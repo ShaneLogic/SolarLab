@@ -30,3 +30,10 @@ htmlcov/
 
 # Git worktrees
 .worktrees/
+
+# Claude Code / OMC
+.claude/
+.omc/
+
+# Recursive pycache
+**/__pycache__/

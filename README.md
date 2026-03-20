@@ -4,25 +4,35 @@ Solar cell research and simulation project.
 
 ## Structure
 
-- **`perovskite-sim/`** — Perovskite solar cell drift-diffusion simulation (Python)
-- **`docs/`** — Documentation and research plans
-- **`.claude/`** — OMC skills and configuration
+```
+SolarLab/                    # Root directory
+├── perovskite-sim/          # Perovskite solar cell simulation code (Python)
+├── docs/                   # Research documentation, plans, raw files
+└── .claude/                # OMC skills and configuration
+```
 
 ## Quick Start
 
+### Perovskite Simulator
+
 ```bash
 cd perovskite-sim
-pip install -e .
-```
+pip install -e ".[dev]"
 
-## perovskite-sim
+# Run a simulation
+python -c "
+from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
-A numerical drift-diffusion simulator for perovskite solar cells.
-
-```bash
-# Run simulations
-python -m perovskite_sim
+stack = load_device_from_yaml('configs/nip_MAPbI3.yaml')
+result = run_jv_sweep(stack, N_grid=80, n_points=40, v_rate=1.0)
+print(f'PCE: {result.metrics_fwd.PCE:.3f}')
+"
 
 # Run tests
-pytest tests/
+pytest
 ```
+
+### Documentation
+
+See `docs/README.md` for research documentation and plans.
