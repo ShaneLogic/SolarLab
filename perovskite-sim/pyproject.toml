@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "perovskite-sim"
+version = "0.1.0"
+description = "1D drift-diffusion + ion migration simulator for perovskite solar cells"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "pyyaml>=6.0",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=perovskite_sim --cov-report=term-missing -m 'not slow'"
+markers = [
+    "slow: marks tests as slow (run with -m slow)",
+]
