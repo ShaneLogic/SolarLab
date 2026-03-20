@@ -1,0 +1,191 @@
+**S**
+- Spin-orbit interaction: 117, 305
+- Spin-orbit split-off band: 117
+- Splat cooling: 39
+- Splicing boundary: 523
+- Split quasi-Fermi levels: 596
+- Sputter deposition: 708
+- Sputtered precursors: 710
+- Square Well potential: 172
+- Stacking fault: 65, 64
+- Stacking single layers: 143
+- Staebler–Wronski effect: 78, 724
+- Standing wave: 99
+- Stannites: 34
+- Stark effect: 336
+- Stark shift: 336
+- Stationary high-field domain: 681
+- Statistical distribution: 150, 218, 248, 296
+- Steady-state current continuity equations: 421
+- Sticking of ion pairs: 46
+- Stoichiometry: 47
+- Stokes shifts: 191
+- Strain, remaining: 67
+- Strain-related defects: 229, 230
+- Strained layer systems: 64
+- Structure, matrix-like: 41
+- Structure, network-like: 41
+- Subbands: 105
+- Subimage: 77
+- Sublattice: 35, 128, 131, 188, 208, 221, 259
+- Sublimation: 47
+- Substitutionals: 53, 56, 186
+- Sulphur-containing gelatin: 78
+- Sum of free and trapped charges: 536
+- Sunlight absorption: 576
+- Supercell technique: 176
+- Superlattice: 23, 35, 138, 240, 336
+- Superlinearity: 416
+- Supersaturation: 47
+- Supershell approach: 101
+- Superstrate CdS/CdTe solar cell: 650
+- Supply of minority carriers: 603
+- Surface charges: 432
+- Surface energy: 45
+- Surface recombination: 599
+- Surface recombination current: 499, 558
+- Surfaces: 64
+- Symmetry of the lattice: 23
+- Symmetry operation: 24
+- Symmetry points: 28
+
+**T**
+- Tail of band states: 217
+- Tailing of band states: 222, 225
+- Tathogen: 230
+- Tauc band-gap: 726
+- Temperature gradient: 257, 271, 277
+- Tensor ellipsoid: 115
+- Ternary and quaternary compounds: 32
+- Tetragonal glasses: 233
+- Tetrahedral covalent radii: 17
+- Tetrahedral lattice: 32
+- Tetrahedrally bound amorphous semiconductors: 228, 229
+- Tetrahedrally bound semiconductors: 230
+- Tetravalent elements: 10
+- Thermal distribution: 253
+- Thermal donors: 210
+- Thermal equilibrium: 248, 249, 261–264, 266, 272, 369, 380, 383, 385, 427, 434, 438, 440, 475, 476, 483, 484, 565
+- Thermal excitation: 475
+- Thermal GR-Current: 500
+- Thermal ionization: 400
+- Thermal phonons: 230
+- Thermally stimulated current: 403
+- Thermionic emission current: 262
+- Thermo-emf: 278
+- Thicker slab: 506
+- Thin slab: 506
+- Three-band model: 127
+- Three-dimensional dispersion relation: 112
+- Three-dimensional lattice: 325
+- Three-step process: 330
+- Tight-binding approach: 88
+- Tight-binding approximation: 194
+- Tolman experiment: 108
+- Topology, local: 41
+- Total area efficiencies: 719
+- Total carrier current: 270
+- Total current: 247, 262, 263, 269, 348, 436, 445, 561, 562, 564
+- Total current-voltage characteristic: 550
+- Total electron current: 263, 264
+- Total hole current: 513
+- Total incremental current: 486
+- Totally filled valence band: 107
+- Transition Character: 197
+- Transition coefficient: 389, 475
+- Transition metal: 15, 16, 53, 109, 192, 194, 198, 228
+- Transition metal impurities: 194
+- Transition rate: 402, 475
+- Translational symmetry: 222
+- Transmission electron microscopy: 61
+- Transmuted elements, doping: 32
+- Transparent conducting oxide: 711
+- Transport equations: 273, 274, 592
+- Transverse magneto-resistance: 283
+- Trap availability factor: 410
+- Trap distribution: 411
+- Trap-filling: 391, 392, 396, 404
+- Trapping: 103
+- Trapping a carrier causes violent oscillations: 75
+- Triangular barrier: 323–325
+- Triangular shape: 323
+- Triple and higher defect centers: 211
+- Triplet state: 183
+- Trivalent metals: 109
+- Trochoids: 290, 291
+- True glasses: 233
+- TSC measurements: 374
+- TSC: 403–405
+- TSL: 403, 404
+- Tunability: 245
+- Tunnel spectroscopy: 329
+- Tunneling: 144, 247, 325
+- Twin boundaries: 64
+- Two sets of donors: 630
+- Two-carrier model: 517
+- Two-dimensional hydrogen problem: 336
+- Two-dimensional (layered) lattices: 10
+- Two-donor model: 631
+- Two-step tunneling: 330
+- Type-I pairs: 208
+- Types of scattering centers: 296
+- Typical photoconductors: 573
+
+**U**
+- Ultrathin superlattices: 36
+- Umklapp processes: 298
+- Uncompensated spins: 193, 287
+- Uniaxial stress: 132
+- Unit cell: 23, 24, 28, 32, 43
+- Unit cells, two: 43
+- Unit polarization vector: 332
+- Unpaired spin: 60, 80, 229, 234
+- Upstream diffusion length: 511
+- Urbach tail: 218, 220, 221, 229
+
+**V**
+- V-center: 183
+- V-shaped potential well: 241
+- Vacancies: 52
+- Vacancies and interstitials: 56
+- Valence alternation: 193, 232
+- Valence angles: 30
+- Valence band: 54
+- Vander Waals: 3, 10, 15, 17
+- Virtual cathode: 683
+- Viscosity near surface: 46
+- Vk-center: 183
+- Voltage drop kinetics method: 638
+
+**W**
+- Waals forces: 10
+- Wannier functions: 176
+- Wave crest: 300
+- Wavenumbers: 322
+- Wave packet: 96, 98, 99, 156, 158, 165, 272
+- Wavevector: 28, 90, 127, 151, 300, 312, 323, 324
+- Wavefunction: 28, 98, 157, 160, 171, 198, 220, 236, 240, 300, 321
+- Wavenumber: 28
+- Weak bond breaking: 80
+- Wide bandgap material: 180
+- Wiedemann-Franz law: 277
+- Wigner-Seitz cell: 28
+- WKB approximation: 323
+- Work function of metals: 69
+- Wurtzite, zincblende: 64
+- Wurtzite lattice: 31
+- Wurtzite structure: 31
+
+**X**
+- X-ray photons: 337
+- X-valley: 190
+
+**Y**
+- Yukawa potential: 311, 312
+- Yukawa-type: 306
+
+**Z**
+- Zero bandgap semiconductors: 128
+- Zincblende: 31
+- ZnS lattice: 32
+- Zone rectification: 49
