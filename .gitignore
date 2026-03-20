@@ -1,0 +1,6 @@
+# OMC state
+.omc/
+.claude/
+
+# OS
+.DS_Store
