@@ -8,7 +8,12 @@ except ImportError:
     from scipy_shim import solve_ivp
 
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
-from perovskite_sim.physics.poisson import solve_poisson
+from perovskite_sim.physics.poisson import (
+    solve_poisson,
+    solve_poisson_prefactored,
+    factor_poisson,
+    PoissonFactor,
+)
 from perovskite_sim.physics.continuity import carrier_continuity_rhs
 from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
@@ -77,6 +82,10 @@ class MaterialArrays:
     p_L: float
     n_R: float
     p_R: float
+    # Precomputed LAPACK LU of the Poisson tridiagonal operator; reused in
+    # every RHS call in place of scipy.sparse spsolve, which is the largest
+    # single contributor to assemble_rhs runtime at the default grid sizes.
+    poisson_factor: PoissonFactor | None = None
 
     @property
     def carrier_params(self) -> dict:
@@ -185,6 +194,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     n_L, p_L = _equilibrium_np(first.N_D, first.N_A, first.ni)
     n_R, p_R = _equilibrium_np(last.N_D, last.N_A, last.ni)
 
+    # LAPACK LU of the Poisson tridiagonal — constant across the experiment,
+    # so we pay the factor cost exactly once and each RHS call becomes a
+    # single dgttrs back-substitution.
+    poisson_factor = factor_poisson(x, eps_r)
+
     return MaterialArrays(
         eps_r=eps_r,
         D_ion_node=D_ion_node,
@@ -213,6 +227,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         p_L=p_L,
         n_R=n_R,
         p_R=p_R,
+        poisson_factor=poisson_factor,
     )
 
 
@@ -292,7 +307,9 @@ def assemble_rhs(
     # phi_right = V_bi - V_app: forward bias (V_app > 0) reduces the
     # built-in field; V_app = 0 → short circuit, V_app ≈ V_oc → open circuit.
     rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
-    phi = solve_poisson(x, mat.eps_r, rho, phi_left=0.0, phi_right=stack.V_bi - V_app)
+    phi = solve_poisson_prefactored(
+        mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_app,
+    )
 
     # Generation (layered Beer-Lambert with correct cumulative optical depth)
     if illuminated:
@@ -408,8 +425,10 @@ def split_step(
             _clip_count[0] += 1
         P_nn = np.maximum(P, 0.0)
         rho = _charge_density(p_frozen, n_frozen, P_nn, mat.P_ion0, mat.N_A, mat.N_D)
-        phi = solve_poisson(x, mat.eps_r, rho,
-                            phi_left=0.0, phi_right=stack.V_bi - V_app)
+        phi = solve_poisson_prefactored(
+            mat.poisson_factor, rho,
+            phi_left=0.0, phi_right=stack.V_bi - V_app,
+        )
         return ion_continuity_rhs(x, phi, P_nn, mat.D_ion_face, V_T, mat.P_lim_face)
 
     sol_ion = solve_ivp(
