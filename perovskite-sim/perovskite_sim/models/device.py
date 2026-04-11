@@ -18,6 +18,10 @@ class DeviceStack:
     phi_left: float = 0.0   # V
     V_bi: float = 1.1       # built-in voltage [V]
     Phi: float = 2.5e21     # photon flux [m⁻² s⁻¹] (AM1.5G)
+    # Interface recombination: (v_n, v_p) per internal interface [m/s].
+    # interfaces[0] = interface between layers[0] and layers[1], etc.
+    # Empty tuple means no interface recombination.
+    interfaces: tuple[tuple[float, float], ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))

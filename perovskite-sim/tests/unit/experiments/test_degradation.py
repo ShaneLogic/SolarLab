@@ -14,54 +14,72 @@ def test_result_dataclass():
 
 
 def test_j_sc_constant_and_positive():
-    """J_sc must be computed once from the fresh SC state and held constant
-    across all snapshots.  Ion migration mainly shifts V_oc/FF; re-solving J_sc
-    per snapshot causes spikes and adds runtime overhead.
-    Tolerance 1e-9: values must be bit-for-bit identical (same scalar reused)."""
+    """Degradation snapshots should report finite, physically consistent metrics."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.experiments.degradation import run_degradation
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     result = run_degradation(stack, t_end=5.0, n_snapshots=3,
-                             V_bias=0.9, N_grid=20, dt_max=1.0)
+                             V_bias=0.9, N_grid=20, dt_max=1.0,
+                             metric_n_points=6, metric_settle_time=1e-3)
     assert result.J_sc[0] > 0, f"J_sc={result.J_sc[0]:.3f} should be positive"
     assert np.all(result.V_oc > 0)
     assert np.all(result.PCE > 0)
-    # All snapshots must carry the exact same J_sc value (computed once at startup)
-    np.testing.assert_array_equal(
-        result.J_sc, result.J_sc[0],
-        err_msg="J_sc must be constant (computed once from fresh SC state)"
+    assert np.all(np.isfinite(result.PCE))
+    assert np.all(np.isfinite(result.V_oc))
+    assert np.all(np.isfinite(result.J_sc))
+    # True PCE should include FF losses, so it must stay below J_sc * V_oc / Pin.
+    pce_upper_bound = result.J_sc * result.V_oc / 1000.0
+    assert np.all(result.PCE <= pce_upper_bound + 1e-12)
+    assert np.any(result.PCE < 0.98 * pce_upper_bound)
+
+
+def test_degradation_metrics_decline_under_bias_stress():
+    """Irreversible damage should overcome light-soaking and reduce performance."""
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    from perovskite_sim.experiments.degradation import run_degradation
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    result = run_degradation(
+        stack,
+        t_end=30.0,
+        n_snapshots=4,
+        V_bias=0.9,
+        N_grid=20,
+        dt_max=1.0,
+        metric_n_points=6,
+        metric_settle_time=1e-3,
+    )
+
+    assert result.PCE[-1] < result.PCE[0], (
+        f"PCE should decline under sustained bias stress: {result.PCE}"
+    )
+    assert result.V_oc[-1] < result.V_oc[0], (
+        f"V_oc should decline under sustained bias stress: {result.V_oc}"
     )
 
 
-def test_voc_uses_geometric_mean():
-    """V_oc must use geometric mean of n*p (mean of log), not arithmetic mean.
+def test_degradation_rejects_small_metric_grid():
+    from perovskite_sim.experiments.degradation import run_degradation
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    with pytest.raises(ValueError, match="metric_n_points"):
+        run_degradation(stack, metric_n_points=2)
 
-    Create a mock absorber state where n*p has one very high spike (mimicking
-    interface injection after ion pileup). The arithmetic mean is dominated by
-    the spike; the geometric mean is not.
-    """
-    from perovskite_sim import constants
 
-    ni_sq = (3.2e13) ** 2
-    # 10 absorber nodes: 9 "bulk" with n*p = 10*ni_sq, 1 spike at 1000*ni_sq
-    np_bulk = 10.0 * ni_sq * np.ones(10)
-    np_bulk[-1] = 1000.0 * ni_sq  # interface spike
+def test_degradation_rejects_nonpositive_metric_settle_time():
+    from perovskite_sim.experiments.degradation import run_degradation
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    with pytest.raises(ValueError, match="metric_settle_time"):
+        run_degradation(stack, metric_settle_time=0.0)
 
-    V_T = constants.V_T
-    voc_arithmetic = V_T * np.log(np.mean(np_bulk) / ni_sq)
-    voc_geometric  = V_T * np.mean(np.log(np_bulk / ni_sq))
 
-    # Geometric must be < arithmetic (Jensen's inequality; log is concave)
-    assert voc_geometric < voc_arithmetic, (
-        f"geometric ({voc_geometric:.4f} V) should be < arithmetic ({voc_arithmetic:.4f} V)"
-    )
-    # Geometric must be closer to the bulk value than arithmetic is
-    # (this is the key advantage: less biased by interface spikes)
-    bulk_voc = V_T * np.log(10.0)
-    assert abs(voc_geometric - bulk_voc) < abs(voc_arithmetic - bulk_voc), (
-        f"geometric ({voc_geometric:.4f} V) should be closer to bulk ({bulk_voc:.4f} V) "
-        f"than arithmetic ({voc_arithmetic:.4f} V)"
-    )
+def test_degradation_rejects_negative_damage_motion_gain():
+    from perovskite_sim.experiments.degradation import run_degradation
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    with pytest.raises(ValueError, match="damage_motion_gain"):
+        run_degradation(stack, damage_motion_gain=-1.0)
 
 
 def test_degradation_rejects_nonpositive_t_end():
@@ -96,7 +114,8 @@ def test_dt_max_caps_internal_step():
     from perovskite_sim.experiments.degradation import run_degradation
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     result = run_degradation(stack, t_end=5.0, n_snapshots=2,
-                             V_bias=0.9, N_grid=20, dt_max=1.0)
+                             V_bias=0.9, N_grid=20, dt_max=1.0,
+                             metric_n_points=6, metric_settle_time=1e-3)
     assert result.PCE.shape == (2,)
     assert np.all(np.isfinite(result.PCE))
     assert np.all(np.isfinite(result.V_oc))

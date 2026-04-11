@@ -33,6 +33,8 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             alpha=_f(layer_cfg["alpha"]),
             N_A=_f(layer_cfg["N_A"]),
             N_D=_f(layer_cfg["N_D"]),
+            chi=_f(layer_cfg.get("chi", 0.0)),
+            Eg=_f(layer_cfg.get("Eg", 0.0)),
         )
         layers.append(LayerSpec(
             name=layer_cfg["name"],
@@ -40,8 +42,14 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             params=p,
             role=layer_cfg["role"],
         ))
+    # Interface recombination velocities: list of [v_n, v_p] per internal interface
+    raw_interfaces = dev.get("interfaces", [])
+    interfaces = tuple(
+        (float(pair[0]), float(pair[1])) for pair in raw_interfaces
+    )
     return DeviceStack(
         layers=layers,
         V_bi=_f(dev.get("V_bi", 1.1)),
         Phi=_f(dev.get("Phi", 2.5e21)),
+        interfaces=interfaces,
     )

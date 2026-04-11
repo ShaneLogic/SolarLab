@@ -15,15 +15,15 @@ def test_equilibrium_convergence():
 
 
 def test_equilibrium_carriers_physical():
-    """Carrier densities must be positive and bounded."""
+    """Carrier densities must stay positive and finite."""
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 50) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     N = len(x)
     y_eq = solve_equilibrium(x, stack)
     n, p = y_eq[:N], y_eq[N:2*N]
-    assert np.all(n >= 1.0)
-    assert np.all(p >= 1.0)
+    assert np.all(n > 0.0)
+    assert np.all(p > 0.0)
     assert np.all(np.isfinite(n))
     assert np.all(np.isfinite(p))
 
@@ -68,3 +68,18 @@ def test_equilibrium_residual_small():
 
     # Check dn/dt (first N components of rhs) in absorber interior
     assert np.max(np.abs(rhs[interior])) < 1e22   # m⁻³/s
+
+
+def test_contact_boundaries_use_contact_layer_intrinsic_density():
+    """Minority carrier densities at contacts should reflect the contact layer ni."""
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    layers_grid = [Layer(l.thickness, 20) for l in stack.layers]
+    x = multilayer_grid(layers_grid)
+    N = len(x)
+    y_eq = solve_equilibrium(x, stack)
+    n, p = y_eq[:N], y_eq[N:2*N]
+
+    # With the transport-layer ni=1 m^-3, minority contact carriers should be
+    # vanishingly small rather than using the absorber ni.
+    assert n[0] < 1e-10
+    assert p[-1] < 1e-10
