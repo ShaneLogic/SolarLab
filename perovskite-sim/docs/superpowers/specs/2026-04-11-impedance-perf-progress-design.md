@@ -125,17 +125,21 @@ class MaterialArrays:
 
 **Measured results (2026-04-11, nip_MAPbI3, warm best-of-3, N_grid=60 JV / N_grid=40 IS):**
 
-| Experiment | Baseline (aa485ff) | Post-refactor (8b8c526) | Speedup |
-|---|---|---|---|
-| JV sweep (30 pts, ±1.4 V) | 25.9 s | 22.0 s | **1.18×** |
-| Impedance (5 freqs, V_dc=0.9) | 39.3 s | 34.8 s | **1.13×** |
-| Degradation (cProfile, cold) | 321.5 s | 321.1 s | ~1.00× |
+| Experiment | Baseline (aa485ff) | MaterialArrays only (8b8c526) | + Poisson LU cache (806a70a) | Total speedup |
+|---|---|---|---|---|
+| JV sweep (30 pts, ±1.4 V) | 25.9 s | 22.0 s (1.18×) | **17.4 s** | **1.49×** |
+| Impedance (5 freqs, V_dc=0.9) | 39.3 s | 34.8 s (1.13×) | **17.8 s** | **2.21×** |
+| Degradation (100 s, 10 snapshots) | 321.5 s | 321.1 s (~1.00×) | **90.1 s** | **3.57×** |
 
-**Why the gain is smaller than expected.** The RHS profile shows `solve_poisson` consumes ~65 % of `assemble_rhs` cumulative time (tridiagonal sparse solve + `scipy.sparse.diags` construction). Rebuilding the per-node / per-face material arrays was ~10–15 % of RHS cost, which is exactly what caching removed. The 2× gate in the original spec was an over-optimistic back-of-envelope — the real bottleneck is the Poisson solve, not helper overhead.
+**Why MaterialArrays alone undershot the 2× gate.** The RHS profile showed `solve_poisson` consuming ~65 % of `assemble_rhs` cumulative time. Material-array rebuilding was only ~10–15 % of RHS cost — real, but not dominant. Caching it gave a clean but small win.
 
-**Decision.** Keep the refactor: it delivers a measurable 10–20 % speedup on the two hot-path experiments, collapses four legacy helpers into one frozen dataclass, and removes duplicated per-layer loops across five call sites. It is also the right data structure to carry into the progress-bar work — `ProgressReporter` needs a stable object to attach observations to. However Phase 3 should **not** assume the refactor alone unblocks long runs; the progress bar is doing the heavy lifting for user-perceived responsiveness. A future Phase 4 could tackle the Poisson solve itself (cache the sparse LU factorisation across RHS calls at fixed grid).
+**Phase 2b — Poisson LU cache (the real fix).** The discrete Poisson matrix depends only on `x` and `eps_r`, both constant during a transient. `build_material_arrays` now calls `scipy.linalg.lapack.dgttrf` once to factor the tridiagonal, and `assemble_rhs` uses `solve_poisson_prefactored` (a single `dgttrs` call) in place of rebuilding a sparse CSR + calling `spsolve` on every RHS. Micro-bench: **43×** speedup per Poisson solve (0.43 s → 0.010 s for 5000 calls at N=60). Numerics are bit-identical — relative difference ~4e-15.
 
-**Profile confirms the cache hit.** `build_material_arrays` appears once per experiment in the cumulative profile (not thousands of times), proving the single-build invariant holds across all three experiments.
+**Degradation got the biggest win because it calls `run_transient` in the tightest loop.** The frozen-ion snapshot measurement does 10 voltage settles per snapshot × 10 snapshots = 100 transients, each with its own O(10³) RHS evaluations. Cutting Poisson from 65 % to ~1 % of RHS cost was worth an extra 2–3× on top of the MaterialArrays caching.
+
+**Decision.** Phase 2 is closed with a real speedup that justifies the structural work. `build_material_arrays` is now the single source of truth for everything constant in the RHS — per-node / per-face material arrays **and** the LU factorisation — and Phase 3 (SSE progress bar) can assume long runs are now practical on the N_grid=40–60 device sizes used in the UI.
+
+**Profile confirms the cache hit.** `build_material_arrays` + `factor_poisson` appear once per experiment in the cumulative profile (not thousands of times), and `solve_poisson_prefactored` drops out of the top-10 hot spots entirely.
 
 ### Item 3 — SSE progress channel
 
