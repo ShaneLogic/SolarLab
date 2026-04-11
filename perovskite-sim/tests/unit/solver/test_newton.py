@@ -41,13 +41,14 @@ def test_equilibrium_residual_small():
     model has no band-offset / electron-affinity parameters, so large
     SG-flux divergences at junctions are expected and correct.
     """
-    from perovskite_sim.solver.mol import assemble_rhs
+    from perovskite_sim.solver.mol import assemble_rhs, build_material_arrays
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     n_nodes = 50
     layers_grid = [Layer(l.thickness, n_nodes) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     y_eq = solve_equilibrium(x, stack)
-    rhs = assemble_rhs(0.0, y_eq, x, stack, illuminated=False, V_app=0.0)
+    mat = build_material_arrays(x, stack)
+    rhs = assemble_rhs(0.0, y_eq, x, stack, mat, illuminated=False, V_app=0.0)
 
     # Identify absorber layer node range
     offset = 0

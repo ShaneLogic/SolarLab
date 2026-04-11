@@ -361,13 +361,10 @@ def _find_interface_nodes(x: np.ndarray, stack: DeviceStack) -> list[int]:
 def _apply_interface_recombination(
     dn: np.ndarray,
     dp: np.ndarray,
-    x: np.ndarray,
     n: np.ndarray,
     p: np.ndarray,
     stack: DeviceStack,
-    ni_sq: np.ndarray,
-    n1: np.ndarray,
-    p1: np.ndarray,
+    mat: MaterialArrays,
 ) -> None:
     """Subtract interface recombination from dn, dp at interface nodes (in-place).
 
@@ -376,25 +373,18 @@ def _apply_interface_recombination(
     """
     if not stack.interfaces:
         return
-    dx = np.diff(x)
-    dx_cell = np.empty(len(x))
-    dx_cell[0] = dx[0]
-    dx_cell[-1] = dx[-1]
-    dx_cell[1:-1] = 0.5 * (dx[:-1] + dx[1:])
-
-    iface_nodes = _find_interface_nodes(x, stack)
-    for k, idx in enumerate(iface_nodes):
+    for k, idx in enumerate(mat.interface_nodes):
         if k >= len(stack.interfaces):
             break
         v_n, v_p = stack.interfaces[k]
         if v_n == 0.0 and v_p == 0.0:
             continue
         R_s = interface_recombination(
-            n[idx], p[idx], float(ni_sq[idx]),
-            float(n1[idx]), float(p1[idx]),
+            n[idx], p[idx], float(mat.ni_sq[idx]),
+            float(mat.n1[idx]), float(mat.p1[idx]),
             v_n, v_p,
         )
-        R_vol = R_s / dx_cell[idx]
+        R_vol = R_s / mat.dx_cell[idx]
         dn[idx] -= R_vol
         dp[idx] -= R_vol
 
@@ -404,48 +394,44 @@ def assemble_rhs(
     y: np.ndarray,
     x: np.ndarray,
     stack: DeviceStack,
+    mat: MaterialArrays,
     illuminated: bool = True,
     V_app: float = 0.0,
 ) -> np.ndarray:
-    """Method of Lines RHS: dy/dt = f(t, y)."""
+    """Method of Lines RHS: dy/dt = f(t, y).
+
+    `mat` is the pre-built per-experiment material cache. Building it here
+    would allocate ~20 numpy arrays per Radau RHS call and dominated runtime
+    of the caching refactor's target experiments.
+    """
     N = len(x)
     sv = StateVec.unpack(y, N)
 
-    eps_r, D_ion_node, P_lim_node, P_ion0, N_A, N_D, alpha_arr, _, _ = (
-        _build_layerwise_arrays(x, stack)
-    )
-
-    # Boundary conditions
-    n_L, p_L, n_R, p_R = _equilibrium_bc(stack, x)
-    n = sv.n.copy(); n[0] = n_L; n[-1] = n_R
-    p = sv.p.copy(); p[0] = p_L; p[-1] = p_R
+    # Boundary conditions from cached equilibrium densities
+    n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
+    p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
 
     # Solve Poisson
     # phi_right = V_bi - V_app: forward bias (V_app > 0) reduces the
     # built-in field; V_app = 0 → short circuit, V_app ≈ V_oc → open circuit.
-    rho = _charge_density(p, n, sv.P, P_ion0, N_A, N_D)
-    phi = solve_poisson(x, eps_r, rho, phi_left=0.0, phi_right=stack.V_bi - V_app)
+    rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
+    phi = solve_poisson(x, mat.eps_r, rho, phi_left=0.0, phi_right=stack.V_bi - V_app)
 
     # Generation (layered Beer-Lambert with correct cumulative optical depth)
     if illuminated:
-        G = beer_lambert_generation(x, alpha_arr, stack.Phi)
+        G = beer_lambert_generation(x, mat.alpha, stack.Phi)
     else:
         G = np.zeros(N)
 
     # Carrier continuity with per-layer D and per-node recombination params
-    params = _build_carrier_params(x, stack)
-    dn, dp = carrier_continuity_rhs(x, phi, n, p, G, params)
+    dn, dp = carrier_continuity_rhs(x, phi, n, p, G, mat.carrier_params)
 
     # Interface recombination (surface SRH at heterointerfaces)
-    _apply_interface_recombination(
-        dn, dp, x, n, p, stack,
-        params["ni_sq"], params["n1"], params["p1"],
-    )
+    _apply_interface_recombination(dn, dp, n, p, stack, mat)
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
-    D_ion_face, P_lim_face = _build_ion_face_params(D_ion_node, P_lim_node)
-    dP = ion_continuity_rhs(x, phi, sv.P, D_ion_face, V_T, P_lim_face)
+    dP = ion_continuity_rhs(x, phi, sv.P, mat.D_ion_face, V_T, mat.P_lim_face)
 
     # Enforce Dirichlet BCs: hold boundary nodes fixed
     dn[0] = dn[-1] = 0.0
@@ -465,12 +451,20 @@ def run_transient(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     max_step: float = np.inf,
+    mat: MaterialArrays | None = None,
 ):
-    """Integrate MOL system from t_span[0] to t_span[1]."""
-    N = len(x)
+    """Integrate MOL system from t_span[0] to t_span[1].
+
+    If `mat` is None, the material cache is built locally — convenient for
+    one-off calls but wasteful when this function is invoked many times
+    with the same stack (J-V sweeps, impedance frequency loops). Callers
+    that loop should build `mat` once and pass it in.
+    """
+    if mat is None:
+        mat = build_material_arrays(x, stack)
 
     def rhs(t, y):
-        return assemble_rhs(t, y, x, stack, illuminated, V_app)
+        return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
 
     return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
                      method="Radau", rtol=rtol, atol=atol,
@@ -485,6 +479,7 @@ def split_step(
     V_app: float = 0.0,
     rtol: float = 1e-4,
     atol: float = 1e-6,
+    mat: MaterialArrays | None = None,
 ) -> tuple[np.ndarray, bool]:
     """Operator-split step for long-time ion–carrier evolution.
 
@@ -515,16 +510,15 @@ def split_step(
     If carrier re-equilibration fails, returns the ion-advanced state
     with previous carrier values (partial success, still True).
     """
+    if mat is None:
+        mat = build_material_arrays(x, stack)
+
     N = len(x)
     sv = StateVec.unpack(y, N)
 
     # Apply ohmic contact BCs to frozen carrier arrays
-    n_L, p_L, n_R, p_R = _equilibrium_bc(stack, x)
-    n_frozen = sv.n.copy(); n_frozen[0] = n_L; n_frozen[-1] = n_R
-    p_frozen = sv.p.copy(); p_frozen[0] = p_L; p_frozen[-1] = p_R
-
-    eps_r, D_ion_node, P_lim_node, P_ion0, N_A, N_D, _, _, _ = _build_layerwise_arrays(x, stack)
-    D_ion_face, P_lim_face = _build_ion_face_params(D_ion_node, P_lim_node)
+    n_frozen = sv.n.copy(); n_frozen[0] = mat.n_L; n_frozen[-1] = mat.n_R
+    p_frozen = sv.p.copy(); p_frozen[0] = mat.p_L; p_frozen[-1] = mat.p_R
 
     initial_neg = np.any(sv.P < -1e-30)
     _clip_count = [1 if initial_neg else 0]  # mutable closure counter
@@ -536,10 +530,10 @@ def split_step(
         if np.any(neg_mask):
             _clip_count[0] += 1
         P_nn = np.maximum(P, 0.0)
-        rho = _charge_density(p_frozen, n_frozen, P_nn, P_ion0, N_A, N_D)
-        phi = solve_poisson(x, eps_r, rho,
+        rho = _charge_density(p_frozen, n_frozen, P_nn, mat.P_ion0, mat.N_A, mat.N_D)
+        phi = solve_poisson(x, mat.eps_r, rho,
                             phi_left=0.0, phi_right=stack.V_bi - V_app)
-        return ion_continuity_rhs(x, phi, P_nn, D_ion_face, V_T, P_lim_face)
+        return ion_continuity_rhs(x, phi, P_nn, mat.D_ion_face, V_T, mat.P_lim_face)
 
     sol_ion = solve_ivp(
         _ion_rhs, (0.0, dt), np.maximum(sv.P, 0.0), t_eval=[dt],
@@ -556,7 +550,7 @@ def split_step(
     if not sol_ion.success:
         return y, False
 
-    P_new = np.clip(sol_ion.y[:, -1], 0.0, P_lim_node)
+    P_new = np.clip(sol_ion.y[:, -1], 0.0, mat.P_lim_node)
     y_ions_advanced = StateVec.pack(sv.n, sv.p, P_new)
 
     # Re-equilibrate carriers for one carrier lifetime (~1 µs)
@@ -564,6 +558,7 @@ def split_step(
     sol_eq = run_transient(
         x, y_ions_advanced, (0.0, t_eq), np.array([t_eq]),
         stack, illuminated=True, V_app=V_app, rtol=rtol, atol=atol,
+        mat=mat,
     )
     if not sol_eq.success:
         # Ions advanced; keep previous carrier values (conservative fallback)
