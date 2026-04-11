@@ -123,6 +123,20 @@ class MaterialArrays:
 
 **Expected speedup:** 3–10× on JV and impedance, measured empirically via `cProfile` before and after. If the measured speedup is <2×, I missed the real bottleneck and will re-profile.
 
+**Measured results (2026-04-11, nip_MAPbI3, warm best-of-3, N_grid=60 JV / N_grid=40 IS):**
+
+| Experiment | Baseline (aa485ff) | Post-refactor (8b8c526) | Speedup |
+|---|---|---|---|
+| JV sweep (30 pts, ±1.4 V) | 25.9 s | 22.0 s | **1.18×** |
+| Impedance (5 freqs, V_dc=0.9) | 39.3 s | 34.8 s | **1.13×** |
+| Degradation (cProfile, cold) | 321.5 s | 321.1 s | ~1.00× |
+
+**Why the gain is smaller than expected.** The RHS profile shows `solve_poisson` consumes ~65 % of `assemble_rhs` cumulative time (tridiagonal sparse solve + `scipy.sparse.diags` construction). Rebuilding the per-node / per-face material arrays was ~10–15 % of RHS cost, which is exactly what caching removed. The 2× gate in the original spec was an over-optimistic back-of-envelope — the real bottleneck is the Poisson solve, not helper overhead.
+
+**Decision.** Keep the refactor: it delivers a measurable 10–20 % speedup on the two hot-path experiments, collapses four legacy helpers into one frozen dataclass, and removes duplicated per-layer loops across five call sites. It is also the right data structure to carry into the progress-bar work — `ProgressReporter` needs a stable object to attach observations to. However Phase 3 should **not** assume the refactor alone unblocks long runs; the progress bar is doing the heavy lifting for user-perceived responsiveness. A future Phase 4 could tackle the Poisson solve itself (cache the sparse LU factorisation across RHS calls at fixed grid).
+
+**Profile confirms the cache hit.** `build_material_arrays` appears once per experiment in the cumulative profile (not thousands of times), proving the single-build invariant holds across all three experiments.
+
 ### Item 3 — SSE progress channel
 
 **Backend**
