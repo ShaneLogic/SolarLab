@@ -73,12 +73,11 @@ def test_interface_d_harmonic_mean():
     """D_face at a layer interface must equal 2·D_a·D_b/(D_a+D_b)."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
-    from perovskite_sim.solver.mol import _build_carrier_params
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 20) for l in stack.layers]
     x = multilayer_grid(layers_grid)
-    params = _build_carrier_params(x, stack)
-    D_n_face = params["D_n"]
+    mat = build_material_arrays(x, stack)
+    D_n_face = mat.D_n_face
     # At the HTL/absorber interface, D_n_face should be harmonic mean
     htl_thickness = stack.layers[0].thickness
     x_face = 0.5 * (x[:-1] + x[1:])

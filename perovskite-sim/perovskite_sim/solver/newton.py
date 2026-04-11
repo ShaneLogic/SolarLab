@@ -22,8 +22,7 @@ import numpy as np
 
 from perovskite_sim.solver.mol import (
     StateVec,
-    _build_layerwise_arrays,
-    _equilibrium_bc,
+    build_material_arrays,
 )
 from perovskite_sim.models.device import DeviceStack
 
@@ -36,7 +35,10 @@ def solve_equilibrium(
     Return a quasi-neutral dark initial condition with fixed ionic background.
     """
     N = len(x)
-    _, _, _, P_ion0, N_A, N_D, _, _, _ = _build_layerwise_arrays(x, stack)
+    mat = build_material_arrays(x, stack)
+    P_ion0 = mat.P_ion0
+    N_A = mat.N_A
+    N_D = mat.N_D
 
     # ── per-node ion profile and intrinsic density ───────────────────────────
     ni_arr = np.ones(N)
@@ -71,8 +73,7 @@ def solve_equilibrium(
     p = np.clip(p, 1.0, 1e36)
 
     # Enforce Dirichlet contact values (ohmic contacts)
-    n_L, p_L, n_R, p_R = _equilibrium_bc(stack, x)
-    n[0] = n_L;  n[-1] = n_R
-    p[0] = p_L;  p[-1] = p_R
+    n[0] = mat.n_L;  n[-1] = mat.n_R
+    p[0] = mat.p_L;  p[-1] = mat.p_R
 
     return StateVec.pack(n, p, P_ion0.copy())
