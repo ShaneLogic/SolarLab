@@ -7,10 +7,8 @@ from perovskite_sim.physics.poisson import solve_poisson
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import (
     StateVec, run_transient,
-    _build_carrier_params,
-    _build_layerwise_arrays,
+    MaterialArrays, build_material_arrays,
     _charge_density,
-    _equilibrium_bc,
     _harmonic_face_average,
 )
 from perovskite_sim.models.device import DeviceStack
@@ -86,6 +84,7 @@ def _compute_current(
     V_app: float,
     y_prev: np.ndarray | None = None,
     dt: float | None = None,
+    mat: MaterialArrays | None = None,
 ) -> float:
     """Extract terminal current density J [A/m²] at the contact-adjacent face.
 
@@ -94,26 +93,25 @@ def _compute_current(
 
     Convention: J > 0 when the device delivers power (J_sc > 0 at V=0).
     """
+    if mat is None:
+        mat = build_material_arrays(x, stack)
+
     def state_fields(y_state: np.ndarray):
         N = len(x)
         sv = StateVec.unpack(y_state, N)
-        eps_r, _, _, P_ion0, N_A, N_D, _, _, _ = _build_layerwise_arrays(x, stack)
-        n_L, p_L, n_R, p_R = _equilibrium_bc(stack, x)
-        n = sv.n.copy(); n[0] = n_L; n[-1] = n_R
-        p = sv.p.copy(); p[0] = p_L; p[-1] = p_R
-        rho = _charge_density(p, n, sv.P, P_ion0, N_A, N_D)
-        phi = solve_poisson(x, eps_r, rho, phi_left=0.0, phi_right=stack.V_bi - V_app)
-        return n, p, phi, eps_r
+        n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
+        p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
+        rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
+        phi = solve_poisson(x, mat.eps_r, rho, phi_left=0.0, phi_right=stack.V_bi - V_app)
+        return n, p, phi
 
-    N = len(x)
     dx = np.diff(x)
-    n, p, phi, eps_r = state_fields(y)
+    n, p, phi = state_fields(y)
 
-    carrier_p = _build_carrier_params(x, stack)
-    D_n_face = carrier_p["D_n"]   # (N-1,)
-    D_p_face = carrier_p["D_p"]   # (N-1,)
-    chi = carrier_p["chi"]        # (N,)
-    Eg  = carrier_p["Eg"]         # (N,)
+    D_n_face = mat.D_n_face   # (N-1,)
+    D_p_face = mat.D_p_face   # (N-1,)
+    chi = mat.chi             # (N,)
+    Eg  = mat.Eg              # (N,)
 
     # Band-corrected potentials — consistent with continuity.py so that
     # the extracted current matches the internal SG flux exactly.
@@ -130,8 +128,8 @@ def _compute_current(
     J_total_internal = J_n[0] + J_p[0]
 
     if y_prev is not None and dt is not None and dt > 0.0:
-        _, _, phi_prev, _ = state_fields(y_prev)
-        eps_face = _harmonic_face_average(eps_r)
+        _, _, phi_prev = state_fields(y_prev)
+        eps_face = _harmonic_face_average(mat.eps_r)
         E_prev = -(phi_prev[1:] - phi_prev[:-1]) / dx
         E_now = -(phi[1:] - phi[:-1]) / dx
         J_disp = EPS_0 * eps_face * (E_now - E_prev) / dt
@@ -146,6 +144,7 @@ def _integrate_step(
     x: np.ndarray,
     y: np.ndarray,
     stack: DeviceStack,
+    mat: MaterialArrays,
     V_app: float,
     t_lo: float,
     t_hi: float,
@@ -174,6 +173,7 @@ def _integrate_step(
         x, y, (t_lo, t_hi), np.array([t_hi]),
         stack, illuminated=True, V_app=V_app, rtol=rtol, atol=atol,
         max_step=dt / 20.0 if dt > 0.0 else np.inf,
+        mat=mat,
     )
     if sol.success:
         return sol.y[:, -1]
@@ -183,8 +183,8 @@ def _integrate_step(
             f"at V_app={V_app:.4f} V after bisection"
         )
     t_mid = 0.5 * (t_lo + t_hi)
-    y_mid = _integrate_step(x, y, stack, V_app, t_lo, t_mid, rtol, atol, max_bisect - 1)
-    return _integrate_step(x, y_mid, stack, V_app, t_mid, t_hi, rtol, atol, max_bisect - 1)
+    y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol, max_bisect - 1)
+    return _integrate_step(x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol, max_bisect - 1)
 
 
 def quasi_static_sweep(
@@ -195,6 +195,7 @@ def quasi_static_sweep(
     sweep_time: float,
     rtol: float = 1e-4,
     atol: float = 1e-6,
+    mat: MaterialArrays | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Quasi-static illuminated J-V from an existing state, carrying state forward.
 
@@ -208,6 +209,8 @@ def quasi_static_sweep(
     n = len(voltages)
     if n < 2:
         raise ValueError(f"voltages must have at least 2 points, got {n}")
+    if mat is None:
+        mat = build_material_arrays(x, stack)
     dt = sweep_time / (n - 1)
     J_arr = np.zeros(n, dtype=float)
     y = y_init.copy()
@@ -215,8 +218,8 @@ def quasi_static_sweep(
     for k in range(n):
         V_k = float(voltages[k])
         y_prev = y.copy()
-        y = _integrate_step(x, y, stack, V_k, t, t + dt, rtol, atol)
-        J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt)
+        y = _integrate_step(x, y, stack, mat, V_k, t, t + dt, rtol, atol)
+        J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt, mat=mat)
         t += dt
     return np.asarray(voltages, dtype=float), J_arr
 
@@ -253,6 +256,10 @@ def run_jv_sweep(
     N = len(x)
     L = stack.total_thickness
 
+    # Build the material cache once — shared across forward and reverse sweeps
+    # and every RHS call inside them. See solver/mol.py:MaterialArrays.
+    mat = build_material_arrays(x, stack)
+
     # Start from illuminated SC state: carriers equilibrated, ions at initial profile
     y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
 
@@ -274,8 +281,8 @@ def run_jv_sweep(
             y_prev = y.copy()
             t_lo = t_points[k]
             t_hi = t_lo + dt
-            y = _integrate_step(x, y, stack, V_k, t_lo, t_hi, rtol, atol)
-            J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt)
+            y = _integrate_step(x, y, stack, mat, V_k, t_lo, t_hi, rtol, atol)
+            J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt, mat=mat)
         return V_arr, J_arr, y
 
     V_upper = stack.V_bi if V_max is None else V_max
