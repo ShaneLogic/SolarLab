@@ -47,6 +47,8 @@ def run_impedance(
     """Run small-signal impedance at each frequency."""
     if len(frequencies) == 0:
         raise ValueError("frequencies must be non-empty")
+    if np.any(~np.isfinite(frequencies)) or np.any(frequencies <= 0.0):
+        raise ValueError("frequencies must be finite and positive")
     if N_grid < 3:
         raise ValueError(f"N_grid must be >= 3, got {N_grid}")
     if delta_V <= 0:
@@ -60,40 +62,50 @@ def run_impedance(
     y_dc = solve_illuminated_ss(x, stack, V_app=V_dc, rtol=rtol, atol=atol)
 
     Z_arr = np.zeros(len(frequencies), dtype=complex)
+    pts_per_cycle = 20  # integer pts per cycle ⇒ last cycle spans an exact period
     for k, f in enumerate(frequencies):
         T_period = 1.0 / f
-        t_eval = np.linspace(0, n_cycles * T_period, n_cycles * 20)
-        t_span = (0.0, t_eval[-1])
+        dt = T_period / pts_per_cycle
+        n_intervals = n_cycles * pts_per_cycle
+        t_eval = np.arange(n_intervals + 1, dtype=float) * dt
 
         def V_ac(t):
             return V_dc + delta_V * np.sin(2 * np.pi * f * t)
 
-        # Step through time with piecewise constant V
         y = y_dc.copy()
-        J_t = np.zeros_like(t_eval)
-        for i, t_i in enumerate(t_eval[:-1]):
-            V_i = V_ac(0.5 * (t_eval[i] + t_eval[i + 1]))
-            sol = run_transient(x, y, (t_eval[i], t_eval[i + 1]),
-                                np.array([t_eval[i + 1]]),
+        J_t = np.zeros(n_intervals, dtype=float)
+        for i in range(n_intervals):
+            t_lo, t_hi = t_eval[i], t_eval[i + 1]
+            V_i = V_ac(0.5 * (t_lo + t_hi))
+            y_prev = y.copy()
+            # Cap Radau's internal step so it cannot skip over the AC
+            # excitation within a half-period — same rationale as jv_sweep
+            # near V_bi, where an under-estimated error lets the solver
+            # take a giant step and miss the small-signal response.
+            sol = run_transient(x, y, (t_lo, t_hi), np.array([t_hi]),
                                 stack, illuminated=True, V_app=V_i,
-                                rtol=rtol, atol=atol)
+                                rtol=rtol, atol=atol,
+                                max_step=(t_hi - t_lo) / 5.0)
+            if not sol.success:
+                raise RuntimeError(f"impedance transient failed at f={f:.3e} Hz, step {i}")
             y = sol.y[:, -1]
-            J_t[i] = _compute_current(x, y, stack, V_i)
+            J_t[i] = _compute_current(x, y, stack, V_i, y_prev=y_prev, dt=t_hi - t_lo)
 
-        # Lock-in extraction from last cycle (settled AC response).
-        # J_t[i] is the current after integrating over [t_eval[i], t_eval[i+1]]
-        # with voltage V_ac applied at the midpoint of that interval.
-        # Use midpoint times for the sin/cos reference to match the actual
-        # voltage phase, eliminating the half-step bias at high frequencies.
-        pts = 20   # points per cycle
-        t_mid_all = 0.5 * (t_eval[:-1] + t_eval[1:])   # midpoint of each interval
-        t_ac = t_mid_all[-pts:]         # last cycle midpoint times  (len=pts)
-        J_ac = J_t[:-1][-pts:]         # last cycle current values   (len=pts)
-        sin_ref = np.sin(2 * np.pi * f * t_ac)
-        cos_ref = np.cos(2 * np.pi * f * t_ac)
-        J_in   = 2.0 * np.mean(J_ac * sin_ref)   # in-phase with V = δV·sin
-        J_quad = 2.0 * np.mean(J_ac * cos_ref)   # quadrature
-        delta_J = J_in + 1j * J_quad
-        Z_arr[k] = delta_V / delta_J if abs(delta_J) > 0 else complex(np.inf, 0)
+        # Lock-in over the last full cycle. pts_per_cycle samples cover exactly
+        # one period, so sin/cos references integrate to zero on any DC term —
+        # but we still detrend J explicitly to guard against slow drift from
+        # incompletely settled ion dynamics superimposed on the AC perturbation.
+        J_ac = J_t[-pts_per_cycle:]
+        t_mid = 0.5 * (t_eval[-pts_per_cycle - 1:-1] + t_eval[-pts_per_cycle:])
+        I_ac = -(J_ac - J_ac.mean())  # passive sign convention + detrend
+        sin_ref = np.sin(2 * np.pi * f * t_mid)
+        cos_ref = np.cos(2 * np.pi * f * t_mid)
+        I_in = 2.0 * np.mean(I_ac * sin_ref)
+        I_quad = 2.0 * np.mean(I_ac * cos_ref)
+
+        # Excitation ∝ sin(ωt); capacitive devices give Im(Z) < 0, so the
+        # cosine lock-in term enters the phasor with a minus sign.
+        delta_I = I_in - 1j * I_quad
+        Z_arr[k] = delta_V / delta_I if abs(delta_I) > 0 else complex(np.inf, 0)
 
     return ImpedanceResult(frequencies=frequencies, Z=Z_arr)

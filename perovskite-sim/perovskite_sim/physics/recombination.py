@@ -25,6 +25,25 @@ def auger_recombination(
     return (C_n * n + C_p * p) * (n * p - ni_sq)
 
 
+def interface_recombination(
+    n: float, p: float, ni_sq: float,
+    n1: float, p1: float,
+    v_n: float, v_p: float,
+) -> float:
+    """Interface (surface) SRH recombination rate [m⁻² s⁻¹].
+
+    Parameters
+    ----------
+    n, p : carrier densities at the interface node [m⁻³]
+    ni_sq : intrinsic carrier density squared [m⁻⁶]
+    n1, p1 : SRH trap-level carrier densities [m⁻³]
+    v_n, v_p : surface recombination velocities [m/s]
+    """
+    if v_n == 0.0 and v_p == 0.0:
+        return 0.0
+    return (n * p - ni_sq) / ((n + n1) / v_p + (p + p1) / v_n)
+
+
 def total_recombination(
     n: np.ndarray, p: np.ndarray, ni_sq: float,
     tau_n: float, tau_p: float, n1: float, p1: float,

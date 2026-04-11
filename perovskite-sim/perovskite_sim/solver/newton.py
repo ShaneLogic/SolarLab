@@ -1,36 +1,31 @@
 """
 Equilibrium initialiser for the perovskite drift-diffusion system.
 
-Uses a quasi-neutral (charge-neutrality) initialisation:
+Uses a quasi-neutral initialisation with a neutral ionic background:
   1. For each grid node, set n and p so that:
        n · p = ni²(layer)      (mass-action law)
-       n – p = N_D – N_A + P   (local charge neutrality)
+       n – p = N_D – N_A       (local charge neutrality with neutral ions)
      This gives an analytic, overflow-free closed-form solution.
-  2. Perform ONE linear Poisson solve to obtain a self-consistent
-     electrostatic potential φ.
 
 Physical rationale
 ------------------
-- Boltzmann-based Gummel iterations assume a single intrinsic density
-  ni throughout the device.  For multi-layer PSC stacks (where ni
-  spans ni=1 m⁻³ in transport layers vs ni~3×10¹³ m⁻³ in the
-  perovskite absorber) the Boltzmann formula produces exp-overflow and
-  never converges.
-- The quasi-neutral initial condition gives np = ni²(layer) at every
-  node, so the SRH recombination term vanishes identically.  Carrier
-  drift currents in each layer are individually uniform (∂J/∂x ≈ 0)
-  for a slowly-varying potential, keeping the interior-node residual
-  near zero.
-- The returned state is an excellent seed for the time-domain (Radau)
-  integrator, which will quickly relax any residual transients.
+- The configured vacancy density P₀ is treated as a neutral ionic
+  background, so it should not appear as net space charge in the
+  initial carrier balance.
+- The resulting state is not a full ion-relaxed equilibrium, but it is a
+  fast, physically consistent seed for the transient solver and avoids the
+  enormous artificial carrier imbalance produced when P₀ is treated as net
+  positive space charge.
 """
 from __future__ import annotations
 import numpy as np
-from perovskite_sim.physics.poisson import solve_poisson
-from perovskite_sim.solver.mol import StateVec, _build_layerwise_arrays, _equilibrium_bc
-from perovskite_sim.models.device import DeviceStack
 
-Q   = 1.602176634e-19
+from perovskite_sim.solver.mol import (
+    StateVec,
+    _build_layerwise_arrays,
+    _equilibrium_bc,
+)
+from perovskite_sim.models.device import DeviceStack
 
 
 def solve_equilibrium(
@@ -38,19 +33,12 @@ def solve_equilibrium(
     stack: DeviceStack,
 ) -> np.ndarray:
     """
-    Return a quasi-neutral equilibrium initial condition.
-
-    At every node the carriers satisfy:
-        n · p = ni²(layer),     n – p = N_D – N_A + P
-    followed by one Poisson solve for the potential.
-
-    Returns the packed state vector y = [n, p, P] of shape (3N,).
+    Return a quasi-neutral dark initial condition with fixed ionic background.
     """
     N = len(x)
-    eps_r, _, _, N_A, N_D, _ = _build_layerwise_arrays(x, stack)
+    _, _, _, P_ion0, N_A, N_D, _, _, _ = _build_layerwise_arrays(x, stack)
 
     # ── per-node ion profile and intrinsic density ───────────────────────────
-    P     = np.zeros(N)
     ni_arr = np.ones(N)
     offset = 0.0
     for layer in stack.layers:
@@ -58,8 +46,6 @@ def solve_equilibrium(
         hi = offset + layer.thickness + 1e-15
         mask = (x >= lo) & (x <= hi)
         ni_arr[mask] = layer.params.ni
-        if layer.role == "absorber":
-            P[mask] = layer.params.P0
         offset += layer.thickness
 
     ni_sq = ni_arr ** 2
@@ -69,7 +55,7 @@ def solve_equilibrium(
     # → n = 0.5 * (net + sqrt(net² + 4·ni²))   for net >= 0 (n-type / ion-dominated)
     # → p = 0.5 * (|net| + sqrt(net² + 4·ni²)) for net < 0  (p-type)
     # Using numerically stable two-branch formula to avoid cancellation.
-    net  = N_D - N_A + P
+    net  = N_D - N_A
     disc = np.sqrt(net ** 2 + 4.0 * ni_sq)
 
     # Compute both branches; np.where evaluates both before masking.
@@ -89,10 +75,4 @@ def solve_equilibrium(
     n[0] = n_L;  n[-1] = n_R
     p[0] = p_L;  p[-1] = p_R
 
-    # ── single Poisson solve for self-consistent φ ───────────────────────────
-    # With quasi-neutral ICs, rho ≈ 0 everywhere → φ ≈ linear.
-    rho = Q * (p - n + P - N_A + N_D)
-    phi = solve_poisson(x, eps_r, rho,
-                        phi_left=0.0, phi_right=stack.V_bi)
-
-    return StateVec.pack(n, p, P)
+    return StateVec.pack(n, p, P_ion0.copy())

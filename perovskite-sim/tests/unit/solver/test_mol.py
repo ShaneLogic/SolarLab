@@ -108,3 +108,54 @@ def test_split_step_advances_ions():
     P0_abs = y0[2*N:][abs_mask]
     P1_abs = y_new[2*N:][abs_mask]
     assert not np.allclose(P0_abs, P1_abs)
+
+
+def test_short_dark_transient_keeps_ions_in_absorber():
+    """Ion-blocking transport layers should not accumulate mobile ions."""
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    from perovskite_sim.discretization.grid import multilayer_grid, Layer
+    from perovskite_sim.solver.newton import solve_equilibrium
+    from perovskite_sim.solver.mol import StateVec, run_transient
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
+    x = multilayer_grid(layers_grid)
+    y0 = solve_equilibrium(x, stack)
+    N = len(x)
+    sol = run_transient(
+        x, y0, (0.0, 1e-9), np.array([1e-9]), stack, illuminated=False, V_app=0.0
+    )
+    sv = StateVec.unpack(sol.y[:, -1], N)
+
+    abs_lo = stack.layers[0].thickness
+    abs_hi = abs_lo + stack.layers[1].thickness
+    htl = x < abs_lo
+    etl = x > abs_hi
+
+    assert np.allclose(sv.P[htl], 0.0, atol=1e-24)
+    assert np.allclose(sv.P[etl], 0.0, atol=1e-24)
+    assert np.all(sv.P >= 0.0)
+
+
+def test_split_step_preserves_ion_inventory():
+    """Zero-flux ion evolution should conserve total mobile-ion inventory."""
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    from perovskite_sim.discretization.grid import multilayer_grid, Layer
+    from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
+    from perovskite_sim.solver.mol import StateVec, split_step
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
+    x = multilayer_grid(layers_grid)
+    y0 = solve_illuminated_ss(x, stack, V_app=0.0)
+    N = len(x)
+    sv0 = StateVec.unpack(y0, N)
+
+    y1, ok = split_step(x, y0, dt=0.05, stack=stack, V_app=0.0)
+    assert ok
+    sv1 = StateVec.unpack(y1, N)
+
+    m0 = np.trapezoid(sv0.P, x)
+    m1 = np.trapezoid(sv1.P, x)
+    np.testing.assert_allclose(m1, m0, rtol=1e-10, atol=1e-6)
+    assert np.all(sv1.P >= 0.0)

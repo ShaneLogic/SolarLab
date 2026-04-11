@@ -21,8 +21,22 @@ def carrier_continuity_rhs(
     D_n = params["D_n"]; D_p = params["D_p"]; V_T = params["V_T"]
     dx = np.diff(x)                                # (N-1,)
 
-    J_n = sg_fluxes_n(phi, n, dx, D_n, V_T)       # (N-1,)
-    J_p = sg_fluxes_p(phi, p, dx, D_p, V_T)       # (N-1,)
+    # Band-corrected potentials for heterojunctions:
+    #   phi_n = phi + chi          (conduction band — drives electrons)
+    #   phi_p = phi + chi + Eg     (valence band    — drives holes)
+    # When chi = Eg = 0 everywhere, these reduce to phi and the SG fluxes
+    # are unchanged (backward compatible with homojunction configs).
+    chi = params.get("chi")
+    Eg  = params.get("Eg")
+    if chi is None:
+        phi_n = phi
+        phi_p = phi
+    else:
+        phi_n = phi + chi
+        phi_p = phi + chi + Eg
+
+    J_n = sg_fluxes_n(phi_n, n, dx, D_n, V_T)     # (N-1,)
+    J_p = sg_fluxes_p(phi_p, p, dx, D_p, V_T)     # (N-1,)
 
     R = total_recombination(
         n, p, params["ni_sq"], params["tau_n"], params["tau_p"],

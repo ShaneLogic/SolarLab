@@ -55,3 +55,26 @@ def test_impedance_rejects_zero_delta_v():
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="delta_V"):
         run_impedance(stack, np.array([1e3]), delta_V=0.0)
+
+
+def test_impedance_rejects_nonpositive_frequency():
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    with pytest.raises(ValueError, match="positive"):
+        run_impedance(stack, np.array([0.0, 1e3]))
+
+
+def test_run_impedance_uses_passive_capacitive_sign_convention():
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    result = run_impedance(
+        stack, np.array([1e3, 1e4]), V_dc=0.9, delta_V=0.01, N_grid=20, n_cycles=2
+    )
+
+    assert np.all(np.isfinite(result.Z.real))
+    assert np.all(np.isfinite(result.Z.imag))
+    assert np.all(result.Z.real > 0.0)
+    assert np.all(result.Z.imag < 0.0)

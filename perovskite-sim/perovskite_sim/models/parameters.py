@@ -25,6 +25,8 @@ class MaterialParams:
     alpha: float    # optical absorption coefficient m⁻¹
     N_A: float      # acceptor doping m⁻³
     N_D: float      # donor doping m⁻³
+    chi: float = 0.0   # electron affinity [eV] (= voltage, since 1 eV/q = 1 V)
+    Eg: float = 0.0    # band gap [eV]
 
     @property
     def D_n(self) -> float:
