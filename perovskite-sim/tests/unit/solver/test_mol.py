@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from perovskite_sim.solver.mol import assemble_rhs, StateVec, split_step
+from perovskite_sim.solver.mol import assemble_rhs, StateVec, split_step, build_material_arrays
 
 NI = 3.2e13
 
@@ -24,7 +24,8 @@ def test_assemble_rhs_shape():
     N = len(x)
     n = NI * np.ones(N); p = NI * np.ones(N); P = 1e24 * np.ones(N)
     y0 = StateVec.pack(n, p, P)
-    dydt = assemble_rhs(0.0, y0, x, stack, illuminated=False)
+    mat = build_material_arrays(x, stack)
+    dydt = assemble_rhs(0.0, y0, x, stack, mat, illuminated=False)
     assert dydt.shape == y0.shape
 
 
