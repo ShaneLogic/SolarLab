@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
-from perovskite_sim.physics.poisson import solve_poisson
+from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import (
     StateVec, run_transient,
@@ -102,7 +102,9 @@ def _compute_current(
         n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
         p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
         rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
-        phi = solve_poisson(x, mat.eps_r, rho, phi_left=0.0, phi_right=stack.V_bi - V_app)
+        phi = solve_poisson_prefactored(
+            mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_app,
+        )
         return n, p, phi
 
     dx = np.diff(x)
