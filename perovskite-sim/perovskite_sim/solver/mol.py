@@ -93,12 +93,10 @@ class MaterialArrays:
 def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     """Construct the immutable per-experiment material array bundle.
 
-    Consolidates what used to be four separate per-RHS helpers:
-    `_build_layerwise_arrays`, `_build_carrier_params`, `_equilibrium_bc`,
-    and `_find_interface_nodes`, plus the dx_cell prep from
-    `_apply_interface_recombination`. The output is numerically identical
-    to the legacy path — this is a caching refactor, not an algorithmic
-    change.
+    Single source of truth for per-node / per-face material arrays,
+    contact equilibrium densities, dual-grid cell widths, and interface
+    node indices. Built once per experiment and threaded through the hot
+    path (assemble_rhs, _compute_current, interface recombination).
     """
     N = len(x)
 
@@ -218,121 +216,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     )
 
 
-def _build_layerwise_arrays(x: np.ndarray, stack: DeviceStack):
-    """Return per-node material arrays over the full device grid."""
-    N = len(x)
-    eps_r = np.ones(N)
-    D_ion = np.zeros(N)
-    P_lim = 1e30 * np.ones(N)
-    P_ion0 = np.zeros(N)
-    N_A   = np.zeros(N)
-    N_D   = np.zeros(N)
-    alpha = np.zeros(N)
-    chi   = np.zeros(N)
-    Eg    = np.zeros(N)
-    offset = 0.0
-    for layer in stack.layers:
-        mask = (x >= offset - 1e-12) & (x <= offset + layer.thickness + 1e-12)
-        p = layer.params
-        eps_r[mask] = p.eps_r
-        D_ion[mask] = p.D_ion
-        P_lim[mask] = p.P_lim
-        P_ion0[mask] = p.P0
-        N_A[mask]   = p.N_A
-        N_D[mask]   = p.N_D
-        alpha[mask] = p.alpha
-        chi[mask]   = p.chi
-        Eg[mask]    = p.Eg
-        offset += layer.thickness
-    return eps_r, D_ion, P_lim, P_ion0, N_A, N_D, alpha, chi, Eg
-
-
 def _harmonic_face_average(values: np.ndarray) -> np.ndarray:
     """Harmonic mean on inter-node faces, with zero conductivity preserved."""
     numer = 2.0 * values[:-1] * values[1:]
     denom = values[:-1] + values[1:]
     return np.divide(numer, denom, out=np.zeros_like(numer), where=denom > 0.0)
-
-
-def _build_ion_face_params(
-    D_ion_node: np.ndarray,
-    P_lim_node: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Build per-face ion transport coefficients.
-
-    Harmonic averaging makes the interfacial face coefficient exactly zero when
-    one side is ion-blocking, preventing artificial leakage into transport
-    layers where `D_ion = 0`.
-    """
-    D_ion_face = _harmonic_face_average(D_ion_node)
-    P_lim_face = 0.5 * (P_lim_node[:-1] + P_lim_node[1:])
-    return D_ion_face, P_lim_face
-
-
-def _build_carrier_params(x: np.ndarray, stack: DeviceStack) -> dict:
-    """Build per-face diffusion and per-node recombination arrays.
-
-    Returns a params dict compatible with carrier_continuity_rhs:
-      D_n, D_p  : (N-1,) arrays – diffusion coefficients at inter-node faces
-      ni_sq, tau_n, tau_p, n1, p1, B_rad, C_n, C_p : (N,) per-node arrays
-
-    Interface nodes use the last-matching layer, so transport-layer nodes get
-    their own ni, tau values rather than the absorber's. Inter-layer faces use
-    the harmonic mean of adjacent nodal D values (series-resistance model),
-    consistent with solve_poisson's harmonic-mean treatment of eps_r.
-    """
-    N = len(x)
-    D_n_node = np.empty(N); D_p_node = np.empty(N)
-    ni_sq = np.empty(N); tau_n = np.empty(N); tau_p = np.empty(N)
-    n1    = np.empty(N); p1    = np.empty(N)
-    B_rad = np.empty(N); C_n   = np.empty(N); C_p   = np.empty(N)
-    chi   = np.zeros(N); Eg    = np.zeros(N)
-
-    offset = 0.0
-    for layer in stack.layers:
-        mask = (x >= offset - 1e-12) & (x <= offset + layer.thickness + 1e-12)
-        p = layer.params
-        D_n_node[mask] = p.D_n;  D_p_node[mask] = p.D_p
-        ni_sq[mask]    = p.ni_sq; tau_n[mask] = p.tau_n; tau_p[mask] = p.tau_p
-        n1[mask]       = p.n1;    p1[mask]    = p.p1
-        B_rad[mask]    = p.B_rad; C_n[mask]   = p.C_n;   C_p[mask]   = p.C_p
-        chi[mask]      = p.chi;   Eg[mask]    = p.Eg
-        offset += layer.thickness
-
-    # Per-face D via harmonic mean of adjacent nodal values.
-    # Matches solve_poisson's harmonic-mean treatment of eps_r at interfaces:
-    # both correspond to the series-resistance result for a sharp discontinuity.
-    D_n_face = 2.0 * D_n_node[:-1] * D_n_node[1:] / (D_n_node[:-1] + D_n_node[1:])
-    D_p_face = 2.0 * D_p_node[:-1] * D_p_node[1:] / (D_p_node[:-1] + D_p_node[1:])
-
-    return dict(D_n=D_n_face, D_p=D_p_face, V_T=V_T,
-                ni_sq=ni_sq, tau_n=tau_n, tau_p=tau_p,
-                n1=n1, p1=p1, B_rad=B_rad, C_n=C_n, C_p=C_p,
-                chi=chi, Eg=Eg)
-
-
-def _equilibrium_bc(stack: DeviceStack, x: np.ndarray):
-    """Ohmic contact carrier densities from doping."""
-    def equilibrium_np(N_D, N_A, ni):
-        net = 0.5 * (N_D - N_A)
-        disc = np.sqrt(net**2 + ni**2)
-        if net >= 0:          # n-type or intrinsic: compute n first (large)
-            n = net + disc
-            p = ni**2 / n
-        else:                 # p-type: compute p first (large), avoid cancellation
-            p = -net + disc
-            n = ni**2 / p
-        return n, p
-
-    first_layer = stack.layers[0]
-    last_layer  = stack.layers[-1]
-    n_L, p_L = equilibrium_np(
-        first_layer.params.N_D, first_layer.params.N_A, first_layer.params.ni
-    )
-    n_R, p_R = equilibrium_np(
-        last_layer.params.N_D, last_layer.params.N_A, last_layer.params.ni
-    )
-    return n_L, p_L, n_R, p_R
 
 
 def _charge_density(
@@ -345,17 +233,6 @@ def _charge_density(
 ) -> np.ndarray:
     """Space-charge density with ionic charge measured relative to neutral background."""
     return Q * (p - n + (P_ion - P_ion0) - N_A + N_D)
-
-
-def _find_interface_nodes(x: np.ndarray, stack: DeviceStack) -> list[int]:
-    """Return grid indices closest to each internal interface."""
-    indices = []
-    offset = 0.0
-    for layer in stack.layers[:-1]:
-        offset += layer.thickness
-        idx = int(np.argmin(np.abs(x - offset)))
-        indices.append(idx)
-    return indices
 
 
 def _apply_interface_recombination(
