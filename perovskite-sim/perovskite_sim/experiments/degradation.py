@@ -1,7 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
-from typing import Optional
+from typing import Callable, Optional
 import numpy as np
+
+ProgressCallback = Callable[[str, int, int, str], None]
+"""Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
@@ -177,6 +180,7 @@ def run_degradation(
     damage_stress_rate: float = 1e-3,
     damage_lifetime_strength: float = 4.0,
     min_tau_factor: float = 0.2,
+    progress: ProgressCallback | None = None,
 ) -> DegradationResult:
     """Run constant-bias, ion-coupled degradation simulation.
 
@@ -316,6 +320,9 @@ def run_degradation(
         J_sc_arr[k] = metrics.J_sc
         if store_ion_profiles:
             ion_arr[k] = sv.P
+
+        if progress is not None:
+            progress("degradation", k + 1, n_snapshots, f"t={float(t_k):.2e} s")
 
     return DegradationResult(t=t_eval, PCE=PCE_arr, V_oc=V_oc_arr,
                              J_sc=J_sc_arr, ion_profiles=ion_arr)

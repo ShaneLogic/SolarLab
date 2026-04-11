@@ -1,6 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Callable, Optional
 import numpy as np
+
+ProgressCallback = Callable[[str, int, int, str], None]
+"""Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
@@ -234,6 +238,7 @@ def run_jv_sweep(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     V_max: float | None = None,
+    progress: ProgressCallback | None = None,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
@@ -265,7 +270,7 @@ def run_jv_sweep(
     # Start from illuminated SC state: carriers equilibrated, ions at initial profile
     y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
 
-    def _sweep(V_start: float, V_end: float, y_init: np.ndarray):
+    def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str):
         """Sweep from V_start to V_end, starting from carrier state y_init.
 
         Returns (V_arr, J_arr, y_final) so sweeps can be chained: the reverse
@@ -285,13 +290,15 @@ def run_jv_sweep(
             t_hi = t_lo + dt
             y = _integrate_step(x, y, stack, mat, V_k, t_lo, t_hi, rtol, atol)
             J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt, mat=mat)
+            if progress is not None:
+                progress(stage, k + 1, n_points, "")
         return V_arr, J_arr, y
 
     V_upper = stack.V_bi if V_max is None else V_max
     # Forward sweep: dark equilibrium → short circuit → open circuit
-    V_fwd, J_fwd, y_oc = _sweep(0.0, V_upper, y_eq)
+    V_fwd, J_fwd, y_oc = _sweep(0.0, V_upper, y_eq, "jv_forward")
     # Reverse sweep: continue from light-soaked OC state → short circuit
-    V_rev, J_rev, _ = _sweep(V_upper, 0.0, y_oc)
+    V_rev, J_rev, _ = _sweep(V_upper, 0.0, y_oc, "jv_reverse")
 
     m_fwd = compute_metrics(V_fwd, J_fwd)
     m_rev = compute_metrics(V_rev[::-1], J_rev[::-1])

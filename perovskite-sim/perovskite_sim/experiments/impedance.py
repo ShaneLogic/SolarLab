@@ -1,6 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Callable, Optional
 import numpy as np
+
+ProgressCallback = Callable[[str, int, int, str], None]
+"""Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
@@ -43,6 +47,7 @@ def run_impedance(
     n_cycles: int = 3,
     rtol: float = 1e-4,
     atol: float = 1e-6,
+    progress: ProgressCallback | None = None,
 ) -> ImpedanceResult:
     """Run small-signal impedance at each frequency."""
     if len(frequencies) == 0:
@@ -111,5 +116,8 @@ def run_impedance(
         # cosine lock-in term enters the phasor with a minus sign.
         delta_I = I_in - 1j * I_quad
         Z_arr[k] = delta_V / delta_I if abs(delta_I) > 0 else complex(np.inf, 0)
+
+        if progress is not None:
+            progress("impedance", k + 1, len(frequencies), f"f={f:.3e} Hz")
 
     return ImpedanceResult(frequencies=frequencies, Z=Z_arr)
