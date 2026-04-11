@@ -33,6 +33,191 @@ class StateVec:
         return StateVec(n=y[:N], p=y[N:2*N], P=y[2*N:3*N])
 
 
+@dataclass(frozen=True)
+class MaterialArrays:
+    """Pre-computed per-node and per-face material arrays for one device.
+
+    These quantities depend only on the device geometry and layer stack, not
+    on time or state, so they can be built once per experiment and reused on
+    every RHS evaluation. Building them inside `assemble_rhs` (the original
+    behavior) allocated ~20 numpy arrays per Radau RHS call, which dominated
+    the runtime of all three experiments.
+
+    Build one with `build_material_arrays(x, stack)`.
+    """
+    # Per-node arrays (length N)
+    eps_r: np.ndarray
+    D_ion_node: np.ndarray
+    P_lim_node: np.ndarray
+    P_ion0: np.ndarray
+    N_A: np.ndarray
+    N_D: np.ndarray
+    alpha: np.ndarray
+    chi: np.ndarray
+    Eg: np.ndarray
+    ni_sq: np.ndarray
+    tau_n: np.ndarray
+    tau_p: np.ndarray
+    n1: np.ndarray
+    p1: np.ndarray
+    B_rad: np.ndarray
+    C_n: np.ndarray
+    C_p: np.ndarray
+    # Per-face arrays (length N-1)
+    D_n_face: np.ndarray
+    D_p_face: np.ndarray
+    D_ion_face: np.ndarray
+    P_lim_face: np.ndarray
+    # Dual-grid cell widths for interface recombination volume conversion
+    dx_cell: np.ndarray
+    # Interface node indices (length = len(stack.layers) - 1)
+    interface_nodes: tuple[int, ...]
+    # Ohmic contact carrier densities from doping
+    n_L: float
+    p_L: float
+    n_R: float
+    p_R: float
+
+    @property
+    def carrier_params(self) -> dict:
+        """Dict shape expected by `carrier_continuity_rhs` — legacy key names."""
+        return dict(
+            D_n=self.D_n_face, D_p=self.D_p_face, V_T=V_T,
+            ni_sq=self.ni_sq, tau_n=self.tau_n, tau_p=self.tau_p,
+            n1=self.n1, p1=self.p1, B_rad=self.B_rad,
+            C_n=self.C_n, C_p=self.C_p,
+            chi=self.chi, Eg=self.Eg,
+        )
+
+
+def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
+    """Construct the immutable per-experiment material array bundle.
+
+    Consolidates what used to be four separate per-RHS helpers:
+    `_build_layerwise_arrays`, `_build_carrier_params`, `_equilibrium_bc`,
+    and `_find_interface_nodes`, plus the dx_cell prep from
+    `_apply_interface_recombination`. The output is numerically identical
+    to the legacy path — this is a caching refactor, not an algorithmic
+    change.
+    """
+    N = len(x)
+
+    eps_r = np.ones(N)
+    D_ion_node = np.zeros(N)
+    P_lim_node = 1e30 * np.ones(N)
+    P_ion0 = np.zeros(N)
+    N_A = np.zeros(N)
+    N_D = np.zeros(N)
+    alpha = np.zeros(N)
+    chi = np.zeros(N)
+    Eg = np.zeros(N)
+
+    D_n_node = np.empty(N)
+    D_p_node = np.empty(N)
+    ni_sq = np.empty(N)
+    tau_n = np.empty(N)
+    tau_p = np.empty(N)
+    n1 = np.empty(N)
+    p1 = np.empty(N)
+    B_rad = np.empty(N)
+    C_n = np.empty(N)
+    C_p = np.empty(N)
+
+    offset = 0.0
+    for layer in stack.layers:
+        mask = (x >= offset - 1e-12) & (x <= offset + layer.thickness + 1e-12)
+        p = layer.params
+        eps_r[mask] = p.eps_r
+        D_ion_node[mask] = p.D_ion
+        P_lim_node[mask] = p.P_lim
+        P_ion0[mask] = p.P0
+        N_A[mask] = p.N_A
+        N_D[mask] = p.N_D
+        alpha[mask] = p.alpha
+        chi[mask] = p.chi
+        Eg[mask] = p.Eg
+        D_n_node[mask] = p.D_n
+        D_p_node[mask] = p.D_p
+        ni_sq[mask] = p.ni_sq
+        tau_n[mask] = p.tau_n
+        tau_p[mask] = p.tau_p
+        n1[mask] = p.n1
+        p1[mask] = p.p1
+        B_rad[mask] = p.B_rad
+        C_n[mask] = p.C_n
+        C_p[mask] = p.C_p
+        offset += layer.thickness
+
+    # Per-face diffusion via harmonic mean of adjacent nodal values.
+    # Matches solve_poisson's eps_r treatment and the legacy
+    # _build_carrier_params / _build_ion_face_params outputs exactly.
+    D_n_face = 2.0 * D_n_node[:-1] * D_n_node[1:] / (D_n_node[:-1] + D_n_node[1:])
+    D_p_face = 2.0 * D_p_node[:-1] * D_p_node[1:] / (D_p_node[:-1] + D_p_node[1:])
+    D_ion_face = _harmonic_face_average(D_ion_node)
+    P_lim_face = 0.5 * (P_lim_node[:-1] + P_lim_node[1:])
+
+    # Dual-grid cell widths for surface→volumetric conversion at interfaces.
+    dx = np.diff(x)
+    dx_cell = np.empty(N)
+    dx_cell[0] = dx[0]
+    dx_cell[-1] = dx[-1]
+    dx_cell[1:-1] = 0.5 * (dx[:-1] + dx[1:])
+
+    # Interface nodes: grid index closest to each internal interface.
+    iface_list: list[int] = []
+    offset = 0.0
+    for layer in stack.layers[:-1]:
+        offset += layer.thickness
+        iface_list.append(int(np.argmin(np.abs(x - offset))))
+
+    # Ohmic-contact equilibrium carrier densities from doping.
+    def _equilibrium_np(N_D_val: float, N_A_val: float, ni_val: float) -> tuple[float, float]:
+        net = 0.5 * (N_D_val - N_A_val)
+        disc = np.sqrt(net ** 2 + ni_val ** 2)
+        if net >= 0:
+            n_val = net + disc
+            p_val = ni_val ** 2 / n_val
+        else:
+            p_val = -net + disc
+            n_val = ni_val ** 2 / p_val
+        return float(n_val), float(p_val)
+
+    first = stack.layers[0].params
+    last = stack.layers[-1].params
+    n_L, p_L = _equilibrium_np(first.N_D, first.N_A, first.ni)
+    n_R, p_R = _equilibrium_np(last.N_D, last.N_A, last.ni)
+
+    return MaterialArrays(
+        eps_r=eps_r,
+        D_ion_node=D_ion_node,
+        P_lim_node=P_lim_node,
+        P_ion0=P_ion0,
+        N_A=N_A,
+        N_D=N_D,
+        alpha=alpha,
+        chi=chi,
+        Eg=Eg,
+        ni_sq=ni_sq,
+        tau_n=tau_n,
+        tau_p=tau_p,
+        n1=n1,
+        p1=p1,
+        B_rad=B_rad,
+        C_n=C_n,
+        C_p=C_p,
+        D_n_face=D_n_face,
+        D_p_face=D_p_face,
+        D_ion_face=D_ion_face,
+        P_lim_face=P_lim_face,
+        dx_cell=dx_cell,
+        interface_nodes=tuple(iface_list),
+        n_L=n_L,
+        p_L=p_L,
+        n_R=n_R,
+        p_R=p_R,
+    )
+
+
 def _build_layerwise_arrays(x: np.ndarray, stack: DeviceStack):
     """Return per-node material arrays over the full device grid."""
     N = len(x)
