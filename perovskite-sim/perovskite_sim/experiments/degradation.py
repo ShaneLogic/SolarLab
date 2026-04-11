@@ -5,7 +5,7 @@ import numpy as np
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
-from perovskite_sim.solver.mol import StateVec, run_transient, split_step
+from perovskite_sim.solver.mol import StateVec, run_transient, split_step, build_material_arrays
 from perovskite_sim.experiments.jv_sweep import (
     _compute_current,
     compute_metrics,
@@ -66,6 +66,8 @@ def _measure_snapshot_metrics(
     voltages[0].
     """
     frozen_stack = _freeze_ions(stack)
+    mat_frozen = build_material_arrays(x, frozen_stack)
+    mat_stack = build_material_arrays(x, stack)
     voltages = np.asarray(voltages, dtype=float)
     J_arr = np.zeros_like(voltages)
     # Tighter tolerances for the settled-state measurement: integration
@@ -84,13 +86,14 @@ def _measure_snapshot_metrics(
             x, y_ref, (0.0, settle_time), np.array([settle_time]),
             frozen_stack, illuminated=True, V_app=float(V_k),
             rtol=snap_rtol, atol=snap_atol, max_step=snap_max_step,
+            mat=mat_frozen,
         )
         if not sol.success:
             raise RuntimeError(
                 f"snapshot J-V solver failed at V={V_k:.4f} V"
             )
         y_v = sol.y[:, -1]
-        J_arr[k] = _compute_current(x, y_v, stack, float(V_k))
+        J_arr[k] = _compute_current(x, y_v, stack, float(V_k), mat=mat_stack)
     return compute_metrics(voltages, J_arr)
 
 
@@ -227,7 +230,9 @@ def run_degradation(
     # first time chunk does not have to transition SC→V_bias carriers (expensive).
     y = solve_illuminated_ss(x, stack, V_app=V_bias, rtol=rtol, atol=atol)
     active_stack = stack
+    mat_active = build_material_arrays(x, active_stack)
     damage = 0.0
+    damage_cached = 0.0
     if n_snapshots == 1:
         t_eval = np.array([t_end])
     else:
@@ -251,7 +256,7 @@ def run_degradation(
             sol = run_transient(x, y, (t_cur, t_cur + dt_chunk),
                                 np.array([t_cur + dt_chunk]),
                                 active_stack, illuminated=True, V_app=V_bias,
-                                rtol=rtol, atol=atol)
+                                rtol=rtol, atol=atol, mat=mat_active)
             if sol.success:
                 y = sol.y[:, -1]
                 P_now = StateVec.unpack(y, N).P[absorber_mask]
@@ -260,12 +265,15 @@ def run_degradation(
                     motion_gain=damage_motion_gain,
                     stress_rate=damage_stress_rate,
                 )
-                active_stack = _apply_absorber_damage(
-                    stack,
-                    damage,
-                    lifetime_strength=damage_lifetime_strength,
-                    min_tau_factor=min_tau_factor,
-                )
+                if damage != damage_cached:
+                    active_stack = _apply_absorber_damage(
+                        stack,
+                        damage,
+                        lifetime_strength=damage_lifetime_strength,
+                        min_tau_factor=min_tau_factor,
+                    )
+                    mat_active = build_material_arrays(x, active_stack)
+                    damage_cached = damage
             else:
                 # Coupled solver stalled — operator splitting fallback.
                 # dt_chunk ≤ dt_max, so sub-steps ≤ ceil(dt_max / 0.05).
@@ -274,7 +282,7 @@ def run_degradation(
                 for _ in range(n_sub):
                     P_prev = StateVec.unpack(y, N).P[absorber_mask].copy()
                     y_new, ok = split_step(x, y, dt_sub, active_stack, V_bias,
-                                           rtol=rtol, atol=atol)
+                                           rtol=rtol, atol=atol, mat=mat_active)
                     if not ok:
                         raise RuntimeError(
                             "degradation split_step failed to advance the state "
@@ -287,12 +295,15 @@ def run_degradation(
                         motion_gain=damage_motion_gain,
                         stress_rate=damage_stress_rate,
                     )
-                    active_stack = _apply_absorber_damage(
-                        stack,
-                        damage,
-                        lifetime_strength=damage_lifetime_strength,
-                        min_tau_factor=min_tau_factor,
-                    )
+                    if damage != damage_cached:
+                        active_stack = _apply_absorber_damage(
+                            stack,
+                            damage,
+                            lifetime_strength=damage_lifetime_strength,
+                            min_tau_factor=min_tau_factor,
+                        )
+                        mat_active = build_material_arrays(x, active_stack)
+                        damage_cached = damage
             t_cur += dt_chunk
         t_prev = t_k
 
