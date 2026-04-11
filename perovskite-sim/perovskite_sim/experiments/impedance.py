@@ -4,7 +4,7 @@ import numpy as np
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
-from perovskite_sim.solver.mol import run_transient
+from perovskite_sim.solver.mol import run_transient, build_material_arrays
 from perovskite_sim.experiments.jv_sweep import _compute_current
 
 
@@ -58,6 +58,9 @@ def run_impedance(
 
     layers_grid = [Layer(l.thickness, N_grid // len(stack.layers)) for l in stack.layers]
     x = multilayer_grid(layers_grid)
+    # Build the material cache once — reused across every frequency and
+    # every RHS call inside each frequency's transient.
+    mat = build_material_arrays(x, stack)
     # Pre-condition: illuminated steady state at V_dc (avoids dark→light transient)
     y_dc = solve_illuminated_ss(x, stack, V_app=V_dc, rtol=rtol, atol=atol)
 
@@ -85,11 +88,12 @@ def run_impedance(
             sol = run_transient(x, y, (t_lo, t_hi), np.array([t_hi]),
                                 stack, illuminated=True, V_app=V_i,
                                 rtol=rtol, atol=atol,
-                                max_step=(t_hi - t_lo) / 5.0)
+                                max_step=(t_hi - t_lo) / 5.0,
+                                mat=mat)
             if not sol.success:
                 raise RuntimeError(f"impedance transient failed at f={f:.3e} Hz, step {i}")
             y = sol.y[:, -1]
-            J_t[i] = _compute_current(x, y, stack, V_i, y_prev=y_prev, dt=t_hi - t_lo)
+            J_t[i] = _compute_current(x, y, stack, V_i, y_prev=y_prev, dt=t_hi - t_lo, mat=mat)
 
         # Lock-in over the last full cycle. pts_per_cycle samples cover exactly
         # one period, so sin/cos references integrate to zero on any DC term —
