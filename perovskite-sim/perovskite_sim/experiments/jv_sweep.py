@@ -108,7 +108,10 @@ def _total_current_faces(
         sv = StateVec.unpack(y_state, N)
         n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
         p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
-        rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
+        rho = _charge_density(
+            p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+            P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
+        )
         phi = solve_poisson_prefactored(
             mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_bc,
         )

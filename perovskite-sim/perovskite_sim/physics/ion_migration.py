@@ -59,3 +59,38 @@ def ion_continuity_rhs(
     dx_cell[1:-1] = 0.5 * (dx[:-1] + dx[1:])
 
     return -(F_full[1:] - F_full[:-1]) / dx_cell
+
+
+def ion_continuity_rhs_neg(
+    x: np.ndarray,
+    phi: np.ndarray,
+    P_neg: np.ndarray,
+    D_I: np.ndarray | float,
+    V_T: float,
+    P_lim: np.ndarray | float,
+) -> np.ndarray:
+    """dP_neg/dt for a negatively charged mobile ion species.
+
+    Same SG discretization as the positive species but with reversed drift
+    direction: the sign of xi is negated because q_neg = -q.
+    Zero-flux BCs at both contacts.
+    """
+    P_neg = np.asarray(P_neg, dtype=float)
+    dx = np.diff(x)
+    D_I_face = np.broadcast_to(np.asarray(D_I, dtype=float), dx.shape)
+    P_lim_face = np.broadcast_to(np.asarray(P_lim, dtype=float), dx.shape)
+    P_avg = 0.5 * (P_neg[:-1] + P_neg[1:])
+    steric = 1.0 / np.maximum(1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6)
+    # Reversed drift: negative charge → xi flipped
+    xi = -(phi[1:] - phi[:-1]) / V_T
+    D_eff = D_I_face * steric
+    F_int = D_eff / dx * (bernoulli(xi) * P_neg[:-1] - bernoulli(-xi) * P_neg[1:])
+
+    F_full = np.concatenate([[0.0], F_int, [0.0]])
+
+    dx_cell = np.empty(len(x))
+    dx_cell[0]    = dx[0]
+    dx_cell[-1]   = dx[-1]
+    dx_cell[1:-1] = 0.5 * (dx[:-1] + dx[1:])
+
+    return -(F_full[1:] - F_full[:-1]) / dx_cell

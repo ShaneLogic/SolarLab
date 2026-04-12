@@ -76,4 +76,6 @@ def solve_equilibrium(
     n[0] = mat.n_L;  n[-1] = mat.n_R
     p[0] = mat.p_L;  p[-1] = mat.p_R
 
+    if mat.has_dual_ions:
+        return StateVec.pack(n, p, P_ion0.copy(), mat.P_ion0_neg.copy())
     return StateVec.pack(n, p, P_ion0.copy())
