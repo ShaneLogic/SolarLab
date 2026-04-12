@@ -127,11 +127,21 @@ def _advance_damage(
     motion_gain: float,
     stress_rate: float,
 ) -> float:
-    """Update irreversible damage from ion motion and sustained segregation."""
+    """Update irreversible damage from ion motion and sustained segregation.
+
+    Both terms are integrated as rate × dt so the accumulated damage is
+    independent of the integration step size in the smooth-evolution limit:
+
+      motion_rate      = ‖ΔP/scale‖_RMS / dt      [1/s]  (ion velocity proxy)
+      segregation_rate = ‖(P − P0)/scale‖_RMS     [–]    (sustained stress)
+      increment        = (motion_gain·motion_rate + stress_rate·segregation_rate)·dt
+    """
+    if dt <= 0.0:
+        return damage
     scale = max(P0, 1e-30)
-    motion = np.sqrt(np.mean(((P_now - P_prev) / scale) ** 2))
+    motion_rate = np.sqrt(np.mean(((P_now - P_prev) / scale) ** 2)) / dt
     segregation = np.sqrt(np.mean(((P_now - P0) / scale) ** 2))
-    increment = motion_gain * motion + stress_rate * segregation * dt
+    increment = (motion_gain * motion_rate + stress_rate * segregation) * dt
     if increment <= 0.0:
         return damage
     return min(damage + (1.0 - damage) * increment, _DAMAGE_CAP)
@@ -170,7 +180,7 @@ def run_degradation(
     V_bias: float = 0.9,
     N_grid: int = 60,
     dt_max: float = 1.0,      # max internal time step [s]
-    metric_n_points: int = 20,
+    metric_n_points: int = 40,
     metric_V_max: float | None = None,
     metric_settle_time: float = 1e-2,  # per-voltage carrier settling time [s]
     rtol: float = 1e-4,
@@ -225,7 +235,7 @@ def run_degradation(
     N = len(x)
     # V_oc can exceed V_bi when heterojunction band offsets are present, so
     # sweep beyond V_bi; the caller may override. Default gives ~30 % headroom.
-    v_upper = metric_V_max if metric_V_max is not None else max(stack.V_bi * 1.3, 1.4)
+    v_upper = metric_V_max if metric_V_max is not None else max(stack.compute_V_bi() * 1.3, 1.4)
     metric_voltages = np.linspace(0.0, v_upper, metric_n_points)
     absorber_layer, absorber_mask = _absorber_region(x, stack)
     P0_abs = absorber_layer.params.P0

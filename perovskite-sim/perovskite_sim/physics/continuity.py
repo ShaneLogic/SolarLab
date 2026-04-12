@@ -38,6 +38,36 @@ def carrier_continuity_rhs(
     J_n = sg_fluxes_n(phi_n, n, dx, D_n, V_T)     # (N-1,)
     J_p = sg_fluxes_p(phi_p, p, dx, D_p, V_T)     # (N-1,)
 
+    # Thermionic emission capping at heterointerfaces
+    interface_faces = params.get("interface_faces")
+    if interface_faces:
+        from perovskite_sim.discretization.fe_operators import thermionic_emission_flux
+        A_star_n_arr = params["A_star_n"]
+        A_star_p_arr = params["A_star_p"]
+        T_val = params["T"]
+        # Ensure flux arrays are writable (they may be views)
+        J_n = J_n.copy()
+        J_p = J_p.copy()
+        for f_idx in interface_faces:
+            # Electron: CB offset
+            delta_Ec = chi[f_idx + 1] - chi[f_idx]
+            if abs(delta_Ec) > 0.05:
+                J_te_n = thermionic_emission_flux(
+                    float(n[f_idx]), float(n[f_idx + 1]), float(delta_Ec), T_val,
+                    float(A_star_n_arr[f_idx]),
+                )
+                if abs(J_n[f_idx]) > abs(J_te_n):
+                    J_n[f_idx] = J_te_n
+            # Hole: VB offset
+            delta_Ev = (chi[f_idx] + Eg[f_idx]) - (chi[f_idx + 1] + Eg[f_idx + 1])
+            if abs(delta_Ev) > 0.05:
+                J_te_p = thermionic_emission_flux(
+                    float(p[f_idx]), float(p[f_idx + 1]), float(delta_Ev), T_val,
+                    float(A_star_p_arr[f_idx]),
+                )
+                if abs(J_p[f_idx]) > abs(J_te_p):
+                    J_p[f_idx] = J_te_p
+
     R = total_recombination(
         n, p, params["ni_sq"], params["tau_n"], params["tau_p"],
         params["n1"], params["p1"], params["B_rad"], params["C_n"], params["C_p"]

@@ -86,17 +86,30 @@ class MaterialArrays:
     # every RHS call in place of scipy.sparse spsolve, which is the largest
     # single contributor to assemble_rhs runtime at the default grid sizes.
     poisson_factor: PoissonFactor | None = None
+    # Effective built-in potential computed from band offsets (or manual V_bi fallback)
+    V_bi_eff: float = 1.1
+    # Per-node Richardson constants for thermionic emission capping
+    A_star_n: np.ndarray | None = None
+    A_star_p: np.ndarray | None = None
+    # Face indices where thermionic emission capping applies (band offset > threshold)
+    interface_faces: tuple[int, ...] = ()
 
     @property
     def carrier_params(self) -> dict:
         """Dict shape expected by `carrier_continuity_rhs` — legacy key names."""
-        return dict(
+        d = dict(
             D_n=self.D_n_face, D_p=self.D_p_face, V_T=V_T,
             ni_sq=self.ni_sq, tau_n=self.tau_n, tau_p=self.tau_p,
             n1=self.n1, p1=self.p1, B_rad=self.B_rad,
             C_n=self.C_n, C_p=self.C_p,
             chi=self.chi, Eg=self.Eg,
         )
+        if self.interface_faces:
+            d["interface_faces"] = list(self.interface_faces)
+            d["A_star_n"] = self.A_star_n
+            d["A_star_p"] = self.A_star_p
+            d["T"] = 300.0
+        return d
 
 
 def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
@@ -129,6 +142,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     B_rad = np.empty(N)
     C_n = np.empty(N)
     C_p = np.empty(N)
+    A_star_n_node = np.empty(N)
+    A_star_p_node = np.empty(N)
 
     offset = 0.0
     for layer in stack.layers:
@@ -153,6 +168,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         B_rad[mask] = p.B_rad
         C_n[mask] = p.C_n
         C_p[mask] = p.C_p
+        A_star_n_node[mask] = p.A_star_n
+        A_star_p_node[mask] = p.A_star_p
         offset += layer.thickness
 
     # Per-face diffusion via harmonic mean of adjacent nodal values.
@@ -177,6 +194,17 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         offset += layer.thickness
         iface_list.append(int(np.argmin(np.abs(x - offset))))
 
+    # Interface face indices where band offset exceeds the TE threshold.
+    # A face index f corresponds to the interval between nodes f and f+1.
+    TE_THRESHOLD = 0.05  # eV
+    interface_face_list: list[int] = []
+    for idx in iface_list:
+        if idx > 0 and idx < N - 1:
+            delta_Ec = abs(chi[idx] - chi[idx - 1])
+            delta_Ev = abs((chi[idx - 1] + Eg[idx - 1]) - (chi[idx] + Eg[idx]))
+            if delta_Ec > TE_THRESHOLD or delta_Ev > TE_THRESHOLD:
+                interface_face_list.append(idx - 1)
+
     # Ohmic-contact equilibrium carrier densities from doping.
     def _equilibrium_np(N_D_val: float, N_A_val: float, ni_val: float) -> tuple[float, float]:
         net = 0.5 * (N_D_val - N_A_val)
@@ -198,6 +226,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     # so we pay the factor cost exactly once and each RHS call becomes a
     # single dgttrs back-substitution.
     poisson_factor = factor_poisson(x, eps_r)
+
+    V_bi_eff = stack.compute_V_bi()
 
     return MaterialArrays(
         eps_r=eps_r,
@@ -228,6 +258,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         n_R=n_R,
         p_R=p_R,
         poisson_factor=poisson_factor,
+        V_bi_eff=V_bi_eff,
+        A_star_n=A_star_n_node,
+        A_star_p=A_star_p_node,
+        interface_faces=tuple(interface_face_list),
     )
 
 
