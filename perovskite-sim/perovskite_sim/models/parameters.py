@@ -29,6 +29,10 @@ class MaterialParams:
     Eg: float = 0.0    # band gap [eV]
     A_star_n: float = 1.2017e6   # Richardson constant for electrons [A/(m²·K²)]
     A_star_p: float = 1.2017e6   # Richardson constant for holes [A/(m²·K²)]
+    # Negative ion species (e.g. V_MA-, halide interstitial)
+    D_ion_neg: float = 0.0     # diffusion coefficient [m²/s] (0 = single species)
+    P0_neg: float = 0.0        # equilibrium density [m⁻³]
+    P_lim_neg: float = 1e30    # steric limit [m⁻³]
     # Optical data source for TMM (None = use scalar alpha Beer-Lambert)
     optical_material: str | None = None   # e.g. "MAPbI3", "TiO2", "spiro_OMeTAD"
     n_optical: float | None = None        # constant refractive index (fallback)

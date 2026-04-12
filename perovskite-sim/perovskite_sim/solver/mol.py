@@ -28,13 +28,21 @@ class StateVec:
     n: np.ndarray
     p: np.ndarray
     P: np.ndarray
+    P_neg: np.ndarray | None = None
 
     @staticmethod
-    def pack(n, p, P) -> np.ndarray:
-        return np.concatenate([n, p, P])
+    def pack(n, p, P, P_neg=None) -> np.ndarray:
+        parts = [n, p, P]
+        if P_neg is not None:
+            parts.append(P_neg)
+        return np.concatenate(parts)
 
     @staticmethod
     def unpack(y: np.ndarray, N: int) -> "StateVec":
+        if len(y) == 4 * N:
+            return StateVec(
+                n=y[:N], p=y[N:2*N], P=y[2*N:3*N], P_neg=y[3*N:4*N],
+            )
         return StateVec(n=y[:N], p=y[N:2*N], P=y[2*N:3*N])
 
 
@@ -95,6 +103,12 @@ class MaterialArrays:
     interface_faces: tuple[int, ...] = ()
     # TMM-computed generation profile G(x) [m^-3 s^-1]; None = use Beer-Lambert
     G_optical: np.ndarray | None = None
+    # Negative ion species arrays (dual-species mode when has_dual_ions is True)
+    D_ion_neg_face: np.ndarray | None = None
+    P_lim_neg_face: np.ndarray | None = None
+    P_ion0_neg: np.ndarray | None = None
+    P_lim_neg_node: np.ndarray | None = None
+    has_dual_ions: bool = False
 
     @property
     def carrier_params(self) -> dict:
@@ -185,6 +199,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     D_ion_node = np.zeros(N)
     P_lim_node = 1e30 * np.ones(N)
     P_ion0 = np.zeros(N)
+    D_ion_neg_node = np.zeros(N)
+    P_lim_neg_node = 1e30 * np.ones(N)
+    P_ion0_neg = np.zeros(N)
     N_A = np.zeros(N)
     N_D = np.zeros(N)
     alpha = np.zeros(N)
@@ -212,6 +229,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         D_ion_node[mask] = p.D_ion
         P_lim_node[mask] = p.P_lim
         P_ion0[mask] = p.P0
+        D_ion_neg_node[mask] = p.D_ion_neg
+        P_lim_neg_node[mask] = p.P_lim_neg
+        P_ion0_neg[mask] = p.P0_neg
         N_A[mask] = p.N_A
         N_D[mask] = p.N_D
         alpha[mask] = p.alpha
@@ -238,6 +258,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     D_p_face = 2.0 * D_p_node[:-1] * D_p_node[1:] / (D_p_node[:-1] + D_p_node[1:])
     D_ion_face = _harmonic_face_average(D_ion_node)
     P_lim_face = 0.5 * (P_lim_node[:-1] + P_lim_node[1:])
+    D_ion_neg_face = _harmonic_face_average(D_ion_neg_node)
+    P_lim_neg_face = 0.5 * (P_lim_neg_node[:-1] + P_lim_neg_node[1:])
+    _has_dual_ions = np.any(D_ion_neg_node > 0.0)
 
     # Dual-grid cell widths for surface→volumetric conversion at interfaces.
     dx = np.diff(x)
@@ -325,6 +348,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         A_star_p=A_star_p_node,
         interface_faces=tuple(interface_face_list),
         G_optical=G_optical,
+        D_ion_neg_face=D_ion_neg_face if _has_dual_ions else None,
+        P_lim_neg_face=P_lim_neg_face if _has_dual_ions else None,
+        P_ion0_neg=P_ion0_neg if _has_dual_ions else None,
+        P_lim_neg_node=P_lim_neg_node if _has_dual_ions else None,
+        has_dual_ions=bool(_has_dual_ions),
     )
 
 
@@ -342,9 +370,18 @@ def _charge_density(
     P_ion0: np.ndarray,
     N_A: np.ndarray,
     N_D: np.ndarray,
+    P_neg: np.ndarray | None = None,
+    P_neg0: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Space-charge density with ionic charge measured relative to neutral background."""
-    return Q * (p - n + (P_ion - P_ion0) - N_A + N_D)
+    """Space-charge density with ionic charge measured relative to neutral background.
+
+    Positive species contribute +(P_ion - P_ion0), negative species contribute
+    -(P_neg - P_neg0). When P_neg is None, single-species mode.
+    """
+    rho = Q * (p - n + (P_ion - P_ion0) - N_A + N_D)
+    if P_neg is not None and P_neg0 is not None:
+        rho -= Q * (P_neg - P_neg0)
+    return rho
 
 
 def _apply_interface_recombination(
@@ -403,7 +440,10 @@ def assemble_rhs(
     # Solve Poisson
     # phi_right = V_bi - V_app: forward bias (V_app > 0) reduces the
     # built-in field; V_app = 0 → short circuit, V_app ≈ V_oc → open circuit.
-    rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
+    rho = _charge_density(
+        p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+        P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
+    )
     phi = solve_poisson_prefactored(
         mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_app,
     )
@@ -427,11 +467,19 @@ def assemble_rhs(
     # confined to ion-conducting layers.
     dP = ion_continuity_rhs(x, phi, sv.P, mat.D_ion_face, V_T, mat.P_lim_face)
 
+    # Negative ion continuity (dual-species mode)
+    dP_neg = None
+    if mat.has_dual_ions and sv.P_neg is not None:
+        from perovskite_sim.physics.ion_migration import ion_continuity_rhs_neg
+        dP_neg = ion_continuity_rhs_neg(
+            x, phi, sv.P_neg, mat.D_ion_neg_face, V_T, mat.P_lim_neg_face,
+        )
+
     # Enforce Dirichlet BCs: hold boundary nodes fixed
     dn[0] = dn[-1] = 0.0
     dp[0] = dp[-1] = 0.0
 
-    return StateVec.pack(dn, dp, dP)
+    return StateVec.pack(dn, dp, dP, dP_neg)
 
 
 def run_transient(
@@ -514,27 +562,67 @@ def split_step(
     n_frozen = sv.n.copy(); n_frozen[0] = mat.n_L; n_frozen[-1] = mat.n_R
     p_frozen = sv.p.copy(); p_frozen[0] = mat.p_L; p_frozen[-1] = mat.p_R
 
-    initial_neg = np.any(sv.P < -1e-30)
-    _clip_count = [1 if initial_neg else 0]  # mutable closure counter
+    _clip_count = [0]
 
-    def _ion_rhs(t, P):
-        # Clip to non-negative: ions cannot have negative density.
-        # Track significant clips (|P| > 1e-30) so we can warn the caller.
-        neg_mask = P < -1e-30
-        if np.any(neg_mask):
-            _clip_count[0] += 1
-        P_nn = np.maximum(P, 0.0)
-        rho = _charge_density(p_frozen, n_frozen, P_nn, mat.P_ion0, mat.N_A, mat.N_D)
-        phi = solve_poisson_prefactored(
-            mat.poisson_factor, rho,
-            phi_left=0.0, phi_right=stack.V_bi - V_app,
+    dual = mat.has_dual_ions and sv.P_neg is not None
+
+    if dual:
+        from perovskite_sim.physics.ion_migration import ion_continuity_rhs_neg
+
+        P_pos_init = np.maximum(sv.P, 0.0)
+        P_neg_init = np.maximum(sv.P_neg, 0.0)
+        y_ion0 = np.concatenate([P_pos_init, P_neg_init])
+
+        def _ion_rhs(t, y_ion):
+            P_pos = np.maximum(y_ion[:N], 0.0)
+            P_neg_v = np.maximum(y_ion[N:], 0.0)
+            if np.any(y_ion < -1e-30):
+                _clip_count[0] += 1
+            rho = _charge_density(
+                p_frozen, n_frozen, P_pos, mat.P_ion0, mat.N_A, mat.N_D,
+                P_neg=P_neg_v, P_neg0=mat.P_ion0_neg,
+            )
+            phi = solve_poisson_prefactored(
+                mat.poisson_factor, rho,
+                phi_left=0.0, phi_right=stack.V_bi - V_app,
+            )
+            dP_pos = ion_continuity_rhs(
+                x, phi, P_pos, mat.D_ion_face, V_T, mat.P_lim_face,
+            )
+            dP_neg = ion_continuity_rhs_neg(
+                x, phi, P_neg_v, mat.D_ion_neg_face, V_T, mat.P_lim_neg_face,
+            )
+            return np.concatenate([dP_pos, dP_neg])
+
+        sol_ion = solve_ivp(
+            _ion_rhs, (0.0, dt), y_ion0, t_eval=[dt],
+            method="Radau", rtol=rtol, atol=atol,
         )
-        return ion_continuity_rhs(x, phi, P_nn, mat.D_ion_face, V_T, mat.P_lim_face)
+    else:
+        P_init = np.maximum(sv.P, 0.0)
+        if np.any(sv.P < -1e-30):
+            _clip_count[0] = 1
 
-    sol_ion = solve_ivp(
-        _ion_rhs, (0.0, dt), np.maximum(sv.P, 0.0), t_eval=[dt],
-        method="Radau", rtol=rtol, atol=atol,
-    )
+        def _ion_rhs(t, P):
+            if np.any(P < -1e-30):
+                _clip_count[0] += 1
+            P_nn = np.maximum(P, 0.0)
+            rho = _charge_density(
+                p_frozen, n_frozen, P_nn, mat.P_ion0, mat.N_A, mat.N_D,
+            )
+            phi = solve_poisson_prefactored(
+                mat.poisson_factor, rho,
+                phi_left=0.0, phi_right=stack.V_bi - V_app,
+            )
+            return ion_continuity_rhs(
+                x, phi, P_nn, mat.D_ion_face, V_T, mat.P_lim_face,
+            )
+
+        sol_ion = solve_ivp(
+            _ion_rhs, (0.0, dt), P_init, t_eval=[dt],
+            method="Radau", rtol=rtol, atol=atol,
+        )
+
     if _clip_count[0] > 0:
         warnings.warn(
             f"Ion density clipped to zero in {_clip_count[0]} RHS evaluation(s) "
@@ -546,8 +634,14 @@ def split_step(
     if not sol_ion.success:
         return y, False
 
-    P_new = np.clip(sol_ion.y[:, -1], 0.0, mat.P_lim_node)
-    y_ions_advanced = StateVec.pack(sv.n, sv.p, P_new)
+    if dual:
+        P_new = np.clip(sol_ion.y[:N, -1], 0.0, mat.P_lim_node)
+        P_neg_new = np.clip(sol_ion.y[N:, -1], 0.0, mat.P_lim_neg_node)
+        y_ions_advanced = StateVec.pack(sv.n, sv.p, P_new, P_neg_new)
+    else:
+        P_new = np.clip(sol_ion.y[:, -1], 0.0, mat.P_lim_node)
+        P_neg_carry = sv.P_neg  # None in single-species mode
+        y_ions_advanced = StateVec.pack(sv.n, sv.p, P_new, P_neg_carry)
 
     # Re-equilibrate carriers for one carrier lifetime (~1 µs)
     t_eq = 1e-6
