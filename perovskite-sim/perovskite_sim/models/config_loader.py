@@ -40,6 +40,13 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             D_ion_neg=_f(layer_cfg.get("D_ion_neg", 0.0)),
             P0_neg=_f(layer_cfg.get("P0_neg", 0.0)),
             P_lim_neg=_f(layer_cfg.get("P_lim_neg", 1e30)),
+            Nc300=float(layer_cfg["Nc300"]) if "Nc300" in layer_cfg else None,
+            Nv300=float(layer_cfg["Nv300"]) if "Nv300" in layer_cfg else None,
+            mu_T_gamma=_f(layer_cfg.get("mu_T_gamma", -1.5)),
+            E_a_ion=_f(layer_cfg.get("E_a_ion", 0.58)),
+            trap_N_t_interface=float(layer_cfg["trap_N_t_interface"]) if "trap_N_t_interface" in layer_cfg else None,
+            trap_N_t_bulk=float(layer_cfg["trap_N_t_bulk"]) if "trap_N_t_bulk" in layer_cfg else None,
+            trap_decay_length=float(layer_cfg["trap_decay_length"]) if "trap_decay_length" in layer_cfg else None,
             optical_material=layer_cfg.get("optical_material"),
             n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
         )
@@ -59,4 +66,5 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         V_bi=_f(dev.get("V_bi", 1.1)),
         Phi=_f(dev.get("Phi", 2.5e21)),
         interfaces=interfaces,
+        T=_f(dev.get("T", 300.0)),
     )

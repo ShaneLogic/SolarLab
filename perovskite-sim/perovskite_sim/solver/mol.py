@@ -20,7 +20,10 @@ from perovskite_sim.physics.generation import beer_lambert_generation
 from perovskite_sim.models.device import DeviceStack
 
 from perovskite_sim.physics.recombination import interface_recombination
-from perovskite_sim.constants import Q, V_T
+from perovskite_sim.physics.temperature import (
+    thermal_voltage, ni_at_T, mu_at_T, D_ion_at_T,
+)
+from perovskite_sim.constants import Q
 
 
 @dataclass
@@ -109,12 +112,15 @@ class MaterialArrays:
     P_ion0_neg: np.ndarray | None = None
     P_lim_neg_node: np.ndarray | None = None
     has_dual_ions: bool = False
+    # Temperature and thermal voltage (for T != 300 K)
+    T_device: float = 300.0
+    V_T_device: float = 0.025852  # kT/q at device temperature
 
     @property
     def carrier_params(self) -> dict:
         """Dict shape expected by `carrier_continuity_rhs` — legacy key names."""
         d = dict(
-            D_n=self.D_n_face, D_p=self.D_p_face, V_T=V_T,
+            D_n=self.D_n_face, D_p=self.D_p_face, V_T=self.V_T_device,
             ni_sq=self.ni_sq, tau_n=self.tau_n, tau_p=self.tau_p,
             n1=self.n1, p1=self.p1, B_rad=self.B_rad,
             C_n=self.C_n, C_p=self.C_p,
@@ -124,7 +130,7 @@ class MaterialArrays:
             d["interface_faces"] = list(self.interface_faces)
             d["A_star_n"] = self.A_star_n
             d["A_star_p"] = self.A_star_p
-            d["T"] = 300.0
+            d["T"] = self.T_device
         return d
 
 
@@ -221,25 +227,39 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     A_star_n_node = np.empty(N)
     A_star_p_node = np.empty(N)
 
+    T_dev = stack.T
+    V_T_dev = thermal_voltage(T_dev)
+
     offset = 0.0
     for layer in stack.layers:
         mask = (x >= offset - 1e-12) & (x <= offset + layer.thickness + 1e-12)
         p = layer.params
         eps_r[mask] = p.eps_r
-        D_ion_node[mask] = p.D_ion
+
+        # Temperature-scaled ion diffusion
+        D_ion_node[mask] = D_ion_at_T(p.D_ion, T_dev, p.E_a_ion)
         P_lim_node[mask] = p.P_lim
         P_ion0[mask] = p.P0
-        D_ion_neg_node[mask] = p.D_ion_neg
+        D_ion_neg_node[mask] = D_ion_at_T(p.D_ion_neg, T_dev, p.E_a_ion)
         P_lim_neg_node[mask] = p.P_lim_neg
         P_ion0_neg[mask] = p.P0_neg
+
         N_A[mask] = p.N_A
         N_D[mask] = p.N_D
         alpha[mask] = p.alpha
         chi[mask] = p.chi
         Eg[mask] = p.Eg
-        D_n_node[mask] = p.D_n
-        D_p_node[mask] = p.D_p
-        ni_sq[mask] = p.ni_sq
+
+        # Temperature-scaled mobility → diffusion (Einstein: D = mu * V_T)
+        mu_n_T = mu_at_T(p.mu_n, T_dev, p.mu_T_gamma)
+        mu_p_T = mu_at_T(p.mu_p, T_dev, p.mu_T_gamma)
+        D_n_node[mask] = mu_n_T * V_T_dev
+        D_p_node[mask] = mu_p_T * V_T_dev
+
+        # Temperature-scaled intrinsic density
+        ni_T = ni_at_T(p.ni, p.Eg, T_dev, p.Nc300, p.Nv300)
+        ni_sq[mask] = ni_T ** 2
+
         tau_n[mask] = p.tau_n
         tau_p[mask] = p.tau_p
         n1[mask] = p.n1
@@ -249,6 +269,23 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         C_p[mask] = p.C_p
         A_star_n_node[mask] = p.A_star_n
         A_star_p_node[mask] = p.A_star_p
+
+        # Spatially varying trap profile: tau(x) = tau_bulk * N_t_bulk / N_t(x)
+        if (p.trap_N_t_interface is not None
+                and p.trap_N_t_bulk is not None
+                and p.trap_decay_length is not None):
+            x_local = x[mask] - offset
+            d_left = x_local
+            d_right = layer.thickness - x_local
+            L_d = p.trap_decay_length
+            N_t_x = (p.trap_N_t_bulk
+                      + (p.trap_N_t_interface - p.trap_N_t_bulk)
+                      * (np.exp(-d_left / L_d) + np.exp(-d_right / L_d)))
+            # Scale tau inversely with trap density
+            ratio = p.trap_N_t_bulk / np.maximum(N_t_x, 1.0)
+            tau_n[mask] *= ratio
+            tau_p[mask] *= ratio
+
         offset += layer.thickness
 
     # Per-face diffusion via harmonic mean of adjacent nodal values.
@@ -353,6 +390,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         P_ion0_neg=P_ion0_neg if _has_dual_ions else None,
         P_lim_neg_node=P_lim_neg_node if _has_dual_ions else None,
         has_dual_ions=bool(_has_dual_ions),
+        T_device=T_dev,
+        V_T_device=V_T_dev,
     )
 
 
@@ -465,14 +504,14 @@ def assemble_rhs(
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
-    dP = ion_continuity_rhs(x, phi, sv.P, mat.D_ion_face, V_T, mat.P_lim_face)
+    dP = ion_continuity_rhs(x, phi, sv.P, mat.D_ion_face, mat.V_T_device, mat.P_lim_face)
 
     # Negative ion continuity (dual-species mode)
     dP_neg = None
     if mat.has_dual_ions and sv.P_neg is not None:
         from perovskite_sim.physics.ion_migration import ion_continuity_rhs_neg
         dP_neg = ion_continuity_rhs_neg(
-            x, phi, sv.P_neg, mat.D_ion_neg_face, V_T, mat.P_lim_neg_face,
+            x, phi, sv.P_neg, mat.D_ion_neg_face, mat.V_T_device, mat.P_lim_neg_face,
         )
 
     # Enforce Dirichlet BCs: hold boundary nodes fixed
@@ -587,10 +626,10 @@ def split_step(
                 phi_left=0.0, phi_right=stack.V_bi - V_app,
             )
             dP_pos = ion_continuity_rhs(
-                x, phi, P_pos, mat.D_ion_face, V_T, mat.P_lim_face,
+                x, phi, P_pos, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
             )
             dP_neg = ion_continuity_rhs_neg(
-                x, phi, P_neg_v, mat.D_ion_neg_face, V_T, mat.P_lim_neg_face,
+                x, phi, P_neg_v, mat.D_ion_neg_face, mat.V_T_device, mat.P_lim_neg_face,
             )
             return np.concatenate([dP_pos, dP_neg])
 
@@ -615,7 +654,7 @@ def split_step(
                 phi_left=0.0, phi_right=stack.V_bi - V_app,
             )
             return ion_continuity_rhs(
-                x, phi, P_nn, mat.D_ion_face, V_T, mat.P_lim_face,
+                x, phi, P_nn, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
             )
 
         sol_ion = solve_ivp(

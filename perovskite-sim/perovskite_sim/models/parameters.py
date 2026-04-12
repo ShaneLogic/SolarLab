@@ -33,6 +33,15 @@ class MaterialParams:
     D_ion_neg: float = 0.0     # diffusion coefficient [m²/s] (0 = single species)
     P0_neg: float = 0.0        # equilibrium density [m⁻³]
     P_lim_neg: float = 1e30    # steric limit [m⁻³]
+    # Temperature-dependent scaling parameters (all optional, T=300 K default)
+    Nc300: float | None = None      # effective conduction-band DOS at 300 K [m⁻³]
+    Nv300: float | None = None      # effective valence-band DOS at 300 K [m⁻³]
+    mu_T_gamma: float = -1.5        # mobility temperature exponent
+    E_a_ion: float = 0.58           # ion activation energy [eV] (Arrhenius)
+    # Spatially varying trap profile (None = uniform tau)
+    trap_N_t_interface: float | None = None  # interface trap density [m⁻³]
+    trap_N_t_bulk: float | None = None       # bulk trap density [m⁻³]
+    trap_decay_length: float | None = None   # exponential decay length [m]
     # Optical data source for TMM (None = use scalar alpha Beer-Lambert)
     optical_material: str | None = None   # e.g. "MAPbI3", "TiO2", "spiro_OMeTAD"
     n_optical: float | None = None        # constant refractive index (fallback)
