@@ -26,6 +26,10 @@ class DeviceStack:
     interfaces: tuple[tuple[float, float], ...] = ()
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
+    # Simulation mode name; resolved to a SimulationMode by resolve_mode().
+    # "full" (default) enables every physics upgrade the config supports;
+    # "legacy" reproduces pre-upgrade behaviour for benchmarking.
+    mode: str = "full"
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))

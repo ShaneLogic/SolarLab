@@ -23,7 +23,8 @@ from perovskite_sim.physics.recombination import interface_recombination
 from perovskite_sim.physics.temperature import (
     thermal_voltage, ni_at_T, mu_at_T, D_ion_at_T,
 )
-from perovskite_sim.constants import Q
+from perovskite_sim.models.mode import resolve_mode, SimulationMode
+from perovskite_sim.constants import Q, V_T as _V_T_300
 
 
 @dataclass
@@ -227,8 +228,16 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     A_star_n_node = np.empty(N)
     A_star_p_node = np.empty(N)
 
-    T_dev = stack.T
-    V_T_dev = thermal_voltage(T_dev)
+    sim_mode = resolve_mode(getattr(stack, "mode", "full"))
+    # Temperature scaling is only applied in modes that request it; other
+    # modes see a fixed 300 K so that benchmarks and legacy configs stay
+    # unaffected by an incidental ``T`` field in the YAML.
+    if sim_mode.use_temperature_scaling:
+        T_dev = stack.T
+        V_T_dev = thermal_voltage(T_dev)
+    else:
+        T_dev = 300.0
+        V_T_dev = _V_T_300
 
     offset = 0.0
     for layer in stack.layers:
@@ -240,9 +249,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         D_ion_node[mask] = D_ion_at_T(p.D_ion, T_dev, p.E_a_ion)
         P_lim_node[mask] = p.P_lim
         P_ion0[mask] = p.P0
-        D_ion_neg_node[mask] = D_ion_at_T(p.D_ion_neg, T_dev, p.E_a_ion)
-        P_lim_neg_node[mask] = p.P_lim_neg
-        P_ion0_neg[mask] = p.P0_neg
+        if sim_mode.use_dual_ions:
+            D_ion_neg_node[mask] = D_ion_at_T(p.D_ion_neg, T_dev, p.E_a_ion)
+            P_lim_neg_node[mask] = p.P_lim_neg
+            P_ion0_neg[mask] = p.P0_neg
 
         N_A[mask] = p.N_A
         N_D[mask] = p.N_D
@@ -271,7 +281,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         A_star_p_node[mask] = p.A_star_p
 
         # Spatially varying trap profile: tau(x) = tau_bulk * N_t_bulk / N_t(x)
-        if (p.trap_N_t_interface is not None
+        if (sim_mode.use_trap_profile
+                and p.trap_N_t_interface is not None
                 and p.trap_N_t_bulk is not None
                 and p.trap_decay_length is not None):
             x_local = x[mask] - offset
@@ -315,14 +326,16 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
     # Interface face indices where band offset exceeds the TE threshold.
     # A face index f corresponds to the interval between nodes f and f+1.
+    # Legacy/fast modes skip this so the SG flux is never capped.
     TE_THRESHOLD = 0.05  # eV
     interface_face_list: list[int] = []
-    for idx in iface_list:
-        if idx > 0 and idx < N - 1:
-            delta_Ec = abs(chi[idx] - chi[idx - 1])
-            delta_Ev = abs((chi[idx - 1] + Eg[idx - 1]) - (chi[idx] + Eg[idx]))
-            if delta_Ec > TE_THRESHOLD or delta_Ev > TE_THRESHOLD:
-                interface_face_list.append(idx - 1)
+    if sim_mode.use_thermionic_emission:
+        for idx in iface_list:
+            if idx > 0 and idx < N - 1:
+                delta_Ec = abs(chi[idx] - chi[idx - 1])
+                delta_Ev = abs((chi[idx - 1] + Eg[idx - 1]) - (chi[idx] + Eg[idx]))
+                if delta_Ec > TE_THRESHOLD or delta_Ev > TE_THRESHOLD:
+                    interface_face_list.append(idx - 1)
 
     # Ohmic-contact equilibrium carrier densities from doping.
     def _equilibrium_np(N_D_val: float, N_A_val: float, ni_val: float) -> tuple[float, float]:
@@ -348,8 +361,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
     V_bi_eff = stack.compute_V_bi()
 
-    # TMM optical generation: computed when any layer has optical data
-    G_optical = _compute_tmm_generation(x, stack)
+    # TMM optical generation: computed when any layer has optical data and
+    # the active mode enables TMM. Legacy/fast fall back to Beer-Lambert.
+    if sim_mode.use_tmm_optics:
+        G_optical = _compute_tmm_generation(x, stack)
+    else:
+        G_optical = None
 
     return MaterialArrays(
         eps_r=eps_r,
