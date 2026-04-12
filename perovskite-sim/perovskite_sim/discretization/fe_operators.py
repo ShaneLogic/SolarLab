@@ -1,5 +1,9 @@
 from __future__ import annotations
+import math
+
 import numpy as np
+
+from perovskite_sim.constants import K_B, Q
 
 
 def bernoulli(x: np.ndarray) -> np.ndarray:
@@ -67,3 +71,20 @@ def sg_fluxes_p(
     q = 1.602176634e-19
     xi = (phi[1:] - phi[:-1]) / V_T
     return q * D_p / dx * (bernoulli(xi) * p[:-1] - bernoulli(-xi) * p[1:])
+
+
+def thermionic_emission_flux(
+    n_left: float, n_right: float, delta_E: float, T: float, A_star: float,
+) -> float:
+    """Richardson-Dushman thermionic emission current [A/m^2] across a band offset.
+
+    delta_E: band offset E_right - E_left [eV]. Positive = step-up barrier left->right.
+    A_star: Richardson constant [A/(m^2 K^2)]
+
+    J = A*T^2 * (n_left * exp(-max(delta_E, 0) / V_T)
+                - n_right * exp(-max(-delta_E, 0) / V_T))
+    """
+    v_t = K_B * T / Q
+    left_term = n_left * math.exp(-max(delta_E, 0.0) / v_t)
+    right_term = n_right * math.exp(-max(-delta_E, 0.0) / v_t)
+    return A_star * T**2 * (left_term - right_term)

@@ -27,6 +27,8 @@ class MaterialParams:
     N_D: float      # donor doping m⁻³
     chi: float = 0.0   # electron affinity [eV] (= voltage, since 1 eV/q = 1 V)
     Eg: float = 0.0    # band gap [eV]
+    A_star_n: float = 1.2017e6   # Richardson constant for electrons [A/(m²·K²)]
+    A_star_p: float = 1.2017e6   # Richardson constant for holes [A/(m²·K²)]
 
     @property
     def D_n(self) -> float:
