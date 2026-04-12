@@ -47,11 +47,17 @@ The frontend expects the backend at `http://127.0.0.1:8000` (see `frontend/src/a
 
 ## Simulator Architecture (`perovskite_sim/`)
 
-**Core method.** Method of Lines: Scharfetter–Gummel finite elements on a tanh-clustered multilayer grid for space; `scipy.integrate.solve_ivp(Radau)` for time. Poisson is a sparse tridiagonal solve with harmonic-mean face permittivity, evaluated once per RHS call (no inner Newton loop). State vector is `y = (n, p, P)` per grid node.
+**Core method.** Method of Lines: Scharfetter–Gummel finite elements on a tanh-clustered multilayer grid for space; `scipy.integrate.solve_ivp(Radau)` for time. Poisson is a tridiagonal solve with harmonic-mean face permittivity, evaluated once per RHS call (no inner Newton loop). State vector is `y = (n, p, P)` per grid node.
 
-**Layer-wise arrays.** `solver/mol.py:_build_layerwise_arrays` expands per-layer `MaterialParams` into per-node numpy arrays and is the single source of truth for material properties at a grid point. Anything reading layer-local quantities (`recombination.py`, `ion_migration.py`, `poisson.py`) goes through this.
+**MaterialArrays cache (hot path).** `solver/mol.py:build_material_arrays(x, stack)` returns an immutable `MaterialArrays` bundle holding every per-node / per-face array the RHS needs (`D_n_face`, `D_p_face`, `eps_r`, `N_A`, `N_D`, `P_ion0`, interface masks, boundary concentrations) plus a pre-factored Poisson operator. Every experiment builds this once per run and threads it through `assemble_rhs`, `run_transient`, `split_step`, `_compute_current`, and `_integrate_step` via the `mat=` kwarg. Rebuilding it per RHS call was the dominant cost before the cache landed — do not reintroduce a code path that calls `build_material_arrays` inside the inner loop. Degradation is the one exception: it rebuilds `mat` only when the absorber-damage state actually changes (`mat_active` in `run_degradation`).
+
+**Poisson LU cache.** `physics/poisson.py:factor_poisson(x, eps_r)` does one LAPACK `dgttrf` call and returns a `PoissonFactor` holding `(dl, d, du, du2, ipiv)`. `solve_poisson_prefactored(fac, rho, phi_left, phi_right)` then runs a single `dgttrs` per call — ~40× faster than the legacy `solve_poisson` path. The factorization only depends on `(x, eps_r)`, which are constant across a transient, so it is cached inside `MaterialArrays.poisson_factor`. Legacy `solve_poisson` is kept as a fallback but is not on any hot path.
 
 **Heterojunctions.** `chi` (electron affinity, eV) and `Eg` (band gap, eV) on each layer set the band offsets. Interface recombination uses per-interface `(v_n, v_p)` surface-recombination velocities carried by `DeviceStack.interfaces`.
+
+**Band-offset contact BCs.** `DeviceStack.compute_V_bi()` derives the built-in potential from the Fermi-level difference across the heterostack (accounting for chi, Eg, doping, and ni). When chi=Eg=0 in all layers (legacy configs), it falls back to the manual `V_bi` field. The computed value is stored as `MaterialArrays.V_bi_eff` and used for voltage sweep range calculation (`V_max` defaults). The Poisson BC still uses `stack.V_bi` to match IonMonger's convention — do not substitute `V_bi_eff` into the Poisson boundary without careful validation, as IonMonger treats V_bi as a free parameter representing the degenerate-doping limit.
+
+**Thermionic emission (TE) at heterointerfaces.** At interfaces where the conduction-band offset |delta_Ec| or valence-band offset |delta_Ev| exceeds 0.05 eV, the SG flux is capped to the Richardson-Dushman thermionic emission limit (`fe_operators.thermionic_emission_flux`). This prevents the SG scheme from overestimating current across sharp band discontinuities (a known artifact when the band offset is resolved in a single grid spacing). The capping is applied in `continuity.py:carrier_continuity_rhs`. Richardson constants `A_star_n` and `A_star_p` default to the free-electron value (1.2017e6 A/(m²·K²)) and can be overridden per layer in YAML configs. Interface faces where TE activates are pre-computed in `MaterialArrays.interface_faces`. Note: IonMonger does not use TE, so our V_oc is ~0.1 V higher than IonMonger's on the same parameter set; Phase 5 (tiered modes) will add a legacy mode that disables TE for exact IonMonger reproduction.
 
 **Experiments** (`perovskite_sim/experiments/`):
 - `jv_sweep.run_jv_sweep` — forward then reverse scan; reuses the previous steady state as initial condition so ionic memory is preserved and the hysteresis loop comes out of the physics, not post-processing.
@@ -64,7 +70,21 @@ Near flat-band (V ≈ V_bi) the Jacobian is nearly singular and Radau's adaptive
 
 ## Backend (`backend/main.py`)
 
-Thin FastAPI wrapper. Three POST endpoints (`/api/jv`, `/api/impedance`, `/api/degradation`) each accept either an inline `device` dict or a `config_path` name from `configs/`; they build a `DeviceStack` via `build_stack` and call the corresponding `perovskite_sim.experiments` function. `GET /api/configs` auto-scans the `configs/` directory, so dropping a new YAML in that folder makes it visible to the frontend with no code change.
+Thin FastAPI wrapper. Two endpoint families:
+
+**Legacy blocking endpoints** — `POST /api/jv`, `/api/impedance`, `/api/degradation`. Run synchronously and return the full result in one response. Kept for backwards compatibility; the frontend no longer uses them.
+
+**Streaming job endpoints** (frontend uses these):
+- `POST /api/jobs` — body `{kind, config_path|device, params}`. Dispatches the experiment onto a worker thread via `JobRegistry.submit` and returns `{job_id}`. The closure captured in `_run(reporter)` passes `reporter.report` as the `progress=` kwarg to the experiment.
+- `GET /api/jobs/{id}/events` — Server-Sent-Events stream. Named events are `progress` (JSON `{stage, current, total, eta_s, message}`), `result` (final serialized result), `error` (on exception), and `done` (always last). The handler uses `run_in_executor` + a 0.5 s drain timeout to avoid blocking the event loop, and emits `: keepalive` SSE comments in the gap between progress frames.
+
+`backend/progress.py` and `backend/jobs.py` are the pub/sub primitive and the thread-per-job registry behind this. Any new experiment that wants progress should take a `progress: Callable[[str, int, int, str], None] | None = None` kwarg (see `experiments/jv_sweep.py` for the pattern) and the backend `_run` closure wraps it with `reporter.report`.
+
+`GET /api/configs` auto-scans `configs/`, so dropping a new YAML in that folder makes it visible to the frontend with no code change.
+
+### Development loop — restart uvicorn after backend edits
+
+`uvicorn backend.main:app --reload` picks up most edits, but the watcher is set on the SolarLab root and occasionally misses changes under `perovskite-sim/backend/`. If `/api/jobs` or a new endpoint returns 404 after an edit, kill and restart the process rather than trusting `--reload`.
 
 ### YAML scientific-notation gotcha
 
@@ -82,6 +102,24 @@ Plain TypeScript (no framework). `main.ts` wires five tabs — `J–V Sweep`, `I
 - `plot-theme.ts`, `plotly.d.ts`, `types.ts`, `ui-helpers.ts` — shared styling, type shims, small helpers
 
 Plotly is pulled from `plotly.js-dist-min` which is why `vite build` warns about the 4 MB bundle; that warning is expected and not a bug.
+
+### Backend URL: absolute, not proxied
+
+`api.ts` and `job-stream.ts` both hardcode `http://127.0.0.1:8000` as the base URL. The Vite dev-server proxy is configured for `/api` in `vite.config.ts`, but its SPA history fallback intercepts `/api/configs` before the proxy has a chance to match, returning `index.html` — the JSON parse then fails with `Unexpected token '<'`. Hitting the backend directly sidesteps this. CORS is already wide open in `backend/main.py`, so this works from both `npm run dev` and `npm run preview`/`dist`.
+
+SSE notes worth knowing:
+- `EventSource` fires a native `error` event when the server closes the connection. `job-stream.ts:streamJobEvents` ignores events whose `e.data` is falsy — only SSE `event: error` frames sent from the backend are surfaced to the user.
+- Progress frames and the terminal `done` frame go through named SSE events (`event: progress`, `event: result`, `event: error`, `event: done`), not the default message channel, so each has its own `addEventListener`.
+
+### Streaming-job + progress-bar pattern
+
+Each experiment panel (`panels/{jv,impedance,degradation}.ts`) follows the same shape:
+1. Instantiate a `ProgressBarHandle` once in `mount*Panel` via `createProgressBar(progressContainer)`.
+2. On button click, call `startJob(kind, device, params)` → get `job_id`.
+3. Open the stream with `streamJobEvents<TResult>(jobId, { onProgress, onResult, onError, onDone })`.
+4. `onResult` calls the panel-local `render*Results`; `onDone` re-enables the Run button.
+
+The button is disabled between `startJob` and `onDone`, and the progress bar is `reset()` on every run so a second click doesn't briefly show the previous run's "done" state.
 
 ## Configs (`configs/`)
 
