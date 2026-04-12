@@ -81,6 +81,64 @@ def hysteresis_index(
     return (m_rev.PCE - m_fwd.PCE) / m_rev.PCE
 
 
+def _total_current_faces(
+    x: np.ndarray,
+    y: np.ndarray,
+    stack: DeviceStack,
+    V_app: float,
+    y_prev: np.ndarray | None = None,
+    dt: float | None = None,
+    mat: MaterialArrays | None = None,
+    V_app_prev: float | None = None,
+) -> np.ndarray:
+    """Return total (conduction + displacement) current density at every face,
+    in external/solar sign convention (positive when device delivers power).
+
+    Shape is (N-1,), one value per mesh face. Callers that want a scalar
+    terminal current (e.g. J-V sweep) should take face 0; callers that want
+    an AC-sensitive reading (e.g. impedance) should average spatially — by
+    the 1D Ramo–Shockley argument the small-signal total current is very
+    nearly space-uniform, and the boundary faces are the noisiest.
+    """
+    if mat is None:
+        mat = build_material_arrays(x, stack)
+
+    def state_fields(y_state: np.ndarray, V_bc: float):
+        N = len(x)
+        sv = StateVec.unpack(y_state, N)
+        n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
+        p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
+        rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
+        phi = solve_poisson_prefactored(
+            mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_bc,
+        )
+        return n, p, phi
+
+    dx = np.diff(x)
+    n, p, phi = state_fields(y, V_app)
+    D_n_face = mat.D_n_face
+    D_p_face = mat.D_p_face
+    chi = mat.chi
+    Eg = mat.Eg
+    phi_n = phi + chi
+    phi_p = phi + chi + Eg
+    xi_n = (phi_n[1:] - phi_n[:-1]) / V_T
+    xi_p = (phi_p[1:] - phi_p[:-1]) / V_T
+    B_pos_n = bernoulli(xi_n); B_neg_n = bernoulli(-xi_n)
+    B_pos_p = bernoulli(xi_p); B_neg_p = bernoulli(-xi_p)
+    J_n = Q * D_n_face / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
+    J_p = Q * D_p_face / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
+    J_tot = J_n + J_p  # (N-1,)
+    if y_prev is not None and dt is not None and dt > 0.0:
+        V_prev_bc = V_app_prev if V_app_prev is not None else V_app
+        _, _, phi_prev = state_fields(y_prev, V_prev_bc)
+        eps_face = _harmonic_face_average(mat.eps_r)
+        E_prev = -(phi_prev[1:] - phi_prev[:-1]) / dx
+        E_now = -(phi[1:] - phi[:-1]) / dx
+        J_tot = J_tot + EPS_0 * eps_face * (E_now - E_prev) / dt
+    return -J_tot
+
+
 def _compute_current(
     x: np.ndarray,
     y: np.ndarray,
@@ -89,61 +147,22 @@ def _compute_current(
     y_prev: np.ndarray | None = None,
     dt: float | None = None,
     mat: MaterialArrays | None = None,
+    V_app_prev: float | None = None,
 ) -> float:
     """Extract terminal current density J [A/m²] at the contact-adjacent face.
 
     The terminal current combines carrier conduction and, when a previous state
-    is available, the displacement current over the last time step.
+    is available, the displacement current over the last time step. When the
+    applied voltage changed between `y_prev` and `y`, pass `V_app_prev` so the
+    Poisson solve for `y_prev` uses the right Dirichlet condition; otherwise
+    the ∂V_boundary/∂t contribution to the displacement current is lost.
 
     Convention: J > 0 when the device delivers power (J_sc > 0 at V=0).
     """
-    if mat is None:
-        mat = build_material_arrays(x, stack)
-
-    def state_fields(y_state: np.ndarray):
-        N = len(x)
-        sv = StateVec.unpack(y_state, N)
-        n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
-        p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
-        rho = _charge_density(p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D)
-        phi = solve_poisson_prefactored(
-            mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_app,
-        )
-        return n, p, phi
-
-    dx = np.diff(x)
-    n, p, phi = state_fields(y)
-
-    D_n_face = mat.D_n_face   # (N-1,)
-    D_p_face = mat.D_p_face   # (N-1,)
-    chi = mat.chi             # (N,)
-    Eg  = mat.Eg              # (N,)
-
-    # Band-corrected potentials — consistent with continuity.py so that
-    # the extracted current matches the internal SG flux exactly.
-    phi_n = phi + chi
-    phi_p = phi + chi + Eg
-
-    xi_n = (phi_n[1:] - phi_n[:-1]) / V_T
-    xi_p = (phi_p[1:] - phi_p[:-1]) / V_T
-    B_pos_n = bernoulli(xi_n); B_neg_n = bernoulli(-xi_n)
-    B_pos_p = bernoulli(xi_p); B_neg_p = bernoulli(-xi_p)
-
-    J_n = Q * D_n_face / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
-    J_p = Q * D_p_face / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
-    J_total_internal = J_n[0] + J_p[0]
-
-    if y_prev is not None and dt is not None and dt > 0.0:
-        _, _, phi_prev = state_fields(y_prev)
-        eps_face = _harmonic_face_average(mat.eps_r)
-        E_prev = -(phi_prev[1:] - phi_prev[:-1]) / dx
-        E_now = -(phi[1:] - phi[:-1]) / dx
-        J_disp = EPS_0 * eps_face * (E_now - E_prev) / dt
-        J_total_internal += J_disp[0]
-
-    # Negate for external
-    # circuit convention: J_sc > 0.
-    return -float(J_total_internal)
+    J_faces = _total_current_faces(
+        x, y, stack, V_app, y_prev=y_prev, dt=dt, mat=mat, V_app_prev=V_app_prev,
+    )
+    return float(J_faces[0])
 
 
 def _integrate_step(
@@ -220,12 +239,15 @@ def quasi_static_sweep(
     dt = sweep_time / (n - 1)
     J_arr = np.zeros(n, dtype=float)
     y = y_init.copy()
+    V_prev = float(voltages[0])
     t = 0.0
     for k in range(n):
         V_k = float(voltages[k])
         y_prev = y.copy()
         y = _integrate_step(x, y, stack, mat, V_k, t, t + dt, rtol, atol)
-        J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt, mat=mat)
+        J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt,
+                                     mat=mat, V_app_prev=V_prev)
+        V_prev = V_k
         t += dt
     return np.asarray(voltages, dtype=float), J_arr
 
@@ -242,7 +264,7 @@ def run_jv_sweep(
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
-    V_max : upper voltage limit. If None, defaults to stack.V_bi. With
+    V_max : upper voltage limit. If None, defaults to max(V_bi_eff*1.3, 1.4). With
       heterojunction band offsets, V_oc can exceed V_bi, so pass a larger
       value (e.g. 1.4 V for MAPbI3) to capture the full forward curve.
     """
@@ -284,17 +306,21 @@ def run_jv_sweep(
         t_points = np.arange(n_points) * dt
         J_arr = np.zeros(n_points)
         y = y_init.copy()
+        V_prev = float(V_arr[0])
         for k, V_k in enumerate(V_arr):
             y_prev = y.copy()
             t_lo = t_points[k]
             t_hi = t_lo + dt
             y = _integrate_step(x, y, stack, mat, V_k, t_lo, t_hi, rtol, atol)
-            J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt, mat=mat)
+            J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt,
+                                         mat=mat, V_app_prev=V_prev)
+            V_prev = float(V_k)
             if progress is not None:
                 progress(stage, k + 1, n_points, "")
         return V_arr, J_arr, y
 
-    V_upper = stack.V_bi if V_max is None else V_max
+    V_bi_eff = stack.compute_V_bi()
+    V_upper = max(V_bi_eff * 1.3, 1.4) if V_max is None else V_max
     # Forward sweep: dark equilibrium → short circuit → open circuit
     V_fwd, J_fwd, y_oc = _sweep(0.0, V_upper, y_eq, "jv_forward")
     # Reverse sweep: continue from light-soaked OC state → short circuit
