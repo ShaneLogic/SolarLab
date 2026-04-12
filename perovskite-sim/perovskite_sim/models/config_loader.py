@@ -67,4 +67,5 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         Phi=_f(dev.get("Phi", 2.5e21)),
         interfaces=interfaces,
         T=_f(dev.get("T", 300.0)),
+        mode=str(dev.get("mode", "full")),
     )
