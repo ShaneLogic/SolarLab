@@ -1,0 +1,237 @@
+"""Unit tests for the Transfer-Matrix Method (TMM) optics engine."""
+import numpy as np
+import pytest
+
+from perovskite_sim.physics.optics import (
+    TMMLayer,
+    _transfer_matrix_stack,
+    _electric_field_profile,
+    tmm_absorption_profile,
+    tmm_generation,
+    tmm_reflectance,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_single_layer(n_val=1.5, k_val=0.0, d=100e-9, n_wl=50):
+    """Create a single non-absorbing layer for analytical checks."""
+    wl_nm = np.linspace(400, 700, n_wl)
+    wl_m = wl_nm * 1e-9
+    n_arr = np.full(n_wl, n_val)
+    k_arr = np.full(n_wl, k_val)
+    layer = TMMLayer(d=d, n=n_arr, k=k_arr)
+    return [layer], wl_m
+
+
+# ---------------------------------------------------------------------------
+# TMMLayer
+# ---------------------------------------------------------------------------
+
+class TestTMMLayer:
+    def test_n_complex(self):
+        n = np.array([2.0, 2.5])
+        k = np.array([0.1, 0.2])
+        layer = TMMLayer(d=100e-9, n=n, k=k)
+        expected = n + 1j * k
+        np.testing.assert_array_equal(layer.n_complex, expected)
+
+    def test_frozen(self):
+        layer = TMMLayer(d=100e-9, n=np.ones(5), k=np.zeros(5))
+        with pytest.raises(AttributeError):
+            layer.d = 200e-9
+
+
+# ---------------------------------------------------------------------------
+# Single-layer Fabry-Perot reflectance
+# ---------------------------------------------------------------------------
+
+class TestSingleLayerReflectance:
+    """For a single dielectric slab (k=0) in air, the Fabry-Perot formula
+    gives an analytical reflectance that oscillates between 0 and
+    4*r^2 / (1+r^2)^2 where r = (1-n)/(1+n).
+    """
+
+    def test_reflectance_range(self):
+        """R must be between 0 and the Fabry-Perot max."""
+        layers, wl_m = _make_single_layer(n_val=2.0, k_val=0.0, d=200e-9)
+        R = tmm_reflectance(layers, wl_m)
+        r_fresnel = (1.0 - 2.0) / (1.0 + 2.0)
+        R_max = 4 * r_fresnel**2 / (1 + r_fresnel**2)**2
+        assert np.all(R >= -1e-10)
+        assert np.all(R <= R_max + 1e-10)
+
+    def test_reflectance_at_half_wave(self):
+        """At half-wave thickness (n*d = lambda/2), R should be zero
+        because the reflected beams interfere destructively.
+        """
+        n_val = 2.0
+        d = 200e-9
+        # lambda where n*d = lambda/2 → lambda = 2*n*d = 800nm
+        wl_m = np.array([2 * n_val * d])  # exactly 800nm
+        layer = TMMLayer(d=d, n=np.array([n_val]), k=np.array([0.0]))
+        R = tmm_reflectance([layer], wl_m)
+        np.testing.assert_allclose(R, 0.0, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Energy conservation: R + T + A = 1
+# ---------------------------------------------------------------------------
+
+class TestEnergyConservation:
+    """The total reflectance + transmittance + absorption must equal 1."""
+
+    @pytest.fixture
+    def three_layer_stack(self):
+        n_wl = 100
+        wl_nm = np.linspace(350, 750, n_wl)
+        wl_m = wl_nm * 1e-9
+        layers = [
+            TMMLayer(d=50e-9,
+                     n=np.full(n_wl, 2.4),
+                     k=np.where(wl_nm < 380, 0.05, 0.001)),
+            TMMLayer(d=400e-9,
+                     n=np.full(n_wl, 2.5),
+                     k=0.4 * np.exp(-(wl_nm - 400) / 150)),
+            TMMLayer(d=150e-9,
+                     n=np.full(n_wl, 1.8),
+                     k=np.where(wl_nm < 420, 0.02, 0.001)),
+        ]
+        return layers, wl_m
+
+    def test_rta_equals_one(self, three_layer_stack):
+        layers, wl_m = three_layer_stack
+
+        # R
+        R = tmm_reflectance(layers, wl_m)
+
+        # T (from transfer matrix)
+        S_total, _ = _transfer_matrix_stack(layers, wl_m)
+        t = 1.0 / S_total[:, 0, 0]
+        T = np.abs(t) ** 2
+
+        # A (integrate absorption profile over space)
+        boundaries = np.array([0, 50e-9, 450e-9, 600e-9])
+        x = np.linspace(0.5e-9, 599.5e-9, 800)
+        A_profile = tmm_absorption_profile(layers, wl_m, x, boundaries)
+        A_total = np.trapz(A_profile, x, axis=0)
+
+        total = R + T + A_total
+        np.testing.assert_allclose(total, 1.0, atol=0.03,
+                                   err_msg="R+T+A should equal 1")
+
+    def test_transparent_stack_no_absorption(self):
+        """With k=0 everywhere, A should be zero and R+T=1."""
+        n_wl = 30
+        wl_m = np.linspace(400e-9, 700e-9, n_wl)
+        layers = [
+            TMMLayer(d=100e-9, n=np.full(n_wl, 2.0), k=np.zeros(n_wl)),
+            TMMLayer(d=300e-9, n=np.full(n_wl, 2.5), k=np.zeros(n_wl)),
+        ]
+        R = tmm_reflectance(layers, wl_m)
+        S_total, _ = _transfer_matrix_stack(layers, wl_m)
+        T = np.abs(1.0 / S_total[:, 0, 0]) ** 2
+        np.testing.assert_allclose(R + T, 1.0, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Generation profile
+# ---------------------------------------------------------------------------
+
+class TestTMMGeneration:
+
+    def test_generation_positive(self):
+        """G(x) must be non-negative everywhere."""
+        n_wl = 50
+        wl_m = np.linspace(350e-9, 750e-9, n_wl)
+        layers = [
+            TMMLayer(d=400e-9,
+                     n=np.full(n_wl, 2.5),
+                     k=0.3 * np.exp(-(wl_m * 1e9 - 400) / 200)),
+        ]
+        boundaries = np.array([0.0, 400e-9])
+        x = np.linspace(1e-9, 399e-9, 100)
+        flux = np.full(n_wl, 3e24)
+        G = tmm_generation(layers, wl_m, flux, x, boundaries)
+        assert np.all(G >= 0)
+
+    def test_generation_decays_with_depth(self):
+        """For a single absorbing layer, G should generally decrease
+        with depth (exponential decay modified by interference)."""
+        n_wl = 100
+        wl_m = np.linspace(350e-9, 750e-9, n_wl)
+        # Strong absorption so decay dominates interference
+        layers = [
+            TMMLayer(d=500e-9,
+                     n=np.full(n_wl, 2.5),
+                     k=np.full(n_wl, 0.5)),
+        ]
+        boundaries = np.array([0.0, 500e-9])
+        x = np.linspace(1e-9, 499e-9, 200)
+        flux = np.full(n_wl, 3e24)
+        G = tmm_generation(layers, wl_m, flux, x, boundaries)
+        # Front half should have more generation than back half
+        mid = len(x) // 2
+        assert G[:mid].mean() > G[mid:].mean()
+
+    def test_generation_order_of_magnitude(self):
+        """With realistic-ish parameters, G_max should be ~1e27-1e29."""
+        n_wl = 100
+        wl_m = np.linspace(350e-9, 780e-9, n_wl)
+        wl_nm = wl_m * 1e9
+        layers = [
+            TMMLayer(d=50e-9,
+                     n=np.full(n_wl, 2.4),
+                     k=np.where(wl_nm < 370, 0.05, 0.0)),
+            TMMLayer(d=400e-9,
+                     n=np.full(n_wl, 2.5),
+                     k=np.where(wl_nm < 780, 0.5 * np.exp(-(wl_nm - 400) / 200), 0.0)),
+            TMMLayer(d=200e-9,
+                     n=np.full(n_wl, 1.8),
+                     k=np.where(wl_nm < 420, 0.02, 0.0)),
+        ]
+        boundaries = np.array([0, 50e-9, 450e-9, 650e-9])
+        x = np.linspace(1e-9, 649e-9, 200)
+        # Realistic spectral photon flux ~ 1e24 - 1e25 per m per m^2/s
+        flux = np.full(n_wl, 3e24)
+        G = tmm_generation(layers, wl_m, flux, x, boundaries)
+        assert G.max() > 1e20, f"G_max too low: {G.max():.2e}"
+        assert G.max() < 1e30, f"G_max too high: {G.max():.2e}"
+
+
+# ---------------------------------------------------------------------------
+# Optical data loaders
+# ---------------------------------------------------------------------------
+
+class TestOpticalData:
+
+    def test_load_nk_mapbi3(self):
+        from perovskite_sim.data import load_nk
+        wl, n, k = load_nk("MAPbI3")
+        assert len(wl) > 10
+        assert np.all(n > 0)
+        assert np.all(k >= 0)
+
+    def test_load_nk_interpolation(self):
+        from perovskite_sim.data import load_nk
+        target_wl = np.array([400.0, 500.0, 600.0, 700.0])
+        wl, n, k = load_nk("MAPbI3", target_wl)
+        np.testing.assert_array_equal(wl, target_wl)
+        assert len(n) == 4
+        assert len(k) == 4
+
+    def test_load_am15g(self):
+        from perovskite_sim.data import load_am15g
+        wl, flux = load_am15g()
+        assert len(wl) > 10
+        assert np.all(flux > 0)
+        # Integrated flux should be ~2.5e21 m^-2 s^-1
+        total = np.trapz(flux, wl * 1e-9)
+        assert 1e21 < total < 5e21, f"Integrated flux {total:.2e} out of range"
+
+    def test_load_nk_missing_material(self):
+        from perovskite_sim.data import load_nk
+        with pytest.raises(FileNotFoundError):
+            load_nk("NonExistentMaterial")
