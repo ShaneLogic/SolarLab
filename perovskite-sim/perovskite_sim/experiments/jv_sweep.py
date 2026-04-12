@@ -16,7 +16,7 @@ from perovskite_sim.solver.mol import (
     _harmonic_face_average,
 )
 from perovskite_sim.models.device import DeviceStack
-from perovskite_sim.constants import EPS_0, Q, V_T
+from perovskite_sim.constants import EPS_0, Q
 
 
 @dataclass(frozen=True)
@@ -125,8 +125,9 @@ def _total_current_faces(
     Eg = mat.Eg
     phi_n = phi + chi
     phi_p = phi + chi + Eg
-    xi_n = (phi_n[1:] - phi_n[:-1]) / V_T
-    xi_p = (phi_p[1:] - phi_p[:-1]) / V_T
+    V_T_dev = mat.V_T_device
+    xi_n = (phi_n[1:] - phi_n[:-1]) / V_T_dev
+    xi_p = (phi_p[1:] - phi_p[:-1]) / V_T_dev
     B_pos_n = bernoulli(xi_n); B_neg_n = bernoulli(-xi_n)
     B_pos_p = bernoulli(xi_p); B_neg_p = bernoulli(-xi_p)
     J_n = Q * D_n_face / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])

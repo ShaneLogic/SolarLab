@@ -24,6 +24,8 @@ class DeviceStack:
     # interfaces[0] = interface between layers[0] and layers[1], etc.
     # Empty tuple means no interface recombination.
     interfaces: tuple[tuple[float, float], ...] = ()
+    # Device temperature [K]. Default 300 K (isothermal).
+    T: float = 300.0
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))
