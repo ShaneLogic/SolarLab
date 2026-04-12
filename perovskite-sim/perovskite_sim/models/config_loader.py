@@ -35,6 +35,8 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             N_D=_f(layer_cfg["N_D"]),
             chi=_f(layer_cfg.get("chi", 0.0)),
             Eg=_f(layer_cfg.get("Eg", 0.0)),
+            A_star_n=_f(layer_cfg.get("A_star_n", 1.2017e6)),
+            A_star_p=_f(layer_cfg.get("A_star_p", 1.2017e6)),
         )
         layers.append(LayerSpec(
             name=layer_cfg["name"],
