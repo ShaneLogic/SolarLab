@@ -93,6 +93,8 @@ class MaterialArrays:
     A_star_p: np.ndarray | None = None
     # Face indices where thermionic emission capping applies (band offset > threshold)
     interface_faces: tuple[int, ...] = ()
+    # TMM-computed generation profile G(x) [m^-3 s^-1]; None = use Beer-Lambert
+    G_optical: np.ndarray | None = None
 
     @property
     def carrier_params(self) -> dict:
@@ -110,6 +112,63 @@ class MaterialArrays:
             d["A_star_p"] = self.A_star_p
             d["T"] = 300.0
         return d
+
+
+def _compute_tmm_generation(
+    x: np.ndarray,
+    stack: DeviceStack,
+    n_wavelengths: int = 200,
+    lam_min: float = 300.0,
+    lam_max: float = 800.0,
+) -> np.ndarray | None:
+    """Compute TMM generation profile if any layer has optical material data.
+
+    Returns G(x) [m^-3 s^-1] or None if no layers have optical data.
+    The computation runs once during build_material_arrays and the result
+    is cached in MaterialArrays.G_optical.
+    """
+    has_optical = any(
+        layer.params is not None and layer.params.optical_material is not None
+        for layer in stack.layers
+    )
+    if not has_optical:
+        return None
+
+    from perovskite_sim.physics.optics import TMMLayer, tmm_generation
+    from perovskite_sim.data import load_nk, load_am15g
+
+    wavelengths_nm = np.linspace(lam_min, lam_max, n_wavelengths)
+    wavelengths_m = wavelengths_nm * 1e-9
+
+    # Load AM1.5G spectrum
+    _, spectral_flux = load_am15g(wavelengths_nm)
+
+    # Build TMM layers
+    tmm_layers: list[TMMLayer] = []
+    for layer in stack.layers:
+        p = layer.params
+        if p.optical_material is not None:
+            _, n_arr, k_arr = load_nk(p.optical_material, wavelengths_nm)
+        elif p.n_optical is not None:
+            # Constant refractive index, compute k from scalar alpha
+            n_arr = np.full(n_wavelengths, p.n_optical)
+            # k = alpha * lambda / (4 * pi)
+            k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
+        else:
+            # Fallback: estimate n from eps_r, k from alpha
+            n_arr = np.full(n_wavelengths, np.sqrt(p.eps_r))
+            k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
+        tmm_layers.append(TMMLayer(d=layer.thickness, n=n_arr, k=k_arr))
+
+    # Layer boundaries for spatial mapping
+    boundaries = np.zeros(len(stack.layers) + 1)
+    for i, layer in enumerate(stack.layers):
+        boundaries[i + 1] = boundaries[i] + layer.thickness
+
+    G = tmm_generation(
+        tmm_layers, wavelengths_m, spectral_flux, x, boundaries,
+    )
+    return G
 
 
 def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
@@ -229,6 +288,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
     V_bi_eff = stack.compute_V_bi()
 
+    # TMM optical generation: computed when any layer has optical data
+    G_optical = _compute_tmm_generation(x, stack)
+
     return MaterialArrays(
         eps_r=eps_r,
         D_ion_node=D_ion_node,
@@ -262,6 +324,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         A_star_n=A_star_n_node,
         A_star_p=A_star_p_node,
         interface_faces=tuple(interface_face_list),
+        G_optical=G_optical,
     )
 
 
@@ -345,9 +408,12 @@ def assemble_rhs(
         mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_app,
     )
 
-    # Generation (layered Beer-Lambert with correct cumulative optical depth)
+    # Generation: TMM-computed profile if available, else Beer-Lambert fallback
     if illuminated:
-        G = beer_lambert_generation(x, mat.alpha, stack.Phi)
+        if mat.G_optical is not None:
+            G = mat.G_optical
+        else:
+            G = beer_lambert_generation(x, mat.alpha, stack.Phi)
     else:
         G = np.zeros(N)
 
