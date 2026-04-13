@@ -1,20 +1,29 @@
 import { GoldenLayout } from 'golden-layout'
 import type { LayoutConfig, ResolvedLayoutConfig } from 'golden-layout'
-import { getConfig } from '../api'
-import type { Workspace, Device } from './types'
+import { getConfig, listConfigs } from '../api'
+import type { Workspace, Device, Run, ExperimentKind } from './types'
 import {
   addDevice,
+  addExperiment,
+  addRun,
   createEmptyWorkspace,
   loadWorkspace,
   saveWorkspace,
   setActiveDevice,
+  setActiveExperiment,
+  setActiveRun,
 } from './state'
 import { attachTreeHandlers, renderTreeHTML } from './tree'
 import { mountConsole } from './console'
 import type { ConsoleHandle } from './console'
 import { mountDevicePane } from './panes/device-pane'
 import { mountHelpPane } from './panes/help-pane'
-import { mountLegacyExperimentPane } from './panes/legacy-experiment-pane'
+import { mountJVPane } from './panes/jv-pane'
+import { mountImpedancePane } from './panes/impedance-pane'
+import { mountDegradationPane } from './panes/degradation-pane'
+import { mountMainPlotPane } from './panes/main-plot-pane'
+import type { MainPlotHandle } from './panes/main-plot-pane'
+import { showWizard } from './wizard'
 
 const DEFAULT_LAYOUT: LayoutConfig = {
   root: {
@@ -22,17 +31,26 @@ const DEFAULT_LAYOUT: LayoutConfig = {
     content: [
       {
         type: 'stack',
-        width: 50,
+        width: 30,
         content: [
           { type: 'component', componentType: 'device', title: 'Device' },
           { type: 'component', componentType: 'help', title: 'Help' },
         ],
       },
       {
+        type: 'stack',
+        width: 35,
+        content: [
+          { type: 'component', componentType: 'jv', title: 'J–V Sweep' },
+          { type: 'component', componentType: 'impedance', title: 'Impedance' },
+          { type: 'component', componentType: 'degradation', title: 'Degradation' },
+        ],
+      },
+      {
         type: 'component',
-        componentType: 'legacy-experiments',
-        title: 'Experiments (legacy)',
-        width: 50,
+        componentType: 'main-plot',
+        title: 'Main Plot',
+        width: 35,
       },
     ],
   },
@@ -51,16 +69,12 @@ function physicsSummary(tier: 'legacy' | 'fast' | 'full'): string {
   return 'flat bands · Beer-Lambert · single ion · uniform τ · T=300K'
 }
 
-/** Seed a default device from the shipped ionmonger preset. */
-async function seedDefaultDevice(): Promise<Device> {
-  const config = await getConfig('ionmonger_benchmark.yaml')
-  return {
-    id: 'seed-ionmonger',
-    name: 'IonMonger benchmark',
-    tier: config.device.mode ?? 'full',
-    config,
-    experiments: [],
-  }
+function randomDeviceId(): string {
+  return 'd-' + Math.random().toString(36).slice(2, 10)
+}
+
+function randomExperimentId(): string {
+  return 'e-' + Math.random().toString(36).slice(2, 10)
 }
 
 export async function mountWorkstation(root: HTMLElement): Promise<void> {
@@ -84,15 +98,79 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   // --- workspace state ---
   let workspace: Workspace = loadWorkspace() ?? createEmptyWorkspace('Untitled')
   if (workspace.devices.length === 0) {
-    const seed = await seedDefaultDevice()
-    workspace = addDevice(workspace, seed)
-    saveWorkspace(workspace)
+    const presets = await listConfigs()
+    const result = await showWizard(root, presets)
+    if (!result.cancelled && result.selection) {
+      const cfg = await getConfig(result.selection.preset)
+      cfg.device.mode = result.selection.tier
+      const dev: Device = {
+        id: randomDeviceId(),
+        name: result.selection.name,
+        tier: result.selection.tier,
+        config: cfg,
+        experiments: [],
+      }
+      workspace = addDevice(workspace, dev)
+      saveWorkspace(workspace)
+    }
   }
 
   function refreshTree(): void {
     treeEl.innerHTML = renderTreeHTML(workspace)
   }
   refreshTree()
+
+  // --- helpers wired into pane factories ---
+  let mainPlot: MainPlotHandle | null = null
+
+  function activeDeviceAccessor(): { id: string; config: import('../types').DeviceConfig } | null {
+    const id = workspace.activeDeviceId
+    if (!id) return null
+    const d = workspace.devices.find(x => x.id === id)
+    return d ? { id: d.id, config: d.config } : null
+  }
+
+  function ensureExperiment(deviceId: string, kind: ExperimentKind): string {
+    const dev = workspace.devices.find(d => d.id === deviceId)
+    if (!dev) throw new Error('device missing')
+    const existing = dev.experiments.find(e => e.kind === kind)
+    if (existing) return existing.id
+    const id = randomExperimentId()
+    workspace = addExperiment(workspace, deviceId, { id, kind, params: {}, runs: [] })
+    return id
+  }
+
+  function commitRun(deviceId: string, kind: ExperimentKind, run: Run): void {
+    const expId = ensureExperiment(deviceId, kind)
+    workspace = addRun(workspace, deviceId, expId, run)
+    workspace = setActiveRun(workspace, deviceId, expId, run.id)
+    saveWorkspace(workspace)
+    refreshTree()
+    mainPlot?.update(workspace)
+    consoleHandle.log(`run complete: ${kind}  (${run.activePhysics})`)
+  }
+
+  function experimentKindOf(experimentId: string): ExperimentKind {
+    for (const d of workspace.devices) {
+      const e = d.experiments.find(e => e.id === experimentId)
+      if (e) return e.kind
+    }
+    return 'jv'
+  }
+
+  function focusComponent(componentType: string): void {
+    try {
+      const root = layout.rootItem as unknown as {
+        getItemsByFilter?: (fn: (it: { isComponent?: boolean; componentType?: string }) => boolean) => Array<{ focus?: () => void }>
+      } | undefined
+      const items = root?.getItemsByFilter?.(
+        (it) => !!it.isComponent && it.componentType === componentType,
+      ) ?? []
+      items[0]?.focus?.()
+    } catch (e) {
+      console.warn('focusComponent failed:', e)
+    }
+  }
 
   attachTreeHandlers(treeEl, {
     onSelectDevice: (id) => {
@@ -103,6 +181,19 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       if (active) {
         consoleHandle.setPhysics(tierLabel(active.tier), physicsSummary(active.tier))
       }
+    },
+    onSelectExperiment: (deviceId, experimentId) => {
+      workspace = setActiveExperiment(workspace, deviceId, experimentId)
+      saveWorkspace(workspace)
+      refreshTree()
+      focusComponent(experimentKindOf(experimentId))
+    },
+    onSelectRun: (deviceId, experimentId, runId) => {
+      workspace = setActiveRun(workspace, deviceId, experimentId, runId)
+      saveWorkspace(workspace)
+      refreshTree()
+      mainPlot?.update(workspace)
+      focusComponent('main-plot')
     },
   })
 
@@ -116,13 +207,33 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   const layout = new GoldenLayout(dockEl)
 
   layout.registerComponentFactoryFunction('device', (container) => {
-    void mountDevicePane(container.element, 'ws-device')
+    const active = workspace.devices.find(d => d.id === workspace.activeDeviceId)
+    void mountDevicePane(container.element, 'ws-device', active?.tier ?? 'full')
   })
   layout.registerComponentFactoryFunction('help', (container) => {
     mountHelpPane(container.element)
   })
-  layout.registerComponentFactoryFunction('legacy-experiments', (container) => {
-    void mountLegacyExperimentPane(container.element)
+  layout.registerComponentFactoryFunction('jv', (container) => {
+    mountJVPane(container.element, {
+      getActiveDevice: () => activeDeviceAccessor(),
+      onRunComplete: (deviceId, run) => commitRun(deviceId, 'jv', run),
+    })
+  })
+  layout.registerComponentFactoryFunction('impedance', (container) => {
+    mountImpedancePane(container.element, {
+      getActiveDevice: () => activeDeviceAccessor(),
+      onRunComplete: (deviceId, run) => commitRun(deviceId, 'impedance', run),
+    })
+  })
+  layout.registerComponentFactoryFunction('degradation', (container) => {
+    mountDegradationPane(container.element, {
+      getActiveDevice: () => activeDeviceAccessor(),
+      onRunComplete: (deviceId, run) => commitRun(deviceId, 'degradation', run),
+    })
+  })
+  layout.registerComponentFactoryFunction('main-plot', (container) => {
+    mainPlot = mountMainPlotPane(container.element)
+    mainPlot.update(workspace)
   })
 
   const initialLayout: LayoutConfig = (workspace.layout as LayoutConfig | null) ?? DEFAULT_LAYOUT

@@ -1,5 +1,6 @@
 import { mountDevicePanel } from '../../device-panel'
 import type { DevicePanel } from '../../device-panel'
+import type { SimulationModeName } from '../../types'
 
 /**
  * Build the Device pane contents into the given container.
@@ -9,16 +10,17 @@ import type { DevicePanel } from '../../device-panel'
  * of its behaviour (preset dropdown, per-layer editor, reset button)
  * without a rewrite.
  *
- * Returns the `DevicePanel` handle so the host (Golden Layout wiring
- * in Task 11) can call `getConfig()` and `onChange()`.
+ * Returns the `DevicePanel` handle so the host (Golden Layout wiring)
+ * can call `getConfig()` and `onChange()`.
  */
 export async function mountDevicePane(
   container: HTMLElement,
   tabId: string,
+  tier: SimulationModeName = 'full',
 ): Promise<DevicePanel> {
   container.classList.add('pane', 'pane-device')
   const inner = document.createElement('div')
   inner.className = 'pane-body'
   container.appendChild(inner)
-  return mountDevicePanel(inner, tabId)
+  return mountDevicePanel(inner, tabId, { tier })
 }
