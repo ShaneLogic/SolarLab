@@ -5,7 +5,7 @@ import numpy as np
 
 ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import StateVec, run_transient, split_step, build_material_arrays
@@ -106,7 +106,7 @@ def _absorber_region(
 ):
     """Return the absorber layer and a mask covering its interior nodes."""
     offset = 0.0
-    for layer in stack.layers:
+    for layer in electrical_layers(stack):
         hi = offset + layer.thickness
         if layer.role == "absorber":
             strict_mask = (x > offset + 1e-15) & (x < hi - 1e-15)
@@ -230,7 +230,9 @@ def run_degradation(
             f"min_tau_factor must be in (0, 1], got {min_tau_factor}"
         )
 
-    layers_grid = [Layer(l.thickness, N_grid // len(stack.layers)) for l in stack.layers]
+    # Grid construction uses electrical layers only; substrate is optical-only.
+    elec = electrical_layers(stack)
+    layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
     x = multilayer_grid(layers_grid)
     N = len(x)
     # V_oc can exceed V_bi when heterojunction band offsets are present, so

@@ -24,7 +24,7 @@ from perovskite_sim.solver.mol import (
     StateVec,
     build_material_arrays,
 )
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import DeviceStack, electrical_layers
 
 
 def solve_equilibrium(
@@ -43,7 +43,7 @@ def solve_equilibrium(
     # ── per-node ion profile and intrinsic density ───────────────────────────
     ni_arr = np.ones(N)
     offset = 0.0
-    for layer in stack.layers:
+    for layer in electrical_layers(stack):
         lo = offset - 1e-15
         hi = offset + layer.thickness + 1e-15
         mask = (x >= lo) & (x <= hi)

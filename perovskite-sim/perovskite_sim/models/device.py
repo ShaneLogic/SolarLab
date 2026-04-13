@@ -53,16 +53,23 @@ class DeviceStack:
         Falls back to the manual ``self.V_bi`` field when all layers have
         chi = Eg = 0 (backward compatibility with legacy configs).
         """
+        # Compute V_bi from the electrical-only contacts. Substrate layers
+        # have no Fermi level for the drift-diffusion problem and must be
+        # excluded, or a glass layer at index 0 (chi=Eg=0) would drag the
+        # left contact potential to zero.
+        elec = tuple(l for l in self.layers if l.role != "substrate")
+        if not elec:
+            return self.V_bi
         all_zero = all(
             layer.params.chi == 0.0 and layer.params.Eg == 0.0
-            for layer in self.layers
+            for layer in elec
             if layer.params is not None
         )
         if all_zero:
             return self.V_bi
 
-        left = self.layers[0].params
-        right = self.layers[-1].params
+        left = elec[0].params
+        right = elec[-1].params
 
         e_f_left = _fermi_level(left)
         e_f_right = _fermi_level(right)
@@ -75,8 +82,54 @@ def electrical_layers(stack: "DeviceStack") -> tuple["LayerSpec", ...]:
     Layers with role == "substrate" are optical-only and skipped. The TMM
     optical path still walks stack.layers (full list); only the electrical
     path uses this filtered view.
+
+    Substrate layers must form a contiguous prefix of stack.layers (or be
+    entirely absent). Any substrate layer after a non-substrate layer is
+    unsupported and raises ValueError, because the grid/interface indexing
+    below assumes the post-filter layer order is a prefix of the full list.
     """
+    seen_non_substrate = False
+    for layer in stack.layers:
+        if layer.role == "substrate":
+            if seen_non_substrate:
+                raise ValueError(
+                    "substrate layers must form a contiguous prefix of "
+                    "stack.layers (mid-stack or trailing substrate layers "
+                    "are not supported)"
+                )
+        else:
+            seen_non_substrate = True
     return tuple(l for l in stack.layers if l.role != "substrate")
+
+
+def electrical_interfaces(
+    stack: "DeviceStack",
+) -> tuple[tuple[float, float], ...]:
+    """Return interfaces aligned to electrical_layers (substrate excluded).
+
+    ``stack.interfaces`` still has length ``len(stack.layers) - 1`` and is
+    indexed against the *full* layer list. After filtering out a substrate
+    prefix, ``electrical_layers`` drops the first ``substrate_prefix``
+    layers; the first ``substrate_prefix`` interfaces therefore describe
+    substrate↔substrate or substrate↔first-electrical-layer boundaries and
+    have no electrical counterpart, so they must be dropped as well. All
+    subsequent interfaces are kept in order.
+
+    Assumes the contiguous-substrate-at-edge layout enforced by
+    ``electrical_layers``; multi-substrate-prefix is fine, mid-stack or
+    trailing substrate is rejected upstream.
+    """
+    # Count how many contiguous leading layers are substrate.
+    substrate_prefix = 0
+    for layer in stack.layers:
+        if layer.role == "substrate":
+            substrate_prefix += 1
+        else:
+            break
+    elec_n = sum(1 for l in stack.layers if l.role != "substrate")
+    desired = max(0, elec_n - 1)
+    start = substrate_prefix
+    return tuple(stack.interfaces[start : start + desired])
 
 
 def _fermi_level(p: MaterialParams) -> float:

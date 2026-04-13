@@ -15,7 +15,7 @@ from perovskite_sim.solver.mol import (
     _charge_density,
     _harmonic_face_average,
 )
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.constants import EPS_0, Q
 
 
@@ -284,10 +284,15 @@ def run_jv_sweep(
                 f"layer {i} ({layer.name!r}) has non-positive thickness {layer.thickness}"
             )
 
-    layers_grid = [Layer(l.thickness, N_grid // len(stack.layers)) for l in stack.layers]
+    # Grid construction uses electrical layers only — substrate layers are
+    # optical-only and have no drift-diffusion counterpart, so allocating
+    # grid nodes inside them would desync MaterialArrays masks with the
+    # solver state vector. TMM/optics paths still see the full stack.
+    elec = electrical_layers(stack)
+    layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
     x = multilayer_grid(layers_grid)
     N = len(x)
-    L = stack.total_thickness
+    L = sum(l.thickness for l in elec)
 
     # Build the material cache once — shared across forward and reverse sweeps
     # and every RHS call inside them. See solver/mol.py:MaterialArrays.
