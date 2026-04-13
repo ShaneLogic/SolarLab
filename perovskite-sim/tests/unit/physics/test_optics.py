@@ -236,15 +236,13 @@ class TestOpticalData:
         with pytest.raises(FileNotFoundError):
             load_nk("NonExistentMaterial")
 
+    def test_load_shipped_fto_csv(self):
+        """FTO.csv should load via load_nk() with monotonic wavelengths in 300-1000 nm."""
+        from perovskite_sim.data import load_nk
 
-def test_load_shipped_fto_csv():
-    """FTO.csv should load via load_nk() with monotonic wavelengths in 300-1000 nm."""
-    from perovskite_sim.data import load_nk
-    import numpy as np
-
-    wl, n, k = load_nk("FTO")
-    assert wl.shape == n.shape == k.shape
-    assert np.all(np.diff(wl) > 0), "wavelengths must be strictly increasing"
-    assert wl[0] <= 305.0 and wl[-1] >= 995.0, "must cover 300-1000 nm range"
-    assert np.all(n > 0.5) and np.all(n < 5.0), "FTO n in reasonable range"
-    assert np.all(k >= 0.0), "k must be non-negative"
+        wl, n, k = load_nk("FTO")
+        assert wl.shape == n.shape == k.shape
+        assert np.all(np.diff(wl) > 0), "wavelengths must be strictly increasing"
+        assert wl[0] <= 305.0 and wl[-1] >= 995.0, "must cover 300-1000 nm range"
+        assert np.all(n > 0.5) and np.all(n < 5.0), "FTO n in reasonable range"
+        assert np.all(k >= 0.0), "k must be non-negative"
