@@ -1,5 +1,5 @@
-export async function mountAlgorithmPanel(el: HTMLElement): Promise<void> {
-  el.innerHTML = `
+export function algorithmHTML(): string {
+  return `
   <div class="card doc-card">
     <h3>Algorithm &amp; Physics</h3>
     <div class="doc-body">
@@ -113,4 +113,8 @@ export async function mountAlgorithmPanel(el: HTMLElement): Promise<void> {
       </ul>
     </div>
   </div>`
+}
+
+export async function mountAlgorithmPanel(el: HTMLElement): Promise<void> {
+  el.innerHTML = algorithmHTML()
 }
