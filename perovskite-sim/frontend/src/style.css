@@ -708,7 +708,7 @@ html, body, #app {
   background: var(--card-bg);
   border-top: 1px solid var(--border);
   padding: 0.5rem 1rem;
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font);
   font-size: 0.75rem;
   color: var(--text-muted);
   display: flex;
@@ -891,7 +891,7 @@ html, body, #app {
 /* main plot pane */
 .main-plot-pane { display: flex; flex-direction: column; height: 100%; padding: 0.75rem; }
 .main-plot-header {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font);
   font-size: 0.8rem;
   color: var(--text-muted);
   padding-bottom: 0.5rem;
