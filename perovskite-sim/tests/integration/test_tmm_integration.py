@@ -91,17 +91,9 @@ class TestTMMJVSweep:
 def test_nip_tmm_preset_jsc_in_band():
     """Full J-V on nip_MAPbI3_tmm.yaml must give J_sc in a physically reasonable band.
 
-    The plan's original 180-260 A/m² target assumed the shipped MAPbI3 nk data
-    would respect the ~1.55 eV bandgap (Shockley-Queisser max ~26 mA/cm²). In
-    practice the nk CSV extends absorption slightly into the sub-bandgap tail,
-    so the TMM path integrates ~340 A/m² of generation across the 400 nm
-    absorber, and the measured J_sc (after HTL/ETL parasitics and the glass
-    substrate's Fresnel reflection) lands near ~313 A/m² — above the SQ limit
-    but consistent with what the rest of the TMM integration suite already
-    sees (see test_jsc_tmm_vs_beer_lambert, which uses the 100-400 band). The
-    band below is widened to [180, 330] to accept the nk-data reality while
-    still catching gross regressions; tightening is blocked on a future nk
-    refresh that enforces the band edge more sharply.
+    Target band [180, 260] A/m² corresponds to the Shockley-Queisser limit for
+    MAPbI3 (Eg=1.55 eV, ~275 A/m²) after accounting for HTL/ETL parasitics and
+    the glass substrate's Fresnel reflection.
     """
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
@@ -109,6 +101,6 @@ def test_nip_tmm_preset_jsc_in_band():
     result = run_jv_sweep(stack, n_points=21)
     J_sc = result.metrics_fwd.J_sc
     print(f"\nnip_MAPbI3_tmm J_sc = {J_sc:.2f} A/m^2")
-    assert 180.0 <= J_sc <= 330.0, (
-        f"J_sc={J_sc:.1f} A/m² out of band [180, 330]"
+    assert 180.0 <= J_sc <= 260.0, (
+        f"J_sc={J_sc:.1f} A/m² out of band [180, 260]"
     )
