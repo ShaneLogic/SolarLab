@@ -9,6 +9,19 @@ def _f(v) -> float:
     return float(v)
 
 
+def _parse_bool(v) -> bool:
+    """Parse a YAML value as bool, tolerating quoted strings like "false".
+
+    PyYAML 1.1 normally returns Python bools for bare true/false, but a
+    quoted "false" comes through as a str and bool("false") is True.
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in {"true", "1", "yes", "on"}
+    return bool(v)
+
+
 def load_device_from_yaml(path: str) -> DeviceStack:
     with open(path) as f:
         cfg = yaml.safe_load(f)
@@ -49,7 +62,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             trap_decay_length=float(layer_cfg["trap_decay_length"]) if "trap_decay_length" in layer_cfg else None,
             optical_material=layer_cfg.get("optical_material"),
             n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
-            incoherent=bool(layer_cfg.get("incoherent", False)),
+            incoherent=_parse_bool(layer_cfg.get("incoherent", False)),
         )
         layers.append(LayerSpec(
             name=layer_cfg["name"],
