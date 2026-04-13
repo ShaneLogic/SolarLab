@@ -1,0 +1,15 @@
+{
+  "hash": "3564321e",
+  "configHash": "0af0cd2b",
+  "lockfileHash": "beda1500",
+  "browserHash": "2d900056",
+  "optimized": {
+    "plotly.js-dist-min": {
+      "src": "../../node_modules/plotly.js-dist-min/plotly.min.js",
+      "file": "plotly__js-dist-min.js",
+      "fileHash": "dbe570e0",
+      "needsInterop": true
+    }
+  },
+  "chunks": {}
+}
