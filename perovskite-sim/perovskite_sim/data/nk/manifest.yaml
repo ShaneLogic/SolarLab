@@ -1,20 +1,46 @@
-MAPbI3:
-  source: refractiveindex.info
-  reference: "Phillips et al. 2018"
-  wavelength_range_nm: [300, 800]
-  notes: "MAPbI3 perovskite thin film; shipped baseline. Native grid ends at 800 nm."
+Ag:
+  source: synthetic-Drude
+  reference: "Free-electron Drude model fitted to Johnson & Christy 1972, Phys. Rev. B 6, 4370"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Synthetic Drude model: eps(E) = eps_inf - (hbar*wp)^2 / (E*(E + i*hbar*gamma)).
+    Parameters: eps_inf=5.0, hbar*wp=9.0 eV, hbar*gamma=0.025 eV.
+    Reproduces J&C silver near-optics: n<<1, k~3-7 across 300-1000 nm,
+    k(550 nm)~3.3, k(1000 nm)~6.9. Primary-source refractiveindex.info
+    Johnson & Christy data was not retrieved in-loop; parametric Drude fit
+    with physically-sourced parameters is the approved fallback.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
 
-TiO2:
-  source: refractiveindex.info
-  reference: "Siefke et al. 2016"
-  wavelength_range_nm: [300, 800]
-  notes: "Anatase TiO2 ETL. Native grid ends at 800 nm."
+Au:
+  source: synthetic-Drude-Lorentz
+  reference: "Drude + Lorentz model calibrated to Johnson & Christy 1972, Phys. Rev. B 6, 4370"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Synthetic Drude + single Lorentz model capturing the characteristic
+    Au ~500 nm interband absorption edge.
+    eps(E) = eps_inf - (hbar*wp)^2/(E*(E + i*hbar*gamma))
+             + f*E0^2/(E0^2 - E^2 - i*E*gammaL).
+    Parameters: eps_inf=6.5, hbar*wp=8.9 eV, hbar*gamma=0.07 eV,
+    f=1.8, E0=3.0 eV (~413 nm), gammaL=1.0 eV.
+    Gives n~0.5 k~2.5 at 550 nm, n~0.25 k~6.5 at 1000 nm — consistent with
+    J&C tabulated gold. Primary-source tabulated data not retrieved in-loop;
+    parametric fit is the approved fallback.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
 
-spiro_OMeTAD:
-  source: refractiveindex.info
-  reference: "Filipic et al. 2015, Opt. Express 23, A263"
-  wavelength_range_nm: [300, 800]
-  notes: "Spiro-OMeTAD HTL. Native grid ends at 800 nm."
+C60:
+  source: synthetic-Lorentz
+  reference: "Two-oscillator Lorentz model; parameters inspired by Ren et al. 2015 thin-film fullerene dispersions"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Synthetic two-Lorentz oscillator model producing typical C60 thin-film
+    n,k with absorption edge near 450 nm and n~2.0-2.7 in visible.
+    eps(E) = eps_inf + sum_j f_j*E0_j^2/(E0_j^2 - E^2 - i*E*gamma_j).
+    Parameters: eps_inf=2.3,
+    oscillator 1 (UV): f=2.2, E0=3.5 eV (354 nm), gamma=0.5 eV;
+    oscillator 2 (visible tail): f=0.4, E0=2.7 eV (459 nm), gamma=0.3 eV.
+    k(550 nm)~0.18, k(1000 nm)~0.04. Primary-source data not retrieved
+    in-loop; parametric fit is the approved fallback.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
 
 FTO:
   source: synthetic-Drude-Lorentz
@@ -35,3 +61,117 @@ FTO:
     not present in refractiveindex.info database; this synthetic model is the
     approved fallback per the task specification.
     5 nm uniform grid, 300-1000 nm, 141 data rows.
+
+ITO:
+  source: synthetic-Drude-Lorentz
+  reference: "Drude + Lorentz model; parameters inspired by König et al. 2014, Opt. Mater. Express 4, 689 (Sn:In2O3 sputtered films)"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Synthetic Drude + single UV Lorentz oscillator.
+    eps(E) = eps_inf - (hbar*wp)^2/(E*(E + i*hbar*gamma))
+             + f*E0^2/(E0^2 - E^2 - i*E*gammaL).
+    Parameters: eps_inf=3.95, hbar*wp=1.78 eV, hbar*gamma=0.155 eV,
+    f=0.3, E0=4.0 eV, gammaL=0.5 eV. Reproduces ITO-like dispersion:
+    n(550 nm)~1.94, k(550 nm)~0.02; free-carrier NIR tail
+    n(1000 nm)~1.50, k(1000 nm)~0.09. Primary-source data from
+    refractiveindex.info was not retrieved in-loop; Drude-Lorentz fit
+    is the approved fallback.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
+
+MAPbI3:
+  source: refractiveindex.info
+  reference: "Phillips et al. 2018"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    MAPbI3 perovskite thin film; shipped baseline. Native 300-800 nm data
+    (refractiveindex.info / Phillips 2018) resampled onto uniform 5 nm grid,
+    then extended 805-1000 nm with constant n=n(800 nm) and exponentially
+    decaying k = k(800 nm)*exp(-(lam-800)/30 nm) reflecting the sharp fall
+    in absorption below the ~1.6 eV bandgap. k rounded to 4 decimals ->
+    effectively zero beyond ~820 nm.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
+
+PCBM:
+  source: synthetic-Lorentz
+  reference: "Two-oscillator Lorentz model; parameters inspired by Ren et al. 2015"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Synthetic two-Lorentz oscillator model for PCBM. Slightly red-shifted
+    relative to C60 with marginally lower n.
+    eps(E) = eps_inf + sum_j f_j*E0_j^2/(E0_j^2 - E^2 - i*E*gamma_j).
+    Parameters: eps_inf=2.1,
+    oscillator 1 (UV): f=2.0, E0=3.4 eV, gamma=0.55 eV;
+    oscillator 2 (visible tail): f=0.35, E0=2.65 eV (468 nm), gamma=0.35 eV.
+    k(550 nm)~0.21, k(1000 nm)~0.04. Primary-source data not retrieved
+    in-loop; parametric fit is the approved fallback.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
+
+PEDOT_PSS:
+  source: synthetic-Drude-Lorentz
+  reference: "Drude + two-Lorentz model; parameters inspired by Lee et al. 2018 (conductive PEDOT:PSS formulation)"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Synthetic conductive-PEDOT:PSS model with broad mid-visible absorption
+    and weak free-carrier Drude tail.
+    eps(E) = eps_inf - (hbar*wp)^2/(E*(E + i*hbar*gamma))
+             + sum_j f_j*E0_j^2/(E0_j^2 - E^2 - i*E*gamma_j).
+    Parameters: eps_inf=2.1, hbar*wp=0.3 eV, hbar*gamma=0.3 eV,
+    oscillator 1 (visible): f=0.25, E0=2.0 eV (620 nm), gamma=1.1 eV;
+    oscillator 2 (UV): f=0.4, E0=4.0 eV, gamma=1.0 eV.
+    n(550 nm)~1.59, k(550 nm)~0.14; n(1000 nm)~1.67, k(1000 nm)~0.07.
+    Primary-source data not retrieved in-loop; parametric fit is the
+    approved fallback.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
+
+SnO2:
+  source: synthetic-Drude-Lorentz
+  reference: "Drude + UV Lorentz model; SnO2 bandgap parameters inspired by Filipic et al. 2015, Opt. Express 23, A263"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Synthetic weak-Drude + single UV Lorentz oscillator. Wide-gap TCO with
+    near-transparent visible response and weak free-carrier NIR tail.
+    eps(E) = eps_inf - (hbar*wp)^2/(E*(E + i*hbar*gamma))
+             + f*E0^2/(E0^2 - E^2 - i*E*gammaL).
+    Parameters: eps_inf=3.5, hbar*wp=0.6 eV, hbar*gamma=0.15 eV,
+    f=0.35, E0=4.3 eV (~288 nm), gammaL=0.4 eV.
+    n(550 nm)~1.98, k(550 nm)~0.009; n(1000 nm)~1.91, k(1000 nm)~0.010.
+    The Filipic 2015 Opt. Express file is not present in refractiveindex.info
+    (confirmed during Task 1); parametric fit is the approved fallback.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
+
+TiO2:
+  source: refractiveindex.info
+  reference: "Siefke et al. 2016"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Anatase TiO2 ETL. Native 300-800 nm data resampled onto uniform 5 nm
+    grid, then extended 805-1000 nm by holding n and k constant at the
+    800 nm edge value (TiO2 is transparent far below the ~3.2 eV bandgap;
+    k remains near zero).
+    5 nm uniform grid, 300-1000 nm, 141 rows.
+
+glass:
+  source: analytical-Sellmeier
+  reference: "Schott BK7 Sellmeier equation (Schott optical glass datasheet)"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Deterministic Sellmeier dispersion for Schott BK7:
+    n^2 = 1 + B1*L^2/(L^2-C1) + B2*L^2/(L^2-C2) + B3*L^2/(L^2-C3),
+    with L in micrometres and
+    B1=1.03961212, B2=0.231792344, B3=1.01046945,
+    C1=6.00069867e-3 um^2, C2=2.00179144e-2 um^2, C3=1.03560653e2 um^2.
+    k=0 everywhere (BK7 is transparent 300-1000 nm; residual absorption is
+    well below 4-decimal precision).
+    n(550 nm)~1.518, n(1000 nm)~1.508.
+    5 nm uniform grid, 300-1000 nm, 141 rows.
+
+spiro_OMeTAD:
+  source: refractiveindex.info
+  reference: "Filipic et al. 2015, Opt. Express 23, A263"
+  wavelength_range_nm: [300, 1000]
+  notes: >
+    Spiro-OMeTAD HTL. Native 300-800 nm data resampled onto uniform 5 nm
+    grid, then extended 805-1000 nm by holding n and k constant at the
+    800 nm edge value (spiro-OMeTAD is transparent in the NIR; k remains
+    near zero).
+    5 nm uniform grid, 300-1000 nm, 141 rows.
