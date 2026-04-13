@@ -2,7 +2,7 @@ import Plotly from 'plotly.js-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../../plot-theme'
-import type { JVResult, ISResult } from '../../types'
+import type { JVResult, ISResult, DegResult } from '../../types'
 
 export interface MainPlotHandle {
   update(ws: Workspace): void
@@ -46,7 +46,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           renderImpedance(plotEl, run.result.data)
           return
         case 'degradation':
-          clear('(degradation plot in this pane: Task 10)')
+          renderDegradation(plotEl, run.result.data)
           return
       }
     },
@@ -103,5 +103,28 @@ function renderImpedance(el: HTMLElement, r: ISResult): void {
       yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('−Im(Z)  (Ω·m²)'), scaleanchor: 'x' },
     }),
     plotConfig('impedance'),
+  )
+}
+
+function renderDegradation(el: HTMLElement, r: DegResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  const pce0 = r.PCE[0] || 1
+  const normalized = r.PCE.map(p => p / pce0)
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.times, y: normalized, name: 'PCE / PCE₀',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (s)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Normalised PCE') },
+    }),
+    plotConfig('degradation'),
   )
 }
