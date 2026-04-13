@@ -1,3 +1,6 @@
+@import 'golden-layout/dist/css/goldenlayout-base.css';
+@import 'golden-layout/dist/css/themes/goldenlayout-dark-theme.css';
+
 :root {
   --bg: #f5f7fa;
   --card-bg: #ffffff;
