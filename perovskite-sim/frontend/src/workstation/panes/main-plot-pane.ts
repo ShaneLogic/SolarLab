@@ -54,6 +54,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
 }
 
 function renderJV(el: HTMLElement, r: JVResult): void {
+  Plotly.purge(el)
   el.innerHTML = ''
   const J_fwd_mA = r.J_fwd.map(j => j / 10)
   const J_rev_mA = r.J_rev.map(j => j / 10)
