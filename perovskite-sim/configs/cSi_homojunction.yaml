@@ -1,0 +1,56 @@
+# Crystalline-Si p-n homojunction (simplified)
+# n+ emitter / p-base.  D_ion = 0 everywhere (no mobile ions in Si).
+# Reference: Sze & Ng, "Physics of Semiconductor Devices", 3rd ed.
+
+device:
+  V_bi: 0.9
+  Phi: 2.7e21   # AM1.5G above Eg=1.12 eV
+  interfaces:
+    - [1.0e2, 1.0e2]   # n+/p junction: low SRV (bulk-limited Si)
+
+layers:
+  - name: n_emitter
+    role: ETL
+    thickness: 300e-9
+    eps_r: 11.7
+    mu_n: 0.135       # 1350 cm^2/Vs
+    mu_p: 0.048       # 480 cm^2/Vs
+    ni: 1.0e16        # Si at 300K
+    N_D: 1e25         # n+ 1e19 cm^-3
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-6       # degraded in n+ (heavy doping)
+    tau_p: 1e-7
+    n1: 1.0e16
+    p1: 1.0e16
+    B_rad: 1e-20
+    C_n: 2.8e-43      # Auger Cn [m^6/s]
+    C_p: 9.9e-44
+    alpha: 1e6        # weak near front
+    chi: 4.05
+    Eg: 1.12
+
+  - name: p_base
+    role: absorber
+    thickness: 180e-6   # 180 um wafer
+    eps_r: 11.7
+    mu_n: 0.135
+    mu_p: 0.048
+    ni: 1.0e16
+    N_D: 0.0
+    N_A: 1e22           # p 1e16 cm^-3
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-3         # ms-scale minority lifetime
+    tau_p: 1e-3
+    n1: 1.0e16
+    p1: 1.0e16
+    B_rad: 1e-20
+    C_n: 2.8e-43
+    C_p: 9.9e-44
+    alpha: 1e5          # avg absorption 1e3 cm^-1 (indirect)
+    chi: 4.05
+    Eg: 1.12

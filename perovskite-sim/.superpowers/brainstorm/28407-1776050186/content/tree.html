@@ -1,0 +1,58 @@
+<h2>What lives in the project tree?</h2>
+<p class="subtitle">This decides the data model: single-device vs multi-device, whether runs are persistent objects, whether sweeps are first-class.</p>
+
+<div class="options">
+  <div class="option" data-choice="one-device" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>One device, experiments as children, runs stored under each experiment</h3>
+      <pre style="font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.4;margin:8px 0 0;background:rgba(0,0,0,0.25);padding:10px;border-radius:6px;color:#cfe0ff;">
+📦 Session
+└─ 🔬 Device: MAPbI₃ n-i-p
+   ├─ 🧪 J–V Sweep
+   │  ├─ ▶ Run 11:02 (V_oc=1.08)
+   │  └─ ▶ Run 11:15 (V_oc=1.09)
+   ├─ 🧪 Impedance @ 0.9 V
+   │  └─ ▶ Run 11:20
+   └─ 🧪 Degradation 100 s
+      └─ ▶ Run 11:30</pre>
+      <p style="margin-top:10px;">Simplest mental model: one device open at a time, experiments hang off it, every Run button press saves a run you can re-open. Matches how a researcher actually works — one device under study at a time.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="workspace" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Workspace with multiple devices open at once, experiments per device</h3>
+      <pre style="font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.4;margin:8px 0 0;background:rgba(0,0,0,0.25);padding:10px;border-radius:6px;color:#cfe0ff;">
+📦 Workspace
+├─ 🔬 MAPbI₃ baseline
+│  ├─ 🧪 J–V Sweep   ▶ Run 11:02
+│  └─ 🧪 Impedance   ▶ Run 11:15
+├─ 🔬 MAPbI₃ +Cs5%
+│  └─ 🧪 J–V Sweep   ▶ Run 11:30
+└─ 🔬 CIGS baseline
+   └─ 🧪 J–V Sweep   ▶ Run 11:45</pre>
+      <p style="margin-top:10px;">Several devices coexist in the tree so you can flip between them, run the same experiment on each, and compare. This is how Silvaco / Sentaurus projects actually look in practice.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="shallow" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Shallow buckets — Devices, Experiments, Results as three parallel folders</h3>
+      <pre style="font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.4;margin:8px 0 0;background:rgba(0,0,0,0.25);padding:10px;border-radius:6px;color:#cfe0ff;">
+📦 Workspace
+├─ 🔬 Devices
+│  ├─ MAPbI₃ baseline
+│  └─ CIGS baseline
+├─ 🧪 Experiments
+│  ├─ J–V @ 1 V/s
+│  └─ Impedance sweep
+└─ 📊 Results
+   ├─ MAPbI₃ × J–V   (Run 11:02)
+   └─ CIGS × J–V     (Run 11:15)</pre>
+      <p style="margin-top:10px;">Devices and experiments are decoupled — you aim any experiment at any device. Results live in their own folder and cross-reference both. Most flexible for parameter studies but the highest learning curve.</p>
+    </div>
+  </div>
+</div>
