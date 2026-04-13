@@ -2,7 +2,7 @@ import Plotly from 'plotly.js-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../../plot-theme'
-import type { JVResult } from '../../types'
+import type { JVResult, ISResult } from '../../types'
 
 export interface MainPlotHandle {
   update(ws: Workspace): void
@@ -43,7 +43,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           renderJV(plotEl, run.result.data)
           return
         case 'impedance':
-          clear('(impedance plot in this pane: Task 9)')
+          renderImpedance(plotEl, run.result.data)
           return
         case 'degradation':
           clear('(degradation plot in this pane: Task 10)')
@@ -81,5 +81,27 @@ function renderJV(el: HTMLElement, r: JVResult): void {
       yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
     }),
     plotConfig('jv_sweep'),
+  )
+}
+
+function renderImpedance(el: HTMLElement, r: ISResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  const minusImag = r.Z_imag.map(x => -x)
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.Z_real, y: minusImag, name: 'Z',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Re(Z)  (Ω·m²)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('−Im(Z)  (Ω·m²)'), scaleanchor: 'x' },
+    }),
+    plotConfig('impedance'),
   )
 }
