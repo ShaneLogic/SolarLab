@@ -42,10 +42,13 @@ function tierLabel(tier: 'legacy' | 'fast' | 'full'): string {
   return tier.toUpperCase()
 }
 
+// Keep in sync with backend/main.py:_describe_active_physics. FAST today has
+// identical physics flags to LEGACY (see perovskite_sim/models/mode.py), so
+// both tiers advertise the same feature string — do not reintroduce
+// "T-scaling" for FAST until SimulationMode.FAST actually enables it.
 function physicsSummary(tier: 'legacy' | 'fast' | 'full'): string {
   if (tier === 'full') return 'band offsets · TE · TMM · dual ions · T-scaling'
-  if (tier === 'fast') return 'Beer-Lambert · single ion · uniform τ · T-scaling'
-  return 'Beer-Lambert · single ion · uniform τ · T=300K'
+  return 'flat bands · Beer-Lambert · single ion · uniform τ · T=300K'
 }
 
 /** Seed a default device from the shipped ionmonger preset. */
