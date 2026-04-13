@@ -865,3 +865,93 @@ html, body, #app {
 .legacy-section[hidden] {
   display: none;
 }
+
+/* ---- Phase 2 additions ---- */
+
+/* hierarchical tree children */
+.tree-children {
+  margin-left: 1.25rem;
+  border-left: 1px solid var(--border);
+  padding-left: 0.5rem;
+}
+.tree-node-experiment,
+.tree-node-run {
+  font-size: 0.85rem;
+}
+.tree-node-run .tree-icon { color: var(--primary); }
+
+/* main plot pane */
+.main-plot-pane { display: flex; flex-direction: column; height: 100%; padding: 0.75rem; }
+.main-plot-header {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding-bottom: 0.5rem;
+}
+.plot-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 2rem 0;
+  font-style: italic;
+}
+
+/* wizard */
+.wizard-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999;
+}
+.wizard-modal {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 900px;
+  width: 90%;
+  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.25);
+}
+.wizard-modal h2 { margin: 0 0 0.25rem 0; }
+.wizard-subtitle { color: var(--text-muted); margin: 0 0 1.5rem 0; }
+.wizard-tier-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.wizard-card {
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  cursor: pointer;
+  display: flex; flex-direction: column;
+  transition: border-color 0.15s, background 0.15s;
+}
+.wizard-card:has(input:checked) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.wizard-card input { display: none; }
+.wizard-card-title { font-size: 1.2rem; font-weight: 600; }
+.wizard-card-subtitle { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
+.wizard-card-bullets { margin: 0; padding-left: 1.2rem; font-size: 0.85rem; }
+.wizard-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem; }
+.wizard-form-row label { display: flex; flex-direction: column; gap: 0.25rem; }
+.wizard-form-row input, .wizard-form-row select {
+  padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+}
+.wizard-actions { display: flex; justify-content: flex-end; gap: 0.75rem; }
+
+/* tree-node-active now also applies to experiment + run rows */
+.tree-node-run.tree-node-active {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--primary);
+}
+
+/* pane hint */
+.pane-hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  padding-top: 0.5rem;
+}
