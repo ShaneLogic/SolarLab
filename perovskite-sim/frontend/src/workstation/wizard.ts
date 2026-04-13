@@ -13,11 +13,11 @@ const TIER_CARDS: Array<{
   bullets: string[]
 }> = [
   { tier: 'legacy', title: 'Legacy', subtitle: 'IonMonger-compatible',
-    bullets: ['Beer-Lambert optics', 'Single ion species', 'Uniform tau', 'T = 300 K'] },
+    bullets: ['Beer–Lambert optics', 'Single ion species', 'Uniform τ', 'T = 300 K'] },
   { tier: 'fast', title: 'Fast', subtitle: 'Same physics, fast path (today)',
-    bullets: ['Beer-Lambert', 'Single ion species', 'Uniform tau', 'T = 300 K'] },
-  { tier: 'full', title: 'Full', subtitle: 'All Phase 1-4 upgrades',
-    bullets: ['TMM optics', 'Band-offset TE', 'Dual-species ions', 'Trap profile and T-scaling'] },
+    bullets: ['Beer–Lambert', 'Single ion species', 'Uniform τ', 'T = 300 K'] },
+  { tier: 'full', title: 'Full', subtitle: 'All Phase 1–4 upgrades',
+    bullets: ['TMM optics', 'Band-offset TE', 'Dual-species ions', 'Trap profile · T-scaling'] },
 ]
 
 export function buildWizardHTML(presets: ReadonlyArray<string>): string {
