@@ -54,15 +54,16 @@ export function mountDegradationPane(container: HTMLElement, opts: DegradationPa
     startJob('degradation', active.config, params)
       .then(jobId => {
         setStatus('status-deg', 'Running degradation…')
-        streamJobEvents<DegResult>(jobId, {
+        streamJobEvents<DegResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const runResult: RunResult = { kind: 'degradation', data: result }
+            const { active_physics, ...pure } = result as DegResult & { active_physics?: string }
+            const runResult: RunResult = { kind: 'degradation', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: 'unknown',
+              activePhysics: active_physics ?? 'unknown',
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
