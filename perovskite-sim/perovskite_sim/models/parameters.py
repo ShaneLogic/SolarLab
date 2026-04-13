@@ -45,6 +45,10 @@ class MaterialParams:
     # Optical data source for TMM (None = use scalar alpha Beer-Lambert)
     optical_material: str | None = None   # e.g. "MAPbI3", "TiO2", "spiro_OMeTAD"
     n_optical: float | None = None        # constant refractive index (fallback)
+    # Optical coherence flag for TMM. When True, the layer is treated as
+    # incoherent (bulk Beer-Lambert + Fresnel interfaces, no interference).
+    # Must be True for mm-thick substrates; defaults False (coherent).
+    incoherent: bool = False
 
     @property
     def D_n(self) -> float:
