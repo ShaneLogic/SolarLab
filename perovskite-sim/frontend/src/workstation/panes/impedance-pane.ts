@@ -56,15 +56,16 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
     startJob('impedance', active.config, params)
       .then(jobId => {
         setStatus('status-imp', 'Running impedance sweep…')
-        streamJobEvents<ISResult>(jobId, {
+        streamJobEvents<ISResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const runResult: RunResult = { kind: 'impedance', data: result }
+            const { active_physics, ...pure } = result as ISResult & { active_physics?: string }
+            const runResult: RunResult = { kind: 'impedance', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: 'unknown',
+              activePhysics: active_physics ?? 'unknown',
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
