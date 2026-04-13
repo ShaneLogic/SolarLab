@@ -1,0 +1,77 @@
+<h2>How should the workstation be divided into panes?</h2>
+<p class="subtitle">Three honest options. All keep the project tree on the left. The difference is how the centre and right-hand-side work.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="fixed-grid" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="font-size:10px;padding:4px;">
+        <div class="mockup-header">Fixed 3-region layout</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:80px 1fr 1fr;grid-template-rows:1fr 1fr 40px;gap:3px;height:200px;">
+            <div class="mock-sidebar" style="grid-row:1/4;">Tree</div>
+            <div class="placeholder" style="grid-column:2/3;grid-row:1/2;">Device editor / parameter form</div>
+            <div class="placeholder" style="grid-column:3/4;grid-row:1/2;">Main plot (J–V / Nyquist / ...)</div>
+            <div class="placeholder" style="grid-column:2/3;grid-row:2/3;">Band diagram / density profile</div>
+            <div class="placeholder" style="grid-column:3/4;grid-row:2/3;">Metric cards + run info</div>
+            <div class="mock-nav" style="grid-column:2/4;grid-row:3/4;font-size:9px;">Solver console · Radau 247 steps · V_oc=1.08V · done in 12.3s</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Fixed grid</h3>
+      <p>Always the same regions in the same spots: tree left, editor top-centre, plot top-right, secondary view bottom-centre, metrics bottom-right, solver console as a strip along the bottom. Resizable splitters between them, but you can't tear a pane off or hide regions.</p>
+      <p><strong>Feels like:</strong> early TCAD, SCAPS's results window, MATLAB's built-in layout.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="dockable" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="font-size:10px;padding:4px;">
+        <div class="mockup-header">Dockable panes with tabs</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:3px;height:200px;">
+            <div class="mock-sidebar" style="min-width:60px;">Tree</div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:3px;">
+              <div class="mock-nav" style="font-size:9px;">[Editor] [J–V Plot] [Band Diagram ×]</div>
+              <div class="placeholder" style="flex:1;">Active tab fills the area — drag a tab to split</div>
+              <div style="display:flex;gap:3px;height:60px;">
+                <div class="placeholder" style="flex:1;font-size:9px;">Metric cards</div>
+                <div class="placeholder" style="flex:1;font-size:9px;">Properties inspector</div>
+              </div>
+              <div class="mock-nav" style="font-size:9px;">Solver console (collapsible)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Dockable / tabbed panes</h3>
+      <p>Central area is a VS-Code-style tab/split region. Panes can be dragged to split horizontally or vertically, closed, or stacked as tabs. Bottom console and right-hand inspector are collapsible. Layout is saved per workspace.</p>
+      <p><strong>Feels like:</strong> Silvaco DeckBuild, Sentaurus Workbench, VS Code, Lumerical.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="three-column" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="font-size:10px;padding:4px;">
+        <div class="mockup-header">Three-column focused</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:70px 1fr 1.2fr;grid-template-rows:1fr 38px;gap:3px;height:200px;">
+            <div class="mock-sidebar" style="grid-row:1/3;">Tree</div>
+            <div class="placeholder" style="grid-column:2/3;grid-row:1/2;">Device editor · experiment controls · metadata (one single scrollable column)</div>
+            <div class="placeholder" style="grid-column:3/4;grid-row:1/2;">Results area — stacked plots (J–V + band diagram + density), click to expand any plot to full-width.</div>
+            <div class="mock-nav" style="grid-column:2/4;grid-row:2/3;font-size:9px;">Solver console (always visible bottom strip)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Three-column focused</h3>
+      <p>Tree · Config · Results. No secondary grid — the config column is one long scrollable form (device + experiment + metadata), and the results column stacks plots vertically with click-to-expand. Solver console is a thin always-visible strip at the bottom.</p>
+      <p><strong>Feels like:</strong> Jupyter Lab, modern cloud-based simulators, Driftfusion Web. Pragmatic middle ground.</p>
+    </div>
+  </div>
+
+</div>
