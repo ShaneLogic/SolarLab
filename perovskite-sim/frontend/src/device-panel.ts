@@ -1,10 +1,14 @@
 import { listConfigs, getConfig } from './api'
 import { renderDeviceEditor, readDeviceEditor } from './config-editor'
-import type { DeviceConfig } from './types'
+import type { DeviceConfig, SimulationModeName } from './types'
 
 export interface DevicePanel {
   getConfig(): DeviceConfig
   onChange(cb: (cfg: DeviceConfig) => void): void
+}
+
+export interface MountDevicePanelOptions {
+  tier?: SimulationModeName
 }
 
 // Shared device editor per tab. Fetches the YAML from the backend so the
@@ -12,7 +16,9 @@ export interface DevicePanel {
 export async function mountDevicePanel(
   root: HTMLElement,
   tabId: string,
+  options: MountDevicePanelOptions = {},
 ): Promise<DevicePanel> {
+  const { tier } = options
   root.innerHTML = `
     <div class="card">
       <div class="card-header">
@@ -42,7 +48,7 @@ export async function mountDevicePanel(
     const cfg = await getConfig(name)
     pristine = structuredClone(cfg)
     current = cfg
-    renderDeviceEditor(editor, cfg)
+    renderDeviceEditor(editor, cfg, tier)
     listeners.forEach(l => l(cfg))
   }
 
@@ -50,7 +56,7 @@ export async function mountDevicePanel(
   resetBtn.addEventListener('click', () => {
     if (pristine) {
       current = structuredClone(pristine)
-      renderDeviceEditor(editor, current)
+      renderDeviceEditor(editor, current, tier)
     }
   })
 

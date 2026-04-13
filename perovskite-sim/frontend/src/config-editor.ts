@@ -1,4 +1,5 @@
 import type { DeviceConfig, LayerConfig, SimulationModeName } from './types'
+import { isFieldVisible } from './workstation/tier-gating'
 
 const MODE_OPTIONS: ReadonlyArray<{ value: SimulationModeName; label: string }> = [
   { value: 'full', label: 'Full (all physics upgrades)' },
@@ -73,9 +74,13 @@ function numAttr(id: string, value: unknown): string {
   return `<input type="text" class="num-input" id="${id}" value="${fmt(value)}" spellcheck="false">`
 }
 
-function renderLayer(layer: LayerConfig, idx: number): string {
+function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName): string {
   const groups = LAYER_GROUPS.map(group => {
-    const rows = group.fields.map(f => {
+    const visibleFields = tier
+      ? group.fields.filter(f => isFieldVisible(String(f.key), tier))
+      : group.fields
+    if (visibleFields.length === 0) return ''
+    const rows = visibleFields.map(f => {
       const id = `layer-${idx}-${String(f.key)}`
       const unit = f.unit ? `<span class="unit">${f.unit}</span>` : ''
       return `
@@ -140,10 +145,20 @@ function renderModeOptions(current: SimulationModeName): string {
     .join('')
 }
 
-export function renderDeviceEditor(container: HTMLElement, config: DeviceConfig): void {
-  const layers = config.layers.map(renderLayer).join('')
+export function renderDeviceEditor(
+  container: HTMLElement,
+  config: DeviceConfig,
+  tier?: SimulationModeName,
+): void {
+  const layers = config.layers.map((layer, idx) => renderLayer(layer, idx, tier)).join('')
   const currentMode: SimulationModeName = isModeName(config.device.mode) ? config.device.mode : 'full'
   const currentT = config.device.T ?? 300
+  const showT = !tier || isFieldVisible('T', tier)
+  const tField = showT ? `
+          <label class="param">
+            <span class="param-label"><span class="sym"><i>T</i></span><span class="unit">K</span></span>
+            ${numAttr('dev-T', currentT)}
+          </label>` : ''
   container.innerHTML = `
     <div class="editor">
       <div class="param-group">
@@ -152,11 +167,7 @@ export function renderDeviceEditor(container: HTMLElement, config: DeviceConfig)
           <label class="param">
             <span class="param-label"><span class="sym">Mode</span></span>
             <select class="num-input" id="dev-mode">${renderModeOptions(currentMode)}</select>
-          </label>
-          <label class="param">
-            <span class="param-label"><span class="sym"><i>T</i></span><span class="unit">K</span></span>
-            ${numAttr('dev-T', currentT)}
-          </label>
+          </label>${tField}
           <label class="param">
             <span class="param-label"><span class="sym"><i>V</i><sub>bi</sub></span><span class="unit">V</span></span>
             ${numAttr('dev-Vbi', config.device.V_bi)}
