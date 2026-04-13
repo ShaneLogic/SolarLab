@@ -28,25 +28,16 @@ def _describe_active_physics(stack) -> str:
     """
     mode_name = str(getattr(stack, "mode", "full")).lower()
     mode = resolve_mode(mode_name)
-    if mode_name == "legacy":
-        return "LEGACY  Beer-Lambert · single ion · uniform τ · T=300K"
-    if mode_name == "fast":
-        return "FAST  Beer-Lambert · single ion · uniform τ · T-scaling"
-    # full (or any unrecognised-but-valid mode falls through to full defaults)
-    parts = []
-    if mode.use_thermionic_emission:
-        parts.append("band offsets · TE")
-    if mode.use_tmm_optics:
-        parts.append("TMM")
-    else:
-        parts.append("Beer-Lambert")
-    if mode.use_dual_ions:
-        parts.append("dual ions")
-    if mode.use_trap_profile:
-        parts.append("trap profile")
-    if mode.use_temperature_scaling:
-        parts.append("T-scaling")
-    return "FULL  " + " · ".join(parts)
+    # Drive every label fragment off the mode flags so the indicator can't
+    # silently drift from the physics that actually ran.
+    parts: list[str] = [
+        "band offsets · TE" if mode.use_thermionic_emission else "flat bands",
+        "TMM" if mode.use_tmm_optics else "Beer-Lambert",
+        "dual ions" if mode.use_dual_ions else "single ion",
+        "trap profile" if mode.use_trap_profile else "uniform τ",
+        "T-scaling" if mode.use_temperature_scaling else "T=300K",
+    ]
+    return f"{mode.name.upper()}  " + " · ".join(parts)
 
 
 _JOB_REGISTRY = JobRegistry()

@@ -53,3 +53,8 @@ def test_fast_mode_string_is_distinct_from_full_and_legacy():
     # fast should not claim full-only features
     assert "TMM" not in s
     assert "dual ions" not in s
+    # FAST currently has use_temperature_scaling=False (see mode.py), so the
+    # label must not advertise T-scaling — regression guard for the drift
+    # between mode.FAST flags and the displayed string.
+    assert "T-scaling" not in s
+    assert "T=300K" in s
