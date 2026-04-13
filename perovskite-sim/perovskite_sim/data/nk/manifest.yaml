@@ -24,11 +24,14 @@ FTO:
     Synthetic data generated via single Drude + single Lorentz oscillator model.
     eps(omega) = eps_inf - omega_p^2/(omega^2 + i*gamma_D*omega)
                 + f_L*omega_0^2/(omega_0^2 - omega^2 - i*gamma_L*omega).
-    Parameters: eps_inf=3.60, omega_p=7.799e14 rad/s (N=2e26 m^-3, m_eff=0.29*m0,
-    mu=20 cm^2/Vs), gamma_D=3.028e14 rad/s, Lorentz resonance omega_0=7.5e15 rad/s
-    (~251 nm, above SnO2 direct bandgap ~344 nm), gamma_L=4e14 rad/s, f_L=0.6.
-    Produces n=2.02-2.36, k=0.006-0.063 across 300-1000 nm, consistent with
-    literature values for PSC-grade FTO (n~2.0-2.1 in visible). The Filipic 2015
-    Opt. Express file is not present in refractiveindex.info database; this
-    synthetic model is the approved fallback per the task specification.
+    Parameters: eps_inf=3.60, omega_p=1.9e15 rad/s, gamma_D=5.0e14 rad/s,
+    Lorentz resonance omega_0=7.5e15 rad/s (~251 nm, above SnO2 direct bandgap
+    ~344 nm), gamma_L=4e14 rad/s, f_L=0.6. Drude parameters retuned (2025-04)
+    to reproduce realistic free-carrier (near-IR) absorption: k(1000 nm)~0.072,
+    consistent with literature FTO at typical PSC doping levels (k~0.05-0.10 at
+    1000 nm). Produces n=1.82-2.34, k=0.017-0.065 across 300-1000 nm.
+    Key values: n(550 nm)=2.014, k(550 nm)=0.017, k(300 nm)=0.065,
+    k(800 nm)=0.038, k(1000 nm)=0.072. The Filipic 2015 Opt. Express file is
+    not present in refractiveindex.info database; this synthetic model is the
+    approved fallback per the task specification.
     5 nm uniform grid, 300-1000 nm, 141 data rows.
