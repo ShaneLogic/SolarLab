@@ -17,7 +17,7 @@ from perovskite_sim.physics.poisson import (
 from perovskite_sim.physics.continuity import carrier_continuity_rhs
 from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import DeviceStack, electrical_layers
 
 from perovskite_sim.physics.recombination import interface_recombination
 from perovskite_sim.physics.temperature import (
@@ -140,13 +140,20 @@ def _compute_tmm_generation(
     stack: DeviceStack,
     n_wavelengths: int = 200,
     lam_min: float = 300.0,
-    lam_max: float = 800.0,
+    lam_max: float = 1000.0,
 ) -> np.ndarray | None:
     """Compute TMM generation profile if any layer has optical material data.
 
     Returns G(x) [m^-3 s^-1] or None if no layers have optical data.
     The computation runs once during build_material_arrays and the result
     is cached in MaterialArrays.G_optical.
+
+    TMM sees the *full* stack (including role=="substrate" layers) so the
+    Fresnel chain and thin-film interference are correct. The electrical
+    grid ``x`` only covers the non-substrate layers, so we shift it by the
+    cumulative substrate thickness before querying ``tmm_generation``;
+    ``tmm_absorption_profile`` routes each query to the right layer via
+    ``layer_boundaries``.
     """
     has_optical = any(
         layer.params is not None and layer.params.optical_material is not None
@@ -164,7 +171,7 @@ def _compute_tmm_generation(
     # Load AM1.5G spectrum
     _, spectral_flux = load_am15g(wavelengths_nm)
 
-    # Build TMM layers
+    # Build TMM layers from the FULL stack (substrate included).
     tmm_layers: list[TMMLayer] = []
     for layer in stack.layers:
         p = layer.params
@@ -179,15 +186,29 @@ def _compute_tmm_generation(
             # Fallback: estimate n from eps_r, k from alpha
             n_arr = np.full(n_wavelengths, np.sqrt(p.eps_r))
             k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
-        tmm_layers.append(TMMLayer(d=layer.thickness, n=n_arr, k=k_arr))
+        tmm_layers.append(
+            TMMLayer(
+                d=layer.thickness,
+                n=n_arr,
+                k=k_arr,
+                incoherent=bool(getattr(p, "incoherent", False)),
+            )
+        )
 
-    # Layer boundaries for spatial mapping
+    # Layer boundaries for spatial mapping (full stack).
     boundaries = np.zeros(len(stack.layers) + 1)
     for i, layer in enumerate(stack.layers):
         boundaries[i + 1] = boundaries[i] + layer.thickness
 
+    # Shift electrical x by the cumulative substrate thickness so the
+    # queries land inside the post-substrate thin films.
+    substrate_offset = sum(
+        l.thickness for l in stack.layers if l.role == "substrate"
+    )
+    x_tmm = x + substrate_offset
+
     G = tmm_generation(
-        tmm_layers, wavelengths_m, spectral_flux, x, boundaries,
+        tmm_layers, wavelengths_m, spectral_flux, x_tmm, boundaries,
     )
     return G
 
@@ -239,8 +260,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         T_dev = 300.0
         V_T_dev = _V_T_300
 
+    elec_layers = electrical_layers(stack)
+
     offset = 0.0
-    for layer in stack.layers:
+    for layer in elec_layers:
         mask = (x >= offset - 1e-12) & (x <= offset + layer.thickness + 1e-12)
         p = layer.params
         eps_r[mask] = p.eps_r
@@ -320,7 +343,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     # Interface nodes: grid index closest to each internal interface.
     iface_list: list[int] = []
     offset = 0.0
-    for layer in stack.layers[:-1]:
+    for layer in elec_layers[:-1]:
         offset += layer.thickness
         iface_list.append(int(np.argmin(np.abs(x - offset))))
 
@@ -349,8 +372,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             n_val = ni_val ** 2 / p_val
         return float(n_val), float(p_val)
 
-    first = stack.layers[0].params
-    last = stack.layers[-1].params
+    first = elec_layers[0].params
+    last = elec_layers[-1].params
     n_L, p_L = _equilibrium_np(first.N_D, first.N_A, first.ni)
     n_R, p_R = _equilibrium_np(last.N_D, last.N_A, last.ni)
 

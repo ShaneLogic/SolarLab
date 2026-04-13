@@ -69,6 +69,16 @@ class DeviceStack:
         return e_f_left - e_f_right
 
 
+def electrical_layers(stack: "DeviceStack") -> tuple["LayerSpec", ...]:
+    """Return layers that participate in the drift-diffusion solve.
+
+    Layers with role == "substrate" are optical-only and skipped. The TMM
+    optical path still walks stack.layers (full list); only the electrical
+    path uses this filtered view.
+    """
+    return tuple(l for l in stack.layers if l.role != "substrate")
+
+
 def _fermi_level(p: MaterialParams) -> float:
     """Compute the Fermi level (in eV, referenced to vacuum) for a layer.
 

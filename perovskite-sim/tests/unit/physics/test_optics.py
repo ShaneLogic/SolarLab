@@ -295,3 +295,47 @@ def test_incoherent_not_first_raises():
     ]
     with pytest.raises(ValueError, match="first layer"):
         _transfer_matrix_stack(bad, wl)
+
+
+def test_tmm_generation_maps_back_to_electrical_grid():
+    """_compute_tmm_generation must return G array sized to the electrical grid.
+
+    TMM walks the full stack (substrate + absorber) but returns G(x) on the
+    electrical grid, which only covers the non-substrate layers.
+    """
+    from dataclasses import replace
+
+    from perovskite_sim.solver.mol import _compute_tmm_generation
+    from perovskite_sim.models.device import (
+        DeviceStack,
+        LayerSpec,
+        electrical_layers,
+    )
+    from perovskite_sim.models.parameters import MaterialParams
+    from perovskite_sim.discretization.grid import multilayer_grid, Layer
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    real = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    absorber_params = replace(real.layers[1].params, optical_material="MAPbI3")
+
+    glass_p = MaterialParams(
+        eps_r=2.25, mu_n=0.0, mu_p=0.0, D_ion=0.0,
+        P_lim=1e30, P0=0.0,
+        ni=1.0, tau_n=1e-9, tau_p=1e-9, n1=1.0, p1=1.0,
+        B_rad=0.0, C_n=0.0, C_p=0.0, alpha=0.0, N_A=0.0, N_D=0.0,
+        optical_material="glass", incoherent=True,
+    )
+    stack = DeviceStack(layers=(
+        LayerSpec("glass", 1.0e-3, glass_p, "substrate"),
+        LayerSpec("MAPbI3", 400e-9, absorber_params, "absorber"),
+    ))
+
+    elec = electrical_layers(stack)
+    layers_grid = [Layer(l.thickness, 30) for l in elec]
+    x = multilayer_grid(layers_grid)
+    G = _compute_tmm_generation(x, stack)
+
+    assert G is not None
+    assert G.shape == x.shape
+    assert np.all(G >= 0.0)
+    assert G.max() > 1e24
