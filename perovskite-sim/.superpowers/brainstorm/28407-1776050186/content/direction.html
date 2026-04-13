@@ -1,0 +1,77 @@
+<h2>Which "professional device simulator" archetype feels right?</h2>
+<p class="subtitle">These three directions exist in the wild. Pick the one closest to what you have in mind — we'll refine from there.</p>
+
+<div class="cards">
+  <div class="card" data-choice="workstation" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="font-size:10px;padding:4px;">
+        <div class="mockup-header">Workstation (Silvaco / Sentaurus / TCAD)</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:4px;">
+            <div class="mock-sidebar" style="min-width:60px;">Project Tree<br>• Devices<br>• Solvers<br>• Results</div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
+              <div class="mock-nav">File Edit Run Tools Window Help</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+                <div class="placeholder">Device cross-section</div>
+                <div class="placeholder">Parameter inspector</div>
+                <div class="placeholder">J(V) plot</div>
+                <div class="placeholder">Band diagram</div>
+              </div>
+              <div class="mock-nav" style="font-size:9px;">Console: solved in 12.3s | 247 Radau steps | V_oc=1.08V</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Workstation</h3>
+      <p>Multi-pane IDE layout. Project tree on the left, multiple result views tiled on the right, persistent console / solver log. Device is a first-class object you configure once, then run many experiments against.</p>
+      <p><strong>Feels like:</strong> TCAD, Silvaco ATLAS, Sentaurus, Lumerical CHARGE</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="notebook" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="font-size:10px;padding:4px;">
+        <div class="mockup-header">Notebook (SCAPS-1D / PC1D modernised)</div>
+        <div class="mockup-body">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div class="mock-nav">Device | J–V | Impedance | Degradation | Optics</div>
+            <div class="placeholder" style="height:50px;">Big device schematic with labelled layers</div>
+            <div style="display:grid;grid-template-columns:1fr 2fr;gap:4px;">
+              <div class="placeholder">Parameter form<br>(dense, structured)</div>
+              <div class="placeholder">Result plot + metric cards</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Structured Notebook</h3>
+      <p>Keep the tab metaphor but make it feel like a real lab notebook. Big visual device schematic with clickable layers, experiments as tabs, each experiment shows its parameters alongside its results. Device state is shared across tabs.</p>
+      <p><strong>Feels like:</strong> SCAPS-1D, modern PC1D, SolarCellSimu, AFORS-HET</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="studio" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="font-size:10px;padding:4px;">
+        <div class="mockup-header">Studio (COMSOL / Driftfusion Web)</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:4px;">
+            <div class="mock-sidebar" style="min-width:50px;">Study<br>Steps<br>▸ Setup<br>▸ Physics<br>▸ Mesh<br>▸ Solve<br>▸ Results</div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
+              <div class="placeholder" style="height:80px;">Active step editor (full-width, one job at a time)</div>
+              <div class="mock-nav" style="font-size:9px;">Run history: 1.08V · 1.09V · 1.07V (click to restore)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Study Studio</h3>
+      <p>Linear wizard-style workflow: Setup → Physics → Mesh → Solve → Results, with run history and parameter sweeps as first-class objects. No tabs — one active step at a time, but nothing gets lost.</p>
+      <p><strong>Feels like:</strong> COMSOL Model Builder, Driftfusion Web, Ansys Granta</p>
+    </div>
+  </div>
+</div>

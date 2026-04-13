@@ -9,7 +9,7 @@ from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import run_transient, build_material_arrays
-from perovskite_sim.experiments.jv_sweep import _compute_current
+from perovskite_sim.experiments.jv_sweep import _compute_current, _total_current_faces
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,8 @@ def run_impedance(
 
     layers_grid = [Layer(l.thickness, N_grid // len(stack.layers)) for l in stack.layers]
     x = multilayer_grid(layers_grid)
+    dx_faces = np.diff(x)
+    L_total = float(x[-1] - x[0])
     # Build the material cache once — reused across every frequency and
     # every RHS call inside each frequency's transient.
     mat = build_material_arrays(x, stack)
@@ -70,7 +72,7 @@ def run_impedance(
     y_dc = solve_illuminated_ss(x, stack, V_app=V_dc, rtol=rtol, atol=atol)
 
     Z_arr = np.zeros(len(frequencies), dtype=complex)
-    pts_per_cycle = 20  # integer pts per cycle ⇒ last cycle spans an exact period
+    pts_per_cycle = 40  # integer pts per cycle ⇒ last cycle spans an exact period
     for k, f in enumerate(frequencies):
         T_period = 1.0 / f
         dt = T_period / pts_per_cycle
@@ -82,6 +84,7 @@ def run_impedance(
 
         y = y_dc.copy()
         J_t = np.zeros(n_intervals, dtype=float)
+        V_prev = V_dc
         for i in range(n_intervals):
             t_lo, t_hi = t_eval[i], t_eval[i + 1]
             V_i = V_ac(0.5 * (t_lo + t_hi))
@@ -98,7 +101,16 @@ def run_impedance(
             if not sol.success:
                 raise RuntimeError(f"impedance transient failed at f={f:.3e} Hz, step {i}")
             y = sol.y[:, -1]
-            J_t[i] = _compute_current(x, y, stack, V_i, y_prev=y_prev, dt=t_hi - t_lo, mat=mat)
+            # Spatial average of the full-device total (conduction + displacement)
+            # current. By 1D current continuity the AC component is essentially
+            # space-uniform, and averaging removes the boundary-face quantization
+            # noise that otherwise dominates the capacitive signal at face 0.
+            J_face = _total_current_faces(
+                x, y, stack, V_i, y_prev=y_prev, dt=t_hi - t_lo, mat=mat,
+                V_app_prev=V_prev,
+            )
+            J_t[i] = float(np.sum(J_face * dx_faces) / L_total)
+            V_prev = V_i
 
         # Lock-in over the last full cycle. pts_per_cycle samples cover exactly
         # one period, so sin/cos references integrate to zero on any DC term —
@@ -112,9 +124,11 @@ def run_impedance(
         I_in = 2.0 * np.mean(I_ac * sin_ref)
         I_quad = 2.0 * np.mean(I_ac * cos_ref)
 
-        # Excitation ∝ sin(ωt); capacitive devices give Im(Z) < 0, so the
-        # cosine lock-in term enters the phasor with a minus sign.
-        delta_I = I_in - 1j * I_quad
+        # Excitation V(t) = δV·sin(ωt) ⇒ V̂ = δV (imag-part phasor convention,
+        # V(t) = Im[V̂ e^{jωt}]). For I(t) = I_in·sin + I_quad·cos,
+        # Î = I_in + j·I_quad, so Z = δV / (I_in + j·I_quad). A pure capacitor
+        # has I_quad > 0 and yields Im(Z) = −1/(ωC) < 0, as required.
+        delta_I = I_in + 1j * I_quad
         Z_arr[k] = delta_V / delta_I if abs(delta_I) > 0 else complex(np.inf, 0)
 
         if progress is not None:

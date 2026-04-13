@@ -20,6 +20,26 @@ from perovskite_sim.models.parameters import MaterialParams
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
 
+def _describe_active_physics(stack) -> str:
+    """Return a short human-readable description of the active physics tier.
+
+    Used by the SSE result payload so the frontend solver console can
+    show which Phase 1-4 upgrades ran without re-deriving the flags.
+    """
+    mode_name = str(getattr(stack, "mode", "full")).lower()
+    mode = resolve_mode(mode_name)
+    # Drive every label fragment off the mode flags so the indicator can't
+    # silently drift from the physics that actually ran.
+    parts: list[str] = [
+        "band offsets · TE" if mode.use_thermionic_emission else "flat bands",
+        "TMM" if mode.use_tmm_optics else "Beer-Lambert",
+        "dual ions" if mode.use_dual_ions else "single ion",
+        "trap profile" if mode.use_trap_profile else "uniform τ",
+        "T-scaling" if mode.use_temperature_scaling else "T=300K",
+    ]
+    return f"{mode.name.upper()}  " + " · ".join(parts)
+
+
 _JOB_REGISTRY = JobRegistry()
 
 
@@ -284,7 +304,9 @@ def start_job(req: JobRequest):
                 V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
-            return to_serializable(result)
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
     elif kind == "impedance":
         def _run(reporter: ProgressReporter) -> dict:
             freqs = np.logspace(
@@ -304,6 +326,7 @@ def start_job(req: JobRequest):
                 out["Z_real"] = Z.real.tolist()
                 out["Z_imag"] = Z.imag.tolist()
                 del out["Z"]
+            out["active_physics"] = _describe_active_physics(stack)
             return out
     elif kind == "degradation":
         def _run(reporter: ProgressReporter) -> dict:
@@ -320,6 +343,7 @@ def start_job(req: JobRequest):
             out = to_serializable(result)
             if "t" in out:
                 out["times"] = out.pop("t")
+            out["active_physics"] = _describe_active_physics(stack)
             return out
     else:
         raise HTTPException(status_code=400, detail=f"unknown kind: {kind}")
