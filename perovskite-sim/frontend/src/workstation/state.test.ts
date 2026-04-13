@@ -7,8 +7,11 @@ import {
   saveWorkspace,
   loadWorkspace,
   STORAGE_KEY,
+  addExperiment,
+  removeExperiment,
+  setActiveExperiment,
 } from './state'
-import type { Device } from './types'
+import type { Device, Experiment } from './types'
 
 function makeDevice(id: string, name = 'Test'): Device {
   return {
@@ -18,6 +21,10 @@ function makeDevice(id: string, name = 'Test'): Device {
     config: { device: { V_bi: 1.1, Phi: 1.4e21 }, layers: [] },
     experiments: [],
   }
+}
+
+function makeExperiment(id: string, kind: 'jv' | 'impedance' | 'degradation' = 'jv'): Experiment {
+  return { id, kind, params: {}, runs: [] }
 }
 
 describe('createEmptyWorkspace', () => {
@@ -119,5 +126,63 @@ describe('saveWorkspace / loadWorkspace', () => {
   it('returns null when the stored blob is not JSON', () => {
     localStorage.setItem(STORAGE_KEY, 'not json')
     expect(loadWorkspace()).toBeNull()
+  })
+})
+
+describe('addExperiment', () => {
+  it('appends experiment to the named device, leaves other devices alone', () => {
+    let ws = createEmptyWorkspace('W')
+    ws = addDevice(ws, makeDevice('d1'))
+    ws = addDevice(ws, makeDevice('d2'))
+    const next = addExperiment(ws, 'd1', makeExperiment('e1'))
+    expect(next.devices.find(d => d.id === 'd1')!.experiments).toHaveLength(1)
+    expect(next.devices.find(d => d.id === 'd2')!.experiments).toHaveLength(0)
+  })
+
+  it('is a no-op when the device id is unknown', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    const next = addExperiment(ws, 'unknown', makeExperiment('e1'))
+    expect(next).toBe(ws)
+  })
+
+  it('returns a new workspace reference (immutability)', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    const next = addExperiment(ws, 'd1', makeExperiment('e1'))
+    expect(next).not.toBe(ws)
+    expect(ws.devices[0].experiments).toHaveLength(0)
+  })
+})
+
+describe('removeExperiment', () => {
+  it('removes the experiment from its device', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e2'))
+    const next = removeExperiment(ws, 'd1', 'e1')
+    expect(next.devices[0].experiments.map(e => e.id)).toEqual(['e2'])
+  })
+
+  it('clears activeExperimentId when the removed experiment was active', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    ws = setActiveExperiment(ws, 'd1', 'e1')
+    const next = removeExperiment(ws, 'd1', 'e1')
+    expect(next.activeExperimentId).toBeNull()
+  })
+})
+
+describe('setActiveExperiment', () => {
+  it('sets both activeDeviceId and activeExperimentId', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    const next = setActiveExperiment(ws, 'd1', 'e1')
+    expect(next.activeDeviceId).toBe('d1')
+    expect(next.activeExperimentId).toBe('e1')
+  })
+
+  it('is a no-op when device or experiment id is unknown', () => {
+    const ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    expect(setActiveExperiment(ws, 'd1', 'missing')).toBe(ws)
+    expect(setActiveExperiment(ws, 'missing', 'e1')).toBe(ws)
   })
 })
