@@ -80,8 +80,13 @@ function randomExperimentId(): string {
 export async function mountWorkstation(root: HTMLElement): Promise<void> {
   root.innerHTML = `
     <header class="workstation-header">
-      <h1>Thin-Film Solar Cell Simulator</h1>
-      <p class="subtitle">1D Drift-Diffusion + Poisson + Mobile Ions · Perovskite · CIGS · c-Si</p>
+      <div>
+        <h1>Thin-Film Solar Cell Simulator</h1>
+        <p class="subtitle">1D Drift-Diffusion + Poisson + Mobile Ions · Perovskite · CIGS · c-Si</p>
+      </div>
+      <div class="workstation-header-actions">
+        <button type="button" class="btn btn-ghost" id="ws-reset-layout" title="Restore all panes to the default dock layout">Reset Layout</button>
+      </div>
     </header>
     <div class="workstation-body">
       <aside class="workstation-sidebar" id="ws-tree"></aside>
@@ -243,6 +248,15 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     console.error('loadLayout failed, falling back to default:', e)
     layout.loadLayout(DEFAULT_LAYOUT)
   }
+
+  // Reset Layout — restore the default dock so closed panes come back.
+  const resetBtn = root.querySelector<HTMLButtonElement>('#ws-reset-layout')
+  resetBtn?.addEventListener('click', () => {
+    layout.loadLayout(DEFAULT_LAYOUT)
+    workspace = { ...workspace, layout: null }
+    saveWorkspace(workspace)
+    requestAnimationFrame(() => layout.setSize(dockEl.clientWidth, dockEl.clientHeight))
+  })
 
   // Persist layout changes
   layout.on('stateChanged', () => {

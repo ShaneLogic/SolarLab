@@ -663,6 +663,14 @@ html, body, #app {
   background: var(--card-bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.workstation-header-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 .workstation-header h1 {
   margin: 0;
