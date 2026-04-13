@@ -1,4 +1,4 @@
-import type { Device, Workspace } from './types'
+import type { Device, Experiment, Workspace } from './types'
 
 export const STORAGE_KEY = 'solarsim:workspace:v1'
 
@@ -61,4 +61,61 @@ export function loadWorkspace(): Workspace | null {
   } catch {
     return null
   }
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+function mapDevice(
+  ws: Workspace,
+  deviceId: string,
+  fn: (d: Device) => Device,
+): Workspace {
+  const idx = ws.devices.findIndex(d => d.id === deviceId)
+  if (idx < 0) return ws
+  const devices = ws.devices.map((d, i) => (i === idx ? fn(d) : d))
+  return { ...ws, devices }
+}
+
+// ---------------------------------------------------------------------------
+// Experiment-level state operations
+// ---------------------------------------------------------------------------
+
+export function addExperiment(
+  ws: Workspace,
+  deviceId: string,
+  experiment: Experiment,
+): Workspace {
+  return mapDevice(ws, deviceId, d => ({
+    ...d,
+    experiments: [...d.experiments, experiment],
+  }))
+}
+
+export function removeExperiment(
+  ws: Workspace,
+  deviceId: string,
+  experimentId: string,
+): Workspace {
+  const next = mapDevice(ws, deviceId, d => ({
+    ...d,
+    experiments: d.experiments.filter(e => e.id !== experimentId),
+  }))
+  if (next.activeExperimentId === experimentId) {
+    return { ...next, activeExperimentId: null, activeRunId: null }
+  }
+  return next
+}
+
+export function setActiveExperiment(
+  ws: Workspace,
+  deviceId: string,
+  experimentId: string,
+): Workspace {
+  const dev = ws.devices.find(d => d.id === deviceId)
+  if (!dev) return ws
+  if (!dev.experiments.some(e => e.id === experimentId)) return ws
+  if (ws.activeDeviceId === deviceId && ws.activeExperimentId === experimentId) return ws
+  return { ...ws, activeDeviceId: deviceId, activeExperimentId: experimentId, activeRunId: null }
 }
