@@ -6,6 +6,7 @@ declare module 'plotly.js-dist-min' {
       layout?: Record<string, unknown>,
       config?: Record<string, unknown>,
     ): Promise<void>
+    purge(root: string | HTMLElement): void
   }
   export default Plotly
 }
