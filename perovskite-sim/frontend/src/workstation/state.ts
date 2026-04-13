@@ -14,6 +14,8 @@ export function createEmptyWorkspace(name: string): Workspace {
     name,
     devices: [],
     activeDeviceId: null,
+    activeExperimentId: null,
+    activeRunId: null,
     layout: null,
   }
 }

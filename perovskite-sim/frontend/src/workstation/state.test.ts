@@ -27,6 +27,8 @@ describe('createEmptyWorkspace', () => {
     expect(ws.name).toBe('My Workspace')
     expect(ws.devices).toEqual([])
     expect(ws.activeDeviceId).toBeNull()
+    expect(ws.activeExperimentId).toBeNull()
+    expect(ws.activeRunId).toBeNull()
     expect(ws.layout).toBeNull()
     expect(typeof ws.id).toBe('string')
     expect(ws.id.length).toBeGreaterThan(0)

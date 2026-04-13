@@ -9,6 +9,10 @@ export interface Workspace {
   devices: Device[]
   /** ID of the currently-selected device, or null for "nothing selected". */
   activeDeviceId: string | null
+  /** ID of the currently-selected experiment within the active device, or null. */
+  activeExperimentId: string | null
+  /** ID of the currently-selected run within the active experiment, or null. */
+  activeRunId: string | null
   /**
    * Opaque Golden Layout config blob — serialised state of the dockable area.
    * `unknown` by design: we never inspect it, only round-trip it to Golden Layout.
@@ -26,10 +30,12 @@ export interface Device {
   experiments: Experiment[]
 }
 
+export type ExperimentKind = 'jv' | 'impedance' | 'degradation'
+
 /** Phase 2 will populate this. Defined here to keep the type stable across phases. */
 export interface Experiment {
   id: string
-  kind: 'jv' | 'impedance' | 'degradation'
+  kind: ExperimentKind
   params: Record<string, unknown>
   runs: Run[]
 }
