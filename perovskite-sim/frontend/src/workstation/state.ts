@@ -1,4 +1,4 @@
-import type { Device, Experiment, Workspace } from './types'
+import type { Device, Experiment, Run, Workspace } from './types'
 
 export const STORAGE_KEY = 'solarsim:workspace:v1'
 
@@ -118,4 +118,85 @@ export function setActiveExperiment(
   if (!dev.experiments.some(e => e.id === experimentId)) return ws
   if (ws.activeDeviceId === deviceId && ws.activeExperimentId === experimentId) return ws
   return { ...ws, activeDeviceId: deviceId, activeExperimentId: experimentId, activeRunId: null }
+}
+
+// ---------------------------------------------------------------------------
+// Run-level state operations
+// ---------------------------------------------------------------------------
+
+function mapExperiment(
+  ws: Workspace,
+  deviceId: string,
+  experimentId: string,
+  fn: (e: Experiment) => Experiment,
+): Workspace {
+  return mapDevice(ws, deviceId, d => {
+    const idx = d.experiments.findIndex(e => e.id === experimentId)
+    if (idx < 0) return d
+    const experiments = d.experiments.map((e, i) => (i === idx ? fn(e) : e))
+    return { ...d, experiments }
+  })
+}
+
+export function addRun(
+  ws: Workspace,
+  deviceId: string,
+  experimentId: string,
+  run: Run,
+): Workspace {
+  const dev = ws.devices.find(d => d.id === deviceId)
+  if (!dev) return ws
+  if (!dev.experiments.some(e => e.id === experimentId)) return ws
+  return mapExperiment(ws, deviceId, experimentId, e => ({
+    ...e,
+    runs: [...e.runs, run],
+  }))
+}
+
+export function removeRun(
+  ws: Workspace,
+  deviceId: string,
+  experimentId: string,
+  runId: string,
+): Workspace {
+  const next = mapExperiment(ws, deviceId, experimentId, e => ({
+    ...e,
+    runs: e.runs.filter(r => r.id !== runId),
+  }))
+  if (next.activeRunId === runId) {
+    return { ...next, activeRunId: null }
+  }
+  return next
+}
+
+export function setActiveRun(
+  ws: Workspace,
+  deviceId: string,
+  experimentId: string,
+  runId: string,
+): Workspace {
+  const run = findRun(ws, deviceId, experimentId, runId)
+  if (!run) return ws
+  if (
+    ws.activeDeviceId === deviceId &&
+    ws.activeExperimentId === experimentId &&
+    ws.activeRunId === runId
+  ) return ws
+  return {
+    ...ws,
+    activeDeviceId: deviceId,
+    activeExperimentId: experimentId,
+    activeRunId: runId,
+  }
+}
+
+export function findRun(
+  ws: Workspace,
+  deviceId: string,
+  experimentId: string,
+  runId: string,
+): Run | undefined {
+  const d = ws.devices.find(d => d.id === deviceId)
+  const e = d?.experiments.find(e => e.id === experimentId)
+  return e?.runs.find(r => r.id === runId)
 }

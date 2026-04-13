@@ -10,8 +10,12 @@ import {
   addExperiment,
   removeExperiment,
   setActiveExperiment,
+  addRun,
+  removeRun,
+  setActiveRun,
+  findRun,
 } from './state'
-import type { Device, Experiment } from './types'
+import type { Device, Experiment, Run } from './types'
 
 function makeDevice(id: string, name = 'Test'): Device {
   return {
@@ -25,6 +29,17 @@ function makeDevice(id: string, name = 'Test'): Device {
 
 function makeExperiment(id: string, kind: 'jv' | 'impedance' | 'degradation' = 'jv'): Experiment {
   return { id, kind, params: {}, runs: [] }
+}
+
+function makeRun(id: string): Run {
+  return {
+    id,
+    timestamp: Date.now(),
+    result: { placeholder: true },
+    activePhysics: 'FULL',
+    durationMs: 123,
+    deviceSnapshot: { device: { V_bi: 1.1, Phi: 1.4e21 }, layers: [] },
+  }
 }
 
 describe('createEmptyWorkspace', () => {
@@ -184,5 +199,59 @@ describe('setActiveExperiment', () => {
     const ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
     expect(setActiveExperiment(ws, 'd1', 'missing')).toBe(ws)
     expect(setActiveExperiment(ws, 'missing', 'e1')).toBe(ws)
+  })
+})
+
+describe('addRun', () => {
+  it('appends run under the named experiment', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    const next = addRun(ws, 'd1', 'e1', makeRun('r1'))
+    expect(next.devices[0].experiments[0].runs.map(r => r.id)).toEqual(['r1'])
+  })
+
+  it('is a no-op when device or experiment is unknown', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    expect(addRun(ws, 'd1', 'missing', makeRun('r1'))).toBe(ws)
+    expect(addRun(ws, 'missing', 'e1', makeRun('r1'))).toBe(ws)
+  })
+})
+
+describe('removeRun', () => {
+  it('removes the run and clears activeRunId if it was active', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    ws = addRun(ws, 'd1', 'e1', makeRun('r1'))
+    ws = setActiveRun(ws, 'd1', 'e1', 'r1')
+    const next = removeRun(ws, 'd1', 'e1', 'r1')
+    expect(next.devices[0].experiments[0].runs).toHaveLength(0)
+    expect(next.activeRunId).toBeNull()
+  })
+})
+
+describe('setActiveRun', () => {
+  it('sets activeDevice/Experiment/Run', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    ws = addRun(ws, 'd1', 'e1', makeRun('r1'))
+    const next = setActiveRun(ws, 'd1', 'e1', 'r1')
+    expect(next.activeDeviceId).toBe('d1')
+    expect(next.activeExperimentId).toBe('e1')
+    expect(next.activeRunId).toBe('r1')
+  })
+})
+
+describe('findRun', () => {
+  it('returns the run when it exists', () => {
+    let ws = addDevice(createEmptyWorkspace('W'), makeDevice('d1'))
+    ws = addExperiment(ws, 'd1', makeExperiment('e1'))
+    ws = addRun(ws, 'd1', 'e1', makeRun('r1'))
+    const found = findRun(ws, 'd1', 'e1', 'r1')
+    expect(found?.id).toBe('r1')
+  })
+
+  it('returns undefined for an unknown triple', () => {
+    expect(findRun(createEmptyWorkspace('W'), 'x', 'y', 'z')).toBeUndefined()
   })
 })
