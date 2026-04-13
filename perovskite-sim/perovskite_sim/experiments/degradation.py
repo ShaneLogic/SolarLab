@@ -240,6 +240,13 @@ def run_degradation(
     absorber_layer, absorber_mask = _absorber_region(x, stack)
     P0_abs = absorber_layer.params.P0
 
+    # Emit a kickoff progress event so the user sees motion before the first
+    # snapshot completes. The initial steady-state + first metric sweep can
+    # take 10–20 s of silence otherwise.
+    if progress is not None:
+        progress("degradation_transient", 0, max(1, int(t_end * 1000)),
+                 "solving illuminated steady state")
+
     # Degradation loop starts from V_bias-equilibrated state so that the very
     # first time chunk does not have to transition SC→V_bias carriers (expensive).
     y = solve_illuminated_ss(x, stack, V_app=V_bias, rtol=rtol, atol=atol)
@@ -319,6 +326,16 @@ def run_degradation(
                         mat_active = build_material_arrays(x, active_stack)
                         damage_cached = damage
             t_cur += dt_chunk
+            # Sub-snapshot progress: emit on every chunk so the bar advances
+            # continuously across the long final intervals (otherwise the user
+            # sees no motion for minutes at a time near t_end).
+            if progress is not None:
+                progress(
+                    "degradation_transient",
+                    int(t_cur * 1000),
+                    max(1, int(t_end * 1000)),
+                    f"snap {k + 1}/{n_snapshots}  t={t_cur:.2e}/{t_end:.2e} s",
+                )
         t_prev = t_k
 
         sv = StateVec.unpack(y, N)
