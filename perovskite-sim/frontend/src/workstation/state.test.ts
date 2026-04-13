@@ -8,7 +8,7 @@ import {
   loadWorkspace,
   STORAGE_KEY,
 } from './state'
-import type { Device, Workspace } from './types'
+import type { Device } from './types'
 
 function makeDevice(id: string, name = 'Test'): Device {
   return {
