@@ -1,31 +1,33 @@
 Ag:
-  source: synthetic-Drude
-  reference: "Free-electron Drude model fitted to Johnson & Christy 1972, Phys. Rev. B 6, 4370"
+  source: "refractiveindex.info / Johnson & Christy 1972"
+  reference: "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370 (1972)"
   wavelength_range_nm: [300, 1000]
   notes: >
-    Synthetic Drude model: eps(E) = eps_inf - (hbar*wp)^2 / (E*(E + i*hbar*gamma)).
-    Parameters: eps_inf=5.0, hbar*wp=9.0 eV, hbar*gamma=0.025 eV.
-    Reproduces J&C silver near-optics: n<<1, k~3-7 across 300-1000 nm,
-    k(550 nm)~3.3, k(1000 nm)~6.9. Primary-source refractiveindex.info
-    Johnson & Christy data was not retrieved in-loop; parametric Drude fit
-    with physically-sourced parameters is the approved fallback.
-    5 nm uniform grid, 300-1000 nm, 141 rows.
+    Real tabulated n,k for silver from Johnson & Christy 1972 (the community
+    gold-standard noble-metal optical-constants dataset). Source file is the
+    refractiveindex.info database YAML
+    (database/data/main/Ag/nk/Johnson.yml), public-domain CC0. The native
+    table spans 187.9-1937 nm at 49 wavelengths; we linearly interpolate
+    onto the uniform 5 nm grid from 300-1000 nm (141 rows) and round to
+    4 decimals. Key values:
+    n(550 nm)=0.0596, k(550 nm)=3.5974;
+    n(1000 nm)=0.0400, k(1000 nm)=7.1155.
 
 Au:
-  source: synthetic-Drude-Lorentz
-  reference: "Drude + Lorentz model calibrated to Johnson & Christy 1972, Phys. Rev. B 6, 4370"
+  source: "refractiveindex.info / Johnson & Christy 1972"
+  reference: "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370 (1972)"
   wavelength_range_nm: [300, 1000]
   notes: >
-    Synthetic Drude + single Lorentz model capturing the characteristic
-    Au ~500 nm interband absorption edge.
-    eps(E) = eps_inf - (hbar*wp)^2/(E*(E + i*hbar*gamma))
-             + f*E0^2/(E0^2 - E^2 - i*E*gammaL).
-    Parameters: eps_inf=6.5, hbar*wp=8.9 eV, hbar*gamma=0.07 eV,
-    f=1.8, E0=3.0 eV (~413 nm), gammaL=1.0 eV.
-    Gives n~0.5 k~2.5 at 550 nm, n~0.25 k~6.5 at 1000 nm — consistent with
-    J&C tabulated gold. Primary-source tabulated data not retrieved in-loop;
-    parametric fit is the approved fallback.
-    5 nm uniform grid, 300-1000 nm, 141 rows.
+    Real tabulated n,k for gold from Johnson & Christy 1972 (the community
+    gold-standard noble-metal optical-constants dataset). Source file is the
+    refractiveindex.info database YAML
+    (database/data/main/Au/nk/Johnson.yml), public-domain CC0. The native
+    table spans 187.9-1937 nm at 49 wavelengths; we linearly interpolate
+    onto the uniform 5 nm grid from 300-1000 nm (141 rows) and round to
+    4 decimals. Characteristic ~500 nm interband absorption edge is present
+    in the primary data. Key values:
+    n(550 nm)=0.4241, k(550 nm)=2.4721;
+    n(1000 nm)=0.2277, k(1000 nm)=6.4731.
 
 C60:
   source: synthetic-Lorentz
