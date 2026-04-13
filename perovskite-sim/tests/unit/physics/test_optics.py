@@ -246,3 +246,17 @@ class TestOpticalData:
         assert wl[0] <= 305.0 and wl[-1] >= 995.0, "must cover 300-1000 nm range"
         assert np.all(n > 0.5) and np.all(n < 5.0), "FTO n in reasonable range"
         assert np.all(k >= 0.0), "k must be non-negative"
+
+    @pytest.mark.parametrize("material", [
+        "MAPbI3", "TiO2", "spiro_OMeTAD",
+        "FTO", "ITO", "SnO2", "C60", "PCBM", "PEDOT_PSS", "Ag", "Au", "glass",
+    ])
+    def test_load_all_shipped_materials(self, material):
+        """Every shipped nk CSV must load cleanly, cover 300-1000 nm, and have n>0, k>=0."""
+        from perovskite_sim.data import load_nk
+
+        wl, n, k = load_nk(material)
+        assert np.all(np.diff(wl) > 0), f"{material}: wavelengths not monotonic"
+        assert wl[0] <= 305.0 and wl[-1] >= 995.0, f"{material}: range too narrow"
+        assert np.all(n > 0.0), f"{material}: n must be positive"
+        assert np.all(k >= 0.0), f"{material}: k must be non-negative"
