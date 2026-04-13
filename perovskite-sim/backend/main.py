@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -183,6 +184,18 @@ def list_configs():
         return {"status": "ok", "configs": names}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/optical-materials")
+def list_optical_materials() -> dict:
+    """Auto-scan ``perovskite_sim/data/nk/`` and return the sorted material list.
+
+    The frontend optical-material picker calls this to populate its dropdown,
+    so dropping a new ``<name>.csv`` in the nk directory makes it visible with
+    no code change (same convention as ``/api/configs``).
+    """
+    nk_dir = Path(__file__).resolve().parent.parent / "perovskite_sim" / "data" / "nk"
+    return {"materials": sorted(p.stem for p in nk_dir.glob("*.csv"))}
 
 
 @app.get("/api/configs/{name}")
