@@ -35,7 +35,18 @@ function makeRun(id: string): Run {
   return {
     id,
     timestamp: Date.now(),
-    result: { placeholder: true },
+    result: {
+      kind: 'jv' as const,
+      data: {
+        V_fwd: [],
+        J_fwd: [],
+        V_rev: [],
+        J_rev: [],
+        metrics_fwd: { V_oc: 0, J_sc: 0, FF: 0, PCE: 0 },
+        metrics_rev: { V_oc: 0, J_sc: 0, FF: 0, PCE: 0 },
+        hysteresis_index: 0,
+      },
+    },
     activePhysics: 'FULL',
     durationMs: 123,
     deviceSnapshot: { device: { V_bi: 1.1, Phi: 1.4e21 }, layers: [] },

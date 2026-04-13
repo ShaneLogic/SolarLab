@@ -1,4 +1,4 @@
-import type { DeviceConfig, SimulationModeName } from '../types'
+import type { DeviceConfig, SimulationModeName, JVResult, ISResult, DegResult } from '../types'
 
 /** The root object persisted to localStorage. */
 export interface Workspace {
@@ -32,6 +32,11 @@ export interface Device {
 
 export type ExperimentKind = 'jv' | 'impedance' | 'degradation'
 
+export type RunResult =
+  | { kind: 'jv'; data: JVResult }
+  | { kind: 'impedance'; data: ISResult }
+  | { kind: 'degradation'; data: DegResult }
+
 /** Phase 2 will populate this. Defined here to keep the type stable across phases. */
 export interface Experiment {
   id: string
@@ -44,7 +49,7 @@ export interface Experiment {
 export interface Run {
   id: string
   timestamp: number
-  result: unknown
+  result: RunResult
   activePhysics: string
   durationMs: number
   /** Frozen DeviceConfig snapshot at the moment the run was dispatched. */
