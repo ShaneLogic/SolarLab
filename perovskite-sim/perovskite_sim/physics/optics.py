@@ -26,10 +26,17 @@ class TMMLayer:
     d: physical thickness [m]
     n: real part of refractive index, shape (n_wavelengths,)
     k: imaginary part (extinction coefficient), shape (n_wavelengths,)
+    incoherent: if True, this layer is treated as a thick (>> lambda)
+        incoherent slab — no phase tracking. Only legal on the FIRST
+        layer of the stack (typically a ~1 mm glass substrate). The
+        bypass applies a single air->layer Fresnel reflection plus
+        bulk Beer-Lambert power attenuation and hands the remaining
+        intensity to the coherent sub-stack formed by layers[1:].
     """
     d: float
     n: np.ndarray
     k: np.ndarray
+    incoherent: bool = False
 
     @property
     def n_complex(self) -> np.ndarray:
@@ -40,8 +47,8 @@ class TMMLayer:
 def _transfer_matrix_stack(
     layers: Sequence[TMMLayer],
     wavelengths: np.ndarray,
-    n_ambient: float = 1.0,
-    n_substrate: float = 1.0,
+    n_ambient: float | np.ndarray = 1.0,
+    n_substrate: float | np.ndarray = 1.0,
 ) -> tuple[np.ndarray, list[np.ndarray]]:
     """Compute the total transfer matrix and per-layer partial products.
 
@@ -51,6 +58,17 @@ def _transfer_matrix_stack(
                    partial product from ambient through layer j (inclusive).
                    Used for computing the electric field inside each layer.
     """
+    # Validator: only the first layer may be marked incoherent. Any
+    # incoherent layer at index >= 1 is unsupported (would require a
+    # full hybrid incoherent-coherent transfer matrix — see module
+    # docstring / commit message for rationale).
+    for j, lyr in enumerate(layers):
+        if j > 0 and lyr.incoherent:
+            raise ValueError(
+                "only the first layer may be incoherent "
+                f"(layer index {j} has incoherent=True)"
+            )
+
     n_wl = len(wavelengths)
     # Identity start
     S = np.zeros((n_wl, 2, 2), dtype=complex)
@@ -92,7 +110,9 @@ def _transfer_matrix_stack(
         return np.einsum("wij,wjk->wik", A, B)
 
     S_partial: list[np.ndarray] = []
-    n_prev = np.full(n_wl, n_ambient, dtype=complex)
+    n_prev = np.broadcast_to(
+        np.asarray(n_ambient, dtype=complex), (n_wl,),
+    ).astype(complex, copy=True)
 
     for layer in layers:
         n_c = layer.n_complex  # (n_wl,)
@@ -106,7 +126,9 @@ def _transfer_matrix_stack(
         n_prev = n_c
 
     # Final interface: last layer → substrate
-    n_sub = np.full(n_wl, n_substrate, dtype=complex)
+    n_sub = np.broadcast_to(
+        np.asarray(n_substrate, dtype=complex), (n_wl,),
+    ).astype(complex, copy=True)
     I_out = interface_matrix(n_prev, n_sub)
     S_total = mat_mul(S, I_out)
 
@@ -119,8 +141,8 @@ def _electric_field_profile(
     x_positions: np.ndarray,
     layer_indices: np.ndarray,
     local_positions: np.ndarray,
-    n_ambient: float = 1.0,
-    n_substrate: float = 1.0,
+    n_ambient: float | np.ndarray = 1.0,
+    n_substrate: float | np.ndarray = 1.0,
 ) -> np.ndarray:
     """Compute |E(x)|^2 / |E_0|^2 at each spatial position for each wavelength.
 
@@ -176,7 +198,9 @@ def _electric_field_profile(
     M = np.zeros((n_wl, 2, 2), dtype=complex)
     M[:, 0, 0] = 1.0
     M[:, 1, 1] = 1.0
-    n_prev = np.full(n_wl, n_ambient, dtype=complex)
+    n_prev = np.broadcast_to(
+        np.asarray(n_ambient, dtype=complex), (n_wl,),
+    ).astype(complex, copy=True)
 
     for j, layer in enumerate(layers):
         n_c = layer.n_complex
@@ -242,8 +266,8 @@ def tmm_absorption_profile(
     wavelengths: np.ndarray,
     x: np.ndarray,
     layer_boundaries: np.ndarray,
-    n_ambient: float = 1.0,
-    n_substrate: float = 1.0,
+    n_ambient: float | np.ndarray = 1.0,
+    n_substrate: float | np.ndarray = 1.0,
 ) -> np.ndarray:
     """Compute spectral absorption rate A(x, lambda) [m^-1].
 
@@ -274,6 +298,47 @@ def tmm_absorption_profile(
         mask = (x >= x_lo - 1e-15) & (x <= x_hi + 1e-15)
         layer_indices[mask] = j
         local_positions[mask] = x[mask] - x_lo
+
+    # Incoherent first-layer bypass. The thick slab absorbs Beer-Lambert
+    # style (no phase, no interference); everything past it sees the
+    # coherent sub-stack with an entering intensity of (1-R_front)*T_bulk
+    # and a new ambient index equal to the slab's real part.
+    if layers and layers[0].incoherent:
+        R_front, T_bulk, n_real = _incoherent_front_factors(
+            layers[0], wavelengths, n_ambient,
+        )
+
+        A = np.zeros((N, n_wl))
+        # Glass / thick-slab absorption: monotonic power decay.
+        # |E(x)|^2 / |E_0|^2 = (1 - R_front) * exp(-alpha_glass * x_local)
+        # Then A(x, lam) = alpha_glass * |E|^2 in the absorbing slab.
+        slab_mask = layer_indices == 0
+        if np.any(slab_mask):
+            x_local_slab = local_positions[slab_mask]
+            k_slab = layers[0].k
+            alpha_slab = 4.0 * np.pi * k_slab / wavelengths  # (n_wl,)
+            decay = np.exp(-alpha_slab[None, :] * x_local_slab[:, None])
+            E_sq_slab = (1.0 - R_front)[None, :] * decay
+            A[slab_mask, :] = alpha_slab[None, :] * E_sq_slab
+
+        # Sub-stack: compute absorption on layers[1:] with the slab's
+        # real index as ambient (per-lambda array), then scale by
+        # (1-R_front)*T_bulk — the power that reaches the sub-stack
+        # after the Fresnel bounce and bulk attenuation.
+        sub_mask = layer_indices >= 1
+        if np.any(sub_mask) and n_layers > 1:
+            x0_sub = layer_boundaries[1]
+            x_sub = x[sub_mask] - x0_sub
+            boundaries_sub = layer_boundaries[1:] - x0_sub
+            scale = (1.0 - R_front) * T_bulk  # (n_wl,)
+            A_sub = tmm_absorption_profile(
+                layers[1:], wavelengths, x_sub, boundaries_sub,
+                n_ambient=n_real,
+                n_substrate=n_substrate,
+            )  # (n_sub, n_wl)
+            A[sub_mask, :] = A_sub * scale[None, :]
+
+        return A
 
     E_sq = _electric_field_profile(
         layers, wavelengths, x, layer_indices, local_positions,
@@ -336,6 +401,37 @@ def tmm_generation(
     return G
 
 
+def _incoherent_front_factors(
+    layer0: TMMLayer,
+    wavelengths: np.ndarray,
+    n_ambient: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Air -> thick-slab Fresnel and bulk Beer-Lambert factors.
+
+    Power form — no phase — because a ~1 mm glass substrate has a
+    coherence length far shorter than its thickness, so the many
+    internal round trips average out interference. Using exp(-2*pi*k*d/
+    lambda) (field form) would reintroduce a phase and produce the
+    very fringes we are trying to kill.
+
+    Returns:
+        R_front: (n_wl,) — |r0|^2 for the air->slab interface
+        T_bulk:  (n_wl,) — exp(-4*pi*k*d / lambda), power transmission
+                 through the bulk slab (intensity, not amplitude)
+        n_real:  (n_wl,) — real part of slab index (ambient for sub-stack)
+    """
+    n_real = np.asarray(layer0.n, dtype=float)
+    k_slab = np.asarray(layer0.k, dtype=float)
+    r0 = (n_ambient - n_real) / (n_ambient + n_real)
+    R_front = r0 * r0  # already real for a lossless air->dielectric interface
+    # Power-form Beer-Lambert: alpha = 4*pi*k/lambda, T = exp(-alpha*d).
+    # Do NOT replace with the field form exp(-2*pi*k*d/lambda) — that
+    # keeps phase and reintroduces fringes through the thick substrate.
+    alpha = 4.0 * np.pi * k_slab / wavelengths
+    T_bulk = np.exp(-alpha * layer0.d)
+    return R_front, T_bulk, n_real
+
+
 def tmm_reflectance(
     layers: Sequence[TMMLayer],
     wavelengths: np.ndarray,
@@ -347,6 +443,35 @@ def tmm_reflectance(
     Returns:
         R: shape (n_wl,) — reflectance (power) at each wavelength
     """
+    # Incoherent first-layer bypass (e.g. 1 mm glass substrate).
+    if layers and layers[0].incoherent:
+        # Validate the rest of the stack before doing any work.
+        for j, lyr in enumerate(layers):
+            if j > 0 and lyr.incoherent:
+                raise ValueError(
+                    "only the first layer may be incoherent "
+                    f"(layer index {j} has incoherent=True)"
+                )
+        R_front, T_bulk, n_real = _incoherent_front_factors(
+            layers[0], wavelengths, n_ambient,
+        )
+        # Sub-stack reflectance uses the real-valued slab index as its
+        # ambient (per-wavelength array because n_glass varies with lambda).
+        S_sub, _ = _transfer_matrix_stack(
+            layers[1:], wavelengths,
+            n_ambient=n_real,
+            n_substrate=n_substrate,
+        )
+        r_sub = S_sub[:, 1, 0] / S_sub[:, 0, 0]
+        R_sub = np.abs(r_sub) ** 2
+        # Simple first-order incoherent sum: front Fresnel + one round
+        # trip through the glass reflecting off the sub-stack. The
+        # geometric series of further round trips is dropped because
+        # for nonzero k_glass (or typical R_sub < 0.5) it contributes
+        # < 2% and simplifies the book-keeping for R+T+A. See commit
+        # message trailer "Not-tested: multi-pass geometric series".
+        return R_front + (1.0 - R_front) ** 2 * (T_bulk ** 2) * R_sub
+
     S_total, _ = _transfer_matrix_stack(
         layers, wavelengths, n_ambient, n_substrate,
     )

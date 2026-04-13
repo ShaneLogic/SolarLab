@@ -260,3 +260,38 @@ class TestOpticalData:
         assert wl[0] <= 305.0 and wl[-1] >= 995.0, f"{material}: range too narrow"
         assert np.all(n > 0.0), f"{material}: n must be positive"
         assert np.all(k >= 0.0), f"{material}: k must be non-negative"
+
+
+# ---------------------------------------------------------------------------
+# Incoherent first layer (thick glass substrate)
+# ---------------------------------------------------------------------------
+
+def test_glass_substrate_incoherent_suppresses_fringes():
+    """1 mm glass with incoherent=True must produce smooth R(lambda), not fringes."""
+    from perovskite_sim.physics.optics import TMMLayer, tmm_reflectance
+    from perovskite_sim.data import load_nk
+
+    wl_nm = np.linspace(500.0, 502.0, 201)  # 0.01 nm spacing
+    wl_m = wl_nm * 1e-9
+
+    _, n_glass, k_glass = load_nk("glass", wl_nm)
+    _, n_fto, k_fto = load_nk("FTO", wl_nm)
+
+    glass = TMMLayer(d=1.0e-3, n=n_glass, k=k_glass, incoherent=True)
+    fto = TMMLayer(d=500e-9, n=n_fto, k=k_fto)
+
+    R = tmm_reflectance([glass, fto], wl_m)
+    # Smooth: peak-to-peak variation over 2 nm window < 5% absolute
+    assert (R.max() - R.min()) < 0.05, f"R variation {R.max()-R.min():.3f} suggests fringes"
+
+
+def test_incoherent_not_first_raises():
+    from perovskite_sim.physics.optics import TMMLayer, _transfer_matrix_stack
+    wl = np.linspace(400e-9, 800e-9, 10)
+    ones = np.ones(10)
+    bad = [
+        TMMLayer(100e-9, ones * 1.5, ones * 0.0),
+        TMMLayer(1e-3, ones * 1.5, ones * 0.0, incoherent=True),
+    ]
+    with pytest.raises(ValueError, match="first layer"):
+        _transfer_matrix_stack(bad, wl)
