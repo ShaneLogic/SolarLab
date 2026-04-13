@@ -116,7 +116,11 @@ export function setActiveExperiment(
   const dev = ws.devices.find(d => d.id === deviceId)
   if (!dev) return ws
   if (!dev.experiments.some(e => e.id === experimentId)) return ws
-  if (ws.activeDeviceId === deviceId && ws.activeExperimentId === experimentId) return ws
+  if (
+    ws.activeDeviceId === deviceId &&
+    ws.activeExperimentId === experimentId &&
+    ws.activeRunId === null
+  ) return ws
   return { ...ws, activeDeviceId: deviceId, activeExperimentId: experimentId, activeRunId: null }
 }
 
