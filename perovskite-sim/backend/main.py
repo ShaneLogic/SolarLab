@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.models.mode import resolve_mode
 from perovskite_sim.models.parameters import MaterialParams
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
@@ -97,11 +98,17 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         (float(pair[0]), float(pair[1]))
         for pair in (dev.get("interfaces") or [])
     )
+    mode_name = str(dev.get("mode", "full"))
+    # Validate early so an unknown mode fails the HTTP request rather than
+    # blowing up inside the worker thread where the error is harder to surface.
+    resolve_mode(mode_name)
     return DeviceStack(
         layers=tuple(layers),
         V_bi=float(dev.get("V_bi", 1.1)),
         Phi=float(dev.get("Phi", 2.5e21)),
         interfaces=interfaces,
+        T=float(dev.get("T", 300.0)),
+        mode=mode_name,
     )
 
 
