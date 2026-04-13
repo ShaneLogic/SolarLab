@@ -23,11 +23,15 @@ export interface LayerConfig {
   Eg?: number
 }
 
+export type SimulationModeName = 'legacy' | 'fast' | 'full'
+
 export interface DeviceConfig {
   device: {
     V_bi: number
     Phi: number
     interfaces?: Array<[number, number]>
+    T?: number
+    mode?: SimulationModeName
   }
   layers: LayerConfig[]
 }
