@@ -49,6 +49,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             trap_decay_length=float(layer_cfg["trap_decay_length"]) if "trap_decay_length" in layer_cfg else None,
             optical_material=layer_cfg.get("optical_material"),
             n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
+            incoherent=bool(layer_cfg.get("incoherent", False)),
         )
         layers.append(LayerSpec(
             name=layer_cfg["name"],
