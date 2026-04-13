@@ -1,0 +1,108 @@
+# pin_MAPbI3_tmm.yaml — p-i-n production preset exercising the TMM optics path.
+#
+# Layer order matches pin_MAPbI3.yaml (HTL → absorber → ETL); the electrical
+# solver uses phi_left = 0 at the HTL and phi_right = V_bi at the ETL. Light
+# enters from x=0 (HTL side). A 1 mm glass substrate is prepended with
+# role:substrate and incoherent:true, so the TMM layer stack sees a thick
+# incoherent front window for Fresnel reflection while the electrical grid
+# is filtered to the HTL/absorber/ETL trio via electrical_layers().
+#
+# Electrical parameters for NiO_HTL / MAPbI3 / PCBM_ETL are copied verbatim
+# from configs/pin_MAPbI3.yaml — the only additions are the substrate layer
+# and the optical material wiring on each electrical layer. NiO is absent
+# from perovskite_sim/data/nk/manifest.yaml, so the HTL uses the constant
+# n_optical fallback (n=2.2, alpha=0) — physically reasonable for NiOx,
+# which is transparent across 300–1000 nm with weak absorption well below
+# the TMM 4-decimal precision floor.
+device:
+  V_bi: 1.1
+  Phi: 2.5e21
+layers:
+  - name: glass
+    role: substrate
+    thickness: 1.0e-3
+    eps_r: 2.25
+    mu_n: 0.0
+    mu_p: 0.0
+    ni: 1.0
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0
+    p1: 1.0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    optical_material: glass
+    incoherent: true
+
+  - name: NiO_HTL
+    role: HTL
+    thickness: 100e-9
+    eps_r: 11.9
+    mu_n: 1e-10
+    mu_p: 1e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 1e24
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+    n_optical: 2.2
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 2e-4
+    mu_p: 2e-4
+    ni: 3.2e13
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 3.2e13
+    p1: 3.2e13
+    B_rad: 5e-22
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 1.3e7
+    optical_material: MAPbI3
+
+  - name: PCBM_ETL
+    role: ETL
+    thickness: 200e-9
+    eps_r: 4.0
+    mu_n: 1e-6
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e23
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+    optical_material: PCBM
