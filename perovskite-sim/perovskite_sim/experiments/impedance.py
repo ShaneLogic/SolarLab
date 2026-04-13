@@ -5,7 +5,7 @@ import numpy as np
 
 ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import run_transient, build_material_arrays
@@ -61,7 +61,9 @@ def run_impedance(
     if n_cycles < 1:
         raise ValueError(f"n_cycles must be >= 1, got {n_cycles}")
 
-    layers_grid = [Layer(l.thickness, N_grid // len(stack.layers)) for l in stack.layers]
+    # Grid construction uses electrical layers only; substrate is optical-only.
+    elec = electrical_layers(stack)
+    layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
     x = multilayer_grid(layers_grid)
     dx_faces = np.diff(x)
     L_total = float(x[-1] - x[0])

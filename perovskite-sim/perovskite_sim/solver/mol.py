@@ -17,7 +17,9 @@ from perovskite_sim.physics.poisson import (
 from perovskite_sim.physics.continuity import carrier_continuity_rhs
 from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
-from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.models.device import (
+    DeviceStack, electrical_layers, electrical_interfaces,
+)
 
 from perovskite_sim.physics.recombination import interface_recombination
 from perovskite_sim.physics.temperature import (
@@ -191,7 +193,7 @@ def _compute_tmm_generation(
                 d=layer.thickness,
                 n=n_arr,
                 k=k_arr,
-                incoherent=bool(getattr(p, "incoherent", False)),
+                incoherent=bool(p.incoherent),
             )
         )
 
@@ -261,6 +263,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         V_T_dev = _V_T_300
 
     elec_layers = electrical_layers(stack)
+    if len(elec_layers) == 0:
+        raise ValueError(
+            "stack has no electrical layers (all layers have role:substrate)"
+        )
 
     offset = 0.0
     for layer in elec_layers:
@@ -476,12 +482,13 @@ def _apply_interface_recombination(
     Interface recombination is a surface rate [m⁻² s⁻¹] converted to
     volumetric [m⁻³ s⁻¹] by dividing by the dual-grid cell width.
     """
-    if not stack.interfaces:
+    ifaces = electrical_interfaces(stack)
+    if not ifaces:
         return
     for k, idx in enumerate(mat.interface_nodes):
-        if k >= len(stack.interfaces):
+        if k >= len(ifaces):
             break
-        v_n, v_p = stack.interfaces[k]
+        v_n, v_p = ifaces[k]
         if v_n == 0.0 and v_p == 0.0:
             continue
         R_s = interface_recombination(
