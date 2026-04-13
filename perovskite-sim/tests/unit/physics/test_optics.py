@@ -228,8 +228,49 @@ class TestOpticalData:
         assert len(wl) > 10
         assert np.all(flux > 0)
         # Integrated flux should be ~2.5e21 m^-2 s^-1
-        total = np.trapz(flux, wl * 1e-9)
+        total = np.trapezoid(flux, wl * 1e-9)
         assert 1e21 < total < 5e21, f"Integrated flux {total:.2e} out of range"
+
+    def test_am15g_shockley_queisser_integral(self):
+        """AM1.5G 300-800 nm photon flux must match authoritative ASTM G-173.
+
+        Regression guard for a prior bug where am15g.csv was ~1.5x too high
+        vs canonical ASTM G-173-03 and truncated to 300-800 nm, inflating
+        J_sc across the board. See Task 7.5 in the TMM activation plan.
+        """
+        from perovskite_sim.data import load_am15g
+        q = 1.602176634e-19
+        wl_nm = np.linspace(300.0, 800.0, 501)
+        _, phi = load_am15g(wl_nm)
+        j_sq = q * np.trapezoid(phi, wl_nm * 1e-9)
+        assert 270.0 <= j_sq <= 290.0, (
+            f"AM1.5G 300-800nm integral = {j_sq:.1f} A/m^2, expected ~275. "
+            "File may be out of calibration vs ASTM G-173."
+        )
+
+    def test_am15g_spot_check_500nm(self):
+        """Spot-check: photon flux at 500 nm must match ASTM G-173 within 5%."""
+        from perovskite_sim.data import load_am15g
+        _, phi = load_am15g(np.array([500.0]))
+        # ASTM G-173: E(500nm) ~= 1.545 W/m^2/nm -> Phi ~= 3.89e27
+        assert 3.7e27 <= phi[0] <= 4.1e27, (
+            f"Phi(500nm) = {phi[0]:.3e}, expected ~3.89e27 photons/m^2/s/m"
+        )
+
+    def test_am15g_native_range_covers_ir(self):
+        """Native file must span at least 280-1200 nm for c-Si / future IR work."""
+        from perovskite_sim.data import load_am15g
+        wl, _ = load_am15g()
+        assert wl[0] <= 280.0, f"AM1.5G lower bound {wl[0]} nm > 280 nm"
+        assert wl[-1] >= 1200.0, f"AM1.5G upper bound {wl[-1]} nm < 1200 nm"
+
+    def test_am15g_raises_outside_native_range(self):
+        """load_am15g must raise on extrapolation (no silent np.interp clamping)."""
+        from perovskite_sim.data import load_am15g
+        with pytest.raises(ValueError, match="outside"):
+            load_am15g(np.array([100.0, 500.0]))  # 100 nm below native range
+        with pytest.raises(ValueError, match="outside"):
+            load_am15g(np.array([500.0, 5000.0]))  # 5000 nm above native range
 
     def test_load_nk_missing_material(self):
         from perovskite_sim.data import load_nk
