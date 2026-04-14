@@ -14,12 +14,25 @@ def load_nk(material: str, wavelengths_nm: np.ndarray | None = None) -> tuple[np
     """Load optical constants n(lambda), k(lambda) for a material.
 
     Args:
-        material: one of "MAPbI3", "TiO2", "spiro_OMeTAD"
+        material: name of a CSV under ``data/nk/`` (e.g. "MAPbI3", "TiO2",
+            "spiro_OMeTAD", "FTO", ...). See ``data/nk/`` for the full list.
         wavelengths_nm: if provided, interpolate to these wavelengths [nm].
-                        Otherwise return the native grid.
+            All requested wavelengths must lie within the native file range;
+            out-of-range wavelengths raise ``ValueError`` rather than silently
+            clamping. Otherwise return the native grid.
 
     Returns:
         (wavelengths_nm, n, k) — all shape (n_wl,)
+
+    Raises:
+        FileNotFoundError: if no CSV is shipped for ``material``.
+        ValueError: if any requested wavelength falls outside the native
+            range of the material's CSV. This is a hard failure because
+            ``np.interp`` silently clamps edge values, and clamping the
+            imaginary index ``k`` extends spurious absorption (or spurious
+            transparency) into a region where the material was never
+            measured -- historically the same class of bug the AM1.5G
+            loader already guards against.
     """
     path = _DATA_DIR / "nk" / f"{material}.csv"
     if not path.exists():
@@ -30,9 +43,19 @@ def load_nk(material: str, wavelengths_nm: np.ndarray | None = None) -> tuple[np
     k_native = data[:, 2]
     if wavelengths_nm is None:
         return wl_native, n_native, k_native
-    n_interp = np.interp(wavelengths_nm, wl_native, n_native)
-    k_interp = np.interp(wavelengths_nm, wl_native, k_native)
-    return wavelengths_nm, n_interp, k_interp
+    wl_req = np.asarray(wavelengths_nm, dtype=float)
+    lo, hi = float(wl_native[0]), float(wl_native[-1])
+    if wl_req.size and (wl_req.min() < lo or wl_req.max() > hi):
+        raise ValueError(
+            f"Requested wavelengths [{wl_req.min():.2f}, {wl_req.max():.2f}] nm "
+            f"are outside the native range of {material!r} "
+            f"[{lo:.2f}, {hi:.2f}] nm. Extend the CSV in data/nk/{material}.csv "
+            "or narrow the TMM wavelength grid (lam_min/lam_max in "
+            "_compute_tmm_generation)."
+        )
+    n_interp = np.interp(wl_req, wl_native, n_native)
+    k_interp = np.interp(wl_req, wl_native, k_native)
+    return wl_req, n_interp, k_interp
 
 
 def load_am15g(wavelengths_nm: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:

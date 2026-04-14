@@ -116,7 +116,7 @@ class TestEnergyConservation:
         boundaries = np.array([0, 50e-9, 450e-9, 600e-9])
         x = np.linspace(0.5e-9, 599.5e-9, 800)
         A_profile = tmm_absorption_profile(layers, wl_m, x, boundaries)
-        A_total = np.trapz(A_profile, x, axis=0)
+        A_total = np.trapezoid(A_profile, x, axis=0)
 
         total = R + T + A_total
         np.testing.assert_allclose(total, 1.0, atol=0.03,
@@ -276,6 +276,39 @@ class TestOpticalData:
         from perovskite_sim.data import load_nk
         with pytest.raises(FileNotFoundError):
             load_nk("NonExistentMaterial")
+
+    def test_load_nk_raises_below_native_range(self):
+        """load_nk must raise when any wavelength is below the CSV minimum.
+
+        Regression guard: np.interp silently clamps to the edge value, which
+        for k (imaginary index) means extending the near-edge absorption into
+        a spectral region where the material was never measured -- a
+        J_sc-biasing bug that has already bitten load_am15g.
+        """
+        from perovskite_sim.data import load_nk
+        with pytest.raises(ValueError, match="outside the native range"):
+            load_nk("MAPbI3", np.array([250.0, 500.0]))  # 250 nm below 300
+
+    def test_load_nk_raises_above_native_range(self):
+        """load_nk must raise when any wavelength is above the CSV maximum."""
+        from perovskite_sim.data import load_nk
+        with pytest.raises(ValueError, match="outside the native range"):
+            load_nk("MAPbI3", np.array([500.0, 1100.0]))  # 1100 nm above 1000
+
+    def test_load_nk_error_names_material(self):
+        """The ValueError message must identify the material for actionable debugging."""
+        from perovskite_sim.data import load_nk
+        with pytest.raises(ValueError, match="'TiO2'"):
+            load_nk("TiO2", np.array([1500.0]))
+
+    def test_load_nk_boundary_inclusive(self):
+        """Requests exactly at the native endpoints must succeed (closed interval)."""
+        from perovskite_sim.data import load_nk
+        wl_native, _, _ = load_nk("MAPbI3")
+        lo, hi = float(wl_native[0]), float(wl_native[-1])
+        wl, n, k = load_nk("MAPbI3", np.array([lo, hi]))
+        assert len(n) == 2 and len(k) == 2
+        assert np.all(n > 0) and np.all(k >= 0)
 
     def test_load_shipped_fto_csv(self):
         """FTO.csv should load via load_nk() with monotonic wavelengths in 300-1000 nm."""
