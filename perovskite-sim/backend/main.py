@@ -175,13 +175,27 @@ app.add_middleware(
 
 @app.get("/api/configs")
 def list_configs():
-    """List available YAML config files bundled with the project."""
+    """List YAML configs available to the frontend.
+
+    Each entry carries a ``namespace`` tag so the frontend can render the
+    dropdown as two ``<optgroup>``s — shipped (top-level configs/) and user
+    (configs/user/). Returning a list of dicts is a deliberate breaking
+    change vs the Phase 2a flat-list shape; the frontend api wrapper updates
+    in lockstep.
+    """
     try:
-        names = sorted(
-            f for f in os.listdir(CONFIGS_DIR)
-            if f.endswith((".yaml", ".yml"))
-        )
-        return {"status": "ok", "configs": names}
+        entries: list[dict] = []
+        for f in sorted(os.listdir(CONFIGS_DIR)):
+            if f.endswith((".yaml", ".yml")):
+                full = os.path.join(CONFIGS_DIR, f)
+                if os.path.isfile(full):
+                    entries.append({"name": f, "namespace": "shipped"})
+        user_dir = os.path.join(CONFIGS_DIR, "user")
+        if os.path.isdir(user_dir):
+            for f in sorted(os.listdir(user_dir)):
+                if f.endswith((".yaml", ".yml")):
+                    entries.append({"name": f, "namespace": "user"})
+        return {"status": "ok", "configs": entries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -223,10 +237,18 @@ def list_layer_templates() -> dict:
 
 @app.get("/api/configs/{name}")
 def get_config(name: str):
-    """Return the parsed YAML device config so the frontend can edit it."""
+    """Return the parsed YAML device config so the frontend can edit it.
+
+    Searches shipped first, then user/. ``os.path.basename`` strips any
+    leading path components in case a caller URL-encodes a slash.
+    """
     safe_name = os.path.basename(name)
-    path = os.path.join(CONFIGS_DIR, safe_name)
-    if not os.path.exists(path):
+    candidates = [
+        os.path.join(CONFIGS_DIR, safe_name),
+        os.path.join(CONFIGS_DIR, "user", safe_name),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if path is None:
         raise HTTPException(status_code=404, detail=f"Config '{safe_name}' not found")
     try:
         with open(path) as f:
