@@ -146,4 +146,15 @@ tests/
 └── regression/    physical sanity checks (V_oc range, J_sc bounds, ...)
 ```
 
-`pytest` defaults (from `pyproject.toml`) include coverage and exclude `-m slow`. The regression suite is where to add new "result should look physically reasonable" checks.
+`pytest` defaults (from `pyproject.toml`) exclude `-m slow`. Coverage is **opt-in** — pass `--cov=perovskite_sim --cov-report=term-missing` explicitly when you want a report. The regression suite is where to add new "result should look physically reasonable" checks.
+
+### Test gotcha — slow suite BLAS thread pinning
+
+The TMM regression suite (`tests/regression/test_tmm_baseline.py`) drives ~4700 calls to `scipy.linalg.lu_factor` on the ~300×300 Radau Jacobian. These matrices are too small for multi-threaded BLAS to pay off — on a 10-core box OpenBLAS spins up every LU call across all cores and the thread-creation + contention overhead turns a 14 s test into a 5-10 minute test. A Phase 2a investigation wasted four run-kills diagnosing this as a "stall" (runs were being terminated at ~4 min wall, but they would have taken another 2-3 min each to finish under oversubscription). It is NOT a hang.
+
+`tests/conftest.py` pins BLAS threads to 1 via `threadpoolctl` whenever the `slow` marker is selected (excluding the default `-m 'not slow'` unit run). numpy/scipy must be imported inside the hook before calling `threadpool_limits`, because threadpoolctl only sees already-loaded backends. Do not remove this hook; also do not re-bake `--cov=perovskite_sim` into `pyproject.toml` `addopts` — pytest-cov's line tracer adds a further ~17× overhead on the same hot loop and is equally sticky (the tracer is installed during pytest-cov's own `pytest_configure`, before any user conftest gets a chance to stop it).
+
+Canonical invocations:
+- Unit + integration: `pytest` (default, ~15 s, no coverage)
+- Unit with coverage: `pytest --cov=perovskite_sim --cov-report=term-missing`
+- Slow regression: `pytest -m slow` (BLAS pinned automatically, ~27 s for the TMM baselines)
