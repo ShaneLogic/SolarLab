@@ -1,4 +1,4 @@
-import Plotly from 'plotly.js-dist-min'
+import Plotly from 'plotly.js-basic-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../../plot-theme'
