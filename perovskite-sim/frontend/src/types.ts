@@ -109,3 +109,46 @@ export interface JobStreamHandlers<TResult> {
   onError: (message: string) => void
   onDone: () => void
 }
+
+// ── Phase 2b layer builder ──────────────────────────────────────────────────
+
+export type LayerRole =
+  | 'substrate'
+  | 'front_contact'
+  | 'ETL'
+  | 'absorber'
+  | 'HTL'
+  | 'back_contact'
+
+export interface LayerTemplate {
+  role: LayerRole
+  optical_material: string | null
+  description: string
+  source: string
+  defaults: Partial<LayerConfig>
+}
+
+export interface ValidationIssue {
+  layerIdx: number | null   // null = stack-level issue
+  field: string | null
+  message: string
+}
+
+export interface ValidationReport {
+  errors: ValidationIssue[]
+  warnings: ValidationIssue[]
+}
+
+export type StackAction =
+  | { type: 'select'; idx: number }
+  | { type: 'delete'; idx: number }
+  | { type: 'reorder'; from: number; to: number }
+  | { type: 'insert'; atIdx: number; layer: LayerConfig }
+  | { type: 'edit-interface'; idx: number; pair: readonly [number, number] }
+
+export type Namespace = 'shipped' | 'user'
+
+export interface ConfigEntry {
+  name: string
+  namespace: Namespace
+}
