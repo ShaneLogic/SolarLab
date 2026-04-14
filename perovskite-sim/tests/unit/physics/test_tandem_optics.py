@@ -7,6 +7,96 @@ from perovskite_sim.physics.tandem_optics import (
 )
 
 
+def test_compute_tandem_generation_happy_path(monkeypatch):
+    """End-to-end test with mocked load_nk and a synthetic TandemConfig."""
+    import perovskite_sim.physics.tandem_optics as tandem_optics_mod
+    from perovskite_sim.physics.tandem_optics import compute_tandem_generation, TandemGeneration
+    from perovskite_sim.models.tandem_config import JunctionLayer
+
+    # Stub load_nk: return constant n=2.0, k=0.1 (weakly absorbing) across all wavelengths.
+    def fake_load_nk(material, wavelengths_nm):
+        n = np.full_like(wavelengths_nm, 2.0, dtype=float)
+        k = np.full_like(wavelengths_nm, 0.1, dtype=float)
+        return wavelengths_nm, n, k
+    monkeypatch.setattr(tandem_optics_mod, "load_nk", fake_load_nk)
+
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    top_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    bottom_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+
+    from perovskite_sim.models.tandem_config import TandemConfig
+    cfg = TandemConfig(
+        top_cell=top_cell,
+        bottom_cell=bottom_cell,
+        junction_stack=(
+            JunctionLayer(name="recomb", thickness=20e-9,
+                          optical_material="stub", incoherent=False),
+        ),
+        junction_model="ideal_ohmic",
+        light_direction="top_first",
+        benchmark=None,
+    )
+
+    wavelengths_nm = np.linspace(400.0, 800.0, 20)
+    wavelengths_m = wavelengths_nm * 1e-9
+    spectral_flux = np.full_like(wavelengths_m, 1e21)
+
+    gen = compute_tandem_generation(
+        cfg, wavelengths_m, spectral_flux, wavelengths_nm,
+        N_top=30, N_bot=30,
+    )
+
+    assert isinstance(gen, TandemGeneration)
+    assert gen.G_top.shape == (30,)
+    assert gen.G_bot.shape == (30,)
+    assert np.all(gen.G_top >= 0)
+    assert np.all(gen.G_bot >= 0)
+    assert 0.0 <= gen.parasitic_absorption <= 1.0
+
+
+def test_compute_tandem_generation_empty_junction_stack(monkeypatch):
+    """When junction_stack is empty, grid has no phantom junction points."""
+    import perovskite_sim.physics.tandem_optics as tandem_optics_mod
+    from perovskite_sim.physics.tandem_optics import compute_tandem_generation
+
+    def fake_load_nk(material, wavelengths_nm):
+        n = np.full_like(wavelengths_nm, 2.0, dtype=float)
+        k = np.full_like(wavelengths_nm, 0.05, dtype=float)
+        return wavelengths_nm, n, k
+    monkeypatch.setattr(tandem_optics_mod, "load_nk", fake_load_nk)
+
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    from perovskite_sim.models.tandem_config import TandemConfig
+
+    top_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    bottom_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+
+    cfg = TandemConfig(
+        top_cell=top_cell,
+        bottom_cell=bottom_cell,
+        junction_stack=(),
+        junction_model="ideal_ohmic",
+        light_direction="top_first",
+        benchmark=None,
+    )
+
+    wavelengths_nm = np.linspace(400.0, 800.0, 15)
+    wavelengths_m = wavelengths_nm * 1e-9
+    spectral_flux = np.full_like(wavelengths_m, 1e21)
+
+    gen = compute_tandem_generation(
+        cfg, wavelengths_m, spectral_flux, wavelengths_nm,
+        N_top=25, N_bot=25,
+    )
+
+    assert gen.G_top.shape == (25,)
+    assert gen.G_bot.shape == (25,)
+    # Empty junction → parasitic_absorption should be ~0 (only numerical noise)
+    assert gen.parasitic_absorption < 1e-6
+    assert gen.top_layer_slice == slice(0, 25)
+    assert gen.bottom_layer_slice == slice(25, 50)
+
+
 def test_partition_assigns_layer_ranges_correctly():
     # 10 grid points, 3 wavelengths. Points 0-3: top, 4-5: junction, 6-9: bottom.
     A = np.ones((10, 3))  # uniform absorption rate [m^-1]

@@ -112,7 +112,10 @@ def partition_absorption(
     bot_absorbed = float(np.trapezoid(G_bot, x[bottom_slice]))
     parasitic = (full_absorbed - top_absorbed - bot_absorbed) / total_incident
 
-    return G_top, G_bot, max(0.0, parasitic)
+    # Note: junction_slice is accepted for API symmetry; the junction contribution
+    # is computed as the residual (full - top - bot) to make photon conservation
+    # exact under disjoint-trapezoid quadrature at shared grid boundaries.
+    return G_top, G_bot, min(1.0, max(0.0, parasitic))
 
 
 def _tmm_layer_from_stack_layer(layer, wavelengths_nm: np.ndarray) -> TMMLayer:
@@ -220,14 +223,23 @@ def compute_tandem_generation(
     junc_end = float(boundaries[n_top + n_junc])
 
     # --- Spatial grid: top / junction interior / bottom ---
-    x_top = np.linspace(0.0, top_end, N_top)
-    n_junc_pts_full = max(3, n_junc * 3)
-    x_junc = np.linspace(top_end, junc_end, n_junc_pts_full)
-    x_bot = np.linspace(junc_end, total_thickness, N_bot)
-
-    # Drop duplicate boundary points at top/junc and junc/bot interfaces.
-    x = np.concatenate([x_top, x_junc[1:-1], x_bot])
-    n_junc_pts = n_junc_pts_full - 2
+    # endpoint=False on x_top (and x_junc) gives each segment ownership of its
+    # left boundary while the next segment owns its own left boundary.  This
+    # eliminates duplicate grid points at every interface with no special-casing.
+    if n_junc == 0:
+        # No junction layers: grid is just top + bottom. Use endpoint=False
+        # on the top segment so the boundary point belongs only to the bottom.
+        x_top = np.linspace(0.0, top_end, N_top, endpoint=False)
+        x_bot = np.linspace(top_end, total_thickness, N_bot)
+        x = np.concatenate([x_top, x_bot])
+        n_junc_pts = 0
+    else:
+        x_top = np.linspace(0.0, top_end, N_top, endpoint=False)
+        n_junc_pts_full = max(3, n_junc * 3)
+        x_junc = np.linspace(top_end, junc_end, n_junc_pts_full, endpoint=False)
+        x_bot = np.linspace(junc_end, total_thickness, N_bot)
+        x = np.concatenate([x_top, x_junc, x_bot])
+        n_junc_pts = n_junc_pts_full
 
     # --- Combined TMM absorption ---
     A = tmm_absorption_profile(
