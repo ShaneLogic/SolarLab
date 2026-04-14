@@ -23,30 +23,76 @@ def ionmonger_result():
     return run_jv_sweep(stack, N_grid=40, n_points=20, v_rate=5.0)
 
 
-def test_voc_ionmonger_benchmark(ionmonger_result):
-    """V_oc should be in [0.95, 1.25] V.
+# ── Reference metrics (TE-corrected, N_grid=40, n_points=20, v_rate=5.0) ────
+# Captured from a clean run against configs/ionmonger_benchmark.yaml with the
+# band-offset V_bi and thermionic-emission capping landed in Phase 1. These
+# tight bounds (±2% V_oc, ±3% J_sc/FF, ±5% PCE) are the deeper-benchmark gate:
+# if the physics drifts under a future change, these tests fail immediately
+# rather than waiting for a loose guardrail to flag it. Update the reference
+# ONLY when a physics change is deliberate and documented in the commit body.
+_REF_V_OC = 1.1932
+_REF_J_SC = 231.70
+_REF_FF = 0.7774
+_REF_PCE = 0.2149
 
-    IonMonger predicts ~1.07 V; our TE-corrected model gives ~1.18 V.
-    Both are within experimental MAPbI3 range (0.9-1.2 V).
+
+def _assert_within(value: float, target: float, rel: float, name: str) -> None:
+    lo = target * (1.0 - rel)
+    hi = target * (1.0 + rel)
+    assert lo <= value <= hi, (
+        f"{name} = {value:.4f} outside [{lo:.4f}, {hi:.4f}] "
+        f"(target {target:.4f} ± {rel * 100:.1f}%)"
+    )
+
+
+def test_voc_ionmonger_benchmark(ionmonger_result):
+    """V_oc (reverse scan) must be within ±2% of the Phase 1 reference.
+
+    Reference: 1.1932 V at N_grid=40, n_points=20, v_rate=5.0 V/s with
+    band-offset V_bi + thermionic-emission capping. IonMonger's own value
+    is ~1.07 V; our TE-corrected ~1.19 V sits inside the experimental
+    MAPbI3 window (0.9-1.2 V).
     """
-    V_oc = ionmonger_result.metrics_rev.V_oc
-    assert 0.95 < V_oc < 1.25, f"V_oc = {V_oc:.4f} V outside expected range"
+    _assert_within(ionmonger_result.metrics_rev.V_oc, _REF_V_OC, 0.02, "V_oc_rev")
 
 
 def test_jsc_ionmonger_benchmark(ionmonger_result):
-    """J_sc should be in [150, 300] A/m² (15-30 mA/cm²).
-
-    IonMonger predicts ~220 A/m²; our model should be close since J_sc
-    is mainly determined by generation and collection, not V_oc physics.
-    """
-    J_sc = ionmonger_result.metrics_rev.J_sc
-    assert 150.0 < J_sc < 300.0, f"J_sc = {J_sc:.1f} A/m² outside expected range"
+    """J_sc must be within ±3% of the Phase 1 reference (~231.7 A/m²)."""
+    _assert_within(ionmonger_result.metrics_rev.J_sc, _REF_J_SC, 0.03, "J_sc_rev")
 
 
 def test_ff_ionmonger_benchmark(ionmonger_result):
-    """FF should exceed 0.55 for a functional perovskite device."""
-    FF = ionmonger_result.metrics_rev.FF
-    assert FF > 0.55, f"FF = {FF:.3f} below minimum threshold"
+    """FF must be within ±3% of the Phase 1 reference (~0.777)."""
+    _assert_within(ionmonger_result.metrics_rev.FF, _REF_FF, 0.03, "FF_rev")
+
+
+def test_pce_ionmonger_benchmark(ionmonger_result):
+    """PCE must be within ±5% of the Phase 1 reference (~0.2149, i.e. 21.5%).
+
+    PCE is the most sensitive metric because it compounds V_oc·J_sc·FF
+    drift — a 2% V_oc slip and a 3% J_sc slip alone can move PCE ~5%.
+    """
+    _assert_within(ionmonger_result.metrics_rev.PCE, _REF_PCE, 0.05, "PCE_rev")
+
+
+def test_forward_reverse_consistency(ionmonger_result):
+    """Forward and reverse V_oc must agree within 5 mV — the ionmonger stack
+    has weak ionic hysteresis, so a larger split means the solver took a
+    wrong branch on one of the sweeps.
+    """
+    delta = abs(
+        ionmonger_result.metrics_fwd.V_oc - ionmonger_result.metrics_rev.V_oc
+    )
+    assert delta < 5e-3, f"|V_oc_fwd - V_oc_rev| = {delta * 1e3:.2f} mV (>5 mV)"
+
+
+def test_hysteresis_index_bounded(ionmonger_result):
+    """|HI| must be under 0.05 — the ionmonger benchmark is a weak-hysteresis
+    case; anything larger indicates unphysical current spikes in the sweep.
+    """
+    assert abs(ionmonger_result.hysteresis_index) < 0.05, (
+        f"|HI| = {abs(ionmonger_result.hysteresis_index):.4f} (>0.05)"
+    )
 
 
 def test_legacy_config_no_regression():
