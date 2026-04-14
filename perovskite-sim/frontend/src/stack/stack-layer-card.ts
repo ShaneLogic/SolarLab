@@ -8,6 +8,17 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, c => HTML_ESCAPE[c])
 }
 
+/**
+ * Render chemical-formula subscripts in a layer name. Escapes HTML first,
+ * then wraps any run of digits that immediately follows a letter (e.g. the
+ * "2" in "TiO2", the "3" in "MAPbI3", the "60" in "C60") in a <sub> tag.
+ * Layer names that don't match the pattern — "spiro_HTL", "Au_back_contact"
+ * — are returned unchanged beyond escaping. Safe to inject into innerHTML.
+ */
+export function prettyFormula(s: string): string {
+  return esc(s).replace(/([A-Za-z\)\]])(\d+)/g, '$1<sub>$2</sub>')
+}
+
 function fmtThickness(metres: number): string {
   if (!Number.isFinite(metres) || metres <= 0) return '—'
   if (metres >= 1e-3) return `${(metres * 1000).toPrecision(3)} mm`
@@ -45,7 +56,7 @@ export function renderLayerCard(
          aria-label="Layer ${idx + 1}: ${esc(layer.name)} (${esc(role)})">
       <span class="layer-card-handle" aria-hidden="true">⋮⋮</span>
       <div class="layer-card-body">
-        <div class="layer-card-name">${esc(layer.name)}</div>
+        <div class="layer-card-name">${prettyFormula(layer.name)}</div>
         <div class="layer-card-meta">${fmtThickness(layer.thickness)} · ${esc(role)}${layer.incoherent ? ' · incoherent' : ''}</div>
       </div>
       ${opticalPill}

@@ -19,7 +19,7 @@ export function renderInterfaceStrip(
   const cls = isDefaultZero ? 'iface-strip is-default' : 'iface-strip'
   const label = isDefaultZero
     ? '◆ uses default 0 m/s'
-    : `◆ v_n=${fmtSrv(pair[0])} v_p=${fmtSrv(pair[1])} m/s`
+    : `◆ <i>v</i><sub>n</sub>=${fmtSrv(pair[0])} <i>v</i><sub>p</sub>=${fmtSrv(pair[1])} m/s`
   return `
     <button class="${cls}"
             data-action="edit-iface"
