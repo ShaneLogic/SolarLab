@@ -38,3 +38,42 @@ def is_shipped_name(name: str) -> bool:
     if "." in name or "/" in name:
         return False
     return (CONFIGS_ROOT / f"{name}.yaml").exists()
+
+
+def write_user_config(
+    name: str,
+    body: dict,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Write a validated user config atomically.
+
+    Uses ``os.O_EXCL`` on first save so two concurrent saves of the same
+    name cannot both succeed (the second raises ``FileExistsError``). A
+    second save with ``overwrite=True`` truncates the existing file.
+
+    Raises:
+        ValueError: filename does not match USER_FILENAME_RE.
+        FileExistsError: name collides with a shipped preset, or the
+            target already exists and ``overwrite`` is False.
+    """
+    validate_user_filename(name)
+    if is_shipped_name(name):
+        raise FileExistsError(f"{name!r} is reserved by a shipped preset")
+    USER_CONFIGS_ROOT.mkdir(parents=True, exist_ok=True)
+    target = USER_CONFIGS_ROOT / f"{name}.yaml"
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if overwrite else os.O_EXCL)
+    try:
+        fd = os.open(target, flags, 0o644)
+    except FileExistsError:
+        raise FileExistsError(f"{name!r} already exists")
+    with os.fdopen(fd, "w") as f:
+        yaml.safe_dump(body, f, default_flow_style=False, sort_keys=False)
+    return target
+
+
+def list_user_configs() -> list[str]:
+    """Return a sorted list of user-preset bare names (no extension)."""
+    if not USER_CONFIGS_ROOT.is_dir():
+        return []
+    return sorted(p.stem for p in USER_CONFIGS_ROOT.glob("*.yaml"))
