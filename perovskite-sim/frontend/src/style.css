@@ -1204,3 +1204,63 @@ html, body, #app {
   margin-left: 6px;
   font-weight: 600;
 }
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal {
+  background: #fff;
+  border-radius: 6px;
+  min-width: 360px;
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-header { padding: 12px 16px; font-weight: 600; border-bottom: 1px solid #e5e5ec; }
+.modal-tabs { display: flex; border-bottom: 1px solid #e5e5ec; }
+.modal-tab {
+  flex: 1;
+  padding: 8px;
+  background: #f7f7fa;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+.modal-tab.is-active { background: #fff; border-bottom-color: #ff9b45; }
+.modal-body { padding: 12px 16px; overflow: auto; flex: 1; }
+.modal-footer {
+  padding: 8px 16px;
+  border-top: 1px solid #e5e5ec;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.template-item {
+  text-align: left;
+  background: #fff;
+  border: 1px solid #c9c9d1;
+  border-radius: 4px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.template-item.is-selected { border-color: #ff9b45; background: #fff8f0; }
+.template-name { font-weight: 600; font-size: 12px; }
+.template-role { font-size: 10px; color: #888; }
+.template-desc { font-size: 11px; color: #444; margin-top: 2px; }
+.template-source { font-size: 9px; color: #888; margin-top: 2px; font-style: italic; }
