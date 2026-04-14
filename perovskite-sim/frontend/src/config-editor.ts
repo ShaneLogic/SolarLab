@@ -1,4 +1,5 @@
-import type { DeviceConfig, LayerConfig, SimulationModeName } from './types'
+import type { DeviceConfig, LayerConfig, LayerRole, SimulationModeName } from './types'
+import { isLayerRole } from './types'
 import { isFieldVisible } from './workstation/tier-gating'
 
 const MODE_OPTIONS: ReadonlyArray<{ value: SimulationModeName; label: string }> = [
@@ -284,6 +285,12 @@ function parseText(id: string, fallback: string): string {
   return el?.value ?? fallback
 }
 
+function parseRole(id: string, fallback: LayerRole): LayerRole {
+  const el = document.getElementById(id) as HTMLSelectElement | null
+  const v = el?.value
+  return isLayerRole(v) ? v : fallback
+}
+
 function parseOpticalMaterial(layerIdx: number, fallback: string | null | undefined): string | null {
   const el = document.getElementById(`layer-${layerIdx}-optical_material`) as HTMLSelectElement | null
   if (!el) return fallback ?? null
@@ -308,7 +315,7 @@ export function readDeviceEditor(
     }
     const next: LayerConfig = { ...layer }
     next.name = parseText(`layer-${idx}-name`, layer.name)
-    next.role = parseText(`layer-${idx}-role`, layer.role)
+    next.role = parseRole(`layer-${idx}-role`, layer.role)
     for (const group of LAYER_GROUPS) {
       for (const f of group.fields) {
         const id = `layer-${idx}-${String(f.key)}`
