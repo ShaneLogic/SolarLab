@@ -19,45 +19,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.experiments.jv_sweep import (
     JVMetrics,
     JVResult,
+    _grid_node_count,
     compute_metrics,
     run_jv_sweep,
 )
-from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.models.tandem_config import TandemConfig
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _electrical_grid_length(stack: DeviceStack, N_grid: int) -> int:
-    """Compute the number of electrical grid nodes run_jv_sweep will use.
-
-    Replicates the grid construction at the top of run_jv_sweep so that callers
-    can pre-compute the exact N before calling compute_tandem_generation, which
-    requires N_top / N_bot to match the electrical grid lengths exactly.
-
-    The formula follows from multilayer_grid's deduplication logic:
-    - Each layer is given  n_per = N_grid // len(elec)  intervals.
-    - tanh_grid(n_per, L) returns n_per + 1 points.
-    - multilayer_grid drops the leading point of every layer except the first,
-      so total points = 1 + len(elec) * n_per.
-
-    Args:
-        stack:  DeviceStack whose electrical layers will be gridded.
-        N_grid: N_grid kwarg that will be passed to run_jv_sweep.
-
-    Returns:
-        Integer count of electrical grid nodes N = len(x).
-    """
-    elec = electrical_layers(stack)
-    n_elec = len(elec)
-    n_per = N_grid // n_elec          # intervals per layer (integer division)
-    return 1 + n_elec * n_per         # matches len(multilayer_grid(...))
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +125,7 @@ def run_tandem_jv(
     wavelengths_nm: np.ndarray,
     N_grid: int = 100,
     n_points: int = 50,
+    V_junction: float = 0.0,
 ) -> TandemJVResult:
     """Run a series-connected 2T tandem J-V sweep.
 
@@ -174,8 +145,10 @@ def run_tandem_jv(
         wavelengths_nm: same wavelengths in nanometres — passed to load_nk.
         N_grid:        number of grid intervals to request per sub-cell sweep
                        (the actual node count depends on the layer count; see
-                       _electrical_grid_length).
+                       jv_sweep._grid_node_count).
         n_points:      number of voltage points in each sweep direction.
+        V_junction:    recombination-junction voltage offset [V]; default 0.0
+                       (ideal_ohmic model, no voltage drop at the junction).
 
     Returns:
         TandemJVResult with the series-matched J-V and per-sub-cell results.
@@ -190,10 +163,10 @@ def run_tandem_jv(
 
     # Step 1: Determine electrical grid node counts for each sub-cell.
     # run_jv_sweep validates fixed_generation.shape == (N,) where N is the
-    # electrical node count — not N_grid itself. We replicate that computation
-    # here so the shapes agree before any expensive ODE work starts.
-    N_top = _electrical_grid_length(cfg.top_cell, N_grid)
-    N_bot = _electrical_grid_length(cfg.bottom_cell, N_grid)
+    # electrical node count — not N_grid itself. _grid_node_count is the
+    # single source of truth shared with run_jv_sweep for this formula.
+    N_top = _grid_node_count(cfg.top_cell, N_grid)
+    N_bot = _grid_node_count(cfg.bottom_cell, N_grid)
 
     # Step 2: One combined-TMM generation solve over the full tandem stack.
     gen = compute_tandem_generation(
@@ -216,16 +189,20 @@ def run_tandem_jv(
     )
 
     # Step 4: Series-match the forward sweeps.
+    # V_junction is the recombination-junction voltage offset; v1 uses 0.0
+    # for the ideal_ohmic junction model (no voltage drop at the junction).
     J_common, V_top_m, V_bot_m, V_tandem = series_match_jv(
         top_result.J_fwd, top_result.V_fwd,
         bot_result.J_fwd, bot_result.V_fwd,
-        V_junction=0.0,
+        V_junction=V_junction,
     )
 
     # Step 5: Extract tandem metrics from the series-matched curve.
     # compute_metrics is already public in jv_sweep and handles the same
-    # sign convention (J > 0 at short circuit). V and J must be paired; the
-    # natural pairing here is V_tandem sorted by J_common (already ascending).
+    # sign convention (J > 0 at short circuit). J_common is ascending (most
+    # negative J first), which means V_tandem is descending (V decreases as J
+    # increases along a photovoltaic J-V curve). compute_metrics re-sorts by V
+    # internally, so the order here does not matter.
     metrics = compute_metrics(V_tandem, J_common)
 
     return TandemJVResult(

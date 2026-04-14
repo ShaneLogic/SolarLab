@@ -258,6 +258,25 @@ def quasi_static_sweep(
     return np.asarray(voltages, dtype=float), J_arr
 
 
+def _grid_node_count(stack: DeviceStack, N_grid: int) -> int:
+    """Return the number of electrical grid nodes run_jv_sweep will build.
+
+    This is the single source of truth for the electrical-grid sizing formula.
+    Both run_jv_sweep (internally) and tandem callers (to pre-size generation
+    profiles) must use this helper so the two sites can never silently diverge.
+
+    Formula derivation:
+    - Only electrical layers (non-substrate) are gridded.
+    - Each layer receives  n_per = N_grid // n_elec  intervals.
+    - multilayer_grid deduplicates shared boundary points, giving
+      N = 1 + n_elec * n_per  total nodes.
+    """
+    elec = electrical_layers(stack)
+    n_elec = len(elec)
+    n_per = N_grid // n_elec
+    return 1 + n_elec * n_per
+
+
 def run_jv_sweep(
     stack: DeviceStack,
     N_grid: int = 100,
@@ -302,7 +321,8 @@ def run_jv_sweep(
     elec = electrical_layers(stack)
     layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
     x = multilayer_grid(layers_grid)
-    N = len(x)
+    N = _grid_node_count(stack, N_grid)
+    assert N == len(x), "grid node count mismatch — _grid_node_count is out of sync"
     L = sum(l.thickness for l in elec)
 
     # Build the material cache once — shared across forward and reverse sweeps

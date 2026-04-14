@@ -1,7 +1,5 @@
 """Tests for perovskite_sim.experiments.tandem_jv.
 
-Step 2/7 — written before the implementation to drive TDD.
-
 The series_match_jv tests are pure unit tests (no physics, fast).
 The run_tandem_jv smoke test uses real sub-cell sweeps but keeps
 N_grid=30 and n_points=12 to minimise wall time.
