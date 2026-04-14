@@ -70,10 +70,19 @@ export async function mountDevicePanel(
     setOpticalMaterialOptions([])
   }
 
-  const names = await listConfigs()
-  select.innerHTML = names
-    .map(n => `<option value="${n}">${n.replace(/\.ya?ml$/, '')}</option>`)
+  const entries = await listConfigs()
+  const shipped = entries.filter(e => e.namespace === 'shipped')
+  const user = entries.filter(e => e.namespace === 'user')
+  const shippedOpts = shipped
+    .map(e => `<option value="${e.name}">${e.name.replace(/\.ya?ml$/, '')}</option>`)
     .join('')
+  const userOpts = user
+    .map(e => `<option value="user/${e.name}">${e.name.replace(/\.ya?ml$/, '')}</option>`)
+    .join('')
+  select.innerHTML = [
+    shippedOpts ? `<optgroup label="Shipped presets">${shippedOpts}</optgroup>` : '',
+    userOpts ? `<optgroup label="User presets">${userOpts}</optgroup>` : '',
+  ].join('')
 
   let current: DeviceConfig | null = null
   let pristine: DeviceConfig | null = null
@@ -88,7 +97,10 @@ export async function mountDevicePanel(
     listeners.forEach(l => l(cfg))
   }
 
-  select.addEventListener('change', () => { void load(select.value) })
+  select.addEventListener('change', () => {
+    const v = select.value.startsWith('user/') ? select.value.slice(5) : select.value
+    void load(v)
+  })
   resetBtn.addEventListener('click', () => {
     if (pristine) {
       current = structuredClone(pristine)
@@ -97,10 +109,14 @@ export async function mountDevicePanel(
     }
   })
 
-  // Prefer ionmonger benchmark as default if available (best-tuned V_oc).
-  const initial = names.find(n => n.includes('ionmonger')) ?? names[0]
+  const initial =
+    shipped.find(e => e.name.includes('ionmonger'))?.name ??
+    shipped[0]?.name ??
+    entries[0]?.name
+  if (!initial) throw new Error('no configs available')
+  const initialName = initial.startsWith('user/') ? initial.slice(5) : initial
   select.value = initial
-  await load(initial)
+  await load(initialName)
 
   return {
     getConfig(): DeviceConfig {

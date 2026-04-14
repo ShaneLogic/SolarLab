@@ -103,7 +103,8 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   // --- workspace state ---
   let workspace: Workspace = loadWorkspace() ?? createEmptyWorkspace('Untitled')
   if (workspace.devices.length === 0) {
-    const presets = await listConfigs()
+    const entries = await listConfigs()
+    const presets = entries.map(e => e.name)
     const result = await showWizard(root, presets)
     if (!result.cancelled && result.selection) {
       const cfg = await getConfig(result.selection.preset)
