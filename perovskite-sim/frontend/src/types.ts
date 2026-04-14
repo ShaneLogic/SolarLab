@@ -1,6 +1,27 @@
+export type LayerRole =
+  | 'substrate'
+  | 'front_contact'
+  | 'ETL'
+  | 'absorber'
+  | 'HTL'
+  | 'back_contact'
+
+export const LAYER_ROLES: readonly LayerRole[] = [
+  'substrate',
+  'front_contact',
+  'ETL',
+  'absorber',
+  'HTL',
+  'back_contact',
+]
+
+export function isLayerRole(v: unknown): v is LayerRole {
+  return typeof v === 'string' && (LAYER_ROLES as readonly string[]).includes(v)
+}
+
 export interface LayerConfig {
   name: string
-  role: string
+  role: LayerRole
   thickness: number
   eps_r: number
   mu_n: number
@@ -111,14 +132,6 @@ export interface JobStreamHandlers<TResult> {
 }
 
 // ── Phase 2b layer builder ──────────────────────────────────────────────────
-
-export type LayerRole =
-  | 'substrate'
-  | 'front_contact'
-  | 'ETL'
-  | 'absorber'
-  | 'HTL'
-  | 'back_contact'
 
 export interface LayerTemplate {
   role: LayerRole

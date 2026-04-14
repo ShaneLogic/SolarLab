@@ -38,7 +38,7 @@ export function renderLayerCard(
   selected: boolean,
   errorFields: ReadonlySet<string>,
 ): string {
-  const role = layer.role || 'absorber'
+  const role = layer.role
   const heightPx = logScaleHeight(layer.thickness)
   const selectedCls = selected ? ' is-selected' : ''
   const errorCls = errorFields.size > 0 ? ' is-error' : ''
