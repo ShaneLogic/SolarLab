@@ -32,6 +32,13 @@ export async function getConfig(name: string): Promise<DeviceConfig> {
   return data.config as DeviceConfig
 }
 
+export async function fetchOpticalMaterials(): Promise<string[]> {
+  const res = await fetch(`${BASE}/api/optical-materials`)
+  if (!res.ok) throw new Error(`fetchOpticalMaterials failed: ${res.status}`)
+  const data = (await res.json()) as { materials: string[] }
+  return data.materials
+}
+
 export async function runJV(device: DeviceConfig, params: JVParams): Promise<JVResult> {
   const res = await fetch(`${BASE}/api/jv`, {
     method: 'POST',
