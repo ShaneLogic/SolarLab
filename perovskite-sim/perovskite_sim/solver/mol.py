@@ -5,7 +5,7 @@ import numpy as np
 try:
     from scipy.integrate import solve_ivp
 except ImportError:
-    from scipy_shim import solve_ivp
+    from perovskite_sim._compat.scipy_shim import solve_ivp
 
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.physics.poisson import (
