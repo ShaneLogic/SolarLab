@@ -42,7 +42,8 @@ export function computeTmmBadge(
     l => l.optical_material != null && l.optical_material !== '',
   )
   if (tmmLayers.length === 0) return ''
-  return `<span class="tmm-badge" title="Optical generation computed with transfer-matrix method. Layers without optical_material fall back to Beer-Lambert.">TMM active · ${tmmLayers.length} layers</span>`
+  const noun = tmmLayers.length === 1 ? 'layer' : 'layers'
+  return `<span class="tmm-badge" title="Optical generation computed with transfer-matrix method. Layers without optical_material fall back to Beer-Lambert.">TMM active · ${tmmLayers.length} ${noun}</span>`
 }
 
 export async function mountDevicePanel(

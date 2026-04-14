@@ -296,16 +296,16 @@ input[type="number"] {
 
 .layer-list { display: flex; flex-direction: column; gap: 0.625rem; }
 
-.layer-card {
+.param-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: #fafbfc;
   overflow: hidden;
 }
 
-.layer-card[open] { background: #ffffff; }
+.param-card[open] { background: #ffffff; }
 
-.layer-card > summary {
+.param-card > summary {
   list-style: none;
   padding: 0.75rem 1rem;
   display: flex;
@@ -317,19 +317,19 @@ input[type="number"] {
   border-bottom: 1px solid transparent;
 }
 
-.layer-card[open] > summary {
+.param-card[open] > summary {
   border-bottom-color: var(--border);
 }
 
-.layer-card > summary::-webkit-details-marker { display: none; }
-.layer-card > summary::before {
+.param-card > summary::-webkit-details-marker { display: none; }
+.param-card > summary::before {
   content: '▸';
   color: var(--text-muted);
   transition: transform 0.15s;
   display: inline-block;
   width: 0.75rem;
 }
-.layer-card[open] > summary::before { transform: rotate(90deg); }
+.param-card[open] > summary::before { transform: rotate(90deg); }
 
 .layer-index {
   display: inline-flex;
@@ -366,7 +366,7 @@ input[type="number"] {
   font-weight: 600;
 }
 
-.layer-body {
+.param-card-body {
   padding: 1rem;
   display: flex;
   flex-direction: column;
@@ -1099,25 +1099,31 @@ html, body, #app {
 
 .layer-card-handle {
   cursor: grab;
-  font-size: 13px;
+  font-size: 14px;
   opacity: 0.7;
 }
 .layer-card-body { flex: 1; min-width: 0; }
 .layer-card-name {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   font-feature-settings: "subs", "sups";
+  line-height: 1.2;
+}
+.layer-card-name sub {
+  font-size: 0.75em;
+  vertical-align: sub;
 }
 .layer-card-meta {
-  font-size: 10px;
+  font-size: 12px;
   opacity: 0.85;
+  line-height: 1.25;
 }
 .layer-card-pill {
   background: rgba(255, 255, 255, 0.85);
   color: #333;
   border-radius: 10px;
-  padding: 1px 7px;
-  font-size: 9px;
+  padding: 2px 8px;
+  font-size: 11px;
   border: 1px solid rgba(0, 0, 0, 0.15);
 }
 .layer-card-controls {
@@ -1145,14 +1151,15 @@ html, body, #app {
   background: #f0f4fa;
   border: 1px solid #d0e0f0;
   color: #6a8ab8;
-  font-size: 9px;
-  padding: 2px 6px;
-  border-radius: 2px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 3px;
   margin: 2px 0;
   text-align: center;
   cursor: pointer;
   width: 100%;
 }
+.iface-strip sub { font-size: 0.75em; vertical-align: sub; }
 .iface-strip.is-default {
   background: #fff8e0;
   border-color: #e0d090;
@@ -1174,10 +1181,10 @@ html, body, #app {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
-  font-size: 9px;
+  font-size: 11px;
 }
 .legend-chip {
-  padding: 2px 6px;
+  padding: 3px 8px;
   border-radius: 10px;
   border: 1px solid rgba(0,0,0,0.1);
 }
@@ -1193,7 +1200,7 @@ html, body, #app {
   gap: 6px;
   margin-top: 10px;
 }
-.stack-actions button { flex: 1; font-size: 11px; }
+.stack-actions button { flex: 1; font-size: 12px; }
 
 .dirty-pill {
   background: #ff9b45;

@@ -157,7 +157,12 @@ function isVisibleField(f: FieldDef, tier: SimulationModeName | undefined): bool
   return isFieldVisible(String(f.key), tier)
 }
 
-function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName): string {
+function renderLayer(
+  layer: LayerConfig,
+  idx: number,
+  tier?: SimulationModeName,
+  forceOpen: boolean = false,
+): string {
   const groups = LAYER_GROUPS.map(group => {
     const visibleFields = group.fields.filter(f => isVisibleField(f, tier))
     if (visibleFields.length === 0) return ''
@@ -169,8 +174,9 @@ function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName)
       </div>`
   }).join('')
 
+  const openAttr = (forceOpen || idx === 0) ? 'open' : ''
   return `
-    <details class="layer-card" ${idx === 0 ? 'open' : ''}>
+    <details class="param-card" ${openAttr}>
       <summary>
         <span class="layer-index">${idx + 1}</span>
         <input type="text" class="layer-name" id="layer-${idx}-name" value="${escapeHtml(layer.name)}" spellcheck="false">
@@ -183,7 +189,7 @@ function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName)
           <option value="back_contact" ${layer.role === 'back_contact' ? 'selected' : ''}>back contact</option>
         </select>
       </summary>
-      <div class="layer-body">${groups}</div>
+      <div class="param-card-body">${groups}</div>
     </details>`
 }
 
@@ -229,7 +235,7 @@ export function renderDeviceEditor(
 ): void {
   const singleLayer = selectedLayerIdx != null && tier === 'full'
   const layerHtml = singleLayer
-    ? renderLayer(config.layers[selectedLayerIdx!], selectedLayerIdx!, tier)
+    ? renderLayer(config.layers[selectedLayerIdx!], selectedLayerIdx!, tier, true)
     : config.layers.map((layer, idx) => renderLayer(layer, idx, tier)).join('')
   const currentMode: SimulationModeName = isModeName(config.device.mode) ? config.device.mode : 'full'
   const currentT = config.device.T ?? 300
