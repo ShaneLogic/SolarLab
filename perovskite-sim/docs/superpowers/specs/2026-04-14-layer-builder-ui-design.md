@@ -182,6 +182,11 @@ cross-section preview, adapted to the workstation's horizontal pane budget:
 - **Drag handle (`⋮⋮`).** Visible on the left of every card. Native HTML5
   `dragstart`/`dragover`/`drop` events; on drop, the card moves and the
   interfaces array is reconciled.
+- **↑↓ reorder buttons.** Hover-revealed on the right of each card next to
+  the delete button. Keyboard-focusable; serve as the accessible reorder
+  path for users who cannot drag (and as a fallback if browser DnD
+  misbehaves). They drive the same `onAction({type:'reorder', from, to})`
+  path as drag-and-drop, so reconciliation logic is shared.
 - **Delete (`✕`).** Hover-revealed on the right of each card. Confirms only
   if the card is the only absorber.
 - **Inter-layer `+` buttons.** A 2 px-tall gap sits between every pair of
@@ -608,11 +613,13 @@ time as `ValueError`, surfaced through the existing SSE `error` channel.
 - `log-scale-height.test.ts` — height function is finite for `[1 nm, 1 mm]`,
   preserves ordering, and never returns 0 / NaN / negative values.
 
-Snapshot test:
+Field-set superset test:
 - `config-editor-superset.test.ts` — render the same `LayerConfig` through
-  both the old (all-layers, fast tier) and new (single-layer, full tier)
-  editor; assert that the new editor's field set is a strict superset of
-  the old.
+  both the legacy/fast accordion path and the full-tier single-layer path;
+  collect the rendered field `id` set from each (e.g. `layer-0-thickness`,
+  `layer-0-mu_n`, …) and assert that the full-tier set is a strict
+  superset of the legacy set. This catches accidental field drops in the
+  shrunk editor without depending on DOM structure.
 
 ### 15b. Unit (backend, pytest)
 
