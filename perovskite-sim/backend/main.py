@@ -198,6 +198,29 @@ def list_optical_materials() -> dict:
     return {"materials": sorted(p.stem for p in nk_dir.glob("*.csv"))}
 
 
+@app.get("/api/layer-templates")
+def list_layer_templates() -> dict:
+    """Return the parsed layer templates library used by the Add Layer dialog.
+
+    The library lives in ``perovskite_sim/data/layer_templates.yaml`` so the
+    frontend can populate the dialog without re-deriving material defaults.
+    """
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "perovskite_sim"
+        / "data"
+        / "layer_templates.yaml"
+    )
+    if not path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="layer_templates.yaml missing — Phase 2b data file not installed",
+        )
+    with path.open() as f:
+        templates = yaml.safe_load(f) or {}
+    return {"status": "ok", "templates": _coerce_numbers(templates)}
+
+
 @app.get("/api/configs/{name}")
 def get_config(name: str):
     """Return the parsed YAML device config so the frontend can edit it."""
