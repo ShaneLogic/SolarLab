@@ -37,3 +37,6 @@ htmlcov/
 
 # Recursive pycache
 **/__pycache__/
+
+# Phase 2b user-saved device presets (per-developer; not version-controlled)
+configs/user/

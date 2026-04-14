@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isFieldVisible, hiddenKeysForTier } from './tier-gating'
+import { isFieldVisible, hiddenKeysForTier, isLayerBuilderEnabled } from './tier-gating'
 
 describe('isFieldVisible', () => {
   it('always shows the core Geometry & Electrostatics fields regardless of tier', () => {
@@ -55,5 +55,13 @@ describe('hiddenKeysForTier', () => {
 
   it('full hides nothing', () => {
     expect(hiddenKeysForTier('full')).toEqual([])
+  })
+})
+
+describe('isLayerBuilderEnabled', () => {
+  it('returns true only for full tier', () => {
+    expect(isLayerBuilderEnabled('full')).toBe(true)
+    expect(isLayerBuilderEnabled('fast')).toBe(false)
+    expect(isLayerBuilderEnabled('legacy')).toBe(false)
   })
 })

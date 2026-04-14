@@ -36,3 +36,14 @@ export function isFieldVisible(key: string, tier: SimulationModeName): boolean {
 export function hiddenKeysForTier(tier: SimulationModeName): string[] {
   return [...HIDDEN_BY_TIER[tier]]
 }
+
+/**
+ * Phase 2b layer-builder gate. The custom-stack visualizer, add/remove/
+ * reorder controls, template library, and Save-As path are full-tier-only
+ * because adding/removing layers in legacy/fast tiers risks producing
+ * configs that silently diverge from IonMonger / DriftFusion benchmark
+ * conventions — exactly what those tiers exist to preserve.
+ */
+export function isLayerBuilderEnabled(tier: SimulationModeName): boolean {
+  return tier === 'full'
+}

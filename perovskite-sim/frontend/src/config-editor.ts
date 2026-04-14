@@ -175,9 +175,12 @@ function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName)
         <span class="layer-index">${idx + 1}</span>
         <input type="text" class="layer-name" id="layer-${idx}-name" value="${escapeHtml(layer.name)}" spellcheck="false">
         <select class="layer-role" id="layer-${idx}-role">
-          <option value="HTL" ${layer.role === 'HTL' ? 'selected' : ''}>HTL</option>
-          <option value="absorber" ${layer.role === 'absorber' ? 'selected' : ''}>absorber</option>
+          <option value="substrate" ${layer.role === 'substrate' ? 'selected' : ''}>substrate</option>
+          <option value="front_contact" ${layer.role === 'front_contact' ? 'selected' : ''}>front contact</option>
           <option value="ETL" ${layer.role === 'ETL' ? 'selected' : ''}>ETL</option>
+          <option value="absorber" ${layer.role === 'absorber' ? 'selected' : ''}>absorber</option>
+          <option value="HTL" ${layer.role === 'HTL' ? 'selected' : ''}>HTL</option>
+          <option value="back_contact" ${layer.role === 'back_contact' ? 'selected' : ''}>back contact</option>
         </select>
       </summary>
       <div class="layer-body">${groups}</div>
@@ -222,8 +225,12 @@ export function renderDeviceEditor(
   container: HTMLElement,
   config: DeviceConfig,
   tier?: SimulationModeName,
+  selectedLayerIdx?: number,
 ): void {
-  const layers = config.layers.map((layer, idx) => renderLayer(layer, idx, tier)).join('')
+  const singleLayer = selectedLayerIdx != null && tier === 'full'
+  const layerHtml = singleLayer
+    ? renderLayer(config.layers[selectedLayerIdx!], selectedLayerIdx!, tier)
+    : config.layers.map((layer, idx) => renderLayer(layer, idx, tier)).join('')
   const currentMode: SimulationModeName = isModeName(config.device.mode) ? config.device.mode : 'full'
   const currentT = config.device.T ?? 300
   const showT = !tier || isFieldVisible('T', tier)
@@ -232,8 +239,7 @@ export function renderDeviceEditor(
             <span class="param-label"><span class="sym"><i>T</i></span><span class="unit">K</span></span>
             ${numAttr('dev-T', currentT)}
           </label>` : ''
-  container.innerHTML = `
-    <div class="editor">
+  const deviceGroup = singleLayer ? '' : `
       <div class="param-group">
         <h5>Device</h5>
         <div class="param-grid">
@@ -250,9 +256,13 @@ export function renderDeviceEditor(
             ${numAttr('dev-Phi', config.device.Phi)}
           </label>
         </div>
-      </div>
-      ${renderInterfaces(config)}
-      <div class="layer-list">${layers}</div>
+      </div>`
+  const interfacesHtml = singleLayer ? '' : renderInterfaces(config)
+  container.innerHTML = `
+    <div class="editor">
+      ${deviceGroup}
+      ${interfacesHtml}
+      <div class="layer-list">${layerHtml}</div>
     </div>`
 }
 
@@ -281,9 +291,15 @@ function parseCheckbox(id: string, fallback: boolean): boolean {
   return el.checked
 }
 
-export function readDeviceEditor(original: DeviceConfig): DeviceConfig {
+export function readDeviceEditor(
+  original: DeviceConfig,
+  selectedLayerIdx?: number,
+): DeviceConfig {
+  const singleLayer = selectedLayerIdx != null
   const layers: LayerConfig[] = original.layers.map((layer, idx) => {
-    // Immutable base — all writes go into `next` via spread.
+    if (singleLayer && idx !== selectedLayerIdx) {
+      return layer
+    }
     const next: LayerConfig = { ...layer }
     next.name = parseText(`layer-${idx}-name`, layer.name)
     next.role = parseText(`layer-${idx}-role`, layer.role)
@@ -310,6 +326,10 @@ export function readDeviceEditor(original: DeviceConfig): DeviceConfig {
     return next
   })
 
+  if (singleLayer) {
+    return { device: original.device, layers }
+  }
+
   const interfaces: Array<[number, number]> = []
   for (let i = 0; i < layers.length - 1; i++) {
     const existing = original.device.interfaces?.[i] ?? [0, 0]
@@ -318,11 +338,9 @@ export function readDeviceEditor(original: DeviceConfig): DeviceConfig {
       parseNum(`iface-${i}-vp`, existing[1]),
     ])
   }
-
   const rawMode = parseText('dev-mode', original.device.mode ?? 'full')
   const mode: SimulationModeName = isModeName(rawMode) ? rawMode : 'full'
   const T = parseNum('dev-T', original.device.T ?? 300)
-
   return {
     device: {
       V_bi: parseNum('dev-Vbi', original.device.V_bi),

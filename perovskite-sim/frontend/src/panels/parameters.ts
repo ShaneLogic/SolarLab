@@ -36,6 +36,7 @@ export function parametersHTML(): string {
       <table class="param-table">
         <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th><th>Meaning</th></tr></thead>
         <tbody>
+          <tr><td><code>role</code></td><td>Layer role</td><td>—</td><td>One of <code>substrate</code>, <code>front_contact</code>, <code>ETL</code>, <code>absorber</code>, <code>HTL</code>, <code>back_contact</code>. Substrate layers are filtered out of the electrical drift-diffusion grid (they participate only in the TMM optical stack). Every stack must contain exactly one absorber.</td></tr>
           <tr><td>Thickness</td><td>Layer thickness</td><td>m</td><td>Physical extent of the layer along the 1D coordinate <i>x</i>.</td></tr>
           <tr><td><i>ε</i><sub>r</sub></td><td>Relative permittivity</td><td>—</td><td>Static dielectric constant entering Poisson's equation. Harmonic-mean averaged at heterointerfaces.</td></tr>
           <tr><td><i>χ</i></td><td>Electron affinity</td><td>eV</td><td>Energy from vacuum level to conduction-band minimum. Together with <i>E</i><sub>g</sub> it sets the band alignment (CBO / VBO) between layers and — in <b>Full</b> mode — the thermionic-emission cap at heterointerfaces where |Δ<i>E</i><sub>c</sub>| or |Δ<i>E</i><sub>v</sub>| &gt; 0.05 eV.</td></tr>

@@ -46,6 +46,32 @@ export function tutorialHTML(): string {
       </ul>
       <p>To activate TMM, switch to <b>Full</b> tier and pick a preset whose name ends in <code>_tmm</code>, or set the <code>optical_material</code> field on every optical layer of your custom device.</p>
 
+      <h4>Custom Stacks</h4>
+      <p>
+        In <b>Full</b> tier the Device pane shows your stack as a vertical
+        cross-section. You can:
+      </p>
+      <ul>
+        <li><b>Add</b> a layer with <em>＋ Add layer…</em> or any <em>+</em>
+            between layers — pick a starter from the template library
+            (TiO<sub>2</sub> ETL, spiro HTL, Ag back contact, …) or start blank.</li>
+        <li><b>Reorder</b> by dragging a layer's <em>⋮⋮</em> handle, or by
+            clicking the ↑↓ buttons on hover (keyboard-accessible).</li>
+        <li><b>Delete</b> with the <em>✕</em> button on hover.</li>
+        <li><b>Edit</b> any field by clicking a layer to select it and using
+            the detail editor on the right.</li>
+        <li><b>Save</b> as a named user preset via <em>Save as…</em>; it lands
+            in <code>configs/user/</code> and appears under <em>User presets</em>
+            in the dropdown.</li>
+        <li><b>Export</b> the current device as YAML via <em>↓ YAML</em> for
+            sharing outside the app.</li>
+      </ul>
+      <p>
+        Both n-i-p (<code>ETL / absorber / HTL</code>) and p-i-n
+        (<code>HTL / absorber / ETL</code>) orientations are supported — the
+        simulator derives the built-in voltage from the stack itself.
+      </p>
+
       <h4>Tips</h4>
       <ul>
         <li>Increase <i>N</i><sub>grid</sub> for smoother curves and better convergence near <i>V</i><sub>bi</sub>.</li>
