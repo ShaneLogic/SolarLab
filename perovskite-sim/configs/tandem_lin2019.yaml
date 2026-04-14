@@ -1,0 +1,34 @@
+# Lin et al., Nature Energy 4, 864-873 (2019)
+# https://www.nature.com/articles/s41560-019-0466-3
+# Monolithic all-perovskite 2T tandem, 24.8% PCE on 0.049 cm^2.
+#
+# Sub-cell YAMLs are loaded relative to this file's directory.
+# Junction stack is the recombination layer between top and bottom sub-cells.
+# v1 only supports junction.model = ideal_ohmic.
+schema_version: 1
+device_type: tandem_2T_monolithic
+
+tandem:
+  top_cell: nip_wideGap_FACs_1p77.yaml
+  bottom_cell: nip_SnPb_1p22.yaml
+  junction:
+    model: ideal_ohmic
+  light_direction: top_first
+
+junction_stack:
+  - name: Au_nanoparticles
+    thickness_nm: 1.0
+    optical_material: Au
+    incoherent: false
+  - name: PEDOT_PSS_recomb
+    thickness_nm: 20.0
+    optical_material: PEDOT_PSS
+    incoherent: false
+
+benchmark:
+  reference: lin2019_nature_energy
+  target_pce: 24.8
+  target_jsc_ma_cm2: 15.6
+  target_voc_v: 1.965
+  target_ff: 0.79
+  tolerance_pct: 10.0

@@ -1,0 +1,84 @@
+# nip_wideGap_FACs_1p77.yaml — wide-gap FA-Cs perovskite sub-cell preset (1.77 eV)
+#
+# TANDEM SUB-CELL PRESET — do not use standalone without re-tuning contacts.
+# This preset represents the top junction of a Lin 2019-style all-perovskite
+# two-terminal tandem (Eg_top ≈ 1.77 eV FA-Cs / Eg_bot ≈ 1.22 eV Sn-Pb).
+# The tandem loader in Task 6+ will stitch this with nip_SnPb_1p22.yaml.
+#
+# Layer parameters are cloned from nip_MAPbI3.yaml; only the absorber Eg, chi,
+# optical_material, and thickness are changed from that baseline. All other
+# values carry a TODO(benchmark) comment where literature refinement is needed.
+#
+# References:
+#   Saliba et al. JPCL 2016 (FA-Cs chi / Eg)
+#   Lin et al. Nature 2019 (tandem architecture, absorber thicknesses)
+device:
+  V_bi: 1.1
+  Phi: 2.5e21
+# Layer order: HTL (left / hole-contact) → absorber → ETL (right / electron-contact)
+layers:
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 1e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 2e23
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+
+  - name: FA_Cs_1p77
+    role: absorber
+    thickness: 400e-9           # Lin 2019 nominal; refine in Task 8 from SI
+    eps_r: 24.1                 # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    mu_n: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    mu_p: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    ni: 3.2e13                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1e-16                # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    P_lim: 1.6e27               # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    P0: 1.6e24                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    tau_n: 1e-6                 # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    tau_p: 1e-6                 # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    n1: 3.2e13                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    p1: 3.2e13                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    B_rad: 5e-22                # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 1.3e7                # TODO(benchmark): refine after Lin 2019 SI data is loaded
+    Eg: 1.77
+    chi: 3.9                    # FA-Cs wide-gap, Saliba et al. JPCL 2016
+    optical_material: FA_Cs_1p77
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0

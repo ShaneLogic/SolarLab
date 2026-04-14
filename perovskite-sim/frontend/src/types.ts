@@ -165,3 +165,46 @@ export interface ConfigEntry {
   name: string
   namespace: Namespace
 }
+
+// ── Tandem cell (Phase 3) ────────────────────────────────────────────────────
+
+export interface TandemJunctionLayer {
+  name: string
+  role: string
+  thickness_nm?: number
+}
+
+export interface TandemBenchmark {
+  V_oc?: number
+  J_sc?: number
+  FF?: number
+  PCE?: number
+  source?: string
+}
+
+/** Mirrors the POST /api/tandem request body. */
+export interface TandemConfigView {
+  config_path: string
+  N_grid?: number
+  n_points?: number
+}
+
+export interface TandemJVMetrics {
+  V_oc: number
+  J_sc: number
+  FF: number
+  PCE: number
+}
+
+/** Mirrors the JSON response from POST /api/tandem.
+ * Snake_case keys are intentional — they match the backend response directly. */
+export interface TandemJVPayload {
+  V: number[]
+  J: number[]
+  V_top: number[]
+  V_bot: number[]
+  metrics: TandemJVMetrics
+  benchmark: TandemBenchmark | null
+  top_layers?: TandemJunctionLayer[]
+  bot_layers?: TandemJunctionLayer[]
+}
