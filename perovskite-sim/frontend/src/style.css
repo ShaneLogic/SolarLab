@@ -1264,3 +1264,12 @@ html, body, #app {
 .template-role { font-size: 10px; color: #888; }
 .template-desc { font-size: 11px; color: #444; margin-top: 2px; }
 .template-source { font-size: 9px; color: #888; margin-top: 2px; font-style: italic; }
+
+.save-as-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  min-height: 16px;
+}
+.save-as-hint-ok    { color: #2a8040; }
+.save-as-hint-warn  { color: #8a6020; }
+.save-as-hint-error { color: #802020; }
