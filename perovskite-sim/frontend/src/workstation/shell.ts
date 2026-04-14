@@ -31,7 +31,7 @@ const DEFAULT_LAYOUT: LayoutConfig = {
     content: [
       {
         type: 'stack',
-        width: 30,
+        width: 42,
         content: [
           { type: 'component', componentType: 'device', title: 'Device' },
           { type: 'component', componentType: 'help', title: 'Help' },
@@ -39,7 +39,7 @@ const DEFAULT_LAYOUT: LayoutConfig = {
       },
       {
         type: 'stack',
-        width: 35,
+        width: 28,
         content: [
           { type: 'component', componentType: 'jv', title: 'J–V Sweep' },
           { type: 'component', componentType: 'impedance', title: 'Impedance' },
@@ -50,7 +50,7 @@ const DEFAULT_LAYOUT: LayoutConfig = {
         type: 'component',
         componentType: 'main-plot',
         title: 'Main Plot',
-        width: 35,
+        width: 30,
       },
     ],
   },
