@@ -9,11 +9,10 @@
 #
 # Electrical parameters for NiO_HTL / MAPbI3 / PCBM_ETL are copied verbatim
 # from configs/pin_MAPbI3.yaml — the only additions are the substrate layer
-# and the optical material wiring on each electrical layer. NiO is absent
-# from perovskite_sim/data/nk/manifest.yaml, so the HTL uses the constant
-# n_optical fallback (n=2.2, alpha=0) — physically reasonable for NiOx,
-# which is transparent across 300–1000 nm with weak absorption well below
-# the TMM 4-decimal precision floor.
+# and the optical material wiring on each electrical layer. The HTL now uses
+# the shipped NiOx n,k dataset (parameterized from sol-gel NiOx literature;
+# see perovskite_sim/data/nk/NiOx.csv commit message for sources). Prior
+# versions of this preset used a constant n_optical=2.2 fallback.
 device:
   V_bi: 1.1
   Phi: 2.5e21
@@ -61,7 +60,7 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 0.0
-    n_optical: 2.2
+    optical_material: NiOx
 
   - name: MAPbI3
     role: absorber

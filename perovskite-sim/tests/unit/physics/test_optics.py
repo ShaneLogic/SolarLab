@@ -324,6 +324,7 @@ class TestOpticalData:
     @pytest.mark.parametrize("material", [
         "MAPbI3", "TiO2", "spiro_OMeTAD",
         "FTO", "ITO", "SnO2", "C60", "PCBM", "PEDOT_PSS", "Ag", "Au", "glass",
+        "NiOx",
     ])
     def test_load_all_shipped_materials(self, material):
         """Every shipped nk CSV must load cleanly, cover 300-1000 nm, and have n>0, k>=0."""
