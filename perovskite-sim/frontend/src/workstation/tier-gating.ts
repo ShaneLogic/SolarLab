@@ -7,7 +7,7 @@ import type { SimulationModeName } from '../types'
  * Keep this in sync with perovskite_sim/models/mode.py: a field belongs to
  * a tier iff the mode that enables its physics is included in that tier.
  */
-const TMM_KEYS = ['optical_material', 'n_optical'] as const
+const TMM_KEYS = ['optical_material', 'n_optical', 'incoherent'] as const
 const DUAL_ION_KEYS = ['D_ion_neg', 'P_lim_neg', 'E_a_ion_neg'] as const
 const TRAP_PROFILE_KEYS = ['trap_N_t_interface', 'trap_N_t_bulk', 'trap_decay_length'] as const
 const TEMPERATURE_KEYS = ['T'] as const

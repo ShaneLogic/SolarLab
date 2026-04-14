@@ -16,6 +16,12 @@ describe('isFieldVisible', () => {
     expect(isFieldVisible('optical_material', 'full')).toBe(true)
   })
 
+  it('incoherent field is hidden in legacy and fast, visible in full', () => {
+    expect(isFieldVisible('incoherent', 'legacy')).toBe(false)
+    expect(isFieldVisible('incoherent', 'fast')).toBe(false)
+    expect(isFieldVisible('incoherent', 'full')).toBe(true)
+  })
+
   it('hides dual-ion fields in legacy and fast', () => {
     expect(isFieldVisible('D_ion_neg', 'legacy')).toBe(false)
     expect(isFieldVisible('D_ion_neg', 'fast')).toBe(false)
