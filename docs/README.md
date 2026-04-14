@@ -1,25 +1,13 @@
-# SolarLab Documentation
+# SolarLab Research Documentation
 
-Research documentation, plans, and raw analysis files.
+Research notes, plans, specs, and raw source materials.
+See the [root README](../README.md) for the simulator itself.
 
-## Structure
+## Layout
 
 ```
 docs/
-├── plans/      # Research plans and proposals
-├── raw/        # Raw documents (presentations, documents)
-└── (other docs, data, analysis files as needed)
+├── plans/    Research plans, experiment designs, implementation plans
+├── raw/      Source documents (presentations, papers, Word files)
+└── ...       Analysis notes, literature summaries, results
 ```
-
-## Contents
-
-- **plans/** - Research plans and experiment designs
-- **raw/** - Raw documents (presentations, Word documents)
-- Data analysis scripts and results
-- Literature notes and references
-- Raw experimental data (if any)
-
-## Related
-
-- **Perovskite simulator:** See `../perovskite-sim/README.md`
-- **Project config:** See `../.claude/CLAUDE.md`
