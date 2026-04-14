@@ -276,6 +276,27 @@ export async function mountDevicePanel(
     refreshDirtyPill()
   }
 
+  // Incremental update on input/change from the detail editor. Must NOT
+  // rebuild the editor DOM — doing so would destroy focus + cursor position
+  // mid-typing. Only the visualizer, badge, and dirty pill refresh.
+  function syncFromEditor(): void {
+    if (!current || !builderOn) return
+    const updated = readDeviceEditor(current, selectedLayerIdx)
+    current = updated
+    if (visualizerHandle) {
+      const report = validate(current)
+      visualizerHandle.render(current, selectedLayerIdx, report)
+    }
+    refreshBadge(current)
+    refreshDirtyPill()
+    listeners.forEach(l => l(current!))
+  }
+
+  if (builderOn) {
+    editor.addEventListener('input', syncFromEditor)
+    editor.addEventListener('change', syncFromEditor)
+  }
+
   async function refreshConfigsDropdown(selectName: string): Promise<void> {
     const newEntries = await listConfigs()
     const s = newEntries.filter(e => e.namespace === 'shipped')
