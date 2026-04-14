@@ -38,6 +38,14 @@ export function tutorialHTML(): string {
         <li><b>Degradation:</b> snapshot metrics vs time — V<sub>oc</sub> decay implies growing non-radiative recombination; FF loss implies transport or interface deterioration.</li>
       </ul>
 
+      <h4>Optical generation: TMM vs Beer&ndash;Lambert</h4>
+      <p>Generation of electron&ndash;hole pairs <i>G</i>(<i>x</i>) is the source term that drives the drift&ndash;diffusion equations. The simulator supports two optical models:</p>
+      <ul>
+        <li><b>Beer&ndash;Lambert</b> (default on Legacy and Fast tiers): <i>G</i>(<i>x</i>) = <i>α</i> Φ e<sup>&minus;<i>αx</i></sup>. Simple and fast, but ignores reflection at layer interfaces and wavelength dependence. Typically overestimates <i>J</i><sub>SC</sub> by 5&ndash;15 %.</li>
+        <li><b>Transfer-matrix method</b> (Full tier, active whenever <code>optical_material</code> is set on layers): solves Maxwell's equations across the coherent layer stack at each wavelength of the AM1.5G spectrum and integrates. Captures interference fringes, front-surface reflection, and wavelength-dependent absorption.</li>
+      </ul>
+      <p>To activate TMM, switch to <b>Full</b> tier and pick a preset whose name ends in <code>_tmm</code>, or set the <code>optical_material</code> field on every optical layer of your custom device.</p>
+
       <h4>Tips</h4>
       <ul>
         <li>Increase <i>N</i><sub>grid</sub> for smoother curves and better convergence near <i>V</i><sub>bi</sub>.</li>
