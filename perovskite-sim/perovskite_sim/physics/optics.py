@@ -397,7 +397,7 @@ def tmm_generation(
     # Using trapezoidal rule over wavelength
     d_lam = np.diff(wavelengths)
     integrand = A * spectral_flux[None, :]  # (N, n_wl)
-    G = np.trapz(integrand, wavelengths, axis=1)
+    G = np.trapezoid(integrand, wavelengths, axis=1)
     return G
 
 
