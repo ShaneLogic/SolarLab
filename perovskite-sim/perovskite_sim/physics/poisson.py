@@ -6,7 +6,7 @@ try:
     from scipy.sparse.linalg import spsolve
     from scipy.linalg.lapack import dgttrf, dgttrs
 except ImportError:
-    from scipy_shim import diags, spsolve
+    from perovskite_sim._compat.scipy_shim import diags, spsolve
     dgttrf = None
     dgttrs = None
 
