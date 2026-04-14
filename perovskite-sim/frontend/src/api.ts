@@ -8,6 +8,7 @@ import type {
   DegParams,
   ConfigEntry,
   LayerTemplate,
+  TandemJVPayload,
 } from './types'
 
 const BASE = 'http://127.0.0.1:8000'
@@ -119,4 +120,20 @@ export async function runDegradation(device: DeviceConfig, params: DegParams): P
     body: JSON.stringify({ device, ...params }),
   })
   return handle<DegResult>(res)
+}
+
+export async function runTandem(
+  configPath: string,
+  N_grid = 40,
+  n_points = 15,
+): Promise<TandemJVPayload> {
+  const res = await fetch(`${BASE}/api/tandem`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config_path: configPath, N_grid, n_points }),
+  })
+  if (!res.ok) {
+    throw new Error(`tandem run failed: ${res.status} ${await res.text()}`)
+  }
+  return res.json() as Promise<TandemJVPayload>
 }
