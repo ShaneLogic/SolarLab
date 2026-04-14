@@ -107,6 +107,8 @@ Plain TypeScript (no framework). `main.ts` wires five tabs — `J–V Sweep`, `I
 
 Plotly is pulled from `plotly.js-dist-min` which is why `vite build` warns about the 4 MB bundle; that warning is expected and not a bug.
 
+**Custom stacks (Phase 2b — Apr 2026):** In full tier the Device pane renders a vertical layer visualizer with add/remove/reorder, a template library, structural validation, and a Save-As path that lands user presets in `configs/user/`. The accordion editor is preserved for fast/legacy tiers. New backend endpoints: `GET /api/layer-templates`, `POST /api/configs/user`. `GET /api/configs` now returns `{name, namespace}` entries.
+
 ### Backend URL: absolute, not proxied
 
 `api.ts` and `job-stream.ts` both hardcode `http://127.0.0.1:8000` as the base URL. The Vite dev-server proxy is configured for `/api` in `vite.config.ts`, but its SPA history fallback intercepts `/api/configs` before the proxy has a chance to match, returning `index.html` — the JSON parse then fails with `Unexpected token '<'`. Hitting the backend directly sidesteps this. CORS is already wide open in `backend/main.py`, so this works from both `npm run dev` and `npm run preview`/`dist`.
