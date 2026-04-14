@@ -11,54 +11,89 @@ function isModeName(v: unknown): v is SimulationModeName {
   return v === 'full' || v === 'fast' || v === 'legacy'
 }
 
+// Discriminator for per-layer field rendering. Most parameters are numeric;
+// optical_material is a select populated from the backend's n,k CSV scan, and
+// incoherent is a boolean checkbox (thick substrate Fresnel handling in TMM).
+type FieldKind = 'numeric' | 'select-optical-material' | 'boolean'
+
+interface FieldDef {
+  key: keyof LayerConfig
+  label: string
+  kind: FieldKind
+  unit?: string
+}
+
 // Groups of parameters for a single layer. Grouping makes long forms scannable.
 interface ParamGroup {
   title: string
-  fields: Array<{ key: keyof LayerConfig; label: string; unit: string }>
+  fields: FieldDef[]
 }
 
 const LAYER_GROUPS: ParamGroup[] = [
   {
     title: 'Geometry & Electrostatics',
     fields: [
-      { key: 'thickness', label: 'Thickness', unit: 'm' },
-      { key: 'eps_r', label: '<i>ε</i><sub>r</sub>', unit: '' },
-      { key: 'chi', label: '<i>χ</i>', unit: 'eV' },
-      { key: 'Eg', label: '<i>E</i><sub>g</sub>', unit: 'eV' },
+      { key: 'thickness', label: 'Thickness', kind: 'numeric', unit: 'm' },
+      { key: 'eps_r', label: '<i>ε</i><sub>r</sub>', kind: 'numeric', unit: '' },
+      { key: 'chi', label: '<i>χ</i>', kind: 'numeric', unit: 'eV' },
+      { key: 'Eg', label: '<i>E</i><sub>g</sub>', kind: 'numeric', unit: 'eV' },
     ],
   },
   {
     title: 'Transport',
     fields: [
-      { key: 'mu_n', label: '<i>μ</i><sub>n</sub>', unit: 'm²/(V·s)' },
-      { key: 'mu_p', label: '<i>μ</i><sub>p</sub>', unit: 'm²/(V·s)' },
-      { key: 'ni', label: '<i>n</i><sub>i</sub>', unit: 'm⁻³' },
-      { key: 'N_D', label: '<i>N</i><sub>D</sub>', unit: 'm⁻³' },
-      { key: 'N_A', label: '<i>N</i><sub>A</sub>', unit: 'm⁻³' },
+      { key: 'mu_n', label: '<i>μ</i><sub>n</sub>', kind: 'numeric', unit: 'm²/(V·s)' },
+      { key: 'mu_p', label: '<i>μ</i><sub>p</sub>', kind: 'numeric', unit: 'm²/(V·s)' },
+      { key: 'ni', label: '<i>n</i><sub>i</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'N_D', label: '<i>N</i><sub>D</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'N_A', label: '<i>N</i><sub>A</sub>', kind: 'numeric', unit: 'm⁻³' },
     ],
   },
   {
     title: 'Recombination',
     fields: [
-      { key: 'tau_n', label: '<i>τ</i><sub>n</sub>', unit: 's' },
-      { key: 'tau_p', label: '<i>τ</i><sub>p</sub>', unit: 's' },
-      { key: 'n1', label: '<i>n</i><sub>1</sub>', unit: 'm⁻³' },
-      { key: 'p1', label: '<i>p</i><sub>1</sub>', unit: 'm⁻³' },
-      { key: 'B_rad', label: '<i>B</i><sub>rad</sub>', unit: 'm³/s' },
-      { key: 'C_n', label: '<i>C</i><sub>n</sub>', unit: 'm⁶/s' },
-      { key: 'C_p', label: '<i>C</i><sub>p</sub>', unit: 'm⁶/s' },
+      { key: 'tau_n', label: '<i>τ</i><sub>n</sub>', kind: 'numeric', unit: 's' },
+      { key: 'tau_p', label: '<i>τ</i><sub>p</sub>', kind: 'numeric', unit: 's' },
+      { key: 'n1', label: '<i>n</i><sub>1</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'p1', label: '<i>p</i><sub>1</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'B_rad', label: '<i>B</i><sub>rad</sub>', kind: 'numeric', unit: 'm³/s' },
+      { key: 'C_n', label: '<i>C</i><sub>n</sub>', kind: 'numeric', unit: 'm⁶/s' },
+      { key: 'C_p', label: '<i>C</i><sub>p</sub>', kind: 'numeric', unit: 'm⁶/s' },
     ],
   },
   {
     title: 'Ions & Optics',
     fields: [
-      { key: 'D_ion', label: '<i>D</i><sub>ion</sub>', unit: 'm²/s' },
-      { key: 'P_lim', label: '<i>P</i><sub>lim</sub>', unit: 'm⁻³' },
-      { key: 'P0', label: '<i>P</i><sub>0</sub>', unit: 'm⁻³' },
-      { key: 'alpha', label: '<i>α</i>', unit: 'm⁻¹' },
+      { key: 'D_ion', label: '<i>D</i><sub>ion</sub>', kind: 'numeric', unit: 'm²/s' },
+      { key: 'P_lim', label: '<i>P</i><sub>lim</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'P0', label: '<i>P</i><sub>0</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'alpha', label: '<i>α</i>', kind: 'numeric', unit: 'm⁻¹' },
+      { key: 'optical_material', label: 'Optical material', kind: 'select-optical-material' },
+      { key: 'incoherent', label: 'Incoherent layer', kind: 'boolean' },
     ],
   },
 ]
+
+// Module-level cache for optical-material option list. Populated once per
+// mount via setOpticalMaterialOptions() — see device-panel.ts. If the fetch
+// fails the cache stays empty and the dropdown simply has no options beyond
+// the "(none — Beer-Lambert)" sentinel.
+let opticalMaterialOptions: ReadonlyArray<string> = []
+
+export function setOpticalMaterialOptions(options: ReadonlyArray<string>): void {
+  opticalMaterialOptions = [...options]
+}
+
+// Minimal HTML escape for untrusted-ish string values (material filenames
+// come from backend auto-scan of on-disk CSVs — trusted but defensive).
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
 function fmt(v: unknown): string {
   if (v === undefined || v === null || v === '') return ''
@@ -74,21 +109,59 @@ function numAttr(id: string, value: unknown): string {
   return `<input type="text" class="num-input" id="${id}" value="${fmt(value)}" spellcheck="false">`
 }
 
-function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName): string {
-  const groups = LAYER_GROUPS.map(group => {
-    const visibleFields = tier
-      ? group.fields.filter(f => isFieldVisible(String(f.key), tier))
-      : group.fields
-    if (visibleFields.length === 0) return ''
-    const rows = visibleFields.map(f => {
-      const id = `layer-${idx}-${String(f.key)}`
-      const unit = f.unit ? `<span class="unit">${f.unit}</span>` : ''
-      return `
+function renderOpticalMaterialSelect(layerIdx: number, currentValue: string | null | undefined): string {
+  const id = `layer-${layerIdx}-optical_material`
+  const selectedNone = currentValue == null || currentValue === '' ? ' selected' : ''
+  const opts = [`<option value=""${selectedNone}>(none — Beer-Lambert)</option>`]
+    .concat(
+      opticalMaterialOptions.map(m => {
+        const safe = escapeHtml(m)
+        const sel = currentValue === m ? ' selected' : ''
+        return `<option value="${safe}"${sel}>${safe}</option>`
+      }),
+    )
+    .join('')
+  return `<select class="num-input" id="${id}" data-layer="${layerIdx}" data-field="optical_material">${opts}</select>`
+}
+
+function renderIncoherentCheckbox(layerIdx: number, currentValue: boolean | undefined): string {
+  const id = `layer-${layerIdx}-incoherent`
+  const checked = currentValue ? ' checked' : ''
+  return `<input type="checkbox" id="${id}" data-layer="${layerIdx}" data-field="incoherent"${checked}>`
+}
+
+function renderField(layer: LayerConfig, idx: number, f: FieldDef): string {
+  const id = `layer-${idx}-${String(f.key)}`
+  const unit = f.unit ? `<span class="unit">${f.unit}</span>` : ''
+  let control: string
+  switch (f.kind) {
+    case 'numeric':
+      control = numAttr(id, layer[f.key] as number | undefined)
+      break
+    case 'select-optical-material':
+      control = renderOpticalMaterialSelect(idx, layer.optical_material)
+      break
+    case 'boolean':
+      control = renderIncoherentCheckbox(idx, layer.incoherent)
+      break
+  }
+  return `
         <label class="param">
           <span class="param-label"><span class="sym">${f.label}</span>${unit}</span>
-          ${numAttr(id, layer[f.key] as number | undefined)}
+          ${control}
         </label>`
-    }).join('')
+}
+
+function isVisibleField(f: FieldDef, tier: SimulationModeName | undefined): boolean {
+  if (!tier) return true
+  return isFieldVisible(String(f.key), tier)
+}
+
+function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName): string {
+  const groups = LAYER_GROUPS.map(group => {
+    const visibleFields = group.fields.filter(f => isVisibleField(f, tier))
+    if (visibleFields.length === 0) return ''
+    const rows = visibleFields.map(f => renderField(layer, idx, f)).join('')
     return `
       <div class="param-group">
         <h5>${group.title}</h5>
@@ -100,7 +173,7 @@ function renderLayer(layer: LayerConfig, idx: number, tier?: SimulationModeName)
     <details class="layer-card" ${idx === 0 ? 'open' : ''}>
       <summary>
         <span class="layer-index">${idx + 1}</span>
-        <input type="text" class="layer-name" id="layer-${idx}-name" value="${layer.name}" spellcheck="false">
+        <input type="text" class="layer-name" id="layer-${idx}-name" value="${escapeHtml(layer.name)}" spellcheck="false">
         <select class="layer-role" id="layer-${idx}-role">
           <option value="HTL" ${layer.role === 'HTL' ? 'selected' : ''}>HTL</option>
           <option value="absorber" ${layer.role === 'absorber' ? 'selected' : ''}>absorber</option>
@@ -120,7 +193,7 @@ function renderInterfaces(config: DeviceConfig): string {
     const right = config.layers[i + 1]?.name ?? `layer ${i + 2}`
     rows.push(`
       <div class="iface-row">
-        <span class="iface-label">${left} / ${right}</span>
+        <span class="iface-label">${escapeHtml(left)} / ${escapeHtml(right)}</span>
         <label class="param">
           <span class="param-label"><span class="sym"><i>v</i><sub>n</sub></span><span class="unit">m/s</span></span>
           ${numAttr(`iface-${i}-vn`, pair[0])}
@@ -195,16 +268,43 @@ function parseText(id: string, fallback: string): string {
   return el?.value ?? fallback
 }
 
+function parseOpticalMaterial(layerIdx: number, fallback: string | null | undefined): string | null {
+  const el = document.getElementById(`layer-${layerIdx}-optical_material`) as HTMLSelectElement | null
+  if (!el) return fallback ?? null
+  const v = el.value
+  return v === '' ? null : v
+}
+
+function parseCheckbox(id: string, fallback: boolean): boolean {
+  const el = document.getElementById(id) as HTMLInputElement | null
+  if (!el) return fallback
+  return el.checked
+}
+
 export function readDeviceEditor(original: DeviceConfig): DeviceConfig {
   const layers: LayerConfig[] = original.layers.map((layer, idx) => {
+    // Immutable base — all writes go into `next` via spread.
     const next: LayerConfig = { ...layer }
     next.name = parseText(`layer-${idx}-name`, layer.name)
     next.role = parseText(`layer-${idx}-role`, layer.role)
     for (const group of LAYER_GROUPS) {
       for (const f of group.fields) {
         const id = `layer-${idx}-${String(f.key)}`
-        const original_v = (layer[f.key] as number | undefined) ?? 0
-        ;(next as unknown as Record<string, number>)[f.key as string] = parseNum(id, original_v)
+        switch (f.kind) {
+          case 'numeric': {
+            const original_v = (layer[f.key] as number | undefined) ?? 0
+            ;(next as unknown as Record<string, number>)[f.key as string] = parseNum(id, original_v)
+            break
+          }
+          case 'select-optical-material': {
+            next.optical_material = parseOpticalMaterial(idx, layer.optical_material)
+            break
+          }
+          case 'boolean': {
+            next.incoherent = parseCheckbox(id, layer.incoherent ?? false)
+            break
+          }
+        }
       }
     }
     return next
