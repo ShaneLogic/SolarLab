@@ -20,6 +20,11 @@ from perovskite_sim.models.mode import resolve_mode
 from perovskite_sim.models.parameters import MaterialParams
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
+from backend.user_configs import (
+    is_shipped_name,
+    validate_user_filename,
+    write_user_config,
+)
 
 def _describe_active_physics(stack) -> str:
     """Return a short human-readable description of the active physics tier.
@@ -256,6 +261,37 @@ def get_config(name: str):
         return {"status": "ok", "name": safe_name, "config": _coerce_numbers(cfg)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class UserConfigPayload(BaseModel):
+    name: str
+    config: dict
+    overwrite: bool = False
+
+
+@app.post("/api/configs/user")
+def save_user_config(payload: UserConfigPayload):
+    """Write a user-edited DeviceConfig to ``configs/user/<name>.yaml``.
+
+    The frontend Save-As dialog calls this. ``user_configs`` owns filename
+    validation, shipped-name reservation, and atomic writes.
+    """
+    try:
+        validate_user_filename(payload.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if is_shipped_name(payload.name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{payload.name!r} is reserved by a shipped preset",
+        )
+    try:
+        write_user_config(payload.name, payload.config, overwrite=payload.overwrite)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok", "saved": payload.name}
 
 
 class JVRequest(BaseModel):

@@ -78,3 +78,41 @@ class TestListConfigsNamespace:
         # USER_DIR removed by fixture; endpoint must still 200.
         r = client.get("/api/configs")
         assert r.status_code == 200
+
+
+class TestPostUserConfig:
+    def test_save_new_user_preset(self, clean_user_dir) -> None:
+        body = {
+            "name": "post_test_stack",
+            "config": {"device": {"V_bi": 1.1}, "layers": []},
+        }
+        r = client.post("/api/configs/user", json=body)
+        assert r.status_code == 200
+        assert r.json()["saved"] == "post_test_stack"
+        assert (USER_DIR / "post_test_stack.yaml").exists()
+
+    def test_collision_with_shipped_returns_409(self, clean_user_dir) -> None:
+        body = {"name": "nip_MAPbI3", "config": {"device": {"V_bi": 1.0}, "layers": []}}
+        r = client.post("/api/configs/user", json=body)
+        assert r.status_code == 409
+        assert "reserved" in r.json()["detail"].lower() or "shipped" in r.json()["detail"].lower()
+
+    def test_invalid_filename_returns_400(self, clean_user_dir) -> None:
+        body = {"name": "../etc/passwd", "config": {}}
+        r = client.post("/api/configs/user", json=body)
+        assert r.status_code == 400
+
+    def test_overwrite_protection(self, clean_user_dir) -> None:
+        first = {"name": "dup_test", "config": {"device": {"V_bi": 1.0}, "layers": []}}
+        client.post("/api/configs/user", json=first)
+        # Second save without overwrite must 409.
+        r = client.post("/api/configs/user", json=first)
+        assert r.status_code == 409
+        # With overwrite: 200.
+        body = {**first, "overwrite": True}
+        r2 = client.post("/api/configs/user", json=body)
+        assert r2.status_code == 200
+
+    def test_missing_name_returns_400(self, clean_user_dir) -> None:
+        r = client.post("/api/configs/user", json={"config": {}})
+        assert r.status_code in (400, 422)
