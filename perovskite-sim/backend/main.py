@@ -4,6 +4,22 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+# BLAS thread pinning — defensive fix. The Radau solver hits ~300x300 dense LU
+# factors thousands of times per J-V sweep. On a multi-core machine, OpenBLAS
+# and MKL try to parallelise each call across every core; at this matrix size
+# thread-creation + contention overhead can dominate and turn a ~3 s sweep into
+# several minutes. The slow test suite (tests/conftest.py) pins BLAS for the
+# same reason, but the backend previously inherited no such guard, so the first
+# TMM J-V sweep from the UI could intermittently stall.
+#
+# Set the env vars BEFORE importing numpy so BLAS reads them on library load.
+# Opt out with PEROVSKITE_BLAS_PIN=0 if running on a dedicated box and you want
+# the solver to use all cores for something larger (e.g. parallel sweeps).
+if os.environ.get("PEROVSKITE_BLAS_PIN", "1") != "0":
+    for _var in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS",
+                 "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(_var, "1")
+
 import numpy as np
 import traceback
 import yaml
