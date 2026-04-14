@@ -778,6 +778,24 @@ html, body, #app {
 .tier-badge-fast { background: var(--success); }
 .tier-badge-legacy { background: #f59e0b; }
 
+/* "TMM active · N layers" pill shown in the Device pane header when the
+   device is on the `full` tier and at least one layer has an
+   `optical_material` set. Styled to match the existing tier-badge pills. */
+.tmm-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--primary);
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 /* ---------- Solver console strip ---------- */
 .solver-console {
   display: flex;
