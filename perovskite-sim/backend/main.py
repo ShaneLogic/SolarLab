@@ -336,6 +336,75 @@ def run_jv(req: JVRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Tandem endpoint
+# ---------------------------------------------------------------------------
+
+class TandemRequest(BaseModel):
+    config_path: str
+    N_grid: int = 40
+    n_points: int = 15
+
+
+@app.post("/api/tandem")
+def run_tandem(req: TandemRequest):
+    """Run a series-connected 2T tandem J-V sweep from a tandem YAML config.
+
+    Loads the tandem config, builds the AM1.5G wavelength grid using the
+    same parameters as ``_compute_tmm_generation`` (300–1000 nm, 200 points),
+    calls ``run_tandem_jv``, and returns the series-matched J-V together with
+    per-sub-cell voltages and four tandem metrics.
+    """
+    import dataclasses
+
+    import numpy as np
+    from perovskite_sim.data import load_am15g
+    from perovskite_sim.experiments.tandem_jv import run_tandem_jv
+    from perovskite_sim.models.tandem_config import load_tandem_from_yaml
+
+    # --- load config -------------------------------------------------------
+    try:
+        cfg = load_tandem_from_yaml(req.config_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # --- build wavelength grid (same defaults as _compute_tmm_generation) --
+    try:
+        lam_min, lam_max, n_wl = 300.0, 1000.0, 200
+        wavelengths_nm = np.linspace(lam_min, lam_max, n_wl)
+        wavelengths_m = wavelengths_nm * 1e-9
+        _, spectral_flux = load_am15g(wavelengths_nm)
+
+        result = run_tandem_jv(
+            cfg,
+            wavelengths_m,
+            spectral_flux,
+            wavelengths_nm,
+            N_grid=req.N_grid,
+            n_points=req.n_points,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("[Tandem API Exception]", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    # --- serialise metrics (frozen dataclass → dict) -----------------------
+    metrics_dict = dataclasses.asdict(result.metrics)
+
+    return {
+        "V": result.V.tolist(),
+        "J": result.J.tolist(),
+        "V_top": result.V_top.tolist(),
+        "V_bot": result.V_bot.tolist(),
+        "metrics": metrics_dict,
+        "benchmark": cfg.benchmark,
+    }
+
+
 class ISRequest(BaseModel):
     config_path: Optional[str] = None
     device: Optional[dict] = None
