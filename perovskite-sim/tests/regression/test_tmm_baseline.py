@@ -5,9 +5,12 @@ in the commit message and update the pins intentionally. A drift without
 an accompanying physics change is a signal that something silently broke
 (e.g. am15g.csv, nk CSVs, TMM math in physics/optics.py).
 
-Baselines measured against commit 329c79d on main, after Task 7.5
-(am15g.csv regeneration from ASTM G-173) and Task 8 (pin_MAPbI3_tmm
-preset with NiO constant-index fallback).
+Baselines:
+  - nip_tmm: measured against commit 329c79d, after Task 7.5 (am15g.csv
+    regeneration from ASTM G-173).
+  - pin_tmm: re-pinned after the NiOx n,k CSV replaced the constant-index
+    HTL fallback (prior pin was 220.07 with n_optical=2.2/alpha=0). Real
+    NiOx adds ~4% parasitic HTL reflection + absorption.
 
 Run with: pytest -m slow tests/regression/test_tmm_baseline.py
 """
@@ -19,7 +22,7 @@ pytestmark = pytest.mark.slow
 
 # Pinned measurements (A/m^2)
 NIP_TMM_JSC_PINNED = 211.02
-PIN_TMM_JSC_PINNED = 220.07
+PIN_TMM_JSC_PINNED = 210.96
 
 # Tolerance band. ±5 A/m² ≈ ±0.5 mA/cm² ≈ ±2.4% — tight enough to catch
 # any non-trivial change in the TMM path, loose enough to absorb solver
