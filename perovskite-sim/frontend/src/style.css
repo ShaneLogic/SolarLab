@@ -236,7 +236,7 @@ input:focus, select:focus {
 
 .param-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 0.625rem 0.875rem;
 }
 
@@ -1006,17 +1006,14 @@ html, body, #app {
   --selected-outline: #ff9b45;
 }
 
+/* Device pane body: single column that fills the golden-layout pane. */
 .device-pane-grid {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 22px;
-  align-items: start;
+  display: block;
+  width: 100%;
 }
-
-@media (max-width: 1100px) {
-  .device-pane-grid {
-    grid-template-columns: 1fr;
-  }
+.device-pane-grid > .card {
+  width: 100%;
+  max-width: none;
 }
 
 .stack-visualizer {
