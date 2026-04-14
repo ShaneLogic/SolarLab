@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dataclasses
 from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
@@ -9,6 +10,7 @@ from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
+from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.solver.mol import (
     StateVec, run_transient,
     MaterialArrays, build_material_arrays,
@@ -265,12 +267,21 @@ def run_jv_sweep(
     atol: float = 1e-6,
     V_max: float | None = None,
     progress: ProgressCallback | None = None,
+    fixed_generation: np.ndarray | None = None,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
     V_max : upper voltage limit. If None, defaults to max(V_bi_eff*1.3, 1.4). With
       heterojunction band offsets, V_oc can exceed V_bi, so pass a larger
       value (e.g. 1.4 V for MAPbI3) to capture the full forward curve.
+
+    fixed_generation : optional pre-computed generation profile G(x) [m⁻³ s⁻¹].
+      Must be a 1-D array of shape (N,) where N is the number of electrical-grid
+      nodes (determined by N_grid and the number of electrical layers). When
+      provided, this profile is used verbatim in place of Beer-Lambert or TMM
+      optics for both the initial illuminated steady-state and every subsequent
+      solver call. When None (default), the existing single-junction optics path
+      is used unchanged.
     """
     if N_grid < 3:
         raise ValueError(f"N_grid must be >= 3, got {N_grid}")
@@ -298,8 +309,39 @@ def run_jv_sweep(
     # and every RHS call inside them. See solver/mol.py:MaterialArrays.
     mat = build_material_arrays(x, stack)
 
-    # Start from illuminated SC state: carriers equilibrated, ions at initial profile
-    y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
+    # Optional generation override: tandem callers inject a pre-computed G(x)
+    # profile (e.g. from combined-TMM) instead of letting the sweep recompute
+    # optics internally. Validation is done here so the error surfaces early
+    # before any time-consuming ODE work begins.
+    if fixed_generation is not None:
+        expected_shape = (N,)
+        if np.asarray(fixed_generation).shape != expected_shape:
+            raise ValueError(
+                f"fixed_generation shape {np.asarray(fixed_generation).shape} "
+                f"!= expected {expected_shape} "
+                f"(N={N} electrical-grid nodes for N_grid={N_grid} "
+                f"and {len(elec)} electrical layers)"
+            )
+        mat = dataclasses.replace(
+            mat, G_optical=np.asarray(fixed_generation, dtype=float).copy()
+        )
+
+    # Start from illuminated SC state: carriers equilibrated, ions at initial profile.
+    # When fixed_generation is provided we bypass solve_illuminated_ss (which builds
+    # its own MaterialArrays internally) and replicate the same logic inline,
+    # threading our overridden mat so the initial state also sees zero generation.
+    if fixed_generation is not None:
+        from perovskite_sim.solver.mol import run_transient as _run_transient
+        _t_settle = 1e-3
+        y_dark = solve_equilibrium(x, stack)
+        sol = _run_transient(
+            x, y_dark, (0.0, _t_settle), np.array([_t_settle]),
+            stack, illuminated=True, V_app=0.0, rtol=rtol, atol=atol,
+            mat=mat,
+        )
+        y_eq = sol.y[:, -1] if sol.success else y_dark
+    else:
+        y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
 
     def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str):
         """Sweep from V_start to V_end, starting from carrier state y_init.
