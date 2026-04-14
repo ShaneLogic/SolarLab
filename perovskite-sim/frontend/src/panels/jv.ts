@@ -1,4 +1,4 @@
-import Plotly from 'plotly.js-dist-min'
+import Plotly from 'plotly.js-basic-dist-min'
 import { mountDevicePanel } from '../device-panel'
 import { startJob, streamJobEvents } from '../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../progress'

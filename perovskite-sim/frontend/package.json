@@ -19,6 +19,6 @@
   },
   "dependencies": {
     "golden-layout": "^2.6.0",
-    "plotly.js-dist-min": "^3.5.0"
+    "plotly.js-basic-dist-min": "^3.5.0"
   }
 }
