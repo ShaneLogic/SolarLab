@@ -1,3 +1,9 @@
+# WARNING: legacy Beer-Lambert preset. Phi=2.5e21 is ~1.44x above the true
+# AM1.5G above-gap photon flux for Eg=1.55 eV (truth ~1.72e21), so the J_sc
+# this preset produces is inflated by roughly the same factor. Kept as-is for
+# back-compat with existing notebooks and benchmarks. For physically accurate
+# optics use nip_MAPbI3_tmm.yaml, which runs the full transfer-matrix method
+# against the n,k library and the regenerated ASTM G-173 AM1.5G spectrum.
 device:
   V_bi: 1.1
   Phi: 2.5e21
