@@ -46,3 +46,49 @@ def test_hysteresis_index_zero_for_symmetric():
     J = np.linspace(200, 0, 50)
     hi = hysteresis_index(V, J, V, J)
     assert abs(hi) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# fixed_generation kwarg tests
+# ---------------------------------------------------------------------------
+
+def _make_stack_and_N(n_grid: int = 60):
+    """Return (stack, N) for nip_MAPbI3 at the given n_grid.
+
+    Replicates the grid construction from run_jv_sweep so the caller can
+    build a fixed_generation array of exactly the right shape.
+    """
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    from perovskite_sim.models.device import electrical_layers
+    from perovskite_sim.discretization.grid import multilayer_grid, Layer
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    elec = electrical_layers(stack)
+    layers_grid = [Layer(l.thickness, n_grid // len(elec)) for l in elec]
+    x = multilayer_grid(layers_grid)
+    return stack, len(x)
+
+
+def test_fixed_generation_override_is_honored():
+    """Zero generation profile should drive J_sc to ~0."""
+    from perovskite_sim.experiments.jv_sweep import run_jv_sweep
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    N_grid = 60
+    stack, N = _make_stack_and_N(N_grid)
+    G_zero = np.zeros(N)
+    result = run_jv_sweep(
+        stack, N_grid=N_grid, n_points=20, fixed_generation=G_zero,
+    )
+    assert abs(result.metrics_fwd.J_sc) < 1.0  # A/m²; effectively zero
+
+
+def test_fixed_generation_wrong_shape_raises():
+    """Passing an array with wrong shape should raise ValueError."""
+    from perovskite_sim.experiments.jv_sweep import run_jv_sweep
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    with pytest.raises(ValueError, match="fixed_generation"):
+        run_jv_sweep(stack, N_grid=60, n_points=20,
+                     fixed_generation=np.zeros(30))

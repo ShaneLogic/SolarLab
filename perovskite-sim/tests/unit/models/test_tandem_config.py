@@ -84,3 +84,49 @@ def test_rejects_wrong_device_type(tmp_path):
     }))
     with pytest.raises(ValueError, match="device_type"):
         load_tandem_from_yaml(str(cfg_path))
+
+
+def test_rejects_unsupported_light_direction(tmp_path):
+    top, bot = _write_minimal_cells(tmp_path)
+    cfg_path = tmp_path / "tandem.yaml"
+    cfg_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "device_type": "tandem_2T_monolithic",
+        "tandem": {
+            "top_cell": str(top),
+            "bottom_cell": str(bot),
+            "junction": {"model": "ideal_ohmic"},
+            "light_direction": "bottom_first",
+        },
+        "junction_stack": [],
+    }))
+    with pytest.raises(ValueError, match="light_direction"):
+        load_tandem_from_yaml(str(cfg_path))
+
+
+def test_empty_yaml_file_gives_clear_error(tmp_path):
+    cfg_path = tmp_path / "empty.yaml"
+    cfg_path.write_text("")
+    with pytest.raises(ValueError, match="empty or not a mapping"):
+        load_tandem_from_yaml(str(cfg_path))
+
+
+def test_negative_junction_thickness_rejected(tmp_path):
+    top, bot = _write_minimal_cells(tmp_path)
+    cfg_path = tmp_path / "tandem.yaml"
+    cfg_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "device_type": "tandem_2T_monolithic",
+        "tandem": {
+            "top_cell": str(top),
+            "bottom_cell": str(bot),
+            "junction": {"model": "ideal_ohmic"},
+            "light_direction": "top_first",
+        },
+        "junction_stack": [
+            {"name": "recomb", "thickness_nm": -5.0,
+             "optical_material": "PEDOT_PSS", "incoherent": False},
+        ],
+    }))
+    with pytest.raises(ValueError, match="thickness_nm"):
+        load_tandem_from_yaml(str(cfg_path))

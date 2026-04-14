@@ -21,6 +21,7 @@ import { mountHelpPane } from './panes/help-pane'
 import { mountJVPane } from './panes/jv-pane'
 import { mountImpedancePane } from './panes/impedance-pane'
 import { mountDegradationPane } from './panes/degradation-pane'
+import { mountTandemPane } from './panes/tandem-pane'
 import { mountMainPlotPane } from './panes/main-plot-pane'
 import type { MainPlotHandle } from './panes/main-plot-pane'
 import { showWizard } from './wizard'
@@ -44,6 +45,7 @@ const DEFAULT_LAYOUT: LayoutConfig = {
           { type: 'component', componentType: 'jv', title: 'J–V Sweep' },
           { type: 'component', componentType: 'impedance', title: 'Impedance' },
           { type: 'component', componentType: 'degradation', title: 'Degradation' },
+          { type: 'component', componentType: 'tandem', title: 'Tandem' },
         ],
       },
       {
@@ -236,6 +238,9 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       getActiveDevice: () => activeDeviceAccessor(),
       onRunComplete: (deviceId, run) => commitRun(deviceId, 'degradation', run),
     })
+  })
+  layout.registerComponentFactoryFunction('tandem', (container) => {
+    mountTandemPane(container.element)
   })
   layout.registerComponentFactoryFunction('main-plot', (container) => {
     mainPlot = mountMainPlotPane(container.element)
