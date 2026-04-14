@@ -85,6 +85,18 @@ export function algorithmHTML(): string {
 <i>G</i>(<i>x</i>)  =  &int; <i>a</i>(<i>x</i>, <i>&lambda;</i>) &middot; Φ<sub>AM1.5G</sub>(<i>&lambda;</i>) / (<i>h</i><i>c</i>/<i>&lambda;</i>) d<i>&lambda;</i></pre>
       <p>The <i>n</i>/<i>n</i><sub>ambient</sub> Poynting correction guarantees <i>R</i> + <i>T</i> + <i>A</i> = 1 to within 2 %. <i>n</i>, <i>k</i> come from layer-specific CSV tables when <code>optical_material</code> is set, otherwise from a scalar refractive index fallback.</p>
 
+      <h5>TMM (transfer-matrix method) &mdash; procedure</h5>
+      <p>For each wavelength <i>&lambda;</i> in the AM1.5G spectrum (300&ndash;1000 nm, 200 points) the solver:</p>
+      <ol>
+        <li>Builds a 2&times;2 dynamical matrix <i>D</i><sub>j</sub>(<i>n</i><sub>j</sub>, <i>k</i><sub>j</sub>) per layer, encoding the air-side and substrate-side field amplitudes.</li>
+        <li>Builds a propagation matrix <i>P</i><sub>j</sub> = diag(<i>e</i><sup>&minus;<i>i&delta;</i></sup>, <i>e</i><sup>+<i>i&delta;</i></sup>) with phase <i>&delta;</i> = 2<i>&pi;</i>&middot;<i>n&#770;</i><sub>j</sub>&middot;<i>d</i><sub>j</sub>/<i>&lambda;</i>.</li>
+        <li>Multiplies: <i>M</i><sub>total</sub> = <i>D</i><sub>air</sub><sup>&minus;1</sup> &middot; &prod;<sub>j</sub> (<i>D</i><sub>j</sub> &middot; <i>P</i><sub>j</sub> &middot; <i>D</i><sub>j</sub><sup>&minus;1</sup>) &middot; <i>D</i><sub>substrate</sub>.</li>
+        <li>Extracts reflection <i>r</i> = <i>M</i>[1,0] / <i>M</i>[0,0] and transmission <i>t</i> = 1 / <i>M</i>[0,0].</li>
+        <li>Evaluates absorbed power density <i>A</i>(<i>x</i>, <i>&lambda;</i>) = (4<i>&pi;&middot;n&middot;k</i> / <i>&lambda;</i>) &middot; |<i>E</i>(<i>x</i>, <i>&lambda;</i>)|<sup>2</sup> &middot; (<i>n</i><sub>real</sub> / <i>n</i><sub>ambient</sub>); the Poynting-vector correction enforces <i>R</i> + <i>T</i> + <i>A</i> = 1.</li>
+        <li>Integrates spectrally: <i>G</i>(<i>x</i>) = &int; <i>A</i>(<i>x</i>, <i>&lambda;</i>) &middot; Φ<sub>AM1.5</sub>(<i>&lambda;</i>) d<i>&lambda;</i>.</li>
+      </ol>
+      <p>Incoherent layers (e.g. millimetre-thick glass substrates) bypass steps 1&ndash;4 and apply Fresnel reflection plus bulk Beer&ndash;Lambert directly, avoiding unphysical sub-nanometer interference fringes from the matrix product.</p>
+
       <h4>3. Dual-species ion migration (Full only)</h4>
       <p>Perovskites support both positive vacancies (e.g. <i>V</i><sub>I</sub><sup>+</sup>) and negative mobile species (interstitials or methylammonium vacancies). Full mode integrates a second continuity equation with sign-reversed drift:</p>
       <pre class="eqn">
