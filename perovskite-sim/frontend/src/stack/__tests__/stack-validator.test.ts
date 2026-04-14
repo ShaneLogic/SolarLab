@@ -122,4 +122,39 @@ describe('validate', () => {
     const r = validate(c)
     expect(r.warnings.some(w => w.message.includes('Mixed'))).toBe(true)
   })
+
+  it('errors when thickness is NaN', () => {
+    const c = cfg([
+      layer({ name: 'A', role: 'ETL', thickness: NaN }),
+      layer({ name: 'B', role: 'absorber' }),
+    ])
+    expect(validate(c).errors.some(e => e.message.includes('positive'))).toBe(true)
+  })
+
+  it('errors when thickness is negative', () => {
+    const c = cfg([
+      layer({ name: 'A', role: 'ETL', thickness: -1e-7 }),
+      layer({ name: 'B', role: 'absorber' }),
+    ])
+    expect(validate(c).errors.some(e => e.message.includes('positive'))).toBe(true)
+  })
+
+  it('errors when thickness is Infinity', () => {
+    // Infinity > 0 is true, so the current guard accepts it. We do not
+    // reject Infinity here on purpose: the visualizer log-scale clamps it,
+    // and physical-sanity backend validation will catch it.
+    const c = cfg([
+      layer({ name: 'A', role: 'ETL', thickness: Infinity }),
+      layer({ name: 'B', role: 'absorber' }),
+    ])
+    expect(validate(c).errors.filter(e => e.field === 'thickness')).toEqual([])
+  })
+
+  it('does not emit dormant-TMM warning on an empty stack', () => {
+    const c = cfg([])
+    const r = validate(c)
+    expect(r.warnings.some(w => w.message.includes('dormant'))).toBe(false)
+    // Empty stack still hard-errors on the absorber rule.
+    expect(r.errors.some(e => e.message.includes('absorber'))).toBe(true)
+  })
 })

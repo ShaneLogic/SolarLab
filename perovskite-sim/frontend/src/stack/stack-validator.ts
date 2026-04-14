@@ -103,7 +103,7 @@ export function validate(config: DeviceConfig): ValidationReport {
       message: 'Mixed TMM / Beer-Lambert layers — TMM-less layers fall back per Phase 2a',
     })
   }
-  if (tmmCount === 0) {
+  if (tmmCount === 0 && layers.length > 0) {
     warnings.push({
       layerIdx: null,
       field: 'optical_material',
