@@ -1,5 +1,5 @@
-import { listConfigs, getConfig } from './api'
-import { renderDeviceEditor, readDeviceEditor } from './config-editor'
+import { listConfigs, getConfig, fetchOpticalMaterials } from './api'
+import { renderDeviceEditor, readDeviceEditor, setOpticalMaterialOptions } from './config-editor'
 import type { DeviceConfig, SimulationModeName } from './types'
 
 export interface DevicePanel {
@@ -34,6 +34,17 @@ export async function mountDevicePanel(
   const select = root.querySelector<HTMLSelectElement>(`#${tabId}-config-select`)!
   const editor = root.querySelector<HTMLDivElement>(`#${tabId}-editor`)!
   const resetBtn = root.querySelector<HTMLButtonElement>(`#${tabId}-reset`)!
+
+  // Populate optical-material dropdown options once per mount. Failure is
+  // non-fatal: the dropdown will just show only the "(none)" sentinel.
+  try {
+    const materials = await fetchOpticalMaterials()
+    setOpticalMaterialOptions(materials)
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('fetchOpticalMaterials failed; optical-material dropdown will be empty', err)
+    setOpticalMaterialOptions([])
+  }
 
   const names = await listConfigs()
   select.innerHTML = names

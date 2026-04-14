@@ -21,6 +21,8 @@ export interface LayerConfig {
   alpha: number
   chi?: number
   Eg?: number
+  optical_material?: string | null
+  incoherent?: boolean
 }
 
 export type SimulationModeName = 'legacy' | 'fast' | 'full'
