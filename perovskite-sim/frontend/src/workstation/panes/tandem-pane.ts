@@ -27,27 +27,33 @@ function fmt4(v: number): string {
 }
 
 function renderMetrics(data: TandemJVPayload): string {
+  const m = data.metrics
+  // J_sc from backend is A/m²; display convention is mA/cm² (1 A/m² = 0.1 mA/cm²).
+  // Math.abs because J_sc is negative under illumination but shown as positive.
+  const jscDisplay = Math.abs(m.J_sc) / 10
+  // PCE from compute_metrics is a dimensionless fraction (P_mpp / 1000 W/m²);
+  // multiply by 100 to display as percent — mirrors jv.ts renderJVResults.
+  const pceDisplay = m.PCE * 100
+
   const lines: string[] = [
     '=== Tandem J-V Metrics ===',
-    `  V_oc  = ${fmt4(data.V_oc)} V`,
-    `  J_sc  = ${fmt4(data.J_sc)} mA/cm²`,
-    `  FF    = ${fmt4(data.FF)}`,
-    `  PCE   = ${fmt4(data.PCE)} %`,
+    `  V_oc  = ${fmt4(m.V_oc)} V`,
+    `  J_sc  = ${fmt4(jscDisplay)} mA/cm²`,
+    `  FF    = ${fmt4(m.FF)}`,
+    `  PCE   = ${fmt4(pceDisplay)} %`,
     '',
-    '--- Sub-cell operating points ---',
-    `  V_top = ${fmt4(data.V_top)} V`,
-    `  V_bot = ${fmt4(data.V_bot)} V`,
+    // V_top and V_bot are voltage arrays (one value per J-V sample point),
+    // reserved for future Plotly sub-cell overlay — not rendered in v1.
   ]
 
   if (data.benchmark) {
-    lines.push('')
     lines.push('--- Benchmark comparison ---')
     const b = data.benchmark
     if (b.source) lines.push(`  Source: ${b.source}`)
-    if (b.V_oc != null) lines.push(`  V_oc  target = ${fmt4(b.V_oc)} V      simulated = ${fmt4(data.V_oc)} V`)
-    if (b.J_sc != null) lines.push(`  J_sc  target = ${fmt4(b.J_sc)} mA/cm²  simulated = ${fmt4(data.J_sc)} mA/cm²`)
-    if (b.FF != null)   lines.push(`  FF    target = ${fmt4(b.FF)}            simulated = ${fmt4(data.FF)}`)
-    if (b.PCE != null)  lines.push(`  PCE   target = ${fmt4(b.PCE)} %         simulated = ${fmt4(data.PCE)} %`)
+    if (b.V_oc != null) lines.push(`  V_oc  target = ${fmt4(b.V_oc)} V      simulated = ${fmt4(m.V_oc)} V`)
+    if (b.J_sc != null) lines.push(`  J_sc  target = ${fmt4(b.J_sc)} mA/cm²  simulated = ${fmt4(jscDisplay)} mA/cm²`)
+    if (b.FF != null)   lines.push(`  FF    target = ${fmt4(b.FF)}            simulated = ${fmt4(m.FF)}`)
+    if (b.PCE != null)  lines.push(`  PCE   target = ${fmt4(b.PCE)} %         simulated = ${fmt4(pceDisplay)} %`)
   }
 
   return lines.join('\n')

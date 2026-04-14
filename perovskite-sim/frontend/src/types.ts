@@ -189,16 +189,22 @@ export interface TandemConfigView {
   n_points?: number
 }
 
-/** Mirrors the JSON response from POST /api/tandem.
- * Snake_case keys are intentional — they match the backend response directly. */
-export interface TandemJVPayload {
+export interface TandemJVMetrics {
   V_oc: number
   J_sc: number
   FF: number
   PCE: number
-  V_top: number
-  V_bot: number
+}
+
+/** Mirrors the JSON response from POST /api/tandem.
+ * Snake_case keys are intentional — they match the backend response directly. */
+export interface TandemJVPayload {
+  V: number[]
+  J: number[]
+  V_top: number[]
+  V_bot: number[]
+  metrics: TandemJVMetrics
+  benchmark: TandemBenchmark | null
   top_layers?: TandemJunctionLayer[]
   bot_layers?: TandemJunctionLayer[]
-  benchmark?: TandemBenchmark
 }
