@@ -204,18 +204,37 @@ def list_configs():
     change vs the Phase 2a flat-list shape; the frontend api wrapper updates
     in lockstep.
     """
+    def _peek_device_type(path: str) -> str:
+        # Cheap YAML peek — tandem presets have no stack.layers and must be
+        # routed to the Tandem pane instead of the single-cell Device editor.
+        try:
+            with open(path) as fh:
+                data = yaml.safe_load(fh) or {}
+            return str(data.get("device_type", "single"))
+        except Exception:
+            return "single"
+
     try:
         entries: list[dict] = []
         for f in sorted(os.listdir(CONFIGS_DIR)):
             if f.endswith((".yaml", ".yml")):
                 full = os.path.join(CONFIGS_DIR, f)
                 if os.path.isfile(full):
-                    entries.append({"name": f, "namespace": "shipped"})
+                    entries.append({
+                        "name": f,
+                        "namespace": "shipped",
+                        "device_type": _peek_device_type(full),
+                    })
         user_dir = os.path.join(CONFIGS_DIR, "user")
         if os.path.isdir(user_dir):
             for f in sorted(os.listdir(user_dir)):
                 if f.endswith((".yaml", ".yml")):
-                    entries.append({"name": f, "namespace": "user"})
+                    full = os.path.join(user_dir, f)
+                    entries.append({
+                        "name": f,
+                        "namespace": "user",
+                        "device_type": _peek_device_type(full),
+                    })
         return {"status": "ok", "configs": entries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -364,7 +383,7 @@ def run_tandem(req: TandemRequest):
 
     # --- load config -------------------------------------------------------
     try:
-        cfg = load_tandem_from_yaml(req.config_path)
+        cfg = load_tandem_from_yaml(resolve_config_path(req.config_path))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -387,6 +406,20 @@ def run_tandem(req: TandemRequest):
         )
     except HTTPException:
         raise
+    except ValueError as exc:
+        # series_match_jv raises when sub-cell J ranges do not overlap, which
+        # happens when the stub FA_Cs_1p77 / SnPb_1p22 n,k CSVs mis-match the
+        # real Lin 2019 spectral response. Surface a 400 with a clear pointer.
+        msg = str(exc)
+        if "Sub-cell J ranges do not overlap" in msg:
+            detail = (
+                f"{msg} — this tandem preset ships with stub n,k data "
+                "(rigid bandgap shifts of MAPbI3). Replace "
+                "perovskite_sim/data/nk/FA_Cs_1p77.csv and SnPb_1p22.csv "
+                "with real Lin 2019 SI data before expecting physical results."
+            )
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=msg)
     except Exception as exc:
         print("[Tandem API Exception]", exc)
         traceback.print_exc()
@@ -450,7 +483,7 @@ class DegRequest(BaseModel):
 
 
 class JobRequest(BaseModel):
-    kind: str  # "jv" | "impedance" | "degradation"
+    kind: str  # "jv" | "impedance" | "degradation" | "tandem"
     config_path: Optional[str] = None
     device: Optional[dict] = None
     params: dict = {}
@@ -463,15 +496,17 @@ def start_job(req: JobRequest):
     The caller then opens GET /api/jobs/{id}/events to receive
     Server-Sent-Events with incremental progress and the final result.
     """
-    try:
-        stack = build_stack(req.config_path, req.device)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"stack build failed: {e}")
-
     kind = req.kind
     p = req.params
+
+    # Tandem is config-only (no single DeviceStack), so it skips build_stack.
+    if kind != "tandem":
+        try:
+            stack = build_stack(req.config_path, req.device)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"stack build failed: {e}")
 
     if kind == "jv":
         def _run(reporter: ProgressReporter) -> dict:
@@ -524,6 +559,54 @@ def start_job(req: JobRequest):
                 out["times"] = out.pop("t")
             out["active_physics"] = _describe_active_physics(stack)
             return out
+    elif kind == "tandem":
+        from perovskite_sim.data import load_am15g
+        from perovskite_sim.experiments.tandem_jv import run_tandem_jv
+        from perovskite_sim.models.tandem_config import load_tandem_from_yaml
+
+        if not req.config_path:
+            raise HTTPException(status_code=400, detail="tandem kind requires config_path")
+        try:
+            cfg = load_tandem_from_yaml(resolve_config_path(req.config_path))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        def _run(reporter: ProgressReporter) -> dict:
+            wavelengths_nm = np.linspace(300.0, 1000.0, 200)
+            wavelengths_m = wavelengths_nm * 1e-9
+            _, spectral_flux = load_am15g(wavelengths_nm)
+            try:
+                result = run_tandem_jv(
+                    cfg,
+                    wavelengths_m,
+                    spectral_flux,
+                    wavelengths_nm,
+                    N_grid=int(p.get("N_grid", 40)),
+                    n_points=int(p.get("n_points", 15)),
+                    progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+                )
+            except ValueError as exc:
+                msg = str(exc)
+                if "Sub-cell J ranges do not overlap" in msg:
+                    raise RuntimeError(
+                        f"{msg} — this tandem preset ships with stub n,k data "
+                        "(rigid bandgap shifts of MAPbI3). Replace "
+                        "perovskite_sim/data/nk/FA_Cs_1p77.csv and "
+                        "SnPb_1p22.csv with real Lin 2019 SI data before "
+                        "expecting physical results."
+                    )
+                raise
+
+            return {
+                "V": result.V.tolist(),
+                "J": result.J.tolist(),
+                "V_top": result.V_top.tolist(),
+                "V_bot": result.V_bot.tolist(),
+                "metrics": dataclasses.asdict(result.metrics),
+                "benchmark": cfg.benchmark,
+            }
     else:
         raise HTTPException(status_code=400, detail=f"unknown kind: {kind}")
 

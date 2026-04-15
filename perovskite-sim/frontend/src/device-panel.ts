@@ -96,7 +96,9 @@ export async function mountDevicePanel(
     }
   }
 
-  const entries = await listConfigs()
+  const entries = (await listConfigs()).filter(
+    e => !(e.device_type ?? '').startsWith('tandem'),
+  )
   const shipped = entries.filter(e => e.namespace === 'shipped')
   const user = entries.filter(e => e.namespace === 'user')
   select.innerHTML = optgroup('Shipped presets', shipped) + optgroup('User presets', user)
@@ -298,7 +300,9 @@ export async function mountDevicePanel(
   }
 
   async function refreshConfigsDropdown(selectName: string): Promise<void> {
-    const newEntries = await listConfigs()
+    const newEntries = (await listConfigs()).filter(
+      e => !(e.device_type ?? '').startsWith('tandem'),
+    )
     const s = newEntries.filter(e => e.namespace === 'shipped')
     const u = newEntries.filter(e => e.namespace === 'user')
     select.innerHTML = optgroup('Shipped presets', s) + optgroup('User presets', u)

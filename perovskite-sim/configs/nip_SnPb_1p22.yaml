@@ -37,10 +37,11 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 0.0
+    optical_material: spiro_OMeTAD
 
   - name: SnPb_1p22
     role: absorber
-    thickness: 850e-9           # Lin 2019 nominal; refine in Task 8 from SI
+    thickness: 1000e-9          # Lin 2019 SI cites ~1 µm Sn-Pb; thicker improves current match
     eps_r: 24.1                 # TODO(benchmark): refine after Lin 2019 SI data is loaded
     mu_n: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
     mu_p: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
@@ -58,8 +59,9 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 1.3e7                # TODO(benchmark): refine after Lin 2019 SI data is loaded
-    Eg: 1.22
-    chi: 4.15                   # Sn-Pb narrow-gap, Hao et al. Nature Photon. 2014
+    # NOTE: Eg/chi intentionally left at 0 (default). See nip_wideGap_FACs_1p77.yaml
+    # for the V_bi_eff blow-up that motivates this; restore once the contacts also
+    # carry chi/Eg so the band-offset path is self-consistent.
     optical_material: SnPb_1p22
 
   - name: TiO2_ETL
@@ -82,3 +84,4 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 0.0
+    optical_material: TiO2

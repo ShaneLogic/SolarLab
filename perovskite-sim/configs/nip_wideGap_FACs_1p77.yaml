@@ -13,7 +13,12 @@
 #   Saliba et al. JPCL 2016 (FA-Cs chi / Eg)
 #   Lin et al. Nature 2019 (tandem architecture, absorber thicknesses)
 device:
-  V_bi: 1.1
+  # Wide-gap (1.77 eV) top sub-cell. With contact chi/Eg still at 0 the
+  # band-offset path falls back to this manual value, which caps V_oc. Lin
+  # 2019 reports ~1.18 V on the top sub-cell, so we pick V_bi = 1.55 V to
+  # leave a realistic ~0.4 V SRH/contact loss budget. Restore the band-offset
+  # path once spiro_HTL/TiO2_ETL carry literature chi/Eg/ni triples.
+  V_bi: 1.42
   Phi: 2.5e21
 # Layer order: HTL (left / hole-contact) → absorber → ETL (right / electron-contact)
 layers:
@@ -37,10 +42,11 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 0.0
+    optical_material: spiro_OMeTAD
 
   - name: FA_Cs_1p77
     role: absorber
-    thickness: 400e-9           # Lin 2019 nominal; refine in Task 8 from SI
+    thickness: 200e-9           # Tuned for current matching against 1000nm SnPb bottom + Ag back
     eps_r: 24.1                 # TODO(benchmark): refine after Lin 2019 SI data is loaded
     mu_n: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
     mu_p: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
@@ -58,8 +64,11 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 1.3e7                # TODO(benchmark): refine after Lin 2019 SI data is loaded
-    Eg: 1.77
-    chi: 3.9                    # FA-Cs wide-gap, Saliba et al. JPCL 2016
+    # NOTE: Eg/chi intentionally left at 0 (default) so compute_V_bi() falls
+    # back to the manual V_bi=1.1 V above. Setting only the absorber's chi/Eg
+    # while leaving the contacts at chi=0 made V_bi_eff blow up to ~2.8 V and
+    # pushed the J–V sweep range past 3 V. Restore proper band offsets once
+    # spiro_HTL/TiO2_ETL also carry chi/Eg.
     optical_material: FA_Cs_1p77
 
   - name: TiO2_ETL
@@ -82,3 +91,4 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 0.0
+    optical_material: TiO2
