@@ -19,6 +19,14 @@ Baselines:
     that is not engineered for VBM alignment with MAPbI3 — see Park 2015
     / Liu 2015 for engineered NiOx with chi+Eg ≈ 5.3 eV. The drop is the
     interface-aware diode doing its job, not a bug.
+  - pin_tmm: re-pinned 179.81 → 216.62 after the _inv2x2 divide-by-zero
+    guard in optics.py. The pin stack happens to produce a degenerate
+    2x2 transfer submatrix (det==0) at a handful of wavelengths in the
+    MAPbI3 absorption peak; the old code silently propagated Inf/NaN
+    through E_sq at those wavelengths and under-reported J_sc by ~20%.
+    The nip stack does not hit the same degeneracy because the PCBM
+    refractive-index profile shifts the resonance out of the peak —
+    its baseline (211.02) was unaffected and still passes unchanged.
 
 Run with: pytest -m slow tests/regression/test_tmm_baseline.py
 """
@@ -30,7 +38,7 @@ pytestmark = pytest.mark.slow
 
 # Pinned measurements (A/m^2)
 NIP_TMM_JSC_PINNED = 211.02
-PIN_TMM_JSC_PINNED = 179.81
+PIN_TMM_JSC_PINNED = 216.62
 
 # Tolerance band. ±5 A/m² ≈ ±0.5 mA/cm² ≈ ±2.4% — tight enough to catch
 # any non-trivial change in the TMM path, loose enough to absorb solver

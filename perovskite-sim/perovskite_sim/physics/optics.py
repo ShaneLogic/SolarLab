@@ -219,13 +219,20 @@ def _electric_field_profile(
     E_in = np.stack([np.ones(n_wl, dtype=complex), r], axis=1)  # (n_wl, 2)
 
     def _inv2x2(M: np.ndarray) -> np.ndarray:
-        """Batched 2x2 matrix inverse, shape (n_wl, 2, 2)."""
+        """Batched 2x2 matrix inverse, shape (n_wl, 2, 2).
+
+        Guards against det≈0 (a lossless layer at a specific wavelength can
+        produce a singular transfer submatrix). Those wavelengths contribute
+        zero to E_sq rather than propagating NaN/Inf downstream into G(x).
+        """
         det = M[:, 0, 0] * M[:, 1, 1] - M[:, 0, 1] * M[:, 1, 0]
+        safe = np.abs(det) > 1e-30
+        inv_det = np.where(safe, 1.0 / np.where(safe, det, 1.0), 0.0)
         inv = np.empty_like(M)
-        inv[:, 0, 0] = M[:, 1, 1] / det
-        inv[:, 0, 1] = -M[:, 0, 1] / det
-        inv[:, 1, 0] = -M[:, 1, 0] / det
-        inv[:, 1, 1] = M[:, 0, 0] / det
+        inv[:, 0, 0] = M[:, 1, 1] * inv_det
+        inv[:, 0, 1] = -M[:, 0, 1] * inv_det
+        inv[:, 1, 0] = -M[:, 1, 0] * inv_det
+        inv[:, 1, 1] = M[:, 0, 0] * inv_det
         return inv
 
     # Compute |E|^2 at each grid point

@@ -565,7 +565,34 @@ def assemble_rhs(
     dn[0] = dn[-1] = 0.0
     dp[0] = dp[-1] = 0.0
 
+    if _RHS_FINITE_CHECK:
+        _assert_finite_rhs(dn, dp, dP, dP_neg, V_app)
+
     return StateVec.pack(dn, dp, dP, dP_neg)
+
+
+# Debug guard: set PEROVSKITE_RHS_FINITE_CHECK=1 to raise _RhsNonFinite when
+# any RHS component contains NaN/Inf. Off by default so the hot path is
+# untouched in production; used by regression tests to catch silent state
+# corruption (e.g. the substrate-stack Radau hang would have surfaced in
+# seconds instead of 12 minutes under this guard).
+import os as _os
+_RHS_FINITE_CHECK = _os.environ.get("PEROVSKITE_RHS_FINITE_CHECK", "0") == "1"
+
+
+class _RhsNonFinite(Exception):
+    """Raised by assemble_rhs when its output contains NaN or Inf."""
+
+
+def _assert_finite_rhs(dn, dp, dP, dP_neg, V_app: float) -> None:
+    for name, arr in (("dn", dn), ("dp", dp), ("dP", dP), ("dP_neg", dP_neg)):
+        if arr is None:
+            continue
+        if not np.all(np.isfinite(arr)):
+            raise _RhsNonFinite(
+                f"non-finite {name} at V_app={V_app:.4f}: "
+                f"nan={int(np.sum(np.isnan(arr)))}, inf={int(np.sum(np.isinf(arr)))}"
+            )
 
 
 class _NfevExceeded(Exception):
@@ -605,7 +632,7 @@ def run_transient(
     if mat is None:
         mat = build_material_arrays(x, stack)
 
-    if max_nfev is None:
+    if max_nfev is None and not _RHS_FINITE_CHECK:
         def rhs(t, y):
             return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
 
@@ -617,7 +644,7 @@ def run_transient(
 
     def rhs(t, y):
         counter[0] += 1
-        if counter[0] > max_nfev:
+        if max_nfev is not None and counter[0] > max_nfev:
             raise _NfevExceeded
         return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
 
@@ -634,6 +661,16 @@ def run_transient(
             message=f"max_nfev={max_nfev} exceeded (actual nfev={counter[0]})",
             nfev=counter[0],
             status=-1,
+        )
+    except _RhsNonFinite as e:
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            success=False,
+            y=np.empty((y0.size, 0)),
+            t=np.empty(0),
+            message=f"RHS returned non-finite values: {e}",
+            nfev=counter[0],
+            status=-2,
         )
 
 

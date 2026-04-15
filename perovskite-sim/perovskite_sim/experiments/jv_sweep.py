@@ -175,10 +175,13 @@ def _compute_current(
 # Calibration: well-conditioned sub-intervals at N_grid=60 complete in a few
 # hundred nfev; degenerate calls (reverse sweep reheating from a high-V_app
 # carrier-injection state on ionmonger_benchmark) spin indefinitely without
-# a bound. 20k is ~100x the healthy budget and still aborts long before a
-# wall-time user would notice, leaving room for the bisection fallback to
-# retry on halved intervals.
-_JV_RADAU_MAX_NFEV = 20_000
+# a bound. Well-conditioned TMM presets at moderate forward bias can legit
+# consume ~30-40k nfev on a single sub-interval when the corrected generation
+# profile drives high carrier densities, so the cap must stay well above
+# that or the bisection fallback wastes budget on already-good calls.
+# 100k aborts long before a wall-time user would notice (~10-15 s) and
+# leaves headroom for the bisection fallback to retry on halved intervals.
+_JV_RADAU_MAX_NFEV = 100_000
 
 
 def _integrate_step(
@@ -191,7 +194,7 @@ def _integrate_step(
     t_hi: float,
     rtol: float,
     atol: float,
-    max_bisect: int = 4,
+    max_bisect: int = 6,
 ) -> np.ndarray:
     """Advance the coupled MOL state from t_lo to t_hi at fixed V_app.
 
