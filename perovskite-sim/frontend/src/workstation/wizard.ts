@@ -166,13 +166,15 @@ export function showWizard(
       return parsed.length > 0 ? parsed : DEFAULT_TIER_COMPAT
     }
 
-    applyTierCompat(modal, compatForSelected())
-    presetSelect.addEventListener('change', () => {
+    const onPresetChange = (): void => {
       applyTierCompat(modal, compatForSelected())
-    })
+    }
+    applyTierCompat(modal, compatForSelected())
+    presetSelect.addEventListener('change', onPresetChange)
 
     function close(result: WizardResult): void {
-      modal.remove()
+      presetSelect.removeEventListener('change', onPresetChange)
+      host.remove()
       resolve(result)
     }
 

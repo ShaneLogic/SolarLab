@@ -92,11 +92,12 @@ def test_migrated_preset_full_mode_activates_te(preset):
     stack_full = dataclasses.replace(stack, mode="full")
     x = _electrical_grid(stack_full)
     mat = build_material_arrays(x, stack_full)
-    assert len(mat.interface_faces) >= 1, (
-        f"{preset}: FULL tier produced interface_faces=() — TE cap path "
-        "will never run. All four migrated presets have at least one band "
-        "offset > 0.05 eV on each internal heterojunction (that's why they "
-        "were migrated), so at minimum two interface faces should activate."
+    assert len(mat.interface_faces) >= 2, (
+        f"{preset}: FULL tier produced interface_faces={mat.interface_faces!r} "
+        "— TE cap path will not run on all heterojunctions. All four migrated "
+        "presets have at least one band offset > 0.05 eV on each internal "
+        "heterojunction (that's why they were migrated), so both internal "
+        "interfaces (ETL/absorber and absorber/HTL) should activate."
     )
 
 
