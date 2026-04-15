@@ -49,8 +49,15 @@ def carrier_continuity_rhs(
         J_n = J_n.copy()
         J_p = J_p.copy()
         for f_idx in interface_faces:
-            # Electron: CB offset
-            delta_Ec = chi[f_idx + 1] - chi[f_idx]
+            # Electron CB offset. Convention: E_c = E_vac - chi, so the
+            # energy step from left to right is chi_left - chi_right (not
+            # chi_right - chi_left). A *negative* delta_Ec means the CB goes
+            # DOWN left->right, i.e. electrons flow downhill with no barrier
+            # — exactly what spiro -> MAPbI3 looks like, where the SG flux
+            # must pass through unchanged. The previous sign inversion was
+            # turning every downhill step into a "barrier" and capping the
+            # diode injection current at Richardson * exp(-|DeltaE|/kT) ~ 0.
+            delta_Ec = chi[f_idx] - chi[f_idx + 1]
             if abs(delta_Ec) > 0.05:
                 J_te_n = thermionic_emission_flux(
                     float(n[f_idx]), float(n[f_idx + 1]), float(delta_Ec), T_val,
@@ -58,7 +65,9 @@ def carrier_continuity_rhs(
                 )
                 if abs(J_n[f_idx]) > abs(J_te_n):
                     J_n[f_idx] = J_te_n
-            # Hole: VB offset
+            # Hole VB offset. E_v = E_vac - chi - Eg, so
+            # E_v_right - E_v_left = (chi_left + Eg_left) - (chi_right + Eg_right),
+            # which is what's written below — the VB sign was already correct.
             delta_Ev = (chi[f_idx] + Eg[f_idx]) - (chi[f_idx + 1] + Eg[f_idx + 1])
             if abs(delta_Ev) > 0.05:
                 J_te_p = thermionic_emission_flux(
