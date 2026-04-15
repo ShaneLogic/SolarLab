@@ -165,6 +165,11 @@ export interface ConfigEntry {
   name: string
   namespace: Namespace
   device_type?: string
+  // Phase 2 tier gate: list of physics tiers this preset runs correctly
+  // under. Legacy configs with chi=Eg=0 can only run legacy/fast (FULL
+  // collapses compute_V_bi). Optional for backwards compatibility with
+  // older backend snapshots; callers should treat missing as ['legacy', 'fast'].
+  tier_compat?: ReadonlyArray<'legacy' | 'fast' | 'full'>
 }
 
 // ── Tandem cell (Phase 3) ────────────────────────────────────────────────────

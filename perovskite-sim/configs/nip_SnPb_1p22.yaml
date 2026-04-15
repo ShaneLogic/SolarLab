@@ -59,9 +59,11 @@ layers:
     C_n: 1e-42
     C_p: 1e-42
     alpha: 1.3e7                # TODO(benchmark): refine after Lin 2019 SI data is loaded
-    # NOTE: Eg/chi intentionally left at 0 (default). See nip_wideGap_FACs_1p77.yaml
-    # for the V_bi_eff blow-up that motivates this; restore once the contacts also
-    # carry chi/Eg so the band-offset path is self-consistent.
+    # NOTE: Eg/chi intentionally left at 0 (default). See the long comment in
+    # nip_wideGap_FACs_1p77.yaml: this is a TANDEM SUB-CELL ONLY, Lin 2019 is
+    # tuned around manual V_bi=1.10 V, and compute_V_bi() falls back to the
+    # manual value when chi=Eg=0 in all electrical layers. Stage 1c migration
+    # was deferred — see top-cell preset for the full rationale.
     optical_material: SnPb_1p22
 
   - name: TiO2_ETL

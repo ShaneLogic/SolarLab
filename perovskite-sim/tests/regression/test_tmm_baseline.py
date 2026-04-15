@@ -11,6 +11,14 @@ Baselines:
   - pin_tmm: re-pinned after the NiOx n,k CSV replaced the constant-index
     HTL fallback (prior pin was 220.07 with n_optical=2.2/alpha=0). Real
     NiOx adds ~4% parasitic HTL reflection + absorption.
+  - pin_tmm: re-pinned again after Stage 1b FULL-tier migration (added
+    chi/Eg to NiOx/MAPbI3/PCBM and aligned V_bi to compute_V_bi). The
+    NiOx-MAPbI3 VB offset is ~0.4 eV with Greiner 2012 NiOx band data,
+    which activates the TE cap on hole extraction and drops J_sc by ~30
+    A/m². This is the physically expected loss for a literature NiOx HTL
+    that is not engineered for VBM alignment with MAPbI3 — see Park 2015
+    / Liu 2015 for engineered NiOx with chi+Eg ≈ 5.3 eV. The drop is the
+    interface-aware diode doing its job, not a bug.
 
 Run with: pytest -m slow tests/regression/test_tmm_baseline.py
 """
@@ -22,7 +30,7 @@ pytestmark = pytest.mark.slow
 
 # Pinned measurements (A/m^2)
 NIP_TMM_JSC_PINNED = 211.02
-PIN_TMM_JSC_PINNED = 210.96
+PIN_TMM_JSC_PINNED = 179.81
 
 # Tolerance band. ±5 A/m² ≈ ±0.5 mA/cm² ≈ ±2.4% — tight enough to catch
 # any non-trivial change in the TMM path, loose enough to absorb solver

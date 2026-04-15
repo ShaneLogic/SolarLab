@@ -24,7 +24,7 @@ import { mountDegradationPane } from './panes/degradation-pane'
 import { mountTandemPane } from './panes/tandem-pane'
 import { mountMainPlotPane } from './panes/main-plot-pane'
 import type { MainPlotHandle } from './panes/main-plot-pane'
-import { showWizard } from './wizard'
+import { presetsFromEntries, showWizard } from './wizard'
 
 const DEFAULT_LAYOUT: LayoutConfig = {
   root: {
@@ -106,7 +106,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   let workspace: Workspace = loadWorkspace() ?? createEmptyWorkspace('Untitled')
   if (workspace.devices.length === 0) {
     const entries = await listConfigs()
-    const presets = entries.map(e => e.name)
+    const presets = presetsFromEntries(entries)
     const result = await showWizard(root, presets)
     if (!result.cancelled && result.selection) {
       const cfg = await getConfig(result.selection.preset)

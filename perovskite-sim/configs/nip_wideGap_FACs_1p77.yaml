@@ -65,10 +65,18 @@ layers:
     C_p: 1e-42
     alpha: 1.3e7                # TODO(benchmark): refine after Lin 2019 SI data is loaded
     # NOTE: Eg/chi intentionally left at 0 (default) so compute_V_bi() falls
-    # back to the manual V_bi=1.1 V above. Setting only the absorber's chi/Eg
-    # while leaving the contacts at chi=0 made V_bi_eff blow up to ~2.8 V and
-    # pushed the J–V sweep range past 3 V. Restore proper band offsets once
-    # spiro_HTL/TiO2_ETL also carry chi/Eg.
+    # back to the manual V_bi=1.42 V above. This preset is a TANDEM SUB-CELL
+    # ONLY — it is consumed by tandem_lin2019.yaml through tandem_jv, where
+    # V_oc is set by the absorber bandgap and recombination, NOT by stack
+    # Fermi matching. The Lin 2019 benchmark is tuned around manual V_bi.
+    #
+    # Stage 1c migration (Apr 2026) was attempted with chi=3.85, Eg=1.77
+    # (Saliba 2016) plus literature spiro/TiO2 values — compute_V_bi landed
+    # at 0.79 V because spiro_HTL/TiO2_ETL Fermi levels dominate, gutting
+    # the top-cell V_oc capacity by ~0.6 V and breaking the tandem benchmark.
+    # Proper FULL-tier migration here requires also re-tuning contact DOS /
+    # doping / ni so compute_V_bi lands near the manual value, OR re-fitting
+    # the Lin benchmark targets to the new V_bi. Deferred to a separate task.
     optical_material: FA_Cs_1p77
 
   - name: TiO2_ETL
