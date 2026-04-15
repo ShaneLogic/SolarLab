@@ -568,6 +568,10 @@ def assemble_rhs(
     return StateVec.pack(dn, dp, dP, dP_neg)
 
 
+class _NfevExceeded(Exception):
+    """Raised by the RHS wrapper when max_nfev is reached."""
+
+
 def run_transient(
     x: np.ndarray,
     y0: np.ndarray,
@@ -580,6 +584,7 @@ def run_transient(
     atol: float = 1e-6,
     max_step: float = np.inf,
     mat: MaterialArrays | None = None,
+    max_nfev: int | None = None,
 ):
     """Integrate MOL system from t_span[0] to t_span[1].
 
@@ -587,16 +592,49 @@ def run_transient(
     one-off calls but wasteful when this function is invoked many times
     with the same stack (J-V sweeps, impedance frequency loops). Callers
     that loop should build `mat` once and pass it in.
+
+    If `max_nfev` is set, the RHS is wrapped with a call counter and aborts
+    once that many evaluations have been performed. On abort the returned
+    sol object has ``success=False`` so callers that handle non-convergence
+    (e.g. the bisection in ``jv_sweep._integrate_step``) can take over.
+    Without this guard, Radau can spin in its implicit iteration on nearly
+    singular Jacobians without any wall-time bound — the canonical failure
+    is the reverse leg of a JV sweep on ionmonger_benchmark at N_grid=60
+    under single-threaded BLAS (commit history: substrate-stack regression).
     """
     if mat is None:
         mat = build_material_arrays(x, stack)
 
+    if max_nfev is None:
+        def rhs(t, y):
+            return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
+
+        return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
+                         method="Radau", rtol=rtol, atol=atol,
+                         dense_output=False, max_step=max_step)
+
+    counter = [0]
+
     def rhs(t, y):
+        counter[0] += 1
+        if counter[0] > max_nfev:
+            raise _NfevExceeded
         return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
 
-    return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
-                     method="Radau", rtol=rtol, atol=atol,
-                     dense_output=False, max_step=max_step)
+    try:
+        return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
+                         method="Radau", rtol=rtol, atol=atol,
+                         dense_output=False, max_step=max_step)
+    except _NfevExceeded:
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            success=False,
+            y=np.empty((y0.size, 0)),
+            t=np.empty(0),
+            message=f"max_nfev={max_nfev} exceeded (actual nfev={counter[0]})",
+            nfev=counter[0],
+            status=-1,
+        )
 
 
 def split_step(
