@@ -171,6 +171,16 @@ def _compute_current(
     return float(J_faces[0])
 
 
+# Upper bound on RHS evaluations per run_transient call inside a JV sweep.
+# Calibration: well-conditioned sub-intervals at N_grid=60 complete in a few
+# hundred nfev; degenerate calls (reverse sweep reheating from a high-V_app
+# carrier-injection state on ionmonger_benchmark) spin indefinitely without
+# a bound. 20k is ~100x the healthy budget and still aborts long before a
+# wall-time user would notice, leaving room for the bisection fallback to
+# retry on halved intervals.
+_JV_RADAU_MAX_NFEV = 20_000
+
+
 def _integrate_step(
     x: np.ndarray,
     y: np.ndarray,
@@ -205,6 +215,7 @@ def _integrate_step(
         stack, illuminated=True, V_app=V_app, rtol=rtol, atol=atol,
         max_step=dt / 20.0 if dt > 0.0 else np.inf,
         mat=mat,
+        max_nfev=_JV_RADAU_MAX_NFEV,
     )
     if sol.success:
         return sol.y[:, -1]
