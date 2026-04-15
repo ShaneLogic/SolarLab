@@ -35,6 +35,57 @@ class TestLayerTemplatesEndpoint:
             )
 
 
+class TestConfigsTierCompat:
+    """Stage 5 — /api/configs advertises tier_compat per preset.
+
+    The frontend wizard uses this to disable the FULL tier radio for
+    presets that don't have chi/Eg on every electrical layer (legacy
+    configs where compute_V_bi() collapses and the diode fails to turn
+    on under FULL). Migrated _tmm presets must advertise full support;
+    vanilla presets must not.
+    """
+
+    def _entries(self) -> dict[str, dict]:
+        r = client.get("/api/configs")
+        assert r.status_code == 200
+        return {e["name"]: e for e in r.json()["configs"]}
+
+    def test_migrated_presets_advertise_full(self) -> None:
+        entries = self._entries()
+        for name in (
+            "nip_MAPbI3_tmm.yaml",
+            "pin_MAPbI3_tmm.yaml",
+            "ionmonger_benchmark_tmm.yaml",
+            "driftfusion_benchmark_tmm.yaml",
+        ):
+            assert name in entries, f"{name} missing from /api/configs"
+            tiers = entries[name]["tier_compat"]
+            assert "full" in tiers, f"{name}: tier_compat={tiers} missing 'full'"
+            assert "legacy" in tiers and "fast" in tiers
+
+    def test_legacy_preset_excludes_full(self) -> None:
+        entries = self._entries()
+        assert "nip_MAPbI3.yaml" in entries
+        tiers = entries["nip_MAPbI3.yaml"]["tier_compat"]
+        assert "full" not in tiers, (
+            f"nip_MAPbI3.yaml (chi=Eg=0 on all layers) should not advertise "
+            f"FULL tier — compute_V_bi() collapses and diode fails. Got {tiers}"
+        )
+        assert tiers == ["legacy", "fast"]
+
+    def test_every_entry_has_tier_compat_list(self) -> None:
+        entries = self._entries()
+        for name, entry in entries.items():
+            tiers = entry.get("tier_compat")
+            assert isinstance(tiers, list) and tiers, (
+                f"{name}: tier_compat must be a non-empty list, got {tiers!r}"
+            )
+            for t in tiers:
+                assert t in ("legacy", "fast", "full"), (
+                    f"{name}: unknown tier {t!r} in tier_compat"
+                )
+
+
 import pytest
 import shutil
 from pathlib import Path

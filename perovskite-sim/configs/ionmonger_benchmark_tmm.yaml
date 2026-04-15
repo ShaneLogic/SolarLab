@@ -1,0 +1,131 @@
+# ionmonger_benchmark_tmm.yaml — TMM-enabled sibling of ionmonger_benchmark.yaml.
+#
+# This is NOT a paper-reproduction preset. The vanilla ionmonger_benchmark.yaml
+# is tuned to reproduce Courtier 2019 (Energy Environ. Sci.) under Beer-Lambert
+# optics with manual V_bi=1.10 V — touching it would invalidate the published
+# benchmark. This _tmm variant exists so the FULL physics tier (TMM optics +
+# computed V_bi + TE caps + dual ions + trap profile + T-scaling) has a
+# self-consistent IonMonger-style preset to exercise.
+#
+# Differences from ionmonger_benchmark.yaml:
+#   - Prepends a 1 mm glass substrate (incoherent: true) for the TMM stack
+#   - Adds optical_material on every electrical layer
+#   - V_bi 1.10 -> 0.86 to match compute_V_bi from the existing chi/Eg
+#     (spiro 2.1/3.0, MAPbI3 3.7/1.6, TiO2 4.0/3.2). The published Courtier
+#     benchmark treats V_bi as a free parameter (degenerate-doping limit) so
+#     the original keeps 1.10; here we close the FULL-tier consistency gap.
+#   - Everything else (mu, ni, tau, D_ion, P0, P_lim, B_rad, interfaces) is
+#     copied verbatim from ionmonger_benchmark.yaml.
+#
+# Reference: Courtier et al. 2019, DOI 10.1039/C8EE01576G, set (b).
+device:
+  V_bi: 0.86   # Boltzmann-limit V_bi from compute_V_bi on the chi/Eg below.
+               # The original ionmonger_benchmark.yaml uses 1.10 V to match
+               # the IonMonger paper's degenerate-doping convention, but
+               # FULL tier (compute_V_bi) needs a self-consistent value or
+               # the Poisson BC disagrees with Fermi-level matching at V=0
+               # and the diode never turns on.
+  Phi: 1.4e21
+  # Interface recombination velocities (v_n, v_p) at internal heterointerfaces.
+  # Courtier 2019 set (b): minority-carrier SRV high, majority-carrier SRV low.
+  #   [0] HTL/perovskite: electrons are minority in HTL (blocked) → high v_n
+  #   [1] perovskite/ETL: holes are minority in ETL (blocked) → high v_p
+  interfaces:
+    - [3.0e5, 1.0e-1]
+    - [1.0e-1, 3.0e5]
+
+layers:
+  - name: glass
+    role: substrate
+    thickness: 1.0e-3
+    eps_r: 2.25
+    mu_n: 0.0
+    mu_p: 0.0
+    ni: 1.0
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0
+    p1: 1.0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    optical_material: glass
+    incoherent: true
+
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 3.89e-5
+    ni: 1e0
+    N_D: 0.0
+    N_A: 1e24
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 2.1
+    Eg: 3.0
+    optical_material: spiro_OMeTAD
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 6.62e-3
+    mu_p: 6.62e-3
+    ni: 2.89e10
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1.01e-17
+    P_lim: 1.6e27
+    P0: 1.6e25
+    tau_n: 3e-9
+    tau_p: 3e-7
+    n1: 2.89e10
+    p1: 2.89e10
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1.3e7
+    chi: 3.7
+    Eg: 1.6
+    optical_material: MAPbI3
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 3.89e-4
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 4.0
+    Eg: 3.2
+    optical_material: TiO2

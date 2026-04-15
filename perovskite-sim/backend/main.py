@@ -204,15 +204,38 @@ def list_configs():
     change vs the Phase 2a flat-list shape; the frontend api wrapper updates
     in lockstep.
     """
-    def _peek_device_type(path: str) -> str:
-        # Cheap YAML peek — tandem presets have no stack.layers and must be
-        # routed to the Tandem pane instead of the single-cell Device editor.
+    def _peek_metadata(path: str) -> tuple[str, list[str]]:
+        # Cheap YAML peek — returns (device_type, tier_compat).
+        #
+        # device_type: tandem presets have no stack.layers and must be routed
+        # to the Tandem pane instead of the single-cell Device editor.
+        #
+        # tier_compat: list of physics tiers this preset runs correctly under.
+        # Every preset supports 'legacy' and 'fast' (Beer-Lambert + no TE cap
+        # works on any stack). 'full' is gated on *every* electrical layer
+        # having chi > 0 AND Eg > 0 — FULL tier derives the built-in potential
+        # from Fermi-level matching across the heterostack, so a single
+        # missing band alignment collapses compute_V_bi() and the diode fails
+        # to turn on at V=0 (Stage 1a diagnosis, commit c93d854). Tandem
+        # presets are single-cell-only for now and only advertise legacy/fast.
+        legacy_tiers = ["legacy", "fast"]
         try:
             with open(path) as fh:
                 data = yaml.safe_load(fh) or {}
-            return str(data.get("device_type", "single"))
         except Exception:
-            return "single"
+            return "single", legacy_tiers
+        device_type = str(data.get("device_type", "single"))
+        if device_type != "single":
+            return device_type, legacy_tiers
+        layers = data.get("layers") or []
+        electrical = [l for l in layers if l.get("role") != "substrate"]
+        if electrical and all(
+            float(l.get("chi", 0.0) or 0.0) > 0.0
+            and float(l.get("Eg", 0.0) or 0.0) > 0.0
+            for l in electrical
+        ):
+            return device_type, [*legacy_tiers, "full"]
+        return device_type, legacy_tiers
 
     try:
         entries: list[dict] = []
@@ -220,20 +243,24 @@ def list_configs():
             if f.endswith((".yaml", ".yml")):
                 full = os.path.join(CONFIGS_DIR, f)
                 if os.path.isfile(full):
+                    device_type, tier_compat = _peek_metadata(full)
                     entries.append({
                         "name": f,
                         "namespace": "shipped",
-                        "device_type": _peek_device_type(full),
+                        "device_type": device_type,
+                        "tier_compat": tier_compat,
                     })
         user_dir = os.path.join(CONFIGS_DIR, "user")
         if os.path.isdir(user_dir):
             for f in sorted(os.listdir(user_dir)):
                 if f.endswith((".yaml", ".yml")):
                     full = os.path.join(user_dir, f)
+                    device_type, tier_compat = _peek_metadata(full)
                     entries.append({
                         "name": f,
                         "namespace": "user",
-                        "device_type": _peek_device_type(full),
+                        "device_type": device_type,
+                        "tier_compat": tier_compat,
                     })
         return {"status": "ok", "configs": entries}
     except Exception as e:

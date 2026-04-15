@@ -11,7 +11,10 @@
 # from configs/nip_MAPbI3.yaml — the only additions are the substrate layer
 # and optical_material: fields wiring each layer to its shipped n,k CSV.
 device:
-  V_bi: 1.1
+  V_bi: 0.79   # Boltzmann-limit V_bi from compute_V_bi on spiro/MAPbI3/TiO2
+               # band data below. Must stay consistent with chi/Eg on the
+               # contacts or the Poisson BC disagrees with the Fermi-level
+               # matching and the diode never turns on.
   Phi: 2.5e21
 layers:
   - name: glass
@@ -46,6 +49,8 @@ layers:
     ni: 1e0
     N_D: 0.0
     N_A: 2e23
+    chi: 2.05    # electron affinity [eV] — Schulz 2019
+    Eg: 3.05     # band gap [eV] — Schulz 2019
     D_ion: 0.0
     P_lim: 1e30
     P0: 0.0
@@ -68,6 +73,8 @@ layers:
     ni: 3.2e13
     N_D: 0.0
     N_A: 0.0
+    chi: 3.7     # electron affinity [eV] — IonMonger / Courtier 2019
+    Eg: 1.6      # band gap [eV] — MAPbI3
     D_ion: 1e-16
     P_lim: 1.6e27
     P0: 1.6e24
@@ -90,6 +97,8 @@ layers:
     ni: 1e0
     N_D: 1e24
     N_A: 0.0
+    chi: 4.0     # electron affinity [eV] — Bisquert 2014
+    Eg: 3.2      # band gap [eV] — TiO2 (anatase)
     D_ion: 0.0
     P_lim: 1e30
     P0: 0.0
