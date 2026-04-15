@@ -293,7 +293,7 @@ class TestOpticalData:
         """load_nk must raise when any wavelength is above the CSV maximum."""
         from perovskite_sim.data import load_nk
         with pytest.raises(ValueError, match="outside the native range"):
-            load_nk("MAPbI3", np.array([500.0, 1100.0]))  # 1100 nm above 1000
+            load_nk("MAPbI3", np.array([500.0, 1200.0]))  # 1200 nm above 1100
 
     def test_load_nk_error_names_material(self):
         """The ValueError message must identify the material for actionable debugging."""

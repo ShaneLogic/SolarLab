@@ -22,6 +22,7 @@ import numpy as np
 from perovskite_sim.experiments.jv_sweep import (
     JVMetrics,
     JVResult,
+    ProgressCallback,
     _grid_node_count,
     compute_metrics,
     run_jv_sweep,
@@ -79,8 +80,19 @@ def series_match_jv(
             f"top=[{tJ[0]}, {tJ[-1]}], bottom=[{bJ[0]}, {bJ[-1]}]"
         )
 
-    n = max(len(tJ), len(bJ))
-    J_common = np.linspace(j_lo, j_hi, n)
+    # Use the union of both sub-cells' native J samples, restricted to the
+    # overlap. Sub-cell sweeps are V-uniform, so J is naturally dense near
+    # V_oc (where dJ/dV is steep) and sparse in deep injection — the right
+    # distribution for resolving the matched V_oc. A uniform linspace over
+    # the full overlap puts almost all points in the injection branch and
+    # leaves J=0 unresolved, which drags compute_metrics off V_oc.
+    J_common = np.unique(np.concatenate([tJ, bJ]))
+    J_common = J_common[(J_common >= j_lo) & (J_common <= j_hi)]
+    # Always inject J = 0 if it lies in the overlap so downstream metrics
+    # (V_oc at a J zero crossing, J_sc at V = 0 via interp) sample a real
+    # grid point at short-circuit instead of relying on linear interpolation.
+    if j_lo <= 0.0 <= j_hi and not np.any(J_common == 0.0):
+        J_common = np.unique(np.concatenate([J_common, [0.0]]))
     V_top_m = np.interp(J_common, tJ, tV)
     V_bot_m = np.interp(J_common, bJ, bV)
     V_tandem = V_top_m + V_bot_m + V_junction
@@ -126,6 +138,7 @@ def run_tandem_jv(
     N_grid: int = 100,
     n_points: int = 50,
     V_junction: float = 0.0,
+    progress: ProgressCallback | None = None,
 ) -> TandemJVResult:
     """Run a series-connected 2T tandem J-V sweep.
 
@@ -169,24 +182,41 @@ def run_tandem_jv(
     N_bot = _grid_node_count(cfg.bottom_cell, N_grid)
 
     # Step 2: One combined-TMM generation solve over the full tandem stack.
+    if progress is not None:
+        progress("optics", 0, 1, "combined-TMM generation solve")
     gen = compute_tandem_generation(
         cfg, wavelengths_m, spectral_flux, wavelengths_nm,
         N_top=N_top, N_bot=N_bot,
     )
+    if progress is not None:
+        progress("optics", 1, 1, "optics complete")
 
     # Step 3: Independent sub-cell sweeps with pre-computed G(x).
+    # Per-point frames from each sub-cell are re-stamped with a "top/" or
+    # "bot/" stage prefix so the SSE consumer can show which half is running.
+    def _relay(prefix: str):
+        if progress is None:
+            return None
+        def _cb(stage: str, cur: int, tot: int, msg: str) -> None:
+            progress(f"{prefix}/{stage}", cur, tot, msg)
+        return _cb
+
     top_result = run_jv_sweep(
         cfg.top_cell,
         N_grid=N_grid,
         n_points=n_points,
         fixed_generation=gen.G_top,
+        progress=_relay("top"),
     )
     bot_result = run_jv_sweep(
         cfg.bottom_cell,
         N_grid=N_grid,
         n_points=n_points,
         fixed_generation=gen.G_bot,
+        progress=_relay("bot"),
     )
+    if progress is not None:
+        progress("series-match", 1, 1, "series matching sub-cells")
 
     # Step 4: Series-match the forward sweeps.
     # V_junction is the recombination-junction voltage offset; v1 uses 0.0

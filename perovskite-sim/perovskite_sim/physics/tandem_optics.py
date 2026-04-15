@@ -149,6 +149,9 @@ def _tmm_layer_from_stack_layer(layer, wavelengths_nm: np.ndarray) -> TMMLayer:
         k_arr = np.zeros(n_wl)
 
     incoherent = bool(p.incoherent) if p is not None and hasattr(p, "incoherent") else False
+    # Enforce a tiny k floor: exact k=0 over multi-layer stacks can produce
+    # singular cumulative transfer matrices and NaN field profiles.
+    k_arr = np.maximum(k_arr, 1e-6)
     return TMMLayer(d=layer.thickness, n=n_arr, k=k_arr, incoherent=incoherent)
 
 
@@ -161,6 +164,7 @@ def _tmm_layer_from_junction_layer(
     JunctionLayer exposes optical_material directly (no nested .params).
     """
     _, n_arr, k_arr = load_nk(jlayer.optical_material, wavelengths_nm)
+    k_arr = np.maximum(k_arr, 1e-6)
     return TMMLayer(
         d=jlayer.thickness,
         n=n_arr,
@@ -210,9 +214,18 @@ def compute_tandem_generation(
         for j in cfg.junction_stack
     ]
 
-    combined = top_tmm + junc_tmm + bot_tmm
+    # Optional back reflector — optical-only, sits behind the bottom sub-cell
+    # in the combined TMM stack. It never appears on the spatial x grid, so
+    # its only effect is on the cumulative transfer matrix (i.e. it bounces
+    # near-IR photons back into the bottom absorber for a second pass).
+    back_tmm: list[TMMLayer] = []
+    if cfg.back_reflector is not None:
+        back_tmm = [_tmm_layer_from_junction_layer(cfg.back_reflector, wavelengths_nm)]
+
+    combined = top_tmm + junc_tmm + bot_tmm + back_tmm
     n_top = len(top_tmm)
     n_junc = len(junc_tmm)
+    n_bot = len(bot_tmm)
 
     # --- Build cumulative layer boundaries ---
     thicknesses = np.array([L.d for L in combined])
@@ -221,6 +234,8 @@ def compute_tandem_generation(
 
     top_end = float(boundaries[n_top])
     junc_end = float(boundaries[n_top + n_junc])
+    # x grid must not enter the back reflector — it is electrically absent.
+    bot_end = float(boundaries[n_top + n_junc + n_bot])
 
     # --- Spatial grid: top / junction interior / bottom ---
     # endpoint=False on x_top (and x_junc) gives each segment ownership of its
@@ -230,14 +245,14 @@ def compute_tandem_generation(
         # No junction layers: grid is just top + bottom. Use endpoint=False
         # on the top segment so the boundary point belongs only to the bottom.
         x_top = np.linspace(0.0, top_end, N_top, endpoint=False)
-        x_bot = np.linspace(top_end, total_thickness, N_bot)
+        x_bot = np.linspace(top_end, bot_end, N_bot)
         x = np.concatenate([x_top, x_bot])
         n_junc_pts = 0
     else:
         x_top = np.linspace(0.0, top_end, N_top, endpoint=False)
         n_junc_pts_full = max(3, n_junc * 3)
         x_junc = np.linspace(top_end, junc_end, n_junc_pts_full, endpoint=False)
-        x_bot = np.linspace(junc_end, total_thickness, N_bot)
+        x_bot = np.linspace(junc_end, bot_end, N_bot)
         x = np.concatenate([x_top, x_junc, x_bot])
         n_junc_pts = n_junc_pts_full
 
@@ -246,6 +261,11 @@ def compute_tandem_generation(
         combined, wavelengths, x, boundaries,
         n_ambient=1.0, n_substrate=1.0,
     )
+    # At short wavelengths the top absorber is optically thick (α·d >> 1);
+    # the cumulative transfer matrix becomes ill-conditioned deep in the
+    # stack and produces NaN/Inf field amplitudes. Physically those points
+    # receive zero light, so we replace non-finite entries with 0.
+    A = np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
 
     # --- Slice assignments ---
     top_slice = slice(0, N_top)

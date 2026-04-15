@@ -27,6 +27,12 @@ class TandemConfig:
     junction_model: str
     light_direction: str
     benchmark: dict | None
+    # Optional optical-only back reflector behind the bottom sub-cell. Real
+    # monolithic tandems use a Cu/Ag/Au back contact whose high-k metallic
+    # response sends near-IR photons that pass through the absorber on a
+    # second pass. The reflector is added only to the TMM combined stack;
+    # it never enters the drift-diffusion solve.
+    back_reflector: JunctionLayer | None = None
 
 
 def _resolve(base: Path, ref: str) -> str:
@@ -115,6 +121,22 @@ def load_tandem_from_yaml(path: str) -> TandemConfig:
         )
     junction_stack = tuple(layers)
 
+    back_reflector = None
+    br_raw = cfg.get("back_reflector")
+    if br_raw is not None:
+        for required_key in ("name", "thickness_nm", "optical_material"):
+            if required_key not in br_raw:
+                raise ValueError(
+                    f"{path}: back_reflector is missing required field "
+                    f"'{required_key}'"
+                )
+        back_reflector = JunctionLayer(
+            name=br_raw["name"],
+            thickness=float(br_raw["thickness_nm"]) * 1e-9,
+            optical_material=br_raw["optical_material"],
+            incoherent=_parse_bool(br_raw.get("incoherent", False)),
+        )
+
     return TandemConfig(
         top_cell=top_cell,
         bottom_cell=bottom_cell,
@@ -122,4 +144,5 @@ def load_tandem_from_yaml(path: str) -> TandemConfig:
         junction_model=junction_model,
         light_direction=light_direction,
         benchmark=cfg.get("benchmark"),
+        back_reflector=back_reflector,
     )

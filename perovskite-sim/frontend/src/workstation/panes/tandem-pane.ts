@@ -1,25 +1,16 @@
-import { runTandem } from '../../api'
+import { listConfigs } from '../../api'
+import { startJob, streamJobEvents } from '../../job-stream'
+import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, readNum, numField } from '../../ui-helpers'
 import { mountTandemStackVisualizer } from '../../stack/tandem-stack-visualizer'
-import type { TandemJVPayload } from '../../types'
+import type { TandemJVPayload, ConfigEntry } from '../../types'
 
 /**
  * Tandem pane — config-path-based workflow (not device-object-based).
  *
- * Layout:
- *   1. Config path input + N_grid / n_points params + Run button
- *   2. Side-by-side sub-stack visualizer (read-only)
- *   3. Metrics + benchmark comparison rendered as a <pre> block
- *
- * Deviation from plan: uses direct fetch via api.runTandem() rather than the
- * streaming job system (startJob/streamJobEvents). The /api/tandem endpoint is
- * a synchronous POST that returns the full result in one response — there is no
- * SSE stream for tandem yet. Progress bar is therefore omitted in v1.
- *
- * TODO (deferred):
- *   - Wire Plotly J-V curve overlay (top + bottom sub-cells)
- *   - Progress bar via SSE once backend moves tandem to /api/jobs
- *   - Config file browser / dropdown (currently free-text input)
+ * Uses the /api/jobs SSE flow so progress events from both sub-cell sweeps
+ * ("top/fwd", "top/rev", "bot/fwd", "bot/rev") are streamed into a shared
+ * progress bar — same pattern as panels/jv.ts.
  */
 
 function fmt4(v: number): string {
@@ -28,11 +19,7 @@ function fmt4(v: number): string {
 
 function renderMetrics(data: TandemJVPayload): string {
   const m = data.metrics
-  // J_sc from backend is A/m²; display convention is mA/cm² (1 A/m² = 0.1 mA/cm²).
-  // Math.abs because J_sc is negative under illumination but shown as positive.
   const jscDisplay = Math.abs(m.J_sc) / 10
-  // PCE from compute_metrics is a dimensionless fraction (P_mpp / 1000 W/m²);
-  // multiply by 100 to display as percent — mirrors jv.ts renderJVResults.
   const pceDisplay = m.PCE * 100
 
   const lines: string[] = [
@@ -42,8 +29,6 @@ function renderMetrics(data: TandemJVPayload): string {
     `  FF    = ${fmt4(m.FF)}`,
     `  PCE   = ${fmt4(pceDisplay)} %`,
     '',
-    // V_top and V_bot are voltage arrays (one value per J-V sample point),
-    // reserved for future Plotly sub-cell overlay — not rendered in v1.
   ]
 
   if (data.benchmark) {
@@ -65,8 +50,10 @@ export function mountTandemPane(container: HTMLElement): void {
       <h3>Tandem J–V Simulation</h3>
       <div class="form-grid">
         <label class="form-group" style="grid-column: 1 / -1;">
-          <span>Config path</span>
-          <input type="text" id="tandem-config-path" placeholder="configs/tandem_perovskite_si.yaml" style="width:100%;">
+          <span>Tandem preset</span>
+          <select id="tandem-config-select" style="width:100%;">
+            <option value="">Loading…</option>
+          </select>
         </label>
         ${numField('tandem-N', 'N<sub>grid</sub>', 40, '1')}
         ${numField('tandem-np', 'V sample points', 15, '1')}
@@ -75,62 +62,94 @@ export function mountTandemPane(container: HTMLElement): void {
         <button class="btn btn-primary" id="btn-tandem">Run tandem J–V</button>
         <span class="status" id="status-tandem"></span>
       </div>
+      <div id="progress-tandem"></div>
       <div id="tandem-stack-viz-container" style="margin: 12px 0;"></div>
       <div id="tandem-results"></div>
       <div class="pane-hint">
-        Tandem runs are synchronous — no streaming progress bar in v1.
-        Results appear in the panel below once the simulation completes.
+        Tandem runs stream progress for each sub-cell sweep (top then bottom).
+        Results appear below once series-matching completes.
       </div>
     </div>`
 
   const vizContainer = container.querySelector<HTMLDivElement>('#tandem-stack-viz-container')!
   const stackViz = mountTandemStackVisualizer(vizContainer)
 
+  const progressEl = container.querySelector<HTMLDivElement>('#progress-tandem')!
+  const progressBar: ProgressBarHandle = createProgressBar(progressEl)
+
   const btn = container.querySelector<HTMLButtonElement>('#btn-tandem')!
   const resultsEl = container.querySelector<HTMLDivElement>('#tandem-results')!
+  const selectEl = container.querySelector<HTMLSelectElement>('#tandem-config-select')!
 
-  btn.addEventListener('click', () => {
-    const configPathEl = container.querySelector<HTMLInputElement>('#tandem-config-path')!
-    const configPath = configPathEl.value.trim()
+  listConfigs()
+    .then((entries: ConfigEntry[]) => {
+      const tandems = entries.filter(e => (e.device_type ?? '').startsWith('tandem'))
+      if (tandems.length === 0) {
+        selectEl.innerHTML = '<option value="">(no tandem presets found)</option>'
+        return
+      }
+      selectEl.innerHTML = tandems
+        .map(e => `<option value="configs/${e.name}">${e.name.replace(/\.ya?ml$/, '')}</option>`)
+        .join('')
+      const preferred = tandems.find(e => e.name.startsWith('tandem_lin2019'))
+      if (preferred) selectEl.value = `configs/${preferred.name}`
+    })
+    .catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e)
+      selectEl.innerHTML = `<option value="">(error: ${msg})</option>`
+    })
+
+  btn.addEventListener('click', async () => {
+    const configPath = selectEl.value.trim()
     if (!configPath) {
-      setStatus('status-tandem', 'Enter a config path first.', true)
+      setStatus('status-tandem', 'Select a tandem preset first.', true)
       return
     }
 
-    const N_grid = Math.max(3, Math.round(readNum('tandem-N', 40)))
-    const n_points = Math.max(2, Math.round(readNum('tandem-np', 15)))
+    const params = {
+      N_grid: Math.max(3, Math.round(readNum('tandem-N', 40))),
+      n_points: Math.max(2, Math.round(readNum('tandem-np', 15))),
+    }
 
     btn.disabled = true
     stackViz.clear()
     resultsEl.innerHTML = ''
-    setStatus('status-tandem', 'Running tandem simulation…')
+    progressBar.reset()
+    setStatus('status-tandem', 'Dispatching tandem job…')
 
-    runTandem(configPath, N_grid, n_points)
-      .then((data: TandemJVPayload) => {
-        setStatus('status-tandem', 'Done')
+    try {
+      const jobId = await startJob('tandem', null, params, configPath)
+      setStatus('status-tandem', 'Running tandem simulation…')
 
-        // Update sub-stack visualizer if layer data is present.
-        if (data.top_layers || data.bot_layers) {
-          stackViz.update(data.top_layers ?? [], data.bot_layers ?? [])
-        } else {
-          stackViz.clear()
-        }
-
-        // Render metrics as pre block.
-        const pre = document.createElement('pre')
-        pre.className = 'tandem-metrics-pre'
-        pre.style.cssText = 'font-size:0.85rem;line-height:1.5;background:var(--surface-1,#1e1e2e);padding:12px;border-radius:6px;overflow:auto;'
-        pre.textContent = renderMetrics(data)
-        resultsEl.innerHTML = ''
-        resultsEl.appendChild(pre)
+      streamJobEvents<TandemJVPayload>(jobId, {
+        onProgress: (ev) => progressBar.update(ev),
+        onResult: (data) => {
+          setStatus('status-tandem', 'Done')
+          if (data.top_layers || data.bot_layers) {
+            stackViz.update(data.top_layers ?? [], data.bot_layers ?? [])
+          } else {
+            stackViz.clear()
+          }
+          const pre = document.createElement('pre')
+          pre.className = 'tandem-metrics-pre'
+          pre.style.cssText = 'font-size:0.85rem;line-height:1.5;background:var(--surface-1,#1e1e2e);padding:12px;border-radius:6px;overflow:auto;'
+          pre.textContent = renderMetrics(data)
+          resultsEl.innerHTML = ''
+          resultsEl.appendChild(pre)
+        },
+        onError: (msg) => {
+          setStatus('status-tandem', `Error: ${msg}`, true)
+          resultsEl.innerHTML = `<pre class="tandem-metrics-pre" style="color:var(--error,#f38ba8);">${msg}</pre>`
+        },
+        onDone: () => {
+          btn.disabled = false
+        },
       })
-      .catch((e: unknown) => {
-        const msg = e instanceof Error ? e.message : String(e)
-        setStatus('status-tandem', `Error: ${msg}`, true)
-        resultsEl.innerHTML = `<pre class="tandem-metrics-pre" style="color:var(--error,#f38ba8);">${msg}</pre>`
-      })
-      .finally(() => {
-        btn.disabled = false
-      })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setStatus('status-tandem', `Error: ${msg}`, true)
+      resultsEl.innerHTML = `<pre class="tandem-metrics-pre" style="color:var(--error,#f38ba8);">${msg}</pre>`
+      btn.disabled = false
+    }
   })
 }

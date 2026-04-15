@@ -164,6 +164,7 @@ export type Namespace = 'shipped' | 'user'
 export interface ConfigEntry {
   name: string
   namespace: Namespace
+  device_type?: string
 }
 
 // ── Tandem cell (Phase 3) ────────────────────────────────────────────────────

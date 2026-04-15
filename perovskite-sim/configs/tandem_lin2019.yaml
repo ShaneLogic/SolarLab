@@ -25,6 +25,15 @@ junction_stack:
     optical_material: PEDOT_PSS
     incoherent: false
 
+# Optical-only Cu/Ag back contact — bounces unabsorbed near-IR back into the
+# Sn-Pb absorber for a second pass. Lin 2019 used Cu; we use Ag because its
+# n,k CSV already ships with the repo. Effect on J_sc is roughly +1-2 mA/cm².
+back_reflector:
+  name: Ag_back_contact
+  thickness_nm: 100.0
+  optical_material: Ag
+  incoherent: false
+
 benchmark:
   reference: lin2019_nature_energy
   target_pce: 24.8
