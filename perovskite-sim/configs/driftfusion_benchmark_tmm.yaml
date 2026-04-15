@@ -1,0 +1,125 @@
+# driftfusion_benchmark_tmm.yaml — TMM-enabled sibling of driftfusion_benchmark.yaml.
+#
+# Same intent as ionmonger_benchmark_tmm.yaml: the vanilla preset reproduces
+# Calado 2016 (Nat. Commun.) under Beer-Lambert with manual V_bi=1.10 V, so
+# touching it would invalidate the published reference. This _tmm sibling
+# closes the FULL-tier consistency gap so the band-offset code path has a
+# Driftfusion-style preset to exercise.
+#
+# Differences from driftfusion_benchmark.yaml:
+#   - Prepends a 1 mm glass substrate (incoherent: true)
+#   - Adds optical_material on every electrical layer
+#   - V_bi 1.10 -> 1.46 to match compute_V_bi from the existing chi/Eg
+#     (spiro 2.8/2.1, MAPbI3 3.8/1.6, TiO2 4.1/2.3). Driftfusion's chi
+#     values place the contact Fermi levels further apart than IonMonger's,
+#     so its compute_V_bi is *higher*, not lower.
+#   - Everything else (mu, ni, tau, D_ion, P0, P_lim, B_rad, interfaces) is
+#     copied verbatim from driftfusion_benchmark.yaml.
+#
+# Reference: Calado et al. 2016, DOI 10.1038/ncomms13831.
+device:
+  V_bi: 1.46   # Boltzmann-limit V_bi from compute_V_bi on the chi/Eg below.
+               # The original driftfusion_benchmark.yaml uses 1.10 V to match
+               # Driftfusion's spiro_mapi_tio2 default; FULL tier needs the
+               # band-offset-consistent value or the diode never turns on.
+  Phi: 1.4e21
+  # Driftfusion spiro_mapi_tio2 default: bulk-SRH limited, light interface SRV.
+  interfaces:
+    - [1.0e3, 1.0e-1]
+    - [1.0e-1, 1.0e3]
+
+layers:
+  - name: glass
+    role: substrate
+    thickness: 1.0e-3
+    eps_r: 2.25
+    mu_n: 0.0
+    mu_p: 0.0
+    ni: 1.0
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0
+    p1: 1.0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    optical_material: glass
+    incoherent: true
+
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 4.0
+    mu_n: 2e-10
+    mu_p: 2e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 1e24
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 2.8
+    Eg: 2.1
+    optical_material: spiro_OMeTAD
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 23.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 1e11
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 2.57e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    tau_n: 1e-7
+    tau_p: 1e-7
+    n1: 1e11
+    p1: 1e11
+    B_rad: 3.6e-18
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1.3e7
+    chi: 3.8
+    Eg: 1.6
+    optical_material: MAPbI3
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 4.1
+    Eg: 2.3
+    optical_material: TiO2
