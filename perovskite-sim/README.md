@@ -74,7 +74,7 @@ produce current.
 </p>
 
 <p align="center">
-  <img src="docs/images/band_diagram.png?v=2" alt="Energy Band Diagram" width="700">
+  <img src="docs/images/band_diagram.png?v=3" alt="Energy Band Diagram" width="700">
 </p>
 
 <p align="center">

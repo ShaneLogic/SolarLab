@@ -211,7 +211,7 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 </p>
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/band_diagram.png?v=2" alt="Energy Band Diagram" width="700">
+  <img src="perovskite-sim/docs/images/band_diagram.png?v=3" alt="Energy Band Diagram" width="700">
 </p>
 
 <p align="center">
