@@ -336,16 +336,9 @@ After launching the backend and frontend (see [Running the Application](#-runnin
 
 ### Layout
 
-```
-┌─────────────┬──────────────────────────┬──────────────────────────┐
-│  Devices    │  Device  │  Help         │  J–V │ Imp │ Degradation │
-│             ├──────────────────────────┤                          │
-│  Results /  │  Device Configuration    │  Experiment Parameters   │
-│  Compare    │  [preset ▾]   [Reset]    │  Run button + progress   │
-│             │  Layer Builder (full)    │                          │
-│             │  Detail Editor           │  Main Plot               │
-└─────────────┴──────────────────────────┴──────────────────────────┘
-```
+<p align="center">
+  <img src="perovskite-sim/docs/images/ui_layout.png" alt="Web UI Layout" width="700">
+</p>
 
 ### Left rail — Devices / Results
 
