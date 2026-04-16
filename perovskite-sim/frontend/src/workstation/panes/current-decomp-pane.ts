@@ -22,7 +22,7 @@ export function mountCurrentDecompPane(container: HTMLElement, opts: CurrentDeco
         ${numField('cd-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('cd-np', 'V sample points', 30, '1')}
         ${numField('cd-rate', 'Scan rate (V/s)', 1.0, 'any')}
-        ${numField('cd-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
+        ${numField('cd-vmax', 'V<sub>max</sub> (V)', 1.1, '0.01')}
         ${checkField('cd-dark', 'Dark (no illumination)', false)}
       </div>
       <div class="actions">

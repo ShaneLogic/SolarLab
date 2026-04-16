@@ -185,8 +185,9 @@ function renderCurrentDecomp(el: HTMLElement, r: CurrentDecompResult): void {
   Plotly.purge(el)
   el.innerHTML = ''
 
-  // Convert A/m² → mA/cm²
-  const toMA = (arr: number[]) => arr.map(j => j / 10)
+  // Convert A/m² → mA/cm² with sign flip to physics convention
+  // (photocurrent negative, injection positive — matches Driftfusion / literature)
+  const toMA = (arr: number[]) => arr.map(j => -j / 10)
 
   const traces = [
     {
