@@ -229,6 +229,8 @@ input:focus, select:focus {
   padding: 0.4375rem 0.875rem;
 }
 .btn-ghost:hover { color: var(--text); border-color: var(--text-muted); }
+.btn-danger-ghost { color: var(--error); border-color: var(--error); }
+.btn-danger-ghost:hover { background: var(--error); color: #fff; }
 
 .actions {
   margin-top: 1.125rem;
