@@ -23,3 +23,17 @@ export function readNum(id: string, fallback: number): number {
   const v = Number(el.value)
   return Number.isFinite(v) ? v : fallback
 }
+
+export function checkField(id: string, label: string, checked = false): string {
+  return `
+    <label class="form-group form-check">
+      <input type="checkbox" id="${id}"${checked ? ' checked' : ''}>
+      <span>${label}</span>
+    </label>`
+}
+
+export function readCheck(id: string, fallback = false): boolean {
+  const el = document.getElementById(id) as HTMLInputElement | null
+  if (!el) return fallback
+  return el.checked
+}
