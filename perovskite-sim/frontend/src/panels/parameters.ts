@@ -104,6 +104,8 @@ export function parametersHTML(): string {
           <tr><td>V sample points</td><td>Bias samples per leg</td><td>—</td><td>Number of voltage stops on each of the forward (0 → <i>V</i><sub>max</sub>) and reverse (<i>V</i><sub>max</sub> → 0) legs. Result is 2·<i>N</i> current values plus the hysteresis index.</td></tr>
           <tr><td><i>v</i><sub>rate</sub></td><td>Scan rate</td><td>V·s⁻¹</td><td>Voltage ramp speed. Determines the time window each Radau sub-interval must integrate; small rates suppress scan-speed hysteresis, fast rates expose it.</td></tr>
           <tr><td><i>V</i><sub>max</sub></td><td>Upper bias</td><td>V</td><td>Forward endpoint. Should exceed the expected <i>V</i><sub>OC</sub> by ~50 mV so the curve crosses <i>J</i> = 0.</td></tr>
+          <tr><td>illuminated</td><td>Light / dark</td><td>bool</td><td>When <b>false</b>, the sweep runs in <b>dark mode</b>: generation <i>G</i> = 0 everywhere, starting from dark equilibrium instead of the illuminated steady state. The result is the diode injection-current characteristic. Cannot be combined with <code>fixed_generation</code>.</td></tr>
+          <tr><td>save_snapshots</td><td>Spatial export</td><td>bool</td><td>When <b>true</b>, a <code>SpatialSnapshot</code> (φ, <i>E</i>, <i>n</i>, <i>p</i>, <i>P</i>, ρ) is collected at every voltage point for both forward and reverse legs.</td></tr>
         </tbody>
       </table>
 
@@ -129,6 +131,18 @@ export function parametersHTML(): string {
         </tbody>
       </table>
 
+      <h4>Experiment controls — Transient Photovoltage (TPV)</h4>
+      <table class="param-table">
+        <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><i>N</i><sub>grid</sub></td><td>Spatial nodes</td><td>—</td><td>As above.</td></tr>
+          <tr><td><i>δG</i> fraction</td><td>Pulse amplitude</td><td>—</td><td>Fractional increase in generation rate during the light pulse (e.g. 0.05 = 5 % perturbation). Must be in (0, 1) for the small-signal approximation to hold.</td></tr>
+          <tr><td><i>t</i><sub>pulse</sub></td><td>Pulse duration</td><td>s</td><td>Duration of the light pulse. Typical: 1 µs.</td></tr>
+          <tr><td><i>t</i><sub>decay</sub></td><td>Observation window</td><td>s</td><td>Total time span including pulse and decay. Must exceed <i>t</i><sub>pulse</sub>. Typical: 50 µs.</td></tr>
+          <tr><td>n_points</td><td>Output samples</td><td>—</td><td>Number of time points in the output. More points resolve the decay curve more finely; adaptive spacing puts extra resolution during the pulse.</td></tr>
+        </tbody>
+      </table>
+
       <h4>Output metrics</h4>
       <table class="param-table">
         <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th><th>Meaning</th></tr></thead>
@@ -139,6 +153,36 @@ export function parametersHTML(): string {
           <tr><td>PCE</td><td>Power conversion efficiency</td><td>%</td><td>(<i>V</i><sub>OC</sub> <i>J</i><sub>SC</sub> · FF) / <i>P</i><sub>in</sub>, with <i>P</i><sub>in</sub> = 1000 W·m⁻² for AM1.5G.</td></tr>
           <tr><td>HI</td><td>Hysteresis index</td><td>—</td><td>(PCE<sub>rev</sub> − PCE<sub>fwd</sub>) / PCE<sub>rev</sub>. Non-zero values indicate slow ionic rearrangement during the scan.</td></tr>
           <tr><td><i>Z</i>(<i>ω</i>)</td><td>Small-signal impedance</td><td>Ω·m²</td><td>Ratio of AC voltage to AC current density at frequency <i>ω</i> = 2π<i>f</i>. Real part is resistive loss, imaginary part is reactive storage.</td></tr>
+          <tr><td><i>τ</i></td><td>TPV decay time</td><td>s</td><td>Mono-exponential fit to the open-circuit voltage decay after a small light pulse. Encodes the effective recombination lifetime at open circuit.</td></tr>
+          <tr><td><i>δV</i><sub>0</sub></td><td>TPV initial perturbation</td><td>V</td><td>Peak voltage rise from the light pulse, before decay. Proportional to <i>δG</i> and the device capacitance.</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Current decomposition</h4>
+      <p>At any operating point, the total terminal current <i>J</i><sub>total</sub> can be decomposed into four physically distinct contributions, each evaluated at every mesh face:</p>
+      <table class="param-table">
+        <thead><tr><th>Symbol</th><th>Name</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><i>J</i><sub>n</sub></td><td>Electron current</td><td>Conduction current from electron drift + diffusion (Scharfetter–Gummel flux).</td></tr>
+          <tr><td><i>J</i><sub>p</sub></td><td>Hole current</td><td>Conduction current from hole drift + diffusion.</td></tr>
+          <tr><td><i>J</i><sub>ion</sub></td><td>Ionic current</td><td>Current from mobile-ion drift + diffusion (positive species + negative species if dual-ion mode is active). Uses the steric Blakemore correction.</td></tr>
+          <tr><td><i>J</i><sub>disp</sub></td><td>Displacement current</td><td>Dielectric displacement: <i>ε</i><sub>0</sub> <i>ε</i><sub>r</sub> ∂<i>E</i>/∂<i>t</i>. Non-zero only during transients (AC impedance, J–V scanning, TPV pulse).</td></tr>
+        </tbody>
+      </table>
+      <p>Sign convention: positive when the device delivers power (solar convention, consistent with <i>J</i><sub>sc</sub> &gt; 0).</p>
+
+      <h4>Spatial profiles</h4>
+      <p>A <code>SpatialSnapshot</code> captures the internal state at a single voltage / time point. Node arrays have shape (<i>N</i>,); the electric field array has shape (<i>N</i>−1,):</p>
+      <table class="param-table">
+        <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th></tr></thead>
+        <tbody>
+          <tr><td><i>x</i></td><td>Grid positions</td><td>m</td></tr>
+          <tr><td><i>φ</i></td><td>Electrostatic potential</td><td>V</td></tr>
+          <tr><td><i>E</i></td><td>Electric field</td><td>V·m⁻¹</td></tr>
+          <tr><td><i>n</i></td><td>Electron density</td><td>m⁻³</td></tr>
+          <tr><td><i>p</i></td><td>Hole density</td><td>m⁻³</td></tr>
+          <tr><td><i>P</i></td><td>Ion (vacancy) density</td><td>m⁻³</td></tr>
+          <tr><td><i>ρ</i></td><td>Space charge density</td><td>C·m⁻³</td></tr>
         </tbody>
       </table>
 

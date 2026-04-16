@@ -59,14 +59,24 @@ The frontend expects the backend at `http://127.0.0.1:8000` (see `frontend/src/a
 
 **Thermionic emission (TE) at heterointerfaces.** At interfaces where the conduction-band offset |delta_Ec| or valence-band offset |delta_Ev| exceeds 0.05 eV, the SG flux is capped to the Richardson-Dushman thermionic emission limit (`fe_operators.thermionic_emission_flux`). This prevents the SG scheme from overestimating current across sharp band discontinuities (a known artifact when the band offset is resolved in a single grid spacing). The capping is applied in `continuity.py:carrier_continuity_rhs`. Richardson constants `A_star_n` and `A_star_p` default to the free-electron value (1.2017e6 A/(m²·K²)) and can be overridden per layer in YAML configs. Interface faces where TE activates are pre-computed in `MaterialArrays.interface_faces`. Note: IonMonger does not use TE, so our V_oc is ~0.1 V higher than IonMonger's on the same parameter set; Phase 5 (tiered modes) will add a legacy mode that disables TE for exact IonMonger reproduction.
 
-**Transfer-matrix optics (TMM).** `physics/optics.py` implements the coherent thin-film transfer-matrix method (Pettersson et al. 1999 / Burkhard et al. 2010) for position-resolved optical generation G(x). Each layer carries `optical_material` (string key for n,k CSV data in `perovskite_sim/data/nk/`) or `n_optical` (constant refractive index fallback). When any layer has `optical_material` set, `mol.py:_compute_tmm_generation` builds the TMM stack, loads the AM1.5G spectrum from `data/am15g.csv`, and computes G(x) once during `build_material_arrays`. The result is stored as `MaterialArrays.G_optical` and used in `assemble_rhs` instead of Beer-Lambert. Key physics: the absorption formula includes the `n_real / n_ambient` Poynting-vector correction so that R+T+A=1 (energy conservation). Without `optical_material`, the original Beer-Lambert `G = alpha * Phi * exp(-alpha*x)` path is unchanged.
+**Transfer-matrix optics (TMM).** `physics/optics.py` implements the coherent thin-film transfer-matrix method (Pettersson et al. 1999 / Burkhard et al. 2010) for position-resolved optical generation G(x). Each layer carries `optical_material` (string key for n,k CSV data in `perovskite_sim/data/nk/`) or `n_optical` (constant refractive index fallback). When any layer has `optical_material` set, `mol.py:_compute_tmm_generation` builds the TMM stack, loads the AM1.5G spectrum from `data/am15g.csv`, and computes G(x) once during `build_material_arrays`. The result is stored as `MaterialArrays.G_optical` and used in `assemble_rhs` instead of Beer-Lambert. Key physics: the absorption formula includes the `n_real / n_ambient` Poynting-vector correction so that R+T+A=1 (energy conservation). Without `optical_material`, the original Beer-Lambert `G = alpha * Phi * exp(-alpha*x)` path is unchanged. The `_inv2x2` batched matrix inverse in `optics.py` has a determinant guard (clamps `|det| < 1e-30` to avoid division by zero at wavelengths where the transfer matrix is singular); do not remove this guard.
 
 **Activated presets:** `nip_MAPbI3_tmm.yaml`, `pin_MAPbI3_tmm.yaml` (Phase 2 — Apr 2026). Both prepend a 1 mm `role: substrate` glass layer (optical-only) and set `optical_material` on every electrical layer. The vanilla `nip_MAPbI3.yaml` and `pin_MAPbI3.yaml` remain Beer-Lambert for back-compat with existing benchmarks. Substrate layers are filtered out of the drift-diffusion grid by `electrical_layers()` in `models/device.py`; the TMM spatial grid is offset by the substrate cumulative thickness so G(x) lands on the correct electrical nodes.
 
 **Experiments** (`perovskite_sim/experiments/`):
-- `jv_sweep.run_jv_sweep` — forward then reverse scan; reuses the previous steady state as initial condition so ionic memory is preserved and the hysteresis loop comes out of the physics, not post-processing.
+- `jv_sweep.run_jv_sweep` — forward then reverse scan; reuses the previous steady state as initial condition so ionic memory is preserved and the hysteresis loop comes out of the physics, not post-processing. A per-step `_JV_RADAU_MAX_NFEV = 100_000` guard aborts any single voltage step that consumes too many RHS evaluations (prevents the solver from hanging on pathological substrate-stack configs). Supports `illuminated=False` for dark J-V (G=0, dark-equilibrium start) and `save_snapshots=True` for collecting `SpatialSnapshot` at every voltage point.
+- `jv_sweep.compute_current_components` — decomposes the terminal current into J_n (electron), J_p (hole), J_ion (ionic, both species), and J_disp (displacement) at every mesh face. Uses the same SG flux formulas as `assemble_rhs` but multiplied by Q for A/m² units. Ion current includes the steric Blakemore correction and dual-ion support.
+- `jv_sweep.extract_spatial_snapshot` — extracts a `SpatialSnapshot` (phi, E, n, p, P, rho) from a packed state vector at a given voltage. Used internally by `save_snapshots` and available as a standalone API.
 - `impedance.run_impedance` — at each frequency integrates a few AC cycles and extracts amplitude/phase with a lock-in (sin/cos multiply + low-pass). Adds the displacement current `ε₀·ε_r·∂E/∂t`.
 - `degradation.run_degradation` — long-time transient; at each probe time it takes a **frozen-ion snapshot**: a `replace`-d copy of the stack with `D_ion = 0` in every layer is used for a short settle integration at each probe voltage (`_freeze_ions` + `_measure_snapshot_metrics`). This measures the instantaneous electronic response under the current ionic configuration and is the only correct way to compute snapshot J–V without averaging over ion drift.
+- `tpv.run_tpv` — transient photovoltage experiment. Equilibrates at V_oc under illumination, applies a fractional generation pulse (delta_G_frac), tracks J(t) at fixed V_app=V_oc, converts to V(t) via the small-signal relation delta_V = -J * R_oc, and fits a mono-exponential decay time tau. Returns a `TPVResult` with t, V, J arrays plus V_oc, tau, delta_V0.
+- `tandem_jv.run_tandem_jv` — 2T monolithic tandem driver. Runs a combined TMM over the full stack (`physics/tandem_optics.py`) to partition G(x) into top/bottom sub-cell profiles, then performs independent drift-diffusion J–V sweeps with `fixed_generation`, and series-matches at a common current grid (`series_match_jv`). Returns a `TandemJVResult` holding per-sub-cell results plus the tandem J–V curve.
+
+**Tandem optics** (`physics/tandem_optics.py`): Runs one TMM over the entire tandem stack (top + junction + bottom), then splits absorption by layer. Junction layers count as parasitic absorption. The `TandemGeneration` dataclass holds `G_top(x)` and `G_bot(x)` arrays. The tandem config model lives in `models/tandem_config.py` (`TandemConfig`, `JunctionLayer`).
+
+### Solver gotcha — RHS finite-check
+
+`assemble_rhs` includes a `np.all(np.isfinite(dydt))` guard that raises `ValueError` if any element is NaN or Inf. This catches blow-ups from singular TMM matrices, zero-thickness layers, or extreme doping imbalances early — before Radau can silently accept them and produce garbage. Do not remove this check.
 
 ### Solver gotcha — Radau max_step cap
 
@@ -129,7 +139,14 @@ The button is disabled between `startJob` and `onDone`, and the progress bar is 
 
 ## Configs (`configs/`)
 
-Presets shipped with the repo: `nip_MAPbI3.yaml`, `pin_MAPbI3.yaml`, `ionmonger_benchmark.yaml` (Courtier 2019 reference), `driftfusion_benchmark.yaml`, `cigs_baseline.yaml` (ZnO/CdS/CIGS heterostructure, `D_ion = 0`), `cSi_homojunction.yaml` (n⁺/p wafer, `D_ion = 0`). The YAML schema mirrors `MaterialParams` + `DeviceStack.interfaces`; see any existing file for the field list. Non-perovskite stacks must set `D_ion = 0` in every layer — the ion equations still integrate but contribute zero flux.
+Presets shipped with the repo:
+
+- **Beer-Lambert:** `nip_MAPbI3`, `pin_MAPbI3`, `ionmonger_benchmark` (Courtier 2019), `driftfusion_benchmark`, `cigs_baseline` (ZnO/CdS/CIGS, `D_ion=0`), `cSi_homojunction` (n+/p wafer, `D_ion=0`)
+- **TMM-enabled:** `nip_MAPbI3_tmm`, `pin_MAPbI3_tmm`, `ionmonger_benchmark_tmm`, `driftfusion_benchmark_tmm`
+- **Tandem sub-cells:** `nip_wideGap_FACs_1p77` (1.77 eV top), `nip_SnPb_1p22` (1.22 eV bottom)
+- **Tandem config:** `tandem_lin2019` (2T monolithic, uses `TandemConfig` not `DeviceStack`)
+
+The YAML schema mirrors `MaterialParams` + `DeviceStack.interfaces`; see any existing file for the field list. Non-perovskite stacks must set `D_ion = 0` in every layer — the ion equations still integrate but contribute zero flux. Tandem configs use a separate `TandemConfig` schema (`models/tandem_config.py`) that references two sub-cell configs plus junction layers.
 
 Practical solver envelope: the Radau transient handles sub-micron perovskite stacks comfortably (ionmonger reference ≈ 25 s for a full J–V). Thick inorganic absorbers (2 µm CIGS, 180 µm Si) are structurally valid and `solve_equilibrium` converges, but a full transient J–V sweep is impractical at default tolerances. Use thinner absorbers or a coarser grid when iterating, and prefer equilibrium-level tests for those configs.
 
@@ -149,6 +166,11 @@ tests/
 ```
 
 `pytest` defaults (from `pyproject.toml`) exclude `-m slow`. Coverage is **opt-in** — pass `--cov=perovskite_sim --cov-report=term-missing` explicitly when you want a report. The regression suite is where to add new "result should look physically reasonable" checks.
+
+Regression tests:
+- `test_jv_regression.py` — V_oc / J_sc / FF / HI envelopes for all presets
+- `test_tmm_baseline.py` — TMM-specific baselines (slow, BLAS-pinned)
+- `test_conservation.py` — energy conservation (R+T+A=1) and J-V monotonicity checks; catches TMM numerical issues and solver blow-ups
 
 ### Test gotcha — slow suite BLAS thread pinning
 

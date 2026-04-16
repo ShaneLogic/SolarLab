@@ -26,16 +26,18 @@ export function tutorialHTML(): string {
 
       <h4>3. Run an experiment</h4>
       <ul>
-        <li><b>J–V Sweep</b> — forward + reverse scan at constant voltage rate. Returns V<sub>oc</sub>, J<sub>sc</sub>, FF, PCE and the hysteresis index.</li>
+        <li><b>J–V Sweep</b> — forward + reverse scan at constant voltage rate. Returns V<sub>oc</sub>, J<sub>sc</sub>, FF, PCE and the hysteresis index. Supports <b>dark mode</b> (G = 0) for diode characterisation, <b>current decomposition</b> (J<sub>n</sub>, J<sub>p</sub>, J<sub>ion</sub>, J<sub>disp</sub>), and <b>spatial profile export</b> at every bias point.</li>
         <li><b>Impedance</b> — small-signal AC analysis across a frequency range. Produces Nyquist and Bode plots from lock-in extraction of the transient response.</li>
         <li><b>Degradation</b> — long-time evolution under illumination; periodic frozen-ion J–V snapshots track metric drift.</li>
+        <li><b>Transient Photovoltage (TPV)</b> — the device is equilibrated at open circuit under steady illumination, then a small light pulse is applied. The voltage transient V(t) decays back to V<sub>oc</sub> as excess carriers recombine. Fitted mono-exponential lifetime &tau; encodes the dominant recombination rate.</li>
       </ul>
 
       <h4>4. Read the results</h4>
       <ul>
-        <li><b>J–V:</b> compare forward (V: 0→V<sub>max</sub>) and reverse (V<sub>max</sub>→0) curves. Non-zero hysteresis index (HI) indicates slow ionic rearrangement.</li>
+        <li><b>J–V:</b> compare forward (V: 0&rarr;V<sub>max</sub>) and reverse (V<sub>max</sub>&rarr;0) curves. Non-zero hysteresis index (HI) indicates slow ionic rearrangement. In <b>dark mode</b>, the curve shows the diode injection characteristic (no photocurrent). Use <b>current decomposition</b> to identify which carrier species dominates at each bias.</li>
         <li><b>Impedance:</b> low-frequency intercept = R<sub>s</sub>+R<sub>rec</sub>; semicircle diameter = recombination resistance; additional low-f arc reveals ionic capacitance.</li>
-        <li><b>Degradation:</b> snapshot metrics vs time — V<sub>oc</sub> decay implies growing non-radiative recombination; FF loss implies transport or interface deterioration.</li>
+        <li><b>Degradation:</b> snapshot metrics vs time &mdash; V<sub>oc</sub> decay implies growing non-radiative recombination; FF loss implies transport or interface deterioration.</li>
+        <li><b>TPV:</b> the decay time &tau; is the effective carrier lifetime at open circuit. Shorter &tau; indicates faster recombination. Compare across device configurations or degradation states to track recombination evolution.</li>
       </ul>
 
       <h4>Optical generation: TMM vs Beer&ndash;Lambert</h4>
