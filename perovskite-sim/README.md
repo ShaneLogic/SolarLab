@@ -94,14 +94,14 @@ system. Below are the mathematical conditions applied at the device contacts
 
 | Equation | PDE |
 |----------|-----|
-| Poisson | `d/dx(ε₀ εᵣ dφ/dx) = −ρ` |
-| Electron continuity | `∂n/∂t = (1/q) dJₙ/dx + G − R` |
-| Hole continuity | `∂p/∂t = −(1/q) dJₚ/dx + G − R` |
-| Ion (vacancy) continuity | `∂P/∂t = −dFₚ/dx` |
+| Poisson | $\partial/\partial x(\varepsilon_0 \varepsilon_r\, \partial\varphi/\partial x) = -\rho$ |
+| Electron continuity | $\partial n/\partial t = (1/q)\, \partial J_n/\partial x + G - R$ |
+| Hole continuity | $\partial p/\partial t = -(1/q)\, \partial J_p/\partial x + G - R$ |
+| Ion (vacancy) continuity | $\partial P/\partial t = -\partial F_P/\partial x$ |
 
-State vector per grid node: **y = (n, p, P)** — electron density, hole
+State vector per grid node: $\mathbf{y} = (n, p, P)$ — electron density, hole
 density, and positive-ion (vacancy) density. Dual-species mode adds a
-negative-ion field P⁻.
+negative-ion field $P^-$.
 
 ### Boundary Conditions
 
@@ -109,17 +109,15 @@ negative-ion field P⁻.
 
 | Contact | Value |
 |---------|-------|
-| Left (x = 0) | `φ = 0` (grounded) |
-| Right (x = L) | `φ = V_bi − V_app` |
+| Left ($x = 0$) | $\varphi = 0$ (grounded) |
+| Right ($x = L$) | $\varphi = V_{\text{bi}} - V_{\text{app}}$ |
 
-Forward bias (`V_app > 0`) reduces the built-in field; `V_app ≈ V_oc` yields
+Forward bias ($V_{\text{app}} > 0$) reduces the built-in field; $V_{\text{app}} \approx V_{\text{oc}}$ yields
 near-open-circuit conditions.
 
 The Poisson operator uses **harmonic-mean face permittivities**:
 
-```
-ε̃_{i+½} = 2 εᵣ[i] εᵣ[i+1] / (εᵣ[i] + εᵣ[i+1])
-```
+$$\tilde{\varepsilon}_{i+\frac{1}{2}} = \frac{2\,\varepsilon_r[i]\,\varepsilon_r[i+1]}{\varepsilon_r[i] + \varepsilon_r[i+1]}$$
 
 This is the exact series-capacitor result for a sharp dielectric interface and
 avoids the field concentration artefact of nodal averaging.
@@ -132,37 +130,32 @@ Both contacts are treated as ideal ohmic contacts. Carrier densities at
 the boundaries are clamped to the **thermal-equilibrium values** derived
 from the doping of the outermost layers:
 
-```
-n·p = nᵢ²          (mass-action law)
-n − p = N_D − N_A  (charge neutrality)
-```
+$$n \cdot p = n_i^2 \quad\text{(mass-action law)}$$
+
+$$n - p = N_D - N_A \quad\text{(charge neutrality)}$$
 
 Solved via the numerically stable two-branch formula (avoids cancellation
 and overflow):
 
-```
-net  = N_D − N_A
-disc = √(net² + 4·nᵢ²)
+$$\text{net} = N_D - N_A, \qquad \text{disc} = \sqrt{\text{net}^2 + 4\,n_i^2}$$
 
-n-type (net ≥ 0):  n = ½(net + disc),   p = nᵢ²/n
-p-type (net < 0):  p = ½(−net + disc),  n = nᵢ²/p
-```
+$$\text{n-type (net} \ge 0\text{):}\quad n = \tfrac{1}{2}(\text{net} + \text{disc}),\quad p = n_i^2 / n$$
+
+$$\text{p-type (net} < 0\text{):}\quad p = \tfrac{1}{2}(-\text{net} + \text{disc}),\quad n = n_i^2 / p$$
 
 These values are computed once per experiment in `build_material_arrays()`
 and stored as `n_L, p_L, n_R, p_R`. The time derivatives at the contact
 nodes are set to zero (`dn[0] = dn[-1] = dp[0] = dp[-1] = 0`) so the
 Dirichlet values remain constant throughout the transient.
 
-*Source:* `perovskite_sim/solver/mol.py` (lines 369–384, 523–524, 564–566)
+*Source:* `perovskite_sim/solver/mol.py` (lines 369-384, 523-524, 564-566)
 
 #### Ion (vacancy) densities — Neumann (zero-flux)
 
 Ions cannot leave the device. At both contacts the vacancy flux is set to
 zero:
 
-```
-F_P(x = 0) = F_P(x = L) = 0
-```
+$$F_P(x = 0) = F_P(x = L) = 0$$
 
 Implemented by padding the internal flux array with zeros at each end
 before computing the finite-difference divergence. The same zero-flux
@@ -170,17 +163,15 @@ condition applies to both positive and negative ion species.
 
 A **steric saturation limit** prevents unphysical ion pile-up:
 
-```
-steric = 1 / max(1 − P_avg/P_lim, 10⁻⁶)
-```
+$$\text{steric} = \frac{1}{\max(1 - P_{\text{avg}}/P_{\text{lim}},\; 10^{-6})}$$
 
 *Source:* `perovskite_sim/physics/ion_migration.py`
 
 #### Thermionic emission at heterointerfaces
 
-At internal interfaces where the conduction-band offset `|ΔEᶜ|` or
-valence-band offset `|ΔEᵛ|` exceeds 0.05 eV, the Scharfetter–Gummel
-carrier flux is capped to the **Richardson–Dushman thermionic emission
+At internal interfaces where the conduction-band offset $|\Delta E_c|$ or
+valence-band offset $|\Delta E_v|$ exceeds 0.05 eV, the Scharfetter-Gummel
+carrier flux is capped to the **Richardson-Dushman thermionic emission
 limit**. This prevents the SG scheme from overestimating current across
 sharp band discontinuities (a known single-grid-spacing artefact).
 Interface faces where TE activates are pre-computed in `MaterialArrays`.
@@ -191,7 +182,7 @@ Interface faces where TE activates are pre-computed in `MaterialArrays`.
 #### Interface recombination
 
 At each heterointerface, surface recombination is parameterised by
-velocities `(v_n, v_p)` [m/s] carried in `DeviceStack.interfaces`. The
+velocities $(v_n, v_p)$ [m/s] carried in `DeviceStack.interfaces`. The
 surface SRH rate is converted to a volumetric rate by dividing by the
 local dual-grid cell width.
 
@@ -202,15 +193,14 @@ local dual-grid cell width.
 The default initial state is a **quasi-neutral dark equilibrium** with a
 neutral ionic background. At every grid node:
 
-```
-n·p = nᵢ²(layer)      mass-action law
-n − p = N_D − N_A      local charge neutrality (ions treated as neutral background)
-```
+$$n \cdot p = n_i^2(\text{layer}) \quad\text{(mass-action law)}$$
 
-The configured vacancy density P₀ is treated as a **neutral ionic
+$$n - p = N_D - N_A \quad\text{(charge neutrality, ions treated as neutral background)}$$
+
+The configured vacancy density $P_0$ is treated as a **neutral ionic
 background** — it does not appear as net space charge in the initial
 carrier balance. This avoids the enormous artificial carrier imbalance
-that arises when P₀ is treated as net positive charge.
+that arises when $P_0$ is treated as net positive charge.
 
 The ion profile is initialised to the uniform per-layer value `P_ion0`.
 Contact nodes are overwritten with the ohmic-contact equilibrium densities.
@@ -219,19 +209,19 @@ Contact nodes are overwritten with the ohmic-contact equilibrium densities.
 
 #### Illuminated steady-state (light-soaked)
 
-For experiments that begin under illumination (J–V sweep, impedance,
+For experiments that begin under illumination (J-V sweep, impedance,
 degradation), the initial state is obtained by **integrating the full MOL
-system for t_settle = 1 ms** starting from dark equilibrium, under
+system for $t_{\text{settle}} = 1$ ms** starting from dark equilibrium, under
 illumination at the starting voltage:
 
-```
+```python
 y_dark  = solve_equilibrium(x, stack)
 y_light = run_transient(x, y_dark, [0, t_settle], illuminated=True, V_app)
 ```
 
 Carrier dynamics equilibrate on a sub-microsecond timescale, so 1 ms is
 more than sufficient. Ion displacement over this interval is negligible
-(D_ion · t_settle ≈ 0.3 nm). If the transient solve fails, the solver
+($D_{\text{ion}} \cdot t_{\text{settle}} \approx 0.3$ nm). If the transient solve fails, the solver
 falls back to the dark equilibrium.
 
 *Source:* `perovskite_sim/solver/illuminated_ss.py`
@@ -239,8 +229,8 @@ falls back to the dark equilibrium.
 ### Built-in Potential
 
 `DeviceStack.compute_V_bi()` derives the built-in potential from the
-Fermi-level difference across the electrical layers (accounting for χ,
-E_g, doping, and nᵢ). When all layers have `chi = Eg = 0`
+Fermi-level difference across the electrical layers (accounting for $\chi$,
+$E_g$, doping, and $n_i$). When all layers have `chi = Eg = 0`
 (homojunction/legacy configs), it falls back to the manual `V_bi` field
 (default: 1.1 V).
 
@@ -248,11 +238,11 @@ E_g, doping, and nᵢ). When all layers have `chi = Eg = 0`
 
 | Variable | Contact BCs | Type | Source file |
 |----------|-------------|------|-------------|
-| φ | φ(0) = 0, φ(L) = V_bi − V_app | Dirichlet | `physics/poisson.py` |
-| n | n(0) = n_L, n(L) = n_R (equilibrium) | Dirichlet | `solver/mol.py` |
-| p | p(0) = p_L, p(L) = p_R (equilibrium) | Dirichlet | `solver/mol.py` |
-| P (ions) | F(0) = F(L) = 0 | Neumann (zero-flux) | `physics/ion_migration.py` |
-| P⁻ (neg ions) | F(0) = F(L) = 0 | Neumann (zero-flux) | `physics/ion_migration.py` |
+| $\varphi$ | $\varphi(0) = 0$, $\varphi(L) = V_{\text{bi}} - V_{\text{app}}$ | Dirichlet | `physics/poisson.py` |
+| $n$ | $n(0) = n_L$, $n(L) = n_R$ (equilibrium) | Dirichlet | `solver/mol.py` |
+| $p$ | $p(0) = p_L$, $p(L) = p_R$ (equilibrium) | Dirichlet | `solver/mol.py` |
+| $P$ (ions) | $F(0) = F(L) = 0$ | Neumann (zero-flux) | `physics/ion_migration.py` |
+| $P^-$ (neg ions) | $F(0) = F(L) = 0$ | Neumann (zero-flux) | `physics/ion_migration.py` |
 
 ## Python-only quick start
 
