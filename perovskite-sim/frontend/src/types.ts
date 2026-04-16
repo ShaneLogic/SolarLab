@@ -89,6 +89,15 @@ export interface DegResult {
   J_sc: number[]
 }
 
+export interface TPVResult {
+  t: number[]
+  V: number[]
+  J: number[]
+  V_oc: number
+  tau: number
+  delta_V0: number
+}
+
 export interface JVParams {
   N_grid: number
   n_points: number

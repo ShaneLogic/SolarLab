@@ -1,4 +1,4 @@
-import type { DeviceConfig, SimulationModeName, JVResult, ISResult, DegResult } from '../types'
+import type { DeviceConfig, SimulationModeName, JVResult, ISResult, DegResult, TPVResult } from '../types'
 
 /** The root object persisted to localStorage. */
 export interface Workspace {
@@ -30,12 +30,13 @@ export interface Device {
   experiments: Experiment[]
 }
 
-export type ExperimentKind = 'jv' | 'impedance' | 'degradation'
+export type ExperimentKind = 'jv' | 'impedance' | 'degradation' | 'tpv'
 
 export type RunResult =
   | { kind: 'jv'; data: JVResult }
   | { kind: 'impedance'; data: ISResult }
   | { kind: 'degradation'; data: DegResult }
+  | { kind: 'tpv'; data: TPVResult }
 
 /** Phase 2 will populate this. Defined here to keep the type stable across phases. */
 export interface Experiment {
@@ -60,6 +61,6 @@ export interface Run {
 export interface CompareView {
   id: string
   name: string
-  kind: 'jv' | 'impedance' | 'degradation'
+  kind: 'jv' | 'impedance' | 'degradation' | 'tpv'
   runRefs: Array<{ deviceId: string; experimentId: string; runId: string }>
 }

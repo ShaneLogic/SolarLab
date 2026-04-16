@@ -19,6 +19,7 @@ function experimentLabel(kind: Experiment['kind']): string {
     case 'jv': return 'J–V Sweep'
     case 'impedance': return 'Impedance'
     case 'degradation': return 'Degradation'
+    case 'tpv': return 'TPV'
   }
 }
 
