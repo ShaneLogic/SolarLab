@@ -3,7 +3,7 @@ import { mountDevicePanel } from '../device-panel'
 import { startJob, streamJobEvents } from '../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../progress'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'
-import { setStatus, metricCard, numField, readNum } from '../ui-helpers'
+import { setStatus, metricCard, numField, readNum, checkField, readCheck } from '../ui-helpers'
 import type { JVResult } from '../types'
 
 export async function mountJVPanel(root: HTMLElement): Promise<void> {
@@ -16,6 +16,7 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
         ${numField('jv-np', 'V sample points', 30, '1')}
         ${numField('jv-rate', 'Scan rate (V/s)', 1.0, 'any')}
         ${numField('jv-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
+        ${checkField('jv-dark', 'Dark J–V (no illumination)', false)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jv">Run J-V Sweep</button>
@@ -40,11 +41,13 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
     setStatus('status-jv', 'Starting job…')
     try {
       const device = devicePanel.getConfig()
+      const isDark = readCheck('jv-dark', false)
       const params = {
         N_grid: Math.max(3, Math.round(readNum('jv-N', 60))),
         n_points: Math.max(2, Math.round(readNum('jv-np', 30))),
         v_rate: readNum('jv-rate', 1.0),
         V_max: readNum('jv-vmax', 1.4),
+        illuminated: !isDark,
       }
       const jobId = await startJob('jv', device, params)
       setStatus('status-jv', 'Running J–V sweep…')

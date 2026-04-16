@@ -537,12 +537,16 @@ def start_job(req: JobRequest):
 
     if kind == "jv":
         def _run(reporter: ProgressReporter) -> dict:
+            # illuminated defaults to True; frontend sends False for dark J-V
+            _illum = p.get("illuminated", True)
+            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
             result = jv_sweep.run_jv_sweep(
                 stack,
                 N_grid=int(p.get("N_grid", 60)),
                 n_points=int(p.get("n_points", 30)),
                 v_rate=float(p.get("v_rate", 1.0)),
                 V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
+                illuminated=illuminated,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

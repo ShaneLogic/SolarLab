@@ -1,6 +1,6 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
-import { setStatus, numField, readNum } from '../../ui-helpers'
+import { setStatus, numField, readNum, checkField, readCheck } from '../../ui-helpers'
 import type { DeviceConfig, JVResult } from '../../types'
 import type { Run, RunResult } from '../types'
 
@@ -18,6 +18,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         ${numField('jvp-np', 'V sample points', 30, '1')}
         ${numField('jvp-rate', 'Scan rate (V/s)', 1.0, 'any')}
         ${numField('jvp-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
+        ${checkField('jvp-dark', 'Dark J–V (no illumination)', false)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jvp">Run J–V Sweep</button>
@@ -42,11 +43,13 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     progressBar.reset()
     setStatus('status-jvp', 'Starting job…')
 
+    const isDark = readCheck('jvp-dark', false)
     const params = {
       N_grid: Math.max(3, Math.round(readNum('jvp-N', 60))),
       n_points: Math.max(2, Math.round(readNum('jvp-np', 30))),
       v_rate: readNum('jvp-rate', 1.0),
       V_max: readNum('jvp-vmax', 1.4),
+      illuminated: !isDark,
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

@@ -152,6 +152,25 @@ header p { color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.125rem;
   letter-spacing: 0.01em;
 }
 
+.form-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.form-check > input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--primary, #3b82f6);
+  cursor: pointer;
+}
+
+.form-check > span {
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
 /* Tight sub/sup that hug the base character (global) */
 sub, sup {
   font-size: 0.72em;
