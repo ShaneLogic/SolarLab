@@ -186,6 +186,26 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 
 ## 🔬 Physical Principles & Equations
 
+### Physical Model Overview
+
+<p align="center">
+  <img src="perovskite-sim/docs/images/device_structure.png" alt="Device Structure" width="700">
+</p>
+
+<p align="center">
+  <img src="perovskite-sim/docs/images/band_diagram.png" alt="Energy Band Diagram" width="700">
+</p>
+
+<p align="center">
+  <img src="perovskite-sim/docs/images/transport_equations.png" alt="Transport Processes and Boundary Conditions" width="700">
+</p>
+
+<p align="center">
+  <img src="perovskite-sim/docs/images/solver_pipeline.png" alt="Solver Pipeline" width="700">
+</p>
+
+### Equations
+
 SolarLab solves the coupled **Poisson + drift-diffusion + mobile-ion** system in one spatial dimension. State variables at every grid node are the electron density $n$, hole density $p$, and the mobile-ion density $P$.
 
 ### 1. Poisson's equation
