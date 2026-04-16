@@ -57,19 +57,19 @@ produce current.
 
 ### Device Structure
 
-![Device Structure](docs/images/device_structure.png)
+![Device Structure](docs/images/device_structure.png?v=2)
 
 ### Band Diagram
 
-![Energy Band Diagram](docs/images/band_diagram.png)
+![Energy Band Diagram](docs/images/band_diagram.png?v=2)
 
 ### Transport Processes and Boundary Conditions
 
-![Transport Processes](docs/images/transport_equations.png)
+![Transport Processes](docs/images/transport_equations.png?v=2)
 
 ### Solver Pipeline
 
-![Solver Pipeline](docs/images/solver_pipeline.png)
+![Solver Pipeline](docs/images/solver_pipeline.png?v=2)
 
 ### Supported Device Architectures
 
