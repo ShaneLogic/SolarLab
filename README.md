@@ -43,13 +43,15 @@ Perovskite · CIGS · c-Si
 
 **SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
 
-It reproduces three kinds of experiments from a single device definition:
+It reproduces five kinds of experiments from a single device definition:
 
 | Experiment | What it does |
 |:-----------|:-------------|
-| **J-V sweep** | Forward + reverse scans with ionic memory preserved (hysteresis) |
+| **J-V sweep** | Forward + reverse scans with ionic memory preserved (hysteresis); supports dark and illuminated modes |
 | **Impedance spectroscopy** | Nyquist diagrams via lock-in detection of AC response |
 | **Degradation** | Long-time transient with frozen-ion snapshot J-V at each probe |
+| **Transient photovoltage (TPV)** | Small-signal light-pulse perturbation at open circuit; fitted mono-exponential decay lifetime |
+| **Current decomposition** | Per-face $J_n$, $J_p$, $J_\text{ion}$, $J_\text{disp}$ breakdown at any operating point |
 
 The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema.
 
@@ -68,6 +70,10 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 | 🔥 | **Thermionic emission** | Richardson-Dushman flux cap at heterointerfaces with band offsets $> 0.05$ eV |
 | 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface $(v_n, v_p)$ surface recombination |
 | 🧊 | **Frozen-ion degradation** | Snapshot J-V with $D_{\text{ion}} \to 0$ — the correct way to decouple ionic drift from electronic response |
+| 🌓 | **Dark J-V** | Diode curve without photogeneration — injection-current characterisation |
+| 📊 | **Current decomposition** | Per-face breakdown into electron, hole, ionic, and displacement current densities |
+| 📐 | **Spatial profiles** | Snapshot export of $\varphi(x)$, $E(x)$, $n(x)$, $p(x)$, $P(x)$, $\rho(x)$ at any bias point |
+| ⚡ | **Transient photovoltage** | Small-signal light pulse at open circuit with fitted recombination lifetime $\tau$ |
 | 🖥️ | **Interactive web UI** | Live SSE streaming, progress bars, Plotly plots, layer-builder editor |
 | 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_{\text{oc}}$ / $J_{\text{sc}}$ / HI bounds) |
 
@@ -406,7 +412,7 @@ After launching the backend and frontend (see [Running the Application](#running
 
 ### Right Pane — Experiments
 
-Three tabs sharing a common pattern: parameters form -> **Run** button -> live progress bar -> Plotly plot.
+Experiment tabs sharing a common pattern: parameters form -> **Run** button -> live progress bar -> Plotly plot.
 
 #### J-V Sweep
 
@@ -416,8 +422,12 @@ Three tabs sharing a common pattern: parameters form -> **Run** button -> live p
 | V sample points | Number of voltage samples per scan direction |
 | Scan rate (V/s) | Ionic memory effects — fast scans produce larger hysteresis |
 | $V_{\max}$ | Upper voltage bound (defaults to $V_{\text{bi}}$) |
+| Illuminated | Toggle light / dark mode (dark J-V: $G=0$, starts from dark equilibrium) |
+| Save snapshots | Collect spatial profiles $\varphi(x)$, $n(x)$, $p(x)$, $P(x)$ at each voltage |
 
-The experiment runs a **forward** scan (short-circuit to $V_{\max}$) immediately followed by a **reverse** scan, reusing the final state so the ionic population is preserved across the turn. Output: overlaid forward/reverse curves plus metric cards for $V_{\text{oc}}$, $J_{\text{sc}}$, FF, PCE, and hysteresis index.
+The experiment runs a **forward** scan (short-circuit to $V_{\max}$) immediately followed by a **reverse** scan, reusing the final state so the ionic population is preserved across the turn. Output: overlaid forward/reverse curves plus metric cards for $V_{\text{oc}}$, $J_{\text{sc}}$, FF, PCE, and hysteresis index. When **dark mode** is enabled ($G=0$), the sweep produces the diode injection-current characteristic.
+
+**Current decomposition** is available at every voltage point: the terminal current is decomposed into electron ($J_n$), hole ($J_p$), ionic ($J_\text{ion}$), and displacement ($J_\text{disp}$) contributions at every mesh face.
 
 #### Impedance
 
@@ -438,6 +448,17 @@ At each frequency, the solver integrates several AC cycles, then a lock-in ampli
 | Probe bias | Voltage for snapshot J-V |
 
 At each probe time, the solver takes a **frozen-ion snapshot**: a copy of the stack with $D_{\text{ion}}=0$ measures the instantaneous $J(V)$ response. This decouples slow ionic drift from the electronic response. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ vs aging time.
+
+#### Transient Photovoltage (TPV)
+
+| Parameter | Description |
+|:----------|:------------|
+| $N_{\text{grid}}$ | Number of spatial nodes |
+| $\delta G$ fraction | Fractional generation perturbation (e.g. 0.05 = 5% pulse) |
+| Pulse duration | Duration of the light pulse [s] |
+| Observation window | Total time including decay [s] |
+
+The device is equilibrated at open circuit under steady illumination, then a small light pulse is applied. The voltage transient $V(t)$ decays back to $V_\text{oc}$ as excess carriers recombine. A mono-exponential fit extracts the effective recombination lifetime $\tau$. Output: $V(t)$ decay curve, $J(t)$ transient, fitted $\tau$.
 
 ### Docs Tabs — Tutorial & Algorithm
 

@@ -290,3 +290,36 @@ stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
 result = run_jv_sweep(stack, N_grid=80, n_points=40, v_rate=1.0)
 print(f"PCE: {result.metrics_fwd.PCE*100:.2f} %")
 ```
+
+### Dark J-V
+
+```python
+result = run_jv_sweep(stack, N_grid=80, n_points=40, v_rate=1.0, illuminated=False)
+# result.J_fwd is the diode injection-current characteristic
+```
+
+### Current Decomposition
+
+```python
+from perovskite_sim.experiments.jv_sweep import compute_current_components
+
+cc = compute_current_components(x, y_state, stack, V_app=0.5, mat=mat)
+# cc.J_n, cc.J_p, cc.J_ion, cc.J_disp, cc.J_total — all shape (N-1,)
+```
+
+### Spatial Profiles
+
+```python
+result = run_jv_sweep(stack, N_grid=80, n_points=40, v_rate=1.0, save_snapshots=True)
+snap = result.snapshots_fwd[20]  # snapshot at the 20th voltage point
+# snap.phi, snap.E, snap.n, snap.p, snap.P, snap.rho
+```
+
+### Transient Photovoltage (TPV)
+
+```python
+from perovskite_sim.experiments.tpv import run_tpv
+
+result = run_tpv(stack, N_grid=80, delta_G_frac=0.05, t_pulse=1e-6, t_decay=50e-6)
+print(f"V_oc: {result.V_oc:.4f} V, tau: {result.tau:.3e} s")
+```

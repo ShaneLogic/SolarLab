@@ -18,6 +18,8 @@ from perovskite_sim.solver.mol import (
     _harmonic_face_average,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.models.current import CurrentComponents
+from perovskite_sim.models.spatial import SpatialSnapshot
 from perovskite_sim.constants import EPS_0, Q
 
 
@@ -38,6 +40,8 @@ class JVResult:
     metrics_fwd: JVMetrics
     metrics_rev: JVMetrics
     hysteresis_index: float
+    snapshots_fwd: tuple[SpatialSnapshot, ...] | None = None
+    snapshots_rev: tuple[SpatialSnapshot, ...] | None = None
 
 
 def compute_metrics(V: np.ndarray, J: np.ndarray) -> JVMetrics:
@@ -83,6 +87,136 @@ def hysteresis_index(
     return (m_rev.PCE - m_fwd.PCE) / m_rev.PCE
 
 
+def _state_fields(
+    x: np.ndarray,
+    y_state: np.ndarray,
+    stack: DeviceStack,
+    V_bc: float,
+    mat: MaterialArrays,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, StateVec]:
+    """Unpack state vector, apply BCs, solve Poisson. Returns (n, p, phi, sv)."""
+    N = len(x)
+    sv = StateVec.unpack(y_state, N)
+    n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
+    p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
+    rho = _charge_density(
+        p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+        P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
+    )
+    phi = solve_poisson_prefactored(
+        mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_bc,
+    )
+    return n, p, phi, sv
+
+
+def extract_spatial_snapshot(
+    x: np.ndarray,
+    y: np.ndarray,
+    stack: DeviceStack,
+    V_app: float,
+    mat: MaterialArrays | None = None,
+) -> SpatialSnapshot:
+    """Extract spatial profiles from a state vector at a given voltage.
+
+    Returns a SpatialSnapshot with all node/face quantities in SI units.
+    """
+    if mat is None:
+        mat = build_material_arrays(x, stack)
+    n, p, phi, sv = _state_fields(x, y, stack, V_app, mat)
+    dx = np.diff(x)
+    E = -(phi[1:] - phi[:-1]) / dx
+    rho = _charge_density(
+        p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+        P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
+    )
+    return SpatialSnapshot(
+        x=x.copy(), phi=phi, E=E, n=n, p=p, P=sv.P.copy(), rho=rho, V_app=V_app,
+    )
+
+
+def compute_current_components(
+    x: np.ndarray,
+    y: np.ndarray,
+    stack: DeviceStack,
+    V_app: float,
+    y_prev: np.ndarray | None = None,
+    dt: float | None = None,
+    mat: MaterialArrays | None = None,
+    V_app_prev: float | None = None,
+) -> CurrentComponents:
+    """Decompose the total current into electron, hole, ion, and displacement.
+
+    All arrays have shape (N-1,). Sign convention: positive when the device
+    delivers power (solar convention, consistent with _compute_current).
+    """
+    if mat is None:
+        mat = build_material_arrays(x, stack)
+
+    dx = np.diff(x)
+    n, p, phi, sv = _state_fields(x, y, stack, V_app, mat)
+    V_T_dev = mat.V_T_device
+
+    # Electron and hole conduction currents (SG fluxes)
+    phi_n = phi + mat.chi
+    phi_p = phi + mat.chi + mat.Eg
+    xi_n = (phi_n[1:] - phi_n[:-1]) / V_T_dev
+    xi_p = (phi_p[1:] - phi_p[:-1]) / V_T_dev
+    B_pos_n = bernoulli(xi_n); B_neg_n = bernoulli(-xi_n)
+    B_pos_p = bernoulli(xi_p); B_neg_p = bernoulli(-xi_p)
+    J_n = Q * mat.D_n_face / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
+    J_p = Q * mat.D_p_face / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
+
+    # Ion current: Q * F_ion at each face (positive species)
+    xi_ion = (phi[1:] - phi[:-1]) / V_T_dev
+    D_ion_face = np.broadcast_to(
+        np.asarray(mat.D_ion_face, dtype=float), dx.shape,
+    )
+    P_lim_face = np.broadcast_to(
+        np.asarray(mat.P_lim_face, dtype=float), dx.shape,
+    )
+    P_avg = 0.5 * (sv.P[:-1] + sv.P[1:])
+    steric = 1.0 / np.maximum(
+        1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6,
+    )
+    D_eff = D_ion_face * steric
+    F_ion = D_eff / dx * (bernoulli(xi_ion) * sv.P[:-1] - bernoulli(-xi_ion) * sv.P[1:])
+    J_ion = Q * F_ion
+
+    # Negative ion species contribution (reversed drift)
+    if mat.has_dual_ions and sv.P_neg is not None:
+        D_neg_face = np.broadcast_to(
+            np.asarray(mat.D_ion_neg_face, dtype=float), dx.shape,
+        )
+        P_lim_neg_face = np.broadcast_to(
+            np.asarray(mat.P_lim_neg_face, dtype=float), dx.shape,
+        )
+        P_neg_avg = 0.5 * (sv.P_neg[:-1] + sv.P_neg[1:])
+        steric_neg = 1.0 / np.maximum(
+            1.0 - np.clip(P_neg_avg / P_lim_neg_face, 0.0, 0.999999), 1e-6,
+        )
+        xi_neg = -(phi[1:] - phi[:-1]) / V_T_dev  # reversed sign for negative charge
+        D_eff_neg = D_neg_face * steric_neg
+        F_neg = D_eff_neg / dx * (
+            bernoulli(xi_neg) * sv.P_neg[:-1] - bernoulli(-xi_neg) * sv.P_neg[1:]
+        )
+        J_ion = J_ion - Q * F_neg  # negative charge: subtract
+
+    # Displacement current
+    J_disp = np.zeros_like(J_n)
+    if y_prev is not None and dt is not None and dt > 0.0:
+        V_prev_bc = V_app_prev if V_app_prev is not None else V_app
+        _, _, phi_prev, _ = _state_fields(x, y_prev, stack, V_prev_bc, mat)
+        eps_face = _harmonic_face_average(mat.eps_r)
+        E_prev = -(phi_prev[1:] - phi_prev[:-1]) / dx
+        E_now = -(phi[1:] - phi[:-1]) / dx
+        J_disp = EPS_0 * eps_face * (E_now - E_prev) / dt
+
+    J_total = J_n + J_p + J_ion + J_disp
+    return CurrentComponents(
+        J_n=-J_n, J_p=-J_p, J_ion=-J_ion, J_disp=-J_disp, J_total=-J_total,
+    )
+
+
 def _total_current_faces(
     x: np.ndarray,
     y: np.ndarray,
@@ -93,56 +227,13 @@ def _total_current_faces(
     mat: MaterialArrays | None = None,
     V_app_prev: float | None = None,
 ) -> np.ndarray:
-    """Return total (conduction + displacement) current density at every face,
-    in external/solar sign convention (positive when device delivers power).
+    """Return total current density at every face (N-1,), solar sign convention.
 
-    Shape is (N-1,), one value per mesh face. Callers that want a scalar
-    terminal current (e.g. J-V sweep) should take face 0; callers that want
-    an AC-sensitive reading (e.g. impedance) should average spatially — by
-    the 1D Ramo–Shockley argument the small-signal total current is very
-    nearly space-uniform, and the boundary faces are the noisiest.
+    Thin wrapper around compute_current_components for backward compatibility.
     """
-    if mat is None:
-        mat = build_material_arrays(x, stack)
-
-    def state_fields(y_state: np.ndarray, V_bc: float):
-        N = len(x)
-        sv = StateVec.unpack(y_state, N)
-        n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
-        p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
-        rho = _charge_density(
-            p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
-            P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
-        )
-        phi = solve_poisson_prefactored(
-            mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_bc,
-        )
-        return n, p, phi
-
-    dx = np.diff(x)
-    n, p, phi = state_fields(y, V_app)
-    D_n_face = mat.D_n_face
-    D_p_face = mat.D_p_face
-    chi = mat.chi
-    Eg = mat.Eg
-    phi_n = phi + chi
-    phi_p = phi + chi + Eg
-    V_T_dev = mat.V_T_device
-    xi_n = (phi_n[1:] - phi_n[:-1]) / V_T_dev
-    xi_p = (phi_p[1:] - phi_p[:-1]) / V_T_dev
-    B_pos_n = bernoulli(xi_n); B_neg_n = bernoulli(-xi_n)
-    B_pos_p = bernoulli(xi_p); B_neg_p = bernoulli(-xi_p)
-    J_n = Q * D_n_face / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
-    J_p = Q * D_p_face / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
-    J_tot = J_n + J_p  # (N-1,)
-    if y_prev is not None and dt is not None and dt > 0.0:
-        V_prev_bc = V_app_prev if V_app_prev is not None else V_app
-        _, _, phi_prev = state_fields(y_prev, V_prev_bc)
-        eps_face = _harmonic_face_average(mat.eps_r)
-        E_prev = -(phi_prev[1:] - phi_prev[:-1]) / dx
-        E_now = -(phi[1:] - phi[:-1]) / dx
-        J_tot = J_tot + EPS_0 * eps_face * (E_now - E_prev) / dt
-    return -J_tot
+    return compute_current_components(
+        x, y, stack, V_app, y_prev=y_prev, dt=dt, mat=mat, V_app_prev=V_app_prev,
+    ).J_total
 
 
 def _compute_current(
@@ -195,6 +286,7 @@ def _integrate_step(
     rtol: float,
     atol: float,
     max_bisect: int = 6,
+    illuminated: bool = True,
 ) -> np.ndarray:
     """Advance the coupled MOL state from t_lo to t_hi at fixed V_app.
 
@@ -215,7 +307,7 @@ def _integrate_step(
     dt = t_hi - t_lo
     sol = run_transient(
         x, y, (t_lo, t_hi), np.array([t_hi]),
-        stack, illuminated=True, V_app=V_app, rtol=rtol, atol=atol,
+        stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
         max_step=dt / 20.0 if dt > 0.0 else np.inf,
         mat=mat,
         max_nfev=_JV_RADAU_MAX_NFEV,
@@ -228,8 +320,8 @@ def _integrate_step(
             f"at V_app={V_app:.4f} V after bisection"
         )
     t_mid = 0.5 * (t_lo + t_hi)
-    y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol, max_bisect - 1)
-    return _integrate_step(x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol, max_bisect - 1)
+    y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol, max_bisect - 1, illuminated)
+    return _integrate_step(x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol, max_bisect - 1, illuminated)
 
 
 def quasi_static_sweep(
@@ -301,6 +393,8 @@ def run_jv_sweep(
     V_max: float | None = None,
     progress: ProgressCallback | None = None,
     fixed_generation: np.ndarray | None = None,
+    illuminated: bool = True,
+    save_snapshots: bool = False,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
@@ -315,6 +409,10 @@ def run_jv_sweep(
       optics for both the initial illuminated steady-state and every subsequent
       solver call. When None (default), the existing single-junction optics path
       is used unchanged.
+
+    illuminated : when False, run a dark J-V (G=0 everywhere). The initial
+      state is dark equilibrium instead of illuminated steady-state. Cannot
+      be combined with fixed_generation.
     """
     if N_grid < 3:
         raise ValueError(f"N_grid must be >= 3, got {N_grid}")
@@ -322,6 +420,8 @@ def run_jv_sweep(
         raise ValueError(f"n_points must be >= 2, got {n_points}")
     if v_rate <= 0:
         raise ValueError(f"v_rate must be positive, got {v_rate}")
+    if not illuminated and fixed_generation is not None:
+        raise ValueError("Cannot combine illuminated=False with fixed_generation")
     for i, layer in enumerate(stack.layers):
         if layer.thickness <= 0:
             raise ValueError(
@@ -360,11 +460,13 @@ def run_jv_sweep(
             mat, G_optical=np.asarray(fixed_generation, dtype=float).copy()
         )
 
-    # Start from illuminated SC state: carriers equilibrated, ions at initial profile.
-    # When fixed_generation is provided we bypass solve_illuminated_ss (which builds
-    # its own MaterialArrays internally) and replicate the same logic inline,
-    # threading our overridden mat so the initial state also sees zero generation.
-    if fixed_generation is not None:
+    # Start from the appropriate equilibrium state:
+    # - Dark mode: use dark equilibrium directly (no illumination settle)
+    # - Fixed generation: inline the illuminated-SS logic with overridden mat
+    # - Default: use the standard illuminated steady-state solver
+    if not illuminated:
+        y_eq = solve_equilibrium(x, stack)
+    elif fixed_generation is not None:
         from perovskite_sim.solver.mol import run_transient as _run_transient
         _t_settle = 1e-3
         y_dark = solve_equilibrium(x, stack)
@@ -380,40 +482,46 @@ def run_jv_sweep(
     def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str):
         """Sweep from V_start to V_end, starting from carrier state y_init.
 
-        Returns (V_arr, J_arr, y_final) so sweeps can be chained: the reverse
-        sweep starts from the light-soaked state at the end of the forward sweep,
-        matching how hysteresis is measured in the laboratory. If the coupled
-        integrator fails on a step, we bisect that step up to a few times rather
-        than silently recording a stale/divergent state.
+        Returns (V_arr, J_arr, y_final, snapshots) so sweeps can be chained.
+        snapshots is a list of SpatialSnapshot when save_snapshots is True,
+        otherwise an empty list.
         """
         V_arr = np.linspace(V_start, V_end, n_points)
         dt = abs(V_end - V_start) / (v_rate * (n_points - 1))
         t_points = np.arange(n_points) * dt
         J_arr = np.zeros(n_points)
+        snaps: list[SpatialSnapshot] = []
         y = y_init.copy()
         V_prev = float(V_arr[0])
         for k, V_k in enumerate(V_arr):
             y_prev = y.copy()
             t_lo = t_points[k]
             t_hi = t_lo + dt
-            y = _integrate_step(x, y, stack, mat, V_k, t_lo, t_hi, rtol, atol)
+            y = _integrate_step(x, y, stack, mat, V_k, t_lo, t_hi, rtol, atol,
+                               illuminated=illuminated)
             J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt,
                                          mat=mat, V_app_prev=V_prev)
+            if save_snapshots:
+                snaps.append(extract_spatial_snapshot(x, y, stack, float(V_k), mat=mat))
             V_prev = float(V_k)
             if progress is not None:
                 progress(stage, k + 1, n_points, "")
-        return V_arr, J_arr, y
+        return V_arr, J_arr, y, snaps
 
     V_bi_eff = stack.compute_V_bi()
     V_upper = max(V_bi_eff * 1.3, 1.4) if V_max is None else V_max
     # Forward sweep: dark equilibrium → short circuit → open circuit
-    V_fwd, J_fwd, y_oc = _sweep(0.0, V_upper, y_eq, "jv_forward")
+    V_fwd, J_fwd, y_oc, snaps_fwd = _sweep(0.0, V_upper, y_eq, "jv_forward")
     # Reverse sweep: continue from light-soaked OC state → short circuit
-    V_rev, J_rev, _ = _sweep(V_upper, 0.0, y_oc, "jv_reverse")
+    V_rev, J_rev, _, snaps_rev = _sweep(V_upper, 0.0, y_oc, "jv_reverse")
 
     m_fwd = compute_metrics(V_fwd, J_fwd)
     m_rev = compute_metrics(V_rev[::-1], J_rev[::-1])
     HI = hysteresis_index(V_fwd, J_fwd, V_rev[::-1], J_rev[::-1])
 
-    return JVResult(V_fwd=V_fwd, J_fwd=J_fwd, V_rev=V_rev, J_rev=J_rev,
-                    metrics_fwd=m_fwd, metrics_rev=m_rev, hysteresis_index=HI)
+    return JVResult(
+        V_fwd=V_fwd, J_fwd=J_fwd, V_rev=V_rev, J_rev=J_rev,
+        metrics_fwd=m_fwd, metrics_rev=m_rev, hysteresis_index=HI,
+        snapshots_fwd=tuple(snaps_fwd) if save_snapshots else None,
+        snapshots_rev=tuple(snaps_rev) if save_snapshots else None,
+    )
