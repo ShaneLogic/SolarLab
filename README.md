@@ -337,7 +337,7 @@ After launching the backend and frontend (see [Running the Application](#-runnin
 ### Layout
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/ui_layout.png?v=2" alt="Web UI Layout" width="700">
+  <img src="perovskite-sim/docs/images/ui_layout.png?v=3" alt="Web UI Layout" width="700">
 </p>
 
 ### Left rail — Devices / Results
