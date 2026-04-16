@@ -18,6 +18,7 @@ import { attachTreeHandlers, renderTreeHTML } from './tree'
 import { mountConsole } from './console'
 import type { ConsoleHandle } from './console'
 import { mountDevicePane } from './panes/device-pane'
+import type { DevicePanel } from '../device-panel'
 import { mountHelpPane } from './panes/help-pane'
 import { mountJVPane } from './panes/jv-pane'
 import { mountImpedancePane } from './panes/impedance-pane'
@@ -132,12 +133,17 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
 
   // --- helpers wired into pane factories ---
   let mainPlot: MainPlotHandle | null = null
+  let devicePanel: DevicePanel | null = null
 
   function activeDeviceAccessor(): { id: string; config: import('../types').DeviceConfig } | null {
     const id = workspace.activeDeviceId
     if (!id) return null
     const d = workspace.devices.find(x => x.id === id)
-    return d ? { id: d.id, config: d.config } : null
+    if (!d) return null
+    // Prefer the live config from the Device pane editor (reflects dropdown
+    // changes and manual edits) over the stale workspace snapshot.
+    const liveConfig = devicePanel ? devicePanel.getConfig() : d.config
+    return { id: d.id, config: liveConfig }
   }
 
   function ensureExperiment(deviceId: string, kind: ExperimentKind): string {
@@ -219,7 +225,20 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
 
   layout.registerComponentFactoryFunction('device', (container) => {
     const active = workspace.devices.find(d => d.id === workspace.activeDeviceId)
-    void mountDevicePane(container.element, 'ws-device', active?.tier ?? 'full')
+    void mountDevicePane(container.element, 'ws-device', active?.tier ?? 'full').then(panel => {
+      devicePanel = panel
+      // Sync device config changes (preset dropdown, manual edits) back into the workspace
+      panel.onChange((cfg) => {
+        const devId = workspace.activeDeviceId
+        if (!devId) return
+        const idx = workspace.devices.findIndex(d => d.id === devId)
+        if (idx < 0) return
+        const updated = { ...workspace.devices[idx], config: cfg }
+        const devices = workspace.devices.map((d, i) => (i === idx ? updated : d))
+        workspace = { ...workspace, devices }
+        saveWorkspace(workspace)
+      })
+    })
   })
   layout.registerComponentFactoryFunction('help', (container) => {
     mountHelpPane(container.element)
