@@ -20,6 +20,8 @@ function experimentLabel(kind: Experiment['kind']): string {
     case 'impedance': return 'Impedance'
     case 'degradation': return 'Degradation'
     case 'tpv': return 'TPV'
+    case 'current_decomp': return 'Current Decomp.'
+    case 'spatial': return 'Spatial Profiles'
   }
 }
 

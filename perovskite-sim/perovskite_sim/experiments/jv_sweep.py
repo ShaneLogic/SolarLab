@@ -32,6 +32,16 @@ class JVMetrics:
 
 
 @dataclass(frozen=True)
+class JVCurrentDecomp:
+    """Per-voltage-point current decomposition (contact-face values, A/m²)."""
+    J_n: np.ndarray
+    J_p: np.ndarray
+    J_ion: np.ndarray
+    J_disp: np.ndarray
+    J_total: np.ndarray
+
+
+@dataclass(frozen=True)
 class JVResult:
     V_fwd: np.ndarray
     J_fwd: np.ndarray
@@ -42,6 +52,8 @@ class JVResult:
     hysteresis_index: float
     snapshots_fwd: tuple[SpatialSnapshot, ...] | None = None
     snapshots_rev: tuple[SpatialSnapshot, ...] | None = None
+    decomp_fwd: JVCurrentDecomp | None = None
+    decomp_rev: JVCurrentDecomp | None = None
 
 
 def compute_metrics(V: np.ndarray, J: np.ndarray) -> JVMetrics:
@@ -395,6 +407,7 @@ def run_jv_sweep(
     fixed_generation: np.ndarray | None = None,
     illuminated: bool = True,
     save_snapshots: bool = False,
+    decompose_currents: bool = False,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
@@ -482,15 +495,20 @@ def run_jv_sweep(
     def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str):
         """Sweep from V_start to V_end, starting from carrier state y_init.
 
-        Returns (V_arr, J_arr, y_final, snapshots) so sweeps can be chained.
-        snapshots is a list of SpatialSnapshot when save_snapshots is True,
-        otherwise an empty list.
+        Returns (V_arr, J_arr, y_final, snapshots, decomp) so sweeps can be
+        chained. snapshots and decomp are populated only when the corresponding
+        flags (save_snapshots, decompose_currents) are True.
         """
         V_arr = np.linspace(V_start, V_end, n_points)
         dt = abs(V_end - V_start) / (v_rate * (n_points - 1))
         t_points = np.arange(n_points) * dt
         J_arr = np.zeros(n_points)
         snaps: list[SpatialSnapshot] = []
+        d_Jn: list[float] = []
+        d_Jp: list[float] = []
+        d_Jion: list[float] = []
+        d_Jdisp: list[float] = []
+        d_Jtot: list[float] = []
         y = y_init.copy()
         V_prev = float(V_arr[0])
         for k, V_k in enumerate(V_arr):
@@ -503,17 +521,34 @@ def run_jv_sweep(
                                          mat=mat, V_app_prev=V_prev)
             if save_snapshots:
                 snaps.append(extract_spatial_snapshot(x, y, stack, float(V_k), mat=mat))
+            if decompose_currents:
+                cc = compute_current_components(
+                    x, y, stack, float(V_k),
+                    y_prev=y_prev, dt=dt, mat=mat, V_app_prev=V_prev,
+                )
+                d_Jn.append(float(cc.J_n[0]))
+                d_Jp.append(float(cc.J_p[0]))
+                d_Jion.append(float(cc.J_ion[0]))
+                d_Jdisp.append(float(cc.J_disp[0]))
+                d_Jtot.append(float(cc.J_total[0]))
             V_prev = float(V_k)
             if progress is not None:
                 progress(stage, k + 1, n_points, "")
-        return V_arr, J_arr, y, snaps
+        decomp = None
+        if decompose_currents:
+            decomp = JVCurrentDecomp(
+                J_n=np.array(d_Jn), J_p=np.array(d_Jp),
+                J_ion=np.array(d_Jion), J_disp=np.array(d_Jdisp),
+                J_total=np.array(d_Jtot),
+            )
+        return V_arr, J_arr, y, snaps, decomp
 
     V_bi_eff = stack.compute_V_bi()
     V_upper = max(V_bi_eff * 1.3, 1.4) if V_max is None else V_max
     # Forward sweep: dark equilibrium → short circuit → open circuit
-    V_fwd, J_fwd, y_oc, snaps_fwd = _sweep(0.0, V_upper, y_eq, "jv_forward")
+    V_fwd, J_fwd, y_oc, snaps_fwd, decomp_fwd = _sweep(0.0, V_upper, y_eq, "jv_forward")
     # Reverse sweep: continue from light-soaked OC state → short circuit
-    V_rev, J_rev, _, snaps_rev = _sweep(V_upper, 0.0, y_oc, "jv_reverse")
+    V_rev, J_rev, _, snaps_rev, decomp_rev = _sweep(V_upper, 0.0, y_oc, "jv_reverse")
 
     m_fwd = compute_metrics(V_fwd, J_fwd)
     m_rev = compute_metrics(V_rev[::-1], J_rev[::-1])
@@ -524,4 +559,6 @@ def run_jv_sweep(
         metrics_fwd=m_fwd, metrics_rev=m_rev, hysteresis_index=HI,
         snapshots_fwd=tuple(snaps_fwd) if save_snapshots else None,
         snapshots_rev=tuple(snaps_rev) if save_snapshots else None,
+        decomp_fwd=decomp_fwd,
+        decomp_rev=decomp_rev,
     )

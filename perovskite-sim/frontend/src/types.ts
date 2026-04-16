@@ -98,6 +98,39 @@ export interface TPVResult {
   delta_V0: number
 }
 
+export interface CurrentDecompResult {
+  V_fwd: number[]
+  V_rev: number[]
+  Jn_fwd: number[]
+  Jp_fwd: number[]
+  Jion_fwd: number[]
+  Jdisp_fwd: number[]
+  Jtotal_fwd: number[]
+  Jn_rev: number[]
+  Jp_rev: number[]
+  Jion_rev: number[]
+  Jdisp_rev: number[]
+  Jtotal_rev: number[]
+}
+
+export interface SpatialSnapshot {
+  x: number[]       // nm
+  phi: number[]     // V
+  E: number[]       // V/m
+  n: number[]       // m^-3
+  p: number[]       // m^-3
+  P: number[]       // m^-3
+  rho: number[]     // C/m^3
+  V_app: number
+}
+
+export interface SpatialProfileResult {
+  V_fwd: number[]
+  V_rev: number[]
+  snapshots_fwd: SpatialSnapshot[]
+  snapshots_rev: SpatialSnapshot[]
+}
+
 export interface JVParams {
   N_grid: number
   n_points: number
