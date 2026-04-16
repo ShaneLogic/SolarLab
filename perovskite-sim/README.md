@@ -57,122 +57,19 @@ produce current.
 
 ### Device Structure
 
-```
-                      Light (AM1.5G)
-                          |
-                          v
-    ┌─────────────────────────────────────────────┐
-    │              Left Contact (x = 0)           │  Ohmic: n = n_L, p = p_L
-    │               phi = 0  (grounded)           │
-    ├─────────────────────────────────────────────┤
-    │                                             │
-    │   HTL  (hole transport layer)               │  High N_A doping
-    │   e.g. spiro-OMeTAD, 200 nm                 │  Blocks electrons (low mu_n)
-    │                                             │
-    ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤  Interface: (v_n, v_p) SRH
-    │                                             │
-    │   Absorber (perovskite)                     │  Intrinsic (low doping)
-    │   e.g. MAPbI3, 400 nm                       │  Optical absorption: G(x)
-    │                                             │  Mobile ions: P+(x,t), P-(x,t)
-    │   n(x,t) ←──drift──→ p(x,t)                │  SRH + radiative + Auger R
-    │       ↕ diffusion ↕                         │
-    │                                             │
-    ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤  Interface: (v_n, v_p) SRH
-    │                                             │
-    │   ETL  (electron transport layer)           │  High N_D doping
-    │   e.g. TiO2, 100 nm                        │  Blocks holes (low mu_p)
-    │                                             │
-    ├─────────────────────────────────────────────┤
-    │             Right Contact (x = L)           │  Ohmic: n = n_R, p = p_R
-    │          phi = V_bi - V_app                 │
-    └─────────────────────────────────────────────┘
-
-    x = 0 ──────────────────────────────────> x = L
-                    1D spatial domain
-```
+![Device Structure](docs/images/device_structure.png)
 
 ### Band Diagram
 
-```
-  Energy
-    ^
-    │    ┌──────┐                              ┌──────┐
-    │    │      │  ΔEc (conduction band offset)│      │
-    │    │  Ec  └──────────────────────────────┘  Ec  │
-    │    │  ┄┄┄┄┄ EF ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │
-    │    │  Ev  ┌──────────────────────────────┐  Ev  │
-    │    │      │  ΔEv (valence band offset)   │      │
-    │    └──────┘                              └──────┘
-    │     HTL          Absorber                  ETL
-    │   (p-type)     (intrinsic)              (n-type)
-    │
-    │        <── Built-in field E = -dφ/dx ──>
-    │            (separates photogenerated
-    │             electrons and holes)
-    └───────────────────────────────────────────────> x
-```
+![Energy Band Diagram](docs/images/band_diagram.png)
 
-### Transport Processes
+### Transport Processes and Boundary Conditions
 
-```
-  Carrier currents (Scharfetter-Gummel discretised):
+![Transport Processes](docs/images/transport_equations.png)
 
-      Jn = q μn n E  +  q Dn dn/dx        (electron: drift + diffusion)
-      Jp = q μp p E  -  q Dp dp/dx        (hole:     drift + diffusion)
+### Solver Pipeline
 
-  Ion flux (steric Scharfetter-Gummel):
-
-      F_ion = -D_ion [ dP/dx + (q/kT) P (1 - P/P_lim) dφ/dx ]
-
-  Recombination:
-
-      R = R_SRH + R_rad + R_Auger + R_interface
-
-      R_SRH   = (np - ni²) / [ τp(n + n1) + τn(p + p1) ]    (bulk traps)
-      R_rad   = B (np - ni²)                                   (radiative)
-      R_Auger = (Cn·n + Cp·p)(np - ni²)                       (Auger)
-      R_iface = (np - ni²) / [ (p+p1)/vn + (n+n1)/vp ]       (surface)
-
-  Optical generation:
-
-      Beer-Lambert:  G(x) = α Φ exp(-αx)           (Legacy/Fast tier)
-      TMM:           G(x) = ∫ a(x,λ) Φ_AM1.5(λ) dλ  (Full tier)
-```
-
-### How It All Fits Together
-
-```
-  ┌─────────────────────────────────────────────────────┐
-  │                 State vector y(t)                    │
-  │              y = [ n, p, P+, (P-) ]                 │
-  │                  per grid node                      │
-  └───────────────┬─────────────────────────────────────┘
-                  │
-                  v
-  ┌─────────────────────────────────────────────────────┐
-  │           assemble_rhs(t, y)  →  dy/dt              │
-  │                                                     │
-  │  1. Apply ohmic contact BCs to n, p                 │
-  │  2. Compute charge density ρ = q(p - n + P - P0     │
-  │                                  - NA + ND)         │
-  │  3. Solve Poisson: ε₀εr d²φ/dx² = -ρ  (Dirichlet) │
-  │  4. Compute G(x) from TMM or Beer-Lambert           │
-  │  5. Carrier continuity: dn/dt, dp/dt (SG fluxes)   │
-  │  6. Interface recombination at heterojunctions       │
-  │  7. Thermionic emission cap at band offsets > 50 meV│
-  │  8. Ion continuity: dP/dt (zero-flux BCs)           │
-  │  9. Enforce dn=dp=0 at contacts (hold Dirichlet)    │
-  └───────────────┬─────────────────────────────────────┘
-                  │
-                  v
-  ┌─────────────────────────────────────────────────────┐
-  │       Radau (implicit Runge-Kutta) time stepper     │
-  │                                                     │
-  │  - Stiff ODE: dy/dt = f(t,y)                       │
-  │  - max_step cap near V_bi to prevent branch jumps   │
-  │  - Radau Jacobian via finite differences            │
-  └─────────────────────────────────────────────────────┘
-```
+![Solver Pipeline](docs/images/solver_pipeline.png)
 
 ### Supported Device Architectures
 
