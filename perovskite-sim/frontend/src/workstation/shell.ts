@@ -3,6 +3,7 @@ import type { LayoutConfig, ResolvedLayoutConfig } from 'golden-layout'
 import { getConfig, listConfigs } from '../api'
 import type { Workspace, Device, Run, ExperimentKind } from './types'
 import {
+  STORAGE_KEY,
   addDevice,
   addExperiment,
   addRun,
@@ -88,6 +89,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       </div>
       <div class="workstation-header-actions">
         <button type="button" class="btn btn-ghost" id="ws-reset-layout" title="Restore all panes to the default dock layout">Reset Layout</button>
+        <button type="button" class="btn btn-ghost btn-danger-ghost" id="ws-clear-workspace" title="Clear all devices, experiments, and runs (resets localStorage)">Clear Workspace</button>
       </div>
     </header>
     <div class="workstation-body">
@@ -155,6 +157,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     saveWorkspace(workspace)
     refreshTree()
     mainPlot?.update(workspace)
+    focusComponent('main-plot')
     consoleHandle.log(`run complete: ${kind}  (${run.activePhysics})`)
   }
 
@@ -262,6 +265,14 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     workspace = { ...workspace, layout: null }
     saveWorkspace(workspace)
     requestAnimationFrame(() => layout.setSize(dockEl.clientWidth, dockEl.clientHeight))
+  })
+
+  // Clear Workspace — nuke localStorage and reload
+  const clearBtn = root.querySelector<HTMLButtonElement>('#ws-clear-workspace')
+  clearBtn?.addEventListener('click', () => {
+    if (!confirm('Clear all devices, experiments, and runs? This cannot be undone.')) return
+    localStorage.removeItem(STORAGE_KEY)
+    window.location.reload()
   })
 
   // Persist layout changes
