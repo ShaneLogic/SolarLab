@@ -590,6 +590,71 @@ def start_job(req: JobRequest):
                 out["times"] = out.pop("t")
             out["active_physics"] = _describe_active_physics(stack)
             return out
+    elif kind == "current_decomp":
+        def _run(reporter: ProgressReporter) -> dict:
+            _illum = p.get("illuminated", True)
+            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
+            result = jv_sweep.run_jv_sweep(
+                stack,
+                N_grid=int(p.get("N_grid", 60)),
+                n_points=int(p.get("n_points", 30)),
+                v_rate=float(p.get("v_rate", 1.0)),
+                V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
+                illuminated=illuminated,
+                decompose_currents=True,
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = {}
+            out["V_fwd"] = result.V_fwd.tolist()
+            out["V_rev"] = result.V_rev.tolist()
+            if result.decomp_fwd:
+                out["Jn_fwd"] = result.decomp_fwd.J_n.tolist()
+                out["Jp_fwd"] = result.decomp_fwd.J_p.tolist()
+                out["Jion_fwd"] = result.decomp_fwd.J_ion.tolist()
+                out["Jdisp_fwd"] = result.decomp_fwd.J_disp.tolist()
+                out["Jtotal_fwd"] = result.decomp_fwd.J_total.tolist()
+            if result.decomp_rev:
+                out["Jn_rev"] = result.decomp_rev.J_n.tolist()
+                out["Jp_rev"] = result.decomp_rev.J_p.tolist()
+                out["Jion_rev"] = result.decomp_rev.J_ion.tolist()
+                out["Jdisp_rev"] = result.decomp_rev.J_disp.tolist()
+                out["Jtotal_rev"] = result.decomp_rev.J_total.tolist()
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "spatial":
+        def _run(reporter: ProgressReporter) -> dict:
+            _illum = p.get("illuminated", True)
+            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
+            result = jv_sweep.run_jv_sweep(
+                stack,
+                N_grid=int(p.get("N_grid", 60)),
+                n_points=int(p.get("n_points", 15)),
+                v_rate=float(p.get("v_rate", 1.0)),
+                V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
+                illuminated=illuminated,
+                save_snapshots=True,
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            # Convert snapshots to serialisable dicts with x in nm for readability
+            def snap_to_dict(s):
+                return {
+                    "x": (s.x * 1e9).tolist(),        # nm
+                    "phi": s.phi.tolist(),              # V
+                    "E": s.E.tolist(),                  # V/m
+                    "n": s.n.tolist(),                  # m^-3
+                    "p": s.p.tolist(),                  # m^-3
+                    "P": s.P.tolist(),                  # m^-3
+                    "rho": s.rho.tolist(),              # C/m^3 (charge density * q)
+                    "V_app": s.V_app,
+                }
+            out = {
+                "V_fwd": result.V_fwd.tolist(),
+                "V_rev": result.V_rev.tolist(),
+                "snapshots_fwd": [snap_to_dict(s) for s in (result.snapshots_fwd or [])],
+                "snapshots_rev": [snap_to_dict(s) for s in (result.snapshots_rev or [])],
+            }
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
     elif kind == "tpv":
         from perovskite_sim.experiments.tpv import run_tpv
 

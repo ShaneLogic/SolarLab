@@ -1,4 +1,4 @@
-import type { DeviceConfig, SimulationModeName, JVResult, ISResult, DegResult, TPVResult } from '../types'
+import type { DeviceConfig, SimulationModeName, JVResult, ISResult, DegResult, TPVResult, CurrentDecompResult, SpatialProfileResult } from '../types'
 
 /** The root object persisted to localStorage. */
 export interface Workspace {
@@ -30,13 +30,15 @@ export interface Device {
   experiments: Experiment[]
 }
 
-export type ExperimentKind = 'jv' | 'impedance' | 'degradation' | 'tpv'
+export type ExperimentKind = 'jv' | 'impedance' | 'degradation' | 'tpv' | 'current_decomp' | 'spatial'
 
 export type RunResult =
   | { kind: 'jv'; data: JVResult }
   | { kind: 'impedance'; data: ISResult }
   | { kind: 'degradation'; data: DegResult }
   | { kind: 'tpv'; data: TPVResult }
+  | { kind: 'current_decomp'; data: CurrentDecompResult }
+  | { kind: 'spatial'; data: SpatialProfileResult }
 
 /** Phase 2 will populate this. Defined here to keep the type stable across phases. */
 export interface Experiment {
@@ -61,6 +63,6 @@ export interface Run {
 export interface CompareView {
   id: string
   name: string
-  kind: 'jv' | 'impedance' | 'degradation' | 'tpv'
+  kind: 'jv' | 'impedance' | 'degradation' | 'tpv' | 'current_decomp' | 'spatial'
   runRefs: Array<{ deviceId: string; experimentId: string; runId: string }>
 }

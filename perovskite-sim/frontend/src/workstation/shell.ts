@@ -20,11 +20,8 @@ import type { ConsoleHandle } from './console'
 import { mountDevicePane } from './panes/device-pane'
 import type { DevicePanel } from '../device-panel'
 import { mountHelpPane } from './panes/help-pane'
-import { mountJVPane } from './panes/jv-pane'
-import { mountImpedancePane } from './panes/impedance-pane'
-import { mountDegradationPane } from './panes/degradation-pane'
+import { mountExperimentPane } from './panes/experiment-pane'
 import { mountTandemPane } from './panes/tandem-pane'
-import { mountTPVPane } from './panes/tpv-pane'
 import { mountMainPlotPane } from './panes/main-plot-pane'
 import type { MainPlotHandle } from './panes/main-plot-pane'
 import { presetsFromEntries, showWizard } from './wizard'
@@ -45,10 +42,7 @@ const DEFAULT_LAYOUT: LayoutConfig = {
         type: 'stack',
         width: 28,
         content: [
-          { type: 'component', componentType: 'jv', title: 'J–V Sweep' },
-          { type: 'component', componentType: 'impedance', title: 'Impedance' },
-          { type: 'component', componentType: 'degradation', title: 'Degradation' },
-          { type: 'component', componentType: 'tpv', title: 'TPV' },
+          { type: 'component', componentType: 'experiments', title: 'Experiments' },
           { type: 'component', componentType: 'tandem', title: 'Tandem' },
         ],
       },
@@ -169,14 +163,6 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     consoleHandle.log(`run complete: ${kind}  (${run.activePhysics})`)
   }
 
-  function experimentKindOf(experimentId: string): ExperimentKind {
-    for (const d of workspace.devices) {
-      const e = d.experiments.find(e => e.id === experimentId)
-      if (e) return e.kind
-    }
-    return 'jv'
-  }
-
   function focusComponent(componentType: string): void {
     try {
       const root = layout.rootItem as unknown as {
@@ -205,7 +191,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       workspace = setActiveExperiment(workspace, deviceId, experimentId)
       saveWorkspace(workspace)
       refreshTree()
-      focusComponent(experimentKindOf(experimentId))
+      focusComponent('experiments')
     },
     onSelectRun: (deviceId, experimentId, runId) => {
       workspace = setActiveRun(workspace, deviceId, experimentId, runId)
@@ -245,28 +231,10 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   layout.registerComponentFactoryFunction('help', (container) => {
     mountHelpPane(container.element)
   })
-  layout.registerComponentFactoryFunction('jv', (container) => {
-    mountJVPane(container.element, {
+  layout.registerComponentFactoryFunction('experiments', (container) => {
+    mountExperimentPane(container.element, {
       getActiveDevice: () => activeDeviceAccessor(),
-      onRunComplete: (deviceId, run) => commitRun(deviceId, 'jv', run),
-    })
-  })
-  layout.registerComponentFactoryFunction('impedance', (container) => {
-    mountImpedancePane(container.element, {
-      getActiveDevice: () => activeDeviceAccessor(),
-      onRunComplete: (deviceId, run) => commitRun(deviceId, 'impedance', run),
-    })
-  })
-  layout.registerComponentFactoryFunction('degradation', (container) => {
-    mountDegradationPane(container.element, {
-      getActiveDevice: () => activeDeviceAccessor(),
-      onRunComplete: (deviceId, run) => commitRun(deviceId, 'degradation', run),
-    })
-  })
-  layout.registerComponentFactoryFunction('tpv', (container) => {
-    mountTPVPane(container.element, {
-      getActiveDevice: () => activeDeviceAccessor(),
-      onRunComplete: (deviceId, run) => commitRun(deviceId, 'tpv', run),
+      onRunComplete: (deviceId, kind, run) => commitRun(deviceId, kind, run),
     })
   })
   layout.registerComponentFactoryFunction('tandem', (container) => {
