@@ -3,28 +3,34 @@
 The Python simulation package, FastAPI backend, and Vite/TypeScript
 frontend that make up the SolarLab simulator.
 
-> 📖 **Start here:** the [root README](../README.md) covers installation,
+> **Start here:** the [root README](../README.md) covers installation,
 > physics, equations, UI walkthrough, and shipped presets. This file is
-> just a short orientation to the `perovskite-sim/` subtree.
+> a short orientation to the `perovskite-sim/` subtree.
+
+<br>
 
 ## Layout
 
 ```
 perovskite-sim/
 ├── perovskite_sim/   Python simulation library (drift-diffusion + ions + TMM)
-├── backend/          FastAPI HTTP wrapper — see backend/README.md
+├── backend/          FastAPI HTTP wrapper
 ├── frontend/         Vite + TypeScript + Plotly single-page UI
 ├── configs/          Shipped YAML device presets
 ├── tests/            pytest suite (unit / integration / regression)
 └── notebooks/        Exploratory benchmarks
 ```
 
-## Quick install
+<br>
+
+## Quick Install
 
 ```bash
 pip install -e ".[dev]"        # Python package in editable mode
 cd frontend && npm install     # frontend dependencies
 ```
+
+<br>
 
 ## Tests
 
@@ -34,19 +40,27 @@ pytest -m slow                                          # physics regression (~3
 pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 ```
 
+<br>
+
 ## Notebooks
 
-Interactive notebooks under `notebooks/`:
+**Interactive notebooks** under `notebooks/`:
 
-- `01_jv_hysteresis.ipynb` — J–V sweep with hysteresis
-- `02_impedance.ipynb` — impedance spectroscopy (Nyquist plot)
-- `03_degradation.ipynb` — long-term degradation simulation
+| Notebook | Topic |
+|:---------|:------|
+| `01_jv_hysteresis.ipynb` | J-V sweep with hysteresis |
+| `02_impedance.ipynb` | Impedance spectroscopy (Nyquist plot) |
+| `03_degradation.ipynb` | Long-term degradation simulation |
 
-Benchmark scripts (`.py`, run with `python`):
+**Benchmark scripts** (`.py`, run with `python`):
 
-- `04_ionmonger_benchmark.py`
-- `05_comprehensive_benchmark.py`
-- `06_e2e_notebook_vs_api.py`
+| Script | Topic |
+|:-------|:------|
+| `04_ionmonger_benchmark.py` | IonMonger cross-validation |
+| `05_comprehensive_benchmark.py` | Full physics sweep |
+| `06_e2e_notebook_vs_api.py` | Notebook vs API parity check |
+
+<br>
 
 ## Physical Model
 
@@ -55,60 +69,63 @@ layers between two metallic contacts. Light enters from one side, generates
 electron-hole pairs, and the built-in electric field separates them to
 produce current.
 
-### Device Structure
+<p align="center">
+  <img src="docs/images/device_structure.png?v=2" alt="Device Structure" width="700">
+</p>
 
-![Device Structure](docs/images/device_structure.png?v=2)
+<p align="center">
+  <img src="docs/images/band_diagram.png?v=2" alt="Energy Band Diagram" width="700">
+</p>
 
-### Band Diagram
+<p align="center">
+  <img src="docs/images/transport_equations.png?v=2" alt="Transport Processes" width="700">
+</p>
 
-![Energy Band Diagram](docs/images/band_diagram.png?v=2)
-
-### Transport Processes and Boundary Conditions
-
-![Transport Processes](docs/images/transport_equations.png?v=2)
-
-### Solver Pipeline
-
-![Solver Pipeline](docs/images/solver_pipeline.png?v=2)
+<p align="center">
+  <img src="docs/images/solver_pipeline.png?v=2" alt="Solver Pipeline" width="700">
+</p>
 
 ### Supported Device Architectures
 
 | Config | Structure | Ions | Optics |
-|--------|-----------|------|--------|
-| `nip_MAPbI3` | spiro / MAPbI3 / TiO2 | Single species | Beer-Lambert |
-| `nip_MAPbI3_tmm` | Glass / spiro / MAPbI3 / TiO2 | Single species | TMM |
-| `pin_MAPbI3` | TiO2 / MAPbI3 / spiro | Single species | Beer-Lambert |
-| `ionmonger_benchmark` | Courtier 2019 reference | Single species | Beer-Lambert |
-| `cigs_baseline` | ZnO / CdS / CIGS | None (D_ion=0) | Beer-Lambert |
-| `cSi_homojunction` | n+ / p Si wafer | None (D_ion=0) | Beer-Lambert |
-| `tandem_lin2019` | Wide-gap / narrow-gap tandem | Single species | TMM |
+|:-------|:----------|:----:|:------:|
+| `nip_MAPbI3` | spiro / MAPbI3 / TiO2 | Yes | Beer-Lambert |
+| `nip_MAPbI3_tmm` | Glass / spiro / MAPbI3 / TiO2 | Yes | TMM |
+| `pin_MAPbI3` | TiO2 / MAPbI3 / spiro | Yes | Beer-Lambert |
+| `ionmonger_benchmark` | Courtier 2019 reference | Yes | Beer-Lambert |
+| `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert |
+| `cSi_homojunction` | n+ / p Si wafer | No | Beer-Lambert |
+| `tandem_lin2019` | Wide-gap / narrow-gap tandem | Yes | TMM |
+
+<br>
 
 ## Initial Conditions and Boundary Conditions
 
 The simulator solves the coupled 1D drift-diffusion + Poisson + mobile-ion
-system. Below are the mathematical conditions applied at the device contacts
-(boundary conditions) and the strategies used to seed the state vector
-(initial conditions).
+system. Below are the conditions applied at the device contacts (boundary
+conditions) and the strategies used to seed the state vector (initial conditions).
 
 ### Governing Equations
 
 | Equation | PDE |
-|----------|-----|
-| Poisson | $\partial/\partial x(\varepsilon_0 \varepsilon_r\, \partial\varphi/\partial x) = -\rho$ |
-| Electron continuity | $\partial n/\partial t = (1/q)\, \partial J_n/\partial x + G - R$ |
-| Hole continuity | $\partial p/\partial t = -(1/q)\, \partial J_p/\partial x + G - R$ |
+|:---------|:----|
+| Poisson | $\partial/\partial x(\varepsilon_0 \varepsilon_r \, \partial\varphi/\partial x) = -\rho$ |
+| Electron continuity | $\partial n/\partial t = (1/q) \, \partial J_n/\partial x + G - R$ |
+| Hole continuity | $\partial p/\partial t = -(1/q) \, \partial J_p/\partial x + G - R$ |
 | Ion (vacancy) continuity | $\partial P/\partial t = -\partial F_P/\partial x$ |
 
 State vector per grid node: $\mathbf{y} = (n, p, P)$ — electron density, hole
 density, and positive-ion (vacancy) density. Dual-species mode adds a
 negative-ion field $P^-$.
 
+<br>
+
 ### Boundary Conditions
 
-#### Electrostatic potential (Poisson equation) — Dirichlet
+#### Electrostatic Potential (Poisson) — Dirichlet
 
 | Contact | Value |
-|---------|-------|
+|:--------|:------|
 | Left ($x = 0$) | $\varphi = 0$ (grounded) |
 | Right ($x = L$) | $\varphi = V_{\text{bi}} - V_{\text{app}}$ |
 
@@ -124,7 +141,9 @@ avoids the field concentration artefact of nodal averaging.
 
 *Source:* `perovskite_sim/physics/poisson.py`
 
-#### Electron and hole densities — Dirichlet (ohmic contacts)
+<br>
+
+#### Electron and Hole Densities — Dirichlet (Ohmic Contacts)
 
 Both contacts are treated as ideal ohmic contacts. Carrier densities at
 the boundaries are clamped to the **thermal-equilibrium values** derived
@@ -148,9 +167,11 @@ and stored as `n_L, p_L, n_R, p_R`. The time derivatives at the contact
 nodes are set to zero (`dn[0] = dn[-1] = dp[0] = dp[-1] = 0`) so the
 Dirichlet values remain constant throughout the transient.
 
-*Source:* `perovskite_sim/solver/mol.py` (lines 369-384, 523-524, 564-566)
+*Source:* `perovskite_sim/solver/mol.py`
 
-#### Ion (vacancy) densities — Neumann (zero-flux)
+<br>
+
+#### Ion (Vacancy) Densities — Neumann (Zero-Flux)
 
 Ions cannot leave the device. At both contacts the vacancy flux is set to
 zero:
@@ -167,7 +188,9 @@ $$\text{steric} = \frac{1}{\max(1 - P_{\text{avg}}/P_{\text{lim}},\; 10^{-6})}$$
 
 *Source:* `perovskite_sim/physics/ion_migration.py`
 
-#### Thermionic emission at heterointerfaces
+<br>
+
+#### Thermionic Emission at Heterointerfaces
 
 At internal interfaces where the conduction-band offset $|\Delta E_c|$ or
 valence-band offset $|\Delta E_v|$ exceeds 0.05 eV, the Scharfetter-Gummel
@@ -176,19 +199,22 @@ limit**. This prevents the SG scheme from overestimating current across
 sharp band discontinuities (a known single-grid-spacing artefact).
 Interface faces where TE activates are pre-computed in `MaterialArrays`.
 
-*Source:* `perovskite_sim/physics/continuity.py`,
-`perovskite_sim/discretization/fe_operators.py`
+*Source:* `perovskite_sim/physics/continuity.py`, `perovskite_sim/discretization/fe_operators.py`
 
-#### Interface recombination
+<br>
+
+#### Interface Recombination
 
 At each heterointerface, surface recombination is parameterised by
 velocities $(v_n, v_p)$ [m/s] carried in `DeviceStack.interfaces`. The
 surface SRH rate is converted to a volumetric rate by dividing by the
 local dual-grid cell width.
 
+<br>
+
 ### Initial Conditions
 
-#### Dark equilibrium (default)
+#### Dark Equilibrium (Default)
 
 The default initial state is a **quasi-neutral dark equilibrium** with a
 neutral ionic background. At every grid node:
@@ -207,7 +233,9 @@ Contact nodes are overwritten with the ohmic-contact equilibrium densities.
 
 *Source:* `perovskite_sim/solver/newton.py`
 
-#### Illuminated steady-state (light-soaked)
+<br>
+
+#### Illuminated Steady-State (Light-Soaked)
 
 For experiments that begin under illumination (J-V sweep, impedance,
 degradation), the initial state is obtained by **integrating the full MOL
@@ -226,6 +254,8 @@ falls back to the dark equilibrium.
 
 *Source:* `perovskite_sim/solver/illuminated_ss.py`
 
+<br>
+
 ### Built-in Potential
 
 `DeviceStack.compute_V_bi()` derives the built-in potential from the
@@ -234,17 +264,23 @@ $E_g$, doping, and $n_i$). When all layers have `chi = Eg = 0`
 (homojunction/legacy configs), it falls back to the manual `V_bi` field
 (default: 1.1 V).
 
+<br>
+
 ### Summary Table
 
-| Variable | Contact BCs | Type | Source file |
-|----------|-------------|------|-------------|
+| Variable | Contact BCs | Type | Source |
+|:---------|:------------|:-----|:-------|
 | $\varphi$ | $\varphi(0) = 0$, $\varphi(L) = V_{\text{bi}} - V_{\text{app}}$ | Dirichlet | `physics/poisson.py` |
-| $n$ | $n(0) = n_L$, $n(L) = n_R$ (equilibrium) | Dirichlet | `solver/mol.py` |
-| $p$ | $p(0) = p_L$, $p(L) = p_R$ (equilibrium) | Dirichlet | `solver/mol.py` |
-| $P$ (ions) | $F(0) = F(L) = 0$ | Neumann (zero-flux) | `physics/ion_migration.py` |
-| $P^-$ (neg ions) | $F(0) = F(L) = 0$ | Neumann (zero-flux) | `physics/ion_migration.py` |
+| $n$ | $n(0) = n_L$, $n(L) = n_R$ | Dirichlet | `solver/mol.py` |
+| $p$ | $p(0) = p_L$, $p(L) = p_R$ | Dirichlet | `solver/mol.py` |
+| $P$ (ions) | $F(0) = F(L) = 0$ | Neumann | `physics/ion_migration.py` |
+| $P^-$ (neg ions) | $F(0) = F(L) = 0$ | Neumann | `physics/ion_migration.py` |
 
-## Python-only quick start
+<br>
+
+---
+
+## Python-Only Quick Start
 
 ```python
 from perovskite_sim.models.config_loader import load_device_from_yaml

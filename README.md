@@ -2,11 +2,13 @@
 
 # ☀️ SolarLab
 
-### Thin-Film Solar Cell Simulator
+**Thin-Film Solar Cell Simulator**
 
 *1D Drift-Diffusion · Poisson · Mobile Ions · Transfer-Matrix Optics*
 
-**Perovskite · CIGS · c-Si**
+Perovskite · CIGS · c-Si
+
+<br>
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org)
 [![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com)
@@ -15,55 +17,65 @@
 
 </div>
 
+<br>
+
+## Table of Contents
+
+| | Section | Description |
+|--:|---------|-------------|
+| 1 | [Overview](#overview) | What SolarLab does |
+| 2 | [Key Features](#key-features) | Capabilities at a glance |
+| 3 | [Repository Layout](#repository-layout) | Directory structure |
+| 4 | [Installation](#installation) | Setup instructions |
+| 5 | [Running the Application](#running-the-application) | Backend + frontend startup |
+| 6 | [Physical Principles & Equations](#physical-principles--equations) | Governing PDEs and physics |
+| 7 | [Numerical Method](#numerical-method) | Solver architecture |
+| 8 | [Using the Web UI](#using-the-web-ui) | UI walkthrough |
+| 9 | [Shipped Device Presets](#shipped-device-presets) | Available YAML configs |
+| 10 | [Testing](#testing) | Test suite overview |
+| 11 | [References](#references) | Key literature |
+
+<br>
+
 ---
 
-## 📖 Table of Contents
-
-1. [Overview](#-overview)
-2. [Key Features](#-key-features)
-3. [Repository Layout](#-repository-layout)
-4. [Installation](#-installation)
-5. [Running the Application](#-running-the-application)
-6. [Physical Principles & Equations](#-physical-principles--equations)
-7. [Numerical Method](#-numerical-method)
-8. [Using the Web UI](#-using-the-web-ui)
-9. [Shipped Device Presets](#-shipped-device-presets)
-10. [Testing](#-testing)
-11. [References](#-references)
-
----
-
-## 🌐 Overview
+## Overview
 
 **SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
 
 It reproduces three kinds of experiments from a single device definition:
 
-- **J–V sweep** with hysteresis (forward + reverse scans, ionic memory preserved)
-- **Impedance spectroscopy** (Nyquist diagrams via lock-in detection of AC response)
-- **Degradation** (long-time transient with frozen-ion snapshot J–V at each probe)
+| Experiment | What it does |
+|:-----------|:-------------|
+| **J-V sweep** | Forward + reverse scans with ionic memory preserved (hysteresis) |
+| **Impedance spectroscopy** | Nyquist diagrams via lock-in detection of AC response |
+| **Degradation** | Long-time transient with frozen-ion snapshot J-V at each probe |
 
 The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema.
 
----
-
-## ✨ Key Features
-
-| Capability | Details |
-|---|---|
-| 🧮 **Drift-diffusion core** | Scharfetter–Gummel finite-element fluxes on a tanh-clustered multilayer grid |
-| ⚡ **Poisson solve** | Pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs` — ~40× faster than naive assembly |
-| 🔬 **Mobile ions** | Steric Blakemore flux with excluded-volume correction (perovskite vacancy migration) |
-| 🌈 **Transfer-matrix optics** | Coherent TMM for position-resolved $G(x)$ with the Poynting-vector correction so $R+T+A=1$ |
-| 🔥 **Thermionic emission** | Richardson–Dushman flux cap at heterointerfaces with band offsets $>0.05$ eV |
-| 🏗️ **Heterostacks** | Band offsets from electron affinity $\chi$ and bandgap $E_g$; per-interface $(v_n, v_p)$ surface recombination |
-| 🧊 **Frozen-ion degradation** | Snapshot J–V at each probe time with $D_{\text{ion}}\to 0$, the only physically correct way to decouple ionic drift from electronic response |
-| 🖥️ **Interactive web UI** | Live experiment streaming over Server-Sent Events, progress bars, Plotly plots, layer-builder editor |
-| 🧪 **Full test suite** | Unit, integration, and physics regression tests (V_oc / J_sc / hysteresis bounds) |
+<br>
 
 ---
 
-## 🗂️ Repository Layout
+## Key Features
+
+| | Capability | Details |
+|:-:|:-----------|:--------|
+| 🧮 | **Drift-diffusion core** | Scharfetter-Gummel finite-element fluxes on a tanh-clustered multilayer grid |
+| ⚡ | **Poisson solve** | Pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs` — ~40x faster than naive assembly |
+| 🔬 | **Mobile ions** | Steric Blakemore flux with excluded-volume correction (perovskite vacancy migration) |
+| 🌈 | **Transfer-matrix optics** | Coherent TMM for position-resolved $G(x)$ with the Poynting-vector correction so $R+T+A=1$ |
+| 🔥 | **Thermionic emission** | Richardson-Dushman flux cap at heterointerfaces with band offsets $> 0.05$ eV |
+| 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface $(v_n, v_p)$ surface recombination |
+| 🧊 | **Frozen-ion degradation** | Snapshot J-V with $D_{\text{ion}} \to 0$ — the correct way to decouple ionic drift from electronic response |
+| 🖥️ | **Interactive web UI** | Live SSE streaming, progress bars, Plotly plots, layer-builder editor |
+| 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_{\text{oc}}$ / $J_{\text{sc}}$ / HI bounds) |
+
+<br>
+
+---
+
+## Repository Layout
 
 ```
 SolarLab/
@@ -85,9 +97,11 @@ SolarLab/
 └── README.md                       (this file)
 ```
 
+<br>
+
 ---
 
-## 🛠️ Installation
+## Installation
 
 ### Prerequisites
 
@@ -131,9 +145,11 @@ pytest                                    # full unit + integration suite (~15 s
 pytest -m slow                            # slow physics regression (~30 s, BLAS pinned)
 ```
 
+<br>
+
 ---
 
-## 🚀 Running the Application
+## Running the Application
 
 SolarLab runs as **two processes**: a FastAPI backend that executes the simulations, and a Vite dev server that serves the UI.
 
@@ -182,9 +198,11 @@ print(f"FF:   {result.metrics_fwd.FF:.3f}")
 print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 ```
 
+<br>
+
 ---
 
-## 🔬 Physical Principles & Equations
+## Physical Principles & Equations
 
 ### Physical Model Overview
 
@@ -204,11 +222,13 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
   <img src="perovskite-sim/docs/images/solver_pipeline.png?v=2" alt="Solver Pipeline" width="700">
 </p>
 
-### Equations
+### Governing Equations
 
 SolarLab solves the coupled **Poisson + drift-diffusion + mobile-ion** system in one spatial dimension. State variables at every grid node are the electron density $n$, hole density $p$, and the mobile-ion density $P$.
 
-### 1. Poisson's equation
+<br>
+
+### 1. Poisson's Equation
 
 The electrostatic potential $\varphi(x,t)$ satisfies
 
@@ -224,7 +244,9 @@ $$
 
 $V_{\text{bi}}$ is computed from the Fermi-level offset across the heterostack (`DeviceStack.compute_V_bi()`), accounting for $\chi$, $E_g$, doping, and $n_i$. The operator is discretized with a harmonic-mean face permittivity and pre-factored once per run (LAPACK `dgttrf`), then solved at every RHS call with a single `dgttrs` sweep.
 
-### 2. Carrier continuity (drift-diffusion)
+<br>
+
+### 2. Carrier Continuity (Drift-Diffusion)
 
 Electrons and holes obey
 
@@ -248,6 +270,8 @@ $$
 
 where $B(x) = x/(e^{x}-1)$ is the Bernoulli function and $V_t = k_B T / q$. This removes the classical upwind/central-difference stability problem when $|E|\Delta x \gg V_t$.
 
+<br>
+
 ### 3. Recombination
 
 The net recombination rate is the sum of Shockley–Read–Hall, radiative (bimolecular), and Auger channels:
@@ -264,7 +288,9 @@ $$
 
 Interface recombination is applied at heterointerfaces via the per-interface surface-recombination velocities $(v_n, v_p)$ carried in `DeviceStack.interfaces`.
 
-### 4. Mobile-ion migration (Blakemore-limited)
+<br>
+
+### 4. Mobile-Ion Migration (Blakemore-Limited)
 
 For perovskite cells, a single mobile ionic species (typically iodide vacancy $V_{\mathrm{I}}^{+}$) is tracked with a **steric Blakemore flux** that enforces an excluded-volume site-density limit $N_{\max}$:
 
@@ -274,7 +300,9 @@ $$
 
 The $(1 - P/N_{\max})$ factor prevents the ion density from diverging when the quasi-Fermi level of the ions approaches the site energy. Non-perovskite stacks (CIGS, c-Si) set $D_{\text{ion}}=0$ so this term drops out cleanly.
 
-### 5. Optical generation
+<br>
+
+### 5. Optical Generation
 
 Two optional models share the same interface.
 
@@ -292,7 +320,9 @@ $$
 
 integrated over the AM1.5G spectrum. The $n/n_{\text{amb}}$ prefactor is the Poynting-vector correction that guarantees $R+T+A=1$. `G_TMM(x)` is computed once during `build_material_arrays` and cached on `MaterialArrays.G_optical` — the hot path never recomputes optics.
 
-### 6. Thermionic emission at heterointerfaces
+<br>
+
+### 6. Thermionic Emission at Heterointerfaces
 
 When the conduction-band offset $|\Delta E_c|$ or valence-band offset $|\Delta E_v|$ across an interface exceeds $0.05$ eV, the Scharfetter–Gummel flux is capped to the Richardson–Dushman thermionic-emission current
 
@@ -302,7 +332,9 @@ $$
 
 where $A^*$ is the effective Richardson constant (defaults to the free-electron value $1.2017\times 10^{6}\,\text{A/m}^2\text{K}^2$, tunable per layer). Without this cap, SG overestimates current across sharp band discontinuities resolved in a single grid spacing.
 
-### 7. Boundary conditions at the contacts
+<br>
+
+### 7. Boundary Conditions at the Contacts
 
 At each metal contact, ohmic boundary conditions fix the majority-carrier density to its bulk equilibrium value, and the minority-carrier boundary flux is the extraction current controlled by an effective surface-recombination velocity $S_{n,p}$:
 
@@ -312,27 +344,31 @@ $$
 
 Ions are blocked at both contacts ($J_P = 0$), enforcing ionic-species conservation.
 
+<br>
+
 ---
 
-## 🧮 Numerical Method
+## Numerical Method
 
 | Ingredient | Choice |
-|---|---|
-| **Method** | Method of Lines: spatial FE discretization → stiff ODE in time |
+|:-----------|:-------|
+| **Method** | Method of Lines: spatial FE discretization -> stiff ODE in time |
 | **Grid** | Tanh-clustered multilayer grid (refined near interfaces and contacts) |
-| **Spatial** | Scharfetter–Gummel finite elements for drift-diffusion; harmonic-mean faces for Poisson |
+| **Spatial** | Scharfetter-Gummel finite elements for drift-diffusion; harmonic-mean faces for Poisson |
 | **Time** | `scipy.integrate.solve_ivp` with the **Radau** IIA 5th-order implicit method |
 | **Poisson** | LAPACK `dgttrf`/`dgttrs` tridiagonal LU, pre-factored once per run |
 | **Current** | Computed directly from the converged SG fluxes (consistent with continuity) |
-| **Safety cap** | `max_step = Δt / k` on every `run_transient` sub-interval, to stop Radau from accepting a giant step on the wrong branch near flat-band |
+| **Safety cap** | `max_step` capped on every `run_transient` sub-interval to prevent Radau from accepting a giant step near flat-band |
 
-All physical data is held in **immutable frozen dataclasses** (`MaterialParams`, `LayerSpec`, `DeviceStack`, `SolverConfig`). In-place mutation is forbidden anywhere in the library — updates use `dataclasses.replace(...)`.
+All physical data is held in **immutable frozen dataclasses** (`MaterialParams`, `LayerSpec`, `DeviceStack`, `SolverConfig`). In-place mutation is forbidden — updates use `dataclasses.replace(...)`.
+
+<br>
 
 ---
 
-## 🖥️ Using the Web UI
+## Using the Web UI
 
-After launching the backend and frontend (see [Running the Application](#-running-the-application)), open **<http://127.0.0.1:5173>**. The UI is split into three regions.
+After launching the backend and frontend (see [Running the Application](#running-the-application)), open **<http://127.0.0.1:5173>**. The UI is split into three regions.
 
 ### Layout
 
@@ -340,75 +376,97 @@ After launching the backend and frontend (see [Running the Application](#-runnin
   <img src="perovskite-sim/docs/images/ui_layout.png?v=3" alt="Web UI Layout" width="700">
 </p>
 
-### Left rail — Devices / Results
+### Left Rail — Devices / Results
 
-- **DEVICES** — shows the active device tab and its simulation tier (FAST / FULL / LEGACY). Click a device to focus its configuration.
-- **RESULTS / COMPARE** — every completed run is archived here. Select two or more runs to overlay their plots.
+| Element | Description |
+|:--------|:------------|
+| **DEVICES** | Active device tab with simulation tier (FAST / FULL / LEGACY). Click to focus configuration. |
+| **RESULTS / COMPARE** | Completed runs are archived here. Select two or more to overlay plots. |
 
-### Center pane — Device Configuration
+### Center Pane — Device Configuration
 
-1. **Preset dropdown** — choose a shipped or user preset. Switching presets reloads the stack from YAML.
-2. **Reset button** — discards unsaved edits and re-loads the last saved version.
-3. **Stack Visualizer** *(full tier only)* — a vertical column showing every layer in physical order. Click a layer to open it in the Detail Editor; use **➕** between layers to insert from the template library; drag handles to reorder; **✕** to delete.
-4. **Detail Editor** — collapsible groups:
-   - **Geometry** — thickness, grid density, role (contact / transport / absorber / substrate)
-   - **Transport** — $\mu_n$, $\mu_p$, $N_c$, $N_v$, $N_A$, $N_D$, $\chi$, $E_g$, $\varepsilon_r$
-   - **Recombination** — $\tau_n$, $\tau_p$, $k_{\text{rad}}$, $C_n$, $C_p$, $E_t$
-   - **Ions & Optics** — $D_{\text{ion}}$, $N_{\max}$, $P_0$, `optical_material`, `n_optical`, `incoherent` flag
-5. **TMM badge** — in full tier, a `TMM active · N layers` pill appears in the header whenever at least one layer has a non-empty `optical_material`.
-6. **Save As / Download YAML** — in the visualizer's action row, save your edited stack to `configs/user/` (visible to all future runs) or download the YAML directly.
+| Element | Description |
+|:--------|:------------|
+| **Preset dropdown** | Choose a shipped or user preset. Switching reloads the stack from YAML. |
+| **Reset** | Discards unsaved edits and re-loads the last saved version. |
+| **Stack Visualizer** | *(Full tier)* Vertical layer column — click to edit, **+** to insert, drag to reorder, **x** to delete. |
+| **Detail Editor** | Collapsible groups: Geometry, Transport, Recombination, Ions & Optics. |
+| **TMM badge** | Appears when any layer has a non-empty `optical_material`. |
+| **Save As** | Save edited stack to `configs/user/` or download YAML directly. |
 
-### Right pane — Experiments
+<details>
+<summary><strong>Detail Editor parameter groups</strong></summary>
 
-Three tabs sharing a common pattern: parameters form → **Run** button → live progress bar → Plotly plot.
+- **Geometry** — thickness, grid density, role (contact / transport / absorber / substrate)
+- **Transport** — $\mu_n$, $\mu_p$, $N_c$, $N_v$, $N_A$, $N_D$, $\chi$, $E_g$, $\varepsilon_r$
+- **Recombination** — $\tau_n$, $\tau_p$, $k_{\text{rad}}$, $C_n$, $C_p$, $E_t$
+- **Ions & Optics** — $D_{\text{ion}}$, $N_{\max}$, $P_0$, `optical_material`, `n_optical`, `incoherent` flag
 
-#### 📈 J–V Sweep
+</details>
 
-Parameters:
+### Right Pane — Experiments
 
-- $N_{\text{grid}}$ — number of spatial nodes
-- **V sample points** — number of voltage samples on each scan direction
-- **Scan rate (V/s)** — determines ionic memory effects; fast scans see larger hysteresis
-- $V_{\max}$ — upper voltage bound (defaults to $V_{\text{bi}}$)
+Three tabs sharing a common pattern: parameters form -> **Run** button -> live progress bar -> Plotly plot.
 
-The experiment runs a **forward** scan (short-circuit → $V_{\max}$) immediately followed by a **reverse** scan, reusing the final state so the ionic population is preserved across the turn. Output: overlaid forward/reverse curves plus metric cards for $V_{\text{oc}}$, $J_{\text{sc}}$, FF, PCE, and hysteresis index.
+#### J-V Sweep
 
-#### 🌀 Impedance
+| Parameter | Description |
+|:----------|:------------|
+| $N_{\text{grid}}$ | Number of spatial nodes |
+| V sample points | Number of voltage samples per scan direction |
+| Scan rate (V/s) | Ionic memory effects — fast scans produce larger hysteresis |
+| $V_{\max}$ | Upper voltage bound (defaults to $V_{\text{bi}}$) |
 
-Parameters: frequency sweep $(\omega_{\min}, \omega_{\max}, N_\omega)$, DC bias, AC amplitude.
+The experiment runs a **forward** scan (short-circuit to $V_{\max}$) immediately followed by a **reverse** scan, reusing the final state so the ionic population is preserved across the turn. Output: overlaid forward/reverse curves plus metric cards for $V_{\text{oc}}$, $J_{\text{sc}}$, FF, PCE, and hysteresis index.
 
-At each frequency the solver integrates several AC cycles, then a lock-in amplifier (in-phase/quadrature multiply + low-pass) extracts amplitude and phase. Displacement current $\varepsilon_0\varepsilon_r\,\partial E/\partial t$ is included. Output: Nyquist plot (real vs imaginary $Z$) and Bode magnitude/phase curves.
+#### Impedance
 
-#### ⏳ Degradation
+| Parameter | Description |
+|:----------|:------------|
+| Frequency sweep | $\omega_{\min}$, $\omega_{\max}$, $N_\omega$ |
+| DC bias | Steady-state bias voltage |
+| AC amplitude | Small-signal perturbation |
 
-Parameters: total simulation time, number of probes, probe bias.
+At each frequency, the solver integrates several AC cycles, then a lock-in amplifier extracts amplitude and phase. Displacement current $\varepsilon_0 \varepsilon_r \, \partial E / \partial t$ is included. Output: Nyquist plot and Bode magnitude/phase curves.
 
-At each probe time, the solver takes a **frozen-ion snapshot**: it creates a `replace`-d copy of the stack with $D_{\text{ion}}=0$ and runs a short settle integration to measure the instantaneous $J(V)$ response. This decouples the slow ionic drift from the electronic response and is the only physically correct way to extract snapshot PCE decay over device lifetime. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ vs aging time.
+#### Degradation
 
-### Docs tabs — Tutorial & Algorithm
+| Parameter | Description |
+|:----------|:------------|
+| Total time | Simulation duration |
+| Number of probes | Snapshot count over the simulation |
+| Probe bias | Voltage for snapshot J-V |
 
-The **Tutorial** pane is a guided walkthrough (Device Setup → First Simulation → Interpreting Results → Advanced Topics). The **Algorithm** pane is a formal write-up of the PDEs, discretization, solver tiers, and the transfer-matrix optical model. Both are always available — no backend required.
+At each probe time, the solver takes a **frozen-ion snapshot**: a copy of the stack with $D_{\text{ion}}=0$ measures the instantaneous $J(V)$ response. This decouples slow ionic drift from the electronic response. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ vs aging time.
+
+### Docs Tabs — Tutorial & Algorithm
+
+The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation -> Interpreting Results -> Advanced Topics). The **Algorithm** pane is a formal write-up of the PDEs, discretization, solver tiers, and the transfer-matrix optical model. Both are always available — no backend required.
+
+<br>
 
 ---
 
-## 📦 Shipped Device Presets
+## Shipped Device Presets
 
 All presets live in `perovskite-sim/configs/`. Drop a new `.yaml` file there and it is auto-discovered by `GET /api/configs`.
 
-| Preset | Material system | Mobile ions | Optics | Notes |
-|---|---|---|---|---|
-| `nip_MAPbI3.yaml` | MAPbI₃ n-i-p | ✓ | Beer–Lambert | Canonical perovskite reference |
-| `pin_MAPbI3.yaml` | MAPbI₃ p-i-n | ✓ | Beer–Lambert | Inverted-architecture reference |
-| `nip_MAPbI3_tmm.yaml` | MAPbI₃ n-i-p + glass | ✓ | TMM | TMM-enabled with 1 mm substrate |
-| `pin_MAPbI3_tmm.yaml` | MAPbI₃ p-i-n + glass | ✓ | TMM | TMM-enabled |
-| `ionmonger_benchmark.yaml` | Courtier 2019 parameters | ✓ | Beer–Lambert | IonMonger cross-check |
-| `driftfusion_benchmark.yaml` | Driftfusion parameters | ✓ | Beer–Lambert | Driftfusion cross-check |
-| `cigs_baseline.yaml` | ZnO / CdS / CIGS | ✗ | Beer–Lambert | $D_{\text{ion}}=0$ everywhere |
-| `cSi_homojunction.yaml` | n⁺ / p c-Si | ✗ | Beer–Lambert | Homojunction wafer cell |
+| Preset | Material System | Ions | Optics | Notes |
+|:-------|:----------------|:----:|:------:|:------|
+| `nip_MAPbI3` | MAPbI3 n-i-p | Yes | Beer-Lambert | Canonical perovskite reference |
+| `pin_MAPbI3` | MAPbI3 p-i-n | Yes | Beer-Lambert | Inverted-architecture reference |
+| `nip_MAPbI3_tmm` | MAPbI3 n-i-p + glass | Yes | TMM | TMM-enabled with 1 mm substrate |
+| `pin_MAPbI3_tmm` | MAPbI3 p-i-n + glass | Yes | TMM | TMM-enabled |
+| `ionmonger_benchmark` | Courtier 2019 | Yes | Beer-Lambert | IonMonger cross-check |
+| `driftfusion_benchmark` | Driftfusion params | Yes | Beer-Lambert | Driftfusion cross-check |
+| `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert | $D_{\text{ion}}=0$ everywhere |
+| `cSi_homojunction` | n+ / p c-Si | No | Beer-Lambert | Homojunction wafer cell |
+
+<br>
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # From perovskite-sim/
@@ -418,13 +476,17 @@ pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage report
 pytest tests/unit/experiments/test_jv_sweep.py          # a single file
 ```
 
-- **Unit tests** — per-module physics + solver coverage
-- **Integration tests** — end-to-end experiment runs on shipped presets
-- **Regression tests** — physical sanity envelopes ($V_{\text{oc}}$ range, $J_{\text{sc}}$ bounds, hysteresis index), BLAS threads pinned automatically via `tests/conftest.py`
+| Suite | Scope |
+|:------|:------|
+| **Unit** | Per-module physics + solver coverage |
+| **Integration** | End-to-end experiment runs on shipped presets |
+| **Regression** | Physical sanity envelopes ($V_{\text{oc}}$, $J_{\text{sc}}$, HI bounds); BLAS pinned via `conftest.py` |
+
+<br>
 
 ---
 
-## 📚 References
+## References
 
 1. **Scharfetter, D. L. & Gummel, H. K.** (1969) — *Large-signal analysis of a silicon Read diode oscillator*. Foundational SG flux scheme.
 2. **Courtier, N. E. et al.** (2019) — *IonMonger: a free and fast planar perovskite solar cell simulator with coupled ion vacancy and charge carrier dynamics*. J. Comput. Electron.
