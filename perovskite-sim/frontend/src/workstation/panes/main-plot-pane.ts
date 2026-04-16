@@ -2,7 +2,7 @@ import Plotly from 'plotly.js-basic-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../../plot-theme'
-import type { JVResult, ISResult, DegResult } from '../../types'
+import type { JVResult, ISResult, DegResult, TPVResult } from '../../types'
 
 export interface MainPlotHandle {
   update(ws: Workspace): void
@@ -47,6 +47,9 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           return
         case 'degradation':
           renderDegradation(plotEl, run.result.data)
+          return
+        case 'tpv':
+          renderTPV(plotEl, run.result.data)
           return
       }
     },
@@ -126,5 +129,38 @@ function renderDegradation(el: HTMLElement, r: DegResult): void {
       yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Normalised PCE') },
     }),
     plotConfig('degradation'),
+  )
+}
+
+function renderTPV(el: HTMLElement, r: TPVResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  // Convert time to microseconds for readability
+  const t_us = r.t.map(t => t * 1e6)
+  // Convert voltage to mV perturbation from V_oc
+  const dV_mV = r.V.map(v => (v - r.V_oc) * 1e3)
+
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: t_us, y: dV_mV, name: `\u0394V  (\u03C4=${(r.tau * 1e6).toFixed(1)} \u00B5s)`,
+        mode: 'lines',
+        line: { color: PALETTE.forward, width: LINE.width },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (\u00B5s)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('\u0394V (mV)') },
+      annotations: [
+        {
+          x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
+          xanchor: 'right', yanchor: 'top', showarrow: false,
+          text: `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V &nbsp; \u03C4 = ${(r.tau * 1e6).toFixed(1)} \u00B5s &nbsp; \u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
+          font: { size: 12 },
+        },
+      ],
+    }),
+    plotConfig('tpv'),
   )
 }

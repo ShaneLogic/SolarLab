@@ -590,6 +590,22 @@ def start_job(req: JobRequest):
                 out["times"] = out.pop("t")
             out["active_physics"] = _describe_active_physics(stack)
             return out
+    elif kind == "tpv":
+        from perovskite_sim.experiments.tpv import run_tpv
+
+        def _run(reporter: ProgressReporter) -> dict:
+            result = run_tpv(
+                stack,
+                N_grid=int(p.get("N_grid", 80)),
+                delta_G_frac=float(p.get("delta_G_frac", 0.05)),
+                t_pulse=float(p.get("t_pulse", 1e-6)),
+                t_decay=float(p.get("t_decay", 50e-6)),
+                n_points=int(p.get("n_points", 200)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
     elif kind == "tandem":
         from perovskite_sim.data import load_am15g
         from perovskite_sim.experiments.tandem_jv import run_tandem_jv
