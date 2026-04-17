@@ -98,6 +98,46 @@ export interface TPVResult {
   delta_V0: number
 }
 
+// ── Phase 2 characterisation experiments ────────────────────────────────────
+
+export interface DarkJVResult {
+  V: number[]
+  J: number[]
+  n_ideality: number
+  J_0: number
+  V_fit_lo: number
+  V_fit_hi: number
+}
+
+export interface SunsVocResult {
+  suns: number[]
+  V_oc: number[]
+  J_sc: number[]
+  J_pseudo_V: number[]
+  J_pseudo_J: number[]
+  pseudo_FF: number
+}
+
+export interface EQEResult {
+  wavelengths_nm: number[]
+  EQE: number[]
+  J_sc_per_lambda: number[]
+  J_sc_integrated: number
+  Phi_incident: number
+}
+
+export interface MottSchottkyResult {
+  V: number[]
+  C: number[]
+  one_over_C2: number[]
+  V_bi_fit: number
+  N_eff_fit: number
+  V_fit_lo: number
+  V_fit_hi: number
+  frequency: number
+  eps_r_used: number
+}
+
 export interface CurrentDecompResult {
   V_fwd: number[]
   V_rev: number[]

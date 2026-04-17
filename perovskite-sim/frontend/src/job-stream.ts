@@ -1,7 +1,18 @@
 import type { JobStartResponse, JobStreamHandlers, ProgressEvent } from './types'
 
 export async function startJob(
-  kind: 'jv' | 'impedance' | 'degradation' | 'tpv' | 'current_decomp' | 'spatial' | 'tandem',
+  kind:
+    | 'jv'
+    | 'impedance'
+    | 'degradation'
+    | 'tpv'
+    | 'current_decomp'
+    | 'spatial'
+    | 'tandem'
+    | 'dark_jv'
+    | 'suns_voc'
+    | 'eqe'
+    | 'mott_schottky',
   device: unknown,
   params: Record<string, unknown>,
   configPath: string | null = null,

@@ -1,4 +1,17 @@
-import type { DeviceConfig, SimulationModeName, JVResult, ISResult, DegResult, TPVResult, CurrentDecompResult, SpatialProfileResult } from '../types'
+import type {
+  DeviceConfig,
+  SimulationModeName,
+  JVResult,
+  ISResult,
+  DegResult,
+  TPVResult,
+  CurrentDecompResult,
+  SpatialProfileResult,
+  DarkJVResult,
+  SunsVocResult,
+  EQEResult,
+  MottSchottkyResult,
+} from '../types'
 
 /** The root object persisted to localStorage. */
 export interface Workspace {
@@ -30,7 +43,17 @@ export interface Device {
   experiments: Experiment[]
 }
 
-export type ExperimentKind = 'jv' | 'impedance' | 'degradation' | 'tpv' | 'current_decomp' | 'spatial'
+export type ExperimentKind =
+  | 'jv'
+  | 'impedance'
+  | 'degradation'
+  | 'tpv'
+  | 'current_decomp'
+  | 'spatial'
+  | 'dark_jv'
+  | 'suns_voc'
+  | 'eqe'
+  | 'mott_schottky'
 
 export type RunResult =
   | { kind: 'jv'; data: JVResult }
@@ -39,6 +62,10 @@ export type RunResult =
   | { kind: 'tpv'; data: TPVResult }
   | { kind: 'current_decomp'; data: CurrentDecompResult }
   | { kind: 'spatial'; data: SpatialProfileResult }
+  | { kind: 'dark_jv'; data: DarkJVResult }
+  | { kind: 'suns_voc'; data: SunsVocResult }
+  | { kind: 'eqe'; data: EQEResult }
+  | { kind: 'mott_schottky'; data: MottSchottkyResult }
 
 /** Phase 2 will populate this. Defined here to keep the type stable across phases. */
 export interface Experiment {
@@ -63,6 +90,6 @@ export interface Run {
 export interface CompareView {
   id: string
   name: string
-  kind: 'jv' | 'impedance' | 'degradation' | 'tpv' | 'current_decomp' | 'spatial'
+  kind: ExperimentKind
   runRefs: Array<{ deviceId: string; experimentId: string; runId: string }>
 }

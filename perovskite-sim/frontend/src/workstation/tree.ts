@@ -22,6 +22,10 @@ function experimentLabel(kind: Experiment['kind']): string {
     case 'tpv': return 'TPV'
     case 'current_decomp': return 'Current Decomp.'
     case 'spatial': return 'Spatial Profiles'
+    case 'dark_jv': return 'Dark J–V'
+    case 'suns_voc': return 'Suns–Voc'
+    case 'eqe': return 'EQE / IPCE'
+    case 'mott_schottky': return 'Mott–Schottky (C–V)'
   }
 }
 
