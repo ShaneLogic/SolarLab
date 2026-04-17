@@ -49,6 +49,24 @@ class MaterialParams:
     # incoherent (bulk Beer-Lambert + Fresnel interfaces, no interference).
     # Must be True for mm-thick substrates; defaults False (coherent).
     incoherent: bool = False
+    # Field-dependent mobility parameters (Phase 3.2 — Apr 2026).
+    # Caughey-Thomas velocity-saturation: at |E| ≫ v_sat / μ₀ the drift
+    # velocity asymptotes to v_sat. Defaults v_sat_{n,p} = 0 disable CT at
+    # this layer — the low-field μ is returned unchanged. β is the
+    # Caughey-Thomas exponent; β = 2 is the Canali form used for silicon
+    # electrons, β = 1 is the Thornber form used for silicon holes. We
+    # default both to 2 for perovskite-ish materials where the literature
+    # does not strongly favour one over the other.
+    v_sat_n: float = 0.0      # electron saturation velocity [m/s]
+    v_sat_p: float = 0.0      # hole saturation velocity [m/s]
+    ct_beta_n: float = 2.0    # CT exponent for electrons
+    ct_beta_p: float = 2.0    # CT exponent for holes
+    # Poole-Frenkel field-enhanced mobility: μ = μ₀ · exp(γ · √|E|).
+    # Relevant for disordered / organic transport layers (e.g. spiro).
+    # γ = 0 disables the model; typical γ for spiro-OMeTAD is
+    # ~3e-4 (V/m)^-0.5 (arg ~ 3 at |E| = 1e8 V/m, i.e. μ ≈ 20·μ₀).
+    pf_gamma_n: float = 0.0   # PF prefactor for electrons [(V/m)^-0.5]
+    pf_gamma_p: float = 0.0   # PF prefactor for holes [(V/m)^-0.5]
 
     @property
     def D_n(self) -> float:

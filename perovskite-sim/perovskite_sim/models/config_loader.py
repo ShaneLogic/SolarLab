@@ -63,6 +63,12 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             optical_material=layer_cfg.get("optical_material"),
             n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
             incoherent=_parse_bool(layer_cfg.get("incoherent", False)),
+            v_sat_n=_f(layer_cfg.get("v_sat_n", 0.0)),
+            v_sat_p=_f(layer_cfg.get("v_sat_p", 0.0)),
+            ct_beta_n=_f(layer_cfg.get("ct_beta_n", 2.0)),
+            ct_beta_p=_f(layer_cfg.get("ct_beta_p", 2.0)),
+            pf_gamma_n=_f(layer_cfg.get("pf_gamma_n", 0.0)),
+            pf_gamma_p=_f(layer_cfg.get("pf_gamma_p", 0.0)),
         )
         layers.append(LayerSpec(
             name=layer_cfg["name"],

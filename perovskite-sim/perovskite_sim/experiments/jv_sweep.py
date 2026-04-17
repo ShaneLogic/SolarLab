@@ -168,15 +168,35 @@ def compute_current_components(
     n, p, phi, sv = _state_fields(x, y, stack, V_app, mat)
     V_T_dev = mat.V_T_device
 
-    # Electron and hole conduction currents (SG fluxes)
+    # Electron and hole conduction currents (SG fluxes). When the device
+    # enables field-dependent mobility, the terminal J must use the same
+    # field-corrected face diffusivities that assemble_rhs saw — otherwise
+    # the reported current would be inconsistent with the state the solver
+    # integrated, which would break charge conservation at the contact.
     phi_n = phi + mat.chi
     phi_p = phi + mat.chi + mat.Eg
     xi_n = (phi_n[1:] - phi_n[:-1]) / V_T_dev
     xi_p = (phi_p[1:] - phi_p[:-1]) / V_T_dev
     B_pos_n = bernoulli(xi_n); B_neg_n = bernoulli(-xi_n)
     B_pos_p = bernoulli(xi_p); B_neg_p = bernoulli(-xi_p)
-    J_n = Q * mat.D_n_face / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
-    J_p = Q * mat.D_p_face / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
+    if mat.has_field_mobility:
+        from perovskite_sim.physics.field_mobility import apply_field_mobility
+        E_face = -(phi[1:] - phi[:-1]) / dx
+        mu_n_face_base = mat.D_n_face / V_T_dev
+        mu_p_face_base = mat.D_p_face / V_T_dev
+        D_n_face_eff = apply_field_mobility(
+            mu_n_face_base, E_face,
+            mat.v_sat_n_face, mat.ct_beta_n_face, mat.pf_gamma_n_face,
+        ) * V_T_dev
+        D_p_face_eff = apply_field_mobility(
+            mu_p_face_base, E_face,
+            mat.v_sat_p_face, mat.ct_beta_p_face, mat.pf_gamma_p_face,
+        ) * V_T_dev
+    else:
+        D_n_face_eff = mat.D_n_face
+        D_p_face_eff = mat.D_p_face
+    J_n = Q * D_n_face_eff / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
+    J_p = Q * D_p_face_eff / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
 
     # Ion current: Q * F_ion at each face (positive species)
     xi_ion = (phi[1:] - phi[:-1]) / V_T_dev
