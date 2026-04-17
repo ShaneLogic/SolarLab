@@ -38,18 +38,41 @@ def extract_impedance(
     raise NotImplementedError("Full IS requires a DeviceStack argument.")
 
 
+def _linear_detrend(y: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """Remove a linear trend from *y* sampled at times *t*.
+
+    More robust than mean removal: when ion dynamics haven't fully settled,
+    the residual drift is approximately linear over one or two AC periods.
+    Subtracting it prevents the drift from projecting onto the sin/cos
+    lock-in references and corrupting the extracted phasor.
+    """
+    coeffs = np.polyfit(t, y, 1)
+    return y - np.polyval(coeffs, t)
+
+
 def run_impedance(
     stack: DeviceStack,
     frequencies: np.ndarray,
     V_dc: float = 0.9,
     delta_V: float = 0.01,
     N_grid: int = 60,
-    n_cycles: int = 3,
+    n_cycles: int = 5,
+    n_extract: int = 2,
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
 ) -> ImpedanceResult:
-    """Run small-signal impedance at each frequency."""
+    """Run small-signal impedance at each frequency.
+
+    Parameters
+    ----------
+    n_cycles : int
+        Total AC cycles to simulate (includes settling + extraction).
+    n_extract : int
+        Number of *final* cycles used for lock-in extraction. The preceding
+        ``n_cycles - n_extract`` cycles serve as ionic-settling warm-up.
+        Using >1 cycle for extraction reduces noise via averaging.
+    """
     if len(frequencies) == 0:
         raise ValueError("frequencies must be non-empty")
     if np.any(~np.isfinite(frequencies)) or np.any(frequencies <= 0.0):
@@ -60,6 +83,7 @@ def run_impedance(
         raise ValueError(f"delta_V must be positive, got {delta_V}")
     if n_cycles < 1:
         raise ValueError(f"n_cycles must be >= 1, got {n_cycles}")
+    n_extract = min(max(n_extract, 1), n_cycles)
 
     # Grid construction uses electrical layers only; substrate is optical-only.
     elec = electrical_layers(stack)
@@ -114,17 +138,17 @@ def run_impedance(
             J_t[i] = float(np.sum(J_face * dx_faces) / L_total)
             V_prev = V_i
 
-        # Lock-in over the last full cycle. pts_per_cycle samples cover exactly
-        # one period, so sin/cos references integrate to zero on any DC term —
-        # but we still detrend J explicitly to guard against slow drift from
-        # incompletely settled ion dynamics superimposed on the AC perturbation.
-        J_ac = J_t[-pts_per_cycle:]
-        t_mid = 0.5 * (t_eval[-pts_per_cycle - 1:-1] + t_eval[-pts_per_cycle:])
-        I_ac = -(J_ac - J_ac.mean())  # passive sign convention + detrend
-        sin_ref = np.sin(2 * np.pi * f * t_mid)
-        cos_ref = np.cos(2 * np.pi * f * t_mid)
-        I_in = 2.0 * np.mean(I_ac * sin_ref)
-        I_quad = 2.0 * np.mean(I_ac * cos_ref)
+        # Lock-in over the last n_extract cycles.  Using multiple cycles
+        # averages out residual transient noise; linear detrend removes any
+        # slow ionic drift that the settling cycles didn't fully absorb.
+        n_extract_pts = n_extract * pts_per_cycle
+        J_ext = J_t[-n_extract_pts:]
+        t_ext = 0.5 * (t_eval[-n_extract_pts - 1:-1] + t_eval[-n_extract_pts:])
+        I_ext = -_linear_detrend(J_ext, t_ext)   # passive sign + linear detrend
+        sin_ref = np.sin(2 * np.pi * f * t_ext)
+        cos_ref = np.cos(2 * np.pi * f * t_ext)
+        I_in = 2.0 * np.mean(I_ext * sin_ref)
+        I_quad = 2.0 * np.mean(I_ext * cos_ref)
 
         # Excitation V(t) = δV·sin(ωt) ⇒ V̂ = δV (imag-part phasor convention,
         # V(t) = Im[V̂ e^{jωt}]). For I(t) = I_in·sin + I_quad·cos,
