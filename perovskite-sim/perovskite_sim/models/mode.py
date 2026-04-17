@@ -40,6 +40,7 @@ class SimulationMode:
     use_dual_ions: bool = True
     use_trap_profile: bool = True
     use_temperature_scaling: bool = True
+    use_photon_recycling: bool = True
 
 
 LEGACY = SimulationMode(
@@ -49,6 +50,7 @@ LEGACY = SimulationMode(
     use_dual_ions=False,
     use_trap_profile=False,
     use_temperature_scaling=False,
+    use_photon_recycling=False,
 )
 
 FAST = SimulationMode(
@@ -58,6 +60,7 @@ FAST = SimulationMode(
     use_dual_ions=False,
     use_trap_profile=False,
     use_temperature_scaling=False,
+    use_photon_recycling=False,
 )
 
 FULL = SimulationMode(
@@ -67,6 +70,7 @@ FULL = SimulationMode(
     use_dual_ions=True,
     use_trap_profile=True,
     use_temperature_scaling=True,
+    use_photon_recycling=True,
 )
 
 

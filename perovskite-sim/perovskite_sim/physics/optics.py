@@ -378,7 +378,8 @@ def tmm_generation(
     layer_boundaries: np.ndarray,
     n_ambient: float = 1.0,
     n_substrate: float = 1.0,
-) -> np.ndarray:
+    return_absorbance: bool = False,
+):
     """Compute position-resolved generation rate G(x) [m^-3 s^-1].
 
     Integrates the absorbed spectral photon flux over wavelength:
@@ -391,9 +392,13 @@ def tmm_generation(
         x: shape (N,) spatial grid [m]
         layer_boundaries: shape (n_layers + 1,) cumulative layer boundaries [m]
         n_ambient, n_substrate: bounding media refractive indices
+        return_absorbance: if True, also return the spectral absorption
+            rate ``A(x, lambda)`` [m^-1] of shape (N, n_wl). Used by the
+            photon-recycling layer to estimate the escape probability.
 
     Returns:
-        G: shape (N,) — generation rate [m^-3 s^-1]
+        G: shape (N,) — generation rate [m^-3 s^-1]; or ``(G, A)`` if
+        ``return_absorbance`` is True.
     """
     A = tmm_absorption_profile(
         layers, wavelengths, x, layer_boundaries,
@@ -402,9 +407,10 @@ def tmm_generation(
     # A: (N, n_wl), spectral_flux: (n_wl,)
     # Integrate: G(x) = integral A(x, lam) * Phi(lam) d_lam
     # Using trapezoidal rule over wavelength
-    d_lam = np.diff(wavelengths)
     integrand = A * spectral_flux[None, :]  # (N, n_wl)
     G = np.trapezoid(integrand, wavelengths, axis=1)
+    if return_absorbance:
+        return G, A
     return G
 
 
