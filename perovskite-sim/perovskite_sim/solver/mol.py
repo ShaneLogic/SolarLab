@@ -143,7 +143,8 @@ def _compute_tmm_generation(
     n_wavelengths: int = 200,
     lam_min: float = 300.0,
     lam_max: float = 1000.0,
-) -> np.ndarray | None:
+    return_absorbance: bool = False,
+):
     """Compute TMM generation profile if any layer has optical material data.
 
     Returns G(x) [m^-3 s^-1] or None if no layers have optical data.
@@ -156,12 +157,19 @@ def _compute_tmm_generation(
     cumulative substrate thickness before querying ``tmm_generation``;
     ``tmm_absorption_profile`` routes each query to the right layer via
     ``layer_boundaries``.
+
+    When ``return_absorbance`` is True the absorption profile ``A(x, λ)``
+    and the per-layer refractive-index arrays are returned alongside
+    ``G`` so that callers (e.g. the photon-recycling layer) can compute
+    per-layer escape probabilities without rebuilding the TMM stack.
     """
     has_optical = any(
         layer.params is not None and layer.params.optical_material is not None
         for layer in stack.layers
     )
     if not has_optical:
+        if return_absorbance:
+            return None, None
         return None
 
     from perovskite_sim.physics.optics import TMMLayer, tmm_generation
@@ -209,6 +217,19 @@ def _compute_tmm_generation(
     )
     x_tmm = x + substrate_offset
 
+    if return_absorbance:
+        G, A_xl = tmm_generation(
+            tmm_layers, wavelengths_m, spectral_flux, x_tmm, boundaries,
+            return_absorbance=True,
+        )
+        tmm_info = {
+            "wavelengths_m": wavelengths_m,
+            "tmm_layers": tmm_layers,
+            "boundaries": boundaries,
+            "A_xl": A_xl,
+            "substrate_offset": substrate_offset,
+        }
+        return G, tmm_info
     G = tmm_generation(
         tmm_layers, wavelengths_m, spectral_flux, x_tmm, boundaries,
     )
@@ -392,10 +413,81 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
     # TMM optical generation: computed when any layer has optical data and
     # the active mode enables TMM. Legacy/fast fall back to Beer-Lambert.
+    # When photon recycling is also active we capture the spectral
+    # absorbance A(x, λ) returned by TMM so we can derive a per-absorber
+    # escape probability and scale B_rad by (1 − P_esc) in place.
     if sim_mode.use_tmm_optics:
-        G_optical = _compute_tmm_generation(x, stack)
+        if sim_mode.use_photon_recycling:
+            G_optical, tmm_info = _compute_tmm_generation(
+                x, stack, return_absorbance=True,
+            )
+        else:
+            G_optical = _compute_tmm_generation(x, stack)
+            tmm_info = None
     else:
         G_optical = None
+        tmm_info = None
+
+    # Photon recycling: scale B_rad(x) by (1 − P_esc) on absorber layers.
+    # Requires TMM on (for A(x, λ)) and an absorber layer with a non-zero
+    # band gap. Non-absorber layers, and absorbers lacking band-gap data,
+    # are left untouched.
+    if (
+        sim_mode.use_photon_recycling
+        and tmm_info is not None
+        and G_optical is not None
+    ):
+        from perovskite_sim.physics.photon_recycling import (
+            compute_p_esc,
+            wavelength_at_gap,
+        )
+        wavelengths_m = tmm_info["wavelengths_m"]
+        tmm_layers_full = tmm_info["tmm_layers"]
+        # Absorber layers live inside the electrical stack; TMM indexes
+        # them against the *full* stack, so shift by the substrate prefix
+        # count to get the TMM layer index.
+        substrate_prefix = 0
+        for lyr in stack.layers:
+            if lyr.role == "substrate":
+                substrate_prefix += 1
+            else:
+                break
+
+        offset_pr = 0.0
+        for i_elec, layer in enumerate(elec_layers):
+            if layer.role == "absorber":
+                p = layer.params
+                Eg_eV = float(p.Eg) if p is not None else 0.0
+                if Eg_eV > 0.0:
+                    mask_abs = (
+                        (x >= offset_pr - 1e-12)
+                        & (x <= offset_pr + layer.thickness + 1e-12)
+                    )
+                    if np.any(mask_abs):
+                        lam_gap = wavelength_at_gap(Eg_eV)
+                        tmm_idx = i_elec + substrate_prefix
+                        n_lambda = tmm_layers_full[tmm_idx].n
+                        k_lambda = tmm_layers_full[tmm_idx].k
+                        n_at_gap = float(
+                            np.interp(lam_gap, wavelengths_m, n_lambda)
+                        )
+                        k_at_gap = float(
+                            np.interp(lam_gap, wavelengths_m, k_lambda)
+                        )
+                        # α = 4π k / λ  [m⁻¹]
+                        alpha_gap = 4.0 * np.pi * k_at_gap / lam_gap
+                        P_esc = compute_p_esc(
+                            alpha_gap=alpha_gap,
+                            thickness=float(layer.thickness),
+                            n_at_gap=n_at_gap,
+                        )
+                        # Only the fraction P_esc of emitted photons
+                        # leaves the device; the rest is reabsorbed and
+                        # regenerates carriers, so the net radiative
+                        # loss rate scales by P_esc. (Yablonovitch 1982;
+                        # see physics/photon_recycling.py for details.)
+                        B_rad[mask_abs] = B_rad[mask_abs] * P_esc
+            offset_pr += layer.thickness
 
     return MaterialArrays(
         eps_r=eps_r,
