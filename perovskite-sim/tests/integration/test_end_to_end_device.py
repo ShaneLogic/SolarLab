@@ -23,7 +23,11 @@ def test_end_to_end_jv_response_is_finite_and_reasonable():
 
     metrics = result.metrics_fwd
     assert 100.0 < metrics.J_sc < 800.0
-    assert 0.7 < metrics.V_oc < 1.1
+    # Phase 1 target: V_oc ≈ 0.91 V on nip_MAPbI3 (legacy, V_bi_eff falls back
+    # to stack.V_bi = 1.1 V). Tightened from the pre-Phase-1 [0.7, 1.1] range
+    # now that V_bi_eff propagation is pinned; see test_jv_regression.py's
+    # test_voc_in_range for the same bound on the higher-resolution slow lane.
+    assert 0.80 < metrics.V_oc < 1.05
     assert 0.5 < metrics.FF < 0.95
     assert 0.1 < metrics.PCE < 0.4
     assert abs(result.hysteresis_index) < 0.2

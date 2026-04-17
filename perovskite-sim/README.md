@@ -258,11 +258,44 @@ falls back to the dark equilibrium.
 
 ### Built-in Potential
 
-`DeviceStack.compute_V_bi()` derives the built-in potential from the
-Fermi-level difference across the electrical layers (accounting for $\chi$,
-$E_g$, doping, and $n_i$). When all layers have `chi = Eg = 0`
-(homojunction/legacy configs), it falls back to the manual `V_bi` field
-(default: 1.1 V).
+The simulator carries two related built-in potentials:
+
+- **`stack.V_bi`** — manual field read verbatim from the YAML, used as the
+  Poisson Dirichlet boundary condition $\varphi(L) = V_{\text{bi}} - V_{\text{app}}$.
+  Kept as a free parameter to match IonMonger's degenerate-doping
+  convention; changing this field shifts the Poisson BC directly.
+- **`stack.compute_V_bi()` / `MaterialArrays.V_bi_eff`** — derived from the
+  Fermi-level difference across the electrical layers (accounting for
+  $\chi$, $E_g$, doping, and $n_i$). Cached on `MaterialArrays` as
+  `V_bi_eff` and used for (a) the default upper voltage of `run_jv_sweep`
+  (see below), (b) future band-diagram rendering. When all electrical
+  layers have `chi = Eg = 0` (homojunction / legacy configs),
+  `compute_V_bi()` falls back to `stack.V_bi`.
+
+Note that `V_bi_eff` is **not** substituted into the Poisson BC — doing so
+would change the IonMonger benchmark targets and requires a separate
+validation pass.
+
+<br>
+
+### J-V Sweep Voltage Range
+
+`run_jv_sweep(stack, V_max=None, ...)` opens the forward sweep to
+
+$$V_{\text{upper}} = \max\bigl(V_{\text{bi,eff}} \cdot 1.3,\; 1.4\ \text{V}\bigr)$$
+
+when `V_max` is left at its default. The 1.3× headroom captures the
+minority-quasi-Fermi-level rise beyond $V_{\text{bi,eff}}$ under strong
+illumination; the 1.4 V floor is a backstop for stacks whose band-offset
+$V_{\text{bi,eff}}$ is below ~1.08 V (e.g. the IonMonger SiO₂/MAPbI₃/TiO₂
+benchmark, where $V_{\text{bi,eff}} \approx 0.86$ V). Without this
+adaptive default, heterostacks whose $V_{\text{oc}}$ exceeds the manual
+`stack.V_bi` would silently clip before J = 0 and `compute_metrics` would
+return $V_{\text{oc}} = V_{\text{max}}$. The formula lives in the private
+helper `_default_V_max` and is unit-tested in
+`tests/unit/experiments/test_jv_vmax.py`.
+
+*Source:* `perovskite_sim/experiments/jv_sweep.py::_default_V_max`
 
 <br>
 

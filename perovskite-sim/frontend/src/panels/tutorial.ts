@@ -78,6 +78,7 @@ export function tutorialHTML(): string {
       <ul>
         <li>Increase <i>N</i><sub>grid</sub> for smoother curves and better convergence near <i>V</i><sub>bi</sub>.</li>
         <li>Lower the scan rate <i>v</i><sub>rate</sub> to suppress hysteresis caused purely by scan speed.</li>
+        <li>The J&ndash;V sweep's <i>V</i><sub>max</sub> field is the upper voltage of the forward leg; if your stack's <i>V</i><sub>OC</sub> exceeds it the curve never crosses <i>J</i> = 0 and the reported <i>V</i><sub>OC</sub> will be clipped to <i>V</i><sub>max</sub>. The default 1.4&nbsp;V covers MAPbI<sub>3</sub>-like stacks; the Python API picks <code>max(<i>V</i><sub>bi,&nbsp;eff</sub>&times;1.3, 1.4&nbsp;V)</code> automatically when called with <code>V_max=None</code>.</li>
         <li>For non-perovskite materials set <i>D</i><sub>ion</sub> = 0 in every layer — the ion equations stay well-posed but integrate nothing.</li>
         <li>Tighten the tolerances <i>r</i><sub>tol</sub> / <i>a</i><sub>tol</sub> only if the curve shows unphysical kinks. The solver's Radau step cap already guards against the near-singular-Jacobian failure mode at flat-band.</li>
         <li>To reproduce IonMonger numbers exactly, switch Mode to <b>Legacy</b>. <i>V</i><sub>OC</sub> on Full is typically ≈ 0.1 V higher than Legacy because the thermionic emission cap reshapes collection at the HTL/absorber interface.</li>

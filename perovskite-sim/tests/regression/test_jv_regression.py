@@ -36,8 +36,70 @@ def test_jsc_positive(nip_result):
 
 
 def test_voc_in_range(nip_result):
-    # MAPbI3 n-i-p: V_oc ∈ [0.8, 1.3] V
-    assert 0.5 < nip_result.metrics_fwd.V_oc < 1.5
+    """MAPbI3 n-i-p (legacy, chi=Eg=0): recombination-limited V_oc ≈ 0.91 V.
+
+    Observed on the reference Mac run: V_oc_fwd ≈ V_oc_rev ≈ 0.9110 V with
+    V_bi_eff = stack.V_bi = 1.100 V (legacy fallback, no band-offset physics).
+    The ratio V_oc / V_bi ≈ 0.83 is what the default SRH lifetime in the
+    YAML gives; a collapse to < 0.8 V or an inflation to > 1.05 V would
+    signal either a tau/ni misread, a contact-BC regression, or a Radau
+    flat-band spike that compute_metrics is interpolating through.
+    """
+    V_oc_fwd = nip_result.metrics_fwd.V_oc
+    V_oc_rev = nip_result.metrics_rev.V_oc
+    assert 0.80 < V_oc_fwd < 1.05, (
+        f"nip_MAPbI3 forward V_oc out of expected range: {V_oc_fwd:.4f} V "
+        f"(expected ≈ 0.91 V, allowed [0.80, 1.05])"
+    )
+    assert 0.80 < V_oc_rev < 1.05, (
+        f"nip_MAPbI3 reverse V_oc out of expected range: {V_oc_rev:.4f} V "
+        f"(expected ≈ 0.91 V, allowed [0.80, 1.05])"
+    )
+
+
+def test_ionmonger_voc_in_range(ionmonger_result):
+    """IonMonger heterostack: band-offset V_oc ≈ 1.19 V, well above V_bi_eff ≈ 0.86 V.
+
+    The Fermi-level-derived V_bi_eff bounds the bulk band bending, but
+    band-offset contacts pin the quasi-Fermi-levels such that the absorber
+    QFL splitting can exceed V_bi_eff (ceiling is E_g/q ≈ 1.6 V for MAPbI3).
+    Observed on the reference Mac run: V_oc_fwd ≈ V_oc_rev ≈ 1.192 V.
+    If V_oc collapses below 1.00 V, likely culprits are (a) an over-eager
+    thermionic-emission flux cap shorting the contacts, (b) a regression
+    in DeviceStack.compute_V_bi() feeding a too-low V_max and clipping the
+    sweep before the crossing. If V_oc inflates above 1.35 V, the sweep
+    may be running into V_max and compute_metrics is extrapolating.
+    """
+    V_oc_fwd = ionmonger_result.metrics_fwd.V_oc
+    V_oc_rev = ionmonger_result.metrics_rev.V_oc
+    assert 1.00 < V_oc_fwd < 1.35, (
+        f"ionmonger forward V_oc out of expected range: {V_oc_fwd:.4f} V "
+        f"(expected ≈ 1.19 V, allowed [1.00, 1.35])"
+    )
+    assert 1.00 < V_oc_rev < 1.35, (
+        f"ionmonger reverse V_oc out of expected range: {V_oc_rev:.4f} V "
+        f"(expected ≈ 1.19 V, allowed [1.00, 1.35])"
+    )
+
+
+def test_ionmonger_voc_exceeds_vbi_eff(ionmonger_result):
+    """Band-offset V_oc must exceed V_bi_eff for this heterostack.
+
+    This pins the Phase 1 intent: V_bi_eff is a bulk band-bending
+    measure, not an upper bound on QFL splitting. If a future refactor
+    accidentally re-clamps V_oc to V_bi_eff (e.g. by propagating V_bi_eff
+    into the Poisson BC without equally updating the QFL handling), this
+    test fails loudly.
+    """
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    V_bi_eff = stack.compute_V_bi()
+    V_oc = ionmonger_result.metrics_fwd.V_oc
+    assert V_oc > V_bi_eff + 0.1, (
+        f"ionmonger V_oc ({V_oc:.4f} V) failed to exceed V_bi_eff "
+        f"({V_bi_eff:.4f} V) by the 0.1 V margin expected for a working "
+        "band-offset stack — likely a QFL-clipping regression."
+    )
 
 
 def test_ff_reasonable(nip_result):

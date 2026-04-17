@@ -395,6 +395,33 @@ def _grid_node_count(stack: DeviceStack, N_grid: int) -> int:
     return 1 + n_elec * n_per
 
 
+def _default_V_max(stack: DeviceStack) -> float:
+    """Default upper voltage for a J-V sweep when the caller passes V_max=None.
+
+    Rationale
+    ---------
+    V_oc on heterostacks is bounded above by the band-offset-aware built-in
+    potential V_bi_eff (``stack.compute_V_bi()``), which can exceed the manual
+    ``stack.V_bi`` field configured in legacy YAMLs. If we opened the sweep
+    only to the manual V_bi, forward sweeps on high-V_oc stacks (MAPbI3 etc.)
+    would never cross J = 0 and ``compute_metrics`` would return V_oc = V_max.
+
+    Formula:
+        V_upper = max(V_bi_eff * 1.3, 1.4)
+
+    The 1.3 headroom captures the minority-quasi-Fermi-level rise beyond V_bi
+    under strong illumination; the 1.4 V floor is a backstop for legacy configs
+    where chi/Eg are not set (so compute_V_bi falls back to the manual V_bi,
+    which for a MAPbI3-like stack can be ~1.05 V — 1.3× that is only 1.37 V,
+    uncomfortably close to the observed 1.05-1.15 V V_oc range).
+
+    This is the single source of truth for the default V_max and is unit-tested
+    directly so the formula can be audited without running a full sweep.
+    """
+    V_bi_eff = stack.compute_V_bi()
+    return max(V_bi_eff * 1.3, 1.4)
+
+
 def run_jv_sweep(
     stack: DeviceStack,
     N_grid: int = 100,
@@ -543,8 +570,7 @@ def run_jv_sweep(
             )
         return V_arr, J_arr, y, snaps, decomp
 
-    V_bi_eff = stack.compute_V_bi()
-    V_upper = max(V_bi_eff * 1.3, 1.4) if V_max is None else V_max
+    V_upper = _default_V_max(stack) if V_max is None else V_max
     # Forward sweep: dark equilibrium → short circuit → open circuit
     V_fwd, J_fwd, y_oc, snaps_fwd, decomp_fwd = _sweep(0.0, V_upper, y_eq, "jv_forward")
     # Reverse sweep: continue from light-soaked OC state → short circuit

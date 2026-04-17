@@ -18,6 +18,14 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
         ${numField('jv-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
         ${checkField('jv-dark', 'Dark J–V (no illumination)', false)}
       </div>
+      <p>
+        <b>V<sub>max</sub></b> is the upper voltage of the forward sweep.
+        Leave it at the default (1.4&nbsp;V) unless V<sub>OC</sub> on your
+        stack exceeds that; the Python API picks
+        <code>max(V<sub>bi,eff</sub>&times;1.3, 1.4&nbsp;V)</code> when called
+        with <code>V_max=None</code>, but the UI requires an explicit number.
+        If the forward curve never crosses J&nbsp;=&nbsp;0, raise V<sub>max</sub>.
+      </p>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jv">Run J-V Sweep</button>
         <span class="status" id="status-jv"></span>
