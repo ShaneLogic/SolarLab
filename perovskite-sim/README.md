@@ -356,3 +356,121 @@ from perovskite_sim.experiments.tpv import run_tpv
 result = run_tpv(stack, N_grid=80, delta_G_frac=0.05, t_pulse=1e-6, t_decay=50e-6)
 print(f"V_oc: {result.V_oc:.4f} V, tau: {result.tau:.3e} s")
 ```
+
+<br>
+
+## Phase 2 Characterisation Experiments
+
+A family of four higher-level experiments that wrap the core
+drift-diffusion solver and produce characterisation-grade fits —
+dark-diode ideality, intensity-dependent $V_{\text{oc}}$, wavelength-resolved
+quantum efficiency, and capacitance-voltage Mott-Schottky analysis.
+
+Each wrapper returns a frozen dataclass that carries both the raw sweep
+and the derived fit. All four accept an optional
+`progress=lambda stage, k, n, msg: ...` callback so they plug into the
+backend's SSE progress stream unchanged.
+
+### Dark J-V with ideality + $J_0$
+
+```python
+from perovskite_sim.experiments.dark_jv import run_dark_jv
+
+r = run_dark_jv(stack, V_max=1.2, n_points=60)
+# r.V, r.J                      — dark forward sweep (G = 0 everywhere)
+# r.n_ideality                  — diode ideality factor from log|J| vs V
+# r.J_0                         — saturation current density [A/m²]
+# r.V_fit_lo, r.V_fit_hi        — auto-selected exponential-region window
+```
+
+The fit window is chosen as the voltage range where $\log |J(V)|$ is
+most linear — the selector minimises the mean $|d^2 \log|J| / dV^2|$ on a
+6-point sliding window, then grows outward while the neighbour residual
+stays within 10× of that minimum. This rejects the sub-turn-on leakage
+tail (where the $-1$ in $J_0 (e^{V/nV_T} - 1)$ dominates) and the
+high-V series-resistance roll-off.
+
+*Source:* `perovskite_sim/experiments/dark_jv.py`
+
+<br>
+
+### Suns–$V_{\text{oc}}$ with pseudo-JV
+
+```python
+from perovskite_sim.experiments.suns_voc import run_suns_voc
+
+r = run_suns_voc(stack, suns_levels=(0.01, 0.1, 1.0, 5.0, 10.0))
+# r.suns, r.V_oc, r.J_sc        — per-intensity sweep
+# r.J_pseudo_V, r.J_pseudo_J    — Sinton pseudo-JV: V = V_oc(X),
+#                                                    J = J_sc_ref − J_sc(X)
+# r.pseudo_FF                   — series-resistance-free fill factor
+```
+
+At each illumination level the wrapper scales the cached 1-sun
+`G_optical` profile, solves for the illuminated steady state at $V = 0$
+(to read $J_{\text{sc}}$), then bisects for $V_{\text{oc}}$. The resulting
+$V_{\text{oc}}(X)$ vs $\ln X$ slope gives the effective ideality factor;
+the constructed pseudo-JV curve (Sinton convention) is immune to
+series resistance because every point is measured at $V_{\text{oc}}$ where
+$J = 0$.
+
+*Source:* `perovskite_sim/experiments/suns_voc.py`
+
+<br>
+
+### EQE / IPCE
+
+```python
+import numpy as np
+from perovskite_sim.experiments.eqe import compute_eqe
+
+wavelengths = np.linspace(350.0, 850.0, 20)
+r = compute_eqe(stack, wavelengths_nm=wavelengths)
+# r.EQE                         — per-λ external quantum efficiency
+# r.J_sc_per_lambda             — J_sc at each probe wavelength [A/m²]
+# r.J_sc_integrated             — q · ∫ EQE(λ) · Φ_AM15G(λ) dλ [A/m²]
+```
+
+At each wavelength, the wrapper builds a single-wavelength TMM
+generation profile (absorption $A(x; \lambda)$ scaled by
+`Phi_incident`), solves the drift-diffusion problem at $V = 0$ under
+that monochromatic source, and reads $\text{EQE}(\lambda) = |J_{\text{sc}}(\lambda)| / (q \cdot \Phi_{\text{inc}})$.
+A `ValueError` is raised if no layer carries tabulated `optical_material`
+data — Beer-Lambert-only stacks cannot produce a wavelength-resolved
+EQE. The integrated $J_{\text{sc}}$ cross-checks against a full-spectrum
+TMM run to within ~25 % on a 15-point wavelength grid.
+
+*Source:* `perovskite_sim/experiments/eqe.py`
+
+<br>
+
+### Mott-Schottky C-V
+
+```python
+import numpy as np
+from perovskite_sim.experiments.mott_schottky import run_mott_schottky
+
+r = run_mott_schottky(
+    stack,
+    V_range=np.linspace(-0.3, 0.4, 8),
+    frequency=1e5,       # 100 kHz — above ionic relaxation, below RC roll-off
+)
+# r.V, r.C, r.one_over_C2       — dark C-V sweep [F/m² and m⁴/F²]
+# r.V_bi_fit                    — built-in voltage from 1/C² V-intercept
+# r.N_eff_fit                   — ionised-dopant density from slope [m⁻³]
+# r.V_fit_lo, r.V_fit_hi        — auto-selected linear window
+# r.eps_r_used                  — ε_r taken from the 'absorber'-role layer
+```
+
+A thin wrapper over `run_impedance` that drives a single AC excitation
+at `frequency` at each DC bias and reads capacitance off as
+$C = |\text{Im}(1/Z)| / \omega$. Runs dark
+(`illuminated=False`) so photogenerated carriers do not screen the
+depletion capacitance. The linear-fit helper finds the widest
+contiguous $(V, 1/C^2)$ window whose RMS residual is within 10 % of its
+ordinate span — rejects the low-bias fully-depleted tail and the
+high-bias injection tail without a hand-tuned cutoff. On a clean
+Mott-Schottky curve the synthetic-data regression tests pin recovery
+of $V_{\text{bi}}$ to $<0.01$ V and $N$ to $<0.02$ decades.
+
+*Source:* `perovskite_sim/experiments/mott_schottky.py`
