@@ -76,6 +76,7 @@ export function algorithmHTML(): string {
       <p>Each layer carries an electron affinity <i>χ</i> and band gap <i>E</i><sub>g</sub>. The built-in potential is derived from the Fermi-level difference across the stack:</p>
       <pre class="eqn">
 <i>V</i><sub>bi, eff</sub>  =  <i>E</i><sub>F, left</sub> &minus; <i>E</i><sub>F, right</sub></pre>
+      <p>The Poisson Dirichlet BC <i>φ</i>(<i>L</i>) = <i>V</i><sub>bi</sub> &minus; <i>V</i><sub>app</sub> keeps the manual <code>stack.V_bi</code> field to match IonMonger's degenerate-doping convention; <i>V</i><sub>bi,&nbsp;eff</sub> is instead fed into the default J&ndash;V sweep upper voltage <code>max(<i>V</i><sub>bi,&nbsp;eff</sub>&times;1.3, 1.4&nbsp;V)</code>, so forward sweeps on heterostacks whose <i>V</i><sub>OC</sub> exceeds <code>stack.V_bi</code> still cross <i>J</i> = 0.</p>
       <p>At internal heterointerfaces where |Δ<i>E</i><sub>c</sub>| or |Δ<i>E</i><sub>v</sub>| exceeds 0.05 eV, the Scharfetter&ndash;Gummel flux is capped to the Richardson&ndash;Dushman thermionic-emission limit:</p>
       <pre class="eqn">
 <i>J</i><sub>TE</sub>  =  <i>A</i><sup>&lowast;</sup> <i>T</i><sup>2</sup> &middot; exp(&minus; <i>q</i> Δ<i>E</i> / <i>k</i><sub>B</sub><i>T</i>)</pre>
