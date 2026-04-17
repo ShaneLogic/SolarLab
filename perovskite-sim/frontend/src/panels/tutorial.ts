@@ -40,6 +40,16 @@ export function tutorialHTML(): string {
         <li><b>TPV:</b> the decay time &tau; is the effective carrier lifetime at open circuit. Shorter &tau; indicates faster recombination. Compare across device configurations or degradation states to track recombination evolution.</li>
       </ul>
 
+      <h4>Characterisation experiments (Python API)</h4>
+      <p>Four higher-level wrappers on top of the solver deliver the fits that experimentalists read off of their measured data. They currently run from a notebook or script, not from this UI:</p>
+      <ul>
+        <li><b>Dark J&ndash;V fit</b> &mdash; <code>run_dark_jv(stack, V_max, n_points)</code> runs a G=0 forward sweep and extracts diode ideality <i>n</i> and saturation current <i>J</i><sub>0</sub> from the log|<i>J</i>| vs <i>V</i> slope. Auto-selects the exponential-regime window (rejects sub-turn-on leakage and high-<i>V</i> series-resistance roll-off).</li>
+        <li><b>Suns&ndash;V<sub>oc</sub></b> &mdash; <code>run_suns_voc(stack, suns_levels)</code> sweeps light intensity, bisects for <i>V</i><sub>oc</sub>(<i>X</i>) at each level, and builds a Sinton pseudo-JV curve immune to series resistance. Reports <b>pseudo-FF</b> and the <i>V</i><sub>oc</sub>-vs-ln(<i>X</i>) slope used as a recombination-ideality proxy.</li>
+        <li><b>EQE / IPCE</b> &mdash; <code>compute_eqe(stack, wavelengths_nm)</code> runs a monochromatic TMM + drift&ndash;diffusion at each wavelength and returns EQE(&lambda;). Integrating against AM1.5G gives <i>J</i><sub>sc</sub>; cross-checked against the full-spectrum sweep to within ~25 %. Requires a TMM-enabled preset (<code>optical_material</code> on the absorber), e.g. <code>nip_MAPbI3_tmm</code>.</li>
+        <li><b>Mott&ndash;Schottky C&ndash;V</b> &mdash; <code>run_mott_schottky(stack, V_range, frequency)</code> runs a dark C&ndash;V sweep (<code>illuminated=False</code> on the impedance path) and fits 1/<i>C</i><sup>2</sup> vs <i>V</i> to extract the built-in voltage <i>V</i><sub>bi</sub> (intercept) and the net ionised density <i>N</i><sub>eff</sub> (slope). Includes an adaptive window selector that rejects the fully-depleted and injection tails.</li>
+      </ul>
+      <p>See the <code>README.md</code> under <em>Phase 2 Characterisation Experiments</em> for signatures and the physics of each fit.</p>
+
       <h4>Optical generation: TMM vs Beer&ndash;Lambert</h4>
       <p>Generation of electron&ndash;hole pairs <i>G</i>(<i>x</i>) is the source term that drives the drift&ndash;diffusion equations. The simulator supports two optical models:</p>
       <ul>
