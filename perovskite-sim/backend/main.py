@@ -30,6 +30,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
+from perovskite_sim.experiments import dark_jv as dark_jv_exp
+from perovskite_sim.experiments import suns_voc as suns_voc_exp
+from perovskite_sim.experiments import eqe as eqe_exp
+from perovskite_sim.experiments import mott_schottky as ms_exp
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack, LayerSpec
 from perovskite_sim.models.mode import resolve_mode
@@ -510,7 +514,8 @@ class DegRequest(BaseModel):
 
 
 class JobRequest(BaseModel):
-    kind: str  # "jv" | "impedance" | "degradation" | "tandem"
+    kind: str  # "jv" | "impedance" | "degradation" | "tpv" | "current_decomp" | "spatial"
+               # | "dark_jv" | "suns_voc" | "eqe" | "mott_schottky" | "tandem"
     config_path: Optional[str] = None
     device: Optional[dict] = None
     params: dict = {}
@@ -666,6 +671,80 @@ def start_job(req: JobRequest):
                 t_pulse=float(p.get("t_pulse", 1e-6)),
                 t_decay=float(p.get("t_decay", 50e-6)),
                 n_points=int(p.get("n_points", 200)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "dark_jv":
+        def _run(reporter: ProgressReporter) -> dict:
+            result = dark_jv_exp.run_dark_jv(
+                stack,
+                V_max=float(p.get("V_max", 1.2)),
+                n_points=int(p.get("n_points", 60)),
+                N_grid=int(p.get("N_grid", 60)),
+                v_rate=float(p.get("v_rate", 1.0)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "suns_voc":
+        def _run(reporter: ProgressReporter) -> dict:
+            suns_raw = p.get("suns_levels")
+            if suns_raw is None:
+                suns_levels = suns_voc_exp.DEFAULT_SUNS
+            else:
+                suns_levels = tuple(float(x) for x in suns_raw)
+            result = suns_voc_exp.run_suns_voc(
+                stack,
+                suns_levels=suns_levels,
+                N_grid=int(p.get("N_grid", 60)),
+                t_settle=float(p.get("t_settle", 1e-3)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "eqe":
+        def _run(reporter: ProgressReporter) -> dict:
+            lam_min = float(p.get("lambda_min_nm", 300.0))
+            lam_max = float(p.get("lambda_max_nm", 1000.0))
+            n_lam = int(p.get("n_lambda", 29))
+            if n_lam < 2 or lam_max <= lam_min:
+                raise ValueError(
+                    "EQE sweep needs n_lambda >= 2 and lambda_max > lambda_min"
+                )
+            wavelengths_nm = np.linspace(lam_min, lam_max, n_lam)
+            result = eqe_exp.compute_eqe(
+                stack,
+                wavelengths_nm=wavelengths_nm,
+                Phi_incident=float(p.get("Phi_incident", 1e20)),
+                N_grid=int(p.get("N_grid", 60)),
+                t_settle=float(p.get("t_settle", 1e-3)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "mott_schottky":
+        def _run(reporter: ProgressReporter) -> dict:
+            V_lo = float(p.get("V_lo", -0.3))
+            V_hi = float(p.get("V_hi", 0.4))
+            n_pts = int(p.get("n_points", 8))
+            if n_pts < 3 or V_hi <= V_lo:
+                raise ValueError(
+                    "Mott-Schottky needs n_points >= 3 and V_hi > V_lo"
+                )
+            V_range = np.linspace(V_lo, V_hi, n_pts)
+            result = ms_exp.run_mott_schottky(
+                stack,
+                V_range=V_range,
+                frequency=float(p.get("frequency", 1e5)),
+                delta_V=float(p.get("delta_V", 0.01)),
+                N_grid=int(p.get("N_grid", 40)),
+                n_cycles=int(p.get("n_cycles", 5)),
+                n_extract=int(p.get("n_extract", 2)),
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

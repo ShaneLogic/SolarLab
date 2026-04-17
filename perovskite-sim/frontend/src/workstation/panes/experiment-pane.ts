@@ -11,6 +11,10 @@ import { mountDegradationPane } from './degradation-pane'
 import { mountTPVPane } from './tpv-pane'
 import { mountCurrentDecompPane } from './current-decomp-pane'
 import { mountSpatialPane } from './spatial-pane'
+import { mountDarkJVPane } from './dark-jv-pane'
+import { mountSunsVocPane } from './suns-voc-pane'
+import { mountEQEPane } from './eqe-pane'
+import { mountMottSchottkyPane } from './mott-schottky-pane'
 
 export interface ExperimentPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -65,6 +69,22 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
     {
       kind: 'spatial', label: 'Spatial Profiles',
       mount: (el) => mountSpatialPane(el, paneOpts('spatial')),
+    },
+    {
+      kind: 'dark_jv', label: 'Dark J\u2013V',
+      mount: (el) => mountDarkJVPane(el, paneOpts('dark_jv')),
+    },
+    {
+      kind: 'suns_voc', label: 'Suns\u2013V\u2092c',
+      mount: (el) => mountSunsVocPane(el, paneOpts('suns_voc')),
+    },
+    {
+      kind: 'eqe', label: 'EQE / IPCE',
+      mount: (el) => mountEQEPane(el, paneOpts('eqe')),
+    },
+    {
+      kind: 'mott_schottky', label: 'Mott\u2013Schottky (C\u2013V)',
+      mount: (el) => mountMottSchottkyPane(el, paneOpts('mott_schottky')),
     },
   ]
 

@@ -2,7 +2,18 @@ import Plotly from 'plotly.js-basic-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../../plot-theme'
-import type { JVResult, ISResult, DegResult, TPVResult, CurrentDecompResult, SpatialProfileResult } from '../../types'
+import type {
+  JVResult,
+  ISResult,
+  DegResult,
+  TPVResult,
+  CurrentDecompResult,
+  SpatialProfileResult,
+  DarkJVResult,
+  SunsVocResult,
+  EQEResult,
+  MottSchottkyResult,
+} from '../../types'
 
 export interface MainPlotHandle {
   update(ws: Workspace): void
@@ -56,6 +67,18 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           return
         case 'spatial':
           renderSpatialProfiles(plotEl, run.result.data)
+          return
+        case 'dark_jv':
+          renderDarkJV(plotEl, run.result.data)
+          return
+        case 'suns_voc':
+          renderSunsVoc(plotEl, run.result.data)
+          return
+        case 'eqe':
+          renderEQE(plotEl, run.result.data)
+          return
+        case 'mott_schottky':
+          renderMottSchottky(plotEl, run.result.data)
           return
       }
     },
@@ -303,5 +326,178 @@ function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
       height: 700,
     },
     plotConfig('spatial_profiles'),
+  )
+}
+
+// ── Dark J-V ────────────────────────────────────────────────────────────────
+
+function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  // Dark forward J-V: conventional sign has J > 0 for forward bias (injection).
+  // The simulator returns A/m^2; display mA/cm^2 on a log axis.
+  const absJ = r.J.map(j => Math.max(Math.abs(j) / 10, 1e-9))
+
+  // Highlight the fit window as a translucent band
+  const shapes: Record<string, unknown>[] = [
+    {
+      type: 'rect', xref: 'x', yref: 'paper',
+      x0: r.V_fit_lo, x1: r.V_fit_hi,
+      y0: 0, y1: 1,
+      fillcolor: 'rgba(99, 102, 241, 0.10)',
+      line: { width: 0 },
+    },
+  ]
+
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.V, y: absJ, name: '|J|',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA\u00b7cm\u207B\u00b2)'), type: 'log' },
+      shapes,
+      annotations: [
+        {
+          x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
+          xanchor: 'left', yanchor: 'top', showarrow: false,
+          text: `n = ${r.n_ideality.toFixed(2)} &nbsp; J<sub>0</sub> = ${r.J_0.toExponential(2)} A\u00b7m\u207B\u00b2 &nbsp; fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
+          font: { size: 12 },
+        },
+      ],
+    }),
+    plotConfig('dark_jv'),
+  )
+}
+
+// ── Suns–V_oc ───────────────────────────────────────────────────────────────
+
+function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+
+  // Left subplot: V_oc vs log(suns).  Right subplot: pseudo J-V.
+  const pseudo_J_mA = r.J_pseudo_J.map(j => j / 10)
+
+  const axBase = baseLayout().xaxis as object
+  const ayBase = baseLayout().yaxis as object
+
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.suns, y: r.V_oc, name: 'V<sub>oc</sub>(suns)',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+        xaxis: 'x', yaxis: 'y',
+      },
+      {
+        x: r.J_pseudo_V, y: pseudo_J_mA, name: 'pseudo J\u2013V',
+        mode: 'lines+markers',
+        line: { color: PALETTE.reverse, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
+        xaxis: 'x2', yaxis: 'y2',
+      },
+    ],
+    {
+      ...baseLayout(),
+      grid: { rows: 1, columns: 2, pattern: 'independent' },
+      xaxis: { ...axBase, title: axisTitle('Suns'), type: 'log', anchor: 'y' },
+      yaxis: { ...ayBase, title: axisTitle('V<sub>oc</sub> (V)'), anchor: 'x' },
+      xaxis2: { ...axBase, title: axisTitle('V (V)'), anchor: 'y2' },
+      yaxis2: { ...ayBase, title: axisTitle('J (mA\u00b7cm\u207B\u00b2)'), anchor: 'x2' },
+      annotations: [
+        {
+          x: 0.98, y: 0.02, xref: 'paper', yref: 'paper',
+          xanchor: 'right', yanchor: 'bottom', showarrow: false,
+          text: `pseudo FF = ${(r.pseudo_FF * 100).toFixed(1)} %`,
+          font: { size: 12 },
+        },
+      ],
+    },
+    plotConfig('suns_voc'),
+  )
+}
+
+// ── EQE / IPCE ──────────────────────────────────────────────────────────────
+
+function renderEQE(el: HTMLElement, r: EQEResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  const eqePct = r.EQE.map(x => x * 100)
+  const mAcm2 = r.J_sc_integrated / 10
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.wavelengths_nm, y: eqePct, name: 'EQE(\u03bb)',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('EQE (%)'), range: [0, 100] },
+      annotations: [
+        {
+          x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
+          xanchor: 'right', yanchor: 'top', showarrow: false,
+          text: `J<sub>sc</sub>(AM1.5G) = ${mAcm2.toFixed(2)} mA\u00b7cm\u207B\u00b2`,
+          font: { size: 12 },
+        },
+      ],
+    }),
+    plotConfig('eqe'),
+  )
+}
+
+// ── Mott–Schottky (C–V) ─────────────────────────────────────────────────────
+
+function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+
+  const shapes: Record<string, unknown>[] = [
+    {
+      type: 'rect', xref: 'x', yref: 'paper',
+      x0: r.V_fit_lo, x1: r.V_fit_hi,
+      y0: 0, y1: 1,
+      fillcolor: 'rgba(99, 102, 241, 0.10)',
+      line: { width: 0 },
+    },
+  ]
+
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.V, y: r.one_over_C2, name: '1/C\u00b2',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('1/C\u00b2 (m\u2074\u00b7F\u207B\u00b2)') },
+      shapes,
+      annotations: [
+        {
+          x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
+          xanchor: 'left', yanchor: 'top', showarrow: false,
+          text: `V<sub>bi</sub> = ${r.V_bi_fit.toFixed(3)} V &nbsp; N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3 &nbsp; f = ${r.frequency.toExponential(1)} Hz`,
+          font: { size: 12 },
+        },
+      ],
+    }),
+    plotConfig('mott_schottky'),
   )
 }
