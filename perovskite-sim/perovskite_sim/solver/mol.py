@@ -118,6 +118,19 @@ class MaterialArrays:
     # Temperature and thermal voltage (for T != 300 K)
     T_device: float = 300.0
     V_T_device: float = 0.025852  # kT/q at device temperature
+    # Field-dependent mobility (Phase 3.2 — Apr 2026). Per-face arrays
+    # derived from the per-node v_sat / β / γ values via simple averaging.
+    # ``has_field_mobility`` is True iff at least one layer sets
+    # a nonzero v_sat_{n,p} or pf_gamma_{n,p}; otherwise the field-mobility
+    # hook is skipped in assemble_rhs and the cached D_n_face / D_p_face
+    # are used as-is (bit-identical to pre-3.2).
+    v_sat_n_face: np.ndarray | None = None
+    v_sat_p_face: np.ndarray | None = None
+    ct_beta_n_face: np.ndarray | None = None
+    ct_beta_p_face: np.ndarray | None = None
+    pf_gamma_n_face: np.ndarray | None = None
+    pf_gamma_p_face: np.ndarray | None = None
+    has_field_mobility: bool = False
 
     @property
     def carrier_params(self) -> dict:
@@ -271,6 +284,13 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     C_p = np.empty(N)
     A_star_n_node = np.empty(N)
     A_star_p_node = np.empty(N)
+    # Field-dependent mobility parameters per node (Phase 3.2).
+    v_sat_n_node = np.zeros(N)
+    v_sat_p_node = np.zeros(N)
+    ct_beta_n_node = np.full(N, 2.0)
+    ct_beta_p_node = np.full(N, 2.0)
+    pf_gamma_n_node = np.zeros(N)
+    pf_gamma_p_node = np.zeros(N)
 
     sim_mode = resolve_mode(getattr(stack, "mode", "full"))
     # Temperature scaling is only applied in modes that request it; other
@@ -330,6 +350,15 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         A_star_n_node[mask] = p.A_star_n
         A_star_p_node[mask] = p.A_star_p
 
+        # Field-dependent mobility parameters (Phase 3.2). Copied verbatim
+        # from the layer so per-node arrays can average to face values.
+        v_sat_n_node[mask] = p.v_sat_n
+        v_sat_p_node[mask] = p.v_sat_p
+        ct_beta_n_node[mask] = p.ct_beta_n
+        ct_beta_p_node[mask] = p.ct_beta_p
+        pf_gamma_n_node[mask] = p.pf_gamma_n
+        pf_gamma_p_node[mask] = p.pf_gamma_p
+
         # Spatially varying trap profile: tau(x) = tau_bulk * N_t_bulk / N_t(x)
         if (sim_mode.use_trap_profile
                 and p.trap_N_t_interface is not None
@@ -359,6 +388,27 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     D_ion_neg_face = _harmonic_face_average(D_ion_neg_node)
     P_lim_neg_face = 0.5 * (P_lim_neg_node[:-1] + P_lim_neg_node[1:])
     _has_dual_ions = np.any(D_ion_neg_node > 0.0)
+
+    # Field-dependent mobility: linear face averages of the per-node
+    # parameters. The CT / PF models handle v_sat = 0 and γ = 0 as "off"
+    # at the face level, so heterointerfaces with one side opted-in and
+    # the other opted-out end up with a half-strength face parameter —
+    # still physically reasonable for a transition region.
+    v_sat_n_face = 0.5 * (v_sat_n_node[:-1] + v_sat_n_node[1:])
+    v_sat_p_face = 0.5 * (v_sat_p_node[:-1] + v_sat_p_node[1:])
+    ct_beta_n_face = 0.5 * (ct_beta_n_node[:-1] + ct_beta_n_node[1:])
+    ct_beta_p_face = 0.5 * (ct_beta_p_node[:-1] + ct_beta_p_node[1:])
+    pf_gamma_n_face = 0.5 * (pf_gamma_n_node[:-1] + pf_gamma_n_node[1:])
+    pf_gamma_p_face = 0.5 * (pf_gamma_p_node[:-1] + pf_gamma_p_node[1:])
+    _has_field_mobility = bool(
+        sim_mode.use_field_dependent_mobility
+        and (
+            np.any(v_sat_n_face > 0.0)
+            or np.any(v_sat_p_face > 0.0)
+            or np.any(pf_gamma_n_face > 0.0)
+            or np.any(pf_gamma_p_face > 0.0)
+        )
+    )
 
     # Dual-grid cell widths for surface→volumetric conversion at interfaces.
     dx = np.diff(x)
@@ -530,6 +580,13 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         has_dual_ions=bool(_has_dual_ions),
         T_device=T_dev,
         V_T_device=V_T_dev,
+        v_sat_n_face=v_sat_n_face if _has_field_mobility else None,
+        v_sat_p_face=v_sat_p_face if _has_field_mobility else None,
+        ct_beta_n_face=ct_beta_n_face if _has_field_mobility else None,
+        ct_beta_p_face=ct_beta_p_face if _has_field_mobility else None,
+        pf_gamma_n_face=pf_gamma_n_face if _has_field_mobility else None,
+        pf_gamma_p_face=pf_gamma_p_face if _has_field_mobility else None,
+        has_field_mobility=_has_field_mobility,
     )
 
 
@@ -635,8 +692,38 @@ def assemble_rhs(
     else:
         G = np.zeros(N)
 
-    # Carrier continuity with per-layer D and per-node recombination params
-    dn, dp = carrier_continuity_rhs(x, phi, n, p, G, mat.carrier_params)
+    # Carrier continuity with per-layer D and per-node recombination params.
+    # If any layer enables field-dependent mobility (Caughey-Thomas or
+    # Poole-Frenkel), the baseline D_n_face / D_p_face are overridden on a
+    # per-RHS basis from the Poisson-computed face field. This is the one
+    # path that intentionally breaks the "build once, reuse" invariant of
+    # MaterialArrays — it is unavoidable because μ(E) depends on the state.
+    if mat.has_field_mobility:
+        from perovskite_sim.physics.field_mobility import apply_field_mobility
+        dx_loc = np.diff(x)
+        E_face = -(phi[1:] - phi[:-1]) / dx_loc
+        mu_n_face_base = mat.D_n_face / mat.V_T_device
+        mu_p_face_base = mat.D_p_face / mat.V_T_device
+        mu_n_face_eff = apply_field_mobility(
+            mu_n_face_base,
+            E_face,
+            mat.v_sat_n_face,
+            mat.ct_beta_n_face,
+            mat.pf_gamma_n_face,
+        )
+        mu_p_face_eff = apply_field_mobility(
+            mu_p_face_base,
+            E_face,
+            mat.v_sat_p_face,
+            mat.ct_beta_p_face,
+            mat.pf_gamma_p_face,
+        )
+        carrier_params = dict(mat.carrier_params)
+        carrier_params["D_n"] = mu_n_face_eff * mat.V_T_device
+        carrier_params["D_p"] = mu_p_face_eff * mat.V_T_device
+    else:
+        carrier_params = mat.carrier_params
+    dn, dp = carrier_continuity_rhs(x, phi, n, p, G, carrier_params)
 
     # Interface recombination (surface SRH at heterointerfaces)
     _apply_interface_recombination(dn, dp, n, p, stack, mat)

@@ -41,6 +41,7 @@ class SimulationMode:
     use_trap_profile: bool = True
     use_temperature_scaling: bool = True
     use_photon_recycling: bool = True
+    use_field_dependent_mobility: bool = True
 
 
 LEGACY = SimulationMode(
@@ -51,6 +52,7 @@ LEGACY = SimulationMode(
     use_trap_profile=False,
     use_temperature_scaling=False,
     use_photon_recycling=False,
+    use_field_dependent_mobility=False,
 )
 
 FAST = SimulationMode(
@@ -61,6 +63,7 @@ FAST = SimulationMode(
     use_trap_profile=False,
     use_temperature_scaling=False,
     use_photon_recycling=False,
+    use_field_dependent_mobility=False,
 )
 
 FULL = SimulationMode(
@@ -71,6 +74,7 @@ FULL = SimulationMode(
     use_trap_profile=True,
     use_temperature_scaling=True,
     use_photon_recycling=True,
+    use_field_dependent_mobility=True,
 )
 
 
