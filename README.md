@@ -460,12 +460,12 @@ Experiment tabs sharing a common pattern: parameters form -> **Run** button -> l
 | V sample points | Number of voltage samples per scan direction |
 | Scan rate (V/s) | Ionic memory effects — fast scans produce larger hysteresis |
 | $V_{\max}$ | Upper voltage bound (defaults to $V_{\text{bi}}$) |
-| Illuminated | Toggle light / dark mode (dark J-V: $G=0$, starts from dark equilibrium) |
-| Save snapshots | Collect spatial profiles $\varphi(x)$, $n(x)$, $p(x)$, $P(x)$ at each voltage |
+| Decompose current | Per-face breakdown into $J_n$ / $J_p$ / $J_\text{ion}$ / $J_\text{disp}$ at every voltage |
+| Save spatial profiles | Snapshot $\varphi(x)$, $E(x)$, $n(x)$, $p(x)$, $P(x)$ at each voltage |
 
-The experiment runs a **forward** scan (short-circuit to $V_{\max}$) immediately followed by a **reverse** scan, reusing the final state so the ionic population is preserved across the turn. Output: overlaid forward/reverse curves plus metric cards for $V_{\text{oc}}$, $J_{\text{sc}}$, FF, PCE, and hysteresis index. When **dark mode** is enabled ($G=0$), the sweep produces the diode injection-current characteristic.
+The experiment runs a **forward** scan (short-circuit to $V_{\max}$) immediately followed by a **reverse** scan, reusing the final state so the ionic population is preserved across the turn. Output: overlaid forward/reverse curves plus metric cards for $V_{\text{oc}}$, $J_{\text{sc}}$, FF, PCE, and hysteresis index. For a dark diode curve, use the dedicated **Dark J-V** experiment, which runs the same $G = 0$ sweep and adds an ideality-factor / $J_0$ fit.
 
-**Current decomposition** is available at every voltage point: the terminal current is decomposed into electron ($J_n$), hole ($J_p$), ionic ($J_\text{ion}$), and displacement ($J_\text{disp}$) contributions at every mesh face.
+The two optional output views (decomposition, spatial profiles) are mutually exclusive on a single run — pick one per sweep or re-run for the other.
 
 #### Impedance
 

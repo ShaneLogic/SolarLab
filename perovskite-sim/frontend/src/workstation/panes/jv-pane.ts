@@ -23,7 +23,6 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         ${numField('jvp-np', 'V sample points', 30, '1')}
         ${numField('jvp-rate', 'Scan rate (V/s)', 1.0, 'any')}
         ${numField('jvp-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
-        ${checkField('jvp-dark', 'Dark J–V (no illumination)', false)}
         ${checkField('jvp-decomp', 'Decompose current (J<sub>n</sub> / J<sub>p</sub> / J<sub>ion</sub> / J<sub>disp</sub>)', false)}
         ${checkField('jvp-spatial', 'Save spatial profiles (φ, E, n, p, P)', false)}
       </div>
@@ -50,7 +49,6 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     progressBar.reset()
     setStatus('status-jvp', 'Starting job…')
 
-    const isDark = readCheck('jvp-dark', false)
     const wantDecomp = readCheck('jvp-decomp', false)
     const wantSpatial = readCheck('jvp-spatial', false)
     // Decomposition takes priority if both are ticked — the two backend
@@ -67,7 +65,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
       n_points: Math.max(2, Math.round(readNum('jvp-np', 30))),
       v_rate: readNum('jvp-rate', 1.0),
       V_max: readNum('jvp-vmax', 1.4),
-      illuminated: !isDark,
+      illuminated: true,
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))
