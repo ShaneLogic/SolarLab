@@ -115,19 +115,6 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 | 🖥️ | **Interactive web UI** | Live SSE streaming, grouped experiment dropdown, GoldenLayout dockable panes, Plotly plots, layer-builder editor |
 | 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_\text{oc}$ / $J_\text{sc}$ / FF / HI bounds; TMM $R+T+A$ conservation) |
 
-### Roadmap (planned experiments — not yet wired into the UI)
-
-| ID | Capability | Notes |
-|:--:|:-----------|:------|
-| 4.1 | **IMPS / IMVS** | Intensity-modulated photocurrent / photovoltage spectroscopy — forks `run_impedance` to modulate $\Phi$ instead of $V_\text{app}$. IMVS needs the 4.5 circuit-mode root-find to hold $V_\text{oc}$ exactly |
-| 4.2 | **TPC + photo-CELIV** | Transient photocurrent (step in $\Phi$ at fixed $V_\text{app}$) and photo-CELIV (voltage ramp $V(t) = V_0 + \alpha t$) — needs a small `run_transient` callable-voltage extension |
-| 4.3 | **EL spectrum + EQE<sub>EL</sub>** | Electroluminescence spectrum and external radiative efficiency — requires exposing per-layer $A(\lambda)$ from the TMM stack plus a black-body integrand over the wavelength grid |
-| 4.4 | **V<sub>oc</sub>(T)** | Temperature sweep + linear fit; end-to-end validation of Phase 4b Varshni + $B_\text{rad}(T)$ |
-| 4.5 | **Circuit-mode TPV** | Replaces the linearised $R_\text{oc}$ small-signal approximation in `experiments/tpv.py` with an exact $J_\text{terminal} = 0$ root-find |
-| 4.6 | **Public API cleanup** | Rename internal `newton.py` → `equilibrium_qn.py`, promote `_compute_current` etc., split `MaterialParams` into `Electrical` / `Ionic` / `Optical` / `Thermal` sub-dataclasses. Scheduled last to avoid rebase churn |
-
-Build order (by dependency + blast radius): **4.4** (half day, reuses existing code) → **4.5** (half day, surgical) → **4.1 IMPS** (independent) → **4.1 IMVS** (needs 4.5) → **4.2** (~1 day) → **4.3** (~1.5 days, TMM refactor) → **4.6** (last — repo-wide renames).
-
 <br>
 
 ---
