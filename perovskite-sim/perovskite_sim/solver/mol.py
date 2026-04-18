@@ -164,6 +164,17 @@ class MaterialArrays:
     absorber_p_esc: tuple[float, ...] = ()
     absorber_thicknesses: tuple[float, ...] = ()
     has_radiative_reabsorption: bool = False
+    # Spatially resolved trap density N_t(x) [m⁻³] (Phase 4a — Apr 2026).
+    # Populated from the per-layer (trap_N_t_interface, trap_N_t_bulk,
+    # trap_decay_length, trap_profile_shape) parameters when
+    # ``SimulationMode.use_trap_profile`` is on. Layers that do not opt
+    # in keep their bulk ``trap_N_t_bulk`` value (or 0.0 if unset).
+    # Stored for diagnostics and so downstream physics (interface SRH,
+    # band-tail absorption, mobility degradation) can be layered on top
+    # of the same per-node trap density without re-computing the
+    # profile.
+    N_t_node: np.ndarray | None = None
+    has_trap_profile: bool = False
 
     @property
     def carrier_params(self) -> dict:
@@ -324,6 +335,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     ct_beta_p_node = np.full(N, 2.0)
     pf_gamma_n_node = np.zeros(N)
     pf_gamma_p_node = np.zeros(N)
+    # Trap profile (Phase 4a). Per-node trap density [m⁻³]; zeros outside
+    # any layer that opts in. Filled as layer params are iterated below.
+    N_t_node_arr = np.zeros(N)
+    _has_trap_profile = False
 
     sim_mode = resolve_mode(getattr(stack, "mode", "full"))
     # Temperature scaling is only applied in modes that request it; other
@@ -392,22 +407,53 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         pf_gamma_n_node[mask] = p.pf_gamma_n
         pf_gamma_p_node[mask] = p.pf_gamma_p
 
-        # Spatially varying trap profile: tau(x) = tau_bulk * N_t_bulk / N_t(x)
-        if (sim_mode.use_trap_profile
-                and p.trap_N_t_interface is not None
-                and p.trap_N_t_bulk is not None
-                and p.trap_decay_length is not None):
+        # Spatially varying trap profile (Phase 4a). The shape and
+        # primitives live in physics/traps.py so that the same N_t(x)
+        # construction can be reused by future hooks (interface SRH,
+        # band-tail absorption, mobility degradation). Two profile
+        # shapes are accepted: "exponential" (default — the original
+        # Phase 4 form) and "gaussian" (faster decay into the bulk for
+        # well-defined defect slabs).
+        from perovskite_sim.physics.traps import (
+            exponential_edge_profile,
+            gaussian_edge_profile,
+            tau_from_trap_density,
+            has_trap_profile_params,
+        )
+        if sim_mode.use_trap_profile and has_trap_profile_params(p):
             x_local = x[mask] - offset
-            d_left = x_local
-            d_right = layer.thickness - x_local
-            L_d = p.trap_decay_length
-            N_t_x = (p.trap_N_t_bulk
-                      + (p.trap_N_t_interface - p.trap_N_t_bulk)
-                      * (np.exp(-d_left / L_d) + np.exp(-d_right / L_d)))
-            # Scale tau inversely with trap density
-            ratio = p.trap_N_t_bulk / np.maximum(N_t_x, 1.0)
-            tau_n[mask] *= ratio
-            tau_p[mask] *= ratio
+            shape = getattr(p, "trap_profile_shape", "exponential") or "exponential"
+            if str(shape).lower() == "gaussian":
+                N_t_x = gaussian_edge_profile(
+                    x_local,
+                    layer.thickness,
+                    float(p.trap_N_t_interface),
+                    float(p.trap_N_t_bulk),
+                    float(p.trap_decay_length),
+                )
+            else:
+                N_t_x = exponential_edge_profile(
+                    x_local,
+                    layer.thickness,
+                    float(p.trap_N_t_interface),
+                    float(p.trap_N_t_bulk),
+                    float(p.trap_decay_length),
+                )
+            # Cache N_t(x) on the per-node array for diagnostics and
+            # downstream physics; map tau via the SRH inverse-density
+            # rule so deep bulk recovers the layer's clean tau exactly.
+            N_t_node_arr[mask] = N_t_x
+            tau_n[mask] = tau_from_trap_density(
+                tau_n[mask], N_t_x, float(p.trap_N_t_bulk),
+            )
+            tau_p[mask] = tau_from_trap_density(
+                tau_p[mask], N_t_x, float(p.trap_N_t_bulk),
+            )
+            _has_trap_profile = True
+        elif p.trap_N_t_bulk is not None:
+            # Layer specifies a bulk density but no profile — record the
+            # uniform value so the diagnostics array still reflects it.
+            N_t_node_arr[mask] = float(p.trap_N_t_bulk)
 
         offset += layer.thickness
 
@@ -672,6 +718,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         absorber_p_esc=tuple(absorber_p_esc_list) if _has_radiative_reabsorption else (),
         absorber_thicknesses=tuple(absorber_thicknesses_list) if _has_radiative_reabsorption else (),
         has_radiative_reabsorption=_has_radiative_reabsorption,
+        N_t_node=N_t_node_arr,
+        has_trap_profile=_has_trap_profile,
     )
 
 
