@@ -28,14 +28,27 @@ Measurement conditions
 ----------------------
 - Dark (``illuminated=False`` forced) — photogenerated carriers would
   swamp the depletion capacitance at zero/reverse bias.
-- Single AC frequency, default 1e5 Hz (100 kHz). High enough that the
+- Single AC frequency, default 1e6 Hz (1 MHz). High enough that the
   ionic displacement current in perovskite stacks does not alias into
-  the measurement; low enough that the full bulk depletion layer has
-  time to respond. Pick a higher frequency for perovskites with very
-  mobile ions.
+  the measurement (at 100 kHz ionic polarisation contaminates
+  1/C² and yields absurd V_bi extrapolations). Low enough that the
+  full bulk depletion layer still has time to respond.
 - Bias sweep typically from mild reverse (V < 0) up to roughly half of
   V_bi. Beyond that the exponential injection current starts to
   dominate the admittance and Mott-Schottky linearity breaks.
+
+Applicability gotcha — fully-depleted thin absorbers
+----------------------------------------------------
+Mott-Schottky analysis assumes a junction whose depletion width varies
+with bias (so 1/C² has a V-slope). For a thin-film device where the
+absorber is already fully depleted at all sampled biases (common in
+intrinsic perovskite layers <500 nm), the capacitance is essentially
+the geometric ``C_geo = ε₀·ε_r / d`` — 1/C² is nearly flat and any
+linear fit will extrapolate to nonsense V_bi. The method is physically
+valid for doped bases (c-Si, CIGS, PIN stacks with heavily-doped
+contacts), not for fully-depleted intrinsic absorbers. Check the raw
+1/C² curve before trusting V_bi_fit; a slope that varies by less than
+a few percent across the bias range is a red flag.
 
 Sign convention
 ---------------
@@ -198,6 +211,15 @@ def _fit_mott_schottky(
     if V_fit.size < 3:
         return float("nan"), float("nan"), float(V[lo]), float(V[hi])
     slope, intercept = np.polyfit(V_fit, y_fit, 1)
+    # Sanity check: the relative variation of 1/C² over the fit window
+    # must exceed a few percent, otherwise the device is essentially a
+    # flat geometric capacitor (fully-depleted intrinsic absorber) and
+    # the V_bi extrapolation is physically meaningless. Return NaN so
+    # callers can flag the result rather than reporting a nonsense fit.
+    y_span = float(y_fit.max() - y_fit.min())
+    y_mid = float(np.median(np.abs(y_fit)))
+    if y_mid > 0 and y_span / y_mid < 0.05:
+        return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
     # For 1/C² = a·V + b: in Mott-Schottky a < 0, V_bi = -b/a.
     if abs(slope) < 1e-30:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
@@ -215,7 +237,7 @@ def _fit_mott_schottky(
 def run_mott_schottky(
     stack: DeviceStack,
     V_range: Sequence[float] | np.ndarray = None,
-    frequency: float = 1.0e5,
+    frequency: float = 1.0e6,
     delta_V: float = 0.01,
     N_grid: int = 40,
     n_cycles: int = 5,
@@ -230,12 +252,17 @@ def run_mott_schottky(
     ----------
     stack : DeviceStack
     V_range : sequence of float, optional
-        DC bias sample points [V]. Default: ``np.linspace(-0.3, 0.4, 8)``
+        DC bias sample points [V]. Default: ``np.linspace(-0.5, 0.6, 12)``
         — mild reverse to moderate forward, which on a typical silicon
         or perovskite junction covers the depletion regime where
-        Mott-Schottky is linear, without running into injection.
-    frequency : float, default 1e5 Hz
-        Single AC excitation frequency. See module docstring.
+        Mott-Schottky is linear, without running into injection. The
+        wider range gives the linear-window selector more to work with.
+    frequency : float, default 1e6 Hz
+        Single AC excitation frequency. Default chosen high enough that
+        ionic displacement currents in perovskite stacks do not alias
+        into the measurement — at 1e5 Hz the mobile-ion response
+        curved 1/C² away from linearity and yielded unphysical V_bi
+        fits (>>V_bi_true). See module docstring for tradeoffs.
     delta_V : float, default 0.01 V
         AC amplitude. Small-signal regime: keep below k_B·T/q (~26 mV)
         so the lock-in's linear assumption holds.
@@ -250,7 +277,7 @@ def run_mott_schottky(
     MottSchottkyResult
     """
     if V_range is None:
-        V_range = np.linspace(-0.3, 0.4, 8)
+        V_range = np.linspace(-0.5, 0.6, 12)
     V_arr = np.array(sorted(set(float(v) for v in V_range)), dtype=float)
     if V_arr.size < 3:
         raise ValueError(
