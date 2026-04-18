@@ -11,6 +11,7 @@ import type {
   SpatialProfileResult,
   DarkJVResult,
   SunsVocResult,
+  VocTResult,
   EQEResult,
   MottSchottkyResult,
 } from '../../types'
@@ -73,6 +74,9 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           return
         case 'suns_voc':
           renderSunsVoc(plotEl, run.result.data)
+          return
+        case 'voc_t':
+          renderVocT(plotEl, run.result.data)
           return
         case 'eqe':
           renderEQE(plotEl, run.result.data)
@@ -191,6 +195,48 @@ function renderTPV(el: HTMLElement, r: TPVResult): void {
       ],
     }),
     plotConfig('tpv'),
+  )
+}
+
+function renderVocT(el: HTMLElement, r: VocTResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  // Linear fit line across the sweep domain — anchored by (T_min, fit(T_min))
+  // and (T_max, fit(T_max)) so it extends cleanly across the plotted range.
+  const T_min = Math.min(...r.T_arr)
+  const T_max = Math.max(...r.T_arr)
+  const fit_x = [T_min, T_max]
+  const fit_y = fit_x.map(T => r.slope * T + r.intercept_0K)
+  const slope_mV_per_K = (r.slope * 1e3).toFixed(2)
+
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.T_arr, y: r.V_oc_arr, name: 'V<sub>oc</sub>(T)',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+      {
+        x: fit_x, y: fit_y, name: `linear fit (${slope_mV_per_K} mV/K)`,
+        mode: 'lines',
+        line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Temperature, <i>T</i> (K)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Open-circuit voltage, <i>V</i><sub>oc</sub> (V)') },
+      annotations: [
+        {
+          x: 0.98, y: 0.05, xref: 'paper', yref: 'paper',
+          xanchor: 'right', yanchor: 'bottom', showarrow: false,
+          text: `E<sub>A</sub> \u2248 ${r.E_A_eV.toFixed(3)} eV &nbsp; dV<sub>oc</sub>/dT = ${slope_mV_per_K} mV/K &nbsp; R\u00B2 = ${r.R_squared.toFixed(3)}`,
+          font: { size: 12 },
+        },
+      ],
+    }),
+    plotConfig('voc_t'),
   )
 }
 

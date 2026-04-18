@@ -9,6 +9,7 @@ import type {
   SpatialProfileResult,
   DarkJVResult,
   SunsVocResult,
+  VocTResult,
   EQEResult,
   MottSchottkyResult,
 } from '../types'
@@ -52,6 +53,7 @@ export type ExperimentKind =
   | 'spatial'
   | 'dark_jv'
   | 'suns_voc'
+  | 'voc_t'
   | 'eqe'
   | 'mott_schottky'
 
@@ -64,6 +66,7 @@ export type RunResult =
   | { kind: 'spatial'; data: SpatialProfileResult }
   | { kind: 'dark_jv'; data: DarkJVResult }
   | { kind: 'suns_voc'; data: SunsVocResult }
+  | { kind: 'voc_t'; data: VocTResult }
   | { kind: 'eqe'; data: EQEResult }
   | { kind: 'mott_schottky'; data: MottSchottkyResult }
 
