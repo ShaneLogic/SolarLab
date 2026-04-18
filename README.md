@@ -50,7 +50,7 @@ It reproduces eight kinds of experiments from a single device definition, groupe
 | **Illuminated J-V** | J-V sweep | Forward + reverse scans with ionic memory preserved (hysteresis); optional current decomposition ($J_n$ / $J_p$ / $J_\text{ion}$ / $J_\text{disp}$) and spatial profiles ($\varphi$, $E$, $n$, $p$, $P$) per voltage point |
 |  | Suns-V<sub>oc</sub> | Intensity sweep producing the Sinton pseudo-JV (immune to series resistance) and pseudo-FF upper bound |
 | **Dark characterisation** | Dark J-V | Injection-current diode curve with auto-selected linear window → ideality factor $n$ and saturation current $J_0$ |
-|  | Mott-Schottky ($C$-$V$) | Dark $C$-$V$ + auto-windowed $1/C^2$ fit → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
+|  | Mott-Schottky (C-V) | Dark C-V + auto-windowed $1/C^2$ fit → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
 | **Spectral** | EQE / IPCE | Wavelength-resolved external quantum efficiency via monochromatic TMM; integrates against AM1.5G for $J_\text{sc}$ |
 | **Transient** | Impedance spectroscopy | Lock-in extraction of $Z(f)$ with displacement current; Nyquist + Bode plots |
 |  | Transient photovoltage (TPV) | Small-signal light-pulse perturbation at open circuit; mono-exponential fit for recombination lifetime $\tau$ |
@@ -101,7 +101,7 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 | 📈 | **J-V sweep** | Forward + reverse scans with ionic memory preserved (hysteresis from physics, not post-processing); optional current decomposition and spatial-profile export |
 | ☀️ | **Suns-V<sub>oc</sub>** | Intensity sweep → Sinton pseudo-JV (series-resistance-free) and pseudo-FF upper bound |
 | 🌓 | **Dark J-V** | Auto-windowed linear fit on $\ln J$ vs $V$ → ideality factor $n$ and saturation current $J_0$ |
-| 📊 | **Mott-Schottky** | Dark $C$-$V$ with $1/C^2$ linearisation → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
+| 📊 | **Mott-Schottky** | Dark C-V with $1/C^2$ linearisation → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
 | 🌈 | **EQE / IPCE** | Wavelength-resolved external quantum efficiency via monochromatic TMM; AM1.5G integration yields $J_\text{sc}$ |
 | 🎵 | **Impedance** | Lock-in $Z(f)$ with displacement current; Nyquist + Bode output |
 | ⚡ | **Transient photovoltage** | Small-signal light pulse at open circuit with mono-exponential fit for recombination lifetime $\tau$ |
