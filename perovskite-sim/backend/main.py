@@ -50,12 +50,14 @@ def _describe_active_physics(stack) -> str:
     """Return a short human-readable description of the active physics tier.
 
     Used by the SSE result payload so the frontend solver console can
-    show which Phase 1-4 upgrades ran without re-deriving the flags.
+    show which Phase 1–3 upgrades ran without re-deriving the flags.
     """
     mode_name = str(getattr(stack, "mode", "full")).lower()
     mode = resolve_mode(mode_name)
     # Drive every label fragment off the mode flags so the indicator can't
-    # silently drift from the physics that actually ran.
+    # silently drift from the physics that actually ran. Missing labels
+    # (e.g. PR when use_photon_recycling is False) are left out rather than
+    # rendered as "no PR" to keep the string short.
     parts: list[str] = [
         "band offsets · TE" if mode.use_thermionic_emission else "flat bands",
         "TMM" if mode.use_tmm_optics else "Beer-Lambert",
@@ -63,6 +65,14 @@ def _describe_active_physics(stack) -> str:
         "trap profile" if mode.use_trap_profile else "uniform τ",
         "T-scaling" if mode.use_temperature_scaling else "T=300K",
     ]
+    # Phase 3.x extras appended only when on, so the label stays short for
+    # LEGACY / FAST and expands only for FULL or custom modes that opt in.
+    if mode.use_photon_recycling:
+        parts.append("photon recycling")
+    if mode.use_field_dependent_mobility:
+        parts.append("μ(E)")
+    if mode.use_selective_contacts:
+        parts.append("Robin contacts")
     return f"{mode.name.upper()}  " + " · ".join(parts)
 
 
@@ -215,12 +225,16 @@ def list_configs():
         # to the Tandem pane instead of the single-cell Device editor.
         #
         # tier_compat: list of physics tiers this preset runs correctly under.
-        # Every preset supports 'legacy' and 'fast' (Beer-Lambert + no TE cap
-        # works on any stack). 'full' is gated on *every* electrical layer
-        # having chi > 0 AND Eg > 0 — FULL tier derives the built-in potential
-        # from Fermi-level matching across the heterostack, so a single
-        # missing band alignment collapses compute_V_bi() and the diode fails
-        # to turn on at V=0 (Stage 1a diagnosis, commit c93d854). Tandem
+        # Every preset supports 'legacy' and 'fast' — both tiers no-op safely
+        # when layers leave the opt-in Phase 1/2/3.1 parameters unset: TE
+        # needs non-zero band offsets between neighbouring layers (chi/Eg),
+        # TMM needs `optical_material` on a layer, PR needs TMM to be active,
+        # dual-ion and trap-profile and T-scaling each need their own opt-in
+        # config keys. 'full' is gated on *every* electrical layer having
+        # chi > 0 AND Eg > 0 — FULL tier derives the built-in potential from
+        # Fermi-level matching across the heterostack, so a single missing
+        # band alignment collapses compute_V_bi() and the diode fails to
+        # turn on at V=0 (Stage 1a diagnosis, commit c93d854). Tandem
         # presets are single-cell-only for now and only advertise legacy/fast.
         legacy_tiers = ["legacy", "fast"]
         try:

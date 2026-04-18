@@ -1,23 +1,48 @@
 """Simulation mode resolution.
 
-Three tiered modes control which physics upgrades are active at runtime:
-
-- ``legacy``: single-species ions, Beer-Lambert optics, no thermionic emission,
-  uniform traps, fixed T=300 K. This reproduces the pre-upgrade behavior
-  and the IonMonger-style baseline so that benchmark comparisons remain
-  meaningful.
-- ``fast``: identical physics flags as legacy but reserved for future
-  optimisations that trade accuracy for speed (e.g. TMM → effective alpha).
-  Today it behaves the same as legacy; the name is kept to pin the API.
-- ``full`` (default): every physics upgrade is active. TMM optical generation,
-  thermionic emission capping, dual-species ions, position-dependent traps,
-  and temperature scaling all honour whatever the config supplies.
-
-Modes act as a **ceiling**: they enable a feature only when the configuration
-actually provides the required parameters. For example, ``full`` mode does not
+Three tiered modes control which physics upgrades are active at runtime.
+All three tiers act as a **ceiling** — they enable a feature only when the
+configuration actually provides the required parameters (e.g. FULL does not
 build the TMM generation profile unless at least one layer sets
-``optical_material``. The mode therefore never forces an upgrade that the
-config cannot support, which keeps legacy YAML files working unchanged.
+``optical_material``; FULL does not activate selective contacts unless at
+least one of the four outer ``S_*`` values is non-null). The mode therefore
+never forces an upgrade that the config cannot support, which keeps legacy
+YAML files working unchanged.
+
+Tier flag matrix:
+
+    flag                             LEGACY  FAST  FULL
+    use_thermionic_emission            off    on    on
+    use_tmm_optics                     off    on    on
+    use_dual_ions                      off    on    on
+    use_trap_profile                   off    on    on
+    use_temperature_scaling            off    on    on
+    use_photon_recycling               off    on    on
+    use_field_dependent_mobility       off    off   on
+    use_selective_contacts             off    off   on
+
+Design intent:
+
+- ``legacy`` — IonMonger-reproduction baseline. Every Phase 1+ physics
+  upgrade is disabled so that benchmark comparisons against IonMonger /
+  driftfusion / Courtier-2019 remain numerically meaningful.
+
+- ``fast`` — every "build-once" physics upgrade (Phase 1 band-offset + TE,
+  Phase 2 TMM optics, Phase 3.1 photon recycling, dual ions, trap profiles,
+  temperature scaling) is ON, but the two "per-RHS" upgrades that break the
+  MaterialArrays build-once invariant (Phase 3.2 field-dependent mobility,
+  Phase 3.3 selective contacts) are OFF. This is the best-accuracy-per-unit-
+  time tier and should be the default for most interactive / benchmark work
+  where the device geometry already captures selective behaviour via layer
+  doping rather than outer-contact Robin BCs.
+
+- ``full`` — every physics flag is on. Use when the config explicitly needs
+  field-dependent mobility (``v_sat_{n,p}``, ``pf_gamma_{n,p}`` set) or
+  selective / Schottky contacts (any ``S_{n,p}_{left,right}`` set). Full
+  tier is safe to use on legacy YAML too — the per-RHS hooks self-disable
+  when the config leaves their opt-in parameters at None/zero — but it
+  exercises more code paths than strictly necessary for pre-Phase-3.2
+  stacks.
 """
 from __future__ import annotations
 
@@ -58,13 +83,17 @@ LEGACY = SimulationMode(
 )
 
 FAST = SimulationMode(
+    # FAST tier: every "build-once" physics upgrade is on, but the two
+    # per-RHS upgrades that break the MaterialArrays build-once invariant
+    # (Phase 3.2 field-dependent mobility, Phase 3.3 selective contacts)
+    # stay off. Best accuracy-per-unit-time default for benchmark work.
     name="fast",
-    use_thermionic_emission=False,
-    use_tmm_optics=False,
-    use_dual_ions=False,
-    use_trap_profile=False,
-    use_temperature_scaling=False,
-    use_photon_recycling=False,
+    use_thermionic_emission=True,
+    use_tmm_optics=True,
+    use_dual_ions=True,
+    use_trap_profile=True,
+    use_temperature_scaling=True,
+    use_photon_recycling=True,
     use_field_dependent_mobility=False,
     use_selective_contacts=False,
 )

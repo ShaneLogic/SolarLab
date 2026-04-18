@@ -37,6 +37,10 @@ def test_full_mode_string_lists_all_upgrades():
     assert "TMM" in s
     assert "dual ions" in s
     assert "T-scaling" in s
+    # Phase 3.x extras only labelled when on — FULL has them all on.
+    assert "photon recycling" in s
+    assert "μ(E)" in s
+    assert "Robin contacts" in s
 
 
 def test_legacy_mode_string_lists_no_upgrades():
@@ -45,16 +49,25 @@ def test_legacy_mode_string_lists_no_upgrades():
     assert "Beer-Lambert" in s
     assert "uniform" in s
     assert "T=300K" in s
+    # Phase 3.x extras should not be claimed at all.
+    assert "photon recycling" not in s
+    assert "μ(E)" not in s
+    assert "Robin contacts" not in s
 
 
-def test_fast_mode_string_is_distinct_from_full_and_legacy():
+def test_fast_mode_string_shows_build_once_upgrades():
+    """FAST tier enables every build-once upgrade (TE, TMM, dual ions,
+    trap profile, T-scaling, PR) but keeps the per-RHS 3.2/3.3 hooks off.
+    """
     s = _describe_active_physics(_minimal_stack("fast"))
     assert "FAST" in s
-    # fast should not claim full-only features
-    assert "TMM" not in s
-    assert "dual ions" not in s
-    # FAST currently has use_temperature_scaling=False (see mode.py), so the
-    # label must not advertise T-scaling — regression guard for the drift
-    # between mode.FAST flags and the displayed string.
-    assert "T-scaling" not in s
-    assert "T=300K" in s
+    # Build-once physics fragments all present.
+    assert "TE" in s
+    assert "TMM" in s
+    assert "dual ions" in s
+    assert "trap profile" in s
+    assert "T-scaling" in s
+    assert "photon recycling" in s
+    # Per-RHS hooks stay off in FAST.
+    assert "μ(E)" not in s
+    assert "Robin contacts" not in s
