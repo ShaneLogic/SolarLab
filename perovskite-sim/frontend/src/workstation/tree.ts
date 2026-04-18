@@ -26,6 +26,7 @@ function experimentLabel(kind: Experiment['kind']): string {
     case 'suns_voc': return 'Suns–Voc'
     case 'voc_t': return 'Voc(T)'
     case 'eqe': return 'EQE / IPCE'
+    case 'el': return 'EL / ΔV_nr'
     case 'mott_schottky': return 'Mott–Schottky (C–V)'
   }
 }

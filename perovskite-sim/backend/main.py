@@ -531,7 +531,8 @@ class DegRequest(BaseModel):
 
 class JobRequest(BaseModel):
     kind: str  # "jv" | "impedance" | "degradation" | "tpv" | "current_decomp" | "spatial"
-               # | "dark_jv" | "suns_voc" | "voc_t" | "eqe" | "mott_schottky" | "tandem"
+               # | "dark_jv" | "suns_voc" | "voc_t" | "eqe" | "el" | "mott_schottky"
+               # | "tandem"
     config_path: Optional[str] = None
     device: Optional[dict] = None
     params: dict = {}
@@ -756,6 +757,30 @@ def start_job(req: JobRequest):
                 Phi_incident=float(p.get("Phi_incident", 1e20)),
                 N_grid=int(p.get("N_grid", 60)),
                 t_settle=float(p.get("t_settle", 1e-3)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "el":
+        from perovskite_sim.experiments.el_spectrum import run_el_spectrum
+
+        def _run(reporter: ProgressReporter) -> dict:
+            lam_min = float(p.get("lambda_min_nm", 400.0))
+            lam_max = float(p.get("lambda_max_nm", 1000.0))
+            n_lam = int(p.get("n_lambda", 25))
+            if n_lam < 2 or lam_max <= lam_min:
+                raise ValueError(
+                    "EL sweep needs n_lambda >= 2 and lambda_max > lambda_min"
+                )
+            wavelengths_nm = np.linspace(lam_min, lam_max, n_lam)
+            result = run_el_spectrum(
+                stack,
+                V_inj=float(p.get("V_inj", 1.0)),
+                wavelengths_nm=wavelengths_nm,
+                N_grid=int(p.get("N_grid", 60)),
+                n_points_dark=int(p.get("n_points_dark", 30)),
+                v_rate=float(p.get("v_rate", 1.0)),
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

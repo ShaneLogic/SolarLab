@@ -136,6 +136,18 @@ export interface EQEResult {
   Phi_incident: number
 }
 
+export interface ELResult {
+  wavelengths_nm: number[]
+  EL_spectrum: number[]           // photons / m^2 / s / nm
+  absorber_absorptance: number[]  // dimensionless, [0, 1]
+  V_inj: number                   // V
+  J_inj: number                   // A/m^2 (signed; negative under solar sign convention)
+  J_em_rad: number                // A/m^2
+  EQE_EL: number                  // [-]
+  delta_V_nr_mV: number           // mV
+  T: number                       // K
+}
+
 export interface MottSchottkyResult {
   V: number[]
   C: number[]

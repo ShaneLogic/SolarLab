@@ -13,6 +13,7 @@ import type {
   SunsVocResult,
   VocTResult,
   EQEResult,
+  ELResult,
   MottSchottkyResult,
 } from '../../types'
 
@@ -80,6 +81,9 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           return
         case 'eqe':
           renderEQE(plotEl, run.result.data)
+          return
+        case 'el':
+          renderEL(plotEl, run.result.data)
           return
         case 'mott_schottky':
           renderMottSchottky(plotEl, run.result.data)
@@ -502,6 +506,53 @@ function renderEQE(el: HTMLElement, r: EQEResult): void {
       ],
     }),
     plotConfig('eqe'),
+  )
+}
+
+// ── Electroluminescence (Rau reciprocity) ───────────────────────────────────
+
+function renderEL(el: HTMLElement, r: ELResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  const absPct = r.absorber_absorptance.map(a => a * 100)
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.wavelengths_nm, y: r.EL_spectrum,
+        name: 'EL spectrum',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+        yaxis: 'y',
+      },
+      {
+        x: r.wavelengths_nm, y: absPct,
+        name: 'A<sub>abs</sub>(\u03bb)',
+        mode: 'lines',
+        line: { color: PALETTE.reverse, width: LINE.width, dash: 'dot' },
+        yaxis: 'y2',
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
+      yaxis: { ...(baseLayout().yaxis as object),
+        title: axisTitle('EL flux (photons&middot;m\u207B\u00b2&middot;s\u207B\u00b9&middot;nm\u207B\u00b9)') },
+      yaxis2: {
+        title: axisTitle('Absorptance (%)'),
+        overlaying: 'y', side: 'right', range: [0, 100],
+        showgrid: false,
+      },
+      annotations: [
+        {
+          x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
+          xanchor: 'left', yanchor: 'top', showarrow: false,
+          text: `V<sub>inj</sub> = ${r.V_inj.toFixed(2)} V &nbsp; EQE<sub>EL</sub> = ${r.EQE_EL.toExponential(2)} &nbsp; &Delta;V<sub>nr</sub> = ${r.delta_V_nr_mV.toFixed(1)} mV`,
+          font: { size: 12 },
+        },
+      ],
+    }),
+    plotConfig('el'),
   )
 }
 

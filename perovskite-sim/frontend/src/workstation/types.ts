@@ -11,6 +11,7 @@ import type {
   SunsVocResult,
   VocTResult,
   EQEResult,
+  ELResult,
   MottSchottkyResult,
 } from '../types'
 
@@ -55,6 +56,7 @@ export type ExperimentKind =
   | 'suns_voc'
   | 'voc_t'
   | 'eqe'
+  | 'el'
   | 'mott_schottky'
 
 export type RunResult =
@@ -68,6 +70,7 @@ export type RunResult =
   | { kind: 'suns_voc'; data: SunsVocResult }
   | { kind: 'voc_t'; data: VocTResult }
   | { kind: 'eqe'; data: EQEResult }
+  | { kind: 'el'; data: ELResult }
   | { kind: 'mott_schottky'; data: MottSchottkyResult }
 
 /** Phase 2 will populate this. Defined here to keep the type stable across phases. */
