@@ -218,8 +218,21 @@ def run_tpv(
     V_oc, y_oc = _find_voc(x, y_illum, stack, mat_ss, V_guess=stack.compute_V_bi(),
                             rtol=rtol, atol=atol)
 
+    # Step 1b: Find V_oc under the pulse illumination so we know the
+    # physical small-signal dV = V_oc(pulse) - V_oc(ss). This is the
+    # correct target for the transient perturbation and replaces the
+    # unreliable dJ/dV → R_oc estimate that the prior implementation
+    # used (the state at V_oc is not in equilibrium at V_oc - dV, so
+    # the finite-difference slope was junk, yielding R_oc ~ 4e-8 Ω·m²
+    # and a V(t) transient that looked completely flat).
+    V_oc_pulse, _y_oc_pulse = _find_voc(
+        x, y_oc, stack, mat_pulse, V_guess=V_oc, rtol=rtol, atol=atol,
+    )
+    delta_V_ideal = V_oc_pulse - V_oc
+
     if progress is not None:
-        progress("tpv", 0, n_points, f"V_oc={V_oc:.4f} V")
+        progress("tpv", 0, n_points,
+                 f"V_oc={V_oc:.4f} V, dV_pulse={delta_V_ideal*1e3:.2f} mV")
 
     # Step 2: Time integration — pulse phase then decay phase
     # Use adaptive time grid: denser during pulse, sparser during decay
@@ -315,16 +328,27 @@ def run_tpv(
         if progress is not None:
             progress("tpv", k, len(t_arr) - 1, f"t={t_k:.3e} s")
 
-    # The physically meaningful quantity from fixed-V_app TPV is J(t):
-    # J(t) = J_pulse(t) decays to 0 as excess carriers recombine.
-    # Translate to an effective V(t) using small-signal approximation:
-    # delta_V(t) ≈ -J(t) * R_oc where R_oc = dV/dJ at V_oc.
-    # Estimate R_oc from the baseline J-V slope near V_oc.
-    J_baseline = _compute_current(x, y_oc, stack, V_oc, mat=mat_ss)
-    J_shifted = _compute_current(x, y_oc, stack, V_oc - 0.01, mat=mat_ss)
-    dJdV = (J_baseline - J_shifted) / 0.01
-    R_oc = 1.0 / abs(dJdV) if abs(dJdV) > 1e-10 else 1e6
-    V_arr = V_oc - J_arr * R_oc
+    # Translate J(t) at fixed V_app = V_oc into an effective V(t).
+    # Physical picture: under the pulse the device wants to sit at
+    # V_oc_pulse, but we hold V_app = V_oc, so a current flows whose
+    # magnitude at the pulse plateau scales directly with the
+    # open-circuit voltage perturbation delta_V_ideal = V_oc_pulse - V_oc.
+    # Mapping: V(t) - V_oc ≈ delta_V_ideal * J(t) / J_plateau.
+    # J_plateau is estimated from the last few samples of the pulse
+    # phase, avoiding the early transient where the state hasn't
+    # fully responded to the generation step.
+    pulse_mask = t_arr < t_pulse
+    if pulse_mask.sum() >= 3:
+        J_plateau = float(np.mean(J_arr[pulse_mask][-3:]))
+    elif pulse_mask.sum() > 0:
+        J_plateau = float(np.max(np.abs(J_arr[pulse_mask])))
+    else:
+        J_plateau = float(np.max(np.abs(J_arr)))
+    if abs(J_plateau) > 1e-10:
+        V_arr = V_oc + delta_V_ideal * (J_arr / J_plateau)
+    else:
+        V_arr = np.full_like(J_arr, V_oc)
+
 
     # Fit decay
     tau, delta_V0 = _fit_decay_tau(t_arr, V_arr, V_oc)
