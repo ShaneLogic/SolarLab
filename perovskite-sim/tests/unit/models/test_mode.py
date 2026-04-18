@@ -20,6 +20,9 @@ class TestPresets:
         assert LEGACY.use_dual_ions is False
         assert LEGACY.use_trap_profile is False
         assert LEGACY.use_temperature_scaling is False
+        assert LEGACY.use_photon_recycling is False
+        assert LEGACY.use_field_dependent_mobility is False
+        assert LEGACY.use_selective_contacts is False
 
     def test_full_enables_all_upgrades(self):
         assert FULL.name == "full"
@@ -28,17 +31,46 @@ class TestPresets:
         assert FULL.use_dual_ions is True
         assert FULL.use_trap_profile is True
         assert FULL.use_temperature_scaling is True
+        assert FULL.use_photon_recycling is True
+        assert FULL.use_field_dependent_mobility is True
+        assert FULL.use_selective_contacts is True
 
-    def test_fast_matches_legacy_flags(self):
-        """Today fast == legacy in feature flags (name differs)."""
+    def test_fast_enables_build_once_upgrades(self):
+        """FAST turns on every Phase 1/2/3.1 (build-once) upgrade."""
+        assert FAST.name == "fast"
+        assert FAST.use_thermionic_emission is True
+        assert FAST.use_tmm_optics is True
+        assert FAST.use_dual_ions is True
+        assert FAST.use_trap_profile is True
+        assert FAST.use_temperature_scaling is True
+        assert FAST.use_photon_recycling is True
+
+    def test_fast_disables_per_rhs_upgrades(self):
+        """FAST keeps field-mobility / selective contacts off because they
+        break the MaterialArrays build-once invariant and run per-RHS."""
+        assert FAST.use_field_dependent_mobility is False
+        assert FAST.use_selective_contacts is False
+
+    def test_fast_is_strictly_between_legacy_and_full(self):
+        """Every FAST flag is >= the LEGACY flag and <= the FULL flag."""
         for field in (
             "use_thermionic_emission",
             "use_tmm_optics",
             "use_dual_ions",
             "use_trap_profile",
             "use_temperature_scaling",
+            "use_photon_recycling",
+            "use_field_dependent_mobility",
+            "use_selective_contacts",
         ):
-            assert getattr(FAST, field) == getattr(LEGACY, field)
+            legacy_val = bool(getattr(LEGACY, field))
+            fast_val = bool(getattr(FAST, field))
+            full_val = bool(getattr(FULL, field))
+            # legacy <= fast <= full, treating False < True.
+            assert legacy_val <= fast_val <= full_val, (
+                f"Tier monotonicity broken for flag {field}: "
+                f"legacy={legacy_val}, fast={fast_val}, full={full_val}"
+            )
 
     def test_simulation_mode_is_frozen(self):
         with pytest.raises(Exception):
