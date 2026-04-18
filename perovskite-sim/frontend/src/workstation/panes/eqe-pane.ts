@@ -1,8 +1,12 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
+import { hasTMMOptics } from '../../device-utils'
 import type { DeviceConfig, EQEResult } from '../../types'
 import type { Run, RunResult } from '../types'
+
+const NON_TMM_MSG =
+  'Active device has no TMM optics (no optical_material on any layer). EQE needs wavelength-resolved n,k data — switch to a *_tmm preset (e.g. ionmonger_benchmark_tmm, nip_MAPbI3_tmm).'
 
 export interface EQEPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -10,9 +14,12 @@ export interface EQEPaneOptions {
 }
 
 export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void {
+  const active = opts.getActiveDevice()
+  const showBanner = !!active && !hasTMMOptics(active.config)
   container.innerHTML = `
     <div class="card">
       <h3>EQE / IPCE Parameters</h3>
+      <div id="eqe-tmm-banner" class="status error"${showBanner ? '' : ' hidden'} role="alert" style="display:${showBanner ? 'block' : 'none'};margin-bottom:0.5rem;">${NON_TMM_MSG}</div>
       <div class="form-grid">
         ${numField('eqe-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('eqe-lmin', '\u03bb<sub>min</sub> (nm)', 300, '1')}
@@ -40,6 +47,13 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
       setStatus('status-eqe', 'No active device. Select one in the tree.', true)
       return
     }
+    const banner = container.querySelector<HTMLDivElement>('#eqe-tmm-banner')
+    if (!hasTMMOptics(active.config)) {
+      if (banner) { banner.textContent = NON_TMM_MSG; banner.style.display = 'block' }
+      setStatus('status-eqe', 'Switch to a TMM preset before running EQE.', true)
+      return
+    }
+    if (banner) banner.style.display = 'none'
     btn.disabled = true
     progressBar.reset()
     setStatus('status-eqe', 'Starting job\u2026')

@@ -1,8 +1,12 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
+import { hasTMMOptics } from '../../device-utils'
 import type { DeviceConfig, ELResult } from '../../types'
 import type { Run, RunResult } from '../types'
+
+const NON_TMM_MSG =
+  'Active device has no TMM optics (no optical_material on any layer). EL needs wavelength-resolved n,k data — switch to a *_tmm preset (e.g. ionmonger_benchmark_tmm, nip_MAPbI3_tmm).'
 
 export interface ELPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -10,9 +14,12 @@ export interface ELPaneOptions {
 }
 
 export function mountELPane(container: HTMLElement, opts: ELPaneOptions): void {
+  const active = opts.getActiveDevice()
+  const showBanner = !!active && !hasTMMOptics(active.config)
   container.innerHTML = `
     <div class="card">
       <h3>Electroluminescence (EL) &amp; &Delta;V<sub>nr</sub></h3>
+      <div id="el-tmm-banner" class="status error"${showBanner ? '' : ' hidden'} role="alert" style="display:${showBanner ? 'block' : 'none'};margin-bottom:0.5rem;">${NON_TMM_MSG}</div>
       <div class="form-grid">
         ${numField('el-V', 'V<sub>inj</sub> (V)', 1.0, 'any')}
         ${numField('el-lmin', '&lambda;<sub>min</sub> (nm)', 400, '1')}
@@ -41,6 +48,13 @@ export function mountELPane(container: HTMLElement, opts: ELPaneOptions): void {
       setStatus('status-el', 'No active device. Select one in the tree.', true)
       return
     }
+    const banner = container.querySelector<HTMLDivElement>('#el-tmm-banner')
+    if (!hasTMMOptics(active.config)) {
+      if (banner) { banner.textContent = NON_TMM_MSG; banner.style.display = 'block' }
+      setStatus('status-el', 'Switch to a TMM preset before running EL.', true)
+      return
+    }
+    if (banner) banner.style.display = 'none'
     btn.disabled = true
     progressBar.reset()
     setStatus('status-el', 'Starting job…')
