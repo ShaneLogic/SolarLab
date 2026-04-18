@@ -2,6 +2,18 @@
 # n+ emitter / p-base.  D_ion = 0 everywhere (no mobile ions in Si).
 # Reference: Sze & Ng, "Physics of Semiconductor Devices", 3rd ed.
 
+simulation_hints:
+  # 180 um wafer demands dense grid: at N_grid=30 (default) the base is
+  # sampled at ~12 um spacing while the local Debye length is ~100 nm,
+  # yielding unphysical J-V spikes (J_sc in the MA/m^2 range). Minimum
+  # for physical results at default tolerances is ~200 per stack.
+  min_N_grid: 200
+  notes: >-
+    180 um c-Si wafer. Requires N_grid >= 200 at default Radau
+    tolerances to resolve the junction depletion layer without
+    catastrophic discretisation error. Full J-V sweeps take several
+    minutes; for iteration prefer equilibrium-level tests.
+
 device:
   V_bi: 0.9
   Phi: 2.7e21   # AM1.5G above Eg=1.12 eV

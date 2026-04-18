@@ -4,6 +4,32 @@ from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, LayerSpec
 
 
+def load_simulation_hints(path: str) -> dict:
+    """Read the optional top-level ``simulation_hints`` block from a
+    device YAML and return it as a dict (empty if absent).
+
+    The hints surface solver-level recommendations that are tied to the
+    physical stack rather than to any individual experiment. Recognised
+    keys today:
+
+    - ``min_N_grid`` : int. Minimum per-stack grid count below which the
+      default drift-diffusion solve is known to produce unphysical
+      results (e.g. thick c-Si wafers, multi-µm CIGS absorbers where
+      the absorber-to-Debye-length ratio is large). The backend/UI can
+      raise the user-facing N_grid default to this value, or warn when
+      a user drops below it.
+    - ``notes`` : str. Free-text caveats for the UI to surface next to
+      the Run button.
+
+    Hints are advisory and have no effect on a pure library-level
+    ``run_*`` call — the solver does not read them. Consumers that want
+    to enforce them should do so explicitly.
+    """
+    with open(path) as f:
+        cfg = yaml.safe_load(f) or {}
+    return dict(cfg.get("simulation_hints", {}) or {})
+
+
 def _f(v) -> float:
     """Cast YAML value to float (handles string scientific notation)."""
     return float(v)
