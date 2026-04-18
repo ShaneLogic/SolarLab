@@ -39,6 +39,7 @@ def test_full_mode_string_lists_all_upgrades():
     assert "T-scaling" in s
     # Phase 3.x extras only labelled when on — FULL has them all on.
     assert "photon recycling" in s
+    assert "PR reabsorption" in s
     assert "μ(E)" in s
     assert "Robin contacts" in s
 
@@ -51,13 +52,15 @@ def test_legacy_mode_string_lists_no_upgrades():
     assert "T=300K" in s
     # Phase 3.x extras should not be claimed at all.
     assert "photon recycling" not in s
+    assert "PR reabsorption" not in s
     assert "μ(E)" not in s
     assert "Robin contacts" not in s
 
 
 def test_fast_mode_string_shows_build_once_upgrades():
     """FAST tier enables every build-once upgrade (TE, TMM, dual ions,
-    trap profile, T-scaling, PR) but keeps the per-RHS 3.2/3.3 hooks off.
+    trap profile, T-scaling, PR) but keeps the per-RHS 3.1b/3.2/3.3 hooks
+    off.
     """
     s = _describe_active_physics(_minimal_stack("fast"))
     assert "FAST" in s
@@ -69,5 +72,6 @@ def test_fast_mode_string_shows_build_once_upgrades():
     assert "T-scaling" in s
     assert "photon recycling" in s
     # Per-RHS hooks stay off in FAST.
+    assert "PR reabsorption" not in s
     assert "μ(E)" not in s
     assert "Robin contacts" not in s

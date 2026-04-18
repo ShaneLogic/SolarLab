@@ -69,6 +69,8 @@ def _describe_active_physics(stack) -> str:
     # LEGACY / FAST and expands only for FULL or custom modes that opt in.
     if mode.use_photon_recycling:
         parts.append("photon recycling")
+    if mode.use_radiative_reabsorption:
+        parts.append("PR reabsorption")
     if mode.use_field_dependent_mobility:
         parts.append("μ(E)")
     if mode.use_selective_contacts:
