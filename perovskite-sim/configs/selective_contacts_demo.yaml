@@ -1,0 +1,100 @@
+# Demo of Phase 3.3 selective / Schottky outer contacts on the
+# nip MAPbI3 stack. Identical materials and geometry to nip_MAPbI3.yaml;
+# the only difference is the device.contacts: block, which replaces the
+# default ohmic Dirichlet pin with a Robin-type flux
+#
+#     J = ±q · S · (n − n_eq)            at the outer node
+#
+# on a per-carrier, per-side basis. The four S values (in m/s) are the
+# surface recombination velocities for that carrier at that contact.
+# Conventions:
+#   • S → ∞  recovers the ohmic limit (boundary pinned to n_eq).
+#   • S = 0  is a perfectly blocking contact (zero flux, n free).
+#   • Finite S allows the boundary to evolve away from n_eq with a
+#     time constant ~ dx_cell / S.
+#
+# The values below match the Stolterfoht (2019) selective-contact
+# regime: large S for the matched carrier (electrons at the ETL,
+# holes at the HTL) and small S for the wrong-sign carrier so that
+# accumulating wrong-sign carriers cannot dump straight into the metal.
+# This is the canonical pattern used by experimental selective
+# perovskite contacts and is what differentiates them from the
+# legacy Dirichlet-pin treatment.
+#
+# Omitting any of the four S keys (or setting it to null) leaves that
+# carrier/side as ohmic Dirichlet — partial activation is supported
+# and useful for modelling, e.g., one Schottky and one ohmic contact.
+device:
+  V_bi: 1.1
+  Phi: 2.5e21
+  contacts:
+    left:                   # hole-transport contact (HTL side)
+      S_p: 1.0e3            #   matched carrier (holes): finite, modest S
+      S_n: 1.0e-3           #   wrong-sign carrier (electrons): blocked
+    right:                  # electron-transport contact (ETL side)
+      S_n: 1.0e3            #   matched carrier (electrons): finite, modest S
+      S_p: 1.0e-3           #   wrong-sign carrier (holes): blocked
+
+layers:
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 1e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 2e23
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 2e-4
+    mu_p: 2e-4
+    ni: 3.2e13
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 3.2e13
+    p1: 3.2e13
+    B_rad: 5e-22
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 1.3e7
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0

@@ -106,11 +106,29 @@ def _state_fields(
     V_bc: float,
     mat: MaterialArrays,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, StateVec]:
-    """Unpack state vector, apply BCs, solve Poisson. Returns (n, p, phi, sv)."""
+    """Unpack state vector, apply BCs, solve Poisson. Returns (n, p, phi, sv).
+
+    With selective / Schottky contacts active (Phase 3.3) the Robin sides
+    are left free — boundary densities come straight from the state vector
+    — while the Dirichlet sides are still pinned so that post-processing
+    matches what the solver saw.
+    """
     N = len(x)
     sv = StateVec.unpack(y_state, N)
-    n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
-    p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
+    n = sv.n.copy()
+    p = sv.p.copy()
+    if not mat.has_selective_contacts:
+        n[0] = mat.n_L; n[-1] = mat.n_R
+        p[0] = mat.p_L; p[-1] = mat.p_R
+    else:
+        if mat.S_n_L is None:
+            n[0] = mat.n_L
+        if mat.S_n_R is None:
+            n[-1] = mat.n_R
+        if mat.S_p_L is None:
+            p[0] = mat.p_L
+        if mat.S_p_R is None:
+            p[-1] = mat.p_R
     rho = _charge_density(
         p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
         P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,

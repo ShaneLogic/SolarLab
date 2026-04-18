@@ -30,6 +30,17 @@ class DeviceStack:
     # "full" (default) enables every physics upgrade the config supports;
     # "legacy" reproduces pre-upgrade behaviour for benchmarking.
     mode: str = "full"
+    # Selective / Schottky outer contact surface recombination velocities
+    # (Phase 3.3 — Apr 2026). When all four are None the contacts are
+    # ohmic Dirichlet (current behaviour, bit-identical numerics). When
+    # any is set the corresponding boundary uses a Robin-type flux
+    # ``J = ±q · S · (n − n_eq)`` and the carrier density at the
+    # boundary node is allowed to evolve. Units: m/s. ``S = 0`` is a
+    # perfectly blocking contact; ``S → ∞`` recovers the ohmic limit.
+    S_n_left: Optional[float] = None
+    S_p_left: Optional[float] = None
+    S_n_right: Optional[float] = None
+    S_p_right: Optional[float] = None
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))

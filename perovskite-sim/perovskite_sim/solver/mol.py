@@ -131,6 +131,20 @@ class MaterialArrays:
     pf_gamma_n_face: np.ndarray | None = None
     pf_gamma_p_face: np.ndarray | None = None
     has_field_mobility: bool = False
+    # Selective / Schottky outer-contact surface recombination velocities
+    # (Phase 3.3 — Apr 2026). ``has_selective_contacts`` is True iff the
+    # active mode enables it AND the stack config supplies at least one
+    # finite ``S_*``. When False the Dirichlet pin remains in force and
+    # the boundary node is overwritten to ``n_L`` / ``n_R`` in
+    # ``assemble_rhs`` — i.e. the pre-3.3 behaviour, bit-identical.
+    # When True the four S values below are used as Robin coefficients
+    # in :func:`physics.contacts.apply_selective_contacts` and the
+    # boundary node is allowed to evolve freely.
+    S_n_L: float | None = None
+    S_p_L: float | None = None
+    S_n_R: float | None = None
+    S_p_R: float | None = None
+    has_selective_contacts: bool = False
 
     @property
     def carrier_params(self) -> dict:
@@ -410,6 +424,20 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         )
     )
 
+    # Selective / Schottky outer contact Robin BCs (Phase 3.3). Gated by the
+    # active mode AND the stack supplying at least one finite S_* value.
+    # When inactive the flag stays False and the Dirichlet pin remains the
+    # boundary treatment in assemble_rhs — bit-identical to pre-3.3.
+    _has_selective_contacts = bool(
+        sim_mode.use_selective_contacts
+        and (
+            stack.S_n_left is not None
+            or stack.S_p_left is not None
+            or stack.S_n_right is not None
+            or stack.S_p_right is not None
+        )
+    )
+
     # Dual-grid cell widths for surface→volumetric conversion at interfaces.
     dx = np.diff(x)
     dx_cell = np.empty(N)
@@ -587,6 +615,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         pf_gamma_n_face=pf_gamma_n_face if _has_field_mobility else None,
         pf_gamma_p_face=pf_gamma_p_face if _has_field_mobility else None,
         has_field_mobility=_has_field_mobility,
+        S_n_L=stack.S_n_left if _has_selective_contacts else None,
+        S_p_L=stack.S_p_left if _has_selective_contacts else None,
+        S_n_R=stack.S_n_right if _has_selective_contacts else None,
+        S_p_R=stack.S_p_right if _has_selective_contacts else None,
+        has_selective_contacts=_has_selective_contacts,
     )
 
 
@@ -668,9 +701,25 @@ def assemble_rhs(
     N = len(x)
     sv = StateVec.unpack(y, N)
 
-    # Boundary conditions from cached equilibrium densities
-    n = sv.n.copy(); n[0] = mat.n_L; n[-1] = mat.n_R
-    p = sv.p.copy(); p[0] = mat.p_L; p[-1] = mat.p_R
+    # Boundary conditions from cached equilibrium densities. For selective /
+    # Schottky contacts (Phase 3.3) the carriers/sides with a finite S are
+    # allowed to evolve freely; only the Dirichlet sides still get pinned
+    # to the equilibrium value. When has_selective_contacts is False this
+    # reduces exactly to the pre-3.3 pin of all four boundary entries.
+    n = sv.n.copy()
+    p = sv.p.copy()
+    if not mat.has_selective_contacts:
+        n[0] = mat.n_L; n[-1] = mat.n_R
+        p[0] = mat.p_L; p[-1] = mat.p_R
+    else:
+        if mat.S_n_L is None:
+            n[0] = mat.n_L
+        if mat.S_n_R is None:
+            n[-1] = mat.n_R
+        if mat.S_p_L is None:
+            p[0] = mat.p_L
+        if mat.S_p_R is None:
+            p[-1] = mat.p_R
 
     # Solve Poisson
     # phi_right = V_bi - V_app: forward bias (V_app > 0) reduces the
@@ -723,6 +772,32 @@ def assemble_rhs(
         carrier_params["D_p"] = mu_p_face_eff * mat.V_T_device
     else:
         carrier_params = mat.carrier_params
+
+    # Selective / Schottky outer contact Robin BCs (Phase 3.3). Compute one
+    # Robin flux per side/carrier that has a finite S. Carriers/sides left
+    # as None remain Dirichlet-pinned by carrier_continuity_rhs. When the
+    # flag is off this block is skipped entirely and the padded zero flux
+    # survives — bit-identical to pre-3.3.
+    if mat.has_selective_contacts:
+        from perovskite_sim.physics.contacts import selective_contact_flux
+        if carrier_params is mat.carrier_params:
+            carrier_params = dict(mat.carrier_params)
+        if mat.S_n_L is not None:
+            carrier_params["J_n_L"] = selective_contact_flux(
+                float(n[0]), mat.n_L, mat.S_n_L, carrier="n", side="left",
+            )
+        if mat.S_n_R is not None:
+            carrier_params["J_n_R"] = selective_contact_flux(
+                float(n[-1]), mat.n_R, mat.S_n_R, carrier="n", side="right",
+            )
+        if mat.S_p_L is not None:
+            carrier_params["J_p_L"] = selective_contact_flux(
+                float(p[0]), mat.p_L, mat.S_p_L, carrier="p", side="left",
+            )
+        if mat.S_p_R is not None:
+            carrier_params["J_p_R"] = selective_contact_flux(
+                float(p[-1]), mat.p_R, mat.S_p_R, carrier="p", side="right",
+            )
     dn, dp = carrier_continuity_rhs(x, phi, n, p, G, carrier_params)
 
     # Interface recombination (surface SRH at heterointerfaces)
@@ -740,9 +815,23 @@ def assemble_rhs(
             x, phi, sv.P_neg, mat.D_ion_neg_face, mat.V_T_device, mat.P_lim_neg_face,
         )
 
-    # Enforce Dirichlet BCs: hold boundary nodes fixed
-    dn[0] = dn[-1] = 0.0
-    dp[0] = dp[-1] = 0.0
+    # Enforce Dirichlet BCs: hold boundary nodes fixed. With selective /
+    # Schottky contacts (Phase 3.3) the carrier_continuity_rhs helper does
+    # the pinning itself on a per-side / per-carrier basis (Robin sides
+    # are deliberately left free to evolve), so only apply the legacy
+    # blanket pin when every contact is ohmic.
+    if not mat.has_selective_contacts:
+        dn[0] = dn[-1] = 0.0
+        dp[0] = dp[-1] = 0.0
+    else:
+        if mat.S_n_L is None:
+            dn[0] = 0.0
+        if mat.S_n_R is None:
+            dn[-1] = 0.0
+        if mat.S_p_L is None:
+            dp[0] = 0.0
+        if mat.S_p_R is None:
+            dp[-1] = 0.0
 
     if _RHS_FINITE_CHECK:
         _assert_finite_rhs(dn, dp, dP, dP_neg, V_app)
@@ -898,9 +987,24 @@ def split_step(
     N = len(x)
     sv = StateVec.unpack(y, N)
 
-    # Apply ohmic contact BCs to frozen carrier arrays
-    n_frozen = sv.n.copy(); n_frozen[0] = mat.n_L; n_frozen[-1] = mat.n_R
-    p_frozen = sv.p.copy(); p_frozen[0] = mat.p_L; p_frozen[-1] = mat.p_R
+    # Apply ohmic contact BCs to frozen carrier arrays. Selective / Schottky
+    # contacts (Phase 3.3) leave the Robin sides free — the current state
+    # is whatever the main RHS integration produced — so only the ohmic
+    # sides are pinned here.
+    n_frozen = sv.n.copy()
+    p_frozen = sv.p.copy()
+    if not mat.has_selective_contacts:
+        n_frozen[0] = mat.n_L; n_frozen[-1] = mat.n_R
+        p_frozen[0] = mat.p_L; p_frozen[-1] = mat.p_R
+    else:
+        if mat.S_n_L is None:
+            n_frozen[0] = mat.n_L
+        if mat.S_n_R is None:
+            n_frozen[-1] = mat.n_R
+        if mat.S_p_L is None:
+            p_frozen[0] = mat.p_L
+        if mat.S_p_R is None:
+            p_frozen[-1] = mat.p_R
 
     _clip_count = [0]
 
