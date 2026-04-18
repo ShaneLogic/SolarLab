@@ -43,17 +43,20 @@ Perovskite · CIGS · c-Si
 
 **SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
 
-It reproduces five kinds of experiments from a single device definition:
+It reproduces eight kinds of experiments from a single device definition, grouped into four families:
 
-| Experiment | What it does |
-|:-----------|:-------------|
-| **J-V sweep** | Forward + reverse scans with ionic memory preserved (hysteresis); supports dark and illuminated modes |
-| **Impedance spectroscopy** | Nyquist diagrams via lock-in detection of AC response |
-| **Degradation** | Long-time transient with frozen-ion snapshot J-V at each probe |
-| **Transient photovoltage (TPV)** | Small-signal light-pulse perturbation at open circuit; fitted mono-exponential decay lifetime |
-| **Current decomposition** | Per-face $J_n$, $J_p$, $J_\text{ion}$, $J_\text{disp}$ breakdown at any operating point |
+| Family | Experiment | What it does |
+|:-------|:-----------|:-------------|
+| **Illuminated J-V** | J-V sweep | Forward + reverse scans with ionic memory preserved (hysteresis); optional current decomposition ($J_n$ / $J_p$ / $J_\text{ion}$ / $J_\text{disp}$) and spatial profiles ($\varphi$, $E$, $n$, $p$, $P$) per voltage point |
+|  | Suns-$V_\text{oc}$ | Intensity sweep producing the Sinton pseudo-JV (immune to series resistance) and pseudo-FF upper bound |
+| **Dark characterisation** | Dark J-V | Injection-current diode curve with auto-selected linear window → ideality factor $n$ and saturation current $J_0$ |
+|  | Mott-Schottky ($C$-$V$) | Dark $C$-$V$ + auto-windowed $1/C^2$ fit → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
+| **Spectral** | EQE / IPCE | Wavelength-resolved external quantum efficiency via monochromatic TMM; integrates against AM1.5G for $J_\text{sc}$ |
+| **Transient** | Impedance spectroscopy | Lock-in extraction of $Z(f)$ with displacement current; Nyquist + Bode plots |
+|  | Transient photovoltage (TPV) | Small-signal light-pulse perturbation at open circuit; mono-exponential fit for recombination lifetime $\tau$ |
+|  | Degradation | Long-time transient with a **frozen-ion snapshot J-V** at each probe, decoupling slow ionic drift from the instantaneous electronic response |
 
-The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema.
+The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema. A separate **2T monolithic tandem** driver performs a combined TMM over top + junction + bottom, runs independent sub-cell J-V sweeps, and series-matches at a common current grid.
 
 <br>
 
@@ -61,21 +64,56 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 
 ## Key Features
 
+### Core solver
+
 | | Capability | Details |
 |:-:|:-----------|:--------|
-| 🧮 | **Drift-diffusion core** | Scharfetter-Gummel finite-element fluxes on a tanh-clustered multilayer grid |
-| ⚡ | **Poisson solve** | Pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs` — ~40x faster than naive assembly |
-| 🔬 | **Mobile ions** | Steric Blakemore flux with excluded-volume correction (perovskite vacancy migration) |
-| 🌈 | **Transfer-matrix optics** | Coherent TMM for position-resolved $G(x)$ with the Poynting-vector correction so $R+T+A=1$ |
-| 🔥 | **Thermionic emission** | Richardson-Dushman flux cap at heterointerfaces with band offsets $> 0.05$ eV |
-| 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface $(v_n, v_p)$ surface recombination |
-| 🧊 | **Frozen-ion degradation** | Snapshot J-V with $D_{\text{ion}} \to 0$ — the correct way to decouple ionic drift from electronic response |
-| 🌓 | **Dark J-V** | Diode curve without photogeneration — injection-current characterisation |
-| 📊 | **Current decomposition** | Per-face breakdown into electron, hole, ionic, and displacement current densities |
-| 📐 | **Spatial profiles** | Snapshot export of $\varphi(x)$, $E(x)$, $n(x)$, $p(x)$, $P(x)$, $\rho(x)$ at any bias point |
-| ⚡ | **Transient photovoltage** | Small-signal light pulse at open circuit with fitted recombination lifetime $\tau$ |
-| 🖥️ | **Interactive web UI** | Live SSE streaming, progress bars, Plotly plots, layer-builder editor |
-| 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_{\text{oc}}$ / $J_{\text{sc}}$ / HI bounds) |
+| 🧮 | **Drift-diffusion core** | Scharfetter-Gummel finite-element fluxes on a tanh-clustered multilayer grid; Method-of-Lines with Radau implicit time integration |
+| ⚡ | **Poisson solve** | Pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs` (cached once per run) — ~40× faster than naive assembly |
+| 🔬 | **Mobile ions** | Steric Blakemore flux with excluded-volume correction; dual-ion support (mobile cation + anion vacancies) |
+| 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface $(v_n, v_p)$ surface recombination; auto-computed $V_\text{bi}$ from Fermi-level difference |
+
+### Physics upgrades (Phase 2–4)
+
+| | Capability | Details |
+|:-:|:-----------|:--------|
+| 🌈 | **Transfer-matrix optics** | Coherent TMM for position-resolved $G(x)$ with the Poynting-vector correction so $R+T+A=1$; AM1.5G-weighted per-wavelength absorption |
+| 🔥 | **Thermionic emission** | Richardson-Dushman flux cap at heterointerfaces with band offsets $> 0.05$ eV — prevents SG over-current across sharp discontinuities |
+| 💡 | **Photon recycling** | Yablonovitch single-pass escape probability $P_\text{esc} = \min(1, 1/(4 n^2 \alpha d))$ scales $B_\text{rad}$ per absorber (Phase 3.1) |
+| 🔁 | **Self-consistent reabsorption** | Per-RHS radiative reabsorption feeds the trapped emission fraction back into $G(x)$ on absorber nodes (Phase 3.1b, FULL only) |
+| 🌀 | **Field-dependent mobility** | Caughey-Thomas velocity saturation + Poole-Frenkel hopping applied per RHS from the Poisson face field (Phase 3.2, FULL only) |
+| 🚪 | **Selective / Schottky contacts** | Robin-type flux $J = \pm q S (n - n_\text{eq})$ at outer contacts; $S \to \infty$ is ohmic, $S = 0$ is blocking (Phase 3.3, FULL only) |
+| 🎯 | **Position-dependent traps** | Exponential or Gaussian defect profiles concentrated at transport-layer interfaces; $\tau(x) = \tau_\text{bulk} \cdot N_{t,\text{bulk}} / N_t(x)$ (Phase 4a) |
+| 🌡️ | **Temperature scaling** | Varshni bandgap shift referenced to 300 K and power-law $B_\text{rad}(T) \propto (T/300)^\gamma$; self-consistent with $n_i(T)$ (Phase 4b) |
+
+### Tiered fidelity modes
+
+| Tier | Physics set | Use case |
+|:-----|:------------|:---------|
+| **LEGACY** | No TE, no TMM, uniform traps, $T = 300$ K — classic IonMonger reproduction | Regression parity against published benchmarks |
+| **FAST** | All build-once upgrades on (TE, TMM, dual ions, trap profile, $T$-scaling, photon recycling); per-RHS hooks off | Default for J-V / impedance / degradation sweeps |
+| **FULL** | Everything on, including per-RHS radiative reabsorption, $\mu(E)$, and Robin contacts | Highest-fidelity single runs; tandem sub-cells |
+
+### Experiments (single device → 8 observables)
+
+| | Capability | Details |
+|:-:|:-----------|:--------|
+| 📈 | **J-V sweep** | Forward + reverse scans with ionic memory preserved (hysteresis from physics, not post-processing); optional current decomposition and spatial-profile export |
+| ☀️ | **Suns-$V_\text{oc}$** | Intensity sweep → Sinton pseudo-JV (series-resistance-free) and pseudo-FF upper bound |
+| 🌓 | **Dark J-V** | Auto-windowed linear fit on $\ln J$ vs $V$ → ideality factor $n$ and saturation current $J_0$ |
+| 📊 | **Mott-Schottky** | Dark $C$-$V$ with $1/C^2$ linearisation → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
+| 🌈 | **EQE / IPCE** | Wavelength-resolved external quantum efficiency via monochromatic TMM; AM1.5G integration yields $J_\text{sc}$ |
+| 🎵 | **Impedance** | Lock-in $Z(f)$ with displacement current; Nyquist + Bode output |
+| ⚡ | **Transient photovoltage** | Small-signal light pulse at open circuit with mono-exponential fit for recombination lifetime $\tau$ |
+| 🧊 | **Frozen-ion degradation** | Long-time transient with snapshot J-V at each probe ($D_\text{ion} \to 0$) — decouples ionic drift from electronic response |
+| 🔗 | **2T tandem driver** | Combined TMM over top + junction + bottom, independent sub-cell sweeps, series-matched on a common current grid |
+
+### Tooling
+
+| | Capability | Details |
+|:-:|:-----------|:--------|
+| 🖥️ | **Interactive web UI** | Live SSE streaming, grouped experiment dropdown, GoldenLayout dockable panes, Plotly plots, layer-builder editor |
+| 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_\text{oc}$ / $J_\text{sc}$ / FF / HI bounds; TMM $R+T+A$ conservation) |
 
 <br>
 

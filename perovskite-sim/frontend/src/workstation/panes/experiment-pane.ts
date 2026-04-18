@@ -2,6 +2,11 @@
  * Unified experiment pane — a single dropdown selects the experiment type,
  * and the corresponding form renders below. Replaces the cluttered per-experiment
  * tab bar in GoldenLayout.
+ *
+ * The J-V pane internally dispatches kind={jv, current_decomp, spatial} based
+ * on its output-view checkboxes, so those two kinds do not get their own
+ * dropdown entries — their result shapes are still handled by the main-plot
+ * renderer and the state reducer.
  */
 import type { DeviceConfig } from '../../types'
 import type { Run, ExperimentKind } from '../types'
@@ -9,8 +14,6 @@ import { mountJVPane } from './jv-pane'
 import { mountImpedancePane } from './impedance-pane'
 import { mountDegradationPane } from './degradation-pane'
 import { mountTPVPane } from './tpv-pane'
-import { mountCurrentDecompPane } from './current-decomp-pane'
-import { mountSpatialPane } from './spatial-pane'
 import { mountDarkJVPane } from './dark-jv-pane'
 import { mountSunsVocPane } from './suns-voc-pane'
 import { mountEQEPane } from './eqe-pane'
@@ -40,56 +43,85 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
   const select = container.querySelector<HTMLSelectElement>('#exp-select')!
   const body = container.querySelector<HTMLDivElement>('#exp-body')!
 
-  const paneOpts = (kind: ExperimentKind) => ({
+  // Reads the kind from run.result.kind at commit time instead of pre-binding
+  // it per pane. Lets the J-V pane dispatch one of {jv, current_decomp,
+  // spatial} dynamically based on its "decompose current" / "save spatial
+  // profiles" checkboxes — a single pane yields three experiment kinds.
+  const paneOpts = () => ({
     getActiveDevice: opts.getActiveDevice,
-    onRunComplete: (deviceId: string, run: Run) => opts.onRunComplete(deviceId, kind, run),
+    onRunComplete: (deviceId: string, run: Run) =>
+      opts.onRunComplete(deviceId, run.result.kind, run),
   })
 
-  const experiments: ExperimentEntry[] = [
+  interface ExperimentGroup {
+    label: string
+    entries: ExperimentEntry[]
+  }
+
+  const groups: ExperimentGroup[] = [
     {
-      kind: 'jv', label: 'J\u2013V Sweep',
-      mount: (el) => mountJVPane(el, paneOpts('jv')),
+      label: 'Illuminated J\u2013V',
+      entries: [
+        {
+          kind: 'jv', label: 'J\u2013V Sweep',
+          mount: (el) => mountJVPane(el, paneOpts()),
+        },
+        {
+          kind: 'suns_voc', label: 'Suns\u2013V\u2092c',
+          mount: (el) => mountSunsVocPane(el, paneOpts()),
+        },
+      ],
     },
     {
-      kind: 'impedance', label: 'Impedance',
-      mount: (el) => mountImpedancePane(el, paneOpts('impedance')),
+      label: 'Dark characterisation',
+      entries: [
+        {
+          kind: 'dark_jv', label: 'Dark J\u2013V (ideality, J\u2080)',
+          mount: (el) => mountDarkJVPane(el, paneOpts()),
+        },
+        {
+          kind: 'mott_schottky', label: 'Mott\u2013Schottky (C\u2013V)',
+          mount: (el) => mountMottSchottkyPane(el, paneOpts()),
+        },
+      ],
     },
     {
-      kind: 'degradation', label: 'Degradation',
-      mount: (el) => mountDegradationPane(el, paneOpts('degradation')),
+      label: 'Spectral',
+      entries: [
+        {
+          kind: 'eqe', label: 'EQE / IPCE',
+          mount: (el) => mountEQEPane(el, paneOpts()),
+        },
+      ],
     },
     {
-      kind: 'tpv', label: 'Transient Photovoltage (TPV)',
-      mount: (el) => mountTPVPane(el, paneOpts('tpv')),
-    },
-    {
-      kind: 'current_decomp', label: 'Current Decomposition',
-      mount: (el) => mountCurrentDecompPane(el, paneOpts('current_decomp')),
-    },
-    {
-      kind: 'spatial', label: 'Spatial Profiles',
-      mount: (el) => mountSpatialPane(el, paneOpts('spatial')),
-    },
-    {
-      kind: 'dark_jv', label: 'Dark J\u2013V',
-      mount: (el) => mountDarkJVPane(el, paneOpts('dark_jv')),
-    },
-    {
-      kind: 'suns_voc', label: 'Suns\u2013V\u2092c',
-      mount: (el) => mountSunsVocPane(el, paneOpts('suns_voc')),
-    },
-    {
-      kind: 'eqe', label: 'EQE / IPCE',
-      mount: (el) => mountEQEPane(el, paneOpts('eqe')),
-    },
-    {
-      kind: 'mott_schottky', label: 'Mott\u2013Schottky (C\u2013V)',
-      mount: (el) => mountMottSchottkyPane(el, paneOpts('mott_schottky')),
+      label: 'Transient',
+      entries: [
+        {
+          kind: 'impedance', label: 'Impedance',
+          mount: (el) => mountImpedancePane(el, paneOpts()),
+        },
+        {
+          kind: 'tpv', label: 'Transient Photovoltage (TPV)',
+          mount: (el) => mountTPVPane(el, paneOpts()),
+        },
+        {
+          kind: 'degradation', label: 'Degradation',
+          mount: (el) => mountDegradationPane(el, paneOpts()),
+        },
+      ],
     },
   ]
 
-  select.innerHTML = experiments
-    .map(e => `<option value="${e.kind}">${e.label}</option>`)
+  const experiments: ExperimentEntry[] = groups.flatMap(g => g.entries)
+
+  select.innerHTML = groups
+    .map(g => {
+      const opts = g.entries
+        .map(e => `<option value="${e.kind}">${e.label}</option>`)
+        .join('')
+      return `<optgroup label="${g.label}">${opts}</optgroup>`
+    })
     .join('')
 
   function renderSelected(): void {

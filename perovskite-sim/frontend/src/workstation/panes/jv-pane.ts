@@ -1,8 +1,13 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum, checkField, readCheck } from '../../ui-helpers'
-import type { DeviceConfig, JVResult } from '../../types'
-import type { Run, RunResult } from '../types'
+import type {
+  DeviceConfig,
+  JVResult,
+  CurrentDecompResult,
+  SpatialProfileResult,
+} from '../../types'
+import type { Run, RunResult, ExperimentKind } from '../types'
 
 export interface JVPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -19,13 +24,15 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         ${numField('jvp-rate', 'Scan rate (V/s)', 1.0, 'any')}
         ${numField('jvp-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
         ${checkField('jvp-dark', 'Dark J–V (no illumination)', false)}
+        ${checkField('jvp-decomp', 'Decompose current (J<sub>n</sub> / J<sub>p</sub> / J<sub>ion</sub> / J<sub>disp</sub>)', false)}
+        ${checkField('jvp-spatial', 'Save spatial profiles (φ, E, n, p, P)', false)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jvp">Run J–V Sweep</button>
         <span class="status" id="status-jvp"></span>
       </div>
       <div id="progress-jvp"></div>
-      <div class="pane-hint">Results stream into the Main Plot pane and appear as a run under this experiment in the tree.</div>
+      <div class="pane-hint">Enable &ldquo;Decompose current&rdquo; or &ldquo;Save spatial profiles&rdquo; to produce the richer output view; otherwise a plain J&ndash;V curve is returned. Only one extra view per run.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(
@@ -44,6 +51,17 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     setStatus('status-jvp', 'Starting job…')
 
     const isDark = readCheck('jvp-dark', false)
+    const wantDecomp = readCheck('jvp-decomp', false)
+    const wantSpatial = readCheck('jvp-spatial', false)
+    // Decomposition takes priority if both are ticked — the two backend
+    // kinds are mutually exclusive at the dispatch level (each returns a
+    // different result shape), so we pick one and let the user re-run for
+    // the other. Dropped into a hint so nobody sees a silent coercion.
+    if (wantDecomp && wantSpatial) {
+      setStatus('status-jvp', 'Both views requested — running decomposition this time. Re-run with only "Save spatial profiles" to get the spatial view.')
+    }
+    const kind: ExperimentKind = wantDecomp ? 'current_decomp' : wantSpatial ? 'spatial' : 'jv'
+
     const params = {
       N_grid: Math.max(3, Math.round(readNum('jvp-N', 60))),
       n_points: Math.max(2, Math.round(readNum('jvp-np', 30))),
@@ -54,14 +72,23 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))
 
-    startJob('jv', active.config, params)
+    type AnyResult = (JVResult | CurrentDecompResult | SpatialProfileResult) & {
+      active_physics?: string
+    }
+    startJob(kind, active.config, params)
       .then(jobId => {
-        setStatus('status-jvp', 'Running J–V sweep…')
-        streamJobEvents<JVResult & { active_physics?: string }>(jobId, {
+        const label = kind === 'jv' ? 'J–V sweep' : kind === 'current_decomp' ? 'current decomposition' : 'spatial-profile sweep'
+        setStatus('status-jvp', `Running ${label}…`)
+        streamJobEvents<AnyResult>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result as JVResult & { active_physics?: string }
-            const runResult: RunResult = { kind: 'jv', data: pure }
+            const { active_physics, ...pure } = result
+            const runResult: RunResult =
+              kind === 'jv'
+                ? { kind: 'jv', data: pure as JVResult }
+                : kind === 'current_decomp'
+                ? { kind: 'current_decomp', data: pure as CurrentDecompResult }
+                : { kind: 'spatial', data: pure as SpatialProfileResult }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
