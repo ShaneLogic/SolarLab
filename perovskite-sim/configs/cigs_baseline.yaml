@@ -5,6 +5,19 @@
 # D_ion = 0 in every layer (no mobile ionic species in inorganic stack).
 # Interface SRV: high on minority-carrier side of each heterojunction.
 
+simulation_hints:
+  # ZnO(200nm)/CdS(50nm)/CIGS(2um) has a large chi discontinuity (4.4 vs
+  # 4.2) at the ZnO/CdS junction that activates the TE flux cap. With
+  # N_grid < 80 the 2 um absorber is too coarsely resolved and the
+  # coupled Poisson/continuity solver fails to converge around V~0.37V
+  # (bisection stalls). Raising N_grid to 120+ relieves this at the
+  # cost of a slower sweep.
+  min_N_grid: 120
+  notes: >-
+    ZnO/CdS/CIGS heterostructure. Requires N_grid >= 120 to avoid
+    non-convergence of the coupled solver near mid-bias. Default
+    Radau tolerances work but each sweep takes several minutes.
+
 device:
   V_bi: 1.0
   Phi: 2.5e21   # AM1.5G above-bandgap flux for Eg~1.15 eV
