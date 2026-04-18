@@ -81,6 +81,25 @@ def load_device_from_yaml(path: str) -> DeviceStack:
     interfaces = tuple(
         (float(pair[0]), float(pair[1])) for pair in raw_interfaces
     )
+
+    # Selective / Schottky contact surface recombination velocities
+    # (Phase 3.3 — Apr 2026). YAML may supply them as a nested
+    # ``contacts:`` block or as flat top-level device keys. Missing
+    # keys leave the contact as ohmic Dirichlet (None sentinel) so
+    # pre-3.3 configs load unchanged.
+    def _opt_S(value):
+        if value is None:
+            return None
+        return float(value)
+
+    contacts_cfg = dev.get("contacts", {}) or {}
+    left_cfg = contacts_cfg.get("left", {}) or {}
+    right_cfg = contacts_cfg.get("right", {}) or {}
+    S_n_left = _opt_S(dev.get("S_n_left", left_cfg.get("S_n")))
+    S_p_left = _opt_S(dev.get("S_p_left", left_cfg.get("S_p")))
+    S_n_right = _opt_S(dev.get("S_n_right", right_cfg.get("S_n")))
+    S_p_right = _opt_S(dev.get("S_p_right", right_cfg.get("S_p")))
+
     return DeviceStack(
         layers=layers,
         V_bi=_f(dev.get("V_bi", 1.1)),
@@ -88,4 +107,8 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         interfaces=interfaces,
         T=_f(dev.get("T", 300.0)),
         mode=str(dev.get("mode", "full")),
+        S_n_left=S_n_left,
+        S_p_left=S_p_left,
+        S_n_right=S_n_right,
+        S_p_right=S_p_right,
     )

@@ -16,7 +16,18 @@ def carrier_continuity_rhs(
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Vectorized dn/dt and dp/dt via Scharfetter-Gummel fluxes.
-    Boundary nodes are held fixed (returned as 0).
+
+    By default both boundary nodes are Dirichlet-pinned (dn/dp returned as 0
+    at indices 0 and -1). Selective / Schottky contacts (Phase 3.3 — Apr
+    2026) replace that pin with a Robin-type flux on a per-carrier,
+    per-side basis. Callers opt in by stashing any of the four optional
+    keys ``J_n_L`` / ``J_n_R`` / ``J_p_L`` / ``J_p_R`` in ``params``. When
+    a key is present, its value is used as the boundary flux in place of
+    the zero-flux pad and the matching dn/dp entry is allowed to evolve.
+    Missing or ``None`` keys keep the pre-3.3 Dirichlet pin. The flux
+    signs follow the convention used by
+    :func:`perovskite_sim.physics.contacts.selective_contact_flux` so that
+    ``S → ∞`` recovers the ohmic limit and ``S = 0`` the blocking limit.
     """
     D_n = params["D_n"]; D_p = params["D_p"]; V_T = params["V_T"]
     dx = np.diff(x)                                # (N-1,)
@@ -88,13 +99,34 @@ def carrier_continuity_rhs(
     dx_cell[-1]   = dx[-1]
     dx_cell[1:-1] = 0.5 * (dx[:-1] + dx[1:])
 
-    # Pad fluxes with zero-flux BCs at both boundaries
-    J_n_full = np.concatenate([[0.0], J_n, [0.0]])
-    J_p_full = np.concatenate([[0.0], J_p, [0.0]])
+    # Boundary flux treatment. By default pad with zero (Dirichlet pin
+    # overrides dn/dp anyway). Selective / Schottky contacts supply a
+    # Robin flux per carrier / per side; any key left as None keeps the
+    # original pin.
+    J_n_L_val = params.get("J_n_L")
+    J_n_R_val = params.get("J_n_R")
+    J_p_L_val = params.get("J_p_L")
+    J_p_R_val = params.get("J_p_R")
+
+    J_n_full = np.concatenate(
+        [[0.0 if J_n_L_val is None else float(J_n_L_val)], J_n,
+         [0.0 if J_n_R_val is None else float(J_n_R_val)]]
+    )
+    J_p_full = np.concatenate(
+        [[0.0 if J_p_L_val is None else float(J_p_L_val)], J_p,
+         [0.0 if J_p_R_val is None else float(J_p_R_val)]]
+    )
 
     dn =  (J_n_full[1:] - J_n_full[:-1]) / (Q * dx_cell) - R + G
     dp = -(J_p_full[1:] - J_p_full[:-1]) / (Q * dx_cell) - R + G
 
-    dn[0] = dn[-1] = 0.0
-    dp[0] = dp[-1] = 0.0
+    # Dirichlet pins for any boundary/carrier without a Robin flux set.
+    if J_n_L_val is None:
+        dn[0] = 0.0
+    if J_n_R_val is None:
+        dn[-1] = 0.0
+    if J_p_L_val is None:
+        dp[0] = 0.0
+    if J_p_R_val is None:
+        dp[-1] = 0.0
     return dn, dp

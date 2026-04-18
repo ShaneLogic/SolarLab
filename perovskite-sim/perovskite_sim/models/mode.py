@@ -42,6 +42,7 @@ class SimulationMode:
     use_temperature_scaling: bool = True
     use_photon_recycling: bool = True
     use_field_dependent_mobility: bool = True
+    use_selective_contacts: bool = True
 
 
 LEGACY = SimulationMode(
@@ -53,6 +54,7 @@ LEGACY = SimulationMode(
     use_temperature_scaling=False,
     use_photon_recycling=False,
     use_field_dependent_mobility=False,
+    use_selective_contacts=False,
 )
 
 FAST = SimulationMode(
@@ -64,6 +66,7 @@ FAST = SimulationMode(
     use_temperature_scaling=False,
     use_photon_recycling=False,
     use_field_dependent_mobility=False,
+    use_selective_contacts=False,
 )
 
 FULL = SimulationMode(
@@ -75,6 +78,7 @@ FULL = SimulationMode(
     use_temperature_scaling=True,
     use_photon_recycling=True,
     use_field_dependent_mobility=True,
+    use_selective_contacts=True,
 )
 
 
