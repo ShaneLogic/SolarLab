@@ -145,6 +145,25 @@ class MaterialArrays:
     S_n_R: float | None = None
     S_p_R: float | None = None
     has_selective_contacts: bool = False
+    # Self-consistent radiative reabsorption (Phase 3.1b — Apr 2026).
+    # When ``has_radiative_reabsorption`` is True, ``build_material_arrays``
+    # skips the Phase 3.1 build-time ``B_rad *= P_esc`` scaling and instead
+    # stashes per-absorber (mask, P_esc, thickness) entries here. At each
+    # RHS call :func:`assemble_rhs` integrates the full bulk emission rate
+    # ``B_rad · n · p`` across each absorber and adds the reabsorbed
+    # fraction ``(1 − P_esc)`` back as a uniform G_rad source on that
+    # absorber's nodes. This closes the photon-recycling loop: the bulk
+    # ``B_rad`` on ``MaterialArrays`` remains at its intrinsic value and
+    # only the net radiative loss (what actually escapes) appears in
+    # steady-state. In the spatially-uniform n·p limit this is exactly
+    # equivalent to the Phase 3.1 build-time scaling; in the non-uniform
+    # regime (e.g. under injection or near contacts) it is physically more
+    # accurate because it lets emission near a high-n·p region feed
+    # generation near a low-n·p region.
+    absorber_masks: tuple[np.ndarray, ...] = ()
+    absorber_p_esc: tuple[float, ...] = ()
+    absorber_thicknesses: tuple[float, ...] = ()
+    has_radiative_reabsorption: bool = False
 
     @property
     def carrier_params(self) -> dict:
@@ -506,10 +525,26 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         G_optical = None
         tmm_info = None
 
-    # Photon recycling: scale B_rad(x) by (1 − P_esc) on absorber layers.
-    # Requires TMM on (for A(x, λ)) and an absorber layer with a non-zero
-    # band gap. Non-absorber layers, and absorbers lacking band-gap data,
-    # are left untouched.
+    # Photon recycling — two branches that share the per-absorber
+    # (mask, P_esc, thickness) derivation from TMM:
+    #
+    # Phase 3.1 (use_photon_recycling ON, use_radiative_reabsorption OFF):
+    #   scale B_rad(x) by P_esc on each absorber at build time. This
+    #   collapses the reabsorption source directly into a reduced radiative
+    #   loss coefficient — cheap and correct in the spatially-uniform n·p
+    #   limit (which is where "V_oc boost" regressions are measured).
+    #
+    # Phase 3.1b (use_radiative_reabsorption ON, which also requires
+    # use_photon_recycling ON):
+    #   leave B_rad at its intrinsic bulk value and instead cache the
+    #   per-absorber (mask, P_esc, thickness) tuples. assemble_rhs then
+    #   computes the per-RHS G_rad = (1 − P_esc) · <B · n · p>_abs /
+    #   thickness and adds it uniformly onto the absorber nodes of G,
+    #   closing the photon-recycling loop self-consistently.
+    absorber_masks_list: list[np.ndarray] = []
+    absorber_p_esc_list: list[float] = []
+    absorber_thicknesses_list: list[float] = []
+    _has_radiative_reabsorption = False
     if (
         sim_mode.use_photon_recycling
         and tmm_info is not None
@@ -559,12 +594,25 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                             thickness=float(layer.thickness),
                             n_at_gap=n_at_gap,
                         )
-                        # Only the fraction P_esc of emitted photons
-                        # leaves the device; the rest is reabsorbed and
-                        # regenerates carriers, so the net radiative
-                        # loss rate scales by P_esc. (Yablonovitch 1982;
-                        # see physics/photon_recycling.py for details.)
-                        B_rad[mask_abs] = B_rad[mask_abs] * P_esc
+                        if sim_mode.use_radiative_reabsorption:
+                            # Phase 3.1b: keep full B_rad, cache the
+                            # absorber geometry for the per-RHS source.
+                            absorber_masks_list.append(mask_abs)
+                            absorber_p_esc_list.append(float(P_esc))
+                            absorber_thicknesses_list.append(
+                                float(layer.thickness)
+                            )
+                            _has_radiative_reabsorption = True
+                        else:
+                            # Phase 3.1: collapse reabsorption into a
+                            # reduced net radiative loss coefficient.
+                            # Only the fraction P_esc of emitted photons
+                            # leaves the device; the rest is reabsorbed
+                            # and regenerates carriers, so the net
+                            # radiative loss rate scales by P_esc.
+                            # (Yablonovitch 1982; see
+                            # physics/photon_recycling.py for details.)
+                            B_rad[mask_abs] = B_rad[mask_abs] * P_esc
             offset_pr += layer.thickness
 
     return MaterialArrays(
@@ -620,6 +668,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         S_n_R=stack.S_n_right if _has_selective_contacts else None,
         S_p_R=stack.S_p_right if _has_selective_contacts else None,
         has_selective_contacts=_has_selective_contacts,
+        absorber_masks=tuple(absorber_masks_list) if _has_radiative_reabsorption else (),
+        absorber_p_esc=tuple(absorber_p_esc_list) if _has_radiative_reabsorption else (),
+        absorber_thicknesses=tuple(absorber_thicknesses_list) if _has_radiative_reabsorption else (),
+        has_radiative_reabsorption=_has_radiative_reabsorption,
     )
 
 
@@ -740,6 +792,39 @@ def assemble_rhs(
             G = beer_lambert_generation(x, mat.alpha, stack.Phi)
     else:
         G = np.zeros(N)
+
+    # Self-consistent radiative reabsorption (Phase 3.1b). Per absorber,
+    # integrate the bulk radiative emission rate R_rad = B·n·p across its
+    # nodes and add (1 − P_esc) · <R_rad>_abs back as a uniform G_rad on
+    # those nodes. This closes the photon-recycling loop without breaking
+    # any previous invariant: in the uniform-n·p limit the time-averaged
+    # effect is bit-equivalent to the Phase 3.1 B_rad *= P_esc scaling,
+    # which is what the regression uses to check monotonicity. We always
+    # copy G here (even in the dark V_oc sweep) so we never mutate the
+    # cached mat.G_optical — that array is shared across every RHS call in
+    # the experiment and must stay read-only.
+    if mat.has_radiative_reabsorption and mat.absorber_masks:
+        G = G.copy() if G.size else G
+        for mask, P_esc, thickness in zip(
+            mat.absorber_masks, mat.absorber_p_esc, mat.absorber_thicknesses
+        ):
+            if thickness <= 0.0 or P_esc >= 1.0:
+                continue
+            # Integrate B_rad · n · p across the absorber. Trapezoidal on
+            # the electrical grid is plenty — the absorber span is always
+            # resolved with ≥ 20 nodes in production configs.
+            emission = mat.B_rad[mask] * n[mask] * p[mask]
+            x_abs = x[mask]
+            if x_abs.size < 2:
+                continue
+            R_tot = float(np.trapezoid(emission, x_abs))
+            if R_tot <= 0.0:
+                continue
+            # Reabsorbed fraction is redistributed uniformly across the
+            # absorber. Spatial redistribution of G matters only when n·p
+            # is non-uniform (e.g. under strong injection).
+            G_rad = R_tot * (1.0 - P_esc) / thickness
+            G[mask] = G[mask] + G_rad
 
     # Carrier continuity with per-layer D and per-node recombination params.
     # If any layer enables field-dependent mobility (Caughey-Thomas or

@@ -21,6 +21,7 @@ class TestPresets:
         assert LEGACY.use_trap_profile is False
         assert LEGACY.use_temperature_scaling is False
         assert LEGACY.use_photon_recycling is False
+        assert LEGACY.use_radiative_reabsorption is False
         assert LEGACY.use_field_dependent_mobility is False
         assert LEGACY.use_selective_contacts is False
 
@@ -32,6 +33,7 @@ class TestPresets:
         assert FULL.use_trap_profile is True
         assert FULL.use_temperature_scaling is True
         assert FULL.use_photon_recycling is True
+        assert FULL.use_radiative_reabsorption is True
         assert FULL.use_field_dependent_mobility is True
         assert FULL.use_selective_contacts is True
 
@@ -46,8 +48,10 @@ class TestPresets:
         assert FAST.use_photon_recycling is True
 
     def test_fast_disables_per_rhs_upgrades(self):
-        """FAST keeps field-mobility / selective contacts off because they
-        break the MaterialArrays build-once invariant and run per-RHS."""
+        """FAST keeps radiative reabsorption / field-mobility / selective
+        contacts off because they break the MaterialArrays build-once
+        invariant and run per-RHS."""
+        assert FAST.use_radiative_reabsorption is False
         assert FAST.use_field_dependent_mobility is False
         assert FAST.use_selective_contacts is False
 
@@ -60,6 +64,7 @@ class TestPresets:
             "use_trap_profile",
             "use_temperature_scaling",
             "use_photon_recycling",
+            "use_radiative_reabsorption",
             "use_field_dependent_mobility",
             "use_selective_contacts",
         ):

@@ -18,6 +18,7 @@ Tier flag matrix:
     use_trap_profile                   off    on    on
     use_temperature_scaling            off    on    on
     use_photon_recycling               off    on    on
+    use_radiative_reabsorption         off    off   on
     use_field_dependent_mobility       off    off   on
     use_selective_contacts             off    off   on
 
@@ -29,20 +30,22 @@ Design intent:
 
 - ``fast`` — every "build-once" physics upgrade (Phase 1 band-offset + TE,
   Phase 2 TMM optics, Phase 3.1 photon recycling, dual ions, trap profiles,
-  temperature scaling) is ON, but the two "per-RHS" upgrades that break the
-  MaterialArrays build-once invariant (Phase 3.2 field-dependent mobility,
-  Phase 3.3 selective contacts) are OFF. This is the best-accuracy-per-unit-
-  time tier and should be the default for most interactive / benchmark work
-  where the device geometry already captures selective behaviour via layer
-  doping rather than outer-contact Robin BCs.
+  temperature scaling) is ON, but the three "per-RHS" upgrades that break
+  the MaterialArrays build-once invariant — Phase 3.1b radiative
+  reabsorption, Phase 3.2 field-dependent mobility, Phase 3.3 selective
+  contacts — are OFF. This is the best-accuracy-per-unit-time tier and
+  should be the default for most interactive / benchmark work where the
+  device geometry already captures selective behaviour via layer doping
+  rather than outer-contact Robin BCs.
 
 - ``full`` — every physics flag is on. Use when the config explicitly needs
-  field-dependent mobility (``v_sat_{n,p}``, ``pf_gamma_{n,p}`` set) or
-  selective / Schottky contacts (any ``S_{n,p}_{left,right}`` set). Full
-  tier is safe to use on legacy YAML too — the per-RHS hooks self-disable
-  when the config leaves their opt-in parameters at None/zero — but it
-  exercises more code paths than strictly necessary for pre-Phase-3.2
-  stacks.
+  self-consistent radiative reabsorption (Phase 3.1b, per-RHS G_rad source
+  on absorbers), field-dependent mobility (``v_sat_{n,p}``,
+  ``pf_gamma_{n,p}`` set), or selective / Schottky contacts (any
+  ``S_{n,p}_{left,right}`` set). Full tier is safe to use on legacy YAML
+  too — the per-RHS hooks self-disable when the config leaves their opt-in
+  parameters at None/zero — but it exercises more code paths than strictly
+  necessary for pre-Phase-3.1b stacks.
 """
 from __future__ import annotations
 
@@ -66,6 +69,7 @@ class SimulationMode:
     use_trap_profile: bool = True
     use_temperature_scaling: bool = True
     use_photon_recycling: bool = True
+    use_radiative_reabsorption: bool = True
     use_field_dependent_mobility: bool = True
     use_selective_contacts: bool = True
 
@@ -78,15 +82,17 @@ LEGACY = SimulationMode(
     use_trap_profile=False,
     use_temperature_scaling=False,
     use_photon_recycling=False,
+    use_radiative_reabsorption=False,
     use_field_dependent_mobility=False,
     use_selective_contacts=False,
 )
 
 FAST = SimulationMode(
-    # FAST tier: every "build-once" physics upgrade is on, but the two
+    # FAST tier: every "build-once" physics upgrade is on, but the three
     # per-RHS upgrades that break the MaterialArrays build-once invariant
-    # (Phase 3.2 field-dependent mobility, Phase 3.3 selective contacts)
-    # stay off. Best accuracy-per-unit-time default for benchmark work.
+    # (Phase 3.1b radiative reabsorption, Phase 3.2 field-dependent
+    # mobility, Phase 3.3 selective contacts) stay off. Best accuracy-per-
+    # unit-time default for benchmark work.
     name="fast",
     use_thermionic_emission=True,
     use_tmm_optics=True,
@@ -94,6 +100,7 @@ FAST = SimulationMode(
     use_trap_profile=True,
     use_temperature_scaling=True,
     use_photon_recycling=True,
+    use_radiative_reabsorption=False,
     use_field_dependent_mobility=False,
     use_selective_contacts=False,
 )
@@ -106,6 +113,7 @@ FULL = SimulationMode(
     use_trap_profile=True,
     use_temperature_scaling=True,
     use_photon_recycling=True,
+    use_radiative_reabsorption=True,
     use_field_dependent_mobility=True,
     use_selective_contacts=True,
 )
