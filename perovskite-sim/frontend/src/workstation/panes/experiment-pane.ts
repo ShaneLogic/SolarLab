@@ -18,6 +18,7 @@ import { mountDarkJVPane } from './dark-jv-pane'
 import { mountSunsVocPane } from './suns-voc-pane'
 import { mountVocTPane } from './voc-t-pane'
 import { mountEQEPane } from './eqe-pane'
+import { mountELPane } from './el-pane'
 import { mountMottSchottkyPane } from './mott-schottky-pane'
 
 export interface ExperimentPaneOptions {
@@ -96,6 +97,10 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
         {
           kind: 'eqe', label: 'EQE / IPCE',
           mount: (el) => mountEQEPane(el, paneOpts()),
+        },
+        {
+          kind: 'el', label: 'Electroluminescence (EL, \u0394V\u2099\u1d63)',
+          mount: (el) => mountELPane(el, paneOpts()),
         },
       ],
     },

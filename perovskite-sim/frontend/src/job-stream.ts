@@ -13,6 +13,7 @@ export async function startJob(
     | 'suns_voc'
     | 'voc_t'
     | 'eqe'
+    | 'el'
     | 'mott_schottky',
   device: unknown,
   params: Record<string, unknown>,
