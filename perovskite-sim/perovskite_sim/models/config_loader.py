@@ -60,6 +60,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             trap_N_t_interface=float(layer_cfg["trap_N_t_interface"]) if "trap_N_t_interface" in layer_cfg else None,
             trap_N_t_bulk=float(layer_cfg["trap_N_t_bulk"]) if "trap_N_t_bulk" in layer_cfg else None,
             trap_decay_length=float(layer_cfg["trap_decay_length"]) if "trap_decay_length" in layer_cfg else None,
+            trap_profile_shape=str(layer_cfg.get("trap_profile_shape", "exponential")),
             optical_material=layer_cfg.get("optical_material"),
             n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
             incoherent=_parse_bool(layer_cfg.get("incoherent", False)),

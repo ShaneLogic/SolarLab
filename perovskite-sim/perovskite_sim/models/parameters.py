@@ -38,10 +38,17 @@ class MaterialParams:
     Nv300: float | None = None      # effective valence-band DOS at 300 K [m⁻³]
     mu_T_gamma: float = -1.5        # mobility temperature exponent
     E_a_ion: float = 0.58           # ion activation energy [eV] (Arrhenius)
-    # Spatially varying trap profile (None = uniform tau)
+    # Spatially varying trap profile (None = uniform tau).
+    # ``trap_profile_shape`` selects between the two forms in
+    # physics/traps.py: "exponential" (the Phase 4 default) and
+    # "gaussian" (Phase 4a — faster decay into the bulk for defect
+    # layers with a well-defined finite extent). ``trap_decay_length``
+    # is the length parameter in both cases — the exponential 1/e scale
+    # for "exponential" and the Gaussian sigma for "gaussian".
     trap_N_t_interface: float | None = None  # interface trap density [m⁻³]
     trap_N_t_bulk: float | None = None       # bulk trap density [m⁻³]
-    trap_decay_length: float | None = None   # exponential decay length [m]
+    trap_decay_length: float | None = None   # decay length / sigma [m]
+    trap_profile_shape: str = "exponential"  # "exponential" | "gaussian"
     # Optical data source for TMM (None = use scalar alpha Beer-Lambert)
     optical_material: str | None = None   # e.g. "MAPbI3", "TiO2", "spiro_OMeTAD"
     n_optical: float | None = None        # constant refractive index (fallback)
