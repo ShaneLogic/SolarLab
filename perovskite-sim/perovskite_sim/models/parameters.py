@@ -38,6 +38,20 @@ class MaterialParams:
     Nv300: float | None = None      # effective valence-band DOS at 300 K [m⁻³]
     mu_T_gamma: float = -1.5        # mobility temperature exponent
     E_a_ion: float = 0.58           # ion activation energy [eV] (Arrhenius)
+    # Phase 4b temperature scaling of radiative recombination and bandgap.
+    # ``B_rad_T_gamma`` is the power-law exponent in B(T) = B_300 · (T/300)^γ
+    # — default 0 keeps the pre-Phase-4b bit-identical behaviour. Set to
+    # ``-1.5`` to recover the detailed-balance scaling for a non-
+    # degenerate semiconductor at fixed bandgap (the typical literature
+    # value for MAPbI3). ``varshni_alpha`` and ``varshni_beta`` define
+    # the Varshni bandgap shift Eg(T) = Eg_300 − α·[T²/(T+β) − T_REF²/(T_REF+β)].
+    # α = 0 (default) disables the shift. Silicon: α ≈ 4.73e-4 eV/K,
+    # β ≈ 636 K (Eg narrows with heating). MAPbI3 is opposite — its
+    # bandgap *increases* with T, reproduced by α ≈ −3e-4 eV/K with a
+    # positive β (~+200 K is a representative value).
+    B_rad_T_gamma: float = 0.0
+    varshni_alpha: float = 0.0      # Varshni α [eV/K] — 0 = disabled
+    varshni_beta: float = 0.0       # Varshni β [K]
     # Spatially varying trap profile (None = uniform tau).
     # ``trap_profile_shape`` selects between the two forms in
     # physics/traps.py: "exponential" (the Phase 4 default) and

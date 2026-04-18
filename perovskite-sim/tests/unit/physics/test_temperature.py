@@ -11,6 +11,8 @@ from perovskite_sim.physics.temperature import (
     ni_at_T,
     mu_at_T,
     D_ion_at_T,
+    B_rad_at_T,
+    eg_at_T,
     T_REF,
 )
 
@@ -106,3 +108,81 @@ class TestDIonAtT:
         assert D_hi == pytest.approx(expected, rel=1e-10)
         # Higher T -> larger D_ion (exothermic hop)
         assert D_hi > D0
+
+
+class TestBRadAtT:
+    """Phase 4b: temperature-scaled band-to-band radiative coefficient."""
+
+    def test_identity_at_reference(self):
+        assert B_rad_at_T(4e-17, 300.0, gamma=-1.5) == 4e-17
+
+    def test_zero_gamma_is_identity_everywhere(self):
+        """gamma=0 (the default) keeps B unchanged at any T."""
+        assert B_rad_at_T(4e-17, 200.0, gamma=0.0) == 4e-17
+        assert B_rad_at_T(4e-17, 400.0, gamma=0.0) == 4e-17
+
+    def test_zero_input_returns_zero(self):
+        """B_300=0 stays 0 regardless of T or gamma."""
+        assert B_rad_at_T(0.0, 400.0, gamma=-1.5) == 0.0
+
+    def test_power_law_exponent(self):
+        """B(T) = B_300 · (T/300)^gamma."""
+        B0 = 4e-17
+        gamma = -1.5
+        T = 400.0
+        expected = B0 * (T / 300.0) ** gamma
+        assert B_rad_at_T(B0, T, gamma) == pytest.approx(expected, rel=1e-12)
+
+    def test_default_gamma_is_zero(self):
+        """Default gamma=0 so pre-Phase-4b configs are bit-identical."""
+        assert B_rad_at_T(4e-17, 350.0) == 4e-17
+
+    def test_detailed_balance_sign_of_temperature_dependence(self):
+        """gamma=-1.5 → B decreases with T (phonon-suppressed radiative rate)."""
+        B0 = 4e-17
+        assert B_rad_at_T(B0, 400.0, gamma=-1.5) < B0
+        assert B_rad_at_T(B0, 250.0, gamma=-1.5) > B0
+
+
+class TestEgAtT:
+    """Phase 4b: Varshni bandgap shift referenced to 300 K."""
+
+    def test_identity_at_reference(self):
+        assert eg_at_T(1.6, 300.0, alpha=-3e-4, beta=200.0) == 1.6
+
+    def test_zero_alpha_is_identity_everywhere(self):
+        """alpha=0 (default) keeps Eg unchanged at any T."""
+        assert eg_at_T(1.6, 200.0, alpha=0.0) == 1.6
+        assert eg_at_T(1.6, 400.0, alpha=0.0) == 1.6
+
+    def test_default_alpha_is_zero(self):
+        assert eg_at_T(1.55, 350.0) == 1.55
+
+    def test_shift_matches_varshni_formula(self):
+        """Explicit check of the referenced Varshni: shift_T = α·[T²/(T+β) − T_REF²/(T_REF+β)]."""
+        Eg0 = 1.60
+        alpha = -3e-4    # MAPbI3-like: Eg increases with T
+        beta = -200.0
+        T = 250.0
+        shift = alpha * (T * T / (T + beta) - 300.0 * 300.0 / (300.0 + beta))
+        expected = Eg0 - shift
+        assert eg_at_T(Eg0, T, alpha, beta) == pytest.approx(expected, rel=1e-12)
+
+    def test_negative_alpha_increases_eg_with_heating(self):
+        """MAPbI3-like Varshni (negative α, positive β): heating widens Eg."""
+        Eg0 = 1.60
+        Eg_hot = eg_at_T(Eg0, 400.0, alpha=-3e-4, beta=200.0)
+        Eg_cold = eg_at_T(Eg0, 200.0, alpha=-3e-4, beta=200.0)
+        assert Eg_hot > Eg0 > Eg_cold
+
+    def test_positive_alpha_decreases_eg_with_heating(self):
+        """Silicon-like Varshni (positive alpha): heating narrows Eg."""
+        Eg0 = 1.12
+        # Silicon: α ≈ 4.73e-4 eV/K, β ≈ 636 K
+        Eg_hot = eg_at_T(Eg0, 400.0, alpha=4.73e-4, beta=636.0)
+        assert Eg_hot < Eg0
+
+    def test_degenerate_denominator_returns_reference(self):
+        """T + β = 0 is a pathological Varshni input — return Eg_300 rather than divide by zero."""
+        # β = -T makes denom_T = 0
+        assert eg_at_T(1.55, 250.0, alpha=-3e-4, beta=-250.0) == 1.55
