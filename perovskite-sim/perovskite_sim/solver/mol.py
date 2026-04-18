@@ -23,7 +23,7 @@ from perovskite_sim.models.device import (
 
 from perovskite_sim.physics.recombination import interface_recombination
 from perovskite_sim.physics.temperature import (
-    thermal_voltage, ni_at_T, mu_at_T, D_ion_at_T,
+    thermal_voltage, ni_at_T, mu_at_T, D_ion_at_T, B_rad_at_T, eg_at_T,
 )
 from perovskite_sim.models.mode import resolve_mode, SimulationMode
 from perovskite_sim.constants import Q, V_T as _V_T_300
@@ -375,8 +375,19 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         N_A[mask] = p.N_A
         N_D[mask] = p.N_D
         alpha[mask] = p.alpha
+
+        # Phase 4b: temperature-shifted bandgap via Varshni, feeding both
+        # the chi/Eg arrays (so downstream thermionic-emission, photon-
+        # recycling, and band-offset consumers see the shifted edges) and
+        # the ni computation (so ni² ∝ exp(-Eg(T)/kT) is self-consistent).
+        # When ``use_temperature_scaling`` is off or varshni_alpha = 0,
+        # Eg_T ≡ p.Eg and behaviour is bit-identical to pre-Phase-4b.
+        if sim_mode.use_temperature_scaling:
+            Eg_T = eg_at_T(p.Eg, T_dev, p.varshni_alpha, p.varshni_beta)
+        else:
+            Eg_T = p.Eg
         chi[mask] = p.chi
-        Eg[mask] = p.Eg
+        Eg[mask] = Eg_T
 
         # Temperature-scaled mobility → diffusion (Einstein: D = mu * V_T)
         mu_n_T = mu_at_T(p.mu_n, T_dev, p.mu_T_gamma)
@@ -384,15 +395,24 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         D_n_node[mask] = mu_n_T * V_T_dev
         D_p_node[mask] = mu_p_T * V_T_dev
 
-        # Temperature-scaled intrinsic density
-        ni_T = ni_at_T(p.ni, p.Eg, T_dev, p.Nc300, p.Nv300)
+        # Temperature-scaled intrinsic density. Uses the Varshni-shifted
+        # Eg_T so ni(T) is self-consistent with the shifted bandgap when
+        # the user opts in; when varshni_alpha=0, Eg_T == p.Eg and the
+        # result is identical to the Phase 4 path.
+        ni_T = ni_at_T(p.ni, Eg_T, T_dev, p.Nc300, p.Nv300)
         ni_sq[mask] = ni_T ** 2
 
         tau_n[mask] = p.tau_n
         tau_p[mask] = p.tau_p
         n1[mask] = p.n1
         p1[mask] = p.p1
-        B_rad[mask] = p.B_rad
+        # Phase 4b: temperature-scaled radiative coefficient. gamma=0
+        # (the default) short-circuits to B_300 so pre-Phase-4b configs
+        # are unaffected.
+        if sim_mode.use_temperature_scaling:
+            B_rad[mask] = B_rad_at_T(p.B_rad, T_dev, p.B_rad_T_gamma)
+        else:
+            B_rad[mask] = p.B_rad
         C_n[mask] = p.C_n
         C_p[mask] = p.C_p
         A_star_n_node[mask] = p.A_star_n
