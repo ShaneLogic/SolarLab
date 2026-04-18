@@ -118,6 +118,16 @@ export interface SunsVocResult {
   pseudo_FF: number
 }
 
+export interface VocTResult {
+  T_arr: number[]           // K
+  V_oc_arr: number[]        // V
+  J_sc_arr: number[]        // A/m^2
+  slope: number             // V/K
+  intercept_0K: number      // V (≈ E_A in eV)
+  E_A_eV: number            // eV
+  R_squared: number
+}
+
 export interface EQEResult {
   wavelengths_nm: number[]
   EQE: number[]

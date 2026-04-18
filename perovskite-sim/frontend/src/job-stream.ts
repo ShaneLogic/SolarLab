@@ -11,6 +11,7 @@ export async function startJob(
     | 'tandem'
     | 'dark_jv'
     | 'suns_voc'
+    | 'voc_t'
     | 'eqe'
     | 'mott_schottky',
   device: unknown,

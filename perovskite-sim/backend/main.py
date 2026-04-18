@@ -531,7 +531,7 @@ class DegRequest(BaseModel):
 
 class JobRequest(BaseModel):
     kind: str  # "jv" | "impedance" | "degradation" | "tpv" | "current_decomp" | "spatial"
-               # | "dark_jv" | "suns_voc" | "eqe" | "mott_schottky" | "tandem"
+               # | "dark_jv" | "suns_voc" | "voc_t" | "eqe" | "mott_schottky" | "tandem"
     config_path: Optional[str] = None
     device: Optional[dict] = None
     params: dict = {}
@@ -717,6 +717,24 @@ def start_job(req: JobRequest):
                 suns_levels=suns_levels,
                 N_grid=int(p.get("N_grid", 60)),
                 t_settle=float(p.get("t_settle", 1e-3)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            out = to_serializable(result)
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "voc_t":
+        from perovskite_sim.experiments.voc_t import run_voc_t
+
+        def _run(reporter: ProgressReporter) -> dict:
+            result = run_voc_t(
+                stack,
+                T_min=float(p.get("T_min", 250.0)),
+                T_max=float(p.get("T_max", 350.0)),
+                n_points=int(p.get("n_points", 6)),
+                N_grid=int(p.get("N_grid", 60)),
+                jv_n_points=int(p.get("jv_n_points", 30)),
+                v_rate=float(p.get("v_rate", 1.0)),
+                V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

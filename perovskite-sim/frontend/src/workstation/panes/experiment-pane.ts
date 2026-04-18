@@ -16,6 +16,7 @@ import { mountDegradationPane } from './degradation-pane'
 import { mountTPVPane } from './tpv-pane'
 import { mountDarkJVPane } from './dark-jv-pane'
 import { mountSunsVocPane } from './suns-voc-pane'
+import { mountVocTPane } from './voc-t-pane'
 import { mountEQEPane } from './eqe-pane'
 import { mountMottSchottkyPane } from './mott-schottky-pane'
 
@@ -69,6 +70,10 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
         {
           kind: 'suns_voc', label: 'Suns\u2013V\u2092c',
           mount: (el) => mountSunsVocPane(el, paneOpts()),
+        },
+        {
+          kind: 'voc_t', label: 'V\u2092c(T) \u2014 activation energy',
+          mount: (el) => mountVocTPane(el, paneOpts()),
         },
       ],
     },
