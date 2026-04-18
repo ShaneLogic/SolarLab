@@ -107,6 +107,65 @@ def _find_voc(
     return V_oc, y_oc
 
 
+def _adjust_V_for_OC(
+    x: np.ndarray,
+    y_start: np.ndarray,
+    stack: DeviceStack,
+    mat: MaterialArrays,
+    V_guess: float,
+    t_lo: float,
+    t_hi: float,
+    rtol: float = 1e-4,
+    atol: float = 1e-6,
+    J_tol: float = 0.05,
+    max_iter: int = 5,
+    dV_perturb: float = 1e-4,
+) -> tuple[float, np.ndarray, float]:
+    """Find (V, y_end, J_end) such that J_terminal(y_end, V) ≈ 0 after
+    integrating from y_start at (t_lo, V) to t_hi.
+
+    Newton-Raphson with finite-difference dJ/dV, warm-started from V_guess.
+    This is the circuit-mode core: instead of post-hoc mapping J(t) to V(t)
+    via a linearised R_oc slope (which assumes dV ∝ dJ with a single-point
+    slope — incorrect for non-unity ideality and large dV), we impose the
+    exact open-circuit algebraic constraint J = 0 at every reported time
+    and let V_app float to satisfy it.
+
+    Typical cost: 1–3 transient integrations per step (1 when the solution
+    was already at OC, 3 when Newton needs one correction pass).
+    """
+    def _integrate(V: float) -> tuple[float, np.ndarray]:
+        sol = run_transient(
+            x, y_start, (t_lo, t_hi), np.array([t_hi]),
+            stack, illuminated=True, V_app=V,
+            rtol=rtol, atol=atol,
+            max_step=max((t_hi - t_lo) / 5.0, 1e-12),
+            mat=mat,
+        )
+        y_end = sol.y[:, -1] if sol.success else y_start.copy()
+        dt = t_hi - t_lo
+        J = _compute_current(x, y_end, stack, V, y_prev=y_start, dt=dt, mat=mat)
+        return J, y_end
+
+    V = V_guess
+    J, y_end = _integrate(V)
+    for _iter in range(max_iter):
+        if abs(J) < J_tol:
+            break
+        J_plus, _ = _integrate(V + dV_perturb)
+        dJdV = (J_plus - J) / dV_perturb
+        if abs(dJdV) < 1e-12:
+            break  # degenerate slope — bail out rather than divide by zero
+        dV = -J / dJdV
+        # Damp to 20 mV per iteration. TPV voltages never swing more than
+        # ~10 mV between output times, so a larger step is always overshoot.
+        if abs(dV) > 0.02:
+            dV = 0.02 * np.sign(dV)
+        V = V + dV
+        J, y_end = _integrate(V)
+    return V, y_end, J
+
+
 def _fit_decay_tau(t: np.ndarray, V: np.ndarray, V_oc: float) -> tuple[float, float]:
     """Fit mono-exponential decay to V(t) - V_oc after the pulse.
 
@@ -218,24 +277,10 @@ def run_tpv(
     V_oc, y_oc = _find_voc(x, y_illum, stack, mat_ss, V_guess=stack.compute_V_bi(),
                             rtol=rtol, atol=atol)
 
-    # Step 1b: Find V_oc under the pulse illumination so we know the
-    # physical small-signal dV = V_oc(pulse) - V_oc(ss). This is the
-    # correct target for the transient perturbation and replaces the
-    # unreliable dJ/dV → R_oc estimate that the prior implementation
-    # used (the state at V_oc is not in equilibrium at V_oc - dV, so
-    # the finite-difference slope was junk, yielding R_oc ~ 4e-8 Ω·m²
-    # and a V(t) transient that looked completely flat).
-    V_oc_pulse, _y_oc_pulse = _find_voc(
-        x, y_oc, stack, mat_pulse, V_guess=V_oc, rtol=rtol, atol=atol,
-    )
-    delta_V_ideal = V_oc_pulse - V_oc
-
     if progress is not None:
-        progress("tpv", 0, n_points,
-                 f"V_oc={V_oc:.4f} V, dV_pulse={delta_V_ideal*1e3:.2f} mV")
+        progress("tpv", 0, n_points, f"V_oc={V_oc:.4f} V")
 
-    # Step 2: Time integration — pulse phase then decay phase
-    # Use adaptive time grid: denser during pulse, sparser during decay
+    # Step 2: Adaptive time grid — denser during pulse, sparser during decay
     t_pulse_pts = max(int(n_points * t_pulse / t_decay), 10)
     t_decay_pts = n_points - t_pulse_pts
     t_arr = np.concatenate([
@@ -243,112 +288,63 @@ def run_tpv(
         np.linspace(t_pulse, t_decay, t_decay_pts + 1),
     ])
 
+    # Step 3: Circuit-mode transient. At every reported time we enforce
+    # the open-circuit constraint J_terminal(y, V) = 0 exactly via a
+    # Newton root-find on V_app — replacing the prior linearised post-hoc
+    # mapping V(t) = V_oc + delta_V_ideal · J(t)/J_plateau which assumed
+    # dV ∝ dJ with a single-point slope and broke for non-unity ideality.
     V_arr = np.zeros(len(t_arr))
     J_arr = np.zeros(len(t_arr))
+    V_arr[0] = V_oc
+    J_arr[0] = 0.0  # steady-state OC
     y = y_oc.copy()
+    V_prev = V_oc
 
-    for k in range(len(t_arr)):
-        t_k = t_arr[k]
-        # Select mat: pulse or steady-state
-        is_pulse = t_k < t_pulse
-        mat_k = mat_pulse if is_pulse else mat_ss
-
-        if k == 0:
-            V_arr[0] = V_oc
-            J_arr[0] = _compute_current(x, y, stack, V_oc, mat=mat_ss)
-            continue
-
+    for k in range(1, len(t_arr)):
         t_lo = t_arr[k - 1]
         t_hi = t_arr[k]
-        dt = t_hi - t_lo
 
-        # Determine which mat to use for this interval
         if t_lo < t_pulse < t_hi:
-            # Interval straddles the pulse boundary — split it
-            y_prev = y.copy()
-            dt1 = t_pulse - t_lo
-            dt2 = t_hi - t_pulse
-            # First sub-interval: pulse phase
-            if dt1 > 0:
+            # Straddle the pulse boundary: advance the first sub-interval
+            # (pulse phase) at V = V_prev under mat_pulse, then apply the
+            # Newton correction to the second sub-interval (decay phase)
+            # under mat_ss. The straddle is at most one step per sweep
+            # (fallback to V_prev here is a sub-mV error smeared across
+            # one output sample).
+            if t_pulse - t_lo > 0:
                 sol1 = run_transient(
                     x, y, (t_lo, t_pulse), np.array([t_pulse]),
-                    stack, illuminated=True, V_app=V_oc,
+                    stack, illuminated=True, V_app=V_prev,
                     rtol=rtol, atol=atol,
-                    max_step=max(dt1 / 5.0, 1e-12),
+                    max_step=max((t_pulse - t_lo) / 5.0, 1e-12),
                     mat=mat_pulse,
                 )
                 y = sol1.y[:, -1] if sol1.success else y
-            # Second sub-interval: decay phase
-            if dt2 > 0:
-                sol2 = run_transient(
-                    x, y, (t_pulse, t_hi), np.array([t_hi]),
-                    stack, illuminated=True, V_app=V_oc,
-                    rtol=rtol, atol=atol,
-                    max_step=max(dt2 / 5.0, 1e-12),
-                    mat=mat_ss,
+            if t_hi - t_pulse > 0:
+                V_k, y, J_k = _adjust_V_for_OC(
+                    x, y, stack, mat_ss, V_prev, t_pulse, t_hi, rtol, atol,
                 )
-                y = sol2.y[:, -1] if sol2.success else y
-        else:
-            y_prev = y.copy()
-            mat_interval = mat_pulse if t_hi <= t_pulse else mat_ss
-            sol = run_transient(
-                x, y, (t_lo, t_hi), np.array([t_hi]),
-                stack, illuminated=True, V_app=V_oc,
-                rtol=rtol, atol=atol,
-                max_step=dt / 5.0,
-                mat=mat_interval,
+            else:
+                V_k = V_prev
+                J_k = _compute_current(x, y, stack, V_prev, mat=mat_pulse)
+        elif t_hi <= t_pulse:
+            # Entirely inside the pulse phase — V climbs toward V_oc(pulse)
+            V_k, y, J_k = _adjust_V_for_OC(
+                x, y, stack, mat_pulse, V_prev, t_lo, t_hi, rtol, atol,
             )
-            y = sol.y[:, -1] if sol.success else y
+        else:
+            # Entirely after the pulse — V relaxes back to V_oc
+            V_k, y, J_k = _adjust_V_for_OC(
+                x, y, stack, mat_ss, V_prev, t_lo, t_hi, rtol, atol,
+            )
 
-        # Read voltage from quasi-Fermi-level splitting at the contacts
-        # In practice at fixed V_app = V_oc, the change in carrier densities
-        # shifts the internal potential. We read V(t) as the voltage that
-        # would give J=0 — approximated by V_oc + dV from the displacement
-        # current integration.
-        J_k = _compute_current(x, y, stack, V_oc, y_prev=y_prev, dt=dt,
-                                mat=mat_ss)
+        V_arr[k] = V_k
         J_arr[k] = J_k
-
-        # Approximate V(t) from the open-circuit condition:
-        # At true OC, J = 0. With fixed V_app = V_oc, J ≠ 0 during the
-        # perturbation. The voltage perturbation delta_V that would restore
-        # J = 0 satisfies J ≈ -dJ/dV * delta_V. We estimate dJ/dV from the
-        # steady-state (≈ J_sc / V_oc as a rough diode slope). For small
-        # perturbations, we track V(t) by integrating: dV/dt = -J / C_device
-        # where C_device ≈ eps_0 * eps_r * A / d.
-        # Simpler approach: since we're at fixed V_app, the actual voltage
-        # across the device IS V_oc, but the internal quasi-Fermi splitting
-        # differs. We report V_app as the voltage (the externally measurable
-        # quantity at open circuit is defined by the boundary conditions).
-        # For a more physical V(t), we'd need a circuit-mode solver.
-        # Here we use V_oc for all points — the J(t) transient itself
-        # contains the physics (J(t) → 0 as carriers recombine).
-        V_arr[k] = V_oc
+        V_prev = V_k
 
         if progress is not None:
-            progress("tpv", k, len(t_arr) - 1, f"t={t_k:.3e} s")
-
-    # Translate J(t) at fixed V_app = V_oc into an effective V(t).
-    # Physical picture: under the pulse the device wants to sit at
-    # V_oc_pulse, but we hold V_app = V_oc, so a current flows whose
-    # magnitude at the pulse plateau scales directly with the
-    # open-circuit voltage perturbation delta_V_ideal = V_oc_pulse - V_oc.
-    # Mapping: V(t) - V_oc ≈ delta_V_ideal * J(t) / J_plateau.
-    # J_plateau is estimated from the last few samples of the pulse
-    # phase, avoiding the early transient where the state hasn't
-    # fully responded to the generation step.
-    pulse_mask = t_arr < t_pulse
-    if pulse_mask.sum() >= 3:
-        J_plateau = float(np.mean(J_arr[pulse_mask][-3:]))
-    elif pulse_mask.sum() > 0:
-        J_plateau = float(np.max(np.abs(J_arr[pulse_mask])))
-    else:
-        J_plateau = float(np.max(np.abs(J_arr)))
-    if abs(J_plateau) > 1e-10:
-        V_arr = V_oc + delta_V_ideal * (J_arr / J_plateau)
-    else:
-        V_arr = np.full_like(J_arr, V_oc)
-
+            progress("tpv", k, len(t_arr) - 1,
+                     f"t={t_hi:.3e} s, V={V_k:.4f} V")
 
     # Fit decay
     tau, delta_V0 = _fit_decay_tau(t_arr, V_arr, V_oc)
