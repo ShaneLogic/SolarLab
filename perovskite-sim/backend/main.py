@@ -857,6 +857,55 @@ def start_job(req: JobRequest):
                 "metrics": dataclasses.asdict(result.metrics),
                 "benchmark": cfg.benchmark,
             }
+    elif kind == "jv_2d":
+        from perovskite_sim.twod.experiments.jv_sweep_2d import run_jv_sweep_2d
+        from perovskite_sim.twod.microstructure import Microstructure
+
+        def _run(reporter: ProgressReporter) -> dict:
+            _illum = p.get("illuminated", True)
+            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
+            _save = p.get("save_snapshots", True)
+            save_snapshots = bool(_save) if not isinstance(_save, str) else _save.lower() != "false"
+
+            result = run_jv_sweep_2d(
+                stack=stack,
+                microstructure=Microstructure(),
+                lateral_length=float(p.get("lateral_length", 500e-9)),
+                Nx=int(p.get("Nx", 10)),
+                V_max=float(p.get("V_max", 1.2)),
+                V_step=float(p.get("V_step", 0.05)),
+                illuminated=illuminated,
+                lateral_bc=str(p.get("lateral_bc", "periodic")),
+                Ny_per_layer=int(p.get("Ny_per_layer", 20)),
+                settle_t=float(p.get("settle_t", 1e-7)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+                save_snapshots=save_snapshots,
+            )
+
+            def snap2d_to_dict(s):
+                return {
+                    "V": float(s.V),
+                    "x": (s.x * 1e9).tolist(),
+                    "y": (s.y * 1e9).tolist(),
+                    "phi": s.phi.tolist(),
+                    "n": s.n.tolist(),
+                    "p": s.p.tolist(),
+                    "Jx_n": s.Jx_n.tolist(),
+                    "Jy_n": s.Jy_n.tolist(),
+                    "Jx_p": s.Jx_p.tolist(),
+                    "Jy_p": s.Jy_p.tolist(),
+                }
+
+            out = {
+                "V": result.V.tolist(),
+                "J": result.J.tolist(),
+                "grid_x": (result.grid_x * 1e9).tolist(),
+                "grid_y": (result.grid_y * 1e9).tolist(),
+                "lateral_bc": result.lateral_bc,
+                "snapshots": [snap2d_to_dict(s) for s in result.snapshots],
+            }
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
     else:
         raise HTTPException(status_code=400, detail=f"unknown kind: {kind}")
 
