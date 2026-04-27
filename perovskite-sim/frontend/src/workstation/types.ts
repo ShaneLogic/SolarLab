@@ -13,6 +13,7 @@ import type {
   EQEResult,
   ELResult,
   MottSchottkyResult,
+  JV2DResult,
 } from '../types'
 
 /** The root object persisted to localStorage. */
@@ -58,6 +59,7 @@ export type ExperimentKind =
   | 'eqe'
   | 'el'
   | 'mott_schottky'
+  | 'jv_2d'
 
 export type RunResult =
   | { kind: 'jv'; data: JVResult }
@@ -72,6 +74,7 @@ export type RunResult =
   | { kind: 'eqe'; data: EQEResult }
   | { kind: 'el'; data: ELResult }
   | { kind: 'mott_schottky'; data: MottSchottkyResult }
+  | { kind: 'jv_2d'; data: JV2DResult }
 
 /** Phase 2 will populate this. Defined here to keep the type stable across phases. */
 export interface Experiment {

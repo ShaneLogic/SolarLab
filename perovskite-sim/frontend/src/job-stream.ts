@@ -14,7 +14,8 @@ export async function startJob(
     | 'voc_t'
     | 'eqe'
     | 'el'
-    | 'mott_schottky',
+    | 'mott_schottky'
+    | 'jv_2d',
   device: unknown,
   params: Record<string, unknown>,
   configPath: string | null = null,

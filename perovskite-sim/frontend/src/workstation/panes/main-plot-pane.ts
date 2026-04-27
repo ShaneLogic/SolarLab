@@ -15,6 +15,7 @@ import type {
   EQEResult,
   ELResult,
   MottSchottkyResult,
+  JV2DResult,
 } from '../../types'
 
 export interface MainPlotHandle {
@@ -88,9 +89,48 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
         case 'mott_schottky':
           renderMottSchottky(plotEl, run.result.data)
           return
+        case 'jv_2d':
+          renderJV2D(plotEl, run.result.data)
+          return
       }
     },
   }
+}
+
+// ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
+
+function renderJV2D(el: HTMLElement, r: JV2DResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  // 2D backend signs J < 0 under illumination at V=0; flip to match the
+  // 1D forward-sweep display (J > 0 at V_sc, J = 0 at V_oc, J < 0 beyond).
+  const J_mA = r.J.map(j => -j / 10)
+  const Ny = r.grid_y.length
+  const Nx = r.grid_x.length
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.V, y: J_mA, name: 'Forward (2D)',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+    ],
+    baseLayout({
+      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
+      annotations: [
+        {
+          x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
+          xanchor: 'left', yanchor: 'bottom', showarrow: false,
+          text: `2D grid: N<sub>x</sub>=${Nx}, N<sub>y</sub>=${Ny} · BC=${r.lateral_bc} · L<sub>x</sub>=${r.grid_x[Nx - 1].toFixed(0)} nm`,
+          font: { size: 11 },
+        },
+      ],
+    }),
+    plotConfig('jv_2d_sweep'),
+  )
 }
 
 function renderJV(el: HTMLElement, r: JVResult): void {

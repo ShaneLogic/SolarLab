@@ -20,6 +20,7 @@ import { mountVocTPane } from './voc-t-pane'
 import { mountEQEPane } from './eqe-pane'
 import { mountELPane } from './el-pane'
 import { mountMottSchottkyPane } from './mott-schottky-pane'
+import { mountJV2DPane } from './jv-2d-pane'
 
 export interface ExperimentPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -118,6 +119,15 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
         {
           kind: 'degradation', label: 'Degradation',
           mount: (el) => mountDegradationPane(el, paneOpts()),
+        },
+      ],
+    },
+    {
+      label: '2D / Microstructural (Stage A)',
+      entries: [
+        {
+          kind: 'jv_2d', label: 'J–V Sweep (2D)',
+          mount: (el) => mountJV2DPane(el, paneOpts()),
         },
       ],
     },

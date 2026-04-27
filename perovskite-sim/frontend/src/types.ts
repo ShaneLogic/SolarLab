@@ -193,6 +193,30 @@ export interface SpatialProfileResult {
   snapshots_rev: SpatialSnapshot[]
 }
 
+// ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
+
+export interface SpatialSnapshot2D {
+  V: number
+  x: number[]            // nm, length Nx
+  y: number[]            // nm, length Ny
+  phi: number[][]        // (Ny, Nx)
+  n: number[][]          // (Ny, Nx)
+  p: number[][]          // (Ny, Nx)
+  Jx_n: number[][]       // (Ny, Nx-1)
+  Jy_n: number[][]       // (Ny-1, Nx)
+  Jx_p: number[][]       // (Ny, Nx-1)
+  Jy_p: number[][]       // (Ny-1, Nx)
+}
+
+export interface JV2DResult {
+  V: number[]                       // applied bias, V
+  J: number[]                       // terminal current density, A/m^2
+  grid_x: number[]                  // lateral nodes, nm
+  grid_y: number[]                  // vertical nodes, nm
+  lateral_bc: 'periodic' | 'neumann'
+  snapshots: SpatialSnapshot2D[]    // empty when save_snapshots=false
+}
+
 export interface JVParams {
   N_grid: number
   n_points: number
