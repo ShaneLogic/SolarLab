@@ -108,12 +108,19 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 | 🧊 | **Frozen-ion degradation** | Long-time transient with snapshot J-V at each probe ($D_\text{ion} \to 0$) — decouples ionic drift from electronic response |
 | 🔗 | **2T tandem driver** | Combined TMM over top + junction + bottom, independent sub-cell sweeps, series-matched on a common current grid |
 
+### Dimensionality
+
+| | Capability | Details |
+|:-:|:-----------|:--------|
+| 📏 | **1D drift-diffusion (default)** | All experiments above run on a tanh-clustered multilayer 1D grid with the cached `MaterialArrays` hot path |
+| 🟦 | **2D Stage A (lateral-uniform)** | Tensor-product (Ny × Nx) grid with sparse 5-point Poisson, vectorised 2D Scharfetter-Gummel fluxes, periodic / Neumann lateral BCs; bootstraps from the 1D illuminated steady state and freezes ions as a static Poisson background. On a laterally-uniform stack the 2D solver reproduces the 1D J-V to within sub-mV $V_\text{oc}$, $5 \times 10^{-4}$ relative $J_\text{sc}$, and $10^{-3}$ FF — pinned by `tests/regression/test_twod_validation.py`. Available as `kind='jv_2d'` from the backend and as the **J-V Sweep (2D)** entry in the workstation experiment selector. |
+
 ### Tooling
 
 | | Capability | Details |
 |:-:|:-----------|:--------|
 | 🖥️ | **Interactive web UI** | Live SSE streaming, grouped experiment dropdown, GoldenLayout dockable panes, Plotly plots, layer-builder editor |
-| 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_\text{oc}$ / $J_\text{sc}$ / FF / HI bounds; TMM $R+T+A$ conservation) |
+| 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_\text{oc}$ / $J_\text{sc}$ / FF / HI bounds; TMM $R+T+A$ conservation; 1D ↔ 2D parity gate) |
 
 <br>
 
