@@ -325,6 +325,59 @@ def _compute_current(
 _JV_RADAU_MAX_NFEV = 100_000
 
 
+def _bake_radiative_reabsorption_step(
+    y: np.ndarray, x: np.ndarray, mat: MaterialArrays, illuminated: bool,
+) -> MaterialArrays:
+    """Freeze the Phase 3.1b G_rad source for one ``_integrate_step`` call.
+
+    Phase 3.1b's per-RHS hook recomputes ``R_tot = ∫ B·n·p dx`` inside every
+    Radau Newton iteration, which couples every absorber node to every other
+    through a non-local integral. At low forward bias (V ≈ 0.21 V on TMM
+    presets) the diode-injection knee makes ``d(n·p)/dV`` steep and the
+    Newton iteration cannot contract on the resulting low-rank dense block —
+    bisection-and-retry runs out and ``_integrate_step`` raises.
+
+    Fix: evaluate ``R_tot`` once at the entry state ``y`` of each voltage
+    step, fold ``G_rad`` into a step-local ``G_optical`` copy, and clear
+    ``has_radiative_reabsorption`` on the returned ``mat``. Inside the call,
+    the SG flux sees a static G and Newton converges. Across voltage steps
+    the warm-start chain refreshes ``R_tot`` from the freshly-settled state,
+    so the only error is bounded by how much ``n·p`` drifts inside one
+    settle interval — sub-percent for the typical ``v_rate=1 V/s`` sweep,
+    well below the ~5 mV equivalence window the 3.1b regression tests use
+    for V_oc parity with Phase 3.1.
+
+    Beer-Lambert / non-TMM stacks have ``has_radiative_reabsorption=False``
+    and skip this path entirely (returned mat is the original).
+    """
+    if not (mat.has_radiative_reabsorption and illuminated and mat.absorber_masks):
+        return mat
+    sv = StateVec.unpack(y, len(x))
+    G_base = mat.G_optical if mat.G_optical is not None else np.zeros_like(x)
+    G_with_rad = G_base.copy()
+    for mask, P_esc, thickness in zip(
+        mat.absorber_masks, mat.absorber_p_esc, mat.absorber_thicknesses
+    ):
+        if thickness <= 0.0 or P_esc >= 1.0:
+            continue
+        emission = mat.B_rad[mask] * sv.n[mask] * sv.p[mask]
+        x_abs = x[mask]
+        if x_abs.size < 2:
+            continue
+        R_tot = float(np.trapezoid(emission, x_abs))
+        if R_tot <= 0.0:
+            continue
+        G_with_rad[mask] = G_with_rad[mask] + R_tot * (1.0 - P_esc) / thickness
+    return dataclasses.replace(
+        mat,
+        G_optical=G_with_rad,
+        has_radiative_reabsorption=False,
+        absorber_masks=(),
+        absorber_p_esc=(),
+        absorber_thicknesses=(),
+    )
+
+
 def _integrate_step(
     x: np.ndarray,
     y: np.ndarray,
@@ -353,6 +406,16 @@ def _integrate_step(
     If the implicit solver fails to converge on the full step, subdivide
     the interval (halving up to max_bisect levels) and chain sub-steps.
     Raises RuntimeError if bisection is exhausted.
+
+    Phase 3.1b fallback: when the device has ``has_radiative_reabsorption``
+    on, the per-RHS ``G_rad`` source can prevent the Radau Newton iteration
+    from contracting on TMM presets at the diode-injection knee
+    (V ≈ 0.21 V — see saved memory `project_tmm_jv_regression_021.md`). If
+    the standard call fails, retry once with ``G_rad`` frozen at the entry
+    state — the warm-started chain refreshes it on the next voltage step,
+    so the lag stays sub-percent on the typical ``v_rate=1 V/s`` sweep.
+    Steps where the per-RHS hook converges (the vast majority) keep the
+    fully self-consistent semantics; only the pathological steps fall back.
     """
     dt = t_hi - t_lo
     sol = run_transient(
@@ -364,14 +427,27 @@ def _integrate_step(
     )
     if sol.success:
         return sol.y[:, -1]
+    if mat.has_radiative_reabsorption and illuminated:
+        mat_step = _bake_radiative_reabsorption_step(y, x, mat, illuminated)
+        sol = run_transient(
+            x, y, (t_lo, t_hi), np.array([t_hi]),
+            stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
+            max_step=dt / 20.0 if dt > 0.0 else np.inf,
+            mat=mat_step,
+            max_nfev=_JV_RADAU_MAX_NFEV,
+        )
+        if sol.success:
+            return sol.y[:, -1]
     if max_bisect == 0:
         raise RuntimeError(
             f"JV sweep: coupled solver failed to converge on [{t_lo:.3e},{t_hi:.3e}] "
             f"at V_app={V_app:.4f} V after bisection"
         )
     t_mid = 0.5 * (t_lo + t_hi)
-    y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol, max_bisect - 1, illuminated)
-    return _integrate_step(x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol, max_bisect - 1, illuminated)
+    y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol,
+                             max_bisect - 1, illuminated)
+    return _integrate_step(x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol,
+                            max_bisect - 1, illuminated)
 
 
 def quasi_static_sweep(
