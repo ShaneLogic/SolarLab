@@ -43,6 +43,19 @@ class MaterialArrays2D:
     N_D: np.ndarray
     ni: np.ndarray
     G_optical: np.ndarray
+    chi: np.ndarray               # (Ny, Nx) electron affinity [eV] — for heterostack SG
+    Eg: np.ndarray                # (Ny, Nx) bandgap [eV] — for heterostack SG
+    A_star_n: np.ndarray          # (Ny, Nx) Richardson constant for electrons [A/(m²·K²)]
+    A_star_p: np.ndarray          # (Ny, Nx) Richardson constant for holes
+    interface_y_faces: tuple[int, ...]  # y-face indices where TE capping applies (Stage A)
+    T_device: float               # device temperature [K] — for TE flux
+    # Stage A: ions are absent from the 2D state vector but contribute a frozen
+    # background charge density. P_ion_static is the equilibrated ion profile
+    # (defaults to P_ion0 — uniform initial). The Poisson rho gets an extra
+    # Q*(P_ion_static - P_ion0_2d) term, matching the 1D charge-balance equation
+    # so that 1D-converged states extrude to lateral-uniform 2D equilibria.
+    P_ion0_2d: np.ndarray         # (Ny, Nx) initial uniform ion profile
+    P_ion_static: np.ndarray      # (Ny, Nx) frozen ion profile (= P_ion0_2d unless overridden)
     n_eq_left: np.ndarray         # (Nx,)  bottom-contact electron density
     p_eq_left: np.ndarray         # (Nx,)
     n_eq_right: np.ndarray        # (Nx,)  top-contact
@@ -59,6 +72,7 @@ def build_material_arrays_2d(
     ustruct: Microstructure,
     *,
     lateral_bc: str = "periodic",
+    P_ion_static_1d: np.ndarray | None = None,
 ) -> MaterialArrays2D:
     """Assemble the 2D MaterialArrays from a stack and a microstructure.
 
@@ -87,6 +101,31 @@ def build_material_arrays_2d(
     N_A = extrude(mat1d.N_A)
     N_D = extrude(mat1d.N_D)
     ni = extrude(np.sqrt(mat1d.ni_sq))
+    chi = extrude(mat1d.chi)
+    Eg = extrude(mat1d.Eg)
+
+    # Richardson constants for thermionic-emission capping at heterointerfaces.
+    # 1D MaterialArrays may leave A_star_n / A_star_p as None when TE is off.
+    if mat1d.A_star_n is not None:
+        A_star_n = extrude(mat1d.A_star_n)
+    else:
+        A_star_n = np.zeros((Ny, Nx), dtype=float)
+    if mat1d.A_star_p is not None:
+        A_star_p = extrude(mat1d.A_star_p)
+    else:
+        A_star_p = np.zeros((Ny, Nx), dtype=float)
+    interface_y_faces = tuple(mat1d.interface_faces)
+    T_device = float(mat1d.T_device)
+
+    # Frozen ion background — required for 2D-1D parity because the 1D
+    # Poisson rho includes Q*(P - P_ion0). Default to P_ion0 (uniform initial
+    # state) so the contribution is zero on a cold start; pass an equilibrated
+    # P_1d profile from solve_illuminated_ss when bootstrapping a warm-start.
+    P_ion0_2d = extrude(mat1d.P_ion0)
+    if P_ion_static_1d is None:
+        P_ion_static = P_ion0_2d.copy()
+    else:
+        P_ion_static = extrude(np.asarray(P_ion_static_1d, dtype=float))
 
     # G_optical: 1D may be None for Beer-Lambert stacks; always return an array
     if mat1d.G_optical is not None:
@@ -129,14 +168,22 @@ def build_material_arrays_2d(
 
     poisson_factor = build_poisson_2d_factor(grid, eps_r, lateral_bc=lateral_bc)
 
-    # V_bi: use the computed V_bi_eff (from band offsets) stored on the 1D cache
-    V_bi = float(mat1d.V_bi_eff)
+    # V_bi: must use stack.V_bi (the manual value the 1D Poisson BC uses) — not
+    # V_bi_eff (the band-offset-derived value). The CLAUDE.md guidance pins this:
+    # substituting V_bi_eff into the Poisson boundary breaks parity with the 1D
+    # solver because IonMonger / 1D treats V_bi as a free parameter rather than
+    # as the Fermi-level difference of the contacts.
+    V_bi = float(stack.V_bi)
 
     return MaterialArrays2D(
         grid=grid, stack=stack, ustruct=ustruct,
         eps_r=eps_r, D_n=D_n, D_p=D_p,
         tau_n=tau_n, tau_p=tau_p,
         N_A=N_A, N_D=N_D, ni=ni, G_optical=G_optical,
+        chi=chi, Eg=Eg,
+        A_star_n=A_star_n, A_star_p=A_star_p,
+        interface_y_faces=interface_y_faces, T_device=T_device,
+        P_ion0_2d=P_ion0_2d, P_ion_static=P_ion_static,
         n_eq_left=n_eq_left, p_eq_left=p_eq_left,
         n_eq_right=n_eq_right, p_eq_right=p_eq_right,
         V_bi=V_bi, V_T=V_T,
@@ -194,8 +241,15 @@ from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
 
 
 def _charge_density_2d(n: np.ndarray, p: np.ndarray, mat: MaterialArrays2D) -> np.ndarray:
-    """Space-charge density rho = q*(p - n + N_D - N_A). No ions in Stage A."""
-    return Q * (p - n + mat.N_D - mat.N_A)
+    """Space-charge density rho = q*(p - n + N_D - N_A + (P_ion - P_ion0)).
+
+    Stage A holds the ion profile fixed at ``mat.P_ion_static``; defaults to
+    ``mat.P_ion0_2d`` (uniform initial), which makes the ion term identically
+    zero on a cold start. Passing an equilibrated 1D ion profile via
+    ``P_ion_static_1d=`` to ``build_material_arrays_2d`` adds the matching
+    1D background charge so 2D-1D parity holds on lateral-uniform states.
+    """
+    return Q * (p - n + mat.N_D - mat.N_A + (mat.P_ion_static - mat.P_ion0_2d))
 
 
 def assemble_rhs_2d(
@@ -261,10 +315,15 @@ def assemble_rhs_2d(
     ).reshape((g.Ny, g.Nx))
 
     # --- Band-offset quasi-Fermi potentials --------------------------------
-    # MaterialArrays2D has no chi/Eg fields yet (Stage A, homojunction path).
-    # Pass None so continuity_rhs_2d uses phi directly (chi=0 everywhere).
-    chi_2d = None
-    Eg_2d = None
+    # Use chi/Eg from MaterialArrays2D so the SG fluxes correctly account for
+    # heterointerface band offsets.  When chi is uniform (homojunction), this
+    # is bit-identical to the old chi=None path because a constant chi offset
+    # cancels in the Bernoulli argument (phi_n[j+1] - phi_n[j] = phi[j+1] -
+    # phi[j] when chi[j+1] == chi[j]).  For a heterostack (HTL/absorber/ETL)
+    # omitting chi causes the SG flux to be wrong by exp(Δχ/V_T) at every
+    # interface, making dark equilibrium impossible to reach from any start.
+    chi_2d = mat.chi
+    Eg_2d = mat.Eg
 
     # --- Continuity --------------------------------------------------------
     dn, dp = continuity_rhs_2d(
@@ -275,6 +334,10 @@ def assemble_rhs_2d(
         chi=chi_2d,
         Eg=Eg_2d,
         lateral_bc=mat.poisson_factor.lateral_bc,
+        interface_y_faces=mat.interface_y_faces,
+        A_star_n=mat.A_star_n,
+        A_star_p=mat.A_star_p,
+        T=mat.T_device,
     )
 
     # --- Dirichlet pin at y=0 and y=Ly (ohmic contacts) -------------------
@@ -374,8 +437,10 @@ def extract_snapshot_2d(
         phi_top=mat.V_bi - V_app,
     )
 
-    Jx_n, Jy_n = sg_fluxes_2d_n(phi, n, g.x, g.y, mat.D_n, mat.V_T)
-    Jx_p, Jy_p = sg_fluxes_2d_p(phi, p, g.x, g.y, mat.D_p, mat.V_T)
+    phi_n = phi + mat.chi
+    phi_p = phi + mat.chi + mat.Eg
+    Jx_n, Jy_n = sg_fluxes_2d_n(phi_n, n, g.x, g.y, mat.D_n, mat.V_T)
+    Jx_p, Jy_p = sg_fluxes_2d_p(phi_p, p, g.x, g.y, mat.D_p, mat.V_T)
 
     return SpatialSnapshot2D(
         V=float(V_app),

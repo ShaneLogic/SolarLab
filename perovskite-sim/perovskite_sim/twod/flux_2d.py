@@ -24,13 +24,17 @@ def sg_fluxes_2d_n(
     dx = np.diff(x)                              # (Nx-1,)
     dy = np.diff(y)                              # (Ny-1,)
 
-    D_face_x = 0.5 * (D_n[:, :-1] + D_n[:, 1:])  # (Ny, Nx-1)
+    # Harmonic-mean face averaging (matches 1D physics/poisson harmonic eps_r
+    # face average and 1D MaterialArrays harmonic D_n_face). Required at
+    # heterointerfaces where D varies by orders of magnitude across a face.
+    _eps = 1e-300
+    D_face_x = 2.0 * D_n[:, :-1] * D_n[:, 1:] / (D_n[:, :-1] + D_n[:, 1:] + _eps)  # (Ny, Nx-1)
     xi_x = (phi_n[:, 1:] - phi_n[:, :-1]) / V_T  # (Ny, Nx-1)
     Jx = (Q * D_face_x / dx[None, :]) * (
         bernoulli(xi_x) * n[:, 1:] - bernoulli(-xi_x) * n[:, :-1]
     )
 
-    D_face_y = 0.5 * (D_n[:-1, :] + D_n[1:, :])  # (Ny-1, Nx)
+    D_face_y = 2.0 * D_n[:-1, :] * D_n[1:, :] / (D_n[:-1, :] + D_n[1:, :] + _eps)  # (Ny-1, Nx)
     xi_y = (phi_n[1:, :] - phi_n[:-1, :]) / V_T  # (Ny-1, Nx)
     Jy = (Q * D_face_y / dy[:, None]) * (
         bernoulli(xi_y) * n[1:, :] - bernoulli(-xi_y) * n[:-1, :]
@@ -51,13 +55,14 @@ def sg_fluxes_2d_p(
     dx = np.diff(x)
     dy = np.diff(y)
 
-    D_face_x = 0.5 * (D_p[:, :-1] + D_p[:, 1:])
+    _eps = 1e-300
+    D_face_x = 2.0 * D_p[:, :-1] * D_p[:, 1:] / (D_p[:, :-1] + D_p[:, 1:] + _eps)
     xi_x = (phi_p[:, 1:] - phi_p[:, :-1]) / V_T
     Jx = (Q * D_face_x / dx[None, :]) * (
         bernoulli(xi_x) * p[:, :-1] - bernoulli(-xi_x) * p[:, 1:]
     )
 
-    D_face_y = 0.5 * (D_p[:-1, :] + D_p[1:, :])
+    D_face_y = 2.0 * D_p[:-1, :] * D_p[1:, :] / (D_p[:-1, :] + D_p[1:, :] + _eps)
     xi_y = (phi_p[1:, :] - phi_p[:-1, :]) / V_T
     Jy = (Q * D_face_y / dy[:, None]) * (
         bernoulli(xi_y) * p[:-1, :] - bernoulli(-xi_y) * p[1:, :]
