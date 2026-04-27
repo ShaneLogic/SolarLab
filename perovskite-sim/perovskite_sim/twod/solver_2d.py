@@ -351,3 +351,52 @@ def run_transient_2d(
     if not sol.success:
         raise RuntimeError(f"Radau failed at V_app={V_app:.4f} V: {sol.message}")
     return sol.y[:, -1]
+
+
+from perovskite_sim.twod.snapshot import SpatialSnapshot2D
+from perovskite_sim.twod.flux_2d import sg_fluxes_2d_n, sg_fluxes_2d_p
+
+
+def extract_snapshot_2d(
+    y_state: np.ndarray, mat: MaterialArrays2D, V_app: float,
+) -> SpatialSnapshot2D:
+    """Re-solve Poisson at the given (n, p) state and compute SG fluxes for
+    a complete spatial snapshot. Used after run_transient_2d settles."""
+    g = mat.grid
+    Nn = g.n_nodes
+    n = y_state[:Nn].reshape((g.Ny, g.Nx))
+    p = y_state[Nn:].reshape((g.Ny, g.Nx))
+
+    rho = _charge_density_2d(n, p, mat)
+    phi = solve_poisson_2d(
+        mat.poisson_factor, rho,
+        phi_bottom=0.0,
+        phi_top=mat.V_bi - V_app,
+    )
+
+    Jx_n, Jy_n = sg_fluxes_2d_n(phi, n, g.x, g.y, mat.D_n, mat.V_T)
+    Jx_p, Jy_p = sg_fluxes_2d_p(phi, p, g.x, g.y, mat.D_p, mat.V_T)
+
+    return SpatialSnapshot2D(
+        V=float(V_app),
+        x=g.x.copy(), y=g.y.copy(),
+        phi=phi, n=n.copy(), p=p.copy(),
+        Jx_n=Jx_n, Jy_n=Jy_n, Jx_p=Jx_p, Jy_p=Jy_p,
+    )
+
+
+def compute_terminal_current_2d(snap: SpatialSnapshot2D) -> float:
+    """Lateral-average of total current density (electrons + holes) at the
+    top contact (y = Ly), units A/m².
+
+    J_y is defined on edges between grid rows j and j+1; the top-most edge
+    sits between j=Ny-2 and j=Ny-1 (i.e. row index -1 of Jy arrays).
+    Trapezoidal integration over x handles non-uniform x spacing.
+    """
+    Jy_top_n = snap.Jy_n[-1, :]      # (Nx,)
+    Jy_top_p = snap.Jy_p[-1, :]      # (Nx,)
+    dx = np.diff(snap.x)             # (Nx-1,)
+    L_x = float(snap.x[-1] - snap.x[0])
+    avg_n = float(np.sum((Jy_top_n[:-1] + Jy_top_n[1:]) / 2.0 * dx) / L_x)
+    avg_p = float(np.sum((Jy_top_p[:-1] + Jy_top_p[1:]) / 2.0 * dx) / L_x)
+    return avg_n + avg_p
