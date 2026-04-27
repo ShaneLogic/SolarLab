@@ -187,6 +187,105 @@ def _diffusion_per_node(
     return D_n_node, D_p_node
 
 
+from perovskite_sim.constants import Q
+from perovskite_sim.physics.recombination import total_recombination
+from perovskite_sim.twod.poisson_2d import solve_poisson_2d
+from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
+
+
+def _charge_density_2d(n: np.ndarray, p: np.ndarray, mat: MaterialArrays2D) -> np.ndarray:
+    """Space-charge density rho = q*(p - n + N_D - N_A). No ions in Stage A."""
+    return Q * (p - n + mat.N_D - mat.N_A)
+
+
+def assemble_rhs_2d(
+    t: float,
+    y_state: np.ndarray,
+    mat: MaterialArrays2D,
+    V_app: float,
+) -> np.ndarray:
+    """Time-derivative of the flattened state (n, p) on the (Ny, Nx) grid.
+
+    Flatten convention: C-order over (j, i) — y-major. Row j of the (Ny, Nx)
+    array sits in y_state[j*Nx : (j+1)*Nx].
+
+    Stage A scope:
+      - Poisson via cached splu factor; Dirichlet at y=0 (phi=0) and
+        y=Ly (phi = V_bi - V_app)
+      - SG drift-diffusion fluxes on horizontal and vertical edges via
+        continuity_rhs_2d (which calls sg_fluxes_2d_{n,p})
+      - SRH recombination via total_recombination; B_rad=C_n=C_p=n1=p1=0
+        (Stage A uses only SRH; no radiative/Auger, no trap-level offsets)
+      - Optical generation from mat.G_optical (zero array for Beer-Lambert configs)
+      - Lateral BC: periodic or Neumann per mat.poisson_factor.lateral_bc
+      - Dirichlet contacts in y: dn[0,:]=dn[-1,:]=dp[0,:]=dp[-1,:]=0
+
+    DONE_WITH_CONCERNS — total_recombination signature adaptation:
+      total_recombination(n, p, ni_sq, tau_n, tau_p, n1, p1, B_rad, C_n, C_p)
+      expects scalar or broadcastable per-node values. MaterialArrays2D stores
+      ni (not ni_sq), tau_n, tau_p as 2D arrays but does NOT carry n1, p1,
+      B_rad, C_n, C_p. Those are passed as zero scalars here so that only SRH
+      with mid-gap traps (n1=p1=0 limit: R_SRH = (np - ni^2)/(tau_p*n + tau_n*p))
+      contributes. The radiative and Auger channels are intentionally absent in
+      Stage A; they will be added in Stage B by extending MaterialArrays2D with
+      the missing fields (mirroring the 1D MaterialArrays layout).
+    """
+    g = mat.grid
+    Nn = g.n_nodes
+    n = y_state[:Nn].reshape((g.Ny, g.Nx))
+    p = y_state[Nn:].reshape((g.Ny, g.Nx))
+
+    # --- Poisson -----------------------------------------------------------
+    rho = _charge_density_2d(n, p, mat)
+    phi = solve_poisson_2d(
+        mat.poisson_factor, rho,
+        phi_bottom=0.0,
+        phi_top=mat.V_bi - V_app,
+    )
+
+    # --- Recombination -----------------------------------------------------
+    # total_recombination operates element-wise on flat arrays. All missing
+    # fields (n1, p1, B_rad, C_n, C_p) default to zero for Stage A.
+    _zero = 0.0
+    R = total_recombination(
+        n=n.flatten(),
+        p=p.flatten(),
+        ni_sq=(mat.ni ** 2).flatten(),
+        tau_n=mat.tau_n.flatten(),
+        tau_p=mat.tau_p.flatten(),
+        n1=_zero,
+        p1=_zero,
+        B_rad=_zero,
+        C_n=_zero,
+        C_p=_zero,
+    ).reshape((g.Ny, g.Nx))
+
+    # --- Band-offset quasi-Fermi potentials --------------------------------
+    # MaterialArrays2D has no chi/Eg fields yet (Stage A, homojunction path).
+    # Pass None so continuity_rhs_2d uses phi directly (chi=0 everywhere).
+    chi_2d = None
+    Eg_2d = None
+
+    # --- Continuity --------------------------------------------------------
+    dn, dp = continuity_rhs_2d(
+        g.x, g.y, phi, n, p,
+        mat.G_optical, R,
+        mat.D_n, mat.D_p,
+        mat.V_T,
+        chi=chi_2d,
+        Eg=Eg_2d,
+        lateral_bc=mat.poisson_factor.lateral_bc,
+    )
+
+    # --- Dirichlet pin at y=0 and y=Ly (ohmic contacts) -------------------
+    dn[0, :] = 0.0
+    dn[-1, :] = 0.0
+    dp[0, :] = 0.0
+    dp[-1, :] = 0.0
+
+    return np.concatenate([dn.flatten(), dp.flatten()])
+
+
 def _layer_role_at_each_y(y: np.ndarray, stack: DeviceStack) -> list[str]:
     """Return the layer role string at each y-node.
 
