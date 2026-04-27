@@ -56,6 +56,14 @@ class MaterialArrays2D:
     # so that 1D-converged states extrude to lateral-uniform 2D equilibria.
     P_ion0_2d: np.ndarray         # (Ny, Nx) initial uniform ion profile
     P_ion_static: np.ndarray      # (Ny, Nx) frozen ion profile (= P_ion0_2d unless overridden)
+    # Full 1D recombination parameters extruded to 2D so total_recombination
+    # produces the same R(n, p) as the 1D solver. Zeros disable individual
+    # channels (Stage A defaults match 1D defaults from layer YAML).
+    n1: np.ndarray                # (Ny, Nx) SRH electron trap-level density
+    p1: np.ndarray                # (Ny, Nx) SRH hole trap-level density
+    B_rad: np.ndarray             # (Ny, Nx) radiative recombination coefficient
+    C_n: np.ndarray               # (Ny, Nx) Auger electron coefficient
+    C_p: np.ndarray               # (Ny, Nx) Auger hole coefficient
     n_eq_left: np.ndarray         # (Nx,)  bottom-contact electron density
     p_eq_left: np.ndarray         # (Nx,)
     n_eq_right: np.ndarray        # (Nx,)  top-contact
@@ -117,6 +125,15 @@ def build_material_arrays_2d(
     interface_y_faces = tuple(mat1d.interface_faces)
     T_device = float(mat1d.T_device)
 
+    # Full recombination params from the 1D layer config — extruded uniformly
+    # in x for Stage A so total_recombination matches 1D R(n, p) at every
+    # node. Zeros disable individual channels (Stage A defaults follow YAML).
+    n1 = extrude(mat1d.n1)
+    p1 = extrude(mat1d.p1)
+    B_rad = extrude(mat1d.B_rad)
+    C_n_2d = extrude(mat1d.C_n)
+    C_p_2d = extrude(mat1d.C_p)
+
     # Frozen ion background — required for 2D-1D parity because the 1D
     # Poisson rho includes Q*(P - P_ion0). Default to P_ion0 (uniform initial
     # state) so the contribution is zero on a cold start; pass an equilibrated
@@ -127,9 +144,17 @@ def build_material_arrays_2d(
     else:
         P_ion_static = extrude(np.asarray(P_ion_static_1d, dtype=float))
 
-    # G_optical: 1D may be None for Beer-Lambert stacks; always return an array
+    # G_optical: 1D returns None for Beer-Lambert stacks (it computes BL at
+    # runtime per voltage step). Stage A 2D pre-computes BL at build time
+    # via the same helper used by 1D's runtime path; the result is shape
+    # (Ny,) extruded to (Ny, Nx). For TMM stacks, mat1d.G_optical is already
+    # populated and we just extrude.
     if mat1d.G_optical is not None:
         G_optical = extrude(mat1d.G_optical)
+    elif mat1d.alpha is not None and float(stack.Phi) > 0.0:
+        from perovskite_sim.physics.generation import beer_lambert_generation
+        G_1d = beer_lambert_generation(grid.y, mat1d.alpha, stack.Phi)
+        G_optical = extrude(G_1d)
     else:
         G_optical = np.zeros((Ny, Nx), dtype=float)
 
@@ -184,6 +209,7 @@ def build_material_arrays_2d(
         A_star_n=A_star_n, A_star_p=A_star_p,
         interface_y_faces=interface_y_faces, T_device=T_device,
         P_ion0_2d=P_ion0_2d, P_ion_static=P_ion_static,
+        n1=n1, p1=p1, B_rad=B_rad, C_n=C_n_2d, C_p=C_p_2d,
         n_eq_left=n_eq_left, p_eq_left=p_eq_left,
         n_eq_right=n_eq_right, p_eq_right=p_eq_right,
         V_bi=V_bi, V_T=V_T,
@@ -298,20 +324,21 @@ def assemble_rhs_2d(
     )
 
     # --- Recombination -----------------------------------------------------
-    # total_recombination operates element-wise on flat arrays. All missing
-    # fields (n1, p1, B_rad, C_n, C_p) default to zero for Stage A.
-    _zero = 0.0
+    # total_recombination operates element-wise on flat arrays. All channels
+    # (SRH + radiative + Auger) come from the extruded 1D layer config so
+    # R(n, p) matches the 1D solver pointwise — required for V_oc / FF
+    # parity in the validation gate.
     R = total_recombination(
         n=n.flatten(),
         p=p.flatten(),
         ni_sq=(mat.ni ** 2).flatten(),
         tau_n=mat.tau_n.flatten(),
         tau_p=mat.tau_p.flatten(),
-        n1=_zero,
-        p1=_zero,
-        B_rad=_zero,
-        C_n=_zero,
-        C_p=_zero,
+        n1=mat.n1.flatten(),
+        p1=mat.p1.flatten(),
+        B_rad=mat.B_rad.flatten(),
+        C_n=mat.C_n.flatten(),
+        C_p=mat.C_p.flatten(),
     ).reshape((g.Ny, g.Nx))
 
     # --- Band-offset quasi-Fermi potentials --------------------------------
