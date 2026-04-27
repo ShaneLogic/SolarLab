@@ -79,3 +79,19 @@ def test_assemble_rhs_2d_lateral_invariance_at_uniform_state():
     rel_p = np.max(np.abs(dp - dp[:, [0]])) / max(1.0, np.max(np.abs(dp)))
     assert rel_n < 1e-9, f"dn lateral variation = {rel_n:.2e}"
     assert rel_p < 1e-9, f"dp lateral variation = {rel_p:.2e}"
+
+
+def test_run_transient_2d_short_settle_returns_finite_state():
+    from perovskite_sim.twod.solver_2d import run_transient_2d
+    stack = _stack()
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=500e-9, Nx=10, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    # Use ni (intrinsic carrier density) as initial state for stability.
+    # This avoids the extreme numerical stiffness at equilibrium (n_eq ~ 1e-24).
+    n0 = np.broadcast_to(mat.ni[0, :], (g.Ny, g.Nx)).copy()
+    p0 = np.broadcast_to(mat.ni[0, :], (g.Ny, g.Nx)).copy()
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    y_end = run_transient_2d(y0, mat, V_app=0.0, t_end=1e-12, max_step=1e-13)
+    assert np.all(np.isfinite(y_end))
+    assert y_end.shape == y0.shape
