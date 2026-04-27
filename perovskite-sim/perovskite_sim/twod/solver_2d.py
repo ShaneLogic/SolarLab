@@ -307,3 +307,47 @@ def _layer_role_at_each_y(y: np.ndarray, stack: DeviceStack) -> list[str]:
         else:
             roles.append(getattr(layers[-1], "role", "absorber"))
     return roles
+
+
+from scipy.integrate import solve_ivp
+
+
+class _RhsNonFinite2D(Exception):
+    pass
+
+
+def _assert_finite_2d(dydt: np.ndarray, V_app: float) -> None:
+    if not np.all(np.isfinite(dydt)):
+        raise _RhsNonFinite2D(f"non-finite dy/dt at V_app={V_app:.4f} V")
+
+
+def run_transient_2d(
+    y0: np.ndarray,
+    mat: MaterialArrays2D,
+    *,
+    V_app: float,
+    t_end: float,
+    max_step: float | None = None,
+    rtol: float = 1e-6,
+    atol: float = 1e-8,
+) -> np.ndarray:
+    """Integrate dy/dt = assemble_rhs_2d(...) on [0, t_end] with Radau.
+
+    Returns the state vector at t_end. Raises `_RhsNonFinite2D` if any
+    RHS evaluation produces NaN/Inf.
+    """
+    def rhs(t: float, y_state: np.ndarray) -> np.ndarray:
+        dydt = assemble_rhs_2d(t, y_state, mat, V_app)
+        _assert_finite_2d(dydt, V_app)
+        return dydt
+
+    sol = solve_ivp(
+        rhs, (0.0, t_end), y0,
+        method="Radau",
+        rtol=rtol, atol=atol,
+        max_step=max_step if max_step is not None else np.inf,
+        dense_output=False,
+    )
+    if not sol.success:
+        raise RuntimeError(f"Radau failed at V_app={V_app:.4f} V: {sol.message}")
+    return sol.y[:, -1]
