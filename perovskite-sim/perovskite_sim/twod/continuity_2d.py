@@ -15,6 +15,10 @@ def continuity_rhs_2d(
     chi: np.ndarray | None = None,
     Eg: np.ndarray | None = None,
     lateral_bc: str = "periodic",
+    interface_y_faces: tuple[int, ...] = (),
+    A_star_n: np.ndarray | None = None,
+    A_star_p: np.ndarray | None = None,
+    T: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return dn/dt, dp/dt on shape (Ny, Nx).
 
@@ -74,6 +78,39 @@ def continuity_rhs_2d(
     Jx_n, Jy_n = sg_fluxes_2d_n(phi_n, n, x, y, D_n, V_T)   # Jx (Ny, Nx-1), Jy (Ny-1, Nx)
     Jx_p, Jy_p = sg_fluxes_2d_p(phi_p, p, x, y, D_p, V_T)
 
+    # ---- Thermionic-emission capping at heterointerface y-faces -------------
+    # Mirrors physics/continuity.py:carrier_continuity_rhs. When chi/Eg vary
+    # across a y-face, the SG flux can be wildly larger than the Richardson-
+    # Dushman thermionic-emission limit because the band offset compresses
+    # into a single grid spacing. Without this cap the 2D RHS at a 1D-
+    # converged steady state evaluates to ~1e31 instead of ~0.
+    if interface_y_faces and chi is not None and Eg is not None and T is not None:
+        Jy_n = Jy_n.copy()
+        Jy_p = Jy_p.copy()
+        T_sq = T * T
+        for f in interface_y_faces:
+            # chi varies in y only (Stage A); take column 0 for the band-offset
+            # scalar but apply the cap vectorised across all i columns.
+            dEc = float(chi[f, 0] - chi[f + 1, 0])
+            if abs(dEc) > 0.05:
+                left_term = n[f, :] * np.exp(-max(dEc, 0.0) / V_T)
+                right_term = n[f + 1, :] * np.exp(-max(-dEc, 0.0) / V_T)
+                # A_star_n is (Ny, Nx) extruded; left side is row f.
+                J_te_n = A_star_n[f, :] * T_sq * (left_term - right_term)
+                # SG sign convention for J_n is +y direction = positive; TE
+                # also returns +y so we cap on |·|.
+                mask = np.abs(Jy_n[f, :]) > np.abs(J_te_n)
+                Jy_n[f, mask] = J_te_n[mask]
+            dEv = float(
+                (chi[f, 0] + Eg[f, 0]) - (chi[f + 1, 0] + Eg[f + 1, 0])
+            )
+            if abs(dEv) > 0.05:
+                left_term = p[f, :] * np.exp(-max(dEv, 0.0) / V_T)
+                right_term = p[f + 1, :] * np.exp(-max(-dEv, 0.0) / V_T)
+                J_te_p = A_star_p[f, :] * T_sq * (left_term - right_term)
+                mask = np.abs(Jy_p[f, :]) > np.abs(J_te_p)
+                Jy_p[f, mask] = J_te_p[mask]
+
     Ny, Nx = phi.shape
     dx = np.diff(x)
     dy = np.diff(y)
@@ -119,7 +156,9 @@ def continuity_rhs_2d(
         dx_wrap = 0.5 * (dx[0] + dx[-1])
 
         # Electrons: B(xi)*n[right] - B(-xi)*n[left], right=0, left=Nx-1
-        D_face_wrap_n = 0.5 * (D_n[:, -1] + D_n[:, 0])
+        # Harmonic-mean face avg matches the interior sg_fluxes_2d_n averaging.
+        _eps_face = 1e-300
+        D_face_wrap_n = 2.0 * D_n[:, -1] * D_n[:, 0] / (D_n[:, -1] + D_n[:, 0] + _eps_face)
         xi_wrap_n = (phi_n[:, 0] - phi_n[:, -1]) / V_T
         Jx_wrap_n = (Q * D_face_wrap_n / dx_wrap) * (
             _B(xi_wrap_n) * n[:, 0] - _B(-xi_wrap_n) * n[:, -1]
@@ -133,7 +172,7 @@ def continuity_rhs_2d(
         # For wrap (left=Nx-1, right=0):
         #   Jx_wrap_p = Q*D/dx * (B(xi)*p[Nx-1] - B(-xi)*p[0])
         # where xi = (phi_p[0] - phi_p[Nx-1]) / V_T (same as for electrons)
-        D_face_wrap_p = 0.5 * (D_p[:, -1] + D_p[:, 0])
+        D_face_wrap_p = 2.0 * D_p[:, -1] * D_p[:, 0] / (D_p[:, -1] + D_p[:, 0] + _eps_face)
         xi_wrap_p = (phi_p[:, 0] - phi_p[:, -1]) / V_T
         Jx_wrap_p = (Q * D_face_wrap_p / dx_wrap) * (
             _B(xi_wrap_p) * p[:, -1] - _B(-xi_wrap_p) * p[:, 0]
@@ -177,6 +216,11 @@ def continuity_rhs_2d(
         div_y_n[1:-1, :] = (Jy_n[1:, :] - Jy_n[:-1, :]) / hy_cell[1:-1, None]
         div_y_p[1:-1, :] = (Jy_p[1:, :] - Jy_p[:-1, :]) / hy_cell[1:-1, None]
 
-    dn = -(div_x_n + div_y_n) / Q + G - R
+    # Sign convention matches 1D physics/continuity.py:carrier_continuity_rhs.
+    # For electrons (charge −q), J_n is the electric current density and the
+    # continuity is dn/dt = +∇·J_n / q + G − R: a positive divergence means
+    # current flows OUT, which is electron particles flowing IN, raising n.
+    # For holes (charge +q), dp/dt = −∇·J_p / q + G − R.
+    dn =  (div_x_n + div_y_n) / Q + G - R
     dp = -(div_x_p + div_y_p) / Q + G - R
     return dn, dp
