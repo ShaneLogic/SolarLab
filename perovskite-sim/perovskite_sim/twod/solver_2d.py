@@ -64,10 +64,10 @@ class MaterialArrays2D:
     B_rad: np.ndarray             # (Ny, Nx) radiative recombination coefficient
     C_n: np.ndarray               # (Ny, Nx) Auger electron coefficient
     C_p: np.ndarray               # (Ny, Nx) Auger hole coefficient
-    n_eq_left: np.ndarray         # (Nx,)  bottom-contact electron density
-    p_eq_left: np.ndarray         # (Nx,)
-    n_eq_right: np.ndarray        # (Nx,)  top-contact
-    p_eq_right: np.ndarray        # (Nx,)
+    n_eq_left: np.ndarray         # (Nx,)  top contact (y=0, HTL); value = mat1d.n_L
+    p_eq_left: np.ndarray         # (Nx,)  top contact (y=0, HTL); value = mat1d.p_L
+    n_eq_right: np.ndarray        # (Nx,)  bottom contact (y=Ny-1, ETL); value = mat1d.n_R
+    p_eq_right: np.ndarray        # (Nx,)  bottom contact (y=Ny-1, ETL); value = mat1d.p_R
     V_bi: float
     V_T: float
     poisson_factor: Poisson2DFactor
