@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import numpy as np
 
-Q = 1.602176634e-19
+from perovskite_sim.constants import Q
 
 
 def selective_contact_flux(
