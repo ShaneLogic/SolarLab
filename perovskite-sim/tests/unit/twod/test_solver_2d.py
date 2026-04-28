@@ -278,3 +278,34 @@ def test_robin_correction_routes_to_correct_boundary():
         dn_robin[0, :], dn_neumann[0, :],
         err_msg="dn[0,:] should be unchanged when only S_n_right is set (mapping swap?)"
     )
+
+
+def test_legacy_mode_disables_selective_contacts_in_2d():
+    """Tier-as-ceiling invariant: device.mode='legacy' must keep
+    has_selective_contacts=False even when S values are configured.
+
+    Mirrors the 1D pattern in tests/unit/solver/test_temperature_scaling_plumbing.py
+    so the 2D solver respects the same Phase 5 tier gate as the 1D solver.
+    """
+    from dataclasses import replace as dc_replace
+    base = _stack()  # default mode='full' if unset → resolves to FULL
+    # Stack that DOES configure S values, but pins the tier to legacy.
+    stack_legacy = dc_replace(
+        base, mode="legacy",
+        S_n_left=1e-4, S_p_left=1e-3,
+        S_n_right=1e-3, S_p_right=1e-4,
+    )
+    layers = _layers_for_stack(stack_legacy)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack_legacy, Microstructure())
+    # Legacy tier ⇒ Robin off, even though S values are present.
+    assert mat.has_selective_contacts is False, (
+        "device.mode='legacy' must disable Robin even when S_* are configured"
+    )
+
+    # Sanity: same stack with mode='full' DOES enable Robin.
+    stack_full = dc_replace(stack_legacy, mode="full")
+    mat_full = build_material_arrays_2d(g, stack_full, Microstructure())
+    assert mat_full.has_selective_contacts is True, (
+        "device.mode='full' with S_* configured must enable Robin"
+    )
