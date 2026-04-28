@@ -341,7 +341,17 @@ def _apply_robin_contacts_2d(
       dp[0,  :] += J_p_top / (Q·hy_top)   holes top:        dp = −div_p/Q → opposite sign
       dn[−1, :] += J_n_bot / (Q·hy_bot)   electrons bottom: J_n_bot < 0 when n > n_eq
       dp[−1, :] −= J_p_bot / (Q·hy_bot)   holes bottom:     J_p_bot > 0 when p > p_eq
+
+    Returns NEW arrays (the inputs are not mutated). The caller is expected to
+    rebind via ``dn, dp = _apply_robin_contacts_2d(...)``.
     """
+    # Copy inputs to honour the non-mutating contract advertised in the
+    # docstring.  Cost is one O(Ny·Nx) allocation per RHS call — negligible
+    # vs the Radau LU on the same array, and immune to a future caller that
+    # passes in arrays that must not be mutated (e.g. diagnostic harnesses).
+    dn = dn.copy()
+    dp = dp.copy()
+
     # Half-cell control-volume thickness at each contact boundary
     hy_top = (mat.grid.y[1]  - mat.grid.y[0])  / 2.0
     hy_bot = (mat.grid.y[-1] - mat.grid.y[-2]) / 2.0
