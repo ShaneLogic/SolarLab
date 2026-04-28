@@ -859,7 +859,9 @@ def start_job(req: JobRequest):
             }
     elif kind == "jv_2d":
         from perovskite_sim.twod.experiments.jv_sweep_2d import run_jv_sweep_2d
-        from perovskite_sim.twod.microstructure import Microstructure
+        from perovskite_sim.twod.microstructure import (
+            Microstructure, load_microstructure_from_yaml_block,
+        )
 
         def _run(reporter: ProgressReporter) -> dict:
             _illum = p.get("illuminated", True)
@@ -867,9 +869,19 @@ def start_job(req: JobRequest):
             _save = p.get("save_snapshots", True)
             save_snapshots = bool(_save) if not isinstance(_save, str) else _save.lower() != "false"
 
+            # Microstructure resolution order:
+            #   1. params.microstructure block (UI-supplied) — wins
+            #   2. stack.microstructure (auto-attached by the YAML loader)
+            #   3. Microstructure() (Stage-A lateral-uniform fallback)
+            ms_block = p.get("microstructure")
+            if ms_block:
+                ms = load_microstructure_from_yaml_block(ms_block)
+            else:
+                ms = getattr(stack, "microstructure", None) or Microstructure()
+
             result = run_jv_sweep_2d(
                 stack=stack,
-                microstructure=Microstructure(),
+                microstructure=ms,
                 lateral_length=float(p.get("lateral_length", 500e-9)),
                 Nx=int(p.get("Nx", 10)),
                 V_max=float(p.get("V_max", 1.2)),
@@ -906,6 +918,42 @@ def start_job(req: JobRequest):
             }
             out["active_physics"] = _describe_active_physics(stack)
             return out
+    elif kind == "voc_grain_sweep":
+        from perovskite_sim.twod.experiments.voc_grain_sweep import run_voc_grain_sweep
+
+        def _run(reporter: ProgressReporter) -> dict:
+            raw_sizes = p.get("grain_sizes_nm") or p.get("grain_sizes")
+            if not raw_sizes:
+                raise HTTPException(
+                    status_code=400,
+                    detail="voc_grain_sweep requires grain_sizes_nm (list of nm)",
+                )
+            grain_sizes_m = [float(s) * 1e-9 for s in raw_sizes]
+            tau_n_gb = float(p.get("tau_gb_n", 1e-9))
+            tau_p_gb = float(p.get("tau_gb_p", 1e-9))
+            _illum = p.get("illuminated", True)
+            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
+
+            result = run_voc_grain_sweep(
+                stack=stack,
+                grain_sizes=grain_sizes_m,
+                tau_gb=(tau_n_gb, tau_p_gb),
+                gb_width=float(p.get("gb_width", 10e-9)),
+                Nx=int(p.get("Nx", 10)),
+                Ny_per_layer=int(p.get("Ny_per_layer", 10)),
+                V_max=float(p.get("V_max", 1.2)),
+                V_step=float(p.get("V_step", 0.05)),
+                illuminated=illuminated,
+                settle_t=float(p.get("settle_t", 1e-3)),
+                progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+            )
+            return {
+                "grain_sizes_nm": (result.grain_sizes_m * 1e9).tolist(),
+                "V_oc_V": result.V_oc_V.tolist(),
+                "J_sc_Am2": result.J_sc_Am2.tolist(),
+                "FF": result.FF.tolist(),
+                "active_physics": _describe_active_physics(stack),
+            }
     else:
         raise HTTPException(status_code=400, detail=f"unknown kind: {kind}")
 
