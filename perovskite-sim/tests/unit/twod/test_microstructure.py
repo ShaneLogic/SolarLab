@@ -9,6 +9,7 @@ from perovskite_sim.twod.microstructure import (
 )
 from perovskite_sim.twod.grid_2d import build_grid_2d
 from perovskite_sim.discretization.grid import Layer
+from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def _grid():
@@ -83,3 +84,21 @@ def test_microstructure_yaml_loader_rejects_unknown_keys():
     }
     with pytest.raises(ValueError, match="unknown key"):
         load_microstructure_from_yaml_block(bad_block)
+
+
+def test_load_device_from_yaml_attaches_microstructure():
+    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    assert hasattr(stack, "microstructure")
+    assert len(stack.microstructure.grain_boundaries) == 1
+    gb = stack.microstructure.grain_boundaries[0]
+    assert gb.x_position == pytest.approx(250e-9)
+    assert gb.width == pytest.approx(10e-9)
+    assert gb.tau_n == pytest.approx(1e-9)
+    assert gb.tau_p == pytest.approx(1e-9)
+    assert gb.layer_role == "absorber"
+
+
+def test_load_device_from_yaml_empty_microstructure_default():
+    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_uniform.yaml")
+    assert hasattr(stack, "microstructure")
+    assert stack.microstructure.grain_boundaries == ()
