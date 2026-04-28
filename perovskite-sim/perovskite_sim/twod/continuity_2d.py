@@ -207,14 +207,25 @@ def continuity_rhs_2d(
         div_x_p[:, -1] = -Jx_p[:, -1] / hx_cell[-1]
 
     # -----------------------------------------------------------------------
-    # y-divergence on interior rows (j=1..Ny-2). j=0 and j=Ny-1 are Dirichlet
-    # contacts — caller pins them to zero so we skip them here.
+    # y-divergence. Interior rows (j=1..Ny-2) use the full two-face formula.
+    # Boundary rows (j=0, j=Ny-1) use a one-sided Neumann formula (zero wall
+    # flux assumed). The Dirichlet path in assemble_rhs_2d overwrites these
+    # rows to 0 for ohmic contacts; the Robin path applies a flux correction.
+    #
+    # Sign derivation for boundary rows (both carriers, +y convention):
+    #   j=0   (top):    div[0]  = (Jy[0]   - 0) / hy_cell[0]   = +Jy[0]/hy
+    #   j=Ny-1 (bot):   div[-1] = (0 - Jy[-1]) / hy_cell[-1]   = -Jy[-1]/hy
     # -----------------------------------------------------------------------
     div_y_n = np.zeros_like(phi)
     div_y_p = np.zeros_like(phi)
     if Ny > 2:
         div_y_n[1:-1, :] = (Jy_n[1:, :] - Jy_n[:-1, :]) / hy_cell[1:-1, None]
         div_y_p[1:-1, :] = (Jy_p[1:, :] - Jy_p[:-1, :]) / hy_cell[1:-1, None]
+        # One-sided Neumann at y=0 and y=Ny-1 (zero wall flux).
+        div_y_n[0,  :] =  Jy_n[0,  :] / hy_cell[0]
+        div_y_n[-1, :] = -Jy_n[-1, :] / hy_cell[-1]
+        div_y_p[0,  :] =  Jy_p[0,  :] / hy_cell[0]
+        div_y_p[-1, :] = -Jy_p[-1, :] / hy_cell[-1]
 
     # Sign convention matches 1D physics/continuity.py:carrier_continuity_rhs.
     # For electrons (charge −q), J_n is the electric current density and the
