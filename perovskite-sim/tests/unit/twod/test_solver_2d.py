@@ -95,3 +95,36 @@ def test_run_transient_2d_short_settle_returns_finite_state():
     y_end = run_transient_2d(y0, mat, V_app=0.0, t_end=1e-12, max_step=1e-13)
     assert np.all(np.isfinite(y_end))
     assert y_end.shape == y0.shape
+
+
+def test_material_arrays_2d_tau_field_with_singleGB():
+    """End-to-end Stage-B: build_material_arrays_2d driven by a stack carrying
+    a non-empty microstructure must produce a 2D τ field with reduced lifetime
+    at the GB column on rows tagged ``layer_role="absorber"``, and the bulk
+    lifetime everywhere else."""
+    from perovskite_sim.twod.solver_2d import _layer_role_at_each_y
+    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=500e-9, Nx=10, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, stack.microstructure)
+
+    assert mat.tau_n.shape == (g.Ny, g.Nx)
+    assert mat.tau_p.shape == (g.Ny, g.Nx)
+
+    i_gb = int(np.argmin(np.abs(g.x - 250e-9)))
+    i_bulk = 0
+
+    # Use the role-tag-per-y the build path itself uses. This is the ground
+    # truth for which rows the GB band should touch.
+    roles = _layer_role_at_each_y(g.y, stack)
+    is_absorber = np.array([r == "absorber" for r in roles])
+    is_other = ~is_absorber
+
+    # Absorber rows in the GB column → τ_GB (5e-8 s).
+    assert np.allclose(mat.tau_n[is_absorber, i_gb], 5e-8)
+    assert np.allclose(mat.tau_p[is_absorber, i_gb], 5e-8)
+    # Non-absorber rows in the GB column → unchanged from the bulk column
+    # (the GB band only paints absorber rows).
+    assert np.allclose(
+        mat.tau_n[is_other, i_gb], mat.tau_n[is_other, i_bulk]
+    )

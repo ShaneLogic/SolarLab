@@ -102,3 +102,37 @@ def test_load_device_from_yaml_empty_microstructure_default():
     stack = load_device_from_yaml("configs/twod/nip_MAPbI3_uniform.yaml")
     assert hasattr(stack, "microstructure")
     assert stack.microstructure.grain_boundaries == ()
+
+
+def test_grain_boundary_overrides_tau_in_band():
+    """build_tau_field replaces the bulk τ inside a GB band and leaves it
+    untouched everywhere else. Per-carrier independence: τ_n and τ_p override
+    independently, so the test uses different values for each."""
+    g = build_grid_2d([Layer(thickness=400e-9, N=20)],
+                      lateral_length=500e-9, Nx=20, lateral_uniform=True)
+    tau_bulk = np.full((g.Ny,), 1e-6)
+    gb = GrainBoundary(x_position=250e-9, width=20e-9,
+                       tau_n=1e-9, tau_p=2e-9, layer_role="absorber")
+    ustruct = Microstructure(grain_boundaries=(gb,))
+    tau_n, tau_p = build_tau_field(g, ustruct, tau_bulk, tau_bulk,
+                                   layer_role_per_y=["absorber"] * g.Ny)
+    in_band = np.abs(g.x - 250e-9) < 10e-9
+    assert np.allclose(tau_n[:, in_band], 1e-9)
+    assert np.allclose(tau_p[:, in_band], 2e-9)
+    assert np.allclose(tau_n[:, ~in_band], 1e-6)
+    assert np.allclose(tau_p[:, ~in_band], 1e-6)
+
+
+def test_grain_boundary_skipped_outside_target_layer():
+    """A GB tagged with layer_role="absorber" must not affect rows that
+    belong to a different layer role, even when its lateral band would
+    otherwise cover those nodes."""
+    g = build_grid_2d([Layer(thickness=400e-9, N=20)],
+                      lateral_length=500e-9, Nx=20, lateral_uniform=True)
+    tau_bulk = np.full((g.Ny,), 1e-6)
+    gb = GrainBoundary(x_position=250e-9, width=20e-9,
+                       tau_n=1e-9, tau_p=1e-9, layer_role="absorber")
+    ustruct = Microstructure(grain_boundaries=(gb,))
+    tau_n, _ = build_tau_field(g, ustruct, tau_bulk, tau_bulk,
+                               layer_role_per_y=["transport"] * g.Ny)
+    assert np.allclose(tau_n, 1e-6)
