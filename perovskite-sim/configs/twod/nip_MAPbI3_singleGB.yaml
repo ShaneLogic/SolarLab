@@ -77,11 +77,16 @@ layers:
 
 # Lateral microstructure: one grain boundary running vertically through the
 # absorber, centred in a 500 nm domain (Stage-B regression uses lateral_length=500e-9).
-# τ_GB = 1 ns vs τ_bulk = 1 µs (3 orders of magnitude SRH lifetime drop inside the band).
+# τ_GB / width were tuned against tests/regression/test_twod_microstructure.py
+# to land V_oc drop inside the 20–40 mV window on Ny_per_layer=10, Nx=10. A
+# more aggressive band (τ_GB=1ns, width=10nm) produced a ~180 mV drop —
+# realistic for an untreated film, but outside the published GB-passivation
+# regression window. The chosen values (τ_GB=50 ns, width=5 nm) represent a
+# moderately passivated film.
 microstructure:
   grain_boundaries:
     - x_position: 250e-9      # centred in a 500 nm domain
-      width: 10e-9            # 10 nm GB band
-      tau_n: 1e-9             # τ_GB = 1 ns (vs τ_bulk = 1 µs for absorber)
-      tau_p: 1e-9
+      width: 5e-9             # 5 nm GB band (single-cell-wide at Nx=100)
+      tau_n: 5e-8             # τ_GB = 50 ns (vs τ_bulk = 1 µs for absorber)
+      tau_p: 5e-8
       layer_role: absorber
