@@ -342,10 +342,10 @@ def _apply_robin_contacts_2d(
     # selective_contact_flux(carrier="n", side="left") = +Q·S·(n − n_eq)
     # selective_contact_flux(carrier="p", side="left") = −Q·S·(p − p_eq)
     J_n_top = selective_contact_flux(
-        n[0, :], mat.n_eq_left[0], mat.S_n_top, carrier="n", side="left",
+        n[0, :], mat.n_eq_left, mat.S_n_top, carrier="n", side="left",
     )
     J_p_top = selective_contact_flux(
-        p[0, :], mat.p_eq_left[0], mat.S_p_top, carrier="p", side="left",
+        p[0, :], mat.p_eq_left, mat.S_p_top, carrier="p", side="left",
     )
     dn[0, :] -= J_n_top / (Q * hy_top)   # subtract: dn = +div_n/Q
     dp[0, :] += J_p_top / (Q * hy_top)   # add:      dp = −div_p/Q (opposite sign)
@@ -354,10 +354,10 @@ def _apply_robin_contacts_2d(
     # selective_contact_flux(carrier="n", side="right") = −Q·S·(n − n_eq)
     # selective_contact_flux(carrier="p", side="right") = +Q·S·(p − p_eq)
     J_n_bot = selective_contact_flux(
-        n[-1, :], mat.n_eq_right[0], mat.S_n_bot, carrier="n", side="right",
+        n[-1, :], mat.n_eq_right, mat.S_n_bot, carrier="n", side="right",
     )
     J_p_bot = selective_contact_flux(
-        p[-1, :], mat.p_eq_right[0], mat.S_p_bot, carrier="p", side="right",
+        p[-1, :], mat.p_eq_right, mat.S_p_bot, carrier="p", side="right",
     )
     dn[-1, :] += J_n_bot / (Q * hy_bot)   # add:      J_n_bot < 0 when n > n_eq
     dp[-1, :] -= J_p_bot / (Q * hy_bot)   # subtract: J_p_bot > 0 when p > p_eq
