@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 import numpy as np
 
 from perovskite_sim.twod.grid_2d import Grid2D
@@ -21,6 +21,47 @@ class GrainBoundary:
 class Microstructure:
     """Container for spatially-varying defect features in a 2D simulation."""
     grain_boundaries: tuple[GrainBoundary, ...] = ()
+
+
+_GB_KEYS = frozenset({"x_position", "width", "tau_n", "tau_p", "layer_role"})
+
+
+def load_microstructure_from_yaml_block(block: Mapping[str, Any] | None) -> Microstructure:
+    """Parse a YAML ``microstructure:`` block into a Microstructure.
+
+    Schema::
+
+        microstructure:
+          grain_boundaries:
+            - x_position: <float, m>
+              width:      <float, m>
+              tau_n:      <float, s>
+              tau_p:      <float, s>
+              layer_role: <str, default "absorber">
+
+    None / {} / {grain_boundaries: []} all return ``Microstructure()`` so configs
+    without microstructure fall through unchanged. Unknown keys on a
+    grain_boundary entry raise ``ValueError`` so configs cannot silently drop
+    fields (typoed parameters would otherwise just disappear into the void).
+    """
+    if not block:
+        return Microstructure()
+    raw_gbs = block.get("grain_boundaries") or ()
+    gbs: list[GrainBoundary] = []
+    for entry in raw_gbs:
+        unknown = set(entry.keys()) - _GB_KEYS
+        if unknown:
+            raise ValueError(
+                f"microstructure.grain_boundaries unknown key(s): {sorted(unknown)}"
+            )
+        gbs.append(GrainBoundary(
+            x_position=float(entry["x_position"]),
+            width=float(entry["width"]),
+            tau_n=float(entry["tau_n"]),
+            tau_p=float(entry["tau_p"]),
+            layer_role=str(entry.get("layer_role", "absorber")),
+        ))
+    return Microstructure(grain_boundaries=tuple(gbs))
 
 
 def build_tau_field(

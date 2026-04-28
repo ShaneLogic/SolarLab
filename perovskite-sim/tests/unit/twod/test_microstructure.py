@@ -1,9 +1,11 @@
 from __future__ import annotations
 import numpy as np
 import pytest
+import yaml
 
 from perovskite_sim.twod.microstructure import (
     GrainBoundary, Microstructure, build_tau_field,
+    load_microstructure_from_yaml_block,
 )
 from perovskite_sim.twod.grid_2d import build_grid_2d
 from perovskite_sim.discretization.grid import Layer
@@ -36,3 +38,48 @@ def test_grain_boundary_dataclass_is_frozen():
 def test_microstructure_dataclass_default_is_empty():
     ustruct = Microstructure()
     assert ustruct.grain_boundaries == ()
+
+
+def test_microstructure_yaml_loader_single_gb():
+    yaml_text = """
+microstructure:
+  grain_boundaries:
+    - x_position: 250e-9
+      width: 5e-9
+      tau_n: 1e-9
+      tau_p: 1e-9
+      layer_role: absorber
+"""
+    block = yaml.safe_load(yaml_text)["microstructure"]
+    ms = load_microstructure_from_yaml_block(block)
+    assert len(ms.grain_boundaries) == 1
+    gb = ms.grain_boundaries[0]
+    assert gb.x_position == pytest.approx(250e-9)
+    assert gb.width == pytest.approx(5e-9)
+    assert gb.tau_n == pytest.approx(1e-9)
+    assert gb.tau_p == pytest.approx(1e-9)
+    assert gb.layer_role == "absorber"
+
+
+def test_microstructure_yaml_loader_empty_block_returns_empty():
+    assert load_microstructure_from_yaml_block(None).grain_boundaries == ()
+    assert load_microstructure_from_yaml_block({}).grain_boundaries == ()
+    assert load_microstructure_from_yaml_block(
+        {"grain_boundaries": []}
+    ).grain_boundaries == ()
+
+
+def test_microstructure_yaml_loader_rejects_unknown_keys():
+    bad_block = {
+        "grain_boundaries": [
+            {
+                "x_position": 250e-9,
+                "width": 5e-9,
+                "tau_n": 1e-9,
+                "tau_p": 1e-9,
+                "tau_typo": 1e-9,  # unknown — must raise
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="unknown key"):
+        load_microstructure_from_yaml_block(bad_block)
