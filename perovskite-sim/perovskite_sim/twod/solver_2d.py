@@ -214,13 +214,21 @@ def build_material_arrays_2d(
     # as the Fermi-level difference of the contacts.
     V_bi = float(stack.V_bi)
 
-    # Selective contacts: mirror the 1D mol.py logic.  has_selective_contacts
-    # is True iff any S value is explicitly set (not None) on the DeviceStack.
+    # Selective contacts: mirror the 1D mol.py:516–524 gating exactly. The
+    # tier flag is a ceiling — when sim_mode.use_selective_contacts is False
+    # (LEGACY tier) the Robin path stays off even if the stack supplies S
+    # values. This preserves the "tier as ceiling" invariant pinned by the
+    # 1D test_tier_regression suite.
+    from perovskite_sim.models.mode import resolve_mode
+    sim_mode = resolve_mode(getattr(stack, "mode", "full"))
     _has_sc = bool(
-        stack.S_n_left  is not None
-        or stack.S_p_left  is not None
-        or stack.S_n_right is not None
-        or stack.S_p_right is not None
+        sim_mode.use_selective_contacts
+        and (
+            stack.S_n_left  is not None
+            or stack.S_p_left  is not None
+            or stack.S_n_right is not None
+            or stack.S_p_right is not None
+        )
     )
     S_n_top = float(stack.S_n_left)  if stack.S_n_left  is not None else 0.0
     S_p_top = float(stack.S_p_left)  if stack.S_p_left  is not None else 0.0
