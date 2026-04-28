@@ -16,6 +16,7 @@ import type {
   ELResult,
   MottSchottkyResult,
   JV2DResult,
+  VocGrainSweepResult,
 } from '../../types'
 
 export interface MainPlotHandle {
@@ -92,9 +93,61 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
         case 'jv_2d':
           renderJV2D(plotEl, run.result.data)
           return
+        case 'voc_grain_sweep':
+          renderVocGrainSweep(plotEl, run.result.data)
+          return
       }
     },
   }
+}
+
+// ── Stage-B V_oc(L_g) sweep (Phase 6) ───────────────────────────────────────
+
+function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): void {
+  Plotly.purge(el)
+  el.innerHTML = ''
+  const V_oc_mV = r.V_oc_V.map(v => v * 1e3)
+  const J_sc_mA = r.J_sc_Am2.map(j => j / 10)
+  const ann = r.grain_sizes_nm
+    .map((L, i) =>
+      `L_g=${L.toFixed(0)} nm: V<sub>oc</sub>=${V_oc_mV[i].toFixed(1)} mV, ` +
+        `J<sub>sc</sub>=${J_sc_mA[i].toFixed(2)} mA·cm⁻², FF=${r.FF[i].toFixed(3)}`,
+    )
+    .join('<br>')
+  Plotly.newPlot(
+    el,
+    [
+      {
+        x: r.grain_sizes_nm,
+        y: V_oc_mV,
+        name: 'V_oc(L_g)',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      },
+    ],
+    baseLayout({
+      xaxis: {
+        ...(baseLayout().xaxis as object),
+        type: 'log',
+        title: axisTitle('Grain size, <i>L<sub>g</sub></i> (nm)'),
+      },
+      yaxis: {
+        ...(baseLayout().yaxis as object),
+        title: axisTitle('Open-circuit voltage, <i>V<sub>oc</sub></i> (mV)'),
+      },
+      annotations: [
+        {
+          x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
+          xanchor: 'left', yanchor: 'bottom', showarrow: false,
+          text: ann,
+          font: { size: 10 },
+          align: 'left',
+        },
+      ],
+    }),
+    plotConfig('voc_grain_sweep'),
+  )
 }
 
 // ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
