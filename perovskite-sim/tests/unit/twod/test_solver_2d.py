@@ -97,6 +97,49 @@ def test_run_transient_2d_short_settle_returns_finite_state():
     assert y_end.shape == y0.shape
 
 
+def test_material_arrays_2d_default_no_selective_contacts():
+    """Without S values on the stack, has_selective_contacts is False and S fields are 0."""
+    stack = _stack()  # configs/nip_MAPbI3.yaml — no S values
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_selective_contacts is False
+    assert mat.S_n_top == 0.0
+    assert mat.S_p_top == 0.0
+    assert mat.S_n_bot == 0.0
+    assert mat.S_p_bot == 0.0
+
+
+def test_material_arrays_2d_right_maps_to_bot():
+    """DeviceStack.S_n_right must appear in mat.S_n_bot (bottom contact, ETL)."""
+    from dataclasses import replace as dc_replace
+    import pytest
+    stack_with_s = dc_replace(_stack(), S_n_right=1e-2)
+    layers = _layers_for_stack(stack_with_s)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack_with_s, Microstructure())
+    assert mat.has_selective_contacts is True
+    assert mat.S_n_bot == pytest.approx(1e-2)
+    assert mat.S_n_top == 0.0
+    assert mat.S_p_top == 0.0
+    assert mat.S_p_bot == 0.0
+
+
+def test_material_arrays_2d_left_maps_to_top():
+    """DeviceStack.S_p_left must appear in mat.S_p_top (top contact, HTL)."""
+    from dataclasses import replace as dc_replace
+    import pytest
+    stack_with_s = dc_replace(_stack(), S_p_left=5e3)
+    layers = _layers_for_stack(stack_with_s)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack_with_s, Microstructure())
+    assert mat.has_selective_contacts is True
+    assert mat.S_p_top == pytest.approx(5e3)
+    assert mat.S_n_top == 0.0
+    assert mat.S_n_bot == 0.0
+    assert mat.S_p_bot == 0.0
+
+
 def test_material_arrays_2d_tau_field_with_singleGB():
     """End-to-end Stage-B: build_material_arrays_2d driven by a stack carrying
     a non-empty microstructure must produce a 2D τ field with reduced lifetime
