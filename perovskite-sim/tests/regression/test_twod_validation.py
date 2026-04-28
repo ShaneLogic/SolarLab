@@ -214,3 +214,93 @@ def test_twod_robin_parity_vs_1d():
         f"Robin FF(2D)={m2.FF:.6f} vs FF(1D)={m1.FF:.6f} "
         f"(diff {abs(m2.FF - m1.FF):.4f}, limit 1e-3)"
     )
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_robin_bounded_shift_vs_dirichlet():
+    """Robin contacts with aggressive blocking S must shift V_oc by 1–150 mV
+    vs Dirichlet baseline.
+
+    Compares: (a) nip_MAPbI3_uniform.yaml (Dirichlet) vs
+              (b) the same stack with strongly-blocking S values applied
+                  (S_n_left=1e-4, S_p_left=1e-3, S_n_right=1e-3, S_p_right=1e-4 —
+                  same envelope as 1D test_selective_contacts_integration).
+    The shipped selective_contacts_demo.yaml uses moderate matched-carrier
+    S=1e3 which is effectively ohmic at this device thickness and produces no
+    measurable shift; aggressive blocking is needed to drive the contact
+    physics into the regime where V_oc moves.
+
+    This is a secondary sanity test — the parity gate
+    (test_twod_robin_parity_vs_1d) is the primary correctness criterion.
+    """
+    stack_dirichlet = _freeze_ions(load_device_from_yaml(PRESET))        # no S values
+    stack_robin     = replace(stack_dirichlet,
+        S_n_left=1e-4, S_p_left=1e-3,
+        S_n_right=1e-3, S_p_right=1e-4,
+    )
+
+    common_kw = dict(
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-3,
+    )
+    r_d = run_jv_sweep_2d(stack=stack_dirichlet, **common_kw)
+    r_r = run_jv_sweep_2d(stack=stack_robin,     **common_kw)
+
+    V_d = np.asarray(r_d.V); J_d = _maybe_flip_sign(V_d, np.asarray(r_d.J))
+    V_r = np.asarray(r_r.V); J_r = _maybe_flip_sign(V_r, np.asarray(r_r.J))
+    m_d = compute_metrics(V_d, J_d)
+    m_r = compute_metrics(V_r, J_r)
+
+    shift_mV = abs(m_d.V_oc - m_r.V_oc) * 1e3
+    print(
+        f"\nDirichlet: V_oc={m_d.V_oc*1e3:.1f} mV"
+        f"\nRobin:     V_oc={m_r.V_oc*1e3:.1f} mV"
+        f"\n|ΔV_oc| = {shift_mV:.1f} mV"
+    )
+    assert 1.0 <= shift_mV <= 150.0, (
+        f"|ΔV_oc| = {shift_mV:.1f} mV is outside [1, 150] mV "
+        f"(Robin hook inactive or unphysical)"
+    )
+
+
+@pytest.mark.regression
+def test_twod_robin_microstructure_coexistence_smoke():
+    """Robin contacts + grain boundary produce finite, ordered J-V (no NaN/Inf).
+
+    Uses a coarse fast mesh — correctness is covered by the parity gate.
+    """
+    from perovskite_sim.twod.microstructure import GrainBoundary
+    stack = _freeze_ions(load_device_from_yaml(ROBIN_PRESET))
+    ms = Microstructure(grain_boundaries=(
+        GrainBoundary(
+            x_position=150e-9, width=5e-9,
+            tau_n=5e-8, tau_p=5e-8,
+            layer_role="absorber",
+        ),
+    ))
+    r = run_jv_sweep_2d(
+        stack=stack,
+        microstructure=ms,
+        lateral_length=300e-9,
+        Nx=6,
+        V_max=1.0,
+        V_step=0.25,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=5,
+        settle_t=1e-4,
+    )
+    V = np.asarray(r.V)
+    J = np.asarray(r.J)
+    assert np.all(np.isfinite(V)), "Non-finite V in Robin+GB sweep"
+    assert np.all(np.isfinite(J)), "Non-finite J in Robin+GB sweep"
+    J_sc_sign = _maybe_flip_sign(V, J)[0]
+    assert J_sc_sign > 0, "J_sc should be positive under illumination (sign/convergence issue)"
