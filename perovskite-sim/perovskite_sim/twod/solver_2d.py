@@ -72,6 +72,20 @@ class MaterialArrays2D:
     V_T: float
     poisson_factor: Poisson2DFactor
     layer_role_per_y: tuple[str, ...]
+    # --- Stage B(c.1): Robin / selective contacts --------------------------------
+    # has_selective_contacts is True iff any of the four S values is not None on
+    # the originating DeviceStack.  S values default to 0.0 (zero = Neumann /
+    # blocking; Dirichlet ohmic behaviour is restored via the assemble_rhs_2d
+    # guard when has_selective_contacts is False).
+    #
+    # "left/right" are 1D transport-axis names inherited from DeviceStack.
+    # In 2D the transport axis is y, so left→top (y=0, HTL) and right→bottom
+    # (y=Ny-1, ETL).  The DeviceStack field names are intentionally unchanged.
+    has_selective_contacts: bool = False
+    S_n_top: float = 0.0   # electron SRV at y=0  (HTL); from DeviceStack.S_n_left
+    S_p_top: float = 0.0   # hole    SRV at y=0  (HTL); from DeviceStack.S_p_left
+    S_n_bot: float = 0.0   # electron SRV at y=Ny-1 (ETL); from DeviceStack.S_n_right
+    S_p_bot: float = 0.0   # hole    SRV at y=Ny-1 (ETL); from DeviceStack.S_p_right
 
 
 def build_material_arrays_2d(
@@ -200,6 +214,19 @@ def build_material_arrays_2d(
     # as the Fermi-level difference of the contacts.
     V_bi = float(stack.V_bi)
 
+    # Selective contacts: mirror the 1D mol.py logic.  has_selective_contacts
+    # is True iff any S value is explicitly set (not None) on the DeviceStack.
+    _has_sc = bool(
+        stack.S_n_left  is not None
+        or stack.S_p_left  is not None
+        or stack.S_n_right is not None
+        or stack.S_p_right is not None
+    )
+    S_n_top = float(stack.S_n_left)  if stack.S_n_left  is not None else 0.0
+    S_p_top = float(stack.S_p_left)  if stack.S_p_left  is not None else 0.0
+    S_n_bot = float(stack.S_n_right) if stack.S_n_right is not None else 0.0
+    S_p_bot = float(stack.S_p_right) if stack.S_p_right is not None else 0.0
+
     return MaterialArrays2D(
         grid=grid, stack=stack, ustruct=ustruct,
         eps_r=eps_r, D_n=D_n, D_p=D_p,
@@ -215,6 +242,9 @@ def build_material_arrays_2d(
         V_bi=V_bi, V_T=V_T,
         poisson_factor=poisson_factor,
         layer_role_per_y=layer_role_per_y,
+        has_selective_contacts=_has_sc,
+        S_n_top=S_n_top, S_p_top=S_p_top,
+        S_n_bot=S_n_bot, S_p_bot=S_p_bot,
     )
 
 
