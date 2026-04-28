@@ -292,6 +292,7 @@ def _diffusion_per_node(
 
 from perovskite_sim.constants import Q
 from perovskite_sim.physics.recombination import total_recombination
+from perovskite_sim.physics.contacts import selective_contact_flux
 from perovskite_sim.twod.poisson_2d import solve_poisson_2d
 from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
 
@@ -306,6 +307,62 @@ def _charge_density_2d(n: np.ndarray, p: np.ndarray, mat: MaterialArrays2D) -> n
     1D background charge so 2D-1D parity holds on lateral-uniform states.
     """
     return Q * (p - n + mat.N_D - mat.N_A + (mat.P_ion_static - mat.P_ion0_2d))
+
+
+def _apply_robin_contacts_2d(
+    dn: np.ndarray,
+    dp: np.ndarray,
+    n: np.ndarray,
+    p: np.ndarray,
+    mat: "MaterialArrays2D",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Replace Neumann wall flux with Robin contact flux at y=0 and y=Ny-1.
+
+    ``continuity_rhs_2d`` already included a one-sided Neumann y-divergence
+    at the boundary rows (zero wall flux assumed). This helper subtracts the
+    implicit zero-flux assumption and adds the actual Robin flux
+    J = ±q·S·(density − density_eq) instead. The four Dirichlet pins in
+    ``assemble_rhs_2d`` are skipped when this helper is called.
+
+    Outward-normal and side conventions:
+      y=0    (top / HTL / 1D-left)   outward normal = −y  →  side="left"
+      y=Ny−1 (bot / ETL / 1D-right)  outward normal = +y  →  side="right"
+
+    Sign table (verified from first principles):
+      dn[0,  :] −= J_n_top / (Q·hy_top)   electrons top:    dn = +div_n/Q
+      dp[0,  :] += J_p_top / (Q·hy_top)   holes top:        dp = −div_p/Q → opposite sign
+      dn[−1, :] += J_n_bot / (Q·hy_bot)   electrons bottom: J_n_bot < 0 when n > n_eq
+      dp[−1, :] −= J_p_bot / (Q·hy_bot)   holes bottom:     J_p_bot > 0 when p > p_eq
+    """
+    # Half-cell control-volume thickness at each contact boundary
+    hy_top = (mat.grid.y[1]  - mat.grid.y[0])  / 2.0
+    hy_bot = (mat.grid.y[-1] - mat.grid.y[-2]) / 2.0
+
+    # --- top contact (y=0, HTL, side="left") --------------------------------
+    # selective_contact_flux(carrier="n", side="left") = +Q·S·(n − n_eq)
+    # selective_contact_flux(carrier="p", side="left") = −Q·S·(p − p_eq)
+    J_n_top = selective_contact_flux(
+        n[0, :], mat.n_eq_left[0], mat.S_n_top, carrier="n", side="left",
+    )
+    J_p_top = selective_contact_flux(
+        p[0, :], mat.p_eq_left[0], mat.S_p_top, carrier="p", side="left",
+    )
+    dn[0, :] -= J_n_top / (Q * hy_top)   # subtract: dn = +div_n/Q
+    dp[0, :] += J_p_top / (Q * hy_top)   # add:      dp = −div_p/Q (opposite sign)
+
+    # --- bottom contact (y=Ny−1, ETL, side="right") -------------------------
+    # selective_contact_flux(carrier="n", side="right") = −Q·S·(n − n_eq)
+    # selective_contact_flux(carrier="p", side="right") = +Q·S·(p − p_eq)
+    J_n_bot = selective_contact_flux(
+        n[-1, :], mat.n_eq_right[0], mat.S_n_bot, carrier="n", side="right",
+    )
+    J_p_bot = selective_contact_flux(
+        p[-1, :], mat.p_eq_right[0], mat.S_p_bot, carrier="p", side="right",
+    )
+    dn[-1, :] += J_n_bot / (Q * hy_bot)   # add:      J_n_bot < 0 when n > n_eq
+    dp[-1, :] -= J_p_bot / (Q * hy_bot)   # subtract: J_p_bot > 0 when p > p_eq
+
+    return dn, dp
 
 
 def assemble_rhs_2d(
@@ -397,11 +454,17 @@ def assemble_rhs_2d(
         T=mat.T_device,
     )
 
-    # --- Dirichlet pin at y=0 and y=Ly (ohmic contacts) -------------------
-    dn[0, :] = 0.0
-    dn[-1, :] = 0.0
-    dp[0, :] = 0.0
-    dp[-1, :] = 0.0
+    # --- Contact boundary conditions ---------------------------------------
+    # Dirichlet (ohmic) path: pin all four boundary rows to zero (unchanged
+    # from Stage A).  Robin path: apply surface-recombination flux correction
+    # at each boundary row; the four pins are skipped entirely.
+    if mat.has_selective_contacts:
+        dn, dp = _apply_robin_contacts_2d(dn, dp, n, p, mat)
+    else:
+        dn[0, :] = 0.0
+        dn[-1, :] = 0.0
+        dp[0, :] = 0.0
+        dp[-1, :] = 0.0
 
     return np.concatenate([dn.flatten(), dp.flatten()])
 

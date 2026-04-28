@@ -191,3 +191,90 @@ def test_assemble_rhs_2d_dirichlet_boundary_rows_exactly_zero():
     np.testing.assert_array_equal(dn[-1, :], 0.0, err_msg="dn bot row should be 0 (Dirichlet)")
     np.testing.assert_array_equal(dp[0, :],  0.0, err_msg="dp top row should be 0 (Dirichlet)")
     np.testing.assert_array_equal(dp[-1, :], 0.0, err_msg="dp bot row should be 0 (Dirichlet)")
+
+
+def _make_grid_and_mat(stack, Nx=4):
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=Nx, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    return g, mat
+
+
+def test_robin_dp_top_decreases_with_excess_holes():
+    """dp[0,:] must be smaller under Robin (S_p_top>0, p>p_eq) than under pure Neumann."""
+    from dataclasses import replace as dc_replace
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack_base = _stack()
+    # Neumann baseline: S_p_left=0.0 triggers Robin mode but contributes zero correction.
+    stack_neumann = dc_replace(stack_base, S_p_left=0.0)
+    stack_robin   = dc_replace(stack_base, S_p_left=1e3)
+    g, mat_neumann = _make_grid_and_mat(stack_neumann)
+    _, mat_robin   = _make_grid_and_mat(stack_robin)
+    # State: p[0,:] = 2 × p_eq (excess holes at top boundary)
+    n0 = float(mat_neumann.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat_neumann.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0[0, :] = 2.0 * float(mat_neumann.p_eq_left[0])
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    Nn = g.n_nodes
+    dydt_n = assemble_rhs_2d(0.0, y0, mat_neumann, V_app=0.0)
+    dydt_r = assemble_rhs_2d(0.0, y0, mat_robin,   V_app=0.0)
+    dp_neumann = dydt_n[Nn:].reshape(g.Ny, g.Nx)
+    dp_robin   = dydt_r[Nn:].reshape(g.Ny, g.Nx)
+    # Robin removes excess holes → dp[0,:] must decrease
+    assert np.all(dp_robin[0, :] < dp_neumann[0, :]), (
+        "dp[0,:] should decrease under Robin when p > p_eq (wrong sign or no correction)"
+    )
+
+
+def test_robin_dp_bot_decreases_with_excess_holes():
+    """dp[-1,:] must be smaller under Robin (S_p_bot>0, p>p_eq) than pure Neumann."""
+    from dataclasses import replace as dc_replace
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack_base = _stack()
+    stack_neumann = dc_replace(stack_base, S_p_right=0.0)
+    stack_robin   = dc_replace(stack_base, S_p_right=1e3)
+    g, mat_neumann = _make_grid_and_mat(stack_neumann)
+    _, mat_robin   = _make_grid_and_mat(stack_robin)
+    n0 = float(mat_neumann.n_eq_right[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat_neumann.p_eq_right[0]) * np.ones((g.Ny, g.Nx))
+    p0[-1, :] = 2.0 * float(mat_neumann.p_eq_right[0])
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    Nn = g.n_nodes
+    dydt_n = assemble_rhs_2d(0.0, y0, mat_neumann, V_app=0.0)
+    dydt_r = assemble_rhs_2d(0.0, y0, mat_robin,   V_app=0.0)
+    dp_neumann = dydt_n[Nn:].reshape(g.Ny, g.Nx)
+    dp_robin   = dydt_r[Nn:].reshape(g.Ny, g.Nx)
+    assert np.all(dp_robin[-1, :] < dp_neumann[-1, :]), (
+        "dp[-1,:] should decrease under Robin when p > p_eq at bottom"
+    )
+
+
+def test_robin_correction_routes_to_correct_boundary():
+    """S_n_right correction appears on dn[-1,:] not dn[0,:]; top row is unaffected."""
+    from dataclasses import replace as dc_replace
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack_base = _stack()
+    # Only S_n_right set (bottom, ETL). Top correction should be zero.
+    stack_neumann = dc_replace(stack_base, S_n_right=0.0)
+    stack_robin   = dc_replace(stack_base, S_n_right=1e3)
+    g, mat_neumann = _make_grid_and_mat(stack_neumann)
+    _, mat_robin   = _make_grid_and_mat(stack_robin)
+    # State: n[-1,:] = 2 × n_eq_right (excess electrons at bottom boundary)
+    n0 = float(mat_neumann.n_eq_right[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat_neumann.p_eq_right[0]) * np.ones((g.Ny, g.Nx))
+    n0[-1, :] = 2.0 * float(mat_neumann.n_eq_right[0])
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    Nn = g.n_nodes
+    dydt_n = assemble_rhs_2d(0.0, y0, mat_neumann, V_app=0.0)
+    dydt_r = assemble_rhs_2d(0.0, y0, mat_robin,   V_app=0.0)
+    dn_neumann = dydt_n[:Nn].reshape(g.Ny, g.Nx)
+    dn_robin   = dydt_r[:Nn].reshape(g.Ny, g.Nx)
+    # Bottom row: Robin removes excess electrons → dn[-1,:] decreases
+    assert np.all(dn_robin[-1, :] < dn_neumann[-1, :]), (
+        "dn[-1,:] should decrease under Robin when n > n_eq at bottom (mapping swap?)"
+    )
+    # Top row: no S_n_top → correction = 0 → top rows identical
+    np.testing.assert_array_equal(
+        dn_robin[0, :], dn_neumann[0, :],
+        err_msg="dn[0,:] should be unchanged when only S_n_right is set (mapping swap?)"
+    )
