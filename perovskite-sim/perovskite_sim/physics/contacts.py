@@ -61,7 +61,7 @@ Q = 1.602176634e-19
 
 def selective_contact_flux(
     density: float | np.ndarray,
-    density_eq: float,
+    density_eq: float | np.ndarray,
     S: float,
     *,
     carrier: str,
@@ -72,11 +72,12 @@ def selective_contact_flux(
     Parameters
     ----------
     density
-        Carrier density at the boundary node [m⁻³].
+        Carrier density at the boundary node [m⁻³]. Can be a scalar or array.
     density_eq
         Equilibrium carrier density at the contact [m⁻³]. For an ohmic
         doping-derived contact this is the ``_equilibrium_np`` result;
-        for a Schottky contact it is ``N_c · exp(-φ_B/V_T)``.
+        for a Schottky contact it is ``N_c · exp(-φ_B/V_T)``. Can be a
+        scalar or array matching the shape of ``density``.
     S
         Surface recombination velocity [m/s]. ``S = 0`` gives a
         perfectly blocking contact (zero flux, Neumann BC). Any finite
@@ -117,7 +118,7 @@ def selective_contact_flux(
     if carrier not in ("n", "p"):
         raise ValueError(f"carrier must be 'n' or 'p', got {carrier!r}")
 
-    excess = np.asarray(density, dtype=float) - float(density_eq)
+    excess = np.asarray(density, dtype=float) - np.asarray(density_eq, dtype=float)
     mag = Q * float(S) * excess
 
     # Base sign (left contact): + for electrons, - for holes.
