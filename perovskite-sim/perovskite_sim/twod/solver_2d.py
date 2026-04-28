@@ -2,13 +2,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
+from perovskite_sim.constants import Q
 from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.physics.contacts import selective_contact_flux
+from perovskite_sim.physics.recombination import total_recombination
 from perovskite_sim.solver.mol import build_material_arrays as build_material_arrays_1d
+from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
 from perovskite_sim.twod.grid_2d import Grid2D
-from perovskite_sim.twod.poisson_2d import (
-    Poisson2DFactor, build_poisson_2d_factor,
-)
 from perovskite_sim.twod.microstructure import Microstructure, build_tau_field
+from perovskite_sim.twod.poisson_2d import (
+    Poisson2DFactor, build_poisson_2d_factor, solve_poisson_2d,
+)
 
 
 @dataclass(frozen=True)
@@ -296,13 +300,6 @@ def _diffusion_per_node(
         offset += layer.thickness
 
     return D_n_node, D_p_node
-
-
-from perovskite_sim.constants import Q
-from perovskite_sim.physics.recombination import total_recombination
-from perovskite_sim.physics.contacts import selective_contact_flux
-from perovskite_sim.twod.poisson_2d import solve_poisson_2d
-from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
 
 
 def _charge_density_2d(n: np.ndarray, p: np.ndarray, mat: MaterialArrays2D) -> np.ndarray:
