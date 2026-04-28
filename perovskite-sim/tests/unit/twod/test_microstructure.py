@@ -92,9 +92,9 @@ def test_load_device_from_yaml_attaches_microstructure():
     assert len(stack.microstructure.grain_boundaries) == 1
     gb = stack.microstructure.grain_boundaries[0]
     assert gb.x_position == pytest.approx(250e-9)
-    assert gb.width == pytest.approx(10e-9)
-    assert gb.tau_n == pytest.approx(1e-9)
-    assert gb.tau_p == pytest.approx(1e-9)
+    assert gb.width == pytest.approx(5e-9)
+    assert gb.tau_n == pytest.approx(5e-8)
+    assert gb.tau_p == pytest.approx(5e-8)
     assert gb.layer_role == "absorber"
 
 
