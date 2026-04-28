@@ -1,4 +1,6 @@
 from __future__ import annotations
+from dataclasses import replace as dc_replace
+
 import numpy as np
 import pytest
 
@@ -112,8 +114,6 @@ def test_material_arrays_2d_default_no_selective_contacts():
 
 def test_material_arrays_2d_right_maps_to_bot():
     """DeviceStack.S_n_right must appear in mat.S_n_bot (bottom contact, ETL)."""
-    from dataclasses import replace as dc_replace
-    import pytest
     stack_with_s = dc_replace(_stack(), S_n_right=1e-2)
     layers = _layers_for_stack(stack_with_s)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
@@ -127,8 +127,6 @@ def test_material_arrays_2d_right_maps_to_bot():
 
 def test_material_arrays_2d_left_maps_to_top():
     """DeviceStack.S_p_left must appear in mat.S_p_top (top contact, HTL)."""
-    from dataclasses import replace as dc_replace
-    import pytest
     stack_with_s = dc_replace(_stack(), S_p_left=5e3)
     layers = _layers_for_stack(stack_with_s)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
@@ -202,7 +200,6 @@ def _make_grid_and_mat(stack, Nx=4):
 
 def test_robin_dp_top_decreases_with_excess_holes():
     """dp[0,:] must be smaller under Robin (S_p_top>0, p>p_eq) than under pure Neumann."""
-    from dataclasses import replace as dc_replace
     from perovskite_sim.twod.solver_2d import assemble_rhs_2d
     stack_base = _stack()
     # Neumann baseline: S_p_left=0.0 triggers Robin mode but contributes zero correction.
@@ -228,7 +225,6 @@ def test_robin_dp_top_decreases_with_excess_holes():
 
 def test_robin_dp_bot_decreases_with_excess_holes():
     """dp[-1,:] must be smaller under Robin (S_p_bot>0, p>p_eq) than pure Neumann."""
-    from dataclasses import replace as dc_replace
     from perovskite_sim.twod.solver_2d import assemble_rhs_2d
     stack_base = _stack()
     stack_neumann = dc_replace(stack_base, S_p_right=0.0)
@@ -251,7 +247,6 @@ def test_robin_dp_bot_decreases_with_excess_holes():
 
 def test_robin_correction_routes_to_correct_boundary():
     """S_n_right correction appears on dn[-1,:] not dn[0,:]; top row is unaffected."""
-    from dataclasses import replace as dc_replace
     from perovskite_sim.twod.solver_2d import assemble_rhs_2d
     stack_base = _stack()
     # Only S_n_right set (bottom, ETL). Top correction should be zero.
@@ -287,7 +282,6 @@ def test_legacy_mode_disables_selective_contacts_in_2d():
     Mirrors the 1D pattern in tests/unit/solver/test_temperature_scaling_plumbing.py
     so the 2D solver respects the same Phase 5 tier gate as the 1D solver.
     """
-    from dataclasses import replace as dc_replace
     base = _stack()  # default mode='full' if unset → resolves to FULL
     # Stack that DOES configure S values, but pins the tier to legacy.
     stack_legacy = dc_replace(
