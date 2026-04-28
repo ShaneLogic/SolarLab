@@ -304,3 +304,73 @@ def test_twod_robin_microstructure_coexistence_smoke():
     assert np.all(np.isfinite(J)), "Non-finite J in Robin+GB sweep"
     J_sc_sign = _maybe_flip_sign(V, J)[0]
     assert J_sc_sign > 0, "J_sc should be positive under illumination (sign/convergence issue)"
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_robin_parity_vs_1d_aggressive_blocking():
+    """Stage B(c.1) follow-up gate: 1D vs 2D Robin parity in the genuinely
+    non-ohmic regime (S << ohmic limit on both contacts).
+
+    The original parity gate (test_twod_robin_parity_vs_1d) uses
+    selective_contacts_demo.yaml whose matched-carrier S=1e3 m/s is effectively
+    ohmic at this device thickness — the bit-identical 1D/2D agreement there
+    technically validates only the Dirichlet limit of Robin.  This test runs
+    the same parity check at the aggressive-blocking S envelope used by the
+    bounded-shift sanity test, where the Robin term materially shifts V_oc
+    (~36 mV vs Dirichlet) so any sign-table or half-cell-weighting error in
+    the 2D port would surface as a 1D/2D divergence here.
+
+    The math at the boundary is identical between 1D and 2D — same
+    selective_contact_flux primitive, same equilibrium densities, same
+    half-cell weighting — so we expect agreement at or very near the
+    displayed-precision level even in the non-ohmic regime.
+    """
+    base = _freeze_ions(load_device_from_yaml(PRESET))
+    stack = replace(base,
+        S_n_left=1e-4, S_p_left=1e-3,
+        S_n_right=1e-3, S_p_right=1e-4,
+    )
+
+    r1 = run_jv_sweep(stack, N_grid=31, V_max=1.2, n_points=13, illuminated=True)
+    V1 = np.asarray(r1.V_fwd)
+    J1 = _maybe_flip_sign(V1, np.asarray(r1.J_fwd))
+    m1 = compute_metrics(V1, J1)
+
+    r2 = run_jv_sweep_2d(
+        stack=stack,
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-3,
+    )
+    V2 = np.asarray(r2.V)
+    J2 = _maybe_flip_sign(V2, np.asarray(r2.J))
+    m2 = compute_metrics(V2, J2)
+
+    print(
+        f"\nAggressive Robin 1D: V_oc={m1.V_oc*1e3:.4f} mV  J_sc={m1.J_sc:.4f} A/m²  FF={m1.FF:.6f}"
+        f"\nAggressive Robin 2D: V_oc={m2.V_oc*1e3:.4f} mV  J_sc={m2.J_sc:.4f} A/m²  FF={m2.FF:.6f}"
+        f"\nΔV_oc = {(m2.V_oc - m1.V_oc)*1e3:+.4f} mV"
+        f"  ΔJ_sc/J_sc = {(m2.J_sc - m1.J_sc)/m1.J_sc:+.2e}"
+        f"  ΔFF = {m2.FF - m1.FF:+.4e}"
+    )
+
+    assert abs(m2.V_oc - m1.V_oc) <= 1e-3, (
+        f"Aggressive-Robin V_oc(2D)={m2.V_oc:.6f} V vs V_oc(1D)={m1.V_oc:.6f} V "
+        f"(diff {(m2.V_oc - m1.V_oc)*1e3:.3f} mV, limit 1 mV)"
+    )
+    rel_jsc = abs(m2.J_sc - m1.J_sc) / abs(m1.J_sc)
+    assert rel_jsc <= 5e-4, (
+        f"Aggressive-Robin J_sc rel diff {rel_jsc:.2e} > 5e-4 "
+        f"(2D={m2.J_sc:.4f}, 1D={m1.J_sc:.4f} A/m²)"
+    )
+    assert abs(m2.FF - m1.FF) <= 1e-3, (
+        f"Aggressive-Robin FF(2D)={m2.FF:.6f} vs FF(1D)={m1.FF:.6f} "
+        f"(diff {abs(m2.FF - m1.FF):.4f}, limit 1e-3)"
+    )
