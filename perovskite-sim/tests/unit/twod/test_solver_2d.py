@@ -171,3 +171,23 @@ def test_material_arrays_2d_tau_field_with_singleGB():
     assert np.allclose(
         mat.tau_n[is_other, i_gb], mat.tau_n[is_other, i_bulk]
     )
+
+
+def test_assemble_rhs_2d_dirichlet_boundary_rows_exactly_zero():
+    """Backward-compat: without selective contacts, all four boundary rows of dydt are 0."""
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack = _stack()  # no S values → Dirichlet
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    n0 = float(mat.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    dydt = assemble_rhs_2d(0.0, y0, mat, V_app=0.0)
+    Nn = g.n_nodes
+    dn = dydt[:Nn].reshape((g.Ny, g.Nx))
+    dp = dydt[Nn:].reshape((g.Ny, g.Nx))
+    np.testing.assert_array_equal(dn[0, :],  0.0, err_msg="dn top row should be 0 (Dirichlet)")
+    np.testing.assert_array_equal(dn[-1, :], 0.0, err_msg="dn bot row should be 0 (Dirichlet)")
+    np.testing.assert_array_equal(dp[0, :],  0.0, err_msg="dp top row should be 0 (Dirichlet)")
+    np.testing.assert_array_equal(dp[-1, :], 0.0, err_msg="dp bot row should be 0 (Dirichlet)")
