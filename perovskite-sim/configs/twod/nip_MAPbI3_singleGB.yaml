@@ -1,0 +1,87 @@
+# 2D Stage-B preset: nip MAPbI3 stack with a single vertical grain boundary
+# centred laterally in the absorber layer. Inherits all bulk parameters from
+# nip_MAPbI3_uniform.yaml; only the absorber gains a `microstructure` block.
+#
+# WARNING: legacy Beer-Lambert preset (same caveat as the uniform variant — the
+# Phi=2.5e21 inflates J_sc by ~1.44x for Eg=1.55 eV). For physically accurate
+# optics use a TMM preset; this preset is sized for the Stage-B V_oc-drop
+# regression, not for absolute J_sc agreement with measured devices.
+device:
+  V_bi: 1.1
+  Phi: 2.5e21
+# Layer order: HTL (left / hole-contact) → absorber → ETL (right / electron-contact)
+# This matches the code's phi convention: phi_left=0 (p-contact), phi_right=V_bi (n-contact).
+layers:
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 1e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 2e23
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 2e-4
+    mu_p: 2e-4
+    ni: 3.2e13
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 3.2e13
+    p1: 3.2e13
+    B_rad: 5e-22
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 1.3e7
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+
+# Lateral microstructure: one grain boundary running vertically through the
+# absorber, centred in a 500 nm domain (Stage-B regression uses lateral_length=500e-9).
+# τ_GB = 1 ns vs τ_bulk = 1 µs (3 orders of magnitude SRH lifetime drop inside the band).
+microstructure:
+  grain_boundaries:
+    - x_position: 250e-9      # centred in a 500 nm domain
+      width: 10e-9            # 10 nm GB band
+      tau_n: 1e-9             # τ_GB = 1 ns (vs τ_bulk = 1 µs for absorber)
+      tau_p: 1e-9
+      layer_role: absorber
