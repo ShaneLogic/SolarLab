@@ -42,7 +42,7 @@ class JV2DResult:
 
 def run_jv_sweep_2d(
     stack: DeviceStack,
-    microstructure: Microstructure,
+    microstructure: Microstructure | None = None,
     *,
     lateral_length: float,
     Nx: int,
@@ -113,6 +113,13 @@ def run_jv_sweep_2d(
         Sweep results including V array, J array, optional snapshots, and grid
         coordinates.
     """
+    # Resolve microstructure: explicit arg wins, else pick up from
+    # stack.microstructure (set by load_device_from_yaml when the YAML has a
+    # microstructure block), else fall back to an empty descriptor (Stage A
+    # lateral-uniform case).
+    if microstructure is None:
+        microstructure = getattr(stack, "microstructure", None) or Microstructure()
+
     elec = electrical_layers(stack)
     layers = [Layer(L.thickness, Ny_per_layer) for L in elec]
     grid = build_grid_2d(
