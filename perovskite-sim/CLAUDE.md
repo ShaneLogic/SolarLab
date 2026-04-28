@@ -112,6 +112,26 @@ microstructure:
 
 Stage-B scope boundaries — only $\tau$ heterogeneity is wired through; per-grain mobility, anisotropy, and dual-ion segregation across grains are deferred. The Stage-B physics gate uses Beer-Lambert presets to avoid the pre-existing 1D coupled-solver regression at V=0.21 V on TMM presets (`project_tmm_jv_regression_021.md`).
 
+**2D Robin/selective contacts — Stage B(c.1) (Phase 6 — Apr 2026).** Ports the 1D Phase 3.3 Robin/selective-contact boundary condition to `assemble_rhs_2d`. When `SimulationMode.use_selective_contacts` is True and `DeviceStack` supplies any of `S_n_left`, `S_p_left`, `S_n_right`, `S_p_right`, `build_material_arrays_2d` sets `MaterialArrays2D.has_selective_contacts = True` and maps the four scalar S values via the 1D-transport-axis bridge:
+
+```
+DeviceStack.S_n_left  → MaterialArrays2D.S_n_top  (y=0,    HTL / p-contact)
+DeviceStack.S_p_left  → MaterialArrays2D.S_p_top
+DeviceStack.S_n_right → MaterialArrays2D.S_n_bot  (y=Ny-1, ETL / n-contact)
+DeviceStack.S_p_right → MaterialArrays2D.S_p_bot
+```
+
+`continuity_rhs_2d` computes a one-sided Neumann y-divergence at the boundary rows (previously skipped). `assemble_rhs_2d` guards on `has_selective_contacts`: the `else` branch still zeros the four Dirichlet rows (Stage A/B(a) behaviour unchanged); the `if` branch calls `_apply_robin_contacts_2d` which subtracts the Robin wall flux from the Neumann base. The sign table (verified from first principles; `dp` signs are opposite to `dn` because `dp = −div_p/Q`):
+
+```
+dn[0,  :] -= J_n_top / (Q * hy_top)   # top electrons: J_n_top = +q·S·(n−n_eq)
+dp[0,  :] += J_p_top / (Q * hy_top)   # top holes:     J_p_top = −q·S·(p−p_eq)  ← +=
+dn[-1, :] += J_n_bot / (Q * hy_bot)   # bot electrons: J_n_bot = −q·S·(n−n_eq)
+dp[-1, :] -= J_p_bot / (Q * hy_bot)   # bot holes:     J_p_bot = +q·S·(p−p_eq)  ← -=
+```
+
+Equilibrium densities use `mat.n_eq_left` / `mat.p_eq_left` for y=0 and `mat.n_eq_right` / `mat.p_eq_right` for y=Ny-1 (existing `(Nx,)` arrays; note the code comments on these fields had "top/bottom" reversed — fixed in this stage). The parity gate `tests/regression/test_twod_validation.py::test_twod_robin_parity_vs_1d` runs 1D Phase 3.3 vs 2D Stage B(c.1) on `configs/selective_contacts_demo.yaml` (frozen ions) and pins |ΔV_oc| ≤ 1 mV — final passing values are bit-identical at the displayed precision (V_oc=910.634 mV, J_sc=424.036 A/m², FF=0.8247). The bounded-shift sanity test uses an aggressively-blocking Robin stack (`S_n_left=1e-4, S_p_left=1e-3, S_n_right=1e-3, S_p_right=1e-4` m/s — same envelope as 1D `test_selective_contacts_integration`) and asserts |ΔV_oc| ∈ [1, 150] mV vs the Dirichlet baseline; the demo preset's matched S=1e3 m/s is effectively ohmic at this device thickness so the demo would not be useful for this assertion. `selective_contact_flux` was extended to accept array-valued `density_eq` so per-x equilibrium variation is supported when the build path eventually paints lateral structure into `n_eq_left/right`. Stage B(c.1) does not add Schottky barriers, per-column S patterning, or changes to the backend/frontend — those are out of scope.
+
 ### Solver gotcha — RHS finite-check
 
 `assemble_rhs` includes a `np.all(np.isfinite(dydt))` guard that raises `ValueError` if any element is NaN or Inf. This catches blow-ups from singular TMM matrices, zero-thickness layers, or extreme doping imbalances early — before Radau can silently accept them and produce garbage. Do not remove this check.
