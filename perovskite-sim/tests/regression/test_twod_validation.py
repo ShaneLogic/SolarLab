@@ -157,3 +157,60 @@ def test_twod_uniform_matches_1d_within_tolerance():
         f"Top-contact phi[{snap.phi[-1,0]:.4f}] != V_bi - V_app["
         f"{expected_top:.4f}] at V_app={V_app_snap:.3f} V"
     )
+
+
+ROBIN_PRESET = "configs/selective_contacts_demo.yaml"
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_robin_parity_vs_1d():
+    """Stage B(c.1) primary gate: laterally-uniform 2D with Robin contacts matches
+    1D Phase 3.3 within sub-mV V_oc / 5×10⁻⁴ J_sc / 10⁻³ FF.
+
+    Uses configs/selective_contacts_demo.yaml (Beer-Lambert nip MAPbI3 with all
+    four S values set). Ions frozen on both sides for a clean comparison.
+    """
+    stack = _freeze_ions(load_device_from_yaml(ROBIN_PRESET))
+
+    # 1D reference with Phase 3.3 Robin contacts active (has_selective_contacts=True)
+    r1 = run_jv_sweep(stack, N_grid=31, V_max=1.2, n_points=13, illuminated=True)
+    V1 = np.asarray(r1.V_fwd)
+    J1 = _maybe_flip_sign(V1, np.asarray(r1.J_fwd))
+    m1 = compute_metrics(V1, J1)
+
+    # 2D with Stage B(c.1) Robin contacts, same grid resolution as Stage-A gate
+    r2 = run_jv_sweep_2d(
+        stack=stack,
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-3,
+    )
+    V2 = np.asarray(r2.V)
+    J2 = _maybe_flip_sign(V2, np.asarray(r2.J))
+    m2 = compute_metrics(V2, J2)
+
+    print(
+        f"\nRobin 1D: V_oc={m1.V_oc*1e3:.3f} mV  J_sc={m1.J_sc:.3f} A/m²  FF={m1.FF:.4f}"
+        f"\nRobin 2D: V_oc={m2.V_oc*1e3:.3f} mV  J_sc={m2.J_sc:.3f} A/m²  FF={m2.FF:.4f}"
+    )
+
+    assert abs(m2.V_oc - m1.V_oc) <= 1e-3, (
+        f"Robin V_oc(2D)={m2.V_oc:.6f} V vs V_oc(1D)={m1.V_oc:.6f} V "
+        f"(diff {(m2.V_oc - m1.V_oc)*1e3:.3f} mV, limit 1 mV)"
+    )
+    rel_jsc = abs(m2.J_sc - m1.J_sc) / abs(m1.J_sc)
+    assert rel_jsc <= 5e-4, (
+        f"Robin J_sc rel diff {rel_jsc:.2e} > 5e-4 "
+        f"(2D={m2.J_sc:.4f}, 1D={m1.J_sc:.4f} A/m²)"
+    )
+    assert abs(m2.FF - m1.FF) <= 1e-3, (
+        f"Robin FF(2D)={m2.FF:.6f} vs FF(1D)={m1.FF:.6f} "
+        f"(diff {abs(m2.FF - m1.FF):.4f}, limit 1e-3)"
+    )
