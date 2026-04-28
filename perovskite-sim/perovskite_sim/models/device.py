@@ -1,9 +1,10 @@
 from __future__ import annotations
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from perovskite_sim.constants import V_T
 from perovskite_sim.models.parameters import MaterialParams
+from perovskite_sim.twod.microstructure import Microstructure
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,11 @@ class DeviceStack:
     S_p_left: Optional[float] = None
     S_n_right: Optional[float] = None
     S_p_right: Optional[float] = None
+    # Lateral microstructure (2D Stage B — Apr 2026). Carries grain-boundary
+    # bands with reduced SRH lifetimes that ``build_material_arrays_2d`` can
+    # paint onto the (Ny, Nx) τ field. 1D solver paths and lateral-uniform 2D
+    # paths ignore this field, so back-compat is bit-identical when empty.
+    microstructure: Microstructure = field(default_factory=Microstructure)
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))

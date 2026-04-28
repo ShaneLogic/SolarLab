@@ -2,6 +2,7 @@ from __future__ import annotations
 import yaml
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.twod.microstructure import load_microstructure_from_yaml_block
 
 
 def load_simulation_hints(path: str) -> dict:
@@ -130,6 +131,11 @@ def load_device_from_yaml(path: str) -> DeviceStack:
     S_n_right = _opt_S(dev.get("S_n_right", right_cfg.get("S_n")))
     S_p_right = _opt_S(dev.get("S_p_right", right_cfg.get("S_p")))
 
+    # Lateral microstructure (2D Stage B). Top-level YAML block, optional.
+    # Empty / missing → Microstructure() (no GBs); strict-key validation
+    # happens inside load_microstructure_from_yaml_block.
+    microstructure = load_microstructure_from_yaml_block(cfg.get("microstructure"))
+
     return DeviceStack(
         layers=layers,
         V_bi=_f(dev.get("V_bi", 1.1)),
@@ -141,4 +147,5 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         S_p_left=S_p_left,
         S_n_right=S_n_right,
         S_p_right=S_p_right,
+        microstructure=microstructure,
     )
