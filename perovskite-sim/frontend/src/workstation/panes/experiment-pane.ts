@@ -21,6 +21,7 @@ import { mountEQEPane } from './eqe-pane'
 import { mountELPane } from './el-pane'
 import { mountMottSchottkyPane } from './mott-schottky-pane'
 import { mountJV2DPane } from './jv-2d-pane'
+import { mountVocGrainSweepPane } from './voc-grain-sweep-pane'
 
 export interface ExperimentPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -123,11 +124,15 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
       ],
     },
     {
-      label: '2D / Microstructural (Stage A)',
+      label: '2D / Microstructural (Stage A/B)',
       entries: [
         {
           kind: 'jv_2d', label: 'J–V Sweep (2D)',
           mount: (el) => mountJV2DPane(el, paneOpts()),
+        },
+        {
+          kind: 'voc_grain_sweep', label: 'V_oc(L_g) Grain Sweep',
+          mount: (el) => mountVocGrainSweepPane(el, paneOpts()),
         },
       ],
     },

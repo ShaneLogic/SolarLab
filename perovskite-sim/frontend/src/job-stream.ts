@@ -15,7 +15,8 @@ export async function startJob(
     | 'eqe'
     | 'el'
     | 'mott_schottky'
-    | 'jv_2d',
+    | 'jv_2d'
+    | 'voc_grain_sweep',
   device: unknown,
   params: Record<string, unknown>,
   configPath: string | null = null,

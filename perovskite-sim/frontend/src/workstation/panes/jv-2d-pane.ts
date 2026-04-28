@@ -47,6 +47,20 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
           </select>
         </label>
       </div>
+      <fieldset class="form-fieldset">
+        <legend>
+          <label class="checkbox-label">
+            <input type="checkbox" id="jv2d-gb-en" />
+            <span>Single grain boundary (Stage B)</span>
+          </label>
+        </legend>
+        <div class="form-grid" id="jv2d-gb-fields">
+          ${numField('jv2d-gb-x-nm', 'GB <i>x</i> (nm)', 250, 'any')}
+          ${numField('jv2d-gb-w-nm', 'GB width (nm)', 5, 'any')}
+          ${numField('jv2d-gb-tau-n', 'τ<sub>GB</sub><sup>n</sup> (s)', 5e-8, 'any')}
+          ${numField('jv2d-gb-tau-p', 'τ<sub>GB</sub><sup>p</sup> (s)', 5e-8, 'any')}
+        </div>
+      </fieldset>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jv2d">Run 2D J–V</button>
         <span class="status" id="status-jv2d"></span>
@@ -77,7 +91,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
     setStatus('status-jv2d', 'Starting job…')
 
     const Lx_nm = readNum('jv2d-Lx-nm', 500)
-    const params = {
+    const params: Record<string, unknown> = {
       lateral_length: Lx_nm * 1e-9,
       Nx: Math.max(2, Math.round(readNum('jv2d-Nx', 10))),
       Ny_per_layer: Math.max(4, Math.round(readNum('jv2d-Nyl', 20))),
@@ -87,6 +101,23 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
       illuminated: illumCb.checked,
       save_snapshots: snapsCb.checked,
       lateral_bc: bcSel.value,
+    }
+
+    // Stage-B microstructure: when the checkbox is on, pack a single GB into
+    // the request body. Backend treats this as a YAML-block-shaped dict.
+    const gbCb = container.querySelector<HTMLInputElement>('#jv2d-gb-en')
+    if (gbCb && gbCb.checked) {
+      params.microstructure = {
+        grain_boundaries: [
+          {
+            x_position: readNum('jv2d-gb-x-nm', 250) * 1e-9,
+            width: readNum('jv2d-gb-w-nm', 5) * 1e-9,
+            tau_n: readNum('jv2d-gb-tau-n', 5e-8),
+            tau_p: readNum('jv2d-gb-tau-p', 5e-8),
+            layer_role: 'absorber',
+          },
+        ],
+      }
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

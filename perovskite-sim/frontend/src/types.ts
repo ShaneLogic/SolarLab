@@ -217,6 +217,15 @@ export interface JV2DResult {
   snapshots: SpatialSnapshot2D[]    // empty when save_snapshots=false
 }
 
+/** V_oc(L_g) sweep result — Stage-B headline experiment.
+ *  Arrays are aligned: ``V_oc_V[k]`` corresponds to ``grain_sizes_nm[k]``. */
+export interface VocGrainSweepResult {
+  grain_sizes_nm: number[]
+  V_oc_V: number[]
+  J_sc_Am2: number[]
+  FF: number[]
+}
+
 export interface JVParams {
   N_grid: number
   n_points: number
