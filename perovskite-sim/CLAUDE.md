@@ -94,7 +94,23 @@ The Stage-A J-V driver `twod/experiments/jv_sweep_2d.run_jv_sweep_2d` bootstraps
 
 Backend dispatch: `kind="jv_2d"` in `backend/main.py` accepts `lateral_length`, `Nx`, `Ny_per_layer`, `V_max`, `V_step`, `settle_t`, `illuminated`, `lateral_bc`, `save_snapshots` and serialises `JV2DResult` (V, J, grid_x in nm, grid_y in nm, lateral_bc, snapshots). The frontend pane `frontend/src/workstation/panes/jv-2d-pane.ts` is registered under the `'2D / Microstructural (Stage A)'` group as `J–V Sweep (2D)`; the result renderer in `main-plot-pane.ts` flips the J sign to match the 1D solar convention. The TMM preset `nip_MAPbI3_tmm` and the BL preset `nip_MAPbI3` (and the alias `configs/twod/nip_MAPbI3_uniform.yaml`) are the supported Stage-A presets — the Stage-A regression uses BL because the TMM preset has the pre-existing 1D coupled-solver regression at V=0.21 V (see `project_tmm_jv_regression_021.md`).
 
-Stage-A scope boundaries — Phase 6 deliberately does **not** include lateral microstructure (`Microstructure()` is empty by default and is the only supported value for Stage A), 2D ions, 2D radiative reabsorption / field mobility / Robin contacts, or per-grain $\tau$ profiles. Those Stage-B physics extensions reuse the same `MaterialArrays2D` cache slots (which already hold `chi`, `Eg`, `A_star_n/p`, `interface_y_faces`, etc.) and the same `assemble_rhs_2d` skeleton, but are out of scope for the Stage-A validation gate.
+Stage-A scope boundaries — Phase 6 deliberately does **not** include 2D ions, 2D radiative reabsorption / field mobility / Robin contacts, or per-grain $\tau$ profiles. Those reuse the same `MaterialArrays2D` cache slots (which already hold `chi`, `Eg`, `A_star_n/p`, `interface_y_faces`, etc.) and the same `assemble_rhs_2d` skeleton, but are out of scope for the Stage-A validation gate.
+
+**2D Microstructure — Stage B (Phase 6 — Apr 2026).** Lateral grain boundaries with reduced SRH lifetimes, painted onto the absorber via `perovskite_sim/twod/microstructure.py`. The data model is two frozen dataclasses: `GrainBoundary(x_position, width, tau_n, tau_p, layer_role)` represents one vertical band, and `Microstructure(grain_boundaries=...)` is the container. `build_tau_field(grid, ustruct, tau_n_bulk_per_y, tau_p_bulk_per_y, layer_role_per_y)` extrudes the bulk $\tau$ along $x$ and then overrides cells inside each GB band where `|x - gb.x_position| < gb.width/2` AND the role tag at that $y$ matches `gb.layer_role`. Empty `Microstructure()` reduces to identity extrusion (Stage-A bit-identical). The YAML schema is a top-level `microstructure:` block with strict-key validation (`load_microstructure_from_yaml_block` raises `ValueError` on unknown keys so typos surface immediately):
+
+```yaml
+microstructure:
+  grain_boundaries:
+    - x_position: 250e-9   # m, GB centre
+      width:      5e-9     # m, GB band width
+      tau_n:      5e-8     # s, electron SRH lifetime inside GB
+      tau_p:      5e-8     # s, hole SRH lifetime inside GB
+      layer_role: absorber # only nodes tagged this role get overridden
+```
+
+`load_device_from_yaml` parses the block and stores the result on `DeviceStack.microstructure`. `run_jv_sweep_2d` accepts `microstructure: Microstructure | None = None`; when None it picks up `stack.microstructure` (then falls back to `Microstructure()`). Inside `build_material_arrays_2d` the role mask is derived by `_layer_role_at_each_y`, which assigns each $y$ node to exactly one electrical layer; layer-boundary rows are tagged with the upstream layer (HTL on the HTL/absorber interface, absorber on the absorber/ETL interface), so a single absorber GB touches the absorber/ETL interface row but not the HTL/absorber row. The shipped Stage-B preset `configs/twod/nip_MAPbI3_singleGB.yaml` (one centred GB, $\tau_\text{GB}=50$ ns vs $\tau_\text{bulk}=1$ µs, width 5 nm) drops $V_\text{oc}$ by ~46 mV vs the lateral-uniform baseline — pinned to a 5–100 mV regression window in `tests/regression/test_twod_microstructure.py`. Headline experiment: `voc_grain_sweep` (in `twod/experiments/voc_grain_sweep.py`) sweeps a sequence of grain sizes $L_g$, with one centred absorber GB per $L_g$ and periodic lateral BCs, and returns $V_\text{oc}(L_g)$, $J_\text{sc}(L_g)$, $\text{FF}(L_g)$ — exposed as `kind="voc_grain_sweep"` from the backend and as the **V_oc(L_g) Grain Sweep** entry in the workstation. The `jv_2d` backend kind also accepts an optional `params.microstructure` block (same YAML shape) so users can add a single GB to a Stage-A run from the UI without editing YAML.
+
+Stage-B scope boundaries — only $\tau$ heterogeneity is wired through; per-grain mobility, anisotropy, and dual-ion segregation across grains are deferred. The Stage-B physics gate uses Beer-Lambert presets to avoid the pre-existing 1D coupled-solver regression at V=0.21 V on TMM presets (`project_tmm_jv_regression_021.md`).
 
 ### Solver gotcha — RHS finite-check
 
