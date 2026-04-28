@@ -22,4 +22,5 @@ testpaths = ["tests"]
 addopts = "-m 'not slow'"
 markers = [
     "slow: marks tests as slow (run with -m slow)",
+    "regression: physical-sanity regression tests (V_oc / J_sc / FF envelopes, parity gates)",
 ]
