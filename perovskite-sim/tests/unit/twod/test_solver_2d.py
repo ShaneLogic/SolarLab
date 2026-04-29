@@ -303,3 +303,125 @@ def test_legacy_mode_disables_selective_contacts_in_2d():
     assert mat_full.has_selective_contacts is True, (
         "device.mode='full' with S_* configured must enable Robin"
     )
+
+
+# ---------------------------------------------------------------------------
+# Stage B(c.2): Field-dependent mobility μ(E) — MaterialArrays2D wiring tests
+# ---------------------------------------------------------------------------
+
+
+def _stack_with_layer_params(stack, **layer_param_overrides):
+    """Return a DeviceStack with every electrical layer's params updated.
+
+    `v_sat_n`, `v_sat_p`, `ct_beta_n`, `ct_beta_p`, `pf_gamma_n`, `pf_gamma_p`
+    live on MaterialParams (per-layer), not on DeviceStack — so the wiring
+    tests have to push the override down a level via dc_replace().
+    """
+    new_layers = []
+    for L in stack.layers:
+        if L.params is None:
+            new_layers.append(L)
+            continue
+        new_params = dc_replace(L.params, **layer_param_overrides)
+        new_layers.append(dc_replace(L, params=new_params))
+    return dc_replace(stack, layers=tuple(new_layers))
+
+
+def test_material_arrays_2d_default_no_field_mobility():
+    """Default preset → has_field_mobility=False and all 18 face fields None."""
+    stack = _stack()
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_field_mobility is False
+    for name in (
+        "v_sat_n_x_face", "v_sat_n_y_face", "v_sat_p_x_face", "v_sat_p_y_face",
+        "ct_beta_n_x_face", "ct_beta_n_y_face", "ct_beta_p_x_face", "ct_beta_p_y_face",
+        "pf_gamma_n_x_face", "pf_gamma_n_y_face", "pf_gamma_p_x_face", "pf_gamma_p_y_face",
+        "v_sat_n_wrap", "v_sat_p_wrap",
+        "ct_beta_n_wrap", "ct_beta_p_wrap",
+        "pf_gamma_n_wrap", "pf_gamma_p_wrap",
+    ):
+        assert getattr(mat, name) is None, f"{name} should be None when field-mobility is off"
+
+
+def test_material_arrays_2d_v_sat_activates_flag_and_shapes_neumann():
+    """v_sat>0 with mode='full' → has_field_mobility=True and all interior face
+    arrays have correct shapes; wrap arrays remain None for non-periodic BC."""
+    stack = _stack_with_layer_params(_stack(), v_sat_n=1e2, v_sat_p=1e2)
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="neumann")
+    assert mat.has_field_mobility is True
+    assert mat.v_sat_n_x_face.shape == (g.Ny, g.Nx - 1)
+    assert mat.v_sat_n_y_face.shape == (g.Ny - 1, g.Nx)
+    assert mat.v_sat_p_x_face.shape == (g.Ny, g.Nx - 1)
+    assert mat.v_sat_p_y_face.shape == (g.Ny - 1, g.Nx)
+    assert mat.ct_beta_n_x_face.shape == (g.Ny, g.Nx - 1)
+    assert mat.ct_beta_p_y_face.shape == (g.Ny - 1, g.Nx)
+    assert mat.pf_gamma_n_x_face.shape == (g.Ny, g.Nx - 1)
+    assert mat.pf_gamma_p_y_face.shape == (g.Ny - 1, g.Nx)
+    # Wrap arrays not populated for Neumann BC
+    assert mat.v_sat_n_wrap is None
+    assert mat.v_sat_p_wrap is None
+
+
+def test_material_arrays_2d_periodic_populates_wrap_arrays():
+    """Periodic BC with v_sat>0 → all six wrap arrays populated with shape (Ny,)."""
+    stack = _stack_with_layer_params(_stack(), v_sat_n=1e2, v_sat_p=1e2)
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_field_mobility is True
+    for name in (
+        "v_sat_n_wrap", "v_sat_p_wrap",
+        "ct_beta_n_wrap", "ct_beta_p_wrap",
+        "pf_gamma_n_wrap", "pf_gamma_p_wrap",
+    ):
+        arr = getattr(mat, name)
+        assert arr is not None, f"{name} must be populated under periodic BC"
+        assert arr.shape == (g.Ny,)
+
+
+def test_material_arrays_2d_field_mobility_values_match_layer_params():
+    """Layer v_sat_n=1e2 → mat.v_sat_n_y_face equals 1e2 inside that layer (arithmetic mean
+    of two equal nodes is the node value)."""
+    stack = _stack_with_layer_params(_stack(), v_sat_n=1e2, v_sat_p=2e2)
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="neumann")
+    # Every layer has the same v_sat → arithmetic mean across any face equals v_sat.
+    np.testing.assert_allclose(mat.v_sat_n_y_face, 1e2)
+    np.testing.assert_allclose(mat.v_sat_p_y_face, 2e2)
+    np.testing.assert_allclose(mat.v_sat_n_x_face, 1e2)
+    np.testing.assert_allclose(mat.v_sat_p_x_face, 2e2)
+
+
+def test_legacy_mode_disables_field_mobility_in_2d():
+    """Tier-as-ceiling: device.mode='legacy' must keep has_field_mobility=False
+    even when v_sat is set on the stack. Mirrors the B(c.1) Robin tier-gate test
+    that was added during Issue I1 fix."""
+    base = _stack()
+    stack_legacy = dc_replace(
+        _stack_with_layer_params(base, v_sat_n=1e2, v_sat_p=1e2),
+        mode="legacy",
+    )
+    layers = _layers_for_stack(stack_legacy)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack_legacy, Microstructure())
+    assert mat.has_field_mobility is False
+    # Sanity: same params with mode='full' enables.
+    stack_full = dc_replace(stack_legacy, mode="full")
+    mat_full = build_material_arrays_2d(g, stack_full, Microstructure())
+    assert mat_full.has_field_mobility is True
+
+
+def test_pf_gamma_alone_activates_flag():
+    """Setting only pf_gamma (with v_sat=0) is enough to trip the activation gate."""
+    stack = _stack_with_layer_params(_stack(), pf_gamma_n=3e-4, pf_gamma_p=3e-4)
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_field_mobility is True
+    assert mat.pf_gamma_n_x_face is not None
+    np.testing.assert_allclose(mat.pf_gamma_n_x_face, 3e-4)
