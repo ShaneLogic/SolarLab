@@ -8,6 +8,9 @@ from perovskite_sim.physics.contacts import selective_contact_flux
 from perovskite_sim.physics.recombination import total_recombination
 from perovskite_sim.solver.mol import build_material_arrays as build_material_arrays_1d
 from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
+from perovskite_sim.twod.field_mobility_2d import (
+    arith_mean_face_x, arith_mean_face_y, arith_mean_face_wrap,
+)
 from perovskite_sim.twod.grid_2d import Grid2D
 from perovskite_sim.twod.microstructure import Microstructure, build_tau_field
 from perovskite_sim.twod.poisson_2d import (
@@ -90,6 +93,36 @@ class MaterialArrays2D:
     S_p_top: float = 0.0   # hole    SRV at y=0  (HTL); from DeviceStack.S_p_left
     S_n_bot: float = 0.0   # electron SRV at y=Ny-1 (ETL); from DeviceStack.S_n_right
     S_p_bot: float = 0.0   # hole    SRV at y=Ny-1 (ETL); from DeviceStack.S_p_right
+    # --- Stage B(c.2): Field-dependent mobility μ(E) ----------------------------
+    # Face-normal formulation: x-faces use only |E_x_face|, y-faces use only
+    # |E_y_face|.  See docs/superpowers/specs/2026-04-29-2d-stage-b-c2-field-
+    # mobility-design.md.  All eighteen face arrays are None by default; they
+    # are populated by build_material_arrays_2d when sim_mode.
+    # use_field_dependent_mobility AND any layer sets v_sat>0 or pf_gamma>0.
+    # The disabled path (has_field_mobility=False) is bit-identical to the
+    # current Stage B(c.1) constant-mobility code path.
+    has_field_mobility: bool = False
+    # x-face arrays — (Ny, Nx-1)
+    v_sat_n_x_face:    np.ndarray | None = None
+    v_sat_p_x_face:    np.ndarray | None = None
+    ct_beta_n_x_face:  np.ndarray | None = None
+    ct_beta_p_x_face:  np.ndarray | None = None
+    pf_gamma_n_x_face: np.ndarray | None = None
+    pf_gamma_p_x_face: np.ndarray | None = None
+    # y-face arrays — (Ny-1, Nx)
+    v_sat_n_y_face:    np.ndarray | None = None
+    v_sat_p_y_face:    np.ndarray | None = None
+    ct_beta_n_y_face:  np.ndarray | None = None
+    ct_beta_p_y_face:  np.ndarray | None = None
+    pf_gamma_n_y_face: np.ndarray | None = None
+    pf_gamma_p_y_face: np.ndarray | None = None
+    # Periodic-x wrap face arrays — (Ny,); None unless lateral_bc=="periodic"
+    v_sat_n_wrap:    np.ndarray | None = None
+    v_sat_p_wrap:    np.ndarray | None = None
+    ct_beta_n_wrap:  np.ndarray | None = None
+    ct_beta_p_wrap:  np.ndarray | None = None
+    pf_gamma_n_wrap: np.ndarray | None = None
+    pf_gamma_p_wrap: np.ndarray | None = None
 
 
 def build_material_arrays_2d(
@@ -239,6 +272,77 @@ def build_material_arrays_2d(
     S_n_bot = float(stack.S_n_right) if stack.S_n_right is not None else 0.0
     S_p_bot = float(stack.S_p_right) if stack.S_p_right is not None else 0.0
 
+    # --- Stage B(c.2): Field-dependent mobility μ(E) ----------------------------
+    # Build per-node v_sat / ct_beta / pf_gamma arrays from layer params via the
+    # same y-mask construction used for D_n / D_p above.
+    Ny_b, Nx_b = grid.Ny, grid.Nx
+    v_sat_n_node    = np.zeros((Ny_b, Nx_b))
+    v_sat_p_node    = np.zeros((Ny_b, Nx_b))
+    ct_beta_n_node  = np.zeros((Ny_b, Nx_b))
+    ct_beta_p_node  = np.zeros((Ny_b, Nx_b))
+    pf_gamma_n_node = np.zeros((Ny_b, Nx_b))
+    pf_gamma_p_node = np.zeros((Ny_b, Nx_b))
+    _offset_fm = 0.0
+    for _layer_fm in electrical_layers(stack):
+        _mask_fm = (grid.y >= _offset_fm - 1e-12) & (
+            grid.y <= _offset_fm + _layer_fm.thickness + 1e-12
+        )
+        _p_fm = _layer_fm.params
+        v_sat_n_node[_mask_fm, :]    = _p_fm.v_sat_n
+        v_sat_p_node[_mask_fm, :]    = _p_fm.v_sat_p
+        ct_beta_n_node[_mask_fm, :]  = _p_fm.ct_beta_n
+        ct_beta_p_node[_mask_fm, :]  = _p_fm.ct_beta_p
+        pf_gamma_n_node[_mask_fm, :] = _p_fm.pf_gamma_n
+        pf_gamma_p_node[_mask_fm, :] = _p_fm.pf_gamma_p
+        _offset_fm += _layer_fm.thickness
+
+    # Tier-as-ceiling activation gate (mirror 1D mol.py:502–509 and B(c.1) Robin gate).
+    from perovskite_sim.models.mode import resolve_mode as _resolve_mode_fm
+    _sim_mode_fm = _resolve_mode_fm(getattr(stack, "mode", "full"))
+    _has_field_mobility = bool(
+        _sim_mode_fm.use_field_dependent_mobility
+        and (
+            np.any(v_sat_n_node    > 0.0) or np.any(v_sat_p_node    > 0.0)
+            or np.any(pf_gamma_n_node > 0.0) or np.any(pf_gamma_p_node > 0.0)
+        )
+    )
+
+    if _has_field_mobility:
+        # Arithmetic mean to faces (NOT harmonic — see field_mobility_2d.py docstring).
+        v_sat_n_x_face    = arith_mean_face_x(v_sat_n_node)
+        v_sat_n_y_face    = arith_mean_face_y(v_sat_n_node)
+        v_sat_p_x_face    = arith_mean_face_x(v_sat_p_node)
+        v_sat_p_y_face    = arith_mean_face_y(v_sat_p_node)
+        ct_beta_n_x_face  = arith_mean_face_x(ct_beta_n_node)
+        ct_beta_n_y_face  = arith_mean_face_y(ct_beta_n_node)
+        ct_beta_p_x_face  = arith_mean_face_x(ct_beta_p_node)
+        ct_beta_p_y_face  = arith_mean_face_y(ct_beta_p_node)
+        pf_gamma_n_x_face = arith_mean_face_x(pf_gamma_n_node)
+        pf_gamma_n_y_face = arith_mean_face_y(pf_gamma_n_node)
+        pf_gamma_p_x_face = arith_mean_face_x(pf_gamma_p_node)
+        pf_gamma_p_y_face = arith_mean_face_y(pf_gamma_p_node)
+        if lateral_bc == "periodic":
+            v_sat_n_wrap    = arith_mean_face_wrap(v_sat_n_node)
+            v_sat_p_wrap    = arith_mean_face_wrap(v_sat_p_node)
+            ct_beta_n_wrap  = arith_mean_face_wrap(ct_beta_n_node)
+            ct_beta_p_wrap  = arith_mean_face_wrap(ct_beta_p_node)
+            pf_gamma_n_wrap = arith_mean_face_wrap(pf_gamma_n_node)
+            pf_gamma_p_wrap = arith_mean_face_wrap(pf_gamma_p_node)
+        else:
+            v_sat_n_wrap = v_sat_p_wrap = None
+            ct_beta_n_wrap = ct_beta_p_wrap = None
+            pf_gamma_n_wrap = pf_gamma_p_wrap = None
+    else:
+        v_sat_n_x_face = v_sat_n_y_face = None
+        v_sat_p_x_face = v_sat_p_y_face = None
+        ct_beta_n_x_face = ct_beta_n_y_face = None
+        ct_beta_p_x_face = ct_beta_p_y_face = None
+        pf_gamma_n_x_face = pf_gamma_n_y_face = None
+        pf_gamma_p_x_face = pf_gamma_p_y_face = None
+        v_sat_n_wrap = v_sat_p_wrap = None
+        ct_beta_n_wrap = ct_beta_p_wrap = None
+        pf_gamma_n_wrap = pf_gamma_p_wrap = None
+
     return MaterialArrays2D(
         grid=grid, stack=stack, ustruct=ustruct,
         eps_r=eps_r, D_n=D_n, D_p=D_p,
@@ -257,6 +361,16 @@ def build_material_arrays_2d(
         has_selective_contacts=_has_sc,
         S_n_top=S_n_top, S_p_top=S_p_top,
         S_n_bot=S_n_bot, S_p_bot=S_p_bot,
+        has_field_mobility=_has_field_mobility,
+        v_sat_n_x_face=v_sat_n_x_face, v_sat_p_x_face=v_sat_p_x_face,
+        ct_beta_n_x_face=ct_beta_n_x_face, ct_beta_p_x_face=ct_beta_p_x_face,
+        pf_gamma_n_x_face=pf_gamma_n_x_face, pf_gamma_p_x_face=pf_gamma_p_x_face,
+        v_sat_n_y_face=v_sat_n_y_face, v_sat_p_y_face=v_sat_p_y_face,
+        ct_beta_n_y_face=ct_beta_n_y_face, ct_beta_p_y_face=ct_beta_p_y_face,
+        pf_gamma_n_y_face=pf_gamma_n_y_face, pf_gamma_p_y_face=pf_gamma_p_y_face,
+        v_sat_n_wrap=v_sat_n_wrap, v_sat_p_wrap=v_sat_p_wrap,
+        ct_beta_n_wrap=ct_beta_n_wrap, ct_beta_p_wrap=ct_beta_p_wrap,
+        pf_gamma_n_wrap=pf_gamma_n_wrap, pf_gamma_p_wrap=pf_gamma_p_wrap,
     )
 
 
