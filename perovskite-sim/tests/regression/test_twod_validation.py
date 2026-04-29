@@ -422,3 +422,101 @@ def test_twod_field_mobility_disabled_path_bit_identical():
     np.testing.assert_array_equal(V_off, V_legacy)
     np.testing.assert_allclose(J_off, J_legacy, rtol=1e-12, atol=0.0,
         err_msg="Disabled field-mobility path is not bit-identical")
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_field_mobility_parity_vs_1d():
+    """Stage B(c.2) primary correctness gate: laterally-uniform 2D with face-normal
+    μ(E) at v_sat=1e2 matches 1D Phase 3.2 within (1 mV / 5e-4 / 1e-3).
+
+    In a lateral-uniform device E_x ≈ 0, so face-normal μ(E) reduces to
+    "y-face μ(E) only" — exactly what 1D does. Expected: bit-identical or
+    sub-microvolt deltas, mirroring the B(c.1) Robin parity gates.
+    """
+    base = _freeze_ions(load_device_from_yaml(PRESET))
+    stack = _stack_with_layer_params(base, v_sat_n=1e2, v_sat_p=1e2)
+    # 1D reference
+    r1 = run_jv_sweep(stack, N_grid=31, V_max=1.2, n_points=13, illuminated=True)
+    V1 = np.asarray(r1.V_fwd)
+    J1 = _maybe_flip_sign(V1, np.asarray(r1.J_fwd))
+    m1 = compute_metrics(V1, J1)
+    # 2D Stage B(c.2)
+    r2 = run_jv_sweep_2d(
+        stack=stack,
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-3,
+    )
+    V2 = np.asarray(r2.V)
+    J2 = _maybe_flip_sign(V2, np.asarray(r2.J))
+    m2 = compute_metrics(V2, J2)
+    print(
+        f"\nμ(E) 1D: V_oc={m1.V_oc*1e3:.4f} mV  J_sc={m1.J_sc:.4f} A/m²  FF={m1.FF:.6f}"
+        f"\nμ(E) 2D: V_oc={m2.V_oc*1e3:.4f} mV  J_sc={m2.J_sc:.4f} A/m²  FF={m2.FF:.6f}"
+        f"\nΔV_oc = {(m2.V_oc - m1.V_oc)*1e3:+.4f} mV"
+        f"  ΔJ_sc/J_sc = {(m2.J_sc - m1.J_sc)/m1.J_sc:+.2e}"
+        f"  ΔFF = {m2.FF - m1.FF:+.4e}"
+    )
+    assert abs(m2.V_oc - m1.V_oc) <= 1e-3, (
+        f"μ(E) V_oc(2D)={m2.V_oc:.6f} V vs V_oc(1D)={m1.V_oc:.6f} V "
+        f"(diff {(m2.V_oc - m1.V_oc)*1e3:.3f} mV, limit 1 mV)"
+    )
+    rel_jsc = abs(m2.J_sc - m1.J_sc) / abs(m1.J_sc)
+    assert rel_jsc <= 5e-4, (
+        f"μ(E) J_sc rel diff {rel_jsc:.2e} > 5e-4 "
+        f"(2D={m2.J_sc:.4f}, 1D={m1.J_sc:.4f} A/m²)"
+    )
+    assert abs(m2.FF - m1.FF) <= 1e-3, (
+        f"μ(E) FF(2D)={m2.FF:.6f} vs FF(1D)={m1.FF:.6f} "
+        f"(diff {abs(m2.FF - m1.FF):.4f}, limit 1e-3)"
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_field_mobility_bounded_shift():
+    """v_sat=1e2 in 2D shifts J(V) measurably vs v_sat=0 baseline.
+
+    Confirms the μ(E) hook is materially active rather than silently bypassed.
+    Asserts max(|J_on - J_off| / |J_off|) > 1e-6 — same threshold as the 1D
+    analog `test_field_mobility_changes_jv_curve`.
+
+    A larger threshold (e.g. 1e-3) is not appropriate here because at v_sat=1e2
+    on the Beer-Lambert MAPbI3 nip stack the field-mobility correction is
+    physical but modest: empirically the relative J shift peaks at ~7e-4 across
+    the sweep (CT-driven μ reduction in the absorber where E_y is largest, but
+    flat-band regions near contacts contribute very little). The 1e-6 floor
+    catches the "hook completely bypassed" case (shift = 0 to floating-point
+    precision) without false-positiving on the genuine ~mid-1e-4 physical
+    signal at this preset.
+    """
+    base = _freeze_ions(load_device_from_yaml(PRESET))
+    stack_off = base
+    stack_on  = _stack_with_layer_params(base, v_sat_n=1e2, v_sat_p=1e2)
+    common_kw = dict(
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-3,
+    )
+    r_off = run_jv_sweep_2d(stack=stack_off, **common_kw)
+    r_on  = run_jv_sweep_2d(stack=stack_on,  **common_kw)
+    J_off = np.asarray(r_off.J)
+    J_on  = np.asarray(r_on.J)
+    rel = np.max(np.abs(J_on - J_off) / (np.abs(J_off) + 1e-12))
+    print(f"\nμ(E) bounded-shift: max(|ΔJ|/|J|) = {rel:.3e}")
+    assert rel > 1e-6, (
+        f"μ(E) shift max(|ΔJ|/|J|) = {rel:.3e} below 1e-6 — hook may be inactive"
+    )
