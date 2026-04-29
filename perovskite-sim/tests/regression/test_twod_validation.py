@@ -520,3 +520,41 @@ def test_twod_field_mobility_bounded_shift():
     assert rel > 1e-6, (
         f"μ(E) shift max(|ΔJ|/|J|) = {rel:.3e} below 1e-6 — hook may be inactive"
     )
+
+
+@pytest.mark.regression
+def test_twod_field_mobility_robin_microstructure_coexistence_smoke():
+    """μ(E) + Robin contacts + grain boundary on a coarse mesh produce a finite,
+    well-ordered J-V (no NaN/Inf, J_sc>0). Cheap test — proves the three per-RHS
+    hooks compose without solver hang."""
+    from perovskite_sim.twod.microstructure import GrainBoundary
+    base = _freeze_ions(load_device_from_yaml(PRESET))
+    stack = replace(_stack_with_layer_params(base, v_sat_n=1e3, v_sat_p=1e3),
+        S_n_left=1e-4, S_p_left=1e-3,
+        S_n_right=1e-3, S_p_right=1e-4,
+    )
+    ms = Microstructure(grain_boundaries=(
+        GrainBoundary(
+            x_position=150e-9, width=5e-9,
+            tau_n=5e-8, tau_p=5e-8,
+            layer_role="absorber",
+        ),
+    ))
+    r = run_jv_sweep_2d(
+        stack=stack,
+        microstructure=ms,
+        lateral_length=300e-9,
+        Nx=6,
+        V_max=1.0,
+        V_step=0.25,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=5,
+        settle_t=1e-4,
+    )
+    V = np.asarray(r.V)
+    J = np.asarray(r.J)
+    assert np.all(np.isfinite(V)), "Non-finite V in μ(E)+Robin+GB sweep"
+    assert np.all(np.isfinite(J)), "Non-finite J in μ(E)+Robin+GB sweep"
+    J_sc_sign = _maybe_flip_sign(V, J)[0]
+    assert J_sc_sign > 0, "J_sc should be positive under illumination"
