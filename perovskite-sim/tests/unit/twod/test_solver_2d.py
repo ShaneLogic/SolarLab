@@ -425,3 +425,78 @@ def test_pf_gamma_alone_activates_flag():
     assert mat.has_field_mobility is True
     assert mat.pf_gamma_n_x_face is not None
     np.testing.assert_allclose(mat.pf_gamma_n_x_face, 3e-4)
+
+
+# ---------------------------------------------------------------------------
+# Stage B(c.2) Task 4: assemble_rhs_2d field-mobility per-RHS recompute
+# ---------------------------------------------------------------------------
+
+
+def test_assemble_rhs_2d_field_mobility_disabled_path_unchanged():
+    """When v_sat=pf_gamma=0 (default preset), mat.has_field_mobility is False
+    and assemble_rhs_2d output is bit-identical to legacy-mode-with-vsat (which
+    is also disabled via the tier gate)."""
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    base = _stack()
+    stack_off    = base                                                       # mode=full, no v_sat
+    stack_legacy = dc_replace(_stack_with_layer_params(base, v_sat_n=1e2, v_sat_p=1e2), mode="legacy")
+    layers = _layers_for_stack(base)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat_off    = build_material_arrays_2d(g, stack_off,    Microstructure(), lateral_bc="periodic")
+    mat_legacy = build_material_arrays_2d(g, stack_legacy, Microstructure(), lateral_bc="periodic")
+    assert mat_off.has_field_mobility is False
+    assert mat_legacy.has_field_mobility is False
+    n0 = float(mat_off.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat_off.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    dydt_off    = assemble_rhs_2d(0.0, y0, mat_off,    V_app=0.0)
+    dydt_legacy = assemble_rhs_2d(0.0, y0, mat_legacy, V_app=0.0)
+    np.testing.assert_array_equal(dydt_off, dydt_legacy)
+
+
+def test_assemble_rhs_2d_field_mobility_enabled_changes_dydt():
+    """When v_sat=1e2 with mode='full', assemble_rhs_2d output differs from
+    the constant-mobility baseline at a state with non-zero E."""
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    base = _stack()
+    stack_off = base
+    stack_on  = _stack_with_layer_params(base, v_sat_n=1e2, v_sat_p=1e2)
+    layers = _layers_for_stack(base)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat_off = build_material_arrays_2d(g, stack_off, Microstructure(), lateral_bc="periodic")
+    mat_on  = build_material_arrays_2d(g, stack_on,  Microstructure(), lateral_bc="periodic")
+    assert mat_off.has_field_mobility is False
+    assert mat_on.has_field_mobility is True
+    # Build a state with non-trivial gradients in y so E_y != 0.
+    n_grad = np.linspace(float(mat_off.n_eq_left[0]),
+                        float(mat_off.n_eq_right[0]), g.Ny)
+    p_grad = np.linspace(float(mat_off.p_eq_left[0]),
+                        float(mat_off.p_eq_right[0]), g.Ny)
+    n0 = np.broadcast_to(n_grad[:, None], (g.Ny, g.Nx)).copy()
+    p0 = np.broadcast_to(p_grad[:, None], (g.Ny, g.Nx)).copy()
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    dydt_off = assemble_rhs_2d(0.0, y0, mat_off, V_app=0.5)
+    dydt_on  = assemble_rhs_2d(0.0, y0, mat_on,  V_app=0.5)
+    # mu(E) actively perturbs the RHS at non-trivial fields.
+    assert not np.array_equal(dydt_off, dydt_on)
+    rel = np.max(np.abs(dydt_on - dydt_off)) / max(1.0, np.max(np.abs(dydt_off)))
+    assert rel > 1e-6, f"mu(E) effect on RHS too small (rel diff {rel:.2e})"
+
+
+def test_assemble_rhs_2d_field_mobility_finite_periodic():
+    """mu(E) on with lateral_bc='periodic' produces a finite RHS at a non-trivial
+    state. Catches a missing wrap-face override or a periodic-wrap shape bug."""
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack = _stack_with_layer_params(_stack(), v_sat_n=1e2, v_sat_p=1e2)
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=5, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_field_mobility is True
+    assert mat.v_sat_n_wrap is not None
+    # Build a state with broken lateral symmetry -> non-zero E_x at wrap face
+    n0 = float(mat.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    n0[:, 0] *= 1.5   # asymmetric -- drives non-trivial wrap-face E_x
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    dydt = assemble_rhs_2d(0.0, y0, mat, V_app=0.0)
+    assert np.all(np.isfinite(dydt)), "mu(E) periodic wrap produced non-finite RHS"
