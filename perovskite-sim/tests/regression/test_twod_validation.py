@@ -374,3 +374,51 @@ def test_twod_robin_parity_vs_1d_aggressive_blocking():
         f"Aggressive-Robin FF(2D)={m2.FF:.6f} vs FF(1D)={m1.FF:.6f} "
         f"(diff {abs(m2.FF - m1.FF):.4f}, limit 1e-3)"
     )
+
+
+def _stack_with_layer_params(stack, **layer_kwargs):
+    """Push v_sat / ct_beta / pf_gamma overrides into per-layer MaterialParams."""
+    new_layers = tuple(
+        replace(layer, params=replace(layer.params, **layer_kwargs))
+        for layer in stack.layers
+    )
+    return replace(stack, layers=new_layers)
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_field_mobility_disabled_path_bit_identical():
+    """Stage B(c.2) bit-identical disabled-path regression.
+
+    Compare two 2D J-V sweeps:
+      A. Default preset, mode='full', no v_sat / pf_gamma
+         → has_field_mobility=False (no params set).
+      B. Same preset, mode='legacy', WITH aggressive v_sat=1e2
+         → has_field_mobility=False (tier gate disables despite params).
+
+    Both must produce IDENTICAL J-V to floating-point precision because
+    the disabled path bypasses the recompute and the constant-D code path
+    is unchanged.
+    """
+    base = _freeze_ions(load_device_from_yaml(PRESET))
+    stack_off    = base                                                                    # default mode=full, no v_sat
+    stack_legacy = replace(_stack_with_layer_params(base, v_sat_n=1e2, v_sat_p=1e2),
+                           mode="legacy")                                                  # tier-disabled
+    common_kw = dict(
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-3,
+    )
+    r_off    = run_jv_sweep_2d(stack=stack_off,    **common_kw)
+    r_legacy = run_jv_sweep_2d(stack=stack_legacy, **common_kw)
+    V_off    = np.asarray(r_off.V);    J_off    = np.asarray(r_off.J)
+    V_legacy = np.asarray(r_legacy.V); J_legacy = np.asarray(r_legacy.J)
+    np.testing.assert_array_equal(V_off, V_legacy)
+    np.testing.assert_allclose(J_off, J_legacy, rtol=1e-12, atol=0.0,
+        err_msg="Disabled field-mobility path is not bit-identical")
