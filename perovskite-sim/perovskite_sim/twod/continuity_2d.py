@@ -19,6 +19,13 @@ def continuity_rhs_2d(
     A_star_n: np.ndarray | None = None,
     A_star_p: np.ndarray | None = None,
     T: float | None = None,
+    # Stage B(c.2) field-mobility per-face D overrides:
+    D_n_x_face: np.ndarray | None = None,
+    D_n_y_face: np.ndarray | None = None,
+    D_p_x_face: np.ndarray | None = None,
+    D_p_y_face: np.ndarray | None = None,
+    D_n_wrap: np.ndarray | None = None,
+    D_p_wrap: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return dn/dt, dp/dt on shape (Ny, Nx).
 
@@ -75,8 +82,14 @@ def continuity_rhs_2d(
         phi_n = phi + chi
         phi_p = phi + chi + Eg
 
-    Jx_n, Jy_n = sg_fluxes_2d_n(phi_n, n, x, y, D_n, V_T)   # Jx (Ny, Nx-1), Jy (Ny-1, Nx)
-    Jx_p, Jy_p = sg_fluxes_2d_p(phi_p, p, x, y, D_p, V_T)
+    Jx_n, Jy_n = sg_fluxes_2d_n(
+        phi_n, n, x, y, D_n, V_T,
+        D_n_x_face=D_n_x_face, D_n_y_face=D_n_y_face,
+    )   # Jx (Ny, Nx-1), Jy (Ny-1, Nx)
+    Jx_p, Jy_p = sg_fluxes_2d_p(
+        phi_p, p, x, y, D_p, V_T,
+        D_p_x_face=D_p_x_face, D_p_y_face=D_p_y_face,
+    )
 
     # ---- Thermionic-emission capping at heterointerface y-faces -------------
     # Mirrors physics/continuity.py:carrier_continuity_rhs. When chi/Eg vary
@@ -158,7 +171,12 @@ def continuity_rhs_2d(
         # Electrons: B(xi)*n[right] - B(-xi)*n[left], right=0, left=Nx-1
         # Harmonic-mean face avg matches the interior sg_fluxes_2d_n averaging.
         _eps_face = 1e-300
-        D_face_wrap_n = 2.0 * D_n[:, -1] * D_n[:, 0] / (D_n[:, -1] + D_n[:, 0] + _eps_face)
+        # Stage B(c.2): if D_n_wrap was provided (mu(E) on), use it directly;
+        # else fall back to harmonic mean.
+        if D_n_wrap is None:
+            D_face_wrap_n = 2.0 * D_n[:, -1] * D_n[:, 0] / (D_n[:, -1] + D_n[:, 0] + _eps_face)
+        else:
+            D_face_wrap_n = D_n_wrap
         xi_wrap_n = (phi_n[:, 0] - phi_n[:, -1]) / V_T
         Jx_wrap_n = (Q * D_face_wrap_n / dx_wrap) * (
             _B(xi_wrap_n) * n[:, 0] - _B(-xi_wrap_n) * n[:, -1]
@@ -172,7 +190,12 @@ def continuity_rhs_2d(
         # For wrap (left=Nx-1, right=0):
         #   Jx_wrap_p = Q*D/dx * (B(xi)*p[Nx-1] - B(-xi)*p[0])
         # where xi = (phi_p[0] - phi_p[Nx-1]) / V_T (same as for electrons)
-        D_face_wrap_p = 2.0 * D_p[:, -1] * D_p[:, 0] / (D_p[:, -1] + D_p[:, 0] + _eps_face)
+        # Stage B(c.2): if D_p_wrap was provided (mu(E) on), use it directly;
+        # else fall back to harmonic mean.
+        if D_p_wrap is None:
+            D_face_wrap_p = 2.0 * D_p[:, -1] * D_p[:, 0] / (D_p[:, -1] + D_p[:, 0] + _eps_face)
+        else:
+            D_face_wrap_p = D_p_wrap
         xi_wrap_p = (phi_p[:, 0] - phi_p[:, -1]) / V_T
         Jx_wrap_p = (Q * D_face_wrap_p / dx_wrap) * (
             _B(xi_wrap_p) * p[:, -1] - _B(-xi_wrap_p) * p[:, 0]

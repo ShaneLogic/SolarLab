@@ -10,6 +10,7 @@ from perovskite_sim.solver.mol import build_material_arrays as build_material_ar
 from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
 from perovskite_sim.twod.field_mobility_2d import (
     arith_mean_face_x, arith_mean_face_y, arith_mean_face_wrap,
+    recompute_d_eff_2d,
 )
 from perovskite_sim.twod.grid_2d import Grid2D
 from perovskite_sim.twod.microstructure import Microstructure, build_tau_field
@@ -569,19 +570,62 @@ def assemble_rhs_2d(
     Eg_2d = mat.Eg
 
     # --- Continuity --------------------------------------------------------
-    dn, dp = continuity_rhs_2d(
-        g.x, g.y, phi, n, p,
-        mat.G_optical, R,
-        mat.D_n, mat.D_p,
-        mat.V_T,
-        chi=chi_2d,
-        Eg=Eg_2d,
-        lateral_bc=mat.poisson_factor.lateral_bc,
-        interface_y_faces=mat.interface_y_faces,
-        A_star_n=mat.A_star_n,
-        A_star_p=mat.A_star_p,
-        T=mat.T_device,
-    )
+    if mat.has_field_mobility:
+        # Stage B(c.2): face-normal mu(E) recompute. x-faces use |E_x_face|,
+        # y-faces use |E_y_face|. apply_field_mobility takes np.abs(E).
+        d_eff = recompute_d_eff_2d(
+            phi=phi, x=g.x, y=g.y,
+            D_n=mat.D_n, D_p=mat.D_p, V_T=mat.V_T,
+            v_sat_n_x_face=mat.v_sat_n_x_face,
+            v_sat_n_y_face=mat.v_sat_n_y_face,
+            ct_beta_n_x_face=mat.ct_beta_n_x_face,
+            ct_beta_n_y_face=mat.ct_beta_n_y_face,
+            pf_gamma_n_x_face=mat.pf_gamma_n_x_face,
+            pf_gamma_n_y_face=mat.pf_gamma_n_y_face,
+            v_sat_p_x_face=mat.v_sat_p_x_face,
+            v_sat_p_y_face=mat.v_sat_p_y_face,
+            ct_beta_p_x_face=mat.ct_beta_p_x_face,
+            ct_beta_p_y_face=mat.ct_beta_p_y_face,
+            pf_gamma_p_x_face=mat.pf_gamma_p_x_face,
+            pf_gamma_p_y_face=mat.pf_gamma_p_y_face,
+            lateral_bc=mat.poisson_factor.lateral_bc,
+            v_sat_n_wrap=mat.v_sat_n_wrap,
+            v_sat_p_wrap=mat.v_sat_p_wrap,
+            ct_beta_n_wrap=mat.ct_beta_n_wrap,
+            ct_beta_p_wrap=mat.ct_beta_p_wrap,
+            pf_gamma_n_wrap=mat.pf_gamma_n_wrap,
+            pf_gamma_p_wrap=mat.pf_gamma_p_wrap,
+        )
+        dn, dp = continuity_rhs_2d(
+            g.x, g.y, phi, n, p,
+            mat.G_optical, R,
+            mat.D_n, mat.D_p,
+            mat.V_T,
+            chi=chi_2d,
+            Eg=Eg_2d,
+            lateral_bc=mat.poisson_factor.lateral_bc,
+            interface_y_faces=mat.interface_y_faces,
+            A_star_n=mat.A_star_n,
+            A_star_p=mat.A_star_p,
+            T=mat.T_device,
+            D_n_x_face=d_eff.D_n_x, D_n_y_face=d_eff.D_n_y,
+            D_p_x_face=d_eff.D_p_x, D_p_y_face=d_eff.D_p_y,
+            D_n_wrap=d_eff.D_n_wrap, D_p_wrap=d_eff.D_p_wrap,
+        )
+    else:
+        dn, dp = continuity_rhs_2d(
+            g.x, g.y, phi, n, p,
+            mat.G_optical, R,
+            mat.D_n, mat.D_p,
+            mat.V_T,
+            chi=chi_2d,
+            Eg=Eg_2d,
+            lateral_bc=mat.poisson_factor.lateral_bc,
+            interface_y_faces=mat.interface_y_faces,
+            A_star_n=mat.A_star_n,
+            A_star_p=mat.A_star_p,
+            T=mat.T_device,
+        )
 
     # --- Contact boundary conditions ---------------------------------------
     # Dirichlet (ohmic) path: pin all four boundary rows to zero (unchanged
