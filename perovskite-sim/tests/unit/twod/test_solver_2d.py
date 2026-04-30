@@ -664,3 +664,71 @@ def test_assemble_rhs_2d_radiative_reabsorption_enabled_helper_is_invoked():
         dydt = assemble_rhs_2d(0.0, y0, mat, V_app=0.0)
     assert mock_helper.called, "recompute_g_with_rad_2d not called when has_rr_2d=True"
     assert np.all(np.isfinite(dydt))
+
+
+# ---------------------------------------------------------------------------
+# Stage B(c.3) Task 4: jv_sweep_2d lagged-fallback bake helper
+# ---------------------------------------------------------------------------
+
+
+def test_bake_radiative_reabsorption_step_2d_no_op_when_disabled():
+    """When mat.has_radiative_reabsorption_2d=False, the bake helper returns
+    mat unchanged (same object)."""
+    from perovskite_sim.twod.experiments.jv_sweep_2d import _bake_radiative_reabsorption_step_2d
+    stack = _stack()                                 # BL → has_rr_2d=False
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_radiative_reabsorption_2d is False
+    n0 = float(mat.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    y_state = np.concatenate([n0.flatten(), p0.flatten()])
+    mat_baked = _bake_radiative_reabsorption_step_2d(y_state, mat, illuminated=True)
+    assert mat_baked is mat                          # no-op
+
+
+def test_bake_radiative_reabsorption_step_2d_clears_flag_and_augments_G():
+    """When has_radiative_reabsorption_2d=True, the bake helper returns a NEW
+    mat with the flag cleared, the absorber tuples emptied, and G_optical
+    augmented per absorber. The retry then takes the disabled path with G
+    already pre-baked."""
+    from perovskite_sim.twod.experiments.jv_sweep_2d import _bake_radiative_reabsorption_step_2d
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_radiative_reabsorption_2d is True
+    # Build a non-trivial state: steep y-gradient so n·p > 0 inside absorber.
+    n_grad = np.linspace(float(mat.n_eq_left[0]), float(mat.n_eq_right[0]), g.Ny)
+    p_grad = np.linspace(float(mat.p_eq_left[0]), float(mat.p_eq_right[0]), g.Ny)
+    n0 = np.broadcast_to(n_grad[:, None], (g.Ny, g.Nx)).copy()
+    p0 = np.broadcast_to(p_grad[:, None], (g.Ny, g.Nx)).copy()
+    y_state = np.concatenate([n0.flatten(), p0.flatten()])
+    mat_baked = _bake_radiative_reabsorption_step_2d(y_state, mat, illuminated=True)
+    assert mat_baked is not mat
+    assert mat_baked.has_radiative_reabsorption_2d is False
+    assert mat_baked.absorber_y_ranges_2d == ()
+    assert mat_baked.absorber_p_esc_2d == ()
+    assert mat_baked.absorber_thicknesses_2d == ()
+    assert mat_baked.absorber_areas_2d == ()
+    # G_optical was augmented (some absorber rows changed; depends on n·p sign).
+    # In a normal device with non-zero n·p, the augmentation is positive.
+    y_lo, y_hi = mat.absorber_y_ranges_2d[0]
+    assert np.any(mat_baked.G_optical[y_lo:y_hi, :] > mat.G_optical[y_lo:y_hi, :]), (
+        "Bake helper did not augment G_optical inside the absorber"
+    )
+
+
+def test_bake_radiative_reabsorption_step_2d_no_op_when_dark():
+    """When illuminated=False, the bake helper is a no-op (matches 1D)."""
+    from perovskite_sim.twod.experiments.jv_sweep_2d import _bake_radiative_reabsorption_step_2d
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_radiative_reabsorption_2d is True
+    n0 = float(mat.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    y_state = np.concatenate([n0.flatten(), p0.flatten()])
+    mat_baked = _bake_radiative_reabsorption_step_2d(y_state, mat, illuminated=False)
+    assert mat_baked is mat

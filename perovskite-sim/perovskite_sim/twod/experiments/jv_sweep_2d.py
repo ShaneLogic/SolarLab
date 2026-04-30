@@ -8,6 +8,7 @@ from perovskite_sim.discretization.grid import Layer
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.twod.grid_2d import build_grid_2d
 from perovskite_sim.twod.microstructure import Microstructure
+from perovskite_sim.twod.radiative_reabsorption_2d import recompute_g_with_rad_2d
 from perovskite_sim.twod.solver_2d import (
     build_material_arrays_2d,
     run_transient_2d,
@@ -38,6 +39,57 @@ class JV2DResult:
     grid_x: np.ndarray
     grid_y: np.ndarray
     lateral_bc: str
+
+
+def _bake_radiative_reabsorption_step_2d(
+    y_state: np.ndarray, mat, illuminated: bool,
+):
+    """Freeze the Stage B(c.3) G_rad source for one ``run_transient_2d`` call.
+
+    Stage B(c.3)'s per-RHS hook recomputes ``R_tot_2D = ∬ B·n·p dy dx`` inside
+    every Radau Newton iteration, which couples every absorber cell to every
+    other through a non-local integral. At low forward bias on TMM presets
+    (V≈0.21V — see project memory `tmm_jv_regression_021.md`), the diode-
+    injection knee can prevent Newton convergence on the dense absorber block.
+
+    Fix (mirrors 1D ``_bake_radiative_reabsorption_step`` in jv_sweep.py): on
+    ``run_transient_2d`` failure, evaluate ``R_tot_2D`` once at the entry state
+    ``y_state``, fold ``G_rad`` into a step-local ``G_optical`` copy, and clear
+    ``has_radiative_reabsorption_2d`` on the returned ``mat``. Across voltage
+    steps the warm-start chain refreshes ``R_tot`` from the freshly-settled
+    state, so the lag is bounded by ``n·p`` drift inside one settle interval —
+    sub-percent on the typical ``v_rate=1 V/s`` sweep, well below the 5 mV V_oc
+    parity window.
+
+    No-op when ``has_radiative_reabsorption_2d=False``, ``illuminated=False``,
+    or there are no absorbers — returns the original ``mat``.
+    """
+    if not (
+        mat.has_radiative_reabsorption_2d
+        and illuminated
+        and mat.absorber_y_ranges_2d
+    ):
+        return mat
+    g = mat.grid
+    N = g.Ny * g.Nx
+    n0 = y_state[:N].reshape((g.Ny, g.Nx))
+    p0 = y_state[N:].reshape((g.Ny, g.Nx))
+    G_with_rad = recompute_g_with_rad_2d(
+        G_optical=mat.G_optical, n=n0, p=p0, B_rad=mat.B_rad,
+        x=g.x, y=g.y,
+        absorber_y_ranges=mat.absorber_y_ranges_2d,
+        absorber_p_esc=mat.absorber_p_esc_2d,
+        absorber_areas=mat.absorber_areas_2d,
+    )
+    return dataclasses.replace(
+        mat,
+        G_optical=G_with_rad,
+        has_radiative_reabsorption_2d=False,
+        absorber_y_ranges_2d=(),
+        absorber_p_esc_2d=(),
+        absorber_thicknesses_2d=(),
+        absorber_areas_2d=(),
+    )
 
 
 def run_jv_sweep_2d(
@@ -171,12 +223,27 @@ def run_jv_sweep_2d(
     snap_list: list[SpatialSnapshot2D] = []
 
     for k, V in enumerate(voltages):
-        y_state = run_transient_2d(
-            y_state, mat,
-            V_app=float(V),
-            t_end=settle_t,
-            max_step=settle_t / 50.0,
-        )
+        try:
+            y_state = run_transient_2d(
+                y_state, mat,
+                V_app=float(V),
+                t_end=settle_t,
+                max_step=settle_t / 50.0,
+            )
+        except RuntimeError:
+            # Stage B(c.3) lagged fallback: bake R_tot once at the entry state,
+            # retry with the disabled flag. Mirrors 1D jv_sweep.py:328+.
+            if not (mat.has_radiative_reabsorption_2d and illuminated):
+                raise                                      # nothing to fall back on
+            mat_step = _bake_radiative_reabsorption_step_2d(
+                y_state, mat, illuminated=illuminated,
+            )
+            y_state = run_transient_2d(
+                y_state, mat_step,
+                V_app=float(V),
+                t_end=settle_t,
+                max_step=settle_t / 50.0,
+            )
         snap = extract_snapshot_2d(y_state, mat, V_app=float(V))
         J_list.append(compute_terminal_current_2d(snap))
         if save_snapshots:
