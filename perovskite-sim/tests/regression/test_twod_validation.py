@@ -558,3 +558,40 @@ def test_twod_field_mobility_robin_microstructure_coexistence_smoke():
     assert np.all(np.isfinite(J)), "Non-finite J in μ(E)+Robin+GB sweep"
     J_sc_sign = _maybe_flip_sign(V, J)[0]
     assert J_sc_sign > 0, "J_sc should be positive under illumination"
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_radiative_reabsorption_disabled_path_bit_identical():
+    """Stage B(c.3) bit-identical disabled-path regression.
+
+    Compare two 2D J-V sweeps on the BL preset:
+      A. mode='full'  → has_radiative_reabsorption_2d=False (no TMM, no P_esc)
+      B. mode='legacy' → has_radiative_reabsorption_2d=False (tier disables)
+
+    Both must produce IDENTICAL J-V because Stage B(c.3) keeps the constant-G
+    code path (G_to_use is mat.G_optical when the flag is False).
+    The chi=Eg=0 BL preset means the other tier-gated flags (TE, band offsets,
+    etc.) don't change physics either, so this test isolates the B(c.3) gate.
+    """
+    base = _freeze_ions(load_device_from_yaml(PRESET))    # PRESET is BL
+    stack_full   = base                                   # mode=full default
+    stack_legacy = replace(base, mode="legacy")
+    common_kw = dict(
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-3,
+    )
+    r_full   = run_jv_sweep_2d(stack=stack_full,   **common_kw)
+    r_legacy = run_jv_sweep_2d(stack=stack_legacy, **common_kw)
+    np.testing.assert_array_equal(r_full.V, r_legacy.V)
+    np.testing.assert_allclose(
+        r_full.J, r_legacy.J, rtol=1e-12, atol=0.0,
+        err_msg="Stage B(c.3) disabled path is not bit-identical between mode=full and mode=legacy on BL",
+    )
