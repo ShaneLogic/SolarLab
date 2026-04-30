@@ -17,6 +17,7 @@ from perovskite_sim.twod.microstructure import Microstructure, build_tau_field
 from perovskite_sim.twod.poisson_2d import (
     Poisson2DFactor, build_poisson_2d_factor, solve_poisson_2d,
 )
+from perovskite_sim.twod.radiative_reabsorption_2d import recompute_g_with_rad_2d
 
 
 @dataclass(frozen=True)
@@ -654,6 +655,22 @@ def assemble_rhs_2d(
     chi_2d = mat.chi
     Eg_2d = mat.Eg
 
+    # --- Stage B(c.3): Radiative reabsorption recompute -----------------------
+    # When the flag is False (or the per-absorber tuples are empty), G_to_use
+    # is mat.G_optical (same Python object — no copy), bit-identical to current
+    # Stage B(c.2). When enabled, recompute_g_with_rad_2d returns a NEW (Ny, Nx)
+    # array equal to G_optical augmented per absorber.
+    if mat.has_radiative_reabsorption_2d and mat.absorber_y_ranges_2d:
+        G_to_use = recompute_g_with_rad_2d(
+            G_optical=mat.G_optical, n=n, p=p, B_rad=mat.B_rad,
+            x=g.x, y=g.y,
+            absorber_y_ranges=mat.absorber_y_ranges_2d,
+            absorber_p_esc=mat.absorber_p_esc_2d,
+            absorber_areas=mat.absorber_areas_2d,
+        )
+    else:
+        G_to_use = mat.G_optical
+
     # --- Continuity --------------------------------------------------------
     if mat.has_field_mobility:
         # Stage B(c.2): face-normal mu(E) recompute. x-faces use |E_x_face|,
@@ -683,7 +700,7 @@ def assemble_rhs_2d(
         )
         dn, dp = continuity_rhs_2d(
             g.x, g.y, phi, n, p,
-            mat.G_optical, R,
+            G_to_use, R,
             mat.D_n, mat.D_p,
             mat.V_T,
             chi=chi_2d,
@@ -700,7 +717,7 @@ def assemble_rhs_2d(
     else:
         dn, dp = continuity_rhs_2d(
             g.x, g.y, phi, n, p,
-            mat.G_optical, R,
+            G_to_use, R,
             mat.D_n, mat.D_p,
             mat.V_T,
             chi=chi_2d,

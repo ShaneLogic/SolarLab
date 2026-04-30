@@ -594,3 +594,73 @@ def test_fast_mode_disables_radiative_reabsorption_in_2d():
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure())
     assert mat.has_radiative_reabsorption_2d is False
+
+
+# ---------------------------------------------------------------------------
+# Stage B(c.3) Task 3: assemble_rhs_2d radiative-reabsorption per-RHS recompute
+# ---------------------------------------------------------------------------
+
+
+def test_assemble_rhs_2d_radiative_reabsorption_disabled_does_not_call_helper():
+    """When has_radiative_reabsorption_2d=False, recompute_g_with_rad_2d is NOT
+    called. Verified via mock — if it's called, the side_effect raises and the
+    test fails."""
+    from unittest.mock import patch
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack = _stack()                                 # BL → has_rr_2d=False
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_radiative_reabsorption_2d is False
+    n0 = float(mat.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    with patch(
+        "perovskite_sim.twod.solver_2d.recompute_g_with_rad_2d",
+        side_effect=RuntimeError("recompute called when has_rr_2d=False"),
+    ):
+        dydt = assemble_rhs_2d(0.0, y0, mat, V_app=0.0)
+    assert np.all(np.isfinite(dydt))
+
+
+def test_assemble_rhs_2d_radiative_reabsorption_enabled_calls_helper_and_finite():
+    """When has_radiative_reabsorption_2d=True (TMM preset, mode='full'),
+    recompute_g_with_rad_2d IS called and the resulting RHS is finite even at
+    a steep n·p gradient (catches per-RHS integral overflow / mis-shaped trapezoid)."""
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_radiative_reabsorption_2d is True
+    # Build a state with steep y-gradient so n·p varies significantly inside the absorber.
+    n_grad = np.linspace(float(mat.n_eq_left[0]), float(mat.n_eq_right[0]), g.Ny)
+    p_grad = np.linspace(float(mat.p_eq_left[0]), float(mat.p_eq_right[0]), g.Ny)
+    n0 = np.broadcast_to(n_grad[:, None], (g.Ny, g.Nx)).copy()
+    p0 = np.broadcast_to(p_grad[:, None], (g.Ny, g.Nx)).copy()
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    dydt = assemble_rhs_2d(0.0, y0, mat, V_app=0.5)
+    assert np.all(np.isfinite(dydt)), "Stage B(c.3) RHS went non-finite at steep gradient"
+
+
+def test_assemble_rhs_2d_radiative_reabsorption_enabled_helper_is_invoked():
+    """When has_radiative_reabsorption_2d=True, recompute_g_with_rad_2d IS called."""
+    from unittest.mock import patch
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
+    assert mat.has_radiative_reabsorption_2d is True
+    n0 = float(mat.n_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    p0 = float(mat.p_eq_left[0]) * np.ones((g.Ny, g.Nx))
+    y0 = np.concatenate([n0.flatten(), p0.flatten()])
+    with patch(
+        "perovskite_sim.twod.solver_2d.recompute_g_with_rad_2d",
+        wraps=__import__(
+            "perovskite_sim.twod.radiative_reabsorption_2d", fromlist=["recompute_g_with_rad_2d"]
+        ).recompute_g_with_rad_2d,
+    ) as mock_helper:
+        dydt = assemble_rhs_2d(0.0, y0, mat, V_app=0.0)
+    assert mock_helper.called, "recompute_g_with_rad_2d not called when has_rr_2d=True"
+    assert np.all(np.isfinite(dydt))
