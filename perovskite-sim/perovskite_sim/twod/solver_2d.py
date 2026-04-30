@@ -124,6 +124,18 @@ class MaterialArrays2D:
     ct_beta_p_wrap:  np.ndarray | None = None
     pf_gamma_n_wrap: np.ndarray | None = None
     pf_gamma_p_wrap: np.ndarray | None = None
+    # --- Stage B(c.3): Self-consistent radiative reabsorption ------------------
+    # When mat.has_radiative_reabsorption_2d is True, assemble_rhs_2d augments
+    # G_optical per RHS call by summing R_tot_2D = ∬ B·n·p dy dx per absorber
+    # and adding the non-escaping fraction back as a uniform G_rad over the
+    # absorber 2D area. See docs/superpowers/specs/2026-04-30-2d-stage-b-c3-
+    # radiative-reabsorption-design.md. The disabled path (flag=False) is
+    # bit-identical to current Stage B(c.2).
+    has_radiative_reabsorption_2d:  bool                               = False
+    absorber_y_ranges_2d:           tuple[tuple[int, int], ...]        = ()
+    absorber_p_esc_2d:              tuple[float, ...]                  = ()
+    absorber_thicknesses_2d:        tuple[float, ...]                  = ()
+    absorber_areas_2d:              tuple[float, ...]                  = ()
 
 
 def build_material_arrays_2d(
@@ -344,6 +356,74 @@ def build_material_arrays_2d(
         ct_beta_n_wrap = ct_beta_p_wrap = None
         pf_gamma_n_wrap = pf_gamma_p_wrap = None
 
+    # --- Stage B(c.3): Radiative reabsorption ----------------------------------
+    # Translate 1D mat1d.absorber_* tuples to 2D y-range form. Activation gate
+    # mirrors 1D mol.py exactly: requires both tier flags AND the 1D-side
+    # build path to have produced the per-absorber tuples.
+    #
+    # Index convention: the 2D y-range is derived from ``layer_role_per_y``
+    # (the canonical 2D notion of "absorber rows", upstream-tagged at layer
+    # boundaries) rather than the 1D ``mat1d.absorber_masks`` (which is the
+    # inclusive ``offset <= y <= offset + thickness`` mask used by the 1D
+    # solver hot path). The 1D mask includes the boundary node at the
+    # HTL/absorber interface that ``_layer_role_at_each_y`` tags as "HTL"
+    # (upstream); using ``layer_role_per_y`` here keeps the 2D y-ranges
+    # internally consistent with the role-tag-driven microstructure painting
+    # in build_tau_field. The 1D ``mat1d.absorber_p_esc`` /
+    # ``absorber_thicknesses`` tuples (one entry per absorber, in stack
+    # order) are zipped with the role-derived ranges in the same order.
+    from perovskite_sim.models.mode import resolve_mode as _resolve_mode_rr
+    _sim_mode_rr = _resolve_mode_rr(getattr(stack, "mode", "full"))
+    absorber_y_ranges_list:    list[tuple[int, int]] = []
+    absorber_p_esc_list:       list[float]            = []
+    absorber_thicknesses_list: list[float]            = []
+    absorber_areas_list:       list[float]            = []
+    _has_rr_2d = False
+
+    if (_sim_mode_rr.use_radiative_reabsorption
+            and _sim_mode_rr.use_photon_recycling
+            and getattr(mat1d, "has_radiative_reabsorption", False)):
+        _lateral_length = float(grid.x[-1] - grid.x[0])
+        # Derive contiguous absorber y-ranges from layer_role_per_y. Each run
+        # of consecutive "absorber" indices is one entry; multi-absorber stacks
+        # produce multiple ranges in stack order, matching the order of the
+        # 1D mat1d.absorber_* tuples.
+        _role_ranges: list[tuple[int, int]] = []
+        _j = 0
+        _Ny_total = len(layer_role_per_y)
+        while _j < _Ny_total:
+            if layer_role_per_y[_j] == "absorber":
+                _y_lo = _j
+                while _j < _Ny_total and layer_role_per_y[_j] == "absorber":
+                    _j += 1
+                _y_hi = _j  # half-open
+                _role_ranges.append((_y_lo, _y_hi))
+            else:
+                _j += 1
+
+        # Zip role-derived ranges with the 1D per-absorber p_esc/thickness
+        # tuples in stack order. If the 1D side produced N absorber entries
+        # but the role-tag derivation found M ranges, we pair the first
+        # min(N, M) — they should always match in practice (one absorber
+        # layer ⇒ one mask ⇒ one role run).
+        for (_y_lo, _y_hi), _p_esc, _thickness in zip(
+            _role_ranges, mat1d.absorber_p_esc, mat1d.absorber_thicknesses
+        ):
+            if _y_hi - _y_lo < 2:
+                continue
+            if _p_esc >= 1.0 or _thickness <= 0.0:
+                continue
+            absorber_y_ranges_list.append((_y_lo, _y_hi))
+            absorber_p_esc_list.append(float(_p_esc))
+            absorber_thicknesses_list.append(float(_thickness))
+            absorber_areas_list.append(float(_thickness) * _lateral_length)
+        _has_rr_2d = len(absorber_y_ranges_list) > 0
+
+    absorber_y_ranges_2d   = tuple(absorber_y_ranges_list)
+    absorber_p_esc_2d      = tuple(absorber_p_esc_list)
+    absorber_thicknesses_2d = tuple(absorber_thicknesses_list)
+    absorber_areas_2d      = tuple(absorber_areas_list)
+
     return MaterialArrays2D(
         grid=grid, stack=stack, ustruct=ustruct,
         eps_r=eps_r, D_n=D_n, D_p=D_p,
@@ -372,6 +452,11 @@ def build_material_arrays_2d(
         v_sat_n_wrap=v_sat_n_wrap, v_sat_p_wrap=v_sat_p_wrap,
         ct_beta_n_wrap=ct_beta_n_wrap, ct_beta_p_wrap=ct_beta_p_wrap,
         pf_gamma_n_wrap=pf_gamma_n_wrap, pf_gamma_p_wrap=pf_gamma_p_wrap,
+        has_radiative_reabsorption_2d=_has_rr_2d,
+        absorber_y_ranges_2d=absorber_y_ranges_2d,
+        absorber_p_esc_2d=absorber_p_esc_2d,
+        absorber_thicknesses_2d=absorber_thicknesses_2d,
+        absorber_areas_2d=absorber_areas_2d,
     )
 
 

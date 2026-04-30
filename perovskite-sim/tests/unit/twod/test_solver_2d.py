@@ -500,3 +500,97 @@ def test_assemble_rhs_2d_field_mobility_finite_periodic():
     y0 = np.concatenate([n0.flatten(), p0.flatten()])
     dydt = assemble_rhs_2d(0.0, y0, mat, V_app=0.0)
     assert np.all(np.isfinite(dydt)), "mu(E) periodic wrap produced non-finite RHS"
+
+
+# ---------------------------------------------------------------------------
+# Stage B(c.3) Task 2: MaterialArrays2D radiative-reabsorption wiring tests
+# ---------------------------------------------------------------------------
+
+
+def test_material_arrays_2d_default_no_radiative_reabsorption():
+    """Default BL preset → has_radiative_reabsorption_2d=False, all 4 tuples empty."""
+    stack = _stack()                                 # BL → no TMM → no rr
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_radiative_reabsorption_2d is False
+    assert mat.absorber_y_ranges_2d == ()
+    assert mat.absorber_p_esc_2d == ()
+    assert mat.absorber_thicknesses_2d == ()
+    assert mat.absorber_areas_2d == ()
+
+
+def test_material_arrays_2d_tmm_full_mode_activates_radiative_reabsorption():
+    """TMM preset with mode='full' → has_radiative_reabsorption_2d=True with
+    one entry per absorber. Validates the build-path translation from
+    mat1d.absorber_masks to 2D y-ranges."""
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_radiative_reabsorption_2d is True
+    assert len(mat.absorber_y_ranges_2d) >= 1
+    assert len(mat.absorber_p_esc_2d) == len(mat.absorber_y_ranges_2d)
+    assert len(mat.absorber_thicknesses_2d) == len(mat.absorber_y_ranges_2d)
+    assert len(mat.absorber_areas_2d) == len(mat.absorber_y_ranges_2d)
+    for (y_lo, y_hi) in mat.absorber_y_ranges_2d:
+        assert 0 <= y_lo < y_hi <= g.Ny
+
+
+def test_material_arrays_2d_absorber_y_ranges_match_layer_role_per_y():
+    """absorber_y_ranges_2d indices must match layer_role_per_y == 'absorber'
+    indices. This catches a wrong absorber mask."""
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_radiative_reabsorption_2d is True
+    absorber_indices = [j for j, r in enumerate(mat.layer_role_per_y) if r == "absorber"]
+    # The single absorber's y-range should span exactly these indices.
+    y_lo, y_hi = mat.absorber_y_ranges_2d[0]
+    # y-range is half-open [y_lo, y_hi) so indices in range are y_lo..y_hi-1.
+    range_indices = list(range(y_lo, y_hi))
+    assert range_indices == absorber_indices, (
+        f"absorber_y_ranges_2d[0] = ({y_lo}, {y_hi}) → {range_indices} does not "
+        f"match layer_role_per_y 'absorber' indices {absorber_indices}"
+    )
+
+
+def test_material_arrays_2d_absorber_area_equals_thickness_times_lateral():
+    """absorber_areas_2d entries must equal thickness × lateral_length."""
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    lateral = 425e-9
+    g = build_grid_2d(layers, lateral_length=lateral, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_radiative_reabsorption_2d is True
+    for thickness, area in zip(mat.absorber_thicknesses_2d, mat.absorber_areas_2d):
+        assert area == pytest.approx(thickness * lateral, rel=1e-12)
+
+
+def test_legacy_mode_disables_radiative_reabsorption_in_2d():
+    """Tier-as-ceiling: device.mode='legacy' must keep
+    has_radiative_reabsorption_2d=False even on a TMM preset. Mirrors B(c.1)
+    Issue I1 reprise pattern."""
+    stack = dc_replace(
+        load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml"),
+        mode="legacy",
+    )
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_radiative_reabsorption_2d is False
+    assert mat.absorber_y_ranges_2d == ()
+
+
+def test_fast_mode_disables_radiative_reabsorption_in_2d():
+    """FAST tier excludes per-RHS hooks per CLAUDE.md tier matrix:
+    has_radiative_reabsorption_2d=False even on a TMM preset."""
+    stack = dc_replace(
+        load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml"),
+        mode="fast",
+    )
+    layers = _layers_for_stack(stack)
+    g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    assert mat.has_radiative_reabsorption_2d is False
