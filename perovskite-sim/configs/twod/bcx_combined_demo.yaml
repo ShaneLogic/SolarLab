@@ -1,0 +1,125 @@
+# ============================================================================
+# DEMO PRESET — NOT A PHYSICAL DEFAULT
+# ============================================================================
+# Purpose: a single 2D config that activates every Stage B(c.x) per-RHS
+# hook simultaneously so a user can see the combined effect on the
+# J-V curve and confirm that none of the hooks blow up the solver when
+# stacked. The four hooks involved:
+#
+#   B(c.1) Robin / selective contacts — finite outer-contact S
+#   B(c.2) Field-dependent mobility μ(E) — Caughey-Thomas + Poole-Frenkel
+#   B(c.3) Radiative reabsorption — requires TMM optics, NOT included here
+#                                   (this preset is Beer-Lambert; switch to
+#                                   an _tmm.yaml base if you want B(c.3))
+#   Stage B(a) Microstructure — one absorber grain boundary for visual
+#                              interest
+#
+# The numbers are NOT calibrated. They were chosen to land each hook at
+# the centre of its dynamic range on the lateral-uniform extension of
+# the nip MAPbI3 stack, so the J-V curve responds visibly to each
+# individual flag toggle but does not collapse the device. The Robin S
+# pair (matched-carrier 1e3 m/s, wrong-sign 1e-3 m/s) is the same
+# pattern as configs/selective_contacts_demo.yaml; the v_sat / γ_PF
+# values mirror configs/field_mobility_demo.yaml.
+#
+# DO NOT copy these values into a calibration study. Use TMM, real
+# device geometries, and measured material parameters for that.
+#
+# Tier requirement: device.mode must be "full" for B(c.1) and B(c.2) to
+# activate. (B(c.3) needs FULL plus TMM, which this preset does not use.)
+# ============================================================================
+device:
+  V_bi: 1.1
+  Phi: 2.5e21
+  mode: full
+  # Stage B(c.1) Robin / selective contacts. Top = HTL side (left in 1D
+  # axis convention); Bottom = ETL side (right). Matched-carrier S at
+  # 1e3 m/s, wrong-sign at 1e-3 m/s — the canonical Stolterfoht-2019
+  # selective-contact pattern.
+  S_p_left: 1.0e3      # HTL: holes (matched) — finite, modest S
+  S_n_left: 1.0e-3     # HTL: electrons (wrong-sign) — blocked
+  S_n_right: 1.0e3     # ETL: electrons (matched)
+  S_p_right: 1.0e-3    # ETL: holes (wrong-sign) — blocked
+
+layers:
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 1e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 2e23
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+    # B(c.2) Poole-Frenkel — disordered-organic HTL.
+    pf_gamma_p: 3.0e-4
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 2e-4
+    mu_p: 2e-4
+    ni: 3.2e13
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 3.2e13
+    p1: 3.2e13
+    B_rad: 5e-22
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 1.3e7
+    # B(c.2) Caughey-Thomas — field saturates the absorber μ at high
+    # forward bias.
+    v_sat_n: 1.0e5
+    v_sat_p: 1.0e5
+    ct_beta_n: 2.0
+    ct_beta_p: 1.0
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+
+# Stage B(a) microstructure — one centred absorber grain boundary so the
+# combined demo also exercises the GB tau-painting path. Width and τ_GB
+# match the regression-test envelope (~50 ns vs 1 µs bulk).
+microstructure:
+  grain_boundaries:
+    - x_position: 250e-9
+      width: 5e-9
+      tau_n: 5.0e-8
+      tau_p: 5.0e-8
+      layer_role: absorber
