@@ -5,6 +5,7 @@ import dataclasses
 import numpy as np
 
 from perovskite_sim.discretization.grid import Layer
+from perovskite_sim.experiments.jv_sweep import JVMetrics, compute_metrics
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.twod.grid_2d import build_grid_2d
 from perovskite_sim.twod.microstructure import Microstructure
@@ -49,6 +50,13 @@ class JV2DResult:
     grid_x : lateral grid coordinates, shape (Nx,), m
     grid_y : vertical grid coordinates, shape (Ny,), m
     lateral_bc : lateral boundary condition used in the sweep ("periodic" | "neumann")
+    metrics : JVMetrics extracted from (V, J) via the centralized
+        ``compute_metrics`` (sign-normalized to the J_sc-positive
+        convention via ``assume_jsc_positive=False``). Carries
+        ``voc_bracketed=False`` when V_max stopped short of V_oc; the
+        backend SSE handler surfaces this to the frontend so the user
+        can be told to expand the sweep range. Raw V/J arrays are not
+        modified by this extraction.
     """
     V: np.ndarray
     J: np.ndarray
@@ -56,6 +64,9 @@ class JV2DResult:
     grid_x: np.ndarray
     grid_y: np.ndarray
     lateral_bc: str
+    metrics: JVMetrics = dataclasses.field(
+        default_factory=lambda: JVMetrics(0.0, 0.0, 0.0, 0.0, voc_bracketed=False)
+    )
 
 
 def _bake_radiative_reabsorption_step_2d(
@@ -361,11 +372,21 @@ def run_jv_sweep_2d(
         if progress is not None:
             progress("jv_2d", k + 1, len(voltages), f"V = {V:.3f} V")
 
+    J_arr = np.array(J_list, dtype=float)
+    # Centralised metrics extraction (Layer 1 of Phase 6 acceptance follow-up).
+    # 2D backend emits J(V=0) < 0 (opposite to 1D); pass
+    # ``assume_jsc_positive=False`` so ``compute_metrics`` flips the sign
+    # internally and reports JVMetrics in the J_sc-positive convention.
+    # ``voc_bracketed=False`` when the sweep stopped short of V_oc; the
+    # frontend surfaces this as an "increase V_max" warning. Raw V/J
+    # arrays are NOT modified.
+    metrics = compute_metrics(voltages, J_arr, assume_jsc_positive=False)
     return JV2DResult(
         V=voltages,
-        J=np.array(J_list, dtype=float),
+        J=J_arr,
         snapshots=tuple(snap_list),
         grid_x=grid.x.copy(),
         grid_y=grid.y.copy(),
         lateral_bc=lateral_bc,
+        metrics=metrics,
     )

@@ -98,9 +98,10 @@ def run_voc_grain_sweep(
         )
         V = np.asarray(r.V)
         J = np.asarray(r.J)
-        if len(V) >= 2 and J[0] < 0:
-            J = -J
-        m = compute_metrics(V, J)
+        # 2D backend emits J(V=0) < 0; route through the centralised
+        # convention guard rather than flipping inline. Mirrors the
+        # extraction the workstation 2D pane does on the same V/J.
+        m = compute_metrics(V, J, assume_jsc_positive=False)
         V_oc[k] = m.V_oc
         J_sc[k] = m.J_sc
         FF[k] = m.FF

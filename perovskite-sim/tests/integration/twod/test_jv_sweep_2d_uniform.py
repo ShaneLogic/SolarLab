@@ -26,6 +26,16 @@ def test_jv_sweep_2d_returns_finite_result():
     assert np.all(np.isfinite(result.V))
     assert np.all(np.isfinite(result.J))
     assert len(result.V) == len(result.J)
+    # Layer 1+2: every JV2DResult now carries a JVMetrics. On this BL
+    # preset (V_oc ≈ 0.91 V) the sweep to V_max=1.0 must bracket V_oc;
+    # the metrics must be finite and on the J_sc-positive convention
+    # (compute_metrics flipped the sign internally).
+    m = result.metrics
+    assert m.voc_bracketed is True
+    assert m.J_sc > 0.0
+    assert 0.0 < m.V_oc <= 1.0
+    assert 0.0 < m.FF < 1.0
+    assert np.isfinite(m.PCE)
 
 
 def test_jv_sweep_2d_has_nontrivial_photocurrent():
