@@ -206,6 +206,100 @@ def test_stack_from_dict_microstructure_absent_means_empty():
     assert stack.microstructure.grain_boundaries == ()
 
 
+def _consume_sse_until_done(client_, job_id: str, timeout: float = 600.0):
+    """Read /api/jobs/{id}/events to completion. Returns the LAST
+    ``result`` event payload as a dict, or raises if an ``error`` event
+    fires. Mirrors the SSE consumer the live frontend uses (see
+    ``frontend/src/job-stream.ts``); the difference is we read every
+    line explicitly so we can fail fast on a worker crash, instead of
+    a generic JS console.error.
+    """
+    import json as _json
+    cur = None
+    result = None
+    error_msg = None
+    with client_.stream("GET", f"/api/jobs/{job_id}/events", timeout=timeout) as resp:
+        assert resp.status_code == 200
+        for raw in resp.iter_lines():
+            if not raw:
+                cur = None
+                continue
+            if raw.startswith(":"):
+                continue
+            if raw.startswith("event:"):
+                cur = raw.split(":", 1)[1].strip()
+            elif raw.startswith("data:"):
+                payload = raw.split(":", 1)[1].strip()
+                if cur == "result":
+                    result = _json.loads(payload)
+                elif cur == "error":
+                    error_msg = payload
+                elif cur == "done":
+                    break
+    if error_msg is not None:
+        raise AssertionError(
+            f"worker thread emitted an SSE error event before completing: "
+            f"{error_msg[:400]}"
+        )
+    return result
+
+
+def test_jv_2d_sse_result_event_carries_metrics_dict():
+    """Catches the exact serializer regression that escaped Layer 2: the
+    backend ``kind="jv_2d"`` worker MUST emit a final ``result`` event
+    that carries a ``metrics`` dict with the JVMetrics fields. The
+    pre-existing dispatch tests only assert a 200 + job_id on the POST
+    handshake; a worker-thread crash inside ``_run`` would surface as
+    an ``event: error`` on the SSE stream, not a non-200 HTTP code, so
+    those tests cannot see it.
+
+    Mirrors what the live frontend's ``streamJobEvents`` consumer does
+    (``frontend/src/job-stream.ts:streamJobEvents``).
+    """
+    cfg_resp = client.get("/api/configs/nip_MAPbI3_uniform.yaml")
+    assert cfg_resp.status_code == 200
+    cfg = cfg_resp.json()["config"]
+
+    post = client.post(
+        "/api/jobs",
+        json={
+            "kind": "jv_2d",
+            "device": cfg,
+            "params": {
+                "lateral_length": 500e-9,
+                "Nx": 4,
+                "Ny_per_layer": 5,
+                "V_max": 0.4,    # 3 V points, fast — bracket flag will be False
+                "V_step": 0.2,
+                "settle_t": 1e-7,
+                "illuminated": True,
+                "save_snapshots": False,
+                "lateral_bc": "periodic",
+            },
+        },
+    )
+    assert post.status_code == 200, post.text
+    job_id = post.json()["job_id"]
+
+    result = _consume_sse_until_done(client, job_id)
+    assert result is not None, "no SSE result event emitted"
+
+    # Layer 2 wire-through: ``metrics`` must be present as a dict and
+    # carry every JVMetrics field. Bracket flag is expected False here
+    # (V_max=0.4 is below V_oc) but the test does NOT assert physics —
+    # it only asserts SHAPE so a serializer regression fails loudly.
+    assert "metrics" in result, (
+        "SSE result event is missing ``metrics`` — Layer 2 regression: "
+        "either the worker thread crashed before reaching the JVMetrics "
+        "serializer, or the field was renamed. Live frontend would render "
+        "no metric card for any 2D run."
+    )
+    m = result["metrics"]
+    for key in ("V_oc", "J_sc", "FF", "PCE", "voc_bracketed"):
+        assert key in m, f"metrics dict is missing {key!r}: keys = {sorted(m)}"
+    assert isinstance(m["voc_bracketed"], bool)
+
+
 def test_jv_2d_dispatches_inline_device_with_microstructure_from_singleGB():
     """Frontend-realistic dispatch: load configs/twod/nip_MAPbI3_singleGB.yaml
     via the YAML loader, hand the resulting dict back as the ``device:``

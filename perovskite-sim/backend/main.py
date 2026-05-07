@@ -1004,8 +1004,11 @@ def start_job(req: JobRequest):
                 # of the Phase 6 acceptance follow-up). Carries the
                 # ``voc_bracketed`` flag so the frontend can warn the
                 # user when V_max stopped short of V_oc; raw V/J above
-                # are unchanged.
-                "metrics": dataclasses.asdict(result.metrics),
+                # are unchanged. Use the module-top ``asdict`` import; this
+                # handler does NOT have a local ``import dataclasses`` (the
+                # tandem block at L909 does), so a module-qualified call
+                # would crash the worker thread with a NameError.
+                "metrics": asdict(result.metrics),
             }
             out["active_physics"] = _describe_active_physics(stack)
             return out
