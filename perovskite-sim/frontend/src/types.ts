@@ -44,6 +44,17 @@ export interface LayerConfig {
   Eg?: number
   optical_material?: string | null
   incoherent?: boolean
+  // Stage B(c.2) field-dependent mobility μ(E) — optional, FULL-tier-only.
+  // Sentinel 0.0 disables that branch on this layer (Caughey-Thomas: v_sat=0
+  // → no saturation; Poole-Frenkel: pf_gamma=0 → no field enhancement).
+  // ct_beta_{n,p} default to 2.0 (Canali silicon-electron exponent) when
+  // omitted; only meaningful when the corresponding v_sat is non-zero.
+  v_sat_n?: number
+  v_sat_p?: number
+  ct_beta_n?: number
+  ct_beta_p?: number
+  pf_gamma_n?: number
+  pf_gamma_p?: number
 }
 
 export type SimulationModeName = 'legacy' | 'fast' | 'full'
@@ -55,6 +66,18 @@ export interface DeviceConfig {
     interfaces?: Array<[number, number]>
     T?: number
     mode?: SimulationModeName
+    // Stage B(c.1) Robin / selective contacts — optional, FULL-tier-only.
+    // The naming convention here matches the YAML schema (left = HTL side =
+    // 2D top, right = ETL side = 2D bottom). Frontend UI labels these as
+    // Top contact (HTL) / Bottom contact (ETL); see active-physics.ts and
+    // config-editor.ts for the user-facing translation.
+    // - undefined → field absent in YAML, default Dirichlet ohmic contact
+    // - null      → explicitly disabled (also Dirichlet, but persists in YAML)
+    // - number    → Robin flux with this surface recombination velocity (m/s)
+    S_n_left?: number | null
+    S_p_left?: number | null
+    S_n_right?: number | null
+    S_p_right?: number | null
   }
   layers: LayerConfig[]
 }
