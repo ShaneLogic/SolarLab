@@ -22,12 +22,21 @@ interface FieldDef {
   label: string
   kind: FieldKind
   unit?: string
+  /** Hover tooltip — short physical-meaning explainer. */
+  tooltip?: string
+  /** Placeholder hint for an empty numeric input — used to convey the
+   *  "0.0 / disabled" sentinel for opt-in physics fields. */
+  placeholder?: string
 }
 
 // Groups of parameters for a single layer. Grouping makes long forms scannable.
 interface ParamGroup {
   title: string
   fields: FieldDef[]
+  /** When true, render the group inside a collapsed-by-default
+   *  ``<details>`` so the form stays scannable. Used by the
+   *  "Advanced 2D Physics" group (FULL-tier-only μ(E) fields). */
+  collapsed?: boolean
 }
 
 const LAYER_GROUPS: ParamGroup[] = [
@@ -73,6 +82,45 @@ const LAYER_GROUPS: ParamGroup[] = [
       { key: 'incoherent', label: 'Incoherent layer', kind: 'boolean' },
     ],
   },
+  // Stage B(c.2) field-dependent mobility μ(E). Hidden under FAST/LEGACY
+  // by tier-gating.ts (FULL only). Collapsed by default; sentinel "0"
+  // disables the corresponding model on this layer.
+  {
+    title: 'Advanced 2D Physics — Field-dependent mobility μ(E)',
+    collapsed: true,
+    fields: [
+      {
+        key: 'v_sat_n', label: '<i>v</i><sub>sat</sub><sup>n</sup>',
+        kind: 'numeric', unit: 'm/s', placeholder: '0 — disabled',
+        tooltip: 'Caughey-Thomas saturation velocity for electrons. Caps drift mobility under high field. Typical perovskite ~1e5 m/s. Set 0 to disable.',
+      },
+      {
+        key: 'v_sat_p', label: '<i>v</i><sub>sat</sub><sup>p</sup>',
+        kind: 'numeric', unit: 'm/s', placeholder: '0 — disabled',
+        tooltip: 'Caughey-Thomas saturation velocity for holes. Set 0 to disable.',
+      },
+      {
+        key: 'ct_beta_n', label: '<i>β</i><sup>n</sup>',
+        kind: 'numeric', unit: '', placeholder: '2.0',
+        tooltip: 'Caughey-Thomas exponent for electrons. β=2 (Canali silicon-electron form) is the safe default; β=1 (Thornber form) for silicon holes. Only meaningful when v_sat is non-zero.',
+      },
+      {
+        key: 'ct_beta_p', label: '<i>β</i><sup>p</sup>',
+        kind: 'numeric', unit: '', placeholder: '2.0',
+        tooltip: 'Caughey-Thomas exponent for holes. Only meaningful when v_sat is non-zero.',
+      },
+      {
+        key: 'pf_gamma_n', label: '<i>γ</i><sub>PF</sub><sup>n</sup>',
+        kind: 'numeric', unit: '(V/m)^-0.5', placeholder: '0 — disabled',
+        tooltip: 'Poole-Frenkel coefficient for electrons. Field-assisted hopping; typical disordered HTL ~3e-4 (V/m)^-0.5. Set 0 to disable.',
+      },
+      {
+        key: 'pf_gamma_p', label: '<i>γ</i><sub>PF</sub><sup>p</sup>',
+        kind: 'numeric', unit: '(V/m)^-0.5', placeholder: '0 — disabled',
+        tooltip: 'Poole-Frenkel coefficient for holes. Set 0 to disable.',
+      },
+    ],
+  },
 ]
 
 // Module-level cache for optical-material option list. Populated once per
@@ -106,8 +154,17 @@ function fmt(v: unknown): string {
   return n.toExponential(3)
 }
 
-function numAttr(id: string, value: unknown): string {
-  return `<input type="text" class="num-input" id="${id}" value="${fmt(value)}" spellcheck="false">`
+interface NumAttrOpts {
+  /** Hint shown when the input is empty — used for "0 / disabled" sentinels. */
+  placeholder?: string
+  /** Native HTML5 tooltip surfaced on hover. */
+  title?: string
+}
+
+function numAttr(id: string, value: unknown, opts?: NumAttrOpts): string {
+  const placeholderAttr = opts?.placeholder ? ` placeholder="${escapeHtml(opts.placeholder)}"` : ''
+  const titleAttr = opts?.title ? ` title="${escapeHtml(opts.title)}"` : ''
+  return `<input type="text" class="num-input" id="${id}" value="${fmt(value)}" spellcheck="false"${placeholderAttr}${titleAttr}>`
 }
 
 function renderOpticalMaterialSelect(layerIdx: number, currentValue: string | null | undefined): string {
@@ -137,7 +194,10 @@ function renderField(layer: LayerConfig, idx: number, f: FieldDef): string {
   let control: string
   switch (f.kind) {
     case 'numeric':
-      control = numAttr(id, layer[f.key] as number | undefined)
+      control = numAttr(id, layer[f.key] as number | undefined, {
+        placeholder: f.placeholder,
+        title: f.tooltip,
+      })
       break
     case 'select-optical-material':
       control = renderOpticalMaterialSelect(idx, layer.optical_material)
@@ -146,8 +206,9 @@ function renderField(layer: LayerConfig, idx: number, f: FieldDef): string {
       control = renderIncoherentCheckbox(idx, layer.incoherent)
       break
   }
+  const labelTitle = f.tooltip ? ` title="${escapeHtml(f.tooltip)}"` : ''
   return `
-        <label class="param">
+        <label class="param"${labelTitle}>
           <span class="param-label"><span class="sym">${f.label}</span>${unit}</span>
           ${control}
         </label>`
@@ -168,6 +229,13 @@ function renderLayer(
     const visibleFields = group.fields.filter(f => isVisibleField(f, tier))
     if (visibleFields.length === 0) return ''
     const rows = visibleFields.map(f => renderField(layer, idx, f)).join('')
+    if (group.collapsed) {
+      return `
+      <details class="param-group">
+        <summary><h5>${group.title}</h5></summary>
+        <div class="param-grid">${rows}</div>
+      </details>`
+    }
     return `
       <div class="param-group">
         <h5>${group.title}</h5>
@@ -222,6 +290,46 @@ function renderInterfaces(config: DeviceConfig): string {
     </div>`
 }
 
+/**
+ * FULL-tier-only Stage B(c.1) Robin / selective-contacts panel. Maps the
+ * four ``DeviceConfig.device.S_{n,p}_{left,right}`` fields to UI labels
+ * "Top contact (HTL side)" / "Bottom contact (ETL side)" — matches the
+ * y-axis convention exposed by the workstation 2D pane and
+ * ``MaterialArrays2D.S_{n,p}_{top,bot}``. The YAML keys remain the
+ * original 1D names (``S_n_left`` etc.) for backwards compatibility with
+ * the 1D Phase 3.3 hook; this is a UI-only relabel for the 2D mental
+ * model. Empty input is the "absent" sentinel (round-trips as ``null``);
+ * an explicit ``0`` is the "perfectly blocking (Neumann)" limit; large
+ * values (≥ 10³ m/s) approach the ohmic limit.
+ */
+function renderRobinContacts(config: DeviceConfig): string {
+  const d = config.device
+  const help = '<p class="param-help">Surface recombination velocities at the outer contacts. Empty = disabled (Dirichlet ohmic); explicit <code>0</code> = perfectly blocking (Neumann); ≥ 10³ m/s approaches the ohmic limit. <strong>Top</strong> = HTL side (y=0, YAML <code>S_*_left</code>); <strong>Bottom</strong> = ETL side (y=Ny−1, YAML <code>S_*_right</code>).</p>'
+  return `
+      <details class="param-group">
+        <summary><h5>Advanced 2D Physics — Robin contacts (B(c.1))</h5></summary>
+        ${help}
+        <div class="param-grid">
+          <label class="param" title="Electron surface velocity at the top contact (HTL side, YAML S_n_left). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>n</sub><sup>top</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-n-top', d.S_n_left, { placeholder: '0 — disabled', title: 'Top electron Robin S (YAML S_n_left)' })}
+          </label>
+          <label class="param" title="Hole surface velocity at the top contact (HTL side, YAML S_p_left). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>p</sub><sup>top</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-p-top', d.S_p_left, { placeholder: '0 — disabled', title: 'Top hole Robin S (YAML S_p_left)' })}
+          </label>
+          <label class="param" title="Electron surface velocity at the bottom contact (ETL side, YAML S_n_right). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>n</sub><sup>bot</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-n-bot', d.S_n_right, { placeholder: '0 — disabled', title: 'Bottom electron Robin S (YAML S_n_right)' })}
+          </label>
+          <label class="param" title="Hole surface velocity at the bottom contact (ETL side, YAML S_p_right). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>p</sub><sup>bot</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-p-bot', d.S_p_right, { placeholder: '0 — disabled', title: 'Bottom hole Robin S (YAML S_p_right)' })}
+          </label>
+        </div>
+      </details>`
+}
+
 function renderModeOptions(current: SimulationModeName): string {
   return MODE_OPTIONS
     .map(o => `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`)
@@ -265,9 +373,15 @@ export function renderDeviceEditor(
         </div>
       </div>`
   const interfacesHtml = singleLayer ? '' : renderInterfaces(config)
+  // Stage B(c.1) Robin contacts panel — FULL-tier-only because the
+  // ``use_selective_contacts`` flag is off in LEGACY/FAST (mode.py:54-86).
+  // Hidden in the single-layer drill-down too, where the panel would lose
+  // context (it is a device-level setting, not a per-layer one).
+  const robinHtml = !singleLayer && tier === 'full' ? renderRobinContacts(config) : ''
   container.innerHTML = `
     <div class="editor">
       ${deviceGroup}
+      ${robinHtml}
       ${interfacesHtml}
       <div class="layer-list">${layerHtml}</div>
     </div>`
@@ -277,6 +391,28 @@ function parseNum(id: string, fallback: number): number {
   const el = document.getElementById(id) as HTMLInputElement | null
   if (!el) return fallback
   const v = Number(el.value)
+  return Number.isFinite(v) ? v : fallback
+}
+
+/**
+ * Like ``parseNum`` but the empty-string case is a meaningful sentinel
+ * (``null`` = "absent / disabled") rather than a fallback. Used for the
+ * Stage B(c.1) Robin S fields where the backend distinguishes
+ * ``None`` (Dirichlet ohmic), ``0`` (Neumann blocking), and a positive
+ * finite value (Robin). When the input element does not exist (e.g.
+ * because the panel is hidden under a non-FULL tier), the original
+ * value is preserved verbatim — including ``undefined``, which is the
+ * "field never set on this preset" state.
+ */
+function parseNumOrNull(
+  id: string,
+  fallback: number | null | undefined,
+): number | null | undefined {
+  const el = document.getElementById(id) as HTMLInputElement | null
+  if (!el) return fallback
+  const raw = el.value.trim()
+  if (raw === '') return null
+  const v = Number(raw)
   return Number.isFinite(v) ? v : fallback
 }
 
@@ -361,6 +497,15 @@ export function readDeviceEditor(
       interfaces,
       T,
       mode,
+      // Stage B(c.1) Robin contacts. Read by ID matching the renderRobin-
+      // Contacts panel; when the panel is not rendered (non-FULL tier or
+      // single-layer drill-down) ``parseNumOrNull`` returns the
+      // ``original.device.S_*`` value, so a round-trip through readDevice-
+      // Editor in those modes is a no-op.
+      S_n_left: parseNumOrNull('dev-S-n-top', original.device.S_n_left),
+      S_p_left: parseNumOrNull('dev-S-p-top', original.device.S_p_left),
+      S_n_right: parseNumOrNull('dev-S-n-bot', original.device.S_n_right),
+      S_p_right: parseNumOrNull('dev-S-p-bot', original.device.S_p_right),
     },
     layers,
   }
