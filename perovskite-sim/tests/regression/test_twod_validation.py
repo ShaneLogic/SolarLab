@@ -687,15 +687,18 @@ def _voc_1d_via_run_suns_voc(stack: DeviceStack, *, t_settle: float = 1e-3) -> f
 @pytest.mark.regression
 @pytest.mark.slow
 def test_twod_radiative_reabsorption_parity_vs_1d():
-    """Stage B(c.3) primary correctness gate: lateral-uniform 2D V_oc matches
+    """Stage B(c.3) fast V_oc-only smoke: lateral-uniform 2D V_oc matches
     1D Phase 3.1b V_oc within 5 mV on TMM preset with PR + reabsorption ON.
 
-    Restricted to V_oc-only because Stage A 2D + TMM cannot Newton-contract
-    through the V≈0.2 V diode-injection knee (project memory
-    project_stage_a_2d_tmm_newton.md). Bootstrapping 2D directly from a 1D
-    V_oc steady-state and bracketing V_oc with two short 2D settles dodges
-    the knee entirely. J_sc and FF parity assertions are deferred until the
-    Stage A limitation is fixed (out of scope for B(c.3)).
+    Originally written as a workaround for the Stage A + TMM Newton stall
+    (project_stage_a_2d_tmm_newton.md), now retained as a quick (~12 s)
+    feedback test: bootstrap 2D from a 1D V_oc steady-state, bracket V_oc
+    with two short ±5 mV 2D settles, linearly interpolate. The companion
+    test_twod_radiative_reabsorption_full_sweep_parity_vs_1d does the
+    full J_sc/FF/V_oc parity on the same preset using the bisection-in-
+    time path, but is much slower (~15 min) — keep both so a developer
+    iterating on B(c.3) can get fast feedback while CI gates on the full
+    parity.
     """
     base = _freeze_ions(load_device_from_yaml(RR_TMM_PRESET))
     voc_1d = _voc_1d_via_run_suns_voc(base)
@@ -709,6 +712,71 @@ def test_twod_radiative_reabsorption_parity_vs_1d():
     assert abs(delta_mV) <= 5.0, (
         f"rr V_oc(2D)={voc_2d:.6f} V vs V_oc(1D)={voc_1d:.6f} V "
         f"(diff {delta_mV:.3f} mV, limit 5 mV)"
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_radiative_reabsorption_full_sweep_parity_vs_1d():
+    """Stage B(c.3) primary correctness gate: full V_max=1.2 J-V sweep on
+    nip_MAPbI3_tmm.yaml with PR + reabsorption ON, lateral-uniform 2D
+    matches 1D within (5 mV V_oc / 5e-4 J_sc / 1e-3 FF). Replaces the
+    V_oc-only workaround that was needed before bisection-in-time landed
+    in run_jv_sweep_2d (project_stage_a_2d_tmm_newton.md → RESOLVED).
+
+    Uses settle_t=1e-5 — at the original 1D-mirrored settle_t=1e-3 the
+    Stage A 2D solver burns through the bisection budget at high forward
+    bias even on legacy mode (per the resolved-memory diagnostic notes).
+    settle_t=1e-5 is well inside the carrier-relaxation window for Stage
+    A (which has no ion drift), so it changes nothing physically; it just
+    gives Newton a smaller per-step state change to contract on.
+
+    Slow (~15 min on a single-thread BLAS box) because each voltage step
+    triggers bisection a few levels deep. The companion fast V_oc-only
+    smoke test_twod_radiative_reabsorption_parity_vs_1d (~12 s) is the
+    right inner-loop check while iterating on B(c.3).
+    """
+    base = _freeze_ions(load_device_from_yaml(RR_TMM_PRESET))
+    # 1D reference (same parameters the 1D regression suite uses)
+    r1 = run_jv_sweep(base, N_grid=31, V_max=1.2, n_points=13, illuminated=True)
+    V1 = np.asarray(r1.V_fwd)
+    J1 = _maybe_flip_sign(V1, np.asarray(r1.J_fwd))
+    m1 = compute_metrics(V1, J1)
+    # 2D Stage B(c.3) with bisection — settle_t=1e-5 to keep wall time bounded.
+    r2 = run_jv_sweep_2d(
+        stack=base,
+        microstructure=Microstructure(),
+        lateral_length=500e-9,
+        Nx=4,
+        V_max=1.2,
+        V_step=0.1,
+        illuminated=True,
+        lateral_bc="periodic",
+        Ny_per_layer=10,
+        settle_t=1e-5,
+    )
+    V2 = np.asarray(r2.V)
+    J2 = _maybe_flip_sign(V2, np.asarray(r2.J))
+    m2 = compute_metrics(V2, J2)
+    print(
+        f"\nrr full 1D: V_oc={m1.V_oc*1e3:.4f} mV  J_sc={m1.J_sc:.4f} A/m²  FF={m1.FF:.6f}"
+        f"\nrr full 2D: V_oc={m2.V_oc*1e3:.4f} mV  J_sc={m2.J_sc:.4f} A/m²  FF={m2.FF:.6f}"
+        f"\nΔV_oc = {(m2.V_oc - m1.V_oc)*1e3:+.4f} mV"
+        f"  ΔJ_sc/J_sc = {(m2.J_sc - m1.J_sc)/m1.J_sc:+.2e}"
+        f"  ΔFF = {m2.FF - m1.FF:+.4e}"
+    )
+    assert abs(m2.V_oc - m1.V_oc) <= 5e-3, (
+        f"rr full V_oc(2D)={m2.V_oc:.6f} V vs V_oc(1D)={m1.V_oc:.6f} V "
+        f"(diff {(m2.V_oc - m1.V_oc)*1e3:.3f} mV, limit 5 mV)"
+    )
+    rel_jsc = abs(m2.J_sc - m1.J_sc) / abs(m1.J_sc)
+    assert rel_jsc <= 5e-4, (
+        f"rr full J_sc rel diff {rel_jsc:.2e} > 5e-4 "
+        f"(2D={m2.J_sc:.4f}, 1D={m1.J_sc:.4f} A/m²)"
+    )
+    assert abs(m2.FF - m1.FF) <= 1e-3, (
+        f"rr full FF(2D)={m2.FF:.6f} vs FF(1D)={m1.FF:.6f} "
+        f"(diff {abs(m2.FF - m1.FF):.4e}, limit 1e-3)"
     )
 
 
