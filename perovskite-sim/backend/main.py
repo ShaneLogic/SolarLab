@@ -181,6 +181,24 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
     # Validate early so an unknown mode fails the HTTP request rather than
     # blowing up inside the worker thread where the error is harder to surface.
     resolve_mode(mode_name)
+    # Stage B(a) microstructure — mirror load_device_from_yaml's behaviour
+    # so the inline-device path round-trips the ``microstructure:`` block
+    # the same way the YAML loader does. Without this, loading a preset
+    # like configs/twod/nip_MAPbI3_singleGB.yaml in the workstation and
+    # submitting via ``device:`` would silently drop the GB block at the
+    # backend boundary (the frontend's startJob always sends device: and
+    # never config_path:, so the load_device_from_yaml microstructure
+    # path is never used at runtime). Lazy import keeps FastAPI startup
+    # cost unchanged when no jv_2d run is dispatched.
+    ms_block = cfg.get("microstructure")
+    if ms_block:
+        from perovskite_sim.twod.microstructure import (
+            load_microstructure_from_yaml_block,
+        )
+        microstructure = load_microstructure_from_yaml_block(ms_block)
+    else:
+        from perovskite_sim.twod.microstructure import Microstructure
+        microstructure = Microstructure()
     return DeviceStack(
         layers=tuple(layers),
         V_bi=float(dev.get("V_bi", 1.1)),
@@ -196,6 +214,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         S_p_left=_opt_S(dev.get("S_p_left")),
         S_n_right=_opt_S(dev.get("S_n_right")),
         S_p_right=_opt_S(dev.get("S_p_right")),
+        microstructure=microstructure,
     )
 
 
