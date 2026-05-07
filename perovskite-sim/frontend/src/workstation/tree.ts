@@ -1,5 +1,5 @@
-import type { Workspace, Experiment, Run } from './types'
-import type { SimulationModeName } from '../types'
+import type { Workspace, Device, Experiment, Run } from './types'
+import { describeActivePhysics } from '../active-physics'
 
 function escapeHtml(s: string): string {
   return s
@@ -10,8 +10,19 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function tierBadge(tier: SimulationModeName): string {
-  return `<span class="tier-badge tier-badge-${tier}">${tier.toUpperCase()}</span>`
+/**
+ * Compact tier badge with a hover tooltip that previews the active-
+ * physics summary that the device's current tier + parameters will
+ * activate at run time. The tooltip mirrors ``describeActivePhysics``
+ * (frontend) and ``backend/main.py:_describe_active_physics`` so the
+ * pre-run preview matches the post-run truth in shape if not in
+ * verbosity. Visible text stays at the original 4-character tier name
+ * to avoid disturbing the tree-row layout.
+ */
+function tierBadge(d: Device): string {
+  const tier = d.tier
+  const physics = describeActivePhysics(d.config)
+  return `<span class="tier-badge tier-badge-${tier}" title="${escapeHtml(physics)}">${tier.toUpperCase()}</span>`
 }
 
 function experimentLabel(kind: Experiment['kind']): string {
@@ -74,7 +85,7 @@ export function renderTreeHTML(ws: Workspace): string {
         <div class="tree-node tree-node-device${active}" data-device-id="${escapeHtml(d.id)}">
           <span class="tree-icon">🔬</span>
           <span class="tree-label">${escapeHtml(d.name)}</span>
-          ${tierBadge(d.tier)}
+          ${tierBadge(d)}
         </div>
         <div class="tree-children">${experiments}</div>`
     })
