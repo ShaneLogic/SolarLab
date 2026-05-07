@@ -939,7 +939,15 @@ def start_job(req: JobRequest):
                 "J": result.J.tolist(),
                 "V_top": result.V_top.tolist(),
                 "V_bot": result.V_bot.tolist(),
-                "metrics": dataclasses.asdict(result.metrics),
+                # ``main.py`` imports ``asdict`` at module top; bare
+                # ``dataclasses`` is in scope only inside the legacy
+                # blocking ``run_tandem`` (which has its own local
+                # ``import dataclasses``), not this streaming ``_run``.
+                # A module-qualified call would crash the worker thread
+                # with ``NameError`` after a successful tandem sweep —
+                # same shape as the L1008 jv_2d regression fixed in
+                # f29b190.
+                "metrics": asdict(result.metrics),
                 "benchmark": cfg.benchmark,
             }
     elif kind == "jv_2d":
