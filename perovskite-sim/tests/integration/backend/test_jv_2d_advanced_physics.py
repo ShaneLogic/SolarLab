@@ -1,0 +1,226 @@
+"""Backend tests for Stage B(c.x) advanced-physics dispatch (Phase 6 frontend
+wiring).
+
+Two surfaces matter:
+
+1. ``backend.main.stack_from_dict`` — turns a JSON device dict (the path the
+   frontend uses when sending the live editor state) into a ``DeviceStack``.
+   Stage B(c.1) Robin S fields and Stage B(c.2) per-layer μ(E) fields must
+   round-trip; if they are silently dropped here, the frontend editor
+   becomes a UI-only placebo.
+
+2. ``POST /api/jobs`` with ``kind="jv_2d"`` and either a ``config_path`` to a
+   B(c.x)-enabled preset OR an inline ``device`` JSON — must dispatch
+   without error and return a job_id. This mirrors the existing
+   ``test_voc_grain_sweep_api.py`` smoke pattern: we do not await the
+   worker thread, only the synchronous handshake.
+
+The unit-level round-trip test is where regressions show up first; the
+HTTP smoke tests are belt-and-braces against the dispatch surface.
+"""
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from backend.main import app, stack_from_dict
+
+
+client = TestClient(app)
+
+
+# ---------------------------------------------------------------------------
+# unit-level: stack_from_dict round-trip for Stage B(c.x) parameters
+# ---------------------------------------------------------------------------
+
+def _baseline_layer_dict(name: str, role: str, **overrides) -> dict:
+    """Minimal-valid layer schema for stack_from_dict. Numbers chosen to match
+    the nip_MAPbI3 absorber / spiro_HTL / TiO2_ETL stack so the test reads
+    like a real preset."""
+    base = {
+        "name": name,
+        "role": role,
+        "thickness": 400e-9,
+        "eps_r": 24.1,
+        "mu_n": 2e-4,
+        "mu_p": 2e-4,
+        "ni": 3.2e13,
+        "N_D": 0.0,
+        "N_A": 0.0,
+        "D_ion": 1e-16,
+        "P_lim": 1.6e27,
+        "P0": 1.6e24,
+        "tau_n": 1e-6,
+        "tau_p": 1e-6,
+        "n1": 3.2e13,
+        "p1": 3.2e13,
+        "B_rad": 5e-22,
+        "C_n": 1e-42,
+        "C_p": 1e-42,
+        "alpha": 1.3e7,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_stack_from_dict_propagates_robin_S_fields():
+    """device.S_n_left/p_left/n_right/p_right must round-trip onto DeviceStack.
+
+    Stage B(c.1) Robin / selective contacts. Without this plumbing the
+    frontend's Robin panel produces a silent no-op on inline-device runs.
+    """
+    cfg = {
+        "device": {
+            "V_bi": 1.1,
+            "Phi": 2.5e21,
+            "mode": "full",
+            "S_n_left": 1.0e-3,
+            "S_p_left": 1.0e3,
+            "S_n_right": 1.0e3,
+            "S_p_right": 1.0e-3,
+        },
+        "layers": [
+            _baseline_layer_dict("HTL", "HTL", thickness=200e-9),
+            _baseline_layer_dict("ABS", "absorber"),
+            _baseline_layer_dict("ETL", "ETL", thickness=100e-9, N_D=1e24),
+        ],
+    }
+    stack = stack_from_dict(cfg)
+    assert stack.S_n_left == 1.0e-3, "S_n_left dropped by stack_from_dict"
+    assert stack.S_p_left == 1.0e3, "S_p_left dropped by stack_from_dict"
+    assert stack.S_n_right == 1.0e3, "S_n_right dropped by stack_from_dict"
+    assert stack.S_p_right == 1.0e-3, "S_p_right dropped by stack_from_dict"
+
+
+def test_stack_from_dict_robin_S_absent_means_None():
+    """Omitting S_* keys must yield None (= ohmic Dirichlet) on DeviceStack —
+    the documented 'absent / disabled' sentinel that distinguishes itself
+    from an explicit 0 (Neumann blocking)."""
+    cfg = {
+        "device": {"V_bi": 1.1, "Phi": 2.5e21, "mode": "full"},
+        "layers": [
+            _baseline_layer_dict("HTL", "HTL", thickness=200e-9),
+            _baseline_layer_dict("ABS", "absorber"),
+            _baseline_layer_dict("ETL", "ETL", thickness=100e-9, N_D=1e24),
+        ],
+    }
+    stack = stack_from_dict(cfg)
+    assert stack.S_n_left is None
+    assert stack.S_p_left is None
+    assert stack.S_n_right is None
+    assert stack.S_p_right is None
+
+
+def test_stack_from_dict_propagates_field_mobility_layer_fields():
+    """Per-layer v_sat_{n,p}, ct_beta_{n,p}, pf_gamma_{n,p} must round-trip
+    onto MaterialParams. Stage B(c.2) field-dependent mobility μ(E)."""
+    abs_layer = _baseline_layer_dict(
+        "ABS", "absorber",
+        v_sat_n=1.0e5, v_sat_p=2.0e5,
+        ct_beta_n=2.0, ct_beta_p=1.0,
+        pf_gamma_n=1.0e-4, pf_gamma_p=3.0e-4,
+    )
+    cfg = {
+        "device": {"V_bi": 1.1, "Phi": 2.5e21, "mode": "full"},
+        "layers": [
+            _baseline_layer_dict("HTL", "HTL", thickness=200e-9),
+            abs_layer,
+            _baseline_layer_dict("ETL", "ETL", thickness=100e-9, N_D=1e24),
+        ],
+    }
+    stack = stack_from_dict(cfg)
+    p = stack.layers[1].params  # absorber
+    assert p.v_sat_n == 1.0e5
+    assert p.v_sat_p == 2.0e5
+    assert p.ct_beta_n == 2.0
+    assert p.ct_beta_p == 1.0
+    assert p.pf_gamma_n == 1.0e-4
+    assert p.pf_gamma_p == 3.0e-4
+
+
+def test_stack_from_dict_field_mobility_default_is_zero():
+    """Layers that omit μ(E) fields must default to 0 (= disabled)."""
+    cfg = {
+        "device": {"V_bi": 1.1, "Phi": 2.5e21, "mode": "full"},
+        "layers": [_baseline_layer_dict("ABS", "absorber")],
+    }
+    stack = stack_from_dict(cfg)
+    p = stack.layers[0].params
+    assert p.v_sat_n == 0.0
+    assert p.v_sat_p == 0.0
+    assert p.pf_gamma_n == 0.0
+    assert p.pf_gamma_p == 0.0
+
+
+# ---------------------------------------------------------------------------
+# HTTP-level: dispatch smoke for the bcx-enabled presets
+# ---------------------------------------------------------------------------
+
+def test_jv_2d_dispatches_bcx_combined_demo():
+    """POST /api/jobs with kind='jv_2d' on the new bcx_combined_demo preset
+    must return 200 + job_id. The preset activates Robin S + μ(E) +
+    microstructure simultaneously; this test pins that the dispatch surface
+    accepts the combined-physics config, not that the worker thread
+    succeeds (the worker is async and not awaited here)."""
+    resp = client.post(
+        "/api/jobs",
+        json={
+            "kind": "jv_2d",
+            "config_path": "configs/twod/bcx_combined_demo.yaml",
+            "params": {
+                "lateral_length": 500e-9,
+                "Nx": 4,
+                "Ny_per_layer": 5,
+                "V_max": 0.2,
+                "V_step": 0.2,
+                "settle_t": 1e-7,
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert isinstance(body["job_id"], str)
+
+
+def test_jv_2d_dispatches_inline_device_with_bcx_fields():
+    """POST /api/jobs with kind='jv_2d' and an inline device JSON carrying
+    S_n_left + v_sat_n must dispatch without error. This exercises the
+    same code path the frontend uses when the user has an unsaved edit
+    in the device editor."""
+    inline_device = {
+        "device": {
+            "V_bi": 1.1,
+            "Phi": 2.5e21,
+            "mode": "full",
+            "S_n_left": 1.0e-3,
+            "S_p_left": 1.0e3,
+            "S_n_right": 1.0e3,
+            "S_p_right": 1.0e-3,
+        },
+        "layers": [
+            _baseline_layer_dict("HTL", "HTL", thickness=200e-9, pf_gamma_p=3.0e-4),
+            _baseline_layer_dict("ABS", "absorber",
+                                 v_sat_n=1.0e5, v_sat_p=1.0e5,
+                                 ct_beta_n=2.0, ct_beta_p=1.0),
+            _baseline_layer_dict("ETL", "ETL", thickness=100e-9, N_D=1e24),
+        ],
+    }
+    resp = client.post(
+        "/api/jobs",
+        json={
+            "kind": "jv_2d",
+            "device": inline_device,
+            "params": {
+                "lateral_length": 500e-9,
+                "Nx": 4,
+                "Ny_per_layer": 5,
+                "V_max": 0.2,
+                "V_step": 0.2,
+                "settle_t": 1e-7,
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert isinstance(body["job_id"], str)

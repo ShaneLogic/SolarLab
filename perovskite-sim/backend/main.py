@@ -118,6 +118,16 @@ def resolve_config_path(config_path: str) -> str:
     return config_path
 
 
+def _opt_S(v) -> Optional[float]:
+    """Parse a Robin contact S value. ``None`` and missing → None
+    (= ohmic Dirichlet, the documented "absent / disabled" sentinel);
+    every other value is coerced to float, including 0.0 (= Neumann
+    blocking — distinct from absent)."""
+    if v is None:
+        return None
+    return float(v)
+
+
 def stack_from_dict(cfg: dict) -> DeviceStack:
     """Build a DeviceStack from a dict with the same schema as the YAML files."""
     dev = cfg.get("device", {}) or {}
@@ -143,6 +153,16 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
             N_D=float(layer_cfg["N_D"]),
             chi=float(layer_cfg.get("chi", 0.0)),
             Eg=float(layer_cfg.get("Eg", 0.0)),
+            # Stage B(c.2) field-dependent mobility μ(E). Defaults match
+            # MaterialParams: v_sat / pf_gamma at 0 (= disabled); ct_beta
+            # at 2 (= Canali silicon-electron form, the safe default
+            # documented in field_mobility.py).
+            v_sat_n=float(layer_cfg.get("v_sat_n", 0.0)),
+            v_sat_p=float(layer_cfg.get("v_sat_p", 0.0)),
+            ct_beta_n=float(layer_cfg.get("ct_beta_n", 2.0)),
+            ct_beta_p=float(layer_cfg.get("ct_beta_p", 2.0)),
+            pf_gamma_n=float(layer_cfg.get("pf_gamma_n", 0.0)),
+            pf_gamma_p=float(layer_cfg.get("pf_gamma_p", 0.0)),
         )
         layers.append(
             LayerSpec(
@@ -167,6 +187,14 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         interfaces=interfaces,
         T=float(dev.get("T", 300.0)),
         mode=mode_name,
+        # Stage B(c.1) Robin / selective contacts. None = ohmic Dirichlet
+        # (the pre-3.3 default); 0 = Neumann blocking; positive finite =
+        # Robin. The frontend distinguishes these three states via
+        # parseNumOrNull in config-editor.ts.
+        S_n_left=_opt_S(dev.get("S_n_left")),
+        S_p_left=_opt_S(dev.get("S_p_left")),
+        S_n_right=_opt_S(dev.get("S_n_right")),
+        S_p_right=_opt_S(dev.get("S_p_right")),
     )
 
 
