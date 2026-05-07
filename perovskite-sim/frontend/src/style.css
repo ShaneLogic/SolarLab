@@ -463,6 +463,23 @@ input[type="number"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* 2D J-V pane render — plot + metric-card row + (optional) bracket
+   warning banner. The plot lives inside ``.jv2d-plot`` so that
+   ``.jv2d-metrics-row`` and ``.jv2d-warning`` can sit alongside it
+   without colliding with Plotly's mutating DOM. */
+.jv2d-render { display: flex; flex-direction: column; gap: 0.5rem; }
+.jv2d-plot { flex: 1 1 auto; min-height: 0; }
+.jv2d-metrics-row { padding: 0.25rem 0; }
+.jv2d-warning {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  color: #92400e;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .hi-value {
   font-size: 1.5rem;
   font-weight: 700;

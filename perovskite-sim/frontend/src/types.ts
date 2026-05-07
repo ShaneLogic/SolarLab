@@ -87,6 +87,11 @@ export interface JVMetrics {
   J_sc: number
   FF: number
   PCE: number
+  /** True iff the J(V) sweep crossed zero. False means V_max stopped
+   *  short of V_oc; V_oc / FF / PCE are sentinel zeros and the UI
+   *  should warn the user to expand the sweep range. Optional for
+   *  back-compat with 1D consumers that pre-date the flag. */
+  voc_bracketed?: boolean
 }
 
 export interface JVResult {
@@ -238,6 +243,14 @@ export interface JV2DResult {
   grid_y: number[]                  // vertical nodes, nm
   lateral_bc: 'periodic' | 'neumann'
   snapshots: SpatialSnapshot2D[]    // empty when save_snapshots=false
+  /** Layer 2 of the Phase 6 acceptance follow-up. The backend extracts
+   *  V_oc / J_sc / FF / PCE via the centralised ``compute_metrics`` and
+   *  reports ``voc_bracketed=false`` when V_max stopped short of V_oc.
+   *  Optional for back-compat with payloads from a backend that pre-
+   *  dates the field; the renderer falls back to "no metrics" in that
+   *  case. ``J_sc`` is in A/m² (same convention as the J array; the
+   *  backend has already sign-normalised to J_sc>0). */
+  metrics?: JVMetrics
 }
 
 /** V_oc(L_g) sweep result — Stage-B headline experiment.
