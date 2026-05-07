@@ -29,6 +29,12 @@ class JVMetrics:
     J_sc: float
     FF: float
     PCE: float
+    voc_bracketed: bool = True
+    """``True`` iff the J(V) curve crossed zero inside the sampled voltage
+    range. ``False`` means V_max stopped short of V_oc — the returned V_oc /
+    FF / PCE are sentinel zeros and the caller should warn the user to
+    expand the sweep range. ``J_sc`` is still meaningful (interpolated at
+    V=0) and is returned even when the bracket fails."""
 
 
 @dataclass(frozen=True)
@@ -56,7 +62,12 @@ class JVResult:
     decomp_rev: JVCurrentDecomp | None = None
 
 
-def compute_metrics(V: np.ndarray, J: np.ndarray) -> JVMetrics:
+def compute_metrics(
+    V: np.ndarray,
+    J: np.ndarray,
+    *,
+    assume_jsc_positive: bool = True,
+) -> JVMetrics:
     """Compute V_oc, J_sc, FF, PCE from a J-V array (J in A/m²).
 
     Reports the metrics directly from the simulated J(V) samples — it does
@@ -64,9 +75,27 @@ def compute_metrics(V: np.ndarray, J: np.ndarray) -> JVMetrics:
     converged, physically monotone curve (use a fine V grid and a quasi-static
     sweep). V_oc is taken at the first positive→non-positive zero crossing,
     and P_mpp is the maximum of V·J over the operating quadrant 0 ≤ V ≤ V_oc.
+
+    Sign convention. The 1D solver follows the IonMonger / DriftFusion
+    convention where J(V=0) > 0 (the photocurrent flows out of the device
+    and powers an external load). The 2D solver currently emits the
+    opposite sign — J(V=0) < 0 — so 2D callers must pass
+    ``assume_jsc_positive=False`` to flip J internally before extraction.
+    The returned :class:`JVMetrics` is always reported in the
+    "J_sc positive" convention, regardless of which sign the input used.
+
+    Bracketing. If the supplied J(V) does not cross zero in the sampled
+    range — i.e. V_max stopped short of V_oc — the returned metrics carry
+    ``voc_bracketed=False`` and ``V_oc / FF / PCE`` are sentinel zeros.
+    ``J_sc`` is still meaningful (interpolated at V=0) and is returned
+    even when the bracket fails. Callers should surface the flag to the
+    user as a "increase V_max" warning rather than reading 0 V as a
+    physical V_oc.
     """
     V = np.asarray(V, dtype=float)
     J = np.asarray(J, dtype=float)
+    if not assume_jsc_positive:
+        J = -J
     order = np.argsort(V)
     V_s = V[order]
     J_s = J[order]
@@ -75,7 +104,9 @@ def compute_metrics(V: np.ndarray, J: np.ndarray) -> JVMetrics:
     signs = np.sign(J_s)
     crossings = np.where((signs[:-1] > 0) & (signs[1:] <= 0))[0]
     if len(crossings) == 0:
-        return JVMetrics(V_oc=0.0, J_sc=J_sc, FF=0.0, PCE=0.0)
+        return JVMetrics(
+            V_oc=0.0, J_sc=J_sc, FF=0.0, PCE=0.0, voc_bracketed=False,
+        )
     idx = int(crossings[0])
     dV = V_s[idx + 1] - V_s[idx]
     dJ = J_s[idx + 1] - J_s[idx]
@@ -85,7 +116,9 @@ def compute_metrics(V: np.ndarray, J: np.ndarray) -> JVMetrics:
     P_mpp = float(np.max(V_s[mask] * J_s[mask])) if mask.any() else 0.0
     FF = P_mpp / (V_oc * J_sc) if (V_oc * J_sc) > 0 else 0.0
     PCE = P_mpp / 1000.0
-    return JVMetrics(V_oc=V_oc, J_sc=J_sc, FF=FF, PCE=PCE)
+    return JVMetrics(
+        V_oc=V_oc, J_sc=J_sc, FF=FF, PCE=PCE, voc_bracketed=True,
+    )
 
 
 def hysteresis_index(

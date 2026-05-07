@@ -1000,6 +1000,12 @@ def start_job(req: JobRequest):
                 "grid_y": (result.grid_y * 1e9).tolist(),
                 "lateral_bc": result.lateral_bc,
                 "snapshots": [snap2d_to_dict(s) for s in result.snapshots],
+                # Centralised V_oc / J_sc / FF / PCE extraction (Layer 1+2
+                # of the Phase 6 acceptance follow-up). Carries the
+                # ``voc_bracketed`` flag so the frontend can warn the
+                # user when V_max stopped short of V_oc; raw V/J above
+                # are unchanged.
+                "metrics": dataclasses.asdict(result.metrics),
             }
             out["active_physics"] = _describe_active_physics(stack)
             return out
