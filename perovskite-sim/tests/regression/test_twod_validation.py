@@ -595,3 +595,256 @@ def test_twod_radiative_reabsorption_disabled_path_bit_identical():
         r_full.J, r_legacy.J, rtol=1e-12, atol=0.0,
         err_msg="Stage B(c.3) disabled path is not bit-identical between mode=full and mode=legacy on BL",
     )
+
+
+RR_TMM_PRESET = "configs/nip_MAPbI3_tmm.yaml"
+
+
+def _voc_2d_via_warm_start(
+    stack: DeviceStack,
+    microstructure: Microstructure,
+    *,
+    voc_seed: float,
+    lateral_length: float = 500e-9,
+    Nx: int = 4,
+    Ny_per_layer: int = 10,
+    settle_t: float = 1e-3,
+    delta_V: float = 5e-3,
+) -> float:
+    """Compute V_oc on 2D by bootstrapping from the 1D V_oc steady-state and
+    bracketing V_oc with two short 2D settles at ``voc_seed ± delta_V``.
+
+    Why a warm-start bracket rather than a full J-V sweep: Stage A 2D + TMM
+    cannot Newton-contract through the V≈0.2 V diode-injection knee — see
+    project memory ``project_stage_a_2d_tmm_newton.md``. Walking V from 0
+    to V_oc would hang. Bootstrapping 2D directly from the 1D V_oc state
+    and bracketing V_oc with two short settles within ±5 mV of voc_seed
+    dodges the knee entirely. The diode I-V is approximately linear over a
+    10 mV window near V_oc (verified empirically: ΔJ/ΔV ≈ const), so a
+    linear interpolation of J vs V across the bracket gives a sub-mV V_oc
+    estimate.
+
+    Returns
+    -------
+    voc_2d : float, the V_oc on the 2D solver, V.
+    """
+    from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
+    from perovskite_sim.solver.mol import StateVec
+    from perovskite_sim.discretization.grid import Layer, multilayer_grid
+    from perovskite_sim.models.device import electrical_layers
+    from perovskite_sim.twod.grid_2d import build_grid_2d
+    from perovskite_sim.twod.solver_2d import (
+        build_material_arrays_2d, run_transient_2d,
+        extract_snapshot_2d, compute_terminal_current_2d,
+    )
+
+    # Use the same per-layer node count for 1D bootstrap and 2D — the 1D
+    # state vector is broadcast to the 2D grid, so Ny must match exactly.
+    elec = electrical_layers(stack)
+    layers_compat = [Layer(L.thickness, Ny_per_layer) for L in elec]
+    x_1d = multilayer_grid(layers_compat)
+
+    y_1d = solve_illuminated_ss(x_1d, stack, V_app=voc_seed, t_settle=settle_t)
+    sv = StateVec.unpack(y_1d, len(x_1d))
+
+    grid_2d = build_grid_2d(layers_compat, lateral_length=lateral_length, Nx=Nx)
+    mat = build_material_arrays_2d(
+        grid_2d, stack, microstructure,
+        lateral_bc="periodic", P_ion_static_1d=sv.P,
+    )
+    Ny, Nx_nodes = grid_2d.Ny, grid_2d.Nx
+    n_2d = np.broadcast_to(sv.n[:, None], (Ny, Nx_nodes)).copy()
+    p_2d = np.broadcast_to(sv.p[:, None], (Ny, Nx_nodes)).copy()
+    y_2d = np.concatenate([n_2d.flatten(), p_2d.flatten()])
+
+    def _settle_J(V: float) -> float:
+        y_settled = run_transient_2d(
+            y_2d, mat, V_app=V, t_end=settle_t,
+            max_step=settle_t / 50.0, max_nfev=100_000,
+        )
+        snap = extract_snapshot_2d(y_settled, mat, V_app=V)
+        return float(compute_terminal_current_2d(snap))
+
+    V_a = voc_seed - delta_V
+    V_b = voc_seed + delta_V
+    J_a = _settle_J(V_a)
+    J_b = _settle_J(V_b)
+    if abs(J_b - J_a) < 1e-9:
+        raise RuntimeError(
+            f"_voc_2d_via_warm_start: degenerate bracket — J_a={J_a}, J_b={J_b} "
+            f"at V_a={V_a}, V_b={V_b}"
+        )
+    voc_2d = V_a - J_a * (V_b - V_a) / (J_b - J_a)
+    return voc_2d
+
+
+def _voc_1d_via_run_suns_voc(stack: DeviceStack, *, t_settle: float = 1e-3) -> float:
+    from perovskite_sim.experiments.suns_voc import run_suns_voc
+    res = run_suns_voc(stack, suns_levels=(1.0,), N_grid=31, t_settle=t_settle)
+    return float(res.V_oc[0])
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_radiative_reabsorption_parity_vs_1d():
+    """Stage B(c.3) primary correctness gate: lateral-uniform 2D V_oc matches
+    1D Phase 3.1b V_oc within 5 mV on TMM preset with PR + reabsorption ON.
+
+    Restricted to V_oc-only because Stage A 2D + TMM cannot Newton-contract
+    through the V≈0.2 V diode-injection knee (project memory
+    project_stage_a_2d_tmm_newton.md). Bootstrapping 2D directly from a 1D
+    V_oc steady-state and bracketing V_oc with two short 2D settles dodges
+    the knee entirely. J_sc and FF parity assertions are deferred until the
+    Stage A limitation is fixed (out of scope for B(c.3)).
+    """
+    base = _freeze_ions(load_device_from_yaml(RR_TMM_PRESET))
+    voc_1d = _voc_1d_via_run_suns_voc(base)
+    voc_2d = _voc_2d_via_warm_start(base, Microstructure(), voc_seed=voc_1d)
+    delta_mV = (voc_2d - voc_1d) * 1e3
+    print(
+        f"\nrr 1D V_oc = {voc_1d*1e3:.4f} mV"
+        f"\nrr 2D V_oc = {voc_2d*1e3:.4f} mV"
+        f"\nΔV_oc      = {delta_mV:+.4f} mV  (limit ±5 mV)"
+    )
+    assert abs(delta_mV) <= 5.0, (
+        f"rr V_oc(2D)={voc_2d:.6f} V vs V_oc(1D)={voc_1d:.6f} V "
+        f"(diff {delta_mV:.3f} mV, limit 5 mV)"
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_radiative_reabsorption_voc_boost_in_literature_window(monkeypatch):
+    """Stage B(c.3) V_oc boost vs PR-off lies in [40, 100] mV on the 2D
+    solver — verifies the per-RHS reabsorption source actually delivers
+    the literature signature on 2D, not just on 1D.
+
+    V_oc-only path (see test_twod_radiative_reabsorption_parity_vs_1d
+    docstring for why). Computes 2D V_oc twice on the same TMM stack:
+    once with FULL tier (PR + reabsorption ON), once with FULL tier but
+    use_photon_recycling=False AND use_radiative_reabsorption=False (and
+    everything else still on). Mirrors 1D
+    test_radiative_reabsorption_preserves_voc_boost via monkeypatch on
+    resolve_mode in both ``perovskite_sim.models.mode`` (where 2D
+    solver_2d picks it up via local imports) and
+    ``perovskite_sim.solver.mol`` (where 1D run_suns_voc binds it at
+    module load).
+
+    Comparing tier-vs-tier (FULL vs LEGACY) would change far more than
+    just the rr+PR flags — LEGACY also disables TMM, TE, dual ions,
+    trap profile, T-scaling — so the V_oc shift would mix several
+    physics effects and not be the literature reabsorption signature.
+    """
+    import perovskite_sim.models.mode as _mode_mod
+    import perovskite_sim.solver.mol as _mol_mod
+    from perovskite_sim.models.mode import FULL
+
+    # Use the radiative-limit preset (configs/radiative_limit.yaml): bulk
+    # radiative recombination dominates because non-radiative channels are
+    # killed (τ → 1e3 s, Auger → 0, interface SRV → 0). On this stack the
+    # PR-on V_oc boost lands cleanly in the literature [40, 100] mV
+    # window; on a regular MAPbI3 stack (RR_TMM_PRESET) non-radiative
+    # losses swamp the boost down to sub-mV.
+    rr_limit = _freeze_ions(load_device_from_yaml("configs/radiative_limit.yaml"))
+    mode_on = FULL                                       # PR + rr ON, all else FULL
+    mode_off = replace(
+        FULL,
+        use_photon_recycling=False,
+        use_radiative_reabsorption=False,
+    )                                                    # only PR + rr flipped off
+
+    def _voc_2d_under_mode(active_mode):
+        monkeypatch.setattr(_mode_mod, "resolve_mode", lambda _arg: active_mode)
+        monkeypatch.setattr(_mol_mod, "resolve_mode",  lambda _arg: active_mode)
+        voc_1d = _voc_1d_via_run_suns_voc(rr_limit)
+        return _voc_2d_via_warm_start(rr_limit, Microstructure(), voc_seed=voc_1d), voc_1d
+
+    voc_2d_off, voc_1d_off = _voc_2d_under_mode(mode_off)
+    voc_2d_on,  voc_1d_on  = _voc_2d_under_mode(mode_on)
+    boost_mV = (voc_2d_on - voc_2d_off) * 1e3
+    print(
+        f"\nrr OFF 2D V_oc = {voc_2d_off*1e3:.4f} mV  (1D seed {voc_1d_off*1e3:.4f})"
+        f"\nrr ON  2D V_oc = {voc_2d_on*1e3:.4f} mV  (1D seed {voc_1d_on*1e3:.4f})"
+        f"\nΔV_oc(boost) = {boost_mV:.2f} mV  (literature window [40, 100] mV)"
+    )
+    assert 40.0 <= boost_mV <= 100.0, (
+        f"V_oc boost = {boost_mV:.2f} mV outside literature window [40, 100] mV "
+        f"(2D ON: {voc_2d_on*1e3:.2f} mV, 2D OFF: {voc_2d_off*1e3:.2f} mV)"
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+def test_twod_radiative_reabsorption_robin_field_mobility_coexistence_smoke():
+    """All four per-RHS / per-stack hooks (radiative reabsorption + Robin
+    contacts + μ(E) + grain boundary) compose without NaN/Inf during a
+    short V=0 settle. V_oc-only path can't be used here because aggressive
+    Robin S values and the GB shift V_oc significantly off the 1D seed,
+    and the V≈0.2 V Stage A knee (project_stage_a_2d_tmm_newton.md) blocks
+    a sweep approach. V=0 settle always converges (the equilibrium state
+    is well-defined) and exercises all four hooks during integration.
+
+    Does NOT assert physical correctness of the composite — that would
+    require an independent reference. Asserts only finiteness of the
+    settled state and the terminal current.
+    """
+    from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
+    from perovskite_sim.solver.mol import StateVec
+    from perovskite_sim.discretization.grid import Layer, multilayer_grid
+    from perovskite_sim.models.device import electrical_layers
+    from perovskite_sim.twod.grid_2d import build_grid_2d
+    from perovskite_sim.twod.solver_2d import (
+        build_material_arrays_2d, run_transient_2d,
+        extract_snapshot_2d, compute_terminal_current_2d,
+    )
+    from perovskite_sim.twod.microstructure import GrainBoundary
+
+    base = _freeze_ions(load_device_from_yaml(RR_TMM_PRESET))
+    stack = replace(_stack_with_layer_params(base, v_sat_n=1e3, v_sat_p=1e3),
+        S_n_left=1e-4, S_p_left=1e-3,
+        S_n_right=1e-3, S_p_right=1e-4,
+    )
+    ms = Microstructure(grain_boundaries=(
+        GrainBoundary(
+            x_position=150e-9, width=5e-9,
+            tau_n=5e-8, tau_p=5e-8,
+            layer_role="absorber",
+        ),
+    ))
+
+    # Coarse 2D grid — Ny_per_layer=5, Nx=6, lateral 300 nm.
+    Ny_per_layer = 5
+    elec = electrical_layers(stack)
+    layers_compat = [Layer(L.thickness, Ny_per_layer) for L in elec]
+    x_1d = multilayer_grid(layers_compat)
+
+    # Bootstrap from 1D illuminated steady-state at V=0.
+    y_1d = solve_illuminated_ss(x_1d, stack, V_app=0.0, t_settle=1e-3)
+    sv = StateVec.unpack(y_1d, len(x_1d))
+
+    grid_2d = build_grid_2d(layers_compat, lateral_length=300e-9, Nx=6)
+    mat = build_material_arrays_2d(
+        grid_2d, stack, ms, lateral_bc="periodic", P_ion_static_1d=sv.P,
+    )
+    Ny, Nx_nodes = grid_2d.Ny, grid_2d.Nx
+    n_2d = np.broadcast_to(sv.n[:, None], (Ny, Nx_nodes)).copy()
+    p_2d = np.broadcast_to(sv.p[:, None], (Ny, Nx_nodes)).copy()
+    y_2d = np.concatenate([n_2d.flatten(), p_2d.flatten()])
+
+    settle_t = 1e-4
+    y_settled = run_transient_2d(
+        y_2d, mat, V_app=0.0, t_end=settle_t,
+        max_step=settle_t / 50.0, max_nfev=100_000,
+    )
+    snap = extract_snapshot_2d(y_settled, mat, V_app=0.0)
+    J_at_zero = compute_terminal_current_2d(snap)
+    print(
+        f"\ncoexistence smoke (V=0 settle, all four hooks ON): "
+        f"J(V=0) = {J_at_zero:.4e} A/m²"
+    )
+    assert np.all(np.isfinite(y_settled)), (
+        "Non-finite state after rr+Robin+μ(E)+GB V=0 settle"
+    )
+    assert np.isfinite(J_at_zero), (
+        "Non-finite J after rr+Robin+μ(E)+GB V=0 settle"
+    )
