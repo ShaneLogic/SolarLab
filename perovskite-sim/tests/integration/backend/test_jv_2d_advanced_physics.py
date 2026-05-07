@@ -152,6 +152,108 @@ def test_stack_from_dict_field_mobility_default_is_zero():
 
 
 # ---------------------------------------------------------------------------
+# Stage B(a) — microstructure must round-trip on the inline-device path
+# (mirror of load_device_from_yaml; the frontend's startJob always sends
+# device: <full cfg>, never config_path:, so this is the only path that
+# matters at runtime)
+# ---------------------------------------------------------------------------
+
+def test_stack_from_dict_propagates_microstructure_block():
+    """Inline-device payloads carrying a top-level ``microstructure:`` block
+    must produce a populated DeviceStack.microstructure. Loading the
+    shipped configs/twod/nip_MAPbI3_singleGB.yaml in the workstation and
+    submitting via ``device:`` is exactly this code path."""
+    cfg = {
+        "device": {"V_bi": 1.1, "Phi": 2.5e21, "mode": "full"},
+        "layers": [
+            _baseline_layer_dict("HTL", "HTL", thickness=200e-9),
+            _baseline_layer_dict("ABS", "absorber"),
+            _baseline_layer_dict("ETL", "ETL", thickness=100e-9, N_D=1e24),
+        ],
+        "microstructure": {
+            "grain_boundaries": [
+                {
+                    "x_position": 250e-9,
+                    "width": 5e-9,
+                    "tau_n": 5e-8,
+                    "tau_p": 5e-8,
+                    "layer_role": "absorber",
+                }
+            ]
+        },
+    }
+    stack = stack_from_dict(cfg)
+    gbs = stack.microstructure.grain_boundaries
+    assert len(gbs) == 1, "GB block silently dropped by stack_from_dict"
+    gb = gbs[0]
+    assert gb.x_position == 250e-9
+    assert gb.width == 5e-9
+    assert gb.tau_n == 5e-8
+    assert gb.tau_p == 5e-8
+    assert gb.layer_role == "absorber"
+
+
+def test_stack_from_dict_microstructure_absent_means_empty():
+    """Configs without a ``microstructure:`` key must produce an empty
+    Microstructure() so Stage A lateral-uniform runs are bit-identical
+    to the pre-Phase 6 path."""
+    cfg = {
+        "device": {"V_bi": 1.1, "Phi": 2.5e21, "mode": "full"},
+        "layers": [_baseline_layer_dict("ABS", "absorber")],
+    }
+    stack = stack_from_dict(cfg)
+    assert stack.microstructure is not None
+    assert stack.microstructure.grain_boundaries == ()
+
+
+def test_jv_2d_dispatches_inline_device_with_microstructure_from_singleGB():
+    """Frontend-realistic dispatch: load configs/twod/nip_MAPbI3_singleGB.yaml
+    via the YAML loader, hand the resulting dict back as the ``device:``
+    payload, and confirm the dispatch handshake succeeds. Mirrors the
+    workstation flow: GET /api/configs/{name} → device cache → POST
+    /api/jobs with device:<cfg>. The handshake passing here means
+    stack_from_dict picked up the microstructure block (the worker
+    thread does the heavy lifting after the 200 OK)."""
+    import yaml
+    import os
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    cfg_path = os.path.join(repo_root, "configs", "twod", "nip_MAPbI3_singleGB.yaml")
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+    # Sanity: the bundled preset really does carry a GB block.
+    assert "microstructure" in cfg
+    assert cfg["microstructure"]["grain_boundaries"]
+
+    # Stack the cfg through stack_from_dict and confirm GB survives.
+    stack = stack_from_dict(cfg)
+    assert len(stack.microstructure.grain_boundaries) >= 1, (
+        "configs/twod/nip_MAPbI3_singleGB.yaml microstructure dropped "
+        "by stack_from_dict — workstation submit would silently lose "
+        "Stage B(a) physics."
+    )
+
+    resp = client.post(
+        "/api/jobs",
+        json={
+            "kind": "jv_2d",
+            "device": cfg,  # frontend always sends this
+            "params": {
+                "lateral_length": 500e-9,
+                "Nx": 4,
+                "Ny_per_layer": 5,
+                "V_max": 0.2,
+                "V_step": 0.2,
+                "settle_t": 1e-7,
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert isinstance(body["job_id"], str)
+
+
+# ---------------------------------------------------------------------------
 # HTTP-level: dispatch smoke for the bcx-enabled presets
 # ---------------------------------------------------------------------------
 
