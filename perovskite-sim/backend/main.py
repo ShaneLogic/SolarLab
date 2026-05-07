@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -287,6 +288,7 @@ def list_configs():
 
     try:
         entries: list[dict] = []
+        seen_names: set[str] = set()
         for f in sorted(os.listdir(CONFIGS_DIR)):
             if f.endswith((".yaml", ".yml")):
                 full = os.path.join(CONFIGS_DIR, f)
@@ -298,6 +300,7 @@ def list_configs():
                         "device_type": device_type,
                         "tier_compat": tier_compat,
                     })
+                    seen_names.add(f)
         user_dir = os.path.join(CONFIGS_DIR, "user")
         if os.path.isdir(user_dir):
             for f in sorted(os.listdir(user_dir)):
@@ -310,6 +313,36 @@ def list_configs():
                         "device_type": device_type,
                         "tier_compat": tier_compat,
                     })
+                    seen_names.add(f)
+        # Phase 6 shipped 2D presets live under ``configs/twod/`` (Stage A
+        # baseline, Stage B(a) microstructure, T7 B(c.x) demo). They are
+        # listed in the same ``shipped`` namespace as top-level presets so
+        # the existing dropdown surfaces them without a UI redesign.
+        # Collision policy: top-level precedence is preserved — a basename
+        # already listed (top-level or user/) shadows the twod entry, and
+        # the shadowing is reported on stderr so a maintainer can dedupe.
+        twod_dir = os.path.join(CONFIGS_DIR, "twod")
+        if os.path.isdir(twod_dir):
+            for f in sorted(os.listdir(twod_dir)):
+                if not f.endswith((".yaml", ".yml")):
+                    continue
+                if f in seen_names:
+                    print(
+                        f"[list_configs] basename collision: 'configs/twod/{f}' "
+                        f"shadowed by an earlier entry; skipping",
+                        file=sys.stderr,
+                    )
+                    continue
+                full = os.path.join(twod_dir, f)
+                if os.path.isfile(full):
+                    device_type, tier_compat = _peek_metadata(full)
+                    entries.append({
+                        "name": f,
+                        "namespace": "shipped",
+                        "device_type": device_type,
+                        "tier_compat": tier_compat,
+                    })
+                    seen_names.add(f)
         return {"status": "ok", "configs": entries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -354,13 +387,18 @@ def list_layer_templates() -> dict:
 def get_config(name: str):
     """Return the parsed YAML device config so the frontend can edit it.
 
-    Searches shipped first, then user/. ``os.path.basename`` strips any
-    leading path components in case a caller URL-encodes a slash.
+    Search order — top-level ``configs/`` → ``configs/user/`` →
+    ``configs/twod/``. Top-level precedence is preserved on basename
+    collision so a user-renamed top-level preset always wins, matching
+    the listing order in :func:`list_configs`. ``os.path.basename``
+    strips any leading path components in case a caller URL-encodes a
+    slash.
     """
     safe_name = os.path.basename(name)
     candidates = [
         os.path.join(CONFIGS_DIR, safe_name),
         os.path.join(CONFIGS_DIR, "user", safe_name),
+        os.path.join(CONFIGS_DIR, "twod", safe_name),
     ]
     path = next((p for p in candidates if os.path.exists(p)), None)
     if path is None:
