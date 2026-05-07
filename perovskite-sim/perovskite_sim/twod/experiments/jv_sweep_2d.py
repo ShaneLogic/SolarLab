@@ -109,6 +109,112 @@ def _bake_radiative_reabsorption_step_2d(
     )
 
 
+def _integrate_step_2d(
+    y_state: np.ndarray,
+    mat,
+    *,
+    V_app: float,
+    settle_t: float,
+    illuminated: bool,
+    max_bisect: int = 6,
+) -> np.ndarray:
+    """Settle the 2D state at fixed V_app from t=0 to t=settle_t. Mirror of
+    1D ``_integrate_step`` (perovskite_sim/experiments/jv_sweep.py:381+).
+
+    Strategy
+    --------
+    1. Try ``run_transient_2d`` on the full ``settle_t`` interval. Success
+       returns immediately — the typical hot path.
+    2. On ``RuntimeError`` (max_nfev exceeded, RHS non-finite, or Radau
+       reporting non-success), if Stage B(c.3) reabsorption is on, bake
+       ``R_tot`` once at the entry state and retry with the per-RHS hook
+       disabled. Per `project_tmm_jv_regression_021.md`, this fixes the
+       1D V≈0.21 V regression and is mirrored here for symmetry.
+    3. On further failure, if ``max_bisect == 0``: raise — bisection
+       budget exhausted.
+    4. Otherwise: split ``settle_t`` into halves and recurse on each
+       half (warm-chained from the midpoint state). Each recursive call
+       gets ``max_bisect - 1`` so the worst-case fan-out is bounded at
+       ``2 ** max_bisect`` sub-intervals.
+
+    Why bisection helps
+    -------------------
+    The 2D Stage A solver cannot Newton-contract through the V≈0.2 V
+    diode-injection knee on TMM presets when given the full ``settle_t``
+    interval (`project_stage_a_2d_tmm_newton.md`). Halving the time
+    interval shrinks the per-step state change, which in turn relaxes
+    the Newton contraction requirement. At the deepest bisection level
+    (``max_bisect=6``) the interval is ``settle_t / 64``, typically
+    ~1.5e-5 s — well inside the linear-response regime where Newton is
+    not stress-tested.
+
+    Parameters
+    ----------
+    y_state : np.ndarray
+        Packed (n, p) 2D state vector (length 2*Ny*Nx).
+    mat : MaterialArrays2D
+    V_app : float
+        Applied voltage [V].
+    settle_t : float
+        Length of the integration interval [s].
+    illuminated : bool
+        Required so the lagged-fallback knows whether the bake-R_tot
+        path is admissible — re-using the 1D semantics.
+    max_bisect : int, default 6
+        Recursion depth budget. 6 → up to 64 sub-intervals.
+
+    Returns
+    -------
+    np.ndarray : settled 2D state at t=settle_t.
+
+    Raises
+    ------
+    RuntimeError if the bisection budget is exhausted.
+    """
+    try:
+        return run_transient_2d(
+            y_state, mat,
+            V_app=V_app, t_end=settle_t,
+            max_step=settle_t / 50.0,
+            max_nfev=_TWOD_RADAU_MAX_NFEV,
+        )
+    except RuntimeError:
+        pass
+
+    if mat.has_radiative_reabsorption_2d and illuminated:
+        mat_step = _bake_radiative_reabsorption_step_2d(
+            y_state, mat, illuminated=illuminated,
+        )
+        try:
+            return run_transient_2d(
+                y_state, mat_step,
+                V_app=V_app, t_end=settle_t,
+                max_step=settle_t / 50.0,
+                max_nfev=_TWOD_RADAU_MAX_NFEV,
+            )
+        except RuntimeError:
+            pass
+
+    if max_bisect == 0:
+        raise RuntimeError(
+            f"2D JV sweep: coupled solver failed to converge at "
+            f"V_app={V_app:.4f} V on settle_t={settle_t:.3e} after "
+            f"bisection budget exhausted"
+        )
+
+    t_half = 0.5 * settle_t
+    y_mid = _integrate_step_2d(
+        y_state, mat,
+        V_app=V_app, settle_t=t_half,
+        illuminated=illuminated, max_bisect=max_bisect - 1,
+    )
+    return _integrate_step_2d(
+        y_mid, mat,
+        V_app=V_app, settle_t=t_half,
+        illuminated=illuminated, max_bisect=max_bisect - 1,
+    )
+
+
 def run_jv_sweep_2d(
     stack: DeviceStack,
     microstructure: Microstructure | None = None,
@@ -240,29 +346,14 @@ def run_jv_sweep_2d(
     snap_list: list[SpatialSnapshot2D] = []
 
     for k, V in enumerate(voltages):
-        try:
-            y_state = run_transient_2d(
-                y_state, mat,
-                V_app=float(V),
-                t_end=settle_t,
-                max_step=settle_t / 50.0,
-                max_nfev=_TWOD_RADAU_MAX_NFEV,
-            )
-        except RuntimeError:
-            # Stage B(c.3) lagged fallback: bake R_tot once at the entry state,
-            # retry with the disabled flag. Mirrors 1D jv_sweep.py:328+.
-            if not (mat.has_radiative_reabsorption_2d and illuminated):
-                raise                                      # nothing to fall back on
-            mat_step = _bake_radiative_reabsorption_step_2d(
-                y_state, mat, illuminated=illuminated,
-            )
-            y_state = run_transient_2d(
-                y_state, mat_step,
-                V_app=float(V),
-                t_end=settle_t,
-                max_step=settle_t / 50.0,
-                max_nfev=_TWOD_RADAU_MAX_NFEV,
-            )
+        # Bisection-in-time recovery (mirrors 1D _integrate_step): primary
+        # attempt → Stage B(c.3) lagged-fallback retry (when rr is on) →
+        # halve settle_t and recurse, up to 2**6 = 64 sub-intervals.
+        y_state = _integrate_step_2d(
+            y_state, mat,
+            V_app=float(V), settle_t=settle_t,
+            illuminated=illuminated,
+        )
         snap = extract_snapshot_2d(y_state, mat, V_app=float(V))
         J_list.append(compute_terminal_current_2d(snap))
         if save_snapshots:
