@@ -1003,6 +1003,18 @@ html, body, #app {
   padding-top: 0.5rem;
 }
 
+/* Pre-run "Active physics: ..." line above pane-hint. Mirrors the
+   workstation's compact summary of which physics extras the device's
+   current tier + parameters will actually activate. */
+.pane-active-physics {
+  color: var(--text);
+  font-size: 0.8rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace;
+  padding-top: 0.5rem;
+  padding-bottom: 0.25rem;
+  opacity: 0.85;
+}
+
 /* ── Experiment selector ─────────────────────────────────────────── */
 
 .experiment-pane {

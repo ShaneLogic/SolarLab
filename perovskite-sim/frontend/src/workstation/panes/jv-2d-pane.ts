@@ -10,6 +10,7 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
+import { describeActivePhysics } from '../../active-physics'
 import type { DeviceConfig, JV2DResult } from '../../types'
 import type { Run, RunResult } from '../types'
 
@@ -66,6 +67,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
         <span class="status" id="status-jv2d"></span>
       </div>
       <div id="progress-jv2d"></div>
+      <div class="pane-active-physics" id="jv2d-active-physics" title="Pre-run summary of active physics extras above the baseline 2D drift-diffusion solver. Updates when this pane is re-entered or a run is started.">Active physics: baseline 2D drift-diffusion</div>
       <div class="pane-hint">Stage A: ions are frozen as a static Poisson background and the
         device is laterally uniform, so this should reproduce the 1D J–V to within
         sub-mV V<sub>oc</sub>. TMM presets give physical G(x); Beer–Lambert presets
@@ -79,6 +81,21 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
   const illumCb = container.querySelector<HTMLInputElement>('#jv2d-illum')!
   const snapsCb = container.querySelector<HTMLInputElement>('#jv2d-snaps')!
   const bcSel = container.querySelector<HTMLSelectElement>('#jv2d-bc')!
+  const physSlot = container.querySelector<HTMLDivElement>('#jv2d-active-physics')!
+
+  // Pre-run mirror of the backend ``_describe_active_physics``. Reflects
+  // ONLY the device's currently configured physics extras (mode tier flags
+  // ANDed with the parameter presence). Refreshed on three triggers below
+  // — never live-bound, so editing the device in another pane will not
+  // update this line until the user mouses back into this pane.
+  function refreshActivePhysics(): void {
+    const active = opts.getActiveDevice()
+    physSlot.textContent = active
+      ? describeActivePhysics(active.config)
+      : 'Active physics: (no active device)'
+  }
+  refreshActivePhysics()
+  container.addEventListener('mouseenter', refreshActivePhysics)
 
   btn.addEventListener('click', () => {
     const active = opts.getActiveDevice()
@@ -86,6 +103,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
       setStatus('status-jv2d', 'No active device. Select one in the tree.', true)
       return
     }
+    refreshActivePhysics()
     btn.disabled = true
     progressBar.reset()
     setStatus('status-jv2d', 'Starting job…')
