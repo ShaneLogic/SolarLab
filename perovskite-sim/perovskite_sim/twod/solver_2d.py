@@ -774,6 +774,10 @@ class _RhsNonFinite2D(Exception):
     pass
 
 
+class _NfevExceeded2D(Exception):
+    pass
+
+
 def _assert_finite_2d(dydt: np.ndarray, V_app: float) -> None:
     if not np.all(np.isfinite(dydt)):
         raise _RhsNonFinite2D(f"non-finite dy/dt at V_app={V_app:.4f} V")
@@ -788,24 +792,44 @@ def run_transient_2d(
     max_step: float | None = None,
     rtol: float = 1e-6,
     atol: float = 1e-8,
+    max_nfev: int | None = None,
 ) -> np.ndarray:
     """Integrate dy/dt = assemble_rhs_2d(...) on [0, t_end] with Radau.
 
-    Returns the state vector at t_end. Raises `_RhsNonFinite2D` if any
-    RHS evaluation produces NaN/Inf.
+    Returns the state vector at t_end. Raises ``RuntimeError`` if Radau
+    fails to converge, the RHS produces NaN/Inf, or ``max_nfev`` is
+    exceeded.
+
+    The ``max_nfev`` cap mirrors the 1D ``run_transient`` pattern: without
+    it Radau can spin in its implicit Newton iteration on nearly singular
+    Jacobians (e.g. the diode-injection knee at V ≈ 0.21 V on TMM presets
+    when Phase 3.1b reabsorption is on) without any wall-time bound. The
+    cap converts that hang into a fast ``RuntimeError`` so the caller's
+    lagged-fallback path can take over.
     """
+    counter = [0]
+
     def rhs(t: float, y_state: np.ndarray) -> np.ndarray:
+        counter[0] += 1
+        if max_nfev is not None and counter[0] > max_nfev:
+            raise _NfevExceeded2D
         dydt = assemble_rhs_2d(t, y_state, mat, V_app)
         _assert_finite_2d(dydt, V_app)
         return dydt
 
-    sol = solve_ivp(
-        rhs, (0.0, t_end), y0,
-        method="Radau",
-        rtol=rtol, atol=atol,
-        max_step=max_step if max_step is not None else np.inf,
-        dense_output=False,
-    )
+    try:
+        sol = solve_ivp(
+            rhs, (0.0, t_end), y0,
+            method="Radau",
+            rtol=rtol, atol=atol,
+            max_step=max_step if max_step is not None else np.inf,
+            dense_output=False,
+        )
+    except _NfevExceeded2D:
+        raise RuntimeError(
+            f"Radau failed at V_app={V_app:.4f} V: max_nfev={max_nfev} "
+            f"exceeded (actual nfev={counter[0]})"
+        )
     if not sol.success:
         raise RuntimeError(f"Radau failed at V_app={V_app:.4f} V: {sol.message}")
     return sol.y[:, -1]
