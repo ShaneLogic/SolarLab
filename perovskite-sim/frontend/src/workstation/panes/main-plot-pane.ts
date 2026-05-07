@@ -153,17 +153,86 @@ function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): void {
 
 // ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
 
+type JV2DRangeMode = 'operational' | 'full'
+
+function _jv2dReadMode(el: HTMLElement): JV2DRangeMode {
+  // Toggle state lives on the STABLE container ``el`` passed into
+  // ``renderJV2D`` — survives every internal DOM rebuild (Plotly.purge,
+  // child removal, child re-append). Default ``'operational'`` so users
+  // see the photovoltaic operating window first; the diode tail past
+  // V_bi only appears on opt-in.
+  const v = el.dataset.jv2dMode
+  return v === 'full' ? 'full' : 'operational'
+}
+
+function _jv2dComputeYRange(
+  mode: JV2DRangeMode,
+  metrics: JV2DResult['metrics'],
+): [number, number] | undefined {
+  // Returns the clipped ``[ymin, ymax]`` for ``yaxis.range`` only when
+  // every precondition is met; otherwise ``undefined`` so the caller
+  // omits ``yaxis.range`` entirely and lets Plotly autorange (the
+  // explicit fallback path documented in the Layer 4 spec).
+  if (mode !== 'operational') return undefined
+  if (!metrics) return undefined
+  if (metrics.voc_bracketed !== true) return undefined
+  if (!Number.isFinite(metrics.J_sc) || metrics.J_sc <= 0) return undefined
+  // Backend J_sc is in A/m² (J_sc-positive convention). Display is
+  // mA/cm² post-divide-by-10 — same convention as the J trace below.
+  const J_sc_mA = metrics.J_sc / 10
+  return [-0.5 * J_sc_mA, 1.5 * J_sc_mA]
+}
+
 export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   Plotly.purge(el)
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
-  // Layout: plot at the top, metric-card row + (optional) bracket
-  // warning banner below it. The plot div is a SEPARATE child so the
-  // metric/warning markup can live in the same wrapper without
-  // colliding with Plotly's mutating DOM. Raw J/V arrays are NOT
-  // modified — the J → mA/cm² flip below is for display only and
-  // matches the existing pre-Layer-3 behaviour.
+  // Layout: optional toolbar at the top, then plot, then metric-card
+  // row + (optional) bracket warning banner. The plot div is a
+  // SEPARATE child so the metric/warning markup can live in the same
+  // wrapper without colliding with Plotly's mutating DOM. Raw J/V
+  // arrays are NOT modified — the J → mA/cm² flip below is for
+  // display only and matches the existing pre-Layer-3 behaviour.
   el.classList.add('jv2d-render')
+
+  // Layer 4: y-axis display-mode toolbar. Rendered only when metrics
+  // are available (no point offering "Operational range" if J_sc is
+  // unknown). Toggle state lives on ``el.dataset.jv2dMode`` so it
+  // survives the Plotly.purge + child rebuild this function performs.
+  const m = r.metrics
+  if (m) {
+    const toolbar = document.createElement('div')
+    toolbar.className = 'jv2d-toolbar'
+    toolbar.setAttribute('data-test', 'jv2d-toolbar')
+    const label = document.createElement('label')
+    label.className = 'jv2d-range-label'
+    label.htmlFor = 'jv2d-range-mode'
+    label.textContent = 'Range:'
+    const select = document.createElement('select')
+    select.id = 'jv2d-range-mode'
+    select.className = 'jv2d-range-select'
+    select.setAttribute('data-test', 'jv2d-range-mode')
+    const optOp = document.createElement('option')
+    optOp.value = 'operational'
+    optOp.textContent = 'Operational range'
+    const optFull = document.createElement('option')
+    optFull.value = 'full'
+    optFull.textContent = 'Full sweep'
+    select.appendChild(optOp)
+    select.appendChild(optFull)
+    select.value = _jv2dReadMode(el)
+    select.addEventListener('change', () => {
+      // Persist mode on stable container, then re-render. ``r`` is the
+      // SAME object reference — raw V/J unchanged across modes (vitest
+      // case 6 pins this byte-identically).
+      el.dataset.jv2dMode = select.value === 'full' ? 'full' : 'operational'
+      renderJV2D(el, r)
+    })
+    toolbar.appendChild(label)
+    toolbar.appendChild(select)
+    el.appendChild(toolbar)
+  }
+
   const plotDiv = document.createElement('div')
   plotDiv.className = 'jv2d-plot'
   plotDiv.id = 'jv2d-plot-inner'
@@ -174,6 +243,19 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   const J_mA = r.J.map(j => -j / 10)
   const Ny = r.grid_y.length
   const Nx = r.grid_x.length
+
+  // Layer 4: compute optional y-axis clipping range. Returns
+  // ``undefined`` when any precondition fails (mode='full', metrics
+  // missing, voc_bracketed!==true, J_sc<=0, J_sc non-finite) so we
+  // omit ``yaxis.range`` and let Plotly autorange.
+  const yClip = _jv2dComputeYRange(_jv2dReadMode(el), m)
+  const yaxisLayout: Record<string, unknown> = {
+    ...(baseLayout().yaxis as object),
+    title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)'),
+  }
+  if (yClip) {
+    yaxisLayout.range = yClip
+  }
   Plotly.newPlot(
     plotDiv,
     [
@@ -186,7 +268,7 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
     ],
     baseLayout({
       xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
+      yaxis: yaxisLayout,
       annotations: [
         {
           x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
@@ -206,7 +288,8 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // Layer 2 wire-through; in that case the row + warning are simply not
   // rendered. ``J_sc`` is in A/m² (J_sc-positive convention from the
   // backend; divide by 10 for mA/cm² display, mirror of 1D pane).
-  const m = r.metrics
+  // ``m`` was already bound at the top of this function for the Layer 4
+  // toolbar — reuse rather than redeclare.
   if (m) {
     const metricsRow = document.createElement('div')
     metricsRow.className = 'jv2d-metrics-row'

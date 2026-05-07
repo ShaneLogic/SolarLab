@@ -138,3 +138,171 @@ describe('renderJV2D — metrics card row', () => {
     expect(el.querySelector('[data-test="jv2d-voc-not-bracketed"]')).toBeNull()
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// Layer 4: y-axis operational-range toggle. Plotly is mocked, so the test
+// reads ``newPlot``'s third positional arg (the layout) to assert whether
+// ``yaxis.range`` was set or omitted. Trace data is the second positional
+// arg — the test pins that the J trace is byte-identical between modes
+// (raw V/J unchanged).
+// ---------------------------------------------------------------------------
+
+import Plotly from 'plotly.js-basic-dist-min'
+const newPlotMock = vi.mocked(Plotly.newPlot)
+
+function _lastNewPlotLayout(): Record<string, any> | undefined {
+  const calls = newPlotMock.mock.calls
+  if (calls.length === 0) return undefined
+  return calls[calls.length - 1][2] as Record<string, any>
+}
+
+function _lastNewPlotTraceY(): number[] | undefined {
+  const calls = newPlotMock.mock.calls
+  if (calls.length === 0) return undefined
+  const data = calls[calls.length - 1][1] as Array<{ y?: number[] }>
+  return data?.[0]?.y
+}
+
+describe('renderJV2D — Layer 4 y-axis operational range', () => {
+  let el: HTMLDivElement
+
+  beforeEach(() => {
+    newPlotMock.mockClear()
+    el = document.createElement('div')
+    document.body.appendChild(el)
+  })
+
+  it('applies clipped yaxis.range in default Operational mode when bracketed', () => {
+    const result = makeResult({
+      metrics: {
+        V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
+        voc_bracketed: true,
+      },
+    })
+    renderJV2D(el, result)
+    const layout = _lastNewPlotLayout()
+    expect(layout).toBeDefined()
+    const range = layout!.yaxis?.range as [number, number] | undefined
+    expect(range, 'yaxis.range must be set in operational mode').toBeDefined()
+    // J_sc=200 A/m² → 20 mA/cm². [-0.5*20, 1.5*20] = [-10, 30].
+    expect(range![0]).toBeCloseTo(-10.0, 6)
+    expect(range![1]).toBeCloseTo(+30.0, 6)
+  })
+
+  it('switching to Full sweep removes yaxis.range (autorange)', () => {
+    const result = makeResult({
+      metrics: {
+        V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
+        voc_bracketed: true,
+      },
+    })
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis?.range).toBeDefined()
+
+    // Simulate user toggling the select to "Full sweep".
+    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')
+    expect(sel, 'toolbar select must render when metrics present').not.toBeNull()
+    sel!.value = 'full'
+    sel!.dispatchEvent(new Event('change'))
+
+    const layout = _lastNewPlotLayout()
+    expect(layout!.yaxis?.range, 'Full sweep must omit yaxis.range').toBeUndefined()
+  })
+
+  it('falls back to autorange when voc_bracketed is false', () => {
+    const result = makeResult({
+      metrics: {
+        V_oc: 0.0, J_sc: 200.0, FF: 0.0, PCE: 0.0,
+        voc_bracketed: false,
+      },
+    })
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
+  })
+
+  it('falls back to autorange when metrics is missing', () => {
+    // No metrics on the payload (legacy backend).
+    const result = makeResult()
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
+  })
+
+  it('falls back to autorange when J_sc is non-positive', () => {
+    const result = makeResult({
+      metrics: {
+        V_oc: 0.95, J_sc: 0.0, FF: 0.82, PCE: 0.16,
+        voc_bracketed: true,
+      },
+    })
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
+  })
+
+  it('falls back to autorange when J_sc is non-finite', () => {
+    const result = makeResult({
+      metrics: {
+        V_oc: 0.95, J_sc: Number.POSITIVE_INFINITY, FF: 0.82, PCE: 0.16,
+        voc_bracketed: true,
+      },
+    })
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
+  })
+
+  it('raw J trace is byte-identical between Operational and Full sweep modes', () => {
+    const result = makeResult({
+      metrics: {
+        V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
+        voc_bracketed: true,
+      },
+    })
+    // First render — operational (default).
+    renderJV2D(el, result)
+    const yOp = _lastNewPlotTraceY()!.slice()
+    // Toggle to full and re-render via the change handler.
+    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
+    sel.value = 'full'
+    sel.dispatchEvent(new Event('change'))
+    const yFull = _lastNewPlotTraceY()!.slice()
+    // Trace data must match exactly. The Layer 4 toggle changes
+    // yaxis.range only — never the data.
+    expect(yFull).toEqual(yOp)
+    // And both must equal the expected post-flip-and-scale conversion
+    // of the original J array (no mutation of r.J).
+    const expected = result.J.map(j => -j / 10)
+    expect(yOp).toEqual(expected)
+    expect(result.J).toEqual([-300.0, -250.0, +50.0])  // input untouched
+  })
+
+  it('persists the toggle state on the stable container across renderJV2D calls', () => {
+    const result = makeResult({
+      metrics: {
+        V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
+        voc_bracketed: true,
+      },
+    })
+    // First render — default 'operational' (no dataset key written
+    // until user toggles).
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis?.range).toBeDefined()
+    // Toggle to full via the select.
+    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
+    sel.value = 'full'
+    sel.dispatchEvent(new Event('change'))
+    expect(el.dataset.jv2dMode).toBe('full')
+    // Now simulate a fresh ``renderJV2D`` call from outside (e.g.
+    // mountMainPlotPane.update). The dataset attribute on the same
+    // ``el`` must be honoured — no clipped range.
+    renderJV2D(el, result)
+    const sel2 = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
+    expect(sel2.value).toBe('full')
+    expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
+  })
+
+  it('does not render the toolbar when metrics are absent', () => {
+    const result = makeResult()
+    renderJV2D(el, result)
+    expect(el.querySelector('[data-test="jv2d-toolbar"]')).toBeNull()
+  })
+})
