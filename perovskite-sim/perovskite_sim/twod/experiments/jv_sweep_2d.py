@@ -22,6 +22,18 @@ ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
 
 
+_TWOD_RADAU_MAX_NFEV = 100_000
+"""Per-step Newton-iteration budget. Mirrors 1D ``_JV_RADAU_MAX_NFEV``.
+
+Without this cap the 2D Radau implicit step can spin indefinitely on
+nearly singular Jacobians — the canonical case is the diode-injection
+knee at V ≈ 0.21 V on TMM presets when Phase 3.1b reabsorption is on,
+where the non-local ``R_tot = ∬ B·n·p dy dx`` source destroys Newton
+contraction. The cap converts the hang into a fast ``RuntimeError`` so
+the lagged-fallback retry below can take over.
+"""
+
+
 @dataclass(frozen=True)
 class JV2DResult:
     """Result of a forward illuminated 2D J-V sweep.
@@ -229,6 +241,7 @@ def run_jv_sweep_2d(
                 V_app=float(V),
                 t_end=settle_t,
                 max_step=settle_t / 50.0,
+                max_nfev=_TWOD_RADAU_MAX_NFEV,
             )
         except RuntimeError:
             # Stage B(c.3) lagged fallback: bake R_tot once at the entry state,
@@ -243,6 +256,7 @@ def run_jv_sweep_2d(
                 V_app=float(V),
                 t_end=settle_t,
                 max_step=settle_t / 50.0,
+                max_nfev=_TWOD_RADAU_MAX_NFEV,
             )
         snap = extract_snapshot_2d(y_state, mat, V_app=float(V))
         J_list.append(compute_terminal_current_2d(snap))
