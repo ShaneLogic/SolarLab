@@ -41,6 +41,25 @@ describe('isFieldVisible', () => {
     expect(isFieldVisible('T', 'full')).toBe(true)
   })
 
+  it('hides Stage B(c.1) Robin contact fields in legacy and fast', () => {
+    for (const k of ['S_n_left', 'S_p_left', 'S_n_right', 'S_p_right']) {
+      expect(isFieldVisible(k, 'legacy')).toBe(false)
+      expect(isFieldVisible(k, 'fast')).toBe(false)
+      expect(isFieldVisible(k, 'full')).toBe(true)
+    }
+  })
+
+  it('hides Stage B(c.2) field-mobility fields in legacy and fast', () => {
+    for (const k of [
+      'v_sat_n', 'v_sat_p', 'ct_beta_n', 'ct_beta_p',
+      'pf_gamma_n', 'pf_gamma_p',
+    ]) {
+      expect(isFieldVisible(k, 'legacy')).toBe(false)
+      expect(isFieldVisible(k, 'fast')).toBe(false)
+      expect(isFieldVisible(k, 'full')).toBe(true)
+    }
+  })
+
   it('unknown field keys default to visible (fail-open)', () => {
     expect(isFieldVisible('some_new_future_key', 'legacy')).toBe(true)
   })
