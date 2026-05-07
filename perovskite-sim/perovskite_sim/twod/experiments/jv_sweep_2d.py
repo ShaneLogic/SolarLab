@@ -22,15 +22,20 @@ ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
 
 
-_TWOD_RADAU_MAX_NFEV = 100_000
-"""Per-step Newton-iteration budget. Mirrors 1D ``_JV_RADAU_MAX_NFEV``.
+_TWOD_RADAU_MAX_NFEV = 200_000
+"""Per-step Newton-iteration budget. 2× the 1D ``_JV_RADAU_MAX_NFEV``
+because the 2D Jacobian is larger and Newton contracts more slowly per
+iteration; borderline TMM-preset cases (e.g. ``test_jv_sweep_2d_uniform``
+at V=0.5 V) cleanly need ~100-150k RHS calls, and fluctuations in
+multi-threaded BLAS scheduling can push them just over a 100k cap.
 
 Without this cap the 2D Radau implicit step can spin indefinitely on
 nearly singular Jacobians — the canonical case is the diode-injection
 knee at V ≈ 0.21 V on TMM presets when Phase 3.1b reabsorption is on,
 where the non-local ``R_tot = ∬ B·n·p dy dx`` source destroys Newton
-contraction. The cap converts the hang into a fast ``RuntimeError`` so
-the lagged-fallback retry below can take over.
+contraction. The cap converts the hang into a fast ``RuntimeError``
+(at this budget, ~30-60 s wall time) so the lagged-fallback retry
+below can take over.
 """
 
 
