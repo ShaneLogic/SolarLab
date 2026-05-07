@@ -2,6 +2,7 @@ import Plotly from 'plotly.js-basic-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../../plot-theme'
+import { metricCard } from '../../ui-helpers'
 import type {
   JVResult,
   ISResult,
@@ -152,16 +153,29 @@ function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): void {
 
 // ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
 
-function renderJV2D(el: HTMLElement, r: JV2DResult): void {
+export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  // Layout: plot at the top, metric-card row + (optional) bracket
+  // warning banner below it. The plot div is a SEPARATE child so the
+  // metric/warning markup can live in the same wrapper without
+  // colliding with Plotly's mutating DOM. Raw J/V arrays are NOT
+  // modified — the J → mA/cm² flip below is for display only and
+  // matches the existing pre-Layer-3 behaviour.
+  el.classList.add('jv2d-render')
+  const plotDiv = document.createElement('div')
+  plotDiv.className = 'jv2d-plot'
+  plotDiv.id = 'jv2d-plot-inner'
+  el.appendChild(plotDiv)
+
   // 2D backend signs J < 0 under illumination at V=0; flip to match the
   // 1D forward-sweep display (J > 0 at V_sc, J = 0 at V_oc, J < 0 beyond).
   const J_mA = r.J.map(j => -j / 10)
   const Ny = r.grid_y.length
   const Nx = r.grid_x.length
   Plotly.newPlot(
-    el,
+    plotDiv,
     [
       {
         x: r.V, y: J_mA, name: 'Forward (2D)',
@@ -184,6 +198,53 @@ function renderJV2D(el: HTMLElement, r: JV2DResult): void {
     }),
     plotConfig('jv_2d_sweep'),
   )
+
+  // Layer 3: render JVMetrics card row + bracket-warning banner. Mirrors
+  // the 1D ``panels/jv.ts`` pattern (V_oc / J_sc / FF / PCE), reusing the
+  // same ``metricCard`` helper for visual consistency. Optional metrics
+  // field — back-compat with payloads from a backend that pre-dates the
+  // Layer 2 wire-through; in that case the row + warning are simply not
+  // rendered. ``J_sc`` is in A/m² (J_sc-positive convention from the
+  // backend; divide by 10 for mA/cm² display, mirror of 1D pane).
+  const m = r.metrics
+  if (m) {
+    const metricsRow = document.createElement('div')
+    metricsRow.className = 'jv2d-metrics-row'
+    metricsRow.setAttribute('data-test', 'jv2d-metrics-row')
+    // When the sweep didn't bracket V_oc, the backend returns sentinel
+    // zeros for V_oc / FF / PCE. Rendering "0.000 V" as a physical V_oc
+    // is misleading — show "—" (em dash, the conventional "not
+    // available" placeholder). J_sc stays because ``compute_metrics``
+    // interpolates it at V=0 regardless of bracket success.
+    const bracketed = m.voc_bracketed !== false
+    const dash = '—'
+    const vocStr = bracketed ? `${m.V_oc.toFixed(3)} V` : dash
+    const ffStr  = bracketed ? `${(m.FF * 100).toFixed(1)} %` : dash
+    const pceStr = bracketed ? `${(m.PCE * 100).toFixed(2)} %` : dash
+    const cardsHtml =
+      `<div class="metric-row">` +
+      metricCard('V<sub>OC</sub>', vocStr) +
+      metricCard('J<sub>SC</sub>', `${(m.J_sc / 10).toFixed(2)} mA/cm²`) +
+      metricCard('FF', ffStr) +
+      metricCard('PCE', pceStr) +
+      `</div>`
+    metricsRow.insertAdjacentHTML('beforeend', cardsHtml)
+    el.appendChild(metricsRow)
+
+    // Bracket warning — only when the backend explicitly tells us the
+    // sweep stopped short of V_oc. ``voc_bracketed === false`` (NOT
+    // ``=== undefined``) is the trigger so an old backend payload that
+    // omits the field is treated as "no warning surfaced", not as "warn
+    // by default".
+    if (m.voc_bracketed === false) {
+      const warnBanner = document.createElement('div')
+      warnBanner.className = 'jv2d-warning'
+      warnBanner.setAttribute('data-test', 'jv2d-voc-not-bracketed')
+      warnBanner.textContent =
+        'V_oc not bracketed — increase V_max'
+      el.appendChild(warnBanner)
+    }
+  }
 }
 
 function renderJV(el: HTMLElement, r: JVResult): void {
