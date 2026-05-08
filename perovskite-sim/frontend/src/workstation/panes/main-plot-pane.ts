@@ -1028,52 +1028,148 @@ function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
 
 // ── Suns–V_oc ───────────────────────────────────────────────────────────────
 
-function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
+export function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('suns-voc-render')
 
-  // Left subplot: V_oc vs log(suns).  Right subplot: pseudo J-V.
+  const style = readPlotStyleMode(el)
+
+  // Style: select toolbar \u2014 always rendered above the plot.
+  const toolbar = document.createElement('div')
+  toolbar.className = 'plot-toolbar'
+  toolbar.setAttribute('data-test', 'suns-voc-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'suns-voc-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'suns-voc-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'suns-voc-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = style
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderSunsVoc(el, r)
+    })
+    toolbar.appendChild(styleLabel)
+    toolbar.appendChild(styleSelect)
+  }
+  el.appendChild(toolbar)
+
+  const plotDiv = document.createElement('div')
+  plotDiv.className = 'suns-voc-plot'
+  plotDiv.id = 'suns-voc-plot-inner'
+  el.appendChild(plotDiv)
+
+  // Pre-existing transform: A/m\u00b2 \u2192 mA/cm\u00b2 for the pseudo J-V trace.
+  // Raw r.J_pseudo_J / r.J_pseudo_V / r.suns / r.V_oc arrays remain
+  // untouched (regression-pinned).
   const pseudo_J_mA = r.J_pseudo_J.map(j => j / 10)
 
-  const axBase = baseLayout().xaxis as object
-  const ayBase = baseLayout().yaxis as object
-
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.suns, y: r.V_oc, name: 'V<sub>oc</sub>(suns)',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-        xaxis: 'x', yaxis: 'y',
-      },
-      {
-        x: r.J_pseudo_V, y: pseudo_J_mA, name: 'pseudo J\u2013V',
-        mode: 'lines+markers',
-        line: { color: PALETTE.reverse, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
-        xaxis: 'x2', yaxis: 'y2',
-      },
-    ],
-    {
-      ...baseLayout(),
-      grid: { rows: 1, columns: 2, pattern: 'independent' },
-      xaxis: { ...axBase, title: axisTitle('Suns'), type: 'log', anchor: 'y' },
-      yaxis: { ...ayBase, title: axisTitle('V<sub>oc</sub> (V)'), anchor: 'x' },
-      xaxis2: { ...axBase, title: axisTitle('V (V)'), anchor: 'y2' },
-      yaxis2: { ...ayBase, title: axisTitle('J (mA\u00b7cm\u207B\u00b2)'), anchor: 'x2' },
-      annotations: [
+  if (style === 'publication') {
+    Plotly.newPlot(
+      plotDiv,
+      [
         {
-          x: 0.98, y: 0.02, xref: 'paper', yref: 'paper',
-          xanchor: 'right', yanchor: 'bottom', showarrow: false,
-          text: `pseudo FF = ${(r.pseudo_FF * 100).toFixed(1)} %`,
-          font: { size: 12 },
+          x: r.suns, y: r.V_oc, name: 'V<sub>oc</sub>(suns)',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+          xaxis: 'x', yaxis: 'y',
+        },
+        {
+          x: r.J_pseudo_V, y: pseudo_J_mA, name: 'pseudo J\u2013V',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.reverse,
+            hollow: true,
+            symbol: 'square',
+          }),
+          xaxis: 'x2', yaxis: 'y2',
         },
       ],
-    },
-    plotConfig('suns_voc'),
-  )
+      publicationLayout({
+        grid: { rows: 1, columns: 2, pattern: 'independent' as const },
+        xaxis: publicationAxis({ title: 'Suns', isLog: true }),
+        yaxis: publicationAxis({ title: 'V_oc (V)' }),
+        xaxis2: publicationAxis({ title: 'Voltage (V)' }),
+        yaxis2: publicationAxis({ title: 'Current density (mA cm\u207B\u00b2)' }),
+        // Suns-V_oc has two distinct subplots \u2014 keep the legend off
+        // entirely; trace identity is conveyed by the per-subplot
+        // axis labels and the in-plot pseudo-FF annotation.
+        showlegend: false,
+        annotations: [
+          {
+            // Bottom-right of the right (pseudo J-V) subplot. Paper
+            // coords place it at the lower-right of the full figure
+            // which lands inside the right subplot under a 2-column grid.
+            x: 0.98, y: 0.05, xref: 'paper', yref: 'paper',
+            xanchor: 'right' as const, yanchor: 'bottom' as const,
+            showarrow: false,
+            text: `pseudo FF = ${(r.pseudo_FF * 100).toFixed(1)}%`,
+            align: 'right' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('suns_voc'),
+    )
+  } else {
+    const axBase = baseLayout().xaxis as object
+    const ayBase = baseLayout().yaxis as object
+    Plotly.newPlot(
+      plotDiv,
+      [
+        {
+          x: r.suns, y: r.V_oc, name: 'V<sub>oc</sub>(suns)',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+          xaxis: 'x', yaxis: 'y',
+        },
+        {
+          x: r.J_pseudo_V, y: pseudo_J_mA, name: 'pseudo J\u2013V',
+          mode: 'lines+markers',
+          line: { color: PALETTE.reverse, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
+          xaxis: 'x2', yaxis: 'y2',
+        },
+      ],
+      {
+        ...baseLayout(),
+        grid: { rows: 1, columns: 2, pattern: 'independent' },
+        xaxis: { ...axBase, title: axisTitle('Suns'), type: 'log', anchor: 'y' },
+        yaxis: { ...ayBase, title: axisTitle('V<sub>oc</sub> (V)'), anchor: 'x' },
+        xaxis2: { ...axBase, title: axisTitle('V (V)'), anchor: 'y2' },
+        yaxis2: { ...ayBase, title: axisTitle('J (mA\u00b7cm\u207B\u00b2)'), anchor: 'x2' },
+        annotations: [
+          {
+            x: 0.98, y: 0.02, xref: 'paper', yref: 'paper',
+            xanchor: 'right', yanchor: 'bottom', showarrow: false,
+            text: `pseudo FF = ${(r.pseudo_FF * 100).toFixed(1)} %`,
+            font: { size: 12 },
+          },
+        ],
+      },
+      plotConfig('suns_voc'),
+    )
+  }
 }
 
 // ── EQE / IPCE ──────────────────────────────────────────────────────────────
