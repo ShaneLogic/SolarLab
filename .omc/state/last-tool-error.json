@@ -1,7 +1,0 @@
-{
-  "tool_name": "Glob",
-  "tool_input_preview": "{\"pattern\":\"**/.git\",\"path\":\"/Users/shane\"}",
-  "error": "Ripgrep search timed out after 20 seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern.",
-  "timestamp": "2026-03-20T07:54:17.301Z",
-  "retry_count": 1
-}
