@@ -137,6 +137,12 @@ function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): void {
       xaxis: {
         ...(baseLayout().xaxis as object),
         type: 'log',
+        // Decade-only major tick labels (Nature-style log axis
+        // convention). Plotly's default auto-tick algorithm prints
+        // minor labels at 2× and 5× between decades, which crowds
+        // the canvas. Applies in both Engineering and Publication
+        // mode for consistency.
+        dtick: 1,
         title: axisTitle('Grain size, <i>L<sub>g</sub></i> (nm)'),
       },
       yaxis: {
@@ -969,7 +975,7 @@ function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
       xaxis: { ...axBase, title: '', showticklabels: false, anchor: 'y' },
       yaxis: { ...ayBase, title: axisTitle('\u03C6 (V)'), anchor: 'x' },
       xaxis2: { ...axBase, title: '', showticklabels: false, anchor: 'y2' },
-      yaxis2: { ...ayBase, title: axisTitle('n, p (m\u207B\u00B3)'), type: 'log', anchor: 'x2' },
+      yaxis2: { ...ayBase, title: axisTitle('n, p (m\u207B\u00B3)'), type: 'log', dtick: 1, anchor: 'x2' },
       xaxis3: { ...axBase, title: axisTitle('Position (nm)'), anchor: 'y3' },
       yaxis3: { ...ayBase, title: axisTitle('E (10\u2074 V/m)'), anchor: 'x3' },
       legend: { x: 1.02, y: 1, xanchor: 'left', yanchor: 'top', ...(baseLayout().legend as object) },
@@ -1011,7 +1017,7 @@ function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
     ],
     baseLayout({
       xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA\u00b7cm\u207B\u00b2)'), type: 'log' },
+      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA\u00b7cm\u207B\u00b2)'), type: 'log', dtick: 1 },
       shapes,
       annotations: [
         {
@@ -1156,7 +1162,7 @@ export function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
       {
         ...baseLayout(),
         grid: { rows: 1, columns: 2, pattern: 'independent' },
-        xaxis: { ...axBase, title: axisTitle('Suns'), type: 'log', anchor: 'y' },
+        xaxis: { ...axBase, title: axisTitle('Suns'), type: 'log', dtick: 1, anchor: 'y' },
         yaxis: { ...ayBase, title: axisTitle('V<sub>oc</sub> (V)'), anchor: 'x' },
         xaxis2: { ...axBase, title: axisTitle('V (V)'), anchor: 'y2' },
         yaxis2: { ...ayBase, title: axisTitle('J (mA\u00b7cm\u207B\u00b2)'), anchor: 'x2' },
