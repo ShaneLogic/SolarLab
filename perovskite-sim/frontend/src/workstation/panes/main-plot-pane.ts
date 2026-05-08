@@ -6,7 +6,7 @@ import {
   // Publication-theme additions (Nature-style single-panel mode).
   publicationLayout, publicationAxis, publicationConfig,
   publicationTraceStyle, metricAnnotation,
-  readPlotStyleMode, PUBLICATION_PALETTE,
+  readPlotStyleMode, PUBLICATION_PALETTE, PUBLICATION_FONT_FAMILY,
 } from '../../plot-theme'
 import { metricCard } from '../../ui-helpers'
 import type {
@@ -675,15 +675,25 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
       publicationLayout({
         xaxis: publicationAxis(xaxisOpts),
         yaxis: publicationAxis(yaxisOpts),
-        // Annotation source picker — under heavy hysteresis the
-        // forward sweep can fail to bracket V_oc while the reverse
-        // sweep brackets fine, so always-reading metrics_fwd produces
-        // a misleading "V_oc: not bracketed" next to a plot whose
-        // reverse trace clearly crosses zero. Pick the bracketed
-        // sweep (forward preferred when both bracket) and label which
-        // sweep the numbers describe; legacy payloads with both
-        // ``voc_bracketed === undefined`` get no annotation, matching
-        // metricAnnotation's existing fallback.
+        // Override the publicationLayout default upper-LEFT legend
+        // position to upper-RIGHT for 1D J-V. The forward+reverse
+        // curves enter the panel at (V=0, J=+J_sc) — i.e. the
+        // upper-left corner — so the upper-left legend overlaps the
+        // curve plateau. The upper-right corner is empty because
+        // the curves exit toward (V=V_oc, J=0) at the lower-right,
+        // and the metric annotation at (0.12, 0.34) sits well below.
+        // Note: ``publicationLayout`` spreads overrides last, so any
+        // ``legend`` key here REPLACES the default object — re-pin
+        // the publication font / transparent bg / borderless styling
+        // so the override doesn't accidentally restore Plotly defaults.
+        legend: {
+          font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          x: 0.98, y: 0.98,
+          xanchor: 'right' as const, yanchor: 'top' as const,
+        },
         annotations: _jv1dPickAnnotation(pick),
       }),
       publicationConfig('jv_sweep'),

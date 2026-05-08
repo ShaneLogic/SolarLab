@@ -241,6 +241,13 @@ def to_serializable(obj):
         return obj.tolist()
     elif isinstance(obj, (np.floating, float)):
         return float(obj)
+    # NOTE: bool MUST be checked before int — Python ``bool`` subclasses
+    # ``int``, so ``isinstance(True, int) == True`` and the int branch
+    # below would silently coerce ``True``/``False`` to ``1``/``0``,
+    # breaking strict-equality checks (e.g. ``=== true``) on the frontend.
+    # ``np.bool_`` is included so numpy scalar booleans round-trip too.
+    elif isinstance(obj, (bool, np.bool_)):
+        return bool(obj)
     elif isinstance(obj, (np.integer, int)):
         return int(obj)
     elif isinstance(obj, complex):
