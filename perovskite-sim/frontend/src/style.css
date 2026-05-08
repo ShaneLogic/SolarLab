@@ -468,9 +468,11 @@ input[type="number"] {
    ``.jv2d-metrics-row`` and ``.jv2d-warning`` can sit alongside it
    without colliding with Plotly's mutating DOM. */
 .jv2d-render,
-.jv1d-render { display: flex; flex-direction: column; gap: 0.5rem; }
+.jv1d-render,
+.suns-voc-render { display: flex; flex-direction: column; gap: 0.5rem; }
 .jv2d-plot,
-.jv1d-plot { flex: 1 1 auto; min-height: 0; }
+.jv1d-plot,
+.suns-voc-plot { flex: 1 1 auto; min-height: 0; }
 .jv2d-metrics-row { padding: 0.25rem 0; }
 .jv2d-warning {
   background: #fef3c7;
