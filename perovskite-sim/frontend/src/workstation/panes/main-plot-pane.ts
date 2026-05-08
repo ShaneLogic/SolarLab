@@ -189,6 +189,50 @@ function _jv2dComputeYRange(
   return [-0.5 * J_sc_mA, 1.5 * J_sc_mA]
 }
 
+// Publication-mode operational ranges — TIGHTER than the engineering
+// operational window. Designed for paper-figure aesthetics: small
+// negative padding below J=0, light headroom above J_sc, and a small
+// negative x-margin so the V=0 reference line is visible without
+// inventing negative-voltage data. Both helpers return ``undefined``
+// outside operational mode (Full sweep stays autoranged).
+function _jv2dComputeYRangePublication(
+  mode: JV2DRangeMode,
+  metrics: JV2DResult['metrics'],
+): [number, number] | undefined {
+  if (mode !== 'operational') return undefined
+  if (!metrics) return undefined
+  if (metrics.voc_bracketed !== true) return undefined
+  if (!Number.isFinite(metrics.J_sc) || metrics.J_sc <= 0) return undefined
+  const J_sc_mA = metrics.J_sc / 10
+  return [-0.15 * J_sc_mA, 1.12 * J_sc_mA]
+}
+
+function _jv2dComputeXRangePublication(
+  mode: JV2DRangeMode,
+  V: number[],
+  metrics: JV2DResult['metrics'],
+): [number, number] | undefined {
+  if (mode !== 'operational') return undefined
+  if (V.length === 0) return undefined
+  const minV = Math.min(...V)
+  const maxV = Math.max(...V)
+  // Add a small visual negative margin only when the sweep starts at
+  // V=0 — never shift the visible window left of an existing negative
+  // sweep value.
+  const xmin = minV >= 0 ? -0.05 : minV
+  // Cap upper bound at V_oc + 0.18 V when V_oc is bracketed; this
+  // trims the diode-tail past the open-circuit point that typically
+  // dominates Engineering "Full sweep" plots. Without a valid V_oc,
+  // fall back to ``maxV + 0.05`` (small headroom for the rightmost
+  // sample).
+  const vocCap =
+    metrics && metrics.voc_bracketed === true && Number.isFinite(metrics.V_oc)
+      ? metrics.V_oc + 0.18
+      : Number.POSITIVE_INFINITY
+  const xmax = Math.min(maxV + 0.05, vocCap)
+  return [xmin, xmax]
+}
+
 export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   Plotly.purge(el)
   // Reset wrapper without using innerHTML assignment (security hook).
@@ -288,19 +332,37 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // omit ``yaxis.range`` and let Plotly autorange.
   const yClip = _jv2dComputeYRange(_jv2dReadMode(el), m)
 
-  // Vertical zero-line is only drawn when the data crosses V=0
-  // (existing preset sweeps start at V=0; we never invent negative
-  // voltage). Horizontal zero-line at J=0 is always drawn in
-  // publication mode — it is the canonical Nature J–V reference line.
+  // Vertical zero-line is drawn whenever the visible x-axis crosses
+  // V=0 — either because the sweep itself includes negative voltage
+  // OR because publication+operational mode gives the axis a small
+  // negative visual margin (without inventing data). Horizontal
+  // zero-line at J=0 is always drawn in publication mode.
+  const range = _jv2dReadMode(el)
   const minV = r.V.length > 0 ? Math.min(...r.V) : 0
-  const xWithZero = minV < 0
+  const yClipPub = _jv2dComputeYRangePublication(range, m)
+  const xClipPub = _jv2dComputeXRangePublication(range, r.V, m)
+  // Use the publication x-clip's lower bound when active (it may be
+  // -0.05 even though the raw data starts at 0); otherwise fall back
+  // to the raw min(V) — never invents negative data, only relabels
+  // the axis margin.
+  const xVisibleMin = xClipPub ? xClipPub[0] : minV
+  const xWithZero = xVisibleMin < 0
 
   if (style === 'publication') {
     const yaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
       title: 'Current density (mA cm⁻²)',
       withZeroLine: true,
     }
-    if (yClip) yaxisOpts.range = yClip
+    // Publication mode prefers the tighter ``yClipPub`` window; fall
+    // back to the broader engineering ``yClip`` only when the tighter
+    // helper opts out (Full sweep, missing metrics, etc.).
+    const yRangePub = yClipPub ?? yClip
+    if (yRangePub) yaxisOpts.range = yRangePub
+    const xaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+      title: 'Voltage (V)',
+      withZeroLine: xWithZero,
+    }
+    if (xClipPub) xaxisOpts.range = xClipPub
     Plotly.newPlot(
       plotDiv,
       [
@@ -314,9 +376,14 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
         },
       ],
       publicationLayout({
-        xaxis: publicationAxis({ title: 'Voltage (V)', withZeroLine: xWithZero }),
+        xaxis: publicationAxis(xaxisOpts),
         yaxis: publicationAxis(yaxisOpts),
         annotations: metricAnnotation(m),
+        // Single-trace 2D forward sweep — a Nature single-panel J-V
+        // figure with one curve does not need a legend; the trace
+        // identity is conveyed by the in-plot metric annotation and
+        // the panel title outside the canvas.
+        showlegend: false,
       }),
       publicationConfig('jv_2d_sweep'),
     )

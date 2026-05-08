@@ -373,9 +373,10 @@ describe('renderJV2D — publication style mode', () => {
     expect(layout.paper_bgcolor).toBe('#ffffff')
     expect(layout.plot_bgcolor).toBe('#ffffff')
     expect(layout.margin).toEqual({ t: 18, r: 18, b: 48, l: 58 })
-    // Compact in-plot legend, top-right corner.
-    expect(layout.legend.x).toBe(0.98)
-    expect(layout.legend.xanchor).toBe('right')
+    // Default legend lives upper-left in publication layout (single-trace
+    // 2D figure separately suppresses display via ``showlegend: false``).
+    expect(layout.legend.x).toBe(0.02)
+    expect(layout.legend.xanchor).toBe('left')
   })
 
   it('publication config hides the modebar; engineering does not', () => {
@@ -398,8 +399,11 @@ describe('renderJV2D — publication style mode', () => {
     expect(annotations.length).toBe(1)
     expect(annotations[0].text).toContain('0.951 V')
     expect(annotations[0].text).toContain('22.00 mA cm⁻²')
-    expect(annotations[0].text).toContain('82.3 %')
-    expect(annotations[0].text).toContain('17.22 %')
+    // Nature-style: no space before percent sign.
+    expect(annotations[0].text).toContain('82.3%')
+    expect(annotations[0].text).toContain('17.22%')
+    expect(annotations[0].text).not.toContain('82.3 %')
+    expect(annotations[0].text).not.toContain('17.22 %')
   })
 
   it('publication mode shows "not bracketed" annotation when voc_bracketed=false', () => {
@@ -412,8 +416,8 @@ describe('renderJV2D — publication style mode', () => {
     expect(annotations.length).toBe(1)
     expect(annotations[0].text).toContain('not bracketed')
     expect(annotations[0].text).not.toContain('0.000 V')
-    expect(annotations[0].text).not.toContain('0.0 %')
-    expect(annotations[0].text).not.toContain('0.00 %')
+    expect(annotations[0].text).not.toContain('0.0%')
+    expect(annotations[0].text).not.toContain('0.00%')
   })
 
   it('publication mode renders no annotation when metrics are missing', () => {
@@ -452,20 +456,24 @@ describe('renderJV2D — publication style mode', () => {
   })
 
   it('range mode and style mode are independent (operational + publication)', () => {
+    // Engineering operational uses [-0.5*Jsc_mA, 1.5*Jsc_mA].
+    // Publication operational uses the TIGHTER [-0.15*Jsc_mA, 1.12*Jsc_mA].
+    // J_sc=200 A/m² → J_sc_mA=20 → eng:[-10,+30], pub:[-3.0,+22.4].
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
-    // Default = operational + engineering.
     renderJV2D(el, result)
-    expect(_lastNewPlotLayout()!.yaxis.range).toBeDefined()
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    // Toggle style only — range stays operational.
+    const engLayout = _lastNewPlotLayout()!
+    expect(engLayout.yaxis.range).toBeDefined()
+    expect((engLayout.yaxis.range as [number, number])[0]).toBeCloseTo(-10.0, 6)
+    expect((engLayout.yaxis.range as [number, number])[1]).toBeCloseTo(+30.0, 6)
+    expect(engLayout.font.family).toBe('Arial, sans-serif')
     _toggleStyle(el, 'publication')
     const pubLayout = _lastNewPlotLayout()!
-    expect(pubLayout.yaxis.range).toBeDefined()                      // still clipped
-    expect((pubLayout.yaxis.range as [number, number])[0]).toBeCloseTo(-10.0, 6)
-    expect((pubLayout.yaxis.range as [number, number])[1]).toBeCloseTo(+30.0, 6)
-    expect(pubLayout.font.family).toBe(PUBLICATION_FONT_FAMILY)      // publication font
+    expect(pubLayout.yaxis.range).toBeDefined()
+    expect((pubLayout.yaxis.range as [number, number])[0]).toBeCloseTo(-3.0, 6)
+    expect((pubLayout.yaxis.range as [number, number])[1]).toBeCloseTo(+22.4, 6)
+    expect(pubLayout.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
   it('range "Full sweep" + style "Publication" composes — autorange + Helvetica', () => {
@@ -502,17 +510,20 @@ describe('renderJV2D — publication style mode', () => {
     expect(yPub).toEqual(expected)
   })
 
-  it('publication trace uses hollow markers + muted academic palette', () => {
+  it('publication trace: lines+markers, hollow circles, muted blue, thin line', () => {
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
     _toggleStyle(el, 'publication')
     const trace = _lastNewPlotTrace()!
+    expect(trace.mode).toBe('lines+markers')
     expect(trace.marker.symbol).toBe('circle-open')
     expect(trace.marker.color).toBe('rgba(0,0,0,0)')
-    expect(trace.marker.line.color).toBe('#1f3a93')
-    expect(trace.line.color).toBe('#1f3a93')
+    expect(trace.marker.line.color).toBe('#2B6FA3')
+    expect(trace.marker.line.width).toBe(1.2)
+    expect(trace.marker.size).toBe(5)
+    expect(trace.line.color).toBe('#2B6FA3')
     expect(trace.line.width).toBe(1.75)
   })
 
@@ -526,29 +537,104 @@ describe('renderJV2D — publication style mode', () => {
     expect(el.querySelector('[data-test="jv2d-voc-not-bracketed"]')).not.toBeNull()
   })
 
-  it('publication mode draws horizontal zero-line; vertical zero-line only when V<0', () => {
-    // Default fixture starts at V=0 — no negative bias, so xaxis zero
-    // line stays off in publication mode.
+  it('publication mode draws horizontal zero-line at J=0', () => {
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
     _toggleStyle(el, 'publication')
-    const layout = _lastNewPlotLayout()!
-    expect(layout.yaxis.zeroline).toBe(true)
-    expect(layout.xaxis.zeroline).toBe(false)
+    expect(_lastNewPlotLayout()!.yaxis.zeroline).toBe(true)
   })
 
-  it('publication mode draws vertical zero-line when sweep includes negative V', () => {
+  it('publication+operational adds a small negative x-margin to the axis', () => {
+    // Sweep starts at V=0 (no negative voltage in the data). Under
+    // publication+operational the visible x-axis is shifted left to
+    // -0.05 V so the V=0 reference line is visible — without
+    // mutating r.V or inventing data points there.
     const result = makeResult({
-      V: [-0.2, 0.0, 0.5, 1.0],
-      J: [-100.0, -300.0, -250.0, +50.0],
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
     _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
+    expect(layout.xaxis.range).toBeDefined()
+    const [xmin, xmax] = layout.xaxis.range as [number, number]
+    expect(xmin).toBeCloseTo(-0.05, 6)
+    // V_oc + 0.18 = 1.13, max(V)+0.05 = 1.05 → xmax = min(1.05, 1.13) = 1.05.
+    expect(xmax).toBeCloseTo(1.05, 6)
+    // Visible axis crosses V=0, so the vertical zero-line is on.
     expect(layout.xaxis.zeroline).toBe(true)
     expect(layout.xaxis.zerolinecolor).toBe('#000000')
+    // Raw V array is untouched (margin is axis-only).
+    expect(result.V).toEqual([0.0, 0.5, 1.0])
+  })
+
+  it('publication+operational caps x-axis at V_oc+0.18 when bracketed', () => {
+    // max(V)+0.05 = 1.50+0.05 = 1.55; V_oc+0.18 = 0.95+0.18 = 1.13 → cap at 1.13.
+    const result = makeResult({
+      V: [0.0, 0.5, 1.0, 1.5],
+      J: [-300.0, -250.0, +50.0, +500.0],
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const [, xmax] = _lastNewPlotLayout()!.xaxis.range as [number, number]
+    expect(xmax).toBeCloseTo(1.13, 6)
+  })
+
+  it('publication+full-sweep autoranges both axes (no clip)', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    // Toggle range to full first, then style to publication.
+    const rangeSel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
+    rangeSel.value = 'full'
+    rangeSel.dispatchEvent(new Event('change'))
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.yaxis.range).toBeUndefined()
+    expect(layout.xaxis.range).toBeUndefined()
+  })
+
+  it('publication mode hides the legend (single-trace 2D figure)', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    expect(_lastNewPlotLayout()!.showlegend).toBe(false)
+  })
+
+  it('annotation default placement is upper-left lower-third (Nature-style)', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.951, J_sc: 220.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const annotations = _lastNewPlotLayout()!.annotations as Array<Record<string, unknown>>
+    expect(annotations.length).toBe(1)
+    const ann = annotations[0]
+    expect(ann.x).toBe(0.12)
+    expect(ann.y).toBe(0.34)
+    expect(ann.xanchor).toBe('left')
+    expect(ann.yanchor).toBe('top')
+    // No heavy box.
+    expect(ann.bgcolor).toBe('rgba(255,255,255,0)')
+    expect(ann.borderwidth).toBe(0)
+  })
+
+  it('Engineering operational range stays at the original [-0.5, +1.5]·J_sc envelope', () => {
+    // Pinned regression: refining publication-mode helpers must not
+    // change Engineering Layer-4 behaviour.
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    const [ymin, ymax] = _lastNewPlotLayout()!.yaxis.range as [number, number]
+    expect(ymin).toBeCloseTo(-10.0, 6)
+    expect(ymax).toBeCloseTo(+30.0, 6)
+    // Engineering does not set xaxis.range — it leaves Plotly to autorange.
+    expect(_lastNewPlotLayout()!.xaxis.range).toBeUndefined()
   })
 })
