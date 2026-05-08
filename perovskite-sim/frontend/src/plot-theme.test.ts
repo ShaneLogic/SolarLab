@@ -106,9 +106,18 @@ describe('plot-theme — publicationAxis', () => {
     expect(a.title.font.size).toBe(12)
     expect(a.title.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
-  it('isLog produces type=log', () => {
-    const a = publicationAxis({ isLog: true }) as { type: string }
+  it('isLog produces type=log with decade-only dtick', () => {
+    const a = publicationAxis({ isLog: true }) as { type: string; dtick: number }
     expect(a.type).toBe('log')
+    // dtick=1 forces Plotly to label only decade ticks (10⁻¹, 10⁰,
+    // 10¹, …); without this, Plotly's auto-tick algorithm prints
+    // minor labels at 2× and 5× between decades, crowding the compact
+    // publication canvas.
+    expect(a.dtick).toBe(1)
+  })
+  it('non-log axis has no dtick (auto-spacing for linear axes)', () => {
+    const a = publicationAxis() as Record<string, unknown>
+    expect(a.dtick).toBeUndefined()
   })
   it('range is forwarded', () => {
     const a = publicationAxis({ range: [-10, 30] }) as { range: [number, number] }

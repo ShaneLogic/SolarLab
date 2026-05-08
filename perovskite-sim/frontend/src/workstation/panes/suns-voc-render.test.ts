@@ -182,6 +182,35 @@ describe('renderSunsVoc — publication style mode', () => {
     expect(layout.yaxis2.mirror).toBe(true)
   })
 
+  it('publication suns log axis prints only decade tick labels (dtick=1)', () => {
+    // Plotly's auto-tick algorithm otherwise prints minor labels at
+    // 2× and 5× between decades (e.g. "0.01 2 5 0.1 2 5 1 2 5 10"),
+    // which crowds the compact publication panel. publicationAxis
+    // pins ``dtick: 1`` whenever ``isLog`` is set.
+    renderSunsVoc(el, makeResult())
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.xaxis.dtick).toBe(1)
+    // Linear axes get no dtick (auto-spacing).
+    expect(layout.yaxis.dtick).toBeUndefined()
+    expect(layout.xaxis2.dtick).toBeUndefined()
+    expect(layout.yaxis2.dtick).toBeUndefined()
+  })
+
+  it('publication V_oc(suns) y-axis title preserves <sub>oc</sub> HTML', () => {
+    // Plotly natively renders <sub> tags inside title text. The
+    // engineering branch already uses the same HTML form, but the
+    // publication branch initially shipped with literal "V_oc" text
+    // which surfaced as plain underscore in the rendered figure.
+    renderSunsVoc(el, makeResult())
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.yaxis.title.text).toContain('V<sub>oc</sub>')
+    expect(layout.yaxis.title.text).toContain('(V)')
+    // No literal V_oc text should leak through.
+    expect(layout.yaxis.title.text).not.toContain('V_oc')
+  })
+
   it('publication mode hides the legend (subplot identity from axis labels)', () => {
     renderSunsVoc(el, makeResult())
     _toggleStyle(el, 'publication')

@@ -141,7 +141,14 @@ export interface PublicationAxisOpts {
 export function publicationAxis(opts: PublicationAxisOpts = {}): Record<string, unknown> {
   const a: Record<string, unknown> = { ...PUBLICATION_AXIS_BASE }
   if (opts.title !== undefined) a.title = publicationAxisTitle(opts.title)
-  if (opts.isLog) a.type = 'log'
+  if (opts.isLog) {
+    a.type = 'log'
+    // Decade-only major tick labels (Nature-style log axis convention).
+    // Plotly's auto-tick algorithm otherwise prints minor labels at 2x
+    // and 5x between decades — fine on a wide engineering canvas, but
+    // crowds the compact publication panel.
+    a.dtick = 1
+  }
   if (opts.range) a.range = opts.range
   if (opts.withZeroLine) {
     a.zeroline = true
