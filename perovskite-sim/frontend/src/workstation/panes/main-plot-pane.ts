@@ -252,7 +252,7 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // presence). Range: selector is appended only when ``metrics`` is
   // available, since the operational-range clip needs J_sc.
   const toolbar = document.createElement('div')
-  toolbar.className = 'jv2d-toolbar'
+  toolbar.className = 'plot-toolbar'
   toolbar.setAttribute('data-test', 'jv2d-toolbar')
 
   // Style: select — Nature-style publication theme vs interactive
@@ -260,12 +260,12 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // ``el.dataset.plotStyleMode`` so renderJV2D re-entry honours it.
   {
     const styleLabel = document.createElement('label')
-    styleLabel.className = 'jv2d-style-label'
+    styleLabel.className = 'plot-style-label'
     styleLabel.htmlFor = 'jv2d-style-mode'
     styleLabel.textContent = 'Style:'
     const styleSelect = document.createElement('select')
     styleSelect.id = 'jv2d-style-mode'
-    styleSelect.className = 'jv2d-style-select'
+    styleSelect.className = 'plot-style-select'
     styleSelect.setAttribute('data-test', 'jv2d-style-mode')
     const optEng = document.createElement('option')
     optEng.value = 'engineering'
@@ -290,12 +290,12 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // State lives on ``el.dataset.jv2dMode`` (separate from style mode).
   if (m) {
     const rangeLabel = document.createElement('label')
-    rangeLabel.className = 'jv2d-range-label'
+    rangeLabel.className = 'plot-range-label'
     rangeLabel.htmlFor = 'jv2d-range-mode'
     rangeLabel.textContent = 'Range:'
     const rangeSelect = document.createElement('select')
     rangeSelect.id = 'jv2d-range-mode'
-    rangeSelect.className = 'jv2d-range-select'
+    rangeSelect.className = 'plot-range-select'
     rangeSelect.setAttribute('data-test', 'jv2d-range-mode')
     const optOp = document.createElement('option')
     optOp.value = 'operational'
@@ -470,35 +470,180 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   }
 }
 
-function renderJV(el: HTMLElement, r: JVResult): void {
+// Publication-mode operational ranges for the 1D J-V workstation
+// pane. Mirrors the 2D pane's helpers (``_jv2dComputeYRangePublication``
+// / ``_jv2dComputeXRangePublication``). Locally inlined to avoid
+// touching ``plot-theme.ts`` for this commit. Each helper returns
+// ``undefined`` when its preconditions fail so the publication branch
+// in ``renderJV`` can fall back to Plotly autorange — never to the
+// engineering operational envelope.
+function _jv1dComputeYRangePublication(
+  metrics: JVResult['metrics_fwd'] | undefined,
+): [number, number] | undefined {
+  if (!metrics) return undefined
+  if (metrics.voc_bracketed !== true) return undefined
+  if (!Number.isFinite(metrics.J_sc) || metrics.J_sc <= 0) return undefined
+  // 1D backend signs J_sc as POSITIVE in metrics_fwd (panels/jv.ts
+  // displays it via ``(m.J_sc / 10).toFixed(2) mA/cm²`` without a
+  // negation — same convention as the 2D pane post-Layer 2). Tight
+  // publication envelope matches the 2D refinement (-0.15·J_sc_mA,
+  // +1.12·J_sc_mA).
+  const J_sc_mA = metrics.J_sc / 10
+  return [-0.15 * J_sc_mA, 1.12 * J_sc_mA]
+}
+
+function _jv1dComputeXRangePublication(
+  V_fwd: number[],
+  V_rev: number[],
+  metrics: JVResult['metrics_fwd'] | undefined,
+): [number, number] | undefined {
+  const allV = [...V_fwd, ...V_rev]
+  if (allV.length === 0) return undefined
+  const minV = Math.min(...allV)
+  const maxV = Math.max(...allV)
+  // Pull a small visual margin to the left when the data starts at
+  // V=0; never shift left of an existing negative sweep value.
+  const xmin = minV >= 0 ? -0.05 : minV
+  const vocCap =
+    metrics && metrics.voc_bracketed === true && Number.isFinite(metrics.V_oc)
+      ? metrics.V_oc + 0.18
+      : Number.POSITIVE_INFINITY
+  const xmax = Math.min(maxV + 0.05, vocCap)
+  return [xmin, xmax]
+}
+
+export function renderJV(el: HTMLElement, r: JVResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('jv1d-render')
+
+  const style = readPlotStyleMode(el)
+
+  // Toolbar — always rendered when plot data exists. Hosts only the
+  // Style: selector for 1D J-V (no Operational/Full sweep concept on
+  // 1D today).
+  const toolbar = document.createElement('div')
+  toolbar.className = 'plot-toolbar'
+  toolbar.setAttribute('data-test', 'jv1d-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'jv1d-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'jv1d-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'jv1d-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = style
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderJV(el, r)
+    })
+    toolbar.appendChild(styleLabel)
+    toolbar.appendChild(styleSelect)
+  }
+  el.appendChild(toolbar)
+
+  const plotDiv = document.createElement('div')
+  plotDiv.className = 'jv1d-plot'
+  plotDiv.id = 'jv1d-plot-inner'
+  el.appendChild(plotDiv)
+
+  // Pre-existing display transform — A/m² → mA/cm² + reverse sweep
+  // is monotonised by reversing both arrays so Plotly renders the
+  // dashed reverse curve in the same x-direction as the forward.
+  // Raw r.V_fwd / r.J_fwd / r.V_rev / r.J_rev arrays remain
+  // untouched (regression-pinned).
   const J_fwd_mA = r.J_fwd.map(j => j / 10)
   const J_rev_mA = r.J_rev.map(j => j / 10)
   const V_rev_sorted = [...r.V_rev].reverse()
   const J_rev_sorted = [...J_rev_mA].reverse()
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-      {
-        x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
-        mode: 'lines+markers',
-        line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
-        marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
-    }),
-    plotConfig('jv_sweep'),
-  )
+
+  if (style === 'publication') {
+    const yClipPub = _jv1dComputeYRangePublication(r.metrics_fwd)
+    const xClipPub = _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, r.metrics_fwd)
+    const allV = [...r.V_fwd, ...r.V_rev]
+    const minV = allV.length > 0 ? Math.min(...allV) : 0
+    const xVisibleMin = xClipPub ? xClipPub[0] : minV
+    const xWithZero = xVisibleMin < 0
+
+    const yaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+      title: 'Current density (mA cm⁻²)',
+      withZeroLine: true,
+    }
+    if (yClipPub) yaxisOpts.range = yClipPub
+    const xaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+      title: 'Voltage (V)',
+      withZeroLine: xWithZero,
+    }
+    if (xClipPub) xaxisOpts.range = xClipPub
+
+    Plotly.newPlot(
+      plotDiv,
+      [
+        {
+          x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        },
+        {
+          x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.reverse,
+            hollow: true,
+            dash: 'dash',
+          }),
+        },
+      ],
+      publicationLayout({
+        xaxis: publicationAxis(xaxisOpts),
+        yaxis: publicationAxis(yaxisOpts),
+        // Forward-only annotation: keeps the panel uncluttered and
+        // matches the Nature-style single-panel J-V convention. The
+        // reverse curve identity is conveyed by the in-plot legend.
+        // ``metricAnnotation`` already handles missing /
+        // undefined-bracketed payloads by returning [].
+        annotations: metricAnnotation(r.metrics_fwd),
+      }),
+      publicationConfig('jv_sweep'),
+    )
+  } else {
+    Plotly.newPlot(
+      plotDiv,
+      [
+        {
+          x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+        {
+          x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
+          mode: 'lines+markers',
+          line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
+          marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
+      }),
+      plotConfig('jv_sweep'),
+    )
+  }
 }
 
 function renderImpedance(el: HTMLElement, r: ISResult): void {
