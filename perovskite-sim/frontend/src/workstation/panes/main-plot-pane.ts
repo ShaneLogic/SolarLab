@@ -6,7 +6,8 @@ import {
   // Publication-theme additions (Nature-style single-panel mode).
   publicationLayout, publicationAxis, publicationConfig,
   publicationTraceStyle, metricAnnotation,
-  readPlotStyleMode, PUBLICATION_PALETTE, PUBLICATION_FONT_FAMILY,
+  readPlotStyleMode,
+  PUBLICATION_PALETTE, PUBLICATION_FONT_FAMILY, PUBLICATION_LINE_WIDTH,
 } from '../../plot-theme'
 import { metricCard } from '../../ui-helpers'
 import type {
@@ -808,9 +809,50 @@ function renderTPV(el: HTMLElement, r: TPVResult): void {
   )
 }
 
-function renderVocT(el: HTMLElement, r: VocTResult): void {
+export function renderVocT(el: HTMLElement, r: VocTResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('voc-t-render')
+
+  const _vocTStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar — always rendered above the plot.
+  const _vocTToolbar = document.createElement('div')
+  _vocTToolbar.className = 'plot-toolbar'
+  _vocTToolbar.setAttribute('data-test', 'voc-t-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'voc-t-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'voc-t-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'voc-t-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _vocTStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderVocT(el, r)
+    })
+    _vocTToolbar.appendChild(styleLabel)
+    _vocTToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_vocTToolbar)
+
+  const _vocTPlotDiv = document.createElement('div')
+  _vocTPlotDiv.className = 'voc-t-plot'
+  _vocTPlotDiv.id = 'voc-t-plot-inner'
+  el.appendChild(_vocTPlotDiv)
+
   // Linear fit line across the sweep domain — anchored by (T_min, fit(T_min))
   // and (T_max, fit(T_max)) so it extends cleanly across the plotted range.
   const T_min = Math.min(...r.T_arr)
@@ -819,35 +861,93 @@ function renderVocT(el: HTMLElement, r: VocTResult): void {
   const fit_y = fit_x.map(T => r.slope * T + r.intercept_0K)
   const slope_mV_per_K = (r.slope * 1e3).toFixed(2)
 
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.T_arr, y: r.V_oc_arr, name: 'V<sub>oc</sub>(T)',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-      {
-        x: fit_x, y: fit_y, name: `linear fit (${slope_mV_per_K} mV/K)`,
-        mode: 'lines',
-        line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Temperature, <i>T</i> (K)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Open-circuit voltage, <i>V</i><sub>oc</sub> (V)') },
-      annotations: [
+  if (_vocTStyle === 'publication') {
+    Plotly.newPlot(
+      _vocTPlotDiv,
+      [
         {
-          x: 0.98, y: 0.05, xref: 'paper', yref: 'paper',
-          xanchor: 'right', yanchor: 'bottom', showarrow: false,
-          text: `E<sub>A</sub> \u2248 ${r.E_A_eV.toFixed(3)} eV &nbsp; dV<sub>oc</sub>/dT = ${slope_mV_per_K} mV/K &nbsp; R\u00B2 = ${r.R_squared.toFixed(3)}`,
-          font: { size: 12 },
+          x: r.T_arr, y: r.V_oc_arr, name: 'V<sub>oc</sub>(T)',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        },
+        {
+          x: fit_x, y: fit_y, name: `linear fit (${slope_mV_per_K} mV/K)`,
+          mode: 'lines',
+          line: {
+            color: PUBLICATION_PALETTE.reverse,
+            width: PUBLICATION_LINE_WIDTH,
+            dash: 'dash' as const,
+          },
         },
       ],
-    }),
-    plotConfig('voc_t'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Temperature, <i>T</i> (K)' }),
+        yaxis: publicationAxis({ title: 'Open-circuit voltage, <i>V</i><sub>oc</sub> (V)' }),
+        // V_oc(T) curves slope from upper-left (low T, high V_oc)
+        // to lower-right (high T, low V_oc). Legend lives at upper-
+        // RIGHT and the figures-of-merit annotation at lower-LEFT \u2014
+        // both empty quadrants under that slope.
+        legend: {
+          font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          x: 0.98, y: 0.98,
+          xanchor: 'right' as const, yanchor: 'top' as const,
+        },
+        annotations: [
+          {
+            x: 0.05, y: 0.05, xref: 'paper', yref: 'paper',
+            xanchor: 'left' as const, yanchor: 'bottom' as const,
+            showarrow: false,
+            text:
+              `E<sub>A</sub> \u2248 ${r.E_A_eV.toFixed(3)} eV<br>` +
+              `dV<sub>oc</sub>/dT = ${slope_mV_per_K} mV/K<br>` +
+              `R\u00B2 = ${r.R_squared.toFixed(3)}`,
+            align: 'left' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('voc_t'),
+    )
+  } else {
+    Plotly.newPlot(
+      _vocTPlotDiv,
+      [
+        {
+          x: r.T_arr, y: r.V_oc_arr, name: 'V<sub>oc</sub>(T)',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+        {
+          x: fit_x, y: fit_y, name: `linear fit (${slope_mV_per_K} mV/K)`,
+          mode: 'lines',
+          line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Temperature, <i>T</i> (K)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Open-circuit voltage, <i>V</i><sub>oc</sub> (V)') },
+        annotations: [
+          {
+            x: 0.98, y: 0.05, xref: 'paper', yref: 'paper',
+            xanchor: 'right', yanchor: 'bottom', showarrow: false,
+            text: `E<sub>A</sub> \u2248 ${r.E_A_eV.toFixed(3)} eV &nbsp; dV<sub>oc</sub>/dT = ${slope_mV_per_K} mV/K &nbsp; R\u00B2 = ${r.R_squared.toFixed(3)}`,
+            font: { size: 12 },
+          },
+        ],
+      }),
+      plotConfig('voc_t'),
+    )
+  }
 }
 
 // ── Current Decomposition ───────────────────────────────────────────────────

@@ -469,10 +469,12 @@ input[type="number"] {
    without colliding with Plotly's mutating DOM. */
 .jv2d-render,
 .jv1d-render,
-.suns-voc-render { display: flex; flex-direction: column; gap: 0.5rem; }
+.suns-voc-render,
+.voc-t-render { display: flex; flex-direction: column; gap: 0.5rem; }
 .jv2d-plot,
 .jv1d-plot,
-.suns-voc-plot { flex: 1 1 auto; min-height: 0; }
+.suns-voc-plot,
+.voc-t-plot { flex: 1 1 auto; min-height: 0; }
 .jv2d-metrics-row { padding: 0.25rem 0; }
 .jv2d-warning {
   background: #fef3c7;
