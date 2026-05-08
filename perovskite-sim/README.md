@@ -299,6 +299,29 @@ helper `_default_V_max` and is unit-tested in
 
 <br>
 
+### V_oc Bracket Detection
+
+`compute_metrics(V, J)` returns a frozen `JVMetrics(V_oc, J_sc, FF, PCE,
+voc_bracketed)`. The `voc_bracketed` flag is `True` when the sweep contains a
+zero-current crossing (V_oc is then computed by linear interpolation between the
+two adjacent samples whose J flip sign) and `False` when the sweep window stops
+before J flips sign — in which case `V_oc`, `FF`, and `PCE` are zeroed
+sentinels and only `J_sc` is physically meaningful. The 2D driver
+`run_jv_sweep_2d` calls `compute_metrics(..., assume_jsc_positive=False)` so
+the 2D Scharfetter–Gummel sign convention is normalised centrally and
+`JV2DResult.metrics` matches the 1D semantics bit-for-bit. The workstation 2D
+J–V pane reads `voc_bracketed` to render `—` for V_oc / FF / PCE and an inline
+`V_oc not bracketed — increase V_max` warning, and exposes an
+`Operational range / Full sweep` toolbar that toggles a display-only y-axis
+clip $[-0.5\,J_{\text{sc}},\ +1.5\,J_{\text{sc}}]$ (mA/cm²) so the deep
+forward-bias diode tail does not compress the working-quadrant signal — raw
+V/J data are unchanged between the two modes.
+
+*Source:* `perovskite_sim/experiments/jv_sweep.py::compute_metrics`,
+`frontend/src/workstation/panes/main-plot-pane.ts::renderJV2D`
+
+<br>
+
 ### Summary Table
 
 | Variable | Contact BCs | Type | Source |
