@@ -172,35 +172,74 @@ describe('renderJV — publication style mode', () => {
     expect(rev.line.width).toBe(1.75)
   })
 
-  it('forward-only annotation when metrics_fwd.voc_bracketed=true', () => {
+  it('both bracketed: prefer forward metrics, label "Forward"', () => {
+    // Default fixture has metrics_fwd.voc_bracketed=true AND
+    // metrics_rev.voc_bracketed=true (both bracket). Annotation must
+    // prefer forward.
     renderJV(el, makeResult())
     _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
     expect(annotations).toHaveLength(1)
     const text = annotations[0].text
+    expect(text.startsWith('<b>Forward:</b><br>')).toBe(true)
     expect(text).toContain('0.951 V')
     expect(text).toContain('22.00 mA cm⁻²')
     expect(text).toContain('82.3%')
     expect(text).toContain('17.22%')
-    // Reverse metrics must NOT leak into the annotation text.
-    expect(text).not.toContain('0.948')
+    // Reverse-only numerics must NOT leak into the annotation text.
+    expect(text).not.toContain('0.948 V')
     expect(text).not.toContain('21.80')
   })
 
-  it('voc_bracketed=false: shows "not bracketed", no fake V_oc/FF/PCE', () => {
+  it('forward-only bracketed: label "Forward", forward metrics', () => {
     renderJV(el, makeResult({
-      metrics_fwd: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+      metrics_fwd: { V_oc: 0.951, J_sc: 220.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
+      metrics_rev: { V_oc: 0.0, J_sc: 218.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+    }))
+    _toggleStyle(el, 'publication')
+    const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
+    expect(text.startsWith('<b>Forward:</b><br>')).toBe(true)
+    expect(text).toContain('0.951 V')
+    expect(text).toContain('22.00 mA cm⁻²')
+    expect(text).not.toContain('not bracketed')
+  })
+
+  it('reverse-only bracketed: label "Reverse", reverse metrics', () => {
+    // Hysteretic case: forward fails to bracket V_oc, reverse brackets.
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.0, J_sc: 405.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+      metrics_rev: { V_oc: 0.860, J_sc: 404.9, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
     }))
     _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
     expect(annotations).toHaveLength(1)
     const text = annotations[0].text
+    expect(text.startsWith('<b>Reverse:</b><br>')).toBe(true)
+    expect(text).toContain('0.860 V')
+    expect(text).toContain('40.49 mA cm⁻²')
+    expect(text).toContain('86.5%')
+    expect(text).toContain('30.11%')
+    // No "not bracketed" — we picked the bracketed (reverse) sweep.
+    expect(text).not.toContain('not bracketed')
+    // Forward sentinel-zero values must NOT leak in.
+    expect(text).not.toContain('0.000 V')
+    expect(text).not.toContain('0.0%')
+  })
+
+  it('neither bracketed: label "Forward", "V_oc: not bracketed", J_sc only', () => {
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+      metrics_rev: { V_oc: 0.0, J_sc: 218.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+    }))
+    _toggleStyle(el, 'publication')
+    const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
+    expect(text.startsWith('<b>Forward:</b><br>')).toBe(true)
     expect(text).toContain('not bracketed')
+    expect(text).toContain('22.00 mA cm⁻²')   // metrics_fwd.J_sc / 10
+    // No fake V_oc / FF / PCE.
     expect(text).not.toContain('0.000 V')
     expect(text).not.toContain('0.0%')
     expect(text).not.toContain('0.00%')
-    // J_sc still rendered (interpolated at V=0; physically meaningful).
-    expect(text).toContain('22.00 mA cm⁻²')
   })
 
   it('voc_bracketed=undefined (legacy payload): publication style applies, annotation omitted', () => {

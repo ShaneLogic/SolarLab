@@ -230,6 +230,11 @@ export interface MetricAnnotationOpts {
   y?: number
   xanchor?: 'left' | 'center' | 'right'
   yanchor?: 'top' | 'middle' | 'bottom'
+  /** Optional bold prefix line ("Forward:" / "Reverse:" etc.) inserted
+   *  above the metric block. When omitted the annotation text is
+   *  byte-identical to the legacy unlabelled output (preserves 2D pane
+   *  output in this commit). */
+  label?: string
 }
 
 // Builds a single Plotly annotation entry summarising V_oc / J_sc / FF / PCE
@@ -255,21 +260,25 @@ export function metricAnnotation(
   const J_sc_mA = metrics.J_sc / 10
   const jsc_finite = Number.isFinite(metrics.J_sc)
   const jsc_str = jsc_finite ? `${J_sc_mA.toFixed(2)} mA cm⁻²` : '—'
-  let text: string
+  let body: string
   if (metrics.voc_bracketed === true) {
     const voc = `${metrics.V_oc.toFixed(3)} V`
     const ff  = `${(metrics.FF * 100).toFixed(1)}%`
     const pce = `${(metrics.PCE * 100).toFixed(2)}%`
-    text =
+    body =
       `V<sub>oc</sub>: ${voc}<br>` +
       `J<sub>sc</sub>: ${jsc_str}<br>` +
       `FF: ${ff}<br>` +
       `PCE: ${pce}`
   } else {
-    text =
+    body =
       `V<sub>oc</sub>: not bracketed<br>` +
       `J<sub>sc</sub>: ${jsc_str}`
   }
+  // Prefix the label as a bold line above the body when supplied.
+  // Unlabelled annotations remain byte-identical to pre-1D-fix output —
+  // 2D pane (which never passes a label) is unaffected.
+  const text = opts.label !== undefined ? `<b>${opts.label}:</b><br>${body}` : body
   return [{
     x, y, xref: 'paper', yref: 'paper',
     xanchor, yanchor, showarrow: false,

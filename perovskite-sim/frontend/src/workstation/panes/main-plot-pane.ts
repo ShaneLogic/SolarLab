@@ -492,6 +492,38 @@ function _jv1dComputeYRangePublication(
   return [-0.15 * J_sc_mA, 1.12 * J_sc_mA]
 }
 
+// Picks which sweep's metrics drive the publication-mode annotation.
+// Under heavy hysteresis the forward sweep can fail to bracket V_oc
+// while the reverse sweep brackets fine, which produces a misleading
+// "V_oc: not bracketed" annotation next to a plot whose reverse
+// trace clearly crosses zero. Resolution rules:
+//   1. metrics_fwd.voc_bracketed === true   → forward, "Forward" label
+//   2. metrics_rev.voc_bracketed === true   → reverse, "Reverse" label
+//   3. either side is explicitly false      → forward fallback,
+//                                              "Forward" label, body
+//                                              shows "V_oc: not bracketed"
+//   4. both undefined (legacy backend)      → []
+// 2D pane keeps calling ``metricAnnotation(m)`` without a label →
+// unchanged output (regression-pinned).
+function _jv1dPickAnnotation(
+  metrics_fwd: JVResult['metrics_fwd'] | undefined,
+  metrics_rev: JVResult['metrics_rev'] | undefined,
+): Record<string, unknown>[] {
+  if (metrics_fwd && metrics_fwd.voc_bracketed === true) {
+    return metricAnnotation(metrics_fwd, { label: 'Forward' })
+  }
+  if (metrics_rev && metrics_rev.voc_bracketed === true) {
+    return metricAnnotation(metrics_rev, { label: 'Reverse' })
+  }
+  if (
+    (metrics_fwd && metrics_fwd.voc_bracketed === false) ||
+    (metrics_rev && metrics_rev.voc_bracketed === false)
+  ) {
+    return metricAnnotation(metrics_fwd, { label: 'Forward' })
+  }
+  return []
+}
+
 function _jv1dComputeXRangePublication(
   V_fwd: number[],
   V_rev: number[],
@@ -611,12 +643,16 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
       publicationLayout({
         xaxis: publicationAxis(xaxisOpts),
         yaxis: publicationAxis(yaxisOpts),
-        // Forward-only annotation: keeps the panel uncluttered and
-        // matches the Nature-style single-panel J-V convention. The
-        // reverse curve identity is conveyed by the in-plot legend.
-        // ``metricAnnotation`` already handles missing /
-        // undefined-bracketed payloads by returning [].
-        annotations: metricAnnotation(r.metrics_fwd),
+        // Annotation source picker — under heavy hysteresis the
+        // forward sweep can fail to bracket V_oc while the reverse
+        // sweep brackets fine, so always-reading metrics_fwd produces
+        // a misleading "V_oc: not bracketed" next to a plot whose
+        // reverse trace clearly crosses zero. Pick the bracketed
+        // sweep (forward preferred when both bracket) and label which
+        // sweep the numbers describe; legacy payloads with both
+        // ``voc_bracketed === undefined`` get no annotation, matching
+        // metricAnnotation's existing fallback.
+        annotations: _jv1dPickAnnotation(r.metrics_fwd, r.metrics_rev),
       }),
       publicationConfig('jv_sweep'),
     )
