@@ -422,6 +422,26 @@ describe('renderJV — publication style mode', () => {
     expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
+  it('publication legend sits at upper-RIGHT (avoids overlapping J(V=0) plateau)', () => {
+    // 1D J-V curves enter the panel from the upper-LEFT corner where
+    // (V=0, J=+J_sc) lives. publicationLayout's default legend at
+    // (0.02, 0.98) → upper-left would overlap the curve plateau.
+    // 1D pane must override to upper-RIGHT (the curves exit toward
+    // the lower-right at V_oc, leaving the upper-right empty).
+    renderJV(el, makeResult())
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.legend.x).toBe(0.98)
+    expect(layout.legend.y).toBe(0.98)
+    expect(layout.legend.xanchor).toBe('right')
+    expect(layout.legend.yanchor).toBe('top')
+    // Override re-pins the publication transparent / borderless styling
+    // (publicationLayout spreads overrides last, so an incomplete
+    // legend object would silently restore Plotly defaults).
+    expect(layout.legend.bgcolor).toBe('rgba(255,255,255,0)')
+    expect(layout.legend.borderwidth).toBe(0)
+  })
+
   it('publication mode keeps engineering branch intact for second render after toggle-back', () => {
     renderJV(el, makeResult())
     _toggleStyle(el, 'publication')
