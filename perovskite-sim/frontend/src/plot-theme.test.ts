@@ -229,6 +229,34 @@ describe('plot-theme — metricAnnotation', () => {
     expect(a.xanchor).toBe('left')
     expect(a.yanchor).toBe('top')
   })
+  it('label option prepends a bold prefix line; default behaviour bit-identical', () => {
+    const m = { V_oc: 0.95, J_sc: 220, FF: 0.82, PCE: 0.17, voc_bracketed: true }
+    const unlabelled = metricAnnotation(m)
+    const labelled   = metricAnnotation(m, { label: 'Reverse' })
+    const tUn  = (unlabelled[0] as { text: string }).text
+    const tLab = (labelled[0] as { text: string }).text
+    // Labelled output starts with the bold prefix.
+    expect(tLab.startsWith('<b>Reverse:</b><br>')).toBe(true)
+    // Unlabelled output remains unchanged (regression — guards 2D pane).
+    expect(tUn).not.toContain('<b>')
+    expect(tUn).not.toContain('Forward')
+    expect(tUn).not.toContain('Reverse')
+    // Labelled body still contains the V_oc / J_sc / FF / PCE substrings.
+    expect(tLab).toContain('0.950 V')
+    expect(tLab).toContain('22.00 mA cm⁻²')
+    expect(tLab).toContain('82.0%')
+    expect(tLab).toContain('17.00%')
+  })
+  it('label option works for the not-bracketed branch too', () => {
+    const m = { V_oc: 0.0, J_sc: 220, FF: 0.0, PCE: 0.0, voc_bracketed: false }
+    const ann = metricAnnotation(m, { label: 'Forward' })
+    const text = (ann[0] as { text: string }).text
+    expect(text.startsWith('<b>Forward:</b><br>')).toBe(true)
+    expect(text).toContain('not bracketed')
+    expect(text).toContain('22.00 mA cm⁻²')
+    expect(text).not.toContain('0.000 V')
+    expect(text).not.toContain('0.0%')
+  })
   it('non-finite J_sc renders the em-dash placeholder', () => {
     const ann = metricAnnotation({
       V_oc: 0.95, J_sc: Number.POSITIVE_INFINITY, FF: 0.82, PCE: 0.17, voc_bracketed: true,
