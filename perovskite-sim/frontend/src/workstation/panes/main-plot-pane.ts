@@ -1282,82 +1282,274 @@ export function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
 
 // ── EQE / IPCE ──────────────────────────────────────────────────────────────
 
-function renderEQE(el: HTMLElement, r: EQEResult): void {
+export function renderEQE(el: HTMLElement, r: EQEResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('eqe-render')
+
+  const _eqeStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar \u2014 always rendered above the plot.
+  const _eqeToolbar = document.createElement('div')
+  _eqeToolbar.className = 'plot-toolbar'
+  _eqeToolbar.setAttribute('data-test', 'eqe-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'eqe-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'eqe-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'eqe-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _eqeStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderEQE(el, r)
+    })
+    _eqeToolbar.appendChild(styleLabel)
+    _eqeToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_eqeToolbar)
+
+  const _eqePlotDiv = document.createElement('div')
+  _eqePlotDiv.className = 'eqe-plot'
+  _eqePlotDiv.id = 'eqe-plot-inner'
+  el.appendChild(_eqePlotDiv)
+
   const eqePct = r.EQE.map(x => x * 100)
   const mAcm2 = r.J_sc_integrated / 10
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.wavelengths_nm, y: eqePct, name: 'EQE(\u03bb)',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('EQE (%)'), range: [0, 100] },
-      annotations: [
+
+  if (_eqeStyle === 'publication') {
+    Plotly.newPlot(
+      _eqePlotDiv,
+      [
         {
-          x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
-          xanchor: 'right', yanchor: 'top', showarrow: false,
-          text: `J<sub>sc</sub>(AM1.5G) = ${mAcm2.toFixed(2)} mA\u00b7cm\u207B\u00b2`,
-          font: { size: 12 },
+          x: r.wavelengths_nm, y: eqePct, name: 'EQE(<i>\u03bb</i>)',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
         },
       ],
-    }),
-    plotConfig('eqe'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Wavelength, <i>\u03bb</i> (nm)' }),
+        yaxis: publicationAxis({ title: 'EQE (%)', range: [0, 100] }),
+        // EQE typically rises from ~300 nm, plateaus across the visible,
+        // then drops past the bandgap. Upper-right quadrant under the
+        // falling tail is the empty home for the J_sc readout.
+        annotations: [
+          {
+            x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
+            xanchor: 'right' as const, yanchor: 'top' as const,
+            showarrow: false,
+            text: `J<sub>sc</sub>(AM1.5G) = ${mAcm2.toFixed(2)} mA\u00b7cm\u207B\u00b2`,
+            align: 'right' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('eqe'),
+    )
+  } else {
+    Plotly.newPlot(
+      _eqePlotDiv,
+      [
+        {
+          x: r.wavelengths_nm, y: eqePct, name: 'EQE(\u03bb)',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('EQE (%)'), range: [0, 100] },
+        annotations: [
+          {
+            x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
+            xanchor: 'right', yanchor: 'top', showarrow: false,
+            text: `J<sub>sc</sub>(AM1.5G) = ${mAcm2.toFixed(2)} mA\u00b7cm\u207B\u00b2`,
+            font: { size: 12 },
+          },
+        ],
+      }),
+      plotConfig('eqe'),
+    )
+  }
 }
 
 // ── Electroluminescence (Rau reciprocity) ───────────────────────────────────
 
-function renderEL(el: HTMLElement, r: ELResult): void {
+export function renderEL(el: HTMLElement, r: ELResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('el-render')
+
+  const _elStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar \u2014 always rendered above the plot.
+  const _elToolbar = document.createElement('div')
+  _elToolbar.className = 'plot-toolbar'
+  _elToolbar.setAttribute('data-test', 'el-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'el-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'el-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'el-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _elStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderEL(el, r)
+    })
+    _elToolbar.appendChild(styleLabel)
+    _elToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_elToolbar)
+
+  const _elPlotDiv = document.createElement('div')
+  _elPlotDiv.className = 'el-plot'
+  _elPlotDiv.id = 'el-plot-inner'
+  el.appendChild(_elPlotDiv)
+
   const absPct = r.absorber_absorptance.map(a => a * 100)
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.wavelengths_nm, y: r.EL_spectrum,
-        name: 'EL spectrum',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-        yaxis: 'y',
-      },
-      {
-        x: r.wavelengths_nm, y: absPct,
-        name: 'A<sub>abs</sub>(\u03bb)',
-        mode: 'lines',
-        line: { color: PALETTE.reverse, width: LINE.width, dash: 'dot' },
-        yaxis: 'y2',
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
-      yaxis: { ...(baseLayout().yaxis as object),
-        title: axisTitle('EL flux (photons&middot;m\u207B\u00b2&middot;s\u207B\u00b9&middot;nm\u207B\u00b9)') },
-      yaxis2: {
-        title: axisTitle('Absorptance (%)'),
-        overlaying: 'y', side: 'right', range: [0, 100],
-        showgrid: false,
-      },
-      annotations: [
+
+  if (_elStyle === 'publication') {
+    // Right-side absorptance axis: same Nature-style ticks/line as the
+    // primary y-axis, but anchored on the right. mirror is left false
+    // here so the inner plot area only mirrors the left axis to the top
+    // (right axis already closes the panel via its own line).
+    const yaxis2_pub = {
+      ...publicationAxis({ range: [0, 100] }),
+      title: { text: 'Absorptance (%)', font: { family: PUBLICATION_FONT_FAMILY, size: 12, color: '#000000' }, standoff: 8 },
+      overlaying: 'y', side: 'right', mirror: false,
+    }
+    Plotly.newPlot(
+      _elPlotDiv,
+      [
         {
-          x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
-          xanchor: 'left', yanchor: 'top', showarrow: false,
-          text: `V<sub>inj</sub> = ${r.V_inj.toFixed(2)} V &nbsp; EQE<sub>EL</sub> = ${r.EQE_EL.toExponential(2)} &nbsp; &Delta;V<sub>nr</sub> = ${r.delta_V_nr_mV.toFixed(1)} mV`,
-          font: { size: 12 },
+          x: r.wavelengths_nm, y: r.EL_spectrum,
+          name: 'EL spectrum',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+          yaxis: 'y',
+        },
+        {
+          x: r.wavelengths_nm, y: absPct,
+          name: 'A<sub>abs</sub>(<i>\u03bb</i>)',
+          mode: 'lines',
+          line: {
+            color: PUBLICATION_PALETTE.reverse,
+            width: PUBLICATION_LINE_WIDTH,
+            dash: 'dash' as const,
+          },
+          yaxis: 'y2',
         },
       ],
-    }),
-    plotConfig('el'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Wavelength, <i>\u03bb</i> (nm)' }),
+        yaxis: publicationAxis({ title: 'EL flux (photons&middot;m\u207B\u00b2&middot;s\u207B\u00b9&middot;nm\u207B\u00b9)' }),
+        yaxis2: yaxis2_pub,
+        // EL spectrum peaks near the bandgap. Legend pinned upper-left
+        // (low-wavelength side) where both EL flux and absorptance are
+        // typically near zero before the band-edge onset.
+        legend: {
+          font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          x: 0.02, y: 0.98,
+          xanchor: 'left' as const, yanchor: 'top' as const,
+        },
+        annotations: [
+          {
+            x: 0.02, y: 0.78, xref: 'paper', yref: 'paper',
+            xanchor: 'left' as const, yanchor: 'top' as const,
+            showarrow: false,
+            text:
+              `V<sub>inj</sub> = ${r.V_inj.toFixed(2)} V<br>` +
+              `EQE<sub>EL</sub> = ${r.EQE_EL.toExponential(2)}<br>` +
+              `&Delta;V<sub>nr</sub> = ${r.delta_V_nr_mV.toFixed(1)} mV`,
+            align: 'left' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('el'),
+    )
+  } else {
+    Plotly.newPlot(
+      _elPlotDiv,
+      [
+        {
+          x: r.wavelengths_nm, y: r.EL_spectrum,
+          name: 'EL spectrum',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+          yaxis: 'y',
+        },
+        {
+          x: r.wavelengths_nm, y: absPct,
+          name: 'A<sub>abs</sub>(\u03bb)',
+          mode: 'lines',
+          line: { color: PALETTE.reverse, width: LINE.width, dash: 'dot' },
+          yaxis: 'y2',
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
+        yaxis: { ...(baseLayout().yaxis as object),
+          title: axisTitle('EL flux (photons&middot;m\u207B\u00b2&middot;s\u207B\u00b9&middot;nm\u207B\u00b9)') },
+        yaxis2: {
+          title: axisTitle('Absorptance (%)'),
+          overlaying: 'y', side: 'right', range: [0, 100],
+          showgrid: false,
+        },
+        annotations: [
+          {
+            x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
+            xanchor: 'left', yanchor: 'top', showarrow: false,
+            text: `V<sub>inj</sub> = ${r.V_inj.toFixed(2)} V &nbsp; EQE<sub>EL</sub> = ${r.EQE_EL.toExponential(2)} &nbsp; &Delta;V<sub>nr</sub> = ${r.delta_V_nr_mV.toFixed(1)} mV`,
+            font: { size: 12 },
+          },
+        ],
+      }),
+      plotConfig('el'),
+    )
+  }
 }
 
 // ── Mott–Schottky (C–V) ─────────────────────────────────────────────────────
