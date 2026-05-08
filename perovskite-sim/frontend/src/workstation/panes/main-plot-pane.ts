@@ -1104,7 +1104,9 @@ export function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
       publicationLayout({
         grid: { rows: 1, columns: 2, pattern: 'independent' as const },
         xaxis: publicationAxis({ title: 'Suns', isLog: true }),
-        yaxis: publicationAxis({ title: 'V_oc (V)' }),
+        // Plotly renders <sub> tags inside title text natively; the
+        // engineering branch already uses the same HTML form below.
+        yaxis: publicationAxis({ title: 'V<sub>oc</sub> (V)' }),
         xaxis2: publicationAxis({ title: 'Voltage (V)' }),
         yaxis2: publicationAxis({ title: 'Current density (mA cm\u207B\u00b2)' }),
         // Suns-V_oc has two distinct subplots \u2014 keep the legend off
