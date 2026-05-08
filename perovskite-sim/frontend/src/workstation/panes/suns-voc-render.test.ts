@@ -109,6 +109,19 @@ describe('renderSunsVoc — toolbar + style mode', () => {
     expect(layout.yaxis.title.text).toContain('V')
     expect(layout.yaxis2.title.text).toContain('mA')
   })
+
+  it('engineering suns log axis prints decade-only labels (dtick=1)', () => {
+    // Same Plotly minor-label clutter ("0.01 2 5 0.1 2 5 1 2 5 10")
+    // shows up in Engineering mode if dtick is unset. The fix is
+    // applied uniformly across both modes.
+    renderSunsVoc(el, makeResult())
+    const layout = _lastNewPlotLayout()!
+    expect(layout.xaxis.dtick).toBe(1)
+    // Linear axes get no dtick (auto-spacing).
+    expect(layout.yaxis.dtick).toBeUndefined()
+    expect(layout.xaxis2.dtick).toBeUndefined()
+    expect(layout.yaxis2.dtick).toBeUndefined()
+  })
 })
 
 describe('renderSunsVoc — publication style mode', () => {
