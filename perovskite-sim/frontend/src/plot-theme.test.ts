@@ -62,11 +62,11 @@ describe('plot-theme — publicationLayout', () => {
     const L = publicationLayout() as { margin: { t: number; r: number; b: number; l: number } }
     expect(L.margin).toEqual({ t: 18, r: 18, b: 48, l: 58 })
   })
-  it('legend lives inside plot area, no border, transparent bg', () => {
+  it('legend lives inside plot area at upper-left, no border, transparent bg', () => {
     const L = publicationLayout() as { legend: Record<string, unknown> }
-    expect(L.legend.x).toBe(0.98)
+    expect(L.legend.x).toBe(0.02)
     expect(L.legend.y).toBe(0.98)
-    expect(L.legend.xanchor).toBe('right')
+    expect(L.legend.xanchor).toBe('left')
     expect(L.legend.yanchor).toBe('top')
     expect(L.legend.bgcolor).toBe('rgba(255,255,255,0)')
     expect(L.legend.borderwidth).toBe(0)
@@ -139,23 +139,23 @@ describe('plot-theme — publicationConfig', () => {
 
 describe('plot-theme — publicationTraceStyle', () => {
   it('default solid filled marker (hollow=false)', () => {
-    const s = publicationTraceStyle({ color: '#1f3a93' })
-    expect((s.line as { color: string }).color).toBe('#1f3a93')
+    const s = publicationTraceStyle({ color: '#2B6FA3' })
+    expect((s.line as { color: string }).color).toBe('#2B6FA3')
     expect((s.line as { width: number }).width).toBe(PUBLICATION_LINE_WIDTH)
     expect((s.marker as { size: number }).size).toBe(PUBLICATION_MARKER_SIZE)
-    expect((s.marker as { color: string }).color).toBe('#1f3a93')
+    expect((s.marker as { color: string }).color).toBe('#2B6FA3')
     expect((s.marker as { symbol: string }).symbol).toBe('circle')
   })
   it('hollow markers: open symbol, transparent fill, colored outline', () => {
-    const s = publicationTraceStyle({ color: '#1f3a93', hollow: true })
+    const s = publicationTraceStyle({ color: '#2B6FA3', hollow: true })
     expect((s.marker as { symbol: string }).symbol).toBe('circle-open')
     expect((s.marker as { color: string }).color).toBe('rgba(0,0,0,0)')
     const ln = (s.marker as { line: { color: string; width: number } }).line
-    expect(ln.color).toBe('#1f3a93')
-    expect(ln.width).toBe(1.25)
+    expect(ln.color).toBe('#2B6FA3')
+    expect(ln.width).toBe(1.2)
   })
   it('hollow square: square-open', () => {
-    const s = publicationTraceStyle({ color: '#8b1a1a', hollow: true, symbol: 'square' })
+    const s = publicationTraceStyle({ color: '#C44536', hollow: true, symbol: 'square' })
     expect((s.marker as { symbol: string }).symbol).toBe('square-open')
   })
   it('idempotent on already-open symbol', () => {
@@ -184,8 +184,11 @@ describe('plot-theme — metricAnnotation', () => {
     const text = (ann[0] as { text: string }).text
     expect(text).toContain('0.951 V')
     expect(text).toContain('22.00 mA cm⁻²')
-    expect(text).toContain('82.3 %')
-    expect(text).toContain('17.22 %')
+    // Nature-style FF / PCE format: no space before percent sign.
+    expect(text).toContain('82.3%')
+    expect(text).toContain('17.22%')
+    expect(text).not.toContain('82.3 %')
+    expect(text).not.toContain('17.22 %')
     expect(text).not.toContain('not bracketed')
   })
   it('omits FF / PCE / V_oc digits when voc_bracketed=false', () => {
@@ -195,22 +198,25 @@ describe('plot-theme — metricAnnotation', () => {
     const text = (ann[0] as { text: string }).text
     expect(text).toContain('not bracketed')
     expect(text).not.toContain('0.000 V')
-    expect(text).not.toContain('0.0 %')
-    expect(text).not.toContain('0.00 %')
+    expect(text).not.toContain('0.0%')
+    expect(text).not.toContain('0.00%')
     expect(text).toContain('22.00 mA cm⁻²')
   })
-  it('annotation defaults to bottom-right paper coords, no arrow', () => {
+  it('annotation defaults to lower-left paper coords, transparent bg, no arrow', () => {
     const ann = metricAnnotation({
       V_oc: 0.95, J_sc: 220, FF: 0.82, PCE: 0.17, voc_bracketed: true,
     })
     const a = ann[0] as Record<string, unknown>
     expect(a.xref).toBe('paper')
     expect(a.yref).toBe('paper')
-    expect(a.xanchor).toBe('right')
-    expect(a.yanchor).toBe('bottom')
-    expect(a.x).toBe(0.98)
-    expect(a.y).toBe(0.05)
+    expect(a.xanchor).toBe('left')
+    expect(a.yanchor).toBe('top')
+    expect(a.x).toBe(0.12)
+    expect(a.y).toBe(0.34)
     expect(a.showarrow).toBe(false)
+    // No heavy box / colored background — fully transparent.
+    expect(a.bgcolor).toBe('rgba(255,255,255,0)')
+    expect(a.borderwidth).toBe(0)
   })
   it('placement override honoured', () => {
     const ann = metricAnnotation(
@@ -260,8 +266,8 @@ describe('plot-theme — readPlotStyleMode / writePlotStyleMode', () => {
 
 describe('plot-theme — palette + sizing constants (pinned defaults)', () => {
   it('publication palette muted forward / reverse colors', () => {
-    expect(PUBLICATION_PALETTE.forward).toBe('#1f3a93')
-    expect(PUBLICATION_PALETTE.reverse).toBe('#8b1a1a')
+    expect(PUBLICATION_PALETTE.forward).toBe('#2B6FA3')
+    expect(PUBLICATION_PALETTE.reverse).toBe('#C44536')
   })
   it('publication line width and marker size match pinned defaults', () => {
     expect(PUBLICATION_LINE_WIDTH).toBe(1.75)

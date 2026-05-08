@@ -93,9 +93,9 @@ export const MARKER = {
 export type PlotStyleMode = 'engineering' | 'publication'
 
 export const PUBLICATION_PALETTE = {
-  forward:   '#1f3a93',  // muted deep blue
-  reverse:   '#8b1a1a',  // muted deep red
-  primary:   '#1f3a93',
+  forward:   '#2B6FA3',  // muted scientific blue (Nature-family)
+  reverse:   '#C44536',  // muted scientific red
+  primary:   '#2B6FA3',
   secondary: '#5b6770',
   accent:    '#374151',
   neutral:   '#000000',
@@ -166,7 +166,11 @@ export function publicationLayout(
       bgcolor: 'rgba(255,255,255,0)',
       bordercolor: 'rgba(0,0,0,0)',
       borderwidth: 0,
-      x: 0.98, y: 0.98, xanchor: 'right' as const, yanchor: 'top' as const,
+      // Upper-left default — Nature single-panel J-V curves usually have
+      // their open-circuit / saturation activity near the upper-right
+      // quadrant, so legends drift toward the lower- or upper-left in
+      // the printed figures we mimic here.
+      x: 0.02, y: 0.98, xanchor: 'left' as const, yanchor: 'top' as const,
     },
     showlegend: true,
     hovermode: 'closest',
@@ -210,7 +214,7 @@ export function publicationTraceStyle(opts: PublicationTraceStyleOpts): {
   const marker: Record<string, unknown> = {
     size: PUBLICATION_MARKER_SIZE,
     symbol,
-    line: { width: 1.25, color: opts.color },
+    line: { width: 1.2, color: opts.color },
   }
   marker.color = opts.hollow ? 'rgba(0,0,0,0)' : opts.color
   const line: Record<string, unknown> = {
@@ -239,18 +243,23 @@ export function metricAnnotation(
 ): Record<string, unknown>[] {
   if (!metrics) return []
   if (metrics.voc_bracketed === undefined) return []
-  const x       = opts.x       ?? 0.98
-  const y       = opts.y       ?? 0.05
-  const xanchor = opts.xanchor ?? 'right'
-  const yanchor = opts.yanchor ?? 'bottom'
+  // Default placement is the lower-left / mid-left of the panel — Nature
+  // J-V figures conventionally seat the V_oc / J_sc / FF / PCE legend
+  // in this quadrant since the curve sweeps from the upper-left
+  // (V=0, J~J_sc) down to the lower-right (V~V_oc, J=0), leaving the
+  // lower-left quadrant empty.
+  const x       = opts.x       ?? 0.12
+  const y       = opts.y       ?? 0.34
+  const xanchor = opts.xanchor ?? 'left'
+  const yanchor = opts.yanchor ?? 'top'
   const J_sc_mA = metrics.J_sc / 10
   const jsc_finite = Number.isFinite(metrics.J_sc)
   const jsc_str = jsc_finite ? `${J_sc_mA.toFixed(2)} mA cm⁻²` : '—'
   let text: string
   if (metrics.voc_bracketed === true) {
     const voc = `${metrics.V_oc.toFixed(3)} V`
-    const ff  = `${(metrics.FF * 100).toFixed(1)} %`
-    const pce = `${(metrics.PCE * 100).toFixed(2)} %`
+    const ff  = `${(metrics.FF * 100).toFixed(1)}%`
+    const pce = `${(metrics.PCE * 100).toFixed(2)}%`
     text =
       `V<sub>oc</sub>: ${voc}<br>` +
       `J<sub>sc</sub>: ${jsc_str}<br>` +
@@ -266,7 +275,10 @@ export function metricAnnotation(
     xanchor, yanchor, showarrow: false,
     text,
     align: 'left',
-    bgcolor: 'rgba(255,255,255,0.9)',
+    // Fully transparent — the panel background is already white, so an
+    // opaque box would only add a visible rectangle. Border is also
+    // suppressed (heavy boxes are non-Nature).
+    bgcolor: 'rgba(255,255,255,0)',
     bordercolor: 'rgba(0,0,0,0)',
     borderwidth: 0,
     font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
