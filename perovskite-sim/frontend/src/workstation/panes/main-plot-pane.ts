@@ -477,68 +477,97 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
 // ``undefined`` when its preconditions fail so the publication branch
 // in ``renderJV`` can fall back to Plotly autorange — never to the
 // engineering operational envelope.
-function _jv1dComputeYRangePublication(
-  metrics: JVResult['metrics_fwd'] | undefined,
-): [number, number] | undefined {
-  if (!metrics) return undefined
-  if (metrics.voc_bracketed !== true) return undefined
-  if (!Number.isFinite(metrics.J_sc) || metrics.J_sc <= 0) return undefined
-  // 1D backend signs J_sc as POSITIVE in metrics_fwd (panels/jv.ts
-  // displays it via ``(m.J_sc / 10).toFixed(2) mA/cm²`` without a
-  // negation — same convention as the 2D pane post-Layer 2). Tight
-  // publication envelope matches the 2D refinement (-0.15·J_sc_mA,
-  // +1.12·J_sc_mA).
-  const J_sc_mA = metrics.J_sc / 10
-  return [-0.15 * J_sc_mA, 1.12 * J_sc_mA]
+// 1D-only metric source picker. Returns whichever sweep's metrics
+// should drive both the publication-mode annotation AND the y/x
+// range helpers, plus the human-readable label used to prefix the
+// annotation. Returning the same object from a single helper keeps
+// the annotation, y-range, and x-range in lockstep — under heavy
+// hysteresis the forward sweep can fail to bracket V_oc while the
+// reverse sweep brackets fine, and we need ALL three derived values
+// to resolve from the same chosen sweep so the publication panel is
+// internally consistent.
+//
+// Resolution rules (preserved from the previous picker):
+//   1. metrics_fwd.voc_bracketed === true → Forward
+//   2. metrics_rev.voc_bracketed === true → Reverse
+//   3. either side === false              → Forward fallback (so the
+//                                            annotation still surfaces
+//                                            "V_oc: not bracketed" + J_sc
+//                                            via metrics_fwd)
+//   4. both undefined (legacy / stale)    → null
+//
+// 2D pane has only one trace, no fwd/rev distinction, and continues to
+// call ``metricAnnotation(m)`` directly — this picker is 1D-specific.
+type Jv1dPick = {
+  metrics: JVResult['metrics_fwd']
+  label: 'Forward' | 'Reverse'
+  source: 'forward' | 'reverse'
 }
-
-// Picks which sweep's metrics drive the publication-mode annotation.
-// Under heavy hysteresis the forward sweep can fail to bracket V_oc
-// while the reverse sweep brackets fine, which produces a misleading
-// "V_oc: not bracketed" annotation next to a plot whose reverse
-// trace clearly crosses zero. Resolution rules:
-//   1. metrics_fwd.voc_bracketed === true   → forward, "Forward" label
-//   2. metrics_rev.voc_bracketed === true   → reverse, "Reverse" label
-//   3. either side is explicitly false      → forward fallback,
-//                                              "Forward" label, body
-//                                              shows "V_oc: not bracketed"
-//   4. both undefined (legacy backend)      → []
-// 2D pane keeps calling ``metricAnnotation(m)`` without a label →
-// unchanged output (regression-pinned).
-function _jv1dPickAnnotation(
+function _jv1dPickMetrics(
   metrics_fwd: JVResult['metrics_fwd'] | undefined,
   metrics_rev: JVResult['metrics_rev'] | undefined,
-): Record<string, unknown>[] {
+): Jv1dPick | null {
   if (metrics_fwd && metrics_fwd.voc_bracketed === true) {
-    return metricAnnotation(metrics_fwd, { label: 'Forward' })
+    return { metrics: metrics_fwd, label: 'Forward', source: 'forward' }
   }
   if (metrics_rev && metrics_rev.voc_bracketed === true) {
-    return metricAnnotation(metrics_rev, { label: 'Reverse' })
+    return { metrics: metrics_rev, label: 'Reverse', source: 'reverse' }
   }
   if (
     (metrics_fwd && metrics_fwd.voc_bracketed === false) ||
     (metrics_rev && metrics_rev.voc_bracketed === false)
   ) {
-    return metricAnnotation(metrics_fwd, { label: 'Forward' })
+    // Forward fallback. metrics_fwd may be the unbracketed sweep —
+    // metricAnnotation will surface "V_oc: not bracketed" + J_sc.
+    if (metrics_fwd) {
+      return { metrics: metrics_fwd, label: 'Forward', source: 'forward' }
+    }
   }
-  return []
+  return null
 }
 
+function _jv1dPickAnnotation(pick: Jv1dPick | null): Record<string, unknown>[] {
+  if (!pick) return []
+  return metricAnnotation(pick.metrics, { label: pick.label })
+}
+
+// Tight publication y-range based on the picked sweep's J_sc. Falls
+// back to autorange when the picked sweep is not bracketed (sentinel
+// J_sc still meaningful for J_sc-cards, but not safe to drive the
+// y-axis envelope) or when no sweep was picked.
+function _jv1dComputeYRangePublication(
+  pick: Jv1dPick | null,
+): [number, number] | undefined {
+  if (!pick) return undefined
+  const m = pick.metrics
+  if (m.voc_bracketed !== true) return undefined
+  if (!Number.isFinite(m.J_sc) || m.J_sc <= 0) return undefined
+  // 1D backend signs J_sc as POSITIVE in metrics_fwd / metrics_rev
+  // (panels/jv.ts displays it via ``(m.J_sc / 10).toFixed(2) mA/cm²``
+  // without a negation — same convention as the 2D pane post-Layer 2).
+  // Tight publication envelope matches the 2D refinement.
+  const J_sc_mA = m.J_sc / 10
+  return [-0.15 * J_sc_mA, 1.12 * J_sc_mA]
+}
+
+// Tight publication x-range. Same -0.05 V left margin (when sweep
+// starts at V≥0) as before, but the upper-bound V_oc cap now uses
+// the PICKED sweep's V_oc — under heavy hysteresis this means a
+// reverse-bracketed sweep tightens the x-axis to ``V_oc(reverse) +
+// 0.18`` rather than spilling past forward's last sample.
 function _jv1dComputeXRangePublication(
   V_fwd: number[],
   V_rev: number[],
-  metrics: JVResult['metrics_fwd'] | undefined,
+  pick: Jv1dPick | null,
 ): [number, number] | undefined {
   const allV = [...V_fwd, ...V_rev]
   if (allV.length === 0) return undefined
   const minV = Math.min(...allV)
   const maxV = Math.max(...allV)
-  // Pull a small visual margin to the left when the data starts at
-  // V=0; never shift left of an existing negative sweep value.
   const xmin = minV >= 0 ? -0.05 : minV
   const vocCap =
-    metrics && metrics.voc_bracketed === true && Number.isFinite(metrics.V_oc)
-      ? metrics.V_oc + 0.18
+    pick && pick.metrics.voc_bracketed === true && Number.isFinite(pick.metrics.V_oc)
+      ? pick.metrics.V_oc + 0.18
       : Number.POSITIVE_INFINITY
   const xmax = Math.min(maxV + 0.05, vocCap)
   return [xmin, xmax]
@@ -601,8 +630,11 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   const J_rev_sorted = [...J_rev_mA].reverse()
 
   if (style === 'publication') {
-    const yClipPub = _jv1dComputeYRangePublication(r.metrics_fwd)
-    const xClipPub = _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, r.metrics_fwd)
+    // Single source for annotation, y-range and x-range so that all
+    // three derived values agree on which sweep they describe.
+    const pick = _jv1dPickMetrics(r.metrics_fwd, r.metrics_rev)
+    const yClipPub = _jv1dComputeYRangePublication(pick)
+    const xClipPub = _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, pick)
     const allV = [...r.V_fwd, ...r.V_rev]
     const minV = allV.length > 0 ? Math.min(...allV) : 0
     const xVisibleMin = xClipPub ? xClipPub[0] : minV
@@ -652,7 +684,7 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
         // sweep the numbers describe; legacy payloads with both
         // ``voc_bracketed === undefined`` get no annotation, matching
         // metricAnnotation's existing fallback.
-        annotations: _jv1dPickAnnotation(r.metrics_fwd, r.metrics_rev),
+        annotations: _jv1dPickAnnotation(pick),
       }),
       publicationConfig('jv_sweep'),
     )

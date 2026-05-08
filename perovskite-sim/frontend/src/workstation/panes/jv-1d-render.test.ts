@@ -226,6 +226,91 @@ describe('renderJV — publication style mode', () => {
     expect(text).not.toContain('0.0%')
   })
 
+  it('reverse-only bracketed: y-range tightens around metrics_rev.J_sc', () => {
+    // Range source must follow the picked sweep so the publication
+    // panel is internally consistent. metrics_rev.J_sc=400 → 40 mA/cm²
+    // → tight range = [-0.15·40, +1.12·40] = [-6.0, +44.8].
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.0, J_sc: 405.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+      metrics_rev: { V_oc: 0.860, J_sc: 400.0, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
+    }))
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    const [ymin, ymax] = layout.yaxis.range as [number, number]
+    expect(ymin).toBeCloseTo(-6.0, 6)
+    expect(ymax).toBeCloseTo(+44.8, 6)
+  })
+
+  it('reverse-only bracketed: x-range capped at metrics_rev.V_oc + 0.18', () => {
+    // metrics_rev.V_oc = 0.860 → cap at 1.040 V. Sweep extends to
+    // V=1.0, so max(V)+0.05 = 1.05. min(cap, max+0.05) = 1.040.
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.0, J_sc: 405.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+      metrics_rev: { V_oc: 0.860, J_sc: 400.0, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
+    }))
+    _toggleStyle(el, 'publication')
+    const [xmin, xmax] = _lastNewPlotLayout()!.xaxis.range as [number, number]
+    expect(xmin).toBeCloseTo(-0.05, 6)
+    expect(xmax).toBeCloseTo(+1.040, 6)
+  })
+
+  it('both bracketed: y/x range driven by metrics_fwd (forward preferred)', () => {
+    // metrics_fwd.J_sc=200 → 20 mA/cm² → [-3.0, +22.4].
+    // metrics_rev.J_sc=400 → 40 mA/cm² → [-6.0, +44.8] (NOT used).
+    // metrics_fwd.V_oc=0.951 → cap 1.131 (vs reverse 1.040 — NOT used).
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.951, J_sc: 200.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
+      metrics_rev: { V_oc: 0.860, J_sc: 400.0, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
+    }))
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    const [ymin, ymax] = layout.yaxis.range as [number, number]
+    expect(ymin).toBeCloseTo(-3.0, 6)
+    expect(ymax).toBeCloseTo(+22.4, 6)
+    // Forward V_oc cap, not reverse.
+    const [, xmax] = layout.xaxis.range as [number, number]
+    // V_oc + 0.18 = 1.131; max(V) + 0.05 = 1.05 → cap at 1.05.
+    expect(xmax).toBeCloseTo(1.05, 6)
+  })
+
+  it('neither bracketed: autorange y/x; annotation Forward + "not bracketed"', () => {
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+      metrics_rev: { V_oc: 0.0, J_sc: 218.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+    }))
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    // y-range: autoranged because the picked sweep is not bracketed.
+    expect(layout.yaxis.range).toBeUndefined()
+    // x-range: still applies the -0.05 V left margin and max(V)+0.05
+    // cap (no V_oc cap because nothing is bracketed).
+    const [xmin, xmax] = layout.xaxis.range as [number, number]
+    expect(xmin).toBeCloseTo(-0.05, 6)
+    expect(xmax).toBeCloseTo(1.05, 6)   // max(V)=1.0 + 0.05
+    // Annotation falls back to Forward + "not bracketed" via picker rule 3.
+    const ann = layout.annotations as Array<{ text: string }>
+    expect(ann).toHaveLength(1)
+    expect(ann[0].text.startsWith('<b>Forward:</b><br>')).toBe(true)
+    expect(ann[0].text).toContain('not bracketed')
+  })
+
+  it('legacy/undefined payload: autorange y, no annotation, publication style still applies', () => {
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.95, J_sc: 220, FF: 0.82, PCE: 0.17 },     // no voc_bracketed
+      metrics_rev: { V_oc: 0.94, J_sc: 218, FF: 0.81, PCE: 0.165 },
+    }))
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    // y-range autoranged because no sweep was picked.
+    expect(layout.yaxis.range).toBeUndefined()
+    // Annotation suppressed (no voc_bracketed → no fake numbers).
+    expect((layout.annotations as Array<unknown>) ?? []).toHaveLength(0)
+    // Publication style still applies.
+    expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
+    expect(layout.paper_bgcolor).toBe('#ffffff')
+    expect(layout.xaxis.showgrid).toBe(false)
+  })
+
   it('neither bracketed: label "Forward", "V_oc: not bracketed", J_sc only', () => {
     renderJV(el, makeResult({
       metrics_fwd: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
