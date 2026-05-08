@@ -1,7 +1,13 @@
 import Plotly from 'plotly.js-basic-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
-import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../../plot-theme'
+import {
+  baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle,
+  // Publication-theme additions (Nature-style single-panel mode).
+  publicationLayout, publicationAxis, publicationConfig,
+  publicationTraceStyle, metricAnnotation,
+  readPlotStyleMode, PUBLICATION_PALETTE,
+} from '../../plot-theme'
 import { metricCard } from '../../ui-helpers'
 import type {
   JVResult,
@@ -195,43 +201,75 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // display only and matches the existing pre-Layer-3 behaviour.
   el.classList.add('jv2d-render')
 
-  // Layer 4: y-axis display-mode toolbar. Rendered only when metrics
-  // are available (no point offering "Operational range" if J_sc is
-  // unknown). Toggle state lives on ``el.dataset.jv2dMode`` so it
-  // survives the Plotly.purge + child rebuild this function performs.
   const m = r.metrics
+  const style = readPlotStyleMode(el)
+
+  // Toolbar: always rendered (Style: selector is independent of metrics
+  // presence). Range: selector is appended only when ``metrics`` is
+  // available, since the operational-range clip needs J_sc.
+  const toolbar = document.createElement('div')
+  toolbar.className = 'jv2d-toolbar'
+  toolbar.setAttribute('data-test', 'jv2d-toolbar')
+
+  // Style: select — Nature-style publication theme vs interactive
+  // engineering theme. Always rendered. Toggle state persists on
+  // ``el.dataset.plotStyleMode`` so renderJV2D re-entry honours it.
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'jv2d-style-label'
+    styleLabel.htmlFor = 'jv2d-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'jv2d-style-mode'
+    styleSelect.className = 'jv2d-style-select'
+    styleSelect.setAttribute('data-test', 'jv2d-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = style
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderJV2D(el, r)
+    })
+    toolbar.appendChild(styleLabel)
+    toolbar.appendChild(styleSelect)
+  }
+
+  // Range: select — gated on metrics (existing precondition). Sets
+  // ``yaxis.range`` to the operational window centred on J_sc when
+  // ``Operational range`` is selected; otherwise lets Plotly autorange.
+  // State lives on ``el.dataset.jv2dMode`` (separate from style mode).
   if (m) {
-    const toolbar = document.createElement('div')
-    toolbar.className = 'jv2d-toolbar'
-    toolbar.setAttribute('data-test', 'jv2d-toolbar')
-    const label = document.createElement('label')
-    label.className = 'jv2d-range-label'
-    label.htmlFor = 'jv2d-range-mode'
-    label.textContent = 'Range:'
-    const select = document.createElement('select')
-    select.id = 'jv2d-range-mode'
-    select.className = 'jv2d-range-select'
-    select.setAttribute('data-test', 'jv2d-range-mode')
+    const rangeLabel = document.createElement('label')
+    rangeLabel.className = 'jv2d-range-label'
+    rangeLabel.htmlFor = 'jv2d-range-mode'
+    rangeLabel.textContent = 'Range:'
+    const rangeSelect = document.createElement('select')
+    rangeSelect.id = 'jv2d-range-mode'
+    rangeSelect.className = 'jv2d-range-select'
+    rangeSelect.setAttribute('data-test', 'jv2d-range-mode')
     const optOp = document.createElement('option')
     optOp.value = 'operational'
     optOp.textContent = 'Operational range'
     const optFull = document.createElement('option')
     optFull.value = 'full'
     optFull.textContent = 'Full sweep'
-    select.appendChild(optOp)
-    select.appendChild(optFull)
-    select.value = _jv2dReadMode(el)
-    select.addEventListener('change', () => {
-      // Persist mode on stable container, then re-render. ``r`` is the
-      // SAME object reference — raw V/J unchanged across modes (vitest
-      // case 6 pins this byte-identically).
-      el.dataset.jv2dMode = select.value === 'full' ? 'full' : 'operational'
+    rangeSelect.appendChild(optOp)
+    rangeSelect.appendChild(optFull)
+    rangeSelect.value = _jv2dReadMode(el)
+    rangeSelect.addEventListener('change', () => {
+      el.dataset.jv2dMode = rangeSelect.value === 'full' ? 'full' : 'operational'
       renderJV2D(el, r)
     })
-    toolbar.appendChild(label)
-    toolbar.appendChild(select)
-    el.appendChild(toolbar)
+    toolbar.appendChild(rangeLabel)
+    toolbar.appendChild(rangeSelect)
   }
+  el.appendChild(toolbar)
 
   const plotDiv = document.createElement('div')
   plotDiv.className = 'jv2d-plot'
@@ -249,37 +287,70 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // missing, voc_bracketed!==true, J_sc<=0, J_sc non-finite) so we
   // omit ``yaxis.range`` and let Plotly autorange.
   const yClip = _jv2dComputeYRange(_jv2dReadMode(el), m)
-  const yaxisLayout: Record<string, unknown> = {
-    ...(baseLayout().yaxis as object),
-    title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)'),
-  }
-  if (yClip) {
-    yaxisLayout.range = yClip
-  }
-  Plotly.newPlot(
-    plotDiv,
-    [
-      {
-        x: r.V, y: J_mA, name: 'Forward (2D)',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-      yaxis: yaxisLayout,
-      annotations: [
+
+  // Vertical zero-line is only drawn when the data crosses V=0
+  // (existing preset sweeps start at V=0; we never invent negative
+  // voltage). Horizontal zero-line at J=0 is always drawn in
+  // publication mode — it is the canonical Nature J–V reference line.
+  const minV = r.V.length > 0 ? Math.min(...r.V) : 0
+  const xWithZero = minV < 0
+
+  if (style === 'publication') {
+    const yaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+      title: 'Current density (mA cm⁻²)',
+      withZeroLine: true,
+    }
+    if (yClip) yaxisOpts.range = yClip
+    Plotly.newPlot(
+      plotDiv,
+      [
         {
-          x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
-          xanchor: 'left', yanchor: 'bottom', showarrow: false,
-          text: `2D grid: N<sub>x</sub>=${Nx}, N<sub>y</sub>=${Ny} · BC=${r.lateral_bc} · L<sub>x</sub>=${r.grid_x[Nx - 1].toFixed(0)} nm`,
-          font: { size: 11 },
+          x: r.V, y: J_mA, name: 'Forward (2D)',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
         },
       ],
-    }),
-    plotConfig('jv_2d_sweep'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Voltage (V)', withZeroLine: xWithZero }),
+        yaxis: publicationAxis(yaxisOpts),
+        annotations: metricAnnotation(m),
+      }),
+      publicationConfig('jv_2d_sweep'),
+    )
+  } else {
+    const yaxisLayout: Record<string, unknown> = {
+      ...(baseLayout().yaxis as object),
+      title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)'),
+    }
+    if (yClip) yaxisLayout.range = yClip
+    Plotly.newPlot(
+      plotDiv,
+      [
+        {
+          x: r.V, y: J_mA, name: 'Forward (2D)',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+        yaxis: yaxisLayout,
+        annotations: [
+          {
+            x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
+            xanchor: 'left', yanchor: 'bottom', showarrow: false,
+            text: `2D grid: N<sub>x</sub>=${Nx}, N<sub>y</sub>=${Ny} · BC=${r.lateral_bc} · L<sub>x</sub>=${r.grid_x[Nx - 1].toFixed(0)} nm`,
+            font: { size: 11 },
+          },
+        ],
+      }),
+      plotConfig('jv_2d_sweep'),
+    )
+  }
 
   // Layer 3: render JVMetrics card row + bracket-warning banner. Mirrors
   // the 1D ``panels/jv.ts`` pattern (V_oc / J_sc / FF / PCE), reusing the
@@ -289,7 +360,9 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // rendered. ``J_sc`` is in A/m² (J_sc-positive convention from the
   // backend; divide by 10 for mA/cm² display, mirror of 1D pane).
   // ``m`` was already bound at the top of this function for the Layer 4
-  // toolbar — reuse rather than redeclare.
+  // toolbar — reuse rather than redeclare. The metric-card row and
+  // warning banner are unchanged in publication mode (style mode only
+  // affects the Plotly layout/traces/config, not the surrounding cards).
   if (m) {
     const metricsRow = document.createElement('div')
     metricsRow.className = 'jv2d-metrics-row'

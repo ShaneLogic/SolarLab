@@ -300,9 +300,255 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
     expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
   })
 
-  it('does not render the toolbar when metrics are absent', () => {
+  it('renders the Style select even when metrics are absent', () => {
+    // Style is a visual-mode toggle; it must remain available even
+    // for legacy backend payloads that omit the metrics field. The
+    // Range select stays gated on metrics (it needs J_sc to clip).
     const result = makeResult()
     renderJV2D(el, result)
-    expect(el.querySelector('[data-test="jv2d-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="jv2d-toolbar"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="jv2d-style-mode"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="jv2d-range-mode"]')).toBeNull()
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// Publication visual-style mode (Nature-style single-panel theme).
+// Engineering mode remains the default; publication mode swaps the Plotly
+// layout / trace style / config WITHOUT mutating raw V/J. Range mode
+// (Operational vs Full sweep) is independent of the visual style.
+// ---------------------------------------------------------------------------
+
+import { PUBLICATION_FONT_FAMILY } from '../../plot-theme'
+
+function _lastNewPlotConfig(): Record<string, any> | undefined {
+  const calls = newPlotMock.mock.calls
+  if (calls.length === 0) return undefined
+  return calls[calls.length - 1][3] as Record<string, any>
+}
+
+function _lastNewPlotTrace(): Record<string, any> | undefined {
+  const calls = newPlotMock.mock.calls
+  if (calls.length === 0) return undefined
+  const data = calls[calls.length - 1][1] as Array<Record<string, any>>
+  return data?.[0]
+}
+
+function _toggleStyle(el: HTMLElement, mode: 'engineering' | 'publication'): void {
+  const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-style-mode"]')!
+  sel.value = mode
+  sel.dispatchEvent(new Event('change'))
+}
+
+describe('renderJV2D — publication style mode', () => {
+  let el: HTMLDivElement
+
+  beforeEach(() => {
+    newPlotMock.mockClear()
+    el = document.createElement('div')
+    document.body.appendChild(el)
+  })
+
+  it('default is engineering — Arial layout, modebar visible (regression)', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    const layout = _lastNewPlotLayout()!
+    expect(layout.font.family).toBe('Arial, sans-serif')
+    const config = _lastNewPlotConfig()!
+    // plotConfig() does not set displayModeBar — default Plotly behaviour.
+    expect(config.displayModeBar).toBeUndefined()
+  })
+
+  it('toggling to publication applies Nature-style layout', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
+    expect(layout.paper_bgcolor).toBe('#ffffff')
+    expect(layout.plot_bgcolor).toBe('#ffffff')
+    expect(layout.margin).toEqual({ t: 18, r: 18, b: 48, l: 58 })
+    // Compact in-plot legend, top-right corner.
+    expect(layout.legend.x).toBe(0.98)
+    expect(layout.legend.xanchor).toBe('right')
+  })
+
+  it('publication config hides the modebar; engineering does not', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
+    _toggleStyle(el, 'publication')
+    expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
+  })
+
+  it('publication mode adds a metric annotation when voc_bracketed=true', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.951, J_sc: 220.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
+    expect(annotations.length).toBe(1)
+    expect(annotations[0].text).toContain('0.951 V')
+    expect(annotations[0].text).toContain('22.00 mA cm⁻²')
+    expect(annotations[0].text).toContain('82.3 %')
+    expect(annotations[0].text).toContain('17.22 %')
+  })
+
+  it('publication mode shows "not bracketed" annotation when voc_bracketed=false', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
+    expect(annotations.length).toBe(1)
+    expect(annotations[0].text).toContain('not bracketed')
+    expect(annotations[0].text).not.toContain('0.000 V')
+    expect(annotations[0].text).not.toContain('0.0 %')
+    expect(annotations[0].text).not.toContain('0.00 %')
+  })
+
+  it('publication mode renders no annotation when metrics are missing', () => {
+    // Independent of metrics — publication style still applies.
+    const result = makeResult()
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
+    expect((layout.annotations as Array<unknown>).length).toBe(0)
+  })
+
+  it('publication mode renders no annotation when voc_bracketed is undefined', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 220, FF: 0.82, PCE: 0.17 },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect((layout.annotations as Array<unknown>).length).toBe(0)
+  })
+
+  it('style toggle persists across re-render via el.dataset.plotStyleMode', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    expect(el.dataset.plotStyleMode).toBe('publication')
+    // External re-entry (e.g. mountMainPlotPane.update) must honour the
+    // dataset attribute without an explicit second toggle.
+    renderJV2D(el, result)
+    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-style-mode"]')!
+    expect(sel.value).toBe('publication')
+    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
+  })
+
+  it('range mode and style mode are independent (operational + publication)', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    // Default = operational + engineering.
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis.range).toBeDefined()
+    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
+    // Toggle style only — range stays operational.
+    _toggleStyle(el, 'publication')
+    const pubLayout = _lastNewPlotLayout()!
+    expect(pubLayout.yaxis.range).toBeDefined()                      // still clipped
+    expect((pubLayout.yaxis.range as [number, number])[0]).toBeCloseTo(-10.0, 6)
+    expect((pubLayout.yaxis.range as [number, number])[1]).toBeCloseTo(+30.0, 6)
+    expect(pubLayout.font.family).toBe(PUBLICATION_FONT_FAMILY)      // publication font
+  })
+
+  it('range "Full sweep" + style "Publication" composes — autorange + Helvetica', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    // Toggle range to full first.
+    const rangeSel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
+    rangeSel.value = 'full'
+    rangeSel.dispatchEvent(new Event('change'))
+    expect(_lastNewPlotLayout()!.yaxis.range).toBeUndefined()
+    // Then toggle style to publication.
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.yaxis.range).toBeUndefined()                       // still autorange
+    expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
+  })
+
+  it('raw J trace is byte-identical between engineering and publication modes', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    const yEng = _lastNewPlotTraceY()!.slice()
+    _toggleStyle(el, 'publication')
+    const yPub = _lastNewPlotTraceY()!.slice()
+    expect(yPub).toEqual(yEng)
+    // And raw input array must remain untouched in both renders.
+    expect(result.J).toEqual([-300.0, -250.0, +50.0])
+    // Both equal the documented post-flip-and-scale conversion.
+    const expected = result.J.map(j => -j / 10)
+    expect(yEng).toEqual(expected)
+    expect(yPub).toEqual(expected)
+  })
+
+  it('publication trace uses hollow markers + muted academic palette', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const trace = _lastNewPlotTrace()!
+    expect(trace.marker.symbol).toBe('circle-open')
+    expect(trace.marker.color).toBe('rgba(0,0,0,0)')
+    expect(trace.marker.line.color).toBe('#1f3a93')
+    expect(trace.line.color).toBe('#1f3a93')
+    expect(trace.line.width).toBe(1.75)
+  })
+
+  it('publication mode keeps metric cards + warning banner (cards untouched by style)', () => {
+    const result = makeResult({
+      metrics: { V_oc: 0.0, J_sc: 200.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    expect(el.querySelector('[data-test="jv2d-metrics-row"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="jv2d-voc-not-bracketed"]')).not.toBeNull()
+  })
+
+  it('publication mode draws horizontal zero-line; vertical zero-line only when V<0', () => {
+    // Default fixture starts at V=0 — no negative bias, so xaxis zero
+    // line stays off in publication mode.
+    const result = makeResult({
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.yaxis.zeroline).toBe(true)
+    expect(layout.xaxis.zeroline).toBe(false)
+  })
+
+  it('publication mode draws vertical zero-line when sweep includes negative V', () => {
+    const result = makeResult({
+      V: [-0.2, 0.0, 0.5, 1.0],
+      J: [-100.0, -300.0, -250.0, +50.0],
+      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
+    })
+    renderJV2D(el, result)
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.xaxis.zeroline).toBe(true)
+    expect(layout.xaxis.zerolinecolor).toBe('#000000')
   })
 })
