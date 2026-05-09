@@ -1649,11 +1649,54 @@ export function renderEL(el: HTMLElement, r: ELResult): void {
 
 // ── Mott–Schottky (C–V) ─────────────────────────────────────────────────────
 
-function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void {
+export function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('mott-schottky-render')
 
-  const shapes: Record<string, unknown>[] = [
+  const _msStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar \u2014 always rendered above the plot.
+  const _msToolbar = document.createElement('div')
+  _msToolbar.className = 'plot-toolbar'
+  _msToolbar.setAttribute('data-test', 'mott-schottky-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'mott-schottky-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'mott-schottky-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'mott-schottky-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _msStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderMottSchottky(el, r)
+    })
+    _msToolbar.appendChild(styleLabel)
+    _msToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_msToolbar)
+
+  const _msPlotDiv = document.createElement('div')
+  _msPlotDiv.className = 'mott-schottky-plot'
+  _msPlotDiv.id = 'mott-schottky-plot-inner'
+  el.appendChild(_msPlotDiv)
+
+  // Fit window highlight. Engineering uses the existing indigo tint;
+  // publication softens it to a neutral grey so the shaded band reads
+  // as figure annotation rather than a coloured data region.
+  const _engShapes: Record<string, unknown>[] = [
     {
       type: 'rect', xref: 'x', yref: 'paper',
       x0: r.V_fit_lo, x1: r.V_fit_hi,
@@ -1662,30 +1705,81 @@ function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void {
       line: { width: 0 },
     },
   ]
+  const _pubShapes: Record<string, unknown>[] = [
+    {
+      type: 'rect', xref: 'x', yref: 'paper',
+      x0: r.V_fit_lo, x1: r.V_fit_hi,
+      y0: 0, y1: 1,
+      fillcolor: 'rgba(0, 0, 0, 0.06)',
+      line: { width: 0 },
+    },
+  ]
 
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.V, y: r.one_over_C2, name: '1/C\u00b2',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('1/C\u00b2 (m\u2074\u00b7F\u207B\u00b2)') },
-      shapes,
-      annotations: [
+  if (_msStyle === 'publication') {
+    Plotly.newPlot(
+      _msPlotDiv,
+      [
         {
-          x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
-          xanchor: 'left', yanchor: 'top', showarrow: false,
-          text: `V<sub>bi</sub> = ${r.V_bi_fit.toFixed(3)} V &nbsp; N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3 &nbsp; f = ${r.frequency.toExponential(1)} Hz`,
-          font: { size: 12 },
+          x: r.V, y: r.one_over_C2, name: '1/C<sup>2</sup>',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
         },
       ],
-    }),
-    plotConfig('mott_schottky'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
+        yaxis: publicationAxis({ title: '1/C<sup>2</sup> (m\u2074\u00b7F\u207B\u00b2)' }),
+        shapes: _pubShapes,
+        // Mott-Schottky 1/C\u00b2 typically slopes upper-LEFT (deep reverse
+        // bias, large 1/C\u00b2) to lower-RIGHT (toward V_bi where 1/C\u00b2 \u2192 0).
+        // Upper-RIGHT quadrant is the empty home for the V_bi / N_eff /
+        // frequency readout.
+        annotations: [
+          {
+            x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
+            xanchor: 'right' as const, yanchor: 'top' as const,
+            showarrow: false,
+            text:
+              `V<sub>bi</sub> = ${r.V_bi_fit.toFixed(3)} V<br>` +
+              `N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3<br>` +
+              `f = ${r.frequency.toExponential(1)} Hz`,
+            align: 'right' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('mott_schottky'),
+    )
+  } else {
+    Plotly.newPlot(
+      _msPlotDiv,
+      [
+        {
+          x: r.V, y: r.one_over_C2, name: '1/C\u00b2',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('1/C\u00b2 (m\u2074\u00b7F\u207B\u00b2)') },
+        shapes: _engShapes,
+        annotations: [
+          {
+            x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
+            xanchor: 'left', yanchor: 'top', showarrow: false,
+            text: `V<sub>bi</sub> = ${r.V_bi_fit.toFixed(3)} V &nbsp; N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3 &nbsp; f = ${r.frequency.toExponential(1)} Hz`,
+            font: { size: 12 },
+          },
+        ],
+      }),
+      plotConfig('mott_schottky'),
+    )
+  }
 }
