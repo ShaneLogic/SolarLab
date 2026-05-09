@@ -13,9 +13,9 @@ def main():
             color=INK, lw=2.0, label=f"2D · PCE {data['metrics_2d']['pce_pct']:.1f}%")
     ax.axhline(0, color="#999", lw=0.6)
     ax.set_xlabel("Voltage (V)")
-    ax.set_ylabel("J (mA/cm²)")
+    ax.set_ylabel(r"J (mA/cm$^{2}$)")
     delta = data['metrics_1d']['pce_pct'] - data['metrics_2d']['pce_pct']
-    ax.set_title(f"ΔPCE = {delta:+.2f} % (grain-boundary recombination)",
+    ax.set_title(rf"$\Delta$PCE = {delta:+.2f} % (grain-boundary recombination)",
                  fontsize=11, color="#666", style="italic", loc="left")
     ax.legend(frameon=False, loc="lower left")
     fig.tight_layout()
