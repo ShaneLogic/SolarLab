@@ -22,7 +22,7 @@ def main():
                                 linestyle=(0, (6, 4))))
     ax.text(60_000, 28.4, "target", color=SECONDARY,
             ha="center", fontsize=11, fontweight="bold")
-    ax.set_xlabel("Operational lifetime T₈₀ (h)")
+    ax.set_xlabel(r"Operational lifetime $T_{80}$ (h)")
     ax.set_ylabel("PCE (%)")
     ax.set_xlim(50, 200_000)
     ax.set_ylim(15, 30)

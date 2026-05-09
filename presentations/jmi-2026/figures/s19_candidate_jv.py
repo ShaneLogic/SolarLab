@@ -11,7 +11,7 @@ def main():
             color=ACCENT, lw=2.0, label="Top candidate")
     ax.axhline(0, color="#999", lw=0.6)
     ax.set_xlabel("Voltage (V)")
-    ax.set_ylabel("J (mA/cm²)")
+    ax.set_ylabel(r"J (mA/cm$^{2}$)")
     pce = data["metrics"]["pce_pct"]
     ax.text(0.05, 0.92, f"Predicted PCE = {pce:.1f} %",
             transform=ax.transAxes, fontsize=12, color=BODY,

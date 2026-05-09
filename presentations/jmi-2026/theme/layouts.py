@@ -79,9 +79,25 @@ def add_content(prs, *, section_label, slide_index, total, title,
                  subtitle, fonts.SUBTITLE, palette.BODY)
     # figure (left) + bullets (right)
     if figure_path:
+        # Fit picture inside a 5.4 x 3.2 inch box, preserving native aspect.
+        from PIL import Image
+        with Image.open(str(figure_path)) as im:
+            src_w, src_h = im.size
+        max_w_in, max_h_in = 5.4, 3.2
+        src_aspect = src_w / src_h
+        if src_aspect > (max_w_in / max_h_in):
+            fig_w_in = max_w_in
+            fig_h_in = max_w_in / src_aspect
+        else:
+            fig_h_in = max_h_in
+            fig_w_in = max_h_in * src_aspect
+        # Center inside the 0.5..5.9 / 2.0..5.2 box.
+        x_in = 0.5 + (max_w_in - fig_w_in) / 2.0
+        y_in = 2.0 + (max_h_in - fig_h_in) / 2.0
         slide.shapes.add_picture(str(figure_path),
-                                 Inches(0.5), Inches(2.0),
-                                 width=Inches(5.4), height=Inches(3.2))
+                                 Inches(x_in), Inches(y_in),
+                                 width=Inches(fig_w_in),
+                                 height=Inches(fig_h_in))
         bullet_left = Inches(6.2)
         bullet_w = Inches(3.3)
     else:
