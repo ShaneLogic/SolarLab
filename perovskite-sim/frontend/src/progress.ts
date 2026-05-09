@@ -8,6 +8,87 @@ export interface ProgressBarHandle {
   reset(): void
 }
 
+// Backend progress messages use plain underscore notation (Python
+// convention: ``V_oc``, ``J_sc``, ``E_A``…). Render each known physics
+// token as a real <sub> element so users see proper typography without
+// allowing arbitrary HTML in the message stream. Longer tokens come
+// first so ``EQE_EL`` matches before any future ``E_E`` would shadow.
+const SUBSCRIPT_TOKENS: Array<readonly [string, string, string]> = [
+  ['EQE_EL',   'EQE',  'EL'],
+  ['V_inj',    'V',    'inj'],
+  ['V_max',    'V',    'max'],
+  ['V_min',    'V',    'min'],
+  ['V_app',    'V',    'app'],
+  ['V_bi',     'V',    'bi'],
+  ['V_oc',     'V',    'oc'],
+  ['J_inj',    'J',    'inj'],
+  ['J_sc',     'J',    'sc'],
+  ['E_A',      'E',    'A'],
+  ['L_g',      'L',    'g'],
+  ['N_grid',   'N',    'grid'],
+  ['t_settle', 't',    'settle'],
+]
+
+export interface SubscriptPart {
+  readonly kind: 'text' | 'subscript'
+  readonly value: string
+  readonly base?: string
+}
+
+// Pure-data tokeniser. Splits ``raw`` on the longest-first physics-token
+// allow-list and returns an array of text / subscript parts. The
+// surrounding character class keeps ``V_oc_arr`` from being mangled
+// mid-identifier into ``V<sub>oc</sub>_arr``.
+export function tokeniseProgressMessage(raw: string): SubscriptPart[] {
+  const escapeRe = (s: string): string => {
+    let out = ''
+    for (const ch of s) {
+      if ('.*+?^${}()|[]\\'.indexOf(ch) >= 0) out += '\\'
+      out += ch
+    }
+    return out
+  }
+  const pattern = SUBSCRIPT_TOKENS.map(t => escapeRe(t[0])).join('|')
+  const re = new RegExp(`(?<![A-Za-z0-9_])(${pattern})(?![A-Za-z0-9_])`, 'g')
+  const parts: SubscriptPart[] = []
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(raw)) !== null) {
+    if (m.index > lastIndex) {
+      parts.push({ kind: 'text', value: raw.slice(lastIndex, m.index) })
+    }
+    const token = m[1]
+    const entry = SUBSCRIPT_TOKENS.find(t => t[0] === token)
+    if (entry) {
+      parts.push({ kind: 'subscript', value: entry[2], base: entry[1] })
+    } else {
+      parts.push({ kind: 'text', value: token })
+    }
+    lastIndex = m.index + token.length
+  }
+  if (lastIndex < raw.length) {
+    parts.push({ kind: 'text', value: raw.slice(lastIndex) })
+  }
+  return parts
+}
+
+// Replaces every child of ``target`` with text nodes + ``<sub>``
+// elements built from the tokenised message. Avoids innerHTML so any
+// user-controllable content cannot inject markup.
+export function renderProgressMessage(target: HTMLElement, raw: string): void {
+  while (target.firstChild) target.removeChild(target.firstChild)
+  for (const part of tokeniseProgressMessage(raw)) {
+    if (part.kind === 'text') {
+      target.appendChild(document.createTextNode(part.value))
+    } else {
+      target.appendChild(document.createTextNode(part.base ?? ''))
+      const sub = document.createElement('sub')
+      sub.textContent = part.value
+      target.appendChild(sub)
+    }
+  }
+}
+
 export function createProgressBar(container: HTMLElement): ProgressBarHandle {
   container.innerHTML = `
     <div class="progress-card">
@@ -58,7 +139,7 @@ export function createProgressBar(container: HTMLElement): ProgressBarHandle {
       fillEl.style.width = `${pct}%`
       percentEl.textContent = `${pct}%`
       stageEl.textContent = stageLabel(ev.stage)
-      messageEl.textContent = ev.message ?? ''
+      renderProgressMessage(messageEl, ev.message ?? '')
       etaEl.textContent = fmtEta(ev.eta_s)
     },
     done() {
@@ -72,7 +153,7 @@ export function createProgressBar(container: HTMLElement): ProgressBarHandle {
       fillEl.classList.add('error')
       fillEl.classList.remove('done')
       stageEl.textContent = 'Error'
-      messageEl.textContent = message
+      renderProgressMessage(messageEl, message)
       etaEl.textContent = ''
     },
     reset() {
@@ -80,7 +161,7 @@ export function createProgressBar(container: HTMLElement): ProgressBarHandle {
       fillEl.style.width = '0%'
       percentEl.textContent = '0%'
       stageEl.textContent = 'Idle'
-      messageEl.textContent = ''
+      while (messageEl.firstChild) messageEl.removeChild(messageEl.firstChild)
       etaEl.textContent = ''
     },
   }
