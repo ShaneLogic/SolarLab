@@ -1,0 +1,5 @@
+figures/output/*.png
+figures/output/*.pdf
+__pycache__/
+*.pyc
+.venv/
