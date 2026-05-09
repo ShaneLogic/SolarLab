@@ -64,6 +64,7 @@ from perovskite_sim.solver.mol import (
 from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.experiments.jv_sweep import (
     _compute_current,
+    _compute_current_ss,
     _integrate_step,
     _grid_node_count,
 )
@@ -261,7 +262,7 @@ def run_suns_voc(
         x, stack, mat_dark, V_app=0.0,
         t_settle=t_settle, rtol=rtol, atol=atol,
     )
-    J_dark = float(_compute_current(x, y_dark, stack, 0.0, mat=mat_dark))
+    J_dark = float(_compute_current_ss(x, y_dark, stack, 0.0, mat=mat_dark))
 
     for k, suns in enumerate(suns_sorted):
         mat_k = dataclasses.replace(mat_baseline, G_optical=G_unit * suns)
@@ -271,7 +272,7 @@ def run_suns_voc(
             x, stack, mat_k, V_app=0.0,
             t_settle=t_settle, rtol=rtol, atol=atol,
         )
-        J_total = float(_compute_current(x, y_ss, stack, 0.0, mat=mat_k))
+        J_total = float(_compute_current_ss(x, y_ss, stack, 0.0, mat=mat_k))
         # Photo-only current = total at V=0 with light minus dark at V=0.
         J_sc_arr[k] = J_total - J_dark
 

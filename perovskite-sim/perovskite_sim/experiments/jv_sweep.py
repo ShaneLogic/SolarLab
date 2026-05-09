@@ -345,6 +345,36 @@ def _compute_current(
     return float(J_faces[0])
 
 
+def _compute_current_ss(
+    x: np.ndarray,
+    y: np.ndarray,
+    stack: DeviceStack,
+    V_app: float,
+    mat: MaterialArrays | None = None,
+) -> float:
+    """Extract J [A/m²] using the **median** across all interior faces.
+
+    Use this when the caller has settled the device with a finite ``t_settle``
+    and is reading J at fixed V — Suns-Voc, EQE, and similar V=0 SS probes.
+    At true steady state every face carries the same total current (charge
+    conservation), so any face is correct. In practice on ionic-rich presets
+    the contact-adjacent faces still see residual ionic / displacement
+    transients that haven't fully damped, while the interior faces agree on
+    the photo-current to many digits. Median is the robust mid-summary that
+    is insensitive to those boundary outliers — verified on
+    ``ionmonger_benchmark_tmm`` where ``J[0]`` swings ±1700 A/m² across
+    t_settle but median stays pinned at the linear-with-suns photo value.
+
+    Use ``_compute_current`` (face[0]) on transient J-V sweeps where the
+    displacement current at the contact is the physical terminal-current
+    quantity flowing through the external circuit.
+
+    Convention: J > 0 when the device delivers power (J_sc > 0 at V=0).
+    """
+    J_faces = _total_current_faces(x, y, stack, V_app, mat=mat)
+    return float(np.median(J_faces))
+
+
 # Upper bound on RHS evaluations per run_transient call inside a JV sweep.
 # Calibration: well-conditioned sub-intervals at N_grid=60 complete in a few
 # hundred nfev; degenerate calls (reverse sweep reheating from a high-V_app
