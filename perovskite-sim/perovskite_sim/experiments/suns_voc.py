@@ -194,7 +194,7 @@ def run_suns_voc(
     stack: DeviceStack,
     suns_levels: Sequence[float] = DEFAULT_SUNS,
     N_grid: int = 60,
-    t_settle: float = 1e-3,
+    t_settle: float = 1e-1,
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
@@ -209,12 +209,15 @@ def run_suns_voc(
         flux. Sorted ascending internally; duplicates removed.
     N_grid : int, default 60
         Total drift-diffusion grid nodes across the electrical layers.
-    t_settle : float, default 1e-3
+    t_settle : float, default 1e-1
         Settling time [s] for each suns level's illuminated steady-state
-        solve. 1 ms is well beyond carrier recombination lifetimes but
-        short compared to ion redistribution, which is appropriate: the
-        ion profile at V=0 is what we want held fixed while carriers
-        track the new illumination.
+        solve. 100 ms covers the slow ionic dynamics on typical
+        perovskite presets (D_ion ≈ 1e-17 m²/s, 400 nm absorber →
+        τ_ion ≈ 16 ms; settling for ~5τ_ion damps the ionic transient
+        that would otherwise leak into the V=0 J_sc reading and corrupt
+        the pseudo-FF computation downstream. Faster ionic presets can
+        use a smaller t_settle to save runtime; very slow ionic presets
+        (D_ion ≪ 1e-17) may need t_settle bumped further.
     rtol, atol : float
         Scipy solver tolerances forwarded to ``run_transient`` and
         ``_find_voc``.
@@ -247,6 +250,19 @@ def run_suns_voc(
     J_sc_arr = np.zeros_like(suns_sorted)
     V_guess = stack.compute_V_bi()  # initial bracket upper bound
 
+    # Dark baseline at V=0: subtract to isolate the photo-current from
+    # any ionic-drift / contact-leakage current that flows even without
+    # illumination. Without this correction, ionic-rich presets like
+    # ionmonger_benchmark_tmm produce wildly varying J_sc values at low
+    # suns levels (the ionic background swamps the small photo-signal),
+    # which corrupts the pseudo-FF computation downstream.
+    mat_dark = dataclasses.replace(mat_baseline, G_optical=np.zeros_like(x))
+    y_dark = _solve_illuminated_ss_with_mat(
+        x, stack, mat_dark, V_app=0.0,
+        t_settle=t_settle, rtol=rtol, atol=atol,
+    )
+    J_dark = float(_compute_current(x, y_dark, stack, 0.0, mat=mat_dark))
+
     for k, suns in enumerate(suns_sorted):
         mat_k = dataclasses.replace(mat_baseline, G_optical=G_unit * suns)
 
@@ -255,7 +271,9 @@ def run_suns_voc(
             x, stack, mat_k, V_app=0.0,
             t_settle=t_settle, rtol=rtol, atol=atol,
         )
-        J_sc_arr[k] = _compute_current(x, y_ss, stack, 0.0, mat=mat_k)
+        J_total = float(_compute_current(x, y_ss, stack, 0.0, mat=mat_k))
+        # Photo-only current = total at V=0 with light minus dark at V=0.
+        J_sc_arr[k] = J_total - J_dark
 
         # V_oc: bisect starting from the previous level's V_oc (warm
         # start). V_guess is the upper end of the coarse bracket in

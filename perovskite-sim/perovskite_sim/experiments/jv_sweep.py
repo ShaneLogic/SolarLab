@@ -383,10 +383,20 @@ def _bake_radiative_reabsorption_step(
     Beer-Lambert / non-TMM stacks have ``has_radiative_reabsorption=False``
     and skip this path entirely (returned mat is the original).
     """
-    if not (mat.has_radiative_reabsorption and illuminated and mat.absorber_masks):
+    if not (mat.has_radiative_reabsorption and mat.absorber_masks):
         return mat
     sv = StateVec.unpack(y, len(x))
-    G_base = mat.G_optical if mat.G_optical is not None else np.zeros_like(x)
+    # Under dark forward injection (LED-mode), ``mat.G_optical`` still holds
+    # the solar absorption profile that ``build_material_arrays`` cached, but
+    # the runtime branch in ``assemble_rhs`` zeros G when ``illuminated=False``.
+    # The bake mirrors that decision by zeroing G_base here, so the returned
+    # mat carries only the lagged R_rad source. The companion
+    # ``force_use_g_optical=True`` flag tells ``assemble_rhs`` to skip the
+    # dark zeroing on this baked mat.
+    if illuminated:
+        G_base = mat.G_optical if mat.G_optical is not None else np.zeros_like(x)
+    else:
+        G_base = np.zeros_like(x)
     G_with_rad = G_base.copy()
     for mask, P_esc, thickness in zip(
         mat.absorber_masks, mat.absorber_p_esc, mat.absorber_thicknesses
@@ -408,6 +418,7 @@ def _bake_radiative_reabsorption_step(
         absorber_masks=(),
         absorber_p_esc=(),
         absorber_thicknesses=(),
+        force_use_g_optical=True,
     )
 
 
@@ -421,7 +432,7 @@ def _integrate_step(
     t_hi: float,
     rtol: float,
     atol: float,
-    max_bisect: int = 6,
+    max_bisect: int = 10,
     illuminated: bool = True,
 ) -> np.ndarray:
     """Advance the coupled MOL state from t_lo to t_hi at fixed V_app.
@@ -460,7 +471,7 @@ def _integrate_step(
     )
     if sol.success:
         return sol.y[:, -1]
-    if mat.has_radiative_reabsorption and illuminated:
+    if mat.has_radiative_reabsorption:
         mat_step = _bake_radiative_reabsorption_step(y, x, mat, illuminated)
         sol = run_transient(
             x, y, (t_lo, t_hi), np.array([t_hi]),
@@ -472,6 +483,21 @@ def _integrate_step(
         if sol.success:
             return sol.y[:, -1]
     if max_bisect == 0:
+        # Last-chance BDF fallback. When Radau bisection is exhausted on
+        # a near-flat-band / deep-injection state, scipy's BDF (variable-
+        # order BDF) sometimes converges where Radau cannot. Cost is one
+        # extra solve attempt per pathological step; healthy steps never
+        # reach this branch.
+        sol_bdf = run_transient(
+            x, y, (t_lo, t_hi), np.array([t_hi]),
+            stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
+            max_step=(t_hi - t_lo) / 20.0 if t_hi > t_lo else np.inf,
+            mat=mat,
+            max_nfev=_JV_RADAU_MAX_NFEV,
+            method="BDF",
+        )
+        if sol_bdf.success:
+            return sol_bdf.y[:, -1]
         raise RuntimeError(
             f"JV sweep: coupled solver failed to converge on [{t_lo:.3e},{t_hi:.3e}] "
             f"at V_app={V_app:.4f} V after bisection"

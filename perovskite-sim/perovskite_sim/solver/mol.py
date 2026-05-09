@@ -175,6 +175,13 @@ class MaterialArrays:
     # profile.
     N_t_node: np.ndarray | None = None
     has_trap_profile: bool = False
+    # Override the dark/illuminated branch in ``assemble_rhs``: when True,
+    # ``G_optical`` is used verbatim regardless of the ``illuminated`` kwarg.
+    # Set by the lagged-G_rad fallback in ``_bake_radiative_reabsorption_step``
+    # so a baked dark-plus-LED-emission step keeps its R_rad source instead
+    # of being zeroed on the dark branch. Default False keeps the historical
+    # dark behaviour (G zeroed) bit-identical.
+    force_use_g_optical: bool = False
 
     @property
     def carrier_params(self) -> dict:
@@ -852,8 +859,12 @@ def assemble_rhs(
         mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_app,
     )
 
-    # Generation: TMM-computed profile if available, else Beer-Lambert fallback
-    if illuminated:
+    # Generation: TMM-computed profile if available, else Beer-Lambert fallback.
+    # ``force_use_g_optical`` lets the lagged-G_rad bake step keep its
+    # baked R_rad source under the dark branch (LED-mode forward injection
+    # produces radiative emission even with no solar input — the bake step
+    # has already pre-zeroed the solar contribution and folded R_rad in).
+    if illuminated or mat.force_use_g_optical:
         if mat.G_optical is not None:
             G = mat.G_optical
         else:
@@ -1033,6 +1044,7 @@ def run_transient(
     max_step: float = np.inf,
     mat: MaterialArrays | None = None,
     max_nfev: int | None = None,
+    method: str = "Radau",
 ):
     """Integrate MOL system from t_span[0] to t_span[1].
 
@@ -1058,7 +1070,7 @@ def run_transient(
             return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
 
         return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
-                         method="Radau", rtol=rtol, atol=atol,
+                         method=method, rtol=rtol, atol=atol,
                          dense_output=False, max_step=max_step)
 
     counter = [0]
@@ -1071,7 +1083,7 @@ def run_transient(
 
     try:
         return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
-                         method="Radau", rtol=rtol, atol=atol,
+                         method=method, rtol=rtol, atol=atol,
                          dense_output=False, max_step=max_step)
     except _NfevExceeded:
         from types import SimpleNamespace
