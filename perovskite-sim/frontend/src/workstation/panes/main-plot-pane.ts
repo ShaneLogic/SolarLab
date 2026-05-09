@@ -111,57 +111,139 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
 
 // ── Stage-B V_oc(L_g) sweep (Phase 6) ───────────────────────────────────────
 
-function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): void {
+export function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('voc-grain-sweep-render')
+
+  const _vgsStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar — always rendered above the plot.
+  const _vgsToolbar = document.createElement('div')
+  _vgsToolbar.className = 'plot-toolbar'
+  _vgsToolbar.setAttribute('data-test', 'voc-grain-sweep-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'voc-grain-sweep-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'voc-grain-sweep-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'voc-grain-sweep-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _vgsStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderVocGrainSweep(el, r)
+    })
+    _vgsToolbar.appendChild(styleLabel)
+    _vgsToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_vgsToolbar)
+
+  const _vgsPlotDiv = document.createElement('div')
+  _vgsPlotDiv.className = 'voc-grain-sweep-plot'
+  _vgsPlotDiv.id = 'voc-grain-sweep-plot-inner'
+  el.appendChild(_vgsPlotDiv)
+
   const V_oc_mV = r.V_oc_V.map(v => v * 1e3)
   const J_sc_mA = r.J_sc_Am2.map(j => j / 10)
   const ann = r.grain_sizes_nm
     .map((L, i) =>
-      `L_g=${L.toFixed(0)} nm: V<sub>oc</sub>=${V_oc_mV[i].toFixed(1)} mV, ` +
+      `L<sub>g</sub>=${L.toFixed(0)} nm: V<sub>oc</sub>=${V_oc_mV[i].toFixed(1)} mV, ` +
         `J<sub>sc</sub>=${J_sc_mA[i].toFixed(2)} mA·cm⁻², FF=${r.FF[i].toFixed(3)}`,
     )
     .join('<br>')
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.grain_sizes_nm,
-        y: V_oc_mV,
-        name: 'V_oc(L_g)',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-    ],
-    baseLayout({
-      xaxis: {
-        ...(baseLayout().xaxis as object),
-        type: 'log',
-        // Decade-only major tick labels (Nature-style log axis
-        // convention). Plotly's default auto-tick algorithm prints
-        // minor labels at 2× and 5× between decades, which crowds
-        // the canvas. Applies in both Engineering and Publication
-        // mode for consistency.
-        dtick: 1,
-        title: axisTitle('Grain size, <i>L<sub>g</sub></i> (nm)'),
-      },
-      yaxis: {
-        ...(baseLayout().yaxis as object),
-        title: axisTitle('Open-circuit voltage, <i>V<sub>oc</sub></i> (mV)'),
-      },
-      annotations: [
+
+  if (_vgsStyle === 'publication') {
+    Plotly.newPlot(
+      _vgsPlotDiv,
+      [
         {
-          x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
-          xanchor: 'left', yanchor: 'bottom', showarrow: false,
-          text: ann,
-          font: { size: 10 },
-          align: 'left',
+          x: r.grain_sizes_nm,
+          y: V_oc_mV,
+          name: 'V<sub>oc</sub>(L<sub>g</sub>)',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
         },
       ],
-    }),
-    plotConfig('voc_grain_sweep'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Grain size, <i>L</i><sub>g</sub> (nm)', isLog: true }),
+        yaxis: publicationAxis({ title: 'Open-circuit voltage, <i>V</i><sub>oc</sub> (mV)' }),
+        // V_oc(L_g) rises monotonically from lower-left (small grains,
+        // recombination-dominated) toward upper-right (large grains,
+        // bulk limit). Lower-RIGHT quadrant is the empty home for the
+        // multi-line per-grain table (top-down stacked).
+        annotations: [
+          {
+            x: 0.95, y: 0.05, xref: 'paper', yref: 'paper',
+            xanchor: 'right' as const, yanchor: 'bottom' as const,
+            showarrow: false,
+            text: ann,
+            align: 'left' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('voc_grain_sweep'),
+    )
+  } else {
+    Plotly.newPlot(
+      _vgsPlotDiv,
+      [
+        {
+          x: r.grain_sizes_nm,
+          y: V_oc_mV,
+          name: 'V_oc(L_g)',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+      ],
+      baseLayout({
+        xaxis: {
+          ...(baseLayout().xaxis as object),
+          type: 'log',
+          // Decade-only major tick labels (Nature-style log axis
+          // convention). Plotly's default auto-tick algorithm prints
+          // minor labels at 2× and 5× between decades, which crowds
+          // the canvas. Applies in both Engineering and Publication
+          // mode for consistency.
+          dtick: 1,
+          title: axisTitle('Grain size, <i>L<sub>g</sub></i> (nm)'),
+        },
+        yaxis: {
+          ...(baseLayout().yaxis as object),
+          title: axisTitle('Open-circuit voltage, <i>V<sub>oc</sub></i> (mV)'),
+        },
+        annotations: [
+          {
+            x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
+            xanchor: 'left', yanchor: 'bottom', showarrow: false,
+            text: ann,
+            font: { size: 10 },
+            align: 'left',
+          },
+        ],
+      }),
+      plotConfig('voc_grain_sweep'),
+    )
+  }
 }
 
 // ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
@@ -731,82 +813,289 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   }
 }
 
-function renderImpedance(el: HTMLElement, r: ISResult): void {
+export function renderImpedance(el: HTMLElement, r: ISResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('impedance-render')
+
+  const _impStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar — always rendered above the plot.
+  const _impToolbar = document.createElement('div')
+  _impToolbar.className = 'plot-toolbar'
+  _impToolbar.setAttribute('data-test', 'impedance-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'impedance-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'impedance-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'impedance-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _impStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderImpedance(el, r)
+    })
+    _impToolbar.appendChild(styleLabel)
+    _impToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_impToolbar)
+
+  const _impPlotDiv = document.createElement('div')
+  _impPlotDiv.className = 'impedance-plot'
+  _impPlotDiv.id = 'impedance-plot-inner'
+  el.appendChild(_impPlotDiv)
+
   const minusImag = r.Z_imag.map(x => -x)
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.Z_real, y: minusImag, name: 'Z',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Re(Z)  (Ω·m²)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('−Im(Z)  (Ω·m²)'), scaleanchor: 'x' },
-    }),
-    plotConfig('impedance'),
-  )
+
+  if (_impStyle === 'publication') {
+    Plotly.newPlot(
+      _impPlotDiv,
+      [
+        {
+          x: r.Z_real, y: minusImag, name: 'Z',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        },
+      ],
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Re(<i>Z</i>) (Ω·m²)' }),
+        yaxis: { ...publicationAxis({ title: '−Im(<i>Z</i>) (Ω·m²)' }), scaleanchor: 'x' },
+      }),
+      publicationConfig('impedance'),
+    )
+  } else {
+    Plotly.newPlot(
+      _impPlotDiv,
+      [
+        {
+          x: r.Z_real, y: minusImag, name: 'Z',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Re(Z)  (Ω·m²)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('−Im(Z)  (Ω·m²)'), scaleanchor: 'x' },
+      }),
+      plotConfig('impedance'),
+    )
+  }
 }
 
-function renderDegradation(el: HTMLElement, r: DegResult): void {
+export function renderDegradation(el: HTMLElement, r: DegResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('degradation-render')
+
+  const _degStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar — always rendered above the plot.
+  const _degToolbar = document.createElement('div')
+  _degToolbar.className = 'plot-toolbar'
+  _degToolbar.setAttribute('data-test', 'degradation-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'degradation-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'degradation-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'degradation-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _degStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderDegradation(el, r)
+    })
+    _degToolbar.appendChild(styleLabel)
+    _degToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_degToolbar)
+
+  const _degPlotDiv = document.createElement('div')
+  _degPlotDiv.className = 'degradation-plot'
+  _degPlotDiv.id = 'degradation-plot-inner'
+  el.appendChild(_degPlotDiv)
+
   const pce0 = r.PCE[0] || 1
   const normalized = r.PCE.map(p => p / pce0)
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.times, y: normalized, name: 'PCE / PCE₀',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (s)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Normalised PCE') },
-    }),
-    plotConfig('degradation'),
-  )
+
+  if (_degStyle === 'publication') {
+    Plotly.newPlot(
+      _degPlotDiv,
+      [
+        {
+          x: r.times, y: normalized, name: 'PCE / PCE<sub>0</sub>',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        },
+      ],
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Time (s)' }),
+        yaxis: publicationAxis({ title: 'Normalised PCE' }),
+      }),
+      publicationConfig('degradation'),
+    )
+  } else {
+    Plotly.newPlot(
+      _degPlotDiv,
+      [
+        {
+          x: r.times, y: normalized, name: 'PCE / PCE₀',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (s)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Normalised PCE') },
+      }),
+      plotConfig('degradation'),
+    )
+  }
 }
 
-function renderTPV(el: HTMLElement, r: TPVResult): void {
+export function renderTPV(el: HTMLElement, r: TPVResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('tpv-render')
+
+  const _tpvStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar \u2014 always rendered above the plot.
+  const _tpvToolbar = document.createElement('div')
+  _tpvToolbar.className = 'plot-toolbar'
+  _tpvToolbar.setAttribute('data-test', 'tpv-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'tpv-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'tpv-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'tpv-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _tpvStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderTPV(el, r)
+    })
+    _tpvToolbar.appendChild(styleLabel)
+    _tpvToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_tpvToolbar)
+
+  const _tpvPlotDiv = document.createElement('div')
+  _tpvPlotDiv.className = 'tpv-plot'
+  _tpvPlotDiv.id = 'tpv-plot-inner'
+  el.appendChild(_tpvPlotDiv)
+
   // Convert time to microseconds for readability
   const t_us = r.t.map(t => t * 1e6)
   // Convert voltage to mV perturbation from V_oc
   const dV_mV = r.V.map(v => (v - r.V_oc) * 1e3)
 
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: t_us, y: dV_mV, name: `\u0394V  (\u03C4=${(r.tau * 1e6).toFixed(1)} \u00B5s)`,
-        mode: 'lines',
-        line: { color: PALETTE.forward, width: LINE.width },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (\u00B5s)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('\u0394V (mV)') },
-      annotations: [
+  if (_tpvStyle === 'publication') {
+    Plotly.newPlot(
+      _tpvPlotDiv,
+      [
         {
-          x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
-          xanchor: 'right', yanchor: 'top', showarrow: false,
-          text: `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V &nbsp; \u03C4 = ${(r.tau * 1e6).toFixed(1)} \u00B5s &nbsp; \u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
-          font: { size: 12 },
+          x: t_us, y: dV_mV, name: `\u0394V  (\u03C4=${(r.tau * 1e6).toFixed(1)} \u00B5s)`,
+          mode: 'lines',
+          line: {
+            color: PUBLICATION_PALETTE.forward,
+            width: PUBLICATION_LINE_WIDTH,
+          },
         },
       ],
-    }),
-    plotConfig('tpv'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Time (\u00B5s)' }),
+        yaxis: publicationAxis({ title: '\u0394<i>V</i> (mV)' }),
+        // TPV \u0394V(t) decays from \u0394V_0 toward zero. Upper-RIGHT quadrant
+        // is empty after the transient settles \u2014 best home for the
+        // V_oc / \u03C4 / \u0394V_0 readout.
+        annotations: [
+          {
+            x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
+            xanchor: 'right' as const, yanchor: 'top' as const,
+            showarrow: false,
+            text:
+              `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V<br>` +
+              `\u03C4 = ${(r.tau * 1e6).toFixed(1)} \u00B5s<br>` +
+              `\u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
+            align: 'right' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('tpv'),
+    )
+  } else {
+    Plotly.newPlot(
+      _tpvPlotDiv,
+      [
+        {
+          x: t_us, y: dV_mV, name: `\u0394V  (\u03C4=${(r.tau * 1e6).toFixed(1)} \u00B5s)`,
+          mode: 'lines',
+          line: { color: PALETTE.forward, width: LINE.width },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (\u00B5s)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('\u0394V (mV)') },
+        annotations: [
+          {
+            x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
+            xanchor: 'right', yanchor: 'top', showarrow: false,
+            text: `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V &nbsp; \u03C4 = ${(r.tau * 1e6).toFixed(1)} \u00B5s &nbsp; \u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
+            font: { size: 12 },
+          },
+        ],
+      }),
+      plotConfig('tpv'),
+    )
+  }
 }
 
 export function renderVocT(el: HTMLElement, r: VocTResult): void {

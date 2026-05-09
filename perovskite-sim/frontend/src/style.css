@@ -474,7 +474,11 @@ input[type="number"] {
 .eqe-render,
 .el-render,
 .dark-jv-render,
-.mott-schottky-render { display: flex; flex-direction: column; gap: 0.5rem; }
+.mott-schottky-render,
+.impedance-render,
+.degradation-render,
+.tpv-render,
+.voc-grain-sweep-render { display: flex; flex-direction: column; gap: 0.5rem; }
 .jv2d-plot,
 .jv1d-plot,
 .suns-voc-plot,
@@ -482,7 +486,11 @@ input[type="number"] {
 .eqe-plot,
 .el-plot,
 .dark-jv-plot,
-.mott-schottky-plot { flex: 1 1 auto; min-height: 0; }
+.mott-schottky-plot,
+.impedance-plot,
+.degradation-plot,
+.tpv-plot,
+.voc-grain-sweep-plot { flex: 1 1 auto; min-height: 0; }
 .jv2d-metrics-row { padding: 0.25rem 0; }
 .jv2d-warning {
   background: #fef3c7;
