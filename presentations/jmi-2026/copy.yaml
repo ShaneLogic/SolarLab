@@ -1,0 +1,248 @@
+deck:
+  total_content_slides: 22
+  title: "Photovoltaic material screening from database to device-scale simulation"
+  authors: "Xuan-Yan Chen et al."
+  affiliation: "HKUST(GZ) — JMI 2026"
+
+slides:
+  - kind: cover
+
+  - kind: divider
+    number: "01"
+    title: "PROBLEM"
+
+  - kind: content
+    section_label: "01 · PROBLEM"
+    index: 2
+    title: "Efficiency–stability landscape"
+    subtitle: "Two regimes, one underserved corner"
+    bullets:
+      - "CIGS / Si: T[sub]80[/sub] > 10[sup]4[/sup] h, PCE plateau ~22 %"
+      - "Perovskite: PCE > 25 %, T[sub]80[/sub] often < 500 h"
+      - "Target box: PCE [sup]>[/sup] 25 % AND T[sub]80[/sub] [sup]>[/sup] 10[sup]5[/sup] h"
+    figure: "figures/output/s2_eff_stability.png"
+
+  - kind: content
+    section_label: "01 · PROBLEM"
+    index: 3
+    title: "Why neither alone works"
+    subtitle: "Champion-cell PCE timeline + accelerated-aging curves"
+    bullets:
+      - "Perovskite caught up to CIGS in <10 years"
+      - "Stability gap remains [sup]>[/sup] 100x"
+      - "Commercial deployment needs both"
+    figure: null
+
+  - kind: content
+    section_label: "01 · PROBLEM"
+    index: 4
+    title: "Talk roadmap"
+    subtitle: "Six-step funnel"
+    bullets: []
+    figure: "figures/output/s4_funnel.png"
+
+  - kind: divider
+    number: "02"
+    title: "STRATEGY"
+
+  - kind: content
+    section_label: "02 · STRATEGY"
+    index: 5
+    title: "Template-guided screening"
+    subtitle: "Perovskite ABX[sub]3[/sub] and chalcogenide skeletons"
+    bullets:
+      - "Two structural priors as filters"
+      - "Constrains DB scan to physically plausible candidates"
+      - "Enables small-sample ML"
+    figure: null
+
+  - kind: content
+    section_label: "02 · STRATEGY"
+    index: 6
+    title: "End-to-end pipeline"
+    subtitle: "DB to lab"
+    bullets: []
+    figure: "figures/output/s6_pipeline.png"
+
+  - kind: divider
+    number: "03"
+    title: "ML + FEATURES"
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 7
+    title: "HSE06 is too costly at DB scale"
+    subtitle: "Wall-time per structure"
+    bullets:
+      - "PBE: minutes"
+      - "HSE06: hours-to-days"
+      - "GW: weeks"
+      - "[Need bar-chart numbers from your DFT logs — see R1]"
+    figure: null
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 8
+    title: "Feature set"
+    subtitle: "Composition · structural · electronic"
+    bullets:
+      - "Composition: stoichiometry, electronegativity moments"
+      - "Structural: tolerance factor, octahedral factor"
+      - "Electronic: orbital character, ionic radii"
+    figure: null
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 9
+    title: "Small-sample model"
+    subtitle: "Random Forest + Gaussian Process · 5-fold CV"
+    bullets:
+      - "[n[sub]train[/sub] = TBD from R2]"
+      - "[CV scores per target — see R2]"
+    figure: null
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 10
+    title: "Validation vs HSE06"
+    subtitle: "Hold-out parity"
+    bullets:
+      - "R[sup]2[/sup] (E[sub]g[/sub]) = TBD"
+      - "R[sup]2[/sup] (μ[sub]e[/sub]) = TBD"
+      - "RMSE summary on slide"
+    figure: null
+
+  - kind: divider
+    number: "04"
+    title: "CANDIDATES"
+
+  - kind: content
+    section_label: "04 · CANDIDATES"
+    index: 11
+    title: "Top-N candidates"
+    subtitle: "Ranked by predicted (PCE × stability)"
+    bullets:
+      - "[Replace this slide with table image once R3 closes]"
+    figure: null
+
+  - kind: content
+    section_label: "04 · CANDIDATES"
+    index: 12
+    title: "DFT stability check"
+    subtitle: "Decomposition energy + phonon DOS"
+    bullets:
+      - "All top-N have negative ΔH[sub]decomp[/sub]"
+      - "No imaginary phonon modes"
+      - "[See R4 for figure]"
+    figure: null
+
+  - kind: content
+    section_label: "04 · CANDIDATES"
+    index: 13
+    title: "Hit #1"
+    subtitle: "[Candidate A — placeholder]"
+    bullets:
+      - "E[sub]g[/sub] = TBD eV"
+      - "μ[sub]e[/sub] = TBD cm[sup]2[/sup] V[sup]-1[/sup] s[sup]-1[/sup]"
+      - "m[sup]*[/sup] / m[sub]0[/sub] = TBD"
+      - "E[sub]b[/sub] = TBD meV"
+    figure: null
+
+  - kind: content
+    section_label: "04 · CANDIDATES"
+    index: 14
+    title: "Hit #2 vs perovskite"
+    subtitle: "[Candidate B — placeholder]"
+    bullets:
+      - "Radar chart: E[sub]g[/sub], μ, m[sup]*[/sup], E[sub]b[/sub], stability"
+      - "Larger area = better"
+    figure: null
+
+  - kind: divider
+    number: "05"
+    title: "BRIDGE — DEVICE SIM"
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 15
+    title: "Why device simulation"
+    subtitle: "DFT params alone don't predict PCE"
+    bullets:
+      - "Need carrier transport at full stack scale"
+      - "Need optics, contacts, hysteresis"
+      - "Need 2D effects (grains, lateral non-uniformity)"
+    figure: null
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 16
+    title: "SolarLab software stack"
+    subtitle: "1D + 2D drift-diffusion · TMM optics · mobile ions"
+    bullets:
+      - "Backend: Python solver + FastAPI SSE"
+      - "Frontend: Vite/TS workstation"
+      - "Solver: Radau implicit + BDF fallback + bisection-in-time"
+    figure: null
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 17
+    title: "Capability vs SCAPS-1D"
+    subtitle: "What SCAPS leaves on the table"
+    bullets: []
+    figure: "figures/output/s17_capability.png"
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 18
+    title: "1D vs 2D fidelity"
+    subtitle: "Grain-boundary recombination only captured in 2D"
+    bullets:
+      - "Same stack, both solvers"
+      - "ΔPCE attributable to GB physics"
+    figure: "figures/output/s18_1d_vs_2d.png"
+
+  - kind: divider
+    number: "06"
+    title: "PAYOFF"
+
+  - kind: content
+    section_label: "06 · PAYOFF"
+    index: 19
+    title: "Predicted J-V on top candidate"
+    subtitle: "DFT params [sup]→[/sup] device sim [sup]→[/sup] PCE"
+    bullets:
+      - "Closes the loop from DB scan to predicted device performance"
+      - "Placeholder candidate today — real candidate slots in once R3/R4 close"
+    figure: "figures/output/s19_candidate_jv.png"
+
+  - kind: content
+    section_label: "06 · PAYOFF"
+    index: 20
+    title: "Outlook — experimental synthesis"
+    subtitle: "From in-silico hit to lab synthesis"
+    bullets:
+      - "Collaboration with [group X] for synthesis"
+      - "Target: validated devices in 2027 cycle"
+    figure: null
+
+  - kind: content
+    section_label: "06 · PAYOFF"
+    index: 21
+    title: "Summary"
+    subtitle: "Three takeaways"
+    bullets:
+      - "Template-guided ML beats brute-force HSE06 on cost"
+      - "DFT-stability filter shrinks candidate list to actionable size"
+      - "2D device sim is the bridge from DB to predicted PCE"
+    figure: null
+
+  - kind: content
+    section_label: "06 · PAYOFF"
+    index: 22
+    title: "Acknowledgments + references"
+    subtitle: "Q&A"
+    bullets:
+      - "Funding · collaborators · group members"
+      - "Bibliography on a single panel"
+    figure: null
