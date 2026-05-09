@@ -71,11 +71,11 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
           mount: (el) => mountJVPane(el, paneOpts()),
         },
         {
-          kind: 'suns_voc', label: 'Suns\u2013V\u2092c',
+          kind: 'suns_voc', label: 'Suns\u2013V_oc',
           mount: (el) => mountSunsVocPane(el, paneOpts()),
         },
         {
-          kind: 'voc_t', label: 'V\u2092c(T) \u2014 activation energy',
+          kind: 'voc_t', label: 'V_oc(T) \u2014 activation energy',
           mount: (el) => mountVocTPane(el, paneOpts()),
         },
       ],
@@ -84,7 +84,7 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
       label: 'Dark characterisation',
       entries: [
         {
-          kind: 'dark_jv', label: 'Dark J\u2013V (ideality, J\u2080)',
+          kind: 'dark_jv', label: 'Dark J\u2013V (ideality, J_0)',
           mount: (el) => mountDarkJVPane(el, paneOpts()),
         },
         {
@@ -101,7 +101,7 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
           mount: (el) => mountEQEPane(el, paneOpts()),
         },
         {
-          kind: 'el', label: 'Electroluminescence (EL, \u0394V\u2099\u1d63)',
+          kind: 'el', label: 'Electroluminescence (EL, \u0394V_nr)',
           mount: (el) => mountELPane(el, paneOpts()),
         },
       ],
