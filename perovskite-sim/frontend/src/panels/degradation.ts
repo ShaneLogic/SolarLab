@@ -80,7 +80,7 @@ function renderDegResults(container: HTMLElement, r: DegResult): void {
         <div id="plot-pce" class="plot-container"></div>
       </div>
       <div class="card">
-        <h3>V<sub>OC</sub> & J<sub>SC</sub> vs Time</h3>
+        <h3>V<sub>oc</sub> & J<sub>sc</sub> vs Time</h3>
         <div id="plot-voc-jsc" class="plot-container"></div>
       </div>
     </div>`
@@ -112,7 +112,7 @@ function renderDegResults(container: HTMLElement, r: DegResult): void {
     'plot-voc-jsc',
     [
       {
-        x: r.times, y: r.V_oc, name: 'V<sub>OC</sub>',
+        x: r.times, y: r.V_oc, name: 'V<sub>oc</sub>',
         mode: 'lines+markers',
         line: { color: PALETTE.primary, width: LINE.width },
         marker: { ...MARKER, color: PALETTE.primary },
@@ -120,7 +120,7 @@ function renderDegResults(container: HTMLElement, r: DegResult): void {
         hovertemplate: 't = %{x:.2e} s<br>V_OC = %{y:.3f} V<extra></extra>',
       },
       {
-        x: r.times, y: jsc_mA, name: 'J<sub>SC</sub>',
+        x: r.times, y: jsc_mA, name: 'J<sub>sc</sub>',
         mode: 'lines+markers',
         line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
         marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },

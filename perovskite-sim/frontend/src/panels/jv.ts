@@ -20,7 +20,7 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
       </div>
       <p>
         <b>V<sub>max</sub></b> is the upper voltage of the forward sweep.
-        Leave it at the default (1.4&nbsp;V) unless V<sub>OC</sub> on your
+        Leave it at the default (1.4&nbsp;V) unless V<sub>oc</sub> on your
         stack exceeds that; the Python API picks
         <code>max(V<sub>bi,eff</sub>&times;1.3, 1.4&nbsp;V)</code> when called
         with <code>V_max=None</code>, but the UI requires an explicit number.
@@ -93,8 +93,8 @@ function renderJVResults(container: HTMLElement, r: JVResult): void {
         <div class="metric-block">
           <div class="metric-block-title">Forward</div>
           <div class="metric-row">
-            ${metricCard('V<sub>OC</sub>', `${mf.V_oc.toFixed(3)} V`)}
-            ${metricCard('J<sub>SC</sub>', `${(mf.J_sc / 10).toFixed(2)} mA/cm²`)}
+            ${metricCard('V<sub>oc</sub>', `${mf.V_oc.toFixed(3)} V`)}
+            ${metricCard('J<sub>sc</sub>', `${(mf.J_sc / 10).toFixed(2)} mA/cm²`)}
             ${metricCard('FF', `${(mf.FF * 100).toFixed(1)} %`)}
             ${metricCard('PCE', `${(mf.PCE * 100).toFixed(2)} %`)}
           </div>
@@ -102,8 +102,8 @@ function renderJVResults(container: HTMLElement, r: JVResult): void {
         <div class="metric-block">
           <div class="metric-block-title">Reverse</div>
           <div class="metric-row">
-            ${metricCard('V<sub>OC</sub>', `${mr.V_oc.toFixed(3)} V`)}
-            ${metricCard('J<sub>SC</sub>', `${(mr.J_sc / 10).toFixed(2)} mA/cm²`)}
+            ${metricCard('V<sub>oc</sub>', `${mr.V_oc.toFixed(3)} V`)}
+            ${metricCard('J<sub>sc</sub>', `${(mr.J_sc / 10).toFixed(2)} mA/cm²`)}
             ${metricCard('FF', `${(mr.FF * 100).toFixed(1)} %`)}
             ${metricCard('PCE', `${(mr.PCE * 100).toFixed(2)} %`)}
           </div>

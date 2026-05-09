@@ -453,8 +453,8 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
     const pceStr = bracketed ? `${(m.PCE * 100).toFixed(2)} %` : dash
     const cardsHtml =
       `<div class="metric-row">` +
-      metricCard('V<sub>OC</sub>', vocStr) +
-      metricCard('J<sub>SC</sub>', `${(m.J_sc / 10).toFixed(2)} mA/cm²`) +
+      metricCard('V<sub>oc</sub>', vocStr) +
+      metricCard('J<sub>sc</sub>', `${(m.J_sc / 10).toFixed(2)} mA/cm²`) +
       metricCard('FF', ffStr) +
       metricCard('PCE', pceStr) +
       `</div>`
