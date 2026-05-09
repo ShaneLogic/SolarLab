@@ -192,9 +192,9 @@ def _require_tmm_optical_data(stack: DeviceStack) -> None:
 def compute_eqe(
     stack: DeviceStack,
     wavelengths_nm: np.ndarray | None = None,
-    Phi_incident: float = 1e20,
+    Phi_incident: float = 4e21,
     N_grid: int = 60,
-    t_settle: float = 1e-3,
+    t_settle: float = 1e-1,
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
@@ -210,16 +210,24 @@ def compute_eqe(
         Probe wavelengths [nm]. Default is 300-1000 nm in 25-nm steps
         (29 points), which comfortably spans AM1.5G's peak region and
         the MAPbI3 absorption edge around 780 nm.
-    Phi_incident : float, default 1e20
-        Monochromatic probe photon flux [m⁻² s⁻¹]. Large enough to keep
-        the device in photogeneration-dominated regime (above the dark
-        leakage current at V=0), small enough to avoid high-level
-        injection. EQE is independent of this to first order; J_sc per
-        wavelength scales with it.
+    Phi_incident : float, default 4e21
+        Monochromatic probe photon flux [m⁻² s⁻¹]. The default matches
+        the integrated AM1.5G photon flux above the band edge so the
+        photo-signal swamps any residual ionic / contact transient that
+        the t_settle settle did not fully damp. EQE is independent of
+        this to first order; J_sc per wavelength scales with it.
+        On ionic-rich presets (mobile-ion concentrations comparable
+        to or above ~1e25 m⁻³) values much below ~1e21 can produce
+        unphysical EQE > 1 because the ionic background swamps the small
+        monochromatic photo-signal.
     N_grid : int, default 60
         Total drift-diffusion grid nodes across electrical layers.
-    t_settle : float, default 1e-3
-        Illuminated-SS settling time [s] per wavelength.
+    t_settle : float, default 1e-1
+        Illuminated-SS settling time [s] per wavelength. 100 ms covers
+        the slow ionic dynamics on typical perovskite presets
+        (D_ion ≈ 1e-17 m²/s, 400 nm absorber → τ_ion ≈ 16 ms; settling
+        for ~5τ_ion damps the ionic transient that would otherwise leak
+        into the V=0 terminal current and inflate EQE.
     rtol, atol : float
         scipy solver tolerances forwarded to ``run_transient``.
     progress : ProgressCallback | None
@@ -259,6 +267,21 @@ def compute_eqe(
     # cached fields (mobilities, doping, Poisson factor, …) matter.
     mat_base: MaterialArrays = build_material_arrays(x, stack)
 
+    # Dark baseline at V=0: settle the device with G=0 to capture any
+    # ionic-drift / contact-leakage current that flows even without
+    # illumination. Subtracting this from J(λ) at V=0 isolates the pure
+    # photo-current. Without this correction, ionic-rich presets like
+    # ionmonger_benchmark_tmm produce EQE > 1 at low Phi_incident because
+    # the ionic background swamps the small monochromatic photo-signal —
+    # the EQE definition assumes the dark current at V=0 is exactly zero,
+    # which only holds for a perfectly equilibrated device.
+    mat_dark = dataclasses.replace(mat_base, G_optical=np.zeros_like(x))
+    y_dark = _solve_illuminated_ss_with_mat(
+        x, stack, mat_dark, V_app=0.0,
+        t_settle=t_settle, rtol=rtol, atol=atol,
+    )
+    J_dark = float(_compute_current(x, y_dark, stack, 0.0, mat=mat_dark))
+
     eqe = np.zeros_like(wavelengths_nm)
     J_sc_lambda = np.zeros_like(wavelengths_nm)
 
@@ -269,7 +292,9 @@ def compute_eqe(
             x, stack, mat_k, V_app=0.0,
             t_settle=t_settle, rtol=rtol, atol=atol,
         )
-        J_k = float(_compute_current(x, y_ss, stack, 0.0, mat=mat_k))
+        J_total = float(_compute_current(x, y_ss, stack, 0.0, mat=mat_k))
+        # Photo-only current = total at V=0 with λ minus dark at V=0.
+        J_k = J_total - J_dark
         J_sc_lambda[k] = J_k
         # |J_sc| because EQE is positive by convention regardless of the
         # solar-vs-injection sign carried by J_sc.
