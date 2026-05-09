@@ -14,6 +14,27 @@ Source for the 25-min JMI talk. Builds `output/jmi-2026.pptx` end-to-end.
     python runs/r5_1d_vs_2d.py
     python runs/r6_candidate_jv.py
 
+## Import figures from the PV-Materials-Screening project
+
+The DFT/ML-side figures (s8 feature map, s9 ML architecture, s10 parity,
+s11 top-N table, s12 funnel population, s13/s14 candidate structures)
+live in a sibling project tree, not in this repo. Re-import them when
+their source updates:
+
+    SRC="/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/PhD/PV-Materials-Screening/3rd JMI Conference"
+    DST="figures/output"
+    cp "$SRC/feature.png"                              "$DST/s8_features.png"
+    cp "$SRC/ml surrogate algorithm.png"               "$DST/s9_ml_architecture.png"
+    cp "$SRC/fig_ml_accuracy.png"                      "$DST/s10_parity.png"
+    cp "$SRC/pv_top_candidates.png"                    "$DST/s11_top_candidates.png"
+    cp "$SRC/_methods_assets/fig_filtered_structures.png" "$DST/s12_funnel_population.png"
+    cp "$SRC/_methods_assets/candidate_Se16Sn8Zr4.png"    "$DST/s13_hit1_Se16Sn8Zr4.png"
+    cp "$SRC/_methods_assets/candidate_Cs2Sb6Se2.png"     "$DST/s14_hit2_Cs2Sb6Se2.png"
+
+The PNGs themselves are gitignored, but the built `output/jmi-2026.pptx`
+embeds them as bytes — the committed deck is self-contained even
+without the source PNGs on disk.
+
 ## Build deck
 
     python build_deck.py
