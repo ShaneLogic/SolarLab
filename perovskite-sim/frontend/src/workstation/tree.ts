@@ -25,7 +25,12 @@ function tierBadge(d: Device): string {
   return `<span class="tier-badge tier-badge-${tier}" title="${escapeHtml(physics)}">${tier.toUpperCase()}</span>`
 }
 
-function experimentLabel(kind: Experiment['kind']): string {
+/**
+ * Returns experiment label as HTML. May contain <sub> tags for subscript
+ * typography (V_oc, L_g, J_0, etc.). Strings are hard-coded source
+ * constants, so callers can inject the result as innerHTML directly.
+ */
+function experimentLabelHTML(kind: Experiment['kind']): string {
   switch (kind) {
     case 'jv': return 'J–V Sweep'
     case 'impedance': return 'Impedance'
@@ -34,13 +39,13 @@ function experimentLabel(kind: Experiment['kind']): string {
     case 'current_decomp': return 'Current Decomp.'
     case 'spatial': return 'Spatial Profiles'
     case 'dark_jv': return 'Dark J–V'
-    case 'suns_voc': return 'Suns–V_oc'
-    case 'voc_t': return 'V_oc(T)'
+    case 'suns_voc': return 'Suns–V<sub>oc</sub>'
+    case 'voc_t': return 'V<sub>oc</sub>(T)'
     case 'eqe': return 'EQE / IPCE'
-    case 'el': return 'EL / ΔV_nr'
+    case 'el': return 'EL / ΔV<sub>nr</sub>'
     case 'mott_schottky': return 'Mott–Schottky (C–V)'
     case 'jv_2d': return 'J–V Sweep (2D)'
-    case 'voc_grain_sweep': return 'V_oc(L_g) Grain Sweep'
+    case 'voc_grain_sweep': return 'V<sub>oc</sub>(L<sub>g</sub>) Grain Sweep'
   }
 }
 
@@ -71,7 +76,7 @@ function renderExperiment(deviceId: string, e: Experiment, ws: Workspace): strin
          data-device-id="${escapeHtml(deviceId)}"
          data-experiment-id="${escapeHtml(e.id)}">
       <span class="tree-icon">🧪</span>
-      <span class="tree-label">${escapeHtml(experimentLabel(e.kind))}</span>
+      <span class="tree-label">${experimentLabelHTML(e.kind)}</span>
     </div>
     <div class="tree-children">${runs}</div>`
 }

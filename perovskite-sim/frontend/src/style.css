@@ -1094,16 +1094,130 @@ html, body, #app {
   border-radius: var(--radius);
   margin-bottom: 0.5rem;
 }
-.experiment-selector label {
+.experiment-selector-label {
   font-weight: 600;
   font-size: 0.85rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/*
+ * Custom dropdown — replaces native <select> so that experiment labels
+ * with subscripts (V_oc, L_g, J_0, ΔV_nr) can render through <sub> tags.
+ * Native <option> strips HTML, so we render a button + popover listbox.
+ */
 .experiment-dropdown {
+  position: relative;
   flex: 1;
   min-width: 0;
+}
+.experiment-dropdown-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--input-bg, var(--card-bg, #fff));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.375rem 0.625rem;
+  font: inherit;
   font-weight: 600;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.experiment-dropdown-button:hover {
+  border-color: var(--text-muted);
+}
+.experiment-dropdown-button:focus,
+.experiment-dropdown-button:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+.experiment-dropdown-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.experiment-dropdown-current sub,
+.experiment-dropdown-option sub {
+  font-size: 0.72em;
+  vertical-align: sub;
+  line-height: 0;
+}
+.experiment-dropdown-caret {
+  margin-left: 0.5rem;
+  font-size: 0.7em;
+  color: var(--text-muted);
+}
+.experiment-dropdown[data-open="true"] .experiment-dropdown-caret {
+  transform: rotate(180deg);
+}
+.experiment-dropdown-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 0.25rem 0;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.experiment-dropdown-popover[hidden] {
+  display: none;
+}
+.experiment-dropdown-group + .experiment-dropdown-group {
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.25rem;
+}
+.experiment-dropdown-group-label {
+  padding: 0.375rem 0.875rem 0.125rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+.experiment-dropdown-option {
+  padding: 0.4rem 0.875rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.experiment-dropdown-option:hover,
+.experiment-dropdown-option:focus,
+.experiment-dropdown-option:focus-visible {
+  background: rgba(37, 99, 235, 0.10);
+  color: var(--primary);
+}
+.experiment-dropdown-option-selected {
+  background: var(--primary);
+  color: #fff;
+}
+.experiment-dropdown-option-selected:hover,
+.experiment-dropdown-option-selected:focus,
+.experiment-dropdown-option-selected:focus-visible {
+  background: var(--primary-hover, var(--primary));
+  color: #fff;
+}
+
+/* Subscript typography in tree node labels (Suns–V_oc etc.). */
+.tree-label sub {
+  font-size: 0.72em;
+  vertical-align: sub;
+  line-height: 0;
 }
 
 /* ── Phase 2b layer builder ───────────────────────────────────────── */
