@@ -1,0 +1,11 @@
+[project]
+name = "jmi-2026"
+version = "0.1.0"
+description = "JMI conference deck (Chen et al., 2026)"
+requires-python = ">=3.11"
+dependencies = [
+  "python-pptx==1.0.2",
+  "matplotlib==3.9.2",
+  "pyyaml==6.0.2",
+  "numpy==2.1.2",
+]
