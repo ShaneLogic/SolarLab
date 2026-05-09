@@ -113,6 +113,43 @@ def test_eqe_peaks_in_absorption_band(coarse_eqe):
     )
 
 
+@pytest.fixture(scope="module")
+def ionmonger_tmm_stack():
+    """Ionic-rich TMM stack (D_ion ≈ 1e-17 m²/s, slowest perovskite preset)."""
+    return load_device_from_yaml("configs/ionmonger_benchmark_tmm.yaml")
+
+
+def test_eqe_in_unit_range_on_ionic_rich_preset(ionmonger_tmm_stack):
+    """Regression for the ``ionmonger_benchmark_tmm`` EQE>1 artifact
+    (audit 2026-05-09).
+
+    With the pre-fix defaults (``Phi_incident=1e20``, ``t_settle=1e-3 s``)
+    the residual ionic transient at V=0 swamped the small monochromatic
+    photo-signal on this preset, producing ``EQE_max ≈ 48`` — a 4881 %
+    quantum yield, physically impossible. The fix bumps the defaults to
+    ``Phi_incident=4e21`` and ``t_settle=1e-1 s`` and subtracts the
+    dark J(V=0) baseline. This test pins the fix on the worst-case preset
+    so any regression resurrects ``EQE > 1`` immediately.
+    """
+    r = compute_eqe(
+        ionmonger_tmm_stack,
+        wavelengths_nm=np.array([400.0, 500.0, 600.0, 700.0, 800.0]),
+        N_grid=30,
+        # Use defaults — the whole point of this test is to lock the
+        # default behaviour to "physical EQE on the slowest perovskite
+        # preset".
+    )
+    assert np.all(r.EQE >= 0.0), f"negative EQE found: {r.EQE}"
+    # 10 % slack on the upper edge: the fix brings EQE_max from ~48 down
+    # to ~1.06 on this preset; tighter than 1.10 would be flaky against
+    # TMM Fabry-Pérot fringes that occasionally nudge a single λ above 1.
+    assert np.all(r.EQE <= 1.10), (
+        f"EQE > 1.10 found on ionmonger_benchmark_tmm: {r.EQE}; the "
+        "ionic-transient fix in compute_eqe (default t_settle=1e-1 s, "
+        "Phi_incident=4e21, dark-J subtraction) may have regressed."
+    )
+
+
 def test_eqe_drops_above_bandgap():
     """EQE must fall toward zero for λ > MAPbI3 band-gap wavelength (~800 nm)."""
     stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
