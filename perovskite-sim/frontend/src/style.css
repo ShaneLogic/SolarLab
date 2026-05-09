@@ -472,13 +472,15 @@ input[type="number"] {
 .suns-voc-render,
 .voc-t-render,
 .eqe-render,
-.el-render { display: flex; flex-direction: column; gap: 0.5rem; }
+.el-render,
+.dark-jv-render { display: flex; flex-direction: column; gap: 0.5rem; }
 .jv2d-plot,
 .jv1d-plot,
 .suns-voc-plot,
 .voc-t-plot,
 .eqe-plot,
-.el-plot { flex: 1 1 auto; min-height: 0; }
+.el-plot,
+.dark-jv-plot { flex: 1 1 auto; min-height: 0; }
 .jv2d-metrics-row { padding: 0.25rem 0; }
 .jv2d-warning {
   background: #fef3c7;
