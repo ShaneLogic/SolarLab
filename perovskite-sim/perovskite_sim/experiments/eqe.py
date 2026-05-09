@@ -54,7 +54,7 @@ import numpy as np
 from perovskite_sim.constants import Q
 from perovskite_sim.data import load_am15g, load_nk
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
-from perovskite_sim.experiments.jv_sweep import _compute_current
+from perovskite_sim.experiments.jv_sweep import _compute_current, _compute_current_ss
 from perovskite_sim.experiments.suns_voc import _solve_illuminated_ss_with_mat
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.optics import TMMLayer, tmm_absorption_profile
@@ -280,7 +280,7 @@ def compute_eqe(
         x, stack, mat_dark, V_app=0.0,
         t_settle=t_settle, rtol=rtol, atol=atol,
     )
-    J_dark = float(_compute_current(x, y_dark, stack, 0.0, mat=mat_dark))
+    J_dark = float(_compute_current_ss(x, y_dark, stack, 0.0, mat=mat_dark))
 
     eqe = np.zeros_like(wavelengths_nm)
     J_sc_lambda = np.zeros_like(wavelengths_nm)
@@ -292,7 +292,7 @@ def compute_eqe(
             x, stack, mat_k, V_app=0.0,
             t_settle=t_settle, rtol=rtol, atol=atol,
         )
-        J_total = float(_compute_current(x, y_ss, stack, 0.0, mat=mat_k))
+        J_total = float(_compute_current_ss(x, y_ss, stack, 0.0, mat=mat_k))
         # Photo-only current = total at V=0 with λ minus dark at V=0.
         J_k = J_total - J_dark
         J_sc_lambda[k] = J_k
