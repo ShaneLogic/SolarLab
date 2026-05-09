@@ -113,9 +113,7 @@ def add_content(prs, *, section_label, slide_index, total, title,
             p.alignment = PP_ALIGN.LEFT
             write_segments(p, parse_segments(f"•  {line}"),
                            fonts.BODY, palette.BODY)
-    # footer
-    _add_textbox(slide, Inches(0.5), Inches(5.05), Inches(7), Inches(0.3),
-                 "Chen et al. — JMI 2026", fonts.FOOTER, palette.HAIRLINE)
+    # footer — brand mark only (author cite removed per user request)
     _add_textbox(slide, Inches(7.5), Inches(5.05), Inches(2), Inches(0.3),
                  "SOLARLAB", fonts.FOOTER, palette.ACCENT, align=PP_ALIGN.RIGHT)
     return slide

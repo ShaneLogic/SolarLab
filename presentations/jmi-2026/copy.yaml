@@ -1,5 +1,5 @@
 deck:
-  total_content_slides: 22
+  total_content_slides: 30
   title: "High-throughput DFT and small-sample ML for chalcogenide PV absorber discovery, with device-scale validation"
   authors: "Xuanyan Chen et al."
   affiliation: "HKUST(GZ) — 3rd JMI conference 2026"
@@ -19,8 +19,8 @@ slides:
     bullets:
       - "Si: indirect-gap, ~22 % single-junction PCE ceiling, T[sub]80[/sub] [sup]>[/sup] 10[sup]4[/sup] h"
       - "CIGS: direct-gap chalcogenide, 23.4 % record, but Cu / In / Ga supply constraints"
-      - "Perovskite: PCE [sup]>[/sup] 26 %, but T[sub]80[/sub] often < 500 h under 1-sun + 85 °C"
-      - "Shockley–Queisser optimum E[sub]g[/sub] ≈ 1.34 eV, single-junction ceiling 33.7 %"
+      - "Perovskite: PCE [sup]>[/sup] 26 %, T[sub]80[/sub] often < 500 h under 1-sun + 85 °C"
+      - "Shockley–Queisser optimum E[sub]g[/sub] ≈ 1.34 eV; single-junction ceiling 33.7 % [Shockley & Queisser 1961]"
       - "Target box: PCE [sup]>[/sup] 25 % AND T[sub]80[/sub] [sup]>[/sup] 10[sup]5[/sup] h — empty today"
       - "Need a third path: stable inorganic absorber with direct-or-near-direct gap"
     figure: "figures/output/s2_eff_stability.png"
@@ -34,7 +34,7 @@ slides:
       - "Si record 27.6 % (UNSW 2024) — half a century of incremental gain"
       - "Perovskite record 26.7 % (UNIST 2024) — caught Si in <10 years"
       - "Stability gap remains [sup]>[/sup] 100× under stress: ion migration, A-site loss, photo-degradation"
-      - "Encapsulation buys time but doesn't solve absorber-side instability"
+      - "Encapsulation buys time but doesn't solve absorber-side instability [Boyd et al. 2019]"
       - "Commercial-scale module deployment needs both efficiency and outdoor lifetime"
       - "Motivates discovery of new absorber chemistries that satisfy both at once"
     figure: null
@@ -47,9 +47,9 @@ slides:
     bullets:
       - "01 PROBLEM — efficiency–stability deadlock"
       - "02 STRATEGY — chalcogenide structural prior"
-      - "03 ML + FEATURES — small-sample HSE06 surrogate"
+      - "03 ML + FEATURES — small-sample HSE06 surrogate (8 slides)"
       - "04 CANDIDATES — 14-material action list"
-      - "05 BRIDGE — 1D + 2D drift-diffusion device sim (SolarLab)"
+      - "05 BRIDGE — 1D + 2D drift-diffusion device sim (8 slides)"
       - "06 PAYOFF — predicted device J–V + outlook"
     figure: "figures/output/s4_funnel.png"
 
@@ -90,11 +90,11 @@ slides:
     subtitle: "HSE06 + DFPT four-stage VASP workflow per material"
     bullets:
       - "Stage 1 PBE relax → Stage 2 SCF → Stage 3 DFPT dielectric → Stage 4 HSE06 band"
-      - "DFPT + HSE06 dominate cost: hours-to-days per structure on ~64-core HPC"
-      - "Pool MP + OQMD [sup]>[/sup] 10[sup]5[/sup] candidates — full-DFT enumeration is infeasible"
-      - "Strategy: train a surrogate on a curated 473-material subset, extrapolate by ML"
-      - "Acquire next DFT batch from the model's high-mean / high-σ tail (active learning)"
-      - "Closes the loop: surrogate → ranked candidates → fresh DFT labels → re-fit"
+      - "DFPT + HSE06 dominate cost: hours-to-days per structure on ~64-core HPC nodes"
+      - "PBE relax: O(N[sup]3[/sup]) plane-wave eigensolve · HSE06 adds ~10× cost from exact-exchange [Heyd et al. 2003]"
+      - "DFPT dielectric tensor: linear-response Sternheimer equation, ~2× SCF cost [Baroni et al. 2001]"
+      - "MP + OQMD pool [sup]>[/sup] 10[sup]5[/sup] candidates — full-DFT enumeration is infeasible"
+      - "Strategy: train a surrogate on 473 DFT-labelled materials, extrapolate by ML"
     figure: null
 
   - kind: content
@@ -103,41 +103,97 @@ slides:
     title: "Hand-crafted feature set (167 D)"
     subtitle: "Composition · structure · symmetry — Magpie + matminer"
     bullets:
-      - "Composition (~27 D): Magpie statistics over Z, χ, atomic radius, row, group, mass"
-      - "Structure (140 D): CrystalNN site-fingerprint (122) · radial distribution function · density · packing"
+      - "Composition (~27 D): Magpie statistics over Z, χ, atomic radius, row, group, mass [Ward et al. 2016]"
+      - "Magpie reduces a formula A[sub]a[/sub]B[sub]b[/sub]C[sub]c[/sub] to mean / std / min / max / mode of element properties weighted by stoichiometry"
+      - "Structure (140 D): CrystalNN site-fingerprint (122) + RDF + density + packing [matminer · Ward et al. 2018]"
       - "All featurisers tolerate NaN — routed to the appropriate side of every HistGBR split"
       - "Cached numpy matrices on disk → re-fits run in seconds, not minutes"
-      - "Ablation extras (per-element fraction, prototype + space-group + chalcogen one-hot): worse"
-      - "Frozen MEGNet embeddings give R[sup]2[/sup] = 0.366 — below hand-features baseline"
+      - "Frozen MEGNet 16-D embeddings give R[sup]2[/sup] = 0.366 — below hand-features baseline [Chen et al. 2019]"
     figure: "figures/output/s8_features.png"
 
   - kind: content
     section_label: "03 · ML + FEATURES"
     index: 9
-    title: "Small-sample ML model"
-    subtitle: "HistGBR with log[sub]1[/sub]p target · GPR + RF stack for σ(x)"
+    title: "Composite PV figure of merit"
+    subtitle: "Four physically motivated factors fuse into one scalar target y ∈ [0, 1]"
     bullets:
-      - "Deployable: HistGradientBoostingRegressor, log[sub]1[/sub]p(y / 0.08) target"
-      - "Histogram binning ~3× faster than plain GBR on 473 rows; native NaN routing"
-      - "PV figure of merit y = f[sub]gap[/sub](E[sub]g[/sub]) · 1 / (1 + m[sub]avg[/sub]) · tanh(ε / 10) · 1 / (1 + E[sub]b[/sub] / 0.1)"
-      - "Each factor is a piece of device physics: SQ window · light carriers · screening · Wannier–Mott"
-      - "Calibrated σ(x) from a separate GPR + RF stack: anisotropic Matérn-5/2 + WhiteKernel"
-      - "UCB acquisition α = μ + 2σ ranks the next active-learning DFT batch"
-    figure: "figures/output/s9_ml_architecture.png"
+      - "y = f[sub]gap[/sub](E[sub]g[/sub]) · 1 / (1 + m[sub]avg[/sub]) · tanh(ε / 10) · 1 / (1 + E[sub]b[/sub] / 0.1)"
+      - "f[sub]gap[/sub](E[sub]g[/sub]): triangular SQ window — 1 at 1.34 eV, linearly to 0 at 0.5 / 2.5 eV"
+      - "1 / (1 + m[sub]avg[/sub]): sigmoid-like decay rewarding light carriers (high mobility)"
+      - "tanh(ε / 10): saturates above ε ≈ 10 — diminishing returns on dielectric screening"
+      - "1 / (1 + E[sub]b[/sub] / 0.1): rewards Wannier–Mott (E[sub]b[/sub] < 0.1 eV); penalises Frenkel-exciton systems"
+      - "Bounded, differentiable, physically interpretable — single regression head replaces four heads"
+    figure: null
 
   - kind: content
     section_label: "03 · ML + FEATURES"
     index: 10
-    title: "Validation vs HSE06 ground truth"
-    subtitle: "5-fold × 5-seed random CV on 473 labelled materials"
+    title: "HistGBR — gradient boosting on histograms"
+    subtitle: "Stagewise additive function approximation [Friedman 2001 · Ke et al. 2017]"
+    bullets:
+      - "F[sub]m[/sub](x) = F[sub]m-1[/sub](x) + ν · h[sub]m[/sub](x), with h[sub]m[/sub] fitting the negative gradient of the loss at F[sub]m-1[/sub]"
+      - "Histogram binning (256 buckets): O(N · F · K) feature-bin scans → ~3× faster than plain GBR"
+      - "Native NaN routing: missing values learn their own split direction at each node"
+      - "Hyperparameters: 600 boosting iters · max depth 4 · learning rate 0.05 · min-samples-leaf 10"
+      - "TransformedTargetRegressor wraps a log[sub]1[/sub]p(y / 0.08) target → expm1 inverse"
+      - "log target compresses heavy-tailed y; equalises booster resolution at peak (y ≈ 0.5) and bulk (y ≈ 0.01)"
+    figure: null
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 11
+    title: "GPR + RF — calibrated uncertainty source"
+    subtitle: "Matérn-5/2 kernel + WhiteKernel noise [Rasmussen & Williams 2006]"
+    bullets:
+      - "k(x, x[sup]'[/sup]) = σ[sub]f[/sub][sup]2[/sup] (1 + √5 r + (5/3) r[sup]2[/sup]) exp(−√5 r) + σ[sub]n[/sub][sup]2[/sup] δ(x − x[sup]'[/sup])"
+      - "r = ‖x − x[sup]'[/sup]‖ / ℓ — anisotropic length-scale ℓ optimised by L-BFGS-B on marginal log-likelihood"
+      - "WhiteKernel σ[sub]n[/sub][sup]2[/sup] absorbs DFT scatter (typically 0.02 – 0.05 on the log target)"
+      - "Random Forest layer (300 trees) corrects GPR underconfidence in sparse regions"
+      - "Stack: μ(x) = w[sub]GP[/sub] μ[sub]GPR[/sub] + w[sub]RF[/sub] μ[sub]RF[/sub] · σ[sup]2[/sup](x) = w[sub]GP[/sub][sup]2[/sup] σ[sub]GPR[/sub][sup]2[/sup] + w[sub]RF[/sub][sup]2[/sup] σ[sub]RF[/sub][sup]2[/sup]"
+      - "Weights w[sub]GP[/sub], w[sub]RF[/sub] from non-negative ridge on out-of-fold predictions — calibrated, not residual-fit"
+    figure: null
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 12
+    title: "UCB acquisition for active learning"
+    subtitle: "Sequentially pick the next DFT batch [Snoek et al. 2012]"
+    bullets:
+      - "α[sub]UCB[/sub](x) = μ(x) + κ · σ(x), κ = 2"
+      - "μ(x) from HistGBR (better mean predictor on labelled set)"
+      - "σ(x) from GPR + RF stack (calibrated uncertainty source)"
+      - "κ = 2 spans exploitation (high μ) and exploration (high σ) — typical Bayesian-opt regime"
+      - "Decoupling μ and σ between two models avoids GP underconfidence at the high-score tail"
+      - "Top-N(x | α) → next active-learning DFT batch; labels feed back into both models"
+    figure: null
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 13
+    title: "Validation — random vs grouped CV"
+    subtitle: "5-fold × 5-seed random CV on n = 473"
     bullets:
       - "HistGBR R[sup]2[/sup] = 0.466 ± 0.035 · MAE = 0.012 · top-20 recall = 0.50"
       - "+50 % R[sup]2[/sup] over the GPR / GB / ExT baseline (was 0.31)"
-      - "Ablation: GBR 0.399 · ExtraTrees 0.234 · MEGNet fine-tune 0.307"
-      - "Repeated OOF averaging tightens to global R[sup]2[/sup] = 0.492, top-20 recall 0.50"
+      - "Ablation: GBR 0.399 · ExtraTrees 0.234 · MEGNet fine-tune 0.307 · MEGNet frozen 0.366"
+      - "Repeated OOF averaging → global R[sup]2[/sup] = 0.492, top-20 recall 0.50 (poster headline)"
       - "Prototype-grouped CV R[sup]2[/sup] ≈ 0 — model does not extrapolate to unseen prototype"
       - "Chalcogen-grouped CV R[sup]2[/sup] ≈ 0.15 — Se hold-out is the hardest"
     figure: "figures/output/s10_parity.png"
+
+  - kind: content
+    section_label: "03 · ML + FEATURES"
+    index: 14
+    title: "Per-group residual audit"
+    subtitle: "Diagnostic for the next active-learning batch"
+    bullets:
+      - "Score = RMSE · √n + 0.02 · missed-top-20 (penalises ranking errors)"
+      - "Se (n = 182): RMSE 0.042, 17 true top-20, 9 missed → highest priority"
+      - "high-score bin (y > 0.1, n = 14): RMSE 0.145 — under-modelled tail"
+      - "SG 62 Pnma (n = 182): RMSE 0.034, 4 missed of 10"
+      - "AB[sub]2[/sub]C[sub]4[/sub] (n = 91): RMSE 0.045, 1 missed of 7"
+      - "ABC[sub]3[/sub] (n = 56): RMSE 0.045, 50 % miss-rate of top-20 — sharpest data gap"
+    figure: null
 
   - kind: divider
     number: "04"
@@ -145,7 +201,7 @@ slides:
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 11
+    index: 15
     title: "Top-14 candidates (PV score y > 0.10)"
     subtitle: "All chalcogenides · 11 / 14 selenides · AB[sub]2[/sub]C[sub]4[/sub] dominates"
     bullets:
@@ -159,7 +215,7 @@ slides:
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 12
+    index: 16
     title: "Screening funnel"
     subtitle: ">10[sup]5[/sup] MP/OQMD → 647 DFT → 473 ML → 41 PV → 14 action list"
     bullets:
@@ -173,28 +229,28 @@ slides:
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 13
+    index: 17
     title: "Hit #1 — Se[sub]16[/sub]Sn[sub]8[/sub]Zr[sub]4[/sub]"
     subtitle: "AB[sub]2[/sub]C[sub]4[/sub] · Pnma (SG 62) · the Shockley–Queisser bullseye"
     bullets:
       - "E[sub]g[/sub] = 1.12 eV — within 0.22 eV of SQ optimum (1.34 eV)"
       - "m[sub]avg[/sub] = 0.43 m[sub]0[/sub] — light carriers, mobility comparable to GaAs"
-      - "ε[sub]avg[/sub] = 19.5 — strong dielectric screening, suppresses Frenkel-exciton formation"
-      - "E[sub]b[/sub] = 7 meV — well below k[sub]B[/sub]T at 300 K (Wannier–Mott regime)"
+      - "ε[sub]avg[/sub] = 19.5 — strong dielectric screening, suppresses Frenkel formation"
+      - "E[sub]b[/sub] = 7 meV — well below k[sub]B[/sub]T at 300 K (Wannier–Mott)"
       - "Composite PV score y = 0.487 — top of the screened set"
       - "Synthesis precedent: Sn–Zr–Se ternary phases reported, no PV device yet"
     figure: "figures/output/s13_hit1_Se16Sn8Zr4.png"
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 14
+    index: 18
     title: "Hit #2 — Cs[sub]2[/sub]Sb[sub]6[/sub]Se[sub]2[/sub]"
     subtitle: "ABC[sub]3[/sub] · C2/m (SG 12) · Sb 5s[sup]2[/sup] lone pair"
     bullets:
       - "E[sub]g[/sub] = 1.28 eV — also near the SQ optimum"
       - "m[sub]avg[/sub] = 0.81 m[sub]0[/sub] — heavier than Hit #1 but still PV-grade"
       - "ε[sub]avg[/sub] = 12.6 — moderate screening; E[sub]b[/sub] = 56 meV"
-      - "PV score y = 0.298 — different prototype family complements Hit #1"
+      - "PV score y = 0.298 — different prototype family, complements Hit #1"
       - "Sb 5s[sup]2[/sup] lone-pair character produces deep, dispersive VBM"
       - "Cs[sub]2[/sub]SbSe-type ternaries known synthesisable from solution routes"
     figure: "figures/output/s14_hit2_Cs2Sb6Se2.png"
@@ -205,43 +261,99 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 15
+    index: 19
     title: "Why device simulation"
     subtitle: "DFT params alone don't predict PCE"
     bullets:
-      - "DFT delivers E[sub]g[/sub], m[sup]*[/sup], ε, E[sub]b[/sub] — all bulk material-level descriptors"
+      - "DFT delivers E[sub]g[/sub], m[sup]*[/sup], ε, E[sub]b[/sub] — bulk material-level descriptors only"
       - "Device PCE depends on stack geometry, contacts, optical absorption, recombination"
       - "Need drift-diffusion + Poisson at full layer scale (HTL · absorber · ETL)"
-      - "Need TMM optics for thin-film interference / coherent absorption"
-      - "Need 2D effects: grains, lateral non-uniformity, single-grain-boundary recomb"
+      - "Need TMM coherent optics for thin-film interference [Pettersson et al. 1999]"
+      - "Need 2D effects: grains, lateral non-uniformity, single-grain-boundary recombination"
       - "Need mobile-ion transport for hysteresis (perovskite-class absorbers)"
     figure: null
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 16
+    index: 20
     title: "SolarLab software stack"
     subtitle: "1D + 2D drift-diffusion · TMM optics · mobile ions · selective Robin contacts"
     bullets:
       - "Backend: Python solver + FastAPI SSE streaming for live progress"
       - "Frontend: Vite / TypeScript workstation with publication-mode plotting"
       - "Solver: Radau implicit + BDF fallback + bisection-in-time on stiff steps"
-      - "TMM optics: coherent multi-layer with regenerated ASTM G-173 AM1.5G spectrum"
+      - "TMM optics: coherent multi-layer with ASTM G-173 AM1.5G spectrum"
       - "Selective contacts: Robin S[sub]n[/sub], S[sub]p[/sub] formulation, validated 2D ↔ 1D parity at 6 µV"
       - "Open-source, scriptable, REST-driven — composable into screening pipelines"
     figure: null
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 17
+    index: 21
+    title: "Drift-diffusion equations"
+    subtitle: "Three coupled PDEs per absorber layer [Selberherr 1984]"
+    bullets:
+      - "Continuity (electrons): ∂n/∂t = (1/q) ∇·J[sub]n[/sub] + G − R"
+      - "Continuity (holes):     ∂p/∂t = −(1/q) ∇·J[sub]p[/sub] + G − R"
+      - "Poisson: ∇·(ε[sub]r[/sub] ε[sub]0[/sub] ∇φ) = −q (p − n + N[sub]D[/sub] − N[sub]A[/sub] + ρ[sub]ion[/sub])"
+      - "Currents: J[sub]n[/sub] = q μ[sub]n[/sub] n E + q D[sub]n[/sub] ∇n   ·   J[sub]p[/sub] = q μ[sub]p[/sub] p E − q D[sub]p[/sub] ∇p"
+      - "Recombination R: SRH + Auger + radiative; Einstein D = (k[sub]B[/sub]T/q) μ"
+      - "Generation G: from TMM optics (next slide), driven by AM1.5G spectrum"
+    figure: null
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 22
+    title: "TMM optics"
+    subtitle: "Coherent multi-layer interference [Pettersson et al. 1999 · Born & Wolf]"
+    bullets:
+      - "Each layer j has 2×2 characteristic matrix L[sub]j[/sub] in the (E, H) basis"
+      - "L[sub]j[/sub] = [[cos δ[sub]j[/sub], i sin δ[sub]j[/sub] / η[sub]j[/sub]], [i η[sub]j[/sub] sin δ[sub]j[/sub], cos δ[sub]j[/sub]]]"
+      - "Phase thickness δ[sub]j[/sub] = (2π / λ) ñ[sub]j[/sub] d[sub]j[/sub] cos θ[sub]j[/sub] · ñ[sub]j[/sub] = n + i k complex"
+      - "System matrix M = L[sub]1[/sub] · L[sub]2[/sub] · … · L[sub]N[/sub] yields R, T, A per λ"
+      - "Generation profile G(x, λ) ∝ |E(x, λ)|[sup]2[/sup] · α(λ) integrated over AM1.5G"
+      - "Replaces Beer–Lambert (no interference) — captures back-reflector + interface effects"
+    figure: null
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 23
+    title: "Mobile-ion transport"
+    subtitle: "Drives J–V hysteresis in perovskites [Calado et al. 2016 · van Reenen et al. 2015]"
+    bullets:
+      - "Continuity for ion vacancy density P: ∂P/∂t = ∇·(D[sub]ion[/sub] ∇P + μ[sub]ion[/sub] P (1 − P / P[sub]lim[/sub]) ∇φ)"
+      - "Steric (1 − P / P[sub]lim[/sub]) factor caps ion density at the lattice site limit"
+      - "P[sub]lim[/sub] ≈ 1 – 5 % of cation site density in MAPbI[sub]3[/sub] absorber"
+      - "Ion drift redistributes charge under bias → screens electric field → modifies recomb"
+      - "Coupled into Poisson via ρ[sub]ion[/sub] = q (P − P[sub]eq[/sub]) source"
+      - "Time scale 0.01 – 100 s — explains slow J–V scan-rate dependence in hysteretic PSCs"
+    figure: null
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 24
+    title: "Selective Robin contacts"
+    subtitle: "Surface-recombination boundary conditions, not Dirichlet pinning"
+    bullets:
+      - "Left contact: J[sub]n[/sub] = −q S[sub]n,L[/sub] (n − n[sub]eq[/sub]) · J[sub]p[/sub] = +q S[sub]p,L[/sub] (p − p[sub]eq[/sub])"
+      - "Right contact: J[sub]n[/sub] = +q S[sub]n,R[/sub] (n − n[sub]eq[/sub]) · J[sub]p[/sub] = −q S[sub]p,R[/sub] (p − p[sub]eq[/sub])"
+      - "Selectivity: S[sub]n,L[/sub] [sup]≪[/sup] S[sub]p,L[/sub] makes left contact hole-extracting (HTL-like)"
+      - "Limit S → ∞ recovers Dirichlet (carrier pinned to equilibrium)"
+      - "Limit S → 0 makes contact perfectly blocking (zero-flux Neumann)"
+      - "Captures real ETL / HTL physics SCAPS-1D approximates with pinned boundaries"
+    figure: null
+
+  - kind: content
+    section_label: "05 · BRIDGE"
+    index: 25
     title: "Capability vs SCAPS-1D"
-    subtitle: "What the dominant 1D reference leaves on the table"
+    subtitle: "What the dominant 1D reference [Burgelman et al. 2000] leaves on the table"
     bullets: []
     figure: "figures/output/s17_capability.png"
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 18
+    index: 26
     title: "1D vs 2D fidelity"
     subtitle: "Same MAPbI[sub]3[/sub] stack — 50 mV V[sub]oc[/sub] drop in 2D from grain-boundary recombination"
     bullets:
@@ -259,7 +371,7 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 19
+    index: 27
     title: "Predicted device J–V on a top candidate"
     subtitle: "DFT params [sup]→[/sup] device sim [sup]→[/sup] PCE"
     bullets:
@@ -272,12 +384,12 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 20
+    index: 28
     title: "Outlook"
     subtitle: "Three concrete next steps"
     bullets:
       - "Multi-task learning on the ~36 k MP PBE gaps — closes prototype-grouped R[sup]2[/sup] gap"
-      - "SLME (Yu & Zunger PRL 2012) replacing the SQ upper bound — needs absorption coefficient α(E)"
+      - "SLME (Yu & Zunger 2012) replacing the SQ upper bound — needs absorption coefficient α(E)"
       - "Targeted Se-rich AB[sub]2[/sub]C[sub]4[/sub] / ABC[sub]3[/sub] DFT batch in SG 62, 12, 72, 15"
       - "Closed-loop automation: DFT batch submission and re-fit on label return"
       - "Experimental collaboration to synthesise top-3 hits and feed measured J–V back into ML"
@@ -285,7 +397,7 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 21
+    index: 29
     title: "Summary"
     subtitle: "Three takeaways"
     bullets:
@@ -298,14 +410,21 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 22
-    title: "Acknowledgments + references"
-    subtitle: "Q&A"
+    index: 30
+    title: "References"
+    subtitle: "ML + device-sim foundations"
     bullets:
-      - "Funding · collaborators · group members"
-      - "Yu & Zunger PRL 108, 068701 (2012) — SLME framework"
-      - "Blank et al. PRA 8, 024032 (2017) — detailed-balance PV screening metric"
-      - "MP / OQMD — Jain et al. APL Mat 2013 · Saal et al. JOM 2013"
-      - "matminer + Magpie — Ward et al. CMS 2018 / npj CM 2016"
-      - "MEGNet — Chen et al. Chem. Mater. 2019"
+      - "Friedman J.H., Ann. Stat. 29, 1189 (2001) — gradient boosting"
+      - "Ke G. et al., NeurIPS (2017) — LightGBM histogram binning"
+      - "Rasmussen C.E. & Williams C.K.I., MIT Press (2006) — GP for ML"
+      - "Snoek J. et al., NeurIPS (2012) — UCB acquisition"
+      - "Ward L. et al., npj Comput. Mater. 2, 16028 (2016) — Magpie · CMS 152, 60 (2018) — matminer"
+      - "Heyd J. et al., J. Chem. Phys. 118, 8207 (2003) — HSE06"
+      - "Yu L. & Zunger A., PRL 108, 068701 (2012) — SLME"
+      - "Selberherr S., Springer (1984) — semiconductor device simulation"
+      - "Pettersson L.A.A. et al., J. Appl. Phys. 86, 487 (1999) — TMM"
+      - "Burgelman M. et al., Thin Solid Films 361-362, 527 (2000) — SCAPS"
+      - "Calado P. et al., Nat. Commun. 7, 13831 (2016) — perovskite ion migration"
+      - "van Reenen S. et al., J. Phys. Chem. Lett. 6, 3808 (2015) — hysteresis modelling"
+      - "Chen C. et al., Chem. Mater. 31, 3564 (2019) — MEGNet"
     figure: null
