@@ -1087,15 +1087,59 @@ function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
 
 // ── Dark J-V ────────────────────────────────────────────────────────────────
 
-function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
+export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
   Plotly.purge(el)
-  el.innerHTML = ''
+  // Reset wrapper without using innerHTML assignment (security hook).
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('dark-jv-render')
+
+  const _darkStyle = readPlotStyleMode(el)
+
+  // Style: select toolbar \u2014 always rendered above the plot.
+  const _darkToolbar = document.createElement('div')
+  _darkToolbar.className = 'plot-toolbar'
+  _darkToolbar.setAttribute('data-test', 'dark-jv-toolbar')
+  {
+    const styleLabel = document.createElement('label')
+    styleLabel.className = 'plot-style-label'
+    styleLabel.htmlFor = 'dark-jv-style-mode'
+    styleLabel.textContent = 'Style:'
+    const styleSelect = document.createElement('select')
+    styleSelect.id = 'dark-jv-style-mode'
+    styleSelect.className = 'plot-style-select'
+    styleSelect.setAttribute('data-test', 'dark-jv-style-mode')
+    const optEng = document.createElement('option')
+    optEng.value = 'engineering'
+    optEng.textContent = 'Engineering'
+    const optPub = document.createElement('option')
+    optPub.value = 'publication'
+    optPub.textContent = 'Publication'
+    styleSelect.appendChild(optEng)
+    styleSelect.appendChild(optPub)
+    styleSelect.value = _darkStyle
+    styleSelect.addEventListener('change', () => {
+      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
+      renderDarkJV(el, r)
+    })
+    _darkToolbar.appendChild(styleLabel)
+    _darkToolbar.appendChild(styleSelect)
+  }
+  el.appendChild(_darkToolbar)
+
+  const _darkPlotDiv = document.createElement('div')
+  _darkPlotDiv.className = 'dark-jv-plot'
+  _darkPlotDiv.id = 'dark-jv-plot-inner'
+  el.appendChild(_darkPlotDiv)
+
   // Dark forward J-V: conventional sign has J > 0 for forward bias (injection).
   // The simulator returns A/m^2; display mA/cm^2 on a log axis.
   const absJ = r.J.map(j => Math.max(Math.abs(j) / 10, 1e-9))
 
-  // Highlight the fit window as a translucent band
-  const shapes: Record<string, unknown>[] = [
+  // Highlight the fit window as a translucent band. Engineering uses
+  // the existing indigo tint; publication uses a softer grey so the
+  // shaded band reads as figure annotation rather than a colored data
+  // region. Both branches keep the band semantics identical.
+  const _engShapes: Record<string, unknown>[] = [
     {
       type: 'rect', xref: 'x', yref: 'paper',
       x0: r.V_fit_lo, x1: r.V_fit_hi,
@@ -1104,32 +1148,83 @@ function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
       line: { width: 0 },
     },
   ]
+  const _pubShapes: Record<string, unknown>[] = [
+    {
+      type: 'rect', xref: 'x', yref: 'paper',
+      x0: r.V_fit_lo, x1: r.V_fit_hi,
+      y0: 0, y1: 1,
+      fillcolor: 'rgba(0, 0, 0, 0.06)',
+      line: { width: 0 },
+    },
+  ]
 
-  Plotly.newPlot(
-    el,
-    [
-      {
-        x: r.V, y: absJ, name: '|J|',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      },
-    ],
-    baseLayout({
-      xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-      yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA\u00b7cm\u207B\u00b2)'), type: 'log', dtick: 1 },
-      shapes,
-      annotations: [
+  if (_darkStyle === 'publication') {
+    Plotly.newPlot(
+      _darkPlotDiv,
+      [
         {
-          x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
-          xanchor: 'left', yanchor: 'top', showarrow: false,
-          text: `n = ${r.n_ideality.toFixed(2)} &nbsp; J<sub>0</sub> = ${r.J_0.toExponential(2)} A\u00b7m\u207B\u00b2 &nbsp; fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
-          font: { size: 12 },
+          x: r.V, y: absJ, name: '|J|',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
         },
       ],
-    }),
-    plotConfig('dark_jv'),
-  )
+      publicationLayout({
+        xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
+        yaxis: publicationAxis({ title: '|J| (mA\u00b7cm\u207B\u00b2)', isLog: true }),
+        shapes: _pubShapes,
+        // Dark J-V curves rise monotonically from low |J| at V=0 to
+        // injection at high V. Upper-LEFT quadrant (low V, high |J|
+        // axis position) is empty before the diode turn-on \u2014 best
+        // home for the n / J_0 / fit-window readout.
+        annotations: [
+          {
+            x: 0.05, y: 0.95, xref: 'paper', yref: 'paper',
+            xanchor: 'left' as const, yanchor: 'top' as const,
+            showarrow: false,
+            text:
+              `n = ${r.n_ideality.toFixed(2)}<br>` +
+              `J<sub>0</sub> = ${r.J_0.toExponential(2)} A\u00b7m\u207B\u00b2<br>` +
+              `fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
+            align: 'left' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+          },
+        ],
+      }),
+      publicationConfig('dark_jv'),
+    )
+  } else {
+    Plotly.newPlot(
+      _darkPlotDiv,
+      [
+        {
+          x: r.V, y: absJ, name: '|J|',
+          mode: 'lines+markers',
+          line: { color: PALETTE.forward, width: LINE.width },
+          marker: { ...MARKER, color: PALETTE.forward },
+        },
+      ],
+      baseLayout({
+        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA\u00b7cm\u207B\u00b2)'), type: 'log', dtick: 1 },
+        shapes: _engShapes,
+        annotations: [
+          {
+            x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
+            xanchor: 'left', yanchor: 'top', showarrow: false,
+            text: `n = ${r.n_ideality.toFixed(2)} &nbsp; J<sub>0</sub> = ${r.J_0.toExponential(2)} A\u00b7m\u207B\u00b2 &nbsp; fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
+            font: { size: 12 },
+          },
+        ],
+      }),
+      plotConfig('dark_jv'),
+    )
+  }
 }
 
 // ── Suns–V_oc ───────────────────────────────────────────────────────────────
