@@ -13,9 +13,11 @@ def main():
     ax = fig.add_subplot(gs[0])
     ax_stack = fig.add_subplot(gs[1])
 
-    # J-V curves — convert A/m² → mA/cm² (×0.1).
-    j_1d = [j / 10.0 for j in data["j_1d"]]
-    j_2d = [j / 10.0 for j in data["j_2d"]]
+    # J-V curves — convert A/m² → mA/cm² (×0.1) and apply the standard
+    # photovoltaic sign convention: photocurrent is plotted as negative so the
+    # familiar fourth-quadrant operating curve sits below the V axis.
+    j_1d = [-j / 10.0 for j in data["j_1d"]]
+    j_2d = [-j / 10.0 for j in data["j_2d"]]
 
     voc_1d = data["metrics_1d"]["voc_V"]
     voc_2d = data["metrics_2d"]["voc_V"]
@@ -29,7 +31,7 @@ def main():
     ax.axvline(voc_1d, color=ACCENT, lw=0.6, ls=":", alpha=0.6)
     ax.axvline(voc_2d, color=INK, lw=0.6, ls=":", alpha=0.6)
 
-    # Clip to the operating region — reverse-current diode tail past V_oc is uninformative.
+    # Clip to the operating region — reverse-bias forward-current tail past V_oc is uninformative.
     ax.set_xlim(0.0, 1.10 * max(voc_1d, voc_2d))
     ax.set_ylim(-1.20 * jsc_1d, max(5.0, 0.12 * jsc_1d))
 

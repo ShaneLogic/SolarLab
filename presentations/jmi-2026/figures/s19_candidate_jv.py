@@ -13,7 +13,9 @@ def main():
     ax = fig.add_subplot(gs[0])
     ax_stack = fig.add_subplot(gs[1])
 
-    j_mA = [j / 10.0 for j in data["j"]]                    # mA/cm²
+    # Standard PV sign convention — photocurrent plotted as negative so the
+    # operating curve occupies the fourth quadrant.
+    j_mA = [-j / 10.0 for j in data["j"]]                   # mA/cm²
     voc = data["metrics"]["voc_V"]
     jsc = data["metrics"]["jsc_A_per_m2"] / 10.0            # mA/cm²
     pce = data["metrics"]["pce_pct"]
