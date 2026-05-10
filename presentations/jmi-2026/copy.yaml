@@ -299,7 +299,7 @@ slides:
       - "Coherent transfer-matrix-method (TMM) optics are required for thin-film interference [Pettersson et al. 1999]"
       - "Two-dimensional effects (grain boundaries, lateral non-uniformity) cannot be captured in 1D"
       - "Mobile-ion transport must be included to reproduce hysteresis in perovskite-class absorbers"
-    figure: null
+    figure: "figures/output/s21_bulk_vs_device.png"
 
   - kind: content
     section_label: "05 · BRIDGE"
@@ -313,7 +313,7 @@ slides:
       - "Optics: coherent transfer-matrix-method using the ASTM G-173 AM1.5G reference spectrum"
       - "Selective contacts: Robin formulation in S[sub]n[/sub] and S[sub]p[/sub], validated against the 1D solver to 6 µV"
       - "Open-source, scriptable and REST-driven; designed for integration into high-throughput screening pipelines"
-    figure: null
+    figure: "figures/output/s22_framework.png"
 
   - kind: content
     section_label: "05 · BRIDGE"
@@ -327,7 +327,7 @@ slides:
       - "Current densities: J[sub]n[/sub] = q μ[sub]n[/sub] n E + q D[sub]n[/sub] ∇n · J[sub]p[/sub] = q μ[sub]p[/sub] p E − q D[sub]p[/sub] ∇p"
       - "Recombination R: Shockley–Read–Hall, Auger and radiative channels; Einstein relation D = (k[sub]B[/sub]T/q) μ"
       - "Generation G: optical generation profile from the TMM model integrated over the AM1.5G spectrum"
-    figure: null
+    figure: "figures/output/s23_band_diagram.png"
 
   - kind: content
     section_label: "05 · BRIDGE"
@@ -341,7 +341,7 @@ slides:
       - "System matrix M = L[sub]1[/sub] L[sub]2[/sub] … L[sub]N[/sub] yields wavelength-resolved R, T and A"
       - "Generation profile G(x, λ) ∝ |E(x, λ)|[sup]2[/sup] α(λ), integrated over the AM1.5G spectrum"
       - "Supersedes the Beer–Lambert approximation by capturing interference, back-reflector and interface effects"
-    figure: null
+    figure: "figures/output/s24_tmm_interference.png"
 
   - kind: content
     section_label: "05 · BRIDGE"
@@ -355,7 +355,7 @@ slides:
       - "Ion drift under bias redistributes mobile charge, screens the electric field and modulates the recombination rate"
       - "Couples into the Poisson equation via the source term ρ[sub]ion[/sub] = q (P − P[sub]eq[/sub])"
       - "Characteristic time scale of 0.01 – 100 s reproduces the observed scan-rate dependence of perovskite J–V curves"
-    figure: null
+    figure: "figures/output/s25_mobile_ions.png"
 
   - kind: content
     section_label: "05 · BRIDGE"
@@ -369,7 +369,7 @@ slides:
       - "Limit S → ∞ recovers the Dirichlet condition (carrier density pinned to equilibrium)"
       - "Limit S → 0 yields a perfectly blocking (zero-flux Neumann) contact"
       - "Captures the surface-recombination physics that SCAPS-1D approximates via Dirichlet pinning"
-    figure: null
+    figure: "figures/output/s26_robin_contacts.png"
 
   - kind: content
     section_label: "05 · BRIDGE"
