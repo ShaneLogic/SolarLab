@@ -1,5 +1,5 @@
 deck:
-  total_content_slides: 30
+  total_content_slides: 32
   title: "High-throughput DFT and small-sample ML for chalcogenide PV absorber discovery, with device-scale validation"
   authors: "Xuanyan Chen et al."
   affiliation: "HKUST(GZ) — 3rd JMI conference 2026"
@@ -28,6 +28,34 @@ slides:
   - kind: content
     section_label: "01 · PROBLEM"
     index: 3
+    title: "CIGS — Cu(In,Ga)Se[sub]2[/sub] chalcopyrite absorber"
+    subtitle: "Tetragonal I-4̄2d · cation-ordered diamond-like sublattice · tunable direct gap"
+    bullets:
+      - "Stoichiometry Cu(In,Ga)Se[sub]2[/sub]; In and Ga share a single cation site at composition x = Ga / (In + Ga)"
+      - "Lattice parameters a ≈ 5.78 Å · c ≈ 11.62 Å with c / a ≈ 2 (chalcopyrite = doubled zincblende)"
+      - "Direct band gap tunable approximately linearly from 1.04 eV (CuInSe[sub]2[/sub]) to 1.68 eV (CuGaSe[sub]2[/sub])"
+      - "Polycrystalline thin-film absorber 1–3 µm on a Mo back contact; CdS / ZnO buffer + window stack"
+      - "Champion lab cell PCE 23.4 % (Solar Frontier 2019); module reliability T[sub]80[/sub] [sup]>[/sup] 25 yr in field"
+      - "In-free sister chalcogenide kesterite Cu[sub]2[/sub]ZnSn(S,Se)[sub]4[/sub] explored at HKUST(GZ) [Yan et al. Nat. Energy 2018 · ACS Energy Lett. 2017]"
+    figure: "figures/output/s3_cigs_structure.png"
+
+  - kind: content
+    section_label: "01 · PROBLEM"
+    index: 4
+    title: "Perovskite — ABX[sub]3[/sub] structural family"
+    subtitle: "Pm-3̄m cubic parent · corner-sharing BX[sub]6[/sub] octahedral framework"
+    bullets:
+      - "General formula ABX[sub]3[/sub]: A = Cs[sup]+[/sup] / MA[sup]+[/sup] (CH[sub]3[/sub]NH[sub]3[/sub][sup]+[/sup]) / FA[sup]+[/sup] · B = Pb[sup]2+[/sup] / Sn[sup]2+[/sup] · X = I / Br / Cl"
+      - "BX[sub]6[/sub] octahedra share corners; A cation occupies the 12-coordinated cuboctahedral void"
+      - "Stability set by Goldschmidt tolerance factor t = (r[sub]A[/sub] + r[sub]X[/sub]) / (√2 (r[sub]B[/sub] + r[sub]X[/sub])); cubic perovskite for 0.9 ≤ t ≤ 1.0"
+      - "Direct band gap, strong absorption (α ≈ 10[sup]5[/sup] cm[sup]−1[/sup] near band edge), long carrier diffusion lengths"
+      - "Champion single-junction PCE 26.7 % (UNIST 2024); inverted PSC 22.3 % via ligand anchoring [Hou et al. Nat. Energy 2020]"
+      - "Tandem records: monolithic perovskite / Si tandem and 24.2 % all-perovskite tandem [Hou et al. Science 2020 · Nat. Energy 2020]"
+    figure: "figures/output/s4_perovskite_structure.png"
+
+  - kind: content
+    section_label: "01 · PROBLEM"
+    index: 5
     title: "Limitations of the established absorbers"
     subtitle: "Record-cell PCE timeline and accelerated-aging stability gap"
     bullets:
@@ -41,11 +69,11 @@ slides:
 
   - kind: content
     section_label: "01 · PROBLEM"
-    index: 4
+    index: 6
     title: "Talk outline"
     subtitle: "Six stages connecting the materials database to predicted device performance"
     bullets:
-      - "01 PROBLEM — efficiency–stability tradeoff"
+      - "01 PROBLEM — efficiency–stability tradeoff, CIGS and perovskite definitions (5 slides)"
       - "02 STRATEGY — chalcogenide structural template"
       - "03 ML AND FEATURES — small-sample HSE06 surrogate (8 slides)"
       - "04 CANDIDATES — fourteen-material shortlist"
@@ -59,7 +87,7 @@ slides:
 
   - kind: content
     section_label: "02 · STRATEGY"
-    index: 5
+    index: 7
     title: "Chalcogenide templates as the structural prior"
     subtitle: "AB[sub]2[/sub]C[sub]4[/sub] and ABC[sub]3[/sub] frameworks with heavy-p-block cations on chalcogen anions"
     bullets:
@@ -73,7 +101,7 @@ slides:
 
   - kind: content
     section_label: "02 · STRATEGY"
-    index: 6
+    index: 8
     title: "End-to-end pipeline"
     subtitle: "MP / OQMD → ML surrogate → DFT validation → device sim → expt"
     bullets: []
@@ -85,7 +113,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 7
+    index: 9
     title: "Motivation for a learned surrogate"
     subtitle: "Four-stage HSE06 and DFPT workflow executed in VASP for each candidate"
     bullets:
@@ -99,7 +127,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 8
+    index: 10
     title: "Hand-crafted feature set (167 D)"
     subtitle: "Composition · structure · symmetry — Magpie + matminer"
     bullets:
@@ -113,7 +141,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 9
+    index: 11
     title: "Composite photovoltaic figure of merit"
     subtitle: "Four physically motivated factors combined into a single scalar target y ∈ [0, 1]"
     bullets:
@@ -127,7 +155,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 10
+    index: 12
     title: "Histogram-based gradient boosting regression"
     subtitle: "Stage-wise additive function approximation [Friedman 2001 · Ke et al. 2017]"
     bullets:
@@ -141,7 +169,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 11
+    index: 13
     title: "Gaussian-process and random-forest uncertainty stack"
     subtitle: "Matérn-5/2 kernel with additive white noise [Rasmussen & Williams 2006]"
     bullets:
@@ -155,7 +183,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 12
+    index: 14
     title: "Upper-confidence-bound acquisition for active learning"
     subtitle: "Sequential selection of the next DFT batch [Snoek et al. 2012]"
     bullets:
@@ -169,7 +197,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 13
+    index: 15
     title: "Validation under random and grouped cross-validation"
     subtitle: "5-fold × 5-seed random CV on n = 473 labelled materials"
     bullets:
@@ -183,7 +211,7 @@ slides:
 
   - kind: content
     section_label: "03 · ML + FEATURES"
-    index: 14
+    index: 16
     title: "Per-group residual audit"
     subtitle: "Diagnostic informing the next active-learning batch"
     bullets:
@@ -201,7 +229,7 @@ slides:
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 15
+    index: 17
     title: "Top-fourteen candidates (PV score y > 0.10)"
     subtitle: "All entries are chalcogenides; eleven of fourteen are selenides; AB[sub]2[/sub]C[sub]4[/sub] is the dominant prototype"
     bullets:
@@ -215,7 +243,7 @@ slides:
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 16
+    index: 18
     title: "Screening funnel"
     subtitle: ">10[sup]5[/sup] MP / OQMD → 647 DFT-screened → 473 ML-ready → 41 PV-promising → 14 shortlist"
     bullets:
@@ -229,7 +257,7 @@ slides:
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 17
+    index: 19
     title: "Lead candidate — Se[sub]16[/sub]Sn[sub]8[/sub]Zr[sub]4[/sub]"
     subtitle: "AB[sub]2[/sub]C[sub]4[/sub] prototype · Pnma (SG 62) · near-optimal Shockley–Queisser gap"
     bullets:
@@ -243,7 +271,7 @@ slides:
 
   - kind: content
     section_label: "04 · CANDIDATES"
-    index: 18
+    index: 20
     title: "Secondary candidate — Cs[sub]2[/sub]Sb[sub]6[/sub]Se[sub]2[/sub]"
     subtitle: "ABC[sub]3[/sub] prototype · C2/m (SG 12) · Sb 5s[sup]2[/sup] lone-pair active cation"
     bullets:
@@ -261,7 +289,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 19
+    index: 21
     title: "Motivation for device-scale simulation"
     subtitle: "Bulk material descriptors alone do not determine device-level performance"
     bullets:
@@ -275,7 +303,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 20
+    index: 22
     title: "SolarLab device-simulation framework"
     subtitle: "1D + 2D drift-diffusion · TMM optics · mobile ions · selective Robin contacts"
     bullets:
@@ -289,7 +317,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 21
+    index: 23
     title: "Drift-diffusion governing equations"
     subtitle: "Three coupled partial differential equations per absorber layer [Selberherr 1984]"
     bullets:
@@ -303,7 +331,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 22
+    index: 24
     title: "Transfer-matrix-method optics"
     subtitle: "Coherent multi-layer thin-film interference [Pettersson et al. 1999 · Born & Wolf]"
     bullets:
@@ -317,7 +345,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 23
+    index: 25
     title: "Mobile-ion transport"
     subtitle: "Origin of J–V hysteresis in perovskite solar cells [Calado et al. 2016 · van Reenen et al. 2015]"
     bullets:
@@ -331,7 +359,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 24
+    index: 26
     title: "Selective Robin contact boundary conditions"
     subtitle: "Surface-recombination boundary conditions in place of Dirichlet pinning"
     bullets:
@@ -345,7 +373,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 25
+    index: 27
     title: "Capability comparison with SCAPS-1D"
     subtitle: "Capabilities absent from the SCAPS-1D reference solver [Burgelman et al. 2000]"
     bullets: []
@@ -353,7 +381,7 @@ slides:
 
   - kind: content
     section_label: "05 · BRIDGE"
-    index: 26
+    index: 28
     title: "1D and 2D solver fidelity comparison"
     subtitle: "Identical MAPbI[sub]3[/sub] stack: a 50 mV V[sub]oc[/sub] reduction in 2D attributable to grain-boundary recombination"
     bullets:
@@ -371,7 +399,7 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 27
+    index: 29
     title: "Predicted device J–V for a leading candidate"
     subtitle: "DFT parameters [sup]→[/sup] device simulation [sup]→[/sup] predicted PCE"
     bullets:
@@ -384,7 +412,7 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 28
+    index: 30
     title: "Outlook"
     subtitle: "Planned extensions"
     bullets:
@@ -397,7 +425,7 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 29
+    index: 31
     title: "Summary"
     subtitle: "Principal findings"
     bullets:
@@ -410,21 +438,22 @@ slides:
 
   - kind: content
     section_label: "06 · PAYOFF"
-    index: 30
+    index: 32
     title: "References"
-    subtitle: "ML + device-sim foundations"
+    subtitle: "ML, device-sim and absorber-chemistry foundations"
     bullets:
+      - "Yan C. et al., Nat. Energy 3, 764 (2018) · ACS Energy Lett. 2, 930 (2017) — kesterite Cu[sub]2[/sub]ZnSnS[sub]4[/sub]"
+      - "Hou Y. et al., Nat. Energy 5, 131 (2020) · Science 367, 1135 (2020) · Nat. Energy 7, 229 (2022) — perovskite + tandem"
       - "Friedman J.H., Ann. Stat. 29, 1189 (2001) — gradient boosting"
       - "Ke G. et al., NeurIPS (2017) — LightGBM histogram binning"
       - "Rasmussen C.E. & Williams C.K.I., MIT Press (2006) — GP for ML"
       - "Snoek J. et al., NeurIPS (2012) — UCB acquisition"
-      - "Ward L. et al., npj Comput. Mater. 2, 16028 (2016) — Magpie · CMS 152, 60 (2018) — matminer"
+      - "Ward L. et al., npj Comput. Mater. 2, 16028 (2016) · CMS 152, 60 (2018) — Magpie · matminer"
       - "Heyd J. et al., J. Chem. Phys. 118, 8207 (2003) — HSE06"
       - "Yu L. & Zunger A., PRL 108, 068701 (2012) — SLME"
       - "Selberherr S., Springer (1984) — semiconductor device simulation"
       - "Pettersson L.A.A. et al., J. Appl. Phys. 86, 487 (1999) — TMM"
       - "Burgelman M. et al., Thin Solid Films 361-362, 527 (2000) — SCAPS"
-      - "Calado P. et al., Nat. Commun. 7, 13831 (2016) — perovskite ion migration"
-      - "van Reenen S. et al., J. Phys. Chem. Lett. 6, 3808 (2015) — hysteresis modelling"
+      - "Calado P. et al., Nat. Commun. 7, 13831 (2016) · van Reenen S. et al., JPCL 6, 3808 (2015) — perovskite ion migration"
       - "Chen C. et al., Chem. Mater. 31, 3564 (2019) — MEGNet"
     figure: null
