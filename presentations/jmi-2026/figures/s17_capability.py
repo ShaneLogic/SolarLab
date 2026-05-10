@@ -7,7 +7,7 @@ ROWS = [
     ("Mobile-ion transport",   "drift-diffusion",    "steady-state hack"),
     ("Optics — TMM coherent",  "multi-layer",        "Beer–Lambert only"),
     ("Hysteresis / scan rate", "time-resolved",      "—"),
-    ("Selective Robin contacts","Sₙ, Sₚ",            "limited"),
+    ("Selective Robin contacts", r"$S_n$, $S_p$",     "limited"),
     ("Tandem / multi-junction","series matched",     "manual"),
     ("Open-source / scriptable","Python + REST",     "GUI only"),
     ("Solver",                 "Radau + BDF",        "Gummel iter."),

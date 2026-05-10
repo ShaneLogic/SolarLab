@@ -383,13 +383,13 @@ slides:
     section_label: "05 · BRIDGE"
     index: 28
     title: "1D and 2D solver fidelity comparison"
-    subtitle: "Identical MAPbI[sub]3[/sub] stack: a 50 mV V[sub]oc[/sub] reduction in 2D attributable to grain-boundary recombination"
+    subtitle: "Reference MAPbI[sub]3[/sub] stack — 50 mV V[sub]oc[/sub] reduction in 2D from grain-boundary recombination"
     bullets:
-      - "Identical layer stack and material parameters in both solvers"
-      - "1D V[sub]oc[/sub] = 0.910 V is reduced to 2D V[sub]oc[/sub] = 0.860 V"
-      - "The 50 mV reduction reflects the grain-boundary recombination channel resolved only in 2D"
+      - "Stack: spiro HTL 200 nm / MAPbI[sub]3[/sub] 400 nm / TiO[sub]2[/sub] ETL 100 nm with selective Robin contacts"
+      - "2D variant: a single vertical grain boundary at the lateral midplane of the absorber"
+      - "1D V[sub]oc[/sub] = 0.910 V is reduced to 2D V[sub]oc[/sub] = 0.860 V (ΔV[sub]oc[/sub] = −50 mV)"
+      - "The reduction is the grain-boundary recombination channel resolved only by the 2D solver"
       - "1D models would misestimate device performance by omitting this loss channel"
-      - "2D simulation is therefore a prerequisite for quantitatively predicting candidate-material performance"
       - "Solver throughput: a 28-voltage 2D sweep completes in approximately 22 minutes on 4 CPU cores"
     figure: "figures/output/s18_1d_vs_2d.png"
 
@@ -403,10 +403,11 @@ slides:
     title: "Predicted device J–V for a leading candidate"
     subtitle: "DFT parameters [sup]→[/sup] device simulation [sup]→[/sup] predicted PCE"
     bullets:
-      - "Closes the workflow from a > 10[sup]5[/sup] candidate database scan to a predicted device-level J–V"
-      - "Current curve uses a placeholder candidate (MAPbI[sub]3[/sub] baseline with V[sub]oc[/sub] shifted by +30 mV)"
-      - "The Se[sub]16[/sub]Sn[sub]8[/sub]Zr[sub]4[/sub] J–V will replace the placeholder once n, k data and DFT-derived parameters are integrated into the 2D solver"
-      - "Predicted device-level PCE is the figure of merit relevant for synthesis decisions"
+      - "Closes the workflow from > 10[sup]5[/sup] database scan to predicted device-level J–V"
+      - "Stack: same spiro HTL / MAPbI[sub]3[/sub] / TiO[sub]2[/sub] ETL reference as the 1D-vs-2D run"
+      - "Placeholder candidate: MAPbI[sub]3[/sub] baseline with V[sub]oc[/sub] shifted by +30 mV (~candidate-gap surrogate)"
+      - "Real Se[sub]16[/sub]Sn[sub]8[/sub]Zr[sub]4[/sub] J–V replaces the placeholder once n, k data and DFT parameters are wired into the 2D solver"
+      - "Predicted device PCE is the figure of merit relevant for synthesis decisions"
       - "Establishes explicit, falsifiable performance targets for the experimental collaboration"
     figure: "figures/output/s19_candidate_jv.png"
 
