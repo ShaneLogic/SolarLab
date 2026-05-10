@@ -127,10 +127,17 @@ def main():
              ha="center", fontsize=9, color="#666",
              transform=ax2.get_xaxis_transform())
 
-    for label, t in points:
-        ax2.scatter([t], [0.4], color=ACCENT, s=80,
+    # Alternate label rows so closely spaced points (e.g. FAPbI3 at t = 0.99
+    # vs FAPbBr3 at t = 1.01) do not clash. A short tick line connects each
+    # marker to its label.
+    label_rows = [0.28, 0.14]   # alternating y positions
+    for i, (label, t) in enumerate(points):
+        y_label = label_rows[i % 2]
+        ax2.scatter([t], [0.42], color=ACCENT, s=80,
                     edgecolor="white", linewidth=0.8, zorder=3)
-        ax2.text(t, 0.30, label, ha="center", va="top",
+        ax2.plot([t, t], [0.40, y_label + 0.03],
+                 color=BODY, lw=0.6, zorder=2)
+        ax2.text(t, y_label, label, ha="center", va="top",
                  fontsize=9, color=INK)
 
     ax2.set_xlim(0.55, 1.10)
