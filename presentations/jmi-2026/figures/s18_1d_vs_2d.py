@@ -13,18 +13,18 @@ def main():
     ax = fig.add_subplot(gs[0])
     ax_stack = fig.add_subplot(gs[1])
 
-    # J-V curves — convert A/m² → mA/cm² (×0.1) and apply the standard
-    # photovoltaic sign convention: photocurrent is plotted as negative so the
-    # familiar fourth-quadrant operating curve sits below the V axis.
+    # J-V curves — convert A/m² → mA/cm² (×0.1). Plot in the active-cell
+    # convention used by the perovskite literature (e.g. Hou et al.):
+    # J = +J_sc at V = 0, J = 0 at V_oc, slightly negative past V_oc.
     voc_1d = data["metrics_1d"]["voc_V"]
     voc_2d = data["metrics_2d"]["voc_V"]
     jsc_1d = data["metrics_1d"]["jsc_A_per_m2"] / 10.0     # mA/cm²
     v_max = 1.05 * max(voc_1d, voc_2d)
 
-    # Truncate the curves to the operating region — past V_oc the diode
-    # current shoots up by orders of magnitude and is uninformative.
+    # Truncate to V ≤ 1.05·V_oc so the forward-bias diode tail does not blow
+    # out the y-axis past the knee.
     def _trim(v_list, j_list, v_cut):
-        return zip(*[(v, -j / 10.0) for v, j in zip(v_list, j_list) if v <= v_cut])
+        return zip(*[(v, j / 10.0) for v, j in zip(v_list, j_list) if v <= v_cut])
     v_1d_trim, j_1d = _trim(data["v_1d"], data["j_1d"], v_max)
     v_2d_trim, j_2d = _trim(data["v_2d"], data["j_2d"], v_max)
 
@@ -37,7 +37,7 @@ def main():
     ax.axvline(voc_2d, color=INK, lw=0.6, ls=":", alpha=0.6)
 
     ax.set_xlim(0.0, v_max)
-    ax.set_ylim(-1.20 * jsc_1d, 0.10 * jsc_1d)
+    ax.set_ylim(-0.30 * jsc_1d, 1.20 * jsc_1d)
 
     ax.set_xlabel("Voltage (V)")
     ax.set_ylabel(r"J (mA/cm$^{2}$)")
