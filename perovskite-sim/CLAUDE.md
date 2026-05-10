@@ -165,6 +165,18 @@ On every RHS call, `assemble_rhs_2d` calls `recompute_g_with_rad_2d` (in `perovs
 
 Near flat-band (V ≈ V_bi) the Jacobian is nearly singular and Radau's adaptive LTE estimator under-reports the error, letting it accept one giant step on the wrong branch of the implicit system. This manifests as an unphysical J–V spike (e.g. `J=258` sandwiched between `188` and `101`). **All three experiments therefore cap `max_step = Δt / k`** on every `run_transient` sub-interval (`jv_sweep._integrate_step`, `impedance`, `degradation._measure_snapshot_metrics`). Do not remove these caps; if you need tighter control, lower the divisor instead. Any new experiment that calls `run_transient` across a voltage where the Jacobian can become near-singular must apply the same cap.
 
+### Solver gotcha — BDF fallback after Radau bisection budget (May 2026)
+
+`experiments/jv_sweep._integrate_step` halves `settle_t` on every `RuntimeError` up to `max_bisect = 10` (1024 sub-intervals). After that budget is exhausted, **before raising**, it retries once with `solve_ivp(method="BDF")` instead of Radau. BDF is more robust than Radau on near-singular Jacobians at the cost of slower per-step work; using it as the last-resort fallback eliminates the rare cases where Radau's adaptive LTE estimator stalls near flat-band. This path is hit only after the bisection budget exhausts, so the cost is bounded — but it converts otherwise-fatal sweep stalls into successful runs.
+
+### Experiment gotcha — terminal-current measurement at SS (May 2026)
+
+Suns-V_oc, EQE, and any other experiment that pulls a single steady-state terminal current must use `experiments/jv_sweep._compute_current_ss(x, y, stack, V_app, mat=...)`, **not** `_total_current_faces(...)[0]` or `[N//2]`. The helper returns `np.median` across all interior faces of the per-face current. Charge conservation requires `J(x)` to be uniform at SS; in practice the boundary faces oscillate when ionic transients have not fully damped or when the Radau time-step has bottomed out at the bisection floor, and a single-face read picks up that boundary noise. The median is robust to a few outliers without requiring tighter convergence. Audit 2026-05-09 traced an `EQE_max = 48` artifact on `ionmonger_benchmark_tmm.yaml` (4881 % quantum yield) to terminal-face oscillation under a 1 ms settle; switching the sampler to median across faces was the single change that brought the slowest preset back to physical EQE ≤ 1.
+
+### Experiment gotcha — slow ionic transients on TMM presets (May 2026)
+
+The original `run_suns_voc` / `compute_eqe` defaulted to `t_settle = 1e-3 s` (1 ms). On TMM presets where the absorber `D_ion = 1e-17 m²/s` (e.g. `ionmonger_benchmark_tmm`), the ionic time constant `τ_ion = L²/D_ion ≈ 16 ms` is more than an order of magnitude longer than 1 ms, so the unconverged ionic transient produces a residual J that swamps the small monochromatic photo-signal in EQE and produces oscillating pseudo-FF in Suns-V_oc. **Defaults bumped to `t_settle = 1e-1 s` (100 ms)** in both experiments — covers the slowest perovskite preset with one order of magnitude of margin. EQE additionally bumps `Phi_incident` from `1e20` to `4e21` (1-sun integrated AM1.5G) so the per-wavelength photocurrent dominates the residual ionic drift. Suns-V_oc and EQE both subtract a dark-`J(V=0)` baseline before reporting the photo-signal so the surviving ionic drift cancels in the difference. Pinned by `tests/unit/experiments/test_eqe.py::test_eqe_in_unit_range_on_ionic_rich_preset` — locks the worst-case preset (`ionmonger_benchmark_tmm`) to `EQE ≤ 1.10`.
+
 ## Backend (`backend/main.py`)
 
 Thin FastAPI wrapper. Two endpoint families:

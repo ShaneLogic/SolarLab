@@ -7,12 +7,20 @@ from perovskite_sim.constants import K_B, Q
 
 
 def bernoulli(x: np.ndarray) -> np.ndarray:
-    """Bernoulli function B(x) = x / (exp(x) - 1), numerically stable."""
+    """Bernoulli function B(x) = x / (exp(x) - 1), numerically stable.
+
+    For x > ~700 the analytic limit is B(x) → 0 but `np.expm1(x)` overflows
+    to +inf and emits a RuntimeWarning. Branch the huge-positive case to the
+    explicit zero limit so the warning never fires under aggressive 2D
+    Newton iterations that produce out-of-range xi.
+    """
     x = np.asarray(x, dtype=float)
     result = np.empty_like(x)
     small = np.abs(x) < 1e-8
-    large = ~small
+    huge_pos = x > 700.0
+    large = ~small & ~huge_pos
     result[small] = 1.0 - x[small] / 2.0 + x[small]**2 / 12.0
+    result[huge_pos] = 0.0
     result[large] = x[large] / np.expm1(x[large])
     return result
 
