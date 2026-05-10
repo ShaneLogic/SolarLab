@@ -38,9 +38,9 @@ def draw_mapbi3_stack(ax, *, show_gb=False, title=None):
 
     # Layer thicknesses (nm) — drawn in proportion (200 / 400 / 100 = 700 nm).
     layers = [
-        ("spiro_HTL",  "200 nm · HTL",      HTL_COLOR, 200),
-        ("MAPbI$_3$",  "400 nm · absorber", ABS_COLOR, 400),
-        ("TiO$_2$_ETL","100 nm · ETL",      ETL_COLOR, 100),
+        ("HTL · spiro",       "200 nm",           HTL_COLOR, 200),
+        ("MAPbI$_3$ absorber","400 nm",           ABS_COLOR, 400),
+        ("ETL · TiO$_2$",     "100 nm",           ETL_COLOR, 100),
     ]
     total_thickness = sum(t for *_, t in layers)
     box_w = 1.0
@@ -58,14 +58,21 @@ def draw_mapbi3_stack(ax, *, show_gb=False, title=None):
                              edgecolor="#888",
                              facecolor=color)
         ax.add_patch(box)
-        # text colour matches contrast against the layer fill
         text_color = "white" if color == ABS_COLOR else INK
-        ax.text(x0 + 0.04, y + h - 0.04, name,
-                fontsize=10, color=text_color, weight="bold",
-                ha="left", va="top")
-        ax.text(x0 + 0.04, y + 0.03, sub,
-                fontsize=8, color=text_color,
-                ha="left", va="bottom")
+        # When the layer height is too small for two stacked text lines,
+        # collapse to a single centred label that combines name + thickness.
+        if h < 0.18:
+            ax.text(x0 + 0.04, y + h / 2.0,
+                    f"{name} · {sub}",
+                    fontsize=9, color=text_color, weight="bold",
+                    ha="left", va="center")
+        else:
+            ax.text(x0 + 0.04, y + h - 0.04, name,
+                    fontsize=10, color=text_color, weight="bold",
+                    ha="left", va="top")
+            ax.text(x0 + 0.04, y + 0.03, sub,
+                    fontsize=8, color=text_color,
+                    ha="left", va="bottom")
         layer_box_y.append((y, y + h))
         cumulative_y = y
 

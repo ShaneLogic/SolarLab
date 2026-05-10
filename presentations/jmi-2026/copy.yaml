@@ -151,7 +151,7 @@ slides:
       - "tanh(ε / 10): saturates above ε ≈ 10 to reflect diminishing returns from dielectric screening"
       - "1 / (1 + E[sub]b[/sub] / 0.1): favours Wannier–Mott regimes (E[sub]b[/sub] < 0.1 eV) and penalises Frenkel-exciton systems"
       - "Bounded, differentiable, physically interpretable; replaces four independent regression heads with one"
-    figure: null
+    figure: "figures/output/s11_pv_score_factors.png"
 
   - kind: content
     section_label: "03 · ML + FEATURES"
@@ -165,7 +165,7 @@ slides:
       - "Hyperparameters: 600 boosting iterations · maximum depth 4 · learning rate 0.05 · minimum samples per leaf 10"
       - "Target wrapped in log[sub]1[/sub]p(y / 0.08) by TransformedTargetRegressor; inverse via 0.08 · expm1"
       - "Logarithmic transform compresses the heavy-tailed PV-score distribution and equalises booster resolution near peak (y ≈ 0.5) and bulk (y ≈ 0.01)"
-    figure: null
+    figure: "figures/output/s12_histgbr_schematic.png"
 
   - kind: content
     section_label: "03 · ML + FEATURES"
@@ -179,7 +179,7 @@ slides:
       - "A random-forest predictor (300 trees) compensates for GP underconfidence in sparsely sampled regions"
       - "Stack mean: μ(x) = w[sub]GP[/sub] μ[sub]GPR[/sub] + w[sub]RF[/sub] μ[sub]RF[/sub] · variance: σ[sup]2[/sup](x) = w[sub]GP[/sub][sup]2[/sup] σ[sub]GPR[/sub][sup]2[/sup] + w[sub]RF[/sub][sup]2[/sup] σ[sub]RF[/sub][sup]2[/sup]"
       - "Mixing weights are obtained via non-negative ridge regression on out-of-fold predictions, ensuring calibration"
-    figure: null
+    figure: "figures/output/s13_gp_rf_uncertainty.png"
 
   - kind: content
     section_label: "03 · ML + FEATURES"
@@ -193,7 +193,7 @@ slides:
       - "κ = 2 balances exploitation (high μ) and exploration (high σ) and is standard in Bayesian optimisation"
       - "Decoupling μ and σ between two models prevents GP underconfidence from suppressing the high-score tail"
       - "Top-N entries by α become the next active-learning DFT batch; returned labels are fed back into both models"
-    figure: null
+    figure: "figures/output/s14_ucb_acquisition.png"
 
   - kind: content
     section_label: "03 · ML + FEATURES"
@@ -221,7 +221,7 @@ slides:
       - "Pnma (SG 62, n = 182): RMSE 0.034, 4 of 10 true top-20 missed"
       - "AB[sub]2[/sub]C[sub]4[/sub] (n = 91): RMSE 0.045, 1 of 7 true top-20 missed"
       - "ABC[sub]3[/sub] (n = 56): RMSE 0.045, 50 % top-20 miss rate — the most pronounced data-coverage gap"
-    figure: null
+    figure: "figures/output/s16_per_group_residual.png"
 
   - kind: divider
     number: "04"
