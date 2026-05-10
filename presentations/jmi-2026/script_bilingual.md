@@ -114,33 +114,33 @@ Format: each slide gets one **EN** delivery paragraph followed by the parallel *
 
 ## Slide 11 — Composite PV figure of merit (复合光伏品质因子)
 
-**EN —** We compress four physical quantities into a single scalar y in [0, 1]. The four factors: f_gap is a triangular Shockley–Queisser window peaked at 1.34 eV; 1 / (1 + m_avg) rewards low effective mass and therefore high mobility; tanh(ε/10) saturates beyond ε ≈ 10 to reflect diminishing returns from dielectric screening; 1 / (1 + E_b / 0.1) favours Wannier–Mott regimes below 100 meV. Bounded, differentiable, physically interpretable — replaces four independent regression heads with one.
+**EN —** Why this design? An ML model needs one target, not four. If we ran four separate regressors — one for band gap, one for effective mass, one for dielectric, one for binding energy — each would pick its own optimum, and a candidate could win on three but lose on the fourth. Multiplying them together forces the model to find materials that are *jointly* good. Each factor is a known PV constraint: f_gap is a triangular window peaked at the Shockley–Queisser optimum of 1.34 eV; 1/(1+m_avg) rewards high mobility; tanh(ε/10) saturates because more screening above ε ≈ 10 buys little; 1/(1+E_b/0.1) keeps us in the Wannier–Mott regime where excitons dissociate easily. The score is bounded in [0, 1], differentiable, and a high score is hard to fake.
 
-**中文 —** 我们把四个物理量压缩为单一标量 y ∈ [0, 1]。四个因子：f_gap 是一个以 1.34 eV 为峰、贴近 Shockley–Queisser 窗口的三角函数；1/(1+m_avg) 奖励低有效质量、高迁移率；tanh(ε/10) 在介电常数大于 10 后饱和，反映介电屏蔽的边际效应；1/(1+E_b/0.1) 偏好束缚能小于 100 meV 的 Wannier–Mott 体系。整体有界、可微、物理可解释，把原本四个回归头替换成一个。
+**中文 —** 为什么这样设计？ML 模型需要一个回归目标，而不是四个。如果对带隙、有效质量、介电常数、束缚能各跑一个回归，每个都会找自己的最优解；某个候选可能三个赢、一个输。把四项相乘后，模型必须同时优化所有四个，才能拿高分。每个因子都对应一个已知的光伏约束：f_gap 是以 SQ 最优 1.34 eV 为峰的三角窗；1/(1+m_avg) 奖励高迁移率；tanh(ε/10) 在 ε ≈ 10 之后饱和，因为继续增大屏蔽收益递减；1/(1+E_b/0.1) 把候选限制在激子易解离的 Wannier–Mott 区。整体得分在 [0, 1] 之间、可微、且很难"作弊"。
 
 ---
 
 ## Slide 12 — Histogram-based gradient boosting (基于直方图的梯度提升)
 
-**EN —** The mean predictor is HistGBR. Stage-wise additive: F_m = F_{m−1} + ν · h_m, where each h_m fits the negative gradient of the loss at the previous stage. Histogram binning into 256 buckets reduces split scans from O(N) to O(B), giving roughly a three-times speedup. NaN handling is native — missing values learn an independent split direction at every node. We use 600 boosting iterations, depth 4, learning rate 0.05, minimum 10 samples per leaf. The target is wrapped in log1p(y / 0.08) to compress the heavy-tailed PV-score distribution.
+**EN —** Why HistGBR for the mean predictor? Three practical reasons. First, our 167-D feature set mixes compositional statistics with structural fingerprints — heterogeneous tabular data, exactly where boosted trees beat neural networks. Second, our sample size is only 473 — too small for deep models, just right for trees. Third, our features have NaN entries from missing structural data, and HistGBR splits handle NaN natively without imputation. The mechanism is intuitive: build a weak tree, look at where it makes mistakes, build the next tree to fix those mistakes, repeat 600 times. Histogram binning into 256 buckets makes each split scan O(B) instead of O(N), giving roughly 3× speedup. We log-transform the target with log1p(y/0.08) so the model resolves both the high-score peak and the bulk equally well — without it, the heavy tail dominates the loss.
 
-**中文 —** 均值预测器选用 HistGBR。逐级累加：F_m = F_{m−1} + ν · h_m，每个 h_m 拟合上一级损失的负梯度。直方图分桶（256 桶）把分裂扫描复杂度从 O(N) 降为 O(B)，约 3× 加速。NaN 由模型原生处理——每个节点为缺失值学习独立的分裂方向。超参数：600 轮提升、深度 4、学习率 0.05、叶子最小样本 10。目标变量用 log1p(y/0.08) 进行变换，压缩重尾的 PV 评分分布。
+**中文 —** 为什么用 HistGBR 做均值预测？三个实际原因。第一，我们 167 维特征里既有组成统计、又有结构指纹——这是典型的异构表格数据，梯度提升树通常胜过神经网络。第二，样本量只有 473，深度模型嫌小，树模型刚好。第三，特征里有 NaN（部分结构数据缺失），HistGBR 在分裂时原生支持 NaN，无需插补。机制本身很直观：先建一棵弱树，看它哪里错了，下一棵树专门修这些错，重复 600 次。直方图分 256 桶让每次分裂扫描从 O(N) 降到 O(B)，约 3 倍加速。我们对目标做 log1p(y/0.08) 变换，让模型对高分峰和均值区都有同等分辨率——否则重尾会主导损失函数。
 
 ---
 
 ## Slide 13 — GP + RF uncertainty stack (高斯过程 + 随机森林不确定性堆叠)
 
-**EN —** For the uncertainty channel we stack a Gaussian process and a random forest. The GP uses a Matérn-5/2 kernel with anisotropic length scale optimised by L-BFGS-B on the marginal log-likelihood. White-noise variance absorbs DFT scatter. The random forest with 300 trees compensates for GP underconfidence in sparsely sampled regions. Stack mean and variance are non-negative ridge mixtures of the two, calibrated on out-of-fold predictions.
+**EN —** Why a stack? Active learning needs a calibrated standard deviation σ(x). A pure Gaussian process gives smooth, theoretically grounded uncertainty — but it tends to be over-confident in regions where training data is sparse, exactly the regions we most want to explore. A pure random forest gives an empirical σ from per-tree variance, but no closed-form posterior. Combining the two restores calibration: where the GP collapses to its prior and reports near-zero σ, the RF still has tree-to-tree variance that picks up the slack. The mixing weights are fit by non-negative ridge regression on out-of-fold predictions, which guarantees the σ band actually covers the true value at the right rate. The Matérn-5/2 kernel is chosen because PV-score is twice-differentiable in the descriptors, but not infinitely smooth — Matérn-5/2 matches that regularity.
 
-**中文 —** 不确定性通道采用高斯过程 + 随机森林堆叠。GP 使用 Matérn-5/2 核，各向异性长度尺度通过 L-BFGS-B 在边缘对数似然上优化；白噪声方差吸收 DFT 数据噪声。300 棵树的随机森林弥补 GP 在稀疏采样区域的过度自信。堆叠均值和方差通过非负岭回归在折外预测上校准混合权重。
+**中文 —** 为什么要做堆叠？主动学习需要一个校准良好的标准差 σ(x)。纯高斯过程给出的不确定性平滑且理论严谨——但在训练数据稀疏的区域往往过度自信，而那恰是我们最需要探索的区域。纯随机森林通过 300 棵树的预测方差给出经验 σ，但没有解析后验。把两者堆叠就能恢复校准：GP 退化到先验、σ 接近零的地方，RF 的树间方差仍能给出非零的不确定度。堆叠权重通过非负岭回归在折外预测上拟合，保证 σ 区间以正确比例覆盖真值。核函数选 Matérn-5/2，因为 PV 评分在描述符空间是二阶可导但不是无穷光滑——Matérn-5/2 正好匹配这种光滑度。
 
 ---
 
 ## Slide 14 — UCB acquisition (UCB 采集函数)
 
-**EN —** Active learning uses upper-confidence-bound acquisition: α(x) = μ(x) + κ · σ(x), with κ = 2. Crucially we decouple μ and σ between two models — μ from HistGBR (the better mean predictor), σ from the GPR + RF stack (the calibrated uncertainty source). This decoupling prevents GP underconfidence from suppressing the high-score tail. Top-N entries by α form the next DFT batch; returned labels feed back into both models.
+**EN —** The motivating question is: under a finite DFT budget — say we can run 50 more candidates — which 50 will teach the model the most? Two extremes are wrong. Picking only the highest-μ candidates exploits what we already know but never explores. Picking only the highest-σ candidates explores wildly but ignores what we have learned. UCB combines both: α(x) = μ(x) + 2σ(x). A candidate scores highly if it's *likely* a winner, OR if we are *uncertain* enough about it that it might be a hidden winner. The key design choice is decoupling μ and σ across two models: μ from HistGBR (the most accurate mean predictor), σ from the GPR + RF stack (the calibrated uncertainty source). If a single model produced both, the regularisation that calibrates σ would degrade μ, and we would lose accuracy where it matters most. Top-N by α become the next DFT batch; returned labels feed back into both models.
 
-**中文 —** 主动学习采集函数采用 UCB：α(x) = μ(x) + κ · σ(x)，κ = 2。关键设计是把均值与方差解耦：μ 来自 HistGBR（在已标注集上更准的均值预测器），σ 来自 GPR + RF 堆叠（校准良好的不确定性源）。这样可避免 GP 的低不确定性抑制高分尾部。按 α 排序的前 N 个进入下一轮 DFT 计算，返回的标签同时反哺两个模型。
+**中文 —** 出发点是：DFT 预算有限——比如还能算 50 个候选——哪 50 个能让模型学到最多？两个极端都不对。只挑均值最高的，是在剥削已有认知，从不探索；只挑方差最大的，是盲目探索，不看已有结论。UCB 把两者结合：α(x) = μ(x) + 2σ(x)。一个候选得高分要么*可能*是赢家，要么*不确定到*可能藏着赢家。关键设计是把均值和方差跨两个模型解耦：μ 来自 HistGBR（最准的均值预测器），σ 来自 GPR + RF 堆叠（校准的不确定性源）。如果用同一个模型同时给 μ 和 σ，校准 σ 的正则化会拖累 μ，导致最关键的均值精度下降。按 α 排序的前 N 个进入下一轮 DFT，返回的标签同时反哺两个模型。
 
 ---
 
@@ -154,9 +154,9 @@ Format: each slide gets one **EN** delivery paragraph followed by the parallel *
 
 ## Slide 16 — Per-group residual audit (分组残差诊断)
 
-**EN —** This residual audit drives the next active-learning batch. Group-priority score equals RMSE × √n + 0.02 × (missed top-20). Selenium with n = 182 has RMSE 0.042 and 9 of 17 true top-20 missed — highest priority. The high-score bin y > 0.1 has RMSE 0.145, identifying the under-modelled tail. ABC₃ with n = 56 shows the most pronounced data-coverage gap, with a 50 % top-20 miss rate. These groups are where the next DFT batch should focus.
+**EN —** This is where we keep ourselves honest. Random CV on the previous slide gave R² = 0.47, which sounds great. But "averaged across the dataset" hides the question: where is the model still failing? We split the test residuals by chemistry, by structural prototype, by score range — and look at each group separately. The priority score combines two things we care about: RMSE × √n (which groups have most error) plus 0.02 × top-20 misses (which groups lose us actual winners in the ranking). Selenium is the highest priority — RMSE 0.042 across 182 samples and 9 of the 17 true top-20 missed. The high-score bin y > 0.1 has RMSE 0.145, three times the global average — confirming we under-fit exactly the tail we want to predict. ABC₃ has only 56 samples and a 50 % top-20 miss rate. These three groups directly tell the next DFT batch what to compute.
 
-**中文 —** 残差诊断决定下一轮主动学习方向。优先级分数 = RMSE × √n + 0.02 × (top-20 漏检数)。Se 组（n=182）RMSE 0.042，17 个真 top-20 漏检 9 个，最高优先级；高分区 y > 0.1（n=14）RMSE 0.145，是欠拟合的尾部；ABC₃（n=56）漏检率高达 50 %，是覆盖最差的子群。下一轮 DFT 应重点补这些组。
+**中文 —** 这一页是诚实之处。上一页随机 CV 给的 R² = 0.47 听起来不错，但"平均到全数据集"会掩盖一个关键问题：模型究竟在哪里还没学好？我们把测试残差按化学家族、结构原型、得分区间分组，一组一组单独看。优先级分数综合了两个我们关心的指标：RMSE × √n（哪些组误差最大）+ 0.02 × top-20 漏检数（哪些组在排序时漏掉了真正的赢家）。硒族优先级最高——182 个样本 RMSE 0.042，17 个真 top-20 漏掉 9 个；高分区 y > 0.1 的 RMSE 0.145，是全局均值的三倍，说明我们对最关心的尾部欠拟合最严重；ABC₃ 只有 56 个样本，top-20 漏检率高达 50 %。这三个组直接告诉下一轮 DFT 应该补哪些样本。
 
 ---
 
@@ -218,41 +218,41 @@ Format: each slide gets one **EN** delivery paragraph followed by the parallel *
 
 ## Slide 22 — SolarLab framework (SolarLab 框架)
 
-**EN —** SolarLab is our in-house framework. Backend is a Python solver with FastAPI server-sent events streaming intermediate results. Frontend is a TypeScript / Vite workstation with publication-quality figure rendering. Numerics use Radau implicit Runge–Kutta with BDF fallback and bisection-in-time on stiff steps. Optics is coherent TMM under the ASTM G-173 AM1.5G reference spectrum. Selective contacts use the Robin formulation in S_n and S_p, validated against the 1D solver to within 6 µV. The whole framework is open-source, scriptable and REST-driven for high-throughput integration.
+**EN —** Why build our own framework rather than using SCAPS or other established tools? Because the existing tools are 1D-only, treat ions as a steady-state hack, use Beer–Lambert optics, and are GUI-driven — none of which we can wire into a high-throughput active-learning pipeline. SolarLab is built around four design choices. First, a Python backend with FastAPI server-sent events so each J–V sweep streams its progress to whatever client invokes it — useful for both interactive UI and automated batches. Second, a TypeScript / Vite frontend for publication-quality figures during interactive exploration. Third, a Radau implicit Runge–Kutta solver with BDF fallback and bisection-in-time on stiff steps — necessary because the drift-diffusion + ion + Poisson system is genuinely stiff near flat-band. Fourth, the framework is open-source and REST-driven so the same engine that produced today's hero plot can be called programmatically from the active-learning loop.
 
-**中文 —** SolarLab 是我们自研的器件级仿真平台。后端是 Python 求解器 + FastAPI SSE 流式输出；前端是 TypeScript / Vite 工作站，带出版级图形渲染；数值方案为 Radau 隐式 Runge–Kutta + BDF 备选 + 时间二分细化；光学采用 ASTM G-173 AM1.5G 下的相干 TMM；选择性接触使用 S_n、S_p 形式的 Robin 边界，与 1D 求解器对比误差小于 6 µV。整套框架开源、可脚本化、REST 驱动，便于接入高通量流水线。
+**中文 —** 为什么不用 SCAPS 或其他成熟工具，而要自建？因为现有工具是 1D-only、用稳态近似处理离子、光学是 Beer–Lambert、GUI 驱动——这些都没办法嵌进高通量主动学习流水线。SolarLab 的四个设计选择：第一，Python 后端 + FastAPI SSE，让每次 J–V 扫描的中间结果实时推送给调用方——既支持交互式 UI 也支持自动批处理。第二，TypeScript / Vite 前端，方便交互式探索并出版级出图。第三，Radau 隐式 Runge–Kutta + BDF 备选 + 时间二分细化——因为漂移扩散 + 离子 + Poisson 系统在平带附近非常硬，必须用隐式格式。第四，整个框架开源、REST 驱动，使得今天讲的那张图所用的引擎，能够直接被主动学习循环以编程方式调用。
 
 ---
 
 ## Slide 23 — Drift-diffusion governing equations (漂移扩散控制方程)
 
-**EN —** The governing equations are three coupled PDEs per absorber layer. Electron and hole continuity link to current densities J_n and J_p, which decompose into drift plus diffusion via the Einstein relation. Poisson's equation closes the system, including a mobile-ion source term ρ_ion. Recombination R covers Shockley–Read–Hall, Auger, and radiative channels. Generation G is the optical generation profile from TMM integrated over the AM1.5G spectrum.
+**EN —** The output we care about is the J–V curve — V_oc, J_sc, FF and PCE. To predict those, we need to know where carriers are, how fast they move, and how many recombine before reaching the contacts. That's exactly what these three equations track. Continuity says: at any point, the carrier density changes because of currents flowing in or out, plus generation, minus recombination. The current density itself has two terms: drift, which is carriers pushed by the electric field, and diffusion, which is carriers spreading from high to low concentration — the Einstein relation D = (k_B T / q) μ ties the two together. Poisson's equation closes the loop: charge density determines the field, the field drives drift. Generation G comes from TMM optics, which we'll see next; recombination R sets V_oc through the Shockley–Read–Hall, Auger and radiative channels.
 
-**中文 —** 每个吸收层有三组耦合 PDE：电子连续性、空穴连续性，以及把电流密度分解为漂移 + 扩散（由 Einstein 关系连接）。Poisson 方程闭合系统，包含离子源项 ρ_ion。复合项 R 涵盖 SRH、Auger、辐射三种通道；产生项 G 来自 TMM 在 AM1.5G 光谱上的光生剖面积分。
+**中文 —** 我们最终关心的输出是 J–V 曲线——V_oc、J_sc、FF 和 PCE。要预测这些，需要知道载流子在哪里、跑多快、有多少在到达接触前复合。这三组方程就是回答这三个问题的。连续性方程说：任意一点的载流子密度变化，等于流入流出电流之差，加上产生减去复合。电流密度本身分两部分：漂移（电场推动）和扩散（高浓度往低浓度扩散），由 Einstein 关系 D = (k_B T / q) μ 连接。Poisson 方程把环路闭合：电荷密度决定电场，电场驱动漂移。产生项 G 来自下一页要讲的 TMM 光学；复合项 R 通过 SRH、Auger、辐射三个通道直接决定 V_oc。
 
 ---
 
 ## Slide 24 — Transfer-matrix-method optics (TMM 光学)
 
-**EN —** Optics use the coherent transfer-matrix method. Each layer j is a 2×2 characteristic matrix L_j acting on the tangential E and H field components. Phase thickness δ_j depends on the complex refractive index n + ik. The system matrix is the product L_1 L_2 … L_N, yielding wavelength-resolved reflectance, transmittance and absorption. The generation profile G(x, λ) is proportional to |E(x, λ)|² × α(λ), integrated over AM1.5G. This supersedes Beer–Lambert, capturing interference, back-reflector and interface effects.
+**EN —** Why not just Beer–Lambert? In a thin-film stack — say a 400-nm absorber sandwiched between an HTL and an ETL — light reflects back from each interface and interferes with itself. That creates a standing wave inside the absorber, with peaks and troughs at specific wavelengths. Beer–Lambert assumes simple exponential decay, missing those interference fringes; in 200–400 nm absorbers it under-counts photogeneration by 10–20 %. TMM solves the full problem: each layer becomes a 2×2 matrix that propagates the electric and magnetic field components forward; the system matrix is the product over all layers; from that we read off wavelength-resolved reflectance, transmittance and absorption directly. The carrier-generation profile G(x, λ) is proportional to |E(x, λ)|² × α(λ), integrated over AM1.5G — and this is what feeds the G term in the previous slide's drift-diffusion equations.
 
-**中文 —** 光学采用相干 TMM。每层 j 用 2×2 特征矩阵 L_j 作用于切向 E、H 场分量；相位厚度 δ_j 由复折射率 n + ik 决定；系统矩阵 M = L_1 L_2 … L_N 给出波长分辨的 R、T、A。光生剖面 G(x, λ) ∝ |E(x, λ)|² · α(λ)，再对 AM1.5G 光谱积分。相比 Beer–Lambert 模型，TMM 还能刻画干涉、背反射、界面效应。
+**中文 —** 为什么不用 Beer–Lambert？在薄膜叠层里——比如 400 nm 吸收层夹在 HTL 和 ETL 之间——光在每个界面反射、与自己干涉，在吸收层内部形成驻波，特定波长处出现波峰和波谷。Beer–Lambert 把这一切简化为指数衰减，干涉条纹完全丢失；在 200–400 nm 吸收层中会低估光生 10–20 %。TMM 求解完整问题：每层用 2×2 矩阵把电磁场分量前推，系统矩阵 = 各层矩阵之积；从中可直接得到波长分辨的反射、透射、吸收谱。光生剖面 G(x, λ) ∝ |E(x, λ)|² · α(λ)，再在 AM1.5G 光谱上积分——正是上一页漂移扩散方程里 G 项的输入。
 
 ---
 
 ## Slide 25 — Mobile-ion transport (离子迁移)
 
-**EN —** Mobile-ion transport explains the J–V hysteresis observed in perovskite cells. The ion-vacancy density P satisfies a continuity equation with a steric factor (1 − P / P_lim) capping density at the available lattice-site limit, estimated as 1 to 5 percent of the cation-site density in MAPbI₃. Ion drift under bias redistributes mobile charge, screens the field, and modulates recombination. The coupling into Poisson is through ρ_ion = q (P − P_eq). Time scales of 0.01 to 100 seconds reproduce the measured scan-rate dependence.
+**EN —** Why does this slide exist? Because of one experimental fact: when you measure a perovskite J–V curve, the forward sweep and the reverse sweep do not match — and the gap between them depends on how fast you scan. That hysteresis is the smoking gun for mobile ions. A simulator without ion transport gives you exactly one J–V curve regardless of scan rate, and cannot fit the data. So we add a continuity equation for ion vacancies. The key term is the steric factor (1 − P / P_lim): mobile ions cannot pile up beyond the available lattice sites — without this cap they would run away to one contact. Under bias, ions drift, accumulate at one electrode, screen the internal field, and change the recombination rate. The feedback into Poisson is the source term ρ_ion. Characteristic time scales of 0.01 to 100 seconds — set by the ion mobility — reproduce the measured scan-rate dependence.
 
-**中文 —** 离子迁移解释了钙钛矿电池的 J–V 迟滞。空位浓度 P 满足带饱和因子 (1 − P/P_lim) 的连续性方程，P_lim 取 MAPbI₃ 阳离子位密度的 1–5 %。偏压驱动下离子重新分布，屏蔽内电场，调制复合速率，并通过源项 ρ_ion = q (P − P_eq) 反馈到 Poisson 方程。0.01–100 s 的特征时间尺度再现了扫描速率依赖性。
+**中文 —** 这一页存在的根本原因是一个实验事实：测钙钛矿 J–V 曲线时，正向扫描和反向扫描不重合，而且不重合的程度跟扫描速率有关。这种迟滞就是离子迁移的"铁证"。一个不含离子迁移的仿真器，无论扫多快都给同一条 J–V 曲线，根本拟合不了实验。所以我们加入离子空位的连续性方程。关键是饱和因子 (1 − P/P_lim)：可动离子的密度不能超过可用晶格位——没有这个上限，它们会全部跑到一边的接触面去。偏压下离子迁移、在某一极聚集、屏蔽内电场、改变复合速率；通过源项 ρ_ion 反馈到 Poisson 方程。由离子迁移率决定的 0.01–100 s 特征时间尺度，正好再现了实测的扫描速率依赖。
 
 ---
 
 ## Slide 26 — Robin selective-contact boundary conditions (Robin 选择性接触边界)
 
-**EN —** Contacts use Robin boundary conditions instead of Dirichlet pinning. Each contact has separate surface-recombination velocities S_n and S_p; selectivity emerges from S_n,L ≪ S_p,L for a hole-extracting left contact, and the mirror condition on the right. The S → ∞ limit recovers Dirichlet pinning; S → 0 gives a perfectly blocking Neumann contact. This formulation captures the surface-recombination physics that SCAPS-1D approximates with Dirichlet pinning only.
+**EN —** Why care about contact boundary conditions? Because they set how easily carriers leave the absorber, and that directly affects V_oc. Real measured surface-recombination velocities span six orders of magnitude — from 0.1 to 10⁵ metres per second. SCAPS and similar 1D solvers usually use Dirichlet pinning, which forces carrier density at the contact to its equilibrium value. That is the S → ∞ limit only — perfectly extracting contact, infinite velocity. Real contacts are nowhere near that limit. We use Robin boundary conditions: the current at the contact is proportional to S × (carrier density − equilibrium density). Two velocities per contact — S_n for electrons, S_p for holes — and selectivity is built in by making S_n small and S_p large at the HTL, mirrored at the ETL. The S → ∞ limit recovers Dirichlet pinning, and S → 0 gives a perfectly blocking Neumann contact, so Robin smoothly interpolates between every physically relevant case. This is one of the capabilities listed on the next slide as absent from SCAPS.
 
-**中文 —** 接触采用 Robin 边界条件而非 Dirichlet 钉扎。每个接触各自具有 S_n、S_p；选择性体现在 S_n,L ≪ S_p,L（构成提取空穴的左接触），右侧镜像。S → ∞ 极限退化为 Dirichlet 钉扎；S → 0 给出完全阻断的 Neumann 边界。这套公式自然刻画了表面复合物理，而 SCAPS-1D 通常仅用 Dirichlet 钉扎近似。
+**中文 —** 为什么接触边界条件重要？因为它决定载流子离开吸收层的难易程度，直接影响 V_oc。实测表面复合速度跨越六个数量级——从 0.1 到 10⁵ m/s。SCAPS 等 1D 求解器通常采用 Dirichlet 钉扎：把接触处载流子密度强制等于平衡值，这只对应 S → ∞ 极限——完美提取、无穷速度。真实接触远远达不到这个极限。我们用 Robin 边界：接触电流正比于 S × (载流子密度 − 平衡密度)。每个接触有两个速度——电子的 S_n、空穴的 S_p——通过让 HTL 的 S_n 远小于 S_p（ETL 镜像）天然实现选择性。S → ∞ 退化为 Dirichlet 钉扎，S → 0 给出完全阻断的 Neumann 边界，Robin 在两个极限之间平滑插值，覆盖所有物理相关情形。这正是下一页列出的、SCAPS 缺失能力之一。
 
 ---
 
