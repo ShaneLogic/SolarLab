@@ -14,19 +14,23 @@ def main():
     ax_stack = fig.add_subplot(gs[1])
 
     # Standard PV sign convention — photocurrent plotted as negative so the
-    # operating curve occupies the fourth quadrant.
-    j_mA = [-j / 10.0 for j in data["j"]]                   # mA/cm²
+    # operating curve occupies the fourth quadrant. Truncate past V_oc so the
+    # forward-bias diode tail does not dominate the y-axis.
     voc = data["metrics"]["voc_V"]
     jsc = data["metrics"]["jsc_A_per_m2"] / 10.0            # mA/cm²
     pce = data["metrics"]["pce_pct"]
+    v_max = 1.05 * voc
 
-    ax.plot(data["v"], j_mA, color=ACCENT, lw=2.2,
+    v_trim, j_mA = zip(*[(v, -j / 10.0) for v, j in zip(data["v"], data["j"])
+                         if v <= v_max])
+
+    ax.plot(v_trim, j_mA, color=ACCENT, lw=2.2,
             label=rf"Top candidate · $V_{{oc}}$ = {voc:.3f} V")
     ax.axhline(0, color="#999", lw=0.6)
     ax.axvline(voc, color=ACCENT, lw=0.6, ls=":", alpha=0.6)
 
-    ax.set_xlim(0.0, 1.10 * voc)
-    ax.set_ylim(-1.20 * jsc, max(5.0, 0.12 * jsc))
+    ax.set_xlim(0.0, v_max)
+    ax.set_ylim(-1.20 * jsc, 0.10 * jsc)
 
     ax.set_xlabel("Voltage (V)")
     ax.set_ylabel(r"J (mA/cm$^{2}$)")
