@@ -66,6 +66,14 @@ def add_content(prs, *, section_label, slide_index, total, title,
                 subtitle, bullets, figure_path=None):
     slide = _add_blank(prs)
     sw, sh = prs.slide_width, prs.slide_height
+    # Layout band budget (inches, 16:9 deck = 10 × 5.625):
+    #   header  : 0.30 .. 0.60  (height 0.30)
+    #   title   : 0.70 .. 1.40  (height 0.70 — accommodates 2 lines at 22pt)
+    #   subtitle: 1.45 .. 1.90  (height 0.45)
+    #   body    : 2.00 .. 5.00  (height 3.00 — figure / bullets)
+    #   footer  : 5.10 .. 5.40  (height 0.30 — brand mark)
+    # All bands are non-overlapping by 0.05 in margins.
+
     # header row
     _add_textbox(slide, Inches(0.5), Inches(0.3), Inches(7), Inches(0.3),
                  section_label.upper(), fonts.SECTION_LABEL, palette.BODY)
@@ -73,17 +81,26 @@ def add_content(prs, *, section_label, slide_index, total, title,
                  f"{slide_index} / {total}", fonts.SLIDE_COUNTER,
                  palette.HAIRLINE, align=PP_ALIGN.RIGHT)
     # body title + subtitle
-    _add_textbox(slide, Inches(0.5), Inches(0.8), Inches(9), Inches(0.6),
-                 title, fonts.TITLE, palette.INK)
-    _add_textbox(slide, Inches(0.5), Inches(1.4), Inches(9), Inches(0.4),
+    _add_textbox(slide, Inches(0.5), Inches(0.7), Inches(9), Inches(0.7),
+                 title, fonts.CONTENT_TITLE, palette.INK)
+    _add_textbox(slide, Inches(0.5), Inches(1.45), Inches(9), Inches(0.45),
                  subtitle, fonts.SUBTITLE, palette.BODY)
-    # figure (left) + bullets (right)
+    # figure (left) + bullets (right) — or full-width figure if no bullets
+    body_top_in = 2.0
+    body_h_in = 3.0
+    has_bullets = bool(bullets)
     if figure_path:
-        # Fit picture inside a 5.4 x 3.2 inch box, preserving native aspect.
         from PIL import Image
         with Image.open(str(figure_path)) as im:
             src_w, src_h = im.size
-        max_w_in, max_h_in = 5.4, 3.2
+        # Figure-only slides (no bullets) use the full 9-inch body width;
+        # otherwise the figure occupies the 5.4-inch left column.
+        if has_bullets:
+            max_w_in, max_h_in = 5.4, body_h_in
+            box_left_in = 0.5
+        else:
+            max_w_in, max_h_in = 9.0, body_h_in
+            box_left_in = 0.5
         src_aspect = src_w / src_h
         if src_aspect > (max_w_in / max_h_in):
             fig_w_in = max_w_in
@@ -91,9 +108,8 @@ def add_content(prs, *, section_label, slide_index, total, title,
         else:
             fig_h_in = max_h_in
             fig_w_in = max_h_in * src_aspect
-        # Center inside the 0.5..5.9 / 2.0..5.2 box.
-        x_in = 0.5 + (max_w_in - fig_w_in) / 2.0
-        y_in = 2.0 + (max_h_in - fig_h_in) / 2.0
+        x_in = box_left_in + (max_w_in - fig_w_in) / 2.0
+        y_in = body_top_in + (max_h_in - fig_h_in) / 2.0
         slide.shapes.add_picture(str(figure_path),
                                  Inches(x_in), Inches(y_in),
                                  width=Inches(fig_w_in),
@@ -104,16 +120,17 @@ def add_content(prs, *, section_label, slide_index, total, title,
         bullet_left = Inches(0.5)
         bullet_w = Inches(9)
     if bullets:
-        tb = slide.shapes.add_textbox(bullet_left, Inches(2.0),
-                                      bullet_w, Inches(3.2))
+        tb = slide.shapes.add_textbox(bullet_left, Inches(body_top_in),
+                                      bullet_w, Inches(body_h_in))
         tf = tb.text_frame
         tf.word_wrap = True
         for i, line in enumerate(bullets):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.alignment = PP_ALIGN.LEFT
+            p.space_after = Pt(2)
             write_segments(p, parse_segments(f"•  {line}"),
                            fonts.BODY, palette.BODY)
     # footer — brand mark only (author cite removed per user request)
-    _add_textbox(slide, Inches(7.5), Inches(5.05), Inches(2), Inches(0.3),
+    _add_textbox(slide, Inches(7.5), Inches(5.10), Inches(2), Inches(0.30),
                  "SOLARLAB", fonts.FOOTER, palette.ACCENT, align=PP_ALIGN.RIGHT)
     return slide

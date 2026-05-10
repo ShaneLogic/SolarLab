@@ -4,9 +4,10 @@ from pptx.util import Pt
 FONT_NAME = "Arial"
 
 # (size_pt, bold) by role
-TITLE = (Pt(28), True)
-SUBTITLE = (Pt(16), False)
-BODY = (Pt(14), False)
+TITLE = (Pt(28), True)            # cover only
+CONTENT_TITLE = (Pt(22), True)    # content slides — fits long titles on one line
+SUBTITLE = (Pt(15), False)
+BODY = (Pt(13), False)
 CAPTION = (Pt(11), False)
 FOOTER = (Pt(10), False)
 DIVIDER_NUMERAL = (Pt(250), True)

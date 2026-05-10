@@ -8,8 +8,10 @@ def test_build_produces_pptx_with_correct_slide_count(tmp_path):
     out = tmp_path / "deck.pptx"
     n = build(out_path=out)
     assert out.exists()
-    # 1 cover + 6 dividers + 21 content = 28 slides (slide 1 missing from spec)
-    assert n == 28
+    # Slide count is data-driven: number of entries in copy.yaml.
+    import yaml
+    spec = yaml.safe_load(Path("copy.yaml").read_text())
+    assert n == len(spec["slides"])
 
 
 def test_no_underscore_or_caret_anywhere_in_deck(tmp_path):
