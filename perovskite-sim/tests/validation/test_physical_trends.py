@@ -199,3 +199,166 @@ def test_jsc_vs_bandgap(eg_sweep_results: list[tuple[float, JVResult]]) -> None:
         f"J_sc ratio widest/narrowest Eg = {ratio:.3f} — "
         "expected more drop at wider bandgap (≤ 0.95)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Trend 2: V_oc vs Thickness
+# ---------------------------------------------------------------------------
+
+THICKNESS_SWEEP_NM = [100, 200, 400, 700, 1000]  # nm → converted to m
+
+
+def test_voc_vs_thickness(baseline_stack: DeviceStack) -> None:
+    """V_oc should increase with absorber thickness.
+
+    dV_oc / d(log₁₀(thickness)) should be positive and in 30–90 mV/decade —
+    the classic SRH signature: thicker absorbers dilute contact recombination.
+    """
+    thicknesses_m = [t * 1e-9 for t in THICKNESS_SWEEP_NM]
+    stacks = _vary_absorber_thickness(baseline_stack, thicknesses_m)
+
+    voc_values: list[float] = []
+    for stack in stacks:
+        result = _run_jv(stack)
+        voc_values.append(result.metrics_fwd.V_oc)
+
+    log10_t = np.log10(THICKNESS_SWEEP_NM)
+    slope, intercept, r_value, _, _ = linregress(log10_t, voc_values)
+
+    # mV/decade
+    slope_mv_per_decade = slope * 1000
+
+    assert r_value > 0.7, (
+        f"V_oc vs log₁₀(thickness) correlation r={r_value:.3f} is too weak — "
+        f"V_oc values: {[f'{v:.4f}' for v in voc_values]}"
+    )
+    assert 20 <= slope_mv_per_decade <= 120, (
+        f"V_oc vs thickness slope {slope_mv_per_decade:.1f} mV/decade "
+        f"outside [20, 120] — V_oc values: {[f'{v:.4f}' for v in voc_values]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trend 3: FF vs Mobility
+# ---------------------------------------------------------------------------
+
+MOBILITY_SWEEP_CM2 = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2]  # cm²/Vs
+
+
+def test_ff_vs_mobility(baseline_stack: DeviceStack) -> None:
+    """FF should degrade measurably below ~1e-4 cm²/Vs.
+
+    At low mobility transport resistance limits charge extraction, reducing FF.
+    The test asserts FF at the lowest μ is at least 3 percentage points
+    (absolute) lower than at the highest μ.
+    """
+    mobility_m2 = [m * 1e-4 for m in MOBILITY_SWEEP_CM2]  # cm²/Vs → m²/Vs
+    ff_values: list[float] = []
+    for mu in mobility_m2:
+        stacks_n = _vary_absorber_param(baseline_stack, "mu_n", [mu])
+        s = _vary_absorber_param(stacks_n[0], "mu_p", [mu])[0]
+        result = _run_jv(s)
+        ff_values.append(result.metrics_fwd.FF)
+        if not ff_values[-1] > 0:
+            pytest.fail(f"FF=0 at μ={mu:.2e} m²/Vs — solver likely failed")
+
+    ff_drop = ff_values[0] - ff_values[-1]
+    assert ff_drop >= 0.03, (
+        f"FF drop from lowest to highest mobility is only {ff_drop:.4f} "
+        f"(absolute) — expected ≥ 0.03. FF values: "
+        f"{[f'{ff:.4f}' for ff in ff_values]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trend 4: Ideality Factor
+# ---------------------------------------------------------------------------
+
+
+def test_ideality_factor(baseline_stack: DeviceStack) -> None:
+    """Dark J-V ideality factor should be 1.0 ≤ n_id ≤ 2.0.
+
+    In the low-injection regime (J < J_sc/100), a single-junction device
+    with SRH and radiative recombination has n_id between 1 and 2.
+    n_id < 1 or > 2 signals a missing or misconfigured recombination path.
+    """
+    # Get J_sc reference from illuminated run for the threshold
+    ill_result = _run_jv(baseline_stack)
+    j_sc = ill_result.metrics_fwd.J_sc
+    assert j_sc > 0, "Need illuminated J_sc reference for ideality test"
+
+    # Run dark J-V
+    dark_result = run_jv_sweep(
+        baseline_stack, N_grid=60, n_points=30, v_rate=1.0,
+        V_max=1.5, illuminated=False,
+    )
+    V = np.asarray(dark_result.V_fwd)
+    J = np.asarray(dark_result.J_fwd)
+
+    # Low-injection region: J positive but well below J_sc
+    threshold = j_sc / 100
+    lo_mask = (J > 0) & (J < threshold)
+    if lo_mask.sum() < 4:
+        pytest.skip(
+            f"Not enough low-injection points: {lo_mask.sum()} with J < {threshold:.1f}"
+        )
+
+    V_lo = V[lo_mask]
+    J_lo = J[lo_mask]
+
+    slope, _, r_value, _, _ = linregress(V_lo, np.log(J_lo))
+    # slope = d(ln J)/dV = q / (n_id * kT)  → n_id = q / (slope * kT)
+    # At 300 K: kT/q = 0.02585 V, so n_id = 1 / (slope * 0.02585)
+    n_id = 1.0 / (slope * 0.02585)
+
+    assert r_value > 0.95, (
+        f"Ideality fit correlation r={r_value:.3f} too weak — "
+        "J(V) may not be exponential in the selected region"
+    )
+    assert 1.0 <= n_id <= 2.5, (
+        f"Ideality factor n_id = {n_id:.2f} outside [1.0, 2.5]"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trend 6: V_oc vs Illumination (Suns-V_oc)
+# ---------------------------------------------------------------------------
+
+
+def test_voc_vs_illumination(baseline_stack: DeviceStack) -> None:
+    """Suns-V_oc slope dV_oc / d(ln Φ) should be n_id · kT/q.
+
+    At 300 K: slope ∈ [25, 65] mV/decade, corresponding to
+    ideality factor n_id ∈ [1.0, 2.5].
+
+    Uses the existing run_suns_voc experiment with default suns levels.
+    """
+    from perovskite_sim.experiments.suns_voc import run_suns_voc
+
+    # Wider suns range for robust slope fitting
+    suns_levels = [1e-3, 1e-2, 5e-2, 1e-1, 5e-1, 1.0]
+    result = run_suns_voc(
+        baseline_stack, suns_levels=suns_levels, N_grid=60, t_settle=0.1,
+    )
+
+    assert len(result.suns) >= 4, (
+        f"Need ≥4 suns levels for slope fit, got {len(result.suns)}"
+    )
+    # Filter out any failed levels (V_oc may be zero or NaN on failure)
+    valid = np.isfinite(result.V_oc) & (result.V_oc > 0)
+    suns_valid = np.asarray(result.suns)[valid]
+    voc_valid = np.asarray(result.V_oc)[valid]
+
+    assert len(suns_valid) >= 3, (
+        f"Need ≥3 valid V_oc points, got {len(suns_valid)}"
+    )
+
+    slope, _, r_value, _, _ = linregress(np.log(suns_valid), voc_valid)
+    slope_mv_per_decade = slope * 1000  # V/decade → mV/decade
+
+    assert r_value > 0.95, (
+        f"Suns-V_oc slope fit correlation r={r_value:.3f} too weak"
+    )
+    assert 20 <= slope_mv_per_decade <= 70, (
+        f"Suns-V_oc slope {slope_mv_per_decade:.1f} mV/decade outside [20, 70]"
+    )
