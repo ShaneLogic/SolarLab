@@ -112,7 +112,9 @@ def _above_gap_flux(eg: float) -> float:
 
     # Prefer trapezoid (NumPy >= 2.0), fall back to trapz
     _integrate = getattr(np, "trapezoid", getattr(np, "trapz"))
-    return float(_integrate(spectral_flux[above], wavelength_nm[above]))
+    # wavelength_nm → m so the integral over spectral flux [photons/(m²·s·m)]
+    # yields photons/(m²·s); skipping the conversion gives 1e9× too many photons.
+    return float(_integrate(spectral_flux[above], wavelength_nm[above] * 1e-9))
 
 
 def _ni_for_eg(eg: float, eg_ref: float = EG_REF, ni_ref: float = NI_REF) -> float:
