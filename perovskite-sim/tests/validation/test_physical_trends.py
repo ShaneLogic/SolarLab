@@ -328,17 +328,21 @@ def test_ideality_factor(baseline_stack: DeviceStack) -> None:
     V = np.asarray(dark_result.V_rev)
     J = np.asarray(dark_result.J_rev)
 
-    # Low-injection region: well above the noise floor but below J_sc/50
-    threshold = j_sc / 50
-    lo_mask = (J > j_sc / 500) & (J < threshold)
+    # Low-injection region: above noise floor but well below J_sc.
+    # Dark J is negative under forward bias (diode forward current),
+    # so we work with |J|.
+    J_abs = np.abs(J)
+    floor = max(j_sc / 500, 0.5)
+    threshold = j_sc / 8
+    lo_mask = (J_abs > floor) & (J_abs < threshold)
     if lo_mask.sum() < 4:
         pytest.skip(
             f"Not enough low-injection points: {lo_mask.sum()} with "
-            f"J ∈ [{j_sc/500:.1f}, {threshold:.1f}]"
+            f"|J| ∈ [{floor:.2e}, {threshold:.2e}]"
         )
 
     V_lo = V[lo_mask]
-    J_lo = J[lo_mask]
+    J_lo = J_abs[lo_mask]
 
     slope, _, r_value, _, _ = linregress(V_lo, np.log(J_lo))
     # slope = d(ln J)/dV = q / (n_id * kT)  → n_id = q / (slope * kT)
