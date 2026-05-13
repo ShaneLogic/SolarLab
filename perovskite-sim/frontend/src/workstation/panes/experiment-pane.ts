@@ -197,7 +197,7 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
 
   button.addEventListener('click', (e) => {
     e.stopPropagation()
-    setOpen(popover.hidden)
+    setOpen(!!popover.hidden)
   })
 
   button.addEventListener('keydown', (e) => {
