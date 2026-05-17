@@ -51,6 +51,7 @@ from typing import Callable
 
 import numpy as np
 
+from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.constants import Q
 from perovskite_sim.data import load_am15g, load_nk
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
@@ -320,7 +321,7 @@ def compute_eqe(
         J_sc_integrated = float("nan")
     else:
         J_sc_integrated = float(
-            Q * np.trapezoid(eqe * phi_am15g, wavelengths_m)
+            Q * trapezoid(eqe * phi_am15g, wavelengths_m)
         )
 
     return EQEResult(

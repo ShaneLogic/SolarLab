@@ -7,6 +7,7 @@ try:
 except ImportError:
     from perovskite_sim._compat.scipy_shim import solve_ivp
 
+from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.physics.poisson import (
     solve_poisson,
@@ -896,7 +897,7 @@ def assemble_rhs(
             x_abs = x[mask]
             if x_abs.size < 2:
                 continue
-            R_tot = float(np.trapezoid(emission, x_abs))
+            R_tot = float(trapezoid(emission, x_abs))
             if R_tot <= 0.0:
                 continue
             # Reabsorbed fraction is redistributed uniformly across the
