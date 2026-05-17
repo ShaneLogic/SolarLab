@@ -20,6 +20,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--out-dir", required=True, type=Path, help="Output directory")
     parser.add_argument("--limit", type=int, default=None, help="Optional maximum number of configs")
+    parser.add_argument(
+        "--import-policy",
+        choices=("production", "exploratory"),
+        default="production",
+        help="production requires promising records; exploratory also accepts phonon-ready records",
+    )
     return parser
 
 
@@ -30,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         template_path=args.template,
         out_dir=args.out_dir,
         limit=args.limit,
+        import_policy=args.import_policy,
     )
     print(
         f"Generated {len(manifest['generated'])} SolarLab configs; "
