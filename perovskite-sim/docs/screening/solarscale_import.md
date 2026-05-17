@@ -18,6 +18,7 @@ PYTHONPATH=. python scripts/run_material_screening.py \
   --base-config configs/nip_MAPbI3.yaml \
   --top-n 10 \
   --out-dir ../../5_SolarScale-runs/solarlab-screening/exploratory \
+  --sweep-policy quick \
   --dry-run
 ```
 
@@ -140,6 +141,18 @@ not fixed DFT/MD material properties:
 - trap density
 - surface or interface recombination velocity
 - contact work function and transport-layer band alignment
+
+Use `--sweep-policy` to make this boundary reproducible:
+
+- `quick`: one smoke-safe point per dimension; default for process checks.
+- `exploratory`: broad coarse grid for sensitivity scans.
+- `production`: smaller conservative grid intended for first HPC batch testing.
+
+The selected policy, grid values, and total sweep-point count are written to
+the plan, manifest, generated config source block, and device results. Phase 4
+records the sweep dimensions and writes one baseline config per selected
+candidate; full matrix expansion belongs in a follow-up production runner so a
+dry-run can be reviewed before HPC job count grows.
 
 SLME and absorption-edge metadata are not converted into scalar `alpha` or
 optical constants. TMM/n,k import is a later workflow that should write
