@@ -10,6 +10,7 @@ import yaml
 
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.screening.solarscale import (
+    expand_sweep_manifest,
     generate_solarlab_inputs,
     parse_material_records,
     plan_solarlab_import,
@@ -454,6 +455,87 @@ def test_sweep_policy_controls_recorded_device_unknown_grid(tmp_path: Path):
     assert config["source"]["sweep_grid"]["absorber.trap_N_t_bulk"] == [1e21, 1e22]
 
 
+def test_expand_sweep_manifest_generates_capped_matrix_configs(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=tmp_path / "sweep-expand",
+        limit=1,
+        import_policy="production",
+        sweep_policy="production",
+    )
+
+    sweep_manifest = expand_sweep_manifest(manifest, max_points=3)
+
+    assert sweep_manifest["schema"] == "solarlab.solarscale_sweep_manifest"
+    assert sweep_manifest["sweep_dimensions"]["total_points"] == 32
+    assert sweep_manifest["sweep_dimensions"]["total_requested_points"] == 32
+    assert sweep_manifest["sweep_dimensions"]["total_generated_points"] == 3
+    assert sweep_manifest["sweep_dimensions"]["truncated"] is True
+    assert [item["sweep_point_id"] for item in sweep_manifest["generated"]] == [
+        "mp-best__sweep_0001",
+        "mp-best__sweep_0002",
+        "mp-best__sweep_0003",
+    ]
+
+    first = sweep_manifest["generated"][0]
+    first_config = yaml.safe_load(Path(first["config_path"]).read_text(encoding="utf-8"))
+    first_absorber = next(layer for layer in first_config["layers"] if layer["role"] == "absorber")
+    assert first["parent_config_path"] == manifest["generated"][0]["config_path"]
+    assert first["sweep_values"] == {
+        "absorber.thickness": 400e-9,
+        "absorber.tau_n": 1e-8,
+        "absorber.tau_p": 1e-8,
+        "absorber.trap_N_t_bulk": 1e21,
+        "device.interfaces": 0.1,
+    }
+    assert first_absorber["thickness"] == pytest.approx(400e-9)
+    assert first_absorber["tau_n"] == pytest.approx(1e-8)
+    assert first_absorber["tau_p"] == pytest.approx(1e-8)
+    assert first_absorber["trap_N_t_bulk"] == pytest.approx(1e21)
+    assert first_config["device"]["interfaces"] == [[0.1, 0.1], [0.1, 0.1]]
+    assert first_config["source"]["sweep_point_id"] == "mp-best__sweep_0001"
+    assert first_config["source"]["parent_config_path"] == manifest["generated"][0]["config_path"]
+    stack = load_device_from_yaml(first["config_path"])
+    absorber = next(layer for layer in stack.layers if layer.role == "absorber")
+    assert absorber.thickness == pytest.approx(400e-9)
+    assert stack.interfaces == ((0.1, 0.1), (0.1, 0.1))
+    assert (tmp_path / "sweep-expand" / "sweep_plan.json").exists()
+
+
+def test_sweep_device_results_preserve_sweep_metadata(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=tmp_path / "sweep-results",
+        limit=1,
+        import_policy="production",
+        sweep_policy="quick",
+    )
+    sweep_manifest = expand_sweep_manifest(manifest)
+
+    results = run_smoke_device_results(
+        sweep_manifest,
+        N_grid=6,
+        n_points=2,
+        V_max=0.05,
+        max_configs=1,
+        result_type="sweep_jv",
+    )
+
+    assert results["schema_version"] == "0.2"
+    assert results["result_type"] == "sweep_jv"
+    assert results["sweep_policy"] == "quick"
+    record = results["records"][0]
+    assert record["simulation_status"] == "completed"
+    assert record["sweep_point_id"] == "mp-best__sweep_0001"
+    assert record["parent_config_path"] == manifest["generated"][0]["config_path"]
+    assert record["sweep_values"]["absorber.thickness"] == pytest.approx(300e-9)
+    assert record["jv_settings"]["N_grid"] == 6
+
+
 def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
     records_path = _write_records(tmp_path)
     out_dir = tmp_path / "cli"
@@ -494,6 +576,42 @@ def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
     assert not (out_dir / "manifest.json").exists()
 
 
+def test_cli_expand_sweep_writes_sweep_plan(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    out_dir = tmp_path / "cli-sweep"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_material_screening.py",
+            "--records",
+            str(records_path),
+            "--policy",
+            "production",
+            "--base-config",
+            "configs/nip_MAPbI3.yaml",
+            "--top-n",
+            "1",
+            "--out-dir",
+            str(out_dir),
+            "--sweep-policy",
+            "production",
+            "--expand-sweep",
+            "--max-sweep-points",
+            "2",
+        ],
+        check=True,
+        cwd=Path(__file__).parents[3],
+        text=True,
+        capture_output=True,
+    )
+
+    assert "Expanded 2 sweep configs" in result.stdout
+    sweep_plan = json.loads((out_dir / "sweep_plan.json").read_text(encoding="utf-8"))
+    assert sweep_plan["sweep_dimensions"]["total_requested_points"] == 32
+    assert sweep_plan["sweep_dimensions"]["total_generated_points"] == 2
+    assert len(sweep_plan["generated"]) == 2
+
+
 def test_smoke_device_results_write_json_and_csv(tmp_path: Path):
     records_path = _write_records(tmp_path)
     out_dir = tmp_path / "device-results"
@@ -518,7 +636,7 @@ def test_smoke_device_results_write_json_and_csv(tmp_path: Path):
 
     loaded = json.loads(json_path.read_text(encoding="utf-8"))
     assert loaded["schema"] == "solarlab.device_results"
-    assert loaded["schema_version"] == "0.1"
+    assert loaded["schema_version"] == "0.2"
     assert loaded["summary"]["status_counts"] == {"completed": 1}
     record = loaded["records"][0]
     assert record["material_id"] == "mp-best"

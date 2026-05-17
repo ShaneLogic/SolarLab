@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import itertools
 import json
 import re
 import subprocess
@@ -28,6 +29,13 @@ except Exception:  # pragma: no cover - defensive only
 
 ImportPolicy = Literal["production", "exploratory"]
 SweepPolicyName = Literal["quick", "exploratory", "production"]
+SWEEP_DIMENSION_ORDER = (
+    "absorber.thickness",
+    "absorber.tau_n",
+    "absorber.tau_p",
+    "absorber.trap_N_t_bulk",
+    "device.interfaces",
+)
 
 
 @dataclass(frozen=True)
@@ -294,6 +302,98 @@ def generate_solarlab_inputs(
     return manifest
 
 
+def expand_sweep_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    out_dir: str | Path | None = None,
+    max_points: int | None = None,
+) -> dict[str, Any]:
+    """Expand selected candidates into one YAML config per sweep-grid point."""
+
+    if max_points is not None and max_points < 0:
+        raise ValueError("max_points must be non-negative")
+    sweeps = _manifest_sweep_grid(manifest)
+    root = Path(out_dir or manifest.get("out_dir") or ".")
+    root.mkdir(parents=True, exist_ok=True)
+    config_dir = root / "sweep_configs"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    generated: list[dict[str, Any]] = []
+    stopped_by_limit = False
+    for candidate in manifest.get("generated", []) or []:
+        parent_config_path = candidate.get("config_path")
+        if not parent_config_path:
+            raise ValueError(f"Generated candidate {candidate.get('material_id')!r} is missing config_path")
+        parent_config = _load_yaml(parent_config_path)
+        material_name = _safe_name(str(candidate.get("material_id", "material")))
+        material_dir = config_dir / material_name
+        material_dir.mkdir(parents=True, exist_ok=True)
+        for candidate_index, sweep_values in enumerate(_iter_sweep_values(sweeps), start=1):
+            if max_points is not None and len(generated) >= max_points:
+                stopped_by_limit = True
+                break
+            sweep_point_id = f"{material_name}__sweep_{candidate_index:04d}"
+            config = copy.deepcopy(parent_config)
+            _apply_sweep_values(
+                config,
+                sweep_values,
+                sweep_point_id=sweep_point_id,
+                candidate_sweep_index=candidate_index,
+                parent_config_path=str(parent_config_path),
+            )
+            config_path = material_dir / f"{sweep_point_id}.yaml"
+            _write_yaml(config_path, config)
+            sweep_item = copy.deepcopy(dict(candidate))
+            sweep_item.update(
+                {
+                    "parent_config_path": str(parent_config_path),
+                    "config_path": str(config_path),
+                    "sweep_point_id": sweep_point_id,
+                    "sweep_index": candidate_index,
+                    "global_sweep_index": len(generated) + 1,
+                    "sweep_values": dict(sweep_values),
+                    "sweep_policy": manifest.get("sweep_policy"),
+                }
+            )
+            generated.append(sweep_item)
+        if stopped_by_limit:
+            break
+
+    per_candidate = _sweep_dimensions(sweeps)
+    total_requested = per_candidate["total_points"] * len(manifest.get("generated", []) or [])
+    sweep_manifest = {
+        "schema": "solarlab.solarscale_sweep_manifest",
+        "schema_version": "0.1",
+        "parent_schema": manifest.get("schema"),
+        "parent_schema_version": manifest.get("schema_version"),
+        "records_path": manifest.get("records_path"),
+        "template_path": manifest.get("template_path"),
+        "out_dir": str(root),
+        "sweep_config_dir": str(config_dir),
+        "import_policy": manifest.get("import_policy"),
+        "allowed_readiness": manifest.get("allowed_readiness", []),
+        "activate_bandgap": manifest.get("activate_bandgap"),
+        "sweep_policy": manifest.get("sweep_policy"),
+        "sweep_grid": sweeps,
+        "sweep_dimensions": {
+            **per_candidate,
+            "generated_configs_per_candidate": per_candidate["total_points"],
+            "candidate_count": len(manifest.get("generated", []) or []),
+            "total_requested_points": total_requested,
+            "total_generated_points": len(generated),
+            "max_points": max_points,
+            "truncated": stopped_by_limit,
+        },
+        "summary": manifest.get("summary", {}),
+        "generated": generated,
+        "skipped": manifest.get("skipped", []),
+    }
+    (root / "sweep_plan.json").write_text(
+        json.dumps(sweep_manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return sweep_manifest
+
+
 def run_smoke_jv(
     config_path: str | Path,
     *,
@@ -347,6 +447,7 @@ def run_smoke_device_results(
     v_rate: float = 5.0,
     V_max: float = 0.2,
     max_configs: int | None = 1,
+    result_type: str = "smoke_jv",
 ) -> dict[str, Any]:
     """Run tiny JV smoke checks and return SolarScale-ingestible device results."""
 
@@ -372,14 +473,23 @@ def run_smoke_device_results(
     ]
     return {
         "schema": "solarlab.device_results",
-        "schema_version": "0.1",
-        "result_type": "smoke_jv",
+        "schema_version": "0.2",
+        "result_type": result_type,
         "timestamp": timestamp,
         "git_commit": git_commit,
         "records_path": manifest.get("records_path"),
         "template_path": manifest.get("template_path"),
         "import_policy": manifest.get("import_policy"),
         "activate_bandgap": manifest.get("activate_bandgap"),
+        "sweep_policy": manifest.get("sweep_policy"),
+        "sweep_dimensions": manifest.get("sweep_dimensions", {}),
+        "jv_settings": {
+            "N_grid": N_grid,
+            "n_points": n_points,
+            "v_rate": v_rate,
+            "V_max": V_max,
+            "max_configs": max_configs,
+        },
         "smoke_settings": {
             "N_grid": N_grid,
             "n_points": n_points,
@@ -412,6 +522,12 @@ def write_device_results(
         "template_path",
         "import_policy",
         "activate_bandgap",
+        "sweep_policy",
+        "sweep_point_id",
+        "sweep_index",
+        "global_sweep_index",
+        "sweep_values_json",
+        "parent_config_path",
         "simulation_status",
         "Voc",
         "Jsc",
@@ -545,6 +661,12 @@ def _device_result_base(
         "records_path": manifest.get("records_path"),
         "import_policy": manifest.get("import_policy"),
         "activate_bandgap": manifest.get("activate_bandgap"),
+        "sweep_policy": manifest.get("sweep_policy") or item.get("sweep_policy"),
+        "sweep_point_id": item.get("sweep_point_id"),
+        "sweep_index": item.get("sweep_index"),
+        "global_sweep_index": item.get("global_sweep_index"),
+        "parent_config_path": item.get("parent_config_path"),
+        "sweep_values": item.get("sweep_values", {}),
         "mapped_parameters": item.get("mapped_parameters", {}),
         "material_metadata": item.get("material_metadata", {}),
         "screening_evidence": item.get("screening_evidence", {}),
@@ -558,6 +680,7 @@ def _device_result_base(
         "missing_optional": item.get("missing_optional", []),
         "sweep_parameters": item.get("sweep_parameters", {}),
         "warnings": warnings,
+        "jv_settings": dict(smoke_settings),
         "smoke_settings": dict(smoke_settings),
         "git_commit": git_commit,
         "timestamp": timestamp,
@@ -580,6 +703,8 @@ def _device_results_summary(records: list[Mapping[str, Any]]) -> dict[str, Any]:
         "best_by_pce": [
             {
                 "material_id": record.get("material_id"),
+                "sweep_point_id": record.get("sweep_point_id"),
+                "sweep_index": record.get("sweep_index"),
                 "PCE": _metric_value(record, "PCE"),
                 "Voc": _metric_value(record, "V_oc"),
                 "Jsc": _metric_value(record, "J_sc"),
@@ -612,6 +737,12 @@ def _device_result_csv_row(record: Mapping[str, Any]) -> dict[str, Any]:
         "template_path": record.get("template_path"),
         "import_policy": record.get("import_policy"),
         "activate_bandgap": record.get("activate_bandgap"),
+        "sweep_policy": record.get("sweep_policy"),
+        "sweep_point_id": record.get("sweep_point_id"),
+        "sweep_index": record.get("sweep_index"),
+        "global_sweep_index": record.get("global_sweep_index"),
+        "sweep_values_json": json.dumps(record.get("sweep_values", {}) or {}, sort_keys=True),
+        "parent_config_path": record.get("parent_config_path"),
         "simulation_status": record.get("simulation_status"),
         "Voc": _dict_get(forward, "V_oc"),
         "Jsc": _dict_get(forward, "J_sc"),
@@ -725,7 +856,7 @@ def _sweep_dimensions(sweeps: Mapping[str, list[float]]) -> dict[str, Any]:
         "dimensions": sizes,
         "total_points": total,
         "generated_configs_per_candidate": 1,
-        "note": "Phase 4 records sweep dimensions in the manifest; full matrix expansion is a follow-up production runner.",
+        "note": "Sweep-grid size per selected candidate. Baseline imports generate one config; expand_sweep_manifest generates the full matrix or a capped subset.",
     }
 
 
@@ -1053,6 +1184,55 @@ def _write_yaml(path: Path, config: Mapping[str, Any]) -> None:
         yaml.safe_dump(dict(config), sort_keys=False, default_flow_style=False),
         encoding="utf-8",
     )
+
+
+def _manifest_sweep_grid(manifest: Mapping[str, Any]) -> dict[str, list[float]]:
+    raw = manifest.get("sweep_grid")
+    if not isinstance(raw, Mapping):
+        raise ValueError("Manifest is missing sweep_grid")
+    sweeps = {str(name): [float(value) for value in values] for name, values in raw.items()}
+    _validate_sweep_grid(sweeps)
+    return {name: sweeps[name] for name in _sweep_dimension_names(sweeps)}
+
+
+def _sweep_dimension_names(sweeps: Mapping[str, list[float]]) -> list[str]:
+    ordered = [name for name in SWEEP_DIMENSION_ORDER if name in sweeps]
+    ordered.extend(sorted(name for name in sweeps if name not in set(ordered)))
+    return ordered
+
+
+def _iter_sweep_values(sweeps: Mapping[str, list[float]]):
+    names = _sweep_dimension_names(sweeps)
+    for values in itertools.product(*(sweeps[name] for name in names)):
+        yield dict(zip(names, values, strict=True))
+
+
+def _apply_sweep_values(
+    config: dict[str, Any],
+    sweep_values: Mapping[str, float],
+    *,
+    sweep_point_id: str,
+    candidate_sweep_index: int,
+    parent_config_path: str,
+) -> None:
+    layers = config.get("layers")
+    if not isinstance(layers, list):
+        raise ValueError("Sweep config layers must be a list")
+    absorber = _absorber_layer(layers)
+    for target, value in sweep_values.items():
+        if target.startswith("absorber."):
+            absorber[target.split(".", 1)[1]] = float(value)
+        elif target == "device.interfaces":
+            device = config.setdefault("device", {})
+            interface_s = float(value)
+            device["interfaces"] = [[interface_s, interface_s] for _ in range(max(0, len(layers) - 1))]
+        else:
+            raise ValueError(f"Unsupported sweep target {target!r}")
+    source = config.setdefault("source", {})
+    source["sweep_point_id"] = sweep_point_id
+    source["sweep_index"] = candidate_sweep_index
+    source["parent_config_path"] = parent_config_path
+    source["sweep_values"] = {name: float(value) for name, value in sweep_values.items()}
 
 
 def _absorber_layer(layers: list[dict[str, Any]]) -> dict[str, Any]:
