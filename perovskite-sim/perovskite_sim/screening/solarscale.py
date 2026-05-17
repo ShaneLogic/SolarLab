@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - defensive only
     np = None
 
 ImportPolicy = Literal["production", "exploratory"]
+SweepPolicyName = Literal["quick", "exploratory", "production"]
 
 
 @dataclass(frozen=True)
@@ -78,13 +79,31 @@ class CandidatePlan:
     config_path: str | None = None
 
 
-DEFAULT_SWEEP_GRID: dict[str, list[float]] = {
-    "absorber.thickness": [300e-9, 500e-9, 800e-9],
-    "absorber.tau_n": [1e-9, 1e-7, 1e-6],
-    "absorber.tau_p": [1e-9, 1e-7, 1e-6],
-    "absorber.trap_N_t_bulk": [1e20, 1e22, 1e24],
-    "device.interfaces": [0.0, 1.0, 10.0],
+SWEEP_POLICIES: dict[SweepPolicyName, dict[str, list[float]]] = {
+    "quick": {
+        "absorber.thickness": [300e-9],
+        "absorber.tau_n": [1e-7],
+        "absorber.tau_p": [1e-7],
+        "absorber.trap_N_t_bulk": [1e22],
+        "device.interfaces": [1.0],
+    },
+    "exploratory": {
+        "absorber.thickness": [300e-9, 500e-9, 800e-9],
+        "absorber.tau_n": [1e-9, 1e-7, 1e-6],
+        "absorber.tau_p": [1e-9, 1e-7, 1e-6],
+        "absorber.trap_N_t_bulk": [1e20, 1e22, 1e24],
+        "device.interfaces": [0.0, 1.0, 10.0],
+    },
+    "production": {
+        "absorber.thickness": [400e-9, 600e-9],
+        "absorber.tau_n": [1e-8, 1e-7],
+        "absorber.tau_p": [1e-8, 1e-7],
+        "absorber.trap_N_t_bulk": [1e21, 1e22],
+        "device.interfaces": [0.1, 1.0],
+    },
 }
+DEFAULT_SWEEP_POLICY: SweepPolicyName = "quick"
+DEFAULT_SWEEP_GRID = SWEEP_POLICIES[DEFAULT_SWEEP_POLICY]
 
 DEVICE_SWEEP_PROPERTY_MAP: dict[str, str] = {
     "absorber_thickness_m": "absorber.thickness",
@@ -150,6 +169,7 @@ def plan_solarlab_import(
     import_policy: ImportPolicy = "exploratory",
     limit: int | None = None,
     sweep_grid: Mapping[str, list[float]] | None = None,
+    sweep_policy: SweepPolicyName = DEFAULT_SWEEP_POLICY,
     include_configs: bool = True,
     activate_bandgap: bool = False,
 ) -> dict[str, Any]:
@@ -162,7 +182,7 @@ def plan_solarlab_import(
     template = _load_yaml(template_path)
     if activate_bandgap:
         _validate_band_aligned_template(template)
-    sweeps = dict(sweep_grid or DEFAULT_SWEEP_GRID)
+    sweeps = _resolve_sweep_grid(sweep_policy=sweep_policy, sweep_grid=sweep_grid)
 
     candidates = sorted(
         (
@@ -172,6 +192,7 @@ def plan_solarlab_import(
                 sweeps,
                 import_policy,
                 activate_bandgap=activate_bandgap,
+                sweep_policy=sweep_policy,
             )
             for record in records
         ),
@@ -205,6 +226,9 @@ def plan_solarlab_import(
         "import_policy": import_policy,
         "allowed_readiness": sorted(_ALLOWED_READINESS[import_policy]),
         "activate_bandgap": activate_bandgap,
+        "sweep_policy": sweep_policy,
+        "sweep_grid": sweeps,
+        "sweep_dimensions": _sweep_dimensions(sweeps),
         "dry_run": True,
         "selected_count": len(selected),
         "skipped_count": len(skipped),
@@ -221,6 +245,7 @@ def generate_solarlab_inputs(
     out_dir: str | Path,
     limit: int | None = None,
     sweep_grid: Mapping[str, list[float]] | None = None,
+    sweep_policy: SweepPolicyName = DEFAULT_SWEEP_POLICY,
     import_policy: ImportPolicy = "production",
     activate_bandgap: bool = False,
 ) -> dict[str, Any]:
@@ -232,6 +257,7 @@ def generate_solarlab_inputs(
         import_policy=import_policy,
         limit=limit,
         sweep_grid=sweep_grid,
+        sweep_policy=sweep_policy,
         include_configs=True,
         activate_bandgap=activate_bandgap,
     )
@@ -255,6 +281,9 @@ def generate_solarlab_inputs(
         "import_policy": import_policy,
         "allowed_readiness": plan["allowed_readiness"],
         "activate_bandgap": activate_bandgap,
+        "sweep_policy": sweep_policy,
+        "sweep_grid": plan["sweep_grid"],
+        "sweep_dimensions": plan["sweep_dimensions"],
         "summary": plan["summary"],
         "generated": generated,
         "skipped": plan["skipped"],
@@ -659,6 +688,47 @@ def _parse_property(prop: Any) -> MaterialProperty:
     )
 
 
+def _resolve_sweep_grid(
+    *,
+    sweep_policy: SweepPolicyName,
+    sweep_grid: Mapping[str, list[float]] | None,
+) -> dict[str, list[float]]:
+    if sweep_policy not in SWEEP_POLICIES:
+        raise ValueError(
+            f"Unknown sweep_policy {sweep_policy!r}; expected one of "
+            + ", ".join(sorted(SWEEP_POLICIES))
+        )
+    grid = {name: list(values) for name, values in SWEEP_POLICIES[sweep_policy].items()}
+    if sweep_grid:
+        for name, values in sweep_grid.items():
+            grid[str(name)] = list(values)
+    _validate_sweep_grid(grid)
+    return grid
+
+
+def _validate_sweep_grid(grid: Mapping[str, list[float]]) -> None:
+    required = {"absorber.thickness", "absorber.tau_n", "absorber.tau_p", "absorber.trap_N_t_bulk", "device.interfaces"}
+    missing = sorted(required - set(grid))
+    if missing:
+        raise ValueError("sweep grid is missing required dimensions: " + ", ".join(missing))
+    empty = [name for name, values in grid.items() if not values]
+    if empty:
+        raise ValueError("sweep grid dimensions must not be empty: " + ", ".join(sorted(empty)))
+
+
+def _sweep_dimensions(sweeps: Mapping[str, list[float]]) -> dict[str, Any]:
+    sizes = {name: len(values) for name, values in sweeps.items()}
+    total = 1
+    for size in sizes.values():
+        total *= size
+    return {
+        "dimensions": sizes,
+        "total_points": total,
+        "generated_configs_per_candidate": 1,
+        "note": "Phase 4 records sweep dimensions in the manifest; full matrix expansion is a follow-up production runner.",
+    }
+
+
 def _candidate_plan(
     record: MaterialRecord,
     template: Mapping[str, Any],
@@ -666,6 +736,7 @@ def _candidate_plan(
     import_policy: ImportPolicy,
     *,
     activate_bandgap: bool,
+    sweep_policy: SweepPolicyName,
 ) -> CandidatePlan:
     material_id = record.material_id
     if not material_id:
@@ -723,6 +794,7 @@ def _candidate_plan(
             diagnostics,
             import_policy=import_policy,
             activate_bandgap=activate_bandgap,
+            sweep_policy=sweep_policy,
         )
 
     return CandidatePlan(
@@ -841,7 +913,8 @@ def _sweep_parameters(
         value = prop.value
         kind = prop.provenance.kind
         if kind == "swept":
-            sweep_parameters.setdefault(target_name, list(sweeps.get(target_name, [])))
+            if target_name in sweeps:
+                sweep_parameters.setdefault(target_name, list(sweeps[target_name]))
         elif value is not None:
             sweep_parameters[target_name] = value
     return sweep_parameters
@@ -882,6 +955,7 @@ def _build_config(
     *,
     import_policy: ImportPolicy,
     activate_bandgap: bool,
+    sweep_policy: SweepPolicyName,
 ) -> dict[str, Any]:
     config = copy.deepcopy(dict(template))
     layers = config.get("layers")
@@ -936,6 +1010,9 @@ def _build_config(
         "material_id": material_id,
         "import_policy": import_policy,
         "activate_bandgap": activate_bandgap,
+        "sweep_policy": sweep_policy,
+        "sweep_grid": {name: list(values) for name, values in sweeps.items()},
+        "sweep_dimensions": _sweep_dimensions(sweeps),
         "screening": record.screening,
         "screening_evidence": screening_evidence,
         "ranking": {
