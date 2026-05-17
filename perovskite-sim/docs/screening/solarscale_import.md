@@ -149,10 +149,50 @@ Use `--sweep-policy` to make this boundary reproducible:
 - `production`: smaller conservative grid intended for first HPC batch testing.
 
 The selected policy, grid values, and total sweep-point count are written to
-the plan, manifest, generated config source block, and device results. Phase 4
-records the sweep dimensions and writes one baseline config per selected
-candidate; full matrix expansion belongs in a follow-up production runner so a
-dry-run can be reviewed before HPC job count grows.
+the plan, manifest, generated config source block, sweep plan, and device
+results. A normal generate step writes one baseline config per selected
+candidate. Add `--expand-sweep` after reviewing the dry-run to write one
+config per sweep-grid point:
+
+```bash
+PYTHONPATH=. python scripts/run_material_screening.py \
+  --records ../../5_SolarScale-runs/exports/material_records.json \
+  --policy exploratory \
+  --base-config configs/nip_MAPbI3.yaml \
+  --top-n 1 \
+  --out-dir ../../5_SolarScale-runs/solarlab-screening/production-sweep \
+  --sweep-policy production \
+  --expand-sweep \
+  --max-sweep-points 4
+```
+
+This writes `sweep_plan.json` and YAML configs under `sweep_configs/`. The
+`--max-sweep-points` cap is optional, but it is recommended for first HPC
+checks. Without the cap, `production` creates 32 configs per selected candidate.
+
+For a capped process check that actually runs JV on expanded configs:
+
+```bash
+PYTHONPATH=. python scripts/run_material_screening.py \
+  --records ../../5_SolarScale-runs/exports/material_records.json \
+  --policy exploratory \
+  --base-config configs/nip_MAPbI3.yaml \
+  --top-n 1 \
+  --out-dir ../../5_SolarScale-runs/solarlab-screening/production-sweep-smoke \
+  --sweep-policy production \
+  --expand-sweep \
+  --run-sweep \
+  --max-sweep-points 2 \
+  --smoke-n-grid 6 \
+  --smoke-n-points 2 \
+  --smoke-v-max 0.05
+```
+
+This writes `sweep_device_results.json` and `sweep_device_results.csv`.
+Every result record includes `sweep_point_id`, `parent_config_path`, and the
+exact `sweep_values` used for that JV run. These are process-validation outputs
+until the sweep grid, optical inputs, and band alignment are promoted to the
+production policy.
 
 SLME and absorption-edge metadata are not converted into scalar `alpha` or
 optical constants. TMM/n,k import is a later workflow that should write

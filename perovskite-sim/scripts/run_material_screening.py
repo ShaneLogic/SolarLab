@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from perovskite_sim.screening.solarscale import (
+    expand_sweep_manifest,
     generate_solarlab_inputs,
     plan_solarlab_import,
     run_smoke_device_results,
@@ -59,6 +60,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--run-smoke",
         action="store_true",
         help="After generating YAML configs, run a tiny JV smoke check on the top candidate",
+    )
+    parser.add_argument(
+        "--expand-sweep",
+        action="store_true",
+        help="Expand selected candidates into one YAML config per sweep-grid point.",
+    )
+    parser.add_argument(
+        "--run-sweep",
+        action="store_true",
+        help="Run JV checks on expanded sweep configs. Use --max-sweep-points for smoke-safe caps.",
+    )
+    parser.add_argument(
+        "--max-sweep-points",
+        type=int,
+        default=None,
+        help="Optional cap on generated and executed sweep points across all selected candidates.",
     )
     parser.add_argument("--smoke-n-grid", type=int, default=12)
     parser.add_argument("--smoke-n-points", type=int, default=4)
@@ -130,6 +147,37 @@ def main(argv: list[str] | None = None) -> int:
         failed = device_results.get("summary", {}).get("status_counts", {}).get("failed", 0)
         if failed:
             return 1
+    if args.expand_sweep or args.run_sweep:
+        sweep_manifest = expand_sweep_manifest(
+            manifest,
+            out_dir=args.out_dir,
+            max_points=args.max_sweep_points,
+        )
+        print(
+            f"Expanded {len(sweep_manifest['generated'])} sweep configs; "
+            f"plan: {args.out_dir / 'sweep_plan.json'}"
+        )
+        if args.run_sweep and sweep_manifest["generated"]:
+            sweep_results = run_smoke_device_results(
+                sweep_manifest,
+                N_grid=args.smoke_n_grid,
+                n_points=args.smoke_n_points,
+                v_rate=args.smoke_v_rate,
+                V_max=args.smoke_v_max,
+                max_configs=args.max_sweep_points,
+                result_type="sweep_jv",
+            )
+            sweep_json_path = args.out_dir / "sweep_device_results.json"
+            sweep_csv_path = args.out_dir / "sweep_device_results.csv"
+            write_device_results(
+                sweep_results,
+                json_path=sweep_json_path,
+                csv_path=sweep_csv_path,
+            )
+            print(f"Sweep device results complete: {sweep_json_path}; {sweep_csv_path}")
+            failed = sweep_results.get("summary", {}).get("status_counts", {}).get("failed", 0)
+            if failed:
+                return 1
     return 0
 
 
