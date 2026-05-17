@@ -9,10 +9,13 @@ sweep dimensions or diagnostics.
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import re
+import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -305,6 +308,318 @@ def run_smoke_jv(
         },
         "hysteresis_index": result.hysteresis_index,
     }
+
+
+def run_smoke_device_results(
+    manifest: Mapping[str, Any],
+    *,
+    N_grid: int = 12,
+    n_points: int = 4,
+    v_rate: float = 5.0,
+    V_max: float = 0.2,
+    max_configs: int | None = 1,
+) -> dict[str, Any]:
+    """Run tiny JV smoke checks and return SolarScale-ingestible device results."""
+
+    generated = list(manifest.get("generated", []) or [])
+    if max_configs is not None:
+        generated = generated[:max_configs]
+    timestamp = _utc_timestamp()
+    git_commit = _git_commit(Path(__file__).resolve())
+    records = [
+        _device_result_record(
+            item,
+            manifest,
+            timestamp=timestamp,
+            git_commit=git_commit,
+            smoke_settings={
+                "N_grid": N_grid,
+                "n_points": n_points,
+                "v_rate": v_rate,
+                "V_max": V_max,
+            },
+        )
+        for item in generated
+    ]
+    return {
+        "schema": "solarlab.device_results",
+        "schema_version": "0.1",
+        "result_type": "smoke_jv",
+        "timestamp": timestamp,
+        "git_commit": git_commit,
+        "records_path": manifest.get("records_path"),
+        "template_path": manifest.get("template_path"),
+        "import_policy": manifest.get("import_policy"),
+        "activate_bandgap": manifest.get("activate_bandgap"),
+        "smoke_settings": {
+            "N_grid": N_grid,
+            "n_points": n_points,
+            "v_rate": v_rate,
+            "V_max": V_max,
+            "max_configs": max_configs,
+        },
+        "records": records,
+        "summary": _device_results_summary(records),
+    }
+
+
+def write_device_results(
+    results: Mapping[str, Any],
+    *,
+    json_path: str | Path,
+    csv_path: str | Path | None = None,
+) -> None:
+    """Write device results as JSON plus an optional flat CSV table."""
+
+    json_out = Path(json_path)
+    json_out.write_text(json.dumps(results, indent=2, sort_keys=True), encoding="utf-8")
+    if csv_path is None:
+        return
+    csv_out = Path(csv_path)
+    rows = [_device_result_csv_row(record) for record in results.get("records", []) or []]
+    fieldnames = [
+        "material_id",
+        "config_path",
+        "template_path",
+        "import_policy",
+        "activate_bandgap",
+        "simulation_status",
+        "Voc",
+        "Jsc",
+        "FF",
+        "PCE",
+        "hysteresis_index",
+        "voc_bracketed_fwd",
+        "voc_bracketed_rev",
+        "error_type",
+        "error_message",
+        "git_commit",
+        "timestamp",
+    ]
+    with csv_out.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _device_result_record(
+    item: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    *,
+    timestamp: str,
+    git_commit: str | None,
+    smoke_settings: Mapping[str, Any],
+) -> dict[str, Any]:
+    warnings = list(item.get("diagnostics", []) or [])
+    config_path = item.get("config_path")
+    if not config_path:
+        return _failed_device_result_record(
+            item,
+            manifest,
+            timestamp=timestamp,
+            git_commit=git_commit,
+            smoke_settings=smoke_settings,
+            error=ValueError("generated manifest item is missing config_path"),
+            warnings=warnings,
+        )
+    try:
+        smoke = run_smoke_jv(
+            config_path,
+            N_grid=int(smoke_settings["N_grid"]),
+            n_points=int(smoke_settings["n_points"]),
+            v_rate=float(smoke_settings["v_rate"]),
+            V_max=float(smoke_settings["V_max"]),
+        )
+    except Exception as exc:  # noqa: BLE001 - result schema must capture failures.
+        return _failed_device_result_record(
+            item,
+            manifest,
+            timestamp=timestamp,
+            git_commit=git_commit,
+            smoke_settings=smoke_settings,
+            error=exc,
+            warnings=warnings,
+        )
+
+    metrics_fwd = dict(smoke.get("metrics_fwd", {}) or {})
+    metrics_rev = dict(smoke.get("metrics_rev", {}) or {})
+    if metrics_fwd.get("voc_bracketed") is False:
+        warnings.append("forward JV did not bracket Voc; increase smoke V_max for physical metrics")
+    if metrics_rev.get("voc_bracketed") is False:
+        warnings.append("reverse JV did not bracket Voc; increase smoke V_max for physical metrics")
+    return {
+        **_device_result_base(
+            item,
+            manifest,
+            timestamp=timestamp,
+            git_commit=git_commit,
+            smoke_settings=smoke_settings,
+            warnings=warnings,
+        ),
+        "simulation_status": "completed",
+        "JV_metrics": {
+            "forward": metrics_fwd,
+            "reverse": metrics_rev,
+            "hysteresis_index": smoke.get("hysteresis_index"),
+        },
+        "smoke_result": smoke,
+        "error": None,
+    }
+
+
+def _failed_device_result_record(
+    item: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    *,
+    timestamp: str,
+    git_commit: str | None,
+    smoke_settings: Mapping[str, Any],
+    error: Exception,
+    warnings: list[str],
+) -> dict[str, Any]:
+    return {
+        **_device_result_base(
+            item,
+            manifest,
+            timestamp=timestamp,
+            git_commit=git_commit,
+            smoke_settings=smoke_settings,
+            warnings=warnings,
+        ),
+        "simulation_status": "failed",
+        "JV_metrics": {
+            "forward": None,
+            "reverse": None,
+            "hysteresis_index": None,
+        },
+        "smoke_result": None,
+        "error": {
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+        },
+    }
+
+
+def _device_result_base(
+    item: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    *,
+    timestamp: str,
+    git_commit: str | None,
+    smoke_settings: Mapping[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    return {
+        "material_id": item.get("material_id"),
+        "config_path": item.get("config_path"),
+        "template_path": manifest.get("template_path"),
+        "records_path": manifest.get("records_path"),
+        "import_policy": manifest.get("import_policy"),
+        "activate_bandgap": manifest.get("activate_bandgap"),
+        "mapped_parameters": item.get("mapped_parameters", {}),
+        "material_metadata": item.get("material_metadata", {}),
+        "screening_evidence": item.get("screening_evidence", {}),
+        "ranking": {
+            "ranking_score": item.get("ranking_score"),
+            "ranking_score_source": item.get("ranking_score_source"),
+            "ml_pv_score": item.get("ml_pv_score"),
+            "final_fom_score": item.get("final_fom_score"),
+        },
+        "missing_required": item.get("missing_required", []),
+        "missing_optional": item.get("missing_optional", []),
+        "sweep_parameters": item.get("sweep_parameters", {}),
+        "warnings": warnings,
+        "smoke_settings": dict(smoke_settings),
+        "git_commit": git_commit,
+        "timestamp": timestamp,
+    }
+
+
+def _device_results_summary(records: list[Mapping[str, Any]]) -> dict[str, Any]:
+    status_counts = Counter(str(record.get("simulation_status", "unknown")) for record in records)
+    completed = [record for record in records if record.get("simulation_status") == "completed"]
+    failed = [record for record in records if record.get("simulation_status") == "failed"]
+    best = sorted(
+        completed,
+        key=lambda record: _metric_value(record, "PCE") or float("-inf"),
+        reverse=True,
+    )
+    return {
+        "total_records": len(records),
+        "status_counts": dict(sorted(status_counts.items())),
+        "failed_materials": [record.get("material_id") for record in failed],
+        "best_by_pce": [
+            {
+                "material_id": record.get("material_id"),
+                "PCE": _metric_value(record, "PCE"),
+                "Voc": _metric_value(record, "V_oc"),
+                "Jsc": _metric_value(record, "J_sc"),
+                "FF": _metric_value(record, "FF"),
+            }
+            for record in best[:10]
+        ],
+    }
+
+
+def _metric_value(record: Mapping[str, Any], field: str) -> float | None:
+    metrics = record.get("JV_metrics", {})
+    if not isinstance(metrics, Mapping):
+        return None
+    forward = metrics.get("forward")
+    if not isinstance(forward, Mapping):
+        return None
+    value = forward.get(field)
+    return None if value is None else float(value)
+
+
+def _device_result_csv_row(record: Mapping[str, Any]) -> dict[str, Any]:
+    metrics = record.get("JV_metrics", {})
+    forward = metrics.get("forward") if isinstance(metrics, Mapping) else None
+    reverse = metrics.get("reverse") if isinstance(metrics, Mapping) else None
+    error = record.get("error") or {}
+    return {
+        "material_id": record.get("material_id"),
+        "config_path": record.get("config_path"),
+        "template_path": record.get("template_path"),
+        "import_policy": record.get("import_policy"),
+        "activate_bandgap": record.get("activate_bandgap"),
+        "simulation_status": record.get("simulation_status"),
+        "Voc": _dict_get(forward, "V_oc"),
+        "Jsc": _dict_get(forward, "J_sc"),
+        "FF": _dict_get(forward, "FF"),
+        "PCE": _dict_get(forward, "PCE"),
+        "hysteresis_index": _dict_get(metrics, "hysteresis_index"),
+        "voc_bracketed_fwd": _dict_get(forward, "voc_bracketed"),
+        "voc_bracketed_rev": _dict_get(reverse, "voc_bracketed"),
+        "error_type": error.get("error_type"),
+        "error_message": error.get("error_message"),
+        "git_commit": record.get("git_commit"),
+        "timestamp": record.get("timestamp"),
+    }
+
+
+def _dict_get(value: Any, key: str) -> Any:
+    if not isinstance(value, Mapping):
+        return None
+    return value.get(key)
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _git_commit(anchor: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=anchor if anchor.is_dir() else anchor.parent,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except Exception:
+        return None
+    return result.stdout.strip() or None
 
 
 def _parse_record(record: Mapping[str, Any]) -> MaterialRecord:
