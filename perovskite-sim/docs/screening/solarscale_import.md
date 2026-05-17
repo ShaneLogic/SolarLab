@@ -164,6 +164,20 @@ PYTHONPATH=. python scripts/run_material_screening.py \
 The smoke result only proves that the imported stack reaches SolarLab's JV API.
 It is not a publication-grade simulation result.
 
+When `--run-smoke` is used, SolarLab writes three process-validation outputs:
+
+- `smoke_jv.json`: legacy single-run smoke payload for quick inspection.
+- `device_results.json`: machine-readable SolarLab result records intended for
+  SolarScale ingestion.
+- `device_results.csv`: flat one-row-per-material summary for quick tabular
+  review.
+
+Each `device_results.json` record preserves `material_id`, config/template
+paths, import policy, `activate_bandgap`, mapped parameters, material metadata,
+screening evidence, JV metrics, warnings, git commit, timestamp, and structured
+failure details when a smoke simulation fails. Failed simulations are recorded
+with `simulation_status: failed`; they are not silently dropped.
+
 The activated smoke path is also process validation only. It confirms that a
 SolarScale HSE band gap can enter absorber `Eg` with a band-aligned template,
 while optical constants and deeper band-alignment policy remain separate
