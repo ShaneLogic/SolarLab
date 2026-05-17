@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.screening.solarscale import (
@@ -111,7 +112,9 @@ def test_plan_sorts_by_final_fom_then_ml_score_and_keeps_scores_as_metadata(tmp_
     assert [item["material_id"] for item in plan["selected"]] == ["mp-best", "mp-ml-only"]
     assert plan["selected"][0]["ranking_score_source"] == "final_fom_score"
     assert plan["selected"][1]["ranking_score_source"] == "ml_pv_score"
-    assert "absorber.Eg" in plan["selected"][0]["mapped_parameters"]
+    assert "absorber.Eg" not in plan["selected"][0]["mapped_parameters"]
+    assert plan["selected"][0]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
+    assert "band_gap_hse_ev kept as metadata" in " ".join(plan["selected"][0]["diagnostics"])
     assert "final_fom_score imported as ranking metadata only" in plan["selected"][0]["diagnostics"]
     assert "ml_pv_score imported as ranking metadata only" in plan["selected"][0]["diagnostics"]
 
@@ -142,7 +145,7 @@ def test_production_import_requires_promising_and_maps_dft_md_absorber_inputs(tm
     htl = [layer for layer in stack.layers if layer.role == "HTL"][0]
 
     assert absorber.name == "SolarScale_mp-best"
-    assert absorber.params.Eg == pytest.approx(1.62)
+    assert absorber.params.Eg == pytest.approx(0.0)
     assert absorber.params.eps_r == 12.0
     assert absorber.params.mu_n == pytest.approx(3.0e-4)
     assert absorber.params.mu_p == pytest.approx(4.0e-4)
@@ -151,7 +154,81 @@ def test_production_import_requires_promising_and_maps_dft_md_absorber_inputs(tm
     assert absorber.thickness == pytest.approx(300e-9)
     assert htl.params.eps_r == pytest.approx(3.0)
     assert stack.interfaces == ((0.0, 0.0), (0.0, 0.0))
+    assert stack.compute_V_bi() == pytest.approx(stack.V_bi)
+    assert manifest["generated"][0]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
     assert (out_dir / "manifest.json").exists()
+
+
+def test_default_generated_yaml_preserves_bandgap_as_metadata_only(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    out_dir = tmp_path / "default-bandgap"
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=out_dir,
+        limit=1,
+        import_policy="production",
+    )
+
+    config_path = Path(manifest["generated"][0]["config_path"])
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    absorber = next(layer for layer in config["layers"] if layer["role"] == "absorber")
+
+    assert absorber.get("Eg", 0.0) == pytest.approx(0.0)
+    assert config["source"]["activate_bandgap"] is False
+    assert "absorber.Eg" not in config["source"]["mapped_parameters"]
+    assert config["source"]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
+
+
+def test_activate_bandgap_rejects_legacy_template(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+
+    with pytest.raises(ValueError, match="fully band-aligned template"):
+        generate_solarlab_inputs(
+            records_path,
+            template_path="configs/nip_MAPbI3.yaml",
+            out_dir=tmp_path / "bad-activation",
+            limit=1,
+            import_policy="production",
+            activate_bandgap=True,
+        )
+
+
+def test_activate_bandgap_maps_eg_for_band_aligned_template(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    template = yaml.safe_load(Path("configs/nip_MAPbI3.yaml").read_text(encoding="utf-8"))
+    for layer in template["layers"]:
+        if layer["role"] == "HTL":
+            layer["chi"] = 2.2
+            layer["Eg"] = 3.0
+        elif layer["role"] == "absorber":
+            layer["chi"] = 3.9
+            layer["Eg"] = 1.55
+        elif layer["role"] == "ETL":
+            layer["chi"] = 4.0
+            layer["Eg"] = 3.2
+    template_path = tmp_path / "band_aligned.yaml"
+    template_path.write_text(yaml.safe_dump(template, sort_keys=False), encoding="utf-8")
+
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path=template_path,
+        out_dir=tmp_path / "activated",
+        limit=1,
+        import_policy="production",
+        activate_bandgap=True,
+    )
+
+    config_path = Path(manifest["generated"][0]["config_path"])
+    stack = load_device_from_yaml(str(config_path))
+    absorber = next(layer for layer in stack.layers if layer.role == "absorber")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert absorber.params.Eg == pytest.approx(1.62)
+    assert manifest["activate_bandgap"] is True
+    assert manifest["generated"][0]["mapped_parameters"]["absorber.Eg"] == pytest.approx(1.62)
+    assert config["source"]["activate_bandgap"] is True
+    assert config["source"]["mapped_parameters"]["absorber.Eg"] == pytest.approx(1.62)
 
 
 def test_exploratory_import_accepts_phonon_records_and_uses_template_ion_defaults(tmp_path: Path):

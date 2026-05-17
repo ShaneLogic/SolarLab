@@ -38,6 +38,11 @@ PYTHONPATH=. python scripts/run_material_screening.py \
   --out-dir ../../5_SolarScale-runs/solarlab-screening/production
 ```
 
+With `configs/nip_MAPbI3.yaml`, do not pass `--activate-bandgap`. That legacy
+template has no complete `chi`/`Eg` band alignment for all electrical layers,
+so the importer keeps the HSE band gap as metadata and leaves the template
+`Eg` behavior unchanged.
+
 The legacy helper remains available:
 
 ```bash
@@ -72,12 +77,22 @@ Scores are ranking metadata only:
 
 Mapped into the absorber only when provenance is `computed` or `derived`:
 
-- `band_gap_hse_ev` -> `Eg`
 - `dielectric_static_avg` -> `eps_r`
 - `electron_mobility_cm2_v_s` -> `mu_n`, converted to `m^2/V/s`
 - `hole_mobility_cm2_v_s` -> `mu_p`, converted to `m^2/V/s`
 - `ion_diffusion_coefficient_m2_s` -> `D_ion`
 - `ion_activation_energy_ev` -> `E_a_ion`
+
+`band_gap_hse_ev` is required record metadata, but by default it is not mapped
+into absorber `Eg`. It is written under `material_metadata["band_gap_hse_ev"]`
+in the plan, manifest, and generated config source block. This avoids a
+partial band-alignment state where only the absorber band gap changes while
+HTL/ETL `chi`/`Eg` are still legacy defaults.
+
+To explicitly activate HSE band gap as absorber `Eg`, pass
+`--activate-bandgap`. The importer accepts this only when the base template is
+fully band-aligned, meaning every electrical layer has `chi` and a positive
+`Eg`. Using `--activate-bandgap` with `configs/nip_MAPbI3.yaml` raises an error.
 
 `swept`, `missing`, `assumed`, and `literature` provenance are not treated as
 fixed DFT/MD inputs by this importer. Missing optional mobility or ion fields
