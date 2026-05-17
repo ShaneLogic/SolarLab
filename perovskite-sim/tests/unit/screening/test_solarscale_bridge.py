@@ -447,6 +447,8 @@ def test_sweep_policy_controls_recorded_device_unknown_grid(tmp_path: Path):
     assert production["sweep_dimensions"]["total_points"] == 32
     generated = production["generated"][0]
     assert generated["sweep_parameters"]["absorber.thickness"] == [400e-9, 600e-9]
+    assert "absorber.tau_n/tau_p" not in generated["sweep_parameters"]
+    assert "device.contact_work_function" not in generated["sweep_parameters"]
     config = yaml.safe_load(Path(generated["config_path"]).read_text(encoding="utf-8"))
     assert config["source"]["sweep_policy"] == "production"
     assert config["source"]["sweep_grid"]["absorber.trap_N_t_bulk"] == [1e21, 1e22]
