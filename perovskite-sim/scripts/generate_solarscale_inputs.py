@@ -26,6 +26,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="production",
         help="production requires promising records; exploratory also accepts phonon-ready records",
     )
+    parser.add_argument(
+        "--activate-bandgap",
+        action="store_true",
+        help=(
+            "Map band_gap_hse_ev into absorber Eg. This requires a fully "
+            "band-aligned template with chi and positive Eg on every electrical layer."
+        ),
+    )
     return parser
 
 
@@ -37,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         out_dir=args.out_dir,
         limit=args.limit,
         import_policy=args.import_policy,
+        activate_bandgap=args.activate_bandgap,
     )
     print(
         f"Generated {len(manifest['generated'])} SolarLab configs; "

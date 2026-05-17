@@ -66,6 +66,7 @@ from typing import Callable
 
 import numpy as np
 
+from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.constants import K_B, Q
 from perovskite_sim.data import load_nk
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
@@ -287,7 +288,7 @@ def run_el_spectrum(
         raise ValueError(
             "absorber mask has fewer than 2 grid nodes; increase N_grid."
         )
-    A_abs = np.trapezoid(A_xl[abs_mask, :], x_abs, axis=0)
+    A_abs = trapezoid(A_xl[abs_mask, :], x_abs, axis=0)
     # Clamp A_abs into [0, 1]; tiny numerical leaks out of this band are
     # unphysical and would push exp(qV/kT) into noise.
     A_abs = np.clip(A_abs, 0.0, 1.0)
@@ -302,7 +303,7 @@ def run_el_spectrum(
     Phi_EL = A_abs * phi_bb * boltzmann_factor
 
     # Radiative emission current [A/m^2] = q . integral Phi_EL d_lambda.
-    J_em_rad = float(Q * np.trapezoid(Phi_EL, wavelengths_m))
+    J_em_rad = float(Q * trapezoid(Phi_EL, wavelengths_m))
 
     # EL_spectrum reported in photons / m^2 / s / nm for plotting
     # convenience; storage wavelength axis is already in nm.

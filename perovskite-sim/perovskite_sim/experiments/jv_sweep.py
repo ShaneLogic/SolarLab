@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
 
+from perovskite_sim._compat.numpy_compat import trapezoid
+
 ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.discretization.fe_operators import bernoulli
@@ -437,7 +439,7 @@ def _bake_radiative_reabsorption_step(
         x_abs = x[mask]
         if x_abs.size < 2:
             continue
-        R_tot = float(np.trapezoid(emission, x_abs))
+        R_tot = float(trapezoid(emission, x_abs))
         if R_tot <= 0.0:
             continue
         G_with_rad[mask] = G_with_rad[mask] + R_tot * (1.0 - P_esc) / thickness
