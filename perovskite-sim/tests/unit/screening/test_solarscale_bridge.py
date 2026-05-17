@@ -231,6 +231,51 @@ def test_activate_bandgap_maps_eg_for_band_aligned_template(tmp_path: Path):
     assert config["source"]["mapped_parameters"]["absorber.Eg"] == pytest.approx(1.62)
 
 
+def test_solarscale_band_aligned_template_keeps_template_eg_by_default(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/solarscale_nip_band_aligned.yaml",
+        out_dir=tmp_path / "solarscale-default",
+        limit=1,
+        import_policy="production",
+    )
+
+    config_path = Path(manifest["generated"][0]["config_path"])
+    stack = load_device_from_yaml(str(config_path))
+    absorber = next(layer for layer in stack.layers if layer.role == "absorber")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert absorber.params.Eg == pytest.approx(1.6)
+    assert config["source"]["activate_bandgap"] is False
+    assert "absorber.Eg" not in config["source"]["mapped_parameters"]
+    assert config["source"]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
+
+
+def test_activate_bandgap_maps_eg_for_solarscale_band_aligned_template(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/solarscale_nip_band_aligned.yaml",
+        out_dir=tmp_path / "solarscale-activated",
+        limit=1,
+        import_policy="production",
+        activate_bandgap=True,
+    )
+
+    config_path = Path(manifest["generated"][0]["config_path"])
+    stack = load_device_from_yaml(str(config_path))
+    absorber = next(layer for layer in stack.layers if layer.role == "absorber")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert absorber.params.Eg == pytest.approx(1.62)
+    assert absorber.params.chi == pytest.approx(3.7)
+    assert manifest["activate_bandgap"] is True
+    assert manifest["generated"][0]["mapped_parameters"]["absorber.Eg"] == pytest.approx(1.62)
+    assert manifest["generated"][0]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
+    assert config["source"]["mapped_parameters"]["absorber.Eg"] == pytest.approx(1.62)
+
+
 def test_exploratory_import_accepts_phonon_records_and_uses_template_ion_defaults(tmp_path: Path):
     records_path = _write_records(tmp_path)
     out_dir = tmp_path / "exploratory"

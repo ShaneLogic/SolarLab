@@ -43,6 +43,26 @@ template has no complete `chi`/`Eg` band alignment for all electrical layers,
 so the importer keeps the HSE band gap as metadata and leaves the template
 `Eg` behavior unchanged.
 
+For an activated band-gap process check, use the dedicated SolarScale template:
+
+```bash
+PYTHONPATH=. python scripts/run_material_screening.py \
+  --records ../../5_SolarScale-runs/exports/material_records.json \
+  --policy exploratory \
+  --base-config configs/solarscale_nip_band_aligned.yaml \
+  --top-n 1 \
+  --out-dir ../../5_SolarScale-runs/solarlab-screening/activated-smoke \
+  --activate-bandgap \
+  --run-smoke \
+  --smoke-n-grid 6 \
+  --smoke-n-points 2 \
+  --smoke-v-max 0.05
+```
+
+`configs/solarscale_nip_band_aligned.yaml` is based on the band-aligned
+spiro/MAPbI3/TiO2 TMM preset. It lets the importer replace absorber `Eg` only;
+it does not infer a new absorber `chi`, `ni`, `alpha`, or material-specific n,k.
+
 The legacy helper remains available:
 
 ```bash
@@ -131,3 +151,8 @@ PYTHONPATH=. python scripts/run_material_screening.py \
 
 The smoke result only proves that the imported stack reaches SolarLab's JV API.
 It is not a publication-grade simulation result.
+
+The activated smoke path is also process validation only. It confirms that a
+SolarScale HSE band gap can enter absorber `Eg` with a band-aligned template,
+while optical constants and deeper band-alignment policy remain separate
+follow-up work.
