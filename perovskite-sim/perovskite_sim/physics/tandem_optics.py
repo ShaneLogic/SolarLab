@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
+from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.physics.optics import TMMLayer, tmm_absorption_profile
 from perovskite_sim.models.tandem_config import TandemConfig, JunctionLayer
 from perovskite_sim.models.device import DeviceStack
@@ -98,18 +99,18 @@ def partition_absorption(
         parasitic_fraction: dimensionless residual fraction in [0, 1)
     """
     integrand = A * spectral_flux[None, :]                  # (N, n_wl)
-    G_full = np.trapezoid(integrand, wavelengths, axis=1)   # (N,)
+    G_full = trapezoid(integrand, wavelengths, axis=1)      # (N,)
 
     G_top = G_full[top_slice]
     G_bot = G_full[bottom_slice]
 
-    total_incident = float(np.trapezoid(spectral_flux, wavelengths))
+    total_incident = float(trapezoid(spectral_flux, wavelengths))
     if total_incident <= 0:
         return G_top, G_bot, 0.0
 
-    full_absorbed = float(np.trapezoid(G_full, x))
-    top_absorbed = float(np.trapezoid(G_top, x[top_slice]))
-    bot_absorbed = float(np.trapezoid(G_bot, x[bottom_slice]))
+    full_absorbed = float(trapezoid(G_full, x))
+    top_absorbed = float(trapezoid(G_top, x[top_slice]))
+    bot_absorbed = float(trapezoid(G_bot, x[bottom_slice]))
     parasitic = (full_absorbed - top_absorbed - bot_absorbed) / total_incident
 
     # Note: junction_slice is accepted for API symmetry; the junction contribution

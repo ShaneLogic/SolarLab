@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.constants import Q
 
 # Planck constant × speed of light [J·m]. Using CODATA values.
@@ -163,7 +164,7 @@ def compute_p_esc_for_absorber(
 
     lam_gap = wavelength_at_gap(Eg_eV)
     A_gap = _interp_absorbance_at_gap(A_xl, wavelengths_m, lam_gap)
-    OD_gap = float(np.trapezoid(A_gap, x_absorber))
+    OD_gap = float(trapezoid(A_gap, x_absorber))
     if not np.isfinite(OD_gap) or OD_gap <= 0.0:
         return 1.0
     return _clamp(1.0 / (4.0 * n_at_gap * n_at_gap * OD_gap))
