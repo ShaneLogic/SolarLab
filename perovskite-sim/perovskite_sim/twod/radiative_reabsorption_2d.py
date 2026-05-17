@@ -17,6 +17,8 @@ array equal to G_optical augmented per absorber.
 from __future__ import annotations
 import numpy as np
 
+from perovskite_sim._compat.numpy_compat import trapezoid
+
 
 def _check_2d_shape(name: str, A: np.ndarray, Ny: int, Nx: int) -> None:
     if A.shape != (Ny, Nx):
@@ -84,8 +86,8 @@ def recompute_g_with_rad_2d(
             continue
         emission = B_rad[y_lo:y_hi, :] * n[y_lo:y_hi, :] * p[y_lo:y_hi, :]   # (n_y_abs, Nx)
         # Integrate over y first (axis=0), giving (Nx,), then over x → scalar.
-        emission_x = np.trapezoid(emission, y[y_lo:y_hi], axis=0)            # (Nx,)
-        R_tot = float(np.trapezoid(emission_x, x))                            # scalar
+        emission_x = trapezoid(emission, y[y_lo:y_hi], axis=0)               # (Nx,)
+        R_tot = float(trapezoid(emission_x, x))                              # scalar
         if R_tot <= 0.0:
             continue
         G_rad = R_tot * (1.0 - p_esc) / area

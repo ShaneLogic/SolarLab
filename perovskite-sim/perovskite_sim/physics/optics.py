@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from typing import Sequence
 import numpy as np
 
+from perovskite_sim._compat.numpy_compat import trapezoid
+
 
 @dataclass(frozen=True)
 class TMMLayer:
@@ -408,7 +410,7 @@ def tmm_generation(
     # Integrate: G(x) = integral A(x, lam) * Phi(lam) d_lam
     # Using trapezoidal rule over wavelength
     integrand = A * spectral_flux[None, :]  # (N, n_wl)
-    G = np.trapezoid(integrand, wavelengths, axis=1)
+    G = trapezoid(integrand, wavelengths, axis=1)
     if return_absorbance:
         return G, A
     return G
