@@ -63,6 +63,7 @@ class CandidatePlan:
     ml_pv_score: float | None
     final_fom_score: float | None
     mapped_parameters: dict[str, Any]
+    material_metadata: dict[str, Any]
     sweep_parameters: dict[str, Any]
     missing_required: list[str]
     missing_optional: list[str]
@@ -89,7 +90,6 @@ DEVICE_SWEEP_PROPERTY_MAP: dict[str, str] = {
 }
 
 MAPPED_PROPERTY_SPECS: dict[str, tuple[str, str | None, float]] = {
-    "band_gap_hse_ev": ("absorber.Eg", "Eg", 1.0),
     "dielectric_static_avg": ("absorber.eps_r", "eps_r", 1.0),
     "electron_mobility_cm2_v_s": ("absorber.mu_n", "mu_n", 1.0e-4),
     "hole_mobility_cm2_v_s": ("absorber.mu_p", "mu_p", 1.0e-4),
@@ -146,6 +146,7 @@ def plan_solarlab_import(
     limit: int | None = None,
     sweep_grid: Mapping[str, list[float]] | None = None,
     include_configs: bool = True,
+    activate_bandgap: bool = False,
 ) -> dict[str, Any]:
     """Return a dry-run import manifest without writing files."""
 
@@ -154,10 +155,21 @@ def plan_solarlab_import(
 
     records = parse_material_records(records_path)
     template = _load_yaml(template_path)
+    if activate_bandgap:
+        _validate_band_aligned_template(template)
     sweeps = dict(sweep_grid or DEFAULT_SWEEP_GRID)
 
     candidates = sorted(
-        (_candidate_plan(record, template, sweeps, import_policy) for record in records),
+        (
+            _candidate_plan(
+                record,
+                template,
+                sweeps,
+                import_policy,
+                activate_bandgap=activate_bandgap,
+            )
+            for record in records
+        ),
         key=_candidate_sort_key,
     )
     selected_count = 0
@@ -187,6 +199,7 @@ def plan_solarlab_import(
         "template_path": str(template_path),
         "import_policy": import_policy,
         "allowed_readiness": sorted(_ALLOWED_READINESS[import_policy]),
+        "activate_bandgap": activate_bandgap,
         "dry_run": True,
         "selected_count": len(selected),
         "skipped_count": len(skipped),
@@ -203,6 +216,7 @@ def generate_solarlab_inputs(
     limit: int | None = None,
     sweep_grid: Mapping[str, list[float]] | None = None,
     import_policy: ImportPolicy = "production",
+    activate_bandgap: bool = False,
 ) -> dict[str, Any]:
     """Generate SolarLab YAML configs and a manifest from SolarScale records."""
 
@@ -213,6 +227,7 @@ def generate_solarlab_inputs(
         limit=limit,
         sweep_grid=sweep_grid,
         include_configs=True,
+        activate_bandgap=activate_bandgap,
     )
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -233,6 +248,7 @@ def generate_solarlab_inputs(
         "out_dir": str(out),
         "import_policy": import_policy,
         "allowed_readiness": plan["allowed_readiness"],
+        "activate_bandgap": activate_bandgap,
         "generated": generated,
         "skipped": plan["skipped"],
     }
@@ -329,6 +345,8 @@ def _candidate_plan(
     template: Mapping[str, Any],
     sweeps: Mapping[str, list[float]],
     import_policy: ImportPolicy,
+    *,
+    activate_bandgap: bool,
 ) -> CandidatePlan:
     material_id = record.material_id
     if not material_id:
@@ -343,6 +361,7 @@ def _candidate_plan(
             ml_pv_score=None,
             final_fom_score=None,
             mapped_parameters={},
+            material_metadata={},
             sweep_parameters={},
             missing_required=list(REQUIRED_PHYSICAL_INPUTS),
             missing_optional=list(OPTIONAL_PHYSICAL_INPUTS),
@@ -352,7 +371,11 @@ def _candidate_plan(
 
     readiness = str(record.screening.get("readiness", "") or _property_value(record, "screening_readiness") or "")
     ready, reason = _is_device_ready(record, import_policy=import_policy)
-    mapped, missing_required, missing_optional, diagnostics = _mapped_parameters(record)
+    mapped, missing_required, missing_optional, diagnostics = _mapped_parameters(
+        record,
+        activate_bandgap=activate_bandgap,
+    )
+    material_metadata = _material_metadata(record)
     sweep_parameters = _sweep_parameters(record, sweeps)
     assumed = _template_assumptions(template, mapped, sweeps)
     ranking_score, ranking_source = _ranking_score(record)
@@ -372,6 +395,7 @@ def _candidate_plan(
             missing_optional,
             diagnostics,
             import_policy=import_policy,
+            activate_bandgap=activate_bandgap,
         )
 
     return CandidatePlan(
@@ -385,6 +409,7 @@ def _candidate_plan(
         ml_pv_score=ml_score,
         final_fom_score=fom_score,
         mapped_parameters=mapped,
+        material_metadata=material_metadata,
         sweep_parameters=sweep_parameters,
         missing_required=missing_required,
         missing_optional=missing_optional,
@@ -419,11 +444,29 @@ def _is_device_ready(record: MaterialRecord, *, import_policy: ImportPolicy) -> 
     return False, f"{flag_name} is not true and screening.readiness is unavailable"
 
 
-def _mapped_parameters(record: MaterialRecord) -> tuple[dict[str, Any], list[str], list[str], list[str]]:
+def _mapped_parameters(
+    record: MaterialRecord,
+    *,
+    activate_bandgap: bool,
+) -> tuple[dict[str, Any], list[str], list[str], list[str]]:
     mapped: dict[str, Any] = {}
     missing_required: list[str] = []
     missing_optional: list[str] = []
     diagnostics: list[str] = []
+
+    band_gap = record.properties.get("band_gap_hse_ev")
+    if band_gap is None or band_gap.value is None or band_gap.provenance.kind == "missing":
+        missing_required.append("band_gap_hse_ev")
+    elif band_gap.provenance.kind not in {"computed", "derived"}:
+        missing_required.append("band_gap_hse_ev")
+        diagnostics.append(
+            f"band_gap_hse_ev provenance kind {band_gap.provenance.kind!r} is not accepted as a fixed input"
+        )
+    elif activate_bandgap:
+        mapped["absorber.Eg"] = _coerce_numeric(band_gap.value)
+        diagnostics.append("band_gap_hse_ev activated as absorber Eg")
+    else:
+        diagnostics.append("band_gap_hse_ev kept as metadata; absorber Eg follows the template")
 
     for prop_name, (target, _field, scale) in MAPPED_PROPERTY_SPECS.items():
         prop = record.properties.get(prop_name)
@@ -486,6 +529,8 @@ def _template_assumptions(
         return {}
     absorber = _absorber_layer(copy.deepcopy(layers))
     assumptions: dict[str, Any] = {}
+    if "absorber.Eg" not in mapped:
+        assumptions["absorber.Eg"] = absorber.get("Eg", 0.0)
     for prop_name, (_target, field_name, _scale) in MAPPED_PROPERTY_SPECS.items():
         if field_name is None or _target in mapped:
             continue
@@ -508,6 +553,7 @@ def _build_config(
     diagnostics: list[str],
     *,
     import_policy: ImportPolicy,
+    activate_bandgap: bool,
 ) -> dict[str, Any]:
     config = copy.deepcopy(dict(template))
     layers = config.get("layers")
@@ -542,14 +588,20 @@ def _build_config(
         )
     if "absorber.Eg" in mapped:
         notes.append(
-            "HSE band gap is mapped to absorber Eg. Contact-layer band alignment still comes from the template."
+            "HSE band gap is explicitly activated as absorber Eg. Use only with a fully band-aligned template."
         )
+    else:
+        notes.append(
+            "HSE band gap is preserved as metadata; absorber Eg follows the template to avoid partial band-alignment activation."
+        )
+    material_metadata = _material_metadata(record)
     config["notes"] = notes
     config["source"] = {
         "schema": "solarlab.solarscale_import_config",
         "schema_version": "0.3",
         "material_id": material_id,
         "import_policy": import_policy,
+        "activate_bandgap": activate_bandgap,
         "screening": record.screening,
         "ranking": {
             "ranking_score": _ranking_score(record)[0],
@@ -557,6 +609,7 @@ def _build_config(
             "ml_pv_score": _numeric_property(record, "ml_pv_score"),
             "final_fom_score": _numeric_property(record, "final_fom_score"),
         },
+        "material_metadata": material_metadata,
         "mapped_parameters": dict(mapped),
         "missing_optional": list(missing_optional),
         "sweep_parameters": _sweep_parameters(record, sweeps),
@@ -623,7 +676,8 @@ def _candidate_to_dict(candidate: CandidatePlan, *, include_config: bool = True)
         "ml_pv_score": candidate.ml_pv_score,
         "final_fom_score": candidate.final_fom_score,
         "mapped_parameters": candidate.mapped_parameters,
-        "dft_properties": _legacy_dft_properties(candidate.mapped_parameters),
+        "material_metadata": candidate.material_metadata,
+        "dft_properties": _legacy_dft_properties(candidate.mapped_parameters, candidate.material_metadata),
         "md_properties": _legacy_md_properties(candidate.mapped_parameters),
         "sweep_parameters": candidate.sweep_parameters,
         "missing_required": candidate.missing_required,
@@ -650,6 +704,7 @@ def _replace_candidate(candidate: CandidatePlan, **changes: Any) -> CandidatePla
         "ml_pv_score": candidate.ml_pv_score,
         "final_fom_score": candidate.final_fom_score,
         "mapped_parameters": candidate.mapped_parameters,
+        "material_metadata": candidate.material_metadata,
         "sweep_parameters": candidate.sweep_parameters,
         "missing_required": candidate.missing_required,
         "missing_optional": candidate.missing_optional,
@@ -669,9 +724,53 @@ def _property_value(record: MaterialRecord, name: str) -> Any:
     return prop.value
 
 
-def _legacy_dft_properties(mapped: Mapping[str, Any]) -> dict[str, Any]:
+def _material_metadata(record: MaterialRecord) -> dict[str, Any]:
     return {
-        "band_gap_hse_ev": mapped.get("absorber.Eg"),
+        "band_gap_hse_ev": _numeric_property(record, "band_gap_hse_ev"),
+        "electron_effective_mass_m0": _numeric_property(record, "electron_effective_mass_m0"),
+        "hole_effective_mass_m0": _numeric_property(record, "hole_effective_mass_m0"),
+        "slme_0p5um": _numeric_property(record, "slme_0p5um"),
+        "slme_2um": _numeric_property(record, "slme_2um"),
+        "absorption_edge_ev": _numeric_property(record, "absorption_edge_ev"),
+    }
+
+
+def _validate_band_aligned_template(template: Mapping[str, Any]) -> None:
+    layers = template.get("layers")
+    if not isinstance(layers, list):
+        raise ValueError("Template layers must be a list")
+    invalid: list[str] = []
+    for layer in layers:
+        if layer.get("role") == "substrate":
+            continue
+        name = str(layer.get("name", "<unnamed>"))
+        chi = _optional_float(layer.get("chi"))
+        eg = _optional_float(layer.get("Eg"))
+        if chi is None or eg is None or eg <= 0.0:
+            invalid.append(name)
+    if invalid:
+        raise ValueError(
+            "--activate-bandgap requires a fully band-aligned template with "
+            "chi and positive Eg on every electrical layer; invalid layers: "
+            + ", ".join(invalid)
+        )
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _legacy_dft_properties(
+    mapped: Mapping[str, Any],
+    material_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "band_gap_hse_ev": mapped.get("absorber.Eg", material_metadata.get("band_gap_hse_ev")),
         "dielectric_static_avg": mapped.get("absorber.eps_r"),
         "electron_mobility_cm2_v_s": _inverse_scaled(mapped.get("absorber.mu_n"), 1.0e-4),
         "hole_mobility_cm2_v_s": _inverse_scaled(mapped.get("absorber.mu_p"), 1.0e-4),

@@ -41,6 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write only an import plan JSON; do not generate YAML configs or run JV",
     )
     parser.add_argument(
+        "--activate-bandgap",
+        action="store_true",
+        help=(
+            "Map band_gap_hse_ev into absorber Eg. This requires a fully "
+            "band-aligned template with chi and positive Eg on every electrical layer."
+        ),
+    )
+    parser.add_argument(
         "--run-smoke",
         action="store_true",
         help="After generating YAML configs, run a tiny JV smoke check on the top candidate",
@@ -62,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             import_policy=args.policy,
             limit=args.top_n,
             include_configs=False,
+            activate_bandgap=args.activate_bandgap,
         )
         plan_path = args.out_dir / "screening_plan.json"
         plan_path.write_text(json.dumps(plan, indent=2, sort_keys=True), encoding="utf-8")
@@ -77,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         out_dir=args.out_dir,
         limit=args.top_n,
         import_policy=args.policy,
+        activate_bandgap=args.activate_bandgap,
     )
     print(
         f"Generated {len(manifest['generated'])} SolarLab configs; "
