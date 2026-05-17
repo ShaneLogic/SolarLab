@@ -78,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             f"Selected {plan['selected_count']} candidates; skipped {plan['skipped_count']}; "
             f"plan: {plan_path}"
         )
+        _print_dry_run_summary(plan)
         return 0
 
     manifest = generate_solarlab_inputs(
@@ -105,6 +106,42 @@ def main(argv: list[str] | None = None) -> int:
         smoke_path.write_text(json.dumps(smoke, indent=2, sort_keys=True), encoding="utf-8")
         print(f"Smoke JV complete: {smoke_path}")
     return 0
+
+
+def _print_dry_run_summary(plan: dict) -> None:
+    summary = plan.get("summary", {})
+    readiness = summary.get("readiness_distribution", {})
+    gate_summary = summary.get("gate_summary", {})
+    skipped_reasons = summary.get("skipped_reason_counts", {})
+    top_selected = summary.get("top_selected_candidates", [])
+
+    if readiness:
+        print("Readiness distribution:")
+        for name, count in readiness.items():
+            print(f"  {name}: {count}")
+    totals = gate_summary.get("totals", {})
+    if totals:
+        print(
+            "Gate totals: "
+            f"pass={totals.get('pass', 0)}, "
+            f"fail={totals.get('fail', 0)}, "
+            f"missing={totals.get('missing', 0)}, "
+            f"unknown={totals.get('unknown', 0)}"
+        )
+    if top_selected:
+        print("Top selected candidates:")
+        for item in top_selected[:10]:
+            source = item.get("ranking_score_source") or "none"
+            score = item.get("ranking_score")
+            score_text = "n/a" if score is None else f"{score:.6g}"
+            print(
+                f"  #{item.get('rank')} {item.get('material_id')} "
+                f"readiness={item.get('readiness')} score={score_text} source={source}"
+            )
+    if skipped_reasons:
+        print("Skipped reasons:")
+        for reason, count in skipped_reasons.items():
+            print(f"  {count}x {reason}")
 
 
 if __name__ == "__main__":

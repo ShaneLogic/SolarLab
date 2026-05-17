@@ -25,6 +25,14 @@ This writes `screening_plan.json` with selected candidates, skipped records,
 ranking scores, mapped fields, missing fields, sweep parameters, and
 diagnostics. It does not write generated YAML configs.
 
+The plan also keeps SolarScale gate evidence for audit. SolarLab does not
+recompute these gates; it preserves `screening.gates`, `screening.thresholds`,
+the resolved readiness value, and the raw `screening` block for every candidate.
+The top-level `summary` section reports readiness distribution, gate
+pass/fail/missing/unknown counts, top selected candidates, and skipped reason
+counts. Use this summary to inspect why records entered or did not enter
+SolarLab before launching simulations.
+
 ## Generate configs
 
 After inspecting the dry-run plan:
@@ -84,6 +92,10 @@ PYTHONPATH=. python scripts/generate_solarscale_inputs.py \
 
 Blocked, incomplete, and electronic-only records are skipped. A skipped record
 still appears in the plan with the rejection reason and missing inputs.
+
+SolarScale remains the authority for material gates and thresholds. SolarLab
+uses readiness only for import policy selection, then records the upstream gate
+evidence unchanged under `screening_evidence`.
 
 ## Ranking policy
 
