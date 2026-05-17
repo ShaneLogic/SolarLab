@@ -10,7 +10,8 @@ from pathlib import Path
 from perovskite_sim.screening.solarscale import (
     generate_solarlab_inputs,
     plan_solarlab_import,
-    run_smoke_jv,
+    run_smoke_device_results,
+    write_device_results,
 )
 
 
@@ -94,17 +95,33 @@ def main(argv: list[str] | None = None) -> int:
         f"skipped {len(manifest['skipped'])}; manifest: {args.out_dir / 'manifest.json'}"
     )
     if args.run_smoke and manifest["generated"]:
-        config_path = manifest["generated"][0]["config_path"]
-        smoke = run_smoke_jv(
-            config_path,
+        device_results = run_smoke_device_results(
+            manifest,
             N_grid=args.smoke_n_grid,
             n_points=args.smoke_n_points,
             v_rate=args.smoke_v_rate,
             V_max=args.smoke_v_max,
+            max_configs=1,
         )
         smoke_path = args.out_dir / "smoke_jv.json"
-        smoke_path.write_text(json.dumps(smoke, indent=2, sort_keys=True), encoding="utf-8")
+        smoke_record = device_results["records"][0] if device_results["records"] else {}
+        smoke_payload = smoke_record.get("smoke_result") or {
+            "simulation_status": smoke_record.get("simulation_status"),
+            "error": smoke_record.get("error"),
+        }
+        smoke_path.write_text(json.dumps(smoke_payload, indent=2, sort_keys=True), encoding="utf-8")
         print(f"Smoke JV complete: {smoke_path}")
+        device_json_path = args.out_dir / "device_results.json"
+        device_csv_path = args.out_dir / "device_results.csv"
+        write_device_results(
+            device_results,
+            json_path=device_json_path,
+            csv_path=device_csv_path,
+        )
+        print(f"Device results complete: {device_json_path}; {device_csv_path}")
+        failed = device_results.get("summary", {}).get("status_counts", {}).get("failed", 0)
+        if failed:
+            return 1
     return 0
 
 
