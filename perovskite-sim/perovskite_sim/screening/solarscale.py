@@ -913,7 +913,8 @@ def _sweep_parameters(
         value = prop.value
         kind = prop.provenance.kind
         if kind == "swept":
-            sweep_parameters.setdefault(target_name, list(sweeps.get(target_name, [])))
+            if target_name in sweeps:
+                sweep_parameters.setdefault(target_name, list(sweeps[target_name]))
         elif value is not None:
             sweep_parameters[target_name] = value
     return sweep_parameters
