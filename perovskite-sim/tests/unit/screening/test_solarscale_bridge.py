@@ -13,6 +13,8 @@ from perovskite_sim.screening.solarscale import (
     generate_solarlab_inputs,
     parse_material_records,
     plan_solarlab_import,
+    run_smoke_device_results,
+    write_device_results,
 )
 
 
@@ -448,3 +450,64 @@ def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert [item["material_id"] for item in plan["selected"]] == ["mp-best", "mp-phonon"]
     assert not (out_dir / "manifest.json").exists()
+
+
+def test_smoke_device_results_write_json_and_csv(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    out_dir = tmp_path / "device-results"
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=out_dir,
+        limit=1,
+        import_policy="production",
+    )
+
+    results = run_smoke_device_results(
+        manifest,
+        N_grid=6,
+        n_points=2,
+        V_max=0.05,
+        max_configs=1,
+    )
+    json_path = out_dir / "device_results.json"
+    csv_path = out_dir / "device_results.csv"
+    write_device_results(results, json_path=json_path, csv_path=csv_path)
+
+    loaded = json.loads(json_path.read_text(encoding="utf-8"))
+    assert loaded["schema"] == "solarlab.device_results"
+    assert loaded["schema_version"] == "0.1"
+    assert loaded["summary"]["status_counts"] == {"completed": 1}
+    record = loaded["records"][0]
+    assert record["material_id"] == "mp-best"
+    assert record["simulation_status"] == "completed"
+    assert record["template_path"] == "configs/nip_MAPbI3.yaml"
+    assert record["mapped_parameters"]["absorber.eps_r"] == pytest.approx(12.0)
+    assert record["screening_evidence"]["gates"]["electronic"]["passed"] is True
+    assert record["JV_metrics"]["forward"]["J_sc"] > 0.0
+    assert record["error"] is None
+    assert "mp-best" in csv_path.read_text(encoding="utf-8")
+
+
+def test_smoke_device_results_record_failures_without_dropping_metadata(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=tmp_path / "broken-device-results",
+        limit=1,
+        import_policy="production",
+    )
+    manifest["generated"][0]["config_path"] = str(tmp_path / "missing.yaml")
+
+    results = run_smoke_device_results(manifest, N_grid=6, n_points=2, V_max=0.05)
+
+    record = results["records"][0]
+    assert results["summary"]["status_counts"] == {"failed": 1}
+    assert results["summary"]["failed_materials"] == ["mp-best"]
+    assert record["material_id"] == "mp-best"
+    assert record["simulation_status"] == "failed"
+    assert record["mapped_parameters"]["absorber.eps_r"] == pytest.approx(12.0)
+    assert record["screening_evidence"]["readiness"] == "promising"
+    assert record["JV_metrics"]["forward"] is None
+    assert record["error"]["error_type"] in {"FileNotFoundError", "ValueError"}

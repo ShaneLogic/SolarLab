@@ -5,7 +5,9 @@ from .solarscale import (
     load_material_records,
     parse_material_records,
     plan_solarlab_import,
+    run_smoke_device_results,
     run_smoke_jv,
+    write_device_results,
 )
 
 __all__ = [
@@ -13,5 +15,7 @@ __all__ = [
     "load_material_records",
     "parse_material_records",
     "plan_solarlab_import",
+    "run_smoke_device_results",
     "run_smoke_jv",
+    "write_device_results",
 ]
