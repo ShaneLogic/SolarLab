@@ -1,6 +1,7 @@
 """Screening bridge utilities for DFT/MD-to-device workflows."""
 
 from .solarscale import (
+    expand_sweep_manifest,
     generate_solarlab_inputs,
     load_material_records,
     parse_material_records,
@@ -11,6 +12,7 @@ from .solarscale import (
 )
 
 __all__ = [
+    "expand_sweep_manifest",
     "generate_solarlab_inputs",
     "load_material_records",
     "parse_material_records",
