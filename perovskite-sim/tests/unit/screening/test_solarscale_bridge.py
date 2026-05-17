@@ -125,6 +125,8 @@ def test_plan_sorts_by_final_fom_then_ml_score_and_keeps_scores_as_metadata(tmp_
     assert [item["material_id"] for item in plan["selected"]] == ["mp-best", "mp-ml-only"]
     assert plan["selected"][0]["ranking_score_source"] == "final_fom_score"
     assert plan["selected"][1]["ranking_score_source"] == "ml_pv_score"
+    assert plan["sweep_policy"] == "quick"
+    assert plan["sweep_dimensions"]["total_points"] == 1
     assert plan["selected"][0]["screening_evidence"]["gates"]["electronic"]["passed"] is True
     assert plan["selected"][0]["screening_evidence"]["thresholds"]["band_gap_hse_ev"] == [1.0, 2.0]
     assert "absorber.Eg" not in plan["selected"][0]["mapped_parameters"]
@@ -147,6 +149,8 @@ def test_production_import_requires_promising_and_maps_dft_md_absorber_inputs(tm
 
     assert [item["material_id"] for item in manifest["generated"]] == ["mp-best"]
     assert manifest["import_policy"] == "production"
+    assert manifest["sweep_policy"] == "quick"
+    assert manifest["sweep_dimensions"]["total_points"] == 1
     assert manifest["allowed_readiness"] == ["promising"]
     assert {item["material_id"] for item in manifest["skipped"]} == {
         "mp-ml-only",
@@ -168,7 +172,7 @@ def test_production_import_requires_promising_and_maps_dft_md_absorber_inputs(tm
     assert absorber.params.E_a_ion == pytest.approx(0.42)
     assert absorber.thickness == pytest.approx(300e-9)
     assert htl.params.eps_r == pytest.approx(3.0)
-    assert stack.interfaces == ((0.0, 0.0), (0.0, 0.0))
+    assert stack.interfaces == ((1.0, 1.0), (1.0, 1.0))
     assert stack.compute_V_bi() == pytest.approx(stack.V_bi)
     assert manifest["generated"][0]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
     assert (out_dir / "manifest.json").exists()
@@ -192,6 +196,8 @@ def test_default_generated_yaml_preserves_bandgap_as_metadata_only(tmp_path: Pat
     assert absorber.get("Eg", 0.0) == pytest.approx(0.0)
     assert config["source"]["activate_bandgap"] is False
     assert config["source"]["schema_version"] == "0.4"
+    assert config["source"]["sweep_policy"] == "quick"
+    assert config["source"]["sweep_dimensions"]["total_points"] == 1
     assert "absorber.Eg" not in config["source"]["mapped_parameters"]
     assert config["source"]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
     assert config["source"]["screening_evidence"]["gates"]["md_ion"]["status"] == "pass"
@@ -415,6 +421,39 @@ def test_plan_preserves_gate_evidence_and_adds_auditable_summary(tmp_path: Path)
     assert phonon["screening_evidence"]["raw_screening"]["gates"] == phonon["screening_evidence"]["gates"]
 
 
+def test_sweep_policy_controls_recorded_device_unknown_grid(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    exploratory = plan_solarlab_import(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        import_policy="exploratory",
+        sweep_policy="exploratory",
+        include_configs=False,
+    )
+    production = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=tmp_path / "production-sweep-policy",
+        limit=1,
+        import_policy="production",
+        sweep_policy="production",
+    )
+
+    assert exploratory["sweep_policy"] == "exploratory"
+    assert exploratory["sweep_dimensions"]["total_points"] == 243
+    assert exploratory["sweep_grid"]["absorber.thickness"] == [300e-9, 500e-9, 800e-9]
+
+    assert production["sweep_policy"] == "production"
+    assert production["sweep_dimensions"]["total_points"] == 32
+    generated = production["generated"][0]
+    assert generated["sweep_parameters"]["absorber.thickness"] == [400e-9, 600e-9]
+    assert "absorber.tau_n/tau_p" not in generated["sweep_parameters"]
+    assert "device.contact_work_function" not in generated["sweep_parameters"]
+    config = yaml.safe_load(Path(generated["config_path"]).read_text(encoding="utf-8"))
+    assert config["source"]["sweep_policy"] == "production"
+    assert config["source"]["sweep_grid"]["absorber.trap_N_t_bulk"] == [1e21, 1e22]
+
+
 def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
     records_path = _write_records(tmp_path)
     out_dir = tmp_path / "cli"
@@ -433,6 +472,8 @@ def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
             "--out-dir",
             str(out_dir),
             "--dry-run",
+            "--sweep-policy",
+            "exploratory",
         ],
         check=True,
         cwd=Path(__file__).parents[3],
@@ -446,6 +487,7 @@ def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
     assert "Gate totals: pass=11, fail=0, missing=1, unknown=0" in result.stdout
     assert "#1 mp-best readiness=promising score=72 source=final_fom_score" in result.stdout
     assert "1x limit reached" in result.stdout
+    assert "Sweep policy: exploratory (243 point(s) per candidate recorded)" in result.stdout
     assert plan_path.exists()
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert [item["material_id"] for item in plan["selected"]] == ["mp-best", "mp-phonon"]

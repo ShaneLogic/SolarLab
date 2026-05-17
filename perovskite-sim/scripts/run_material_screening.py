@@ -37,6 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-n", "--limit", type=int, default=None, dest="top_n")
     parser.add_argument("--out-dir", required=True, type=Path, help="Output directory")
     parser.add_argument(
+        "--sweep-policy",
+        choices=("quick", "exploratory", "production"),
+        default="quick",
+        help="Device-level unknown sweep grid recorded in plan/manifest; quick is smoke-safe.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Write only an import plan JSON; do not generate YAML configs or run JV",
@@ -70,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
             template_path=args.base_config,
             import_policy=args.policy,
             limit=args.top_n,
+            sweep_policy=args.sweep_policy,
             include_configs=False,
             activate_bandgap=args.activate_bandgap,
         )
@@ -88,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         out_dir=args.out_dir,
         limit=args.top_n,
         import_policy=args.policy,
+        sweep_policy=args.sweep_policy,
         activate_bandgap=args.activate_bandgap,
     )
     print(
@@ -159,6 +167,13 @@ def _print_dry_run_summary(plan: dict) -> None:
         print("Skipped reasons:")
         for reason, count in skipped_reasons.items():
             print(f"  {count}x {reason}")
+    dimensions = plan.get("sweep_dimensions", {})
+    if dimensions:
+        print(
+            "Sweep policy: "
+            f"{plan.get('sweep_policy')} "
+            f"({dimensions.get('total_points')} point(s) per candidate recorded)"
+        )
 
 
 if __name__ == "__main__":

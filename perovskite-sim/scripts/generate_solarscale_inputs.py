@@ -21,6 +21,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", required=True, type=Path, help="Output directory")
     parser.add_argument("--limit", type=int, default=None, help="Optional maximum number of configs")
     parser.add_argument(
+        "--sweep-policy",
+        choices=("quick", "exploratory", "production"),
+        default="quick",
+        help="Device-level unknown sweep grid recorded in the generated manifest.",
+    )
+    parser.add_argument(
         "--import-policy",
         choices=("production", "exploratory"),
         default="production",
@@ -45,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         out_dir=args.out_dir,
         limit=args.limit,
         import_policy=args.import_policy,
+        sweep_policy=args.sweep_policy,
         activate_bandgap=args.activate_bandgap,
     )
     print(
