@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -62,6 +63,7 @@ class CandidatePlan:
     ranking_score_source: str | None
     ml_pv_score: float | None
     final_fom_score: float | None
+    screening_evidence: dict[str, Any]
     mapped_parameters: dict[str, Any]
     material_metadata: dict[str, Any]
     sweep_parameters: dict[str, Any]
@@ -194,7 +196,7 @@ def plan_solarlab_import(
     skipped = [candidate for candidate in limited_candidates if not candidate.selected]
     return {
         "schema": "solarlab.solarscale_import_plan",
-        "schema_version": "0.3",
+        "schema_version": "0.4",
         "records_path": str(records_path),
         "template_path": str(template_path),
         "import_policy": import_policy,
@@ -203,6 +205,7 @@ def plan_solarlab_import(
         "dry_run": True,
         "selected_count": len(selected),
         "skipped_count": len(skipped),
+        "summary": _screening_summary(limited_candidates),
         "selected": [_candidate_to_dict(candidate) for candidate in selected],
         "skipped": [_candidate_to_dict(candidate, include_config=False) for candidate in skipped],
     }
@@ -242,13 +245,14 @@ def generate_solarlab_inputs(
 
     manifest = {
         "schema": "solarlab.solarscale_import_manifest",
-        "schema_version": "0.3",
+        "schema_version": "0.4",
         "records_path": plan["records_path"],
         "template_path": plan["template_path"],
         "out_dir": str(out),
         "import_policy": import_policy,
         "allowed_readiness": plan["allowed_readiness"],
         "activate_bandgap": activate_bandgap,
+        "summary": plan["summary"],
         "generated": generated,
         "skipped": plan["skipped"],
     }
@@ -360,6 +364,13 @@ def _candidate_plan(
             ranking_score_source=None,
             ml_pv_score=None,
             final_fom_score=None,
+            screening_evidence={
+                "readiness": None,
+                "resolved_readiness": "",
+                "gates": {},
+                "thresholds": {},
+                "raw_screening": {},
+            },
             mapped_parameters={},
             material_metadata={},
             sweep_parameters={},
@@ -381,6 +392,7 @@ def _candidate_plan(
     ranking_score, ranking_source = _ranking_score(record)
     ml_score = _numeric_property(record, "ml_pv_score")
     fom_score = _numeric_property(record, "final_fom_score")
+    screening_evidence = _screening_evidence(record, resolved_readiness=readiness)
     selected = ready and not missing_required
     if ready and missing_required:
         reason = "missing required SolarLab physical inputs: " + ", ".join(missing_required)
@@ -408,6 +420,7 @@ def _candidate_plan(
         ranking_score_source=ranking_source,
         ml_pv_score=ml_score,
         final_fom_score=fom_score,
+        screening_evidence=screening_evidence,
         mapped_parameters=mapped,
         material_metadata=material_metadata,
         sweep_parameters=sweep_parameters,
@@ -595,14 +608,21 @@ def _build_config(
             "HSE band gap is preserved as metadata; absorber Eg follows the template to avoid partial band-alignment activation."
         )
     material_metadata = _material_metadata(record)
+    screening_evidence = _screening_evidence(
+        record,
+        resolved_readiness=str(
+            record.screening.get("readiness", "") or _property_value(record, "screening_readiness") or ""
+        ),
+    )
     config["notes"] = notes
     config["source"] = {
         "schema": "solarlab.solarscale_import_config",
-        "schema_version": "0.3",
+        "schema_version": "0.4",
         "material_id": material_id,
         "import_policy": import_policy,
         "activate_bandgap": activate_bandgap,
         "screening": record.screening,
+        "screening_evidence": screening_evidence,
         "ranking": {
             "ranking_score": _ranking_score(record)[0],
             "ranking_score_source": _ranking_score(record)[1],
@@ -675,6 +695,7 @@ def _candidate_to_dict(candidate: CandidatePlan, *, include_config: bool = True)
         "ranking_score_source": candidate.ranking_score_source,
         "ml_pv_score": candidate.ml_pv_score,
         "final_fom_score": candidate.final_fom_score,
+        "screening_evidence": candidate.screening_evidence,
         "mapped_parameters": candidate.mapped_parameters,
         "material_metadata": candidate.material_metadata,
         "dft_properties": _legacy_dft_properties(candidate.mapped_parameters, candidate.material_metadata),
@@ -703,6 +724,7 @@ def _replace_candidate(candidate: CandidatePlan, **changes: Any) -> CandidatePla
         "ranking_score_source": candidate.ranking_score_source,
         "ml_pv_score": candidate.ml_pv_score,
         "final_fom_score": candidate.final_fom_score,
+        "screening_evidence": candidate.screening_evidence,
         "mapped_parameters": candidate.mapped_parameters,
         "material_metadata": candidate.material_metadata,
         "sweep_parameters": candidate.sweep_parameters,
@@ -715,6 +737,92 @@ def _replace_candidate(candidate: CandidatePlan, **changes: Any) -> CandidatePla
     }
     data.update(changes)
     return CandidatePlan(**data)
+
+
+def _screening_summary(candidates: list[CandidatePlan]) -> dict[str, Any]:
+    readiness_counts = Counter(candidate.readiness or "<missing>" for candidate in candidates)
+    skipped_reason_counts = Counter(candidate.reason for candidate in candidates if not candidate.selected)
+    selected_candidates = [candidate for candidate in candidates if candidate.selected]
+    return {
+        "readiness_distribution": dict(sorted(readiness_counts.items())),
+        "gate_summary": _gate_summary(candidates),
+        "skipped_reason_counts": dict(sorted(skipped_reason_counts.items())),
+        "top_selected_candidates": [
+            {
+                "material_id": candidate.material_id,
+                "rank": candidate.rank,
+                "readiness": candidate.readiness,
+                "ranking_score": candidate.ranking_score,
+                "ranking_score_source": candidate.ranking_score_source,
+            }
+            for candidate in selected_candidates[:10]
+        ],
+    }
+
+
+def _gate_summary(candidates: list[CandidatePlan]) -> dict[str, Any]:
+    statuses = ("pass", "fail", "missing", "unknown")
+    totals: Counter[str] = Counter()
+    by_gate: dict[str, Counter[str]] = {}
+    records_with_gate_data = 0
+    for candidate in candidates:
+        gates = candidate.screening_evidence.get("gates", {})
+        if not isinstance(gates, Mapping) or not gates:
+            continue
+        records_with_gate_data += 1
+        for gate_name, gate_value in gates.items():
+            status = _gate_status(gate_value)
+            gate_counts = by_gate.setdefault(str(gate_name), Counter())
+            gate_counts[status] += 1
+            totals[status] += 1
+    return {
+        "records_with_gate_data": records_with_gate_data,
+        "totals": {status: totals.get(status, 0) for status in statuses},
+        "by_gate": {
+            gate_name: {status: counts.get(status, 0) for status in statuses}
+            for gate_name, counts in sorted(by_gate.items())
+        },
+    }
+
+
+def _gate_status(value: Any) -> str:
+    if isinstance(value, Mapping):
+        for key in ("status", "state", "outcome", "result"):
+            if key in value:
+                return _gate_status(value[key])
+        for key in ("passed", "pass", "is_passed"):
+            if key in value:
+                return "pass" if bool(value[key]) else "fail"
+        if value.get("missing") is True or value.get("available") is False:
+            return "missing"
+        return "unknown"
+    if value is True:
+        return "pass"
+    if value is False:
+        return "fail"
+    if value is None:
+        return "missing"
+    text = str(value).strip().lower().replace("-", "_")
+    if text in {"pass", "passed", "ok", "true", "yes", "accepted"}:
+        return "pass"
+    if text in {"fail", "failed", "false", "no", "blocked", "rejected", "reject"}:
+        return "fail"
+    if text in {"missing", "not_run", "not_available", "none", ""}:
+        return "missing"
+    if text in {"unknown", "pending", "inconclusive"}:
+        return "unknown"
+    return "unknown"
+
+
+def _screening_evidence(record: MaterialRecord, *, resolved_readiness: str) -> dict[str, Any]:
+    raw_screening = copy.deepcopy(record.screening)
+    return {
+        "readiness": raw_screening.get("readiness"),
+        "resolved_readiness": resolved_readiness,
+        "gates": copy.deepcopy(raw_screening.get("gates", {})),
+        "thresholds": copy.deepcopy(raw_screening.get("thresholds", {})),
+        "raw_screening": raw_screening,
+    }
 
 
 def _property_value(record: MaterialRecord, name: str) -> Any:
