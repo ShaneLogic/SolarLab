@@ -134,14 +134,29 @@ def generate_transport_equations() -> None:
     x, y = 0.54, 0.395
     text(ax, x, y, "Beer-Lambert", size=14.5, weight="bold")
     text(ax, x + 0.130, y, "legacy / fast fallback", size=10.8, color="#888888")
-    text(ax, x, y - 0.040, r"$G_{BL}(x)=\int_\lambda \alpha\Phi_0\,e^{-\int_0^x\alpha dx'}d\lambda$", size=12.2)
-    ax.plot([0.54, 0.94], [0.330, 0.330], color="#dddddd", lw=1)
-    text(ax, x, y - 0.085, "Transfer Matrix (TMM)", size=14.5, weight="bold")
-    text(ax, x + 0.205, y - 0.085, "FULL tier", size=10.8, color="#888888")
-    text(ax, x, y - 0.125, r"$G_{TMM}(x,\lambda)=\hbar^{-1}\omega^{-1}(n/n_{amb})\,\alpha |E|^2$", size=12.2)
-    ax.plot([0.54, 0.94], [0.245, 0.245], color="#dddddd", lw=1)
-    text(ax, x, 0.218, r"$\mathbf{Poisson:}\ -\partial_x(\varepsilon_0\varepsilon_r\partial_x\varphi)=q(p-n+N_D-N_A+P-P_0)$", size=11.4)
-    text(ax, x, 0.192, r"$\mathbf{2D:}$ sparse Poisson + SG fluxes on $(N_y\times N_x)$ mesh", size=11.4)
+    text(
+        ax,
+        x,
+        y - 0.036,
+        r"$G_{BL}(x)=\int_{\lambda_{\min}}^{\lambda_{\max}}"
+        r"\alpha(\lambda,x)\Phi_0(\lambda)T(\lambda,x)\,d\lambda$",
+        size=10.8,
+    )
+    text(
+        ax,
+        x,
+        y - 0.070,
+        r"$T(\lambda,x)=\exp[-\int_0^x\alpha(\lambda,x')\,dx']$",
+        size=10.8,
+        color="#555555",
+    )
+    ax.plot([0.54, 0.94], [0.304, 0.304], color="#dddddd", lw=1)
+    text(ax, x, y - 0.110, "Transfer Matrix (TMM)", size=14.2, weight="bold")
+    text(ax, x + 0.205, y - 0.110, "FULL tier", size=10.8, color="#888888")
+    text(ax, x, y - 0.150, r"$G_{TMM}(x,\lambda)=\hbar^{-1}\omega^{-1}(n/n_{amb})\,\alpha |E|^2$", size=11.8)
+    ax.plot([0.54, 0.94], [0.222, 0.222], color="#dddddd", lw=1)
+    text(ax, x, 0.206, r"$\mathbf{Poisson:}\ -\partial_x(\varepsilon_0\varepsilon_r\partial_x\varphi)=q(p-n+N_D-N_A+P-P_0)$", size=10.8)
+    text(ax, x, 0.185, r"$\mathbf{2D:}$ sparse Poisson + SG fluxes on $(N_y\times N_x)$ mesh", size=10.8)
 
     save(fig, "transport_equations.png")
 
@@ -212,31 +227,51 @@ def generate_device_structure() -> None:
     text(ax, 0.50, 0.905, "AM1.5G illumination", size=15, weight="bold", color="#e0a000", ha="center")
     ax.add_patch(Polygon([[0.49, 0.888], [0.51, 0.888], [0.50, 0.868]], color="#e0a000"))
 
-    x, y, w, h = 0.24, 0.18, 0.56, 0.66
+    x, y, w, h = 0.22, 0.16, 0.58, 0.68
     parts = [
-        (0.095, "#b5b5b5", "Left Contact (Anode, x = 0)", r"$\varphi=0$ | ohmic or Robin $S_{\mathrm{left}}$"),
-        (0.185, "#e8f1ff", "HTL - Hole Transport Layer", r"high $N_A$ doping; blocks electrons ($\mu_n \ll \mu_p$)"),
-        (0.335, "#fff2d8", "Absorber - Perovskite", r"generation $G(x)$; mobile ions $P^+(x,t)$ and $P^-(x,t)$; GBs reduce $\tau$"),
-        (0.205, "#e6f4e8", "ETL - Electron Transport Layer", r"high $N_D$ doping; blocks holes ($\mu_p \ll \mu_n$)"),
-        (0.105, "#b5b5b5", "Right Contact (Cathode, x = L)", r"$\varphi=V_{bi}-V_{app}$ | ohmic or Robin $S_{\mathrm{right}}$"),
+        ("layer", 0.095, "#b5b5b5", "Contact at x = 0 (Anode)", r"$\varphi(0)=0$ | ohmic or Robin $S_{\mathrm{left}}$"),
+        ("layer", 0.170, "#e8f1ff", "HTL - Hole Transport Layer", r"high $N_A$ doping; blocks electrons ($\mu_n \ll \mu_p$)"),
+        ("interface", 0.035, "#fffdf7", r"Interface SRH recombination $(v_n,v_p)$", ""),
+        ("absorber", 0.315, "#fff2d8", "Absorber - Perovskite", r"generation $G(x)$; mobile ions $P^+(x,t)$ and $P^-(x,t)$; GBs reduce $\tau$"),
+        ("interface", 0.035, "#fffdf7", r"Interface SRH recombination $(v_n,v_p)$", ""),
+        ("layer", 0.205, "#e6f4e8", "ETL - Electron Transport Layer", r"high $N_D$ doping; blocks holes ($\mu_p \ll \mu_n$)"),
+        ("layer", 0.145, "#b5b5b5", "Contact at x = L (Cathode)", r"$\varphi(L)=V_{bi}-V_{app}$ | ohmic or Robin $S_{\mathrm{right}}$"),
     ]
     yy = y + h
-    for frac, color, title, subtitle in parts:
+    for kind, frac, color, title, subtitle in parts:
         hh = h * frac
         yy -= hh
         ax.add_patch(Rectangle((x, yy), w, hh, facecolor=color, edgecolor="#666666", linewidth=1.5))
-        text(ax, x + 0.025, yy + hh * 0.66, title, size=15.0, weight="bold")
-        text(ax, x + 0.025, yy + hh * 0.33, subtitle, size=11.6, color="#444444")
-    text(ax, x + w / 2, y + h * 0.56, r"$n(x,t)\leftarrow drift \rightarrow p(x,t)$", size=12.5, ha="center")
-    text(ax, x + w / 2, y + h * 0.52, r"$\uparrow\ diffusion\ \downarrow$", size=12.0, style="italic", ha="center")
-    text(ax, x + w / 2, y + h * 0.708, r"Interface SRH: $(v_n,v_p)$", size=10.8, color="#777777", ha="center")
-    text(ax, x + w / 2, y + h * 0.363, r"Interface SRH: $(v_n,v_p)$", size=10.8, color="#777777", ha="center")
+        if kind == "interface":
+            text(ax, x + w / 2, yy + hh * 0.52, title, size=10.4, color="#777777", ha="center")
+        elif kind == "absorber":
+            text(ax, x + 0.025, yy + hh * 0.72, title, size=15.0, weight="bold")
+            text(ax, x + w / 2, yy + hh * 0.51, r"$n(x,t)\leftarrow drift \rightarrow p(x,t)$", size=12.4, ha="center")
+            text(ax, x + w / 2, yy + hh * 0.40, r"$\uparrow\ diffusion\ \downarrow$", size=11.8, style="italic", ha="center")
+            text(ax, x + 0.025, yy + hh * 0.23, subtitle, size=11.4, color="#444444")
+        else:
+            text(ax, x + 0.025, yy + hh * 0.65, title, size=14.7, weight="bold")
+            text(ax, x + 0.025, yy + hh * 0.34, subtitle, size=11.4, color="#444444")
 
-    ax.plot([x, x + w], [0.145, 0.145], color="#555555", lw=2)
-    ax.add_patch(Polygon([[x + w, 0.145], [x + w - 0.018, 0.154], [x + w - 0.018, 0.136]], color="#555555"))
-    text(ax, x, 0.125, "x = 0", size=12, color="#666666")
-    text(ax, x + w, 0.125, "x = L", size=12, color="#666666", ha="right")
-    text(ax, x + w / 2, 0.100, "1D spatial domain; 2D extension extrudes this stack laterally", size=13, color="#444444", ha="center")
+    axis_x = x + w + 0.055
+    ax.annotate(
+        "",
+        xy=(axis_x, y),
+        xytext=(axis_x, y + h),
+        arrowprops={"arrowstyle": "-|>", "color": "#555555", "lw": 2, "mutation_scale": 18},
+    )
+    text(ax, axis_x + 0.018, y + h, "x = 0", size=12, color="#666666", va="center")
+    text(ax, axis_x + 0.018, y, "x = L", size=12, color="#666666", va="center")
+    text(ax, axis_x + 0.040, y + h / 2, "1D coordinate x", size=12, color="#555555", rotation=-90, ha="center")
+    text(
+        ax,
+        x + w / 2,
+        0.095,
+        "x increases through the stack; 2D extension adds a lateral direction",
+        size=13,
+        color="#444444",
+        ha="center",
+    )
 
     save(fig, "device_structure.png")
 
