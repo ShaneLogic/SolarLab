@@ -95,6 +95,7 @@ def run_material_evaluation_report(
     if profile == "production":
         optical_blocking_reasons = _production_optical_blocking_reasons(config)
         blocking_reasons.extend(optical_blocking_reasons)
+        blocking_reasons.extend(_production_band_alignment_blocking_reasons(config))
     else:
         blocking_reasons.append(f"report profile {profile!r} is not publication-grade")
     jv_result = _run_experiment(
@@ -457,6 +458,33 @@ def _production_optical_blocking_reasons(config: Mapping[str, Any]) -> list[str]
     if not optical_provenance:
         reasons.append(
             "Production optical policy blocked: material-specific optical n/k provenance is missing"
+        )
+    return reasons
+
+
+def _production_band_alignment_blocking_reasons(config: Mapping[str, Any]) -> list[str]:
+    source = config.get("source") if isinstance(config.get("source"), Mapping) else {}
+    if source.get("schema") != "solarlab.solarscale_import_config":
+        return []
+    metadata = source.get("material_metadata") if isinstance(source.get("material_metadata"), Mapping) else {}
+    mapped = source.get("mapped_parameters") if isinstance(source.get("mapped_parameters"), Mapping) else {}
+    absorber = _config_absorber_layer(config)
+    reasons: list[str] = []
+    provenance = (
+        source.get("band_alignment_provenance")
+        or metadata.get("band_alignment_provenance")
+    )
+    if not provenance:
+        reasons.append(
+            "Production band-alignment policy blocked: absorber electron affinity provenance is missing"
+        )
+    if "absorber.chi" not in mapped and metadata.get("electron_affinity_ev") is None:
+        reasons.append(
+            "Production band-alignment policy blocked: electron_affinity_ev was not mapped to absorber chi"
+        )
+    if absorber is None or _optional_float(absorber.get("chi")) is None:
+        reasons.append(
+            "Production band-alignment policy blocked: absorber chi is missing"
         )
     return reasons
 

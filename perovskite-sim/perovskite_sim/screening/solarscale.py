@@ -123,6 +123,7 @@ DEVICE_SWEEP_PROPERTY_MAP: dict[str, str] = {
 
 MAPPED_PROPERTY_SPECS: dict[str, tuple[str, str | None, float]] = {
     "dielectric_static_avg": ("absorber.eps_r", "eps_r", 1.0),
+    "electron_affinity_ev": ("absorber.chi", "chi", 1.0),
     "electron_mobility_cm2_v_s": ("absorber.mu_n", "mu_n", 1.0e-4),
     "hole_mobility_cm2_v_s": ("absorber.mu_p", "mu_p", 1.0e-4),
     "ion_diffusion_coefficient_m2_s": ("absorber.D_ion", "D_ion", 1.0),
@@ -135,6 +136,7 @@ REQUIRED_PHYSICAL_INPUTS = (
 )
 
 OPTIONAL_PHYSICAL_INPUTS = (
+    "electron_affinity_ev",
     "electron_mobility_cm2_v_s",
     "hole_mobility_cm2_v_s",
     "ion_diffusion_coefficient_m2_s",
@@ -962,6 +964,8 @@ def _is_device_ready(record: MaterialRecord, *, import_policy: ImportPolicy) -> 
         )
     if flag_value is True:
         return True, f"{flag_name}=true"
+    if import_policy == "production":
+        return False, f"{flag_name} is not true"
 
     readiness = str(record.screening.get("readiness", "") or _property_value(record, "screening_readiness") or "")
     if readiness:
@@ -1096,9 +1100,19 @@ def _build_config(
     absorber = _absorber_layer(layers)
     material_id = record.material_id
     absorber["name"] = f"SolarScale_{material_id}"
+    activate_material_specific_device_evidence = bool(
+        activate_bandgap
+        and "absorber.Eg" in mapped
+        and "absorber.chi" in mapped
+    )
     for target, value in mapped.items():
+        if target == "absorber.chi" and not activate_material_specific_device_evidence:
+            continue
         field_name = target.split(".", 1)[1]
         absorber[field_name] = value
+    optical_material = _text_property(record, "optical_material")
+    if activate_material_specific_device_evidence and optical_material and optical_material != "MAPbI3":
+        absorber["optical_material"] = optical_material
 
     absorber["thickness"] = sweeps["absorber.thickness"][0]
     absorber["tau_n"] = sweeps["absorber.tau_n"][0]
@@ -1154,6 +1168,12 @@ def _build_config(
         },
         "material_metadata": material_metadata,
         "mapped_parameters": dict(mapped),
+        "optical_material": optical_material,
+        "nk_provenance": _text_property(record, "nk_provenance"),
+        "nk_csv_path": _text_property(record, "nk_csv_path"),
+        "nk_source_path": _text_property(record, "nk_source_path"),
+        "band_alignment_provenance": _text_property(record, "band_alignment_provenance"),
+        "band_alignment_source_path": _text_property(record, "band_alignment_source_path"),
         "missing_optional": list(missing_optional),
         "sweep_parameters": _sweep_parameters(record, sweeps),
         "diagnostics": list(diagnostics),
@@ -1409,6 +1429,17 @@ def _material_metadata(record: MaterialRecord) -> dict[str, Any]:
         "band_gap_hse_ev": _numeric_property(record, "band_gap_hse_ev"),
         "electron_effective_mass_m0": _numeric_property(record, "electron_effective_mass_m0"),
         "hole_effective_mass_m0": _numeric_property(record, "hole_effective_mass_m0"),
+        "electron_affinity_ev": _numeric_property(record, "electron_affinity_ev"),
+        "cbm_vs_vacuum_ev": _numeric_property(record, "cbm_vs_vacuum_ev"),
+        "vbm_vs_vacuum_ev": _numeric_property(record, "vbm_vs_vacuum_ev"),
+        "optical_material": _text_property(record, "optical_material"),
+        "nk_csv_path": _text_property(record, "nk_csv_path"),
+        "nk_provenance": _text_property(record, "nk_provenance"),
+        "nk_source_path": _text_property(record, "nk_source_path"),
+        "nk_wavelength_min_nm": _numeric_property(record, "nk_wavelength_min_nm"),
+        "nk_wavelength_max_nm": _numeric_property(record, "nk_wavelength_max_nm"),
+        "band_alignment_provenance": _text_property(record, "band_alignment_provenance"),
+        "band_alignment_source_path": _text_property(record, "band_alignment_source_path"),
         "slme_0p5um": _numeric_property(record, "slme_0p5um"),
         "slme_2um": _numeric_property(record, "slme_2um"),
         "absorption_edge_ev": _numeric_property(record, "absorption_edge_ev"),
@@ -1478,6 +1509,14 @@ def _numeric_property(record: MaterialRecord, name: str) -> float | None:
         return float(prop.value)
     except (TypeError, ValueError):
         return None
+
+
+def _text_property(record: MaterialRecord, name: str) -> str | None:
+    prop = record.properties.get(name)
+    if prop is None or prop.value is None or prop.provenance.kind == "missing":
+        return None
+    text = str(prop.value).strip()
+    return text or None
 
 
 def _coerce_numeric(value: Any) -> float:

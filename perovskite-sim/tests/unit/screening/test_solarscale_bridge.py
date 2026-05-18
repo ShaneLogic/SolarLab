@@ -30,6 +30,7 @@ def _record(
     final_score=None,
     ml_score=None,
     with_md: bool = True,
+    production_ready: bool = True,
     mobility_kind: str = "computed",
 ) -> dict:
     properties = {
@@ -46,6 +47,22 @@ def _record(
         "final_fom_score": _prop(final_score, "derived", unit="score"),
         "slme_0p5um": _prop(0.18, "derived"),
     }
+    if production_ready:
+        properties.update(
+            {
+                "optical_material": _prop(f"SolarScale_{material_id.replace('-', '_')}_nk"),
+                "nk_csv_path": _prop(f"fixtures/{material_id}/nk.csv"),
+                "nk_provenance": _prop("vasp_loptics"),
+                "nk_source_path": _prop(f"fixtures/{material_id}/vasprun.xml"),
+                "nk_wavelength_min_nm": _prop(350.0, unit="nm"),
+                "nk_wavelength_max_nm": _prop(950.0, unit="nm"),
+                "electron_affinity_ev": _prop(3.8, unit="eV"),
+                "cbm_vs_vacuum_ev": _prop(-3.8, unit="eV"),
+                "vbm_vs_vacuum_ev": _prop(-5.42, unit="eV"),
+                "band_alignment_provenance": _prop("slab_vacuum"),
+                "band_alignment_source_path": _prop(f"fixtures/{material_id}/slab"),
+            }
+        )
     if with_md:
         properties.update(
             {
@@ -60,11 +77,13 @@ def _record(
             "readiness": readiness,
             "promising_candidate": readiness == "promising",
             "provisional_solarlab_ready": readiness in {"phonon", "promising"},
-            "production_solarlab_ready": readiness == "promising",
+            "production_solarlab_ready": readiness == "promising" and production_ready,
             "gates": {
                 "electronic": {"passed": True, "band_gap_window_ev": [1.0, 2.0]},
                 "phonon": True if readiness in {"phonon", "promising"} else None,
                 "md_ion": {"status": "pass" if with_md else "missing"},
+                "optical": {"status": "pass" if production_ready else "missing"},
+                "band_alignment": {"status": "pass" if production_ready else "missing"},
                 "sustainability": "pass",
             },
             "thresholds": {
@@ -85,9 +104,9 @@ def _write_records(tmp_path: Path) -> Path:
                 "schema": "solarscale.material_records",
                 "schema_version": "0.2",
                 "records": [
-                    _record("mp-ml-only", "promising", final_score=None, ml_score=0.95),
+                    _record("mp-ml-only", "promising", final_score=None, ml_score=0.95, production_ready=False),
                     _record("mp-best", "promising", final_score=72.0, ml_score=0.20),
-                    _record("mp-phonon", "phonon", final_score=12.0, ml_score=0.40, with_md=False),
+                    _record("mp-phonon", "phonon", final_score=12.0, ml_score=0.40, with_md=False, production_ready=False),
                     {
                         "material_id": "mp-partial",
                         "screening": {"readiness": "incomplete"},
@@ -123,9 +142,9 @@ def test_plan_sorts_by_final_fom_then_ml_score_and_keeps_scores_as_metadata(tmp_
         include_configs=False,
     )
 
-    assert [item["material_id"] for item in plan["selected"]] == ["mp-best", "mp-ml-only"]
+    assert [item["material_id"] for item in plan["selected"]] == ["mp-best"]
     assert plan["selected"][0]["ranking_score_source"] == "final_fom_score"
-    assert plan["selected"][1]["ranking_score_source"] == "ml_pv_score"
+    assert next(item for item in plan["skipped"] if item["material_id"] == "mp-ml-only")["ranking_score_source"] == "ml_pv_score"
     assert plan["sweep_policy"] == "quick"
     assert plan["sweep_dimensions"]["total_points"] == 1
     assert plan["selected"][0]["screening_evidence"]["gates"]["electronic"]["passed"] is True
@@ -176,6 +195,8 @@ def test_production_import_requires_promising_and_maps_dft_md_absorber_inputs(tm
     assert stack.interfaces == ((1.0, 1.0), (1.0, 1.0))
     assert stack.compute_V_bi() == pytest.approx(stack.V_bi)
     assert manifest["generated"][0]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
+    assert manifest["generated"][0]["material_metadata"]["electron_affinity_ev"] == pytest.approx(3.8)
+    assert manifest["generated"][0]["mapped_parameters"]["absorber.chi"] == pytest.approx(3.8)
     assert (out_dir / "manifest.json").exists()
 
 
@@ -255,6 +276,30 @@ def test_activate_bandgap_maps_eg_for_band_aligned_template(tmp_path: Path):
     assert config["source"]["mapped_parameters"]["absorber.Eg"] == pytest.approx(1.62)
 
 
+def test_solarscale_import_maps_candidate_optics_and_band_alignment_metadata(tmp_path: Path):
+    records_path = _write_records(tmp_path)
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/solarscale_nip_band_aligned.yaml",
+        out_dir=tmp_path / "production-evidence",
+        limit=1,
+        import_policy="production",
+        activate_bandgap=True,
+    )
+
+    config_path = Path(manifest["generated"][0]["config_path"])
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    absorber = next(layer for layer in config["layers"] if layer["role"] == "absorber")
+
+    assert absorber["optical_material"] == "SolarScale_mp_best_nk"
+    assert absorber["chi"] == pytest.approx(3.8)
+    assert config["source"]["mapped_parameters"]["absorber.chi"] == pytest.approx(3.8)
+    assert config["source"]["nk_provenance"] == "vasp_loptics"
+    assert config["source"]["band_alignment_provenance"] == "slab_vacuum"
+    assert config["source"]["material_metadata"]["optical_material"] == "SolarScale_mp_best_nk"
+    assert config["source"]["material_metadata"]["electron_affinity_ev"] == pytest.approx(3.8)
+
+
 def test_solarscale_band_aligned_template_keeps_template_eg_by_default(tmp_path: Path):
     records_path = _write_records(tmp_path)
     manifest = generate_solarlab_inputs(
@@ -293,7 +338,7 @@ def test_activate_bandgap_maps_eg_for_solarscale_band_aligned_template(tmp_path:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
     assert absorber.params.Eg == pytest.approx(1.62)
-    assert absorber.params.chi == pytest.approx(3.7)
+    assert absorber.params.chi == pytest.approx(3.8)
     assert manifest["activate_bandgap"] is True
     assert manifest["generated"][0]["mapped_parameters"]["absorber.Eg"] == pytest.approx(1.62)
     assert manifest["generated"][0]["material_metadata"]["band_gap_hse_ev"] == pytest.approx(1.62)
@@ -409,6 +454,8 @@ def test_plan_preserves_gate_evidence_and_adds_auditable_summary(tmp_path: Path)
     assert plan["summary"]["gate_summary"]["records_with_gate_data"] == 3
     assert plan["summary"]["gate_summary"]["by_gate"]["electronic"]["pass"] == 3
     assert plan["summary"]["gate_summary"]["by_gate"]["md_ion"]["missing"] == 1
+    assert plan["summary"]["gate_summary"]["by_gate"]["optical"]["missing"] == 2
+    assert plan["summary"]["gate_summary"]["by_gate"]["band_alignment"]["missing"] == 2
     assert plan["summary"]["skipped_reason_counts"]["screening.readiness='incomplete' not allowed by exploratory policy"] == 1
     assert [item["material_id"] for item in plan["summary"]["top_selected_candidates"][:2]] == [
         "mp-best",
@@ -566,7 +613,7 @@ def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
     plan_path = out_dir / "screening_plan.json"
     assert "Selected 2 candidates" in result.stdout
     assert "Readiness distribution:" in result.stdout
-    assert "Gate totals: pass=11, fail=0, missing=1, unknown=0" in result.stdout
+    assert "Gate totals: pass=13, fail=0, missing=5, unknown=0" in result.stdout
     assert "#1 mp-best readiness=promising score=72 source=final_fom_score" in result.stdout
     assert "1x limit reached" in result.stdout
     assert "Sweep policy: exploratory (243 point(s) per candidate recorded)" in result.stdout
