@@ -91,7 +91,11 @@ def run_material_evaluation_report(
     figure_quality: dict[str, dict[str, Any]] = {}
     experiment_status: dict[str, Any] = {}
     blocking_reasons: list[str] = []
-    if profile != "production":
+    optical_blocking_reasons: list[str] = []
+    if profile == "production":
+        optical_blocking_reasons = _production_optical_blocking_reasons(config)
+        blocking_reasons.extend(optical_blocking_reasons)
+    else:
         blocking_reasons.append(f"report profile {profile!r} is not publication-grade")
     jv_result = _run_experiment(
         "jv",
@@ -181,7 +185,13 @@ def run_material_evaluation_report(
         path = figures / "eqe.png"
         _plot_eqe(path, eqe_result)
         figure_paths["eqe"] = str(path)
-        _record_figure_quality(figure_quality, "eqe", path, profile)
+        _record_figure_quality(
+            figure_quality,
+            "eqe",
+            path,
+            profile,
+            status="publication_blocked" if optical_blocking_reasons else None,
+        )
         device_metrics["quick_experiments"]["eqe"] = _jsonable_dataclass(eqe_result)
     else:
         if profile == "production":
@@ -424,6 +434,41 @@ def _validate_production_config(config: Mapping[str, Any]) -> None:
         )
     if not absorber_has_optics:
         raise ReportQualityError("Production report requires absorber optical_material for EQE/TMM provenance")
+
+
+def _production_optical_blocking_reasons(config: Mapping[str, Any]) -> list[str]:
+    source = config.get("source") if isinstance(config.get("source"), Mapping) else {}
+    if source.get("schema") != "solarlab.solarscale_import_config":
+        return []
+    absorber = _config_absorber_layer(config)
+    optical_material = str(absorber.get("optical_material") or "").strip() if absorber else ""
+    metadata = source.get("material_metadata") if isinstance(source.get("material_metadata"), Mapping) else {}
+    optical_provenance = (
+        source.get("optical_material_provenance")
+        or source.get("nk_provenance")
+        or metadata.get("optical_material_provenance")
+        or metadata.get("nk_provenance")
+    )
+    reasons: list[str] = []
+    if optical_material == "MAPbI3":
+        reasons.append(
+            "Production optical policy blocked: absorber optical_material is the MAPbI3 template placeholder, not material-specific n/k evidence"
+        )
+    if not optical_provenance:
+        reasons.append(
+            "Production optical policy blocked: material-specific optical n/k provenance is missing"
+        )
+    return reasons
+
+
+def _config_absorber_layer(config: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    layers = config.get("layers")
+    if not isinstance(layers, list):
+        return None
+    for layer in layers:
+        if isinstance(layer, Mapping) and layer.get("role") == "absorber":
+            return layer
+    return None
 
 
 def _optional_float(value: Any) -> float | None:
