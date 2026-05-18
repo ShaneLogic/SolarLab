@@ -364,7 +364,8 @@ Two optional models share the same interface.
 **Beer–Lambert** (default / fallback):
 
 $$
-G_{\text{BL}}(x) = \int_\lambda \alpha(\lambda,x)\,\Phi_0(\lambda)\,\exp\left(-\int_0^x \alpha(\lambda,x')\,dx'\right)\,d\lambda.
+G_{\text{BL}}(x) = \int_\lambda \alpha(\lambda,x)\,\Phi_0(\lambda)\,
+\exp\left(-\int_0^x \alpha(\lambda,\xi)\,d\xi\right)\,d\lambda.
 $$
 
 **Transfer-matrix (coherent thin-film) optics.** When any layer carries an `optical_material` key, `physics/optics.py` loads complex $n(\lambda)$, $k(\lambda)$ CSVs from `perovskite_sim/data/nk/`, builds the layer transfer matrices against AM1.5G, and computes the position-resolved generation rate as
