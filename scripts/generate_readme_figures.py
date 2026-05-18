@@ -137,18 +137,16 @@ def generate_transport_equations() -> None:
     text(
         ax,
         x,
-        y - 0.036,
-        r"$G_{BL}(x)=\int_{\lambda_{\min}}^{\lambda_{\max}}"
-        r"\alpha(\lambda,x)\Phi_0(\lambda)T(\lambda,x)\,d\lambda$",
-        size=10.8,
+        y - 0.034,
+        r"$G_{\mathrm{BL}}(x)=\int_{\lambda}\alpha(\lambda,x)\,\Phi_0(\lambda)$",
+        size=11.6,
     )
     text(
         ax,
-        x,
-        y - 0.070,
-        r"$T(\lambda,x)=\exp[-\int_0^x\alpha(\lambda,x')\,dx']$",
-        size=10.8,
-        color="#555555",
+        x + 0.010,
+        y - 0.068,
+        r"$\times\,\exp\!\left[-\int_0^x\alpha(\lambda,x')\,dx'\right]\,d\lambda$",
+        size=11.6,
     )
     ax.plot([0.54, 0.94], [0.304, 0.304], color="#dddddd", lw=1)
     text(ax, x, y - 0.110, "Transfer Matrix (TMM)", size=14.2, weight="bold")
