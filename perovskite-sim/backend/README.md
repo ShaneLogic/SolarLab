@@ -26,7 +26,7 @@ uvicorn backend.main:app \
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/configs` | List shipped + user presets (auto-scans `configs/`) |
+| `GET` | `/api/configs` | List shipped + user presets (auto-scans `configs/`, `configs/twod/`, and `configs/user/`) |
 | `GET` | `/api/configs/{name}` | Load one device preset (numerics coerced via `_coerce_numbers`) |
 | `POST` | `/api/configs/user` | Save a user-edited stack to `configs/user/` |
 | `GET` | `/api/layer-templates` | Layer template library for the Layer Builder UI |
@@ -44,6 +44,26 @@ Progress frames are JSON `{stage, current, total, eta_s, message}`. The
 handler emits `: keepalive` comments between progress frames and drains
 the job queue via `run_in_executor` with a 0.5 s timeout so it never
 blocks the event loop.
+
+Supported `kind` values include:
+
+| Kind | Purpose |
+|---|---|
+| `jv` | 1D illuminated J-V sweep |
+| `current_decomp` | 1D J-V with current-component output |
+| `spatial` | 1D J-V with spatial-profile snapshots |
+| `dark_jv` | 1D dark diode sweep with ideality-factor / J0 fit |
+| `suns_voc` | Suns-Voc intensity sweep |
+| `voc_t` | V_oc versus temperature sweep |
+| `eqe` | Wavelength-resolved EQE / IPCE |
+| `el` | Electroluminescence / EQE_EL output |
+| `impedance` | Small-signal impedance sweep |
+| `tpv` | Transient photovoltage |
+| `degradation` | Long-time degradation with frozen-ion snapshot J-V |
+| `tandem` | 2T monolithic tandem J-V driver |
+| `mott_schottky` | Dark C-V / Mott-Schottky fit |
+| `jv_2d` | 2D J-V sweep over the tensor-product solver |
+| `voc_grain_sweep` | 2D V_oc versus grain-size sweep |
 
 ### Experiments — legacy sync (back-compat)
 
@@ -72,11 +92,13 @@ frontend no longer uses them; they exist for notebook / CLI consumers.
 
 ## Configuration auto-discovery
 
-`GET /api/configs` scans `perovskite-sim/configs/` on every request, so
-dropping a new YAML file in that folder makes it immediately visible to
-the frontend dropdown with no code change. User presets saved via
-`POST /api/configs/user` land in `configs/user/` and are returned in a
-separate `namespace: "user"` group.
+`GET /api/configs` scans `perovskite-sim/configs/` and
+`perovskite-sim/configs/twod/` on every request, so dropping a new YAML file
+in either folder makes it immediately visible to the frontend dropdown with no
+code change. User presets saved via `POST /api/configs/user` land in
+`configs/user/` and are returned in a separate `namespace: "user"` group.
+Basename collisions are resolved in favor of top-level shipped/user presets;
+2D presets are returned with namespace `"shipped"` when not shadowed.
 
 ## Experimental — Celery
 

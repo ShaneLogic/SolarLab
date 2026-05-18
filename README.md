@@ -4,7 +4,7 @@
 
 **Thin-Film Solar Cell Simulator**
 
-*1D Drift-Diffusion · Poisson · Mobile Ions · Transfer-Matrix Optics*
+*1D/2D Drift-Diffusion · Poisson · Mobile Ions · Transfer-Matrix Optics*
 
 Perovskite · CIGS · c-Si
 
@@ -41,9 +41,9 @@ Perovskite · CIGS · c-Si
 
 ## Overview
 
-**SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
+**SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver, with an experimental two-dimensional extension for lateral microstructure studies, backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
 
-It reproduces eight kinds of experiments from a single device definition, grouped into four families:
+It reproduces the main thin-film characterisation experiments from a single device definition, grouped into four families:
 
 | Family | Experiment | What it does |
 |:-------|:-----------|:-------------|
@@ -94,7 +94,7 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 | **FAST** | All build-once upgrades on (TE, TMM, dual ions, trap profile, $T$-scaling, photon recycling); per-RHS hooks off | Default for J-V / impedance / degradation sweeps |
 | **FULL** | Everything on, including per-RHS radiative reabsorption, $\mu(E)$, and Robin contacts | Highest-fidelity single runs; tandem sub-cells |
 
-### Experiments (single device → 8 observables)
+### Experiments
 
 | | Capability | Details |
 |:-:|:-----------|:--------|
@@ -107,6 +107,8 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 | ⚡ | **Transient photovoltage** | Small-signal light pulse at open circuit with mono-exponential fit for recombination lifetime $\tau$ |
 | 🧊 | **Frozen-ion degradation** | Long-time transient with snapshot J-V at each probe ($D_\text{ion} \to 0$) — decouples ionic drift from electronic response |
 | 🔗 | **2T tandem driver** | Combined TMM over top + junction + bottom, independent sub-cell sweeps, series-matched on a common current grid |
+| 🟦 | **2D J-V sweep** | Tensor-product 2D extension for lateral-uniform parity checks and microstructure / grain-boundary studies |
+| 🟪 | **V<sub>oc</sub>(L<sub>g</sub>) grain sweep** | Repeats 2D J-V over grain sizes to quantify microstructure-driven open-circuit-voltage loss |
 
 ### Dimensionality
 
@@ -136,12 +138,13 @@ SolarLab/
 │   │   ├── discretization/         Grid + Scharfetter–Gummel operators
 │   │   ├── physics/                Poisson, continuity, recombination, ions, optics
 │   │   ├── models/                 Frozen dataclasses: DeviceStack, MaterialParams
-│   │   ├── solver/                 Method-of-Lines assembler, Newton equilibrium
-│   │   ├── experiments/            J–V sweep, impedance, degradation
+│   │   ├── solver/                 1D Method-of-Lines assembler, Newton equilibrium
+│   │   ├── twod/                   2D grid, Poisson, fluxes, microstructure, J-V drivers
+│   │   ├── experiments/            1D J-V, EQE, impedance, degradation, TPV, tandem
 │   │   └── data/nk/                Complex refractive-index n,k data for TMM
 │   ├── backend/                    FastAPI HTTP wrapper (SSE job streaming)
 │   ├── frontend/                   Vite + TypeScript + Plotly single-page UI
-│   ├── configs/                    Shipped YAML device presets
+│   ├── configs/                    Shipped YAML presets, including configs/twod/
 │   ├── tests/                      pytest suite (unit / integration / regression)
 │   └── notebooks/                  Exploratory benchmarks
 ├── perovskite-sim-phase2b/         Git worktree for feat/tandem-cell
@@ -259,7 +262,7 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 ### Physical Model Overview
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/device_structure.png?v=2" alt="Device Structure" width="700">
+  <img src="perovskite-sim/docs/images/device_structure.png?v=4" alt="Device Structure" width="700">
 </p>
 
 <p align="center">
@@ -267,16 +270,16 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 </p>
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/transport_equations.png?v=2" alt="Transport Processes and Boundary Conditions" width="700">
+  <img src="perovskite-sim/docs/images/transport_equations.png?v=4" alt="Transport Processes and Boundary Conditions" width="700">
 </p>
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/solver_pipeline.png?v=2" alt="Solver Pipeline" width="700">
+  <img src="perovskite-sim/docs/images/solver_pipeline.png?v=4" alt="Solver Pipeline" width="700">
 </p>
 
 ### Governing Equations
 
-SolarLab solves the coupled **Poisson + drift-diffusion + mobile-ion** system in one spatial dimension. State variables at every grid node are the electron density $n$, hole density $p$, and the mobile-ion density $P$.
+SolarLab solves the coupled **Poisson + drift-diffusion + mobile-ion** system on the default one-dimensional device axis. The 2D extension extrudes the same layer stack onto a tensor-product grid for lateral microstructure studies. State variables at every grid node are the electron density $n$, hole density $p$, and the mobile-ion density $P$.
 
 <br>
 
@@ -388,13 +391,38 @@ where $A^*$ is the effective Richardson constant (defaults to the free-electron 
 
 ### 7. Boundary Conditions at the Contacts
 
-At each metal contact, ohmic boundary conditions fix the majority-carrier density to its bulk equilibrium value, and the minority-carrier boundary flux is the extraction current controlled by an effective surface-recombination velocity $S_{n,p}$:
+By default, each metal contact is treated as ohmic: the boundary carrier densities are fixed to the thermal-equilibrium values computed from the outermost layers and the boundary-node time derivatives are pinned. In FULL mode, any configured selective-contact coefficient replaces that side/carrier pin with a Robin-type flux:
 
 $$
-J_{n}\big|_{0} = -qS_n(n - n_0), \qquad J_{p}\big|_{L} = qS_p(p - p_0).
+J_{c,s} = \sigma_{c,s}\,qS_{c,s}(u_c - u_{c,\mathrm{eq}}),
+\qquad c \in \{n,p\},\ s \in \{\mathrm{left},\mathrm{right}\},
 $$
+
+where $u_n=n$, $u_p=p$, and $\sigma_{c,s}$ is the outward-current sign for the carrier and side. The YAML schema supports either flat keys (`S_n_left`, `S_p_left`, `S_n_right`, `S_p_right`) or the readable nested form:
+
+```yaml
+device:
+  mode: full
+  contacts:
+    left:
+      S_p: 1.0e3
+      S_n: 1.0e-3
+    right:
+      S_n: 1.0e3
+      S_p: 1.0e-3
+```
+
+Missing or `null` means the default ohmic Dirichlet pin remains active for that carrier/side. A finite value activates the Robin flux; `S = 0` is blocking, while large `S` approaches the ohmic limit. The same coefficients are mapped onto the top and bottom boundaries of the 2D solver.
 
 Ions are blocked at both contacts ($J_P = 0$), enforcing ionic-species conservation.
+
+<br>
+
+### 8. Two-Dimensional Extension
+
+The 2D solver is an experimental extension for lateral microstructure effects, not a replacement for the default 1D workflow. It builds a tensor-product grid with lateral coordinate $x$ and vertical stack coordinate $y$, solves sparse 2D Poisson with Dirichlet contacts in $y$ and periodic lateral boundaries, and advances 2D Scharfetter-Gummel fluxes for carriers. Ions are frozen as a static Poisson background during 2D J-V runs.
+
+2D presets live under `perovskite-sim/configs/twod/` and are auto-discovered by the backend. Current entry points are `kind='jv_2d'` for a voltage sweep and `kind='voc_grain_sweep'` for a grain-size sweep. Microstructure is supplied by a YAML `microstructure:` block containing vertical grain boundaries; the solver paints reduced SRH lifetimes into the absorber through `MaterialArrays2D`.
 
 <br>
 
@@ -405,7 +433,8 @@ Ions are blocked at both contacts ($J_P = 0$), enforcing ionic-species conservat
 | Ingredient | Choice |
 |:-----------|:-------|
 | **Method** | Method of Lines: spatial FE discretization -> stiff ODE in time |
-| **Grid** | Tanh-clustered multilayer grid (refined near interfaces and contacts) |
+| **1D grid** | Tanh-clustered multilayer grid (refined near interfaces and contacts) |
+| **2D grid** | Tensor-product lateral/vertical mesh for Stage A/B microstructure studies |
 | **Spatial** | Scharfetter-Gummel finite elements for drift-diffusion; harmonic-mean faces for Poisson |
 | **Time** | `scipy.integrate.solve_ivp` with the **Radau** IIA 5th-order implicit method |
 | **Poisson** | LAPACK `dgttrf`/`dgttrs` tridiagonal LU, pre-factored once per run |
@@ -425,7 +454,7 @@ After launching the backend and frontend (see [Running the Application](#running
 ### Layout
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/ui_layout.png?v=3" alt="Web UI Layout" width="700">
+  <img src="perovskite-sim/docs/images/ui_layout.png?v=4" alt="Web UI Layout" width="700">
 </p>
 
 ### Left Rail — Devices / Results
@@ -453,12 +482,13 @@ After launching the backend and frontend (see [Running the Application](#running
 - **Transport** — $\mu_n$, $\mu_p$, $N_c$, $N_v$, $N_A$, $N_D$, $\chi$, $E_g$, $\varepsilon_r$
 - **Recombination** — $\tau_n$, $\tau_p$, $k_{\text{rad}}$, $C_n$, $C_p$, $E_t$
 - **Ions & Optics** — $D_{\text{ion}}$, $N_{\max}$, $P_0$, `optical_material`, `n_optical`, `incoherent` flag
+- **Contacts / Advanced physics** — optional Robin contact coefficients, field mobility, and FULL-tier hooks
 
 </details>
 
 ### Right Pane — Experiments
 
-Experiment tabs sharing a common pattern: parameters form -> **Run** button -> live progress bar -> Plotly plot.
+Experiment panes share a common pattern: parameters form -> **Run** button -> live progress bar -> Plotly plot. The workstation includes the 1D characterisation experiments plus 2D J-V and grain-size studies.
 
 #### J-V Sweep
 
@@ -506,6 +536,17 @@ At each probe time, the solver takes a **frozen-ion snapshot**: a copy of the st
 
 The device is equilibrated at open circuit under steady illumination, then a small light pulse is applied. The voltage transient $V(t)$ decays back to $V_\text{oc}$ as excess carriers recombine. A mono-exponential fit extracts the effective recombination lifetime $\tau$. Output: $V(t)$ decay curve, $J(t)$ transient, fitted $\tau$.
 
+#### 2D J-V and Grain Sweep
+
+| Parameter | Description |
+|:----------|:------------|
+| `Nx`, `Ny_per_layer` | Lateral and vertical mesh density |
+| Lateral length | Width of the 2D domain |
+| Microstructure | Optional `grain_boundaries` block painted into absorber lifetime fields |
+| Grain sizes | Sequence used by `voc_grain_sweep` to compute $V_\text{oc}(L_g)$ |
+
+The 2D J-V pane uses the same metric semantics as the 1D J-V sweep. If the voltage window does not bracket the zero-current crossing, the UI shows `V_oc not bracketed` and keeps raw data unchanged while offering an operational-range display clip.
+
 ### Docs Tabs — Tutorial & Algorithm
 
 The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation -> Interpreting Results -> Advanced Topics). The **Algorithm** pane is a formal write-up of the PDEs, discretization, solver tiers, and the transfer-matrix optical model. Both are always available — no backend required.
@@ -516,7 +557,7 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 
 ## Shipped Device Presets
 
-All presets live in `perovskite-sim/configs/`. Drop a new `.yaml` file there and it is auto-discovered by `GET /api/configs`.
+Presets live in `perovskite-sim/configs/`, with 2D examples under `perovskite-sim/configs/twod/`. Drop a new `.yaml` file in either location and it is auto-discovered by `GET /api/configs`.
 
 | Preset | Material System | Ions | Optics | Notes |
 |:-------|:----------------|:----:|:------:|:------|
@@ -528,6 +569,9 @@ All presets live in `perovskite-sim/configs/`. Drop a new `.yaml` file there and
 | `driftfusion_benchmark` | Driftfusion params | Yes | Beer-Lambert | Driftfusion cross-check |
 | `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert | $D_{\text{ion}}=0$ everywhere |
 | `cSi_homojunction` | n+ / p c-Si | No | Beer-Lambert | Homojunction wafer cell |
+| `twod/nip_MAPbI3_uniform` | MAPbI3 2D lateral-uniform | Frozen in 2D | Beer-Lambert | 2D parity / baseline preset |
+| `twod/nip_MAPbI3_singleGB` | MAPbI3 2D single grain boundary | Frozen in 2D | Beer-Lambert | Microstructure V<sub>oc</sub>-loss preset |
+| `twod/bcx_combined_demo` | MAPbI3 2D combined hooks | Frozen in 2D | Beer-Lambert | Demo for Robin contacts + field mobility + microstructure |
 
 <br>
 

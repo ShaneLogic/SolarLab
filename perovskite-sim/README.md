@@ -64,13 +64,15 @@ pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 
 ## Physical Model
 
-The simulator models a 1D thin-film solar cell as a stack of semiconductor
-layers between two metallic contacts. Light enters from one side, generates
-electron-hole pairs, and the built-in electric field separates them to
-produce current.
+The simulator models a thin-film solar cell as a stack of semiconductor
+layers between two metallic contacts. The default solver is 1D along the
+device stack; the 2D extension extrudes the same stack laterally for
+microstructure and grain-boundary studies. Light enters from one side,
+generates electron-hole pairs, and the built-in electric field separates them
+to produce current.
 
 <p align="center">
-  <img src="docs/images/device_structure.png?v=2" alt="Device Structure" width="700">
+  <img src="docs/images/device_structure.png?v=4" alt="Device Structure" width="700">
 </p>
 
 <p align="center">
@@ -78,11 +80,11 @@ produce current.
 </p>
 
 <p align="center">
-  <img src="docs/images/transport_equations.png?v=2" alt="Transport Processes" width="700">
+  <img src="docs/images/transport_equations.png?v=4" alt="Transport Processes" width="700">
 </p>
 
 <p align="center">
-  <img src="docs/images/solver_pipeline.png?v=2" alt="Solver Pipeline" width="700">
+  <img src="docs/images/solver_pipeline.png?v=4" alt="Solver Pipeline" width="700">
 </p>
 
 ### Supported Device Architectures
@@ -96,6 +98,9 @@ produce current.
 | `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert |
 | `cSi_homojunction` | n+ / p Si wafer | No | Beer-Lambert |
 | `tandem_lin2019` | Wide-gap / narrow-gap tandem | Yes | TMM |
+| `twod/nip_MAPbI3_uniform` | 2D lateral-uniform MAPbI3 | Frozen in 2D | Beer-Lambert |
+| `twod/nip_MAPbI3_singleGB` | 2D MAPbI3 with one vertical grain boundary | Frozen in 2D | Beer-Lambert |
+| `twod/bcx_combined_demo` | 2D combined Robin / field-mobility / microstructure demo | Frozen in 2D | Beer-Lambert |
 
 <br>
 
@@ -143,11 +148,11 @@ avoids the field concentration artefact of nodal averaging.
 
 <br>
 
-#### Electron and Hole Densities — Dirichlet (Ohmic Contacts)
+#### Electron and Hole Densities — Ohmic or Robin Contacts
 
-Both contacts are treated as ideal ohmic contacts. Carrier densities at
-the boundaries are clamped to the **thermal-equilibrium values** derived
-from the doping of the outermost layers:
+By default, both contacts are treated as ideal ohmic contacts. Carrier
+densities at the boundaries are clamped to the **thermal-equilibrium values**
+derived from the doping of the outermost layers:
 
 $$n \cdot p = n_i^2 \quad\text{(mass-action law)}$$
 
@@ -163,11 +168,39 @@ $$\text{n-type (net} \ge 0\text{):}\quad n = \tfrac{1}{2}(\text{net} + \text{dis
 $$\text{p-type (net} < 0\text{):}\quad p = \tfrac{1}{2}(-\text{net} + \text{disc}),\quad n = n_i^2 / p$$
 
 These values are computed once per experiment in `build_material_arrays()`
-and stored as `n_L, p_L, n_R, p_R`. The time derivatives at the contact
-nodes are set to zero (`dn[0] = dn[-1] = dp[0] = dp[-1] = 0`) so the
-Dirichlet values remain constant throughout the transient.
+and stored as `n_L, p_L, n_R, p_R`. With default ohmic contacts, the time
+derivatives at the contact nodes are set to zero
+(`dn[0] = dn[-1] = dp[0] = dp[-1] = 0`) so the Dirichlet values remain
+constant throughout the transient.
 
-*Source:* `perovskite_sim/solver/mol.py`
+In FULL mode, optional selective-contact coefficients replace the ohmic pin
+for the configured carrier/side with a Robin-type boundary flux:
+
+$$J_{c,s} = \sigma_{c,s}\,qS_{c,s}(u_c - u_{c,\mathrm{eq}})$$
+
+where $c \in \{n,p\}$, $s \in \{\text{left},\text{right}\}$, $u_n=n$, and
+$u_p=p$. The YAML schema supports both flat keys (`S_n_left`, `S_p_left`,
+`S_n_right`, `S_p_right`) and a nested readable block:
+
+```yaml
+device:
+  mode: full
+  contacts:
+    left:
+      S_p: 1.0e3
+      S_n: 1.0e-3
+    right:
+      S_n: 1.0e3
+      S_p: 1.0e-3
+```
+
+Missing or `null` means the default ohmic pin remains active for that
+carrier/side. A finite value activates the Robin flux; `S = 0` is blocking,
+and large `S` approaches the ohmic limit. The 2D solver maps left/right onto
+top/bottom contacts.
+
+*Source:* `perovskite_sim/solver/mol.py`, `perovskite_sim/physics/contacts.py`,
+`perovskite_sim/twod/solver_2d.py`
 
 <br>
 
@@ -187,6 +220,26 @@ A **steric saturation limit** prevents unphysical ion pile-up:
 $$\text{steric} = \frac{1}{\max(1 - P_{\text{avg}}/P_{\text{lim}},\; 10^{-6})}$$
 
 *Source:* `perovskite_sim/physics/ion_migration.py`
+
+<br>
+
+### 2D Extension Boundary Conditions
+
+The Stage A/B 2D solver uses the same physical stack but extrudes it onto a
+tensor-product grid. The vertical stack direction carries the device-contact
+boundary conditions: top/bottom carrier rows are ohmic by default, or Robin
+when FULL-mode selective-contact coefficients are configured. The lateral
+direction is periodic, so laterally uniform presets reproduce the 1D J-V
+semantics while microstructure presets can add vertical grain boundaries.
+Positive and negative ions are frozen as static Poisson background fields
+during 2D J-V runs.
+
+2D presets live in `configs/twod/`; the backend exposes them through
+`GET /api/configs` and runs them with `kind="jv_2d"` or
+`kind="voc_grain_sweep"`.
+
+*Source:* `perovskite_sim/twod/solver_2d.py`,
+`perovskite_sim/twod/experiments/jv_sweep_2d.py`
 
 <br>
 
@@ -327,8 +380,8 @@ V/J data are unchanged between the two modes.
 | Variable | Contact BCs | Type | Source |
 |:---------|:------------|:-----|:-------|
 | $\varphi$ | $\varphi(0) = 0$, $\varphi(L) = V_{\text{bi}} - V_{\text{app}}$ | Dirichlet | `physics/poisson.py` |
-| $n$ | $n(0) = n_L$, $n(L) = n_R$ | Dirichlet | `solver/mol.py` |
-| $p$ | $p(0) = p_L$, $p(L) = p_R$ | Dirichlet | `solver/mol.py` |
+| $n$ | default $n(0) = n_L$, $n(L) = n_R$; optional FULL-mode Robin flux for configured sides | Dirichlet or Robin | `solver/mol.py`, `physics/contacts.py` |
+| $p$ | default $p(0) = p_L$, $p(L) = p_R$; optional FULL-mode Robin flux for configured sides | Dirichlet or Robin | `solver/mol.py`, `physics/contacts.py` |
 | $P$ (ions) | $F(0) = F(L) = 0$ | Neumann | `physics/ion_migration.py` |
 | $P^-$ (neg ions) | $F(0) = F(L) = 0$ | Neumann | `physics/ion_migration.py` |
 
