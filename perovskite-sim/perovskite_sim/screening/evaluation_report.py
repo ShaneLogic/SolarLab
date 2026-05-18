@@ -7,7 +7,7 @@ import json
 import math
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import matplotlib
 
@@ -36,6 +36,17 @@ DFT_PARAMETER_TARGETS = {
     "absorption_edge_ev": None,
 }
 
+ReportProfile = Literal["smoke", "diagnostic", "production"]
+FIGURE_QUALITY_BY_PROFILE: dict[ReportProfile, str] = {
+    "smoke": "workflow_smoke",
+    "diagnostic": "diagnostic_only",
+    "production": "production_candidate",
+}
+
+
+class ReportQualityError(RuntimeError):
+    """Raised when a production report would look physical but is invalid."""
+
 
 def run_material_evaluation_report(
     *,
@@ -44,6 +55,7 @@ def run_material_evaluation_report(
     device_results_path: str | Path,
     out_dir: str | Path,
     quick: bool = False,
+    profile: ReportProfile = "diagnostic",
     material_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a report pack for one SolarScale-imported SolarLab config."""
@@ -57,6 +69,9 @@ def run_material_evaluation_report(
     figures.mkdir(parents=True, exist_ok=True)
 
     config = _load_yaml(config_file)
+    profile = _resolve_profile(profile=profile, quick=quick)
+    if profile == "production":
+        _validate_production_config(config)
     material_id = material_id or _config_material_id(config) or _first_record_id(record_file)
     record = _select_material_record(_load_json(record_file), material_id)
     device_results = _load_json(device_results_file)
@@ -70,24 +85,53 @@ def run_material_evaluation_report(
 
     device_metrics = _device_metrics_summary(device_results, device_record, material_id)
     stack = load_device_from_yaml(str(config_file))
-    settings = _quick_settings() if quick else _default_settings()
+    settings = _profile_settings(profile)
 
     figure_paths: dict[str, str] = {}
+    figure_quality: dict[str, dict[str, Any]] = {}
     experiment_status: dict[str, Any] = {}
+    blocking_reasons: list[str] = []
+    if profile != "production":
+        blocking_reasons.append(f"report profile {profile!r} is not publication-grade")
     jv_result = _run_experiment(
         "jv",
         experiment_status,
         lambda: run_jv_sweep(stack, **settings["jv"]),
     )
     if jv_result is not None:
+        if profile == "production":
+            jv_reasons = _production_jv_blocking_reasons(jv_result)
+            if jv_reasons:
+                failure_path = out / "evaluation_failure.json"
+                failure_path.write_text(
+                    json.dumps(
+                        {
+                            "schema": "solarlab.material_evaluation_failure",
+                            "schema_version": "0.1",
+                            "material_id": material_id,
+                            "profile": profile,
+                            "blocking_reasons": jv_reasons,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
+                )
+                raise ReportQualityError("Production JV quality gate failed: " + "; ".join(jv_reasons))
         path = figures / "jv_curve.png"
         _plot_jv(path, jv_result)
         figure_paths["jv_curve"] = str(path)
+        _record_figure_quality(figure_quality, "jv_curve", path, profile)
         device_metrics["quick_experiments"]["jv"] = _jv_metrics_dict(jv_result)
     else:
+        if profile == "production":
+            raise ReportQualityError(
+                "Production JV solver failed: " + experiment_status["jv"]["error_message"]
+            )
         path = figures / "jv_curve.png"
         _plot_error(path, "JV sweep failed", experiment_status["jv"]["error_message"])
         figure_paths["jv_curve"] = str(path)
+        _record_figure_quality(figure_quality, "jv_curve", path, profile, status="publication_blocked")
 
     suns_result = _run_experiment(
         "suns_voc",
@@ -101,12 +145,15 @@ def run_material_evaluation_report(
         _plot_pseudo_jv(pseudo_path, suns_result)
         figure_paths["suns_voc"] = str(suns_path)
         figure_paths["pseudo_jv"] = str(pseudo_path)
+        _record_figure_quality(figure_quality, "suns_voc", suns_path, profile)
+        _record_figure_quality(figure_quality, "pseudo_jv", pseudo_path, profile)
         device_metrics["quick_experiments"]["suns_voc"] = _jsonable_dataclass(suns_result)
     else:
         for name, title in (("suns_voc", "Suns-Voc failed"), ("pseudo_jv", "Pseudo-JV failed")):
             path = figures / f"{name}.png"
             _plot_error(path, title, experiment_status["suns_voc"]["error_message"])
             figure_paths[name] = str(path)
+            _record_figure_quality(figure_quality, name, path, profile, status="publication_blocked")
 
     degradation_result = _run_experiment(
         "degradation",
@@ -117,11 +164,13 @@ def run_material_evaluation_report(
         path = figures / "degradation.png"
         _plot_degradation(path, degradation_result)
         figure_paths["degradation"] = str(path)
+        _record_figure_quality(figure_quality, "degradation", path, profile)
         device_metrics["quick_experiments"]["degradation"] = _jsonable_dataclass(degradation_result)
     else:
         path = figures / "degradation.png"
         _plot_error(path, "Degradation failed", experiment_status["degradation"]["error_message"])
         figure_paths["degradation"] = str(path)
+        _record_figure_quality(figure_quality, "degradation", path, profile, status="publication_blocked")
 
     eqe_result = _run_experiment(
         "eqe",
@@ -132,24 +181,47 @@ def run_material_evaluation_report(
         path = figures / "eqe.png"
         _plot_eqe(path, eqe_result)
         figure_paths["eqe"] = str(path)
+        _record_figure_quality(figure_quality, "eqe", path, profile)
         device_metrics["quick_experiments"]["eqe"] = _jsonable_dataclass(eqe_result)
     else:
+        if profile == "production":
+            blocking_reasons.append("EQE skipped because material-specific optical n/k data are unavailable or incomplete")
         skip_path = figures / "eqe_skip_reason.json"
         skip_payload = {
             "schema": "solarlab.eqe_skip_reason",
             "schema_version": "0.1",
             "material_id": material_id,
+            "profile": profile,
+            "quality_status": "publication_blocked" if profile == "production" else FIGURE_QUALITY_BY_PROFILE[profile],
             "reason": experiment_status["eqe"]["error_message"],
             "policy": "EQE is skipped when wavelength-resolved optical n/k data are unavailable or incomplete.",
         }
         skip_path.write_text(json.dumps(skip_payload, indent=2, sort_keys=True), encoding="utf-8")
         figure_paths["eqe_skip_reason"] = str(skip_path)
+        _record_figure_quality(
+            figure_quality,
+            "eqe_skip_reason",
+            skip_path,
+            profile,
+            status="publication_blocked" if profile == "production" else None,
+        )
 
     gates_path = figures / "screening_gates.png"
     _plot_screening_gates(gates_path, record)
     figure_paths["screening_gates"] = str(gates_path)
+    _record_figure_quality(figure_quality, "screening_gates", gates_path, profile)
 
+    physics_quality_status = _physics_quality_status(profile, blocking_reasons)
+    publication_ready = profile == "production" and not blocking_reasons
+    quality_summary = {
+        "report_profile": profile,
+        "physics_quality_status": physics_quality_status,
+        "publication_ready": publication_ready,
+        "blocking_reasons": blocking_reasons,
+        "figure_quality": figure_quality,
+    }
     device_metrics["experiment_status"] = experiment_status
+    device_metrics.update(quality_summary)
     device_metrics_json = out / "device_metrics.json"
     device_metrics_json.write_text(json.dumps(device_metrics, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -163,6 +235,7 @@ def run_material_evaluation_report(
             dft_summary=dft_summary,
             device_metrics=device_metrics,
             figure_paths=figure_paths,
+            quality_summary=quality_summary,
         ),
         encoding="utf-8",
     )
@@ -175,11 +248,16 @@ def run_material_evaluation_report(
         "material_record_path": str(record_file),
         "device_results_path": str(device_results_file),
         "out_dir": str(out),
+        "report_profile": profile,
+        "physics_quality_status": physics_quality_status,
+        "publication_ready": publication_ready,
+        "blocking_reasons": blocking_reasons,
         "report_path": str(report_path),
         "dft_parameter_summary_json": str(dft_json),
         "dft_parameter_summary_csv": str(dft_csv),
         "device_metrics_json": str(device_metrics_json),
         "figures": figure_paths,
+        "figure_quality": figure_quality,
         "experiment_status": experiment_status,
     }
     manifest_path = out / "evaluation_manifest.json"
@@ -312,7 +390,60 @@ def _device_metrics_summary(
     }
 
 
-def _quick_settings() -> dict[str, dict[str, Any]]:
+def _resolve_profile(*, profile: ReportProfile, quick: bool) -> ReportProfile:
+    if quick:
+        return "smoke"
+    if profile not in {"smoke", "diagnostic", "production"}:
+        raise ValueError(f"Unknown report profile {profile!r}")
+    return profile
+
+
+def _validate_production_config(config: Mapping[str, Any]) -> None:
+    source = config.get("source") if isinstance(config.get("source"), Mapping) else {}
+    if not source.get("activate_bandgap"):
+        raise ReportQualityError("Production report requires activate_bandgap=True in the generated SolarLab config source")
+    layers = config.get("layers")
+    if not isinstance(layers, list):
+        raise ReportQualityError("Production report requires a SolarLab config with layers")
+    invalid: list[str] = []
+    absorber_has_optics = False
+    for layer in layers:
+        if not isinstance(layer, Mapping) or layer.get("role") == "substrate":
+            continue
+        role = str(layer.get("role") or layer.get("name") or "layer")
+        chi = _optional_float(layer.get("chi"))
+        eg = _optional_float(layer.get("Eg"))
+        if chi is None or eg is None or eg <= 0.0:
+            invalid.append(role)
+        if layer.get("role") == "absorber" and layer.get("optical_material"):
+            absorber_has_optics = True
+    if invalid:
+        raise ReportQualityError(
+            "Production report requires chi and positive Eg on every electrical layer; invalid layers: "
+            + ", ".join(invalid)
+        )
+    if not absorber_has_optics:
+        raise ReportQualityError("Production report requires absorber optical_material for EQE/TMM provenance")
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _profile_settings(profile: ReportProfile) -> dict[str, dict[str, Any]]:
+    if profile == "smoke":
+        return _smoke_settings()
+    if profile == "production":
+        return _production_settings()
+    return _diagnostic_settings()
+
+
+def _smoke_settings() -> dict[str, dict[str, Any]]:
     return {
         "jv": {"N_grid": 12, "n_points": 4, "v_rate": 5.0, "V_max": 0.2},
         "suns_voc": {"suns_levels": (0.5, 1.0, 2.0), "N_grid": 20, "t_settle": 5.0e-4},
@@ -333,8 +464,8 @@ def _quick_settings() -> dict[str, dict[str, Any]]:
     }
 
 
-def _default_settings() -> dict[str, dict[str, Any]]:
-    settings = _quick_settings()
+def _diagnostic_settings() -> dict[str, dict[str, Any]]:
+    settings = _smoke_settings()
     settings["jv"] = {"N_grid": 30, "n_points": 8, "v_rate": 5.0, "V_max": 1.4}
     settings["suns_voc"] = {"suns_levels": (0.1, 1.0, 3.0, 10.0), "N_grid": 30, "t_settle": 5.0e-4}
     settings["degradation"] = {
@@ -350,6 +481,27 @@ def _default_settings() -> dict[str, dict[str, Any]]:
         "wavelengths_nm": np.linspace(350.0, 950.0, 7),
         "N_grid": 30,
         "t_settle": 5.0e-4,
+    }
+    return settings
+
+
+def _production_settings() -> dict[str, dict[str, Any]]:
+    settings = _diagnostic_settings()
+    settings["jv"] = {"N_grid": 60, "n_points": 16, "v_rate": 0.5, "V_max": 1.4}
+    settings["suns_voc"] = {"suns_levels": (0.1, 0.5, 1.0, 3.0, 10.0), "N_grid": 50, "t_settle": 1.0e-2}
+    settings["degradation"] = {
+        "t_end": 100.0,
+        "n_snapshots": 5,
+        "V_bias": 0.9,
+        "N_grid": 40,
+        "dt_max": 1.0,
+        "metric_n_points": 10,
+        "metric_settle_time": 2.0e-3,
+    }
+    settings["eqe"] = {
+        "wavelengths_nm": np.linspace(350.0, 950.0, 13),
+        "N_grid": 40,
+        "t_settle": 2.0e-3,
     }
     return settings
 
@@ -446,6 +598,44 @@ def _plot_screening_gates(path: Path, record: Mapping[str, Any]) -> None:
     _savefig(fig, path)
 
 
+def _record_figure_quality(
+    figure_quality: dict[str, dict[str, Any]],
+    name: str,
+    path: Path,
+    profile: ReportProfile,
+    *,
+    status: str | None = None,
+) -> None:
+    quality_status = status or FIGURE_QUALITY_BY_PROFILE[profile]
+    figure_quality[name] = {
+        "path": str(path),
+        "profile": profile,
+        "quality_status": quality_status,
+    }
+
+
+def _production_jv_blocking_reasons(result: Any) -> list[str]:
+    reasons: list[str] = []
+    for label, metrics in (("forward", result.metrics_fwd), ("reverse", result.metrics_rev)):
+        if not bool(getattr(metrics, "voc_bracketed", False)):
+            reasons.append(f"{label} JV did not bracket Voc")
+        for field in ("V_oc", "J_sc", "FF", "PCE"):
+            value = getattr(metrics, field)
+            if value is None or not math.isfinite(float(value)):
+                reasons.append(f"{label} JV metric {field} is not finite")
+        if float(getattr(metrics, "V_oc")) <= 0.0:
+            reasons.append(f"{label} JV metric V_oc is sentinel or non-positive")
+        if float(getattr(metrics, "PCE")) <= 0.0:
+            reasons.append(f"{label} JV metric PCE is sentinel or non-positive")
+    return reasons
+
+
+def _physics_quality_status(profile: ReportProfile, blocking_reasons: list[str]) -> str:
+    if blocking_reasons:
+        return "publication_blocked"
+    return FIGURE_QUALITY_BY_PROFILE[profile]
+
+
 def _plot_error(path: Path, title: str, message: str) -> None:
     fig, ax = plt.subplots(figsize=(6.4, 4.2))
     ax.axis("off")
@@ -530,6 +720,7 @@ def _render_report_md(
     dft_summary: Mapping[str, Any],
     device_metrics: Mapping[str, Any],
     figure_paths: Mapping[str, str],
+    quality_summary: Mapping[str, Any],
 ) -> str:
     jv = device_metrics.get("JV_metrics") or {}
     forward = jv.get("forward") if isinstance(jv, Mapping) else {}
@@ -566,6 +757,11 @@ def _render_report_md(
             f"- FF: `{_fmt_float(_dict_get(forward, 'FF'))}`",
             f"- PCE: `{_fmt_float(_dict_get(forward, 'PCE'))}`",
             "",
+            "## Quality",
+            f"- Profile: `{quality_summary.get('report_profile')}`",
+            f"- Physics quality status: `{quality_summary.get('physics_quality_status')}`",
+            f"- Publication ready: `{quality_summary.get('publication_ready')}`",
+            "",
             "## Figures",
         ]
     )
@@ -573,11 +769,12 @@ def _render_report_md(
         rows.append(f"- {name}: `{path}`")
     rows.extend(["", "## Notes"])
     warnings = list(device_metrics.get("warnings", []) or [])
+    warnings.extend(quality_summary.get("blocking_reasons", []) or [])
     if warnings:
         rows.extend(f"- {warning}" for warning in warnings)
     else:
         rows.append("- No device-result warnings were reported.")
-    rows.append("- Quick figures are workflow validation outputs unless rerun with production settings.")
+    rows.append("- Smoke and diagnostic figures are not publication-grade device evidence.")
     return "\n".join(rows) + "\n"
 
 
