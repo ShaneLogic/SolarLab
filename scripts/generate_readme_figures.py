@@ -1,8 +1,8 @@
 """Generate README diagram PNGs.
 
-These figures are intentionally simple, text-heavy documentation assets.  Keep
-them synchronized with README physics/API descriptions when solver features
-change.
+The figures intentionally follow the original README visual language: airy
+white space, light panels, and concise physics labels.  They are generated so
+future README figure updates do not require manual image editing.
 """
 
 from __future__ import annotations
@@ -14,15 +14,23 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, Rectangle
+from matplotlib.patches import FancyBboxPatch, Polygon, Rectangle
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "perovskite-sim" / "docs" / "images"
-FONT = "DejaVu Sans"
+FONT = "Arial"
+
+plt.rcParams.update({
+    "font.family": FONT,
+    "mathtext.fontset": "custom",
+    "mathtext.rm": FONT,
+    "mathtext.it": f"{FONT}:italic",
+    "mathtext.bf": f"{FONT}:bold",
+})
 
 
-def setup(width: float = 16, height: float = 10) -> tuple[plt.Figure, plt.Axes]:
+def setup(width: float, height: float) -> tuple[plt.Figure, plt.Axes]:
     fig, ax = plt.subplots(figsize=(width, height), dpi=120)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -37,184 +45,234 @@ def save(fig: plt.Figure, name: str) -> None:
     plt.close(fig)
 
 
-def rounded(ax: plt.Axes, xy, w, h, fc="#ffffff", ec="#d5d5d5", lw=1.5, r=0.02):
-    patch = FancyBboxPatch(
-        xy, w, h,
-        boxstyle=f"round,pad=0.012,rounding_size={r}",
-        facecolor=fc, edgecolor=ec, linewidth=lw,
-    )
-    ax.add_patch(patch)
-    return patch
-
-
-def label(ax: plt.Axes, x, y, text, size=14, weight="normal", color="#222", ha="left", va="center"):
+def text(ax: plt.Axes, x: float, y: float, s: str, *, size=16, weight="normal",
+         color="#222222", ha="left", va="center", style="normal",
+         rotation: float = 0.0) -> None:
     ax.text(
-        x, y, text,
+        x, y, s,
         fontsize=size, fontweight=weight, color=color, ha=ha, va=va,
-        family=FONT,
+        fontstyle=style, family=FONT, rotation=rotation,
     )
 
 
-def pill(ax: plt.Axes, x, y, text, color):
-    rounded(ax, (x, y - 0.017), 0.09, 0.034, fc=color, ec=color, lw=0, r=0.008)
-    label(ax, x + 0.045, y, text, size=9, weight="bold", color="white", ha="center")
+def panel(ax: plt.Axes, x: float, y: float, w: float, h: float, title: str,
+          accent: str, *, title_size=16) -> None:
+    box = FancyBboxPatch(
+        (x, y), w, h,
+        boxstyle="round,pad=0.008,rounding_size=0.008",
+        linewidth=1.5, edgecolor="#d4d4d4", facecolor="#fbfbfb",
+    )
+    ax.add_patch(box)
+    text(ax, x + 0.02, y + h - 0.045, title, size=title_size, weight="bold")
+    ax.plot([x + 0.02, x + w - 0.02], [y + h - 0.075, y + h - 0.075],
+            color=accent, lw=2)
 
 
-def generate_device_structure() -> None:
-    fig, ax = setup(16, 11)
-    label(ax, 0.03, 0.96, "Device Structure and Solver Views", size=24, weight="bold")
-    label(ax, 0.50, 0.89, "AM1.5G illumination", size=15, weight="bold", color="#d99a00", ha="center")
-    ax.arrow(0.50, 0.865, 0, -0.035, width=0.004, head_width=0.025, head_length=0.025, color="#e0a000")
-
-    x0, y0, w, h = 0.23, 0.14, 0.54, 0.70
-    layers = [
-        ("Left / top contact", 0.12, "#b8b8b8", "phi=0 | ohmic or Robin S_left"),
-        ("HTL - hole transport", 0.18, "#e7f0ff", "high N_A, blocks electrons"),
-        ("Absorber - perovskite", 0.34, "#fff2d8", "G(x), SRH/rad/Auger, mobile ions; GBs reduce tau"),
-        ("ETL - electron transport", 0.20, "#e6f4e8", "high N_D, blocks holes"),
-        ("Right / bottom contact", 0.16, "#b8b8b8", "phi=V_bi - V_app | ohmic or Robin S_right"),
-    ]
-    yy = y0 + h
-    for title, frac, color, subtitle in layers:
-        lh = h * frac
-        yy -= lh
-        ax.add_patch(Rectangle((x0, yy), w, lh, facecolor=color, edgecolor="#666", linewidth=1.4))
-        label(ax, x0 + 0.025, yy + lh * 0.62, title, size=15, weight="bold")
-        label(ax, x0 + 0.025, yy + lh * 0.34, subtitle, size=11, color="#4f4f4f")
-
-    ax.plot([x0, x0 + w], [y0 - 0.025, y0 - 0.025], color="#555", lw=2)
-    ax.arrow(x0 + w - 0.01, y0 - 0.025, 0.001, 0, head_width=0.018, head_length=0.018, color="#555")
-    label(ax, x0, y0 - 0.055, "1D axis: x=0", size=11, color="#555")
-    label(ax, x0 + w, y0 - 0.055, "x=L", size=11, color="#555", ha="right")
-
-    rounded(ax, (0.06, 0.42), 0.12, 0.20, fc="#f8f8f8")
-    label(ax, 0.12, 0.59, "1D default", size=13, weight="bold", ha="center")
-    label(ax, 0.12, 0.54, "tanh grid", size=10, ha="center", color="#555")
-    label(ax, 0.12, 0.50, "fast sweeps", size=10, ha="center", color="#555")
-    label(ax, 0.12, 0.46, "most experiments", size=10, ha="center", color="#555")
-
-    rounded(ax, (0.82, 0.40), 0.13, 0.24, fc="#f8f8ff")
-    label(ax, 0.885, 0.61, "2D extension", size=13, weight="bold", ha="center")
-    label(ax, 0.885, 0.56, "lateral x", size=10, ha="center", color="#555")
-    label(ax, 0.885, 0.52, "vertical y stack", size=10, ha="center", color="#555")
-    label(ax, 0.885, 0.48, "grain boundaries", size=10, ha="center", color="#555")
-    label(ax, 0.885, 0.44, "frozen ions in JV", size=10, ha="center", color="#555")
-
-    save(fig, "device_structure.png")
+def pill(
+    ax: plt.Axes,
+    x: float,
+    y: float,
+    label: str,
+    *,
+    fc: str,
+    color: str,
+    width: float = 0.078,
+    size: float = 9.5,
+) -> None:
+    box = FancyBboxPatch(
+        (x, y - 0.014), width, 0.028,
+        boxstyle="round,pad=0.004,rounding_size=0.004",
+        linewidth=0, facecolor=fc,
+    )
+    ax.add_patch(box)
+    text(ax, x + width / 2, y, label, size=size, weight="bold", color=color, ha="center")
 
 
 def generate_transport_equations() -> None:
-    fig, ax = setup(16, 12)
-    label(ax, 0.03, 0.96, "Transport Processes and Boundary Conditions", size=24, weight="bold")
-    boxes = [
-        (0.04, 0.55, 0.44, 0.33, "Carrier transport", "#3b73e8"),
-        (0.52, 0.55, 0.44, 0.33, "Ion migration", "#f28c18"),
-        (0.04, 0.14, 0.44, 0.33, "Recombination channels", "#d9443f"),
-        (0.52, 0.14, 0.44, 0.33, "Optics, Poisson, and 2D", "#2f9a4a"),
-    ]
-    for x, y, w, h, title, color in boxes:
-        rounded(ax, (x, y), w, h, fc="#fbfbfb")
-        label(ax, x + 0.02, y + h - 0.04, title, size=15, weight="bold")
-        ax.plot([x + 0.02, x + w - 0.02], [y + h - 0.095, y + h - 0.095], color=color, lw=2)
+    fig, ax = setup(15.8, 15.3)
+    text(ax, 0.03, 0.965, "Transport Processes and Boundary Conditions", size=25, weight="bold")
 
-    label(ax, 0.06, 0.755, "J_n = q mu_n n E + q D_n dn/dx", size=13, weight="bold")
-    label(ax, 0.06, 0.705, "J_p = q mu_p p E - q D_p dp/dx", size=13, weight="bold")
-    label(ax, 0.06, 0.655, "Default contacts: n,p pinned to equilibrium", size=11)
-    pill(ax, 0.37, 0.655, "DIRICHLET", "#3b73e8")
-    label(ax, 0.06, 0.610, "FULL selective contacts: J = +/- q S (u - u_eq)", size=11)
-    pill(ax, 0.37, 0.610, "ROBIN", "#6b55c7")
-    label(ax, 0.06, 0.570, "S=null -> ohmic pin | S=0 -> blocking | large S -> ohmic limit", size=10, color="#666")
+    panel(ax, 0.04, 0.57, 0.44, 0.34, "Carrier Transport (Scharfetter-Gummel)", "#4b7fff")
+    panel(ax, 0.52, 0.57, 0.44, 0.34, "Ion Migration (Steric SG)", "#ff901a")
+    panel(ax, 0.04, 0.18, 0.44, 0.33, "Recombination Channels", "#f04444")
+    panel(ax, 0.52, 0.18, 0.44, 0.33, "Optical Generation, Poisson, and 2D", "#32a050")
 
-    label(ax, 0.54, 0.755, "F_P = -D_ion [dP/dx + (q/kBT) P dphi/dx] steric(P)", size=12, weight="bold")
-    label(ax, 0.54, 0.705, "dP/dt = -dF_P/dx; dual mode also tracks P-", size=11)
-    label(ax, 0.54, 0.645, "BCs: F(0)=F(L)=0", size=12, weight="bold")
-    pill(ax, 0.74, 0.645, "ZERO-FLUX", "#f28c18")
-    label(ax, 0.54, 0.585, "2D J-V freezes ions as static Poisson background", size=10, color="#666")
+    x, y = 0.06, 0.795
+    text(ax, x, y, r"$\mathbf{J_n}=q\,\mu_n nE+qD_n\,\partial n/\partial x$", size=15.4)
+    text(ax, x + 0.25, y, "electron current", size=11.0, color="#888888")
+    text(ax, x, y - 0.048, r"$\mathbf{J_p}=q\,\mu_p pE-qD_p\,\partial p/\partial x$", size=15.4)
+    text(ax, x + 0.25, y - 0.048, "hole current", size=11.0, color="#888888")
+    ax.plot([0.06, 0.46], [0.710, 0.710], color="#dddddd", lw=1)
+    text(ax, x, 0.678, r"$\mathbf{BCs:}$ default $n(0)=n_L,\ n(L)=n_R$", size=13.0)
+    pill(ax, 0.370, 0.678, "DIRICHLET", fc="#eef0ff", color="#3150a8", width=0.080, size=8.6)
+    text(ax, x, 0.644, r"default $p(0)=p_L,\ p(L)=p_R$", size=13.0)
+    pill(ax, 0.370, 0.644, "DIRICHLET", fc="#eef0ff", color="#3150a8", width=0.080, size=8.6)
+    text(ax, x, 0.612, r"FULL Robin: $J_{c,s}=\pm qS_{c,s}(u_c-u_{c,\mathrm{eq}})$", size=12.1)
+    pill(ax, 0.370, 0.612, "ROBIN", fc="#efeaff", color="#5d45bd", width=0.080, size=8.8)
+    text(ax, x, 0.586, r"$S=\mathrm{None}$: ohmic; $S=0$: blocking; large $S$: near-ohmic", size=10.5, color="#666666")
 
-    label(ax, 0.06, 0.345, "R_SRH = (np - ni^2) / [ tau_p(n+n1) + tau_n(p+p1) ]", size=11)
-    label(ax, 0.06, 0.305, "R_rad = B(np - ni^2), with photon recycling / reabsorption hooks", size=11)
-    label(ax, 0.06, 0.260, "R_Auger = (C_n n + C_p p)(np - ni^2)", size=11)
-    label(ax, 0.06, 0.215, "R_iface and 2D grain boundaries modify local lifetimes", size=11)
+    x, y = 0.54, 0.795
+    text(ax, x, y, r"$\mathbf{F_{ion}}=-D_{ion}\,[\,\partial_xP+(q/k_BT)P(1-P/P_{lim})\,\partial_x\varphi\,]$", size=12.5)
+    text(ax, x, y - 0.050, r"$\partial P^{+}/\partial t=-\partial F_{ion,+}/\partial x$", size=14.0)
+    text(ax, x + 0.235, y - 0.050, "positive vacancies", size=10.7, color="#888888")
+    text(ax, x, y - 0.100, r"$\partial P^{-}/\partial t=-\partial F_{ion,-}/\partial x$", size=14.0)
+    text(ax, x + 0.235, y - 0.100, "negative species", size=10.7, color="#888888")
+    ax.plot([0.54, 0.94], [0.682, 0.682], color="#dddddd", lw=1)
+    text(ax, x, 0.650, r"$\mathbf{BCs:}\ F(0)=F(L)=0$", size=14.0)
+    pill(ax, 0.830, 0.650, "ZERO-FLUX", fc="#fff2df", color="#d94800", width=0.092, size=8.4)
+    text(ax, x, 0.612, r"2D J-V freezes ions as static Poisson background", size=11.4, color="#666666")
 
-    label(ax, 0.54, 0.345, "G_BL(x) or transfer-matrix G_TMM(x, lambda)", size=12, weight="bold")
-    label(ax, 0.54, 0.305, "Poisson: -d/dx(eps0 eps_r dphi/dx) = q(p-n+ND-NA+P-P0)", size=10)
-    label(ax, 0.54, 0.260, "2D: sparse Poisson + SG fluxes on (Ny x Nx) mesh", size=11)
-    label(ax, 0.54, 0.215, "BCs: vertical contacts, periodic lateral boundaries", size=11)
+    x, y = 0.06, 0.395
+    text(ax, x, y, r"$\mathbf{R_{SRH}}=\dfrac{np-n_i^2}{\tau_p(n+n_1)+\tau_n(p+p_1)}$", size=14.4)
+    text(ax, x + 0.300, y, "Shockley-Read-Hall", size=10.8, color="#888888")
+    text(ax, x, y - 0.055, r"$\mathbf{R_{rad}}=B(np-n_i^2)$", size=14.8)
+    text(ax, x + 0.130, y - 0.055, "radiative + recycling", size=10.8, color="#888888")
+    text(ax, x, y - 0.110, r"$\mathbf{R_{Auger}}=(C_n n+C_p p)(np-n_i^2)$", size=14.8)
+    text(ax, x + 0.238, y - 0.110, "Auger", size=10.8, color="#888888")
+    text(ax, x, y - 0.165, r"$\mathbf{R_{iface}}$ and 2D grain boundaries modify local lifetimes", size=13.2)
+
+    x, y = 0.54, 0.395
+    text(ax, x, y, "Beer-Lambert", size=14.5, weight="bold")
+    text(ax, x + 0.130, y, "legacy / fast fallback", size=10.8, color="#888888")
+    text(ax, x, y - 0.040, r"$G_{BL}(x)=\int_\lambda \alpha\Phi_0\,e^{-\int_0^x\alpha dx'}d\lambda$", size=12.2)
+    ax.plot([0.54, 0.94], [0.330, 0.330], color="#dddddd", lw=1)
+    text(ax, x, y - 0.085, "Transfer Matrix (TMM)", size=14.5, weight="bold")
+    text(ax, x + 0.205, y - 0.085, "FULL tier", size=10.8, color="#888888")
+    text(ax, x, y - 0.125, r"$G_{TMM}(x,\lambda)=\hbar^{-1}\omega^{-1}(n/n_{amb})\,\alpha |E|^2$", size=12.2)
+    ax.plot([0.54, 0.94], [0.245, 0.245], color="#dddddd", lw=1)
+    text(ax, x, 0.218, r"$\mathbf{Poisson:}\ -\partial_x(\varepsilon_0\varepsilon_r\partial_x\varphi)=q(p-n+N_D-N_A+P-P_0)$", size=11.4)
+    text(ax, x, 0.192, r"$\mathbf{2D:}$ sparse Poisson + SG fluxes on $(N_y\times N_x)$ mesh", size=11.4)
+
     save(fig, "transport_equations.png")
 
 
 def generate_solver_pipeline() -> None:
-    fig, ax = setup(16, 11)
-    label(ax, 0.03, 0.96, "Solver Pipeline: 1D Core and 2D Extension", size=24, weight="bold")
+    fig, ax = setup(15.0, 15.8)
+    text(ax, 0.03, 0.965, "Solver Pipeline: How Each Timestep Works", size=25, weight="bold")
 
-    steps = [
-        ("DeviceStack / YAML", "layers, mode, contacts, optics, microstructure", "#e8f4ea"),
-        ("Build caches", "MaterialArrays or MaterialArrays2D; Poisson factors; optical G", "#e8f0ff"),
-        ("Assemble RHS", "charge density, Poisson solve, SG fluxes, recombination", "#fff4d8"),
-        ("Boundary hooks", "ohmic pins or FULL Robin contacts; zero-flux ions", "#f2eaff"),
-        ("Integrate / sweep", "Radau time stepping; JV, EQE, IS, TPV, degradation, 2D JV", "#fbe7e7"),
-        ("Results", "metrics, snapshots, current decomposition, V_oc(L_g)", "#f4f4f4"),
+    def box(x, y, w, h, title, subtitle, fc, ec, title_color="#222222"):
+        rounded = FancyBboxPatch(
+            (x, y), w, h,
+            boxstyle="round,pad=0.010,rounding_size=0.009",
+            facecolor=fc, edgecolor=ec, linewidth=2,
+        )
+        ax.add_patch(rounded)
+        text(ax, x + w / 2, y + h * 0.62, title, size=15, weight="bold", color=title_color, ha="center")
+        text(ax, x + w / 2, y + h * 0.32, subtitle, size=12, color=title_color, ha="center")
+
+    box(0.31, 0.84, 0.38, 0.060, "Initial Condition", "dark equilibrium or illuminated steady state", "#eaf6ec", "#2c7b34", "#1f7a2b")
+    ax.arrow(0.50, 0.835, 0, -0.035, head_width=0.012, head_length=0.015, color="#666666")
+    box(0.34, 0.745, 0.32, 0.045, "State vector y(t)", r"$y=[\,n,\ p,\ P^+,\ (P^-)\,]$ per grid node", "#e4f1ff", "#1764bd", "#0a55b2")
+    ax.arrow(0.50, 0.740, 0, -0.035, head_width=0.012, head_length=0.015, color="#666666")
+
+    outer = FancyBboxPatch((0.15, 0.325), 0.70, 0.35, boxstyle="round,pad=0.012,rounding_size=0.010",
+                           facecolor="#fff7df", edgecolor="#f27e16", linewidth=2)
+    ax.add_patch(outer)
+    text(ax, 0.50, 0.650, r"$\mathbf{assemble\_rhs(t,y)\ \rightarrow\ dy/dt}$", size=15.5,
+         color="#e64c00", ha="center")
+    rows = [
+        ("1", "Apply contact BCs to n, p", r"ohmic pins or FULL Robin $S_{c,s}$"),
+        ("2", "Compute charge density rho", r"$\rho=q(p-n+P-P_0-N_A+N_D)$"),
+        ("3", "Solve Poisson equation", r"$\varphi(0)=0,\ \varphi(L)=V_{bi}-V_{app}$"),
+        ("4", "Compute generation G(x)", "TMM or Beer-Lambert fallback"),
+        ("5", "Carrier continuity: dn/dt, dp/dt", "SG fluxes + G - R"),
+        ("6", "Interface recombination + TE cap", "surface SRH + Richardson-Dushman"),
+        ("7", r"Ion continuity: $dP^{+}/dt$, $dP^{-}/dt$", "zero-flux contacts; 2D freezes ions"),
     ]
-    x, w, h = 0.25, 0.50, 0.095
-    y = 0.82
-    for title, desc, color in steps:
-        rounded(ax, (x, y), w, h, fc=color, ec="#777", lw=1.5)
-        label(ax, x + w / 2, y + h * 0.62, title, size=14, weight="bold", ha="center")
-        label(ax, x + w / 2, y + h * 0.30, desc, size=10, color="#555", ha="center")
-        if y > 0.24:
-            ax.arrow(x + w / 2, y - 0.005, 0, -0.032, head_width=0.018, head_length=0.018, color="#666")
-        y -= 0.13
+    y0 = 0.605
+    for i, (num, title, note) in enumerate(rows):
+        yy = y0 - i * 0.043
+        item = FancyBboxPatch((0.185, yy - 0.017), 0.31, 0.032,
+                              boxstyle="round,pad=0.004,rounding_size=0.005",
+                              facecolor="white", edgecolor="#bbbbbb", linewidth=1)
+        ax.add_patch(item)
+        circle_color = "#4285f4" if i < 3 else "#34a853" if i == 3 else "#ea4335" if i < 6 else "#f59e0b"
+        ax.scatter([0.205], [yy], s=260, color=circle_color, zorder=3)
+        text(ax, 0.205, yy, num, size=10.5, weight="bold", color="white", ha="center")
+        text(ax, 0.225, yy, title, size=12.5)
+        text(ax, 0.52, yy, note, size=10.5, color="#7d7d7d")
 
-    rounded(ax, (0.05, 0.45), 0.15, 0.20, fc="#ffffff")
-    label(ax, 0.125, 0.61, "1D default", size=13, weight="bold", ha="center")
-    label(ax, 0.125, 0.56, "fast screen", size=10, ha="center", color="#555")
-    label(ax, 0.125, 0.52, "full hooks", size=10, ha="center", color="#555")
-    label(ax, 0.125, 0.48, "all main experiments", size=10, ha="center", color="#555")
+    ax.arrow(0.50, 0.315, 0, -0.035, head_width=0.012, head_length=0.015, color="#666666")
+    box(0.26, 0.225, 0.48, 0.055, "Radau IIA (implicit Runge-Kutta)",
+        r"stiff ODE; max_step capped near $V_{bi}$", "#eee7fb", "#6137b6", "#4f2cab")
+    ax.arrow(0.50, 0.220, 0, -0.035, head_width=0.012, head_length=0.015, color="#666666")
+    box(0.28, 0.125, 0.44, 0.060, "Outputs and diagnostics",
+        r"$J(V)$, $Z(f)$, profiles, 2D J-V, $V_{oc}(L_g)$", "#fde8ee", "#d3222a", "#b51c24")
 
-    rounded(ax, (0.80, 0.43), 0.15, 0.24, fc="#ffffff")
-    label(ax, 0.875, 0.63, "2D path", size=13, weight="bold", ha="center")
-    label(ax, 0.875, 0.58, "jv_2d", size=10, ha="center", color="#555")
-    label(ax, 0.875, 0.54, "voc_grain_sweep", size=10, ha="center", color="#555")
-    label(ax, 0.875, 0.50, "microstructure", size=10, ha="center", color="#555")
-    label(ax, 0.875, 0.46, "frozen ions", size=10, ha="center", color="#555")
+    ax.plot([0.74, 0.89, 0.89, 0.66], [0.252, 0.252, 0.770, 0.770], color="#6038bf", lw=1.5)
+    text(ax, 0.90, 0.50, "next timestep", size=11.5, weight="bold", color="#6038bf",
+         rotation=-90, ha="center")
+
     save(fig, "solver_pipeline.png")
 
 
+def generate_device_structure() -> None:
+    fig, ax = setup(16.0, 14.6)
+    text(ax, 0.03, 0.965, "Device Structure (n-i-p Perovskite Solar Cell)", size=25, weight="bold")
+    text(ax, 0.50, 0.905, "AM1.5G illumination", size=15, weight="bold", color="#e0a000", ha="center")
+    ax.add_patch(Polygon([[0.49, 0.888], [0.51, 0.888], [0.50, 0.868]], color="#e0a000"))
+
+    x, y, w, h = 0.24, 0.18, 0.56, 0.66
+    parts = [
+        (0.095, "#b5b5b5", "Left Contact (Anode, x = 0)", r"$\varphi=0$ | ohmic or Robin $S_{\mathrm{left}}$"),
+        (0.185, "#e8f1ff", "HTL - Hole Transport Layer", r"high $N_A$ doping; blocks electrons ($\mu_n \ll \mu_p$)"),
+        (0.335, "#fff2d8", "Absorber - Perovskite", r"generation $G(x)$; mobile ions $P^+(x,t)$ and $P^-(x,t)$; GBs reduce $\tau$"),
+        (0.205, "#e6f4e8", "ETL - Electron Transport Layer", r"high $N_D$ doping; blocks holes ($\mu_p \ll \mu_n$)"),
+        (0.105, "#b5b5b5", "Right Contact (Cathode, x = L)", r"$\varphi=V_{bi}-V_{app}$ | ohmic or Robin $S_{\mathrm{right}}$"),
+    ]
+    yy = y + h
+    for frac, color, title, subtitle in parts:
+        hh = h * frac
+        yy -= hh
+        ax.add_patch(Rectangle((x, yy), w, hh, facecolor=color, edgecolor="#666666", linewidth=1.5))
+        text(ax, x + 0.025, yy + hh * 0.66, title, size=15.0, weight="bold")
+        text(ax, x + 0.025, yy + hh * 0.33, subtitle, size=11.6, color="#444444")
+    text(ax, x + w / 2, y + h * 0.56, r"$n(x,t)\leftarrow drift \rightarrow p(x,t)$", size=12.5, ha="center")
+    text(ax, x + w / 2, y + h * 0.52, r"$\uparrow\ diffusion\ \downarrow$", size=12.0, style="italic", ha="center")
+    text(ax, x + w / 2, y + h * 0.708, r"Interface SRH: $(v_n,v_p)$", size=10.8, color="#777777", ha="center")
+    text(ax, x + w / 2, y + h * 0.363, r"Interface SRH: $(v_n,v_p)$", size=10.8, color="#777777", ha="center")
+
+    ax.plot([x, x + w], [0.145, 0.145], color="#555555", lw=2)
+    ax.add_patch(Polygon([[x + w, 0.145], [x + w - 0.018, 0.154], [x + w - 0.018, 0.136]], color="#555555"))
+    text(ax, x, 0.125, "x = 0", size=12, color="#666666")
+    text(ax, x + w, 0.125, "x = L", size=12, color="#666666", ha="right")
+    text(ax, x + w / 2, 0.100, "1D spatial domain; 2D extension extrudes this stack laterally", size=13, color="#444444", ha="center")
+
+    save(fig, "device_structure.png")
+
+
 def generate_ui_layout() -> None:
-    fig, ax = setup(15, 8)
-    label(ax, 0.03, 0.94, "Web UI Layout", size=24, weight="bold")
-    outer = (0.04, 0.18, 0.92, 0.62)
-    rounded(ax, (outer[0], outer[1]), outer[2], outer[3], fc="#ffffff", ec="#444", lw=2)
-    x0, y0, w, h = outer
-    header_h = 0.09
-    ax.plot([x0, x0 + w], [y0 + h - header_h, y0 + h - header_h], color="#444", lw=2)
-    left_w, center_w = 0.18, 0.35
-    ax.plot([x0 + left_w, x0 + left_w], [y0, y0 + h], color="#444", lw=2)
-    ax.plot([x0 + left_w + center_w, x0 + left_w + center_w], [y0, y0 + h], color="#444", lw=2)
-
-    label(ax, x0 + left_w / 2, y0 + h - header_h / 2, "Devices", size=13, weight="bold", ha="center")
-    label(ax, x0 + left_w + center_w / 2, y0 + h - header_h / 2, "Device | Help", size=13, weight="bold", ha="center")
-    label(ax, x0 + left_w + center_w + (w - left_w - center_w) / 2, y0 + h - header_h / 2,
-          "Experiments", size=13, weight="bold", ha="center")
-
-    label(ax, x0 + 0.03, y0 + 0.41, "Results / Compare", size=12)
-    label(ax, x0 + 0.03, y0 + 0.34, "Select runs to overlay", size=10, color="#777")
-    label(ax, x0 + 0.03, y0 + 0.29, "1D, 2D, tandem outputs", size=10, color="#777")
-
-    cx = x0 + left_w + 0.03
-    label(ax, cx, y0 + 0.40, "Device Configuration", size=12, weight="bold")
-    label(ax, cx, y0 + 0.34, "Preset / Reset / Mode / Save As", size=11)
-    label(ax, cx, y0 + 0.28, "Layer Builder + Stack Visualizer", size=11)
-    label(ax, cx, y0 + 0.22, "Geometry / Transport / Recombination", size=10, color="#777")
-    label(ax, cx, y0 + 0.17, "Ions & Optics / Contacts / Advanced", size=10, color="#777")
-
-    rx = x0 + left_w + center_w + 0.03
-    label(ax, rx, y0 + 0.43, "1D: J-V, Dark J-V, EQE, IS, TPV", size=11)
-    label(ax, rx, y0 + 0.37, "C-V, Suns-Voc, Degradation", size=11)
-    label(ax, rx, y0 + 0.31, "2D: J-V Sweep, V_oc(L_g)", size=11)
-    label(ax, rx, y0 + 0.25, "Tandem: 2T J-V", size=11)
-    rounded(ax, (rx, y0 + 0.08), 0.31, 0.10, fc="#f7f7f7", ec="#dddddd", lw=1)
-    label(ax, rx + 0.155, y0 + 0.13, "Plotly panes + metric cards", size=11, color="#888", ha="center")
+    fig, ax = setup(14.8, 8.1)
+    text(ax, 0.03, 0.90, "Web UI Layout", size=25, weight="bold")
+    x, y, w, h = 0.04, 0.18, 0.92, 0.60
+    frame = FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.000,rounding_size=0.008",
+                           facecolor="white", edgecolor="#444444", linewidth=2)
+    ax.add_patch(frame)
+    header_y = y + h - 0.085
+    ax.plot([x, x + w], [header_y, header_y], color="#444444", lw=2)
+    c1, c2 = x + 0.18, x + 0.53
+    ax.plot([c1, c1], [y, y + h], color="#444444", lw=2)
+    ax.plot([c2, c2], [y, y + h], color="#444444", lw=2)
+    text(ax, x + 0.09, y + h - 0.043, "Devices", size=14, weight="bold", ha="center")
+    text(ax, (c1 + c2) / 2, y + h - 0.043, "Device  |  Help", size=14, weight="bold", ha="center")
+    text(ax, (c2 + x + w) / 2, y + h - 0.043,
+         "J-V / Dark / EQE / IS / TPV / 2D", size=13.5, weight="bold", ha="center")
+    text(ax, x + 0.02, y + 0.31, "Results / Compare", size=13.5)
+    text(ax, x + 0.02, y + 0.24, "Select runs to overlay", size=11.0, color="#888888")
+    text(ax, x + 0.02, y + 0.19, "1D, 2D, tandem plots", size=11.0, color="#888888")
+    text(ax, c1 + 0.02, y + 0.37, "Device Configuration", size=14, weight="bold", color="#555555")
+    text(ax, c1 + 0.02, y + 0.31, "preset  |  Reset  |  Mode  |  Save As", size=12.0)
+    text(ax, c1 + 0.02, y + 0.24, "Layer Builder + Detail Editor", size=12.0)
+    text(ax, c1 + 0.02, y + 0.18, "Geometry / Transport / Recombination", size=10.8, color="#888888")
+    text(ax, c1 + 0.02, y + 0.14, "Ions & Optics / Contacts / Advanced", size=10.8, color="#888888")
+    text(ax, c2 + 0.02, y + 0.40, "Experiment Parameters", size=13.5, weight="bold", color="#555555")
+    text(ax, c2 + 0.02, y + 0.34, "Run     + progress bar", size=12.0)
+    text(ax, c2 + 0.02, y + 0.28, r"2D J-V and $V_{oc}(L_g)$ use the same job stream", size=10.8, color="#777777")
+    inner = FancyBboxPatch((c2 + 0.02, y + 0.10), 0.34, 0.11,
+                           boxstyle="round,pad=0.010,rounding_size=0.008",
+                           facecolor="#fbfbfb", edgecolor="#dddddd", linewidth=1)
+    ax.add_patch(inner)
+    text(ax, c2 + 0.19, y + 0.155, "Main Plot (Plotly) + metric cards", size=11.8, color="#888888", ha="center")
     save(fig, "ui_layout.png")
 
 
