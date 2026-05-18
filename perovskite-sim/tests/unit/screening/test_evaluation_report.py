@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from perovskite_sim.screening.evaluation_report import run_material_evaluation_report
+from perovskite_sim.screening.evaluation_report import ReportQualityError, run_material_evaluation_report
 from perovskite_sim.screening.solarscale import generate_solarlab_inputs, run_smoke_device_results, write_device_results
 from tests.unit.screening.test_solarscale_bridge import _write_records
 
@@ -41,6 +43,9 @@ def test_material_evaluation_report_pack_writes_expected_artifacts(tmp_path: Pat
 
     assert report["schema"] == "solarlab.material_evaluation_report"
     assert report["material_id"] == "mp-best"
+    assert report["report_profile"] == "smoke"
+    assert report["physics_quality_status"] == "publication_blocked"
+    assert report["publication_ready"] is False
     assert Path(report["report_path"]).exists()
     assert Path(report["dft_parameter_summary_json"]).exists()
     assert Path(report["dft_parameter_summary_csv"]).exists()
@@ -65,6 +70,119 @@ def test_material_evaluation_report_pack_writes_expected_artifacts(tmp_path: Pat
     assert metrics["experiment_status"]["suns_voc"]["status"] == "completed"
     assert metrics["experiment_status"]["degradation"]["status"] == "completed"
     assert metrics["experiment_status"]["eqe"]["status"] == "skipped"
+    assert metrics["report_profile"] == "smoke"
+    assert metrics["figure_quality"]["jv_curve"]["quality_status"] == "workflow_smoke"
+
+
+def test_diagnostic_report_marks_missing_eqe_as_diagnostic_only(tmp_path: Path) -> None:
+    records_path = _write_records(tmp_path)
+    screening_dir = tmp_path / "screening"
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=screening_dir,
+        limit=1,
+        import_policy="production",
+    )
+    device_results = run_smoke_device_results(manifest, N_grid=6, n_points=2, V_max=0.05, max_configs=1)
+    device_results_path = screening_dir / "device_results.json"
+    write_device_results(device_results, json_path=device_results_path)
+
+    report = run_material_evaluation_report(
+        config_path=manifest["generated"][0]["config_path"],
+        material_record_path=records_path,
+        device_results_path=device_results_path,
+        out_dir=tmp_path / "diagnostic-report",
+        profile="diagnostic",
+    )
+
+    assert report["report_profile"] == "diagnostic"
+    assert report["physics_quality_status"] == "publication_blocked"
+    assert "report profile 'diagnostic' is not publication-grade" in report["blocking_reasons"]
+    assert report["figure_quality"]["jv_curve"]["quality_status"] == "diagnostic_only"
+    assert "eqe_skip_reason" in report["figures"]
+
+
+def test_production_report_rejects_legacy_template(tmp_path: Path) -> None:
+    records_path = _write_records(tmp_path)
+    screening_dir = tmp_path / "screening"
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/nip_MAPbI3.yaml",
+        out_dir=screening_dir,
+        limit=1,
+        import_policy="production",
+    )
+    device_results = run_smoke_device_results(manifest, N_grid=6, n_points=2, V_max=0.05, max_configs=1)
+    device_results_path = screening_dir / "device_results.json"
+    write_device_results(device_results, json_path=device_results_path)
+
+    with pytest.raises(ReportQualityError, match="activate_bandgap=True"):
+        run_material_evaluation_report(
+            config_path=manifest["generated"][0]["config_path"],
+            material_record_path=records_path,
+            device_results_path=device_results_path,
+            out_dir=tmp_path / "production-report",
+            profile="production",
+        )
+
+
+def test_production_report_rejects_unbracketed_jv(tmp_path: Path) -> None:
+    records_path = _write_records(tmp_path)
+    screening_dir = tmp_path / "screening"
+    manifest = generate_solarlab_inputs(
+        records_path,
+        template_path="configs/solarscale_nip_band_aligned.yaml",
+        out_dir=screening_dir,
+        limit=1,
+        import_policy="production",
+        activate_bandgap=True,
+    )
+    device_results = run_smoke_device_results(manifest, N_grid=6, n_points=2, V_max=0.05, max_configs=1)
+    device_results_path = screening_dir / "device_results.json"
+    write_device_results(device_results, json_path=device_results_path)
+
+    @dataclass(frozen=True)
+    class Metrics:
+        V_oc: float = 0.0
+        J_sc: float = 10.0
+        FF: float = 0.0
+        PCE: float = 0.0
+        voc_bracketed: bool = False
+
+    @dataclass(frozen=True)
+    class FakeJV:
+        V_fwd: np.ndarray
+        J_fwd: np.ndarray
+        V_rev: np.ndarray
+        J_rev: np.ndarray
+        metrics_fwd: Metrics
+        metrics_rev: Metrics
+        hysteresis_index: float
+
+    fake = FakeJV(
+        V_fwd=np.array([0.0, 0.05]),
+        J_fwd=np.array([10.0, 9.0]),
+        V_rev=np.array([0.05, 0.0]),
+        J_rev=np.array([9.0, 10.0]),
+        metrics_fwd=Metrics(),
+        metrics_rev=Metrics(),
+        hysteresis_index=0.0,
+    )
+
+    import perovskite_sim.screening.evaluation_report as report_module
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(report_module, "run_jv_sweep", lambda *_args, **_kwargs: fake)
+    with pytest.raises(ReportQualityError, match="Production JV quality gate failed"):
+        run_material_evaluation_report(
+            config_path=manifest["generated"][0]["config_path"],
+            material_record_path=records_path,
+            device_results_path=device_results_path,
+            out_dir=tmp_path / "production-report",
+            profile="production",
+        )
+    monkeypatch.undo()
 
 
 def test_material_evaluation_report_rejects_missing_material(tmp_path: Path) -> None:
