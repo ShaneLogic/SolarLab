@@ -285,7 +285,7 @@ SolarLab solves the coupled **Poisson + drift-diffusion + mobile-ion** system in
 The electrostatic potential $\varphi(x,t)$ satisfies
 
 $$
--\frac{\partial}{\partial x}\!\left(\varepsilon_0 \varepsilon_r(x)\,\frac{\partial \varphi}{\partial x}\right) = q\bigl(p - n + N_D(x) - N_A(x) + P - P_0(x)\bigr)
+-\frac{\partial}{\partial x}\left(\varepsilon_0 \varepsilon_r(x)\,\frac{\partial \varphi}{\partial x}\right) = q\bigl(p - n + N_D(x) - N_A(x) + P - P_0(x)\bigr)
 $$
 
 with Dirichlet boundaries
@@ -361,7 +361,7 @@ Two optional models share the same interface.
 **Beer–Lambert** (default / fallback):
 
 $$
-G_{\text{BL}}(x) = \int_\lambda \alpha(\lambda,x)\,\Phi_0(\lambda)\,\exp\!\left(-\int_0^x \alpha(\lambda,x')\,dx'\right)\,d\lambda.
+G_{\text{BL}}(x) = \int_\lambda \alpha(\lambda,x)\,\Phi_0(\lambda)\,\exp\left(-\int_0^x \alpha(\lambda,x')\,dx'\right)\,d\lambda.
 $$
 
 **Transfer-matrix (coherent thin-film) optics.** When any layer carries an `optical_material` key, `physics/optics.py` loads complex $n(\lambda)$, $k(\lambda)$ CSVs from `perovskite_sim/data/nk/`, builds the layer transfer matrices against AM1.5G, and computes the position-resolved generation rate as
@@ -379,7 +379,7 @@ integrated over the AM1.5G spectrum. The $n/n_{\text{amb}}$ prefactor is the Poy
 When the conduction-band offset $|\Delta E_c|$ or valence-band offset $|\Delta E_v|$ across an interface exceeds $0.05$ eV, the Scharfetter–Gummel flux is capped to the Richardson–Dushman thermionic-emission current
 
 $$
-J_{\text{TE},n} = A^*_n T^2 \exp\!\left(-\frac{\Delta E_c}{k_B T}\right)\bigl[\exp(qV/k_B T) - 1\bigr],
+J_{\text{TE},n} = A^*_n T^2 \exp\left(-\frac{\Delta E_c}{k_B T}\right)\bigl[\exp(qV/k_B T) - 1\bigr],
 $$
 
 where $A^*$ is the effective Richardson constant (defaults to the free-electron value $1.2017\times 10^{6}\,\text{A/m}^2\text{K}^2$, tunable per layer). Without this cap, SG overestimates current across sharp band discontinuities resolved in a single grid spacing.
