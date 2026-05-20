@@ -1383,11 +1383,37 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
   el.classList.add('dark-jv-render')
 
   const _darkStyle = readPlotStyleMode(el)
+  const _darkCurveMode = el.dataset.darkJvCurveMode === 'ideality' ? 'ideality' : 'signed'
 
   // Style: select toolbar \u2014 always rendered above the plot.
   const _darkToolbar = document.createElement('div')
   _darkToolbar.className = 'plot-toolbar'
   _darkToolbar.setAttribute('data-test', 'dark-jv-toolbar')
+  {
+    const curveLabel = document.createElement('label')
+    curveLabel.className = 'plot-range-label'
+    curveLabel.htmlFor = 'dark-jv-curve-mode'
+    curveLabel.textContent = 'Curve:'
+    const curveSelect = document.createElement('select')
+    curveSelect.id = 'dark-jv-curve-mode'
+    curveSelect.className = 'plot-range-select'
+    curveSelect.setAttribute('data-test', 'dark-jv-curve-mode')
+    const optSigned = document.createElement('option')
+    optSigned.value = 'signed'
+    optSigned.textContent = 'Signed J-V'
+    const optIdeality = document.createElement('option')
+    optIdeality.value = 'ideality'
+    optIdeality.textContent = '|J| ideality'
+    curveSelect.appendChild(optSigned)
+    curveSelect.appendChild(optIdeality)
+    curveSelect.value = _darkCurveMode
+    curveSelect.addEventListener('change', () => {
+      el.dataset.darkJvCurveMode = curveSelect.value === 'ideality' ? 'ideality' : 'signed'
+      renderDarkJV(el, r)
+    })
+    _darkToolbar.appendChild(curveLabel)
+    _darkToolbar.appendChild(curveSelect)
+  }
   {
     const styleLabel = document.createElement('label')
     styleLabel.className = 'plot-style-label'
@@ -1420,8 +1446,10 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
   _darkPlotDiv.id = 'dark-jv-plot-inner'
   el.appendChild(_darkPlotDiv)
 
-  // Dark forward J-V: conventional sign has J > 0 for forward bias (injection).
-  // The simulator returns A/m^2; display mA/cm^2 on a log axis.
+  // The simulator returns signed A/m^2. Display signed mA/cm^2 by
+  // default; keep |J| as a separate ideality-fit view because log axes
+  // hide the current sign and exaggerate near-zero crossings.
+  const signedJ = r.J.map(j => j / 10)
   const absJ = r.J.map(j => Math.max(Math.abs(j) / 10, 1e-9))
 
   // Highlight the fit window as a translucent band. Engineering uses
@@ -1448,69 +1476,101 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
   ]
 
   if (_darkStyle === 'publication') {
+    const data = _darkCurveMode === 'ideality'
+      ? [
+          {
+            x: r.V, y: absJ, name: '|J|',
+            mode: 'lines+markers',
+            ...publicationTraceStyle({
+              color: PUBLICATION_PALETTE.forward,
+              hollow: true,
+            }),
+          },
+        ]
+      : [
+          {
+            x: r.V, y: signedJ, name: 'Dark J-V',
+            mode: 'lines+markers',
+            ...publicationTraceStyle({
+              color: PUBLICATION_PALETTE.forward,
+              hollow: true,
+            }),
+          },
+        ]
+    const layout = _darkCurveMode === 'ideality'
+      ? publicationLayout({
+          xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
+          yaxis: publicationAxis({ title: '|J| (mA cm⁻²)', isLog: true }),
+          shapes: _pubShapes,
+          annotations: [
+            {
+              x: 0.05, y: 0.95, xref: 'paper', yref: 'paper',
+              xanchor: 'left' as const, yanchor: 'top' as const,
+              showarrow: false,
+              text:
+                `n = ${r.n_ideality.toFixed(2)}<br>` +
+                `J<sub>0</sub> = ${r.J_0.toExponential(2)} A·m⁻²<br>` +
+                `fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
+              align: 'left' as const,
+              bgcolor: 'rgba(255,255,255,0)',
+              bordercolor: 'rgba(0,0,0,0)',
+              borderwidth: 0,
+              font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+            },
+          ],
+        })
+      : publicationLayout({
+          xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
+          yaxis: publicationAxis({ title: 'Current density, <i>J</i> (mA cm⁻²)', withZeroLine: true }),
+          showlegend: false,
+        })
     Plotly.newPlot(
       _darkPlotDiv,
-      [
-        {
-          x: r.V, y: absJ, name: '|J|',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
-        yaxis: publicationAxis({ title: '|J| (mA\u00b7cm\u207B\u00b2)', isLog: true }),
-        shapes: _pubShapes,
-        // Dark J-V curves rise monotonically from low |J| at V=0 to
-        // injection at high V. Upper-LEFT quadrant (low V, high |J|
-        // axis position) is empty before the diode turn-on \u2014 best
-        // home for the n / J_0 / fit-window readout.
-        annotations: [
-          {
-            x: 0.05, y: 0.95, xref: 'paper', yref: 'paper',
-            xanchor: 'left' as const, yanchor: 'top' as const,
-            showarrow: false,
-            text:
-              `n = ${r.n_ideality.toFixed(2)}<br>` +
-              `J<sub>0</sub> = ${r.J_0.toExponential(2)} A\u00b7m\u207B\u00b2<br>` +
-              `fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
-            align: 'left' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-          },
-        ],
-      }),
+      data,
+      layout,
       publicationConfig('dark_jv'),
     )
   } else {
+    const data = _darkCurveMode === 'ideality'
+      ? [
+          {
+            x: r.V, y: absJ, name: '|J|',
+            mode: 'lines+markers',
+            line: { color: PALETTE.forward, width: LINE.width },
+            marker: { ...MARKER, color: PALETTE.forward },
+          },
+        ]
+      : [
+          {
+            x: r.V, y: signedJ, name: 'Dark J-V',
+            mode: 'lines+markers',
+            line: { color: PALETTE.forward, width: LINE.width },
+            marker: { ...MARKER, color: PALETTE.forward },
+          },
+        ]
+    const layout = _darkCurveMode === 'ideality'
+      ? baseLayout({
+          xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+          yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA·cm⁻²)'), type: 'log', dtick: 1 },
+          shapes: _engShapes,
+          annotations: [
+            {
+              x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
+              xanchor: 'left', yanchor: 'top', showarrow: false,
+              text: `n = ${r.n_ideality.toFixed(2)} &nbsp; J<sub>0</sub> = ${r.J_0.toExponential(2)} A·m⁻² &nbsp; fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
+              font: { size: 12 },
+            },
+          ],
+        })
+      : baseLayout({
+          xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
+          yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
+          showlegend: false,
+        })
     Plotly.newPlot(
       _darkPlotDiv,
-      [
-        {
-          x: r.V, y: absJ, name: '|J|',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-      ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA\u00b7cm\u207B\u00b2)'), type: 'log', dtick: 1 },
-        shapes: _engShapes,
-        annotations: [
-          {
-            x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
-            xanchor: 'left', yanchor: 'top', showarrow: false,
-            text: `n = ${r.n_ideality.toFixed(2)} &nbsp; J<sub>0</sub> = ${r.J_0.toExponential(2)} A\u00b7m\u207B\u00b2 &nbsp; fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
-            font: { size: 12 },
-          },
-        ],
-      }),
+      data,
+      layout,
       plotConfig('dark_jv'),
     )
   }
