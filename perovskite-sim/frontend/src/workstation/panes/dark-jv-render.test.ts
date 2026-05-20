@@ -28,7 +28,7 @@ const newPlotMock = vi.mocked(Plotly.newPlot)
 function makeResult(overrides: Partial<DarkJVResult> = {}): DarkJVResult {
   return {
     V: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-    J: [1e-7, 1e-5, 1e-3, 1.0, 50.0, 200.0],   // A/m²
+    J: [1e-7, 1e-5, -1e-3, -1.0, -50.0, -200.0],   // A/m²
     n_ideality: 1.65,
     J_0: 3.2e-9,
     V_fit_lo: 0.6,
@@ -61,6 +61,12 @@ function _toggleStyle(el: HTMLElement, mode: 'engineering' | 'publication'): voi
   sel.dispatchEvent(new Event('change'))
 }
 
+function _toggleCurve(el: HTMLElement, mode: 'signed' | 'ideality'): void {
+  const sel = el.querySelector<HTMLSelectElement>('[data-test="dark-jv-curve-mode"]')!
+  sel.value = mode
+  sel.dispatchEvent(new Event('change'))
+}
+
 describe('renderDarkJV — toolbar + style mode', () => {
   let el: HTMLDivElement
   beforeEach(() => {
@@ -69,9 +75,10 @@ describe('renderDarkJV — toolbar + style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select unconditionally', () => {
+  it('renders the Curve and Style selects unconditionally', () => {
     renderDarkJV(el, makeResult())
     expect(el.querySelector('[data-test="dark-jv-toolbar"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="dark-jv-curve-mode"]')).not.toBeNull()
     expect(el.querySelector('[data-test="dark-jv-style-mode"]')).not.toBeNull()
   })
 
@@ -81,25 +88,36 @@ describe('renderDarkJV — toolbar + style mode', () => {
     expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
   })
 
-  it('engineering trace color matches the pre-publication renderer', () => {
-    renderDarkJV(el, makeResult())
+  it('default curve is signed J-V on a linear axis', () => {
+    const result = makeResult()
+    renderDarkJV(el, result)
     const traces = _lastNewPlotTraces()!
     expect(traces).toHaveLength(1)
-    expect(traces[0].name).toBe('|J|')
+    expect(traces[0].name).toBe('Dark J-V')
     expect(traces[0].mode).toBe('lines+markers')
+    expect(traces[0].y).toEqual(result.J.map(j => j / 10))
+    expect(_lastNewPlotLayout()!.yaxis.type).toBeUndefined()
+  })
+
+  it('engineering signed trace color matches the default renderer', () => {
+    renderDarkJV(el, makeResult())
+    const traces = _lastNewPlotTraces()!
+    expect(traces[0].name).toBe('Dark J-V')
     expect(traces[0].line.color).toBe('#2563eb')
     expect(traces[0].marker.color).toBe('#2563eb')
   })
 
-  it('engineering: log y-axis with decade-only ticks (dtick=1)', () => {
+  it('ideality curve: log y-axis with decade-only ticks (dtick=1)', () => {
     renderDarkJV(el, makeResult())
+    _toggleCurve(el, 'ideality')
     const layout = _lastNewPlotLayout()!
     expect(layout.yaxis.type).toBe('log')
     expect(layout.yaxis.dtick).toBe(1)
   })
 
-  it('engineering: fit window highlighted with indigo translucent band', () => {
+  it('ideality curve: fit window highlighted with indigo translucent band', () => {
     renderDarkJV(el, makeResult())
+    _toggleCurve(el, 'ideality')
     const shapes = _lastNewPlotLayout()!.shapes as Array<Record<string, any>>
     expect(shapes).toHaveLength(1)
     expect(shapes[0].type).toBe('rect')
@@ -108,8 +126,9 @@ describe('renderDarkJV — toolbar + style mode', () => {
     expect(shapes[0].fillcolor).toBe('rgba(99, 102, 241, 0.10)')
   })
 
-  it('engineering annotation: n / J_0 / fit window with separators', () => {
+  it('ideality curve annotation: n / J_0 / fit window with separators', () => {
     renderDarkJV(el, makeResult())
+    _toggleCurve(el, 'ideality')
     const ann = _lastNewPlotLayout()!.annotations as Array<Record<string, any>>
     expect(ann).toHaveLength(1)
     const text = ann[0].text
@@ -152,7 +171,7 @@ describe('renderDarkJV — publication style mode', () => {
     renderDarkJV(el, makeResult())
     _toggleStyle(el, 'publication')
     const data = _lastNewPlotTraces()![0]
-    expect(data.name).toBe('|J|')
+    expect(data.name).toBe('Dark J-V')
     expect(data.mode).toBe('lines+markers')
     expect(data.marker.symbol).toBe('circle-open')
     expect(data.marker.color).toBe('rgba(0,0,0,0)')
@@ -161,8 +180,17 @@ describe('renderDarkJV — publication style mode', () => {
     expect(data.line.width).toBe(1.75)
   })
 
-  it('publication: log y-axis with decade-only ticks (dtick=1)', () => {
+  it('publication signed curve: linear y-axis with zero line', () => {
     renderDarkJV(el, makeResult())
+    _toggleStyle(el, 'publication')
+    const layout = _lastNewPlotLayout()!
+    expect(layout.yaxis.type).toBeUndefined()
+    expect(layout.yaxis.zeroline).toBe(true)
+  })
+
+  it('publication ideality curve: log y-axis with decade-only ticks (dtick=1)', () => {
+    renderDarkJV(el, makeResult())
+    _toggleCurve(el, 'ideality')
     _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.yaxis.type).toBe('log')
@@ -171,6 +199,7 @@ describe('renderDarkJV — publication style mode', () => {
 
   it('publication: fit window highlighted with neutral grey translucent band', () => {
     renderDarkJV(el, makeResult())
+    _toggleCurve(el, 'ideality')
     _toggleStyle(el, 'publication')
     const shapes = _lastNewPlotLayout()!.shapes as Array<Record<string, any>>
     expect(shapes).toHaveLength(1)
@@ -181,6 +210,7 @@ describe('renderDarkJV — publication style mode', () => {
 
   it('publication annotation lives at upper-LEFT (under diode turn-on)', () => {
     renderDarkJV(el, makeResult())
+    _toggleCurve(el, 'ideality')
     _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     const ann = layout.annotations as Array<Record<string, any>>
@@ -196,6 +226,7 @@ describe('renderDarkJV — publication style mode', () => {
 
   it('publication annotation text: n / J_0 / fit window stacked with <br>', () => {
     renderDarkJV(el, makeResult())
+    _toggleCurve(el, 'ideality')
     _toggleStyle(el, 'publication')
     const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
     expect(text).toContain('n = 1.65')
@@ -216,9 +247,20 @@ describe('renderDarkJV — publication style mode', () => {
     // V (x) is reference-identical (no .slice() / .map()) across modes.
     expect(tracesEng[0].x).toBe(result.V)
     expect(tracesPub[0].x).toBe(result.V)
-    // Y is derived (|J| / 10) but the source J array stays bit-identical.
+    // Y is derived for display but the source J array stays bit-identical.
     expect(result.V).toEqual(V_pre)
     expect(result.J).toEqual(J_pre)
+  })
+
+  it('curve mode persists across re-render via el.dataset.darkJvCurveMode', () => {
+    const result = makeResult()
+    renderDarkJV(el, result)
+    _toggleCurve(el, 'ideality')
+    expect(el.dataset.darkJvCurveMode).toBe('ideality')
+    renderDarkJV(el, result)
+    const sel = el.querySelector<HTMLSelectElement>('[data-test="dark-jv-curve-mode"]')!
+    expect(sel.value).toBe('ideality')
+    expect(_lastNewPlotTraces()![0].name).toBe('|J|')
   })
 
   it('style mode persists across re-render via el.dataset.plotStyleMode', () => {
