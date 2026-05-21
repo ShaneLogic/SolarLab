@@ -1400,7 +1400,7 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
     curveSelect.setAttribute('data-test', 'dark-jv-curve-mode')
     const optSigned = document.createElement('option')
     optSigned.value = 'signed'
-    optSigned.textContent = 'Signed J-V'
+    optSigned.textContent = 'Diode J-V'
     const optIdeality = document.createElement('option')
     optIdeality.value = 'ideality'
     optIdeality.textContent = '|J| ideality'
@@ -1446,10 +1446,12 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
   _darkPlotDiv.id = 'dark-jv-plot-inner'
   el.appendChild(_darkPlotDiv)
 
-  // The simulator returns signed A/m^2. Display signed mA/cm^2 by
-  // default; keep |J| as a separate ideality-fit view because log axes
-  // hide the current sign and exaggerate near-zero crossings.
-  const signedJ = r.J.map(j => j / 10)
+  // The simulator uses the solar-cell sign convention (photocurrent
+  // positive, forward dark injection negative). The default dark J-V
+  // view flips to the diode convention so forward bias bends upward.
+  // Keep |J| as a separate ideality-fit view because log axes hide the
+  // current sign and exaggerate near-zero crossings.
+  const diodeJ = r.J.map(j => -j / 10)
   const absJ = r.J.map(j => Math.max(Math.abs(j) / 10, 1e-9))
 
   // Highlight the fit window as a translucent band. Engineering uses
@@ -1489,7 +1491,7 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
         ]
       : [
           {
-            x: r.V, y: signedJ, name: 'Dark J-V',
+            x: r.V, y: diodeJ, name: 'Dark J-V',
             mode: 'lines+markers',
             ...publicationTraceStyle({
               color: PUBLICATION_PALETTE.forward,
@@ -1542,7 +1544,7 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
         ]
       : [
           {
-            x: r.V, y: signedJ, name: 'Dark J-V',
+            x: r.V, y: diodeJ, name: 'Dark J-V',
             mode: 'lines+markers',
             line: { color: PALETTE.forward, width: LINE.width },
             marker: { ...MARKER, color: PALETTE.forward },
