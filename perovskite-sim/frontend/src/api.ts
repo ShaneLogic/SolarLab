@@ -11,7 +11,7 @@ import type {
   TandemJVPayload,
 } from './types'
 
-const BASE = 'http://127.0.0.1:8000'
+const BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {

@@ -6,3 +6,7 @@
 .DS_Store
 .superpowers/
 .worktrees/
+
+# Generated sweep outputs
+perovskite-sim/outputs/
+perovskite-sim/notebooks/outputs/
