@@ -88,15 +88,21 @@ describe('renderDarkJV — toolbar + style mode', () => {
     expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
   })
 
-  it('default curve is signed J-V on a linear axis', () => {
+  it('default curve uses diode-sign J-V on a linear axis', () => {
     const result = makeResult()
     renderDarkJV(el, result)
     const traces = _lastNewPlotTraces()!
     expect(traces).toHaveLength(1)
     expect(traces[0].name).toBe('Dark J-V')
     expect(traces[0].mode).toBe('lines+markers')
-    expect(traces[0].y).toEqual(result.J.map(j => j / 10))
+    expect(traces[0].y).toEqual(result.J.map(j => -j / 10))
     expect(_lastNewPlotLayout()!.yaxis.type).toBeUndefined()
+  })
+
+  it('default Curve selector label is Diode J-V', () => {
+    renderDarkJV(el, makeResult())
+    const sel = el.querySelector<HTMLSelectElement>('[data-test="dark-jv-curve-mode"]')!
+    expect(sel.selectedOptions[0].textContent).toBe('Diode J-V')
   })
 
   it('engineering signed trace color matches the default renderer', () => {
