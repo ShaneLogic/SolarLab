@@ -288,7 +288,7 @@ SolarLab solves the coupled **Poisson + drift-diffusion + mobile-ion** system on
 The electrostatic potential $\varphi(x,t)$ satisfies
 
 $$
--\frac{\partial}{\partial x}\left(\varepsilon_0 \varepsilon_r(x)\,\frac{\partial \varphi}{\partial x}\right) = q\bigl(p - n + N_D(x) - N_A(x) + P - P_0(x)\bigr)
+-\frac{\partial}{\partial x}\left(\varepsilon_0 \varepsilon_r(x)\frac{\partial \varphi}{\partial x}\right) = q\bigl(p - n + N_D(x) - N_A(x) + P - P_0(x)\bigr)
 $$
 
 with Dirichlet boundaries
