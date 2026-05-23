@@ -451,6 +451,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         if sim_mode.use_trap_profile and has_trap_profile_params(p):
             x_local = x[mask] - offset
             shape = getattr(p, "trap_profile_shape", "exponential") or "exponential"
+            edge_target = str(getattr(p, "trap_edge", "both") or "both").lower()
             if str(shape).lower() == "gaussian":
                 N_t_x = gaussian_edge_profile(
                     x_local,
@@ -458,6 +459,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                     float(p.trap_N_t_interface),
                     float(p.trap_N_t_bulk),
                     float(p.trap_decay_length),
+                    edge=edge_target,
                 )
             else:
                 N_t_x = exponential_edge_profile(
@@ -466,6 +468,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                     float(p.trap_N_t_interface),
                     float(p.trap_N_t_bulk),
                     float(p.trap_decay_length),
+                    edge=edge_target,
                 )
             # Cache N_t(x) on the per-node array for diagnostics and
             # downstream physics; map tau via the SRH inverse-density

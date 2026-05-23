@@ -44,12 +44,39 @@ from __future__ import annotations
 import numpy as np
 
 
+_VALID_EDGE_TARGETS = ("both", "left", "right")
+
+
+def _combine_edge_kernel(
+    d_left: np.ndarray, d_right: np.ndarray, edge: str, kernel
+) -> np.ndarray:
+    """Return the edge contribution honouring ``edge`` target.
+
+    ``edge="both"`` reproduces the original symmetric profile. ``"left"``
+    or ``"right"`` attach the kernel to a single absorber face only, so
+    SCAPS-style heterojunction-specific defects (e.g. PVK/ETL only) can
+    drive asymmetric recombination that responds to the band-offset.
+    Unknown values raise ``ValueError`` so YAML typos surface at config
+    load instead of silently degenerating to the symmetric profile.
+    """
+    if edge not in _VALID_EDGE_TARGETS:
+        raise ValueError(
+            f"edge must be one of {_VALID_EDGE_TARGETS}, got {edge!r}"
+        )
+    if edge == "left":
+        return kernel(d_left)
+    if edge == "right":
+        return kernel(d_right)
+    return kernel(d_left) + kernel(d_right)
+
+
 def exponential_edge_profile(
     x_local: np.ndarray,
     thickness: float,
     N_t_interface: float,
     N_t_bulk: float,
     L_d: float,
+    edge: str = "both",
 ) -> np.ndarray:
     """Return ``N_t(x)`` for an exponential interface-trap distribution.
 
@@ -65,16 +92,19 @@ def exponential_edge_profile(
         Trap density deep in the bulk (in m⁻³).
     L_d
         Decay length in m.
+    edge
+        Which absorber face(s) carry the decay. ``"both"`` (default)
+        reproduces the original symmetric profile; ``"left"`` /
+        ``"right"`` attach the kernel to a single face only.
     """
     if L_d <= 0.0:
         # No decay → uniform bulk everywhere; no edge contribution.
         return np.full_like(x_local, N_t_bulk)
     d_left = x_local
     d_right = thickness - x_local
-    edge = (
-        np.exp(-d_left / L_d) + np.exp(-d_right / L_d)
-    )
-    return N_t_bulk + (N_t_interface - N_t_bulk) * edge
+    kernel = lambda d: np.exp(-d / L_d)
+    edge_contribution = _combine_edge_kernel(d_left, d_right, edge, kernel)
+    return N_t_bulk + (N_t_interface - N_t_bulk) * edge_contribution
 
 
 def gaussian_edge_profile(
@@ -83,6 +113,7 @@ def gaussian_edge_profile(
     N_t_interface: float,
     N_t_bulk: float,
     sigma: float,
+    edge: str = "both",
 ) -> np.ndarray:
     """Return ``N_t(x)`` for a Gaussian interface-trap distribution.
 
@@ -90,13 +121,18 @@ def gaussian_edge_profile(
     ``s = distance-from-interface``, so the bulk recovers the clean tau
     more quickly. Useful for systems where the interface defect layer
     has a measured finite thickness (e.g. a few nm grain-boundary slab).
+
+    ``edge`` selects which absorber face the Gaussian decay attaches to
+    (``"both"``, ``"left"``, or ``"right"``). Default ``"both"`` matches
+    the original symmetric behaviour.
     """
     if sigma <= 0.0:
         return np.full_like(x_local, N_t_bulk)
     d_left = x_local
     d_right = thickness - x_local
-    edge = np.exp(-((d_left / sigma) ** 2)) + np.exp(-((d_right / sigma) ** 2))
-    return N_t_bulk + (N_t_interface - N_t_bulk) * edge
+    kernel = lambda d: np.exp(-((d / sigma) ** 2))
+    edge_contribution = _combine_edge_kernel(d_left, d_right, edge, kernel)
+    return N_t_bulk + (N_t_interface - N_t_bulk) * edge_contribution
 
 
 def tau_from_trap_density(

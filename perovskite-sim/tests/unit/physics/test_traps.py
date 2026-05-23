@@ -153,3 +153,69 @@ class TestHasTrapProfileParams:
             trap_N_t_interface=1e22,
             trap_N_t_bulk=1e20,
         )) is False
+
+
+class TestDirectionalEdge:
+    """Phase D2: per-edge ``edge`` parameter on the trap profile.
+
+    SCAPS lets a defect bind to a single heterointerface (e.g. PVK/ETL
+    only). The symmetric Phase 4a profile cannot reproduce that, so a
+    new ``edge`` kwarg selects which absorber face the Gaussian /
+    exponential decay attaches to.
+    """
+
+    @pytest.fixture
+    def x_local(self):
+        return np.linspace(0.0, THICKNESS, 201)
+
+    def test_gaussian_edge_left_only_recovers_bulk_at_right(self, x_local):
+        sigma = 10e-9
+        N_t = gaussian_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, sigma, edge="left",
+        )
+        assert N_t[-1] == pytest.approx(1e20, rel=1e-6)
+        assert N_t[0] == pytest.approx(1e22, rel=1e-3)
+
+    def test_gaussian_edge_right_only_recovers_bulk_at_left(self, x_local):
+        sigma = 10e-9
+        N_t = gaussian_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, sigma, edge="right",
+        )
+        assert N_t[0] == pytest.approx(1e20, rel=1e-6)
+        assert N_t[-1] == pytest.approx(1e22, rel=1e-3)
+
+    def test_gaussian_edge_default_both_matches_legacy(self, x_local):
+        sigma = 10e-9
+        legacy = gaussian_edge_profile(x_local, THICKNESS, 1e22, 1e20, sigma)
+        explicit = gaussian_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, sigma, edge="both",
+        )
+        np.testing.assert_array_equal(legacy, explicit)
+
+    def test_exponential_edge_left_only_recovers_bulk_at_right(self, x_local):
+        L_d = 20e-9
+        N_t = exponential_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, L_d, edge="left",
+        )
+        assert N_t[-1] == pytest.approx(1e20, rel=1e-3)
+
+    def test_exponential_edge_right_only_recovers_bulk_at_left(self, x_local):
+        L_d = 20e-9
+        N_t = exponential_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, L_d, edge="right",
+        )
+        assert N_t[0] == pytest.approx(1e20, rel=1e-3)
+
+    def test_exponential_edge_default_both_matches_legacy(self, x_local):
+        L_d = 20e-9
+        legacy = exponential_edge_profile(x_local, THICKNESS, 1e22, 1e20, L_d)
+        explicit = exponential_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, L_d, edge="both",
+        )
+        np.testing.assert_array_equal(legacy, explicit)
+
+    def test_unknown_edge_raises_value_error(self, x_local):
+        with pytest.raises(ValueError, match="edge"):
+            gaussian_edge_profile(
+                x_local, THICKNESS, 1e22, 1e20, 10e-9, edge="bogus",
+            )
