@@ -79,14 +79,35 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
     if bulk:
         sigma_n = float(bulk["sigma_n_cm2"]) * 1.0e-4
         sigma_p = float(bulk["sigma_p_cm2"]) * 1.0e-4
-        N_t = cm3_to_m3(float(bulk["N_t_cm3"]))
-        tau_n = srh_lifetime(sigma_n, v_th, N_t)
-        tau_p = srh_lifetime(sigma_p, v_th, N_t)
+        N_t_bulk_m3 = cm3_to_m3(float(bulk["N_t_cm3"]))
+        tau_n = srh_lifetime(sigma_n, v_th, N_t_bulk_m3)
+        tau_p = srh_lifetime(sigma_p, v_th, N_t_bulk_m3)
         depth = float(bulk.get("E_t_eV_below_cb", Eg / 2.0))
         n1, p1 = srh_n1_p1_from_trap_depth(ni, Eg, depth, reference="below_cb")
     else:
         tau_n = tau_p = _DEFECT_FREE_TAU
         n1 = p1 = ni
+        N_t_bulk_m3 = None
+
+    iface = row.get("interface_defect") or {}
+    trap_N_t_interface = trap_N_t_bulk = trap_decay_length = None
+    trap_profile_shape = "exponential"
+    trap_edge = "both"
+    if iface:
+        trap_N_t_interface = cm3_to_m3(float(iface["N_t_peak_cm3"]))
+        trap_decay_length = float(iface["decay_length_nm"]) * 1.0e-9
+        trap_profile_shape = str(iface.get("profile", "exponential")).lower()
+        trap_N_t_bulk = (
+            N_t_bulk_m3 if N_t_bulk_m3 is not None else trap_N_t_interface
+        )
+        # SCAPS "target" names the interface face the defect sits on; map
+        # to absorber-edge ("left"=HTL/absorber face, "right"=absorber/ETL).
+        target = str(iface.get("target", "both")).lower()
+        trap_edge = {
+            "htl/pvk": "left", "left": "left",
+            "pvk/etl": "right", "right": "right",
+            "both": "both",
+        }.get(target, "both")
 
     params = MaterialParams(
         eps_r=float(row["eps_r"]),
@@ -109,6 +130,11 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
         chi=chi,
         Eg=Eg,
         optical_material=row.get("optical_material"),
+        trap_N_t_interface=trap_N_t_interface,
+        trap_N_t_bulk=trap_N_t_bulk,
+        trap_decay_length=trap_decay_length,
+        trap_profile_shape=trap_profile_shape,
+        trap_edge=trap_edge,
     )
     return LayerSpec(
         name=str(row["name"]),

@@ -70,6 +70,13 @@ layers:
     C_n_cm6_s: 2.3e-29
     C_p_cm6_s: 2.3e-29
     optical_material: MAPbI3
+    # SCAPS PVK/ETL Gaussian interface defect is NOT populated here:
+    # the Phase 4a spatial trap profile (even with the new directional
+    # edge kwarg) reproduces the SCAPS magnitude but not the SCAPS
+    # cliff/spike direction. See tests/integration/test_scaps_mirror_cbo_trend.py
+    # for the documented xfail. Full direction parity needs interface
+    # SRH with E_t-aware n1/p1 at the heterojunction node, which is
+    # Phase E1 solver work and out of scope here.
 
   - name: SCAPS_ETL
     role: ETL

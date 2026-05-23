@@ -63,6 +63,13 @@ class MaterialParams:
     trap_N_t_bulk: float | None = None       # bulk trap density [m⁻³]
     trap_decay_length: float | None = None   # decay length / sigma [m]
     trap_profile_shape: str = "exponential"  # "exponential" | "gaussian"
+    # Which absorber face the trap edge profile attaches to. Default
+    # "both" reproduces the original symmetric Phase 4a behaviour.
+    # "left" / "right" attach the kernel to a single face only so
+    # heterojunction-specific defects (e.g. SCAPS PVK/ETL Gaussian
+    # interface trap) can drive asymmetric recombination that responds
+    # to the band offset on that side.
+    trap_edge: str = "both"                  # "both" | "left" | "right"
     # Optical data source for TMM (None = use scalar alpha Beer-Lambert)
     optical_material: str | None = None   # e.g. "MAPbI3", "TiO2", "spiro_OMeTAD"
     n_optical: float | None = None        # constant refractive index (fallback)
