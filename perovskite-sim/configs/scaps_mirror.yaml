@@ -1,0 +1,87 @@
+# scaps_mirror.yaml — SCAPS-1D partner stack mirrored for SolarLab.
+#
+# Mirrors the partner 1D-SCAPS configuration recorded in the SCAPS PDF
+# (page 1) so that SolarLab outputs can be compared against the SCAPS
+# parameter sweeps (PDF + Parameters(1).xlsx) using identical layer
+# dimensions, band parameters, and bulk defect data.
+#
+# The schema is consumed by `perovskite_sim.scaps_compat.load_scaps_yaml`,
+# which converts cgs units into SI and derives ni / tau / n1 / p1 from
+# the SCAPS microscopic parameters before constructing the frozen
+# DeviceStack the solver consumes. No solver, model, or boundary-
+# condition code is changed.
+#
+# Physics tier: FAST. SolarLab's FAST mode enables the upgrades that
+# SCAPS already models (thermionic emission at heterojunctions, TMM
+# optics, spatial trap profile) while keeping the FULL-tier per-RHS
+# additions off (Robin contacts, μ(E) field-dependent mobility, radiative
+# reabsorption). FAST is therefore the closest physics overlap with
+# SCAPS available without solver changes. The mobile-ion equation is
+# integrated under FAST but with D_ion = 0 the ion term is zero and
+# matches SCAPS' ion-frozen absorber.
+
+device:
+  # V_bi = WF(HTL) - WF(ETL) where WF = chi + (E_F - E_C). For SCAPS HTL
+  # (N_A=1e18 on N_V=2.5e20) and ETL (N_D=1e18 on N_C=8e19) this gives:
+  #   WF(HTL) = chi + Eg - kT*ln(N_V/N_A) = 2.40 + 3.25 - 0.143 = 5.51 eV
+  #   WF(ETL) = chi + kT*ln(N_C/N_D)      = 4.10 + 0.114        = 4.21 eV
+  #   V_bi    = 5.51 - 4.21 = 1.30 V
+  V_bi: 1.30
+  Phi: 2.5e21        # AM1.5G above-gap photon flux [m^-2 s^-1]
+  mode: fast
+
+layers:
+  - name: SCAPS_HTL
+    role: HTL
+    thickness_nm: 20.0
+    E_g_eV: 3.25
+    chi_eV: 2.40
+    eps_r: 11.75
+    mu_n_cm2: 1.0e-3
+    mu_p_cm2: 1.0e-3
+    N_C_cm3: 2.5e20
+    N_V_cm3: 2.5e20
+    N_D_cm3: 0.0
+    N_A_cm3: 1.0e18
+    v_th_cm_s: 1.0e7
+    optical_material: spiro_OMeTAD
+
+  - name: SCAPS_PVK
+    role: absorber
+    thickness_nm: 800.0
+    E_g_eV: 1.53
+    chi_eV: 3.94
+    eps_r: 31.0
+    mu_n_cm2: 20.0
+    mu_p_cm2: 20.0
+    N_C_cm3: 1.0e19
+    N_V_cm3: 1.0e19
+    N_D_cm3: 1.0e14
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    # SCAPS PVK bulk defect (Perovskite-CB single-level)
+    bulk_defect:
+      sigma_n_cm2: 1.0e-15
+      sigma_p_cm2: 1.0e-15
+      N_t_cm3: 1.0e12
+      E_t_eV_below_cb: 0.1
+    # SCAPS-specified PVK radiative + Auger
+    B_rad_cm3_s: 1.0e-12
+    C_n_cm6_s: 2.3e-29
+    C_p_cm6_s: 2.3e-29
+    optical_material: MAPbI3
+
+  - name: SCAPS_ETL
+    role: ETL
+    thickness_nm: 25.0
+    E_g_eV: 1.9
+    chi_eV: 4.10
+    eps_r: 4.2
+    mu_n_cm2: 1.0e-2
+    mu_p_cm2: 1.0e-5
+    N_C_cm3: 8.0e19
+    N_V_cm3: 8.0e19
+    N_D_cm3: 1.0e18
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    optical_material: TiO2
