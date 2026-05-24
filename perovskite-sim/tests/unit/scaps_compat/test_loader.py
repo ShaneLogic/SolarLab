@@ -114,3 +114,75 @@ def test_load_scaps_yaml_raises_when_required_field_missing(tmp_path):
     path.write_text(broken)
     with pytest.raises(ValueError):
         load_scaps_yaml(path)
+
+
+# ---------- Phase E1 — top-level interfaces block ---------------------------
+
+
+def test_load_scaps_yaml_without_interfaces_block_leaves_defects_empty(tmp_path):
+    """Legacy bit-identical: no top-level ``interfaces:`` block means
+    ``DeviceStack.interfaces`` and ``DeviceStack.interface_defects`` are both
+    empty tuples (current behaviour for every shipped preset)."""
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    stack = load_scaps_yaml(_write_yaml(tmp_path))
+    assert stack.interfaces == ()
+    assert stack.interface_defects == ()
+
+
+def test_load_scaps_yaml_parses_interfaces_block_to_devicestack(tmp_path):
+    """A top-level ``interfaces:`` block with a PVK/ETL entry must populate
+    both ``stack.interfaces`` (v_n, v_p from sigma · v_th · N_t_areal) and
+    ``stack.interface_defects`` (E_t below CB)."""
+    from perovskite_sim.models.device import InterfaceDefect
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    body = _MINIMAL_SCAPS_YAML + dedent(
+        """
+        interfaces:
+          - target: PVK/ETL
+            sigma_n_cm2: 1.0e-15
+            sigma_p_cm2: 1.0e-15
+            N_t_cm2: 1.0e13
+            v_th_cm_s: 1.0e7
+            E_t_eV_below_cb: 0.6
+        """
+    )
+    path = tmp_path / "with_iface.yaml"
+    path.write_text(body)
+    stack = load_scaps_yaml(path)
+
+    # Two electrical interfaces (HTL/PVK, PVK/ETL); only the last populated.
+    assert len(stack.interfaces) == 2
+    assert len(stack.interface_defects) == 2
+    assert stack.interfaces[0] == (0.0, 0.0)
+    assert stack.interface_defects[0] is None
+    # SCAPS-areal SRV: sigma_n[m^2] * v_th[m/s] * N_t_areal[m^-2]
+    #   = 1e-19 * 1e5 * 1e17 = 1e3 m/s
+    v_n_expected = 1.0e-19 * 1.0e5 * 1.0e17
+    v_p_expected = v_n_expected
+    assert stack.interfaces[1][0] == pytest.approx(v_n_expected, rel=1e-12)
+    assert stack.interfaces[1][1] == pytest.approx(v_p_expected, rel=1e-12)
+    assert isinstance(stack.interface_defects[1], InterfaceDefect)
+    assert stack.interface_defects[1].E_t_eV == pytest.approx(0.6)
+
+
+def test_load_scaps_yaml_rejects_unknown_interface_target(tmp_path):
+    """Unknown target alias raises ValueError so typos surface immediately."""
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    body = _MINIMAL_SCAPS_YAML + dedent(
+        """
+        interfaces:
+          - target: BOGUS/PAIR
+            sigma_n_cm2: 1.0e-15
+            sigma_p_cm2: 1.0e-15
+            N_t_cm2: 1.0e13
+            v_th_cm_s: 1.0e7
+            E_t_eV_below_cb: 0.6
+        """
+    )
+    path = tmp_path / "bogus_iface.yaml"
+    path.write_text(body)
+    with pytest.raises(ValueError, match="unknown interface target"):
+        load_scaps_yaml(path)

@@ -23,7 +23,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.scaps_compat.defects import srh_lifetime
 from perovskite_sim.scaps_compat.materials import ni_from_dos
@@ -41,6 +41,20 @@ _REQUIRED_LAYER_KEYS = (
     "mu_n_cm2", "mu_p_cm2", "N_C_cm3", "N_V_cm3", "N_D_cm3", "N_A_cm3",
     "v_th_cm_s",
 )
+_REQUIRED_INTERFACE_KEYS = (
+    "target", "sigma_n_cm2", "sigma_p_cm2", "N_t_cm2",
+    "v_th_cm_s", "E_t_eV_below_cb",
+)
+# SCAPS role aliases for the ``target: A/B`` alias resolver. SCAPS UI uses
+# ``PVK`` interchangeably with ``absorber``; SolarLab carries ``absorber``
+# on the LayerSpec.role.
+_ROLE_ALIAS = {
+    "pvk": "absorber",
+    "perovskite": "absorber",
+    "absorber": "absorber",
+    "htl": "htl",
+    "etl": "etl",
+}
 _DEFECT_FREE_TAU = 1.0e-3  # s; fallback lifetime when no bulk_defect block
 
 
@@ -56,11 +70,85 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
         raise ValueError("scaps yaml must define at least one layer")
 
     layers = tuple(_layer_from_scaps_row(row) for row in cfg["layers"])
+    interfaces, interface_defects = _parse_interfaces_block(
+        cfg.get("interfaces") or [], layers,
+    )
     return DeviceStack(
         layers=layers,
         V_bi=float(dev["V_bi"]),
         Phi=float(dev["Phi"]),
         mode=str(dev["mode"]),
+        interfaces=interfaces,
+        interface_defects=interface_defects,
+    )
+
+
+def _parse_interfaces_block(
+    entries: list,
+    layers: tuple[LayerSpec, ...],
+) -> tuple[
+    tuple[tuple[float, float], ...],
+    tuple[InterfaceDefect | None, ...],
+]:
+    """Translate the top-level ``interfaces:`` list into aligned tuples.
+
+    SCAPS specifies an interface defect with the kinetic triplet
+    ``(sigma, v_th, N_t_areal)`` plus a trap depth ``E_t`` below the
+    reference (lower-Eg / absorber) conduction band. The surface
+    recombination velocity follows the same SCAPS kinetic identity:
+
+        v = sigma_si * v_th_si * N_t_areal_si      [m/s]
+
+    With sigma in m², v_th in m/s, and N_t in m⁻² (areal density at the
+    heterointerface), the dimensions cancel to m/s. The cgs → SI factors:
+
+        sigma_si       = sigma_cm2  * 1e-4
+        v_th_si        = v_th_cm_s  * 1e-2
+        N_t_areal_si   = N_t_cm2    * 1e4
+    """
+    n_interfaces = max(0, len(layers) - 1)
+    if not entries:
+        return (), ()
+    interfaces = [(0.0, 0.0)] * n_interfaces
+    defects: list[InterfaceDefect | None] = [None] * n_interfaces
+    for entry in entries:
+        _check_keys(entry, _REQUIRED_INTERFACE_KEYS, where="interface entry")
+        k = _resolve_interface_index(str(entry["target"]), layers)
+        sigma_n_si = float(entry["sigma_n_cm2"]) * 1.0e-4
+        sigma_p_si = float(entry["sigma_p_cm2"]) * 1.0e-4
+        v_th_si = cms_to_ms(float(entry["v_th_cm_s"]))
+        N_t_areal_si = float(entry["N_t_cm2"]) * 1.0e4
+        v_n = sigma_n_si * v_th_si * N_t_areal_si
+        v_p = sigma_p_si * v_th_si * N_t_areal_si
+        interfaces[k] = (v_n, v_p)
+        defects[k] = InterfaceDefect(E_t_eV=float(entry["E_t_eV_below_cb"]))
+    return tuple(interfaces), tuple(defects)
+
+
+def _resolve_interface_index(target: str, layers: tuple[LayerSpec, ...]) -> int:
+    """Map a ``LEFT/RIGHT`` role-pair alias to a ``stack.layers`` interface index.
+
+    Accepts SCAPS role names (``PVK`` ≡ ``absorber``) on either side,
+    case-insensitive. Raises ``ValueError`` if no adjacent layer pair
+    matches — typos must surface immediately rather than silently
+    creating a defect at the wrong interface.
+    """
+    parts = [p.strip().lower() for p in target.split("/")]
+    if len(parts) != 2 or any(not p for p in parts):
+        raise ValueError(
+            f"unknown interface target {target!r} (expected 'LEFT/RIGHT')"
+        )
+    left_alias = _ROLE_ALIAS.get(parts[0], parts[0])
+    right_alias = _ROLE_ALIAS.get(parts[1], parts[1])
+    for k in range(len(layers) - 1):
+        left_role = layers[k].role.lower()
+        right_role = layers[k + 1].role.lower()
+        if left_role == left_alias and right_role == right_alias:
+            return k
+    raise ValueError(
+        f"unknown interface target {target!r} — no adjacent layer pair "
+        f"matches roles ({left_alias!r}, {right_alias!r}) in the stack "
+        + str([l.role for l in layers])
     )
 
 
