@@ -107,16 +107,23 @@ class MaterialArrays:
     # adjacent layer is absorber, else lower-Eg side).
     interface_n1: tuple[float, ...] = ()
     interface_p1: tuple[float, ...] = ()
-    # Phase E1 — node index where interface SRH samples (n, p, ni²). Defaults
-    # to ``interface_nodes`` so the legacy / no-defect path is bit-identical.
-    # When ``InterfaceDefect`` is present at a heterojunction with one
-    # absorber-side neighbour, the sample index switches to the interior
-    # absorber node (``idx - 1`` if absorber on left, else ``idx``). The
-    # mask-overwrite ordering in ``build_material_arrays`` places the
-    # transport layer's params at the boundary node, so sampling at the
-    # transport node would underestimate the absorber-side hole density that
-    # the SCAPS interface SRH formulation needs.
-    interface_eval_node: tuple[int, ...] = ()
+    # Phase E1.5 — Pauwels-Vanhoutte cross-carrier sampling at heterojunction
+    # interface SRH. Two per-interface node indices: one where n is sampled
+    # (transport-side interior, ``idx + 1`` — electrons accumulate there
+    # under cliff) and one where p is sampled (absorber-side interior,
+    # ``idx − 1`` — holes accumulate there under cliff). Both populations
+    # rise at cliff → np rises → R explodes → V_oc tanks; spike suppresses
+    # both → R small → V_oc preserved. This is the SCAPS cliff/spike
+    # direction. Legacy default: both eval nodes equal ``idx`` so the
+    # no-defect / pre-E1 path stays bit-identical.
+    # ``interface_ni_sq_eff`` is the np_eq reference used in the SRH numerator
+    # ``(n · p − ni_eff²)``; defaults to ``ni_sq[idx]`` for legacy, set to
+    # the reference-side ``ni²`` (lower-Eg / absorber side, matching the
+    # n1·p1 = ni_ref² identity from srh_n1_p1_from_trap_depth) when a defect
+    # is populated.
+    interface_eval_node_n: tuple[int, ...] = ()
+    interface_eval_node_p: tuple[int, ...] = ()
+    interface_ni_sq_eff: tuple[float, ...] = ()
     # Precomputed LAPACK LU of the Poisson tridiagonal operator; reused in
     # every RHS call in place of scipy.sparse spsolve, which is the largest
     # single contributor to assemble_rhs runtime at the default grid sizes.
@@ -576,15 +583,21 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     )
     interface_n1_list: list[float] = []
     interface_p1_list: list[float] = []
-    interface_eval_list: list[int] = []
+    interface_eval_n_list: list[int] = []
+    interface_eval_p_list: list[int] = []
+    interface_ni_sq_eff_list: list[float] = []
     defects = getattr(stack, "interface_defects", ()) or ()
+    N_grid = len(x)
     for k, idx in enumerate(iface_list):
         defect = defects[k] if k < len(defects) else None
         if defect is None:
-            # Legacy bit-identical: per-node bulk n1/p1, sample at idx.
+            # Legacy bit-identical: per-node bulk n1/p1, sample at idx,
+            # ni² ref from per-node ni_sq[idx] (current SRH numerator).
             interface_n1_list.append(float(n1[idx]))
             interface_p1_list.append(float(p1[idx]))
-            interface_eval_list.append(idx)
+            interface_eval_n_list.append(idx)
+            interface_eval_p_list.append(idx)
+            interface_ni_sq_eff_list.append(float(ni_sq[idx]))
             continue
         left = elec_layers[k].params
         right = elec_layers[k + 1].params
@@ -594,27 +607,48 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         right_is_abs = elec_layers[k + 1].role == "absorber"
         if left_is_abs and not right_is_abs:
             ref = left
-            eval_idx = max(0, idx - 1)
         elif right_is_abs and not left_is_abs:
             ref = right
-            eval_idx = idx
         else:
-            # No absorber neighbour — pick lower-Eg side and place eval on
-            # that side. Interface node already carries right-layer params,
-            # so right is "at idx" and left is "at idx - 1".
-            if left.Eg <= right.Eg:
-                ref = left
-                eval_idx = max(0, idx - 1)
-            else:
-                ref = right
-                eval_idx = idx
+            ref = left if left.Eg <= right.Eg else right
         n1_k, p1_k = srh_n1_p1_from_trap_depth(
             ref.ni, ref.Eg, float(defect.E_t_eV),
             reference="below_cb", thermal_voltage=V_T_dev,
         )
+        # Cross-carrier Pauwels-Vanhoutte sampling: electrons from the
+        # transport (right interior) side where they pool under cliff,
+        # holes from the absorber (left interior) side where they pool
+        # under cliff. Bounds-clamped so a single-node-layer pathological
+        # grid still resolves to a valid index.
+        eval_n_idx = min(idx + 1, N_grid - 1)
+        eval_p_idx = max(idx - 1, 0)
         interface_n1_list.append(n1_k)
         interface_p1_list.append(p1_k)
-        interface_eval_list.append(eval_idx)
+        interface_eval_n_list.append(eval_n_idx)
+        interface_eval_p_list.append(eval_p_idx)
+        # ni_eff² for cross-carrier detailed balance: at thermal
+        # equilibrium n_R_eq · p_L_eq must equal ni_eff² so the SRH
+        # numerator (n · p − ni_eff²) vanishes (zero generation/
+        # recombination at equilibrium). With heavily-doped contact
+        # layers (e.g. ETL N_D=1e24 m⁻³) the equilibrium n_R · p_L can
+        # exceed ni_L · ni_R by many orders of magnitude — using a
+        # naïve ni_L · ni_R would make R non-zero at dark equilibrium
+        # and tank V_oc spuriously. Compute the equilibrium densities
+        # of each adjacent layer from its doping, then use the cross
+        # product as the np_eq reference.
+        def _eq_n_p(p_):
+            net = 0.5 * (p_.N_D - p_.N_A)
+            disc = float(np.sqrt(net * net + p_.ni * p_.ni))
+            if net >= 0.0:
+                n_eq = net + disc
+                p_eq = p_.ni * p_.ni / n_eq
+            else:
+                p_eq = -net + disc
+                n_eq = p_.ni * p_.ni / p_eq
+            return n_eq, p_eq
+        _, pL_eq = _eq_n_p(left)
+        nR_eq, _ = _eq_n_p(right)
+        interface_ni_sq_eff_list.append(float(nR_eq * pL_eq))
 
     # Interface face indices where band offset exceeds the TE threshold.
     # A face index f corresponds to the interval between nodes f and f+1.
@@ -786,7 +820,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_nodes=tuple(iface_list),
         interface_n1=tuple(interface_n1_list),
         interface_p1=tuple(interface_p1_list),
-        interface_eval_node=tuple(interface_eval_list),
+        interface_eval_node_n=tuple(interface_eval_n_list),
+        interface_eval_node_p=tuple(interface_eval_p_list),
+        interface_ni_sq_eff=tuple(interface_ni_sq_eff_list),
         n_L=n_L,
         p_L=p_L,
         n_R=n_R,
@@ -875,15 +911,29 @@ def _apply_interface_recombination(
         v_n, v_p = ifaces[k]
         if v_n == 0.0 and v_p == 0.0:
             continue
-        eval_idx = mat.interface_eval_node[k] if mat.interface_eval_node else idx
+        # Cross-carrier (Pauwels-Vanhoutte) sample pair: n from the
+        # transport-side eval node, p from the absorber-side eval node.
+        # Legacy path (no defect): both fall back to idx so the rate
+        # collapses to the pre-E1 single-side form.
+        eval_n_idx = mat.interface_eval_node_n[k] if mat.interface_eval_node_n else idx
+        eval_p_idx = mat.interface_eval_node_p[k] if mat.interface_eval_node_p else idx
+        ni_sq_eff = (
+            mat.interface_ni_sq_eff[k]
+            if mat.interface_ni_sq_eff
+            else float(mat.ni_sq[idx])
+        )
         R_s = interface_recombination(
-            n[eval_idx], p[eval_idx], float(mat.ni_sq[eval_idx]),
+            n[eval_n_idx], p[eval_p_idx], ni_sq_eff,
             mat.interface_n1[k], mat.interface_p1[k],
             v_n, v_p,
         )
-        R_vol = R_s / mat.dx_cell[eval_idx]
-        dn[eval_idx] -= R_vol
-        dp[eval_idx] -= R_vol
+        # Volumetric loss conversion uses the interface-node dual cell.
+        # The depletion is applied at the interface node itself —
+        # diffusion / drift then re-feeds the eval nodes from the bulk
+        # state, preserving carrier conservation across the dual cell.
+        R_vol = R_s / mat.dx_cell[idx]
+        dn[idx] -= R_vol
+        dp[idx] -= R_vol
 
 
 def assemble_rhs(
