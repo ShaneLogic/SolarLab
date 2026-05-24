@@ -1,23 +1,29 @@
-"""SCAPS-mirror CBO trend test -- XFAIL (Phase E1 work).
+"""SCAPS-mirror CBO trend test -- XFAIL (Phase E1.5 work).
 
-Pins the SCAPS cliff/spike direction so a future per-interface SRH
-landing has a target to hit. SCAPS shows V_oc rising ~420 mV from
-ΔE_C = −0.5 (cliff, V_oc ≈ 0.83 V) through ΔE_C ≈ 0 (V_oc ≈ 1.25 V)
-and plateaus for positive ΔE_C up to +0.3 V.
+Pins the SCAPS cliff/spike direction so the next interface-SRH refinement
+has a target to hit. SCAPS shows V_oc rising ~420 mV from ΔE_C = −0.5
+(cliff, V_oc ≈ 0.83 V) through ΔE_C ≈ 0 (V_oc ≈ 1.25 V) and plateaus for
+positive ΔE_C up to +0.3 V.
 
-Phase D2 (directional Phase 4a edge profile) reproduces the *magnitude*
-of the V_oc response (~150 mV swing achievable) but produces a V-shape
-with minimum at the design point rather than SCAPS' monotonic cliff →
-spike rise. The directional edge profile is now a real new capability
-(useful for CIGS/CdS, c-Si heterojunctions, any layer needing asymmetric
-trap distribution), but cliff/spike *direction* parity requires interface
-SRH with E_t-aware n1/p1 at the heterojunction node -- solver work in
-``solver/mol.py:_apply_interface_recombination`` that is Phase E1, out
-of scope here.
+Status as of Phase E1:
+- E1 backend landed per-interface SRH with E_t-aware n1/p1 derived from
+  ``InterfaceDefect.E_t_eV`` plus absorber-side carrier sampling at the
+  interior node (``solver/mol.py:_apply_interface_recombination``).
+- ``configs/scaps_mirror.yaml`` intentionally does NOT declare an
+  ``interfaces:`` block because populating one with SCAPS-realistic
+  σ·v_th·N_t (SRV 1e2–1e5 m/s) produces a V-shape with minimum near
+  ΔE_C ≈ −0.16 V rather than SCAPS' monotonic cliff→spike rise: at deep
+  cliff (ΔE_C=−0.5) electrons drain from PVK to ETL faster than holes
+  accumulate at the absorber-interior eval node, so single-side n·p at
+  the interface recovers rather than blowing up.
+- Closing the gap requires the cross-carrier (Pauwels-Vanhoutte)
+  interface SRH formulation R = (n_L·p_R − ni_L·ni_R)/(...) so the trap
+  sees electrons from the ETL pool and holes from the PVK side
+  simultaneously. That is Phase E1.5, out of scope for the E1 backend.
 
-These tests are marked xfail so the SCAPS direction target stays
-documented and the CI surfaces if/when Phase E1 lands and the gap
-closes.
+These tests stay xfail with strict=False so CI surfaces if/when E1.5
+lands and the SCAPS mirror baseline is re-activated with an
+``interfaces:`` block.
 """
 from __future__ import annotations
 
@@ -44,9 +50,11 @@ def voc_by_delta_ec():
 
 
 _XFAIL_REASON = (
-    "Phase E1 (per-interface SRH with E_t-aware n1/p1 at heterojunction "
-    "node) not landed yet; Phase 4a directional edge profile produces a "
-    "V-shape rather than the SCAPS monotonic cliff→spike rise."
+    "Phase E1.5 (cross-carrier Pauwels-Vanhoutte interface SRH with "
+    "n_L·p_R coupling between absorber and transport sides) not landed "
+    "yet; Phase E1 single-side eval on the absorber-interior node "
+    "produces a V-shape with minimum near ΔE_C ≈ −0.16 V rather than "
+    "the SCAPS monotonic cliff→spike rise across [−0.5, +0.3] V."
 )
 
 
