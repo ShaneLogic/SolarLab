@@ -16,6 +16,19 @@ class LayerSpec:
 
 
 @dataclass(frozen=True)
+class InterfaceDefect:
+    """Single-level SRH defect localised at a heterointerface.
+
+    ``E_t_eV`` is the trap depth below the conduction band of the reference
+    side (SCAPS convention). Reference side is selected in
+    ``build_material_arrays``: absorber if exactly one adjacent layer is an
+    absorber, else the lower-Eg side. The resulting ``n1`` / ``p1`` use
+    ``srh_n1_p1_from_trap_depth(ni_ref, Eg_ref, E_t_eV, reference="below_cb")``.
+    """
+    E_t_eV: float
+
+
+@dataclass(frozen=True)
 class DeviceStack:
     layers: tuple[LayerSpec, ...]
     phi_left: float = 0.0   # V
@@ -25,6 +38,14 @@ class DeviceStack:
     # interfaces[0] = interface between layers[0] and layers[1], etc.
     # Empty tuple means no interface recombination.
     interfaces: tuple[tuple[float, float], ...] = ()
+    # Phase E1 — per-interface SRH defect (optional, aligned with ``interfaces``).
+    # ``None`` entries (or an empty tuple) fall back to the per-node bulk
+    # ``n1`` / ``p1`` of the layer that owns the interface node, which is
+    # bit-identical to the pre-E1 solver path. Populating an
+    # ``InterfaceDefect`` activates the E_t-aware n1/p1 derivation at that
+    # interface so the SCAPS cliff/spike direction at heterointerfaces with
+    # a defect-rich face becomes physically accessible.
+    interface_defects: tuple[Optional[InterfaceDefect], ...] = ()
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().

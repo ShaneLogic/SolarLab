@@ -97,6 +97,26 @@ class MaterialArrays:
     p_L: float
     n_R: float
     p_R: float
+    # Phase E1 — per-interface SRH (n1, p1) used by interface_recombination.
+    # Tuples aligned with ``interface_nodes``. Legacy fill = per-node bulk
+    # ``n1[idx]`` / ``p1[idx]`` of the layer that owns the interface node
+    # (bit-identical to the pre-E1 path). When ``stack.interface_defects``
+    # provides an ``InterfaceDefect`` at index k, the entry is replaced with
+    # ``srh_n1_p1_from_trap_depth(ni_ref, Eg_ref, defect.E_t_eV,
+    # reference="below_cb")`` on the reference side (absorber if exactly one
+    # adjacent layer is absorber, else lower-Eg side).
+    interface_n1: tuple[float, ...] = ()
+    interface_p1: tuple[float, ...] = ()
+    # Phase E1 — node index where interface SRH samples (n, p, ni²). Defaults
+    # to ``interface_nodes`` so the legacy / no-defect path is bit-identical.
+    # When ``InterfaceDefect`` is present at a heterojunction with one
+    # absorber-side neighbour, the sample index switches to the interior
+    # absorber node (``idx - 1`` if absorber on left, else ``idx``). The
+    # mask-overwrite ordering in ``build_material_arrays`` places the
+    # transport layer's params at the boundary node, so sampling at the
+    # transport node would underestimate the absorber-side hole density that
+    # the SCAPS interface SRH formulation needs.
+    interface_eval_node: tuple[int, ...] = ()
     # Precomputed LAPACK LU of the Poisson tridiagonal operator; reused in
     # every RHS call in place of scipy.sparse spsolve, which is the largest
     # single contributor to assemble_rhs runtime at the default grid sizes.
@@ -548,6 +568,54 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         offset += layer.thickness
         iface_list.append(int(np.argmin(np.abs(x - offset))))
 
+    # Phase E1 — per-interface (n1, p1). Default = per-node bulk values
+    # (bit-identical legacy). Replaced with E_t-derived values when the
+    # stack supplies an ``InterfaceDefect`` at the matching index.
+    from perovskite_sim.sweeps.device_parameter_sweep import (
+        srh_n1_p1_from_trap_depth,
+    )
+    interface_n1_list: list[float] = []
+    interface_p1_list: list[float] = []
+    interface_eval_list: list[int] = []
+    defects = getattr(stack, "interface_defects", ()) or ()
+    for k, idx in enumerate(iface_list):
+        defect = defects[k] if k < len(defects) else None
+        if defect is None:
+            # Legacy bit-identical: per-node bulk n1/p1, sample at idx.
+            interface_n1_list.append(float(n1[idx]))
+            interface_p1_list.append(float(p1[idx]))
+            interface_eval_list.append(idx)
+            continue
+        left = elec_layers[k].params
+        right = elec_layers[k + 1].params
+        # Reference side: absorber if exactly one side is absorber, else
+        # lower-Eg side (smaller bandgap dominates the SRH kinetics).
+        left_is_abs = elec_layers[k].role == "absorber"
+        right_is_abs = elec_layers[k + 1].role == "absorber"
+        if left_is_abs and not right_is_abs:
+            ref = left
+            eval_idx = max(0, idx - 1)
+        elif right_is_abs and not left_is_abs:
+            ref = right
+            eval_idx = idx
+        else:
+            # No absorber neighbour — pick lower-Eg side and place eval on
+            # that side. Interface node already carries right-layer params,
+            # so right is "at idx" and left is "at idx - 1".
+            if left.Eg <= right.Eg:
+                ref = left
+                eval_idx = max(0, idx - 1)
+            else:
+                ref = right
+                eval_idx = idx
+        n1_k, p1_k = srh_n1_p1_from_trap_depth(
+            ref.ni, ref.Eg, float(defect.E_t_eV),
+            reference="below_cb", thermal_voltage=V_T_dev,
+        )
+        interface_n1_list.append(n1_k)
+        interface_p1_list.append(p1_k)
+        interface_eval_list.append(eval_idx)
+
     # Interface face indices where band offset exceeds the TE threshold.
     # A face index f corresponds to the interval between nodes f and f+1.
     # Legacy/fast modes skip this so the SG flux is never capped.
@@ -716,6 +784,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         P_lim_face=P_lim_face,
         dx_cell=dx_cell,
         interface_nodes=tuple(iface_list),
+        interface_n1=tuple(interface_n1_list),
+        interface_p1=tuple(interface_p1_list),
+        interface_eval_node=tuple(interface_eval_list),
         n_L=n_L,
         p_L=p_L,
         n_R=n_R,
@@ -804,14 +875,15 @@ def _apply_interface_recombination(
         v_n, v_p = ifaces[k]
         if v_n == 0.0 and v_p == 0.0:
             continue
+        eval_idx = mat.interface_eval_node[k] if mat.interface_eval_node else idx
         R_s = interface_recombination(
-            n[idx], p[idx], float(mat.ni_sq[idx]),
-            float(mat.n1[idx]), float(mat.p1[idx]),
+            n[eval_idx], p[eval_idx], float(mat.ni_sq[eval_idx]),
+            mat.interface_n1[k], mat.interface_p1[k],
             v_n, v_p,
         )
-        R_vol = R_s / mat.dx_cell[idx]
-        dn[idx] -= R_vol
-        dp[idx] -= R_vol
+        R_vol = R_s / mat.dx_cell[eval_idx]
+        dn[eval_idx] -= R_vol
+        dp[eval_idx] -= R_vol
 
 
 def assemble_rhs(
