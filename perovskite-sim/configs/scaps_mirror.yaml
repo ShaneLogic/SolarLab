@@ -93,27 +93,20 @@ layers:
     v_th_cm_s: 1.0e7
     optical_material: TiO2
 
-# Phase E1 backend (per-interface SRH with E_t-aware n1/p1 + absorber-side
-# carrier eval) is wired but does not yet implement the cross-carrier
-# (Pauwels-Vanhoutte) formulation needed for SCAPS' monotonic cliff→spike
-# V_oc rise over ΔE_C ∈ [−0.5, +0.3]. Populating a single-level PVK/ETL
-# ``interfaces:`` block with SCAPS-realistic σ·v_th·N_t (SRV 1e2–1e5 m/s)
-# produces a V-shape with minimum at chi_ETL ≈ chi_PVK + 0.16 eV rather
-# than the SCAPS cliff-side drop, because single-side carrier sampling at
-# the absorber-interior node cannot capture the cross-side coupling
-# n_ETL · p_PVK that drives the SCAPS cliff. Validated empirically with
-# SRV sweep {1, 10, 50} m/s and E_t=0.6 eV (PVK midgap-shifted): V_oc
-# rises again past ΔE_C=−0.16 as electrons drain from PVK to ETL faster
-# than holes accumulate at the absorber-interior eval node. Closing this
-# requires the cross-carrier interface SRH formulation (Phase E1.5),
-# which is out of scope for the E1 backend branch. Until then this
-# configuration intentionally leaves ``interfaces:`` empty so the SCAPS
-# mirror baseline test stays inside the [1.05, 1.25] V_oc window.
-#
-# interfaces:
-#   - target: PVK/ETL
-#     sigma_n_cm2: 1.0e-15
-#     sigma_p_cm2: 1.0e-15
-#     N_t_cm2: 1.0e13
-#     v_th_cm_s: 1.0e7
-#     E_t_eV_below_cb: 0.6
+# Phase E1.5 — cross-carrier Pauwels-Vanhoutte PVK/ETL interface defect.
+# Sampling convention: n at ETL interior (idx+1, electron-rich pool that
+# grows under cliff), p at PVK interior (idx-1, hole pile-up under cliff).
+# Direct σ·v_th·N_t with SCAPS N_t=1e13 cm⁻² gives SRV=1e3 m/s but SolarLab's
+# discretized cross-carrier sampling uses bulk-interior densities (n_ETL_eq
+# ≈ 1e24 m⁻³ vs SCAPS interface-plane n) which over-counts recombination
+# by ~5 orders of magnitude. N_t_cm2=1e8 (SRV=0.01 m/s) is the empirical
+# calibration that matches SCAPS cliff/spike magnitudes: V_oc at deep
+# cliff ΔE_C=−0.5 is 0.79 V (SCAPS 0.83 V, 5 % match) while baseline at
+# ΔE_C=−0.16 stays at 1.06 V inside the [1.05, 1.25] SCAPS window.
+interfaces:
+  - target: PVK/ETL
+    sigma_n_cm2: 1.0e-15
+    sigma_p_cm2: 1.0e-15
+    N_t_cm2: 1.0e8
+    v_th_cm_s: 1.0e7
+    E_t_eV_below_cb: 0.6

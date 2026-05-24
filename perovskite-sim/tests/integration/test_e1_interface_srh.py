@@ -109,15 +109,20 @@ def test_interface_n1_p1_populated_from_E_t_on_lower_Eg_side():
 
 
 def test_empty_interface_defects_falls_back_to_per_node_bulk_n1_p1():
-    """Without ``interface_defects`` populated, ``interface_n1[k]`` mirrors
-    the per-node bulk ``n1[idx]`` exactly — bit-identical legacy path."""
+    """Interfaces WITHOUT an ``InterfaceDefect`` entry get
+    ``interface_n1[k]`` mirroring the per-node bulk ``n1[idx]`` exactly —
+    bit-identical legacy path. Iterates only the no-defect slots so the
+    test survives ``scaps_mirror.yaml`` populating the PVK/ETL slot."""
     stack = load_scaps_yaml("configs/scaps_mirror.yaml")
     x = _build_grid_for(stack)
     mat = build_material_arrays(x, stack)
 
     assert hasattr(mat, "interface_n1")
     assert len(mat.interface_n1) == len(mat.interface_nodes)
+    defects = stack.interface_defects or ()
     for k, idx in enumerate(mat.interface_nodes):
+        if k < len(defects) and defects[k] is not None:
+            continue
         assert mat.interface_n1[k] == float(mat.n1[idx])
         assert mat.interface_p1[k] == float(mat.p1[idx])
 
@@ -202,4 +207,8 @@ def test_scaps_mirror_baseline_metrics_recorded(baseline_metrics):
     assert 1.05 <= m.V_oc <= 1.25
     assert 230.0 <= m.J_sc <= 280.0
     assert 0.78 <= m.FF <= 0.92
-    assert 0.22 <= m.PCE <= 0.30
+    # PCE floor widened from 0.22 to 0.21 after Phase E1.5 activated the
+    # PVK/ETL interface defect in scaps_mirror.yaml (small PCE shaving
+    # ~0.001 from the no-defect baseline is the cost of the cliff-
+    # direction parity gain).
+    assert 0.21 <= m.PCE <= 0.30
