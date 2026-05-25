@@ -323,6 +323,12 @@ def apply_sweep_point(
             cms_to_ms(float(updates["interface_srv_cm_s"])),
             target=str(updates.get("interface_target", "all")),
         )
+    if "interface_defect_N_t_cm2" in updates:
+        updated = _apply_interface_defect_N_t_cm2(
+            updated,
+            float(updates["interface_defect_N_t_cm2"]),
+            target=str(updates.get("interface_defect_target", "pvk/etl")),
+        )
 
     if sync_vbi:
         updated = dataclasses.replace(updated, V_bi=updated.compute_V_bi())
@@ -662,6 +668,106 @@ def _apply_internal_interface_srv(
         if should_set:
             interfaces[i] = (srv_m_s, srv_m_s)
     return dataclasses.replace(stack, interfaces=tuple(interfaces))
+
+
+def _apply_interface_defect_N_t_cm2(
+    stack: DeviceStack,
+    N_t_cm2_areal: float,
+    *,
+    target: str = "pvk/etl",
+) -> DeviceStack:
+    """Set the SRV on ``DeviceStack.interfaces[k]`` from a SCAPS areal
+    trap density ``N_t [cm^-2]``, preserving ``InterfaceDefect.E_t_eV``.
+
+    Translates SCAPS kinetic identity using fixed σ=1e-15 cm² and
+    v_th=1e7 cm/s — the standard SCAPS PVK/ETL Gaussian-defect cross-
+    section and thermal velocity. SRV [m/s] = σ_cm2 · v_th_cm_s ·
+    N_t_cm2 · 1e-2. The sweep handler does NOT touch
+    ``MaterialParams.trap_N_t_interface`` (the Phase 4a layer-trap-
+    profile knob driven by the separate ``interface_trap_density_cm3``
+    sweep key).
+
+    Raises ``ValueError`` if the named target has no existing
+    ``InterfaceDefect`` entry — the YAML must declare the defect first
+    (with its ``E_t_eV_below_cb``) before the sweep can drive its
+    density. Otherwise sweeping a defect-free interface would silently
+    invent a defect on it, masking config bugs.
+
+    Target alias resolves the heterointerface by adjacent layer roles
+    (case-insensitive, ``pvk`` ≡ ``absorber``): ``pvk/etl``,
+    ``htl/pvk``, ``left`` (first interior interface), ``right`` (last
+    interior interface).
+    """
+    SIGMA_CM2 = 1.0e-15
+    V_TH_CM_S = 1.0e7
+    srv_m_s = SIGMA_CM2 * V_TH_CM_S * float(N_t_cm2_areal) * 1.0e-2
+
+    n_interfaces = max(0, len(stack.layers) - 1)
+    if n_interfaces == 0:
+        raise ValueError("DeviceStack has no interior interfaces")
+    k = _resolve_interface_sweep_target(target, stack.layers, n_interfaces)
+
+    defects = list(stack.interface_defects) if stack.interface_defects else [None] * n_interfaces
+    if defects[k] is None:
+        raise ValueError(
+            f"interface_defect_N_t_cm2 sweep target {target!r} has no "
+            "InterfaceDefect entry in DeviceStack.interface_defects — "
+            "declare one in the YAML interfaces: block before sweeping"
+        )
+    interfaces = list(stack.interfaces) if stack.interfaces else [(0.0, 0.0)] * n_interfaces
+    interfaces[k] = (srv_m_s, srv_m_s)
+    return dataclasses.replace(
+        stack,
+        interfaces=tuple(interfaces),
+        interface_defects=tuple(defects),
+    )
+
+
+# Adjacent-layer-role alias resolver for the interface-defect sweep
+# handler. Mirrors the resolver in ``perovskite_sim.scaps_compat.loader``
+# but kept local here so the sweeps package stays decoupled from the
+# SCAPS compatibility module.
+_INTERFACE_SWEEP_ROLE_ALIAS = {
+    "pvk": "absorber",
+    "perovskite": "absorber",
+    "absorber": "absorber",
+    "htl": "htl",
+    "etl": "etl",
+}
+
+
+def _resolve_interface_sweep_target(
+    target: str, layers: tuple[LayerSpec, ...], n_interfaces: int,
+) -> int:
+    """Resolve a heterointerface target alias to a stack.layers index.
+
+    Accepts ``A/B`` role pairs (case-insensitive, ``pvk`` ≡ ``absorber``)
+    or the positional aliases ``left`` (first interior interface) /
+    ``right`` (last interior interface).
+    """
+    key = target.strip().lower()
+    if key in ("left", "first"):
+        return 0
+    if key in ("right", "last"):
+        return n_interfaces - 1
+    parts = [p.strip() for p in key.split("/")]
+    if len(parts) != 2 or any(not p for p in parts):
+        raise ValueError(
+            f"unknown interface target {target!r} "
+            "(expected 'A/B' role pair or 'left'/'right')"
+        )
+    left_alias = _INTERFACE_SWEEP_ROLE_ALIAS.get(parts[0], parts[0])
+    right_alias = _INTERFACE_SWEEP_ROLE_ALIAS.get(parts[1], parts[1])
+    for k in range(n_interfaces):
+        left_role = layers[k].role.lower()
+        right_role = layers[k + 1].role.lower()
+        if left_role == left_alias and right_role == right_alias:
+            return k
+    raise ValueError(
+        f"unknown interface target {target!r} — no adjacent layer pair "
+        f"matches roles ({left_alias!r}, {right_alias!r}) in the stack "
+        + str([l.role for l in layers])
+    )
 
 
 def _replace_layer_params_by_role(stack: DeviceStack, role: str, **updates: Any) -> DeviceStack:
