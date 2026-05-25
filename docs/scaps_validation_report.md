@@ -132,3 +132,133 @@ used `solarscale_nip_band_aligned.yaml` with wrong thicknesses, χ, E_g
 and a 1 µs τ), the SCAPS-mirror baseline closes V_oc by +89 mV, FF by
 +13 pp, and PCE by +3.3 pp on the base J–V — purely from parameter
 parity, with no solver work.
+
+---
+
+## Update 2026-05-25 — Phases E1 + E1.5 + E1.7 landed on `main`
+
+Three atomic feature branches merged to `origin/main` (HEAD `af627b8`)
+that close most of the per-sweep parity gaps documented above. The
+underlying physics changes are:
+
+- **Phase E1** (`3bd5dcb`, `fa0cdf7`) — per-interface SRH with
+  E_t-aware n1/p1 at heterojunction nodes. Adds `InterfaceDefect`
+  dataclass + `DeviceStack.interface_defects` field; SCAPS YAML loader
+  parses a new top-level `interfaces:` block.
+- **Phase E1.5** (`05ef0d1`, `8b8ff3b`) — Pauwels-Vanhoutte cross-
+  carrier sampling at the heterojunction (n from transport-side
+  interior, p from absorber-side interior) + detailed-balance
+  `ni_eff² = n_R_eq · p_L_eq`. Activates the PVK/ETL defect in
+  `scaps_mirror.yaml` with empirically calibrated
+  `N_t_cm2 = 1e8` (SRV = 0.01 m/s). Flips the two CBO trend xfails
+  to passing.
+- **Phase E1.7** (`af627b8`) — new
+  `interface_defect_N_t_cm2` sweep key wires SCAPS interface defect
+  sweeps through `DeviceStack.interface_defects[k]` SRV via
+  σ·v_th·N_t_areal. Validation script `scripts/run_scaps_validation.py`
+  re-points its PVK/ETL interface defect sweep to the new key with a
+  documented `_INTERFACE_DEFECT_N_T_CALIBRATION = 1e-4` multiplier
+  (empirical SolarLab/SCAPS N_t ratio at scaps_mirror baseline).
+
+### Updated per-sweep parity (parked → E1.7)
+
+| Sweep | Parked (Phase D2) | E1.7 (May 25) | SCAPS | Closure |
+|---|---|---|---|---|
+| ETL/PVK ΔE_C (CBO) | 18 mV / match | **782 mV / match** | 918 mV | **85 %** ✓✓ |
+| ETL donor doping | 15 mV / mismatch | 1075 mV / match-direction | 137 mV | direction ✓, magnitude 8× too sensitive |
+| PVK donor doping | 50 mV / mismatch | 34 mV / mismatch | 34 mV | range matches, direction still off |
+| PVK-CB bulk N_t | 0 / match | 0 / match | 39 mV | unchanged (masked by interface SRH dominance) |
+| PVK/ETL interface defect density | 0 / mismatch | **210 mV / match** | 282 mV | **74 %** ✓ |
+| PVK-CB bulk E_t | 3 / flat both | 2 / flat both | 0 | unchanged |
+| Base J-V V_oc | 1.0905 V | 1.0694 V | 1.1676 | shift −21 mV (defect active) |
+| Base J-V PCE | 22.99 % | 21.99 % | 26.69 % | −1 pp (cliff-direction parity cost) |
+
+### Calibration mapping (SCAPS PDF → SolarLab YAML)
+
+| SCAPS PDF input | SolarLab YAML equivalent | Source of gap |
+|---|---|---|
+| `σ_n = 1e-15 cm²` | identical | — |
+| `v_th = 1e7 cm/s` | identical | — |
+| `N_t = 1e12 cm⁻²` (areal) at baseline | `N_t_cm2: 1.0e8` in `scaps_mirror.yaml` | **5-order discretization gap** — see below |
+| `E_t = 0.6 eV below CB` | identical | — |
+| Resulting SRV | 1e3 m/s SCAPS direct → **0.01 m/s** in SolarLab YAML | empirical calibration |
+
+The `1e-4` calibration multiplier in
+`scripts/run_scaps_validation.py:_INTERFACE_DEFECT_N_T_CALIBRATION`
+scales SCAPS PDF sweep values down to SolarLab-effective N_t before
+passing to the new sweep handler.
+
+### Root cause of the 5-order N_t calibration gap
+
+Phase E1.5 cross-carrier sampling reads **bulk-interior** carrier
+densities at `idx±1` (e.g. `n[idx+1] = N_D_ETL ≈ 1e24 m⁻³`). SCAPS
+reads **interface-plane** densities suppressed by band-bending
+depletion to roughly `N_D · exp(−q·V_bend/V_T) ≈ 1e19 m⁻³`. The
+5-order density gap forces the empirical N_t calibration.
+
+A direct Boltzmann face-density formulation (Phase E1.6 attempt) was
+explored on 2026-05-25 and found to be **non-physical under photo-
+injection** — the quasi-Fermi splitting on each side breaks the dark-
+equilibrium Fermi-continuity assumption baked into the formula,
+causing the SRH numerator to blow up beyond the Newton convergence
+basin (solver crashes at V_app ≈ 0.08 V for any defect-active SRV).
+Proper closure requires SG-flux-consistent face-density extraction in
+`physics/continuity.py` — multi-week refactor, parked for future
+research-grade work.
+
+### Known limitations remaining
+
+1. **ETL doping magnitude over-sensitivity** (1075 mV vs SCAPS
+   137 mV). Two compounding effects: (a) E1.5 cross-carrier R scales
+   linearly with bulk N_D_ETL; (b) Dirichlet contact starves V_oc at
+   N_D ≤ 1e12 cm⁻³ in the SCAPS-extreme sweep. Probe shows Robin
+   contacts close (a) to within 22 mV in realistic [1e16, 1e20]
+   range BUT surface a V_oc-bracket failure at extreme low doping.
+   Robin activation deferred pending bracket fix.
+2. **Bulk N_t sweep flat** (0 mV vs SCAPS 39 mV). Routing is correct
+   — τ modulates 6 orders across sweep. Bulk SRH areal rate (~4e17
+   m⁻²s⁻¹) dwarfed by E1.5 interface SRH (~1e20 m⁻²s⁻¹) by 250×.
+   Same Phase E1.6 SG-face-density refactor closes this as a bonus.
+3. **Calibration ratio is per-heterojunction** — the `1e-4` factor
+   reflects PVK/ETL specifically. Other heterointerfaces (HTL/PVK,
+   tandem recombination layers) would need separate empirical
+   tuning until Phase E1.6 lands.
+
+### Test guards updated
+
+- `tests/integration/test_scaps_mirror_baseline.py` — base envelope
+  still pinned (PCE floor relaxed 0.22 → 0.21 to absorb the −1 pp
+  defect-active shift).
+- `tests/integration/test_scaps_mirror_cbo_trend.py` — both
+  previously-xfailed tests are now active passing assertions:
+  `test_cbo_voc_drops_at_cliff` (V_oc drop ≥ 100 mV at ΔE_C = −0.5)
+  and `test_cbo_voc_range_at_least_200mV`.
+- `tests/integration/test_e1_interface_srh.py` (Phase E1, 5 tests),
+  `tests/integration/test_e1_5_cross_carrier_srh.py` (Phase E1.5,
+  4 tests), and `tests/unit/sweeps/test_interface_defect_sweep.py`
+  (Phase E1.7, 5 tests) pin the new behaviour.
+- Total SCAPS subset: 37/37 pass on `main`.
+
+### How to reproduce post-E1.7
+
+```bash
+cd perovskite-sim
+git checkout main && git pull
+python scripts/run_scaps_validation.py --out-dir outputs/scaps_validation_e1_7
+```
+
+Output written under
+`perovskite-sim/outputs/scaps_validation_e1_7/`. ~3 minute wall time
+(faster than parked Phase D2 because the new sweep key reuses cached
+material arrays more efficiently).
+
+### Next-phase decision (parked 2026-05-25)
+
+E1+E1.5+E1.7 is the right milestone to validate with partner before
+further work. Remaining gaps (ETL doping magnitude, bulk N_t
+visibility) all stem from a single architectural cause (interface-
+plane vs bulk-interior carrier sampling) that requires multi-week
+solver refactor (Phase E1.6 SG-face-density extraction). Decision to
+proceed with that work, accept current calibration as permanent, or
+explore alternative validation strategies should be partner-driven
+based on the present parity status.
