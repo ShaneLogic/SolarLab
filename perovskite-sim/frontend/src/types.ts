@@ -59,11 +59,47 @@ export interface LayerConfig {
 
 export type SimulationModeName = 'legacy' | 'fast' | 'full'
 
+/**
+ * Phase E1.8 — SCAPS-style heterojunction interface defect fields. Mirrors
+ * the YAML schema parsed by ``perovskite_sim.scaps_compat.loader`` and the
+ * ``backend/main.py:stack_from_dict`` plumbing: the 5 fields below feed a
+ * single ``InterfaceDefect`` slot on ``DeviceStack.interface_defects[k]``
+ * plus the SRV pair on ``DeviceStack.interfaces[k]`` (v = σ·v_th·N_t_areal,
+ * cgs→SI). Sentinel discipline matches ``S_*_left/right``:
+ *   undefined → field absent in YAML, no defect on this interface
+ *   null      → explicitly disabled (also no defect, but persists in JSON)
+ *   number    → finite value, included in σ·v_th·N_t computation
+ *
+ * The backend treats the whole slot as "absent" iff the slot itself is
+ * null or undefined. A slot with mixed-null fields is malformed and is
+ * rejected at the boundary (every field must be non-null when the slot
+ * is populated).
+ */
+export interface InterfaceDefectFields {
+  sigma_n_cm2: number | null
+  sigma_p_cm2: number | null
+  N_t_cm2: number | null
+  v_th_cm_s: number | null
+  E_t_eV_below_cb: number | null
+}
+
 export interface DeviceConfig {
   device: {
     V_bi: number
     Phi: number
     interfaces?: Array<[number, number]>
+    /**
+     * Phase E1.8 — per-interface SCAPS defect dicts aligned with
+     * ``layers.length − 1`` slots (k=0 → HTL/PVK, k=1 → PVK/ETL, etc.).
+     * Each slot is either null (no defect on this heterointerface) or a
+     * populated ``InterfaceDefectFields`` object. The backend computes
+     * the SRV pair on ``stack.interfaces[k]`` from σ·v_th·N_t_areal and
+     * builds ``stack.interface_defects[k] = InterfaceDefect(E_t_eV=…)``;
+     * see ``backend/main.py:stack_from_dict``. When this field is
+     * present, it takes precedence over the legacy ``interfaces`` SRV
+     * pairs on the same index.
+     */
+    interface_defects?: Array<InterfaceDefectFields | null>
     T?: number
     mode?: SimulationModeName
     // Stage B(c.1) Robin / selective contacts — optional, FULL-tier-only.

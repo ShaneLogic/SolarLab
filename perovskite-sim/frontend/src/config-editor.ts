@@ -1,4 +1,4 @@
-import type { DeviceConfig, LayerConfig, LayerRole, SimulationModeName } from './types'
+import type { DeviceConfig, InterfaceDefectFields, LayerConfig, LayerRole, SimulationModeName } from './types'
 import { isLayerRole } from './types'
 import { isFieldVisible } from './workstation/tier-gating'
 
@@ -330,6 +330,58 @@ function renderRobinContacts(config: DeviceConfig): string {
       </details>`
 }
 
+/**
+ * Phase E1.8 — FULL-tier-only per-heterointerface SCAPS defect panel.
+ * Collapsed ``<details>`` placed below the Robin contacts panel; one
+ * row per electrical heterointerface (HTL/PVK, PVK/ETL, …) auto-derived
+ * from ``config.layers``. Each row exposes the 5 SCAPS fields
+ * (σ_n, σ_p, N_t areal, v_th, E_t below CB) typed ``number | null`` —
+ * empty input is the "absent" sentinel (round-trips as ``null``).
+ * Mirrors the YAML schema parsed by ``scaps_compat/loader.py`` and the
+ * backend ``stack_from_dict`` plumbing.
+ */
+function renderInterfaceDefects(config: DeviceConfig): string {
+  const n = Math.max(0, config.layers.length - 1)
+  if (n === 0) return ''
+  const help = '<p class="param-help">SCAPS-style per-heterointerface SRH defect. Each row contributes ``σ·v_th·N_t`` surface velocities to <code>DeviceStack.interfaces[k]</code> and an <code>InterfaceDefect(E_t_eV)</code> entry to <code>DeviceStack.interface_defects[k]</code>. Empty fields = absent (no defect on this interface). Calibration ratio between SCAPS direct N_t and SolarLab effective N_t is ~10⁻⁴ for PVK/ETL — see <code>docs/scaps_validation_report.md</code>.</p>'
+  const rows: string[] = []
+  for (let i = 0; i < n; i++) {
+    const defect = config.device.interface_defects?.[i] ?? null
+    const left = config.layers[i]?.name ?? `layer ${i + 1}`
+    const right = config.layers[i + 1]?.name ?? `layer ${i + 2}`
+    rows.push(`
+      <div class="iface-row">
+        <span class="iface-label">${escapeHtml(left)} / ${escapeHtml(right)}</span>
+        <label class="param" title="Electron capture cross-section [cm²]">
+          <span class="param-label"><span class="sym">σ<sub>n</sub></span><span class="unit">cm²</span></span>
+          ${numAttr(`idef-${i}-sigma-n`, defect?.sigma_n_cm2, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Hole capture cross-section [cm²]">
+          <span class="param-label"><span class="sym">σ<sub>p</sub></span><span class="unit">cm²</span></span>
+          ${numAttr(`idef-${i}-sigma-p`, defect?.sigma_p_cm2, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Areal trap density at the interface plane [cm⁻²]">
+          <span class="param-label"><span class="sym"><i>N</i><sub>t</sub></span><span class="unit">cm⁻²</span></span>
+          ${numAttr(`idef-${i}-N-t`, defect?.N_t_cm2, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Thermal velocity (typically 1e7 cm/s) [cm/s]">
+          <span class="param-label"><span class="sym"><i>v</i><sub>th</sub></span><span class="unit">cm/s</span></span>
+          ${numAttr(`idef-${i}-v-th`, defect?.v_th_cm_s, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Trap energy referenced as E_C(reference side) − E_t [eV]; reference is the absorber if exactly one adjacent layer is an absorber, else the lower-Eg side.">
+          <span class="param-label"><span class="sym"><i>E</i><sub>t</sub></span><span class="unit">eV</span></span>
+          ${numAttr(`idef-${i}-E-t`, defect?.E_t_eV_below_cb, { placeholder: '— disabled' })}
+        </label>
+      </div>`)
+  }
+  return `
+      <details class="param-group">
+        <summary><h5>Interface Defects (FULL only) — Phase E1.5</h5></summary>
+        ${help}
+        <div class="iface-list">${rows.join('')}</div>
+      </details>`
+}
+
 function renderModeOptions(current: SimulationModeName): string {
   return MODE_OPTIONS
     .map(o => `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`)
@@ -378,10 +430,17 @@ export function renderDeviceEditor(
   // Hidden in the single-layer drill-down too, where the panel would lose
   // context (it is a device-level setting, not a per-layer one).
   const robinHtml = !singleLayer && tier === 'full' ? renderRobinContacts(config) : ''
+  // Phase E1.8 — interface defects panel placed below Robin contacts.
+  // FULL-tier-gated (matches the underlying ``InterfaceDefect`` solver
+  // hook from Phase E1.5). Hidden in single-layer drill-down because
+  // the panel is device-level.
+  const interfaceDefectsHtml =
+    !singleLayer && tier === 'full' ? renderInterfaceDefects(config) : ''
   container.innerHTML = `
     <div class="editor">
       ${deviceGroup}
       ${robinHtml}
+      ${interfaceDefectsHtml}
       ${interfacesHtml}
       <div class="layer-list">${layerHtml}</div>
     </div>`
@@ -487,6 +546,31 @@ export function readDeviceEditor(
       parseNum(`iface-${i}-vp`, existing[1]),
     ])
   }
+  // Phase E1.8 — read interface defects panel. Each slot is "absent"
+  // (null in the round-trip payload) iff EVERY field is empty input;
+  // a fully-populated slot serialises into an ``InterfaceDefectFields``
+  // object for backend ``stack_from_dict``. Mixed half-populated slots
+  // are not allowed by contract (backend rejects), so the reader
+  // collapses them to null to surface the user's intent cleanly.
+  const interface_defects: Array<InterfaceDefectFields | null> = []
+  for (let i = 0; i < layers.length - 1; i++) {
+    const existing = original.device.interface_defects?.[i] ?? null
+    const parsed: InterfaceDefectFields = {
+      sigma_n_cm2: parseNumOrNull(`idef-${i}-sigma-n`, existing?.sigma_n_cm2 ?? null) ?? null,
+      sigma_p_cm2: parseNumOrNull(`idef-${i}-sigma-p`, existing?.sigma_p_cm2 ?? null) ?? null,
+      N_t_cm2: parseNumOrNull(`idef-${i}-N-t`, existing?.N_t_cm2 ?? null) ?? null,
+      v_th_cm_s: parseNumOrNull(`idef-${i}-v-th`, existing?.v_th_cm_s ?? null) ?? null,
+      E_t_eV_below_cb: parseNumOrNull(`idef-${i}-E-t`, existing?.E_t_eV_below_cb ?? null) ?? null,
+    }
+    const allNull = Object.values(parsed).every(v => v == null)
+    interface_defects.push(allNull ? null : parsed)
+  }
+  const anyDefectPopulated = interface_defects.some(d => d != null)
+  const interfaceDefectsField = anyDefectPopulated
+    ? { interface_defects }
+    : (original.device.interface_defects !== undefined
+      ? { interface_defects }
+      : {})
   const rawMode = parseText('dev-mode', original.device.mode ?? 'full')
   const mode: SimulationModeName = isModeName(rawMode) ? rawMode : 'full'
   const T = parseNum('dev-T', original.device.T ?? 300)
@@ -506,6 +590,11 @@ export function readDeviceEditor(
       S_p_left: parseNumOrNull('dev-S-p-top', original.device.S_p_left),
       S_n_right: parseNumOrNull('dev-S-n-bot', original.device.S_n_right),
       S_p_right: parseNumOrNull('dev-S-p-bot', original.device.S_p_right),
+      // Phase E1.8 — spread the interface_defects field conditionally
+      // so absent → still absent (no spurious null array in the payload
+      // for presets that pre-date E1.5 or for non-FULL tier round-trips
+      // where the panel is hidden).
+      ...interfaceDefectsField,
     },
     layers,
   }

@@ -36,7 +36,7 @@ from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
 from perovskite_sim.experiments import mott_schottky as ms_exp
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.models.mode import resolve_mode
 from perovskite_sim.models.parameters import MaterialParams
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
@@ -173,9 +173,47 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
                 role=str(layer_cfg["role"]),
             )
         )
-    interfaces = tuple(
-        (float(pair[0]), float(pair[1]))
-        for pair in (dev.get("interfaces") or [])
+    # Legacy ``interfaces`` schema: list of (v_n, v_p) m/s SRV pairs aligned
+    # with the heterointerfaces. Phase E1.5 / E1.8 SCAPS-style schema:
+    # ``interface_defects`` list of per-slot ``{sigma_n_cm2, sigma_p_cm2,
+    # N_t_cm2, v_th_cm_s, E_t_eV_below_cb} | None``. When both schemas
+    # supply data on the same index k, ``interface_defects`` takes
+    # precedence (computes SRV via σ·v_th·N_t kinetic identity); legacy
+    # ``interfaces`` survives for slots where ``interface_defects[k]`` is
+    # None or absent.
+    legacy_pairs = list(dev.get("interfaces") or [])
+    defect_blocks = list(dev.get("interface_defects") or [])
+    n_iface = max(0, len(layers) - 1)
+    iface_list: list[tuple[float, float]] = []
+    defect_list: list[InterfaceDefect | None] | None = (
+        [] if defect_blocks else None
+    )
+    for k in range(n_iface):
+        pair = legacy_pairs[k] if k < len(legacy_pairs) else (0.0, 0.0)
+        defect_dict = defect_blocks[k] if k < len(defect_blocks) else None
+        if defect_dict is None:
+            iface_list.append((float(pair[0]), float(pair[1])))
+            if defect_list is not None:
+                defect_list.append(None)
+            continue
+        sigma_n_cm2 = float(defect_dict["sigma_n_cm2"])
+        sigma_p_cm2 = float(defect_dict["sigma_p_cm2"])
+        v_th_cm_s = float(defect_dict["v_th_cm_s"])
+        N_t_cm2 = float(defect_dict["N_t_cm2"])
+        E_t_eV = float(defect_dict["E_t_eV_below_cb"])
+        v_n = sigma_n_cm2 * v_th_cm_s * N_t_cm2 * 1.0e-2
+        v_p = sigma_p_cm2 * v_th_cm_s * N_t_cm2 * 1.0e-2
+        iface_list.append((v_n, v_p))
+        assert defect_list is not None  # narrows for mypy
+        defect_list.append(InterfaceDefect(E_t_eV=E_t_eV))
+    # Only emit the ``interfaces`` tuple if the user supplied either schema
+    # (preserves "absent → ()" legacy behaviour when neither key present).
+    if legacy_pairs or defect_blocks:
+        interfaces = tuple(iface_list)
+    else:
+        interfaces = ()
+    interface_defects = (
+        tuple(defect_list) if defect_list is not None else ()
     )
     mode_name = str(dev.get("mode", "full"))
     # Validate early so an unknown mode fails the HTTP request rather than
@@ -204,6 +242,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         V_bi=float(dev.get("V_bi", 1.1)),
         Phi=float(dev.get("Phi", 2.5e21)),
         interfaces=interfaces,
+        interface_defects=interface_defects,
         T=float(dev.get("T", 300.0)),
         mode=mode_name,
         # Stage B(c.1) Robin / selective contacts. None = ohmic Dirichlet
