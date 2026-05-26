@@ -73,6 +73,12 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
     interfaces, interface_defects = _parse_interfaces_block(
         cfg.get("interfaces") or [], layers,
     )
+    # Phase E1.10 — Robin / selective outer-contact S fields. Mirrors the
+    # flat top-level schema accepted by ``models/config_loader.py`` so
+    # SCAPS-shape YAMLs can opt into Phase 3.3 Robin contacts without
+    # switching loader. Absent → None (Dirichlet ohmic default, pre-3.3
+    # behaviour). 0.0 → Neumann blocking sentinel (distinct from absent).
+    # Positive finite → Robin surface recombination velocity m/s.
     return DeviceStack(
         layers=layers,
         V_bi=float(dev["V_bi"]),
@@ -80,7 +86,23 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
         mode=str(dev["mode"]),
         interfaces=interfaces,
         interface_defects=interface_defects,
+        S_n_left=_opt_S(dev.get("S_n_left")),
+        S_p_left=_opt_S(dev.get("S_p_left")),
+        S_n_right=_opt_S(dev.get("S_n_right")),
+        S_p_right=_opt_S(dev.get("S_p_right")),
     )
+
+
+def _opt_S(v: Any) -> float | None:
+    """Coerce a YAML S value to float or None.
+
+    None / absent → None (Dirichlet ohmic default).
+    Numeric (incl. 0.0) → float; ``0.0`` is the Neumann blocking
+    sentinel and must NOT be coerced to None.
+    """
+    if v is None:
+        return None
+    return float(v)
 
 
 def _parse_interfaces_block(
