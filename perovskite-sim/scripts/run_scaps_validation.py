@@ -328,9 +328,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    # Phase E1.9 opt-in: at SCAPS-extreme low ETL doping (N_D ≤ 1e12 cm⁻³)
+    # with Robin contacts active, V_oc can climb above the V_max=1.6 default
+    # and the sweep would report ``voc_bracketed=False`` with sentinel zeros.
+    # Three attempts (V_max up to V_initial+1.0 V) covers the SCAPS PDF
+    # sweep range without spending budget on points that already bracket
+    # on the first try.
     jv_kwargs = dict(
         N_grid=args.N_grid, n_points=args.n_points,
         v_rate=args.v_rate, V_max=args.V_max,
+        v_max_max_attempts=3,
     )
 
     print("== base J-V ==", flush=True)
