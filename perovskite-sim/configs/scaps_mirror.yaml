@@ -93,20 +93,45 @@ layers:
     v_th_cm_s: 1.0e7
     optical_material: TiO2
 
-# Phase E1.5 — cross-carrier Pauwels-Vanhoutte PVK/ETL interface defect.
+# Phase E1.5 + E1.6 — cross-carrier Pauwels-Vanhoutte PVK/ETL interface
+# defect with explicit Phase E1.6 calibration factor.
+#
 # Sampling convention: n at ETL interior (idx+1, electron-rich pool that
 # grows under cliff), p at PVK interior (idx-1, hole pile-up under cliff).
-# Direct σ·v_th·N_t with SCAPS N_t=1e13 cm⁻² gives SRV=1e3 m/s but SolarLab's
-# discretized cross-carrier sampling uses bulk-interior densities (n_ETL_eq
-# ≈ 1e24 m⁻³ vs SCAPS interface-plane n) which over-counts recombination
-# by ~5 orders of magnitude. N_t_cm2=1e8 (SRV=0.01 m/s) is the empirical
-# calibration that matches SCAPS cliff/spike magnitudes: V_oc at deep
-# cliff ΔE_C=−0.5 is 0.79 V (SCAPS 0.83 V, 5 % match) while baseline at
-# ΔE_C=−0.16 stays at 1.06 V inside the [1.05, 1.25] SCAPS window.
+# Direct σ·v_th·N_t with SCAPS N_t=1e13 cm⁻² gives SRV=1e3 m/s but
+# SolarLab's discretized cross-carrier sampling reads bulk-interior
+# carrier densities (n_ETL_eq ≈ 1e24 m⁻³ vs SCAPS interface-plane n)
+# which over-counts recombination by ~5 orders of magnitude. Phase A
+# probe data (2026-05-26, see docs/superpowers/specs/2026-05-26-e1.6-sg-face-density-spec.md
+# + outputs/scaps_validation_e1_6a_probe.txt) ruled out SG-flux-extraction
+# (loses cliff direction because p_ETL is machine epsilon). Option B-2
+# locks the SCAPS direct N_t at its partner value and absorbs the
+# 5-order discretization gap into an explicit ``calibration_factor`` on
+# the InterfaceDefect dataclass — making the partner-facing data model
+# transparent rather than hiding the gap in a script constant.
+#
+# N_t_cm2=1e13 (SCAPS direct) · calibration_factor=1e-5 → SRV_eff =
+# σ·v_th·N_t · 1e-2 · cf = 1e-15 · 1e7 · 1e13 · 1e-2 · 1e-5 = 0.01 m/s,
+# same effective velocity as the empirical N_t_cm2=1e8 setting that
+# scaps_mirror.yaml carried before Phase E1.6. Baseline V_oc, CBO sweep,
+# and PVK/ETL interface N_t sweep parities are preserved exactly.
 interfaces:
   - target: PVK/ETL
     sigma_n_cm2: 1.0e-15
     sigma_p_cm2: 1.0e-15
-    N_t_cm2: 1.0e8
+    N_t_cm2: 1.0e12              # SCAPS PDF baseline value (PDF p12)
     v_th_cm_s: 1.0e7
     E_t_eV_below_cb: 0.6
+    calibration_factor: 1.0e-4   # Phase E1.6 explicit attenuation
+    # Effective SRV: σ · v_th · N_t · 1e-2 · cf
+    #   = 1e-15 · 1e7 · 1e12 · 1e-2 · 1e-4 = 1e-2 m/s
+    # Matches the pre-E1.6 empirical N_t_cm2=1e8 + cf=1.0 path exactly
+    # (mathematically equivalent: 1e8 · 1e-2 = 1e12 · 1e-2 · 1e-4).
+    # SCAPS PDF baseline value chosen as the YAML N_t so the validation
+    # script's sweep range (SCAPS-direct N_t values) and the YAML
+    # baseline use the same calibration_factor uniformly. Partner-facing:
+    # N_t matches SCAPS PDF directly; the calibration_factor reflects
+    # the SolarLab-vs-SCAPS discretization gap (5 orders absorbed via
+    # σ·v_th·N_t·1e-2·1e-4 = SRV_eff). See
+    # docs/superpowers/specs/2026-05-26-e1.6-sg-face-density-spec.md
+    # for the underlying physics rationale.

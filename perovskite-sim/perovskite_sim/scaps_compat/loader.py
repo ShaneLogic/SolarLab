@@ -143,7 +143,15 @@ def _parse_interfaces_block(
         v_n = sigma_n_si * v_th_si * N_t_areal_si
         v_p = sigma_p_si * v_th_si * N_t_areal_si
         interfaces[k] = (v_n, v_p)
-        defects[k] = InterfaceDefect(E_t_eV=float(entry["E_t_eV_below_cb"]))
+        # Phase E1.6 — optional calibration_factor (default 1.0 = legacy).
+        # Mirrors the schema accepted by ``backend/main.py:stack_from_dict``
+        # so SCAPS YAML and inline-device dicts surface the same partner-
+        # facing field.
+        calibration_factor = float(entry.get("calibration_factor", 1.0))
+        defects[k] = InterfaceDefect(
+            E_t_eV=float(entry["E_t_eV_below_cb"]),
+            calibration_factor=calibration_factor,
+        )
     return tuple(interfaces), tuple(defects)
 
 

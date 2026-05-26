@@ -121,6 +121,16 @@ class MaterialArrays:
     # the reference-side ``ni²`` (lower-Eg / absorber side, matching the
     # n1·p1 = ni_ref² identity from srh_n1_p1_from_trap_depth) when a defect
     # is populated.
+    # Phase E1.6 (Option B-2) — per-interface attenuation factor on (v_n, v_p).
+    # Default 1.0 = legacy bit-identical with pre-E1.6 behaviour. When an
+    # ``InterfaceDefect`` declares ``calibration_factor`` it is forwarded
+    # here at build time and multiplied into the SG-flux-derived surface
+    # velocities in ``_apply_interface_recombination``. Lets SCAPS direct
+    # N_t values plug into ``configs/scaps_mirror.yaml`` (e.g. ``N_t_cm2:
+    # 1e13`` with ``calibration_factor: 1e-5`` instead of the empirical
+    # ``N_t_cm2: 1e8``). See Phase A probe data + RFC at
+    # ``docs/superpowers/specs/2026-05-26-e1.6-sg-face-density-spec.md``.
+    interface_calibration_factor: tuple[float, ...] = ()
     interface_eval_node_n: tuple[int, ...] = ()
     interface_eval_node_p: tuple[int, ...] = ()
     interface_ni_sq_eff: tuple[float, ...] = ()
@@ -586,18 +596,22 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_eval_n_list: list[int] = []
     interface_eval_p_list: list[int] = []
     interface_ni_sq_eff_list: list[float] = []
+    # Phase E1.6 — per-interface attenuation factor multiplied into v_n, v_p.
+    interface_calibration_factor_list: list[float] = []
     defects = getattr(stack, "interface_defects", ()) or ()
     N_grid = len(x)
     for k, idx in enumerate(iface_list):
         defect = defects[k] if k < len(defects) else None
         if defect is None:
             # Legacy bit-identical: per-node bulk n1/p1, sample at idx,
-            # ni² ref from per-node ni_sq[idx] (current SRH numerator).
+            # ni² ref from per-node ni_sq[idx] (current SRH numerator),
+            # calibration_factor = 1.0 (no attenuation).
             interface_n1_list.append(float(n1[idx]))
             interface_p1_list.append(float(p1[idx]))
             interface_eval_n_list.append(idx)
             interface_eval_p_list.append(idx)
             interface_ni_sq_eff_list.append(float(ni_sq[idx]))
+            interface_calibration_factor_list.append(1.0)
             continue
         left = elec_layers[k].params
         right = elec_layers[k + 1].params
@@ -649,6 +663,16 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         _, pL_eq = _eq_n_p(left)
         nR_eq, _ = _eq_n_p(right)
         interface_ni_sq_eff_list.append(float(nR_eq * pL_eq))
+        # Phase E1.6 — per-interface attenuation factor from the
+        # InterfaceDefect dataclass. Multiplied into v_n, v_p downstream
+        # in ``_apply_interface_recombination`` (mathematically equivalent
+        # to scaling N_t areal density, so partner can declare SCAPS
+        # direct N_t values + an explicit attenuation rather than the
+        # empirical N_t calibration that hid the gap inside the
+        # validation script).
+        interface_calibration_factor_list.append(
+            float(defect.calibration_factor)
+        )
 
     # Interface face indices where band offset exceeds the TE threshold.
     # A face index f corresponds to the interval between nodes f and f+1.
@@ -820,6 +844,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_nodes=tuple(iface_list),
         interface_n1=tuple(interface_n1_list),
         interface_p1=tuple(interface_p1_list),
+        interface_calibration_factor=tuple(interface_calibration_factor_list),
         interface_eval_node_n=tuple(interface_eval_n_list),
         interface_eval_node_p=tuple(interface_eval_p_list),
         interface_ni_sq_eff=tuple(interface_ni_sq_eff_list),
@@ -909,6 +934,18 @@ def _apply_interface_recombination(
         if k >= len(ifaces):
             break
         v_n, v_p = ifaces[k]
+        # Phase E1.6 — per-interface attenuation factor (Anderson v_eff
+        # calibration). When the InterfaceDefect declared a non-default
+        # calibration_factor, the effective surface velocities are
+        # scaled before the SRH rate computation. Mathematically
+        # equivalent to scaling the SCAPS-direct N_t areal density,
+        # so partner can write ``N_t_cm2: 1e13 + calibration_factor:
+        # 1e-5`` instead of the empirical ``N_t_cm2: 1e8`` that hid
+        # the gap in the script. Default 1.0 = legacy bit-identical.
+        if mat.interface_calibration_factor:
+            cf = mat.interface_calibration_factor[k]
+            v_n = v_n * cf
+            v_p = v_p * cf
         if v_n == 0.0 and v_p == 0.0:
             continue
         # Cross-carrier (Pauwels-Vanhoutte) sample pair: n from the
