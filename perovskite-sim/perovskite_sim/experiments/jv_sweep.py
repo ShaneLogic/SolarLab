@@ -640,12 +640,26 @@ def run_jv_sweep(
     illuminated: bool = True,
     save_snapshots: bool = False,
     decompose_currents: bool = False,
+    v_max_max_attempts: int = 1,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
     V_max : upper voltage limit. If None, defaults to max(V_bi_eff*1.3, 1.4). With
       heterojunction band offsets, V_oc can exceed V_bi, so pass a larger
       value (e.g. 1.4 V for MAPbI3) to capture the full forward curve.
+
+    v_max_max_attempts : Phase E1.9 — opt-in adaptive V_max bump when the
+      first sweep fails to bracket V_oc (forward J never crosses zero).
+      Default 1 = legacy no-retry behaviour, bit-identical to pre-E1.9.
+      Values > 1 trigger up to ``v_max_max_attempts - 1`` retries with
+      V_max bumped by 0.5 V per attempt (cap at V_initial + 2.0 V). The
+      cost is bounded — at worst, ``v_max_max_attempts`` full forward/
+      reverse sweeps. Useful for stacks where V_oc may exceed the
+      default V_max (e.g. Robin contacts at low ETL doping; SCAPS
+      validation script's extreme-N_D sweep points). On exhaustion the
+      result returns ``voc_bracketed=False`` and the standard sentinel
+      zeros for V_oc/FF/PCE — no exception is raised, so callers can
+      inspect the flag and decide how to handle the residual gap.
 
     fixed_generation : optional pre-computed generation profile G(x) [m⁻³ s⁻¹].
       Must be a 1-D array of shape (N,) where N is the number of electrical-grid
@@ -659,6 +673,45 @@ def run_jv_sweep(
       state is dark equilibrium instead of illuminated steady-state. Cannot
       be combined with fixed_generation.
     """
+    if v_max_max_attempts < 1:
+        raise ValueError(
+            f"v_max_max_attempts must be >= 1, got {v_max_max_attempts}"
+        )
+    if v_max_max_attempts > 1:
+        # Adaptive V_max bump: run the legacy single-attempt path first;
+        # if it brackets V_oc successfully, return that result unchanged
+        # (so attempts > 1 with successful first try is bit-identical to
+        # attempts = 1). On failed bracket, retry with V_max += 0.5 per
+        # attempt until success or attempts exhaust.
+        V_max_initial = (
+            V_max
+            if V_max is not None
+            else max(stack.compute_V_bi() * 1.3, 1.4)
+        )
+        V_max_cap = V_max_initial + 2.0
+        V_max_attempt = V_max_initial
+        last_result: JVResult | None = None
+        for attempt in range(v_max_max_attempts):
+            last_result = run_jv_sweep(
+                stack=stack, N_grid=N_grid, v_rate=v_rate,
+                n_points=n_points, rtol=rtol, atol=atol,
+                V_max=V_max_attempt, progress=progress,
+                fixed_generation=fixed_generation,
+                illuminated=illuminated, save_snapshots=save_snapshots,
+                decompose_currents=decompose_currents,
+                v_max_max_attempts=1,  # disable recursion on inner call
+            )
+            if last_result.metrics_fwd.voc_bracketed:
+                return last_result
+            V_max_attempt = min(V_max_attempt + 0.5, V_max_cap)
+            if V_max_attempt == last_result and attempt > 0:
+                # Hit the cap on the previous attempt already; bail out
+                # rather than spinning on the same V_max value.
+                break
+        # ``last_result`` is set: outer loop always executes at least once
+        # because v_max_max_attempts >= 2 in this branch.
+        assert last_result is not None
+        return last_result
     if N_grid < 3:
         raise ValueError(f"N_grid must be >= 3, got {N_grid}")
     if n_points < 2:
