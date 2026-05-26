@@ -130,28 +130,18 @@ _AXIS_TO_UPDATE_KEY = {
 }
 
 
-# Empirical calibration: SolarLab's cross-carrier interface SRH samples
-# bulk-interior carrier densities while SCAPS samples interface-plane
-# densities. The 5-order over-counting is absorbed into a per-
-# heterojunction calibration ratio between SCAPS-PDF N_t and our
-# YAML-effective N_t. At the scaps_mirror baseline (SCAPS PDF
-# N_t_baseline = 1e12 cm^-2 ↔ SolarLab YAML N_t = 1e8 cm^-2 from the
-# Phase E1.5 interfaces block) the ratio is 1e-4. Multiplying sweep
-# N_t values by this factor before passing to the handler keeps the
-# baseline aligned and lets the cliff/spike direction respond at SCAPS-
-# realistic relative magnitudes. Phase E1.6 (Anderson face-density
-# sampling) will close the underlying gap and drop the need for this
-# scaling.
-_INTERFACE_DEFECT_N_T_CALIBRATION = 1.0e-4
+# Phase E1.6 (2026-05-26) — the per-sweep N_t calibration multiplier
+# moved from this script constant into the data model as
+# ``InterfaceDefect.calibration_factor`` on each interfaces[k] slot in
+# ``configs/scaps_mirror.yaml``. Sweep values pass through unchanged
+# here; the solver now applies the calibration via the YAML field.
+# Partner sees the calibration explicitly in the YAML rather than
+# hidden in a script constant.
 
 
 def _build_sweep_point(axis: str, x: float) -> SweepPoint:
     update_key = _AXIS_TO_UPDATE_KEY[axis]
-    if axis == "interface_defect_N_t_cm2":
-        scaled = float(x) * _INTERFACE_DEFECT_N_T_CALIBRATION
-        updates = {update_key: scaled}
-    else:
-        updates = {update_key: x}
+    updates = {update_key: x}
     if axis == "absorber_doping_cm3":
         # SCAPS PVK is donor-doped (N_D = 1e14 at base); pass through accordingly.
         updates["absorber_doping_type"] = "donor"

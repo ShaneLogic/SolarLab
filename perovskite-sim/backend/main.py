@@ -201,11 +201,18 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         v_th_cm_s = float(defect_dict["v_th_cm_s"])
         N_t_cm2 = float(defect_dict["N_t_cm2"])
         E_t_eV = float(defect_dict["E_t_eV_below_cb"])
+        # Phase E1.6 — optional calibration_factor (default 1.0). Frontend
+        # live editor exposes this field on each interface_defects[k]
+        # slot; backend round-trips it here so changes survive the
+        # /api/jobs boundary.
+        calibration_factor = float(defect_dict.get("calibration_factor", 1.0))
         v_n = sigma_n_cm2 * v_th_cm_s * N_t_cm2 * 1.0e-2
         v_p = sigma_p_cm2 * v_th_cm_s * N_t_cm2 * 1.0e-2
         iface_list.append((v_n, v_p))
         assert defect_list is not None  # narrows for mypy
-        defect_list.append(InterfaceDefect(E_t_eV=E_t_eV))
+        defect_list.append(
+            InterfaceDefect(E_t_eV=E_t_eV, calibration_factor=calibration_factor)
+        )
     # Only emit the ``interfaces`` tuple if the user supplied either schema
     # (preserves "absent → ()" legacy behaviour when neither key present).
     if legacy_pairs or defect_blocks:

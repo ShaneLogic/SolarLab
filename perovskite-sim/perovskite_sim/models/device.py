@@ -24,8 +24,22 @@ class InterfaceDefect:
     ``build_material_arrays``: absorber if exactly one adjacent layer is an
     absorber, else the lower-Eg side. The resulting ``n1`` / ``p1`` use
     ``srh_n1_p1_from_trap_depth(ni_ref, Eg_ref, E_t_eV, reference="below_cb")``.
+
+    Phase E1.6 (Option B-2, Anderson v_eff calibration) — ``calibration_factor``
+    multiplies ``v_n, v_p`` from ``DeviceStack.interfaces[k]`` before the
+    cross-carrier SRH rate computation in
+    ``solver/mol.py:_apply_interface_recombination``. Default 1.0 is
+    legacy bit-identical with pre-E1.6 behaviour. Used to absorb the
+    SCAPS-vs-SolarLab face-density discretization gap (Phase A probe data:
+    cross-carrier bulk-interior sampling over-counts the interface SRH rate
+    by ~5 orders vs SCAPS interface-plane carrier evaluation). Setting
+    ``N_t_cm2: 1e13`` (SCAPS direct) + ``calibration_factor: 1e-5`` produces
+    the same effective SRV as the empirical ``N_t_cm2: 1e8`` + default
+    factor, so partner sees the calibration explicitly in the YAML rather
+    than hidden in a validation-script constant.
     """
     E_t_eV: float
+    calibration_factor: float = 1.0
 
 
 @dataclass(frozen=True)
