@@ -155,10 +155,29 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("outputs/scaps_validation_e1_6a_probe.txt"),
     )
     parser.add_argument("--config", type=Path, default=Path("configs/scaps_mirror.yaml"))
+    parser.add_argument(
+        "--robin", action="store_true",
+        help=(
+            "Force Robin contacts active via dataclasses.replace (mode=full, "
+            "S_n_right=1e5, S_p_left=1e5, S_n_left=1e-4, S_p_right=1e-4). "
+            "Phase A2 hypothesis: does Robin shift p_ETL out of the machine-"
+            "epsilon regime so SG-Selberherr face density becomes viable?"
+        ),
+    )
     args = parser.parse_args(argv)
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
     base = load_scaps_yaml(args.config)
+
+    if args.robin:
+        # Phase A2 — Robin contacts to test whether p_ETL exits the
+        # machine-epsilon regime. Same S pattern as Sprint 1a probe.
+        base = dataclasses.replace(
+            base, mode="full",
+            S_n_right=1.0e5, S_p_right=1.0e-4,
+            S_p_left=1.0e5, S_n_left=1.0e-4,
+        )
+        print("Phase A2 — Robin contacts ACTIVE (mode=full)")
 
     # First measure V_oc on the current scaps_mirror baseline (E1.5 active).
     r = run_jv_sweep(base, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
