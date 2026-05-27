@@ -181,6 +181,15 @@ def main(argv: list[str] | None = None) -> int:
             "epsilon regime so SG-Selberherr face density becomes viable?"
         ),
     )
+    parser.add_argument(
+        "--nd-sweep", action="store_true",
+        help=(
+            "Phase E2a Day 3.5 — sweep N_D_ETL ∈ {1e16, 1e17, 1e18, 1e19} "
+            "cm⁻³ at V_oc baseline. Measure d log(np_BBD) / d log(N_D_ETL) "
+            "to test whether BBD recovers SCAPS' 8× ETL doping sensitivity. "
+            "Skips the ΔE_C cliff/spike probe points."
+        ),
+    )
     args = parser.parse_args(argv)
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -224,20 +233,44 @@ def main(argv: list[str] | None = None) -> int:
         "",
     ]
 
-    # Three probe points: V_oc baseline, deep cliff (-0.5), spike (+0.3)
-    probe_one_point(base, V_app=voc, label="V_oc baseline", out_lines=out_lines)
+    if args.nd_sweep:
+        # Phase E2a Day 3.5 — N_D_ETL sweep at V_oc baseline.
+        out_lines.append("=" * 60)
+        out_lines.append("Phase E2a Day 3.5 — N_D_ETL sweep at V_oc baseline")
+        out_lines.append("=" * 60)
+        out_lines.append("")
+        for n_d in [1.0e16, 1.0e17, 1.0e18, 1.0e19]:
+            pt = SweepPoint(
+                "p", "c", f"nd_{n_d:.0e}", {"etl_doping_cm3": n_d}
+            )
+            swept = apply_sweep_point(base, pt)
+            r_swept = run_jv_sweep(
+                swept, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6
+            )
+            voc_swept = r_swept.metrics_fwd.V_oc
+            out_lines.append(
+                f"--- N_D_ETL={n_d:.0e} cm⁻³  V_oc={voc_swept:.4f} V ---"
+            )
+            probe_one_point(
+                swept, V_app=voc_swept,
+                label=f"N_D_ETL={n_d:.0e}",
+                out_lines=out_lines,
+            )
+    else:
+        # Default: three probe points — V_oc baseline, cliff -0.5, spike +0.3
+        probe_one_point(base, V_app=voc, label="V_oc baseline", out_lines=out_lines)
 
-    for d in [-0.5, +0.3]:
-        pt = SweepPoint("p", "c", f"{d:+.2f}", {"etl_delta_ec_eV": d})
-        swept = apply_sweep_point(base, pt)
-        r_swept = run_jv_sweep(swept, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
-        voc_swept = r_swept.metrics_fwd.V_oc
-        out_lines.append(f"--- ΔE_C={d:+.2f} V_oc={voc_swept:.4f} ---")
-        probe_one_point(
-            swept, V_app=voc_swept,
-            label=f"ΔE_C={d:+.2f} V_oc point",
-            out_lines=out_lines,
-        )
+        for d in [-0.5, +0.3]:
+            pt = SweepPoint("p", "c", f"{d:+.2f}", {"etl_delta_ec_eV": d})
+            swept = apply_sweep_point(base, pt)
+            r_swept = run_jv_sweep(swept, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
+            voc_swept = r_swept.metrics_fwd.V_oc
+            out_lines.append(f"--- ΔE_C={d:+.2f} V_oc={voc_swept:.4f} ---")
+            probe_one_point(
+                swept, V_app=voc_swept,
+                label=f"ΔE_C={d:+.2f} V_oc point",
+                out_lines=out_lines,
+            )
 
     args.out.write_text("\n".join(out_lines))
     print(f"Probe output written to {args.out}")
