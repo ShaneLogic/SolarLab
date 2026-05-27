@@ -1,25 +1,17 @@
 #!/usr/bin/env python
-"""Phase E1.6a investigation — instrument scaps_mirror's PVK/ETL interface.
+"""Phase E1.6a / E2a investigation — instrument scaps_mirror's PVK/ETL interface.
 
 Dumps:
 - Solver state ``(n, p, φ)`` at the PVK-interior (idx-1), interface (idx),
   and ETL-interior (idx+1) nodes at V_app ∈ {V_oc, cliff -0.5, spike +0.3}
-- SG flux-implied face densities (Selberherr face concentration formula
-  derived from the SG flux discretization in ``physics/continuity.py``)
-- Boltzmann-from-Fermi-continuity predictions (Phase E1.6 attempt-2
-  formula, for cross-reference)
-- Computed E1.5 cross-carrier sampling values (``n[idx+1]·face_factor·NC_ratio``
-  with current MaterialArrays values)
+- Four face-density candidates side-by-side:
+    1. E1.5 cross-carrier (CURRENT SOLVER)
+    2. Boltzmann-from-Fermi (E1.6 v2, REVERTED — photo-injection blow-up)
+    3. SG-Selberherr (Phase A1, REJECTED — p ETL collapse)
+    4. E2 band-bending depletion (NEW — same-layer φ-only projection)
 
-Generates a table comparing all three candidates side-by-side. Output
-goes to ``outputs/scaps_validation_e1_6a_probe.txt`` as plain text for
-inclusion in the Phase A3 RFC memo.
-
-Goal: identify which face-density formulation matches SCAPS' interface-
-plane carrier sampling within ~1 order of magnitude (current E1.5
-cross-carrier over-counts by ~5 orders). Numbers feed the RFC decision
-between Anderson abrupt-junction face density vs SG-flux-consistent
-face density vs thin-shell volumetric SRH.
+Output goes to ``outputs/<name>.txt`` as plain text for the Phase A3 /
+Phase E2 design RFC memos.
 
 Run: ``cd perovskite-sim && python scripts/probe_interface_face_densities.py``
 """
@@ -120,6 +112,24 @@ def probe_one_point(stack, V_app: float, label: str, out_lines: list[str]) -> No
     n_e15 = float(n[idx_R])
     p_e15 = float(p[idx_L])
 
+    # Phase E2 candidate (d) — band-bending depletion within source layer.
+    # Project majority carrier from its bulk to the interface plane using
+    # ONLY same-layer φ band-bending (no χ step crossing). This avoids the
+    # photo-injection breakdown of candidate (b), which assumed quasi-Fermi
+    # continuity ACROSS the χ step and amplified Q-Fermi splitting through
+    # exp(ΔE_V/V_T) ≈ 8e8.
+    #
+    # In ETL (right side), under SS the quasi-Fermi level for electrons is
+    # flat across the bulk (drift gradient ≪ V_T), so:
+    #   n(idx) = n(idx+1) · exp((φ(idx) − φ(idx+1))/V_T)
+    # where the exponential captures the BAND-BENDING DEPLETION as φ drops
+    # entering the heterojunction depletion zone. Similarly for holes
+    # entering from the PVK side:
+    #   p(idx) = p(idx−1) · exp(−(φ(idx) − φ(idx−1))/V_T)
+    # (negative exponent because hole density scales with −φ.)
+    n_face_bbd = float(n[idx_R]) * math.exp((phi[idx] - phi[idx_R]) / V_T)
+    p_face_bbd = float(p[idx_L]) * math.exp(-(phi[idx] - phi[idx_L]) / V_T)
+
     out_lines.append(f"=== {label}  (V_app = {V_app:+.3f} V) ===")
     out_lines.append(
         f"  Interface idx={idx}, neighbours [idx-1={idx_L}, idx+1={idx_R}]"
@@ -131,6 +141,9 @@ def probe_one_point(stack, V_app: float, label: str, out_lines: list[str]) -> No
         f"  ΔE_C(L−R)={delta_E_C:+.3f} eV   ΔE_V(R−L)={delta_E_V:+.3f} eV"
     )
     out_lines.append(
+        f"  Δφ(M−R)={phi[idx]-phi[idx_R]:+.4f} V   Δφ(M−L)={phi[idx]-phi[idx_L]:+.4f} V"
+    )
+    out_lines.append(
         f"  E1.5 cross sample:        n_eval={n_e15:.3e}  p_eval={p_e15:.3e}"
     )
     out_lines.append(
@@ -139,11 +152,15 @@ def probe_one_point(stack, V_app: float, label: str, out_lines: list[str]) -> No
     out_lines.append(
         f"  SG-Selberherr (proposed): n_face={n_face_sg:.3e}  p_face={p_face_sg:.3e}"
     )
+    out_lines.append(
+        f"  E2 band-bending depl:     n_face={n_face_bbd:.3e}  p_face={p_face_bbd:.3e}"
+    )
     np_e15 = n_e15 * p_e15
     np_boltzmann = n_face_boltzmann * p_face_boltzmann
     np_sg = n_face_sg * p_face_sg
+    np_bbd = n_face_bbd * p_face_bbd
     out_lines.append(
-        f"  np product: E1.5={np_e15:.3e}  Boltzmann={np_boltzmann:.3e}  SG={np_sg:.3e}"
+        f"  np product: E1.5={np_e15:.3e}  Boltz={np_boltzmann:.3e}  SG={np_sg:.3e}  BBD={np_bbd:.3e}"
     )
     out_lines.append("")
 
@@ -185,18 +202,25 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Baseline V_oc = {voc:.4f} V (bracketed={r.metrics_fwd.voc_bracketed})")
 
     out_lines: list[str] = [
-        f"Phase E1.6a probe — face-density formulations at PVK/ETL interface",
+        f"Phase E2a probe — face-density formulations at PVK/ETL interface",
         f"Config: {args.config}",
         f"Baseline V_oc = {voc:.4f} V",
         "",
-        "Three face-density candidates compared:",
+        "Four face-density candidates compared:",
         "  • E1.5 cross-carrier (CURRENT SOLVER) — n at idx+1 (ETL interior),",
         "    p at idx-1 (PVK interior). 5-order over-count vs SCAPS interface plane.",
         "  • Boltzmann-from-Fermi (E1.6 attempt-2, REVERTED) — derived from",
-        "    Fermi continuity assumption; non-physical under photo-injection.",
-        "  • SG-Selberherr (PROPOSED Phase E1.6) — extracted from the same",
-        "    Bernoulli flux discretization the solver already uses; consistent",
-        "    with the existing SG flux machinery in physics/continuity.py.",
+        "    Fermi continuity ACROSS the χ step. Amplified Q-Fermi splitting via",
+        "    exp(ΔE_V/V_T) ≈ 8e8 — non-physical under photo-injection.",
+        "  • SG-Selberherr (Phase A1, REJECTED) — extracted from Bernoulli flux",
+        "    discretization. Collapses on ETL side (p machine epsilon ⇒ cliff",
+        "    direction LOST). Rejected by Phase A1 probe; Phase A2 Robin",
+        "    confirmed dead.",
+        "  • E2 Band-bending depletion (NEW) — project majority carrier from",
+        "    its bulk to interface plane via SAME-LAYER φ Boltzmann only. No",
+        "    χ step crossing ⇒ photo-injection safe. Hypothesis: this is the",
+        "    depletion factor SCAPS' thermionic-emission boundary applies",
+        "    implicitly via Q-Fermi step at the heterointerface.",
         "",
     ]
 
