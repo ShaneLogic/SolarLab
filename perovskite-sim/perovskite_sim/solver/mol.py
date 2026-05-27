@@ -1,5 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import math
+import os
 import warnings
 import numpy as np
 try:
@@ -914,6 +916,18 @@ def _charge_density(
     return rho
 
 
+_PAUWELS_VANHOUTTE_ENV = "SOLARLAB_PAUWELS_VANHOUTTE"
+
+
+def _pauwels_vanhoutte_active() -> bool:
+    """True if Phase E2.4 Pauwels-Vanhoutte prototype is gated on via env.
+
+    Read at every call (no module-load caching) so monkeypatched tests can
+    toggle the path mid-session without process restart.
+    """
+    return os.environ.get(_PAUWELS_VANHOUTTE_ENV) == "1"
+
+
 def _apply_interface_recombination(
     dn: np.ndarray,
     dp: np.ndarray,
@@ -921,15 +935,39 @@ def _apply_interface_recombination(
     p: np.ndarray,
     stack: DeviceStack,
     mat: MaterialArrays,
+    *,
+    V_app: float = 0.0,
 ) -> None:
     """Subtract interface recombination from dn, dp at interface nodes (in-place).
 
     Interface recombination is a surface rate [m⁻² s⁻¹] converted to
     volumetric [m⁻³ s⁻¹] by dividing by the dual-grid cell width.
+
+    Phase E2.4 prototype: when ``SOLARLAB_PAUWELS_VANHOUTTE=1``, replace
+    the E1.5 cross-carrier sample (n[idx+1], p[idx-1]) with the faithful
+    Pauwels-Vanhoutte 1978 (J.Phys.D 11, 649-667) heavy-doping-limit form:
+
+      n_iface (ETL side) = n[idx+1]                       # no depletion
+      p_iface (PVK side) = p[idx-1] · exp(−(V_bi − V_app)/V_T)
+
+    The depletion factor uses the GLOBAL band-bending V_bi − V_app (from
+    mat.V_bi_eff and the assemble_rhs V_app kwarg) — doping-independent
+    in the heavy-doping regime. Distinct from BBD prototype which used
+    local grid potential differences that scaled with N_D_ETL.
+
+    Default path (env unset) is legacy E1.5 cross-carrier, bit-identical.
+    See docs/superpowers/specs/2026-05-27-e2-pauwels-vanhoutte-formula.md.
     """
     ifaces = electrical_interfaces(stack)
     if not ifaces:
         return
+    pv_active = _pauwels_vanhoutte_active()
+    V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
+    # Heavy-doping ETL limit: V_2 (PVK side) = V_bi_eff − V_app.
+    # Clamp to ≥ 0 — forward bias beyond V_bi cannot give negative
+    # depletion. exp(0) = 1 → no projection in that regime.
+    V_2_band = max(0.0, float(mat.V_bi_eff) - float(V_app))
+    pv_factor = math.exp(-V_2_band / V_T_local) if pv_active else 1.0
     for k, idx in enumerate(mat.interface_nodes):
         if k >= len(ifaces):
             break
@@ -959,8 +997,17 @@ def _apply_interface_recombination(
             if mat.interface_ni_sq_eff
             else float(mat.ni_sq[idx])
         )
+        if pv_active:
+            # Pauwels-Vanhoutte heavy-doping ETL limit. p_iface gets the
+            # global band-bending depletion factor (single exp evaluated
+            # once outside the loop). n_iface stays at bulk-ETL value.
+            n_eval = float(n[eval_n_idx])
+            p_eval = float(p[eval_p_idx]) * pv_factor
+        else:
+            n_eval = float(n[eval_n_idx])
+            p_eval = float(p[eval_p_idx])
         R_s = interface_recombination(
-            n[eval_n_idx], p[eval_p_idx], ni_sq_eff,
+            n_eval, p_eval, ni_sq_eff,
             mat.interface_n1[k], mat.interface_p1[k],
             v_n, v_p,
         )
@@ -1127,8 +1174,10 @@ def assemble_rhs(
             )
     dn, dp = carrier_continuity_rhs(x, phi, n, p, G, carrier_params)
 
-    # Interface recombination (surface SRH at heterointerfaces)
-    _apply_interface_recombination(dn, dp, n, p, stack, mat)
+    # Interface recombination (surface SRH at heterointerfaces).
+    # Pass V_app so the Phase E2.4 Pauwels-Vanhoutte prototype path (env-
+    # gated) can compute the V_bi − V_app band-bending depletion factor.
+    _apply_interface_recombination(dn, dp, n, p, stack, mat, V_app=V_app)
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
