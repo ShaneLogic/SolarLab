@@ -36,7 +36,13 @@ from perovskite_sim.physics.recombination import interface_recombination
 from perovskite_sim.models.device import electrical_interfaces
 
 
-_DEFAULT_V_TH_MS = 1.0e5  # m/s typical electron / hole thermal velocity
+_DEFAULT_V_TH_MS = 1.0e-2  # m/s — matches SCAPS-mirror surface recombination
+                           # velocity scale to keep iface_state ODE timescale
+                           # comparable to the existing carrier transient
+                           # (tau ~ dx_iface / v_th ~ 1e-9/1e-2 = 1e-7 s).
+                           # Full thermal velocity (1e5 m/s) makes Newton
+                           # diverge at the diode knee; Sprint 7 Day 4+
+                           # will revisit with QSS algebraic reduction.
 _EXP_CAP = 30.0           # cap exponent to avoid overflow at V_bi/V_T ~ 42
 
 

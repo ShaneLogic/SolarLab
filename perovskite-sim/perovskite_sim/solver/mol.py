@@ -167,6 +167,11 @@ class MaterialArrays:
     interface_p_L_eq: tuple[float, ...] = ()
     interface_n_R_eq: tuple[float, ...] = ()
     interface_p_R_eq: tuple[float, ...] = ()
+    # Phase E3 — count of interface-plane state blocks in the packed
+    # state vector y. Zero = legacy MoL (iface_state absent). Set to
+    # len(interface_V_partition_2) when SOLARLAB_INTERFACE_PLANE_STATE=1
+    # AND at least one interface has charge-balance partition cached.
+    N_iface_state: int = 0
     # Precomputed LAPACK LU of the Poisson tridiagonal operator; reused in
     # every RHS call in place of scipy.sparse spsolve, which is the largest
     # single contributor to assemble_rhs runtime at the default grid sizes.
@@ -369,6 +374,17 @@ def _compute_tmm_generation(
         tmm_layers, wavelengths_m, spectral_flux, x_tmm, boundaries,
     )
     return G
+
+
+_INTERFACE_PLANE_STATE_ENV = "SOLARLAB_INTERFACE_PLANE_STATE"
+
+
+def _interface_plane_state_active() -> bool:
+    """True if Phase E3 interface-plane state path gated on via env var.
+
+    Read at every call so monkeypatched tests can toggle mid-session.
+    """
+    return os.environ.get(_INTERFACE_PLANE_STATE_ENV) == "1"
 
 
 def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
@@ -977,6 +993,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_p_L_eq=tuple(interface_p_L_eq_list),
         interface_n_R_eq=tuple(interface_n_R_eq_list),
         interface_p_R_eq=tuple(interface_p_R_eq_list),
+        N_iface_state=(
+            len(interface_V_partition_2_list)
+            if _interface_plane_state_active()
+            and len(interface_V_partition_2_list) > 0
+            else 0
+        ),
         n_L=n_L,
         p_L=p_L,
         n_R=n_R,
@@ -1118,7 +1140,7 @@ def assemble_rhs(
     of the caching refactor's target experiments.
     """
     N = len(x)
-    sv = StateVec.unpack(y, N)
+    sv = StateVec.unpack(y, N, N_iface_state=mat.N_iface_state)
 
     # Boundary conditions from cached equilibrium densities. For selective /
     # Schottky contacts (Phase 3.3) the carriers/sides with a finite S are
@@ -1256,8 +1278,12 @@ def assemble_rhs(
             )
     dn, dp = carrier_continuity_rhs(x, phi, n, p, G, carrier_params)
 
-    # Interface recombination (surface SRH at heterointerfaces)
-    _apply_interface_recombination(dn, dp, n, p, stack, mat)
+    # Interface recombination (surface SRH at heterointerfaces).
+    # Phase E3 path replaces this with TE flux + SRH on state vec; see
+    # below near the iface_state RHS block. Legacy E1.5 cross-carrier
+    # SRH applies only when N_iface_state == 0.
+    if mat.N_iface_state == 0:
+        _apply_interface_recombination(dn, dp, n, p, stack, mat)
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
@@ -1289,10 +1315,54 @@ def assemble_rhs(
         if mat.S_p_R is None:
             dp[-1] = 0.0
 
+    # Phase E3 -- interface-plane state RHS (TE flux in + SRH sink).
+    # Also drains bulk-side carriers via the TE flux: positive TE means
+    # carrier leaves bulk and enters interface-plane state. This is the
+    # missing coupling that lets the new path actually affect bulk V_oc.
+    diface_state = None
+    if mat.N_iface_state > 0 and sv.iface_state is not None:
+        from perovskite_sim.physics.interface_plane import (
+            compute_interface_srh_on_state,
+            compute_interface_te_fluxes,
+        )
+        te_fluxes = compute_interface_te_fluxes(
+            mat, sv.iface_state, V_app=V_app,
+        )
+        srh_sinks = compute_interface_srh_on_state(
+            sv.iface_state, stack, mat,
+        )
+        diface_state = np.zeros_like(sv.iface_state)
+        for k in range(mat.N_iface_state):
+            if k >= len(mat.interface_nodes):
+                break
+            idx = mat.interface_nodes[k]
+            dx_iface = float(mat.dx_cell[idx])
+            base = 4 * k
+            # iface_state evolution: TE flux fills + SRH drains.
+            for j in range(4):
+                diface_state[base + j] = (
+                    te_fluxes[base + j] + srh_sinks[base + j]
+                ) / dx_iface
+            # Bulk drain: TE flux removes carriers from the bulk-side
+            # eval node. Positive TE -> carrier leaves bulk into state.
+            # eval_n holds bulk-side electron node (ETL interior idx+1);
+            # eval_p holds bulk-side hole node (PVK interior idx-1).
+            if mat.interface_eval_node_n and mat.interface_eval_node_p:
+                eval_n = mat.interface_eval_node_n[k]
+                eval_p = mat.interface_eval_node_p[k]
+                # n_1s (block 0) drains ETL electron at eval_n.
+                # p_1s (block 1) drains ETL hole   at eval_n.
+                # n_2s (block 2) drains PVK electron at eval_p.
+                # p_2s (block 3) drains PVK hole   at eval_p.
+                dn[eval_n] -= te_fluxes[base + 0] / dx_iface
+                dp[eval_n] -= te_fluxes[base + 1] / dx_iface
+                dn[eval_p] -= te_fluxes[base + 2] / dx_iface
+                dp[eval_p] -= te_fluxes[base + 3] / dx_iface
+
     if _RHS_FINITE_CHECK:
         _assert_finite_rhs(dn, dp, dP, dP_neg, V_app)
 
-    return StateVec.pack(dn, dp, dP, dP_neg)
+    return StateVec.pack(dn, dp, dP, dP_neg, iface_state=diface_state)
 
 
 # Debug guard: set PEROVSKITE_RHS_FINITE_CHECK=1 to raise _RhsNonFinite when
@@ -1442,7 +1512,7 @@ def split_step(
         mat = build_material_arrays(x, stack)
 
     N = len(x)
-    sv = StateVec.unpack(y, N)
+    sv = StateVec.unpack(y, N, N_iface_state=mat.N_iface_state)
 
     # Apply ohmic contact BCs to frozen carrier arrays. Selective / Schottky
     # contacts (Phase 3.3) leave the Robin sides free — the current state
@@ -1538,11 +1608,15 @@ def split_step(
     if dual:
         P_new = np.clip(sol_ion.y[:N, -1], 0.0, mat.P_lim_node)
         P_neg_new = np.clip(sol_ion.y[N:, -1], 0.0, mat.P_lim_neg_node)
-        y_ions_advanced = StateVec.pack(sv.n, sv.p, P_new, P_neg_new)
+        y_ions_advanced = StateVec.pack(
+            sv.n, sv.p, P_new, P_neg_new, iface_state=sv.iface_state,
+        )
     else:
         P_new = np.clip(sol_ion.y[:, -1], 0.0, mat.P_lim_node)
         P_neg_carry = sv.P_neg  # None in single-species mode
-        y_ions_advanced = StateVec.pack(sv.n, sv.p, P_new, P_neg_carry)
+        y_ions_advanced = StateVec.pack(
+            sv.n, sv.p, P_new, P_neg_carry, iface_state=sv.iface_state,
+        )
 
     # Re-equilibrate carriers for one carrier lifetime (~1 µs)
     t_eq = 1e-6

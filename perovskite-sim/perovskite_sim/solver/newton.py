@@ -22,6 +22,7 @@ import numpy as np
 
 from perovskite_sim.solver.mol import (
     StateVec,
+    _compute_iface_state_dark_eq,
     build_material_arrays,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
@@ -76,6 +77,13 @@ def solve_equilibrium(
     n[0] = mat.n_L;  n[-1] = mat.n_R
     p[0] = mat.p_L;  p[-1] = mat.p_R
 
+    # Phase E3 — pack interface-plane state block when active.
+    iface_state = (
+        _compute_iface_state_dark_eq(mat) if mat.N_iface_state > 0 else None
+    )
     if mat.has_dual_ions:
-        return StateVec.pack(n, p, P_ion0.copy(), mat.P_ion0_neg.copy())
-    return StateVec.pack(n, p, P_ion0.copy())
+        return StateVec.pack(
+            n, p, P_ion0.copy(), mat.P_ion0_neg.copy(),
+            iface_state=iface_state,
+        )
+    return StateVec.pack(n, p, P_ion0.copy(), iface_state=iface_state)
