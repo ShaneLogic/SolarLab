@@ -172,6 +172,12 @@ class MaterialArrays:
     # len(interface_V_partition_2) when SOLARLAB_INTERFACE_PLANE_STATE=1
     # AND at least one interface has charge-balance partition cached.
     N_iface_state: int = 0
+    # Phase E3 Day 4-6 — band offsets per interface for cross-flux χ
+    # step coupling (paper eq 15). ΔE_c = chi_R − chi_L (eV) is
+    # positive when electron sees a barrier going right→left; the
+    # exp(−ΔE_c/V_T) factor in the cross-flux restores CBO sensitivity.
+    interface_chi_step: tuple[float, ...] = ()  # chi_R − chi_L, eV
+    interface_Eg_step:  tuple[float, ...] = ()  # Eg_R  − Eg_L,  eV
     # Precomputed LAPACK LU of the Poisson tridiagonal operator; reused in
     # every RHS call in place of scipy.sparse spsolve, which is the largest
     # single contributor to assemble_rhs runtime at the default grid sizes.
@@ -423,10 +429,27 @@ def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
         p_R = float(mat.interface_p_R_eq[k])
         n_L = float(mat.interface_n_L_eq[k])
         p_L = float(mat.interface_p_L_eq[k])
-        out[4 * k + 0] = n_R * math.exp(-v1_norm)  # n_1s
-        out[4 * k + 1] = p_R * math.exp(+v1_norm)  # p_1s
-        out[4 * k + 2] = n_L * math.exp(+v2_norm)  # n_2s
-        out[4 * k + 3] = p_L * math.exp(-v2_norm)  # p_2s
+        # Phase E3 Day 4-6 — χ-step-consistent dark-eq init.
+        # Anchor 1s side via Boltzmann from R bulk with V_1 band-bending,
+        # derive 2s side via the χ step (paper eq 15: n_1s/n_2s =
+        # exp(ΔE_c/V_T) at flat E_F). Keeps cross-flux ~ 0 at dark eq.
+        n_1s = n_R * math.exp(-v1_norm)
+        p_1s = p_R * math.exp(+v1_norm)
+        if mat.interface_chi_step and len(mat.interface_chi_step) > k:
+            dE_c = float(mat.interface_chi_step[k])
+            dE_g = float(mat.interface_Eg_step[k])
+            dE_v = dE_c - dE_g
+            ec_norm = max(-EXP_CAP, min(EXP_CAP, dE_c / V_T_local))
+            ev_norm = max(-EXP_CAP, min(EXP_CAP, dE_v / V_T_local))
+            n_2s = n_1s * math.exp(-ec_norm)
+            p_2s = p_1s * math.exp(-ev_norm)
+        else:
+            n_2s = n_L * math.exp(+v2_norm)
+            p_2s = p_L * math.exp(-v2_norm)
+        out[4 * k + 0] = n_1s
+        out[4 * k + 1] = p_1s
+        out[4 * k + 2] = n_2s
+        out[4 * k + 3] = p_2s
     return out
 
 
@@ -699,6 +722,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_p_L_eq_list: list[float] = []
     interface_n_R_eq_list: list[float] = []
     interface_p_R_eq_list: list[float] = []
+    interface_chi_step_list: list[float] = []
+    interface_Eg_step_list: list[float] = []
     defects = getattr(stack, "interface_defects", ()) or ()
     N_grid = len(x)
 
@@ -740,6 +765,17 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_p_L_eq_list.append(float(p_L_eq_e3))
         interface_n_R_eq_list.append(float(n_R_eq_e3))
         interface_p_R_eq_list.append(float(p_R_eq_e3))
+        # Phase E3 Day 4-6 — band offsets for cross-flux χ-step coupling.
+        # ΔE_c = chi_R − chi_L (eV); >0 means CB cliff for electrons
+        # going R→L (e.g. ETL chi=4.0 → PVK chi=3.84 → ΔE_c=+0.16 eV).
+        # ΔE_v = Eg_R − Eg_L − ΔE_c = (Eg_R − Eg_L) − (chi_R − chi_L).
+        # Cache the (Eg_R − Eg_L) term — interface_plane.py derives ΔE_v.
+        interface_chi_step_list.append(
+            float(right_e3.chi) - float(left_e3.chi)
+        )
+        interface_Eg_step_list.append(
+            float(right_e3.Eg) - float(left_e3.Eg)
+        )
 
         defect = defects[k] if k < len(defects) else None
         if defect is None:
@@ -993,6 +1029,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_p_L_eq=tuple(interface_p_L_eq_list),
         interface_n_R_eq=tuple(interface_n_R_eq_list),
         interface_p_R_eq=tuple(interface_p_R_eq_list),
+        interface_chi_step=tuple(interface_chi_step_list),
+        interface_Eg_step=tuple(interface_Eg_step_list),
         N_iface_state=(
             len(interface_V_partition_2_list)
             if _interface_plane_state_active()
@@ -1325,8 +1363,12 @@ def assemble_rhs(
             compute_interface_srh_on_state,
             compute_interface_te_fluxes,
         )
+        # Phase E3 Day 4-6 — pass v_cross_eff=v_th_eff to activate the
+        # χ-step cross-interface TE flux (paper eq 15). Restores CBO
+        # sensitivity by coupling n_1s ↔ n_2s and p_1s ↔ p_2s across
+        # the χ step.
         te_fluxes = compute_interface_te_fluxes(
-            mat, sv.iface_state, V_app=V_app,
+            mat, sv.iface_state, V_app=V_app, v_cross_eff=1.0e-2,
         )
         srh_sinks = compute_interface_srh_on_state(
             sv.iface_state, stack, mat,

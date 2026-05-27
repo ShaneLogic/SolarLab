@@ -136,10 +136,18 @@ def test_compute_iface_state_dark_eq_layout_per_interface():
     EXP_CAP = 30.0
     v1_norm = max(-EXP_CAP, min(EXP_CAP, V_1 / V_T_local))
     v2_norm = max(-EXP_CAP, min(EXP_CAP, V_2 / V_T_local))
+    # Phase E3 Day 4-6 χ-step-anchored dark-eq init: 1s side via Boltzmann
+    # from R bulk; 2s side via χ step from 1s.
     expected_n_1s = n_R * math.exp(-v1_norm)
     expected_p_1s = p_R * math.exp(+v1_norm)
-    expected_n_2s = n_L * math.exp(+v2_norm)
-    expected_p_2s = p_L * math.exp(-v2_norm)
+    # ΔE_c and ΔE_v from cached values.
+    dE_c = mat.interface_chi_step[k]
+    dE_g = mat.interface_Eg_step[k]
+    dE_v = dE_c - dE_g
+    ec_norm = max(-EXP_CAP, min(EXP_CAP, dE_c / V_T_local))
+    ev_norm = max(-EXP_CAP, min(EXP_CAP, dE_v / V_T_local))
+    expected_n_2s = expected_n_1s * math.exp(-ec_norm)
+    expected_p_2s = expected_p_1s * math.exp(-ev_norm)
     block = iface_eq[4*k:4*(k+1)]
     assert block[0] == pytest.approx(expected_n_1s, rel=1e-9)
     assert block[1] == pytest.approx(expected_p_1s, rel=1e-9)
