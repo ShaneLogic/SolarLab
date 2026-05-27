@@ -1,5 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import math
+import os
 import warnings
 import numpy as np
 try:
@@ -134,6 +136,13 @@ class MaterialArrays:
     interface_eval_node_n: tuple[int, ...] = ()
     interface_eval_node_p: tuple[int, ...] = ()
     interface_ni_sq_eff: tuple[float, ...] = ()
+    # Phase E2.5 (full Pauwels-Vanhoutte) — fraction of band-bending
+    # V_bi − V_app absorbed on the LEFT side of each interface (charge-
+    # balance partition). Heavy-doping limit → 0 on heavy side, 1 on
+    # light side. Light p-type PVK ≪ heavy n-type ETL → partition_2_left
+    # → 1.0 at the PVK/ETL interface (PVK absorbs all band-bending).
+    # Used only when SOLARLAB_PV_FULL=1; legacy paths ignore.
+    interface_V_partition_2: tuple[float, ...] = ()
     # Precomputed LAPACK LU of the Poisson tridiagonal operator; reused in
     # every RHS call in place of scipy.sparse spsolve, which is the largest
     # single contributor to assemble_rhs runtime at the default grid sizes.
@@ -598,10 +607,33 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_ni_sq_eff_list: list[float] = []
     # Phase E1.6 — per-interface attenuation factor multiplied into v_n, v_p.
     interface_calibration_factor_list: list[float] = []
+    # Phase E2.5 — charge-balance partition of V_bi between layers.
+    # partition_2_left[k] = fraction of V_total on left side of interface k.
+    # V_left = partition · V_total ; V_right = (1 − partition) · V_total.
+    interface_V_partition_2_list: list[float] = []
     defects = getattr(stack, "interface_defects", ()) or ()
     N_grid = len(x)
     for k, idx in enumerate(iface_list):
         defect = defects[k] if k < len(defects) else None
+        # Phase E2.5 — charge-balance partition for every interface so the
+        # full-PV path can read it whether or not a defect is declared.
+        # V_p / V_total = N_D · ε_n / (N_A · ε_p + N_D · ε_n)  (standard
+        # asymmetric p-n junction; lighter side absorbs more band-bending).
+        left_params = elec_layers[k].params
+        right_params = elec_layers[k + 1].params
+        N_left_eff = max(float(left_params.N_A), float(left_params.N_D), 1.0e10)
+        N_right_eff = max(float(right_params.N_A), float(right_params.N_D), 1.0e10)
+        denom_qb = (
+            N_left_eff * float(left_params.eps_r)
+            + N_right_eff * float(right_params.eps_r)
+        )
+        if denom_qb > 0.0:
+            partition_left = (
+                N_right_eff * float(right_params.eps_r) / denom_qb
+            )
+        else:
+            partition_left = 0.5
+        interface_V_partition_2_list.append(partition_left)
         if defect is None:
             # Legacy bit-identical: per-node bulk n1/p1, sample at idx,
             # ni² ref from per-node ni_sq[idx] (current SRH numerator),
@@ -848,6 +880,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_eval_node_n=tuple(interface_eval_n_list),
         interface_eval_node_p=tuple(interface_eval_p_list),
         interface_ni_sq_eff=tuple(interface_ni_sq_eff_list),
+        interface_V_partition_2=tuple(interface_V_partition_2_list),
         n_L=n_L,
         p_L=p_L,
         n_R=n_R,
@@ -914,6 +947,17 @@ def _charge_density(
     return rho
 
 
+_PV_FULL_ENV = "SOLARLAB_PV_FULL"
+
+
+def _pv_full_active() -> bool:
+    """True if Phase E2.5 full Pauwels-Vanhoutte prototype is gated on.
+
+    Read at every call so monkeypatched tests can toggle mid-session.
+    """
+    return os.environ.get(_PV_FULL_ENV) == "1"
+
+
 def _apply_interface_recombination(
     dn: np.ndarray,
     dp: np.ndarray,
@@ -921,15 +965,27 @@ def _apply_interface_recombination(
     p: np.ndarray,
     stack: DeviceStack,
     mat: MaterialArrays,
+    *,
+    V_app: float = 0.0,
 ) -> None:
     """Subtract interface recombination from dn, dp at interface nodes (in-place).
 
     Interface recombination is a surface rate [m⁻² s⁻¹] converted to
     volumetric [m⁻³ s⁻¹] by dividing by the dual-grid cell width.
+
+    Phase E2.5 prototype: when ``SOLARLAB_PV_FULL=1``, replace the E1.5
+    cross-carrier sample with the full Pauwels-Vanhoutte 1978 form
+    (J.Phys.D 11, 649-667) — charge-balance V_1/V_2 partition + two-
+    sided Shockley-Read SRH (R = R_s1 + R_s2 per paper eq 7) + four
+    interface-plane densities (paper eqs 8, 9, 11). Default path (env
+    unset) is legacy E1.5 cross-carrier, bit-identical.
     """
     ifaces = electrical_interfaces(stack)
     if not ifaces:
         return
+    pv_full = _pv_full_active()
+    V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
+    V_total = max(0.0, float(mat.V_bi_eff) - float(V_app))
     for k, idx in enumerate(mat.interface_nodes):
         if k >= len(ifaces):
             break
@@ -959,11 +1015,44 @@ def _apply_interface_recombination(
             if mat.interface_ni_sq_eff
             else float(mat.ni_sq[idx])
         )
-        R_s = interface_recombination(
-            n[eval_n_idx], p[eval_p_idx], ni_sq_eff,
-            mat.interface_n1[k], mat.interface_p1[k],
-            v_n, v_p,
-        )
+        if pv_full and mat.interface_V_partition_2:
+            # Phase E2.5 — full Pauwels-Vanhoutte interface SRH.
+            # Charge-balance partition (cached at build time):
+            partition_left = mat.interface_V_partition_2[k]
+            V_2 = partition_left * V_total         # band-bending on left (PVK) side
+            V_1 = (1.0 - partition_left) * V_total  # band-bending on right (ETL) side
+            # Cap exponent to avoid overflow at low V_app where V_total ≈ V_bi.
+            # exp(±30) ≈ 1e13 — sufficient headroom for physical densities.
+            EXP_CAP = 30.0
+            v1_norm = max(-EXP_CAP, min(EXP_CAP, V_1 / V_T_local))
+            v2_norm = max(-EXP_CAP, min(EXP_CAP, V_2 / V_T_local))
+            # Four interface-plane densities (paper eqs 8, 9, 11 translated
+            # to SolarLab n+p convention). Boltzmann projection from each
+            # layer's bulk-interior density via own-side band-bending.
+            n_bulk_R = float(n[eval_n_idx])  # ETL bulk electron
+            p_bulk_R = float(p[eval_n_idx])  # ETL bulk hole
+            n_bulk_L = float(n[eval_p_idx])  # PVK bulk electron
+            p_bulk_L = float(p[eval_p_idx])  # PVK bulk hole
+            n_1s = n_bulk_R * math.exp(-v1_norm)  # ETL e — depleted by V_1
+            p_1s = p_bulk_R * math.exp(+v1_norm)  # ETL h — accumulated
+            n_2s = n_bulk_L * math.exp(+v2_norm)  # PVK e — accumulated
+            p_2s = p_bulk_L * math.exp(-v2_norm)  # PVK h — depleted
+            n1_k = mat.interface_n1[k]
+            p1_k = mat.interface_p1[k]
+            # Two-sided SRH (paper eq 7: j_s = j_s1 + j_s2):
+            R_s1 = interface_recombination(
+                n_1s, p_2s, ni_sq_eff, n1_k, p1_k, v_n, v_p,
+            )
+            R_s2 = interface_recombination(
+                n_2s, p_1s, ni_sq_eff, n1_k, p1_k, v_n, v_p,
+            )
+            R_s = R_s1 + R_s2
+        else:
+            R_s = interface_recombination(
+                n[eval_n_idx], p[eval_p_idx], ni_sq_eff,
+                mat.interface_n1[k], mat.interface_p1[k],
+                v_n, v_p,
+            )
         # Volumetric loss conversion uses the interface-node dual cell.
         # The depletion is applied at the interface node itself —
         # diffusion / drift then re-feeds the eval nodes from the bulk
@@ -1127,8 +1216,10 @@ def assemble_rhs(
             )
     dn, dp = carrier_continuity_rhs(x, phi, n, p, G, carrier_params)
 
-    # Interface recombination (surface SRH at heterointerfaces)
-    _apply_interface_recombination(dn, dp, n, p, stack, mat)
+    # Interface recombination (surface SRH at heterointerfaces).
+    # V_app passed so the Phase E2.5 full-PV path (env-gated) can compute
+    # band-bending V_1, V_2 from V_bi_eff − V_app at this voltage step.
+    _apply_interface_recombination(dn, dp, n, p, stack, mat, V_app=V_app)
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
