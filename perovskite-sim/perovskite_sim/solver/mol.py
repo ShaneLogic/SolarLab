@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import os
 import warnings
 import numpy as np
 try:
@@ -914,6 +915,89 @@ def _charge_density(
     return rho
 
 
+_THIN_SHELL_ENV = "SOLARLAB_THIN_SHELL_SRH"
+
+
+def _thin_shell_width() -> int:
+    """Parse SOLARLAB_THIN_SHELL_SRH env. Returns 0 if unset, malformed, or ≤0.
+
+    Read at every call (no module-load caching) so monkeypatched tests can
+    toggle the path mid-session.
+    """
+    raw = os.environ.get(_THIN_SHELL_ENV, "")
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
+def _apply_thin_shell_recombination(
+    dn: np.ndarray,
+    dp: np.ndarray,
+    n: np.ndarray,
+    p: np.ndarray,
+    stack: DeviceStack,
+    mat: MaterialArrays,
+    n_shell: int,
+) -> None:
+    """Phase E2 thin-shell volumetric SRH (Sprint 3 prototype).
+
+    Spread interface SRH over a shell of n_shell grid nodes around the
+    interface node, evaluating per-node n[i]·p[i] (NOT cross-carrier
+    bulk samples). Skip the interface node itself due to negative-p
+    artifact from state-vector reconstruction (Phase A1 finding).
+
+    Per-node SRH rate uses the interface_recombination helper with local
+    n[i], p[i] (clamped to ≥0). Total area-integrated rate equals the
+    legacy single-point rate when the depletion zone is uniform; the
+    distribution differs only when n·p varies across the shell.
+    """
+    ifaces = electrical_interfaces(stack)
+    if not ifaces:
+        return
+    N = len(n)
+    half = n_shell // 2
+    for k, idx in enumerate(mat.interface_nodes):
+        if k >= len(ifaces):
+            break
+        v_n, v_p = ifaces[k]
+        if mat.interface_calibration_factor:
+            cf = mat.interface_calibration_factor[k]
+            v_n = v_n * cf
+            v_p = v_p * cf
+        if v_n == 0.0 and v_p == 0.0:
+            continue
+        ni_sq_eff = (
+            mat.interface_ni_sq_eff[k]
+            if mat.interface_ni_sq_eff
+            else float(mat.ni_sq[idx])
+        )
+        n1 = mat.interface_n1[k]
+        p1 = mat.interface_p1[k]
+        # Build shell indices around idx, bounded by grid, skipping idx.
+        lo = max(0, idx - half)
+        hi = min(N, idx + half + 1)
+        shell = [i for i in range(lo, hi) if i != idx]
+        if not shell:
+            continue
+        shell_width = float(sum(mat.dx_cell[i] for i in shell))
+        if shell_width <= 0.0:
+            continue
+        for i in shell:
+            n_i = max(0.0, float(n[i]))
+            p_i = max(0.0, float(p[i]))
+            R_s_i = interface_recombination(
+                n_i, p_i, ni_sq_eff, n1, p1, v_n, v_p,
+            )
+            # Distribute the surface rate uniformly across the shell so
+            # the area-integrated recombination matches the legacy
+            # single-point formulation in the uniform-density limit.
+            R_vol_i = R_s_i / shell_width
+            dn[i] -= R_vol_i
+            dp[i] -= R_vol_i
+
+
 def _apply_interface_recombination(
     dn: np.ndarray,
     dp: np.ndarray,
@@ -926,7 +1010,18 @@ def _apply_interface_recombination(
 
     Interface recombination is a surface rate [m⁻² s⁻¹] converted to
     volumetric [m⁻³ s⁻¹] by dividing by the dual-grid cell width.
+
+    Phase E2 Sprint 3 prototype: when SOLARLAB_THIN_SHELL_SRH=N (N a
+    positive integer), dispatch to _apply_thin_shell_recombination
+    instead of the legacy E1.5 cross-carrier path. Default (unset /
+    malformed / ≤0) preserves legacy bit-identity.
     """
+    shell_width = _thin_shell_width()
+    if shell_width > 0:
+        _apply_thin_shell_recombination(
+            dn, dp, n, p, stack, mat, shell_width,
+        )
+        return
     ifaces = electrical_interfaces(stack)
     if not ifaces:
         return
