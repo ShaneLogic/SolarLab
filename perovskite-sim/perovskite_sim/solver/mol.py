@@ -1,5 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import math
+import os
 import warnings
 import numpy as np
 try:
@@ -154,6 +156,17 @@ class MaterialArrays:
     interface_eval_node_n: tuple[int, ...] = ()
     interface_eval_node_p: tuple[int, ...] = ()
     interface_ni_sq_eff: tuple[float, ...] = ()
+    # Phase E3 — charge-balance band-bending partition per interface k.
+    # Fraction of V_bi_eff absorbed on the LEFT side. Heavy-doped right
+    # (e.g. ETL N_D=1e18) ≪ light-doped left (PVK N_A=1e14) → 0.99+.
+    interface_V_partition_2: tuple[float, ...] = ()
+    # Per-interface equilibrium bulk densities on each side. Used by the
+    # Phase E3 _compute_iface_state_dark_eq() helper to initialise the
+    # 4·N_iface interface-plane state-vector block.
+    interface_n_L_eq: tuple[float, ...] = ()
+    interface_p_L_eq: tuple[float, ...] = ()
+    interface_n_R_eq: tuple[float, ...] = ()
+    interface_p_R_eq: tuple[float, ...] = ()
     # Precomputed LAPACK LU of the Poisson tridiagonal operator; reused in
     # every RHS call in place of scipy.sparse spsolve, which is the largest
     # single contributor to assemble_rhs runtime at the default grid sizes.
@@ -356,6 +369,49 @@ def _compute_tmm_generation(
         tmm_layers, wavelengths_m, spectral_flux, x_tmm, boundaries,
     )
     return G
+
+
+def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
+    """Phase E3 — dark-equilibrium interface-plane state initial condition.
+
+    Returns a 1-D array of shape ``(4 * N_iface,)`` carrying
+    ``(n_1s, p_1s, n_2s, p_2s)`` per heterointerface k in that order.
+
+    Boltzmann projection from cached equilibrium bulk densities via the
+    charge-balance band-bending partition:
+      V_total       = mat.V_bi_eff
+      V_2 (PVK side) = partition_left * V_total
+      V_1 (ETL side) = (1 - partition_left) * V_total
+      n_1s = n_R_eq * exp(-V_1 / V_T)   # ETL e — depleted
+      p_1s = p_R_eq * exp(+V_1 / V_T)   # ETL h — accumulated
+      n_2s = n_L_eq * exp(+V_2 / V_T)   # PVK e — accumulated
+      p_2s = p_L_eq * exp(-V_2 / V_T)   # PVK h — depleted
+
+    Exponent capped at ±30 to avoid overflow at V_2 ≈ V_bi (where the
+    naive exponent can reach ±42 for V_bi = 1.1 V at 300 K).
+    """
+    n_iface = len(mat.interface_V_partition_2)
+    if n_iface == 0:
+        return np.zeros(0, dtype=float)
+    V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
+    V_total = float(mat.V_bi_eff)
+    EXP_CAP = 30.0
+    out = np.zeros(4 * n_iface, dtype=float)
+    for k in range(n_iface):
+        partition_left = float(mat.interface_V_partition_2[k])
+        V_2 = partition_left * V_total
+        V_1 = (1.0 - partition_left) * V_total
+        v1_norm = max(-EXP_CAP, min(EXP_CAP, V_1 / V_T_local))
+        v2_norm = max(-EXP_CAP, min(EXP_CAP, V_2 / V_T_local))
+        n_R = float(mat.interface_n_R_eq[k])
+        p_R = float(mat.interface_p_R_eq[k])
+        n_L = float(mat.interface_n_L_eq[k])
+        p_L = float(mat.interface_p_L_eq[k])
+        out[4 * k + 0] = n_R * math.exp(-v1_norm)  # n_1s
+        out[4 * k + 1] = p_R * math.exp(+v1_norm)  # p_1s
+        out[4 * k + 2] = n_L * math.exp(+v2_norm)  # n_2s
+        out[4 * k + 3] = p_L * math.exp(-v2_norm)  # p_2s
+    return out
 
 
 def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
@@ -618,9 +674,57 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_ni_sq_eff_list: list[float] = []
     # Phase E1.6 — per-interface attenuation factor multiplied into v_n, v_p.
     interface_calibration_factor_list: list[float] = []
+    # Phase E3 — charge-balance partition + equilibrium bulk densities
+    # per interface. Populated for EVERY interface (defect or not) so
+    # the interface-plane state initial condition can build a sensible
+    # equilibrium block even on stacks without explicit defects.
+    interface_V_partition_2_list: list[float] = []
+    interface_n_L_eq_list: list[float] = []
+    interface_p_L_eq_list: list[float] = []
+    interface_n_R_eq_list: list[float] = []
+    interface_p_R_eq_list: list[float] = []
     defects = getattr(stack, "interface_defects", ()) or ()
     N_grid = len(x)
+
+    def _eq_n_p_layer(p_):
+        """Equilibrium (n, p) for a layer params object (Phase E3 helper)."""
+        net = 0.5 * (p_.N_D - p_.N_A)
+        disc = float(np.sqrt(net * net + p_.ni * p_.ni))
+        if net >= 0.0:
+            n_eq_ = net + disc
+            p_eq_ = p_.ni * p_.ni / n_eq_
+        else:
+            p_eq_ = -net + disc
+            n_eq_ = p_.ni * p_.ni / p_eq_
+        return n_eq_, p_eq_
+
     for k, idx in enumerate(iface_list):
+        # Phase E3 — populate partition + equilibrium-bulk-density caches
+        # for EVERY interface (defect or not). Needed by interface-plane
+        # state initial condition + RHS, which can be active even on
+        # legacy-style stacks if the user toggles SOLARLAB_INTERFACE_PLANE_STATE.
+        left_e3 = elec_layers[k].params
+        right_e3 = elec_layers[k + 1].params
+        N_L_eff = max(float(left_e3.N_A), float(left_e3.N_D), 1.0e10)
+        N_R_eff = max(float(right_e3.N_A), float(right_e3.N_D), 1.0e10)
+        denom_qb = (
+            N_L_eff * float(left_e3.eps_r)
+            + N_R_eff * float(right_e3.eps_r)
+        )
+        if denom_qb > 0.0:
+            partition_left = (
+                N_R_eff * float(right_e3.eps_r) / denom_qb
+            )
+        else:
+            partition_left = 0.5
+        interface_V_partition_2_list.append(partition_left)
+        n_L_eq_e3, p_L_eq_e3 = _eq_n_p_layer(left_e3)
+        n_R_eq_e3, p_R_eq_e3 = _eq_n_p_layer(right_e3)
+        interface_n_L_eq_list.append(float(n_L_eq_e3))
+        interface_p_L_eq_list.append(float(p_L_eq_e3))
+        interface_n_R_eq_list.append(float(n_R_eq_e3))
+        interface_p_R_eq_list.append(float(p_R_eq_e3))
+
         defect = defects[k] if k < len(defects) else None
         if defect is None:
             # Legacy bit-identical: per-node bulk n1/p1, sample at idx,
@@ -868,6 +972,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_eval_node_n=tuple(interface_eval_n_list),
         interface_eval_node_p=tuple(interface_eval_p_list),
         interface_ni_sq_eff=tuple(interface_ni_sq_eff_list),
+        interface_V_partition_2=tuple(interface_V_partition_2_list),
+        interface_n_L_eq=tuple(interface_n_L_eq_list),
+        interface_p_L_eq=tuple(interface_p_L_eq_list),
+        interface_n_R_eq=tuple(interface_n_R_eq_list),
+        interface_p_R_eq=tuple(interface_p_R_eq_list),
         n_L=n_L,
         p_L=p_L,
         n_R=n_R,
