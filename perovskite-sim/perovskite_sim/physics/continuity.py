@@ -60,6 +60,44 @@ def split_interface_flux(
     return J_L, J_R
 
 
+def split_interface_flux_p(
+    *,
+    p_idx: float, p_idx_plus_1: float,
+    p_L_iface: float, p_R_iface: float,
+    phi_idx: float, phi_idx_plus_1: float, phi_iface: float,
+    D_L: float, D_R: float,
+    dx_face: float,
+    V_T: float,
+) -> tuple[float, float]:
+    """Phase E4 — per-layer hole half-flux at a heterointerface face.
+
+    Mirror of ``split_interface_flux`` for holes. Sign convention matches
+    ``sg_fluxes_p``:
+
+      J_L_p = q · D_L / dx_half · (B(xi_L) · p_idx − B(−xi_L) · p_L_iface)
+      J_R_p = q · D_R / dx_half · (B(xi_R) · p_R_iface − B(−xi_R) · p_idx_plus_1)
+
+    Within a single layer chi + Eg is constant, so xi simplifies to
+    (phi_iface − phi_idx) / V_T on each side (same as electron half-flux).
+
+    Returns (J_L_p_half, J_R_p_half) in A/m².
+    """
+    dx_half = dx_face / 2.0
+    xi_L = (phi_iface - phi_idx) / V_T
+    B_pos_L = float(bernoulli(np.array([xi_L]))[0])
+    B_neg_L = float(bernoulli(np.array([-xi_L]))[0])
+    J_L = float(
+        Q * D_L / dx_half * (B_pos_L * p_idx - B_neg_L * p_L_iface)
+    )
+    xi_R = (phi_idx_plus_1 - phi_iface) / V_T
+    B_pos_R = float(bernoulli(np.array([xi_R]))[0])
+    B_neg_R = float(bernoulli(np.array([-xi_R]))[0])
+    J_R = float(
+        Q * D_R / dx_half * (B_pos_R * p_R_iface - B_neg_R * p_idx_plus_1)
+    )
+    return J_L, J_R
+
+
 def carrier_continuity_rhs(
     x: np.ndarray,
     phi: np.ndarray,
@@ -183,4 +221,63 @@ def carrier_continuity_rhs(
         dp[0] = 0.0
     if J_p_R_val is None:
         dp[-1] = 0.0
+
+    # Phase E4 — split-interface-flux divergence override at heterointerface
+    # faces. When ``interface_split_data`` is supplied, the legacy
+    # harmonic-mean SG flux at each heterointerface face is replaced with
+    # two single-layer half-fluxes coupled to interface-plane state
+    # densities (n_L_iface, n_R_iface, p_L_iface, p_R_iface). This is the
+    # missing-physics piece for SCAPS parity (paper eq 14a TE BC).
+    iface_split = params.get("interface_split_data")
+    if iface_split is not None:
+        iface_face_list = iface_split["iface_face_list"]
+        iface_state = iface_split["iface_state"]
+        D_n_node = iface_split["D_n_node"]
+        D_p_node = iface_split["D_p_node"]
+        for k, f in enumerate(iface_face_list):
+            if f < 0 or f >= len(J_n):
+                continue
+            base = 4 * k
+            # iface_state block layout (Sprint 6): n_1s, p_1s, n_2s, p_2s.
+            # In our convention 1s = R side (ETL, idx+1); 2s = L side
+            # (PVK, idx).
+            n_R_iface = float(iface_state[base + 0])
+            p_R_iface = float(iface_state[base + 1])
+            n_L_iface = float(iface_state[base + 2])
+            p_L_iface = float(iface_state[base + 3])
+            # Interface plane phi: midpoint of bulk nodes (first-order
+            # approximation; refine to charge-balance-derived value later).
+            phi_iface = 0.5 * (phi[f] + phi[f + 1])
+            chi_L = float(chi[f]) if chi is not None else 0.0
+            chi_R = float(chi[f + 1]) if chi is not None else 0.0
+            # Electron half-fluxes.
+            J_L_n, J_R_n = split_interface_flux(
+                n_idx=float(n[f]), n_idx_plus_1=float(n[f + 1]),
+                n_L_iface=n_L_iface, n_R_iface=n_R_iface,
+                phi_idx=float(phi[f]), phi_idx_plus_1=float(phi[f + 1]),
+                phi_iface=phi_iface,
+                chi_L=chi_L, chi_R=chi_R,
+                D_L=float(D_n_node[f]), D_R=float(D_n_node[f + 1]),
+                dx_face=float(dx[f]), V_T=V_T,
+            )
+            # Hole half-fluxes.
+            J_L_p, J_R_p = split_interface_flux_p(
+                p_idx=float(p[f]), p_idx_plus_1=float(p[f + 1]),
+                p_L_iface=p_L_iface, p_R_iface=p_R_iface,
+                phi_idx=float(phi[f]), phi_idx_plus_1=float(phi[f + 1]),
+                phi_iface=phi_iface,
+                D_L=float(D_p_node[f]), D_R=float(D_p_node[f + 1]),
+                dx_face=float(dx[f]), V_T=V_T,
+            )
+            # Apply divergence-correction at idx (left bulk node):
+            # legacy used J_n[f] as right-face flux; replace with J_L_n.
+            J_n_legacy_f = float(J_n[f])
+            J_p_legacy_f = float(J_p[f])
+            dn[f] += (J_L_n - J_n_legacy_f) / (Q * dx_cell[f])
+            dp[f] += -(J_L_p - J_p_legacy_f) / (Q * dx_cell[f])
+            # At idx+1 (right bulk node): legacy used J_n[f] as left-face
+            # flux; replace with J_R_n. Sign: dn = (right - left)/dx, so
+            # replacing left-flux means subtracting delta.
+            dn[f + 1] -= (J_R_n - J_n_legacy_f) / (Q * dx_cell[f + 1])
+            dp[f + 1] -= -(J_R_p - J_p_legacy_f) / (Q * dx_cell[f + 1])
     return dn, dp
