@@ -264,6 +264,13 @@ class MaterialArrays:
     # of being zeroed on the dark branch. Default False keeps the historical
     # dark behaviour (G zeroed) bit-identical.
     force_use_g_optical: bool = False
+    # Phase E4 — per-node carrier diffusion coefficients for the
+    # split-interface-flux helper. Half-flux at a heterointerface face
+    # uses single-layer D_L = D_n_node[idx], D_R = D_n_node[idx+1] (not
+    # the harmonic-mean face D). Always populated by build_material_arrays
+    # because the harmonic-mean face derivation needs them anyway.
+    D_n_node: np.ndarray | None = None
+    D_p_node: np.ndarray | None = None
 
     @property
     def carrier_params(self) -> dict:
@@ -1014,6 +1021,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         C_p=C_p,
         D_n_face=D_n_face,
         D_p_face=D_p_face,
+        D_n_node=D_n_node.copy(),
+        D_p_node=D_p_node.copy(),
         D_ion_face=D_ion_face,
         P_lim_face=P_lim_face,
         dx_cell=dx_cell,
@@ -1314,6 +1323,14 @@ def assemble_rhs(
             carrier_params["J_p_R"] = selective_contact_flux(
                 float(p[-1]), mat.p_R, mat.S_p_R, carrier="p", side="right",
             )
+    # Phase E4 — split-flux scaffold landed in physics/continuity.py
+    # (split_interface_flux + split_interface_flux_p helpers + divergence
+    # override gated by params["interface_split_data"]). Sprint 8 Day 4-7
+    # ships the plumbing groundwork; the bulk-side wire-through requires
+    # Sprint 9 TE BC at the heterointerface face to conserve carrier mass
+    # across the iface plane. Until then, assemble_rhs does NOT inject
+    # interface_split_data so carrier_continuity_rhs uses the legacy SG
+    # flux divergence (Phase E3 Sprint 7 bulk drain stays active).
     dn, dp = carrier_continuity_rhs(x, phi, n, p, G, carrier_params)
 
     # Interface recombination (surface SRH at heterointerfaces).
