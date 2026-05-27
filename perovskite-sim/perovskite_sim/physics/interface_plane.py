@@ -32,6 +32,8 @@ import math
 import numpy as np
 
 from perovskite_sim.constants import V_T as _V_T_300
+from perovskite_sim.physics.recombination import interface_recombination
+from perovskite_sim.models.device import electrical_interfaces
 
 
 _DEFAULT_V_TH_MS = 1.0e5  # m/s typical electron / hole thermal velocity
@@ -113,4 +115,77 @@ def compute_interface_te_fluxes(
         out[base + 1] = te_flux(p_1s_proj, p_1s, v_th_eff)
         out[base + 2] = te_flux(n_2s_proj, n_2s, v_th_eff)
         out[base + 3] = te_flux(p_2s_proj, p_2s, v_th_eff)
+    return out
+
+
+def compute_interface_srh_on_state(
+    iface_state: np.ndarray,
+    stack,
+    mat,
+) -> np.ndarray:
+    """Two-sided Shockley-Read SRH evaluated on interface-plane state.
+
+    Paper eq 12, 13 translated to SolarLab n+p convention.
+
+    Per interface k, four state densities (n_1s, p_1s, n_2s, p_2s) pair
+    up into two SRH paths:
+      R_s1 = SRH(n_1s, p_2s, ...)  # ETL electron + PVK hole
+      R_s2 = SRH(n_2s, p_1s, ...)  # PVK electron + ETL hole
+
+    Sinks (negative contributions to dy/dt) on each state density:
+      d(n_1s)/dt -= R_s1
+      d(p_2s)/dt -= R_s1   # paired with n_1s
+      d(n_2s)/dt -= R_s2
+      d(p_1s)/dt -= R_s2   # paired with n_2s
+
+    Returns array shape (4 * N_iface,) of NEGATIVE sink magnitudes (each
+    entry = -R_s for the carrier consumed in its pair). Caller adds this
+    array to the diface_state block to apply the loss.
+
+    Uses cached per-interface (n_1, p_1, ni_eff_sq, calibration_factor)
+    from MaterialArrays. Surface velocities (v_n, v_p) read from
+    stack.interfaces, scaled by calibration_factor (Phase E1.6 pattern).
+    """
+    ifaces = electrical_interfaces(stack)
+    n_iface = len(mat.interface_V_partition_2)
+    out = np.zeros(4 * n_iface, dtype=float)
+    if n_iface == 0 or not ifaces:
+        return out
+    for k in range(n_iface):
+        if k >= len(ifaces):
+            break
+        v_n, v_p = ifaces[k]
+        if mat.interface_calibration_factor:
+            cf = float(mat.interface_calibration_factor[k])
+            v_n = v_n * cf
+            v_p = v_p * cf
+        if v_n == 0.0 and v_p == 0.0:
+            continue
+        n1_k = float(mat.interface_n1[k])
+        p1_k = float(mat.interface_p1[k])
+        ni_eff_sq = (
+            float(mat.interface_ni_sq_eff[k])
+            if mat.interface_ni_sq_eff else 0.0
+        )
+        base = 4 * k
+        n_1s = float(iface_state[base + 0])
+        p_1s = float(iface_state[base + 1])
+        n_2s = float(iface_state[base + 2])
+        p_2s = float(iface_state[base + 3])
+        # Clamp negatives (defensive against transient overshoots).
+        n_1s = max(0.0, n_1s); p_1s = max(0.0, p_1s)
+        n_2s = max(0.0, n_2s); p_2s = max(0.0, p_2s)
+        # R_s1: ETL-side electron capture paired with PVK-side hole.
+        R_s1 = interface_recombination(
+            n_1s, p_2s, ni_eff_sq, n1_k, p1_k, v_n, v_p,
+        )
+        # R_s2: PVK-side electron capture paired with ETL-side hole.
+        R_s2 = interface_recombination(
+            n_2s, p_1s, ni_eff_sq, n1_k, p1_k, v_n, v_p,
+        )
+        # Sinks (carrier consumed -> negative dy/dt contribution).
+        out[base + 0] = -R_s1   # n_1s
+        out[base + 1] = -R_s2   # p_1s
+        out[base + 2] = -R_s2   # n_2s
+        out[base + 3] = -R_s1   # p_2s
     return out
