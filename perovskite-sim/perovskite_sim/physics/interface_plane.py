@@ -66,6 +66,7 @@ def compute_interface_te_fluxes(
     V_app: float = 0.0,
     *,
     v_th_eff: float = _DEFAULT_V_TH_MS,
+    v_cross_eff: float = 0.0,
     V_T: float | None = None,
 ) -> np.ndarray:
     """Compute all 4*N_iface TE fluxes for one RHS evaluation.
@@ -110,8 +111,22 @@ def compute_interface_te_fluxes(
         p_L = float(mat.interface_p_L_eq[k])
         n_1s_proj = n_R * math.exp(-v1_norm)
         p_1s_proj = p_R * math.exp(+v1_norm)
-        n_2s_proj = n_L * math.exp(+v2_norm)
-        p_2s_proj = p_L * math.exp(-v2_norm)
+        # Phase E3 Day 4-6 — χ-step-consistent 2s projection. Without
+        # this, single-side Boltzmann from L bulk gives an unphysical
+        # 2s_proj that ignores cross-interface equilibrium (n_2s_eq =
+        # n_1s_eq · exp(-ΔE_c/V_T) at flat E_F). Falls back to legacy
+        # single-side when chi_step cache is empty.
+        if mat.interface_chi_step and len(mat.interface_chi_step) > k:
+            dE_c = float(mat.interface_chi_step[k])
+            dE_g = float(mat.interface_Eg_step[k])
+            dE_v_local = dE_c - dE_g
+            ec_n = max(-_EXP_CAP, min(_EXP_CAP, dE_c / V_T_local))
+            ev_n = max(-_EXP_CAP, min(_EXP_CAP, dE_v_local / V_T_local))
+            n_2s_proj = n_1s_proj * math.exp(-ec_n)
+            p_2s_proj = p_1s_proj * math.exp(-ev_n)
+        else:
+            n_2s_proj = n_L * math.exp(+v2_norm)
+            p_2s_proj = p_L * math.exp(-v2_norm)
         base = 4 * k
         n_1s = float(iface_state[base + 0])
         p_1s = float(iface_state[base + 1])
@@ -121,6 +136,35 @@ def compute_interface_te_fluxes(
         out[base + 1] = te_flux(p_1s_proj, p_1s, v_th_eff)
         out[base + 2] = te_flux(n_2s_proj, n_2s, v_th_eff)
         out[base + 3] = te_flux(p_2s_proj, p_2s, v_th_eff)
+        # Phase E3 Day 4-6 — cross-interface χ-step TE flux (paper eq 15).
+        # Electrons: equilibrium ratio n_1s/n_2s = exp(ΔE_c/V_T) where
+        # ΔE_c = chi_R − chi_L. Cross-flux drives n_1s, n_2s toward this
+        # ratio across the χ-step barrier.
+        # Holes: equilibrium ratio p_1s/p_2s = exp(ΔE_v/V_T) where
+        # ΔE_v = (E_v_R − E_v_L) = ΔE_c − (Eg_R − Eg_L).
+        if (
+            v_cross_eff > 0.0
+            and mat.interface_chi_step
+            and len(mat.interface_chi_step) > k
+        ):
+            dE_c = float(mat.interface_chi_step[k])  # eV
+            dE_g = float(mat.interface_Eg_step[k])   # eV
+            dE_v = dE_c - dE_g
+            # Exponent caps for numerical stability.
+            ec_norm = max(-_EXP_CAP, min(_EXP_CAP, dE_c / V_T_local))
+            ev_norm = max(-_EXP_CAP, min(_EXP_CAP, dE_v / V_T_local))
+            # Cross-flux: positive value flows from 2s side to 1s side.
+            J_cross_n = v_cross_eff * (
+                n_2s * math.exp(ec_norm) - n_1s
+            )
+            J_cross_p = v_cross_eff * (
+                p_2s * math.exp(ev_norm) - p_1s
+            )
+            # Mass-conserving redistribution: +J on 1s side, -J on 2s side.
+            out[base + 0] += J_cross_n      # n_1s gains
+            out[base + 2] -= J_cross_n      # n_2s loses
+            out[base + 1] += J_cross_p      # p_1s gains
+            out[base + 3] -= J_cross_p      # p_2s loses
     return out
 
 
@@ -169,10 +213,28 @@ def compute_interface_srh_on_state(
             continue
         n1_k = float(mat.interface_n1[k])
         p1_k = float(mat.interface_p1[k])
-        ni_eff_sq = (
-            float(mat.interface_ni_sq_eff[k])
-            if mat.interface_ni_sq_eff else 0.0
-        )
+        # χ-step-consistent ni_eff² for iface-plane SRH path. At equilibrium
+        # n_1s_eq · p_2s_eq = n_R_eq · p_R_eq · exp(-ΔE_v/V_T) (detailed
+        # balance across the χ step). Falls back to legacy cached value
+        # when chi_step cache is empty.
+        if (
+            mat.interface_chi_step
+            and len(mat.interface_chi_step) > k
+            and mat.interface_n_R_eq
+        ):
+            dE_c_k = float(mat.interface_chi_step[k])
+            dE_g_k = float(mat.interface_Eg_step[k])
+            dE_v_k = dE_c_k - dE_g_k
+            V_T_iface = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
+            ev_n_k = max(-_EXP_CAP, min(_EXP_CAP, dE_v_k / V_T_iface))
+            n_R_eq = float(mat.interface_n_R_eq[k])
+            p_R_eq = float(mat.interface_p_R_eq[k])
+            ni_eff_sq = n_R_eq * p_R_eq * math.exp(-ev_n_k)
+        else:
+            ni_eff_sq = (
+                float(mat.interface_ni_sq_eff[k])
+                if mat.interface_ni_sq_eff else 0.0
+            )
         base = 4 * k
         n_1s = float(iface_state[base + 0])
         p_1s = float(iface_state[base + 1])
