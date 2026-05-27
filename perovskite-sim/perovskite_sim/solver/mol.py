@@ -36,21 +36,41 @@ class StateVec:
     p: np.ndarray
     P: np.ndarray
     P_neg: np.ndarray | None = None
+    # Phase E3 — optional interface-plane state block. Shape (4*N_iface,)
+    # carrying (n_1s, p_1s, n_2s, p_2s) per heterointerface k. Block at
+    # END of packed vector so legacy bulk-state slicing stays bit-
+    # identical. None / size 0 = legacy MoL behaviour.
+    iface_state: np.ndarray | None = None
 
     @staticmethod
-    def pack(n, p, P, P_neg=None) -> np.ndarray:
+    def pack(n, p, P, P_neg=None, iface_state=None) -> np.ndarray:
         parts = [n, p, P]
         if P_neg is not None:
             parts.append(P_neg)
+        if iface_state is not None and np.asarray(iface_state).size > 0:
+            parts.append(np.asarray(iface_state))
         return np.concatenate(parts)
 
     @staticmethod
-    def unpack(y: np.ndarray, N: int) -> "StateVec":
-        if len(y) == 4 * N:
+    def unpack(
+        y: np.ndarray, N: int, N_iface_state: int = 0,
+    ) -> "StateVec":
+        # Interface-plane block at the end (size = 4 * N_iface_state).
+        iface_block_size = 4 * max(0, int(N_iface_state))
+        bulk_end = len(y) - iface_block_size
+        iface_state = (
+            y[bulk_end:] if iface_block_size > 0 else None
+        )
+        # Detect dual-ion presence: bulk segment length 4N → P_neg active.
+        if bulk_end == 4 * N:
             return StateVec(
                 n=y[:N], p=y[N:2*N], P=y[2*N:3*N], P_neg=y[3*N:4*N],
+                iface_state=iface_state,
             )
-        return StateVec(n=y[:N], p=y[N:2*N], P=y[2*N:3*N])
+        return StateVec(
+            n=y[:N], p=y[N:2*N], P=y[2*N:3*N],
+            iface_state=iface_state,
+        )
 
 
 @dataclass(frozen=True)
