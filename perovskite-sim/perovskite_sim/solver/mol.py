@@ -1,5 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import math
+import os
 import warnings
 import numpy as np
 try:
@@ -914,6 +916,18 @@ def _charge_density(
     return rho
 
 
+_BBD_FACE_ENV = "SOLARLAB_BBD_FACE"
+
+
+def _bbd_face_active() -> bool:
+    """True if Phase E2.1 BBD prototype is gated on via env var.
+
+    Read at every call (no module-load caching) so monkeypatched tests
+    can toggle the path mid-session without process restart.
+    """
+    return os.environ.get(_BBD_FACE_ENV) == "1"
+
+
 def _apply_interface_recombination(
     dn: np.ndarray,
     dp: np.ndarray,
@@ -921,15 +935,25 @@ def _apply_interface_recombination(
     p: np.ndarray,
     stack: DeviceStack,
     mat: MaterialArrays,
+    *,
+    phi: np.ndarray | None = None,
 ) -> None:
     """Subtract interface recombination from dn, dp at interface nodes (in-place).
 
     Interface recombination is a surface rate [m⁻² s⁻¹] converted to
     volumetric [m⁻³ s⁻¹] by dividing by the dual-grid cell width.
+
+    Phase E2.1 prototype: when ``SOLARLAB_BBD_FACE=1`` AND ``phi`` is
+    provided, replace the cross-carrier sample pair with band-bending
+    depletion (BBD) projected face densities. See Phase E2 design RFC
+    `docs/superpowers/specs/2026-05-27-e2-design-rfc.md`. Default path
+    (env unset or phi None) is legacy E1.5 cross-carrier, bit-identical.
     """
     ifaces = electrical_interfaces(stack)
     if not ifaces:
         return
+    bbd_active = phi is not None and _bbd_face_active()
+    V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
     for k, idx in enumerate(mat.interface_nodes):
         if k >= len(ifaces):
             break
@@ -959,8 +983,22 @@ def _apply_interface_recombination(
             if mat.interface_ni_sq_eff
             else float(mat.ni_sq[idx])
         )
+        if bbd_active:
+            # Phase E2.1 — band-bending depletion projection. Same-layer
+            # φ Boltzmann, no χ step crossing (avoids E1.6 v2 photo-
+            # injection breakdown). Hypothesis: this reproduces SCAPS'
+            # interface-plane density (ref [13] Pauwels-Vanhoutte 1978).
+            n_eval = float(n[eval_n_idx]) * math.exp(
+                (float(phi[idx]) - float(phi[eval_n_idx])) / V_T_local
+            )
+            p_eval = float(p[eval_p_idx]) * math.exp(
+                -(float(phi[idx]) - float(phi[eval_p_idx])) / V_T_local
+            )
+        else:
+            n_eval = float(n[eval_n_idx])
+            p_eval = float(p[eval_p_idx])
         R_s = interface_recombination(
-            n[eval_n_idx], p[eval_p_idx], ni_sq_eff,
+            n_eval, p_eval, ni_sq_eff,
             mat.interface_n1[k], mat.interface_p1[k],
             v_n, v_p,
         )
@@ -1127,8 +1165,10 @@ def assemble_rhs(
             )
     dn, dp = carrier_continuity_rhs(x, phi, n, p, G, carrier_params)
 
-    # Interface recombination (surface SRH at heterointerfaces)
-    _apply_interface_recombination(dn, dp, n, p, stack, mat)
+    # Interface recombination (surface SRH at heterointerfaces).
+    # ``phi`` is the solved electrostatic potential from this RHS call,
+    # needed by the Phase E2.1 BBD prototype path (env-gated).
+    _apply_interface_recombination(dn, dp, n, p, stack, mat, phi=phi)
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
