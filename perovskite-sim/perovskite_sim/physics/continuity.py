@@ -1,9 +1,63 @@
 from __future__ import annotations
 import numpy as np
-from perovskite_sim.discretization.fe_operators import sg_fluxes_n, sg_fluxes_p
+from perovskite_sim.discretization.fe_operators import (
+    bernoulli, sg_fluxes_n, sg_fluxes_p,
+)
 from perovskite_sim.physics.recombination import total_recombination
 
 Q = 1.602176634e-19
+
+
+def split_interface_flux(
+    *,
+    n_idx: float, n_idx_plus_1: float,
+    n_L_iface: float, n_R_iface: float,
+    phi_idx: float, phi_idx_plus_1: float, phi_iface: float,
+    chi_L: float, chi_R: float,
+    D_L: float, D_R: float,
+    dx_face: float,
+    V_T: float,
+) -> tuple[float, float]:
+    """Phase E4 — per-layer half-flux at a heterointerface face.
+
+    Splits the legacy chi/Eg-aware SG flux into TWO half-fluxes coupled
+    to the interface-plane state densities (n_L_iface, n_R_iface):
+
+      J_L_half (idx → iface plane on L side):
+        uses chi_L on both ends; dx_half = dx_face / 2
+        xi_L = (phi_iface − phi_idx) / V_T    (chi cancels: both sides chi_L)
+        J_L = q · D_L / dx_half · (B(xi_L) · n_L_iface − B(−xi_L) · n_idx)
+
+      J_R_half (iface plane on R side → idx+1):
+        uses chi_R on both ends; dx_half = dx_face / 2
+        xi_R = (phi_idx_plus_1 − phi_iface) / V_T
+        J_R = q · D_R / dx_half · (B(xi_R) · n_idx_plus_1 − B(−xi_R) · n_R_iface)
+
+    The χ step lives OUTSIDE the half-fluxes — Sprint 7 Day 4-6
+    cross-interface TE flux handles n_L_iface ↔ n_R_iface coupling via
+    exp(−ΔE_c/V_T) factor.
+
+    Sign convention matches the legacy sg_fluxes_n: positive flux flows
+    from lower-index node toward higher-index node (idx → idx+1).
+
+    Returns (J_L_half, J_R_half) in A/m².
+    """
+    dx_half = dx_face / 2.0
+    # L-half: chi_L is constant on both ends → SG xi uses just phi diff.
+    xi_L = (phi_iface - phi_idx) / V_T
+    B_pos_L = float(bernoulli(np.array([xi_L]))[0])
+    B_neg_L = float(bernoulli(np.array([-xi_L]))[0])
+    J_L = float(
+        Q * D_L / dx_half * (B_pos_L * n_L_iface - B_neg_L * n_idx)
+    )
+    # R-half: chi_R constant on both ends.
+    xi_R = (phi_idx_plus_1 - phi_iface) / V_T
+    B_pos_R = float(bernoulli(np.array([xi_R]))[0])
+    B_neg_R = float(bernoulli(np.array([-xi_R]))[0])
+    J_R = float(
+        Q * D_R / dx_half * (B_pos_R * n_idx_plus_1 - B_neg_R * n_R_iface)
+    )
+    return J_L, J_R
 
 
 def carrier_continuity_rhs(
