@@ -122,6 +122,43 @@ New sweep axis `interface_defect_E_t_eV` (targetable, mirrors
 `interface_defect_N_t_cm2`) added to `device_parameter_sweep.py` to cover
 sweeps #4/#10 — purely additive, 5/5 existing sweep unit tests green.
 
+## HTL/PVK + bulk-N_t investigation — entangled interface calibration (do-not-retry)
+
+Tried to close the HTL/PVK N_t sweep (SL rose +105 mV + crashed; SCAPS flat).
+Root cause measured precisely: the cross-carrier reference
+`ni_sq_eff = nR_eq·pL_eq` uses **bulk-asymptotic** equilibrium densities. At
+the thin HTL/PVK junction the eval node sits in the depletion region, so the
+self-consistent dark-equilibrium product is `9.2e23` vs the cached `1e44` —
+**20 orders too high** → `np < ni²` → SRH flips to spurious generation that
+raises V_oc with N_t.
+
+Prototyped the principled fix (`SOLARLAB_IFACE_EQREF`): recompute `ni_sq_eff`
+per interface from a self-consistent dark steady state (interfaces zeroed),
+sampled at the eval nodes. Result:
+
+- HTL/PVK sign **corrected** (V_oc now *drops* with N_t) — but over-shoots
+  (−190 mV vs SCAPS −5 mV): the cross-carrier np at HTL/PVK is too large, so
+  the interface is a strong recombiner where SCAPS keeps it nearly inert.
+- **PVK/ETL regressed** (106 % → broken, base 1.05→0.82, crash). It was
+  matching SCAPS *because* its reference was "wrong" (1.98e28 vs correct
+  4.08e29, too low → more recombination → right magnitude). Correcting it
+  reduces recombination and breaks the match.
+
+**Conclusion (reverted, not shipped):** the interface-SRH references and σ
+values are an *entangled empirical calibration*. Making one interface
+physically correct regresses the empirically-matched one. Closing all
+interface sweeps simultaneously requires either the interface-plane-state
+solver (the dormant `SOLARLAB_INTERFACE_PLANE_STATE` path — Newton-unstable,
+archived `failed-prototype/*`) or SCAPS source data (interface SRH
+formulation + contact spec). This is the same architectural boundary E1–E7
+documented; the eq-reference measurement quantifies *why* (20-order reference
+error on the depleted interface) and is preserved here so it is not retried
+blind. **Do not retry the global eq-reference correction without first
+re-tuning the PVK/ETL σ/calibration to absorb the reference change.**
+
+`Nt_C_PVK` / `Nt_V_PVK` remain cascade-masked (E7) and indistinguishable
+(combined absorber τ) — genuinely partner-data-blocked.
+
 ## Open integration decision
 
 The hook is env-gated for safety. Promoting it (SimulationMode flag /
