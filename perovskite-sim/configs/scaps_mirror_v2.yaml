@@ -21,14 +21,20 @@
 # Base layer parameters (24 fields per layer) audited line-by-line against
 # PDF page 1 and confirmed bit-identical to scaps_mirror.yaml.
 #
-# ⚠ THIS FILE IS NOT LOADABLE BY THE CURRENT scaps_compat LOADER.
-# Phase E6 Step 3 extends `loader.py` to support:
-#   - `bulk_defects: list` (currently `bulk_defect: dict` singular)
-#   - `E_t_eV_above_vb` (currently only `E_t_eV_below_cb`)
-#   - `distribution: gaussian` with `E_char_eV` + `N_peak_cm3` fields
-#     (Gaussian → Single collapse: N_t_eff = N_peak · E_char · sqrt(2*pi))
-# Until the loader extension lands, this file lives as the design target
-# for the Step 4 regression harness.
+# Phase E6.3 loader extension consumes this schema:
+#   - `bulk_defects: list` — multi-defect parallel SRH per layer; loader
+#     combines via 1/tau_total = sum(1/tau_i) and weights n1/p1 by
+#     inverse-lifetime (matches arithmetic mean for identical taus).
+#   - `E_t_eV_above_vb` — alternative to `E_t_eV_below_cb` for traps
+#     referenced from VB; exactly one must be set per defect entry.
+#   - `distribution: gaussian` — accepted on both bulk and interface
+#     entries. The loader uses N_t_cm3 (bulk) or N_t_cm2 (interface)
+#     directly; `E_char_eV` and `N_peak_cm3` are informational fields
+#     (the PDF column-header units make standard Gaussian normalisation
+#     ambiguous — see Phase E6.3 docstring in scaps_compat/loader.py).
+#   - Strict-key validation: typos in defect/interface entries now raise
+#     ValueError. Pre-E6.3 the loader silently dropped unrecognised
+#     keys, which masked the calibration_factor unit-error class.
 
 device:
   V_bi: 1.30
@@ -120,12 +126,12 @@ interfaces:
   # N_t=[1e9, 1e15]. SCAPS encodes this as a Gaussian energy distribution
   # peaked at E_t=0.6 below CB with characteristic energy E_char=0.1 eV.
   # Peak density 5.64e8 cm^-3 is the SCAPS PDF reference for N_t_total=1e12.
-  # Loader's Gaussian→Single collapse (Step 3 extension):
-  #   N_t_eff = N_peak · E_char · sqrt(2*pi)  ≈ 5.64e8 · 0.1 · 2.5066
-  #           ≈ 1.41e8 cm^-3   (deferred unit reconciliation —
-  #   the PDF column header reads cm^-3 even for the surface defects;
-  #   Step 3 either trusts the PDF N_t_total directly or computes
-  #   from N_peak using the same collapse formula SCAPS uses).
+  # The Phase E6.3 loader uses N_t_cm2=1e12 directly (the SCAPS-input total)
+  # and treats E_char_eV + N_peak_cm3 as informational metadata — the PDF
+  # column-header units make the standard Gaussian normalisation ambiguous
+  # (ratio 5.64e-4 does not match sqrt(2*pi)*E_char ≈ 0.2507), so the YAML
+  # mirrors the SCAPS GUI inputs verbatim rather than computing a synthetic
+  # N_t_eff from the peak.
   # calibration_factor INTENTIONALLY OMITTED — the v1 1e-4 factor hid the
   # 4-order sigma error (1e-15 vs PDF 1e-19) and the Single→Gaussian
   # distribution mismatch. Both are corrected here.
