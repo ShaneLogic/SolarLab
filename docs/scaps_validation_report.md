@@ -439,3 +439,172 @@ Partner decides next phase based on this report:
 | "tandem stack validation" | new SCAPS preset + extend validation script |
 | "different priority" | redirect
 based on the present parity status.
+
+---
+
+## Update 2026-05-28 — Phase E6 defect-inventory rewrite + decision gate
+
+Re-audit of `configs/scaps_mirror.yaml` against the SCAPS PDF page 1
+defect inventory (driven by the partner xlsx + PDF dropped on Desktop)
+exposed three v1 schema mismatches that were silently corrupting all
+post-E1.7 closure metrics. Phase E6 closes those mismatches and runs
+a fresh regression on a defect-corrected `scaps_mirror_v2.yaml` — the
+result FALSIFIES the parked Phase E2/E3/E4 "needs Newton-Krylov refactor"
+diagnosis (carried forward through Update 2026-05-27 above).
+
+### Ship log (E6.1 → E6.5)
+
+| Commit | Phase | Summary |
+|---|---|---|
+| `6ed8ce8` | E6.1 | Ground truth from partner xlsx (12 sheets, 251 sweep points) + PDF (21 pp) → machine-readable `tests/integration/scaps_reference.json` |
+| `05a2c73` | E6.2 | `configs/scaps_mirror_v2.yaml` + audit doc — 4-defect inventory matching PDF (added PVK-VB bulk, added HTL/PVK interface, rewrote PVK/ETL as Gaussian with σ corrected 1e-15 → 1e-19) |
+| `c91726f` | E6.3 | `scaps_compat/loader.py` extension — `bulk_defects: list` parallel-SRH combine, `E_t_eV_above_vb` mutex with `_below_cb`, `distribution: gaussian` accepted, strict-key validation (17 new unit tests) |
+| `f079830` | E6.4 | Regression harness + decision-gate doc — runs 4 marquee sweeps against scaps_reference.json with bracketed-only V_oc range |
+| `7d4fbb6` | E6.5 | `V_max=2.5 V` probe on Nd_ETL — falsifies V_max-only fix hypothesis, opens E6.6 contact-BC audit |
+| `a970a9e` | docs | Lock SolarLab Technical User Manual + this report's antecedent partner artefact into git |
+
+### Defect inventory: v1 vs v2 vs SCAPS PDF
+
+PDF page 1 declares **four** defects (all Neutral). v1 carried two
+and hid two errors behind a 4-order σ adjustment dressed up as a
+`calibration_factor`:
+
+| # | PDF defect | σ_n=σ_p (cm²) | Distribution | E_t (eV) | N_t | v1 status | v2 status |
+|---|---|---|---|---|---|---|---|
+| 1 | HTL/Perovskite | 1e-19 | Single | 0.6 | 1e12 cm⁻³ | ✗ MISSING | ✓ added |
+| 2 | Perovskite-CB | 1e-15 | Single | 0.1 below CB | 1e12 cm⁻³ | ✓ as `bulk_defect` | ✓ in `bulk_defects[0]` |
+| 3 | Perovskite-VB | 1e-15 | Single | 0.1 above VB | 1e12 cm⁻³ | ✗ MISSING | ✓ in `bulk_defects[1]` (above_vb) |
+| 4 | Perovskite/ETL | 1e-19 | **Gaussian** (E_char=0.1) | 0.6 | N_peak=5.64e8 cm⁻³, N_total=1e12 | ✗ encoded as Single + σ=1e-15 + cf=1e-4 (hid 4-order σ error AND Single/Gaussian mismatch) | ✓ Gaussian, σ=1e-19, cf removed |
+
+### Final parity table (v2, E6.4)
+
+Working-regime closure = points where SolarLab brackets V_oc within
+`V_max=1.6 V`. Unbracketed-V_oc=0 sentinels EXCLUDED from the range
+calculation — including them was how parked Phase E2/E3/E4 inflated
+its 1075 mV SolarLab Nd_ETL range to claim "8× over-sensitive".
+
+| Sheet | n_bracketed | SCAPS Δ_subset | SolarLab Δ | Closure | Median Δ | Max\|Δ\| |
+|---|---|---|---|---|---|---|
+| CHI_ETL (CBO) | 14/14 | 918 mV | 762 mV | **83 %** ✓ | −140 mV | 166 mV |
+| Nt_PVK_ETL (interface) | 6/7 | 226.7 mV | 246.2 mV | **109 %** ✓✓ | −304 mV | 358 mV |
+| Nd_ETL (ETL doping) | 8/11 | 99.6 mV | 29.7 mV | **30 %** UNDER | −83 mV | 153 mV |
+| Nt_C_PVK (PVK bulk) | 7/7 | 38.6 mV | 0.1 mV | **0.2 %** | −96 mV | 96 mV |
+| Base J-V V_oc | — | — | 1.0808 V | gap −87 mV (vs parked −99 mV) |
+| Base J-V J_sc | — | — | 333 A/m² | +27 % over (TMM vs SCAPS scalar-α, unchanged from v1) |
+
+### Critical reframing — parked diagnosis was wrong
+
+Update 2026-05-27 ("Final parity table") recorded
+`ETL donor doping | 1441 mV / mismatch | 137 mV | direction OK, magnitude 10× over`
+and routed the next-phase decision through "Phase E2 — SG-flux-consistent
+face density OR thin-shell volumetric SRH (multi-week)". E6.4 shows the
+1441 mV / 1075 mV SolarLab range was inflated by three unbracketed
+V_oc=0 sentinels at Nd_ETL ∈ {1e10, 1e11, 1e12} cm⁻³. Once those points
+are filtered, v2 is **3× UNDER-sensitive** (30 mV SL vs 100 mV SCAPS in
+the working regime), the opposite sign of the parked diagnosis. The
+Newton-Krylov / SG-face-density / QSS refactor recommended through E1.16
+would have widened the (now under-sensitive) gap, not closed it.
+
+### Phase E6.5 V_max probe outcome
+
+E6.5 re-ran the Nd_ETL sweep with `V_max=2.5 V` to test whether the
+bracket failure at low Nd was simply a sweep-range artifact. Result:
+
+| Nd_ETL (cm⁻³) | SolarLab V_oc | SCAPS V_oc | Bracketed? | Interpretation |
+|---:|---:|---:|---|---|
+| 1e10 | 0.000 V | 1.100 V | no | still unbracketed |
+| 1e11 | **2.107 V** | 1.125 V | yes | UNPHYSICAL high-V_oc branch |
+| 1e12 | **1.666 V** | 1.132 V | yes | UNPHYSICAL high-V_oc branch |
+| 1e13–1e20 | 1.06–1.14 V | 1.14–1.24 V | yes | working regime, ~80 mV gap |
+
+Bracketing succeeded at Nd≤1e12 but landed on an unphysical high-V_oc
+branch (V_oc=2.1 V on a 1.53 eV bandgap absorber). V_max was NOT the
+real gap — the contact equilibrium / branch-selection at very low ETL
+doping is.
+
+In-session probes confirmed:
+- `apply_sweep_point` already auto-updates `stack.V_bi` per Nd point
+  (Nd=1e11 → V_bi=0.877 V; not hardcoded at 1.30) — V_bi mismatch ruled out
+- ETL contact `n_R_eq` stays ≥ 10⁶·ni across the full sweep range — pin
+  density not directly the cause
+
+Remaining hypothesis (deferred to E6.6): contact pinning model
+mismatch. SolarLab Dirichlet pins (n, p) at boundary regardless of
+photocurrent demand; SCAPS likely uses workfunction/Robin-like contact
+that bends under illumination. Confirmation requires solver-side
+probing (dark-equilibrium band diagram, J-V branch comparison) — not
+a one-line YAML change.
+
+### Updated next-phase decision (parked 2026-05-28)
+
+Replaces the Update 2026-05-27 decision table.
+
+| Partner says | Next phase |
+|---|---|
+| "parity acceptable as-is" | merge complete; focus elsewhere (paper repro, tandem, manual polish) |
+| "close ETL doping low-Nd branch" | **Phase E6.6** — narrow contact-BC audit (probe dark equilibrium + branch selection + Robin pinning). Bounded ~1–2 days. Do NOT retry the parked Newton-Krylov / SG-face-density / QSS path — falsified by E6.4 |
+| "close PVK bulk N_t mask" | interface SRV tuning (PVK/ETL → 0) OR multi-defect SRH solver hook |
+| "close CBO spike-side plateau" | Richardson-Dushman TE-cap softening at \|ΔE_C\| > 0.1 eV |
+| "tandem stack validation" | new SCAPS preset + extend validation script |
+| "different priority" | redirect |
+
+### What NOT to retry
+
+Falsified or superseded by E6.4 evidence:
+
+- Newton-Krylov reformulation with iface-plane state as full DAE block
+- QSS reduction to Pauwels-Vanhoutte algebraic constraint
+- SG-flux-consistent face-density extraction in `physics/continuity.py`
+- Thin-shell volumetric SRH on the absorber/ETL interface
+- Boltzmann-degenerate carrier statistics for N_D > 1e16 cm⁻³ (was
+  proposed for PVK doping direction; PVK doping not yet revisited
+  under v2 but the diagnosis chain that motivated this branch is broken)
+- Phi_b ohmic-equivalent contact BC (was proposed for PVK doping
+  direction; same caveat)
+
+These remain archived as `failed-prototype/*` tags. Do not retry
+without first re-reading
+`docs/superpowers/specs/2026-05-28-e6-decision-gate.md` and confirming
+that the new hypothesis explains the v2 closure numbers, not the v1
+ones.
+
+### Test guards added
+
+- `tests/unit/scaps_compat/test_loader_multi_defect.py` — 17 tests
+  covering plural `bulk_defects` list, `E_t_eV_above_vb` mutex,
+  `distribution: gaussian` accepted-but-uses-N_t-directly, strict-key
+  rejection on both bulk + interface entries, end-to-end v2 YAML load.
+- All 32 pre-E6.3 `scaps_compat` unit tests + `test_scaps_mirror_baseline`
+  + `test_scaps_mirror_cbo_trend` continue to pass — v1 schema is
+  bit-identical to pre-E6.3.
+
+Total SCAPS-subset: **142+ tests pass on `main` post-E6.4**.
+
+### Reproducer
+
+```bash
+cd perovskite-sim
+git checkout main && git pull
+python scripts/run_scaps_v2_regression.py
+# → outputs/scaps_validation_e6/{*.csv, summary.json}, ~7.5 min
+```
+
+E6.5 V_max probe (Nd_ETL only):
+
+```bash
+python scripts/run_scaps_v2_regression.py \
+  --sheets Nd_ETL --v-max 2.5 \
+  --out-dir ../outputs/scaps_validation_e6_5_vmax
+```
+
+### Related artefacts
+
+- `docs/superpowers/specs/2026-05-28-e2a-scaps-yaml-audit-vs-pdf.md` —
+  E6.2 audit (precursor)
+- `docs/superpowers/specs/2026-05-28-e6-decision-gate.md` — E6.4 gate
+- `docs/superpowers/specs/2026-05-28-e6.5-vmax-low-nd.md` — E6.5 V_max probe
+- `docs/superpowers/references/scaps_1d_simulation_report.pdf` — partner PDF
+- `docs/superpowers/references/scaps_1r_parameters.xlsx` — partner xlsx
+- `outputs/scaps_validation_e6/` — E6.4 raw CSVs + summary.json
+- `outputs/scaps_validation_e6_5_vmax/` — E6.5 raw CSVs + summary.json
+
