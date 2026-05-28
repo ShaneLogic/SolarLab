@@ -1,0 +1,140 @@
+# scaps_mirror_v2.yaml — SCAPS-1D partner stack, defect-corrected.
+#
+# Phase E6 rewrite of configs/scaps_mirror.yaml that closes three defect-
+# inventory gaps identified by the 2026-05-28 PDF audit
+# (docs/superpowers/specs/2026-05-28-e2a-scaps-yaml-audit-vs-pdf.md):
+#
+#   1. PVK carried ONE bulk defect (Perovskite-CB Single, E_t=0.1 below CB)
+#      → SCAPS PDF declares TWO: Perovskite-CB AND Perovskite-VB.
+#      New schema:   `bulk_defects: [...]` list per layer.
+#
+#   2. HTL/PVK interface defect was absent.
+#      → PDF declares Single, E_t=0.6, sigma=1e-19, N_t=1e12.
+#      Added under `interfaces:` block with target HTL/PVK.
+#
+#   3. PVK/ETL interface defect was encoded as Single + sigma=1e-15 +
+#      calibration_factor=1e-4 (which hid a 4-order sigma error AND the
+#      Single→Gaussian distribution mismatch).
+#      → Rewritten as `distribution: gaussian` with E_char=0.1 eV,
+#        N_peak=5.64e8 cm^-3, sigma=1e-19. calibration_factor REMOVED.
+#
+# Base layer parameters (24 fields per layer) audited line-by-line against
+# PDF page 1 and confirmed bit-identical to scaps_mirror.yaml.
+#
+# ⚠ THIS FILE IS NOT LOADABLE BY THE CURRENT scaps_compat LOADER.
+# Phase E6 Step 3 extends `loader.py` to support:
+#   - `bulk_defects: list` (currently `bulk_defect: dict` singular)
+#   - `E_t_eV_above_vb` (currently only `E_t_eV_below_cb`)
+#   - `distribution: gaussian` with `E_char_eV` + `N_peak_cm3` fields
+#     (Gaussian → Single collapse: N_t_eff = N_peak · E_char · sqrt(2*pi))
+# Until the loader extension lands, this file lives as the design target
+# for the Step 4 regression harness.
+
+device:
+  V_bi: 1.30
+  Phi: 2.5e21
+  mode: fast
+
+layers:
+  - name: SCAPS_HTL
+    role: HTL
+    thickness_nm: 20.0
+    E_g_eV: 3.25
+    chi_eV: 2.40
+    eps_r: 11.75
+    mu_n_cm2: 1.0e-3
+    mu_p_cm2: 1.0e-3
+    N_C_cm3: 2.5e20
+    N_V_cm3: 2.5e20
+    N_D_cm3: 0.0
+    N_A_cm3: 1.0e18
+    v_th_cm_s: 1.0e7
+    optical_material: spiro_OMeTAD
+    # PDF: no HTL bulk defect declared.
+
+  - name: SCAPS_PVK
+    role: absorber
+    thickness_nm: 800.0
+    E_g_eV: 1.53
+    chi_eV: 3.94
+    eps_r: 31.0
+    mu_n_cm2: 20.0
+    mu_p_cm2: 20.0
+    N_C_cm3: 1.0e19
+    N_V_cm3: 1.0e19
+    N_D_cm3: 1.0e14
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    B_rad_cm3_s: 1.0e-12
+    C_n_cm6_s: 2.3e-29
+    C_p_cm6_s: 2.3e-29
+    optical_material: MAPbI3
+    # PDF Interface Defects table declares TWO PVK bulk-style defects:
+    #   - Perovskite-CB: Single, sigma=1e-15, N_t=1e12 cm^-3, E_t=0.1 below CB
+    #   - Perovskite-VB: Single, sigma=1e-15, N_t=1e12 cm^-3, E_t=0.1 above VB
+    # Combined SRH lifetime per node: 1/tau_total = 1/tau_CB + 1/tau_VB.
+    bulk_defects:
+      - name: Perovskite-CB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e12
+        E_t_eV_below_cb: 0.1
+        distribution: single
+      - name: Perovskite-VB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e12
+        E_t_eV_above_vb: 0.1
+        distribution: single
+
+  - name: SCAPS_ETL
+    role: ETL
+    thickness_nm: 25.0
+    E_g_eV: 1.9
+    chi_eV: 4.10
+    eps_r: 4.2
+    mu_n_cm2: 1.0e-2
+    mu_p_cm2: 1.0e-5
+    N_C_cm3: 8.0e19
+    N_V_cm3: 8.0e19
+    N_D_cm3: 1.0e18
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    optical_material: TiO2
+    # PDF: no ETL bulk defect declared.
+
+# PDF Interface Defects table declares TWO heterointerface defects.
+interfaces:
+  # SCAPS sweep result: V_oc range across N_t=[1e9, 1e15] is < 1 mV (flat).
+  # Interface 1 is effectively passive in the partner model but must be
+  # declared for completeness (defect inventory must match SCAPS).
+  - target: HTL/PVK
+    sigma_n_cm2: 1.0e-19
+    sigma_p_cm2: 1.0e-19
+    N_t_cm2: 1.0e12
+    v_th_cm_s: 1.0e7
+    E_t_eV_below_cb: 0.6
+    distribution: single
+
+  # SCAPS sweep result: dominant interface — V_oc range 282 mV across
+  # N_t=[1e9, 1e15]. SCAPS encodes this as a Gaussian energy distribution
+  # peaked at E_t=0.6 below CB with characteristic energy E_char=0.1 eV.
+  # Peak density 5.64e8 cm^-3 is the SCAPS PDF reference for N_t_total=1e12.
+  # Loader's Gaussian→Single collapse (Step 3 extension):
+  #   N_t_eff = N_peak · E_char · sqrt(2*pi)  ≈ 5.64e8 · 0.1 · 2.5066
+  #           ≈ 1.41e8 cm^-3   (deferred unit reconciliation —
+  #   the PDF column header reads cm^-3 even for the surface defects;
+  #   Step 3 either trusts the PDF N_t_total directly or computes
+  #   from N_peak using the same collapse formula SCAPS uses).
+  # calibration_factor INTENTIONALLY OMITTED — the v1 1e-4 factor hid the
+  # 4-order sigma error (1e-15 vs PDF 1e-19) and the Single→Gaussian
+  # distribution mismatch. Both are corrected here.
+  - target: PVK/ETL
+    sigma_n_cm2: 1.0e-19
+    sigma_p_cm2: 1.0e-19
+    N_t_cm2: 1.0e12
+    v_th_cm_s: 1.0e7
+    E_t_eV_below_cb: 0.6
+    distribution: gaussian
+    E_char_eV: 0.1
+    N_peak_cm3: 5.64e8
