@@ -9,6 +9,8 @@ pass/fail threshold from real data.
 Run from `perovskite-sim/`:
 
     python scripts/run_scaps_v2_regression.py [--out-dir outputs/scaps_validation_e6]
+    python scripts/run_scaps_v2_regression.py --sheets Nd_ETL --v-max 2.5 \
+        --out-dir outputs/scaps_validation_e6_5_vmax
 """
 from __future__ import annotations
 
@@ -45,7 +47,7 @@ _SHEET_TO_AXIS = {
 # `apply_sweep_point` keys carry the SolarLab-side semantics, so the
 # sweep value passed is the SCAPS-input number used as-is.
 
-JV_KWARGS = dict(N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
+DEFAULT_JV_KWARGS = dict(N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
 
 
 @dataclass
@@ -66,7 +68,12 @@ def _scaps_jsc_A_m2(jsc_ma_cm2: float) -> float:
     return jsc_ma_cm2 * 10.0  # mA/cm^2 → A/m^2
 
 
-def run_sweep(stack_path: Path, sheet: str, ref_points: list[dict]) -> list[PointResult]:
+def run_sweep(
+    stack_path: Path,
+    sheet: str,
+    ref_points: list[dict],
+    jv_kwargs: dict,
+) -> list[PointResult]:
     base_stack = load_scaps_yaml(stack_path)
     axis = _SHEET_TO_AXIS[sheet]
     out: list[PointResult] = []
@@ -78,7 +85,7 @@ def run_sweep(stack_path: Path, sheet: str, ref_points: list[dict]) -> list[Poin
         sp = SweepPoint("p", axis, f"{x:.3e}", updates)
         swept = apply_sweep_point(base_stack, sp)
         try:
-            res = run_jv_sweep(swept, **JV_KWARGS)
+            res = run_jv_sweep(swept, **jv_kwargs)
             m = res.metrics_fwd
             out.append(PointResult(
                 x=x,
@@ -172,6 +179,19 @@ def main() -> None:
         default=str(REPO_ROOT.parent / "outputs" / "scaps_validation_e6"),
         help="output directory for CSV + JSON summary",
     )
+    ap.add_argument(
+        "--sheets",
+        nargs="+",
+        choices=tuple(_SHEET_TO_AXIS),
+        default=list(_SHEET_TO_AXIS),
+        help="SCAPS reference sheet(s) to run",
+    )
+    ap.add_argument(
+        "--v-max",
+        type=float,
+        default=DEFAULT_JV_KWARGS["V_max"],
+        help="J-V sweep V_max override",
+    )
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -181,18 +201,20 @@ def main() -> None:
     print(f"Config: {CFG_PATH.relative_to(REPO_ROOT)}")
     print(f"Ref:    {REF_PATH.relative_to(REPO_ROOT)} (extracted {ref['extracted_at']})")
     print(f"Out:    {out_dir}")
+    jv_kwargs = {**DEFAULT_JV_KWARGS, "V_max": args.v_max}
+    print(f"JV:     {jv_kwargs}")
     print()
 
     summaries: list[dict] = []
     t0_all = time.time()
-    for sheet in _SHEET_TO_AXIS:
+    for sheet in args.sheets:
         if sheet not in ref["sweeps"]:
             print(f"[skip] sheet {sheet!r} not in reference")
             continue
         ref_points = ref["sweeps"][sheet]["points"]
         print(f"=== {sheet} ({len(ref_points)} pts) ===")
         t0 = time.time()
-        results = run_sweep(CFG_PATH, sheet, ref_points)
+        results = run_sweep(CFG_PATH, sheet, ref_points, jv_kwargs)
         dt = time.time() - t0
         sl_csv = out_dir / f"{sheet.replace(' ', '_').replace('/', '_')}.csv"
         write_csv(sl_csv, results)
@@ -218,7 +240,7 @@ def main() -> None:
         "config": str(CFG_PATH.relative_to(REPO_ROOT)),
         "reference": str(REF_PATH.relative_to(REPO_ROOT)),
         "extracted_at": ref["extracted_at"],
-        "jv_kwargs": JV_KWARGS,
+        "jv_kwargs": jv_kwargs,
         "total_wall_time_s": time.time() - t0_all,
         "summaries": summaries,
     }, indent=2))
