@@ -1,10 +1,33 @@
 # Phase E7 — Trend-parity closure design
 
-**Status:** design approved, awaiting spec review then implementation plan
+**Status:** spec superseded by Day 1 spike findings (2026-05-28). See
+[Phase E7 spike report](2026-05-28-e7-spike-report.md) for revised scope.
 **Date:** 2026-05-28
 **Branch (proposed):** `e7-trend-parity`
 **Predecessor:** Phase E6.5 (V_max probe, 2026-05-28)
 **Decision gate prior:** `docs/superpowers/specs/2026-05-28-e6-decision-gate.md`
+
+## Post-spike scope (2026-05-28)
+
+After Day 1 spike Probes A / B / C, the original three-phase plan
+collapsed to a one-phase ship:
+
+- **Y3 dropped** — Probe A confirmed PVK doping direction matches SCAPS
+  under v2 automatically (no code needed).
+- **Y1 simplified** — Probe B showed multi-defect collapse is exact;
+  Y1 = YAML-only PVK/ETL SRV tune (~0.5 day) rather than multi-defect
+  solver hook (2-3 days).
+- **Y2 parked** — Probe C showed Robin BC family cannot break the
+  bulk-limited V_oc ceiling on Nd_ETL high-N_d regime. Root cause is
+  interface SRH formulation, not contact BC; closure requires either
+  the parked SG-face-density refactor (multi-week, falsified prototype
+  family) or partner SCAPS contact-model spec (unavailable). User chose
+  to park Nd_ETL gap and ship Y1 only.
+
+The sections below are kept as-is for historical context, but **only the
+Y1 Branch B1 (YAML SRV tune) path is being executed**. Y2 architectural
+hypotheses, Y3 PVK doping ladder, and the multi-defect solver hook
+discussion are now archived.
 
 ## Context
 

@@ -1,6 +1,6 @@
 # Phase E7 Day 1 spike — findings + decision matrix
 
-**Status:** complete; awaiting writing-plans for Y1 + revised Y2 scope
+**Status:** complete (Day 1 spike + Y1 follow-up probes); Y1 falsified, Y2 parked, Y3 dropped. See `docs/scaps_validation_report.md` Update 2026-05-28 section for the ship-doc summary.
 **Date:** 2026-05-28
 **Spec:** `docs/superpowers/specs/2026-05-28-e7-trend-parity-design.md`
 
@@ -197,7 +197,7 @@ architectural limitation.
    Y1 (bulk N_t SRV tune) — small enough that an implementation plan
    may not be needed; could execute directly.
 
-## Spike artefacts (this commit)
+## Spike artefacts (commit `094bd6c`)
 
 - `perovskite-sim/scripts/probes/e7_probe_a_pvk_doping.py`
 - `perovskite-sim/scripts/probes/e7_probe_b_srh_collapse.py`
@@ -208,3 +208,92 @@ architectural limitation.
 - `outputs/scaps_e7_probe_b/srh_collapse_ratio.csv`
 - `outputs/scaps_e7_probe_c/nd_etl_v2_{dirichlet,robin_moderate,robin_strong}.csv`
 - `docs/superpowers/specs/2026-05-28-e7-spike-report.md` (this file)
+
+## Y1 follow-up probes — cascade theory locked
+
+After the spike landed (`094bd6c`), three more probes audited the Y1
+(bulk N_t closure) path:
+
+### Y1 probe 1 — PVK/ETL SRV tune sensitivity
+
+Script: `scripts/probes/e7_y1_probe_srv_tune.py`. Three variants of
+PVK/ETL `N_t_cm2`: baseline (1e12), 1e10, 1e8. Nt_C_PVK sweep on each.
+
+| Variant | V_oc baseline | V_oc range across sweep | Closure |
+|---|---:|---:|---:|
+| baseline (N_t=1e12) | 1.0718 V | 0.07 mV | 0.18 % |
+| lo (N_t=1e10) | 1.0873 V | 0.10 mV | 0.27 % |
+| lo (N_t=1e8) | 1.0874 V | 0.10 mV | 0.27 % |
+
+Lowering PVK/ETL N_t by 10000× lifts V_oc baseline 15 mV but does
+not open the bulk sweep range. Conclusion: the calibration-only
+Y1 path (Branch B1) **does not** unmask Nt_C_PVK. Initial Y1
+scoping was wrong.
+
+### Y1 probe 2 — kill-Auger experimental confirmation
+
+Script: `scripts/probes/e7_y1_probe_kill_auger.py`. Three variants
+of the absorber recombination flags: baseline, Auger off, Auger+Rad
+off (SRH only).
+
+| Variant | V_oc baseline | V_oc range across sweep |
+|---|---:|---:|
+| baseline (Auger + Rad on) | 1.0718 V | 0.07 mV |
+| Auger off | 1.0955 V (+24 mV) | 0.06 mV |
+| Auger + Rad off | 1.1212 V (+49 mV) | 0.65 mV |
+
+Initial calculated diagnosis said Auger alone was the ceiling.
+**Falsified.** Killing Auger lifts baseline but the sweep stays flat;
+killing Auger AND radiative opens the sweep slightly (10×) but still
+50× below SCAPS. Real story is a CASCADE of recombination ceilings,
+each exposing the next.
+
+### Y1 probe 3 — cascade-confirm with all ceilings off
+
+Script: `scripts/probes/e7_y1_probe_cascade_confirm.py`. Single
+combined variant: Auger=0, B_rad=0, PVK/ETL N_t=1e8 (10000× lower).
+
+| N_t (cm⁻³) | V_oc SL | V_oc SCAPS |
+|---:|---:|---:|
+| 1e9 | 1.524 V | 1.168 V |
+| 1e12 | 1.522 V | 1.168 V |
+| 1e13 | 1.492 V | 1.167 V |
+| 1e14 | 1.409 V | 1.160 V |
+| 1e15 | 1.293 V | 1.129 V |
+
+V_oc range SolarLab: 231 mV. SCAPS: 39 mV. Direction matches
+(V_oc falls as N_t rises). Closure 599 % (over-shoots because we
+removed too many ceilings, but proves the mechanism). The over-shoot
+itself is informative — it shows SolarLab's bulk SRH formulation is
+*more* sensitive to N_t than SCAPS's, but masked in production by
+the upstream cascade.
+
+**Cascade theory experimentally locked.** Diagnosis is no longer
+calculation-only.
+
+### Final E7 verdict
+
+Spike + Y1 follow-up together prove that **none of Y1 / Y2 / Y3 ships
+as code under the trend-fidelity bar.** The single ship-doc deliverable
+is the updated `docs/scaps_validation_report.md` Update 2026-05-28
+section that documents the locked diagnosis.
+
+Net session outcome:
+
+- 5 of 5 trend gaps are either already passing (4 of 5) or fully
+  characterised down to specific blocked physics (Nt_C_PVK = recombination
+  cascade requiring SCAPS Auger/radiative/interface formulation spec).
+- 2 of 4 falsified prototype directions (E6.4 Newton-Krylov, E7 Robin BC)
+  are now experimentally confirmed as wrong levers.
+- All probe artefacts and CSVs are preserved under `outputs/scaps_e7_*/`
+  for next-session reference.
+
+## Y1 follow-up artefacts (this commit)
+
+- `perovskite-sim/scripts/probes/e7_y1_probe_srv_tune.py`
+- `perovskite-sim/scripts/probes/e7_y1_probe_kill_auger.py`
+- `perovskite-sim/scripts/probes/e7_y1_probe_cascade_confirm.py`
+- `outputs/scaps_e7_y1_probe/nt_c_pvk_srv_tune.csv` + variant YAMLs
+- `outputs/scaps_e7_y1_kill_auger/nt_c_pvk_kill_auger.csv` + variant YAMLs
+- `outputs/scaps_e7_y1_cascade/nt_c_pvk_cascade_confirm.csv` + variant YAML
+- `docs/scaps_validation_report.md` — Update 2026-05-28 Phase E7 section
