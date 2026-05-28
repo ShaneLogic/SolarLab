@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">SCAPS Pauwels-Vanhoutte interface SRH concept diagram</title>
+  <desc id="desc">Conceptual explanation of how SCAPS-style thermionic-emission interface carrier densities feed a Pauwels-Vanhoutte extension of SRH recombination, and how that maps into a drift-diffusion numerical loop.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#263238"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#0B5CAD"/>
+    </marker>
+    <linearGradient id="leftLayer" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#E8F4FF"/>
+      <stop offset="100%" stop-color="#F7FBFF"/>
+    </linearGradient>
+    <linearGradient id="rightLayer" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#FFF8EC"/>
+      <stop offset="100%" stop-color="#FFE8B8"/>
+    </linearGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="#000000" flood-opacity="0.14"/>
+    </filter>
+    <style>
+      .bg { fill: #F6F8FA; }
+      .panel { fill: #FFFFFF; stroke: #D5DCE3; stroke-width: 2; filter: url(#softShadow); }
+      .title { font: 700 34px Arial, sans-serif; fill: #1D2733; }
+      .subtitle { font: 400 17px Arial, sans-serif; fill: #566371; }
+      .h2 { font: 700 24px Arial, sans-serif; fill: #1D2733; }
+      .h3 { font: 700 18px Arial, sans-serif; fill: #25313D; }
+      .body { font: 400 17px Arial, sans-serif; fill: #263238; }
+      .small { font: 400 14px Arial, sans-serif; fill: #4E5A66; }
+      .tiny { font: 400 12px Arial, sans-serif; fill: #5E6A75; }
+      .math { font: 400 19px "Times New Roman", serif; fill: #1F2A33; }
+      .mathSmall { font: 400 15px "Times New Roman", serif; fill: #1F2A33; }
+      .axis { stroke: #263238; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .bandC { stroke: #0B5CAD; stroke-width: 5; fill: none; }
+      .bandV { stroke: #C43D3D; stroke-width: 5; fill: none; }
+      .qf { stroke: #4C8F3A; stroke-width: 3; fill: none; stroke-dasharray: 9 7; }
+      .interface { stroke: #161B22; stroke-width: 3; stroke-dasharray: 8 6; }
+      .node { fill: #FFFFFF; stroke: #263238; stroke-width: 2; }
+      .nodeInterface { fill: #FFE082; stroke: #263238; stroke-width: 3; }
+      .flowBox { fill: #F9FBFD; stroke: #B8C3CF; stroke-width: 2; }
+      .flowBoxAccent { fill: #EEF6FF; stroke: #7AADDD; stroke-width: 2; }
+      .flowBoxWarn { fill: #FFF8E1; stroke: #E0A722; stroke-width: 2; }
+      .arrow { stroke: #263238; stroke-width: 2.6; fill: none; marker-end: url(#arrow); }
+      .arrowBlue { stroke: #0B5CAD; stroke-width: 2.8; fill: none; marker-end: url(#arrowBlue); }
+      .legendLineBlue { stroke: #0B5CAD; stroke-width: 4; }
+      .legendLineRed { stroke: #C43D3D; stroke-width: 4; }
+      .legendLineGreen { stroke: #4C8F3A; stroke-width: 3; stroke-dasharray: 8 6; }
+      .callout { fill: #FFFFFF; stroke: #CFD8E3; stroke-width: 1.6; }
+      .note { fill: #FFF3CD; stroke: #D6A400; stroke-width: 1.6; }
+      .formulaBox { fill: #F7FAFC; stroke: #B9C7D5; stroke-width: 1.8; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="1000"/>
+
+  <text class="title" x="70" y="58">Pauwels-Vanhoutte / SCAPS Interface SRH: physical meaning and numerical role</text>
+  <text class="subtitle" x="70" y="88">Conceptual diagram from the SCAPS manual audit. Exact 1978 formula still needs the paper; this shows the known physics interface.</text>
+
+  <rect class="panel" x="55" y="120" width="1490" height="405" rx="8"/>
+  <text class="h2" x="85" y="158">1. Physical picture: interface states recombine carriers at the heterojunction plane</text>
+
+  <rect x="90" y="195" width="700" height="270" fill="url(#leftLayer)" stroke="#C9D9EA" stroke-width="2"/>
+  <rect x="790" y="195" width="700" height="270" fill="url(#rightLayer)" stroke="#E6C47A" stroke-width="2"/>
+  <line class="interface" x1="790" y1="185" x2="790" y2="475"/>
+  <text class="h3" x="360" y="220" text-anchor="middle">Layer A: absorber / PVK side</text>
+  <text class="h3" x="1120" y="220" text-anchor="middle">Layer B: ETL / transport side</text>
+  <text class="small" x="800" y="182">mathematical interface</text>
+
+  <line class="axis" x1="135" y1="440" x2="1450" y2="440"/>
+  <line class="axis" x1="135" y1="440" x2="135" y2="225"/>
+  <text class="small" x="1440" y="464">x</text>
+  <text class="small" x="105" y="232">Energy</text>
+
+  <path class="bandC" d="M160,260 C310,255 475,285 640,310 C710,320 755,330 790,332 C830,305 910,280 990,275 C1140,266 1290,260 1440,255"/>
+  <path class="bandV" d="M160,385 C310,375 475,390 640,405 C710,412 755,420 790,421 C830,398 910,382 990,378 C1140,372 1290,367 1440,364"/>
+  <path class="qf" d="M160,318 C315,316 470,320 640,327 C700,330 755,333 782,334"/>
+  <path class="qf" d="M798,317 C850,306 925,303 1000,302 C1160,300 1300,298 1440,296"/>
+  <path class="qf" d="M160,354 C315,350 470,348 640,350 C700,352 755,354 782,356"/>
+  <path class="qf" d="M798,372 C860,364 930,361 1000,359 C1160,356 1300,354 1440,352"/>
+
+  <circle cx="790" cy="332" r="5" fill="#0B5CAD"/>
+  <circle cx="790" cy="421" r="5" fill="#C43D3D"/>
+  <rect class="callout" x="626" y="240" width="330" height="75" rx="6"/>
+  <text class="body" x="642" y="265">Thermionic-emission interface transport</text>
+  <text class="small" x="642" y="290">creates small quasi-Fermi steps at the interface.</text>
+  <path class="arrowBlue" d="M785,315 C770,300 750,285 718,280"/>
+  <path class="arrowBlue" d="M797,315 C827,300 845,286 870,280"/>
+
+  <rect class="callout" x="1010" y="320" width="400" height="112" rx="6"/>
+  <line class="legendLineBlue" x1="1030" y1="345" x2="1085" y2="345"/>
+  <text class="small" x="1100" y="350">Conduction band E<tspan baseline-shift="sub">C</tspan></text>
+  <line class="legendLineRed" x1="1030" y1="374" x2="1085" y2="374"/>
+  <text class="small" x="1100" y="379">Valence band E<tspan baseline-shift="sub">V</tspan></text>
+  <line class="legendLineGreen" x1="1030" y1="404" x2="1085" y2="404"/>
+  <text class="small" x="1100" y="409">Quasi-Fermi levels E<tspan baseline-shift="sub">Fn</tspan>, E<tspan baseline-shift="sub">Fp</tspan></text>
+
+  <rect class="formulaBox" x="175" y="485" width="590" height="60" rx="6"/>
+  <text class="math" x="195" y="522">n<tspan baseline-shift="sub">iface</tspan> = N<tspan baseline-shift="sub">C</tspan> exp[-(E<tspan baseline-shift="sub">C,iface</tspan> - E<tspan baseline-shift="sub">Fn,iface</tspan>)/kT]</text>
+  <rect class="formulaBox" x="835" y="485" width="590" height="60" rx="6"/>
+  <text class="math" x="855" y="522">p<tspan baseline-shift="sub">iface</tspan> = N<tspan baseline-shift="sub">V</tspan> exp[-(E<tspan baseline-shift="sub">Fp,iface</tspan> - E<tspan baseline-shift="sub">V,iface</tspan>)/kT]</text>
+
+  <rect class="panel" x="55" y="555" width="1490" height="365" rx="8"/>
+  <text class="h2" x="85" y="593">2. Numerical algorithm: interface rate becomes a localized source term in the continuity equations</text>
+
+  <rect class="flowBox" x="95" y="635" width="210" height="94" rx="7"/>
+  <text class="h3" x="122" y="665">Solve device state</text>
+  <text class="small" x="122" y="692">Poisson + drift-diffusion</text>
+  <text class="mathSmall" x="122" y="715">φ(x), n(x), p(x)</text>
+
+  <path class="arrow" d="M305,682 L380,682"/>
+  <rect class="flowBoxAccent" x="380" y="635" width="255" height="94" rx="7"/>
+  <text class="h3" x="405" y="665">Interface boundary model</text>
+  <text class="small" x="405" y="692">TE gives E<tspan baseline-shift="sub">Fn/Fp</tspan> steps</text>
+  <text class="small" x="405" y="715">and interface-plane n, p</text>
+
+  <path class="arrow" d="M635,682 L710,682"/>
+  <rect class="flowBoxAccent" x="710" y="622" width="315" height="120" rx="7"/>
+  <text class="h3" x="735" y="651">Pauwels-Vanhoutte SRH</text>
+  <text class="small" x="735" y="679">Extension of SRH for interface states</text>
+  <text class="mathSmall" x="735" y="706">R<tspan baseline-shift="sub">s</tspan> = F(n<tspan baseline-shift="sub">iface</tspan>, p<tspan baseline-shift="sub">iface</tspan>, E<tspan baseline-shift="sub">t</tspan>, σ<tspan baseline-shift="sub">n,p</tspan>, v<tspan baseline-shift="sub">th</tspan>, N<tspan baseline-shift="sub">t</tspan>)</text>
+  <text class="tiny" x="735" y="728">Exact F is the missing 1978-paper item.</text>
+
+  <path class="arrow" d="M1025,682 L1100,682"/>
+  <rect class="flowBox" x="1100" y="635" width="250" height="94" rx="7"/>
+  <text class="h3" x="1125" y="665">Discretize source</text>
+  <text class="small" x="1125" y="692">Surface rate: m<tspan baseline-shift="super">-2</tspan> s<tspan baseline-shift="super">-1</tspan></text>
+  <text class="mathSmall" x="1125" y="715">R<tspan baseline-shift="sub">vol</tspan> = R<tspan baseline-shift="sub">s</tspan> / Δx<tspan baseline-shift="sub">cell</tspan></text>
+
+  <path class="arrow" d="M1350,682 L1420,682"/>
+  <rect class="flowBox" x="1420" y="635" width="95" height="94" rx="7"/>
+  <text class="h3" x="1444" y="665">RHS</text>
+  <text class="mathSmall" x="1435" y="695">dn/dt -= R</text>
+  <text class="mathSmall" x="1435" y="718">dp/dt -= R</text>
+
+  <rect class="formulaBox" x="130" y="775" width="585" height="98" rx="7"/>
+  <text class="h3" x="155" y="806">What SCAPS is likely doing</text>
+  <text class="body" x="155" y="835">Use interface-plane carrier densities from the TE boundary condition,</text>
+  <text class="body" x="155" y="861">then evaluate a surface SRH rate for interface states.</text>
+
+  <rect class="formulaBox" x="760" y="775" width="585" height="98" rx="7"/>
+  <text class="h3" x="785" y="806">What SolarLab prototypes tested</text>
+  <text class="body" x="785" y="835">E1.5: bulk-side cross-carrier sampling; BBD: extra φ projection;</text>
+  <text class="body" x="785" y="861">thin-shell: distributed volumetric approximation near the interface.</text>
+
+  <rect class="note" x="80" y="930" width="1440" height="44" rx="6"/>
+  <text class="small" x="105" y="958">Important: this is not a verbatim Pauwels-Vanhoutte formula. It explains the physical and numerical role inferred from the SCAPS manual: TE sets interface n,p; interface SRH converts defect kinetics into a localized recombination source.</text>
+</svg>

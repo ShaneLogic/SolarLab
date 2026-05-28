@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<rect width="1920" height="1080" fill="#F7F9FC"/>
+<defs>
+<marker id="muted-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#64748B"/></marker>
+<marker id="blue-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#2563EB"/></marker>
+<marker id="green-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16803C"/></marker>
+<marker id="amber-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#A16207"/></marker>
+<marker id="purple-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#6D28D9"/></marker>
+<marker id="red-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#B42318"/></marker>
+<marker id="slate-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+</defs>
+<text x="68.0" y="64.0" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700" fill="#162033" text-anchor="start"><tspan x="68.0" dy="0">2D Boundary Conditions in SolarLab</tspan></text>
+<text x="70.0" y="116.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#334155" text-anchor="start"><tspan x="70.0" dy="0">Separate the lateral x-boundary from the transport/contact y-boundary: only some parts are user-configurable.</tspan></text>
+<rect x="60" y="145" width="1800" height="760" rx="14" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2"/>
+<rect x="594" y="236" width="732" height="592" rx="12" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="2"/>
+<text x="960.0" y="266.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#334155" text-anchor="middle"><tspan x="960.0" dy="0">2D device domain</tspan></text>
+<rect x="610" y="280" width="700" height="115" fill="#E6F7EE" stroke="#CBD5E1"/>
+<text x="630.0" y="342.5" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#16803C" text-anchor="start"><tspan x="630.0" dy="0">HTL / y=0 side</tspan></text>
+<rect x="610" y="395" width="700" height="270" fill="#EEF5FF" stroke="#CBD5E1"/>
+<text x="630.0" y="535.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#2563EB" text-anchor="start"><tspan x="630.0" dy="0">Absorber</tspan></text>
+<rect x="610" y="665" width="700" height="115" fill="#FFF2D8" stroke="#CBD5E1"/>
+<text x="630.0" y="727.5" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#A16207" text-anchor="start"><tspan x="630.0" dy="0">ETL / y=Ly side</tspan></text>
+<rect x="610" y="238" width="700" height="36" rx="8" fill="#DCFCE7" stroke="#16803C" stroke-width="1.5"/>
+<text x="960.0" y="262.0" font-family="Arial, Helvetica, sans-serif" font-size="14.5" font-weight="700" fill="#16803C" text-anchor="middle"><tspan x="960.0" dy="0">Poisson Dirichlet: φ(y=0,x) = 0</tspan></text>
+<rect x="610" y="788" width="700" height="38" rx="8" fill="#FEF3C7" stroke="#A16207" stroke-width="1.5"/>
+<text x="960.0" y="812.0" font-family="Arial, Helvetica, sans-serif" font-size="14.5" font-weight="700" fill="#A16207" text-anchor="middle"><tspan x="960.0" dy="0">Poisson Dirichlet: phi(y=Ly,x) = Vbi - Vapp</tspan></text>
+<line x1="630" y1="855" x2="790" y2="855" stroke="#334155" stroke-width="2.5" marker-end="url(#slate-arrow)"/>
+<text x="800.0" y="862.0" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="400" fill="#334155" text-anchor="start"><tspan x="800.0" dy="0">x lateral</tspan></text>
+<line x1="566" y1="292" x2="566" y2="452" stroke="#334155" stroke-width="2.5" marker-end="url(#slate-arrow)"/>
+<text x="518.0" y="478.0" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="400" fill="#334155" text-anchor="start"><tspan x="518.0" dy="0">y transport</tspan></text>
+<line x1="608" y1="352" x2="1312" y2="352" stroke="#2563EB" stroke-width="2.2" marker-end="url(#blue-arrow)"/>
+<line x1="1312" y1="352" x2="608" y2="352" stroke="#2563EB" stroke-width="2.2" marker-end="url(#blue-arrow)"/>
+<text x="960.0" y="342.0" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="700" fill="#2563EB" text-anchor="middle"><tspan x="960.0" dy="0">periodic wrap option</tspan></text>
+<line x1="610" y1="660" x2="610" y2="732" stroke="#B42318" stroke-width="7"/>
+<line x1="1310" y1="660" x2="1310" y2="732" stroke="#B42318" stroke-width="7"/>
+<text x="963.0" y="715.0" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="700" fill="#B42318" text-anchor="middle"><tspan x="963.0" dy="0">zero lateral flux option</tspan></text>
+<rect x="92" y="230" width="430" height="245" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+<text x="116.0" y="266.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#2563EB" text-anchor="start"><tspan x="116.0" dy="0">x-boundary option A: periodic</tspan></text>
+<text x="116.0" y="310.0" font-family="Arial, Helvetica, sans-serif" font-size="15.2" font-weight="400" fill="#162033" text-anchor="start"><tspan x="116.0" dy="0">lateral_bc = &quot;periodic&quot;</tspan><tspan x="116.0" dy="18.5">Left/right edges are coupled.</tspan><tspan x="116.0" dy="18.5">u(0,y) = u(Lx,y) for phi, n, p.</tspan></text>
+<line x1="522" y1="342" x2="588" y2="352" stroke="#2563EB" stroke-width="2.2" marker-end="url(#blue-arrow)"/>
+<rect x="92" y="525" width="430" height="250" rx="10" fill="#FEE4E2" stroke="#B42318" stroke-width="2"/>
+<text x="116.0" y="561.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#B42318" text-anchor="start"><tspan x="116.0" dy="0">x-boundary option B: Neumann</tspan></text>
+<text x="116.0" y="604.0" font-family="Arial, Helvetica, sans-serif" font-size="15.2" font-weight="400" fill="#162033" text-anchor="start"><tspan x="116.0" dy="0">lateral_bc = &quot;neumann&quot;</tspan><tspan x="116.0" dy="18.5">No lateral current leaves.</tspan><tspan x="116.0" dy="18.5">dphi/dx = 0</tspan><tspan x="116.0" dy="18.5">normal carrier current = 0 at x=0,Lx.</tspan></text>
+<line x1="522" y1="646" x2="590" y2="694" stroke="#B42318" stroke-width="2.2" marker-end="url(#red-arrow)"/>
+<rect x="1396" y="230" width="420" height="242" rx="10" fill="#DCFCE7" stroke="#16803C" stroke-width="2"/>
+<text x="1420.0" y="266.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#16803C" text-anchor="start"><tspan x="1420.0" dy="0">y-boundary: electrode potential</tspan></text>
+<text x="1420.0" y="310.0" font-family="Arial, Helvetica, sans-serif" font-size="15.2" font-weight="400" fill="#162033" text-anchor="start"><tspan x="1420.0" dy="0">Fixed in the current 2D solver.</tspan><tspan x="1420.0" dy="18.5">Dirichlet for Poisson:</tspan><tspan x="1420.0" dy="18.5">y=0: phi = 0</tspan><tspan x="1420.0" dy="18.5">y=Ly: phi = Vbi - Vapp</tspan></text>
+<line x1="1396" y1="324" x2="1340" y2="256" stroke="#16803C" stroke-width="2.2" marker-end="url(#green-arrow)"/>
+<line x1="1396" y1="392" x2="1340" y2="808" stroke="#A16207" stroke-width="2.2" marker-end="url(#amber-arrow)"/>
+<rect x="1396" y="525" width="420" height="296" rx="10" fill="#EDE9FE" stroke="#6D28D9" stroke-width="2"/>
+<text x="1420.0" y="561.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#6D28D9" text-anchor="start"><tspan x="1420.0" dy="0">y-boundary: carrier contacts</tspan></text>
+<text x="1420.0" y="604.0" font-family="Arial, Helvetica, sans-serif" font-size="15.2" font-weight="400" fill="#162033" text-anchor="start"><tspan x="1420.0" dy="0">Configurable through S fields.</tspan><tspan x="1420.0" dy="18.5">Missing S: ohmic Dirichlet</tspan><tspan x="1420.0" dy="18.5">S = 0: blocking / Neumann</tspan><tspan x="1420.0" dy="18.5">Finite S: Robin selective contact</tspan><tspan x="1420.0" dy="18.5">Large S: ohmic limit</tspan></text>
+<line x1="1396" y1="652" x2="1336" y2="306" stroke="#6D28D9" stroke-width="2.0" marker-end="url(#purple-arrow)"/>
+<line x1="1396" y1="710" x2="1336" y2="752" stroke="#6D28D9" stroke-width="2.0" marker-end="url(#purple-arrow)"/>
+<rect x="92" y="845" width="1724" height="42" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.4"/>
+<text x="954.0" y="871.0" font-family="Arial, Helvetica, sans-serif" font-size="13.2" font-weight="400" fill="#64748B" text-anchor="middle"><tspan x="954.0" dy="0">Code mapping: S_*_left maps to y=0 / HTL; S_*_right maps to y=Ly / ETL.</tspan></text>
+<rect x="0" y="930" width="1920" height="150" fill="#EAF2FF"/>
+<text x="94.0" y="975.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#162033" text-anchor="start"><tspan x="94.0" dy="0">Switching locations in the repo</tspan></text>
+<rect x="94" y="995" width="480" height="42" rx="18" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="334.0" y="1021.0" font-family="Arial, Helvetica, sans-serif" font-size="14.5" font-weight="700" fill="#2563EB" text-anchor="middle"><tspan x="334.0" dy="0">run_jv_sweep_2d(..., lateral_bc=&quot;periodic&quot;|&quot;neumann&quot;)</tspan></text>
+<rect x="610" y="995" width="520" height="42" rx="18" fill="#EDE9FE" stroke="#6D28D9" stroke-width="1.5"/>
+<text x="870.0" y="1021.0" font-family="Arial, Helvetica, sans-serif" font-size="14.5" font-weight="700" fill="#6D28D9" text-anchor="middle"><tspan x="870.0" dy="0">YAML/UI: mode=full + Sn/Sp contact fields</tspan></text>
+<rect x="1166" y="995" width="560" height="42" rx="18" fill="#FEF3C7" stroke="#A16207" stroke-width="1.5"/>
+<text x="1446.0" y="1021.0" font-family="Arial, Helvetica, sans-serif" font-size="14.5" font-weight="700" fill="#A16207" text-anchor="middle"><tspan x="1446.0" dy="0">Poisson electrodes: fixed Dirichlet phi = 0 and Vbi-Vapp</tspan></text>
+</svg>

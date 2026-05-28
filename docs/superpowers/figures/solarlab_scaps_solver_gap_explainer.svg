@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">SolarLab 与 SCAPS 结果差异的 solver/model 结构原因</title>
+  <desc id="desc">对比当前 SolarLab MoL + Scharfetter-Gummel + Radau 结构与目标 SCAPS-like interface-plane QSS 结构，解释 ETL doping gap 和 interface SRH 差异。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="55%" stop-color="#eef6f2"/>
+      <stop offset="100%" stop-color="#fff7ed"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#334155" flood-opacity="0.16"/>
+    </filter>
+    <marker id="arrowBlue" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L13,7 L1,13 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L13,7 L1,13 Z" fill="#059669"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L13,7 L1,13 Z" fill="#dc2626"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L13,7 L1,13 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title { font: 700 42px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 22px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #334155; }
+      .section { font: 700 28px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .smallTitle { font: 700 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .body { font: 400 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #1e293b; }
+      .bodySmall { font: 400 15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #334155; }
+      .mono { font: 400 16px "SFMono-Regular", Consolas, monospace; fill: #0f172a; }
+      .monoSmall { font: 400 13px "SFMono-Regular", Consolas, monospace; fill: #334155; }
+      .tag { font: 700 15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #ffffff; }
+      .metric { font: 700 20px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .metricSmall { font: 400 14px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #475569; }
+      .warn { font: 700 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #991b1b; }
+      .ok { font: 700 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #065f46; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 22; filter: url(#shadow); }
+      .inner { fill: #f8fafc; stroke: #dbe3ec; stroke-width: 1.2; rx: 14; }
+      .blueBox { fill: #eff6ff; stroke: #93c5fd; stroke-width: 1.4; rx: 14; }
+      .greenBox { fill: #ecfdf5; stroke: #86efac; stroke-width: 1.4; rx: 14; }
+      .redBox { fill: #fef2f2; stroke: #fca5a5; stroke-width: 1.4; rx: 14; }
+      .amberBox { fill: #fffbeb; stroke: #fcd34d; stroke-width: 1.4; rx: 14; }
+      .purpleBox { fill: #f5f3ff; stroke: #c4b5fd; stroke-width: 1.4; rx: 14; }
+      .lineBlue { stroke: #2563eb; stroke-width: 4; fill: none; marker-end: url(#arrowBlue); }
+      .lineGreen { stroke: #059669; stroke-width: 4; fill: none; marker-end: url(#arrowGreen); }
+      .lineRed { stroke: #dc2626; stroke-width: 4; fill: none; marker-end: url(#arrowRed); }
+      .lineGray { stroke: #64748b; stroke-width: 3; fill: none; marker-end: url(#arrowGray); }
+      .dash { stroke-dasharray: 8 8; }
+      .gridLine { stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 5 8; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+
+  <text x="90" y="72" class="title">为什么 SolarLab 与 SCAPS 仍有较大差异？</text>
+  <text x="90" y="111" class="subtitle">核心不是单个参数没调好，而是 heterointerface carrier density 的定义和求解结构不同</text>
+
+  <rect x="80" y="145" width="820" height="735" class="panel"/>
+  <rect x="1020" y="145" width="820" height="735" class="panel"/>
+  <rect x="905" y="222" width="110" height="560" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2" rx="22" filter="url(#shadow)"/>
+
+  <text x="120" y="198" class="section">当前 SolarLab 路径</text>
+  <text x="120" y="229" class="subtitle">MoL + Scharfetter-Gummel bulk flux + Radau transient</text>
+  <text x="1060" y="198" class="section">目标 SCAPS-like 路径</text>
+  <text x="1060" y="229" class="subtitle">steady-state interface-plane equations + TE/QSS constraints</text>
+
+  <text x="941" y="270" class="smallTitle" text-anchor="middle">差异</text>
+  <text x="941" y="302" class="smallTitle" text-anchor="middle">来自</text>
+  <text x="941" y="334" class="smallTitle" text-anchor="middle">界面</text>
+  <text x="941" y="366" class="smallTitle" text-anchor="middle">定义</text>
+  <line x1="960" y1="410" x2="960" y2="558" class="lineRed"/>
+  <text x="941" y="615" class="warn" text-anchor="middle">不是</text>
+  <text x="941" y="646" class="warn" text-anchor="middle">简单</text>
+  <text x="941" y="677" class="warn" text-anchor="middle">调参</text>
+
+  <!-- Left: current SolarLab model -->
+  <rect x="120" y="265" width="720" height="100" class="blueBox"/>
+  <text x="146" y="300" class="smallTitle">1. 统一网格上的连续 bulk 状态</text>
+  <text x="146" y="331" class="body">每个节点只有一组 n, p, φ；界面只是左右 layer 的交界 face/node。</text>
+
+  <rect x="120" y="405" width="720" height="128" class="inner"/>
+  <text x="146" y="440" class="smallTitle">2. Scharfetter-Gummel flux 跨界面直接耦合</text>
+  <text x="146" y="471" class="mono">J_n[f] = SG(φ + χ, n_L, n_R, D_face)</text>
+  <text x="146" y="501" class="bodySmall">χ step 被塞进同一个 face flux；默认倾向维持连续的 bulk quasi-Fermi 结构。</text>
+
+  <rect x="120" y="575" width="720" height="138" class="redBox"/>
+  <text x="146" y="610" class="smallTitle">3. interface SRH 只能采样 bulk / 近邻 density</text>
+  <text x="146" y="641" class="monoSmall">R_s ≈ SRH(n_bulk-side, p_bulk-side, N_t, σ)</text>
+  <text x="146" y="671" class="bodySmall">低 ETL doping 时 depletion 区变宽，local Δφ 与 N_D 强耦合。</text>
+  <text x="146" y="700" class="warn">结果：ETL doping response 被放大，或修正后 CBO / N_t response 崩塌。</text>
+
+  <line x1="480" y1="365" x2="480" y2="405" class="lineBlue"/>
+  <line x1="480" y1="533" x2="480" y2="575" class="lineRed"/>
+
+  <!-- Left schematic band / grid -->
+  <rect x="170" y="740" width="620" height="96" fill="#ffffff" stroke="#d1d5db" stroke-width="1.2" rx="12"/>
+  <text x="190" y="765" class="bodySmall">当前离散图像：界面 face 上只有一个 SG flux</text>
+  <line x1="230" y1="805" x2="730" y2="805" stroke="#475569" stroke-width="3"/>
+  <circle cx="300" cy="805" r="12" fill="#3b82f6"/>
+  <circle cx="410" cy="805" r="12" fill="#3b82f6"/>
+  <circle cx="520" cy="805" r="12" fill="#ef4444"/>
+  <circle cx="630" cy="805" r="12" fill="#ef4444"/>
+  <line x1="465" y1="770" x2="465" y2="835" class="gridLine"/>
+  <path d="M410 805 C430 775, 445 775, 465 805 C485 835, 500 835, 520 805" stroke="#dc2626" stroke-width="4" fill="none" marker-end="url(#arrowRed)"/>
+  <text x="280" y="830" class="monoSmall">PVK</text>
+  <text x="610" y="830" class="monoSmall">ETL</text>
+  <text x="454" y="855" class="monoSmall" text-anchor="middle">single face flux</text>
+
+  <!-- Right: target model -->
+  <rect x="1060" y="265" width="720" height="100" class="greenBox"/>
+  <text x="1086" y="300" class="smallTitle">1. 界面有独立 interface-plane unknowns</text>
+  <text x="1086" y="331" class="body">n₁s, p₁s, n₂s, p₂s 与 bulk 节点分开，不强迫跨界面连续。</text>
+
+  <rect x="1060" y="405" width="720" height="128" class="purpleBox"/>
+  <text x="1086" y="440" class="smallTitle">2. Thermionic-emission 边界 + χ-step/Q-Fermi step</text>
+  <text x="1086" y="471" class="mono">J_TE = v_th · (n_bulk·exp(-V_i/V_T) - n_is)</text>
+  <text x="1086" y="501" class="bodySmall">SCAPS 通过 analytical V₁/V₂ 与 per-side quasi-Fermi level 定义界面 density。</text>
+
+  <rect x="1060" y="575" width="720" height="138" class="greenBox"/>
+  <text x="1086" y="610" class="smallTitle">3. QSS / Newton-Krylov 解 steady-state 界面方程</text>
+  <text x="1086" y="641" class="monoSmall">0 = TE refill - SRH(n₁s,p₂s) - cross-interface transport</text>
+  <text x="1086" y="671" class="bodySmall">界面 recombination 使用真正的 interface-plane density，而不是 bulk proxy。</text>
+  <text x="1086" y="700" class="ok">目标：同时保留 CBO、interface N_t 与 ETL doping 的正确响应尺度。</text>
+
+  <line x1="1420" y1="365" x2="1420" y2="405" class="lineGreen"/>
+  <line x1="1420" y1="533" x2="1420" y2="575" class="lineGreen"/>
+
+  <!-- Right schematic -->
+  <rect x="1110" y="740" width="620" height="96" fill="#ffffff" stroke="#d1d5db" stroke-width="1.2" rx="12"/>
+  <text x="1130" y="765" class="bodySmall">目标离散图像：bulk 与 interface plane 分开</text>
+  <line x1="1170" y1="805" x2="1330" y2="805" stroke="#475569" stroke-width="3"/>
+  <line x1="1510" y1="805" x2="1670" y2="805" stroke="#475569" stroke-width="3"/>
+  <circle cx="1225" cy="805" r="12" fill="#3b82f6"/>
+  <circle cx="1330" cy="805" r="12" fill="#3b82f6"/>
+  <circle cx="1510" cy="805" r="12" fill="#ef4444"/>
+  <circle cx="1615" cy="805" r="12" fill="#ef4444"/>
+  <rect x="1385" y="779" width="70" height="52" fill="#fef3c7" stroke="#f59e0b" stroke-width="2" rx="10"/>
+  <text x="1420" y="800" class="monoSmall" text-anchor="middle">n₁s,p₁s</text>
+  <text x="1420" y="819" class="monoSmall" text-anchor="middle">n₂s,p₂s</text>
+  <path d="M1330 805 C1355 780, 1368 780, 1385 795" class="lineGreen"/>
+  <path d="M1455 795 C1478 780, 1490 780, 1510 805" class="lineGreen"/>
+  <path d="M1387 832 C1365 856, 1345 856, 1330 812" stroke="#2563eb" stroke-width="3" fill="none" marker-end="url(#arrowBlue)"/>
+  <path d="M1453 832 C1475 856, 1495 856, 1510 812" stroke="#2563eb" stroke-width="3" fill="none" marker-end="url(#arrowBlue)"/>
+  <text x="1210" y="830" class="monoSmall">PVK bulk</text>
+  <text x="1588" y="830" class="monoSmall">ETL bulk</text>
+  <text x="1420" y="855" class="monoSmall" text-anchor="middle">interface plane + TE BC</text>
+
+  <!-- Bottom: evidence and conclusion -->
+  <rect x="80" y="910" width="1760" height="126" fill="#0f172a" rx="24"/>
+  <text x="120" y="950" class="tag">实验证据：7 个 prototype 都在同一结构矛盾上失败</text>
+  <text x="120" y="985" class="body" fill="#e2e8f0">BBD 修 CBO 但 ETL 更差；thin-shell 修 ETL 但 CBO 崩；iface-state/χ-step 让 N_t 崩或刚性太强；split-flux raw drain ≈ 1e36 m⁻³/s，Newton &gt;24 min 挂起。</text>
+  <text x="120" y="1018" class="body" fill="#fef3c7">结论：YAML/loader 修正是必要的，但若要复现 SCAPS，需要新的 steady-state interface-plane 求解路径，而不是继续在当前 Radau/MoL 路径上加局部 correction factor。</text>
+
+  <!-- Metrics tiles -->
+  <rect x="748" y="42" width="235" height="92" class="amberBox"/>
+  <text x="770" y="75" class="metric">ETL doping</text>
+  <text x="770" y="104" class="metricSmall">SolarLab ≈ 1095 mV</text>
+  <text x="770" y="126" class="metricSmall">SCAPS ≈ 137 mV → 约 8× over</text>
+
+  <rect x="1005" y="42" width="235" height="92" class="greenBox"/>
+  <text x="1027" y="75" class="metric">CBO response</text>
+  <text x="1027" y="104" class="metricSmall">约 83-85% closure</text>
+  <text x="1027" y="126" class="metricSmall">说明 band offset 并非全错</text>
+
+  <rect x="1262" y="42" width="300" height="92" class="redBox"/>
+  <text x="1284" y="75" class="metric">核心 gap</text>
+  <text x="1284" y="104" class="metricSmall">interface-plane density 不是 bulk density</text>
+  <text x="1284" y="126" class="metricSmall">需要独立界面未知量 / QSS 约束</text>
+</svg>

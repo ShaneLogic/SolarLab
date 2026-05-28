@@ -10,3 +10,11 @@
 # Generated sweep outputs
 perovskite-sim/outputs/
 perovskite-sim/notebooks/outputs/
+
+# Transient SCAPS scratch — partner PDF/xlsx unpacking, intermediate
+# image renders; reproduced from docs/superpowers/references/* on demand.
+.tmp_scaps/
+
+# Python bytecode caches anywhere in the tree
+__pycache__/
+*.pyc

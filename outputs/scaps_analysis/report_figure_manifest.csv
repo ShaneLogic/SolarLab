@@ -1,0 +1,14 @@
+key,path
+cbo,outputs/scaps_analysis/report_figures/01_cbo_compare.png
+etl_doping,outputs/scaps_analysis/report_figures/02_etl_doping_compare.png
+pvk_doping,outputs/scaps_analysis/report_figures/03_pvk_doping_compare.png
+nt_htl_pvk,outputs/scaps_analysis/report_figures/04_nt_htl_pvk_scaps.png
+nt_cb,outputs/scaps_analysis/report_figures/05_nt_cb_compare.png
+nt_vb,outputs/scaps_analysis/report_figures/06_nt_vb_scaps.png
+nt_pvk_etl,outputs/scaps_analysis/report_figures/07_nt_pvk_etl_compare.png
+et_htl_pvk,outputs/scaps_analysis/report_figures/08_et_htl_pvk_scaps.png
+et_cb,outputs/scaps_analysis/report_figures/09_et_cb_compare.png
+et_vb,outputs/scaps_analysis/report_figures/10_et_vb_compare.png
+et_pvk_etl,outputs/scaps_analysis/report_figures/11_et_pvk_etl_compare.png
+heat_et_pce,outputs/scaps_analysis/report_figures/12_pair_nt_et_pce_scaps.png
+heat_cbo_pce,outputs/scaps_analysis/report_figures/13_pair_nt_cbo_pce_scaps.png
