@@ -210,10 +210,37 @@ step`). Plumbing: snapshot `n`/`p` at step entry in `_integrate_step`, stash on
 frozen target. This is the concrete next milestone to close HTL/PVK + bulk-N_t
 without the PVK/ETL entanglement.
 
-**Conclusion:** stabilizing the cross-flux (done, committed) was necessary; the
-coupling-death root cause is now identified (cached-eq target) and the fix is
-scoped to the lagged-target pattern. Production remains the E1.5 path + E8
-projection (6/10 trends) until the lagged-target work lands.
+**Lagged-target prototyped — Jacobian-stable but stiff (E8.5b).** Built the
+full lagged plumbing: snapshot illuminated (n, p) at each voltage-step entry
+(`jv_sweep._bake_iface_target`), stash on `mat`, project to the interface plane
+as the TE-flux target. Default path stays bit-identical (bake is a no-op when
+`N_iface_state==0`; verified V_oc=1.0808). But once the target carries the
+illuminated population the interface-plane SRH becomes *physically active* —
+and the extra interface-plane DOF then makes the system **stiff**: Radau fails
+to converge at the very first step (V=0) as the illuminated-strength SRH is
+applied onto the freshly-baked target. So the lag removes the *Jacobian
+feedback* instability but exposes the *physical stiffness* of an actively-
+recombining extra DOF. Reverted (kept committed bounded cross-flux only).
+
+**Full root-cause chain for the iface-state route (definitive):**
+1. cached-eq target → stable, coupling-dead (SRH at dark levels, no trend)
+2. live-iterate target → Jacobian-unstable (state-dependent target feedback)
+3. lagged frozen target → Jacobian-stable but stiff (active DOF, Newton fails)
+4. **resolution = QSS algebraic reduction**: collapse the fast interface-plane
+   state to its quasi-steady algebraic value (`diface_state = 0` solved
+   per-RHS) so there is no stiff ODE DOF, with the illuminated target and
+   per-interface detailed balance. This is what the original `_DEFAULT_V_TH_MS`
+   comment anticipated ("Sprint 7 Day 4+ will revisit with QSS algebraic
+   reduction"). It is also, in effect, deriving the proper per-interface
+   Pauwels-Vanhoutte *algebraic* interface SRH — which would unify the fix
+   (no entanglement, correct HTL/PVK reference, illuminated coupling) in one
+   formulation. Multi-day solver work; the clear next milestone.
+
+**Conclusion:** the cross-flux is stabilized (committed); the iface-state
+coupling is fully root-caused; the remaining work is the QSS algebraic
+reduction (multi-day). Production remains the E1.5 path + E8 projection
+(6/10 PDF trends) — the achievable in-tree maximum without the QSS work or
+SCAPS source data.
 
 ## Open integration decision
 
