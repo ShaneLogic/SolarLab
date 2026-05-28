@@ -1,0 +1,2562 @@
+{
+  "source_xlsx": "docs/superpowers/references/scaps_1r_parameters.xlsx",
+  "source_pdf": "docs/superpowers/references/scaps_1d_simulation_report.pdf",
+  "extracted_at": "2026-05-28",
+  "base_model": {
+    "Voc_V": 1.1676,
+    "Jsc_mA_cm2": 26.281994,
+    "FF_percent": 86.99,
+    "PCE_percent": 26.69
+  },
+  "sweeps": {
+    "CHI_ETL": {
+      "x_name": "delta_E_C_eV",
+      "x_unit": "eV",
+      "n_points": 14,
+      "points": [
+        {
+          "x": -0.999999999999999,
+          "PCE_percent": 5.8685,
+          "Voc_V": 0.332353,
+          "FF_percent": 67.1265,
+          "Jsc_mA_cm2": 26.30453758
+        },
+        {
+          "x": -0.749999999999999,
+          "PCE_percent": 11.8314,
+          "Voc_V": 0.580953,
+          "FF_percent": 77.4679,
+          "Jsc_mA_cm2": 26.28893747
+        },
+        {
+          "x": -0.499999999999999,
+          "PCE_percent": 18.0802,
+          "Voc_V": 0.83085,
+          "FF_percent": 82.791,
+          "Jsc_mA_cm2": 26.28440831
+        },
+        {
+          "x": -0.249999999999999,
+          "PCE_percent": 24.4188,
+          "Voc_V": 1.080493,
+          "FF_percent": 85.9878,
+          "Jsc_mA_cm2": 26.28239324
+        },
+        {
+          "x": -0.199999999999999,
+          "PCE_percent": 25.6782,
+          "Voc_V": 1.129308,
+          "FF_percent": 86.5152,
+          "Jsc_mA_cm2": 26.28208431
+        },
+        {
+          "x": -0.159999999999999,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": -0.1,
+          "PCE_percent": 28.1546,
+          "Voc_V": 1.217203,
+          "FF_percent": 88.0108,
+          "Jsc_mA_cm2": 26.28153965
+        },
+        {
+          "x": -0.0499999999999998,
+          "PCE_percent": 29.1364,
+          "Voc_V": 1.240043,
+          "FF_percent": 89.4021,
+          "Jsc_mA_cm2": 26.28156065
+        },
+        {
+          "x": 0.0,
+          "PCE_percent": 29.6512,
+          "Voc_V": 1.247696,
+          "FF_percent": 90.424,
+          "Jsc_mA_cm2": 26.28148444
+        },
+        {
+          "x": 0.1,
+          "PCE_percent": 29.8159,
+          "Voc_V": 1.250391,
+          "FF_percent": 90.7313,
+          "Jsc_mA_cm2": 26.28116069
+        },
+        {
+          "x": 0.2,
+          "PCE_percent": 29.8035,
+          "Voc_V": 1.250158,
+          "FF_percent": 90.7096,
+          "Jsc_mA_cm2": 26.28140832
+        },
+        {
+          "x": 0.299999999999999,
+          "PCE_percent": 29.7103,
+          "Voc_V": 1.249937,
+          "FF_percent": 90.4411,
+          "Jsc_mA_cm2": 26.28168179
+        },
+        {
+          "x": 0.399999999999999,
+          "PCE_percent": 21.3846,
+          "Voc_V": 1.248839,
+          "FF_percent": 65.1522,
+          "Jsc_mA_cm2": 26.28238752
+        },
+        {
+          "x": 0.5,
+          "PCE_percent": 0.7158,
+          "Voc_V": 1.228325,
+          "FF_percent": 23.7528,
+          "Jsc_mA_cm2": 2.45338907
+        }
+      ]
+    },
+    "Et_HTL PVK": {
+      "x_name": "scan_value",
+      "x_unit": "eV",
+      "n_points": 8,
+      "points": [
+        {
+          "x": 0.01,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167556,
+          "FF_percent": 86.9873,
+          "Jsc_mA_cm2": 26.28199611
+        },
+        {
+          "x": 0.05,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.167554,
+          "FF_percent": 86.9874,
+          "Jsc_mA_cm2": 26.28199554
+        },
+        {
+          "x": 0.1,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.167551,
+          "FF_percent": 86.9875,
+          "Jsc_mA_cm2": 26.28199439
+        },
+        {
+          "x": 0.2,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199378
+        },
+        {
+          "x": 0.3,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 0.4,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 0.5,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 0.6,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        }
+      ]
+    },
+    "Et_C_PVK": {
+      "x_name": "scan_value",
+      "x_unit": "eV",
+      "n_points": 8,
+      "points": [
+        {
+          "x": 0.01,
+          "PCE_percent": 26.6934,
+          "Voc_V": 1.167645,
+          "FF_percent": 86.9831,
+          "Jsc_mA_cm2": 26.2819943
+        },
+        {
+          "x": 0.05,
+          "PCE_percent": 26.6933,
+          "Voc_V": 1.16763,
+          "FF_percent": 86.9839,
+          "Jsc_mA_cm2": 26.28199418
+        },
+        {
+          "x": 0.1,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 0.2,
+          "PCE_percent": 26.6814,
+          "Voc_V": 1.167246,
+          "FF_percent": 86.9736,
+          "Jsc_mA_cm2": 26.2819914
+        },
+        {
+          "x": 0.3,
+          "PCE_percent": 26.6754,
+          "Voc_V": 1.167217,
+          "FF_percent": 86.9563,
+          "Jsc_mA_cm2": 26.28198587
+        },
+        {
+          "x": 0.4,
+          "PCE_percent": 26.6752,
+          "Voc_V": 1.167216,
+          "FF_percent": 86.9558,
+          "Jsc_mA_cm2": 26.28196862
+        },
+        {
+          "x": 0.5,
+          "PCE_percent": 26.6752,
+          "Voc_V": 1.167216,
+          "FF_percent": 86.9558,
+          "Jsc_mA_cm2": 26.28196368
+        },
+        {
+          "x": 0.6,
+          "PCE_percent": 26.6752,
+          "Voc_V": 1.167216,
+          "FF_percent": 86.9558,
+          "Jsc_mA_cm2": 26.28196354
+        }
+      ]
+    },
+    "Et_PVK ETL": {
+      "x_name": "scan_value",
+      "x_unit": "eV",
+      "n_points": 8,
+      "points": [
+        {
+          "x": 0.01,
+          "PCE_percent": 27.7347,
+          "Voc_V": 1.201974,
+          "FF_percent": 87.7951,
+          "Jsc_mA_cm2": 26.28199587
+        },
+        {
+          "x": 0.05,
+          "PCE_percent": 27.3549,
+          "Voc_V": 1.187526,
+          "FF_percent": 87.6463,
+          "Jsc_mA_cm2": 26.2819956
+        },
+        {
+          "x": 0.1,
+          "PCE_percent": 27.0066,
+          "Voc_V": 1.177299,
+          "FF_percent": 87.2819,
+          "Jsc_mA_cm2": 26.28199504
+        },
+        {
+          "x": 0.2,
+          "PCE_percent": 26.7348,
+          "Voc_V": 1.168613,
+          "FF_percent": 87.0458,
+          "Jsc_mA_cm2": 26.28199408
+        },
+        {
+          "x": 0.3,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 0.4,
+          "PCE_percent": 26.69,
+          "Voc_V": 1.167495,
+          "FF_percent": 86.9831,
+          "Jsc_mA_cm2": 26.28199374
+        },
+        {
+          "x": 0.5,
+          "PCE_percent": 26.6899,
+          "Voc_V": 1.167494,
+          "FF_percent": 86.9829,
+          "Jsc_mA_cm2": 26.28199374
+        },
+        {
+          "x": 0.6,
+          "PCE_percent": 26.6899,
+          "Voc_V": 1.167494,
+          "FF_percent": 86.9829,
+          "Jsc_mA_cm2": 26.28199374
+        }
+      ]
+    },
+    "Et_V_PVK": {
+      "x_name": "scan_value",
+      "x_unit": "eV",
+      "n_points": 8,
+      "points": [
+        {
+          "x": 0.01,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167564,
+          "FF_percent": 86.9869,
+          "Jsc_mA_cm2": 26.28199389
+        },
+        {
+          "x": 0.05,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167562,
+          "FF_percent": 86.987,
+          "Jsc_mA_cm2": 26.28199387
+        },
+        {
+          "x": 0.1,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 0.2,
+          "PCE_percent": 26.6892,
+          "Voc_V": 1.167305,
+          "FF_percent": 86.9949,
+          "Jsc_mA_cm2": 26.28199256
+        },
+        {
+          "x": 0.3,
+          "PCE_percent": 26.6761,
+          "Voc_V": 1.167139,
+          "FF_percent": 86.9645,
+          "Jsc_mA_cm2": 26.28198922
+        },
+        {
+          "x": 0.4,
+          "PCE_percent": 26.6745,
+          "Voc_V": 1.167133,
+          "FF_percent": 86.9597,
+          "Jsc_mA_cm2": 26.28197931
+        },
+        {
+          "x": 0.5,
+          "PCE_percent": 26.6745,
+          "Voc_V": 1.167133,
+          "FF_percent": 86.9597,
+          "Jsc_mA_cm2": 26.2819643
+        },
+        {
+          "x": 0.6,
+          "PCE_percent": 26.6745,
+          "Voc_V": 1.167133,
+          "FF_percent": 86.9597,
+          "Jsc_mA_cm2": 26.28196311
+        }
+      ]
+    },
+    "Nd_ETL": {
+      "x_name": "scan_value",
+      "x_unit": "cm^-3",
+      "n_points": 11,
+      "points": [
+        {
+          "x": 10000000000.0,
+          "PCE_percent": 17.5945,
+          "Voc_V": 1.100196,
+          "FF_percent": 60.8285,
+          "Jsc_mA_cm2": 26.29049969
+        },
+        {
+          "x": 100000000000.0,
+          "PCE_percent": 19.0381,
+          "Voc_V": 1.12464,
+          "FF_percent": 64.3912,
+          "Jsc_mA_cm2": 26.28959355
+        },
+        {
+          "x": 1000000000000.0,
+          "PCE_percent": 20.4893,
+          "Voc_V": 1.132448,
+          "FF_percent": 68.8235,
+          "Jsc_mA_cm2": 26.28887261
+        },
+        {
+          "x": 10000000000000.0,
+          "PCE_percent": 21.9318,
+          "Voc_V": 1.137615,
+          "FF_percent": 73.3378,
+          "Jsc_mA_cm2": 26.28758643
+        },
+        {
+          "x": 100000000000000.0,
+          "PCE_percent": 23.2512,
+          "Voc_V": 1.141248,
+          "FF_percent": 77.5039,
+          "Jsc_mA_cm2": 26.2870558
+        },
+        {
+          "x": 1000000000000000.0,
+          "PCE_percent": 24.1574,
+          "Voc_V": 1.143994,
+          "FF_percent": 80.3336,
+          "Jsc_mA_cm2": 26.28631476
+        },
+        {
+          "x": 1e+16,
+          "PCE_percent": 24.7579,
+          "Voc_V": 1.14637,
+          "FF_percent": 82.1615,
+          "Jsc_mA_cm2": 26.28571211
+        },
+        {
+          "x": 1e+17,
+          "PCE_percent": 25.5067,
+          "Voc_V": 1.151017,
+          "FF_percent": 84.3099,
+          "Jsc_mA_cm2": 26.28415867
+        },
+        {
+          "x": 1e+18,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 1e+19,
+          "PCE_percent": 28.0976,
+          "Voc_V": 1.202403,
+          "FF_percent": 88.9143,
+          "Jsc_mA_cm2": 26.28131988
+        },
+        {
+          "x": 1e+20,
+          "PCE_percent": 29.2855,
+          "Voc_V": 1.237259,
+          "FF_percent": 90.063,
+          "Jsc_mA_cm2": 26.28120163
+        }
+      ]
+    },
+    "Nt_HTL PVK": {
+      "x_name": "scan_value",
+      "x_unit": "cm^-3",
+      "n_points": 7,
+      "points": [
+        {
+          "x": 1000000000.0,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167556,
+          "FF_percent": 86.9873,
+          "Jsc_mA_cm2": 26.28199633
+        },
+        {
+          "x": 10000000000.0,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167556,
+          "FF_percent": 86.9873,
+          "Jsc_mA_cm2": 26.28199631
+        },
+        {
+          "x": 100000000000.0,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167555,
+          "FF_percent": 86.9873,
+          "Jsc_mA_cm2": 26.28199608
+        },
+        {
+          "x": 1000000000000.0,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 10000000000000.0,
+          "PCE_percent": 26.6922,
+          "Voc_V": 1.167495,
+          "FF_percent": 86.9904,
+          "Jsc_mA_cm2": 26.28197063
+        },
+        {
+          "x": 100000000000000.0,
+          "PCE_percent": 26.6882,
+          "Voc_V": 1.166958,
+          "FF_percent": 87.018,
+          "Jsc_mA_cm2": 26.28173937
+        },
+        {
+          "x": 1000000000000000.0,
+          "PCE_percent": 26.6491,
+          "Voc_V": 1.16235,
+          "FF_percent": 87.2429,
+          "Jsc_mA_cm2": 26.27943401
+        }
+      ]
+    },
+    "Nt_C_PVK": {
+      "x_name": "scan_value",
+      "x_unit": "cm^-3",
+      "n_points": 7,
+      "points": [
+        {
+          "x": 1000000000.0,
+          "PCE_percent": 26.6934,
+          "Voc_V": 1.167649,
+          "FF_percent": 86.9829,
+          "Jsc_mA_cm2": 26.28199434
+        },
+        {
+          "x": 10000000000.0,
+          "PCE_percent": 26.6934,
+          "Voc_V": 1.167648,
+          "FF_percent": 86.983,
+          "Jsc_mA_cm2": 26.28199434
+        },
+        {
+          "x": 100000000000.0,
+          "PCE_percent": 26.6934,
+          "Voc_V": 1.167639,
+          "FF_percent": 86.9834,
+          "Jsc_mA_cm2": 26.28199429
+        },
+        {
+          "x": 1000000000000.0,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 10000000000000.0,
+          "PCE_percent": 26.6853,
+          "Voc_V": 1.166683,
+          "FF_percent": 87.0283,
+          "Jsc_mA_cm2": 26.28198853
+        },
+        {
+          "x": 100000000000000.0,
+          "PCE_percent": 26.6172,
+          "Voc_V": 1.159563,
+          "FF_percent": 87.3396,
+          "Jsc_mA_cm2": 26.2819362
+        },
+        {
+          "x": 1000000000000000.0,
+          "PCE_percent": 26.1403,
+          "Voc_V": 1.129075,
+          "FF_percent": 88.0927,
+          "Jsc_mA_cm2": 26.28141294
+        }
+      ]
+    },
+    "Nt_PVK ETL": {
+      "x_name": "scan_value",
+      "x_unit": "cm^-3",
+      "n_points": 7,
+      "points": [
+        {
+          "x": 1000000000.0,
+          "PCE_percent": 29.8175,
+          "Voc_V": 1.249473,
+          "FF_percent": 90.7999,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x": 10000000000.0,
+          "PCE_percent": 29.6176,
+          "Voc_V": 1.248254,
+          "FF_percent": 90.2795,
+          "Jsc_mA_cm2": 26.2819962
+        },
+        {
+          "x": 100000000000.0,
+          "PCE_percent": 28.4621,
+          "Voc_V": 1.23572,
+          "FF_percent": 87.6373,
+          "Jsc_mA_cm2": 26.28199597
+        },
+        {
+          "x": 1000000000000.0,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.167551,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 10000000000000.0,
+          "PCE_percent": 25.0476,
+          "Voc_V": 1.088511,
+          "FF_percent": 87.5539,
+          "Jsc_mA_cm2": 26.28197167
+        },
+        {
+          "x": 100000000000000.0,
+          "PCE_percent": 23.4575,
+          "Voc_V": 1.022812,
+          "FF_percent": 87.2634,
+          "Jsc_mA_cm2": 26.28175152
+        },
+        {
+          "x": 1000000000000000.0,
+          "PCE_percent": 21.9278,
+          "Voc_V": 0.967755,
+          "FF_percent": 86.2206,
+          "Jsc_mA_cm2": 26.27962552
+        }
+      ]
+    },
+    "Nt_V_PVK": {
+      "x_name": "scan_value",
+      "x_unit": "cm^-3",
+      "n_points": 7,
+      "points": [
+        {
+          "x": 1000000000.0,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167564,
+          "FF_percent": 86.9868,
+          "Jsc_mA_cm2": 26.28199389
+        },
+        {
+          "x": 10000000000.0,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167564,
+          "FF_percent": 86.9869,
+          "Jsc_mA_cm2": 26.28199389
+        },
+        {
+          "x": 100000000000.0,
+          "PCE_percent": 26.6927,
+          "Voc_V": 1.167563,
+          "FF_percent": 86.9869,
+          "Jsc_mA_cm2": 26.28199388
+        },
+        {
+          "x": 1000000000000.0,
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.16755,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x": 10000000000000.0,
+          "PCE_percent": 26.6917,
+          "Voc_V": 1.167422,
+          "FF_percent": 86.9942,
+          "Jsc_mA_cm2": 26.28199259
+        },
+        {
+          "x": 100000000000000.0,
+          "PCE_percent": 26.6829,
+          "Voc_V": 1.16619,
+          "FF_percent": 87.0572,
+          "Jsc_mA_cm2": 26.2819808
+        },
+        {
+          "x": 1000000000000000.0,
+          "PCE_percent": 26.6021,
+          "Voc_V": 1.156805,
+          "FF_percent": 87.4982,
+          "Jsc_mA_cm2": 26.28186293
+        }
+      ]
+    }
+  },
+  "pairs": {
+    "pair-nt-cbo-pvk-etl": {
+      "n_points": 100,
+      "points": [
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -1.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 12.8646,
+          "Voc_V": 0.664506,
+          "FF_percent": 73.5977,
+          "Jsc_mA_cm2": 26.30464934
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.75,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 18.9323,
+          "Voc_V": 0.914418,
+          "FF_percent": 78.7563,
+          "Jsc_mA_cm2": 26.28895045
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.1388,
+          "Voc_V": 1.160944,
+          "FF_percent": 82.3826,
+          "Jsc_mA_cm2": 26.2844136
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.25,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6079,
+          "Voc_V": 1.245841,
+          "FF_percent": 90.4232,
+          "Jsc_mA_cm2": 26.28239616
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7603,
+          "Voc_V": 1.248232,
+          "FF_percent": 90.7157,
+          "Jsc_mA_cm2": 26.28208695
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.16,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8175,
+          "Voc_V": 1.249473,
+          "FF_percent": 90.7999,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8527,
+          "Voc_V": 1.250607,
+          "FF_percent": 90.8265,
+          "Jsc_mA_cm2": 26.28154186
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.861,
+          "Voc_V": 1.251081,
+          "FF_percent": 90.8172,
+          "Jsc_mA_cm2": 26.28156267
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8599,
+          "Voc_V": 1.251236,
+          "FF_percent": 90.8027,
+          "Jsc_mA_cm2": 26.28148627
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8397,
+          "Voc_V": 1.250901,
+          "FF_percent": 90.7667,
+          "Jsc_mA_cm2": 26.28116192
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8109,
+          "Voc_V": 1.250334,
+          "FF_percent": 90.7195,
+          "Jsc_mA_cm2": 26.28140909
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7153,
+          "Voc_V": 1.250061,
+          "FF_percent": 90.4474,
+          "Jsc_mA_cm2": 26.2816825
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.4025,
+          "Voc_V": 1.249792,
+          "FF_percent": 65.1571,
+          "Jsc_mA_cm2": 26.28239245
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.7292,
+          "Voc_V": 1.249524,
+          "FF_percent": 23.6153,
+          "Jsc_mA_cm2": 2.47117501
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.0239,
+          "Voc_V": 1.256639,
+          "FF_percent": 29.1372,
+          "Jsc_mA_cm2": 0.06524981
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.7,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.0071,
+          "Voc_V": 1.281537,
+          "FF_percent": 67.5488,
+          "Jsc_mA_cm2": 0.00823184
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -1.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 10.1515,
+          "Voc_V": 0.547257,
+          "FF_percent": 70.5188,
+          "Jsc_mA_cm2": 26.30464833
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.75,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 16.1694,
+          "Voc_V": 0.79715,
+          "FF_percent": 77.1578,
+          "Jsc_mA_cm2": 26.28895033
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 22.3637,
+          "Voc_V": 1.047041,
+          "FF_percent": 81.261,
+          "Jsc_mA_cm2": 26.28441355
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.25,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.4613,
+          "Voc_V": 1.238579,
+          "FF_percent": 87.4311,
+          "Jsc_mA_cm2": 26.28239613
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.2444,
+          "Voc_V": 1.245536,
+          "FF_percent": 89.336,
+          "Jsc_mA_cm2": 26.28208693
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.16,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6176,
+          "Voc_V": 1.248254,
+          "FF_percent": 90.2795,
+          "Jsc_mA_cm2": 26.2819962
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.811,
+          "Voc_V": 1.250264,
+          "FF_percent": 90.7243,
+          "Jsc_mA_cm2": 26.28154184
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8515,
+          "Voc_V": 1.250973,
+          "FF_percent": 90.7962,
+          "Jsc_mA_cm2": 26.28156265
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8577,
+          "Voc_V": 1.251203,
+          "FF_percent": 90.7986,
+          "Jsc_mA_cm2": 26.28148625
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8395,
+          "Voc_V": 1.250897,
+          "FF_percent": 90.7664,
+          "Jsc_mA_cm2": 26.28116191
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8108,
+          "Voc_V": 1.250332,
+          "FF_percent": 90.7194,
+          "Jsc_mA_cm2": 26.28140909
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7153,
+          "Voc_V": 1.250059,
+          "FF_percent": 90.4474,
+          "Jsc_mA_cm2": 26.2816825
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.4023,
+          "Voc_V": 1.249783,
+          "FF_percent": 65.157,
+          "Jsc_mA_cm2": 26.28239241
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.729,
+          "Voc_V": 1.249272,
+          "FF_percent": 23.6172,
+          "Jsc_mA_cm2": 2.47099087
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.0236,
+          "Voc_V": 1.254062,
+          "FF_percent": 28.92,
+          "Jsc_mA_cm2": 0.06495456
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.7,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.0067,
+          "Voc_V": 1.274227,
+          "FF_percent": 67.7314,
+          "Jsc_mA_cm2": 0.00773455
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -1.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 7.7763,
+          "Voc_V": 0.433252,
+          "FF_percent": 68.2335,
+          "Jsc_mA_cm2": 26.30463826
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.75,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 13.7548,
+          "Voc_V": 0.682719,
+          "FF_percent": 76.6372,
+          "Jsc_mA_cm2": 26.28894917
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 19.9782,
+          "Voc_V": 0.932644,
+          "FF_percent": 81.4971,
+          "Jsc_mA_cm2": 26.28441308
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.25,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.2913,
+          "Voc_V": 1.178869,
+          "FF_percent": 84.8559,
+          "Jsc_mA_cm2": 26.28239587
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 27.5296,
+          "Voc_V": 1.217672,
+          "FF_percent": 86.0221,
+          "Jsc_mA_cm2": 26.28208669
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.16,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.4621,
+          "Voc_V": 1.23572,
+          "FF_percent": 87.6373,
+          "Jsc_mA_cm2": 26.28199597
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.4175,
+          "Voc_V": 1.2469,
+          "FF_percent": 89.7683,
+          "Jsc_mA_cm2": 26.28154164
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7617,
+          "Voc_V": 1.249894,
+          "FF_percent": 90.6011,
+          "Jsc_mA_cm2": 26.28156247
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8366,
+          "Voc_V": 1.250872,
+          "FF_percent": 90.7583,
+          "Jsc_mA_cm2": 26.28148608
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8373,
+          "Voc_V": 1.25085,
+          "FF_percent": 90.7631,
+          "Jsc_mA_cm2": 26.2811618
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8102,
+          "Voc_V": 1.250316,
+          "FF_percent": 90.7185,
+          "Jsc_mA_cm2": 26.28140902
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7148,
+          "Voc_V": 1.250048,
+          "FF_percent": 90.4468,
+          "Jsc_mA_cm2": 26.28168243
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.4007,
+          "Voc_V": 1.249696,
+          "FF_percent": 65.1566,
+          "Jsc_mA_cm2": 26.28239197
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.7277,
+          "Voc_V": 1.246841,
+          "FF_percent": 23.6319,
+          "Jsc_mA_cm2": 2.46953935
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.0217,
+          "Voc_V": 1.226926,
+          "FF_percent": 27.9876,
+          "Jsc_mA_cm2": 0.063076
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -1.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 5.8685,
+          "Voc_V": 0.332354,
+          "FF_percent": 67.1265,
+          "Jsc_mA_cm2": 26.30453758
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.75,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 11.8314,
+          "Voc_V": 0.580954,
+          "FF_percent": 77.4679,
+          "Jsc_mA_cm2": 26.28893747
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 18.0802,
+          "Voc_V": 0.830851,
+          "FF_percent": 82.791,
+          "Jsc_mA_cm2": 26.28440831
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.25,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 24.4188,
+          "Voc_V": 1.080494,
+          "FF_percent": 85.9878,
+          "Jsc_mA_cm2": 26.28239324
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.6782,
+          "Voc_V": 1.129309,
+          "FF_percent": 86.5151,
+          "Jsc_mA_cm2": 26.28208431
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.16,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.167551,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.1547,
+          "Voc_V": 1.217204,
+          "FF_percent": 88.0108,
+          "Jsc_mA_cm2": 26.28153965
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.1364,
+          "Voc_V": 1.240043,
+          "FF_percent": 89.4021,
+          "Jsc_mA_cm2": 26.28156065
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6512,
+          "Voc_V": 1.247696,
+          "FF_percent": 90.424,
+          "Jsc_mA_cm2": 26.28148444
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8159,
+          "Voc_V": 1.250391,
+          "FF_percent": 90.7313,
+          "Jsc_mA_cm2": 26.28116069
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8035,
+          "Voc_V": 1.250158,
+          "FF_percent": 90.7096,
+          "Jsc_mA_cm2": 26.28140832
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7103,
+          "Voc_V": 1.249937,
+          "FF_percent": 90.4411,
+          "Jsc_mA_cm2": 26.28168179
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.3846,
+          "Voc_V": 1.248839,
+          "FF_percent": 65.1522,
+          "Jsc_mA_cm2": 26.28238752
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 0.7158,
+          "Voc_V": 1.228325,
+          "FF_percent": 23.7528,
+          "Jsc_mA_cm2": 2.45339088
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -1.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 4.2588,
+          "Voc_V": 0.251814,
+          "FF_percent": 64.2968,
+          "Jsc_mA_cm2": 26.30353246
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.75,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 10.1957,
+          "Voc_V": 0.499805,
+          "FF_percent": 77.5971,
+          "Jsc_mA_cm2": 26.28882065
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 16.4333,
+          "Voc_V": 0.749663,
+          "FF_percent": 83.3992,
+          "Jsc_mA_cm2": 26.28436064
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.25,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 22.7694,
+          "Voc_V": 0.999736,
+          "FF_percent": 86.6566,
+          "Jsc_mA_cm2": 26.28236694
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 24.0258,
+          "Voc_V": 1.049312,
+          "FF_percent": 87.1191,
+          "Jsc_mA_cm2": 26.28206049
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.16,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.0476,
+          "Voc_V": 1.088511,
+          "FF_percent": 87.5539,
+          "Jsc_mA_cm2": 26.28197167
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.5636,
+          "Voc_V": 1.145684,
+          "FF_percent": 88.221,
+          "Jsc_mA_cm2": 26.28151982
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 27.736,
+          "Voc_V": 1.189756,
+          "FF_percent": 88.7024,
+          "Jsc_mA_cm2": 26.28154249
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.7291,
+          "Voc_V": 1.223625,
+          "FF_percent": 89.3356,
+          "Jsc_mA_cm2": 26.28146801
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6304,
+          "Voc_V": 1.246155,
+          "FF_percent": 90.4733,
+          "Jsc_mA_cm2": 26.28114965
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7401,
+          "Voc_V": 1.248631,
+          "FF_percent": 90.6275,
+          "Jsc_mA_cm2": 26.28140141
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6664,
+          "Voc_V": 1.248844,
+          "FF_percent": 90.3863,
+          "Jsc_mA_cm2": 26.28167539
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.2403,
+          "Voc_V": 1.241369,
+          "FF_percent": 65.1022,
+          "Jsc_mA_cm2": 26.28234313
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -1.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 2.8899,
+          "Voc_V": 0.185522,
+          "FF_percent": 59.242,
+          "Jsc_mA_cm2": 26.29364861
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.75,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 8.6617,
+          "Voc_V": 0.43314,
+          "FF_percent": 76.0716,
+          "Jsc_mA_cm2": 26.28766165
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 14.8642,
+          "Voc_V": 0.683242,
+          "FF_percent": 82.771,
+          "Jsc_mA_cm2": 26.28388642
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.25,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.1829,
+          "Voc_V": 0.933117,
+          "FF_percent": 86.3752,
+          "Jsc_mA_cm2": 26.282105
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 22.4361,
+          "Voc_V": 0.983141,
+          "FF_percent": 86.8314,
+          "Jsc_mA_cm2": 26.28182317
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.16,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.4575,
+          "Voc_V": 1.022812,
+          "FF_percent": 87.2634,
+          "Jsc_mA_cm2": 26.28175152
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 24.9813,
+          "Voc_V": 1.080609,
+          "FF_percent": 87.9629,
+          "Jsc_mA_cm2": 26.28132213
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.1835,
+          "Voc_V": 1.125616,
+          "FF_percent": 88.5094,
+          "Jsc_mA_cm2": 26.28136146
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 27.2695,
+          "Voc_V": 1.166318,
+          "FF_percent": 88.9637,
+          "Jsc_mA_cm2": 26.28130424
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.7284,
+          "Voc_V": 1.219504,
+          "FF_percent": 89.6365,
+          "Jsc_mA_cm2": 26.28103946
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.2575,
+          "Voc_V": 1.236181,
+          "FF_percent": 90.0549,
+          "Jsc_mA_cm2": 26.28133234
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.2885,
+          "Voc_V": 1.239642,
+          "FF_percent": 89.8976,
+          "Jsc_mA_cm2": 26.28161147
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 20.5253,
+          "Voc_V": 1.221623,
+          "FF_percent": 63.9285,
+          "Jsc_mA_cm2": 26.28190526
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -1.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 1.6918,
+          "Voc_V": 0.130181,
+          "FF_percent": 49.5847,
+          "Jsc_mA_cm2": 26.20909853
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.75,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 7.239,
+          "Voc_V": 0.37814,
+          "FF_percent": 72.8533,
+          "Jsc_mA_cm2": 26.27692507
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 13.3791,
+          "Voc_V": 0.628059,
+          "FF_percent": 81.0608,
+          "Jsc_mA_cm2": 26.27937815
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.25,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 19.6623,
+          "Voc_V": 0.878124,
+          "FF_percent": 85.2041,
+          "Jsc_mA_cm2": 26.27958331
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 20.911,
+          "Voc_V": 0.927991,
+          "FF_percent": 85.746,
+          "Jsc_mA_cm2": 26.27953443
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.16,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.9278,
+          "Voc_V": 0.967755,
+          "FF_percent": 86.2206,
+          "Jsc_mA_cm2": 26.27962552
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.4477,
+          "Voc_V": 1.02565,
+          "FF_percent": 86.9931,
+          "Jsc_mA_cm2": 26.27940961
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": -0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 24.6573,
+          "Voc_V": 1.069473,
+          "FF_percent": 87.7317,
+          "Jsc_mA_cm2": 26.27960757
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.0,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.7551,
+          "Voc_V": 1.108523,
+          "FF_percent": 88.4092,
+          "Jsc_mA_cm2": 26.27971488
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 27.3033,
+          "Voc_V": 1.165637,
+          "FF_percent": 89.1305,
+          "Jsc_mA_cm2": 26.27996302
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.0649,
+          "Voc_V": 1.193058,
+          "FF_percent": 89.5086,
+          "Jsc_mA_cm2": 26.28065349
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.1975,
+          "Voc_V": 1.201529,
+          "FF_percent": 89.2966,
+          "Jsc_mA_cm2": 26.2809836
+        },
+        {
+          "x_name": "Delta_E_C",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 19.2742,
+          "Voc_V": 1.206672,
+          "FF_percent": 60.7846,
+          "Jsc_mA_cm2": 26.27805506
+        }
+      ]
+    },
+    "pair-nt-et-pvk-etl": {
+      "n_points": 56,
+      "points": [
+        {
+          "x_name": "Et",
+          "x_value": 0.01,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8336,
+          "Voc_V": 1.24954,
+          "FF_percent": 90.8441,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8286,
+          "Voc_V": 1.249513,
+          "FF_percent": 90.8309,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8233,
+          "Voc_V": 1.249493,
+          "FF_percent": 90.8162,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8182,
+          "Voc_V": 1.249475,
+          "FF_percent": 90.802,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8175,
+          "Voc_V": 1.249473,
+          "FF_percent": 90.7999,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8174,
+          "Voc_V": 1.249473,
+          "FF_percent": 90.7998,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8174,
+          "Voc_V": 1.249473,
+          "FF_percent": 90.7998,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.8174,
+          "Voc_V": 1.249473,
+          "FF_percent": 90.7998,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.01,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7672,
+          "Voc_V": 1.248922,
+          "FF_percent": 90.6869,
+          "Jsc_mA_cm2": 26.28199622
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.7206,
+          "Voc_V": 1.248653,
+          "FF_percent": 90.5643,
+          "Jsc_mA_cm2": 26.28199621
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6711,
+          "Voc_V": 1.248454,
+          "FF_percent": 90.4278,
+          "Jsc_mA_cm2": 26.28199621
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6244,
+          "Voc_V": 1.24827,
+          "FF_percent": 90.2989,
+          "Jsc_mA_cm2": 26.2819962
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6176,
+          "Voc_V": 1.248254,
+          "FF_percent": 90.2795,
+          "Jsc_mA_cm2": 26.2819962
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6173,
+          "Voc_V": 1.248253,
+          "FF_percent": 90.2785,
+          "Jsc_mA_cm2": 26.28199619
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6173,
+          "Voc_V": 1.248253,
+          "FF_percent": 90.2784,
+          "Jsc_mA_cm2": 26.28199619
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.6173,
+          "Voc_V": 1.248253,
+          "FF_percent": 90.2784,
+          "Jsc_mA_cm2": 26.28199619
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.01,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 29.217,
+          "Voc_V": 1.243024,
+          "FF_percent": 89.433,
+          "Jsc_mA_cm2": 26.28199618
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.9656,
+          "Voc_V": 1.240401,
+          "FF_percent": 88.8509,
+          "Jsc_mA_cm2": 26.28199616
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.6862,
+          "Voc_V": 1.238132,
+          "FF_percent": 88.1552,
+          "Jsc_mA_cm2": 26.2819961
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.4927,
+          "Voc_V": 1.235926,
+          "FF_percent": 87.7169,
+          "Jsc_mA_cm2": 26.28199601
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.4621,
+          "Voc_V": 1.23572,
+          "FF_percent": 87.6373,
+          "Jsc_mA_cm2": 26.28199597
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.4603,
+          "Voc_V": 1.235711,
+          "FF_percent": 87.6324,
+          "Jsc_mA_cm2": 26.28199597
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.4603,
+          "Voc_V": 1.235711,
+          "FF_percent": 87.6323,
+          "Jsc_mA_cm2": 26.28199597
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 28.4603,
+          "Voc_V": 1.235711,
+          "FF_percent": 87.6323,
+          "Jsc_mA_cm2": 26.28199597
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.01,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 27.7347,
+          "Voc_V": 1.201975,
+          "FF_percent": 87.7951,
+          "Jsc_mA_cm2": 26.28199587
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 27.3549,
+          "Voc_V": 1.187526,
+          "FF_percent": 87.6463,
+          "Jsc_mA_cm2": 26.2819956
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 27.0066,
+          "Voc_V": 1.1773,
+          "FF_percent": 87.2819,
+          "Jsc_mA_cm2": 26.28199504
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.7348,
+          "Voc_V": 1.168613,
+          "FF_percent": 87.0458,
+          "Jsc_mA_cm2": 26.28199408
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.6926,
+          "Voc_V": 1.167551,
+          "FF_percent": 86.9876,
+          "Jsc_mA_cm2": 26.28199376
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.69,
+          "Voc_V": 1.167496,
+          "FF_percent": 86.9831,
+          "Jsc_mA_cm2": 26.28199374
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.6899,
+          "Voc_V": 1.167494,
+          "FF_percent": 86.9829,
+          "Jsc_mA_cm2": 26.28199374
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.6899,
+          "Voc_V": 1.167494,
+          "FF_percent": 86.9829,
+          "Jsc_mA_cm2": 26.28199374
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.01,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 26.0975,
+          "Voc_V": 1.12948,
+          "FF_percent": 87.9148,
+          "Jsc_mA_cm2": 26.28199276
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.726,
+          "Voc_V": 1.113681,
+          "FF_percent": 87.8929,
+          "Jsc_mA_cm2": 26.28199003
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.3746,
+          "Voc_V": 1.099984,
+          "FF_percent": 87.7718,
+          "Jsc_mA_cm2": 26.28198445
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.0917,
+          "Voc_V": 1.090078,
+          "FF_percent": 87.5821,
+          "Jsc_mA_cm2": 26.28197479
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.0476,
+          "Voc_V": 1.088511,
+          "FF_percent": 87.5539,
+          "Jsc_mA_cm2": 26.28197167
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.0448,
+          "Voc_V": 1.088416,
+          "FF_percent": 87.5516,
+          "Jsc_mA_cm2": 26.28197141
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.0447,
+          "Voc_V": 1.088414,
+          "FF_percent": 87.5515,
+          "Jsc_mA_cm2": 26.2819714
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 10000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 25.0447,
+          "Voc_V": 1.088414,
+          "FF_percent": 87.5515,
+          "Jsc_mA_cm2": 26.2819714
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.01,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 24.5096,
+          "Voc_V": 1.062408,
+          "FF_percent": 87.7784,
+          "Jsc_mA_cm2": 26.28196162
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 24.1444,
+          "Voc_V": 1.048187,
+          "FF_percent": 87.6436,
+          "Jsc_mA_cm2": 26.28193439
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.7916,
+          "Voc_V": 1.033979,
+          "FF_percent": 87.55,
+          "Jsc_mA_cm2": 26.28187868
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.5033,
+          "Voc_V": 1.024478,
+          "FF_percent": 87.2914,
+          "Jsc_mA_cm2": 26.28178255
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.4575,
+          "Voc_V": 1.022812,
+          "FF_percent": 87.2634,
+          "Jsc_mA_cm2": 26.28175152
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.4545,
+          "Voc_V": 1.022706,
+          "FF_percent": 87.2613,
+          "Jsc_mA_cm2": 26.2817489
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.4544,
+          "Voc_V": 1.022703,
+          "FF_percent": 87.2612,
+          "Jsc_mA_cm2": 26.2817488
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 100000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 23.4544,
+          "Voc_V": 1.022703,
+          "FF_percent": 87.2612,
+          "Jsc_mA_cm2": 26.2817488
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.01,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 22.9501,
+          "Voc_V": 1.002145,
+          "FF_percent": 87.1367,
+          "Jsc_mA_cm2": 26.28165183
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.05,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 22.5962,
+          "Voc_V": 0.989725,
+          "FF_percent": 86.8705,
+          "Jsc_mA_cm2": 26.28138296
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.1,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 22.2509,
+          "Voc_V": 0.977273,
+          "FF_percent": 86.635,
+          "Jsc_mA_cm2": 26.28083877
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.2,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.9728,
+          "Voc_V": 0.96917,
+          "FF_percent": 86.2702,
+          "Jsc_mA_cm2": 26.27991793
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.3,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.9278,
+          "Voc_V": 0.967755,
+          "FF_percent": 86.2206,
+          "Jsc_mA_cm2": 26.27962552
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.4,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.9249,
+          "Voc_V": 0.967663,
+          "FF_percent": 86.2172,
+          "Jsc_mA_cm2": 26.27960093
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.5,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.9248,
+          "Voc_V": 0.967661,
+          "FF_percent": 86.2171,
+          "Jsc_mA_cm2": 26.27960006
+        },
+        {
+          "x_name": "Et",
+          "x_value": 0.6,
+          "x_unit": "eV",
+          "y_name": "Nt",
+          "y_value": 1000000000000000.0,
+          "y_unit": "cm^-3",
+          "PCE_percent": 21.9248,
+          "Voc_V": 0.967661,
+          "FF_percent": 86.2171,
+          "Jsc_mA_cm2": 26.27960004
+        }
+      ]
+    }
+  }
+}
