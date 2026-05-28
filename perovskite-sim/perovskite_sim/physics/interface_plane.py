@@ -150,16 +150,25 @@ def compute_interface_te_fluxes(
             dE_c = float(mat.interface_chi_step[k])  # eV
             dE_g = float(mat.interface_Eg_step[k])   # eV
             dE_v = dE_c - dE_g
-            # Exponent caps for numerical stability.
-            ec_norm = max(-_EXP_CAP, min(_EXP_CAP, dE_c / V_T_local))
-            ev_norm = max(-_EXP_CAP, min(_EXP_CAP, dE_v / V_T_local))
-            # Cross-flux: positive value flows from 2s side to 1s side.
-            J_cross_n = v_cross_eff * (
-                n_2s * math.exp(ec_norm) - n_1s
-            )
-            J_cross_p = v_cross_eff * (
-                p_2s * math.exp(ev_norm) - p_1s
-            )
+            ec_norm = dE_c / V_T_local
+            ev_norm = dE_v / V_T_local
+            # Cross-flux (positive flows 2s → 1s) toward the detailed-balance
+            # ratio n_1s/n_2s = exp(ΔE_c/V_T). Phase E8.4 — bounded form: the
+            # legacy ``n_2s·exp(ec_norm) − n_1s`` carried exp(+|ΔE|/V_T), which
+            # at a large offset (HTL/PVK ΔE_c=1.54 eV → exp(59), capped at
+            # exp(30)≈1e13) produced the ~1e36 cross-flux that both hung the
+            # Sprint-9 wire-through and flattened the CBO response under the
+            # cap. Factor out the LARGER exponential so the surviving exp arg
+            # is always ≤ 0 (bounded ≤ 1). Same zero-point, physical magnitude
+            # (cross-barrier emission is Boltzmann-suppressed, not enhanced).
+            if ec_norm >= 0.0:
+                J_cross_n = v_cross_eff * (n_2s - n_1s * math.exp(-ec_norm))
+            else:
+                J_cross_n = v_cross_eff * (n_2s * math.exp(ec_norm) - n_1s)
+            if ev_norm >= 0.0:
+                J_cross_p = v_cross_eff * (p_2s - p_1s * math.exp(-ev_norm))
+            else:
+                J_cross_p = v_cross_eff * (p_2s * math.exp(ev_norm) - p_1s)
             # Mass-conserving redistribution: +J on 1s side, -J on 2s side.
             out[base + 0] += J_cross_n      # n_1s gains
             out[base + 2] -= J_cross_n      # n_2s loses
