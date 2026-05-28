@@ -329,6 +329,12 @@ def apply_sweep_point(
             float(updates["interface_defect_N_t_cm2"]),
             target=str(updates.get("interface_defect_target", "pvk/etl")),
         )
+    if "interface_defect_E_t_eV" in updates:
+        updated = _apply_interface_defect_E_t_eV(
+            updated,
+            float(updates["interface_defect_E_t_eV"]),
+            target=str(updates.get("interface_defect_target", "pvk/etl")),
+        )
 
     if sync_vbi:
         updated = dataclasses.replace(updated, V_bi=updated.compute_V_bi())
@@ -721,6 +727,37 @@ def _apply_interface_defect_N_t_cm2(
         interfaces=tuple(interfaces),
         interface_defects=tuple(defects),
     )
+
+
+def _apply_interface_defect_E_t_eV(
+    stack: DeviceStack,
+    E_t_eV: float,
+    *,
+    target: str = "pvk/etl",
+) -> DeviceStack:
+    """Set the trap depth ``E_t_eV`` on the targeted ``InterfaceDefect``.
+
+    Mirrors ``_apply_interface_defect_N_t_cm2`` but drives the trap level
+    rather than the density. The build path recomputes the interface SRH
+    ``(n1, p1)`` from ``defect.E_t_eV`` (``solver/mol.py:build_material_arrays``
+    via ``srh_n1_p1_from_trap_depth(reference="below_cb")``), so replacing
+    the field is sufficient. Surface velocities on ``stack.interfaces`` are
+    left untouched. Raises ``ValueError`` if the target has no declared
+    ``InterfaceDefect`` — the YAML must declare the defect first.
+    """
+    n_interfaces = max(0, len(stack.layers) - 1)
+    if n_interfaces == 0:
+        raise ValueError("DeviceStack has no interior interfaces")
+    k = _resolve_interface_sweep_target(target, stack.layers, n_interfaces)
+    defects = list(stack.interface_defects) if stack.interface_defects else [None] * n_interfaces
+    if defects[k] is None:
+        raise ValueError(
+            f"interface_defect_E_t_eV sweep target {target!r} has no "
+            "InterfaceDefect entry in DeviceStack.interface_defects — "
+            "declare one in the YAML interfaces: block before sweeping"
+        )
+    defects[k] = dataclasses.replace(defects[k], E_t_eV=float(E_t_eV))
+    return dataclasses.replace(stack, interface_defects=tuple(defects))
 
 
 # Adjacent-layer-role alias resolver for the interface-defect sweep

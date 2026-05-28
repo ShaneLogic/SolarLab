@@ -80,6 +80,48 @@ python scripts/run_scaps_v2_regression.py --out-dir ../outputs/scaps_proj_baseli
 SOLARLAB_IFACE_PROJ=1 python scripts/run_scaps_v2_regression.py --out-dir ../outputs/scaps_proj_on  # ON
 ```
 
+## Full-PDF trend scorecard (all 10 single-variable sweeps)
+
+`scripts/run_scaps_full_regression.py` runs every sweep present in the
+partner PDF `1D-SCAPS 模拟.pdf` (mirrored in `scaps_reference.json`) and
+reports direction + range-closure. Status with projection ON +
+`interface_defect_E_t_eV` axis (this phase):
+
+| # | Sweep | SCAPS trend | SolarLab | Status |
+|---|---|---|---|---|
+| 1 | CBO ΔE_C | rise 0.33→1.25 | 92 % closure | ✅ |
+| 2 | Nd_ETL | monotonic rise +100 mV | high-N_D arm rises, **low-N_D dip flips net sign** | ❌ dir |
+| 3 | PVK/ETL N_t | drop 1.25→0.97 | 106 % | ✅ |
+| 4 | PVK/ETL E_t | drop −35 mV | −21 mV, dir + shape match (new axis) | ✅ |
+| 5 | PVK-CB N_t | drop −39 mV | flat (cascade-masked) | ❌ |
+| 6 | PVK-VB N_t | drop −11 mV | flat (same combined SRH as CB) | ❌ |
+| 7 | HTL/PVK N_t | ~flat (−5 mV) | **rises +105 mV + solver crash @1e15** | ❌ bug |
+| 8 | PVK-CB E_t | ~flat | flat | ✅ |
+| 9 | PVK-VB E_t | ~flat | flat | ✅ |
+| 10 | HTL/PVK E_t | dead flat | flat | ✅ |
+
+**6/10 met.** Four open, each a distinct root cause:
+
+- **Nd_ETL (#2)** — low-N_D_ETL V_oc dip (contact/V_bi behaviour at
+  N_D ≤ 1e15), not interface SRH. The high-N_D arm is correct post-E8.
+- **PVK-CB / PVK-VB N_t (#5,#6)** — bulk SRH masked by the interface SRH
+  ceiling (the E7 recombination cascade). Also the sweep handler drives
+  the absorber's *combined* τ, so CB and VB can't be distinguished
+  (SCAPS shows them asymmetric: −39 vs −11 mV). Hardest; partner-blocked
+  on SCAPS Auger/radiative spec per E7.
+- **HTL/PVK N_t (#7)** — cross-carrier orientation bug. `ni_sq_eff =
+  n_R_eq·p_L_eq = 1e20·1e24 = 1e44` pairs PVK electrons (minority at this
+  hole-contact interface) with HTL holes (majority). When the sampled
+  PVK-side electron density dips below 1e20 the numerator `n·p−ni²` goes
+  negative → SRH acts as *generation* → higher N_t (SRV) → more spurious
+  generation → V_oc rises. The E1.5 cross-carrier orientation only holds
+  when the right layer is the electron-transport layer (true for PVK/ETL,
+  false for HTL/PVK). Projection amplifies it (+85→+105 mV). Fix pending.
+
+New sweep axis `interface_defect_E_t_eV` (targetable, mirrors
+`interface_defect_N_t_cm2`) added to `device_parameter_sweep.py` to cover
+sweeps #4/#10 — purely additive, 5/5 existing sweep unit tests green.
+
 ## Open integration decision
 
 The hook is env-gated for safety. Promoting it (SimulationMode flag /
