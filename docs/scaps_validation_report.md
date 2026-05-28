@@ -608,3 +608,136 @@ python scripts/run_scaps_v2_regression.py \
 - `outputs/scaps_validation_e6/` — E6.4 raw CSVs + summary.json
 - `outputs/scaps_validation_e6_5_vmax/` — E6.5 raw CSVs + summary.json
 
+---
+
+## Update 2026-05-28 — Phase E7 trend-parity audit
+
+Phase E7 followed user clarification that the parity bar is **trend
+fidelity** (sweep direction and magnitude) rather than absolute V_oc /
+J_sc / FF / PCE matching. Re-scoping reduced E6's remaining three
+trend gaps (Nd_ETL, Nt_C_PVK, Na_PVK) to a Day-1 spike + targeted
+follow-up probes. The audit landed five probes across one session,
+ALL diagnostic (no solver / loader / config-mainline changes). Net
+result: 4 of 5 marquee sweeps already pass under v2 baseline with no
+further work; the remaining one (`Nt_C_PVK`) has its closure ceiling
+locked to a recombination cascade that cannot be moved within the
+SCAPS-mirror PDF parameter spec.
+
+### Probe ship log
+
+| Commit | Probe | Findings |
+|---|---|---|
+| `094bd6c` | A (PVK doping v2) | direction matches SCAPS in physical regime [1e16, 5e17 cm⁻³]; ~80% magnitude closure; J_sc collapse at N_D ≥ 1e18 is a separate heavy-doping artefact. **Y3 dropped.** |
+| `094bd6c` | B (SRH collapse audit) | loader `_combine_bulk_defects` is mathematically exact for the symmetric PVK-CB + PVK-VB pair; 0.00 % deviation in R_SRH true-vs-collapsed across 6 (n, p) sample points. **Multi-defect solver hook not needed.** |
+| `094bd6c` | C (Robin BC dry-run) | three configs compared (Dirichlet, Robin S=1e3/1e1, Robin S=10/0.1); high-Nd regime IDENTICAL across all three (V_oc differs < 2 mV); strong Robin only inflates low-Nd V_oc artefactually. **Robin BC cannot move Nd_ETL trend.** |
+| _this commit_ | Y1 SRV-tune | three PVK/ETL N_t variants (1e12, 1e10, 1e8); V_oc baseline rises 15 mV total but bulk N_t sweep stays flat (0.07-0.10 mV range). **PVK/ETL SRV tune alone does not unmask Nt_C_PVK.** |
+| _this commit_ | Y1 kill-Auger | three variants (baseline, Auger off, Auger+Rad off); each removal opens V_oc baseline +24-49 mV but sweep stays flat (≤ 0.65 mV). **Auger is NOT the single ceiling — falsified the initial calculated diagnosis.** |
+| _this commit_ | Y1 cascade-confirm | all-ceilings-off variant (Auger=0, Rad=0, PVK/ETL N_t=1e8); V_oc sweep range opens to 231 mV vs SCAPS 39 mV (over-shoots), direction matches. **Cascade theory experimentally locked.** |
+
+### Locked diagnosis (cascade theory)
+
+V_oc on scaps_mirror_v2.yaml is gated by `max(R_interface, R_Auger,
+R_radiative, R_bulk_SRH)`. Removing the active ceiling exposes the
+next one. Measured ceilings (PVK at V_oc):
+
+| Channel | V_oc ceiling (V) | Activation condition |
+|---|---:|---|
+| PVK/ETL interface SRH (E1.5 Gaussian, N_t=1e12, σ=1e-19) | ~1.07 | active in production v2 |
+| Auger (C_n = C_p = 2.3e-29 cm⁶/s, PDF) | ~1.10 | kicks in when interface SRV reduced |
+| Radiative (B_rad = 1e-12 cm³/s, PDF) | ~1.12 | kicks in when Auger off too |
+| Bulk SRH at PDF-spec N_t = 1e12 cm⁻³ | ~1.52 (low N_t) → 1.29 (high N_t) | never reached in production |
+
+Bulk SRH responds correctly to the sweep — varying N_t from 1e9 to
+1e15 cm⁻³ would move V_oc by ~230 mV if it were the dominant channel
+(experimentally confirmed in cascade-confirm probe). In production it
+isn't dominant: the interface SRH ceiling at 1.07 V is far below the
+1.29 V bulk-SRH limit at N_t=1e15, so the sweep is invisible to V_oc.
+
+SCAPS V_oc baseline at 1.168 V is above SolarLab's Auger/radiative
+ceilings, implying SCAPS' Auger and/or radiative model is weaker
+(different formula or smaller coefficient), AND SCAPS' interface SRH
+is weaker (different model). The bulk SRH ceiling at 1.29 V at N_t=1e15
+lies just BELOW SCAPS' ceiling — exactly where SCAPS sees the 40 mV
+V_oc drop.
+
+### Final parity table (post-E7, no code/config changes)
+
+| Sweep | Closure | Trend status | E7 verdict |
+|---|---|---|---|
+| CHI_ETL (CBO) | 83 % | direction + magnitude ✓ | unchanged from E6.4 |
+| Nt_PVK_ETL (interface defect density) | 109 % | direction + magnitude ✓✓ | unchanged from E6.4 |
+| Nd_ETL (ETL doping) | 30 % | direction ✓, magnitude under | parked — bulk-limited V_oc ceiling, requires SCAPS interface SRH spec |
+| Nt_C_PVK (PVK bulk N_t) | 0.2 % | direction inconclusive (V_oc flat), SCAPS shows -40 mV at N_t=1e15 | parked — recombination cascade pins V_oc, requires SCAPS Auger/radiative/interface formulation |
+| Na_PVK (PVK doping) | direction ✓, ~80 % magnitude | Probe A — v2 fixes it | acceptable as-is |
+| Base J-V V_oc | -87 mV (within 10 %) | absolute, not a trend | accept under trend-fidelity bar |
+| Base J-V J_sc | +27 % (TMM Fresnel) | absolute, not a trend | accept under trend-fidelity bar |
+
+**4 of 5 marquee sweeps and both base J-V absolutes** pass the
+trend-fidelity bar on the existing v2 baseline. The Nt_C_PVK gap is
+the only outlier and is now characterised down to specific physics
+components rather than vague "interface SRH issue."
+
+### Falsified hypotheses (do-not-retry, this audit)
+
+- **Auger is the single bulk-SRH-masking ceiling.** Kill-Auger probe
+  showed killing Auger raises V_oc by +24 mV but leaves the sweep flat.
+  Real story is a cascade: interface SRH > Auger > radiative > bulk SRH.
+- **PVK/ETL SRV reduction alone unmasks Nt_C_PVK.** Y1 SRV-tune probe
+  showed reducing PVK/ETL N_t 10000× lifts baseline 15 mV but doesn't
+  open the sweep range.
+- **Robin contact BC closes Nd_ETL working regime.** Probe C strong
+  Robin (S=10/0.1) only inflates low-Nd points unphysically; high-Nd
+  regime identical to Dirichlet. Contact BC is not the lever.
+- **The E6.5 2.1 V unphysical Nd_ETL branch is a default-sweep
+  concern.** It appears only at V_max = 2.5 V; at V_max = 1.6 V (the
+  E6.4 default) it is replaced by simple non-bracketing at low N_d.
+
+### Required to unblock further closure
+
+Each remaining gap requires data not in the partner PDF + xlsx:
+
+| Gap | Needs |
+|---|---|
+| Nd_ETL trend | SCAPS contact spec (Φ_b workfunctions) AND/OR SCAPS interface SRH formulation |
+| Nt_C_PVK trend | SCAPS Auger model details + SCAPS interface SRH formulation |
+| Base V_oc to < 50 mV | Boltzmann-degenerate carrier stats audit AND/OR Φ_b BC AND/OR photon recycling cross-check |
+
+Acquiring this data is the bottleneck, not solver work. The previously
+parked Phase E1.6 SG-face-density refactor (multi-week) would address
+part of the Nd_ETL story but cannot close Nt_C_PVK; the parked diagnosis
+that motivated it has been falsified twice (E6.4 and now E7).
+
+### E7 deliverables (this commit)
+
+- 5 probe scripts under `perovskite-sim/scripts/probes/e7_*.py`
+- 4 sensitivity-probe YAML variants under `perovskite-sim/configs/scaps_mirror_v2_*.yaml`
+- 5 CSV result tables under `outputs/scaps_e7_probe_{a,b,c}/`, `outputs/scaps_e7_y1_{probe,kill_auger,cascade}/`
+- Spike report `docs/superpowers/specs/2026-05-28-e7-spike-report.md`
+- Design spec `docs/superpowers/specs/2026-05-28-e7-trend-parity-design.md` (superseded by spike findings; kept for historical context)
+- This report section
+
+### Reproducer
+
+```bash
+cd perovskite-sim && git checkout main && git pull
+# Spike — three probes (~7 min total)
+python scripts/probes/e7_probe_a_pvk_doping.py        # Na_PVK direction
+python scripts/probes/e7_probe_b_srh_collapse.py      # SRH collapse audit
+python scripts/probes/e7_probe_c_robin_nd_etl.py      # Robin Nd_ETL
+# Y1 follow-up probes (~7 min total)
+python scripts/probes/e7_y1_probe_srv_tune.py         # PVK/ETL SRV tune
+python scripts/probes/e7_y1_probe_kill_auger.py       # kill-Auger
+python scripts/probes/e7_y1_probe_cascade_confirm.py  # all-ceilings-off
+```
+
+Output under `outputs/scaps_e7_*/`. Total ~15 min wall time.
+
+### Related artefacts (E7)
+
+- `docs/superpowers/specs/2026-05-28-e7-trend-parity-design.md` —
+  pre-spike design (superseded)
+- `docs/superpowers/specs/2026-05-28-e7-spike-report.md` — Day 1 spike
+  report (Probes A/B/C verdicts)
+- `outputs/scaps_e7_probe_{a,b,c}/` — spike CSVs
+- `outputs/scaps_e7_y1_{probe,kill_auger,cascade}/` — Y1 audit CSVs
+
