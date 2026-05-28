@@ -1,0 +1,27 @@
+{
+  "config": "configs/scaps_mirror_v2.yaml",
+  "reference": "tests/integration/scaps_reference.json",
+  "extracted_at": "2026-05-28",
+  "jv_kwargs": {
+    "N_grid": 30,
+    "n_points": 20,
+    "v_rate": 5.0,
+    "V_max": 2.5
+  },
+  "total_wall_time_s": 64.65868997573853,
+  "summaries": [
+    {
+      "sheet": "Nd_ETL",
+      "n_points": 11,
+      "n_voc_bracketed": 10,
+      "scaps_voc_range_full_mV": 137.06300000000016,
+      "scaps_voc_range_bracketed_subset_mV": 112.61900000000003,
+      "sl_voc_range_mV": 1045.8090451814555,
+      "voc_range_closure_pct": 928.6257604679986,
+      "voc_delta_mean_mV": 80.94624860224216,
+      "voc_delta_median_mV": -80.19647676853137,
+      "voc_delta_max_abs_mV": 982.5871970381248,
+      "wall_time_s": 64.65827417373657
+    }
+  ]
+}
