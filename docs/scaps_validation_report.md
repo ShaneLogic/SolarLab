@@ -737,7 +737,39 @@ Output under `outputs/scaps_e7_*/`. Total ~15 min wall time.
 - `docs/superpowers/specs/2026-05-28-e7-trend-parity-design.md` —
   pre-spike design (superseded)
 - `docs/superpowers/specs/2026-05-28-e7-spike-report.md` — Day 1 spike
-  report (Probes A/B/C verdicts)
+  report + Y1 follow-up + manual reading + A* probe (full audit)
 - `outputs/scaps_e7_probe_{a,b,c}/` — spike CSVs
 - `outputs/scaps_e7_y1_{probe,kill_auger,cascade}/` — Y1 audit CSVs
+- `outputs/scaps_e7_a_star/` — A* coefficient probe CSV
+
+### Update 2026-05-29 — E7 close-out after SCAPS manual audit
+
+Read on-disk SCAPS user manual (`docs/SCAPS Manual february 2016.pdf`)
+to identify formula-level differences between SCAPS and SolarLab.
+Manual confirms Auger, radiative, bulk SRH, and interface SRH
+(Pauwels-Vanhoutte) formulas all match SolarLab implementations.
+SCAPS does NOT model degenerate carrier statistics (eliminates a
+previously-suspected gap source). SCAPS DOES model tunneling
+(band-to-band, intraband, contact, interface defect); SolarLab does not.
+
+One formula-level lever identified: SCAPS uses `v_th`-based thermionic
+emission at heterointerfaces; SolarLab uses Richardson-Dushman as a cap
+on the SG flux. The final probe (`e7_probe_a_star_tune.py`) varied
+SolarLab's A* coefficient by 1000× and measured zero V_oc shift —
+the RD cap is never active in the v2 regime, so the formula difference
+is invisible to V_oc here. TE-coefficient hypothesis falsified.
+
+After manual + A* probe, all in-tree YAML / parameter / coefficient
+levers are exhausted. The cross-carrier sampling at the interface
+plane (E1.5 reads `n[idx+1]` bulk-interior; SCAPS reads depleted
+interface-plane density) is the singular remaining blocker. Fix is
+the SG-face-density refactor, archived twice as `failed-prototype/*`.
+
+Phase E7 closes. Ship state: 4/5 marquee sweeps preserved at current
+closure (CBO 83 %, interface 109 %, PVK doping direction ✓, base
+J-V within 10 % envelope). Nt_C_PVK 0.2 % and Nd_ETL 30 % gaps fully
+characterised to a single architectural blocker. No code or config
+mainline changes. Three commits land on `main`: `522c527` (design),
+`094bd6c` (Day 1 spike), `6a001b9` (Y1 follow-up + cascade theory),
+plus this commit (manual + A* probe + close-out).
 
