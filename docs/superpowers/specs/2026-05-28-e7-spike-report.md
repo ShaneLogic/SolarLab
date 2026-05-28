@@ -288,7 +288,7 @@ Net session outcome:
 - All probe artefacts and CSVs are preserved under `outputs/scaps_e7_*/`
   for next-session reference.
 
-## Y1 follow-up artefacts (this commit)
+## Y1 follow-up artefacts (commit `6a001b9`)
 
 - `perovskite-sim/scripts/probes/e7_y1_probe_srv_tune.py`
 - `perovskite-sim/scripts/probes/e7_y1_probe_kill_auger.py`
@@ -297,3 +297,82 @@ Net session outcome:
 - `outputs/scaps_e7_y1_kill_auger/nt_c_pvk_kill_auger.csv` + variant YAMLs
 - `outputs/scaps_e7_y1_cascade/nt_c_pvk_cascade_confirm.csv` + variant YAML
 - `docs/scaps_validation_report.md` — Update 2026-05-28 Phase E7 section
+
+## SCAPS manual reading + A* probe — TE formula falsified
+
+After the Y1 follow-up landed, audited the on-disk SCAPS user manual
+(`docs/SCAPS Manual february 2016.pdf`) for formula-level differences
+that might explain the V_oc ceiling cascade. Identified one apparent
+gap (interface TE coefficient: SCAPS uses `v_th = min(v_th_L, v_th_R)`
+while SolarLab uses Richardson-Dushman `A* T² exp(-ΔE_C/V_T)`) and ran
+a final probe to test it.
+
+### Manual findings (in-tree, no partner data needed)
+
+| Component | SCAPS formula | SolarLab | Match? |
+|---|---|---|---|
+| Auger | `U = (c_n·n + c_p·p)(np - ni²)` (manual §3.6.6, eq.12) | identical | ✓ |
+| Radiative | `U = K(np - ni²)` (manual §3.6.6, eq.13) | identical | ✓ |
+| Bulk SRH | standard SRH | identical | ✓ |
+| Interface SRH | Pauwels-Vanhoutte (manual §3.8) | E1.5 Pauwels-Vanhoutte cross-carrier | formula matches; cross-carrier sampling differs (interface-plane vs bulk-interior) |
+| Interface TE | `v_th = min(v_th_L, v_th_R)` (manual §3.8) | Richardson-Dushman cap on SG flux | apparent gap, see A* probe |
+| Degenerate stats | NOT modeled (manual fig. 3.29 caption) | NOT modeled | ✓ (eliminates a previously-suspected gap source) |
+| Tunneling | YES — band-to-band, intraband, contact, interface defect (manual §3.9) | NOT modeled | real gap, multi-week to implement |
+| Contact BC | Φ_m workfunction OR flatband; Sn / Sp surface velocities settable (manual §3.3, scriptable §10.4) | Dirichlet OR Robin | architectures match; partner-spec gap |
+
+### A* probe — A* coefficient irrelevant in this regime
+
+Script: `scripts/probes/e7_probe_a_star_tune.py`. Four variants of
+`A_star_n = A_star_p` on absorber + ETL layers (baseline 1.2017e6,
+10×, 100×, 1000× lower). Base J-V V_oc measured per variant.
+
+| Variant | A* (A/m²·K²) | V_oc |
+|---|---:|---:|
+| baseline | 1.2017e6 | 1.0808 V |
+| 10× lower | 1.2017e5 | 1.0808 V |
+| 100× lower | 1.2017e4 | 1.0808 V |
+| 1000× lower | 1.2017e3 | 1.0808 V |
+
+**ΔV_oc across all variants: 0.0 mV.**
+
+Richardson-Dushman cap is never active on the v2 baseline — the SG
+flux at the heterointerface is always under the cap, even when the cap
+is lowered 1000×. The "TE formula difference" between SCAPS (v_th) and
+SolarLab (RD) is invisible to V_oc here because SolarLab's effective TE
+current is already matching SCAPS' magnitude via the SG flux itself.
+
+### Locked diagnosis (after manual + A* probe)
+
+The cross-carrier sampling at the interface plane is the singular
+remaining architectural blocker. E1.5 reads `n[idx+1]` (bulk-interior
+ETL density ≈ N_D_ETL); SCAPS reads the depleted interface-plane
+density. This single difference explains the Nd_ETL under-sensitivity,
+the bulk N_t mask via the recombination cascade, and part of the
+−87 mV base V_oc absolute gap.
+
+The fix (SG-face-density extraction in `physics/continuity.py`) was
+attempted twice as `failed-prototype/e1.6-*` and `failed-prototype/e2-bbd-*`
+tags. Both failed for documented numerical reasons. Without a fundamentally
+different approach to the same physics (or partner SCAPS source for
+cross-checking), in-tree closure of this blocker is not available.
+
+### Final E7 close-out
+
+All in-tree YAML / parameter / coefficient levers exhausted:
+- ✗ Multi-defect SRH solver hook (Probe B falsified)
+- ✗ PVK/ETL SRV calibration tune (Y1 SRV probe falsified)
+- ✗ Robin contact BC (Probe C falsified)
+- ✗ Kill Auger / kill radiative individually (kill-Auger probe falsified)
+- ✗ A* coefficient tuning (this probe falsified)
+- ✗ Workfunction / Φ_b setting (no partner spec, scope-blocked)
+
+Remaining architectural options (all multi-week, all flagged as
+high-risk by prior attempts):
+- SG-face-density refactor v3 — would need fundamentally new approach
+- Tunneling implementation — would need new module per SCAPS §3.9
+- Both shelved pending higher-level decision.
+
+**E7 ship state**: 4/5 marquee sweeps preserved at current closure
+(CBO 83%, interface 109%, PVK doping direction ✓, base J-V within
+10% envelope). Nt_C_PVK and Nd_ETL gaps fully characterised to a
+single architectural blocker. No code or config mainline changes.
