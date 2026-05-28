@@ -13,7 +13,6 @@ from scipy.stats import linregress
 
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack, LayerSpec
-from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep, JVResult
 
 pytestmark = pytest.mark.validation
@@ -31,7 +30,9 @@ def baseline_stack() -> DeviceStack:
 
 
 def _vary_absorber_param(
-    stack: DeviceStack, param_name: str, values: list[float],
+    stack: DeviceStack,
+    param_name: str,
+    values: list[float],
 ) -> list[DeviceStack]:
     """Return new DeviceStacks with the absorber layer's MaterialParams field
     ``param_name`` set to each value in ``values``.
@@ -55,7 +56,9 @@ def _vary_absorber_param(
 
 
 def _vary_all_layers_param(
-    stack: DeviceStack, param_name: str, value: float,
+    stack: DeviceStack,
+    param_name: str,
+    value: float,
 ) -> DeviceStack:
     """Return a new DeviceStack with *param_name* set to *value* on every
     electrical layer that has MaterialParams.
@@ -71,7 +74,8 @@ def _vary_all_layers_param(
 
 
 def _vary_absorber_thickness(
-    stack: DeviceStack, thicknesses: list[float],
+    stack: DeviceStack,
+    thicknesses: list[float],
 ) -> list[DeviceStack]:
     """Return new DeviceStacks with the absorber layer thickness varied."""
     absorber_idx = next(
@@ -90,7 +94,10 @@ def _vary_absorber_thickness(
 def _run_jv(stack: DeviceStack) -> JVResult:
     """Run a J-V sweep with settings matching the regression suite."""
     return run_jv_sweep(
-        stack, N_grid=60, n_points=20, v_rate=5.0,
+        stack,
+        N_grid=60,
+        n_points=20,
+        v_rate=5.0,
         V_max=1.5,
     )
 
@@ -102,8 +109,8 @@ EG_SWEEP = [1.2, 1.4, 1.6, 1.8, 2.0, 2.2]  # eV
 # the solver uses the explicit ``ni`` parameter rather than deriving it from
 # ``Eg``, so we must scale ni together with Eg to keep the intrinsic carrier
 # density consistent with the shifted bandgap.
-EG_REF = 1.55       # eV
-NI_REF = 3.2e13     # m⁻³ (baseline MAPbI3 ni)
+EG_REF = 1.55  # eV
+NI_REF = 3.2e13  # m⁻³ (baseline MAPbI3 ni)
 
 
 def _above_gap_flux(eg: float) -> float:
@@ -114,11 +121,16 @@ def _above_gap_flux(eg: float) -> float:
     import os
 
     data_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "perovskite_sim", "data", "am15g.csv",
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "perovskite_sim",
+        "data",
+        "am15g.csv",
     )
     raw = np.loadtxt(data_path, delimiter=",", skiprows=6)
-    wavelength_nm = raw[:, 0]        # nm
-    spectral_flux = raw[:, 1]        # photons / (m²·s·m)
+    wavelength_nm = raw[:, 0]  # nm
+    spectral_flux = raw[:, 1]  # photons / (m²·s·m)
 
     # Photon energy: E (eV) = 1240 / λ (nm)
     photon_energy_eV = 1240.0 / wavelength_nm
@@ -189,9 +201,9 @@ def test_voc_vs_bandgap(eg_sweep_results: list[tuple[float, JVResult]]) -> None:
 
     # V_oc must be positive and below the thermodynamic limit (Eg/q)
     assert all(v > 0 for v in voc_values), f"V_oc must be positive: {voc_values}"
-    assert all(d > 0 for d in delta_V), (
-        f"ΔV = Eg − V_oc must be positive: V_oc={[f'{v:.4f}' for v in voc_values]}"
-    )
+    assert all(
+        d > 0 for d in delta_V
+    ), f"ΔV = Eg − V_oc must be positive: V_oc={[f'{v:.4f}' for v in voc_values]}"
 
     # Under Beer-Lambert V_oc is roughly constant; ΔV therefore grows with Eg.
     # The slope d(ΔV)/dEg must be positive (V_oc does not overshoot Eg).
@@ -216,9 +228,9 @@ def test_jsc_vs_bandgap(eg_sweep_results: list[tuple[float, JVResult]]) -> None:
     eg_values = np.array([eg for eg, _ in eg_sweep_results])
     jsc_values = np.array([r.metrics_fwd.J_sc for _, r in eg_sweep_results])
 
-    assert all(j > 0 for j in jsc_values), (
-        f"All J_sc values must be positive, got: {jsc_values}"
-    )
+    assert all(
+        j > 0 for j in jsc_values
+    ), f"All J_sc values must be positive, got: {jsc_values}"
     assert jsc_values[-1] < jsc_values[0], (
         f"J_sc at Eg={eg_values[-1]:.1f} eV ({jsc_values[-1]:.1f} A/m²) "
         f"must be less than J_sc at Eg={eg_values[0]:.1f} eV ({jsc_values[0]:.1f} A/m²)"
@@ -321,8 +333,12 @@ def test_ideality_factor(baseline_stack: DeviceStack) -> None:
 
     # Run dark J-V
     dark_result = run_jv_sweep(
-        baseline_stack, N_grid=60, n_points=30, v_rate=1.0,
-        V_max=1.5, illuminated=False,
+        baseline_stack,
+        N_grid=60,
+        n_points=30,
+        v_rate=1.0,
+        V_max=1.5,
+        illuminated=False,
     )
     # Use reverse scan — starts at forward bias where the device is settled
     V = np.asarray(dark_result.V_rev)
@@ -353,9 +369,7 @@ def test_ideality_factor(baseline_stack: DeviceStack) -> None:
         f"Ideality fit correlation r={r_value:.3f} too weak — "
         "J(V) may not be exponential in the selected region"
     )
-    assert 1.0 <= n_id <= 2.5, (
-        f"Ideality factor n_id = {n_id:.2f} outside [1.0, 2.5]"
-    )
+    assert 1.0 <= n_id <= 2.5, f"Ideality factor n_id = {n_id:.2f} outside [1.0, 2.5]"
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +380,7 @@ def test_ideality_factor(baseline_stack: DeviceStack) -> None:
 def test_voc_vs_illumination(baseline_stack: DeviceStack) -> None:
     """Suns-V_oc slope dV_oc / d(ln Φ) should be n_id · kT/q.
 
-    At 300 K: slope ∈ [25, 65] mV/decade, corresponding to
+    At 300 K: slope ∈ [25, 65] mV/ln-unit, corresponding to
     ideality factor n_id ∈ [1.0, 2.5].
 
     Uses the existing run_suns_voc experiment with default suns levels.
@@ -376,27 +390,26 @@ def test_voc_vs_illumination(baseline_stack: DeviceStack) -> None:
     # Wider suns range for robust slope fitting
     suns_levels = [1e-3, 1e-2, 5e-2, 1e-1, 5e-1, 1.0]
     result = run_suns_voc(
-        baseline_stack, suns_levels=suns_levels, N_grid=60, t_settle=0.1,
+        baseline_stack,
+        suns_levels=suns_levels,
+        N_grid=60,
+        t_settle=0.1,
     )
 
-    assert len(result.suns) >= 4, (
-        f"Need ≥4 suns levels for slope fit, got {len(result.suns)}"
-    )
+    assert (
+        len(result.suns) >= 4
+    ), f"Need ≥4 suns levels for slope fit, got {len(result.suns)}"
     # Filter out any failed levels (V_oc may be zero or NaN on failure)
     valid = np.isfinite(result.V_oc) & (result.V_oc > 0)
     suns_valid = np.asarray(result.suns)[valid]
     voc_valid = np.asarray(result.V_oc)[valid]
 
-    assert len(suns_valid) >= 3, (
-        f"Need ≥3 valid V_oc points, got {len(suns_valid)}"
-    )
+    assert len(suns_valid) >= 3, f"Need ≥3 valid V_oc points, got {len(suns_valid)}"
 
     slope, _, r_value, _, _ = linregress(np.log(suns_valid), voc_valid)
-    slope_mv_per_decade = slope * 1000  # V/decade → mV/decade
+    slope_mv_per_ln = slope * 1000  # V/ln-unit → mV/ln-unit
 
-    assert r_value > 0.95, (
-        f"Suns-V_oc slope fit correlation r={r_value:.3f} too weak"
-    )
-    assert 20 <= slope_mv_per_decade <= 70, (
-        f"Suns-V_oc slope {slope_mv_per_decade:.1f} mV/decade outside [20, 70]"
-    )
+    assert r_value > 0.95, f"Suns-V_oc slope fit correlation r={r_value:.3f} too weak"
+    assert (
+        20 <= slope_mv_per_ln <= 70
+    ), f"Suns-V_oc slope {slope_mv_per_ln:.1f} mV/ln-unit outside [20, 70]"

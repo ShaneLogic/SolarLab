@@ -7,7 +7,7 @@ Invoke with: pytest -m validation
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import numpy as np
 import pytest
 from scipy.stats import linregress
@@ -17,6 +17,42 @@ from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep, JVResult
 
 pytestmark = pytest.mark.validation
+
+
+@dataclass(frozen=True)
+class IonMongerPaperReference:
+    """Numeric paper targets from Courtier 2019 set (b)."""
+
+    source: str
+    V_oc: float
+    J_sc: float
+    FF_min: float
+    FF_max: float
+
+
+@dataclass(frozen=True)
+class DriftfusionPaperReference:
+    """Numeric paper targets from Calado 2016."""
+
+    source: str
+    V_oc_min: float
+    V_oc_max: float
+    J_sc: float
+
+
+IONMONGER_PAPER = IonMongerPaperReference(
+    source="Courtier 2019 set (b)",
+    V_oc=1.07,
+    J_sc=220.0,
+    FF_min=0.70,
+    FF_max=0.80,
+)
+DRIFTFUSION_PAPER = DriftfusionPaperReference(
+    source="Calado 2016 spiro/MAPbI3/TiO2",
+    V_oc_min=1.00,
+    V_oc_max=1.10,
+    J_sc=220.0,
+)
 
 
 def _run_jv(stack: DeviceStack) -> JVResult:
@@ -48,6 +84,13 @@ def ionmonger_legacy_result() -> JVResult:
     stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
     stack_legacy = replace(stack, mode="legacy")
     return _run_jv(stack_legacy)
+
+
+@pytest.fixture(scope="module")
+def ionmonger_repro_result() -> JVResult:
+    """Courtier 2019 reproduction preset with calibrated paper V_bi."""
+    stack = load_device_from_yaml("configs/ionmonger_courtier2019_repro.yaml")
+    return _run_jv(stack)
 
 
 def test_ionmonger_voc_in_band_offset_range(
@@ -95,8 +138,37 @@ def test_ionmonger_ff_in_paper_range(
     """
     FF = ionmonger_result.metrics_rev.FF
     assert 0.60 <= FF <= 0.85, (
-        f"IonMonger FF = {FF:.4f} outside [0.60, 0.85] — "
-        f"paper reports ~0.70–0.80"
+        f"IonMonger FF = {FF:.4f} outside [0.60, 0.85] — " f"paper reports ~0.70–0.80"
+    )
+
+
+def test_ionmonger_paper_comparison_quantifies_known_voc_offset(
+    ionmonger_result: JVResult,
+) -> None:
+    """Quantify the known V_oc offset against Courtier 2019 set (b)."""
+    V_oc = ionmonger_result.metrics_rev.V_oc
+    delta_voc = V_oc - IONMONGER_PAPER.V_oc
+    assert 0.08 <= delta_voc <= 0.18, (
+        f"IonMonger V_oc offset vs {IONMONGER_PAPER.source} is "
+        f"{delta_voc:.4f} V outside [0.08, 0.18] — "
+        f"ours = {V_oc:.4f} V, paper = {IONMONGER_PAPER.V_oc:.4f} V"
+    )
+
+
+def test_ionmonger_repro_matches_paper_metrics(
+    ionmonger_repro_result: JVResult,
+) -> None:
+    """Dedicated reproduction preset must match Courtier 2019 set (b)."""
+    metrics = ionmonger_repro_result.metrics_rev
+    assert 1.03 <= metrics.V_oc <= 1.10, (
+        f"IonMonger repro V_oc = {metrics.V_oc:.4f} V outside [1.03, 1.10]"
+    )
+    assert 200.0 <= metrics.J_sc <= 240.0, (
+        f"IonMonger repro J_sc = {metrics.J_sc:.1f} A/m² outside [200, 240]"
+    )
+    assert IONMONGER_PAPER.FF_min <= metrics.FF <= IONMONGER_PAPER.FF_max, (
+        f"IonMonger repro FF = {metrics.FF:.4f} outside "
+        f"[{IONMONGER_PAPER.FF_min}, {IONMONGER_PAPER.FF_max}]"
     )
 
 
@@ -170,8 +242,6 @@ def _load_driftfusion_flatband() -> DeviceStack:
     mode is set so that TE, TMM, photon recycling, and every other
     post-Phase-1 hook are off — matching Driftfusion's own physics set.
     """
-    from perovskite_sim.models.parameters import MaterialParams
-
     stack = load_device_from_yaml("configs/driftfusion_benchmark.yaml")
     new_layers = []
     for layer in stack.layers:
@@ -188,6 +258,13 @@ def _load_driftfusion_flatband() -> DeviceStack:
 def driftfusion_result() -> JVResult:
     """Driftfusion config — flat-band LEGACY mode matching Calado 2016."""
     return _run_jv(_load_driftfusion_flatband())
+
+
+@pytest.fixture(scope="module")
+def driftfusion_repro_result() -> JVResult:
+    """Calado 2016 reproduction preset with calibrated paper V_bi."""
+    stack = load_device_from_yaml("configs/driftfusion_calado2016_repro.yaml")
+    return _run_jv(stack)
 
 
 def test_driftfusion_voc_in_expected_range(
@@ -207,6 +284,37 @@ def test_driftfusion_voc_in_expected_range(
     assert 0.55 <= V_oc <= 0.85, (
         f"Driftfusion flat-band V_oc = {V_oc:.4f} V outside [0.55, 0.85] — "
         f"Calado 2016 reports ~1.00–1.10 V; our flat-band model gives ~0.67 V"
+    )
+
+
+def test_driftfusion_paper_comparison_quantifies_low_voc_offset(
+    driftfusion_result: JVResult,
+) -> None:
+    """Quantify the known low V_oc offset against the Calado 2016 midpoint."""
+    V_oc = driftfusion_result.metrics_rev.V_oc
+    paper_midpoint = 0.5 * (DRIFTFUSION_PAPER.V_oc_min + DRIFTFUSION_PAPER.V_oc_max)
+    delta_voc = V_oc - paper_midpoint
+    assert -0.50 <= delta_voc <= -0.25, (
+        f"Driftfusion V_oc offset vs {DRIFTFUSION_PAPER.source} midpoint is "
+        f"{delta_voc:.4f} V outside [-0.50, -0.25] — "
+        f"ours = {V_oc:.4f} V, paper midpoint = {paper_midpoint:.4f} V"
+    )
+
+
+def test_driftfusion_repro_matches_paper_metrics(
+    driftfusion_repro_result: JVResult,
+) -> None:
+    """Dedicated reproduction preset must match Calado 2016 paper metrics."""
+    metrics = driftfusion_repro_result.metrics_rev
+    assert DRIFTFUSION_PAPER.V_oc_min <= metrics.V_oc <= DRIFTFUSION_PAPER.V_oc_max, (
+        f"Driftfusion repro V_oc = {metrics.V_oc:.4f} V outside "
+        f"[{DRIFTFUSION_PAPER.V_oc_min}, {DRIFTFUSION_PAPER.V_oc_max}]"
+    )
+    assert 200.0 <= metrics.J_sc <= 240.0, (
+        f"Driftfusion repro J_sc = {metrics.J_sc:.1f} A/m² outside [200, 240]"
+    )
+    assert 0.50 <= metrics.FF <= 0.80, (
+        f"Driftfusion repro FF = {metrics.FF:.4f} outside [0.50, 0.80]"
     )
 
 
@@ -234,13 +342,11 @@ def test_driftfusion_ff_in_expected_range(
     limiting and FF should be in [0.50, 0.80].
     """
     FF = driftfusion_result.metrics_rev.FF
-    assert 0.50 <= FF <= 0.80, (
-        f"Driftfusion FF = {FF:.4f} outside [0.50, 0.80]"
-    )
+    assert 0.50 <= FF <= 0.80, f"Driftfusion FF = {FF:.4f} outside [0.50, 0.80]"
 
 
 def test_driftfusion_illumination_slope_physical() -> None:
-    """dV_oc / d(ln Phi) must be in [25, 80] mV/decade.
+    """dV_oc / d(ln Phi) must be in [25, 80] mV per natural-log unit.
 
     The ideality-factor-controlled slope should be n_id · kT/q with
     n_id ∈ [1.0, 3.1] for a device with both SRH and radiative recombination.
@@ -257,11 +363,9 @@ def test_driftfusion_illumination_slope_physical() -> None:
     slope, _, r_value, _, _ = linregress(ln_phi, voc_vals)
     slope_mv = slope * 1000
 
-    assert r_value > 0.95, (
-        f"V_oc vs ln(Phi) correlation r = {r_value:.3f} — too weak"
-    )
+    assert r_value > 0.95, f"V_oc vs ln(Phi) correlation r = {r_value:.3f} — too weak"
     assert 25.0 <= slope_mv <= 80.0, (
-        f"dV_oc / d(ln Phi) = {slope_mv:.1f} mV/dec outside [25, 80] — "
+        f"dV_oc / d(ln Phi) = {slope_mv:.1f} mV/ln-unit outside [25, 80] — "
         f"n_id ≈ {slope_mv / 25.85:.1f}"
     )
 
@@ -277,7 +381,11 @@ def test_driftfusion_hysteresis_increases_with_scan_rate() -> None:
 
     def _hi_at_rate(v_rate: float) -> float:
         res = run_jv_sweep(
-            base, N_grid=40, n_points=15, v_rate=v_rate, V_max=1.5,
+            base,
+            N_grid=40,
+            n_points=15,
+            v_rate=v_rate,
+            V_max=1.5,
         )
         return float(res.hysteresis_index)
 
