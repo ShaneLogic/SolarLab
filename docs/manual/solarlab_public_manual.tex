@@ -1,0 +1,2396 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\PassOptionsToPackage{dvipsnames,svgnames*,x11names*}{xcolor}
+%
+\documentclass[
+  11pt,
+  american,
+]{report}
+\usepackage{amsmath,amssymb}
+\usepackage{lmodern}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+  \setmainfont[]{Arial}
+  \setsansfont[]{Arial}
+  \setmonofont[]{Menlo}
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\IfFileExists{bookmark.sty}{\usepackage{bookmark}}{\usepackage{hyperref}}
+\hypersetup{
+  pdftitle={SolarLab Technical and User Manual},
+  pdfauthor={SolarLab Project},
+  pdflang={en-US},
+  colorlinks=true,
+  linkcolor={blue},
+  filecolor={Maroon},
+  citecolor={Blue},
+  urlcolor={blue},
+  pdfcreator={LaTeX via pandoc}}
+\urlstyle{same} % disable monospaced font for URLs
+\usepackage[margin=0.85in]{geometry}
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\newenvironment{Shaded}{}{}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.49,0.56,0.16}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\BuiltInTok}[1]{#1}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.53,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.56,0.13,0.00}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.73,0.13,0.13}{\textit{#1}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.02,0.16,0.49}{#1}}
+\newcommand{\ImportTok}[1]{#1}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.74,0.48,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.73,0.40,0.53}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.10,0.09,0.49}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+% Set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{5}
+\hypersetup{linktoc=all}
+\makeatletter
+\renewcommand*\l@section{\@dottedtocline{1}{1.5em}{3.2em}}
+\renewcommand*\l@subsection{\@dottedtocline{2}{4.7em}{4.1em}}
+\makeatother
+\ifXeTeX
+  % Load polyglossia as late as possible: uses bidi with RTL langages (e.g. Hebrew, Arabic)
+  \usepackage{polyglossia}
+  \setmainlanguage[variant=american]{english}
+\else
+  \usepackage[main=american]{babel}
+% get rid of language-specific shorthands (see #6817):
+\let\LanguageShortHands\languageshorthands
+\def\languageshorthands#1{}
+\fi
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+
+\title{SolarLab Technical and User Manual}
+\usepackage{etoolbox}
+\makeatletter
+\providecommand{\subtitle}[1]{% add subtitle to \maketitle
+  \apptocmd{\@title}{\par {\large #1 \par}}{}{}
+}
+\makeatother
+\subtitle{Technical guide to thin-film solar-cell simulation, workflows,
+and validation}
+\author{SolarLab Project}
+\date{2026-05-19}
+
+\begin{document}
+\maketitle
+
+{
+\hypersetup{linkcolor=}
+\setcounter{tocdepth}{2}
+\tableofcontents
+}
+\listoftables
+\listoffigures
+\newpage
+
+\hypertarget{executive-summary}{%
+\chapter{Executive Summary}\label{executive-summary}}
+
+SolarLab is a thin-film photovoltaic device simulator that couples
+drift-diffusion transport, Poisson electrostatics, mobile-ion
+redistribution, recombination, and optical generation within a
+reproducible software workflow. The numerical core is exposed through a
+Python API, a FastAPI service layer, and a TypeScript/Plotly
+workstation. An experimental two-dimensional extension supports lateral
+microstructure and grain-boundary studies.
+
+This manual serves two purposes:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  It introduces the device variables, parameter conventions, and
+  simulation workflow for readers who are new to SolarLab or to
+  semiconductor device simulation.
+\item
+  It documents the implemented physics, numerical method, validation
+  gates, assumptions, and limitations needed for technical review and
+  reproducible use.
+\end{enumerate}
+
+The manual is based on the current SolarLab repository state:
+
+\begin{itemize}
+\tightlist
+\item
+  Commit: \texttt{43c81d7fefd009ffca598f58f85a40ad4e661e1e}
+\item
+  Validation date: 2026-05-19
+\item
+  Primary simulator tree: \texttt{perovskite-sim/}
+\end{itemize}
+
+The validation evidence collected before writing this PDF is summarized
+in Chapter \ref{validation-and-evidence}. The short version is:
+
+\begin{longtable}[]{@{}lr@{}}
+\toprule
+Validation gate & Result \\
+\midrule
+\endhead
+\texttt{pytest} & 647 passed, 1 skipped \\
+\texttt{pytest\ -m\ slow} & 72 passed \\
+\texttt{pytest\ -m\ validation} & 18 passed \\
+\texttt{npm\ run\ build} & passed \\
+\texttt{npm\ run\ test:run} & 320 passed \\
+\bottomrule
+\end{longtable}
+
+The validation evidence should be interpreted as implementation
+evidence, not as a guarantee of predictive accuracy for arbitrary
+material stacks. It shows that the equations, numerical coupling,
+backend/frontend interfaces, regression envelopes, and documented
+benchmark cases are internally consistent for the repository state
+listed above.
+
+\hypertarget{how-to-read-this-manual}{%
+\chapter{How To Read This Manual}\label{how-to-read-this-manual}}
+
+If you are new to device simulation, read Chapters 2 to 6 in order.
+These chapters explain the device, the variables, the equations, and the
+numerical method before introducing the software workflow.
+
+If you are already familiar with semiconductor drift-diffusion, start
+with Chapters 5, 7, 8, and 11:
+
+\begin{itemize}
+\tightlist
+\item
+  Chapter 5 defines the model equations.
+\item
+  Chapter 7 explains the solver.
+\item
+  Chapter 8 explains YAML/Python/API workflows.
+\item
+  Chapter 11 gives validation evidence and limitations.
+\end{itemize}
+
+The notation in this manual follows standard solar-cell convention:
+
+\begin{itemize}
+\tightlist
+\item
+  \(V_\mathrm{oc}\): open-circuit voltage.
+\item
+  \(J_\mathrm{sc}\): short-circuit current density.
+\item
+  \(FF\): fill factor.
+\item
+  \(PCE\): power-conversion efficiency.
+\item
+  \(n\): electron density.
+\item
+  \(p\): hole density.
+\item
+  \(P\): mobile positive ion-vacancy density.
+\item
+  \(\phi\): electrostatic potential.
+\item
+  \(E\): electric field.
+\item
+  \(G\): optical generation rate.
+\item
+  \(R\): recombination rate.
+\end{itemize}
+
+All simulator inputs are SI unless explicitly stated otherwise. Length
+is in meters, time in seconds, current density in \(A\,m^{-2}\), density
+in \(m^{-3}\), mobility in \(m^2 V^{-1} s^{-1}\), and diffusion
+coefficient in \(m^2 s^{-1}\). The electron affinity \(\chi\) and band
+gap \(E_g\) are stored in eV.
+
+\hypertarget{simulator-architecture}{%
+\chapter{Simulator Architecture}\label{simulator-architecture}}
+
+SolarLab should be read as a coupled model implementation rather than as
+a stand-alone user interface. YAML files, the Python API, the FastAPI
+backend, and the TypeScript frontend all operate on the same device
+schema. A parameter edited in the browser is therefore serialized into
+the same scientific object used by the solver.
+
+\begin{figure}
+\centering
+\includegraphics{figures/architecture_flow.png}
+\caption{SolarLab architecture flow}
+\end{figure}
+
+The architecture preserves four technical boundaries:
+
+\begin{itemize}
+\tightlist
+\item
+  device definition is separated from experiment settings;
+\item
+  material and grid arrays are cached before the time integrator runs;
+\item
+  physics hooks are activated by the resolved simulation mode and by the
+  presence of required parameters;
+\item
+  backend and frontend layers transport result dataclasses instead of
+  reimplementing solver logic.
+\end{itemize}
+
+For reproducible interpretation, each reported curve should identify the
+device stack, physics tier, experiment driver, and solver configuration.
+Missing metadata weakens reproducibility even when the numerical run
+completes successfully.
+
+\hypertarget{what-solarlab-simulates}{%
+\chapter{What SolarLab Simulates}\label{what-solarlab-simulates}}
+
+SolarLab represents a solar cell as a sequence of material layers
+between two contacts. The default coordinate follows the stack
+direction. Incident light generates electron-hole pairs, while the
+electrostatic field and contact selectivity drive carrier separation and
+extraction. In perovskite devices, mobile ionic defects can redistribute
+under the same field, producing history-dependent current-voltage
+response.
+
+The default solver is one-dimensional and is appropriate for:
+
+\begin{itemize}
+\tightlist
+\item
+  J-V sweeps and hysteresis;
+\item
+  dark diode curves;
+\item
+  EQE and electroluminescence;
+\item
+  impedance;
+\item
+  transient photovoltage;
+\item
+  ion-coupled degradation;
+\item
+  tandem current matching;
+\item
+  screening many material candidates.
+\end{itemize}
+
+SolarLab also includes an experimental two-dimensional solver. The 2D
+solver extrudes the same vertical device stack laterally and is intended
+for:
+
+\begin{itemize}
+\tightlist
+\item
+  1D/2D parity checks;
+\item
+  vertical grain boundaries;
+\item
+  lateral microstructure;
+\item
+  \(V_\mathrm{oc}(L_g)\) grain-size sweeps.
+\end{itemize}
+
+The 2D solver is not a replacement for the 1D workflow. Mobile ions are
+held as a static Poisson background during 2D J-V runs; this is an
+explicit model assumption and should be reported when interpreting 2D
+results.
+
+\begin{figure}
+\centering
+\includegraphics{perovskite-sim/docs/images/device_structure.png}
+\caption{SolarLab device structure}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics{perovskite-sim/docs/images/band_diagram.png}
+\caption{SolarLab band-diagram concept}
+\end{figure}
+
+\hypertarget{beginner-physics-primer}{%
+\chapter{Beginner Physics Primer}\label{beginner-physics-primer}}
+
+\hypertarget{electrons-holes-and-bands}{%
+\section{Electrons, Holes, And Bands}\label{electrons-holes-and-bands}}
+
+In a semiconductor, electrons can move in the conduction band and holes
+can move in the valence band. A solar cell works because light creates
+electron-hole pairs and the device structure makes it more likely that
+electrons leave through one contact while holes leave through the other.
+
+SolarLab stores two energy parameters that are essential for
+heterojunctions:
+
+\begin{itemize}
+\tightlist
+\item
+  \(\chi\), the electron affinity;
+\item
+  \(E_g\), the band gap.
+\end{itemize}
+
+Together these determine approximate conduction-band and valence-band
+positions. At an interface, a change in \(\chi\) or \(E_g\) creates band
+offsets. Band offsets are important because they can block one carrier
+type while allowing the other carrier type to pass.
+
+\hypertarget{generation-and-recombination}{%
+\section{Generation And
+Recombination}\label{generation-and-recombination}}
+
+Optical generation \(G(x)\) is the rate at which absorbed photons create
+electron-hole pairs per unit volume. Recombination \(R(n,p)\) is the
+rate at which electrons and holes annihilate. A good solar cell has high
+generation and carrier collection, but low recombination.
+
+SolarLab includes several recombination channels:
+
+\begin{itemize}
+\tightlist
+\item
+  Shockley-Read-Hall (SRH) trap-assisted recombination;
+\item
+  radiative recombination;
+\item
+  Auger recombination;
+\item
+  interface recombination through surface recombination velocities;
+\item
+  optional trap-density profiles near interfaces.
+\end{itemize}
+
+\hypertarget{mobile-ions-and-hysteresis}{%
+\section{Mobile Ions And Hysteresis}\label{mobile-ions-and-hysteresis}}
+
+Perovskite cells can contain mobile ionic defects. These defects move
+much more slowly than electronic carriers. During a voltage scan, the
+ion profile may not reach equilibrium at each voltage. This creates J-V
+hysteresis. SolarLab treats this as a physical transient, not as a
+post-processing correction.
+
+In the state vector, the default mobile ion variable is \(P\), the
+positive vacancy density. A second negative species can be configured
+through \texttt{D\_ion\_neg}, \texttt{P0\_neg}, and
+\texttt{P\_lim\_neg}.
+
+\hypertarget{device-definition}{%
+\chapter{Device Definition}\label{device-definition}}
+
+\hypertarget{core-data-flow}{%
+\section{Core Data Flow}\label{core-data-flow}}
+
+The simulator data flow is:
+
+\begin{verbatim}
+YAML or inline device dictionary
+-> MaterialParams + LayerSpec + DeviceStack
+-> experiment driver
+-> MaterialArrays cache
+-> result dataclass
+\end{verbatim}
+
+The main dataclasses are:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{MaterialParams}: physical parameters for one material.
+\item
+  \texttt{LayerSpec}: layer name, role, thickness, and material
+  parameters.
+\item
+  \texttt{DeviceStack}: full multilayer stack and global device
+  settings.
+\end{itemize}
+
+\hypertarget{layer-roles}{%
+\section{Layer Roles}\label{layer-roles}}
+
+Layer roles used by the frontend and YAML schema are:
+
+\begin{longtable}[]{@{}ll@{}}
+\toprule
+Role & Meaning \\
+\midrule
+\endhead
+\texttt{substrate} & optical-only layer, excluded from electrical
+drift-diffusion \\
+\texttt{front\_contact} & front electrode or transparent conductor \\
+\texttt{ETL} & electron transport layer \\
+\texttt{absorber} & active photovoltaic absorber \\
+\texttt{HTL} & hole transport layer \\
+\texttt{back\_contact} & rear electrode \\
+\bottomrule
+\end{longtable}
+
+Substrate layers must form a contiguous prefix of the stack. They
+participate in transfer-matrix optics but do not appear in the
+drift-diffusion grid.
+
+\hypertarget{main-material-parameters}{%
+\section{Main Material Parameters}\label{main-material-parameters}}
+
+\begin{longtable}[]{@{}lll@{}}
+\toprule
+Field & Meaning & Unit \\
+\midrule
+\endhead
+\texttt{eps\_r} & relative permittivity & dimensionless \\
+\texttt{mu\_n}, \texttt{mu\_p} & electron and hole mobilities &
+\(m^2 V^{-1} s^{-1}\) \\
+\texttt{D\_ion} & positive ion diffusion coefficient & \(m^2 s^{-1}\) \\
+\texttt{P\_lim} & positive ion steric limit & \(m^{-3}\) \\
+\texttt{P0} & initial positive ion density & \(m^{-3}\) \\
+\texttt{ni} & intrinsic carrier density & \(m^{-3}\) \\
+\texttt{tau\_n}, \texttt{tau\_p} & SRH lifetimes & \(s\) \\
+\texttt{n1}, \texttt{p1} & SRH trap reference densities & \(m^{-3}\) \\
+\texttt{B\_rad} & radiative recombination coefficient &
+\(m^3 s^{-1}\) \\
+\texttt{C\_n}, \texttt{C\_p} & Auger coefficients & \(m^6 s^{-1}\) \\
+\texttt{alpha} & Beer-Lambert absorption coefficient & \(m^{-1}\) \\
+\texttt{N\_A}, \texttt{N\_D} & acceptor and donor densities &
+\(m^{-3}\) \\
+\texttt{chi} & electron affinity & eV \\
+\texttt{Eg} & band gap & eV \\
+\texttt{optical\_material} & key into \texttt{data/nk/*.csv} & string \\
+\texttt{incoherent} & incoherent TMM layer flag & boolean \\
+\bottomrule
+\end{longtable}
+
+Additional optional parameters cover negative ions, temperature scaling,
+field-dependent mobility, trap profiles, and optical fallbacks.
+
+\hypertarget{parameter-dictionary}{%
+\section{Parameter Dictionary}\label{parameter-dictionary}}
+
+This section is intentionally detailed because input specification is
+often the dominant source of error in device simulation. SolarLab cannot
+infer whether a parameter comes from measurement, literature, fitting,
+or exploratory screening. Each field should therefore be treated as a
+documented scientific assumption.
+
+\hypertarget{electrical-and-transport-fields}{%
+\subsection{Electrical And Transport
+Fields}\label{electrical-and-transport-fields}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedleft\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+\toprule
+Field & Unit & Physical role & Beginner guidance \\
+\midrule
+\endhead
+\path{eps_r} & 1 & relative dielectric constant in Poisson's equation & Larger values screen charge and reduce field gradients. Use layer-specific literature values rather than a single generic perovskite value. \\
+\path{mu_n} & \(m^2 V^{-1} s^{-1}\) & low-field electron mobility & Controls electron extraction and transport resistance. Remember that \(1\,cm^2 V^{-1}s^{-1}=10^{-4}\,m^2 V^{-1}s^{-1}\). \\
+\path{mu_p} & \(m^2 V^{-1} s^{-1}\) & low-field hole mobility & Same unit conversion convention as \path{mu_n}. Low mobility typically affects FF before producing a large change in \(V_\mathrm{oc}\). \\
+\path{N_A} & \(m^{-3}\) & ionized acceptor density & Represents p-type doping. Values reported in \(cm^{-3}\) must be multiplied by \(10^6\). \\
+\path{N_D} & \(m^{-3}\) & ionized donor density & Represents n-type doping. Use compensated doping only when it is part of the intended physical model. \\
+\path{ni} & \(m^{-3}\) & intrinsic carrier density & Appears in mass action and SRH terms. It should be consistent with the effective band gap and temperature when doing parameter studies. \\
+\path{chi} & eV & electron affinity & Sets approximate conduction-band alignment. Inconsistent \(\chi\) values can introduce artificial transport barriers. \\
+\path{Eg} & eV & band gap & Sets band offsets and thermodynamic interpretation. Beer-Lambert optics do not automatically shift spectral absorption when \path{Eg} changes. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{ion-and-hysteresis-fields}{%
+\subsection{Ion And Hysteresis Fields}\label{ion-and-hysteresis-fields}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedleft\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+\toprule
+Field & Unit & Physical role & Beginner guidance \\
+\midrule
+\endhead
+\path{D_ion} & \(m^2 s^{-1}\) & positive mobile-ion diffusion coefficient & Set to zero when mobile ions are excluded from the model. Nonzero values can produce scan-rate dependence. \\
+\path{P0} & \(m^{-3}\) & initial positive ion density & Represents the equilibrium mobile-vacancy population before redistribution. \\
+\path{P_lim} & \(m^{-3}\) & steric upper density for positive ions & Limits ion accumulation through a finite-site-density approximation. The value should be consistent with the assumed mobile-site density. \\
+\path{D_ion_neg} & \(m^2 s^{-1}\) & negative mobile-ion diffusion coefficient & Enables a second mobile species. Leave zero for the default single-ion model. \\
+\path{P0_neg} & \(m^{-3}\) & initial negative ion density & Use only when the negative species is part of the physical hypothesis. \\
+\path{P_lim_neg} & \(m^{-3}\) & steric upper density for negative ions & Same interpretation as \path{P_lim}. \\
+\path{E_a_ion} & eV & Arrhenius activation energy for ion diffusion & Used for temperature-dependent ion mobility. Fitted or literature-derived values should be reported with provenance. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{recombination-and-trap-fields}{%
+\subsection{Recombination And Trap
+Fields}\label{recombination-and-trap-fields}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedleft\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+\toprule
+Field & Unit & Physical role & Beginner guidance \\
+\midrule
+\endhead
+\path{tau_n} & s & electron SRH lifetime & Shorter lifetime increases trap-assisted recombination. It is often an effective fitted parameter. \\
+\path{tau_p} & s & hole SRH lifetime & Interpret with \path{tau_n}; asymmetry can model carrier-selective trap response. \\
+\path{n1} & \(m^{-3}\) & SRH electron reference density & Encodes the effective trap-energy position and should be changed consistently with the trap model. \\
+\path{p1} & \(m^{-3}\) & SRH hole reference density & Companion to \path{n1}. \\
+\path{B_rad} & \(m^3 s^{-1}\) & radiative recombination coefficient & Central to radiative-limit and photon-recycling studies. \\
+\path{C_n} & \(m^6 s^{-1}\) & electron Auger coefficient & Most relevant when high carrier densities are expected. \\
+\path{C_p} & \(m^6 s^{-1}\) & hole Auger coefficient & Same caution as \path{C_n}. \\
+\path{trap_N_t_interface} & \(m^{-3}\) & interface-near trap density & Activates spatial trap profiles when supplied with decay information. \\
+\path{trap_N_t_bulk} & \(m^{-3}\) & bulk trap density & The asymptotic trap density away from the interface. \\
+\path{trap_decay_length} & m & decay length or Gaussian width & Must be physically resolvable by the grid. \\
+\path{trap_profile_shape} & string & \path{exponential} or \path{gaussian} trap profile & Select the profile shape that corresponds to the assumed defect distribution. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{optical-fields}{%
+\subsection{Optical Fields}\label{optical-fields}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedleft\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+\toprule
+Field & Unit & Physical role & Beginner guidance \\
+\midrule
+\endhead
+\path{alpha} & \(m^{-1}\) & scalar Beer-Lambert absorption coefficient & Suitable for simplified optical studies. It is not wavelength-resolved. \\
+\path{optical_material} & string & key into tabulated \(n,k\) data & Required for TMM, EQE, and EL. The key must exist in \path{perovskite_sim/data/nk}. \\
+\path{n_optical} & 1 & constant refractive-index fallback & Useful for approximate optical calculations but not a substitute for measured \(n,k\). \\
+\path{incoherent} & boolean & thick-layer incoherent TMM treatment & Intended for the first thick substrate. The current TMM path does not support arbitrary incoherent layers mid-stack. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{temperature-and-field-dependent-mobility-fields}{%
+\subsection{Temperature And Field-Dependent Mobility
+Fields}\label{temperature-and-field-dependent-mobility-fields}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedleft\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+\toprule
+Field & Unit & Physical role & Beginner guidance \\
+\midrule
+\endhead
+\path{Nc300} & \(m^{-3}\) & conduction-band density of states at 300 K & Optional temperature-scaling input. Use only when the temperature model is calibrated. \\
+\path{Nv300} & \(m^{-3}\) & valence-band density of states at 300 K & Companion to \path{Nc300}. \\
+\path{mu_T_gamma} & 1 & mobility power-law temperature exponent & Default keeps a common scattering-style trend. Document any changed value. \\
+\path{B_rad_T_gamma} & 1 & radiative coefficient temperature exponent & Default zero preserves legacy behavior. \\
+\path{varshni_alpha} & eV K\(^{-1}\) & Varshni band-gap coefficient & Zero disables band-gap temperature shift. \\
+\path{varshni_beta} & K & Varshni temperature parameter & Used with \path{varshni_alpha}. \\
+\path{v_sat_n} & \(m\,s^{-1}\) & electron velocity-saturation limit & Zero disables Caughey-Thomas saturation for electrons. \\
+\path{v_sat_p} & \(m\,s^{-1}\) & hole velocity-saturation limit & Zero disables Caughey-Thomas saturation for holes. \\
+\path{ct_beta_n} & 1 & electron Caughey-Thomas exponent & Controls sharpness of velocity saturation. \\
+\path{ct_beta_p} & 1 & hole Caughey-Thomas exponent & Same role for holes. \\
+\path{pf_gamma_n} & \((V/m)^{-1/2}\) & electron Poole-Frenkel mobility coefficient & Zero disables field-enhanced hopping for electrons. \\
+\path{pf_gamma_p} & \((V/m)^{-1/2}\) & hole Poole-Frenkel mobility coefficient & Zero disables field-enhanced hopping for holes. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{device-level-fields}{%
+\subsection{Device-Level Fields}\label{device-level-fields}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedleft\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+\toprule
+Field & Unit & Physical role & Beginner guidance \\
+\midrule
+\endhead
+\path{V_bi} & V & built-in voltage in Poisson boundary condition & This is not always identical to the derived heterostack Fermi-level separation. \\
+\path{Phi} & \(m^{-2}s^{-1}\) & incident photon flux for Beer-Lambert generation & For spectral experiments use TMM data rather than only changing \path{Phi}. \\
+\path{T} & K & device temperature & Affects thermal voltage and enabled temperature-dependent hooks. \\
+\path{mode} & string & \path{legacy}, \path{fast}, or \path{full} physics tier & The mode is a ceiling; hooks still need required parameters. \\
+\path{interfaces} & \(m\,s^{-1}\) pairs & interface recombination velocities & One pair per internal electrical interface, ordered from the front contact toward the rear contact. \\
+\path{S_n_left} & \(m\,s^{-1}\) & left electron contact velocity & \path{None} gives ohmic default. \path{0} is blocking. Large values approach ohmic extraction. \\
+\path{S_p_left} & \(m\,s^{-1}\) & left hole contact velocity & Same convention as \path{S_n_left}. \\
+\path{S_n_right} & \(m\,s^{-1}\) & right electron contact velocity & Same convention as \path{S_n_left}. \\
+\path{S_p_right} & \(m\,s^{-1}\) & right hole contact velocity & Same convention as \path{S_n_left}. \\
+\path{microstructure} & object & 2D grain-boundary specification & Used by 2D drivers; ignored by standard 1D paths. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{global-device-parameters}{%
+\section{Global Device Parameters}\label{global-device-parameters}}
+
+\texttt{DeviceStack} stores:
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.34\linewidth}>{\raggedright\arraybackslash}p{0.58\linewidth}@{}}
+\toprule
+Field & Meaning \\
+\midrule
+\endhead
+\path{V_bi} & built-in voltage used in the Poisson boundary condition \\
+\path{Phi} & incident photon flux for Beer-Lambert generation \\
+\path{interfaces} & interface recombination velocities \((v_n,v_p)\) \\
+\path{T} & device temperature in K \\
+\path{mode} & \path{legacy}, \path{fast}, or \path{full} \\
+\path{S_n_left}, \path{S_p_left}, \path{S_n_right}, \path{S_p_right} & selective-contact velocities \\
+\path{microstructure} & optional 2D grain-boundary block \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{built-in-potential}{%
+\section{Built-In Potential}\label{built-in-potential}}
+
+SolarLab has two related built-in potentials:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \texttt{stack.V\_bi}: the value read from YAML and used in the Poisson
+  boundary condition.
+\item
+  \texttt{stack.compute\_V\_bi()}: a derived effective built-in
+  potential computed from Fermi-level differences across the electrical
+  stack.
+\end{enumerate}
+
+This distinction matters. Some legacy and benchmark configurations use a
+manual \(V_\mathrm{bi}\) convention. Heterostacks with \(\chi\) and
+\(E_g\) also have band-alignment information that can imply a different
+effective Fermi-level separation.
+
+The Poisson boundary is:
+
+\[
+\phi(0)=\phi_\mathrm{left}, \qquad
+\phi(L)=\phi_\mathrm{left}+V_\mathrm{bi}-V_\mathrm{app}.
+\]
+
+The effective built-in potential is used for defaults such as the
+automatic upper voltage in J-V sweeps.
+
+\hypertarget{yaml-example}{%
+\section{YAML Example}\label{yaml-example}}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{device}\KeywordTok{:}
+\AttributeTok{  }\FunctionTok{V\_bi}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.1}
+\AttributeTok{  }\FunctionTok{Phi}\KeywordTok{:}\AttributeTok{ }\FloatTok{2.5e21}
+\AttributeTok{  }\FunctionTok{T}\KeywordTok{:}\AttributeTok{ }\FloatTok{300.0}
+\AttributeTok{  }\FunctionTok{mode}\KeywordTok{:}\AttributeTok{ full}
+\AttributeTok{  }\FunctionTok{contacts}\KeywordTok{:}
+\AttributeTok{    }\FunctionTok{left}\KeywordTok{:}
+\AttributeTok{      }\FunctionTok{S\_p}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e3}
+\AttributeTok{      }\FunctionTok{S\_n}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e{-}3}
+\AttributeTok{    }\FunctionTok{right}\KeywordTok{:}
+\AttributeTok{      }\FunctionTok{S\_n}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e3}
+\AttributeTok{      }\FunctionTok{S\_p}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e{-}3}
+
+\FunctionTok{layers}\KeywordTok{:}
+\AttributeTok{  }\KeywordTok{{-}}\AttributeTok{ }\FunctionTok{name}\KeywordTok{:}\AttributeTok{ HTL}
+\AttributeTok{    }\FunctionTok{role}\KeywordTok{:}\AttributeTok{ HTL}
+\AttributeTok{    }\FunctionTok{thickness}\KeywordTok{:}\AttributeTok{ }\FloatTok{2.0e{-}7}
+\AttributeTok{    }\FunctionTok{eps\_r}\KeywordTok{:}\AttributeTok{ }\FloatTok{3.0}
+\AttributeTok{    }\FunctionTok{mu\_n}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e{-}8}
+\AttributeTok{    }\FunctionTok{mu\_p}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e{-}6}
+\AttributeTok{    }\FunctionTok{ni}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e9}
+\AttributeTok{    }\FunctionTok{N\_A}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e24}
+\AttributeTok{    }\FunctionTok{N\_D}\KeywordTok{:}\AttributeTok{ }\FloatTok{0.0}
+\AttributeTok{    }\FunctionTok{D\_ion}\KeywordTok{:}\AttributeTok{ }\FloatTok{0.0}
+\AttributeTok{    }\FunctionTok{P\_lim}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e27}
+\AttributeTok{    }\FunctionTok{P0}\KeywordTok{:}\AttributeTok{ }\FloatTok{0.0}
+\AttributeTok{    }\FunctionTok{tau\_n}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e{-}6}
+\AttributeTok{    }\FunctionTok{tau\_p}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e{-}6}
+\AttributeTok{    }\FunctionTok{n1}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e9}
+\AttributeTok{    }\FunctionTok{p1}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.0e9}
+\AttributeTok{    }\FunctionTok{B\_rad}\KeywordTok{:}\AttributeTok{ }\FloatTok{0.0}
+\AttributeTok{    }\FunctionTok{C\_n}\KeywordTok{:}\AttributeTok{ }\FloatTok{0.0}
+\AttributeTok{    }\FunctionTok{C\_p}\KeywordTok{:}\AttributeTok{ }\FloatTok{0.0}
+\AttributeTok{    }\FunctionTok{alpha}\KeywordTok{:}\AttributeTok{ }\FloatTok{0.0}
+\AttributeTok{    }\FunctionTok{chi}\KeywordTok{:}\AttributeTok{ }\FloatTok{2.2}
+\AttributeTok{    }\FunctionTok{Eg}\KeywordTok{:}\AttributeTok{ }\FloatTok{3.0}
+\end{Highlighting}
+\end{Shaded}
+
+YAML 1.1 can parse bare scientific notation such as \texttt{1e-9} as a
+string. SolarLab coerces numeric-looking strings to floats, but writing
+values as \texttt{1.0e-9} is clearer and safer.
+
+\hypertarget{governing-equations}{%
+\chapter{Governing Equations}\label{governing-equations}}
+
+This chapter states the governing equations in dimensional SI form. The
+implementation evaluates discretized node and face arrays, but the
+continuous form clarifies the model assumptions and the physical meaning
+of each state variable.
+
+\hypertarget{poisson-equation}{%
+\section{Poisson Equation}\label{poisson-equation}}
+
+The electrostatic potential is obtained from:
+
+\begin{equation}
+\label{eq:poisson}
+\frac{\partial}{\partial x}
+\left(
+\varepsilon_0 \varepsilon_r
+\frac{\partial \phi}{\partial x}
+\right)
+= -\rho .
+\end{equation}
+
+Here \(\rho\) includes electrons, holes, dopants, and mobile ions. The
+discretization uses a harmonic face permittivity:
+
+\begin{equation}
+\label{eq:harmonic-eps}
+\varepsilon_{i+1/2}
+=
+\frac{2\varepsilon_i\varepsilon_{i+1}}
+{\varepsilon_i+\varepsilon_{i+1}} .
+\end{equation}
+
+The harmonic mean is appropriate for a sharp dielectric interface
+because it matches the series-capacitor limit.
+
+Assumptions and limits:
+
+\begin{itemize}
+\tightlist
+\item
+  electrostatics is quasistatic;
+\item
+  magnetic effects and wave propagation in the electrical solve are
+  ignored;
+\item
+  layer interfaces are abrupt on the scale of the grid;
+\item
+  \(\rho\) is built from the configured mobile species, carriers, and
+  dopants.
+\end{itemize}
+
+\hypertarget{carrier-continuity}{%
+\section{Carrier Continuity}\label{carrier-continuity}}
+
+The electron continuity equation is:
+
+\begin{equation}
+\label{eq:electron-continuity}
+\frac{\partial n}{\partial t}
+=
+\frac{1}{q}\frac{\partial J_n}{\partial x}
++G-R .
+\end{equation}
+
+The hole continuity equation is:
+
+\begin{equation}
+\label{eq:hole-continuity}
+\frac{\partial p}{\partial t}
+=
+-\frac{1}{q}\frac{\partial J_p}{\partial x}
++G-R .
+\end{equation}
+
+In heterojunctions, SolarLab uses band-corrected potentials:
+
+\begin{equation}
+\label{eq:band-corrected-potentials}
+\phi_n=\phi+\chi, \qquad
+\phi_p=\phi+\chi+E_g .
+\end{equation}
+
+These effective potentials allow the same numerical flux formulation to
+represent conduction-band and valence-band offsets in heterojunction
+stacks.
+
+Assumptions and limits:
+
+\begin{itemize}
+\tightlist
+\item
+  carriers are described by drift-diffusion transport, not ballistic
+  transport;
+\item
+  the model is most natural when local quasi-equilibrium is a reasonable
+  approximation;
+\item
+  strongly quantum-confined structures, tunneling-dominated contacts,
+  and hot carrier effects require additional modeling beyond this
+  implementation.
+\end{itemize}
+
+\hypertarget{scharfetter-gummel-flux}{%
+\section{Scharfetter-Gummel Flux}\label{scharfetter-gummel-flux}}
+
+The Bernoulli function is:
+
+\begin{equation}
+\label{eq:bernoulli}
+B(\xi)=\frac{\xi}{\exp(\xi)-1}.
+\end{equation}
+
+The electron face current is:
+
+\begin{equation}
+\label{eq:sg-electron}
+J_{n,i+1/2}
+=
+\frac{qD_n}{\Delta x}
+\left[
+B(\xi)n_{i+1}-B(-\xi)n_i
+\right].
+\end{equation}
+
+The hole face current is:
+
+\begin{equation}
+\label{eq:sg-hole}
+J_{p,i+1/2}
+=
+\frac{qD_p}{\Delta x}
+\left[
+B(\xi)p_i-B(-\xi)p_{i+1}
+\right].
+\end{equation}
+
+The Scharfetter-Gummel form is used because it preserves stable
+exponential fitting in drift-dominated regimes.
+
+Assumptions and limits:
+
+\begin{itemize}
+\tightlist
+\item
+  the potential and material properties are represented between adjacent
+  grid nodes by a face-based discretization;
+\item
+  the method is robust for high drift fields, but accuracy still depends
+  on resolving layer thicknesses, interfaces, and trap profiles.
+\end{itemize}
+
+\hypertarget{ion-migration}{%
+\section{Ion Migration}\label{ion-migration}}
+
+Positive ion vacancies satisfy:
+
+\begin{equation}
+\label{eq:ion-continuity}
+\frac{\partial P}{\partial t}
+=
+-\frac{\partial F_P}{\partial x}.
+\end{equation}
+
+Ions cannot leave the device, so:
+
+\begin{equation}
+\label{eq:ion-zero-flux}
+F_P(0)=F_P(L)=0.
+\end{equation}
+
+The ion flux includes a steric saturation correction:
+
+\begin{equation}
+\label{eq:steric}
+s(P)
+=
+\frac{1}
+{\max(1-P_\mathrm{avg}/P_\mathrm{lim},10^{-6})}.
+\end{equation}
+
+This term limits ion accumulation as the local density approaches the
+configured site-density limit.
+
+Assumptions and limits:
+
+\begin{itemize}
+\tightlist
+\item
+  the default mobile species is a positive vacancy-like species;
+\item
+  negative mobile species are optional and must be explicitly
+  configured;
+\item
+  contacts are ion-blocking in the implemented boundary condition;
+\item
+  the 2D J-V solver treats ions as a frozen Poisson background.
+\end{itemize}
+
+\hypertarget{recombination}{%
+\section{Recombination}\label{recombination}}
+
+SRH recombination is:
+
+\begin{equation}
+\label{eq:srh}
+R_\mathrm{SRH}
+=
+\frac{np-n_i^2}
+{\tau_p(n+n_1)+\tau_n(p+p_1)} .
+\end{equation}
+
+Radiative recombination is:
+
+\begin{equation}
+\label{eq:radiative}
+R_\mathrm{rad}=B_\mathrm{rad}(np-n_i^2).
+\end{equation}
+
+Auger recombination is:
+
+\begin{equation}
+\label{eq:auger}
+R_\mathrm{Auger}
+=(C_n n+C_p p)(np-n_i^2).
+\end{equation}
+
+The total bulk rate is:
+
+\begin{equation}
+\label{eq:total-recombination}
+R=R_\mathrm{SRH}+R_\mathrm{rad}+R_\mathrm{Auger}.
+\end{equation}
+
+Interface recombination uses surface velocities and is converted to a
+local volumetric source term near the interface.
+
+Assumptions and limits:
+
+\begin{itemize}
+\tightlist
+\item
+  SRH parameters are effective trap parameters unless trap-energy
+  provenance is supplied;
+\item
+  radiative and Auger coefficients should be layer-appropriate;
+\item
+  interface recombination is localized numerically near the interface,
+  so grid resolution matters when very large surface velocities are
+  used.
+\end{itemize}
+
+\hypertarget{optical-generation}{%
+\section{Optical Generation}\label{optical-generation}}
+
+For Beer-Lambert absorption:
+
+\begin{equation}
+\label{eq:beer-lambert}
+G(x)
+=
+\Phi \alpha(x)
+\exp\left[
+-\int_0^x \alpha(x')\,dx'
+\right].
+\end{equation}
+
+For transfer-matrix optics, SolarLab loads tabulated \(n(\lambda)\) and
+\(k(\lambda)\) data and computes a wavelength-resolved absorption
+profile. The generation profile is integrated over the incident spectrum
+and cached before the transient solve.
+
+EQE and electroluminescence require this wavelength-resolved optical
+machinery; Beer-Lambert-only stacks do not contain sufficient spectral
+information for those experiments.
+
+Assumptions and limits:
+
+\begin{itemize}
+\tightlist
+\item
+  Beer-Lambert optics are fast and useful for trends, but cannot
+  represent interference, reflection, or wavelength-dependent
+  collection;
+\item
+  TMM quality is limited by the provenance and wavelength coverage of
+  the supplied optical constants;
+\item
+  synthetic or placeholder optical constants should be treated as
+  workflow demonstrations, not material-specific evidence.
+\end{itemize}
+
+\hypertarget{boundary-and-initial-conditions}{%
+\chapter{Boundary And Initial
+Conditions}\label{boundary-and-initial-conditions}}
+
+\hypertarget{potential}{%
+\section{Potential}\label{potential}}
+
+The potential is Dirichlet at both contacts:
+
+\[
+\phi(0)=\phi_\mathrm{left},
+\qquad
+\phi(L)=\phi_\mathrm{left}+V_\mathrm{bi}-V_\mathrm{app}.
+\]
+
+Forward bias reduces the built-in field.
+
+\hypertarget{carrier-contacts}{%
+\section{Carrier Contacts}\label{carrier-contacts}}
+
+By default, carrier densities at contacts are ohmic pins derived from
+local charge neutrality and mass action:
+
+\[
+np=n_i^2, \qquad n-p=N_D-N_A.
+\]
+
+The stable two-branch solution avoids numerical cancellation for heavily
+doped layers.
+
+In \texttt{full} mode, selected contacts can use a Robin flux:
+
+\[
+J=\pm qS(u-u_\mathrm{eq}),
+\]
+
+where \(u\) is \(n\) or \(p\), and \(S\) is a surface
+recombination/extraction velocity. \(S=0\) is blocking; large \(S\)
+approaches the ohmic limit.
+
+\hypertarget{ion-boundaries}{%
+\section{Ion Boundaries}\label{ion-boundaries}}
+
+Both positive and negative mobile ions use zero-flux boundaries. This
+reflects the physical assumption that ions redistribute inside the
+device but do not leave through the contacts.
+
+\hypertarget{initial-states}{%
+\section{Initial States}\label{initial-states}}
+
+The dark equilibrium state starts from charge neutrality and mass
+action. The illuminated state is obtained by integrating the transient
+equations under illumination at the starting voltage.
+
+For J-V, impedance, and degradation, this light-soaked initial state
+matters because ion and carrier memory affect the measurement.
+
+\hypertarget{physics-tiers}{%
+\chapter{Physics Tiers}\label{physics-tiers}}
+
+SolarLab uses three fidelity modes:
+
+\begin{longtable}[]{@{}lll@{}}
+\toprule
+Mode & Active physics & Typical use \\
+\midrule
+\endhead
+\texttt{legacy} & disables upgraded hooks & historical benchmark
+reproduction \\
+\texttt{fast} & build-once upgrades, no expensive per-RHS hooks &
+screening \\
+\texttt{full} & every configured hook & high-fidelity single runs \\
+\bottomrule
+\end{longtable}
+
+The tier is a ceiling, not a command to fabricate missing data. For
+example:
+
+\begin{itemize}
+\tightlist
+\item
+  TMM requires \texttt{optical\_material}.
+\item
+  Field-dependent mobility requires nonzero \texttt{v\_sat\_*} or
+  \texttt{pf\_gamma\_*}.
+\item
+  Selective contacts require finite \texttt{S\_*} values.
+\item
+  Radiative reabsorption requires TMM/photon-recycling support.
+\end{itemize}
+
+\hypertarget{numerical-method}{%
+\chapter{Numerical Method}\label{numerical-method}}
+
+\begin{figure}
+\centering
+\includegraphics{perovskite-sim/docs/images/solver_pipeline.png}
+\caption{SolarLab solver pipeline}
+\end{figure}
+
+The solver discretizes Eqs. \ref{eq:poisson}--\ref{eq:beer-lambert} on
+the device grid and then advances the coupled state in time. The
+important point for users is that a J-V point is not a closed-form diode
+equation; it is the terminal current read from a relaxed drift-diffusion
+state at a specified applied voltage.
+
+\hypertarget{grid}{%
+\section{Grid}\label{grid}}
+
+The 1D solver builds a multilayer grid over electrical layers. Substrate
+layers are excluded from the electrical grid but retained for TMM
+optics.
+
+\hypertarget{method-of-lines}{%
+\section{Method Of Lines}\label{method-of-lines}}
+
+The PDEs are discretized in space first. The result is a coupled system
+of ordinary differential equations in time. This is the method-of-lines
+approach.
+
+The state vector contains the node values for:
+
+\[
+\mathbf{y}=(n,p,P)
+\]
+
+and optionally a negative ion species.
+
+\hypertarget{time-integration}{%
+\section{Time Integration}\label{time-integration}}
+
+SolarLab uses SciPy \texttt{solve\_ivp}, primarily with the implicit
+Radau method. Selected difficult J-V steps use bounded fallback logic,
+including step bisection and BDF fallback. The code caps
+\texttt{max\_step} around voltage transitions to avoid large
+near-flat-band integration jumps.
+
+\hypertarget{poisson-fast-path}{%
+\section{Poisson Fast Path}\label{poisson-fast-path}}
+
+The Poisson equation becomes a tridiagonal linear system. SolarLab
+prefactors this operator and reuses the factorization. This is why
+\texttt{build\_material\_arrays} must be called outside the RHS and not
+inside the time-step loop.
+
+\hypertarget{numerical-safety}{%
+\section{Numerical Safety}\label{numerical-safety}}
+
+Important safety mechanisms include:
+
+\begin{itemize}
+\tightlist
+\item
+  finite-value guards in the RHS;
+\item
+  harmonic face permittivity;
+\item
+  stable Bernoulli-function branches;
+\item
+  TMM transfer-matrix determinant guard;
+\item
+  median-current steady-state readout;
+\item
+  explicit \texttt{voc\_bracketed} flags when a J-V sweep misses the
+  zero crossing.
+\end{itemize}
+
+For publication work, numerical settings are part of the method. Report
+the grid size, voltage spacing, settling time or scan rate, tolerances
+when modified, and whether the run used \texttt{legacy}, \texttt{fast},
+or \texttt{full} mode.
+
+\hypertarget{running-solarlab}{%
+\chapter{Running SolarLab}\label{running-solarlab}}
+
+\hypertarget{installation}{%
+\section{Installation}\label{installation}}
+
+From \texttt{perovskite-sim/}:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ExtensionTok{pip}\NormalTok{ install }\AttributeTok{{-}e} \StringTok{".[dev]"}
+\end{Highlighting}
+\end{Shaded}
+
+For the frontend:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\BuiltInTok{cd}\NormalTok{ frontend}
+\ExtensionTok{npm}\NormalTok{ install}
+\end{Highlighting}
+\end{Shaded}
+
+\hypertarget{backend}{%
+\section{Backend}\label{backend}}
+
+From the SolarLab root:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ExtensionTok{uvicorn}\NormalTok{ backend.main:app }\DataTypeTok{\textbackslash{}}
+  \AttributeTok{{-}{-}host}\NormalTok{ 127.0.0.1 }\AttributeTok{{-}{-}port}\NormalTok{ 8000 }\DataTypeTok{\textbackslash{}}
+  \AttributeTok{{-}{-}app{-}dir}\NormalTok{ perovskite{-}sim }\AttributeTok{{-}{-}reload}
+\end{Highlighting}
+\end{Shaded}
+
+Do not run \texttt{uvicorn\ main:app} from inside \texttt{backend/}; the
+backend imports are written around \texttt{-\/-app-dir\ perovskite-sim}.
+
+\hypertarget{frontend}{%
+\section{Frontend}\label{frontend}}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\BuiltInTok{cd}\NormalTok{ perovskite{-}sim/frontend}
+\ExtensionTok{npm}\NormalTok{ run dev}
+\end{Highlighting}
+\end{Shaded}
+
+Then open:
+
+\begin{verbatim}
+http://127.0.0.1:5173
+\end{verbatim}
+
+\hypertarget{python-api}{%
+\section{Python API}\label{python-api}}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ImportTok{from}\NormalTok{ perovskite\_sim.models.config\_loader }\ImportTok{import}\NormalTok{ load\_device\_from\_yaml}
+\ImportTok{from}\NormalTok{ perovskite\_sim.experiments.jv\_sweep }\ImportTok{import}\NormalTok{ run\_jv\_sweep}
+
+\NormalTok{stack }\OperatorTok{=}\NormalTok{ load\_device\_from\_yaml(}\StringTok{"configs/nip\_MAPbI3.yaml"}\NormalTok{)}
+\NormalTok{result }\OperatorTok{=}\NormalTok{ run\_jv\_sweep(stack, N\_grid}\OperatorTok{=}\DecValTok{80}\NormalTok{, n\_points}\OperatorTok{=}\DecValTok{40}\NormalTok{, v\_rate}\OperatorTok{=}\FloatTok{1.0}\NormalTok{)}
+
+\BuiltInTok{print}\NormalTok{(result.metrics\_fwd.V\_oc)}
+\BuiltInTok{print}\NormalTok{(result.metrics\_fwd.J\_sc)}
+\BuiltInTok{print}\NormalTok{(result.metrics\_fwd.FF)}
+\BuiltInTok{print}\NormalTok{(result.metrics\_fwd.PCE)}
+\end{Highlighting}
+\end{Shaded}
+
+\hypertarget{worked-example-1-baseline-j-v-sweep}{%
+\section{Worked Example 1: Baseline J-V
+Sweep}\label{worked-example-1-baseline-j-v-sweep}}
+
+This example runs a standard n-i-p MAPbI3 J-V sweep and reports the
+principal photovoltaic metrics.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\BuiltInTok{cd}\NormalTok{ perovskite{-}sim}
+\ExtensionTok{python} \AttributeTok{{-}} \OperatorTok{\textless{}\textless{}\textquotesingle{}PY\textquotesingle{}}
+\StringTok{from perovskite\_sim.models.config\_loader import load\_device\_from\_yaml}
+\StringTok{from perovskite\_sim.experiments.jv\_sweep import run\_jv\_sweep}
+
+\StringTok{stack = load\_device\_from\_yaml("configs/nip\_MAPbI3.yaml")}
+\StringTok{result = run\_jv\_sweep(stack, N\_grid=80, n\_points=40, v\_rate=1.0)}
+\StringTok{m = result.metrics\_fwd}
+\StringTok{print(f"Voc = \{m.V\_oc:.4f\} V")}
+\StringTok{print(f"Jsc = \{m.J\_sc:.2f\} A/m\^{}2")}
+\StringTok{print(f"FF  = \{m.FF:.3f\}")}
+\StringTok{print(f"PCE = \{100*m.PCE:.2f\} \%")}
+\StringTok{print(f"Voc bracketed: \{m.voc\_bracketed\}")}
+\OperatorTok{PY}
+\end{Highlighting}
+\end{Shaded}
+
+Metric interpretation:
+
+\begin{itemize}
+\tightlist
+\item
+  \(J_\mathrm{sc}\) is the current density near zero applied voltage.
+\item
+  \(V_\mathrm{oc}\) is interpolated where the terminal current crosses
+  zero.
+\item
+  FF and PCE are meaningful only when \texttt{voc\_bracketed} is true.
+\item
+  Forward and reverse metrics can differ when mobile ions retain scan
+  history.
+\end{itemize}
+
+\hypertarget{worked-example-2-absorber-thickness-study}{%
+\section{Worked Example 2: Absorber Thickness
+Study}\label{worked-example-2-absorber-thickness-study}}
+
+This example varies absorber thickness while leaving the rest of the
+stack unchanged, allowing optical collection and recombination trends to
+be compared under controlled assumptions.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ImportTok{from}\NormalTok{ dataclasses }\ImportTok{import}\NormalTok{ replace}
+\ImportTok{from}\NormalTok{ perovskite\_sim.models.config\_loader }\ImportTok{import}\NormalTok{ load\_device\_from\_yaml}
+\ImportTok{from}\NormalTok{ perovskite\_sim.experiments.jv\_sweep }\ImportTok{import}\NormalTok{ run\_jv\_sweep}
+
+\NormalTok{base }\OperatorTok{=}\NormalTok{ load\_device\_from\_yaml(}\StringTok{"configs/nip\_MAPbI3.yaml"}\NormalTok{)}
+\NormalTok{absorber\_index }\OperatorTok{=} \BuiltInTok{next}\NormalTok{(i }\ControlFlowTok{for}\NormalTok{ i, layer }\KeywordTok{in} \BuiltInTok{enumerate}\NormalTok{(base.layers)}
+                      \ControlFlowTok{if}\NormalTok{ layer.role }\OperatorTok{==} \StringTok{"absorber"}\NormalTok{)}
+
+\ControlFlowTok{for}\NormalTok{ thickness\_nm }\KeywordTok{in}\NormalTok{ (}\DecValTok{200}\NormalTok{, }\DecValTok{400}\NormalTok{, }\DecValTok{700}\NormalTok{, }\DecValTok{1000}\NormalTok{):}
+\NormalTok{    layers }\OperatorTok{=} \BuiltInTok{list}\NormalTok{(base.layers)}
+\NormalTok{    layers[absorber\_index] }\OperatorTok{=}\NormalTok{ replace(}
+\NormalTok{        layers[absorber\_index],}
+\NormalTok{        thickness}\OperatorTok{=}\NormalTok{thickness\_nm }\OperatorTok{*} \FloatTok{1e{-}9}\NormalTok{,}
+\NormalTok{    )}
+\NormalTok{    stack }\OperatorTok{=}\NormalTok{ replace(base, layers}\OperatorTok{=}\BuiltInTok{tuple}\NormalTok{(layers))}
+\NormalTok{    result }\OperatorTok{=}\NormalTok{ run\_jv\_sweep(stack, N\_grid}\OperatorTok{=}\DecValTok{80}\NormalTok{, n\_points}\OperatorTok{=}\DecValTok{30}\NormalTok{, v\_rate}\OperatorTok{=}\FloatTok{2.0}\NormalTok{)}
+\NormalTok{    m }\OperatorTok{=}\NormalTok{ result.metrics\_fwd}
+    \BuiltInTok{print}\NormalTok{(thickness\_nm, m.V\_oc, m.J\_sc, m.FF, m.PCE)}
+\end{Highlighting}
+\end{Shaded}
+
+Expected interpretation:
+
+\begin{itemize}
+\tightlist
+\item
+  Larger absorbers can absorb more light, but can also increase
+  recombination or transport loss.
+\item
+  If \(J_\mathrm{sc}\) does not change under Beer-Lambert optics, check
+  whether \texttt{alpha} and \texttt{Phi} are physically configured.
+\item
+  If FF collapses, inspect spatial profiles and contact selectivity
+  before concluding that the absorber is intrinsically poor.
+\end{itemize}
+
+\hypertarget{worked-example-3-enabling-tmm-optics}{%
+\section{Worked Example 3: Enabling TMM
+Optics}\label{worked-example-3-enabling-tmm-optics}}
+
+This example compares scalar Beer-Lambert generation with
+wavelength-resolved transfer-matrix generation.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ImportTok{from}\NormalTok{ perovskite\_sim.models.config\_loader }\ImportTok{import}\NormalTok{ load\_device\_from\_yaml}
+\ImportTok{from}\NormalTok{ perovskite\_sim.experiments.jv\_sweep }\ImportTok{import}\NormalTok{ run\_jv\_sweep}
+
+\ControlFlowTok{for}\NormalTok{ config }\KeywordTok{in}\NormalTok{ (}\StringTok{"configs/nip\_MAPbI3.yaml"}\NormalTok{, }\StringTok{"configs/nip\_MAPbI3\_tmm.yaml"}\NormalTok{):}
+\NormalTok{    stack }\OperatorTok{=}\NormalTok{ load\_device\_from\_yaml(config)}
+\NormalTok{    result }\OperatorTok{=}\NormalTok{ run\_jv\_sweep(stack, N\_grid}\OperatorTok{=}\DecValTok{60}\NormalTok{, n\_points}\OperatorTok{=}\DecValTok{21}\NormalTok{)}
+    \BuiltInTok{print}\NormalTok{(config, result.metrics\_fwd.J\_sc)}
+\end{Highlighting}
+\end{Shaded}
+
+Expected interpretation:
+
+\begin{itemize}
+\tightlist
+\item
+  TMM includes interference, reflection, parasitic absorption, and
+  spectral weighting.
+\item
+  TMM results are only as credible as the \texttt{optical\_material}
+  data and AM1.5G spectrum used.
+\item
+  EQE and EL should use TMM-enabled configurations, not
+  Beer-Lambert-only presets.
+\end{itemize}
+
+\hypertarget{backend-api}{%
+\chapter{Backend API}\label{backend-api}}
+
+Configuration endpoints:
+
+\begin{longtable}[]{@{}lll@{}}
+\toprule
+Method & Path & Purpose \\
+\midrule
+\endhead
+\texttt{GET} & \texttt{/api/configs} & list shipped and user presets \\
+\texttt{GET} & \texttt{/api/configs/\{name\}} & load one preset \\
+\texttt{POST} & \texttt{/api/configs/user} & save a user-edited stack \\
+\texttt{GET} & \texttt{/api/layer-templates} & layer template library \\
+\texttt{GET} & \texttt{/api/optical-materials} & available TMM optical
+keys \\
+\bottomrule
+\end{longtable}
+
+Preferred experiment interface:
+
+\begin{longtable}[]{@{}lll@{}}
+\toprule
+Method & Path & Purpose \\
+\midrule
+\endhead
+\texttt{POST} & \texttt{/api/jobs} & submit
+\texttt{\{kind,\ config\_path\textbar{}device,\ params\}} \\
+\texttt{GET} & \texttt{/api/jobs/\{id\}/events} & stream
+progress/result/error/done events \\
+\bottomrule
+\end{longtable}
+
+Supported job kinds:
+
+\begin{verbatim}
+jv, current_decomp, spatial, dark_jv, suns_voc, voc_t,
+eqe, el, impedance, tpv, degradation, tandem,
+mott_schottky, jv_2d, voc_grain_sweep
+\end{verbatim}
+
+The frontend primarily uses streaming jobs. Long-running experiments
+should report progress through callbacks that the backend converts to
+SSE frames.
+
+\hypertarget{experiment-manual}{%
+\chapter{Experiment Manual}\label{experiment-manual}}
+
+\hypertarget{j-v-sweep}{%
+\section{J-V Sweep}\label{j-v-sweep}}
+
+The J-V sweep runs forward and reverse voltage scans while preserving
+state history. This state-preserving scan is the implemented
+representation of hysteresis in an ion-coupled perovskite cell.
+
+Outputs:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{V\_fwd}, \texttt{J\_fwd};
+\item
+  \texttt{V\_rev}, \texttt{J\_rev};
+\item
+  \texttt{metrics\_fwd}, \texttt{metrics\_rev};
+\item
+  \texttt{hysteresis\_index}.
+\end{itemize}
+
+Metrics:
+
+\[
+FF=\frac{P_\mathrm{mpp}}{V_\mathrm{oc}J_\mathrm{sc}}.
+\]
+
+\[
+PCE=\frac{P_\mathrm{mpp}}{1000\,W\,m^{-2}}.
+\]
+
+If the sweep never crosses \(J=0\), \texttt{voc\_bracketed=false}. In
+that case \(V_\mathrm{oc}\), FF, and PCE are sentinel values and the
+user should increase \texttt{V\_max}.
+
+\hypertarget{current-decomposition}{%
+\section{Current Decomposition}\label{current-decomposition}}
+
+Current decomposition separates:
+
+\begin{itemize}
+\tightlist
+\item
+  electron current \(J_n\);
+\item
+  hole current \(J_p\);
+\item
+  ion current \(J_\mathrm{ion}\);
+\item
+  displacement current \(J_\mathrm{disp}\);
+\item
+  total current.
+\end{itemize}
+
+This separation helps identify whether a transient is dominated by
+electronic, ionic, or capacitive response.
+
+\hypertarget{spatial-profiles}{%
+\section{Spatial Profiles}\label{spatial-profiles}}
+
+Spatial-profile runs save snapshots of:
+
+\begin{itemize}
+\tightlist
+\item
+  \(x\);
+\item
+  \(\phi\);
+\item
+  \(E\);
+\item
+  \(n\);
+\item
+  \(p\);
+\item
+  \(P\);
+\item
+  \(\rho\);
+\item
+  applied voltage.
+\end{itemize}
+
+These profiles are essential for interpreting unusual J-V behavior. For
+example, a high \(V_\mathrm{oc}\) with poor FF may indicate
+selective-contact or recombination issues rather than poor optical
+generation.
+
+\hypertarget{dark-j-v}{%
+\section{Dark J-V}\label{dark-j-v}}
+
+Dark J-V fits the diode equation:
+
+\[
+J=J_0\left[\exp\left(\frac{V}{n_\mathrm{id}V_T}\right)-1\right].
+\]
+
+The output includes ideality factor \(n_\mathrm{id}\), saturation
+current \(J_0\), and the fitted voltage window.
+
+\hypertarget{suns-voc}{%
+\section{Suns-Voc}\label{suns-voc}}
+
+Suns-Voc varies illumination intensity and extracts \(V_\mathrm{oc}\) at
+each level. It constructs a pseudo-JV curve:
+
+\[
+J_\mathrm{pseudo}(X)
+=J_{\mathrm{sc,ref}}-J_\mathrm{sc}(X),
+\qquad
+V_\mathrm{pseudo}(X)=V_\mathrm{oc}(X).
+\]
+
+The pseudo-JV representation is less affected by series resistance than
+a standard terminal J-V sweep.
+
+\hypertarget{v_mathrmoct}{%
+\section{\texorpdfstring{\(V_\mathrm{oc}(T)\)}{V\_\textbackslash mathrm\{oc\}(T)}}\label{v_mathrmoct}}
+
+The temperature sweep estimates recombination activation energy by
+fitting \(V_\mathrm{oc}\) versus temperature:
+
+\[
+V_\mathrm{oc}(T)
+\approx
+\frac{E_A}{q}
+-
+\frac{kT}{q}
+\ln\left(\frac{J_{00}}{J_\mathrm{sc}}\right).
+\]
+
+The intercept at \(T=0\) is reported as \(E_A\) in eV.
+
+\hypertarget{eqe-ipce}{%
+\section{EQE / IPCE}\label{eqe-ipce}}
+
+EQE is:
+
+\[
+\mathrm{EQE}(\lambda)
+=
+\frac{|J_\mathrm{sc}(\lambda)|}
+{q\Phi_\mathrm{inc}(\lambda)}.
+\]
+
+SolarLab computes monochromatic TMM generation, solves the
+drift-diffusion problem at short circuit, and integrates against AM1.5G
+for \(J_\mathrm{sc}\). This experiment requires
+\texttt{optical\_material}.
+
+\hypertarget{electroluminescence}{%
+\section{Electroluminescence}\label{electroluminescence}}
+
+EL uses reciprocity:
+
+\[
+\Phi_\mathrm{EL}(\lambda)
+=
+A_\mathrm{abs}(\lambda)
+\phi_\mathrm{bb}(\lambda,T)
+\exp\left(\frac{qV_\mathrm{inj}}{kT}\right).
+\]
+
+The blackbody photon flux is:
+
+\[
+\phi_\mathrm{bb}(\lambda,T)
+=
+\frac{2\pi c/\lambda^4}
+{\exp(hc/\lambda kT)-1}.
+\]
+
+The non-radiative voltage loss is:
+
+\[
+\Delta V_\mathrm{nr}
+=
+-V_T\ln(\mathrm{EQE}_\mathrm{EL}).
+\]
+
+This experiment also requires TMM optical data.
+
+\hypertarget{impedance}{%
+\section{Impedance}\label{impedance}}
+
+Impedance applies a small sinusoidal voltage perturbation around a DC
+bias and extracts the current response by lock-in fitting. The result is
+\(Z(f)\) in \(\Omega m^2\), suitable for Nyquist and Bode plots.
+
+\hypertarget{mott-schottky}{%
+\section{Mott-Schottky}\label{mott-schottky}}
+
+Mott-Schottky wraps dark impedance at a fixed frequency and fits:
+
+\[
+\frac{1}{C^2}=aV+b.
+\]
+
+Then:
+
+\[
+V_\mathrm{bi}=-\frac{b}{a},
+\qquad
+N_\mathrm{eff}
+=
+-\frac{2}{q\varepsilon_s\varepsilon_0 a}.
+\]
+
+For thin fully depleted absorbers, this analysis can over-interpret
+geometric capacitance or nonideal response. Fitted slopes should
+therefore not be reported automatically as physical dopant densities.
+
+\hypertarget{transient-photovoltage}{%
+\section{Transient Photovoltage}\label{transient-photovoltage}}
+
+TPV applies a small generation pulse at open circuit. SolarLab enforces
+the open-circuit condition by adjusting \(V_\mathrm{app}\) so that
+terminal current remains near zero at each reported time. The voltage
+decay is fitted as:
+
+\[
+V(t)
+\approx
+V_\mathrm{oc}
++\Delta V_0\exp(-t/\tau).
+\]
+
+\hypertarget{degradation}{%
+\section{Degradation}\label{degradation}}
+
+The degradation experiment is a long-time ion-coupled damage proxy. It
+advances the ion/carrier system under bias and periodically performs
+snapshot J-V measurements. During each snapshot, ions are frozen while
+carriers relax, separating slow ionic redistribution from the
+instantaneous electronic response.
+
+\hypertarget{tandem-j-v}{%
+\section{Tandem J-V}\label{tandem-j-v}}
+
+The tandem driver:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  runs one combined TMM optical calculation over the full tandem stack;
+\item
+  runs independent top and bottom sub-cell J-V sweeps with fixed
+  generation;
+\item
+  series-matches at a common current;
+\item
+  sums the sub-cell voltages.
+\end{enumerate}
+
+Some tandem optical constants are documented as placeholder/stub data.
+These must be replaced before claiming publication-grade
+material-specific tandem predictions.
+
+\hypertarget{d-j-v}{%
+\section{2D J-V}\label{d-j-v}}
+
+The 2D J-V driver uses a tensor-product grid. It is validated against 1D
+in the lateral-uniform limit and can add absorber grain boundaries with
+reduced SRH lifetimes. Ions are frozen as static Poisson background in
+2D.
+
+\hypertarget{v_mathrmocl_g-grain-sweep}{%
+\section{\texorpdfstring{\(V_\mathrm{oc}(L_g)\) Grain
+Sweep}{V\_\textbackslash mathrm\{oc\}(L\_g) Grain Sweep}}\label{v_mathrmocl_g-grain-sweep}}
+
+The grain sweep repeats 2D J-V simulations over grain sizes \(L_g\) and
+reports \(V_\mathrm{oc}\), \(J_\mathrm{sc}\), and FF as functions of
+grain size. It is intended to quantify microstructure-driven voltage
+loss within the frozen-ion 2D approximation.
+
+\hypertarget{shipped-presets}{%
+\chapter{Shipped Presets}\label{shipped-presets}}
+
+Representative shipped presets:
+
+\begin{longtable}[]{@{}ll@{}}
+\toprule
+Preset & Purpose \\
+\midrule
+\endhead
+\texttt{nip\_MAPbI3.yaml} & n-i-p MAPbI3, Beer-Lambert optics \\
+\texttt{nip\_MAPbI3\_tmm.yaml} & n-i-p MAPbI3 with TMM optics \\
+\texttt{pin\_MAPbI3.yaml} & p-i-n MAPbI3, Beer-Lambert optics \\
+\texttt{pin\_MAPbI3\_tmm.yaml} & p-i-n MAPbI3 with TMM optics \\
+\texttt{ionmonger\_benchmark.yaml} & Courtier/IonMonger-style
+benchmark \\
+\texttt{driftfusion\_benchmark.yaml} & Driftfusion-inspired benchmark \\
+\texttt{cigs\_baseline.yaml} & CIGS-like inorganic thin-film stack \\
+\texttt{cSi\_homojunction.yaml} & crystalline silicon homojunction \\
+\texttt{radiative\_limit.yaml} & photon-recycling and radiative-limit
+checks \\
+\texttt{selective\_contacts\_demo.yaml} & Robin/selective-contact
+demonstration \\
+\texttt{field\_mobility\_demo.yaml} & field-dependent mobility
+demonstration \\
+\texttt{tandem\_lin2019.yaml} & 2T tandem workflow demonstration \\
+\texttt{twod/nip\_MAPbI3\_uniform.yaml} & 2D lateral-uniform parity
+preset \\
+\texttt{twod/nip\_MAPbI3\_singleGB.yaml} & 2D single grain-boundary
+preset \\
+\texttt{twod/bcx\_combined\_demo.yaml} & combined 2D advanced-physics
+demo \\
+\bottomrule
+\end{longtable}
+
+Preset values are simulation inputs, not universal material constants.
+For publication studies, users should document the source of every
+parameter they change or use.
+
+\hypertarget{troubleshooting-and-diagnostics}{%
+\chapter{Troubleshooting And
+Diagnostics}\label{troubleshooting-and-diagnostics}}
+
+\hypertarget{voc_bracketedfalse}{%
+\section{\texorpdfstring{\texttt{voc\_bracketed=false}}{voc\_bracketed=false}}\label{voc_bracketedfalse}}
+
+Meaning: the J-V sweep did not find a current zero crossing inside the
+sampled voltage range.
+
+Likely causes:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{V\_max} is too low;
+\item
+  the voltage grid is too coarse near open circuit;
+\item
+  the device is numerically unstable near flat band;
+\item
+  contact or recombination settings produce an unusual current sign.
+\end{itemize}
+
+Recommended response:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Increase \texttt{V\_max}.
+\item
+  Increase \texttt{n\_points} or add a finer voltage region near the
+  expected \(V_\mathrm{oc}\).
+\item
+  Inspect spatial profiles near the highest voltage.
+\item
+  Do not report FF or PCE from an unbracketed result.
+\end{enumerate}
+
+\hypertarget{sentinel-or-zero-ffpce}{%
+\section{Sentinel Or Zero FF/PCE}\label{sentinel-or-zero-ffpce}}
+
+Zero FF or zero PCE does not always mean a physically dead solar cell.
+In SolarLab it can also mean the metric extraction refused to infer a
+maximum power point because \(V_\mathrm{oc}\) was not bracketed. Always
+check \texttt{voc\_bracketed} first.
+
+\hypertarget{tmm-or-eqe-fails-because-optical-data-are-missing}{%
+\section{TMM Or EQE Fails Because Optical Data Are
+Missing}\label{tmm-or-eqe-fails-because-optical-data-are-missing}}
+
+EQE and EL require at least one layer with \texttt{optical\_material}.
+If a stack only uses scalar \texttt{alpha}, it can run Beer-Lambert J-V
+but not wavelength-resolved experiments. Use a \texttt{*\_tmm.yaml}
+preset or add verified \(n,k\) data.
+
+\hypertarget{yaml-values-look-numeric-but-behave-strangely}{%
+\section{YAML Values Look Numeric But Behave
+Strangely}\label{yaml-values-look-numeric-but-behave-strangely}}
+
+YAML 1.1 can parse bare scientific notation such as \texttt{1e-9} as a
+string. SolarLab coerces numeric-looking fields in the config loader,
+but users should write \texttt{1.0e-9} for clarity and to avoid
+surprises in external tools.
+
+\hypertarget{slow-or-stiff-runs}{%
+\section{Slow Or Stiff Runs}\label{slow-or-stiff-runs}}
+
+Thick absorbers, high fields, sharp interfaces, and ion-coupled
+transients can make Radau solves slow. Use a coarse grid while
+developing the configuration, then rerun final cases at publication
+settings. For CIGS or crystalline silicon, transient J-V may be much
+slower than equilibrium-style checks.
+
+\hypertarget{unphysical-band-barriers}{%
+\section{Unphysical Band Barriers}\label{unphysical-band-barriers}}
+
+Large or inconsistent jumps in \texttt{chi} and \texttt{Eg} can create
+artificial heterojunction barriers. If a device has unexpectedly poor FF
+or current, plot the band diagram, check the transport-layer band
+offsets, and verify the contact velocities.
+
+\hypertarget{d-results-differ-from-1d}{%
+\section{2D Results Differ From 1D}\label{d-results-differ-from-1d}}
+
+For a lateral-uniform 2D stack, differences from 1D should be small when
+ions are frozen consistently and the grids are comparable. If the
+difference is large, check:
+
+\begin{itemize}
+\tightlist
+\item
+  whether 1D ions were allowed to move while 2D ions were frozen;
+\item
+  lateral boundary condition;
+\item
+  \texttt{Nx}, \texttt{Ny\_per\_layer}, and settlement time;
+\item
+  whether a microstructure block was unintentionally active.
+\end{itemize}
+
+\hypertarget{frontend-job-appears-to-hang}{%
+\section{Frontend Job Appears To
+Hang}\label{frontend-job-appears-to-hang}}
+
+Long-running experiments use server-sent events. If the UI does not
+update, check that the backend was started from the SolarLab root with
+\texttt{-\/-app-dir\ perovskite-sim}, then verify
+\texttt{/api/jobs/\{id\}/events} is reachable.
+
+\hypertarget{validation-and-evidence}{%
+\chapter{Validation And Evidence}\label{validation-and-evidence}}
+
+This manual was generated after a full evidence pass on 2026-05-19.
+
+\begin{figure}
+\centering
+\includegraphics{figures/validation_gate_summary.png}
+\caption{Validation gate summary}
+\end{figure}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.24\linewidth}>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}>{\raggedright\arraybackslash}p{0.19\linewidth}@{}}
+\toprule
+Gate & Command & Result & Time \\
+\midrule
+\endhead
+Python default suite & \path{pytest} & 647 passed, 1 skipped, 72 deselected & 704.90 s \\
+Python slow suite & \path{pytest -m slow} & 72 passed, 648 deselected & 2156.96 s \\
+Python validation suite & \path{pytest -m validation} & 18 passed, 702 deselected & 217.65 s \\
+Frontend build & \path{npm run build} & passed & build step 0.25 s \\
+Frontend unit tests & \path{npm run test:run} & 22 files, 320 tests passed & 1.29 s \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+The passing suites cover:
+
+\begin{itemize}
+\tightlist
+\item
+  core Poisson, recombination, ion, optics, contact, temperature, and
+  trap modules;
+\item
+  J-V, dark J-V, Suns-Voc, EQE, EL, impedance, Mott-Schottky, TPV,
+  degradation, tandem, and 2D workflows;
+\item
+  backend API and SSE job dispatch;
+\item
+  frontend result rendering and validation UI;
+\item
+  IonMonger and Driftfusion-inspired benchmark envelopes;
+\item
+  TMM Jsc baselines;
+\item
+  photon-recycling voltage boost;
+\item
+  1D/2D lateral-uniform parity;
+\item
+  2D microstructure regression;
+\item
+  physical trends for bandgap, thickness, mobility, dark ideality, and
+  Suns-Voc slope.
+\end{itemize}
+
+\hypertarget{validation-figures}{%
+\section{Validation Figures}\label{validation-figures}}
+
+The figures below summarize the validation evidence and slow-suite
+reference envelopes. They are derived from the tests and evidence files
+listed in the traceability matrix, rather than from independent
+simulation runs. The script used to generate them is
+\texttt{docs/manual/generate\_manual\_figures.py}.
+
+\begin{figure}
+\centering
+\includegraphics{figures/ionmonger_reference_metrics.png}
+\caption{IonMonger reference metric envelope}
+\end{figure}
+
+The IonMonger benchmark gate uses
+\texttt{configs/ionmonger\_benchmark.yaml} with \texttt{N\_grid=40},
+\texttt{n\_points=20}, and \texttt{v\_rate=5.0}. The plotted interval is
+the allowed tolerance around the pinned reverse-scan reference metrics:
+\(V_\mathrm{oc}=1.1932\,V\), \(J_\mathrm{sc}=231.70\,A\,m^{-2}\),
+\(FF=0.7774\), and \(PCE=0.2149\).
+
+\begin{figure}
+\centering
+\includegraphics{figures/tmm_jsc_baselines.png}
+\caption{TMM optical baseline envelope}
+\end{figure}
+
+The TMM baseline gate constrains the n-i-p and p-i-n short-circuit
+currents to remain within the pinned optical-regression tolerance. This
+protects the transfer-matrix implementation from silent drift while
+allowing small numerical variation.
+
+\begin{figure}
+\centering
+\includegraphics{figures/photon_recycling_window.png}
+\caption{Photon-recycling validation window}
+\end{figure}
+
+The photon-recycling regression requires the radiative-limit
+\(V_\mathrm{oc}\) boost to remain inside the 40--100 mV literature
+window encoded by the test. The plotted marker gives the approximate
+MAPbI3 context value used for the regression.
+
+\begin{figure}
+\centering
+\includegraphics{figures/physical_trend_matrix.png}
+\caption{Physics trend validation matrix}
+\end{figure}
+
+The validation suite checks qualitative semiconductor-physics trends:
+current decreases with increasing band gap, mobility affects FF, dark
+J-V returns an ideality factor in the expected range, and Suns-Voc
+produces a physically plausible slope.
+
+\begin{figure}
+\centering
+\includegraphics{figures/twod_validation_summary.png}
+\caption{2D validation and microstructure summary}
+\end{figure}
+
+The 2D slow-suite gates compare the lateral-uniform 2D solver against
+the 1D reference and verify that a single grain boundary produces a
+bounded voltage penalty rather than an uncontrolled numerical artifact.
+
+\hypertarget{validation-traceability-matrix}{%
+\section{Validation Traceability
+Matrix}\label{validation-traceability-matrix}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.24\linewidth}>{\raggedright\arraybackslash}p{0.32\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}@{}}
+\toprule
+Evidence item & Source test or file & What it defends \\
+\midrule
+\endhead
+Default Python suite & \path{pytest} & broad unit/integration coverage for solver, models, backend, and experiments \\
+Slow Python suite & \path{pytest -m slow} & expensive regression baselines, TMM, 2D parity, microstructure, benchmark envelopes \\
+Validation suite & \path{pytest -m validation} & expected semiconductor-physics trends \\
+IonMonger metric envelope & \path{tests/integration/test_voc_benchmark.py} & benchmark-scale J-V metrics and hysteresis bounds \\
+TMM \(J_\mathrm{sc}\) baselines & \path{tests/regression/test_tmm_baseline.py} & optical-stack regression stability \\
+Photon-recycling boost & \path{tests/regression/test_photon_recycling_voc.py} & radiative-limit voltage boost sanity \\
+2D parity & \path{tests/regression/test_twod_validation.py} & lateral-uniform 2D consistency with 1D \\
+Grain-boundary voltage loss & \path{tests/regression/test_twod_microstructure.py} & bounded microstructure-induced voltage penalty \\
+Frontend production build & \path{npm run build} & TypeScript/Vite production surface \\
+Frontend unit tests & \path{npm run test:run} & UI result rendering, validation, progress, and workstation state \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+Observed warnings:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{pytest\_asyncio} future-default warning for fixture loop
+  scope;
+\item
+  \texttt{np.trapz} deprecation warnings in compatibility and
+  conservation tests;
+\item
+  Vite bundle chunk-size warning.
+\end{itemize}
+
+None of these warnings are simulator correctness failures, but they
+should be tracked before a formal software release.
+
+\hypertarget{limitations-and-best-practices}{%
+\chapter{Limitations And Best
+Practices}\label{limitations-and-best-practices}}
+
+\hypertarget{model-assumptions}{%
+\section{Model Assumptions}\label{model-assumptions}}
+
+SolarLab is a numerical research simulator. Predictive accuracy for a
+material stack requires physically justified inputs and a validation
+envelope that covers the intended regime.
+
+\hypertarget{data-and-optical-limits}{%
+\section{Data And Optical Limits}\label{data-and-optical-limits}}
+
+TMM, EQE, and EL depend on tabulated \(n,k\) data. \texttt{load\_nk}
+does not silently extrapolate outside the source wavelength range.
+Placeholder optical constants support workflow testing, but they do not
+support material-specific publication claims.
+
+\hypertarget{numerical-limits}{%
+\section{Numerical Limits}\label{numerical-limits}}
+
+If a J-V sweep does not bracket \(V_\mathrm{oc}\), increase
+\texttt{V\_max} or refine the voltage grid near the expected zero
+crossing. Sentinel zero FF or PCE should not be interpreted as physical
+failure until \texttt{voc\_bracketed} has been checked.
+
+Mott-Schottky fits can be unreliable for fully depleted thin absorbers.
+
+Thick CIGS and crystalline silicon absorbers can be slow in transient
+mode.
+
+\hypertarget{d-limits}{%
+\section{2D Limits}\label{d-limits}}
+
+The 2D solver freezes ions. It is suitable for lateral parity and
+microstructure studies under that approximation, but not for full
+dynamic ion migration in two dimensions.
+
+\hypertarget{reporting-checklist}{%
+\section{Reporting Checklist}\label{reporting-checklist}}
+
+A reproducible SolarLab study should report:
+
+\begin{itemize}
+\tightlist
+\item
+  commit hash;
+\item
+  device YAML or full parameter table;
+\item
+  physics tier;
+\item
+  grid settings;
+\item
+  solver tolerances;
+\item
+  optical data source;
+\item
+  validation command results;
+\item
+  whether \(V_\mathrm{oc}\) was bracketed;
+\item
+  known limitations relevant to the chosen experiment.
+\end{itemize}
+
+\hypertarget{publication-boundary-statement}{%
+\section{Publication Boundary
+Statement}\label{publication-boundary-statement}}
+
+A SolarLab figure is publication-ready only when all of the following
+are true:
+
+\begin{itemize}
+\tightlist
+\item
+  the device stack and all changed parameters are reported;
+\item
+  optical constants and material parameters have provenance;
+\item
+  the chosen physics tier is justified;
+\item
+  the grid and solver settings are sufficient for the conclusion;
+\item
+  validation gates relevant to the claimed regime have passed;
+\item
+  limitations such as frozen 2D ions, placeholder optical data, or
+  screening smoke settings are stated explicitly.
+\end{itemize}
+
+If any item is missing, the result may still be useful for debugging or
+hypothesis screening, but it should not be described as a calibrated
+material-specific prediction.
+
+\hypertarget{solarscale-screening-bridge}{%
+\chapter{SolarScale Screening
+Bridge}\label{solarscale-screening-bridge}}
+
+SolarLab can consume readiness-gated material records from SolarScale.
+This is a workflow layer, not the core solver.
+
+Safe mappings include:
+
+\begin{itemize}
+\tightlist
+\item
+  dielectric constant to \texttt{eps\_r};
+\item
+  electron and hole mobility to \texttt{mu\_n} and \texttt{mu\_p} after
+  unit conversion;
+\item
+  ion diffusion to \texttt{D\_ion};
+\item
+  ion activation energy to \texttt{E\_a\_ion}.
+\end{itemize}
+
+Device-only unknowns should be swept rather than guessed:
+
+\begin{itemize}
+\tightlist
+\item
+  absorber thickness;
+\item
+  SRH lifetime;
+\item
+  trap density;
+\item
+  interface recombination velocity;
+\item
+  contact band alignment.
+\end{itemize}
+
+Smoke J-V results in screening workflows validate the process. They are
+not publication-grade device predictions unless production settings,
+provenance, and validation are also supplied.
+
+\hypertarget{references}{%
+\chapter{References}\label{references}}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  D. L. Scharfetter and H. K. Gummel, ``Large-signal analysis of a
+  silicon Read diode oscillator,'' \emph{IEEE Transactions on Electron
+  Devices} \textbf{16}, 64--77 (1969). doi:10.1109/T-ED.1969.16566.
+\item
+  W. Shockley and W. T. Read, ``Statistics of the recombinations of
+  holes and electrons,'' \emph{Physical Review} \textbf{87}, 835--842
+  (1952). doi:10.1103/PhysRev.87.835.
+\item
+  R. N. Hall, ``Electron-hole recombination in germanium,''
+  \emph{Physical Review} \textbf{87}, 387 (1952).
+  doi:10.1103/PhysRev.87.387.
+\item
+  N. E. Courtier, J. M. Cave, J. M. Foster, A. B. Walker, and G.
+  Richardson, ``IonMonger: a free and fast planar perovskite solar cell
+  simulator with coupled ion vacancy and charge carrier dynamics,''
+  \emph{Journal of Computational Electronics} \textbf{18}, 1435--1449
+  (2019).
+\item
+  P. Calado, B. Telford, D. Bryant, X. Li, J. Nelson, B. C. O'Regan, and
+  P. R. F. Barnes, ``Driftfusion: an open source code for simulating
+  ordered semiconductor devices with mixed ionic-electronic conducting
+  materials in one dimension,'' \emph{Journal of Computational
+  Electronics} \textbf{15}, 1--20 (2016).
+\item
+  M. Burgelman, P. Nollet, and S. Degrave, ``Modelling polycrystalline
+  semiconductor solar cells,'' \emph{Thin Solid Films}
+  \textbf{361--362}, 527--532 (2000). doi:10.1016/S0040-6090(99)00825-1.
+\item
+  U. Rau, ``Reciprocity relation between photovoltaic quantum efficiency
+  and electroluminescent emission of solar cells,'' \emph{Physical
+  Review B} \textbf{76}, 085303 (2007). doi:10.1103/PhysRevB.76.085303.
+\item
+  L. A. A. Pettersson, L. S. Roman, and O. Inganas, ``Modeling
+  photocurrent action spectra of photovoltaic devices based on organic
+  thin films,'' \emph{Journal of Applied Physics} \textbf{86}, 487--496
+  (1999). doi:10.1063/1.370757.
+\item
+  E. Yablonovitch, ``Statistical ray optics,'' \emph{Journal of the
+  Optical Society of America} \textbf{72}, 899--907 (1982).
+  doi:10.1364/JOSA.72.000899.
+\item
+  D. M. Caughey and R. E. Thomas, ``Carrier mobilities in silicon
+  empirically related to doping and field,'' \emph{Proceedings of the
+  IEEE} \textbf{55}, 2192--2193 (1967). doi:10.1109/PROC.1967.6123.
+\item
+  J. Frenkel, ``On pre-breakdown phenomena in insulators and electronic
+  semiconductors,'' \emph{Physical Review} \textbf{54}, 647--648 (1938).
+  doi:10.1103/PhysRev.54.647.
+\item
+  M. A. Green, ``Solar cell fill factors: General graph and empirical
+  expressions,'' \emph{Solid-State Electronics} \textbf{24}, 788--789
+  (1981). doi:10.1016/0038-1101(81)90062-9.
+\item
+  J. Nelson, \emph{The Physics of Solar Cells} (Imperial College Press,
+  London, 2003).
+\item
+  P. Würfel, \emph{Physics of Solar Cells: From Principles to New
+  Concepts} (Wiley-VCH, Weinheim, 2005).
+\item
+  H. J. Snaith, ``Perovskites: The emergence of a new era for low-cost,
+  high-efficiency solar cells,'' \emph{Journal of Physical Chemistry
+  Letters} \textbf{4}, 3623--3630 (2013). doi:10.1021/jz4020162.
+\item
+  L. M. Pazos-Outón et al., ``Photon recycling in lead iodide perovskite
+  solar cells,'' \emph{Science} \textbf{351}, 1430--1433 (2016).
+\end{enumerate}
+
+\hypertarget{appendix-a-manual-source-trail}{%
+\chapter{Appendix A: Manual Source
+Trail}\label{appendix-a-manual-source-trail}}
+
+The manual was drafted from:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{docs/solarlab\_manual\_source\_dossier.md}
+\item
+  \texttt{docs/manual/validation\_evidence\_2026-05-19.md}
+\item
+  \texttt{perovskite-sim/AGENTS.md}
+\item
+  \texttt{README.md}
+\item
+  \texttt{perovskite-sim/README.md}
+\item
+  \texttt{perovskite-sim/backend/README.md}
+\item
+  \texttt{perovskite-sim/perovskite\_sim/models/}
+\item
+  \texttt{perovskite-sim/perovskite\_sim/physics/}
+\item
+  \texttt{perovskite-sim/perovskite\_sim/solver/}
+\item
+  \texttt{perovskite-sim/perovskite\_sim/experiments/}
+\item
+  \texttt{perovskite-sim/perovskite\_sim/twod/}
+\item
+  \texttt{perovskite-sim/backend/main.py}
+\item
+  \texttt{perovskite-sim/frontend/src/types.ts}
+\end{itemize}
+
+This PDF is intended to be defensible as a project manual. For a journal
+supplement, add parameter provenance for every material value and verify
+the full bibliography format against the target journal style.
+
+\hypertarget{appendix-b-figure-source-trail}{%
+\chapter{Appendix B: Figure Source
+Trail}\label{appendix-b-figure-source-trail}}
+
+\begingroup\footnotesize\setlength{\tabcolsep}{3.5pt}
+
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.24\linewidth}>{\raggedright\arraybackslash}p{0.32\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}@{}}
+\toprule
+Figure & Source & Reproducibility note \\
+\midrule
+\endhead
+Architecture flow & \path{docs/manual/generate_manual_figures.py} & Diagrammatic summary of repo architecture described in \path{perovskite-sim/AGENTS.md}. \\
+Validation gate summary & \path{docs/manual/validation_evidence_2026-05-19.md} & Uses pass counts and runtimes from the completed validation pass. \\
+IonMonger reference metrics & \path{tests/integration/test_voc_benchmark.py} & Shows pinned benchmark metrics and tolerances, not a new simulation run. \\
+TMM \(J_\mathrm{sc}\) baselines & \path{tests/regression/test_tmm_baseline.py} & Shows pinned n-i-p and p-i-n TMM baselines with ±5 \(A\,m^{-2}\) tolerance. \\
+Photon-recycling window & \path{tests/regression/test_photon_recycling_voc.py} & Shows the acceptance window used by the slow regression gate. \\
+Physics trend matrix & \path{tests/validation/test_physical_trends.py} & Summarizes physical trend assertions represented by the validation suite. \\
+2D validation summary & \path{tests/regression/test_twod_validation.py}, \path{tests/regression/test_twod_microstructure.py} & Summarizes parity and grain-boundary gates represented by the slow suite. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\hypertarget{appendix-c-quick-glossary}{%
+\chapter{Appendix C: Quick Glossary}\label{appendix-c-quick-glossary}}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.50}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.50}}@{}}
+\toprule
+Term & Meaning \\
+\midrule
+\endhead
+AM1.5G & Standard terrestrial solar spectrum used for photovoltaic
+testing. \\
+Beer-Lambert & Scalar absorption law using an absorption coefficient
+\(\alpha\). \\
+Drift-diffusion & Continuum transport model combining diffusion from
+concentration gradients and drift from electric fields. \\
+FF & Fill factor, the ratio between maximum power and
+\(V_\mathrm{oc}J_\mathrm{sc}\). \\
+Hysteresis & Difference between forward and reverse J-V scans caused by
+state memory, often ionic in perovskites. \\
+Method of lines & Numerical method that discretizes space first and
+integrates the resulting ODE system in time. \\
+PCE & Power-conversion efficiency. \\
+SG flux & Scharfetter-Gummel flux discretization, used for stable
+drift-dominated carrier transport. \\
+SRH & Shockley-Read-Hall trap-assisted recombination. \\
+TMM & Transfer-matrix method for wavelength-resolved multilayer
+optics. \\
+\(J_\mathrm{sc}\) & Short-circuit current density. \\
+\(V_\mathrm{oc}\) & Open-circuit voltage. \\
+\bottomrule
+\end{longtable}
+
+\end{document}
