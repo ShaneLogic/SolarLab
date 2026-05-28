@@ -159,6 +159,40 @@ re-tuning the PVK/ETL σ/calibration to absorb the reference change.**
 `Nt_C_PVK` / `Nt_V_PVK` remain cascade-masked (E7) and indistinguishable
 (combined absorber τ) — genuinely partner-data-blocked.
 
+## Interface-plane-state solver — stabilized but coupling-dead (E8.4)
+
+Attempted the route to close HTL/PVK + bulk-N_t together: revive the dormant
+`SOLARLAB_INTERFACE_PLANE_STATE=1` path (4 extra DOF per interface evolving
+via TE flux + SRH on the interface plane).
+
+**Finding 1 — it no longer hangs on v2** (11 s, V_oc 1.045). The documented
+Newton-hang was the *Sprint-9 split-flux* variant, not this base path.
+
+**Finding 2 — the χ-step cross-flux explodes under the cap.** Legacy
+`J_cross_n = v_cross·(n_2s·exp(ΔE_c/V_T) − n_1s)` carries `exp(+|ΔE|/V_T)`;
+at HTL/PVK (ΔE_c=1.54 eV) that is `exp(59)` capped at `exp(30)≈1e13` → the
+~1e36 cross-flux. Fixed (`physics/interface_plane.py`) by factoring out the
+larger exponential so the surviving arg is always ≤0 — same detailed-balance
+zero-point (`n_1s/n_2s = exp(ΔE_c/V_T)`), bounded magnitude. 45/45 interface
+unit tests green; dormant-gated so zero production impact.
+
+**Finding 3 (the real blocker) — the bulk↔state coupling transmits no V_oc
+trend.** With the cross-flux bounded, every interface sweep is *flat*:
+CBO 1.060→1.075 (should be 0.33→1.25), PVK/ETL N_t dead flat at 1.077 (should
+be 1.25→0.97). Sweeping the TE coupling rate `v_th_eff` over 1e-2 → 1e2 m/s
+changes **nothing** — so it is not a rate problem. At steady state the bulk
+drain equals the state SRH rate regardless of `v_th`; the SRH rate *on the
+interface-plane state densities is simply too small* to move V_oc. The
+state-SRH magnitude / state-density formulation needs fundamental rework to
+match the production E1.5 path's effectiveness.
+
+**Conclusion:** stabilizing the iface-state path (necessary, done) is far from
+sufficient. Making it reproduce the trends — and thereby close HTL/PVK +
+bulk-N_t without the PVK/ETL calibration entanglement — is the multi-week
+research effort E1–E7 flagged. The bounded cross-flux is committed as the
+prerequisite; the coupling rework is the next milestone if this route is
+pursued. Production remains the E1.5 path + E8 projection (6/10 trends).
+
 ## Open integration decision
 
 The hook is env-gated for safety. Promoting it (SimulationMode flag /
