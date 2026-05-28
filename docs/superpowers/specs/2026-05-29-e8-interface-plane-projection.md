@@ -186,12 +186,34 @@ interface-plane state densities is simply too small* to move V_oc. The
 state-SRH magnitude / state-density formulation needs fundamental rework to
 match the production E1.5 path's effectiveness.
 
-**Conclusion:** stabilizing the iface-state path (necessary, done) is far from
-sufficient. Making it reproduce the trends — and thereby close HTL/PVK +
-bulk-N_t without the PVK/ETL calibration entanglement — is the multi-week
-research effort E1–E7 flagged. The bounded cross-flux is committed as the
-prerequisite; the coupling rework is the next milestone if this route is
-pursued. Production remains the E1.5 path + E8 projection (6/10 trends).
+**Root cause of the coupling-death (E8.5, measured):** `compute_interface_te_
+fluxes` builds the TE-flux *target* from the **cached dark-equilibrium**
+densities (`mat.interface_n_R_eq` / `p_L_eq`), not the live illuminated bulk.
+At V_oc the live PVK hole density is `1.6e22` but the cached target is `1.98e4`
+— **18 orders too low** — so the interface-plane state is pinned at dark levels
+and its SRH stays ≈0 (R=0 at equilibrium by construction). That is why no
+interface sweep moves V_oc and why `v_th_eff` is irrelevant.
+
+**Naive live-target fix is Newton-unstable.** Feeding the target from the live
+(state-dependent) `n`/`p` couples the extra interface-plane DOF into the
+Jacobian with feedback → fails to converge (V≈0.59). The production E1.5 path
+is stable because it applies SRH *algebraically* (no DOF); the iface-state DOF
++ live feedback is the stiff combination.
+
+**Well-scoped fix (downgrades "multi-week" → ~hours): lagged live target.**
+Freeze the illuminated densities at each voltage step's *entry* state and feed
+those (state-independent during the Newton solve → stable; refreshed per step →
+illumination-aware). The codebase already implements exactly this pattern for
+radiative reabsorption (`experiments/jv_sweep._bake_radiative_reabsorption_
+step`). Plumbing: snapshot `n`/`p` at step entry in `_integrate_step`, stash on
+`mat` via `dataclasses.replace`, have `compute_interface_te_fluxes` read the
+frozen target. This is the concrete next milestone to close HTL/PVK + bulk-N_t
+without the PVK/ETL entanglement.
+
+**Conclusion:** stabilizing the cross-flux (done, committed) was necessary; the
+coupling-death root cause is now identified (cached-eq target) and the fix is
+scoped to the lagged-target pattern. Production remains the E1.5 path + E8
+projection (6/10 trends) until the lagged-target work lands.
 
 ## Open integration decision
 
