@@ -1,0 +1,99 @@
+# scaps_mirror_v2_robin_strong.yaml — Probe C strong-selective variant
+#
+# Robin BC with 100× lower S than moderate. Tests whether strong selective
+# contacts open up Nd_ETL V_oc sensitivity (current SolarLab is bulk-limited
+# at ~1.07 V across most of the sweep; SCAPS rises monotonically).
+#
+# S_majority = 1e1 m/s, S_minority = 1e-1 m/s. Selectivity ratio still 100×.
+# Compare against moderate (1e3 / 1e1) and Dirichlet baseline.
+
+device:
+  V_bi: 1.30
+  Phi: 2.5e21
+  mode: full
+
+  S_p_left:  1.0e1
+  S_n_left:  1.0e-1
+  S_n_right: 1.0e1
+  S_p_right: 1.0e-1
+
+layers:
+  - name: SCAPS_HTL
+    role: HTL
+    thickness_nm: 20.0
+    E_g_eV: 3.25
+    chi_eV: 2.40
+    eps_r: 11.75
+    mu_n_cm2: 1.0e-3
+    mu_p_cm2: 1.0e-3
+    N_C_cm3: 2.5e20
+    N_V_cm3: 2.5e20
+    N_D_cm3: 0.0
+    N_A_cm3: 1.0e18
+    v_th_cm_s: 1.0e7
+    optical_material: spiro_OMeTAD
+
+  - name: SCAPS_PVK
+    role: absorber
+    thickness_nm: 800.0
+    E_g_eV: 1.53
+    chi_eV: 3.94
+    eps_r: 31.0
+    mu_n_cm2: 20.0
+    mu_p_cm2: 20.0
+    N_C_cm3: 1.0e19
+    N_V_cm3: 1.0e19
+    N_D_cm3: 1.0e14
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    B_rad_cm3_s: 1.0e-12
+    C_n_cm6_s: 2.3e-29
+    C_p_cm6_s: 2.3e-29
+    optical_material: MAPbI3
+    bulk_defects:
+      - name: Perovskite-CB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e12
+        E_t_eV_below_cb: 0.1
+        distribution: single
+      - name: Perovskite-VB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e12
+        E_t_eV_above_vb: 0.1
+        distribution: single
+
+  - name: SCAPS_ETL
+    role: ETL
+    thickness_nm: 25.0
+    E_g_eV: 1.9
+    chi_eV: 4.10
+    eps_r: 4.2
+    mu_n_cm2: 1.0e-2
+    mu_p_cm2: 1.0e-5
+    N_C_cm3: 8.0e19
+    N_V_cm3: 8.0e19
+    N_D_cm3: 1.0e18
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    optical_material: TiO2
+
+interfaces:
+  - target: HTL/PVK
+    sigma_n_cm2: 1.0e-19
+    sigma_p_cm2: 1.0e-19
+    N_t_cm2: 1.0e12
+    v_th_cm_s: 1.0e7
+    E_t_eV_below_cb: 0.6
+    distribution: single
+
+  - target: PVK/ETL
+    sigma_n_cm2: 1.0e-19
+    sigma_p_cm2: 1.0e-19
+    N_t_cm2: 1.0e12
+    v_th_cm_s: 1.0e7
+    E_t_eV_below_cb: 0.6
+    distribution: gaussian
+    E_char_eV: 0.1
+    N_peak_cm3: 5.64e8
