@@ -1112,6 +1112,9 @@ def _charge_density(
     return rho
 
 
+_IFACE_PROJ_EXP_CAP = 40.0  # cap |Δφ/V_T| before exp() to avoid overflow
+
+
 def _apply_interface_recombination(
     dn: np.ndarray,
     dp: np.ndarray,
@@ -1119,15 +1122,30 @@ def _apply_interface_recombination(
     p: np.ndarray,
     stack: DeviceStack,
     mat: MaterialArrays,
+    phi: np.ndarray | None = None,
 ) -> None:
     """Subtract interface recombination from dn, dp at interface nodes (in-place).
 
     Interface recombination is a surface rate [m⁻² s⁻¹] converted to
     volumetric [m⁻³ s⁻¹] by dividing by the dual-grid cell width.
+
+    Phase E8 — band-bending interface-plane projection (env-gated by
+    ``SOLARLAB_IFACE_PROJ=1``). The E1.5 cross-carrier path samples the
+    bulk-interior densities ``n[idx+1]`` / ``p[idx-1]`` directly, which
+    over-counts interface SRH because SCAPS reads the depletion-suppressed
+    *interface-plane* densities. When the gate is on and ``phi`` is
+    supplied, each eval density is Boltzmann-projected onto the interface
+    node, and the ``ni_eff²`` reference is projected by the *same* combined
+    factor so the SRH numerator (n·p − ni²) stays exactly zero at dark
+    equilibrium — the detailed-balance term the failed
+    ``failed-prototype/e2-bbd-face-density`` attempt dropped. Default off:
+    bit-identical to the E1.5 path.
     """
     ifaces = electrical_interfaces(stack)
     if not ifaces:
         return
+    proj = phi is not None and os.environ.get("SOLARLAB_IFACE_PROJ", "") == "1"
+    V_T_dev = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
     for k, idx in enumerate(mat.interface_nodes):
         if k >= len(ifaces):
             break
@@ -1157,8 +1175,25 @@ def _apply_interface_recombination(
             if mat.interface_ni_sq_eff
             else float(mat.ni_sq[idx])
         )
+        n_eval = float(n[eval_n_idx])
+        p_eval = float(p[eval_p_idx])
+        if proj:
+            # Boltzmann-project the bulk-interior eval densities onto the
+            # interface plane: n[idx] = n[eval_n]·exp((φ[idx]−φ[eval_n])/V_T),
+            # p[idx] = p[eval_p]·exp(−(φ[idx]−φ[eval_p])/V_T). Co-project
+            # ni_eff² by the same combined factor (fac_n·fac_p) so the
+            # numerator is exactly fac·(n·p − ni²) → zero at equilibrium.
+            en = (float(phi[idx]) - float(phi[eval_n_idx])) / V_T_dev
+            ep = (float(phi[idx]) - float(phi[eval_p_idx])) / V_T_dev
+            en = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, en))
+            ep = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, ep))
+            fac_n = math.exp(en)
+            fac_p = math.exp(-ep)
+            n_eval *= fac_n
+            p_eval *= fac_p
+            ni_sq_eff = ni_sq_eff * fac_n * fac_p
         R_s = interface_recombination(
-            n[eval_n_idx], p[eval_p_idx], ni_sq_eff,
+            n_eval, p_eval, ni_sq_eff,
             mat.interface_n1[k], mat.interface_p1[k],
             v_n, v_p,
         )
@@ -1338,7 +1373,7 @@ def assemble_rhs(
     # below near the iface_state RHS block. Legacy E1.5 cross-carrier
     # SRH applies only when N_iface_state == 0.
     if mat.N_iface_state == 0:
-        _apply_interface_recombination(dn, dp, n, p, stack, mat)
+        _apply_interface_recombination(dn, dp, n, p, stack, mat, phi)
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
