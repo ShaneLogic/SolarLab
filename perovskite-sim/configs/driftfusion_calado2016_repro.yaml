@@ -1,0 +1,89 @@
+# Driftfusion / Calado 2016 paper-reproduction preset.
+#
+# Purpose: reproduce the paper-scale Calado 2016 spiro/MAPbI3/TiO2 metrics,
+# especially V_oc, without changing the physically richer default benchmark.
+#
+# Differences from driftfusion_benchmark.yaml:
+#   - mode: legacy, so post-baseline physics hooks are disabled.
+#   - chi = Eg = 0 on all electrical layers, matching the flat-band paper
+#     model rather than the FULL-tier heterostack model.
+#   - V_bi = 1.42 V, calibrated in this solver to reproduce the reported
+#     V_oc ~= 1.00-1.10 V paper range while preserving J_sc ~= 22 mA/cm2.
+
+device:
+  mode: legacy
+  V_bi: 1.42
+  Phi: 1.4e21
+  interfaces:
+    - [1.0e3, 1.0e-1]
+    - [1.0e-1, 1.0e3]
+
+layers:
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 4.0
+    mu_n: 2e-10
+    mu_p: 2e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 1e24
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 0.0
+    Eg: 0.0
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 23.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 1e11
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 2.57e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    tau_n: 1e-7
+    tau_p: 1e-7
+    n1: 1e11
+    p1: 1e11
+    B_rad: 3.6e-18
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1.3e7
+    chi: 0.0
+    Eg: 0.0
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 0.0
+    Eg: 0.0
