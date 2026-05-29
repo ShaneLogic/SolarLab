@@ -175,6 +175,12 @@ underlying physics changes are:
 
 ### Per-sweep visual overlays
 
+> **⚠️ SUPERSEDED (historical).** The figures in this E1.7 block were
+> generated 2026-05-25 with pre-E6/E7/E8/E9 models (no E8 projection, no
+> σ-sweep fix, no spurious-generation clamp) and still show the unphysical
+> J_sc ≈ 33 mA/cm². For the current-model overlays see **"Current per-sweep
+> overlays" in the Update 2026-05-29 (Phase E8/E9) section below.**
+
 Each panel below shows SolarLab (post-E1.7) and SCAPS PDF reference
 on the same axes — V_oc, J_sc, FF, PCE versus the sweep parameter.
 Solid = SolarLab; dashed = SCAPS reference; markers = swept points.
@@ -830,4 +836,44 @@ spurious-generation interface); 40 interface/regression tests pass.
 Ship state: physically reasonable across all 10 sweeps; trends matched/close on
 7 of 10; absolute J_sc now physical; base V_oc absolute deferred to the
 characterised bulk/contact wall.
+
+### Current per-sweep overlays (regenerated 2026-05-29, current models)
+
+SolarLab (solid, current default models: E8 optional, no-spurious-generation
+clamp default-on) vs SCAPS xlsx (dashed), all four metrics per panel.
+Regenerate via `python scripts/scaps_validation_figures.py --out
+docs/figures/scaps_validation`. **These supersede the May-25 E1.7-era figures
+further up (which used pre-E6/E7/E8/E9 models and still showed the unphysical
+J_sc=33 mA/cm²).**
+
+**ETL/PVK CBO (ΔE_C)** — V_oc cliff tracks SCAPS; spike-side plateau gap; J_sc physical
+
+![CBO](figures/scaps_validation/sweep_CHI_ETL.png)
+
+**ETL donor doping** — high-N_D arm direction-correct; low-N_D unbracketed (8/11)
+
+![Nd_ETL](figures/scaps_validation/sweep_Nd_ETL.png)
+
+**PVK/ETL interface N_t** — 74 % closure, direction match (post σ-fix)
+
+![Nt_PVK/ETL](figures/scaps_validation/sweep_Nt_PVK_ETL.png)
+
+**HTL/PVK interface N_t** — flat-both = matched (clamp fixed the wrong-direction bug)
+
+![Nt_HTL/PVK](figures/scaps_validation/sweep_Nt_HTL_PVK.png)
+
+**PVK-CB / PVK-VB bulk N_t** — cascade-masked (SolarLab flat vs SCAPS −39/−11 mV)
+
+![Nt_C_PVK](figures/scaps_validation/sweep_Nt_C_PVK.png)
+![Nt_V_PVK](figures/scaps_validation/sweep_Nt_V_PVK.png)
+
+**PVK/ETL interface E_t** — direction + shape match
+
+![Et_PVK/ETL](figures/scaps_validation/sweep_Et_PVK_ETL.png)
+
+**PVK-CB / PVK-VB / HTL-PVK E_t** — flat-both (SCAPS-flat)
+
+![Et_C_PVK](figures/scaps_validation/sweep_Et_C_PVK.png)
+![Et_V_PVK](figures/scaps_validation/sweep_Et_V_PVK.png)
+![Et_HTL/PVK](figures/scaps_validation/sweep_Et_HTL_PVK.png)
 
