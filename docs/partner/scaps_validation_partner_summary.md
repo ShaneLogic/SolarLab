@@ -122,25 +122,25 @@ defect-density sweeps (Figures 6 and 7) are flat in SolarLab, whereas SCAPS
 shows a small response (−39 mV and −11 mV respectively). The mechanism is
 explained in Section 5.
 
-![Figure 1. ETL/PVK conduction-band offset (ΔE<sub>C</sub>).](../figures/scaps_validation/sweep_CHI_ETL.png)
+![ETL/PVK conduction-band offset (ΔE<sub>C</sub>).](../figures/scaps_validation/sweep_CHI_ETL.png)
 
-![Figure 2. PVK/ETL interface defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_PVK_ETL.png)
+![PVK/ETL interface defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_PVK_ETL.png)
 
-![Figure 3. PVK/ETL interface defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_PVK_ETL.png)
+![PVK/ETL interface defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_PVK_ETL.png)
 
-![Figure 4. HTL/PVK interface defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_HTL_PVK.png)
+![HTL/PVK interface defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_HTL_PVK.png)
 
-![Figure 5. ETL donor doping (N<sub>D</sub>).](../figures/scaps_validation/sweep_Nd_ETL.png)
+![ETL donor doping (N<sub>D</sub>).](../figures/scaps_validation/sweep_Nd_ETL.png)
 
-![Figure 6. Perovskite conduction-band bulk defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_C_PVK.png)
+![Perovskite conduction-band bulk defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_C_PVK.png)
 
-![Figure 7. Perovskite valence-band bulk defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_V_PVK.png)
+![Perovskite valence-band bulk defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_V_PVK.png)
 
-![Figure 8. Perovskite conduction-band bulk defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_C_PVK.png)
+![Perovskite conduction-band bulk defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_C_PVK.png)
 
-![Figure 9. Perovskite valence-band bulk defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_V_PVK.png)
+![Perovskite valence-band bulk defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_V_PVK.png)
 
-![Figure 10. HTL/PVK interface defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_HTL_PVK.png)
+![HTL/PVK interface defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_HTL_PVK.png)
 
 For at-a-glance reference, Table 2 summarizes the per-sweep outcome.
 
