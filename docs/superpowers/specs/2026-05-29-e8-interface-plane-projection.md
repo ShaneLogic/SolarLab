@@ -242,6 +242,66 @@ reduction (multi-day). Production remains the E1.5 path + E8 projection
 (6/10 PDF trends) — the achievable in-tree maximum without the QSS work or
 SCAPS source data.
 
+## Phase E9 — absolute+trend audit vs 1R-Parameters.xlsx (parallel-agent findings)
+
+Partner asked for absolute-value closeness AND trend match, referencing the
+raw xlsx. Two parallel debugger agents dispatched. Absolute targets locked
+(`scripts/scaps_absolute_scorecard.py` grades all 4 metrics vs the xlsx):
+base **V_oc 1.168 V, J_sc 263 A/m² (constant across every sweep), FF 0.870,
+PCE 26.69 %**.
+
+### CRITICAL — Nt_PVK/ETL "106 % closure" was a sweep σ-bug artifact
+
+`sweeps/device_parameter_sweep.py:_apply_interface_defect_N_t_cm2` hardcodes
+`SIGMA_CM2 = 1.0e-15` (the v1 value) when converting swept N_t → SRV. The v2
+config uses **σ = 1e-19**. So every Nt_PVK/ETL sweep point ran with SRV
+**10 000× too large** (100 m/s vs the config base 0.01 m/s at N_t=1e12). The
+sweep's N_t=1e12 point therefore does NOT match the true base. With the
+corrected σ=1e-19 the closure is **75 %, not 106 %** (direction still correct,
+whole curve offset ~87 mV low). **The prior "interface 109/106 % ✓" in this
+doc and the parked memory was measuring over-amplified physics — corrected to
+~75 %.** CBO (CHI_ETL) is unaffected (not an N_t sweep): 83 %/92 % stand.
+
+Fix: the sweep must reconstruct SRV with the config's σ. `InterfaceDefect`
+carries only `E_t_eV` + `calibration_factor` (no σ/N_t), so the clean fix adds
+`sigma_n_cm2`/`sigma_p_cm2`/`N_t_cm2`/`v_th_cm_s` to `InterfaceDefect`
+(populated by the loader) and has the sweep handler reconstruct SRV =
+σ·v_th·N_t — OR ratio-scale off the base SRV using a stored base N_t.
+
+### Base V_oc gap (87 mV) is bulk/contact-limited, NOT interface-calibratable
+
+Single-channel knockouts at the base point (PROJ=OFF, V_oc 1080.8 mV):
+
+| zeroed | V_oc (mV) | Δ |
+|---|---|---|
+| PVK/ETL iface SRH | 1095.7 | +14.9 |
+| HTL/PVK iface SRH | 1069.0 | **−11.8 (spurious generation)** |
+| Auger | 1098.3 | +17.5 |
+| B_rad | 1093.7 | +12.9 |
+| bulk SRH → ∞ | 1081.6 | +0.8 (negligible) |
+| iface + Auger + B_rad all 0 | **1199.5** | +118.7 (super-additive) |
+
+Even removing ALL interface SRH only reaches 1095.7 mV — still 72 mV short of
+1168. The all-recomb-off ceiling 1199.5 mV is itself below SCAPS's low-Nt
+ceiling of 1249 mV → a residual ~50 mV **contact/carrier-statistics** gap
+(SCAPS contact band-bending / Fermi treatment vs SolarLab Dirichlet pinning).
+No `calibration_factor` on PVK/ETL can close it; closing needs bulk-recomb or
+contact-BC changes that would regress the Nt sweep slope (the E7 entanglement,
+now quantified). HTL/PVK orientation bug reconfirmed (`ni_sq_eff=nR_eq·pL_eq`
+≈1e44 pairs ETL-electron with HTL-hole → np<ni² → spurious +12 mV generation).
+
+### Absolute-vs-trend tradeoff (E8 projection)
+- PROJ=OFF better for absolute V_oc (1080.8 vs 1059.0 mV).
+- PROJ=ON better for CBO slope (92 % vs 83 %).
+- Cannot get base V_oc=1.168 AND keep the Nt slope — bulk/contact ceiling.
+
+### J_sc over-generation (Agent A — incomplete)
+SolarLab base J_sc 333 A/m² (33.3 mA/cm²) exceeds the SQ limit (~27.5) for
+Eg=1.53 eV; SCAPS 263 (26.28). Agent A hit its session budget before
+reporting a root cause — TMM over-absorption (sub-gap band-tail in the MAPbI3
+n,k, or missing reflection / flux normalization) is the leading hypothesis;
+re-investigation pending.
+
 ## Open integration decision
 
 The hook is env-gated for safety. Promoting it (SimulationMode flag /
