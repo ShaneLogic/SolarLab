@@ -43,4 +43,37 @@ SCAPS-side non-physicality instead of chasing it.**
 - Every shipped result passes the physics gate.
 
 ## Iteration log
-- (E10.1) … see commits below.
+
+### E10.1 — R2 (TMM under-generation): add glass front substrate ✅
+Photon balance (R+A+T=1.00): bare 3-layer lost 7.4 mA/cm² to air/spiro front
+reflection (missing glass substrate). Added 1 mm glass front (optical-only).
+**J_sc 24.0→25.73 mA/cm² (N_grid=30), within −2% of SCAPS 26.3.** Physics gate
+PASS (J_sc≤SQ, V_oc≤V_bi, trends preserved). Commit `c447c22`. Residual =
+SCAPS zero-front-reflection idealization (not chased). Metal back reflector
+tested: +0.4 only (most remaining transmission is sub-Eg, unrecoverable).
+**Numerical item logged:** N_grid=30 inflates the peaked-G trapz ~+2.5 mA/cm²
+vs fine grid (true fine-grid J_sc≈23.1) — grid-convergence, future iteration.
+
+### E10.2 — R3 (base V_oc −97mV): root-caused, fundamental solver divergence
+Implied dark saturation J_0(SolarLab)≈2.6e-20 vs J_0(SCAPS)≈7e-22 A/cm² —
+**37× higher → exactly the 93mV via kT·ln(37)**. Channel decomposition at V_oc:
+**Auger 4.79 + radiative 4.11 mA/cm² dominate** (bulk SRH 0.33, interface
+clamped). Auger/radiative use the PDF coefficients (C=2.3e-29, B=1e-12),
+identical to SCAPS. Yet SolarLab recombines 37× more at a given V — because its
+**carrier-density-vs-voltage relation differs**: the absorber QFL split is
+1.205 V while the terminal V is only 1.07 V — a **135 mV internal drop** across
+the heterojunction band offsets (HTL/PVK ΔE_C=1.54 eV, PVK/ETL transport).
+With identical ni (1.408e12, verified), coefficients, and contacts (Robin/
+Dirichlet equal at SCAPS-realistic S — tested), this is a **fundamental
+solver / heterojunction-transport / high-injection-statistics divergence**, not
+a tunable parameter. It is LINKED to R1 (the interface/heterojunction
+carrier-sampling). **Physics gate: SolarLab's V_oc is physical; not hacked.**
+Closing it requires either SCAPS solver internals or the R1 interface-plane/QSS
+work (multi-day) — deferred. Eliminated (all tested): ni, contact BC, single
+interface SRH channel.
+
+### Remaining (hard, deferred)
+- **R1** — interface-plane carrier sampling (QSS); replaces the NOGEN clamp with
+  the principled fix; addresses Nd_ETL direction, Nt_C/V_PVK mask, AND part of
+  the R3 135 mV heterojunction drop. Multi-day solver work (scoped in the E8 spec).
+- **R3 residual** — high-injection np(V)/statistics vs SCAPS; needs SCAPS internals.

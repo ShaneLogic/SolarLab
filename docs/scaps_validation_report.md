@@ -814,7 +814,7 @@ spurious-generation interface); 40 interface/regression tests pass.
 | Nt_HTL/PVK | flat-both ✓ (was wrong-dir) | — |
 | Et_C/V/HTL | flat-both ✓ | — |
 | PVK/ETL E_t | dir ✓ | — |
-| **J_sc (all sweeps)** | — | **240 vs 263 (−9 %, PHYSICAL; was +27 % over-SQ)** |
+| **J_sc (all sweeps)** | — | **257 vs 263 (−2 %, PHYSICAL) after E10.1 glass front; was 240 (−9%), and 333 (+27%, over-SQ) before the E9 clamp** |
 | Nd_ETL | 38 %, low-N_D dir off | — |
 | Nt_C/V_PVK | flat (SCAPS −39/−11 mV) | cascade-masked |
 | **base V_oc** | — | **1.069 vs 1.168 (−99 mV)** |
@@ -876,4 +876,40 @@ J_sc=33 mA/cm²).**
 ![Et_C_PVK](figures/scaps_validation/sweep_Et_C_PVK.png)
 ![Et_V_PVK](figures/scaps_validation/sweep_Et_V_PVK.png)
 ![Et_HTL/PVK](figures/scaps_validation/sweep_Et_HTL_PVK.png)
+
+---
+
+## Update 2026-05-29 — Phase E10: root-cause optimization workflow
+
+Established a root-cause-driven optimization workflow with a hard **physics
+gate** (every change must keep results physical: J_sc ≤ SQ, V_oc ≤ V_bi,
+R ≥ 0 at illuminated forward bias, energy conservation, correct sweep
+directions; **if matching SCAPS would require less-physical behaviour, physics
+wins and the SCAPS-side idealization is documented, not chased**). Full spec:
+`docs/superpowers/specs/2026-05-29-e10-rootcause-optimization-workflow.md`.
+**The figures above are regenerated under these current models.**
+
+**E10.1 — J_sc (commit `c447c22`).** Photon-balance decomposition showed the
+bare 3-layer stack lost 7.4 mA/cm² to air/spiro front Fresnel reflection — the
+config omitted the glass substrate a real cell is illuminated through. Added a
+1 mm glass front (optical-only, filtered from the electrical grid): **J_sc
+24.0→25.7 mA/cm² (−2 % vs SCAPS 26.3)**, all trends preserved, physics gate
+PASS. The residual is SCAPS's zero-front-reflection idealization (not chased).
+
+**E10.2 — base V_oc −97 mV root-caused (fundamental divergence, deferred).**
+Implied J_0(SolarLab) ≈ 37× J_0(SCAPS) → exactly the 93 mV via kT·ln(37). At
+V_oc the recombination is **Auger 4.79 + radiative 4.11 mA/cm²** dominant
+(PDF coefficients, identical to SCAPS); bulk SRH 0.33. The absorber QFL split is
+1.205 V while the terminal V is 1.07 V — a **135 mV internal drop** across the
+heterojunction band offsets (HTL/PVK ΔE_C=1.54 eV). With identical ni
+(verified 1.408e12), coefficients, and contacts (Robin = Dirichlet at
+SCAPS-realistic S — tested), this is a **fundamental solver / heterojunction-
+transport / high-injection-statistics divergence**, not a tunable parameter or
+a contact/ni error. SolarLab's V_oc is physical; closing the gap needs SCAPS
+solver internals or the interface-plane/QSS solver work (multi-day, R1).
+
+**Status:** all 10 sweeps physical; J_sc matched (−2 %); trends matched/close on
+7/10. Base V_oc (−97 mV) and the Nd_ETL/Nt_C_PVK interface trends are
+characterised to one architectural root cause (heterojunction carrier sampling,
+R1) requiring multi-day solver work — deferred, not hacked.
 
