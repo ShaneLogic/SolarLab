@@ -75,4 +75,30 @@ Jacobian-feedback instability. This is the documented intended path
 ("Sprint 7 will revisit with QSS algebraic reduction").
 
 ## Iteration log
-- (E11.0) … see commits.
+
+- **E11.0 (commit aa4a543)** — golden-master guard + baseline (9 probes). ✅
+- **E11.1 (commit 3042cae)** — QSS math validated offline; all 5 analytical
+  limits pass; QSS R = 3e-5 × bulk-interior over-count. ✅
+- **E11.2 (commit 69bfd51)** — QSS wired into solver (`SOLARLAB_IFACE_QSS=1`,
+  default OFF). **Converges, stable at base (6 s, no Newton hang — the
+  algebraic-not-ODE de-risk works).** Off-path bit-identical. HTL/PVK flat at
+  1.050 for 1e9-1e12 (matches SCAPS, no clamp). ⚠️ partial.
+  - **Open (Phase 3):** (a) extreme N_t (1e15) slow/stalls — stiffness at strong
+    SRV; (b) base V_oc 1.073→1.057 (QSS adds the small HTL/PVK recombination the
+    clamp had zeroed); (c) Nd_ETL / Nt_C_PVK not yet validated (batch run timed
+    out on the slow point). All three reduce to ONE root cause: the 1-cell φ
+    projection under-depletes the interface plane (misses the band-offset / full
+    junction bending). Phase-3 fix = full-band-bending (V₁/V₂ partition +
+    χ-step) projection + a max_nfev bound so strong-SRV points fail-fast.
+- **COUNTERMEASURE VERIFIED** — `qss_golden_master.py --check` (QSS off): all 9
+  probes 0.0 mV drift, physics gate passed → **the current best version is
+  provably unaffected** by all QSS work. env-gate OFF default + golden master
+  guarantee this regardless of QSS outcome.
+
+### Verdict (this session)
+QSS Phases 0-2 complete: math-validated, Newton-stable at base, HTL/PVK flat
+(promising). It does NOT yet cleanly solve all 3 gaps (base V_oc regresses,
+high-N_t stiff). Phase 3 (full-band-bending projection + stiffness hardening) is
+the remaining multi-day work. The countermeasure is in place and verified, so
+this is a safe checkpoint — the current best ships unchanged; QSS stays opt-in
+until Phase 3-5 land.
