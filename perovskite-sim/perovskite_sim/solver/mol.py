@@ -1145,6 +1145,16 @@ def _apply_interface_recombination(
     if not ifaces:
         return
     proj = phi is not None and os.environ.get("SOLARLAB_IFACE_PROJ", "") == "1"
+    # Phase E9.2 — forbid net interface SRH *generation* (R_s < 0). The
+    # cross-carrier ni_sq_eff = nR_eq·pL_eq is a bulk-asymptotic product; at a
+    # thin transport interface (HTL/PVK) it is orders too high (1e44), so under
+    # illumination np < ni_sq_eff and the SRH rate flips to spurious generation
+    # — measured −82 A/m² at short circuit, which inflates J_sc above the
+    # photogeneration (and the SQ limit) and makes the HTL/PVK N_t sweep rise
+    # the wrong way. A passive recombination centre cannot be a net carrier
+    # *source* at illuminated short circuit; clamp R_s ≥ 0 so HTL/PVK goes
+    # inert (matching SCAPS, which holds V_oc flat across that sweep).
+    nogen = os.environ.get("SOLARLAB_IFACE_NOGEN", "") == "1"
     V_T_dev = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
     for k, idx in enumerate(mat.interface_nodes):
         if k >= len(ifaces):
@@ -1197,6 +1207,8 @@ def _apply_interface_recombination(
             mat.interface_n1[k], mat.interface_p1[k],
             v_n, v_p,
         )
+        if nogen and R_s < 0.0:
+            R_s = 0.0
         # Volumetric loss conversion uses the interface-node dual cell.
         # The depletion is applied at the interface node itself —
         # diffusion / drift then re-feeds the eval nodes from the bulk
