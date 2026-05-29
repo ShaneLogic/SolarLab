@@ -704,10 +704,6 @@ def _apply_interface_defect_N_t_cm2(
     ``htl/pvk``, ``left`` (first interior interface), ``right`` (last
     interior interface).
     """
-    SIGMA_CM2 = 1.0e-15
-    V_TH_CM_S = 1.0e7
-    srv_m_s = SIGMA_CM2 * V_TH_CM_S * float(N_t_cm2_areal) * 1.0e-2
-
     n_interfaces = max(0, len(stack.layers) - 1)
     if n_interfaces == 0:
         raise ValueError("DeviceStack has no interior interfaces")
@@ -721,6 +717,20 @@ def _apply_interface_defect_N_t_cm2(
             "declare one in the YAML interfaces: block before sweeping"
         )
     interfaces = list(stack.interfaces) if stack.interfaces else [(0.0, 0.0)] * n_interfaces
+    # SRV = σ·v_th·N_t. The loader built the base SRV in stack.interfaces[k]
+    # from the config's σ (e.g. 1e-19 for the v2 PVK/ETL Gaussian defect). The
+    # legacy path hardcoded σ=1e-15 here, which mismatched the v2 config by
+    # 1e4 — making the swept SRV 10000× too large. When the defect records its
+    # base N_t (Phase E9), scale the *base* SRV by the N_t ratio so the sweep
+    # is σ-consistent and the base point (N_t == N_t_cm2) reproduces the config
+    # baseline exactly. Fall back to the legacy σ=1e-15 derivation only when
+    # the base N_t / base SRV are unavailable.
+    base_N_t = float(getattr(defects[k], "N_t_cm2", 0.0) or 0.0)
+    base_srv = float(interfaces[k][0]) if interfaces[k] else 0.0
+    if base_N_t > 0.0 and base_srv > 0.0:
+        srv_m_s = base_srv * (float(N_t_cm2_areal) / base_N_t)
+    else:
+        srv_m_s = 1.0e-15 * 1.0e7 * float(N_t_cm2_areal) * 1.0e-2
     interfaces[k] = (srv_m_s, srv_m_s)
     return dataclasses.replace(
         stack,

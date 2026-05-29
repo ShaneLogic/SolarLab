@@ -208,6 +208,7 @@ def _parse_interfaces_block(
         defects[k] = InterfaceDefect(
             E_t_eV=depth,
             calibration_factor=calibration_factor,
+            N_t_cm2=float(entry["N_t_cm2"]),
         )
     return tuple(interfaces), tuple(defects)
 
