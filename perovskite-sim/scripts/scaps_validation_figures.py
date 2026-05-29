@@ -16,6 +16,12 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+# Arial everywhere; mathtext in the regular (Arial) font so V$_{oc}$-style
+# subscripts/superscripts render upright in Arial rather than italic Computer
+# Modern. Falls back to DejaVu Sans if Arial is unavailable.
+plt.rcParams["font.family"] = ["Arial", "DejaVu Sans"]
+plt.rcParams["mathtext.default"] = "regular"  # math uses font.family (Arial)
+plt.rcParams["axes.unicode_minus"] = True
 import numpy as np
 import openpyxl
 
@@ -28,18 +34,19 @@ CFG = REPO / "configs" / "scaps_mirror_v2.yaml"
 XLSX = REPO.parent / "docs" / "superpowers" / "references" / "scaps_1r_parameters.xlsx"
 JV = dict(N_grid=30, n_points=24, v_rate=5.0, V_max=1.6)
 
-# sheet -> (updates_fn, x-axis label, log-x). Mirrors scaps_absolute_scorecard.
+# sheet -> (updates_fn, x-axis label [mathtext], log-x, pretty title). Subscripts
+# via $..$ mathtext so they render in Arial (mathtext.default=regular).
 SHEETS = {
-    "CHI_ETL":    (lambda v: {"etl_delta_ec_eV": v}, "ΔE_C (eV)", False),
-    "Nd_ETL":     (lambda v: {"etl_doping_cm3": v}, "N_D,ETL (cm⁻³)", True),
-    "Nt_C_PVK":   (lambda v: {"absorber_defect_density_cm3": v}, "N_t PVK-CB (cm⁻³)", True),
-    "Nt_V_PVK":   (lambda v: {"absorber_defect_density_cm3": v}, "N_t PVK-VB (cm⁻³)", True),
-    "Nt_HTL PVK": (lambda v: {"interface_defect_N_t_cm2": v, "interface_defect_target": "htl/pvk"}, "N_t HTL/PVK (cm⁻²)", True),
-    "Nt_PVK ETL": (lambda v: {"interface_defect_N_t_cm2": v, "interface_defect_target": "pvk/etl"}, "N_t PVK/ETL (cm⁻²)", True),
-    "Et_C_PVK":   (lambda v: {"absorber_defect_depth_eV": v, "trap_depth_reference": "below_cb"}, "E_t PVK-CB (eV)", False),
-    "Et_V_PVK":   (lambda v: {"absorber_defect_depth_eV": v, "trap_depth_reference": "above_vb"}, "E_t PVK-VB (eV)", False),
-    "Et_HTL PVK": (lambda v: {"interface_defect_E_t_eV": v, "interface_defect_target": "htl/pvk"}, "E_t HTL/PVK (eV)", False),
-    "Et_PVK ETL": (lambda v: {"interface_defect_E_t_eV": v, "interface_defect_target": "pvk/etl"}, "E_t PVK/ETL (eV)", False),
+    "CHI_ETL":    (lambda v: {"etl_delta_ec_eV": v}, r"$\Delta E_C$ (eV)", False, "ETL/PVK conduction-band offset"),
+    "Nd_ETL":     (lambda v: {"etl_doping_cm3": v}, r"$N_{D,ETL}$ (cm$^{-3}$)", True, "ETL donor doping"),
+    "Nt_C_PVK":   (lambda v: {"absorber_defect_density_cm3": v}, r"$N_t$ PVK-CB (cm$^{-3}$)", True, "Perovskite-CB bulk defect density"),
+    "Nt_V_PVK":   (lambda v: {"absorber_defect_density_cm3": v}, r"$N_t$ PVK-VB (cm$^{-3}$)", True, "Perovskite-VB bulk defect density"),
+    "Nt_HTL PVK": (lambda v: {"interface_defect_N_t_cm2": v, "interface_defect_target": "htl/pvk"}, r"$N_t$ HTL/PVK (cm$^{-2}$)", True, "HTL/PVK interface defect density"),
+    "Nt_PVK ETL": (lambda v: {"interface_defect_N_t_cm2": v, "interface_defect_target": "pvk/etl"}, r"$N_t$ PVK/ETL (cm$^{-2}$)", True, "PVK/ETL interface defect density"),
+    "Et_C_PVK":   (lambda v: {"absorber_defect_depth_eV": v, "trap_depth_reference": "below_cb"}, r"$E_t$ PVK-CB (eV)", False, "Perovskite-CB bulk defect level"),
+    "Et_V_PVK":   (lambda v: {"absorber_defect_depth_eV": v, "trap_depth_reference": "above_vb"}, r"$E_t$ PVK-VB (eV)", False, "Perovskite-VB bulk defect level"),
+    "Et_HTL PVK": (lambda v: {"interface_defect_E_t_eV": v, "interface_defect_target": "htl/pvk"}, r"$E_t$ HTL/PVK (eV)", False, "HTL/PVK interface defect level"),
+    "Et_PVK ETL": (lambda v: {"interface_defect_E_t_eV": v, "interface_defect_target": "pvk/etl"}, r"$E_t$ PVK/ETL (eV)", False, "PVK/ETL interface defect level"),
 }
 
 
@@ -74,11 +81,11 @@ def run_sl(sheet, fn, xs):
     return sl
 
 
-def plot_sheet(sheet, fn, xlabel, logx, ref, out):
+def plot_sheet(sheet, fn, xlabel, logx, title, ref, out):
     xs = [p["x"] for p in ref]
     sl = run_sl(sheet, fn, xs)
     fig, axes = plt.subplots(2, 2, figsize=(9, 6))
-    metrics = [("Voc", "V_oc (V)"), ("Jsc", "J_sc (mA/cm²)"),
+    metrics = [("Voc", r"$V_{oc}$ (V)"), ("Jsc", r"$J_{sc}$ (mA/cm$^2$)"),
                ("FF", "FF (%)"), ("PCE", "PCE (%)")]
     for ax, (key, ylabel) in zip(axes.ravel(), metrics):
         sc_x = [p["x"] for p in ref]; sc_y = [p[key] for p in ref]
@@ -89,7 +96,7 @@ def plot_sheet(sheet, fn, xlabel, logx, ref, out):
             ax.set_xscale("log")
         ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3); ax.legend(fontsize=8)
-    fig.suptitle(f"{sheet}  —  SolarLab (current models) vs SCAPS", fontsize=11)
+    fig.suptitle(f"{title}  —  SolarLab (current models) vs SCAPS", fontsize=11)
     fig.tight_layout()
     slug = sheet.replace(" ", "_").replace("/", "_")
     p = out / f"sweep_{slug}.png"
@@ -107,9 +114,9 @@ def main():
     for sheet in args.sheets:
         if sheet not in SHEETS or sheet not in wb.sheetnames:
             continue
-        fn, xlabel, logx = SHEETS[sheet]
+        fn, xlabel, logx, title = SHEETS[sheet]
         print(f"=== {sheet} ===")
-        plot_sheet(sheet, fn, xlabel, logx, read_sheet(wb[sheet]), out)
+        plot_sheet(sheet, fn, xlabel, logx, title, read_sheet(wb[sheet]), out)
 
 
 if __name__ == "__main__":
