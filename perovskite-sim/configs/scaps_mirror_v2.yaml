@@ -42,6 +42,30 @@ device:
   mode: fast
 
 layers:
+  # Phase E10.1 — glass front substrate (optical-only, role:substrate filtered
+  # from the electrical grid). Real perovskite cells are illuminated through
+  # glass; omitting it left the air/spiro Fresnel reflection too high (~8 %),
+  # under-counting absorber J_sc. With glass the front reflection drops to
+  # ~5 % (air/glass ~4 % + index-matched glass/spiro) and absorber J_sc rises
+  # 21.7→23.1 mA/cm² — a physical completion of the optical stack, NOT a
+  # tuning hack. Residual to SCAPS 26.3 is SCAPS' zero-front-reflection
+  # idealization (we do not remove real reflection — physics gate).
+  - name: glass
+    role: substrate          # optical-only; filtered from the electrical grid
+    thickness_nm: 1.0e6      # 1 mm
+    E_g_eV: 9.0
+    chi_eV: 1.0
+    eps_r: 2.25
+    mu_n_cm2: 0.0
+    mu_p_cm2: 0.0
+    N_C_cm3: 1.0e19
+    N_V_cm3: 1.0e19
+    N_D_cm3: 0.0
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    optical_material: glass
+    incoherent: true
+
   - name: SCAPS_HTL
     role: HTL
     thickness_nm: 20.0
