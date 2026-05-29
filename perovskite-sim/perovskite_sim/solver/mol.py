@@ -1114,6 +1114,47 @@ def _charge_density(
 
 _IFACE_PROJ_EXP_CAP = 40.0  # cap |Δφ/V_T| before exp() to avoid overflow
 
+# Phase E11 — TE equilibration velocity for the QSS interface-plane balance.
+# Large → interface-plane state ≈ projected bulk for weak SRH (R = SRH(proj));
+# self-limiting (depletion) for strong SRH. Env-overridable for tuning probes.
+_QSS_V_TH_MS = float(os.environ.get("SOLARLAB_QSS_VTH", "1.0e5"))
+
+
+def _qss_interface_R(proj_n, proj_p, ni_sq, n1, p1, v_n, v_p, v_th):
+    """QSS interface SRH rate [m⁻² s⁻¹] via 1-D bounded root-find.
+
+    Solves the quasi-steady-state balance v_th·δ = SRH(proj_n−δ, proj_p−δ) for
+    the interface-plane depletion δ ≥ 0 and returns R = v_th·δ. Intrinsically
+    R ≥ 0 (np ≤ ni² → δ=0 → no spurious generation, so no clamp is needed) and
+    self-limiting (δ bounded by min(proj_n, proj_p)). No ODE DOF / Newton
+    feedback — the stability de-risk vs the dormant interface-plane-state path.
+    Validated offline against analytical limits (scripts/probes/e11_qss_math.py).
+    """
+    if v_n == 0.0 and v_p == 0.0:
+        return 0.0
+    R0 = interface_recombination(proj_n, proj_p, ni_sq, n1, p1, v_n, v_p)
+    if R0 <= 0.0:
+        return 0.0  # at/below equilibrium → no recombination (no generation)
+    hi = min(proj_n, proj_p) * (1.0 - 1e-9)
+    if hi <= 0.0:
+        return 0.0
+
+    def f(d):
+        return v_th * d - interface_recombination(
+            proj_n - d, proj_p - d, ni_sq, n1, p1, v_n, v_p
+        )
+
+    if f(hi) < 0.0:
+        return v_th * hi  # transport(TE)-limited recombination
+    lo, h = 0.0, hi
+    for _ in range(40):
+        mid = 0.5 * (lo + h)
+        if f(mid) > 0.0:
+            h = mid
+        else:
+            lo = mid
+    return v_th * 0.5 * (lo + h)
+
 
 def _apply_interface_recombination(
     dn: np.ndarray,
@@ -1157,6 +1198,13 @@ def _apply_interface_recombination(
     # across that sweep). Escape hatch ``SOLARLAB_IFACE_ALLOW_GEN=1`` restores
     # the legacy (unphysical-generation) branch for back-comparison only.
     nogen = os.environ.get("SOLARLAB_IFACE_ALLOW_GEN", "") != "1"
+    # Phase E11 — QSS interface-plane SRH (env-gated, default OFF). Replaces the
+    # bulk-interior cross-carrier sampling + clamp with the physically-correct
+    # interface-plane carrier model: Boltzmann-project the live bulk densities
+    # onto the interface plane, then solve the quasi-steady-state balance
+    # v_th·δ = SRH(proj−δ) (1-D bounded root-find, R = v_th·δ). Intrinsically
+    # R ≥ 0 (no spurious generation → no clamp needed) and depletion-aware.
+    qss = phi is not None and os.environ.get("SOLARLAB_IFACE_QSS", "") == "1"
     V_T_dev = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
     for k, idx in enumerate(mat.interface_nodes):
         if k >= len(ifaces):
@@ -1189,6 +1237,23 @@ def _apply_interface_recombination(
         )
         n_eval = float(n[eval_n_idx])
         p_eval = float(p[eval_p_idx])
+        if qss:
+            # Interface-plane projection (live bulk → plane via local band
+            # bending) then QSS 1-D root-find. Co-project ni² so detailed
+            # balance holds (R=0 at equilibrium).
+            en = (float(phi[idx]) - float(phi[eval_n_idx])) / V_T_dev
+            ep = (float(phi[idx]) - float(phi[eval_p_idx])) / V_T_dev
+            en = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, en))
+            ep = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, ep))
+            fac_n = math.exp(en); fac_p = math.exp(-ep)
+            R_s = _qss_interface_R(
+                n_eval * fac_n, p_eval * fac_p, ni_sq_eff * fac_n * fac_p,
+                mat.interface_n1[k], mat.interface_p1[k], v_n, v_p, _QSS_V_TH_MS,
+            )
+            R_vol = R_s / mat.dx_cell[idx]
+            dn[idx] -= R_vol
+            dp[idx] -= R_vol
+            continue
         if proj:
             # Boltzmann-project the bulk-interior eval densities onto the
             # interface plane: n[idx] = n[eval_n]·exp((φ[idx]−φ[eval_n])/V_T),
