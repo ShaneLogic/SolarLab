@@ -3,9 +3,15 @@
 This setup runs the primary `perovskite-sim/` tree in two development
 containers:
 
-- `backend`: FastAPI + editable Python package on <http://127.0.0.1:8000>
+- `backend`: FastAPI + editable Python package on <http://127.0.0.1:8002>
 - `frontend`: Vite + TypeScript UI on <http://127.0.0.1:5173>
 - `notebook`: optional JupyterLab workspace on <http://127.0.0.1:8888>
+
+The backend is published on host port **8002** (mapped to container `8000`) to avoid
+clashing with other local Docker stacks that grab `8000`/`8001`. The frontend reads the
+backend URL from `VITE_API_BASE` (set in `docker-compose.yml`), so the browser talks to
+`127.0.0.1:8002`. Open the **frontend** at <http://127.0.0.1:5173> to submit jobs — that
+is the only page you need.
 
 The source tree is bind-mounted into the containers, so normal code edits on
 the host are visible inside Docker. The backend uses `uvicorn --reload`; the
