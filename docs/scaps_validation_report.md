@@ -910,6 +910,32 @@ solver internals or the interface-plane/QSS solver work (multi-day, R1).
 
 **Status:** all 10 sweeps physical; J_sc matched (−2 %); trends matched/close on
 7/10. Base V_oc (−97 mV) and the Nd_ETL/Nt_C_PVK interface trends are
-characterised to one architectural root cause (heterojunction carrier sampling,
-R1) requiring multi-day solver work — deferred, not hacked.
+characterised to fundamental SolarLab-vs-SCAPS model divergences (contact /
+high-injection statistics / interface model) — deferred, not hacked. The QSS
+interface-plane solver (E11) was developed + tested and shown NOT to close them
+(they are not interface-sampling); kept env-gated OFF, current best unaffected.
+
+### Current best — shipping snapshot (the figures above reflect this)
+
+Shipping default: `configs/scaps_mirror_v2.yaml`, glass front (E10.1) +
+no-spurious-generation clamp (E9.3), QSS OFF. Verified via
+`scripts/qss_golden_master.py`. Reproduce figures:
+`python scripts/scaps_validation_figures.py --out docs/figures/scaps_validation`.
+
+| Metric / sweep | SolarLab (current best) | SCAPS | Status |
+|---|---|---|---|
+| Base V_oc | 1.072 V | 1.168 V | −96 mV (physical; model divergence) |
+| Base J_sc | 25.73 mA/cm² | 26.28 | −2 % ✓ (physical, ≤ SQ) |
+| Base FF / PCE | 0.856 / 22.1 % | 0.870 / 26.69 % | follows V_oc·J_sc |
+| CHI_ETL (CBO) | cliff 0.30 → spike 1.078 | 0.33 → 1.25 | dir ✓; spike-plateau gap |
+| Nt_PVK/ETL | 1.080 → 0.869 (~75 %) | 1.249 → 0.968 | dir ✓ |
+| Nt_HTL/PVK | ~flat, −17 mV @1e15 | ~flat, −5 mV | dir ✓, mild over-sensitivity |
+| Et_C/V_PVK, Et_HTL/PVK | flat | flat | ✓ |
+| Et_PVK/ETL | dir + shape | drop −35 mV | ✓ |
+| Nd_ETL | V-shaped dip (low-N_D) | monotonic rise | ✗ dir (contact/V_bi) |
+| Nt_C/V_PVK | flat (−8 mV @1e15) | −39 / −11 mV | ✗ (cascade/ceiling) |
+
+Every shipped value obeys the physics gate (J_sc ≤ SQ, V_oc ≤ V_bi, R ≥ 0 at
+illuminated forward bias). The three unmatched items are proven not-QSS-solvable
+and traced to fundamental model differences requiring SCAPS solver internals.
 
