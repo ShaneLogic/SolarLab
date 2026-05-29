@@ -226,7 +226,7 @@ Implementation notes:
 - `device.mode: full`.
 
 **Tests**:
-- `pytest tests/integration/backend/test_jv_2d_advanced_physics.py` (NEW, see T8) loads both presets and runs `kind=jv_2d` on each at coarse grid (Ny_per_layer=5, Nx=4, V_max=0.6, V_step=0.2) — asserts result is finite and active_physics string contains the expected fragments.
+- `pytest tests/integration/backend/test_jv_2d_advanced_physics.py` (NEW, see T8) loads both presets and runs `kind=jv_2d` on each at coarse grid (Ny_per_layer=5, Nx=4, V<sub>max</sub>=0.6, V_step=0.2) — asserts result is finite and active_physics string contains the expected fragments.
 - Optional: hand-spot-check both load cleanly into the workstation UI.
 
 **Rollback**: delete the two YAML files.

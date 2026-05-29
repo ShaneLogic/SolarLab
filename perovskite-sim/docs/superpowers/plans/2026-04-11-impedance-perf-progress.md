@@ -259,7 +259,7 @@ def test_impedance_ionmonger_finite():
 
 Run: `pytest tests/integration/test_material_cache_regression.py -v -m slow`
 
-Expected: both tests PASS on the current code. If the J–V bounds are too tight (e.g. V_oc is outside 0.9–1.3 V on this device), loosen them to whatever the current run produces — the point of this test is to catch *drift*, not to re-validate physics.
+Expected: both tests PASS on the current code. If the J–V bounds are too tight (e.g. V<sub>oc</sub> is outside 0.9–1.3 V on this device), loosen them to whatever the current run produces — the point of this test is to catch *drift*, not to re-validate physics.
 
 - [ ] **Step 3: Commit the regression test**
 
@@ -2266,7 +2266,7 @@ Expected: clean build, no TypeScript errors.
 - [ ] **Step 3: Manual E2E smoke test**
 
 Start the backend (`uvicorn backend.main:app --app-dir perovskite-sim --port 8000`) and the frontend (`npm run dev`), then:
-- Run a J–V sweep on `ionmonger_benchmark`. Watch the progress bar advance 0→100% through "J–V forward sweep" and "J–V reverse sweep". Verify V_oc, J_sc, FF, PCE look correct and the J–V plot has axis labels.
+- Run a J–V sweep on `ionmonger_benchmark`. Watch the progress bar advance 0→100% through "J–V forward sweep" and "J–V reverse sweep". Verify V<sub>oc</sub>, J<sub>sc</sub>, FF, PCE look correct and the J–V plot has axis labels.
 - Run an impedance sweep at V_dc = 0.9 V. Watch the progress bar advance through 15 frequencies. Verify the Nyquist semicircle is in the upper half plane.
 - Run a degradation run (t_end = 100 s, 10 snapshots). Watch the progress bar advance through 10 snapshots.
 

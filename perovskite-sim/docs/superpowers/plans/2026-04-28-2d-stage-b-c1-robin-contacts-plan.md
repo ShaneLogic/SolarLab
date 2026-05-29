@@ -653,7 +653,7 @@ Wait — at this point Tasks 1–4 are already done, so Robin IS wired in. This 
 pytest tests/regression/test_twod_validation.py::test_twod_robin_parity_vs_1d -v -s
 ```
 
-Expected: PASS with printed V_oc, J_sc, FF values matching within tolerances. If it fails, the Robin boundary math is wrong — re-read the sign table in the spec before debugging.
+Expected: PASS with printed V<sub>oc</sub>, J<sub>sc</sub>, FF values matching within tolerances. If it fails, the Robin boundary math is wrong — re-read the sign table in the spec before debugging.
 
 - [ ] **Step 3: Commit**
 

@@ -6,7 +6,7 @@
 
 **Architecture:** A single new test file `tests/validation/test_physical_trends.py` with six parametrized tests, each running a parameter sweep via `dataclasses.replace()` on a baseline preset, extracting a trend metric, and asserting it falls within a literature window. Tagged `@pytest.mark.validation` for explicit invocation. Zero production-code changes.
 
-**Design Decision — Baseline Preset:** The spec originally specified `nip_MAPbI3_tmm.yaml`. This plan uses `nip_MAPbI3.yaml` (Beer-Lambert, chi=Eg=0 in all layers) instead because Trends 1 and 5 vary the absorber Eg and need the optical-generation response to track. With TMM, the n,k data is fixed per `optical_material` key and does not respond to Eg changes — the J_sc vs Eg trend would be a no-op. Beer-Lambert uses `alpha` on `MaterialParams` and the Eg-shifted ni directly, so both electrical and optical responses are live. The FULL physics tier is still active (default for presets that don't pin `mode`), so thermionic emission will engage once we set non-zero Eg/chi on the absorber — testing more physics, not less.
+**Design Decision — Baseline Preset:** The spec originally specified `nip_MAPbI3_tmm.yaml`. This plan uses `nip_MAPbI3.yaml` (Beer-Lambert, chi=Eg=0 in all layers) instead because Trends 1 and 5 vary the absorber Eg and need the optical-generation response to track. With TMM, the n,k data is fixed per `optical_material` key and does not respond to Eg changes — the J<sub>sc</sub> vs Eg trend would be a no-op. Beer-Lambert uses `alpha` on `MaterialParams` and the Eg-shifted ni directly, so both electrical and optical responses are live. The FULL physics tier is still active (default for presets that don't pin `mode`), so thermionic emission will engage once we set non-zero Eg/chi on the absorber — testing more physics, not less.
 
 **Tech Stack:** pytest, numpy, scipy, existing `perovskite_sim` experiment primitives (`run_jv_sweep`, `run_suns_voc`), `dataclasses.replace()`
 
@@ -163,7 +163,7 @@ git commit -m "test(validation): add shared fixtures and helpers for physics tre
 
 ---
 
-### Task 3: Implement Trend 1 (V_oc vs Bandgap) and Trend 5 (J_sc vs Bandgap) — shared Eg sweep
+### Task 3: Implement Trend 1 (V<sub>oc</sub> vs Bandgap) and Trend 5 (J<sub>sc</sub> vs Bandgap) — shared Eg sweep
 
 **Files:**
 - Modify: `perovskite-sim/tests/validation/test_physical_trends.py` (append two test functions)
@@ -189,7 +189,7 @@ def eg_sweep_results(baseline_stack: DeviceStack) -> list[tuple[float, JVResult]
     return results
 ```
 
-- [ ] **Step 2: Write the V_oc vs Bandgap test (Trend 1)**
+- [ ] **Step 2: Write the V<sub>oc</sub> vs Bandgap test (Trend 1)**
 
 ```python
 def test_voc_vs_bandgap(eg_sweep_results: list[tuple[float, JVResult]]) -> None:
@@ -216,7 +216,7 @@ def test_voc_vs_bandgap(eg_sweep_results: list[tuple[float, JVResult]]) -> None:
     )
 ```
 
-- [ ] **Step 3: Write the J_sc vs Bandgap test (Trend 5)**
+- [ ] **Step 3: Write the J<sub>sc</sub> vs Bandgap test (Trend 5)**
 
 ```python
 def test_jsc_vs_bandgap(eg_sweep_results: list[tuple[float, JVResult]]) -> None:
@@ -258,7 +258,7 @@ git commit -m "test(validation): add V_oc vs Eg and J_sc vs Eg trend tests"
 
 ---
 
-### Task 4: Implement Trend 2 (V_oc vs Thickness)
+### Task 4: Implement Trend 2 (V<sub>oc</sub> vs Thickness)
 
 **Files:**
 - Modify: `perovskite-sim/tests/validation/test_physical_trends.py` (append one test)
@@ -437,7 +437,7 @@ git commit -m "test(validation): add ideality factor trend test"
 
 ---
 
-### Task 7: Implement Trend 6 (V_oc vs Illumination — Suns-V_oc)
+### Task 7: Implement Trend 6 (V<sub>oc</sub> vs Illumination — Suns-V<sub>oc</sub>)
 
 **Files:**
 - Modify: `perovskite-sim/tests/validation/test_physical_trends.py` (append one test)

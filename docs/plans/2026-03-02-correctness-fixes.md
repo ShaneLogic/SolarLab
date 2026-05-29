@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Fix six correctness and robustness bugs identified in the repository analysis: centralize constants, harmonize interface diffusion coefficients, add ion-clipping diagnostics, improve V_oc accuracy in degradation, fix the impedance lock-in time-axis bias, and add input validation to all public experiment APIs.
+**Goal:** Fix six correctness and robustness bugs identified in the repository analysis: centralize constants, harmonize interface diffusion coefficients, add ion-clipping diagnostics, improve V<sub>oc</sub> accuracy in degradation, fix the impedance lock-in time-axis bias, and add input validation to all public experiment APIs.
 
 **Architecture:** All fixes are self-contained and touch no more than 2–3 files each. Each task follows TDD: write a failing test, verify it fails, implement the fix, verify it passes, commit. The fixes are ordered by impact on physical accuracy.
 
@@ -250,7 +250,7 @@ Expected: all tests including `test_interface_d_harmonic_mean` pass.
 ```bash
 python -m pytest tests/regression/ -v
 ```
-Expected: J_sc > 0, V_oc in [0.5, 1.5] V, FF > 0.3. Note: actual values may shift slightly (harmonic mean is lower than arithmetic at interfaces, slightly reducing current — this is more physical, not a regression).
+Expected: J<sub>sc</sub> > 0, V<sub>oc</sub> in [0.5, 1.5] V, FF > 0.3. Note: actual values may shift slightly (harmonic mean is lower than arithmetic at interfaces, slightly reducing current — this is more physical, not a regression).
 
 **Step 6: Commit**
 
@@ -381,9 +381,9 @@ git commit -m "fix: warn when ion density is clipped in split_step"
 
 ---
 
-## Task 4: Fix V_oc in degradation — geometric mean instead of arithmetic mean
+## Task 4: Fix V<sub>oc</sub> in degradation — geometric mean instead of arithmetic mean
 
-**Context:** In `experiments/degradation.py`, V_oc is computed as:
+**Context:** In `experiments/degradation.py`, V<sub>oc</sub> is computed as:
 ```python
 V_oc = V_T * np.log(np.mean(n_abs * pp_abs) / p.ni_sq)
 ```
@@ -449,7 +449,7 @@ python -m pytest tests/unit/experiments/test_degradation.py::test_voc_uses_geome
                  tests/unit/experiments/test_degradation.py::test_degradation_voc_decreases_over_time -v
 ```
 
-`test_voc_uses_geometric_mean` should PASS (it just verifies the math). `test_degradation_voc_decreases_over_time` may pass or fail depending on current V_oc values — run it to establish baseline.
+`test_voc_uses_geometric_mean` should PASS (it just verifies the math). `test_degradation_voc_decreases_over_time` may pass or fail depending on current V<sub>oc</sub> values — run it to establish baseline.
 
 **Step 3: Fix `run_degradation` in `perovskite_sim/experiments/degradation.py`**
 
@@ -792,7 +792,7 @@ python -m pytest tests/ -v --tb=short
 Expected output:
 - All unit tests pass
 - Integration tests pass (n·p = ni² at equilibrium)
-- Regression tests pass (J_sc > 0, V_oc ∈ [0.5, 1.5] V, FF > 0.3)
+- Regression tests pass (J<sub>sc</sub> > 0, V<sub>oc</sub> ∈ [0.5, 1.5] V, FF > 0.3)
 - No new failures introduced
 
 If regression test values shift materially after Task 2 (harmonic D at interfaces), check whether they are still physically plausible rather than matching old incorrect behavior.

@@ -24,7 +24,7 @@ Add 2-terminal (2T) monolithic tandem solar cell simulation to perovskite-sim. v
 - Stack order: glass / ITO / PEDOT:PSS / wide-gap perovskite / C₆₀ / SnO₂ / Au-PEDOT:PSS recomb / PEDOT:PSS / narrow-gap perovskite / C₆₀ / BCP / Cu
 - Recombination junction: near-ohmic at 1-sun operation
 
-**v1 pass criteria:** simulated tandem J_sc, V_oc, FF, PCE each within ±10% of Lin 2019 Table 1 values using the paper's nominal layer thicknesses.
+**v1 pass criteria:** simulated tandem J<sub>sc</sub>, V<sub>oc</sub>, FF, PCE each within ±10% of Lin 2019 Table 1 values using the paper's nominal layer thicknesses.
 
 ## 3. Architecture
 
@@ -53,7 +53,7 @@ Sub-cell generation profiles:
 
 Both profiles are passed to the existing drift-diffusion solver as the generation source term. Each sub-cell then solves on its own grid with its own contacts and doping.
 
-**Why combined TMM (not sequential two-pass):** Captures back-reflection from the bottom back contact into the top cell, interference effects across the full stack, and avoids the systematic J_sc under-prediction that sequential two-pass TMM produces (~1-3 mA/cm² in typical all-perovskite stacks). Extra code is modest — just per-layer sub-cell tagging.
+**Why combined TMM (not sequential two-pass):** Captures back-reflection from the bottom back contact into the top cell, interference effects across the full stack, and avoids the systematic J<sub>sc</sub> under-prediction that sequential two-pass TMM produces (~1-3 mA/cm² in typical all-perovskite stacks). Extra code is modest — just per-layer sub-cell tagging.
 
 ### 4.2 Electrical model — independent sub-cells + series match
 
@@ -70,7 +70,7 @@ For each current J in a common J grid:
 - V_bot = interp(J, bot_sweep.J, bot_sweep.V)
 - V_tandem = V_top + V_bot + V_junction (= 0 for ideal ohmic)
 
-Then tandem metrics (J_sc, V_oc, FF, PCE) are extracted from (J, V_tandem) using the existing metrics module.
+Then tandem metrics (J<sub>sc</sub>, V<sub>oc</sub>, FF, PCE) are extracted from (J, V_tandem) using the existing metrics module.
 
 **Junction model (v1):** ideal ohmic. V_junction = 0, R_junction = 0. Future PRs may add lumped R or tunnel-diode junction models behind a `junction.model` discriminator field.
 
@@ -182,10 +182,10 @@ result payload → backend → frontend
 - **tandem_optics tagging**: verify junction layers are correctly classified as parasitic.
 - **series-match interpolation**: two synthetic J-V curves with known series sum; verify V_tandem(J) reconstruction and monotonicity.
 - **tandem YAML loader**: reject unsupported junction models, reject missing `sub_cell` tags, accept valid Lin 2019 config.
-- **current-matching edge cases**: sub-cell J_sc mismatch (smaller sub-cell limits tandem J_sc); verify V_oc is near top+bottom single-cell V_oc sum.
+- **current-matching edge cases**: sub-cell J<sub>sc</sub> mismatch (smaller sub-cell limits tandem J<sub>sc</sub>); verify V<sub>oc</sub> is near top+bottom single-cell V<sub>oc</sub> sum.
 
 ### 8.2 Integration test (slow, marked `@pytest.mark.slow`)
-- **test_tandem_lin2019**: load `configs/tandem_lin2019.yaml`, run full tandem J-V sweep, assert PCE within ±10% of 24.8%, J_sc/V_oc/FF each within ±10% of Lin 2019 Table 1.
+- **test_tandem_lin2019**: load `configs/tandem_lin2019.yaml`, run full tandem J-V sweep, assert PCE within ±10% of 24.8%, J<sub>sc</sub>/V<sub>oc</sub>/FF each within ±10% of Lin 2019 Table 1.
 
 ### 8.3 Backend test
 - POST /simulate/tandem with Lin 2019 config returns a valid tandem J-V payload with all metrics fields populated.

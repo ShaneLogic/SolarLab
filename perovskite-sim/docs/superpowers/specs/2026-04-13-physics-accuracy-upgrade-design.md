@@ -10,7 +10,7 @@
 ## Current State
 
 - 26/28 physics checks pass
-- 2 failing checks: V_oc too low (0.749 V vs expected ~1.07 V), V_oc insensitive to n_i
+- 2 failing checks: V<sub>oc</sub> too low (0.749 V vs expected ~1.07 V), V<sub>oc</sub> insensitive to n_i
 - Root cause: contact BCs ignore band offsets (chi, Eg)
 - Single-species ion model, scalar Beer-Lambert optics, uniform SRH lifetimes, fixed T=300 K
 
@@ -27,9 +27,9 @@
 
 ### 1a. Band-Offset-Corrected Contact Boundary Conditions
 
-**Problem**: `build_material_arrays` computes contact equilibrium densities using only doping (`N_D - N_A` and `ni`), ignoring the chi/Eg mismatch between transport layers. This makes contacts "leaky" — too many minority carriers inject from contacts into the absorber, killing V_oc.
+**Problem**: `build_material_arrays` computes contact equilibrium densities using only doping (`N_D - N_A` and `ni`), ignoring the chi/Eg mismatch between transport layers. This makes contacts "leaky" — too many minority carriers inject from contacts into the absorber, killing V<sub>oc</sub>.
 
-**Solution**: Compute V_bi from the Fermi level difference across the full heterostack rather than relying on the manually-set `DeviceStack.V_bi` scalar.
+**Solution**: Compute V<sub>bi</sub> from the Fermi level difference across the full heterostack rather than relying on the manually-set `DeviceStack.V_bi` scalar.
 
 ```
 V_bi = (1/q) * (E_F,left - E_F,right)
@@ -39,9 +39,9 @@ V_bi = (1/q) * (E_F,left - E_F,right)
 When chi/Eg are not configured (all zero), `compute_V_bi()` falls back to the existing manual `V_bi` field, preserving legacy behavior.
 
 **Changes**:
-- `DeviceStack`: add `compute_V_bi()` classmethod deriving V_bi from layer chi, Eg, doping
+- `DeviceStack`: add `compute_V_bi()` classmethod deriving V<sub>bi</sub> from layer chi, Eg, doping
 - `build_material_arrays`: contact densities use each contact layer's own ni (already correct)
-- `assemble_rhs`: use computed V_bi as Poisson right BC
+- `assemble_rhs`: use computed V<sub>bi</sub> as Poisson right BC
 
 ### 1b. Thermionic Emission at Heterointerfaces
 
@@ -63,7 +63,7 @@ J_TE = A* * T^2 * (n_left * exp(-delta_Ec/kT) - n_right)
 - `continuity.py`: at interface faces, cap SG flux to thermionic emission limit (take the minimum magnitude — TE acts as an upper bound on current, not an additive correction)
 - `MaterialParams`: add optional `A_star_n`, `A_star_p` (Richardson constants)
 
-**Validation**: V_oc = 1.07 V on ionmonger_benchmark config (currently 0.912 V with band offsets, 0.749 V without).
+**Validation**: V<sub>oc</sub> = 1.07 V on ionmonger_benchmark config (currently 0.912 V with band offsets, 0.749 V without).
 
 ---
 
@@ -127,7 +127,7 @@ TMM at 200 wavelengths on 3-layer stack: ~5 ms (one-time, before transient). G(x
 - Modified: `build_material_arrays` — compute G_optical when optical data present
 - Modified: `assemble_rhs` — use `mat.G_optical` instead of `beer_lambert_generation` when available
 
-**Validation**: J_sc within 2% of TMM reference. Interference fringe positions match analytical expectations.
+**Validation**: J<sub>sc</sub> within 2% of TMM reference. Interference fringe positions match analytical expectations.
 
 ---
 
@@ -139,9 +139,9 @@ Current: `y = (n, p, P+)` — 3N unknowns
 New: `y = (n, p, P+, P-)` — 4N unknowns
 
 Negative species (e.g., methylammonium vacancy V_MA-) has independent transport params:
-- `D_ion_neg`: diffusion coefficient [m^2/s]
-- `P0_neg`: equilibrium density [m^-3]
-- `P_lim_neg`: steric limit [m^-3]
+- `D_ion_neg`: diffusion coefficient [m<sup>2</sup>/s]
+- `P0_neg`: equilibrium density [m<sup>−3</sup>]
+- `P_lim_neg`: steric limit [m<sup>−3</sup>]
 
 ### 3b. Negative Ion Flux
 
@@ -273,7 +273,7 @@ When T=300 or Nc300/Nv300 absent: no scaling (current behavior).
 
 **Validation**:
 - Recombination peaks near interfaces with trap profiles
-- V_oc temperature coefficient ~ -2 mV/K
+- V<sub>oc</sub> temperature coefficient ~ -2 mV/K
 - Higher T -> faster ions -> less hysteresis at same scan rate
 - Arrhenius activation energy extractable from log(D) vs 1/T
 
@@ -342,8 +342,8 @@ Sent as parameter in job request. Progress bar handles variable runtimes.
 
 **Validation**:
 - Legacy: zero regression on 26 passing checks
-- Fast: V_oc within 0.05 V of full mode
-- Full: match IonMonger within 5% on V_oc, J_sc, FF; match Driftfusion hysteresis shape
+- Fast: V<sub>oc</sub> within 0.05 V of full mode
+- Full: match IonMonger within 5% on V<sub>oc</sub>, J<sub>sc</sub>, FF; match Driftfusion hysteresis shape
 - Graceful fallback: full mode without optical data uses Beer-Lambert
 
 ---

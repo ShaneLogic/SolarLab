@@ -29,7 +29,7 @@ from perovskite_sim.experiments.impedance import run_impedance  # → ImpedanceR
 from perovskite_sim.experiments.degradation import run_degradation  # → DegradationResult
 ```
 
-`JVResult` has: `V_fwd, J_fwd, V_rev, J_rev` (np arrays), `metrics_fwd, metrics_rev` (JVMetrics with V_oc, J_sc, FF, PCE), `hysteresis_index`.
+`JVResult` has: `V_fwd, J_fwd, V_rev, J_rev` (np arrays), `metrics_fwd, metrics_rev` (JVMetrics with V<sub>oc</sub>, J<sub>sc</sub>, FF, PCE), `hysteresis_index`.
 
 ---
 

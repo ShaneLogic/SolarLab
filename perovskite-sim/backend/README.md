@@ -54,7 +54,7 @@ Supported `kind` values include:
 | `spatial` | 1D J-V with spatial-profile snapshots |
 | `dark_jv` | 1D dark diode sweep with ideality-factor / J0 fit |
 | `suns_voc` | Suns-Voc intensity sweep |
-| `voc_t` | V_oc versus temperature sweep |
+| `voc_t` | V<sub>oc</sub> versus temperature sweep |
 | `eqe` | Wavelength-resolved EQE / IPCE |
 | `el` | Electroluminescence / EQE_EL output |
 | `impedance` | Small-signal impedance sweep |
@@ -63,7 +63,7 @@ Supported `kind` values include:
 | `tandem` | 2T monolithic tandem J-V driver |
 | `mott_schottky` | Dark C-V / Mott-Schottky fit |
 | `jv_2d` | 2D J-V sweep over the tensor-product solver |
-| `voc_grain_sweep` | 2D V_oc versus grain-size sweep |
+| `voc_grain_sweep` | 2D V<sub>oc</sub> versus grain-size sweep |
 
 ### Experiments — legacy sync (back-compat)
 

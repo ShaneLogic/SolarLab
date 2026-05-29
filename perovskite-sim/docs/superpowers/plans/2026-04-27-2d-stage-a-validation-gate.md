@@ -1694,7 +1694,7 @@ This is the Stage-A deliverable. It runs the existing 1D `run_jv_sweep` and the 
   Run: `pytest perovskite-sim/tests/regression/test_twod_validation.py -v -s`
 
   This is the gate. If any of the six checks fail, do NOT proceed past this task. Diagnose by:
-  1. Check 1 fail → V_oc differs → Poisson stencil sign error or BC mishandling. Print `r1.J[:5]` vs `r2.J[:5]` and inspect.
+  1. Check 1 fail → V<sub>oc</sub> differs → Poisson stencil sign error or BC mishandling. Print `r1.J[:5]` vs `r2.J[:5]` and inspect.
   2. Check 4 fail → lateral variation in n → SG flux at periodic boundary has wrong sign. Drive a non-uniform initial condition through `assemble_rhs_2d` with empty Microstructure and check `dn[:, 0] == dn[:, -1]`.
   3. Check 5 fail → ∇·J ≠ 0 → the SG fluxes don't sum to zero per node in steady state. Verify the `dn = -(div_x + div_y) / Q + G - R` sign is correct (1D `carrier_continuity_rhs` has the same sign).
 
@@ -2078,7 +2078,7 @@ The backend already has a streaming-job dispatch (`POST /api/jobs`) keyed on `ki
 
 **Out-of-scope coverage** (spec items deliberately not in this plan, per §1):
 
-- Stage B grain-boundary experiment, V_oc(L_g), τ_eff extraction → separate plan.
+- Stage B grain-boundary experiment, V<sub>oc</sub>(L_g), τ_eff extraction → separate plan.
 - Frontend `field-maps-2d.ts`, `voc-grain-sweep.ts` → separate plan.
 - Future stages γ/δ/ε → not in any plan yet.
 - Tandem 2D, axisymmetric, full 3D → out of scope per spec.

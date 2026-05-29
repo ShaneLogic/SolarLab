@@ -4,7 +4,7 @@
 [Phase E7 spike report](2026-05-28-e7-spike-report.md) for revised scope.
 **Date:** 2026-05-28
 **Branch (proposed):** `e7-trend-parity`
-**Predecessor:** Phase E6.5 (V_max probe, 2026-05-28)
+**Predecessor:** Phase E6.5 (V<sub>max</sub> probe, 2026-05-28)
 **Decision gate prior:** `docs/superpowers/specs/2026-05-28-e6-decision-gate.md`
 
 ## Post-spike scope (2026-05-28)
@@ -18,7 +18,7 @@ collapsed to a one-phase ship:
   Y1 = YAML-only PVK/ETL SRV tune (~0.5 day) rather than multi-defect
   solver hook (2-3 days).
 - **Y2 parked** — Probe C showed Robin BC family cannot break the
-  bulk-limited V_oc ceiling on Nd_ETL high-N_d regime. Root cause is
+  bulk-limited V<sub>oc</sub> ceiling on Nd_ETL high-N_d regime. Root cause is
   interface SRH formulation, not contact BC; closure requires either
   the parked SG-face-density refactor (multi-week, falsified prototype
   family) or partner SCAPS contact-model spec (unavailable). User chose
@@ -38,24 +38,24 @@ and re-baselined SCAPS parity against the corrected `scaps_mirror_v2.yaml`
 | Sweep | Pre-E7 closure | Issue |
 |---|---|---|
 | Nd_ETL (ETL doping) | 30% UNDER (working regime) + unphysical 2.1 V branch at low Nd | contact BC pinning |
-| Nt_C_PVK (PVK bulk N_t) | 0.2% | PVK/ETL interface SRH 250× dominates bulk SRH; multi-defect loader collapse may mask |
+| Nt_C_PVK (PVK bulk N<sub>t</sub>) | 0.2% | PVK/ETL interface SRH 250× dominates bulk SRH; multi-defect loader collapse may mask |
 | Na_PVK (PVK doping) | direction unknown under v2 (was reversed under v1) | Probe-dependent |
 
 User clarification (2026-05-28): parity bar is **trend fidelity** (sweep
-direction + relative magnitude), not absolute V_oc / J_sc / FF / PCE.
+direction + relative magnitude), not absolute V<sub>oc</sub> / J<sub>sc</sub> / FF / PCE.
 Base J-V absolutes within ±10% envelope are acceptable.
 
 ## Goals
 
-1. Close `Nd_ETL` trend closure to ≥ 70% AND eliminate the V_oc > E_g/q unphysical branch.
+1. Close `Nd_ETL` trend closure to ≥ 70% AND eliminate the V<sub>oc</sub> > E<sub>g</sub>/q unphysical branch.
 2. Close `Nt_C_PVK` trend closure to ≥ 50%.
-3. Match `Na_PVK` direction (V_oc derivative sign matches SCAPS) + closure ≥ 50%.
+3. Match `Na_PVK` direction (V<sub>oc</sub> derivative sign matches SCAPS) + closure ≥ 50%.
 4. Preserve current CHI_ETL (CBO, 83%) and Nt_PVK_ETL (interface, 109%) closures within ±5 pp.
 
 ## Non-goals
 
-- Base V_oc absolute < 50 mV (per E1.14, needs SCAPS source bisection).
-- J_sc TMM Fresnel +27% gap (optics model, not parameter parity).
+- Base V<sub>oc</sub> absolute < 50 mV (per E1.14, needs SCAPS source bisection).
+- J<sub>sc</sub> TMM Fresnel +27% gap (optics model, not parameter parity).
 - CBO spike-side plateau 150 mV residual (direction already passes).
 - Newton-Krylov / QSS / SG-face-density refactor (falsified by E6.4).
 - Boltzmann-degenerate Fermi-Dirac stats (multi-week; only as Y3 hypothesis test, not implementation).
@@ -98,7 +98,7 @@ No code commits. Three probes run in parallel. Output:
 ### Probe A — PVK doping under v2 (~30 min)
 
 **Question**: Does v2 (4-defect inventory + Gaussian PVK/ETL) flip the
-PVK doping V_oc direction to match SCAPS?
+PVK doping V<sub>oc</sub> direction to match SCAPS?
 
 **Method**:
 ```bash
@@ -115,10 +115,10 @@ python scripts/run_scaps_v2_regression.py --sheets Na_PVK --v-max 1.6
 **Question**: Does the E6.3 loader's parallel-SRH collapse (loader.py
 `_combine_bulk_defects`) correctly model SCAPS' parallel defect
 summation, or does inverse-τ-weighted n1/p1 smearing mask the bulk
-N_t sweep?
+N<sub>t</sub> sweep?
 
 **Method** (no code change):
-1. Load `scaps_mirror_v2.yaml`, dump per-defect (σ, v_th, N_t, n1, p1) for
+1. Load `scaps_mirror_v2.yaml`, dump per-defect (σ, v<sub>th</sub>, N<sub>t</sub>, n1, p1) for
    bulk_defects[0] (PVK-CB) + bulk_defects[1] (PVK-VB).
 2. Compute true two-defect R_SRH(n, p) at three (n, p) sample points
    (low / mid / high injection) by summing per-defect R_i.
@@ -174,7 +174,7 @@ Y1 = YAML-only tune.
 
 YAML-only. Lower `interfaces[PVK/ETL].calibration_factor` from `1.0e-4`
 until PVK/ETL areal SRH drops below bulk SRH in working regime.
-Iteratively tune until Nt_C_PVK V_oc range matches SCAPS 39 mV ± 50%.
+Iteratively tune until Nt_C_PVK V<sub>oc</sub> range matches SCAPS 39 mV ± 50%.
 
 **Mitigation for CBO/interface regression risk**: per-sweep
 `calibration_factor` override map in `scripts/run_scaps_v2_regression.py`
@@ -207,7 +207,7 @@ Apply B2 (architectural) first, B1 (parameter tune) second.
 
 ### Exit criteria for Y1
 
-- `Nt_C_PVK` closure: 0.2% → ≥ 50% (≥ 20 mV V_oc range vs SCAPS 39 mV).
+- `Nt_C_PVK` closure: 0.2% → ≥ 50% (≥ 20 mV V<sub>oc</sub> range vs SCAPS 39 mV).
 - CBO + interface_N_t closures stay within ±5 pp of E6.4 baseline.
 - All existing SCAPS-subset tests still pass (142+).
 
@@ -275,18 +275,18 @@ if configs diverge further.
 Re-scope Y2. Park Nd_ETL gap as `requires deeper contact-model rework`.
 Continue with Y1 + Y3. Hypotheses for separate spec:
 - Φ_b values wrong → partner SCAPS contact-model spec needed.
-- Newton initial guess / V_max ramping protocol.
+- Newton initial guess / V<sub>max</sub> ramping protocol.
 - Boltzmann-degenerate stats at N_D_ETL = 1e18 (Y4 future work).
 
 ### Exit criteria for Y2
 
 - `Nd_ETL` working-regime closure: 30% UNDER → ≥ 70%.
-- `Nd_ETL` V_oc ≤ E_g/q = 1.53 V across full sweep (no unphysical branch).
+- `Nd_ETL` V<sub>oc</sub> ≤ E<sub>g</sub>/q = 1.53 V across full sweep (no unphysical branch).
 - Other sweep closures within ±5 pp of E6.4 baseline.
 
 ### New tests for Y2
 
-- `tests/integration/test_e7_y2_nd_etl_closure.py`: closure floor + V_oc upper bound.
+- `tests/integration/test_e7_y2_nd_etl_closure.py`: closure floor + V<sub>oc</sub> upper bound.
 - `tests/integration/test_e7_y2_robin_no_regression.py`: CBO + interface stay ≥ baseline.
 - If two-preset split: `tests/unit/scripts/test_per_sheet_config_map.py`.
 
@@ -314,18 +314,18 @@ Continue with Y1 + Y3. Hypotheses for separate spec:
    `scaps_mirror_v2_robin.yaml`. Robin × correct defect inventory may flip.
 3. **Boltzmann-degenerate audit** (~4 hr, no code). Hand-compute
    (n_eq, p_eq) under degenerate vs non-degenerate stats at
-   N_D ∈ {1e16, 1e17, 1e18, 1e19}. Confirm whether degenerate stats
-   predict opposite V_oc direction.
+   N<sub>D</sub> ∈ {1e16, 1e17, 1e18, 1e19}. Confirm whether degenerate stats
+   predict opposite V<sub>oc</sub> direction.
 4. **HTL Φ_b BC** (~4 hr, conditional on Y2). HTL Dirichlet pins
-   p_L = N_A_PVK; SCAPS Φ_b workfunction decouples from bulk N_A.
+   p_L = N_A_PVK; SCAPS Φ_b workfunction decouples from bulk N<sub>A</sub>.
    Re-test under Robin HTL.
 5. **Fallback**: park as Y4 / future work. Document required either
    Fermi-Dirac stats OR partner SCAPS contact-model spec.
 
 ### Exit criteria for Y3
 
-- `Na_PVK` V_oc derivative sign matches SCAPS across ≥ 80% of sweep range.
-- Closure ≥ 50% (≥ 17 mV V_oc range vs SCAPS 34 mV).
+- `Na_PVK` V<sub>oc</sub> derivative sign matches SCAPS across ≥ 80% of sweep range.
+- Closure ≥ 50% (≥ 17 mV V<sub>oc</sub> range vs SCAPS 34 mV).
 - Other sweep closures within ±5 pp of pre-Y3 baseline.
 
 ### Out-of-scope under Y3
@@ -350,7 +350,7 @@ EXPECTED_VOC_BOUND = 1.53          # E_g/q for MAPbI3, V
 ```
 
 Runs full v2 regression, parses `summary.json`, asserts per-sweep closure
-∈ bounds AND no V_oc > bound. `@pytest.mark.slow`, ~7.5 min wall time.
+∈ bounds AND no V<sub>oc</sub> > bound. `@pytest.mark.slow`, ~7.5 min wall time.
 
 ### Test-count target
 
@@ -362,7 +362,7 @@ Pre-E7: 142+ SCAPS-subset tests pass. Post-E7: 150+.
 |---|---|---|---|
 | CHI_ETL | 83% | ≥ 80% | ≥ 75% |
 | Nt_PVK_ETL | 109% | ≥ 90% | ≥ 80% |
-| Nd_ETL | 30% UNDER + unphysical branch | ≥ 70% + V_oc ≤ 1.53 V | ≥ 50% + branch gone |
+| Nd_ETL | 30% UNDER + unphysical branch | ≥ 70% + V<sub>oc</sub> ≤ 1.53 V | ≥ 50% + branch gone |
 | Nt_C_PVK | 0.2% | ≥ 50% | ≥ 30% |
 | Na_PVK | unknown v2 | direction matches + ≥ 50% | direction matches |
 
@@ -404,8 +404,8 @@ Per-phase output dirs:
 
 - `docs/scaps_validation_report.md` — running parity status; updated per phase.
 - `docs/superpowers/specs/2026-05-28-e6-decision-gate.md` — E6.4 decision gate.
-- `docs/superpowers/specs/2026-05-28-e6.5-vmax-low-nd.md` — E6.5 V_max probe (falsified V_max-only fix).
-- `docs/superpowers/specs/2026-05-26-e1.14-base-voc-audit.md` — E1.14 base V_oc audit (74 mV structural, out-of-scope under trend bar).
+- `docs/superpowers/specs/2026-05-28-e6.5-vmax-low-nd.md` — E6.5 V<sub>max</sub> probe (falsified V<sub>max</sub>-only fix).
+- `docs/superpowers/specs/2026-05-26-e1.14-base-voc-audit.md` — E1.14 base V<sub>oc</sub> audit (74 mV structural, out-of-scope under trend bar).
 - `docs/superpowers/specs/2026-05-27-e1.15-pvk-doping-direction.md` — E1.15 PVK doping (v1 baseline; superseded by Probe A).
 - `tests/integration/scaps_reference.json` — partner ground truth (xlsx + PDF parsed).
 - `configs/scaps_mirror_v2.yaml` — current SCAPS parity baseline.

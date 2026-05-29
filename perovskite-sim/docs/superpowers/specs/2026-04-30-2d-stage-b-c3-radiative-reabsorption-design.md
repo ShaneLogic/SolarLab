@@ -42,11 +42,11 @@ This is **bit-equivalent to 1D in the lateral-uniform limit**: with constant `dx
 **Activation gate (1D, in `mol.py:597+`):** `has_radiative_reabsorption = sim_mode.use_radiative_reabsorption AND sim_mode.use_photon_recycling AND any absorber has Eg > 0 under TMM`. The `use_photon_recycling` AND is critical — without TMM optics there is no `P_esc`.
 
 **Tests (in `tests/regression/test_radiative_reabsorption.py`):**
-- `test_radiative_reabsorption_matches_phase_3_1_at_voc` — at V_oc, Phase 3.1b reproduces Phase 3.1 V_oc within 5 mV.
-- `test_radiative_reabsorption_preserves_voc_boost` — V_oc boost vs PR-off lies in [40, 100] mV.
+- `test_radiative_reabsorption_matches_phase_3_1_at_voc` — at V<sub>oc</sub>, Phase 3.1b reproduces Phase 3.1 V<sub>oc</sub> within 5 mV.
+- `test_radiative_reabsorption_preserves_voc_boost` — V<sub>oc</sub> boost vs PR-off lies in [40, 100] mV.
 - Plus activation-flag and disabled-fallback tests.
 
-**P_esc primitive:** `physics/photon_recycling.compute_p_esc_for_absorber(...)`. Stage B(c.3) does **NOT** modify this module — it is reused unchanged.
+**P<sub>esc</sub> primitive:** `physics/photon_recycling.compute_p_esc_for_absorber(...)`. Stage B(c.3) does **NOT** modify this module — it is reused unchanged.
 
 ---
 
@@ -122,7 +122,7 @@ Mirror the 1D pattern from `jv_sweep.py:328–378` exactly. Add a 2D analog `_ba
    - Return `dataclasses.replace(mat, G_optical=G_with_rad, has_radiative_reabsorption_2d=False, absorber_y_ranges_2d=(), absorber_p_esc_2d=(), absorber_areas_2d=(), absorber_thicknesses_2d=())` — clears the flag and zeros the tuples so the retry takes the disabled path.
    - Retry `run_transient_2d` once with the baked `mat`. If it still fails, raise.
 
-3. Across voltage steps: the warm-start chain refreshes `R_tot` from the freshly-settled state, so the lag is bounded by how much `n·p` drifts inside one settle interval — sub-percent on the typical `v_rate=1 V/s` sweep, well below the 5 mV V_oc parity window.
+3. Across voltage steps: the warm-start chain refreshes `R_tot` from the freshly-settled state, so the lag is bounded by how much `n·p` drifts inside one settle interval — sub-percent on the typical `v_rate=1 V/s` sweep, well below the 5 mV V<sub>oc</sub> parity window.
 
 The lagged fallback only fires on stiff steps (TMM diode-injection knee). On Beer-Lambert presets the fallback never triggers because BL doesn't have the TMM-knee pathology. The fallback is in place for safety so future TMM 2D runs do not need a separate cleanup.
 
@@ -200,7 +200,7 @@ The 2D build leverages the 1D `mat1d.absorber_*` tuples that are already compute
 ### 4.3 No changes to other modules
 
 - **`perovskite_sim/physics/photon_recycling.py`** — UNCHANGED. The `compute_p_esc_for_absorber(...)` primitive is reused via the 1D build path that fills `mat1d.absorber_p_esc`.
-- **`perovskite_sim/solver/mol.py`** — UNCHANGED. The 1D code is the source of truth for P_esc and absorber-mask construction.
+- **`perovskite_sim/solver/mol.py`** — UNCHANGED. The 1D code is the source of truth for P<sub>esc</sub> and absorber-mask construction.
 - **`perovskite_sim/models/parameters.py`** — UNCHANGED. No new `MaterialParams` fields.
 - **`perovskite_sim/models/config_loader.py`** — UNCHANGED. No new YAML keys.
 
@@ -211,14 +211,14 @@ The 2D build leverages the 1D `mat1d.absorber_*` tuples that are already compute
 2. A TMM-enabled preset (`optical_material` set on the absorber) — needed for `compute_p_esc_for_absorber` to run.
 3. An absorber layer with `Eg > 0` (every shipped TMM preset satisfies this).
 
-For Beer-Lambert presets, `mat1d.has_radiative_reabsorption=False` (no TMM → no P_esc), so `_has_rr_2d=False` automatically. Bit-identical to current Stage B(c.2) behaviour.
+For Beer-Lambert presets, `mat1d.has_radiative_reabsorption=False` (no TMM → no P<sub>esc</sub>), so `_has_rr_2d=False` automatically. Bit-identical to current Stage B(c.2) behaviour.
 
 ### 4.5 Tier gating
 
 Mirrors B(c.1) and B(c.2). The activation AND-chain is:
 1. `sim_mode.use_radiative_reabsorption` (off in LEGACY and FAST, on in FULL — per `models/mode.py`).
 2. `sim_mode.use_photon_recycling` (on in FAST and FULL, off in LEGACY).
-3. `mat1d.has_radiative_reabsorption` (only True when 1D side computed P_esc).
+3. `mat1d.has_radiative_reabsorption` (only True when 1D side computed P<sub>esc</sub>).
 
 LEGACY tier disables the hook (matches 1D). FAST tier currently has `use_radiative_reabsorption=False` (it's a per-RHS hook), so FAST also stays on the disabled path. FULL enables when the preset supports it.
 
@@ -229,23 +229,23 @@ LEGACY tier disables the hook (matches 1D). FAST tier currently has `use_radiati
 Seven tests, mirroring the B(c.2) shape:
 
 ### T1 — Disabled-path bit-identical (slow regression)
-Beer-Lambert preset (`nip_MAPbI3_uniform.yaml`) with `_freeze_ions`, `mode='full'` → `mat.has_radiative_reabsorption_2d=False` (BL has no TMM, no P_esc). Compare the 2D J-V sweep against the same sweep with reabsorption explicitly disabled (mode='legacy'). Assert J-V identical via `np.testing.assert_array_equal(V)` and `np.testing.assert_allclose(J, rtol=1e-12, atol=0.0)`.
+Beer-Lambert preset (`nip_MAPbI3_uniform.yaml`) with `_freeze_ions`, `mode='full'` → `mat.has_radiative_reabsorption_2d=False` (BL has no TMM, no P<sub>esc</sub>). Compare the 2D J-V sweep against the same sweep with reabsorption explicitly disabled (mode='legacy'). Assert J-V identical via `np.testing.assert_array_equal(V)` and `np.testing.assert_allclose(J, rtol=1e-12, atol=0.0)`.
 
-### T2 — 1D ↔ 2D parity gate at V_oc (slow regression, primary correctness gate)
+### T2 — 1D ↔ 2D parity gate at V<sub>oc</sub> (slow regression, primary correctness gate)
 **TMM-enabled preset** (`nip_MAPbI3_tmm.yaml`) with `_freeze_ions`, `mode='full'`. Run 1D `run_jv_sweep` and 2D `run_jv_sweep_2d` with matched grids (1D `N_grid=31`, 2D `Ny_per_layer=10` × layers + 1, `Nx=4`, `settle_t=1e-3`, `lateral_bc='periodic'`). Assert:
 - `|ΔV_oc| ≤ 5e-3 V` (5 mV — matches 1D `test_radiative_reabsorption_matches_phase_3_1_at_voc`)
 - `|ΔJ_sc/J_sc| ≤ 5e-4`
 - `|ΔFF| ≤ 1e-3`
 
-**Tolerance discipline:** if measured deltas exceed these bounds, **do NOT loosen blindly**. First report the measured values, diagnose (sign error in trapezoid, wrong axis order, missing `lateral_length` factor, or genuine adaptive-solver noise), and only loosen by pinning at ~3× the measured noise floor. Cap fallback: 10 mV V_oc, 1e-3 J_sc, 2e-3 FF (matches the B(c.2) discipline).
+**Tolerance discipline:** if measured deltas exceed these bounds, **do NOT loosen blindly**. First report the measured values, diagnose (sign error in trapezoid, wrong axis order, missing `lateral_length` factor, or genuine adaptive-solver noise), and only loosen by pinning at ~3× the measured noise floor. Cap fallback: 10 mV V<sub>oc</sub>, 1e-3 J<sub>sc</sub>, 2e-3 FF (matches the B(c.2) discipline).
 
-The TMM preset is required because radiative reabsorption only activates with `use_photon_recycling=True`, which itself requires TMM. The known TMM 1D regression at V≈0.21V (`project_tmm_jv_regression_021.md`) is at the diode-injection knee; V_oc≈0.91V is far from there, so the parity assertion at V_oc is unaffected.
+The TMM preset is required because radiative reabsorption only activates with `use_photon_recycling=True`, which itself requires TMM. The known TMM 1D regression at V≈0.21V (`project_tmm_jv_regression_021.md`) is at the diode-injection knee; V<sub>oc</sub>≈0.91V is far from there, so the parity assertion at V<sub>oc</sub> is unaffected.
 
-### T3 — V_oc boost in [40, 100] mV (slow regression)
+### T3 — V<sub>oc</sub> boost in [40, 100] mV (slow regression)
 Same TMM preset. Compare 2D `mode='full'` (reabsorption on) vs `mode='legacy'` (reabsorption off, photon recycling off). Assert `40 mV ≤ V_oc(on) − V_oc(off) ≤ 100 mV`. Mirrors 1D `test_radiative_reabsorption_preserves_voc_boost`.
 
 ### T4 — Coexistence smoke (regression, fast)
-Reabsorption + Robin contacts + μ(E) + grain boundary on a coarse mesh. Assert finite V, finite J, J_sc > 0 under illumination. **Smoke test only — no tight physics window.** Cheap test that proves the four per-RHS hooks (reabsorption, Robin, μ(E), GB-tau) compose without solver hang or NaN/Inf.
+Reabsorption + Robin contacts + μ(E) + grain boundary on a coarse mesh. Assert finite V, finite J, J<sub>sc</sub> > 0 under illumination. **Smoke test only — no tight physics window.** Cheap test that proves the four per-RHS hooks (reabsorption, Robin, μ(E), GB-tau) compose without solver hang or NaN/Inf.
 
 ### T5 — Absorber-mask correctness (unit, fast)
 Build `MaterialArrays2D` from a single-absorber TMM preset. Assert:
@@ -274,12 +274,12 @@ Build a `MaterialArrays2D` with reabsorption on. Construct a non-trivial `(n, p)
 |---|---|---|
 | **R1** | Non-local RHS coupling → Jacobian stiffness, Newton-fail at TMM diode knee | Port 1D lagged-fallback to `jv_sweep_2d._integrate_step` per §3.4. Activates only on Newton-fail; default path stays self-consistent. |
 | **R2** | Wrong absorber mask (e.g. picks up HTL/ETL rows) | T5 explicitly asserts `absorber_y_ranges_2d` matches `layer_role_per_y` indices. Build path uses 1D `mat1d.absorber_masks` (already validated by 1D tests). |
-| **R3** | Wrong area/volume weighting (forgot `× lateral_length`, used wrong axis order in trapezoid, divided by thickness instead of area) | T2 1D↔2D parity gate at TMM. In the lateral-uniform limit, missing `lateral_length` would scale `G_rad` by `1/lateral_length` — unmissable on V_oc. T5 asserts `area = thickness × lateral_length` numerically. |
-| **R4** | Double-counting `B·n·p` recombination | **No double count.** `B·n·p` stays in recombination `R` (passed to `continuity_rhs_2d`). The reabsorption hook adds the **non-escaping fraction** `(1 − P_esc)·R` BACK as a **G source**. Net effect: an effective `B_rad · P_esc` recombination rate. This is the `B_rad *= P_esc` Phase 3.1 limit in the uniform-n·p case and the rationale Phase 3.1b uses to argue equivalence. T3 V_oc-boost-in-[40, 100] mV would fail if double-counted (V_oc would NOT boost, or would boost by 2× the literature window). |
+| **R3** | Wrong area/volume weighting (forgot `× lateral_length`, used wrong axis order in trapezoid, divided by thickness instead of area) | T2 1D↔2D parity gate at TMM. In the lateral-uniform limit, missing `lateral_length` would scale `G_rad` by `1/lateral_length` — unmissable on V<sub>oc</sub>. T5 asserts `area = thickness × lateral_length` numerically. |
+| **R4** | Double-counting `B·n·p` recombination | **No double count.** `B·n·p` stays in recombination `R` (passed to `continuity_rhs_2d`). The reabsorption hook adds the **non-escaping fraction** `(1 − P_esc)·R` BACK as a **G source**. Net effect: an effective `B_rad · P_esc` recombination rate. This is the `B_rad *= P_esc` Phase 3.1 limit in the uniform-n·p case and the rationale Phase 3.1b uses to argue equivalence. T3 V<sub>oc</sub>-boost-in-[40, 100] mV would fail if double-counted (V<sub>oc</sub> would NOT boost, or would boost by 2× the literature window). |
 | **R5** | Incorrect redistribution (non-uniform G_rad applied to absorber rows) | Stage B(c.3) v1 is uniform-over-absorber by design (Section 1). Optical-profile-weighted is deferred. T2 lateral-uniform parity verifies the uniform redistribution matches 1D. |
 | **R6** | Breaking disabled-path bit-identicality | T1 explicit slow regression. Structural pattern: when flag is False, `G_to_use is mat.G_optical` (same object), and the `continuity_rhs_2d` call is identical to the current Stage B(c.2) call — verified by visual diff in code review. |
 | **R7** | Interaction with B(c.1) Robin or B(c.2) μ(E) | T4 coexistence smoke. Physics is orthogonal: Robin → BC rows, μ(E) → flux faces, reabsorption → absorber-interior G. All three modify disjoint state regions of the RHS. |
-| **R8** | 1D↔2D parity drift on TMM preset due to existing 1D TMM regression at V=0.21V (`project_tmm_jv_regression_021.md`) | TMM parity gate (T2) uses `_freeze_ions` and asserts at V_oc only. V_oc ≈ 0.91 V is far from the 0.21 V diode-injection knee where the 1D regression bites. The 0.21 V issue does NOT affect V_oc parity. If T2 fails near V_oc, the cause is in the reabsorption math, not the pre-existing TMM regression. |
+| **R8** | 1D↔2D parity drift on TMM preset due to existing 1D TMM regression at V=0.21V (`project_tmm_jv_regression_021.md`) | TMM parity gate (T2) uses `_freeze_ions` and asserts at V<sub>oc</sub> only. V<sub>oc</sub> ≈ 0.91 V is far from the 0.21 V diode-injection knee where the 1D regression bites. The 0.21 V issue does NOT affect V<sub>oc</sub> parity. If T2 fails near V<sub>oc</sub>, the cause is in the reabsorption math, not the pre-existing TMM regression. |
 
 ---
 
@@ -303,12 +303,12 @@ These items are visible in the B(c.2) and B(c.1) final reviews and remain candid
 
 Tentative arc, ~7 commits, similar shape to Stage B(c.1) and B(c.2):
 
-1. **T1** — Create `perovskite_sim/twod/radiative_reabsorption_2d.py` with the pure `recompute_g_with_rad_2d` helper + shape validators + ~7 unit tests (shape correctness, identity at zero P_esc, redistribution sums to expected total, area-weighting check, lateral-uniform reduces to 1D analytic, sign correctness, shape-mismatch ValueError).
+1. **T1** — Create `perovskite_sim/twod/radiative_reabsorption_2d.py` with the pure `recompute_g_with_rad_2d` helper + shape validators + ~7 unit tests (shape correctness, identity at zero P<sub>esc</sub>, redistribution sums to expected total, area-weighting check, lateral-uniform reduces to 1D analytic, sign correctness, shape-mismatch ValueError).
 2. **T2** — Add 5 new fields to `MaterialArrays2D` (`has_radiative_reabsorption_2d`, 4 tuples). Populate via build path translating 1D `mat1d.absorber_masks` to 2D y-ranges. Add T5 absorber-mask correctness test + T6 tier-gate test.
 3. **T3** — Wire `assemble_rhs_2d` to call `recompute_g_with_rad_2d` when flag is True; pass augmented `G_to_use` to `continuity_rhs_2d`. Add T7 finite-RHS smoke test.
 4. **T4** — Lagged fallback in `jv_sweep_2d._integrate_step`: add `_bake_radiative_reabsorption_step_2d` helper + Newton-fail retry path. Unit test: simulate Newton-fail (mock or pathological state) and verify the retry takes the disabled-flag path.
 5. **T5** — T1 disabled-path bit-identical regression (slow) on BL preset.
-6. **T6** — T2 1D↔2D TMM parity gate at V_oc + T3 V_oc-boost-in-[40, 100] mV regression (both slow).
+6. **T6** — T2 1D↔2D TMM parity gate at V<sub>oc</sub> + T3 V<sub>oc</sub>-boost-in-[40, 100] mV regression (both slow).
 7. **T7** — T4 coexistence smoke + `CLAUDE.md` Stage B(c.3) section + full fast/slow suite green + push.
 
 ---
@@ -318,7 +318,7 @@ Tentative arc, ~7 commits, similar shape to Stage B(c.1) and B(c.2):
 None remaining at the design level. The brainstorm resolved:
 - **Formulation**: uniform-over-absorber-area (Option A); optical-profile redistribution deferred.
 - **Parity preset**: TMM (`nip_MAPbI3_tmm.yaml`) — required because reabsorption is gated on `use_photon_recycling`.
-- **Tolerances**: T2 = (5 mV V_oc, 5e-4 J_sc, 1e-3 FF) initial; do not loosen blindly. T3 = [40, 100] mV V_oc boost.
+- **Tolerances**: T2 = (5 mV V<sub>oc</sub>, 5e-4 J<sub>sc</sub>, 1e-3 FF) initial; do not loosen blindly. T3 = [40, 100] mV V<sub>oc</sub> boost.
 - **Lagged fallback**: port 1D pattern verbatim to `jv_sweep_2d._integrate_step`; activates on Newton-fail only.
 - **Module placement**: new pure module `perovskite_sim/twod/radiative_reabsorption_2d.py`, mirroring the B(c.2) pattern.
 - **API extension**: 5 new `MaterialArrays2D` fields (1 flag + 4 parallel tuples), no `MaterialParams`/YAML changes.

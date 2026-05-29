@@ -84,7 +84,7 @@ The frontend expects the backend at `http://127.0.0.1:8000`.
 
 - `MaterialParams`, `LayerSpec`, `DeviceStack`, and most result objects are
   frozen dataclasses. Do not mutate them in place. Use `dataclasses.replace`.
-- Units are SI: m, s, V, A/m^2, m^-3. `chi` and `Eg` are in eV.
+- Units are SI: m, s, V, A/m<sup>2</sup>, m<sup>−3</sup>. `chi` and `Eg` are in eV.
 - `DeviceStack.interfaces` is ordered by internal layer interface and contains
   `(v_n, v_p)` surface recombination velocities in m/s.
 - Layers with `role: substrate` are optical-only. They must form a contiguous

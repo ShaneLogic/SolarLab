@@ -9,10 +9,10 @@
 
 Close the three SCAPS-parity gaps blocked on interface face-density convention:
 - **ETL doping over-sensitivity** (SolarLab 1075 mV vs SCAPS 137 mV → 8× over)
-- **Bulk N_t mismatch** (SolarLab 0 mV vs SCAPS 39 mV — masked by interface SRH)
+- **Bulk N<sub>t</sub> mismatch** (SolarLab 0 mV vs SCAPS 39 mV — masked by interface SRH)
 - **(partial) PVK doping direction** (HTL/PVK side, structural)
 
-Hypothesis (Day 1 audit + Day 3 probe + Day 3.5 N_D sweep):
+Hypothesis (Day 1 audit + Day 3 probe + Day 3.5 N<sub>D</sub> sweep):
 **SCAPS samples interface-plane densities with a band-bending depletion
 factor `exp(-Δφ/V_T)` applied within the bulk side of each layer**,
 NOT bulk-interior densities (E1.5) and NOT bulk × χ-step (E1.6 v2).
@@ -107,7 +107,7 @@ per-interface mix (one BBD + one cross-carrier).
 With BBD active, the empirical `calibration_factor: 1e-4` in
 scaps_mirror.yaml is partially absorbed by the physical depletion
 factor. Re-fit `calibration_factor` per-interface so it absorbs only
-the residual SCAPS-specific factors (Pauwels-Vanhoutte form, v_th
+the residual SCAPS-specific factors (Pauwels-Vanhoutte form, v<sub>th</sub>
 convention, etc.). Target: cf ∈ [0.1, 10] (close to 1.0 — confirms
 BBD captured the bulk of the gap).
 
@@ -126,31 +126,31 @@ If pass, the partner report shows:
 - CBO closure ≥ 80 % ✓
 - PVK/ETL interface defect closure ≥ 74 % ✓
 - ETL doping range ≤ 200 mV (was 1075) ✓✓
-- bulk N_t mismatch unmasked, sensitivity matches SCAPS ✓✓
+- bulk N<sub>t</sub> mismatch unmasked, sensitivity matches SCAPS ✓✓
 - (partial) PVK doping direction improved
 
 ## Pass / fail criteria (Sprint 2 Day 3 gate)
 
 ### PASS (proceed to E2.2-E2.4)
-- ETL doping V_oc range closes to ≤ 200 mV (target SCAPS 137 mV ±50%)
+- ETL doping V<sub>oc</sub> range closes to ≤ 200 mV (target SCAPS 137 mV ±50%)
 - CBO closure stays ≥ 80 % (was 85 % at ba10b10)
-- Base V_oc stays within [1.05, 1.25] V envelope
+- Base V<sub>oc</sub> stays within [1.05, 1.25] V envelope
 - No new test failures in the existing 125+ SCAPS-subset tests
 
 ### FAIL (pivot to thin-shell volumetric SRH)
 - ETL doping range still > 300 mV (BBD insufficient)
 - OR CBO closure regresses below 70 %
-- OR base V_oc moves outside [1.05, 1.25] V envelope
+- OR base V<sub>oc</sub> moves outside [1.05, 1.25] V envelope
 - OR > 5 existing tests break
 
 ### Fallback path: thin-shell volumetric SRH
 
 If BBD fails the gate, the alternative is to treat interface SRH as a
 volumetric source over a thin shell (~1 nm) at the interface node,
-with R = N_t_volumetric · σ · v_th · ... evaluated using the
+with R = N_t_volumetric · σ · v<sub>th</sub> · ... evaluated using the
 solver's own n[idx], p[idx] at the interface node (NOT eval_n_idx /
-eval_p_idx). The shell width and N_t conversion are calibrated to
-SCAPS' areal N_t. This path is more invasive (changes the source
+eval_p_idx). The shell width and N<sub>t</sub> conversion are calibrated to
+SCAPS' areal N<sub>t</sub>. This path is more invasive (changes the source
 location from idx → shell mask) and has higher Newton risk near the
 heterointerface, hence is the fallback rather than the primary.
 
@@ -161,7 +161,7 @@ Expected effort if needed: ~2 weeks for the shell mask + tests.
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | BBD formula is wrong (Pauwels-Vanhoutte has different form) | medium | Prototype-first gates at 1 day, not 2 weeks |
-| BBD breaks low-N_D Newton convergence | medium | Phase E1.9 `v_max_max_attempts` already mitigates; test with SOLARLAB_BBD_FACE=1 on the low-N_D end of the SCAPS sweep |
+| BBD breaks low-N<sub>D</sub> Newton convergence | medium | Phase E1.9 `v_max_max_attempts` already mitigates; test with SOLARLAB_BBD_FACE=1 on the low-N<sub>D</sub> end of the SCAPS sweep |
 | BBD changes CBO sweep parity (was 85% closure at ba10b10) | low | Probe shows CBO direction preserved; validation gate catches regression |
 | `phi` array not in scope in all `_apply_interface_recombination` callers | low | Single caller (assemble_rhs line 1131); easy to verify |
 | Env-var path breaks frozen-dataclass conventions | low | Sprint 2.1 is intentional prototype; Sprint 2.2 promotes to proper field if prototype passes |

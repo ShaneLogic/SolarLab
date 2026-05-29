@@ -8,17 +8,17 @@
 
 Test Day 3 hypothesis: does the BBD (band-bending depletion) candidate
 recover SCAPS' lower ETL doping sensitivity (parked-memory claim:
-SolarLab 1075 mV vs SCAPS 137 mV V_oc range, 8× over-sensitive)?
+SolarLab 1075 mV vs SCAPS 137 mV V<sub>oc</sub> range, 8× over-sensitive)?
 
 ## Method
 
 Sweep `etl_doping_cm3` ∈ {1e16, 1e17, 1e18, 1e19} cm⁻³ on
-scaps_mirror.yaml at V_oc baseline. Record E1.5 vs BBD face densities
+scaps_mirror.yaml at V<sub>oc</sub> baseline. Record E1.5 vs BBD face densities
 + np products.
 
 ## Results
 
-| N_D_ETL [cm⁻³] | solver V_oc | E1.5 n_face | E1.5 p_face | E1.5 np | BBD n_face | BBD p_face | BBD np |
+| N_D_ETL [cm⁻³] | solver V<sub>oc</sub> | E1.5 n_face | E1.5 p_face | E1.5 np | BBD n_face | BBD p_face | BBD np |
 |---|---|---|---|---|---|---|---|
 | 1e16 | 1.054 | 3.35e23 | 9.12e22 | 3.06e46 | 3.52e23 | 3.21e23 | 1.13e47 |
 | 1e17 | 1.054 | 4.57e23 | 7.92e22 | 3.62e46 | 4.76e23 | 2.44e23 | 1.16e47 |
@@ -34,12 +34,12 @@ scaps_mirror.yaml at V_oc baseline. Record E1.5 vs BBD face densities
 
 **Ratio E1.5 / BBD: 2.8× sensitivity reduction.**
 
-### V_oc movement under current E1.5 solver
+### V<sub>oc</sub> movement under current E1.5 solver
 
-Solver V_oc rises 17 mV across the probed 3-decade range (1.054→1.071).
+Solver V<sub>oc</sub> rises 17 mV across the probed 3-decade range (1.054→1.071).
 Parked-memory claim of 1075 mV range refers to the full SCAPS sweep
 1e8→1e18 cm⁻³ (10 decades), with the bulk of the range coming from
-low N_D where Fermi-pinning dominates — not from the high-N_D regime
+low N<sub>D</sub> where Fermi-pinning dominates — not from the high-N<sub>D</sub> regime
 probed here.
 
 ## Diagnosis
@@ -51,15 +51,15 @@ closing the SCAPS over-sensitivity gap.
 But the partial reduction (2.8× vs needed 8×) suggests:
 
 1. **BBD alone is not a complete fix.** Remaining ~3× sensitivity gap
-   likely comes from low-N_D regime where Fermi-pinning + Robin contact
-   physics matter (not captured by BBD at single V_oc point).
+   likely comes from low-N<sub>D</sub> regime where Fermi-pinning + Robin contact
+   physics matter (not captured by BBD at single V<sub>oc</sub> point).
 
 2. **Individual n_face / p_face sensitivities are LARGER in BBD.**
    n rises 28× (vs E1.5 30×) and p drops 14.6× (vs E1.5 4.2×). The
    cancellation in np product is what reduces sensitivity. If the
    actual SRH path is in the asymptotic regime where R ∝ min(n,p)
    (large-injection limit), then BBD p drop dominates → R drops 14×,
-   V_oc rises 70 mV across 3 decades. Need solver-wired prototype to
+   V<sub>oc</sub> rises 70 mV across 3 decades. Need solver-wired prototype to
    measure actual SRH sensitivity rather than np proxy.
 
 3. **Cancellation could be coincidental.** BBD assumes Boltzmann
@@ -80,11 +80,11 @@ full multi-week refactor. The prototype:
    via BBD when flag is True; keep E1.5 cross-carrier as default.
 3. Re-run the SCAPS validation suite (CBO + ETL doping + bulk + PVK
    doping + base J-V) with flag=True.
-4. **Pass criterion:** ETL doping V_oc range closes to SCAPS 137 mV ±50 %
-   (200 mV envelope) AND CBO closure stays ≥80 % AND base V_oc within
+4. **Pass criterion:** ETL doping V<sub>oc</sub> range closes to SCAPS 137 mV ±50 %
+   (200 mV envelope) AND CBO closure stays ≥80 % AND base V<sub>oc</sub> within
    10 % envelope.
 5. **Fail criterion:** ETL doping range still >300 mV OR CBO regresses
-   <70 % OR base V_oc moves outside [1.05, 1.25] V envelope.
+   <70 % OR base V<sub>oc</sub> moves outside [1.05, 1.25] V envelope.
 
 If pass → ship as Phase E1.17 / E2 (~150-300 LoC, 1-2 weeks).
 If fail → fall back to thin-shell volumetric SRH option from Day 1 audit.
@@ -92,7 +92,7 @@ If fail → fall back to thin-shell volumetric SRH option from Day 1 audit.
 ## Next actions
 
 - **Day 4-5:** Write Phase E2 design RFC with the prototype-first strategy
-  documented above. Include risk analysis if N_D probe insensitivity is
+  documented above. Include risk analysis if N<sub>D</sub> probe insensitivity is
   coincidental rather than physical.
 - **Phase E2 Sprint 2 Day 1:** Implement solver-wired BBD prototype.
   Pass/fail decision lands in 1 day.

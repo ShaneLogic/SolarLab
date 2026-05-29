@@ -683,7 +683,7 @@ def series_match_jv(
 Run: `pytest tests/unit/experiments/test_tandem_jv.py::test_series_match_sums_voltages_at_matched_current -v`
 Expected: PASS
 
-- [ ] **Step 5: Write failing test for current-limited J_sc**
+- [ ] **Step 5: Write failing test for current-limited J<sub>sc</sub>**
 
 Append to `tests/unit/experiments/test_tandem_jv.py`:
 
@@ -921,7 +921,7 @@ git commit -m "feat(jv_sweep): accept fixed_generation override for tandem calle
 
 Run: `cat configs/nip_MAPbI3.yaml`
 
-Note every field that will change for the wide-gap / narrow-gap variants: `Eg`, `chi`, layer thicknesses, absorber `optical_material`, and the `device.V_max` upper bound (needs to fit the tandem sub-cell V_oc, not the tandem total).
+Note every field that will change for the wide-gap / narrow-gap variants: `Eg`, `chi`, layer thicknesses, absorber `optical_material`, and the `device.V_max` upper bound (needs to fit the tandem sub-cell V<sub>oc</sub>, not the tandem total).
 
 - [ ] **Step 2: Create wide-gap preset**
 

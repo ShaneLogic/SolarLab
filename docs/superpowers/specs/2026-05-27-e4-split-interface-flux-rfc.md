@@ -16,7 +16,7 @@ J_n[f] = sg_fluxes_n(phi_n, n, dx, D_n, V_T)[f]       # one flux per face
 # Optional TE cap when |ΔE_c| > 0.05 eV (current path)
 ```
 
-Bulk continuity at idx, idx+1 uses J_n[f] as the boundary face flux for both bulk nodes. No interface-plane state participation.
+Bulk continuity at idx, idx+1 uses J<sub>n</sub>[f] as the boundary face flux for both bulk nodes. No interface-plane state participation.
 
 ## Proposed architecture
 
@@ -50,7 +50,7 @@ At heterointerface face f connecting layer L (idx) and layer R (idx+1):
    R_s2 = SRH(n_R_iface, p_L_iface, ni²_eff_chi, ...)
    ```
 
-Net result: bulk Fermi level responds to χ via TE BC at the heterointerface face. CBO sweep affects bulk J_n through the TE rate factor exp(-V_1/V_T) which depends on band-bending V_1, which depends on χ via charge-balance partition. The MISSING ingredient that killed all five prior prototypes.
+Net result: bulk Fermi level responds to χ via TE BC at the heterointerface face. CBO sweep affects bulk J<sub>n</sub> through the TE rate factor exp(-V_1/V<sub>T</sub>) which depends on band-bending V_1, which depends on χ via charge-balance partition. The MISSING ingredient that killed all five prior prototypes.
 
 ## File touches
 
@@ -85,8 +85,8 @@ Net result: bulk Fermi level responds to χ via TE BC at the heterointerface fac
 |---|---|
 | ETL doping range | ∈ [60, 270 mV] (SCAPS 137 ± 100 %) |
 | CBO closure | ≥ 50 % of SCAPS 918 mV |
-| Interface defect N_t | ≥ 150 mV (not collapsed) |
-| Base V_oc | ∈ [1.05, 1.25] V envelope |
+| Interface defect N<sub>t</sub> | ≥ 150 mV (not collapsed) |
+| Base V<sub>oc</sub> | ∈ [1.05, 1.25] V envelope |
 | 23/23 SCAPS-subset | PASS |
 | Slow regression (TMM) | PASS |
 | Newton stability | full sweep completes |

@@ -14,7 +14,7 @@ band-bending-depleted **interface-plane** densities. The two differ by the
 local Boltzmann factor `exp(±Δφ/V_T)`. Because that factor scales with
 band bending — which scales with `V_bi` (hence `N_D_ETL`) and with `V_app`
 — a *constant* attenuation (the v1 `calibration_factor=1e-4`, or the v2
-`σ=1e-19` substitute) cannot track it. Frozen suppression ⇒ V_oc cannot
+`σ=1e-19` substitute) cannot track it. Frozen suppression ⇒ V<sub>oc</sub> cannot
 respond to ETL doping ⇒ the **Nd_ETL under-sensitivity** (30 % closure).
 
 ## Why 7 prior prototypes failed and this one does not
@@ -31,7 +31,7 @@ R = interface_recombination(n_eval, p_eval, ni_sq_eff, …)   # ← BUG
 but left `ni_sq_eff` **un-projected**. At dark equilibrium
 `n_eval·p_eval = (nR_eq·pL_eq)·F ≠ ni_sq_eff`, so the SRH numerator
 `(n·p − ni²)` is non-zero at equilibrium → spurious recombination →
-Newton blow-up at V_app ≈ 0.08 V. That single missing detailed-balance
+Newton blow-up at V<sub>app</sub> ≈ 0.08 V. That single missing detailed-balance
 term is what sank the whole architectural-refactor narrative.
 
 **Fix:** co-project `ni_sq_eff` by the *same* combined factor
@@ -54,7 +54,7 @@ SCAPS-subset integration tests green.
 | **Nd_ETL** (ETL doping) | 29.8 % | **54.4 %** | **+25 pp — range nearly doubled; first lever in E1–E7 to move it** |
 | Nt_PVK ETL (interface) | 108.6 % | 106.3 % | −2 pp, still passing |
 | Nt_C_PVK (PVK bulk) | 0.2 % | 0.1 % | unchanged — still masked |
-| Base J-V V_oc | 1.0808 V | 1.0590 V | −22 mV (J_sc 333→272 A/m², *closer* to SCAPS 263) |
+| Base J-V V<sub>oc</sub> | 1.0808 V | 1.0590 V | −22 mV (J<sub>sc</sub> 333→272 A/m², *closer* to SCAPS 263) |
 
 Bracket counts identical across all sweeps (14/14, 8/11, 6/7, 7/7) →
 Newton-stable, no crashes, the E2-BBD V=0.08 failure is gone.
@@ -63,10 +63,10 @@ Newton-stable, no crashes, the E2-BBD V=0.08 failure is gone.
 
 - **Nd_ETL**: the high-doping arm (1e16→1e20) now rises steeper, matching
   SCAPS's monotonic increase. The low-doping arm (1e13→1e16) still dips —
-  a *separate* contact/V_bi root cause at low ETL doping (the same region
+  a *separate* contact/V<sub>bi</sub> root cause at low ETL doping (the same region
   that fails to bracket below 1e13), not an interface-SRH problem.
 - **Nt_C_PVK**: projection *lowers* the interface SRH ceiling
-  (1.072→1.052 V), so bulk N_t stays masked. Unmasking needs the ceiling
+  (1.072→1.052 V), so bulk N<sub>t</sub> stays masked. Unmasking needs the ceiling
   *raised*, which is in direct tension with the CBO/Nd_ETL gains (one
   interface-SRH model drives all of them). Confirms the E7 conclusion that
   Nt_C_PVK is genuinely blocked on SCAPS's Auger/radiative/interface
@@ -89,32 +89,32 @@ reports direction + range-closure. Status with projection ON +
 
 | # | Sweep | SCAPS trend | SolarLab | Status |
 |---|---|---|---|---|
-| 1 | CBO ΔE_C | rise 0.33→1.25 | 92 % closure | ✅ |
-| 2 | Nd_ETL | monotonic rise +100 mV | high-N_D arm rises, **low-N_D dip flips net sign** | ❌ dir |
-| 3 | PVK/ETL N_t | drop 1.25→0.97 | 106 % | ✅ |
-| 4 | PVK/ETL E_t | drop −35 mV | −21 mV, dir + shape match (new axis) | ✅ |
-| 5 | PVK-CB N_t | drop −39 mV | flat (cascade-masked) | ❌ |
-| 6 | PVK-VB N_t | drop −11 mV | flat (same combined SRH as CB) | ❌ |
-| 7 | HTL/PVK N_t | ~flat (−5 mV) | **rises +105 mV + solver crash @1e15** | ❌ bug |
-| 8 | PVK-CB E_t | ~flat | flat | ✅ |
-| 9 | PVK-VB E_t | ~flat | flat | ✅ |
-| 10 | HTL/PVK E_t | dead flat | flat | ✅ |
+| 1 | CBO ΔE<sub>C</sub> | rise 0.33→1.25 | 92 % closure | ✅ |
+| 2 | Nd_ETL | monotonic rise +100 mV | high-N<sub>D</sub> arm rises, **low-N<sub>D</sub> dip flips net sign** | ❌ dir |
+| 3 | PVK/ETL N<sub>t</sub> | drop 1.25→0.97 | 106 % | ✅ |
+| 4 | PVK/ETL E<sub>t</sub> | drop −35 mV | −21 mV, dir + shape match (new axis) | ✅ |
+| 5 | PVK-CB N<sub>t</sub> | drop −39 mV | flat (cascade-masked) | ❌ |
+| 6 | PVK-VB N<sub>t</sub> | drop −11 mV | flat (same combined SRH as CB) | ❌ |
+| 7 | HTL/PVK N<sub>t</sub> | ~flat (−5 mV) | **rises +105 mV + solver crash @1e15** | ❌ bug |
+| 8 | PVK-CB E<sub>t</sub> | ~flat | flat | ✅ |
+| 9 | PVK-VB E<sub>t</sub> | ~flat | flat | ✅ |
+| 10 | HTL/PVK E<sub>t</sub> | dead flat | flat | ✅ |
 
 **6/10 met.** Four open, each a distinct root cause:
 
-- **Nd_ETL (#2)** — low-N_D_ETL V_oc dip (contact/V_bi behaviour at
-  N_D ≤ 1e15), not interface SRH. The high-N_D arm is correct post-E8.
-- **PVK-CB / PVK-VB N_t (#5,#6)** — bulk SRH masked by the interface SRH
+- **Nd_ETL (#2)** — low-N_D_ETL V<sub>oc</sub> dip (contact/V<sub>bi</sub> behaviour at
+  N<sub>D</sub> ≤ 1e15), not interface SRH. The high-N<sub>D</sub> arm is correct post-E8.
+- **PVK-CB / PVK-VB N<sub>t</sub> (#5,#6)** — bulk SRH masked by the interface SRH
   ceiling (the E7 recombination cascade). Also the sweep handler drives
   the absorber's *combined* τ, so CB and VB can't be distinguished
   (SCAPS shows them asymmetric: −39 vs −11 mV). Hardest; partner-blocked
   on SCAPS Auger/radiative spec per E7.
-- **HTL/PVK N_t (#7)** — cross-carrier orientation bug. `ni_sq_eff =
+- **HTL/PVK N<sub>t</sub> (#7)** — cross-carrier orientation bug. `ni_sq_eff =
   n_R_eq·p_L_eq = 1e20·1e24 = 1e44` pairs PVK electrons (minority at this
   hole-contact interface) with HTL holes (majority). When the sampled
   PVK-side electron density dips below 1e20 the numerator `n·p−ni²` goes
-  negative → SRH acts as *generation* → higher N_t (SRV) → more spurious
-  generation → V_oc rises. The E1.5 cross-carrier orientation only holds
+  negative → SRH acts as *generation* → higher N<sub>t</sub> (SRV) → more spurious
+  generation → V<sub>oc</sub> rises. The E1.5 cross-carrier orientation only holds
   when the right layer is the electron-transport layer (true for PVK/ETL,
   false for HTL/PVK). Projection amplifies it (+85→+105 mV). Fix pending.
 
@@ -122,21 +122,21 @@ New sweep axis `interface_defect_E_t_eV` (targetable, mirrors
 `interface_defect_N_t_cm2`) added to `device_parameter_sweep.py` to cover
 sweeps #4/#10 — purely additive, 5/5 existing sweep unit tests green.
 
-## HTL/PVK + bulk-N_t investigation — entangled interface calibration (do-not-retry)
+## HTL/PVK + bulk-N<sub>t</sub> investigation — entangled interface calibration (do-not-retry)
 
-Tried to close the HTL/PVK N_t sweep (SL rose +105 mV + crashed; SCAPS flat).
+Tried to close the HTL/PVK N<sub>t</sub> sweep (SL rose +105 mV + crashed; SCAPS flat).
 Root cause measured precisely: the cross-carrier reference
 `ni_sq_eff = nR_eq·pL_eq` uses **bulk-asymptotic** equilibrium densities. At
 the thin HTL/PVK junction the eval node sits in the depletion region, so the
 self-consistent dark-equilibrium product is `9.2e23` vs the cached `1e44` —
 **20 orders too high** → `np < ni²` → SRH flips to spurious generation that
-raises V_oc with N_t.
+raises V<sub>oc</sub> with N<sub>t</sub>.
 
 Prototyped the principled fix (`SOLARLAB_IFACE_EQREF`): recompute `ni_sq_eff`
 per interface from a self-consistent dark steady state (interfaces zeroed),
 sampled at the eval nodes. Result:
 
-- HTL/PVK sign **corrected** (V_oc now *drops* with N_t) — but over-shoots
+- HTL/PVK sign **corrected** (V<sub>oc</sub> now *drops* with N<sub>t</sub>) — but over-shoots
   (−190 mV vs SCAPS −5 mV): the cross-carrier np at HTL/PVK is too large, so
   the interface is a strong recombiner where SCAPS keeps it nearly inert.
 - **PVK/ETL regressed** (106 % → broken, base 1.05→0.82, crash). It was
@@ -161,11 +161,11 @@ re-tuning the PVK/ETL σ/calibration to absorb the reference change.**
 
 ## Interface-plane-state solver — stabilized but coupling-dead (E8.4)
 
-Attempted the route to close HTL/PVK + bulk-N_t together: revive the dormant
+Attempted the route to close HTL/PVK + bulk-N<sub>t</sub> together: revive the dormant
 `SOLARLAB_INTERFACE_PLANE_STATE=1` path (4 extra DOF per interface evolving
 via TE flux + SRH on the interface plane).
 
-**Finding 1 — it no longer hangs on v2** (11 s, V_oc 1.045). The documented
+**Finding 1 — it no longer hangs on v2** (11 s, V<sub>oc</sub> 1.045). The documented
 Newton-hang was the *Sprint-9 split-flux* variant, not this base path.
 
 **Finding 2 — the χ-step cross-flux explodes under the cap.** Legacy
@@ -176,23 +176,23 @@ larger exponential so the surviving arg is always ≤0 — same detailed-balance
 zero-point (`n_1s/n_2s = exp(ΔE_c/V_T)`), bounded magnitude. 45/45 interface
 unit tests green; dormant-gated so zero production impact.
 
-**Finding 3 (the real blocker) — the bulk↔state coupling transmits no V_oc
+**Finding 3 (the real blocker) — the bulk↔state coupling transmits no V<sub>oc</sub>
 trend.** With the cross-flux bounded, every interface sweep is *flat*:
-CBO 1.060→1.075 (should be 0.33→1.25), PVK/ETL N_t dead flat at 1.077 (should
+CBO 1.060→1.075 (should be 0.33→1.25), PVK/ETL N<sub>t</sub> dead flat at 1.077 (should
 be 1.25→0.97). Sweeping the TE coupling rate `v_th_eff` over 1e-2 → 1e2 m/s
 changes **nothing** — so it is not a rate problem. At steady state the bulk
 drain equals the state SRH rate regardless of `v_th`; the SRH rate *on the
-interface-plane state densities is simply too small* to move V_oc. The
+interface-plane state densities is simply too small* to move V<sub>oc</sub>. The
 state-SRH magnitude / state-density formulation needs fundamental rework to
 match the production E1.5 path's effectiveness.
 
 **Root cause of the coupling-death (E8.5, measured):** `compute_interface_te_
 fluxes` builds the TE-flux *target* from the **cached dark-equilibrium**
 densities (`mat.interface_n_R_eq` / `p_L_eq`), not the live illuminated bulk.
-At V_oc the live PVK hole density is `1.6e22` but the cached target is `1.98e4`
+At V<sub>oc</sub> the live PVK hole density is `1.6e22` but the cached target is `1.98e4`
 — **18 orders too low** — so the interface-plane state is pinned at dark levels
 and its SRH stays ≈0 (R=0 at equilibrium by construction). That is why no
-interface sweep moves V_oc and why `v_th_eff` is irrelevant.
+interface sweep moves V<sub>oc</sub> and why `v_th_eff` is irrelevant.
 
 **Naive live-target fix is Newton-unstable.** Feeding the target from the live
 (state-dependent) `n`/`p` couples the extra interface-plane DOF into the
@@ -207,14 +207,14 @@ illumination-aware). The codebase already implements exactly this pattern for
 radiative reabsorption (`experiments/jv_sweep._bake_radiative_reabsorption_
 step`). Plumbing: snapshot `n`/`p` at step entry in `_integrate_step`, stash on
 `mat` via `dataclasses.replace`, have `compute_interface_te_fluxes` read the
-frozen target. This is the concrete next milestone to close HTL/PVK + bulk-N_t
+frozen target. This is the concrete next milestone to close HTL/PVK + bulk-N<sub>t</sub>
 without the PVK/ETL entanglement.
 
 **Lagged-target prototyped — Jacobian-stable but stiff (E8.5b).** Built the
 full lagged plumbing: snapshot illuminated (n, p) at each voltage-step entry
 (`jv_sweep._bake_iface_target`), stash on `mat`, project to the interface plane
 as the TE-flux target. Default path stays bit-identical (bake is a no-op when
-`N_iface_state==0`; verified V_oc=1.0808). But once the target carries the
+`N_iface_state==0`; verified V<sub>oc</sub>=1.0808). But once the target carries the
 illuminated population the interface-plane SRH becomes *physically active* —
 and the extra interface-plane DOF then makes the system **stiff**: Radau fails
 to converge at the very first step (V=0) as the illuminated-strength SRH is
@@ -247,39 +247,39 @@ SCAPS source data.
 Partner asked for absolute-value closeness AND trend match, referencing the
 raw xlsx. Two parallel debugger agents dispatched. Absolute targets locked
 (`scripts/scaps_absolute_scorecard.py` grades all 4 metrics vs the xlsx):
-base **V_oc 1.168 V, J_sc 263 A/m² (constant across every sweep), FF 0.870,
+base **V<sub>oc</sub> 1.168 V, J<sub>sc</sub> 263 A/m² (constant across every sweep), FF 0.870,
 PCE 26.69 %**.
 
 ### CRITICAL — Nt_PVK/ETL "106 % closure" was a sweep σ-bug artifact
 
 `sweeps/device_parameter_sweep.py:_apply_interface_defect_N_t_cm2` hardcodes
-`SIGMA_CM2 = 1.0e-15` (the v1 value) when converting swept N_t → SRV. The v2
+`SIGMA_CM2 = 1.0e-15` (the v1 value) when converting swept N<sub>t</sub> → SRV. The v2
 config uses **σ = 1e-19**. So every Nt_PVK/ETL sweep point ran with SRV
-**10 000× too large** (100 m/s vs the config base 0.01 m/s at N_t=1e12). The
-sweep's N_t=1e12 point therefore does NOT match the true base. With the
+**10 000× too large** (100 m/s vs the config base 0.01 m/s at N<sub>t</sub>=1e12). The
+sweep's N<sub>t</sub>=1e12 point therefore does NOT match the true base. With the
 corrected σ=1e-19 the closure is **75 %, not 106 %** (direction still correct,
 whole curve offset ~87 mV low). **The prior "interface 109/106 % ✓" in this
 doc and the parked memory was measuring over-amplified physics — corrected to
-~75 %.** CBO (CHI_ETL) is unaffected (not an N_t sweep): 83 %/92 % stand.
+~75 %.** CBO (CHI_ETL) is unaffected (not an N<sub>t</sub> sweep): 83 %/92 % stand.
 
 Fix: the sweep must reconstruct SRV with the config's σ. `InterfaceDefect`
-carries only `E_t_eV` + `calibration_factor` (no σ/N_t), so the clean fix adds
+carries only `E_t_eV` + `calibration_factor` (no σ/N<sub>t</sub>), so the clean fix adds
 `sigma_n_cm2`/`sigma_p_cm2`/`N_t_cm2`/`v_th_cm_s` to `InterfaceDefect`
 (populated by the loader) and has the sweep handler reconstruct SRV =
-σ·v_th·N_t — OR ratio-scale off the base SRV using a stored base N_t.
+σ·v<sub>th</sub>·N<sub>t</sub> — OR ratio-scale off the base SRV using a stored base N<sub>t</sub>.
 
-### Base V_oc gap (87 mV) is bulk/contact-limited, NOT interface-calibratable
+### Base V<sub>oc</sub> gap (87 mV) is bulk/contact-limited, NOT interface-calibratable
 
-Single-channel knockouts at the base point (PROJ=OFF, V_oc 1080.8 mV):
+Single-channel knockouts at the base point (PROJ=OFF, V<sub>oc</sub> 1080.8 mV):
 
-| zeroed | V_oc (mV) | Δ |
+| zeroed | V<sub>oc</sub> (mV) | Δ |
 |---|---|---|
 | PVK/ETL iface SRH | 1095.7 | +14.9 |
 | HTL/PVK iface SRH | 1069.0 | **−11.8 (spurious generation)** |
 | Auger | 1098.3 | +17.5 |
-| B_rad | 1093.7 | +12.9 |
+| B<sub>rad</sub> | 1093.7 | +12.9 |
 | bulk SRH → ∞ | 1081.6 | +0.8 (negligible) |
-| iface + Auger + B_rad all 0 | **1199.5** | +118.7 (super-additive) |
+| iface + Auger + B<sub>rad</sub> all 0 | **1199.5** | +118.7 (super-additive) |
 
 Even removing ALL interface SRH only reaches 1095.7 mV — still 72 mV short of
 1168. The all-recomb-off ceiling 1199.5 mV is itself below SCAPS's low-Nt
@@ -307,7 +307,7 @@ re-investigation pending.
 The J_sc>SQ "optics over-generation" was actually the **HTL/PVK interface SRH
 running backwards**. Current balance at illuminated short circuit (V=0):
 q·∫G = 224.6 A/m², bulk SRH/rad/Auger ≈ 0, HTL/PVK interface R_s = **−82.1
-A/m² (generation)**, PVK/ETL R_s = +0.0. J_sc = 224.6 + 82.1 = 306.7 = measured
+A/m² (generation)**, PVK/ETL R_s = +0.0. J<sub>sc</sub> = 224.6 + 82.1 = 306.7 = measured
 306 — closes to <1 A/m². Root: cross-carrier `ni_sq_eff = nR_eq·pL_eq = 1e44`
 ≫ the illuminated np at the depleted HTL junction → np−ni² < 0. Fix:
 `SOLARLAB_IFACE_NOGEN=1` clamps R_s ≥ 0 (commit 7c2c961).
@@ -320,35 +320,35 @@ NOGEN on, vs 1R-Parameters.xlsx):**
 | CHI_ETL (CBO) | 86 % | ok | ✓ |
 | Nt_PVK ETL | 74 % | ok | ✓ (real, post σ-fix) |
 | Nt_HTL PVK | flat-both | ok | ✓ matched (was wrong-dir) |
-| Nd_ETL | 38 % | ✗ | low-N_D dir |
+| Nd_ETL | 38 % | ✗ | low-N<sub>D</sub> dir |
 | Nt_C/V_PVK | 0–1 % | ok | cascade-masked |
 | Et_C/V_PVK, Et_HTL | flat-ish | — | SCAPS-flat |
 | Et_PVK ETL | 38 % | ok | dir ok |
-| **J_sc** | — | — | **240 A/m² everywhere (−9 % vs 263, PHYSICAL; was 333 = +27 %, over-SQ)** |
+| **J<sub>sc</sub>** | — | — | **240 A/m² everywhere (−9 % vs 263, PHYSICAL; was 333 = +27 %, over-SQ)** |
 
-**Dominant absolute gap = base V_oc −99 mV, which propagates as VocΔmed
+**Dominant absolute gap = base V<sub>oc</sub> −99 mV, which propagates as VocΔmed
 ≈100 mV on EVERY sweep.** Eliminated as causes (all tested):
 - absorber **ni = 1.408e12 m⁻³ = exactly SCAPS-expected** (√(NcNv)·exp(−Eg/2kT)) — not ni.
-- **selective/Robin contacts** (S_min 1→1e-2, minority-blocking): base V_oc
+- **selective/Robin contacts** (S_min 1→1e-2, minority-blocking): base V<sub>oc</sub>
   unchanged 1.069→1.069 — NOT contact-BC-fixable (reconfirms E7).
 - interface SRH with NOGEN: HTL/PVK contributes 0; PVK/ETL ~15 mV.
 - knockout (Agent B): all-recomb-off ceiling 1199 mV < SCAPS low-Nt ceiling
   1249 mV → ~50 mV residual is the **contact-convention / carrier-statistics
   model difference** (SolarLab Dirichlet-at-doping vs SCAPS workfunction
   contacts); the other ~49 mV is residual PVK/ETL + Auger + radiative that
-  SolarLab over-counts because its V_oc carrier densities run higher.
+  SolarLab over-counts because its V<sub>oc</sub> carrier densities run higher.
 
-**Verdict:** base V_oc absolute match (→1.168) is the genuine remaining wall —
+**Verdict:** base V<sub>oc</sub> absolute match (→1.168) is the genuine remaining wall —
 not ni, not contacts, not interface-calibratable. It needs either SCAPS's exact
 contact-workfunction spec + a matching BC, or accepting the −99 mV under the
-trend bar. Everything else (J_sc physicality, CBO, PVK/ETL N_t, HTL/PVK,
+trend bar. Everything else (J<sub>sc</sub> physicality, CBO, PVK/ETL N<sub>t</sub>, HTL/PVK,
 Et sweeps) is matched or close after the E8/E9 fixes.
 
 ## Open integration decision
 
 The hook is env-gated for safety. Promoting it (SimulationMode flag /
 config opt-in / default-on for heterojunction stacks) is a separate
-decision because it shifts the SCAPS-mirror base V_oc (1.08→1.06) and
-J_sc (333→272), which would require updating the
+decision because it shifts the SCAPS-mirror base V<sub>oc</sub> (1.08→1.06) and
+J<sub>sc</sub> (333→272), which would require updating the
 `test_scaps_mirror_baseline.py` envelope guards and the partner-facing
 parity numbers.

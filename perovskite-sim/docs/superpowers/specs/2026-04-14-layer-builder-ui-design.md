@@ -173,7 +173,7 @@ cross-section preview, adapted to the workstation's horizontal pane budget:
   | `back_contact` | metallic gold gradient | white |
 
   A WCAG-AA contrast pass is part of the implementation checklist; sub- and
-  superscripts (MAPbI₃, TiO₂, χ, E_g, μ_n) use a dedicated `.sym` class with
+  superscripts (MAPbI₃, TiO₂, χ, E<sub>g</sub>, μ_n) use a dedicated `.sym` class with
   `font-feature-settings: "sups", "subs"` and a slightly larger size to stay
   readable at the small card scale.
 - **Selected-layer affordance.** The selected card gets a 2 px orange
@@ -676,7 +676,7 @@ Field-set superset test:
       role order — confirms p-i-n / n-i-p symmetry.
 - [ ] Dragging a layer reorders it and the J–V result reflects the change.
 - [ ] Adding a "TiO₂ ETL" template inserts a layer with sensible defaults;
-      running the sweep produces a finite J_sc.
+      running the sweep produces a finite J<sub>sc</sub>.
 - [ ] Deleting the absorber disables Run with the expected error banner;
       restoring it re-enables Run.
 - [ ] Save-As under a fresh name persists across page reload.
@@ -689,7 +689,7 @@ Field-set superset test:
       without overlapping content.
 - [ ] WCAG-AA contrast pass on all role color / text combinations,
       especially the small subscript / superscript characters in layer
-      labels (MAPbI₃, TiO₂, χ, E_g, μ_n).
+      labels (MAPbI₃, TiO₂, χ, E<sub>g</sub>, μ_n).
 
 ## 16. Risks and mitigations
 

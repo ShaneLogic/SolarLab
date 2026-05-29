@@ -354,7 +354,7 @@ Auto-scanning mirrors the `/api/configs` pattern: dropping a new CSV in `data/nk
 
 - `test_nip_tmm_preset_jsc_in_band` — Run a full J–V on `nip_MAPbI3_tmm.yaml`, assert `J_sc ∈ [180, 250] A/m²` (18–25 mA/cm² — the physically realistic band for a 400 nm MAPbI₃ cell with proper front reflection).
 - `test_pin_tmm_preset_jsc_in_band` — Same for `pin_MAPbI3_tmm.yaml`.
-- `test_tmm_jsc_below_beer_lambert` — Run J–V on both `nip_MAPbI3.yaml` and `nip_MAPbI3_tmm.yaml` with the same absorber thickness; assert `J_sc_tmm < J_sc_beer_lambert` (the front reflection loss must show up as a J_sc reduction).
+- `test_tmm_jsc_below_beer_lambert` — Run J–V on both `nip_MAPbI3.yaml` and `nip_MAPbI3_tmm.yaml` with the same absorber thickness; assert `J_sc_tmm < J_sc_beer_lambert` (the front reflection loss must show up as a J<sub>sc</sub> reduction).
 
 ### 9c. Regression test pinning
 
@@ -383,15 +383,15 @@ def test_nip_tmm_baseline_jsc():
     assert abs(result.metrics_fwd.J_sc - NIP_TMM_JSC_PINNED) < 5.0  # 0.5 mA/cm²
 ```
 
-The pinning step is deliberately part of implementation, not the spec — there's no honest way to predict the J_sc to better than ±10% before running it.
+The pinning step is deliberately part of implementation, not the spec — there's no honest way to predict the J<sub>sc</sub> to better than ±10% before running it.
 
 ### 9d. Manual verification checklist (post-merge)
 
 After implementation, verify in the workstation:
 
-- [ ] **Interference fringes appear.** Sweep absorber thickness across 50, 100, 200, 400, 600, 800 nm on `nip_MAPbI3_tmm.yaml` — J_sc should oscillate, not increase monotonically. Beer-Lambert J_sc on the same sweep should be monotonic.
+- [ ] **Interference fringes appear.** Sweep absorber thickness across 50, 100, 200, 400, 600, 800 nm on `nip_MAPbI3_tmm.yaml` — J<sub>sc</sub> should oscillate, not increase monotonically. Beer-Lambert J<sub>sc</sub> on the same sweep should be monotonic.
 - [ ] **Front reflection visible.** TMM `J_sc` should be 5–15% lower than Beer-Lambert `J_sc` at matched absorber thickness, reflecting the air→glass→FTO front-surface loss.
-- [ ] **Glass `incoherent: true` actually flattens spurious 1 mm fringes.** Toggle the flag in a test config and re-run; with the flag, J_sc is smooth in λ; without it, sub-nanometer ripples appear.
+- [ ] **Glass `incoherent: true` actually flattens spurious 1 mm fringes.** Toggle the flag in a test config and re-run; with the flag, J<sub>sc</sub> is smooth in λ; without it, sub-nanometer ripples appear.
 - [ ] **Optical material dropdown** appears in the Device pane on full tier and is hidden on legacy/fast tiers.
 - [ ] **"TMM active" badge** appears whenever any layer has `optical_material` set; disappears when the user clears it.
 - [ ] **Auto-discovery works.** Drop a new CSV (e.g. copy `Ag.csv` to `data/nk/Cu.csv`) and verify it appears in the dropdown without restarting the frontend (backend restart only).
@@ -408,9 +408,9 @@ Add a new section **"Optical Generation"** between "Physics Overview" and "Runni
 >
 > Generation of electron-hole pairs `G(x)` is the source term that drives the drift-diffusion equations. The simulator supports two optical models:
 >
-> - **Beer-Lambert** (default for legacy/fast tiers): `G(x) = α·Φ·exp(−α·x)`. Treats light as a beam being exponentially absorbed. Fast and simple, but ignores reflection at layer interfaces and wavelength dependence. Off by 5–15% on J_sc for thin-film cells.
+> - **Beer-Lambert** (default for legacy/fast tiers): `G(x) = α·Φ·exp(−α·x)`. Treats light as a beam being exponentially absorbed. Fast and simple, but ignores reflection at layer interfaces and wavelength dependence. Off by 5–15% on J<sub>sc</sub> for thin-film cells.
 >
-> - **Transfer-Matrix Method** (full tier, when `optical_material` is set on layers): Solves Maxwell's equations across the full coherent layer stack at each wavelength of the AM1.5G spectrum, then integrates. Captures interference fringes, front-surface reflection, and wavelength-dependent absorption. Matches measured cells within ~2% on J_sc.
+> - **Transfer-Matrix Method** (full tier, when `optical_material` is set on layers): Solves Maxwell's equations across the full coherent layer stack at each wavelength of the AM1.5G spectrum, then integrates. Captures interference fringes, front-surface reflection, and wavelength-dependent absorption. Matches measured cells within ~2% on J<sub>sc</sub>.
 >
 > To activate TMM, switch to **Full** tier and pick a preset whose name ends in `_tmm`, or set the `optical_material` field on every optical layer of your custom device.
 
@@ -480,9 +480,9 @@ Add a one-line note under the existing "Transfer-matrix optics (TMM)" section:
 |---|---|---|
 | n,k data from refractiveindex.info has gaps in 300–1000 nm range | Medium | Spec requires linear interpolation + boundary clamping in `load_nk`; flag any material with >50 nm gap as a CSV header comment |
 | Substrate-role filter introduces off-by-one errors in grid mapping | Medium | New unit test `test_substrate_role_excluded_from_grid`; `np.interp` between TMM and electrical grids is the only mapping path |
-| FTO/Au degenerate-semiconductor parameters give unphysical V_oc or J_sc | Medium | Calibrate against published nip-MAPbI₃ cell measurements during implementation; if approximate BCs degrade quality, fall back to the original 3-layer YAML for the electrical solver and use TMM only for G(x) calculation (see fallback note below) |
+| FTO/Au degenerate-semiconductor parameters give unphysical V<sub>oc</sub> or J<sub>sc</sub> | Medium | Calibrate against published nip-MAPbI₃ cell measurements during implementation; if approximate BCs degrade quality, fall back to the original 3-layer YAML for the electrical solver and use TMM only for G(x) calculation (see fallback note below) |
 | Interference fringes look "wrong" because real cells have texture/roughness | Low | Document explicitly in tutorial: TMM assumes flat planar interfaces; rough/textured cells need scattering models (out of scope) |
-| Pinned regression J_sc value drifts as we tune ETL/HTL thicknesses in presets | Medium | Pin J_sc with a generous ±0.5 mA/cm² tolerance; tighten in a follow-up once preset thicknesses stabilize |
+| Pinned regression J<sub>sc</sub> value drifts as we tune ETL/HTL thicknesses in presets | Medium | Pin J<sub>sc</sub> with a generous ±0.5 mA/cm² tolerance; tighten in a follow-up once preset thicknesses stabilize |
 | Frontend dropdown shows materials that won't load (corrupt CSV) | Low | `load_nk` has existing validation; the dropdown can't crash because `optical_material: <bad>` errors at backend job dispatch, not at UI render |
 | Glass `incoherent` flag exposes a corner case in the existing TMM solver | Medium | New unit test exercises both flag-on and flag-off paths; if a corner case appears, the fix lands in `optics.py` not the YAMLs |
 

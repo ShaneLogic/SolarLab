@@ -8,13 +8,13 @@
 
 | Sweep | Legacy (ba10b10) | BBD-active | **Thin-shell w=2** | SCAPS | Verdict |
 |---|---|---|---|---|---|
-| Base V_oc | 1.069 V | 1.054 V | **1.088 V** | 1.168 V | within envelope ✓ |
+| Base V<sub>oc</sub> | 1.069 V | 1.054 V | **1.088 V** | 1.168 V | within envelope ✓ |
 | CBO range | 782 mV | 847 mV | **16 mV** | 918 mV | **CBO COLLAPSES** ✗ |
 | ETL doping range | 1075 mV | 1542 mV | **17 mV** | 137 mV | **88 % closure** ✓✓ |
 | PVK doping | 34 | 21 | 48 mV | 34 mV | range overshoots |
-| PVK/ETL interface N_t | 210 | 208 | 206 mV | 282 mV | unchanged (74 %) |
-| Bulk N_t | 0 | 0 | 0 mV | 39 mV | unchanged |
-| Bulk E_t | 2 | 1 | 3 mV | 0 mV | flat both |
+| PVK/ETL interface N<sub>t</sub> | 210 | 208 | 206 mV | 282 mV | unchanged (74 %) |
+| Bulk N<sub>t</sub> | 0 | 0 | 0 mV | 39 mV | unchanged |
+| Bulk E<sub>t</sub> | 2 | 1 | 3 mV | 0 mV | flat both |
 
 Plus: 23/23 SCAPS-subset tests pass with env unset (no legacy regression).
 
@@ -24,7 +24,7 @@ Plus: 23/23 SCAPS-subset tests pass with env unset (no legacy regression).
 |---|---|---|---|
 | ETL doping range ≤ 200 mV | ≤ 200 | **17 mV** | **PASS** ✓ |
 | CBO closure ≥ 80 % | ≥ 80 | **1.7 %** (collapsed 782 → 16 mV) | **FAIL** ✗ |
-| Base V_oc ∈ [1.05, 1.25] V | bounded | 1.088 V | PASS |
+| Base V<sub>oc</sub> ∈ [1.05, 1.25] V | bounded | 1.088 V | PASS |
 | No new test failures | 0 | 0 | PASS |
 
 **One pass, one hard fail.** Same gate logic as BBD: any single hard
@@ -54,7 +54,7 @@ has tiny p. The product is dominated by bulk values that do NOT depend
 on band offset. So changing CBO does not change the interface SRH
 rate measurably.
 
-Why BBD over-sensitive on ETL doping: exp(-Δφ/V_T) factor amplifies
+Why BBD over-sensitive on ETL doping: exp(-Δφ/V<sub>T</sub>) factor amplifies
 depletion-zone widening at low N_D_ETL (documented in Sprint 2 Day
 2-3 findings).
 
@@ -85,7 +85,7 @@ Probability of success: high IF formula extracted correctly.
 ### (c) Park ETL doping as structural (Phase G/F precedent)
 
 Accept that ETL doping over-sensitivity is structural like Phase G
-base V_oc gap (74 mV residual) and Phase F PVK doping direction.
+base V<sub>oc</sub> gap (74 mV residual) and Phase F PVK doping direction.
 Ship the partner report with the current main-branch state. CBO
 closure at 85 % remains the strongest closure.
 

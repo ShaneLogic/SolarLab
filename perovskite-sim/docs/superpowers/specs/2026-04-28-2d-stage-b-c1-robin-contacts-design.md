@@ -16,7 +16,7 @@
 - 2D Robin boundary condition for `n` and `p` at the top (y=0) and bottom (y=Ny-1) contacts.
 - Contacts are **spatially uniform in x** — `S_n_top`, `S_p_top`, `S_n_bot`, `S_p_bot` are scalar floats.
 - `S = 0` is the perfectly-blocking (Neumann) limit. `S → ∞` recovers the ohmic Dirichlet pin.
-- Parity gate: laterally-uniform 2D with Robin must match 1D Phase 3.3 within sub-mV V_oc / 5×10⁻⁴ J_sc / 10⁻³ FF.
+- Parity gate: laterally-uniform 2D with Robin must match 1D Phase 3.3 within sub-mV V<sub>oc</sub> / 5×10⁻⁴ J<sub>sc</sub> / 10⁻³ FF.
 
 **Out of scope — deferred:**
 - Schottky barrier contacts (requires `schottky_equilibrium_n/p` override of `n_eq`; machinery is available but not wired in this stage).
