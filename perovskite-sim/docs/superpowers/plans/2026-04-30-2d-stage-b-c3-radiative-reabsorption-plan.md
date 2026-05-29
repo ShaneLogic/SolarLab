@@ -19,7 +19,7 @@
 | `perovskite_sim/twod/experiments/jv_sweep_2d.py` | Add `_bake_radiative_reabsorption_step_2d` helper + try/except retry around `run_transient_2d` |
 | `tests/unit/twod/test_radiative_reabsorption_2d.py` | **NEW** — unit tests for the helper (~7) |
 | `tests/unit/twod/test_solver_2d.py` | Add T5/T6/T7 wiring + tier-gate + finite-RHS smoke tests |
-| `tests/regression/test_twod_validation.py` | Add T1 disabled-bit-identical, T2 1D↔2D parity, T3 V_oc-boost, T4 coexistence smoke |
+| `tests/regression/test_twod_validation.py` | Add T1 disabled-bit-identical, T2 1D↔2D parity, T3 V<sub>oc</sub>-boost, T4 coexistence smoke |
 | `perovskite_sim/CLAUDE.md` | Stage B(c.3) section |
 
 **Current sizes / projected adds:**
@@ -47,7 +47,7 @@ Bit-equivalent to 1D in the lateral-uniform limit. Optical-profile-weighted redi
 
 **Sign and Einstein-relation rules (do NOT change):**
 - `R_tot` is non-negative (it's an integral of a positive quantity).
-- `(1 − P_esc)` is in [0, 1] (P_esc is the escape probability).
+- `(1 − P_esc)` is in [0, 1] (P<sub>esc</sub> is the escape probability).
 - `G_rad` is non-negative (added as a generation source).
 - The cached `mat.G_optical` is **never mutated** — always work on a copy.
 
@@ -57,7 +57,7 @@ has_radiative_reabsorption_2d = sim_mode.use_radiative_reabsorption
                               AND sim_mode.use_photon_recycling
                               AND mat1d.has_radiative_reabsorption
 ```
-The third clause means the 2D side reuses the 1D side's per-absorber tuples — no duplicate "find the absorber, compute P_esc" logic.
+The third clause means the 2D side reuses the 1D side's per-absorber tuples — no duplicate "find the absorber, compute P<sub>esc</sub>" logic.
 
 **Constraints (user-imposed):**
 1. Disabled-path bit-identical to current Stage B(c.2).
@@ -1034,9 +1034,9 @@ git commit -m "test(twod): Stage B(c.3) disabled-path bit-identical regression"
 
 ---
 
-## Task 6: 1D↔2D parity gate + V_oc-boost-in-[40,100] mV (slow)
+## Task 6: 1D↔2D parity gate + V<sub>oc</sub>-boost-in-[40,100] mV (slow)
 
-**Goal:** Primary correctness gate. T2 confirms 2D Stage B(c.3) matches 1D Phase 3.1b on a TMM preset within tight tolerances. T3 confirms the V_oc boost vs PR-off lies in the literature window [40, 100] mV.
+**Goal:** Primary correctness gate. T2 confirms 2D Stage B(c.3) matches 1D Phase 3.1b on a TMM preset within tight tolerances. T3 confirms the V<sub>oc</sub> boost vs PR-off lies in the literature window [40, 100] mV.
 
 **Files:**
 - Modify: `tests/regression/test_twod_validation.py`
@@ -1160,9 +1160,9 @@ pytest tests/regression/test_twod_validation.py::test_twod_radiative_reabsorptio
 Expected: both pass. The parity gate should print sub-mV deltas (or mV-level on TMM where the 1D side has finer-than-2D adaptive-solver behaviour). If parity FAILS:
 1. Read the printed `ΔV_oc / ΔJ_sc / ΔFF` values.
 2. Do **NOT** loosen tolerances. First diagnose: re-check the 2D recompute formula (axis order in trapezoid, missing `lateral_length` factor, sign error). Re-run T5 absorber-mask test to confirm the absorber rows are correct. Re-run T7 finite-RHS smoke.
-3. If diagnosis points to genuine adaptive-solver noise (not a logic bug), report measured deltas to the user and pin near 3× the noise floor (capped at 10 mV V_oc / 1e-3 J_sc / 2e-3 FF per the user's directive).
+3. If diagnosis points to genuine adaptive-solver noise (not a logic bug), report measured deltas to the user and pin near 3× the noise floor (capped at 10 mV V<sub>oc</sub> / 1e-3 J<sub>sc</sub> / 2e-3 FF per the user's directive).
 
-If V_oc boost is outside [40, 100] mV:
+If V<sub>oc</sub> boost is outside [40, 100] mV:
 1. If boost ~ 0: reabsorption is silently disabled. Re-check T6 tier-gate test.
 2. If boost > 100 mV: possible double-counting (B·n·p in both R AND G). Re-read mol.py:864-873 commentary on why this is NOT double-counting in the uniform-n·p limit; confirm 2D code follows the same pattern.
 3. If boost < 40 mV: redistribution may be wrong (e.g., dividing by `lateral_length²` instead of `area`). Re-check `area = thickness × lateral_length`.
@@ -1174,9 +1174,9 @@ git add tests/regression/test_twod_validation.py
 git commit -m "test(twod): Stage B(c.3) 1D↔2D parity gate and V_oc-boost-in-[40,100]mV"
 ```
 
-**Pass condition:** both tests pass with measured V_oc parity within 5 mV and boost in [40, 100] mV.
+**Pass condition:** both tests pass with measured V<sub>oc</sub> parity within 5 mV and boost in [40, 100] mV.
 
-**Rollback / fallback:** if T2 fails by > 10 mV V_oc, the recompute math is wrong — escalate. If T3 falls outside [40, 100] mV, the activation logic is wrong (tier gate misconfigured) or the redistribution is wrong (area weighting). Do NOT widen the [40, 100] window blindly — that's the literature value for MAPbI3 and a different value indicates a real bug. Rollback: `git reset --hard HEAD~1`.
+**Rollback / fallback:** if T2 fails by > 10 mV V<sub>oc</sub>, the recompute math is wrong — escalate. If T3 falls outside [40, 100] mV, the activation logic is wrong (tier gate misconfigured) or the redistribution is wrong (area weighting). Do NOT widen the [40, 100] window blindly — that's the literature value for MAPbI3 and a different value indicates a real bug. Rollback: `git reset --hard HEAD~1`.
 
 ---
 
@@ -1327,12 +1327,12 @@ git push origin 2d-extension
 - §4.5 tier gating — Task 2 includes `test_legacy_mode_disables_*` and `test_fast_mode_disables_*`
 - §5.T1 disabled bit-identical — Task 5
 - §5.T2 1D↔2D parity — Task 6
-- §5.T3 V_oc boost — Task 6
+- §5.T3 V<sub>oc</sub> boost — Task 6
 - §5.T4 coexistence smoke — Task 7
 - §5.T5 absorber-mask correctness — Task 2
 - §5.T6 tier gate — Task 2
 - §5.T7 finite-RHS smoke — Task 3
-- §6 risk register: R1 stiffness — Task 4 lagged fallback; R2 absorber mask — Task 2 T5 test; R3 area weighting — Task 1 lateral-uniform-matches-1D test; R4 double-counting — documented in Background; R5 redistribution — Task 1 only-absorber-rows-augmented test; R6 disabled-path — Task 5; R7 coexistence — Task 7; R8 TMM regression — V_oc-only assertion in Task 6 test docstring
+- §6 risk register: R1 stiffness — Task 4 lagged fallback; R2 absorber mask — Task 2 T5 test; R3 area weighting — Task 1 lateral-uniform-matches-1D test; R4 double-counting — documented in Background; R5 redistribution — Task 1 only-absorber-rows-augmented test; R6 disabled-path — Task 5; R7 coexistence — Task 7; R8 TMM regression — V<sub>oc</sub>-only assertion in Task 6 test docstring
 
 **Placeholder scan:** no "TBD", no "TODO", no "implement later" — every step has full code or exact command.
 

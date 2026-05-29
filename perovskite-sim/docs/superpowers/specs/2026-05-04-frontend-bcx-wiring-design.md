@@ -94,7 +94,7 @@ Rendered from the device's tier + flags. If lowered to LEGACY: `Active physics: 
 | Preset                                            | Status   | What it demonstrates                                |
 |---------------------------------------------------|----------|-----------------------------------------------------|
 | `configs/selective_contacts_demo.yaml`            | exists   | B(c.1) Robin (matched + wrong-sign S)               |
-| `configs/radiative_limit.yaml`                    | exists   | B(c.3) PR/rr V_oc-boost reference                   |
+| `configs/radiative_limit.yaml`                    | exists   | B(c.3) PR/rr V<sub>oc</sub>-boost reference                   |
 | `configs/twod/nip_MAPbI3_uniform.yaml`            | exists   | Stage A 2D parity baseline (BL)                     |
 | `configs/twod/nip_MAPbI3_singleGB.yaml`           | exists   | B(a) microstructure                                 |
 | **NEW** `configs/field_mobility_demo.yaml`        | propose  | B(c.2) μ(E) — non-zero v_sat / pf_gamma in HTL+absorber |
@@ -142,7 +142,7 @@ perovskite-sim/CLAUDE.md                       — frontend section: list new fi
 | 3 | UI clutter: 6 new fields × N layers in the editor                   | New group is collapsed by default. Single-layer-edit mode already exists in FULL tier (config-editor.ts:237) so users can drill into one layer at a time.       |
 | 4 | Beginners enable Robin S=1e-4 (extreme) → 2D solver hangs           | Default sentinels (null) preserve current behaviour. Tooltip suggests "matched-carrier S ~ 1e3 m/s" range. The 200k `max_nfev` cap on `run_transient_2d` converts a hang into a fast `RuntimeError` even for accidental extremes.    |
 | 5 | active-physics string drifts between backend and frontend           | Single source of truth on backend (`_describe_active_physics`); frontend helper is a thin tier→flags map driven by the same `SimulationMode` constants exported via `frontend/src/types.ts`. Add one frontend test pinning the mapping.    |
-| 6 | New `bcx_combined_demo.yaml` enables four hooks at once → flaky on TMM | Use moderate S (~1e3 m/s), small v_sat (~1e2 m/s), moderate γ_PF (~1e-4 (V/m)⁻⁰·⁵) — far from the aggressive-blocking regime that exercised the 200k cap. Verify the combined preset runs to V_max=1.2 V on `kind=jv_2d` without hitting bisection beyond depth 2. |
+| 6 | New `bcx_combined_demo.yaml` enables four hooks at once → flaky on TMM | Use moderate S (~1e3 m/s), small v_sat (~1e2 m/s), moderate γ_PF (~1e-4 (V/m)⁻⁰·⁵) — far from the aggressive-blocking regime that exercised the 200k cap. Verify the combined preset runs to V<sub>max</sub>=1.2 V on `kind=jv_2d` without hitting bisection beyond depth 2. |
 | 7 | `S` fields default to `null` in TS but YAML serialiser may write `null` literally | `config-editor.ts` already drops null/empty fields when serialising back to YAML for save-as (Phase 2b convention). Audit during implementation.   |
 
 ## 7. Validation plan

@@ -38,15 +38,15 @@ A shared helper `_vary_param(stack, field_path, values)` applies a sequence of `
 
 ## Trend definitions
 
-### 1. V_oc vs Bandgap
+### 1. V<sub>oc</sub> vs Bandgap
 
 - **Sweep:** absorber Eg: 1.2, 1.4, 1.6, 1.8, 2.0, 2.2 eV (6 steps)
 - **Experiment:** J-V sweep (illuminated, forward scan)
-- **Metric:** V_oc loss ΔV = Eg/q − V_oc at each Eg
+- **Metric:** V<sub>oc</sub> loss ΔV = Eg/q − V<sub>oc</sub> at each Eg
 - **Assertion:** 0.25 ≤ median(ΔV) ≤ 0.55 V, and |slope(ΔV vs Eg)| ≤ 0.15 V/eV
-- **Physics rationale:** in a physically correct simulator, the non-radiative loss is roughly constant with bandgap; V_oc tracks Eg with slope ≈ 1
+- **Physics rationale:** in a physically correct simulator, the non-radiative loss is roughly constant with bandgap; V<sub>oc</sub> tracks Eg with slope ≈ 1
 
-### 2. V_oc vs Thickness
+### 2. V<sub>oc</sub> vs Thickness
 
 - **Sweep:** absorber thickness: 100, 200, 400, 700, 1000 nm (5 steps)
 - **Experiment:** J-V sweep (illuminated, forward scan)
@@ -65,32 +65,32 @@ A shared helper `_vary_param(stack, field_path, values)` applies a sequence of `
 ### 4. Ideality Factor
 
 - **Sweep:** none — single dark J-V sweep on the baseline preset
-- **Experiment:** dark J-V sweep from V=0 to V=V_oc (estimated from illuminated V_oc)
-- **Metric:** n_id = (q/kT) × dV / d(ln J) in the low-injection region (J < J_sc/100)
+- **Experiment:** dark J-V sweep from V=0 to V=V<sub>oc</sub> (estimated from illuminated V<sub>oc</sub>)
+- **Metric:** n_id = (q/kT) × dV / d(ln J) in the low-injection region (J < J<sub>sc</sub>/100)
 - **Assertion:** 1.0 ≤ n_id ≤ 2.0
 - **Physics rationale:** single-junction recombination ideality falls between 1 (SRH mid-gap) and 2 (radiative or high-injection)
 
-### 5. J_sc vs Bandgap
+### 5. J<sub>sc</sub> vs Bandgap
 
 - **Sweep:** same Eg sweep as Trend 1 (1.2–2.2 eV, 6 steps)
-- **Experiment:** illuminated J-V sweep → extract J_sc
+- **Experiment:** illuminated J-V sweep → extract J<sub>sc</sub>
 - **Metric:** monotonicity and magnitude
-- **Assertion:** J_sc(Eg=2.2) < J_sc(Eg=1.2), and the ratio J_sc(2.2)/J_sc(1.2) ≤ 0.7
+- **Assertion:** J<sub>sc</sub>(Eg=2.2) < J<sub>sc</sub>(Eg=1.2), and the ratio J<sub>sc</sub>(2.2)/J<sub>sc</sub>(1.2) ≤ 0.7
 - **Physics rationale:** wider bandgap → fewer above-gap photons → lower photocurrent; the ratio follows the AM1.5G-integrated photon flux ratio
 
-### 6. V_oc vs Illumination
+### 6. V<sub>oc</sub> vs Illumination
 
-- **Sweep:** Suns-V_oc from 1e-3 to 1 sun, 6 log-spaced points
+- **Sweep:** Suns-V<sub>oc</sub> from 1e-3 to 1 sun, 6 log-spaced points
 - **Experiment:** `run_suns_voc` on baseline preset
-- **Metric:** slope of V_oc vs ln(Φ) via linear regression
+- **Metric:** slope of V<sub>oc</sub> vs ln(Φ) via linear regression
 - **Assertion:** slope ∈ [25, 65] mV/decade (covers n_id from 1.0 to 2.5)
-- **Physics rationale:** V_oc = (n_id · kT/q) · ln(Φ/Φ_0); the slope directly measures the dominant recombination ideality
+- **Physics rationale:** V<sub>oc</sub> = (n_id · kT/q) · ln(Φ/Φ_0); the slope directly measures the dominant recombination ideality
 
 ## Parametrization strategy
 
 Each trend test is `@pytest.mark.parametrize` over the sweep values. The baseline stack is loaded once via a module-scoped fixture (or `@pytest.fixture(scope="module")`). Each parametrized case `dataclasses.replace()`s the relevant field, runs the experiment, and returns the metric.
 
-Tests 1 and 5 share the same Eg sweep — run the J-V once and extract both V_oc and J_sc from each result to avoid duplicate computation.
+Tests 1 and 5 share the same Eg sweep — run the J-V once and extract both V<sub>oc</sub> and J<sub>sc</sub> from each result to avoid duplicate computation.
 
 ## Test execution
 
@@ -108,12 +108,12 @@ Expected runtime: ~5-10 minutes for all six trends (dominated by the Radau trans
 
 | Trend | Failure | Likely culprit |
 |-------|---------|---------------|
-| V_oc vs Eg | ΔV grows with Eg | band offsets misapplied; chi/Eg not propagating correctly to V_bi |
-| V_oc vs thickness | slope ≤ 0 or too steep | contact recombination not modelled; or SRH lifetime too short |
+| V<sub>oc</sub> vs Eg | ΔV grows with Eg | band offsets misapplied; chi/Eg not propagating correctly to V<sub>bi</sub> |
+| V<sub>oc</sub> vs thickness | slope ≤ 0 or too steep | contact recombination not modelled; or SRH lifetime too short |
 | FF vs mobility | FF doesn't drop | field-dependent mobility hook not engaging; or test μ range too narrow |
 | Ideality | n_id < 1 or n_id > 2 | recombination model missing; or measurement in wrong injection regime |
-| J_sc vs Eg | J_sc flat or inverted | TMM generation not responding to Eg-dependent n,k; or absorbing in transport layers |
-| V_oc vs illum | slope outside [25,65] | Suns-V_oc baseline subtraction wrong; or dominant recombination mechanism changing with Φ |
+| J<sub>sc</sub> vs Eg | J<sub>sc</sub> flat or inverted | TMM generation not responding to Eg-dependent n,k; or absorbing in transport layers |
+| V<sub>oc</sub> vs illum | slope outside [25,65] | Suns-V<sub>oc</sub> baseline subtraction wrong; or dominant recombination mechanism changing with Φ |
 
 ## Out of scope (explicitly deferred)
 

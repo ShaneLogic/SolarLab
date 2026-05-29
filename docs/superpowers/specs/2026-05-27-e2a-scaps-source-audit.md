@@ -10,7 +10,7 @@ the Phase E2 face-density refactor can target the right closure path.
 | Ref | Citation | Role |
 |---|---|---|
 | [1] | M. Burgelman, P. Nollet, S. Degrave, *Thin Solid Films* 361 (2000) 527-532 | original SCAPS polycrystalline model |
-| [2] | K. Decock, S. Khelifi, M. Burgelman, *Thin Solid Films* 519 (2011) 7481-7484 | "Modelling multivalent defects in thin film solar cells" — cited in §3.6.5 as the "more advanced algorithms" replacing the display-only τ=1/(σ·v_th·N_t) |
+| [2] | K. Decock, S. Khelifi, M. Burgelman, *Thin Solid Films* 519 (2011) 7481-7484 | "Modelling multivalent defects in thin film solar cells" — cited in §3.6.5 as the "more advanced algorithms" replacing the display-only τ=1/(σ·v<sub>th</sub>·N<sub>t</sub>) |
 | [4] | J. Verschraegen, M. Burgelman, *Thin Solid Films* 515 (2007) 6276-6279 | intra-band tunneling for heterojunction solar cells in SCAPS |
 | [12] | A. Niemegeers, S. Gillis, M. Burgelman, 2nd WCPVE Wien 1998, p. 672-675 | "A user program for realistic simulation of polycrystalline heterojunction solar cells: SCAPS-1D" — main architecture paper |
 | [13] | **H.J. Pauwels, G. Vanhoutte**, *J. Phys. D-Appl. Phys.* 11 (1978) 649-667 | **Interface SRH formula source** — cited in §3.8 as the model implemented for interface recombination |
@@ -29,7 +29,7 @@ L = sqrt(D · τ)
 > algorithms are used there, see e.g. [2]."
 
 So SCAPS computes bulk SRH via the algorithm in **Decock 2011** [2] — not
-the textbook lifetime form. This matters: SolarLab uses τ=1/(σ·v_th·N_t)
+the textbook lifetime form. This matters: SolarLab uses τ=1/(σ·v<sub>th</sub>·N<sub>t</sub>)
 directly in `_apply_interface_recombination`. If SCAPS uses a more
 elaborate occupation-statistics algorithm at finite trap density, the
 factor in calibration_factor=1e-4 is partly absorbing this mismatch.
@@ -72,9 +72,9 @@ Two quoted statements:
 
 Band-to-band, intraband, interface-defect, and contact tunnelling all
 selectable in SCAPS via WKB approximation. SolarLab does not implement
-tunnelling at all. Likely contributes to the 99 mV base V_oc gap (Phase G
+tunnelling at all. Likely contributes to the 99 mV base V<sub>oc</sub> gap (Phase G
 diagnosis "structural") but probably NOT the dominant cause — tunnelling
-typically adds reverse-bias leakage, not forward-bias V_oc shift.
+typically adds reverse-bias leakage, not forward-bias V<sub>oc</sub> shift.
 
 ## Remaining unknowns (require ref [13] paper or ref [14] dissertation)
 
@@ -96,11 +96,11 @@ typically adds reverse-bias leakage, not forward-bias V_oc shift.
    so the interface-plane n is missing the band-bending depletion factor.
    This is the **5-order density gap** documented in Phase A2 RFC.
 
-3. **SCAPS' v_th convention.** Manual says "smallest thermal velocity of
+3. **SCAPS' v<sub>th</sub> convention.** Manual says "smallest thermal velocity of
    the two neighboring layers." SolarLab's scaps_mirror.yaml sets a
    uniform `v_th_cm_s: 1e7` per InterfaceDefect, identical on both sides.
    This means the SCAPS convention is moot for our setup, but if partner
-   ever specifies asymmetric v_th, SolarLab's loader would need a min()
+   ever specifies asymmetric v<sub>th</sub>, SolarLab's loader would need a min()
    reducer.
 
 4. **Whether SCAPS uses Boltzmann-degenerate carrier statistics.**
@@ -132,7 +132,7 @@ uses exactly that form.
 
 If it does NOT reproduce SCAPS-like sensitivity, then we need either
 (a) the original paper to extract the exact form, or (b) a different
-hypothesis (Boltzmann-degenerate statistics, Phi_b BC).
+hypothesis (Boltzmann-degenerate statistics, Φ<sub>b</sub> BC).
 
 ## Sprint 1 next actions
 

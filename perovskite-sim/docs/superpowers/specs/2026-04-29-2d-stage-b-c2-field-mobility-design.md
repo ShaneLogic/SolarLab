@@ -326,7 +326,7 @@ Five tests, mirroring the B(c.1) shape:
 
 ### T1 — Disabled μ(E) reproduces current 2D behaviour (unit, fast)
 - Every shipped preset → `mat.has_field_mobility is False` and all eighteen face arrays are `None`.
-- A backward-compat regression on `nip_MAPbI3_uniform.yaml`: 2D J-V matches the current frozen-ion snapshot bit-identically (V_oc=910.634 mV, J_sc=424.036 A/m², FF=0.8247).
+- A backward-compat regression on `nip_MAPbI3_uniform.yaml`: 2D J-V matches the current frozen-ion snapshot bit-identically (V<sub>oc</sub>=910.634 mV, J<sub>sc</sub>=424.036 A/m², FF=0.8247).
 
 ### T2 — 1D ↔ 2D parity at non-zero `v_sat` (regression, slow) — **primary correctness gate**
 - Lateral-uniform device, `_freeze_ions`, then `replace(stack, v_sat_n=1e2, v_sat_p=1e2)` (same aggressive value as the 1D `test_field_mobility_changes_jv_curve`).
@@ -342,7 +342,7 @@ Five tests, mirroring the B(c.1) shape:
 ### T4 — μ(E) + Robin + microstructure coexistence smoke (regression, fast)
 - Compose all three per-RHS hooks: aggressive Robin (`S_n_left=1e-4, S_p_left=1e-3, S_n_right=1e-3, S_p_right=1e-4`) + grain boundary in absorber + `v_sat=1e3` (modest).
 - Coarse mesh (`Nx=6`, `Ny_per_layer=5`, `V_step=0.25`).
-- Assert finite V, finite J, J_sc > 0 under illumination.
+- Assert finite V, finite J, J<sub>sc</sub> > 0 under illumination.
 - Cheap and proves the three hooks compose without NaN/Inf or solver hang.
 
 ### T5 — Tier-flag gating (unit, fast)
@@ -379,7 +379,7 @@ Tentative arc, ~7 commits, similar shape to Stage B(c.1):
 
 1. **T1** — Add 18 + 1 field-mobility fields to `MaterialArrays2D`; populate via build path (per-node masks → arithmetic-meaned face arrays); add T5 tier-gate test. Mirror B(c.1) Task 2.
 2. **T2** — Extend `sg_fluxes_2d_n/p` and `continuity_rhs_2d` with optional per-face D-override kwargs (`D_n_x_face`, `D_n_y_face`, `D_p_x_face`, `D_p_y_face`, `D_n_wrap`, `D_p_wrap`). Backward-compat unit test: no override → bit-identical to current.
-3. **T3** — Add μ(E) recompute block in `assemble_rhs_2d`. Backward-compat snapshot test (Stage-A V_oc / J_sc / FF unchanged when default presets used).
+3. **T3** — Add μ(E) recompute block in `assemble_rhs_2d`. Backward-compat snapshot test (Stage-A V<sub>oc</sub> / J<sub>sc</sub> / FF unchanged when default presets used).
 4. **T4** — T6 periodic-wrap finite-RHS unit test.
 5. **T5** — T2 1D ↔ 2D parity gate (slow regression).
 6. **T6** — T3 bounded-shift + T4 coexistence smoke.

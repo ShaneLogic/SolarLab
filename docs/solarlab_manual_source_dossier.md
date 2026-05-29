@@ -709,7 +709,7 @@ J_{\mathrm{sc,ref}} - J_\mathrm{sc}(X),
 V_\mathrm{pseudo}(X) = V_\mathrm{oc}(X).
 ```
 
-### 13.4 V_oc(T)
+### 13.4 V<sub>oc</sub>(T)
 
 Public driver: `run_voc_t`.
 
@@ -925,7 +925,7 @@ Important limitations:
 - lateral boundary can be periodic or Neumann;
 - 2D is an extension, not the default production path for all experiments.
 
-### 13.13 V_oc(L_g) Grain Sweep
+### 13.13 V<sub>oc</sub>(L_g) Grain Sweep
 
 Public driver: `run_voc_grain_sweep`.
 
@@ -1013,7 +1013,7 @@ The frontend exposes grouped experiments:
 
 - J-V Sweep
 - Suns-Voc
-- V_oc(T) activation energy
+- V<sub>oc</sub>(T) activation energy
 - Dark J-V
 - Mott-Schottky
 - EQE / IPCE
@@ -1022,7 +1022,7 @@ The frontend exposes grouped experiments:
 - Transient Photovoltage
 - Degradation
 - J-V Sweep (2D)
-- V_oc(L_g) Grain Sweep
+- V<sub>oc</sub>(L_g) Grain Sweep
 
 Result payloads are defined in `frontend/src/types.ts`.
 
@@ -1206,7 +1206,7 @@ Recommended final manual chapters:
    - spatial profiles;
    - dark J-V;
    - Suns-Voc;
-   - V_oc(T);
+   - V<sub>oc</sub>(T);
    - EQE;
    - EL;
    - impedance;

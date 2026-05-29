@@ -21,7 +21,7 @@
 - `perovskite-sim/perovskite_sim/data/nk/manifest.yaml` — provenance for each material (source, reference, wavelength range, notes)
 - `perovskite-sim/configs/nip_MAPbI3_tmm.yaml` — new TMM-enabled n-i-p preset with substrate + contacts
 - `perovskite-sim/configs/pin_MAPbI3_tmm.yaml` — new TMM-enabled p-i-n preset
-- `perovskite-sim/tests/regression/test_tmm_baseline.py` — pinned J_sc regression for both new presets
+- `perovskite-sim/tests/regression/test_tmm_baseline.py` — pinned J<sub>sc</sub> regression for both new presets
 
 **Modified files (Python):**
 - `perovskite_sim/physics/optics.py` — add incoherent-layer support (~30 lines, new Fresnel + bulk-Beer-Lambert path for a first-layer substrate; zero impact on pure-coherent calls)
@@ -46,7 +46,7 @@
 - `tests/unit/physics/test_optics.py` — 3 new tests (incoherent glass, all-materials load, TMM reflection sanity with substrate)
 - `tests/unit/models/test_config_loader.py` — 2 new tests (incoherent field, substrate role)
 - `tests/unit/solver/test_material_arrays.py` — 1 new test (substrate excluded from electrical grid)
-- `tests/integration/test_tmm_integration.py` — 3 new tests (nip preset J_sc, pin preset J_sc, TMM < BL comparison)
+- `tests/integration/test_tmm_integration.py` — 3 new tests (nip preset J<sub>sc</sub>, pin preset J<sub>sc</sub>, TMM < BL comparison)
 - `frontend/src/workstation/tier-gating.test.ts` — 1 new case for `incoherent`
 - `frontend/src/workstation/phase2-smoke.test.ts` or new `tmm.smoke.test.ts` — wiring check for the optical-material dropdown
 
@@ -628,7 +628,7 @@ Expected: FAIL — `FileNotFoundError: configs/nip_MAPbI3_tmm.yaml`.
 
 Create the new preset. Layer order follows the existing `nip_MAPbI3.yaml` electrical convention (HTL → absorber → ETL: `phi_left=0` at HTL, `phi_right=V_bi` at ETL) but **prepends** a substrate layer in front of the HTL for optical-only reasons. Light physically enters from the substrate side in the TMM path (x=0 is the substrate surface).
 
-Because the TMM path walks `stack.layers` in order and treats ambient→layer[0] as the sun-side interface, and because the existing nip stack is HTL-on-the-left, this plan places the substrate on the HTL side. This is an intentional departure from the spec's sun-side-first wording; it preserves the existing V_bi/band-offset convention so no electrical calibration is required. Document the choice in a YAML comment:
+Because the TMM path walks `stack.layers` in order and treats ambient→layer[0] as the sun-side interface, and because the existing nip stack is HTL-on-the-left, this plan places the substrate on the HTL side. This is an intentional departure from the spec's sun-side-first wording; it preserves the existing V<sub>bi</sub>/band-offset convention so no electrical calibration is required. Document the choice in a YAML comment:
 
 ```yaml
 # nip_MAPbI3_tmm — TMM-enabled variant of nip_MAPbI3.
@@ -742,7 +742,7 @@ layers:
 - [ ] **Step 4: Run test, verify it passes**
 
 Run: `pytest tests/integration/test_tmm_integration.py::test_nip_tmm_preset_jsc_in_band -v`
-Expected: PASS. If J_sc falls outside [180, 260], print the value, inspect the G(x) profile, and debug before loosening bounds. A reasonable TMM number for 400 nm MAPbI3 with front glass reflection is ~220 A/m².
+Expected: PASS. If J<sub>sc</sub> falls outside [180, 260], print the value, inspect the G(x) profile, and debug before loosening bounds. A reasonable TMM number for 400 nm MAPbI3 with front glass reflection is ~220 A/m².
 
 - [ ] **Step 5: Commit**
 
@@ -799,7 +799,7 @@ git commit -m "feat(configs): ship pin_MAPbI3_tmm.yaml with glass substrate + TM
 
 ## Task 9: TMM-vs-Beer-Lambert comparison test
 
-**Why:** Prove the new preset reflects the physically expected 5–15% J_sc reduction from front-surface reflection that TMM captures and Beer-Lambert misses.
+**Why:** Prove the new preset reflects the physically expected 5–15% J<sub>sc</sub> reduction from front-surface reflection that TMM captures and Beer-Lambert misses.
 
 **Files:**
 - Test: `tests/integration/test_tmm_integration.py`
@@ -839,7 +839,7 @@ git commit -m "test(tmm): enforce TMM J_sc below Beer-Lambert within 2-20% windo
 **Files:**
 - Create: `tests/regression/test_tmm_baseline.py`
 
-- [ ] **Step 1: Run the new TMM presets manually to extract J_sc values**
+- [ ] **Step 1: Run the new TMM presets manually to extract J<sub>sc</sub> values**
 
 ```bash
 python -c "
@@ -1371,8 +1371,8 @@ Then verify each item by clicking through the workstation:
 - [ ] **TMM active badge** appears when `nip_MAPbI3_tmm` is the active device on full tier; hidden on legacy/fast tiers.
 - [ ] **Optical material dropdown** appears in the per-layer editor on full tier and is absent on legacy/fast.
 - [ ] **Dropdown options** include all 12 materials and list `(none — Beer-Lambert)` first.
-- [ ] **J-V plot** for `nip_MAPbI3_tmm` produces a J_sc within the [180, 260] A/m² band and visibly lower than `nip_MAPbI3` on the same run comparison.
-- [ ] **Interference fringes thickness sweep**: run J-V at absorber thicknesses 50, 100, 200, 400, 600, 800 nm on `nip_MAPbI3_tmm`; J_sc should oscillate, not monotonically increase. On vanilla `nip_MAPbI3` the same sweep should be monotonic.
+- [ ] **J-V plot** for `nip_MAPbI3_tmm` produces a J<sub>sc</sub> within the [180, 260] A/m² band and visibly lower than `nip_MAPbI3` on the same run comparison.
+- [ ] **Interference fringes thickness sweep**: run J-V at absorber thicknesses 50, 100, 200, 400, 600, 800 nm on `nip_MAPbI3_tmm`; J<sub>sc</sub> should oscillate, not monotonically increase. On vanilla `nip_MAPbI3` the same sweep should be monotonic.
 - [ ] **Glass incoherent flag** actually flattens fringes: flip `incoherent: false` in a local copy of `nip_MAPbI3_tmm.yaml`, restart backend, and run a fine wavelength sweep — confirm the sub-nanometer ripples re-appear. Revert.
 - [ ] **Auto-discovery**: copy `data/nk/Ag.csv` to `data/nk/Cu.csv`, restart backend, confirm `Cu` appears in the dropdown.
 - [ ] **Tutorial / Parameters / Algorithm panels** all render the new TMM content.
@@ -1405,7 +1405,7 @@ Otherwise, no commit. Report completion to the coordinator.
 - `fetchOpticalMaterials(): Promise<string[]>` — return type matches the backend `{materials: string[]}` shape in Task 11
 - `FieldKind = 'numeric' | 'select-optical-material' | 'boolean'` — used consistently in Task 13
 
-**Known limitation (flagged to the user before execution):** Task 7's nip_MAPbI3_tmm preset keeps the existing HTL-on-the-left layer order, prepending glass to that side rather than ordering sun→back. The alternative (full sun-side-first order) would require swapping HTL↔ETL positions and re-validating the band-offset / V_bi calculation, which is out of scope for Phase 2a per the user's Path A decision. The TMM model still captures the key physics (front reflection, interference fringes) because it cares about optical ordering, not the electrical polarity labels.
+**Known limitation (flagged to the user before execution):** Task 7's nip_MAPbI3_tmm preset keeps the existing HTL-on-the-left layer order, prepending glass to that side rather than ordering sun→back. The alternative (full sun-side-first order) would require swapping HTL↔ETL positions and re-validating the band-offset / V<sub>bi</sub> calculation, which is out of scope for Phase 2a per the user's Path A decision. The TMM model still captures the key physics (front reflection, interference fringes) because it cares about optical ordering, not the electrical polarity labels.
 
 ---
 

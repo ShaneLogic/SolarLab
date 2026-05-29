@@ -4,11 +4,11 @@
 clamp with a **physically-correct interface-plane carrier model**, via a
 **quasi-steady-state (QSS) algebraic reduction** of the interface-plane state
 (`diface_state = 0` solved per-RHS → no stiff extra ODE DOF). This is the single
-root cause behind base V_oc (135 mV heterojunction drop), Nd_ETL direction, and
+root cause behind base V<sub>oc</sub> (135 mV heterojunction drop), Nd_ETL direction, and
 Nt_C/V_PVK masking.
 
 **Why it's risky:** 7 prior prototypes died here (Newton hang/stall/stiffness).
-The interface SRH drives the working 7/10 (CBO 86%, PVK/ETL 74%, J_sc), so a
+The interface SRH drives the working 7/10 (CBO 86%, PVK/ETL 74%, J<sub>sc</sub>), so a
 naive change regresses them.
 
 ## Risk controls (mandatory, every iteration)
@@ -16,15 +16,15 @@ naive change regresses them.
 1. **Env-gate default-OFF** (`SOLARLAB_IFACE_QSS=1`). Production path bit-identical
    until the final promote. Verify off-path identity every commit.
 2. **Golden-master regression** (`scripts/qss_golden_master.py`): a pinned JSON
-   baseline of the current 7/10 + J_sc + base V_oc + physics-gate booleans.
+   baseline of the current 7/10 + J<sub>sc</sub> + base V<sub>oc</sub> + physics-gate booleans.
    `--check` re-runs and diffs vs tolerance. Run before every commit.
-3. **Physics gate** (automated): J_sc≤SQ, V_oc≤V_bi, R_interface≥0 OR
+3. **Physics gate** (automated): J<sub>sc</sub>≤SQ, V<sub>oc</sub>≤V<sub>bi</sub>, R_interface≥0 OR
    detailed-balance-zero at dark eq, energy conservation, monotone sweep dirs.
 4. **Analytical reference limits** (unit tests, written FIRST/TDD):
    - dark equilibrium → R_interface = 0 (machine precision).
-   - flat-band interface (ΔE_C=ΔE_V=0) → QSS reduces to standard 2-carrier SRH.
-   - QSS interface-plane density = bulk × exp(−ΔE/V_T) (Boltzmann projection).
-   - monotone: V_oc decreases as interface N_t increases.
+   - flat-band interface (ΔE<sub>C</sub>=ΔE<sub>V</sub>=0) → QSS reduces to standard 2-carrier SRH.
+   - QSS interface-plane density = bulk × exp(−ΔE/V<sub>T</sub>) (Boltzmann projection).
+   - monotone: V<sub>oc</sub> decreases as interface N<sub>t</sub> increases.
 5. **Bounded solves**: every `run_transient`/sweep carries `max_nfev` + a wall
    timeout. No unbounded Newton.
 6. **Worktree isolation**: develop in `.worktrees/qss/` (gitignored); merge to
@@ -35,7 +35,7 @@ naive change regresses them.
 
 ### Phase 0 — risk infrastructure (no solver change) ✅ low risk
 - Build `scripts/qss_golden_master.py`: capture current baseline JSON; `--check`
-  compares. Capture the current 7/10 + J_sc + base V_oc as `qss_baseline.json`.
+  compares. Capture the current 7/10 + J<sub>sc</sub> + base V<sub>oc</sub> as `qss_baseline.json`.
 - **Gate:** baseline captured; `--check` passes on unchanged code.
 
 ### Phase 1 — QSS math offline (standalone numpy, no solver) ✅ low risk
@@ -56,7 +56,7 @@ naive change regresses them.
 
 ### Phase 4 — full validation
 - Golden master + absolute scorecard + figures. **Gate:** ≥7/10 preserved AND
-  ≥1 of {Nd_ETL, Nt_C/V_PVK, base V_oc} improved, all physical.
+  ≥1 of {Nd_ETL, Nt_C/V_PVK, base V<sub>oc</sub>} improved, all physical.
 
 ### Phase 5 — promote
 - Merge worktree → main; flip default (or keep opt-in per partner call); update
@@ -83,8 +83,8 @@ Jacobian-feedback instability. This is the documented intended path
   default OFF). **Converges, stable at base (6 s, no Newton hang — the
   algebraic-not-ODE de-risk works).** Off-path bit-identical. HTL/PVK flat at
   1.050 for 1e9-1e12 (matches SCAPS, no clamp). ⚠️ partial.
-  - **Open (Phase 3):** (a) extreme N_t (1e15) slow/stalls — stiffness at strong
-    SRV; (b) base V_oc 1.073→1.057 (QSS adds the small HTL/PVK recombination the
+  - **Open (Phase 3):** (a) extreme N<sub>t</sub> (1e15) slow/stalls — stiffness at strong
+    SRV; (b) base V<sub>oc</sub> 1.073→1.057 (QSS adds the small HTL/PVK recombination the
     clamp had zeroed); (c) Nd_ETL / Nt_C_PVK not yet validated (batch run timed
     out on the slow point). All three reduce to ONE root cause: the 1-cell φ
     projection under-depletes the interface plane (misses the band-offset / full
@@ -99,11 +99,11 @@ Jacobian-feedback instability. This is the documented intended path
 Ran the 3 target sweeps under QSS (bulk/doping sweeps are stable; no extreme-SRV
 stiffness):
 - **Nd_ETL**: 1.090→1.039 (dip @1e16) →1.079 — STILL V-shaped, not monotonic.
-  Identical dip to production. The dip is **contact/V_bi physics at low N_D**,
+  Identical dip to production. The dip is **contact/V<sub>bi</sub> physics at low N<sub>D</sub>**,
   NOT interface sampling → QSS cannot fix it.
 - **Nt_C_PVK**: flat 1.050 across 1e9-1e15 (0.1 mV). STILL masked. The interface
-  V_oc ceiling (now 1.050, even lower than production 1.073) is far below the
-  bulk-N_t-sensitive regime (~1.29 V). Unmasking needs a HIGHER ceiling = LESS
+  V<sub>oc</sub> ceiling (now 1.050, even lower than production 1.073) is far below the
+  bulk-N<sub>t</sub>-sensitive regime (~1.29 V). Unmasking needs a HIGHER ceiling = LESS
   total recombination, which conflicts with the interface SRH the CBO/PVK-ETL
   trends need (the R3 cascade/ceiling wall). QSS lowers the ceiling → WORSE.
 - **HTL/PVK**: QSS gives physical interface recombination STRONGER than SCAPS's
@@ -111,17 +111,17 @@ stiffness):
 
 **Hypothesis "all 3 gaps = R1 (interface-plane sampling)" is FALSIFIED.** QSS
 correctly fixes interface *sampling* (physical, no clamp, no spurious
-generation) but the 3 gaps live elsewhere: Nd_ETL=contact/V_bi,
-Nt_C_PVK=recombination cascade/V_oc ceiling (R3, base-V_oc-linked),
-HTL/PVK=SCAPS interface-model divergence. QSS also lowers base V_oc (more
+generation) but the 3 gaps live elsewhere: Nd_ETL=contact/V<sub>bi</sub>,
+Nt_C_PVK=recombination cascade/V<sub>oc</sub> ceiling (R3, base-V<sub>oc</sub>-linked),
+HTL/PVK=SCAPS interface-model divergence. QSS also lowers base V<sub>oc</sub> (more
 physical, further from SCAPS). **Decision: do NOT promote QSS** (more rigorous
-but does not improve SCAPS match; would regress base V_oc). Keep env-gated as a
+but does not improve SCAPS match; would regress base V<sub>oc</sub>). Keep env-gated as a
 documented physically-rigorous alternative interface model.
 
 ### Verdict (this session)
 QSS Phases 0-2 complete: math-validated, Newton-stable at base, HTL/PVK flat
-(promising). It does NOT yet cleanly solve all 3 gaps (base V_oc regresses,
-high-N_t stiff). Phase 3 (full-band-bending projection + stiffness hardening) is
+(promising). It does NOT yet cleanly solve all 3 gaps (base V<sub>oc</sub> regresses,
+high-N<sub>t</sub> stiff). Phase 3 (full-band-bending projection + stiffness hardening) is
 the remaining multi-day work. The countermeasure is in place and verified, so
 this is a safe checkpoint — the current best ships unchanged; QSS stays opt-in
 until Phase 3-5 land.

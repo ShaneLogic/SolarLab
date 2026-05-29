@@ -36,10 +36,10 @@ Intent: bulk drain via continuity.py divergence override at heterointerface = if
 
 At dark equilibrium with χ-step-anchored iface init:
 
-  n_R_iface = n_R_eq · exp(-V_1/V_T)  ≈ 1e24 (ETL bulk, V_1 ≈ 0)
-  n_L_iface = n_1s · exp(-ΔE_c/V_T)   ≈ 2e21 (χ-step from 1s, ΔE_c=0.16 eV)
-  p_R_iface = p_R_eq · exp(+V_1/V_T)  ≈ 1e-4 (ETL minority)
-  p_L_iface = p_1s · exp(-ΔE_v/V_T)   ≈ 1e9  (χ-step from 1s, ΔE_v=-2.31 eV capped at -30/V_T)
+  n_R_iface = n_R_eq · exp(-V_1/V<sub>T</sub>)  ≈ 1e24 (ETL bulk, V_1 ≈ 0)
+  n_L_iface = n_1s · exp(-ΔE_c/V<sub>T</sub>)   ≈ 2e21 (χ-step from 1s, ΔE_c=0.16 eV)
+  p_R_iface = p_R_eq · exp(+V_1/V<sub>T</sub>)  ≈ 1e-4 (ETL minority)
+  p_L_iface = p_1s · exp(-ΔE_v/V<sub>T</sub>)   ≈ 1e9  (χ-step from 1s, ΔE_v=-2.31 eV capped at -30/V<sub>T</sub>)
 
 Bulk under illumination at V=0:
   n[idx]   = PVK minority + photo-injection ≈ 1e22 m⁻³
@@ -63,7 +63,7 @@ Astronomical bulk drain rate. Newton cannot contract. Solver bisects, then hangs
 
 ## Root cause — discretisation mismatch at heterointerface
 
-The χ-step suppression in the legacy SG flux (factor of exp(-ΔE_c/V_T) ≈ 2e-3 in B(xi)) is what keeps the bulk-bulk SG flux physical at the heterointerface. Removing it (split half-flux uses only same-layer chi) gives a much larger raw flux value that the bulk node cannot accommodate.
+The χ-step suppression in the legacy SG flux (factor of exp(-ΔE_c/V<sub>T</sub>) ≈ 2e-3 in B(xi)) is what keeps the bulk-bulk SG flux physical at the heterointerface. Removing it (split half-flux uses only same-layer chi) gives a much larger raw flux value that the bulk node cannot accommodate.
 
 Mass conservation between bulk drain and iface gain is mathematically correct, BUT the magnitude of both is too large for the Radau time integrator to digest. The iface_state ODE inherits the same large dy/dt → super-stiff ODE → Newton hang.
 
@@ -76,10 +76,10 @@ This is fundamentally the same failure mode as the 6 prior prototypes (BBD, thin
 | Legacy E1.5 | 1075 mV (8× over) | 85 % ✓ | balanced |
 | BBD | 1542 mV (11× over) | 92 % ✓ | makes ETL worse |
 | Thin-shell w=2 | 17 mV (8× under) | 1.7 % ✗ | kills CBO |
-| Single PV | 1419 mV ✗ | 72 % | kills interface N_t |
+| Single PV | 1419 mV ✗ | 72 % | kills interface N<sub>t</sub> |
 | Full PV (1-side) | 1 mV ✗ | 72 % | hang on PVK sweep |
-| Sprint 7 iface-state | 15 mV (9× under) | 1.96 % ✗ | hang on interface N_t |
-| Sprint 7 χ-step | 15 mV ✗ | 18 mV ✗ | interface N_t collapsed |
+| Sprint 7 iface-state | 15 mV (9× under) | 1.96 % ✗ | hang on interface N<sub>t</sub> |
+| Sprint 7 χ-step | 15 mV ✗ | 18 mV ✗ | interface N<sub>t</sub> collapsed |
 | **Sprint 9 split-flux** | n/a — Newton hang | n/a | bulk drain ~ 1e36 m⁻³/s |
 | SCAPS target | 137 mV | 100 % | — |
 
@@ -102,7 +102,7 @@ Future work can resurrect the Sprint 9 wire-through from stash and iterate on:
 
 | Option | Effort | Risk | Outcome |
 |---|---|---|---|
-| **(A) Park** | 1 day docs/memory | low | Ship main as Phase H. 7 prototypes attempted, all fail. Sprint 8 scaffold stays as research foundation. Partner has 85 % CBO closure, 74 % interface N_t closure baseline. |
+| **(A) Park** | 1 day docs/memory | low | Ship main as Phase H. 7 prototypes attempted, all fail. Sprint 8 scaffold stays as research foundation. Partner has 85 % CBO closure, 74 % interface N<sub>t</sub> closure baseline. |
 | **(B) Newton-Krylov solver refactor** | 4-6 weeks | high | Switch Radau Jacobian solve to Krylov subspace method (e.g., GMRES). May handle super-stiff iface_state ODE that current LU-direct Newton cannot. |
 | **(C) Semi-implicit time stepping** | 3-4 weeks | high | Treat iface_state evolution as algebraic constraint solved per-step (quasi-steady-state reduction). Decouples stiff iface dynamics from main Radau step. |
 

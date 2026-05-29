@@ -4119,7 +4119,7 @@ Open `http://127.0.0.1:5173/` and verify each item below. Any failure means a co
   - [ ] All 6 layers of `pin_MAPbI3_tmm` show with the inverse role order — confirms p-i-n / n-i-p symmetry.
   - [ ] Dragging a layer reorders it; running the J–V sweep returns a result that reflects the change.
   - [ ] ↑↓ buttons reorder via keyboard.
-  - [ ] Adding a "TiO2_ETL" template inserts a layer with sensible defaults; running the sweep produces a finite J_sc.
+  - [ ] Adding a "TiO2_ETL" template inserts a layer with sensible defaults; running the sweep produces a finite J<sub>sc</sub>.
   - [ ] Adding "spiro_HTL" template, similar check.
   - [ ] Deleting the absorber disables Run with the expected error banner; restoring it re-enables Run.
   - [ ] Editing any field shows the `● modified` pill; Reset reverts and clears the pill.

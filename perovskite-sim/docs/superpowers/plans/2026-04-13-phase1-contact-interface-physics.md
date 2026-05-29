@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix the 2 failing benchmark checks (V_oc too low, V_oc insensitive to n_i) by adding band-offset-aware contact boundary conditions and thermionic emission at heterointerfaces.
+**Goal:** Fix the 2 failing benchmark checks (V<sub>oc</sub> too low, V<sub>oc</sub> insensitive to n_i) by adding band-offset-aware contact boundary conditions and thermionic emission at heterointerfaces.
 
-**Architecture:** Add `compute_V_bi()` to `DeviceStack` that derives V_bi from the Fermi level difference across the heterostack using chi/Eg/doping. Add `thermionic_correction()` to cap SG fluxes at heterointerface faces. Both changes are backward compatible — when chi=Eg=0, behavior is identical to current.
+**Architecture:** Add `compute_V_bi()` to `DeviceStack` that derives V<sub>bi</sub> from the Fermi level difference across the heterostack using chi/Eg/doping. Add `thermionic_correction()` to cap SG fluxes at heterointerface faces. Both changes are backward compatible — when chi=Eg=0, behavior is identical to current.
 
 **Tech Stack:** Python 3.10+, numpy, scipy, pytest
 
@@ -23,11 +23,11 @@
 | `tests/unit/models/test_device_vbi.py` | Create | Tests for `compute_V_bi()` |
 | `tests/unit/discretization/test_thermionic.py` | Create | Tests for thermionic emission flux |
 | `tests/unit/physics/test_continuity_thermionic.py` | Create | Tests for TE-capped continuity at interfaces |
-| `tests/integration/test_voc_benchmark.py` | Create | V_oc validation against IonMonger target |
+| `tests/integration/test_voc_benchmark.py` | Create | V<sub>oc</sub> validation against IonMonger target |
 
 ---
 
-### Task 1: Compute V_bi from band offsets
+### Task 1: Compute V<sub>bi</sub> from band offsets
 
 **Files:**
 - Create: `tests/unit/models/test_device_vbi.py`
@@ -216,7 +216,7 @@ git commit -m "feat(device): add compute_V_bi from Fermi level difference across
 
 The Poisson boundary condition currently uses `stack.V_bi` directly. We need to use `stack.compute_V_bi()` instead, and cache the result in `MaterialArrays` to avoid recomputing every RHS call.
 
-- [ ] **Step 1: Write failing test for V_bi propagation**
+- [ ] **Step 1: Write failing test for V<sub>bi</sub> propagation**
 
 ```python
 # tests/unit/solver/test_vbi_propagation.py
@@ -252,7 +252,7 @@ def test_material_arrays_legacy_vbi():
 Run: `cd perovskite-sim && python -m pytest tests/unit/solver/test_vbi_propagation.py -v`
 Expected: FAIL with `AttributeError: 'MaterialArrays' object has no attribute 'V_bi_eff'`
 
-- [ ] **Step 3: Add V_bi_eff to MaterialArrays and build_material_arrays**
+- [ ] **Step 3: Add V<sub>bi,eff</sub> to MaterialArrays and build_material_arrays**
 
 In `perovskite_sim/solver/mol.py`, add to the `MaterialArrays` dataclass (after `poisson_factor` field at line 88):
 
@@ -260,7 +260,7 @@ In `perovskite_sim/solver/mol.py`, add to the `MaterialArrays` dataclass (after 
 V_bi_eff: float = 1.1  # effective built-in potential from compute_V_bi()
 ```
 
-In `build_material_arrays()`, before the `return MaterialArrays(...)` call (line 202), compute and pass V_bi_eff:
+In `build_material_arrays()`, before the `return MaterialArrays(...)` call (line 202), compute and pass V<sub>bi,eff</sub>:
 
 ```python
 V_bi_eff = stack.compute_V_bi()
@@ -273,7 +273,7 @@ Add `V_bi_eff=V_bi_eff` to the `MaterialArrays(...)` constructor call.
 Run: `cd perovskite-sim && python -m pytest tests/unit/solver/test_vbi_propagation.py -v`
 Expected: 2 tests PASS
 
-- [ ] **Step 5: Update assemble_rhs to use mat.V_bi_eff instead of stack.V_bi**
+- [ ] **Step 5: Update assemble_rhs to use mat.V<sub>bi,eff</sub> instead of stack.V<sub>bi</sub>**
 
 In `perovskite_sim/solver/mol.py`, in `assemble_rhs()` at line 311, change:
 
@@ -289,7 +289,7 @@ phi = solve_poisson_prefactored(
 )
 ```
 
-- [ ] **Step 6: Update all other stack.V_bi references to use mat.V_bi_eff**
+- [ ] **Step 6: Update all other stack.V<sub>bi</sub> references to use mat.V<sub>bi,eff</sub>**
 
 In `perovskite_sim/experiments/jv_sweep.py`, in `_total_current_faces()` at line 113:
 
@@ -324,7 +324,7 @@ phi = solve_poisson_prefactored(
 - [ ] **Step 7: Run full test suite to check for regressions**
 
 Run: `cd perovskite-sim && python -m pytest tests/ -x -v --timeout=120`
-Expected: All existing tests PASS (legacy configs have chi=Eg=0, so V_bi_eff == V_bi)
+Expected: All existing tests PASS (legacy configs have chi=Eg=0, so V<sub>bi,eff</sub> == V<sub>bi</sub>)
 
 - [ ] **Step 8: Commit**
 
@@ -335,12 +335,12 @@ git commit -m "feat(solver): wire compute_V_bi through MaterialArrays into Poiss
 
 ---
 
-### Task 3: Update V_max default in run_jv_sweep for heterointerfaces
+### Task 3: Update V<sub>max</sub> default in run_jv_sweep for heterointerfaces
 
 **Files:**
 - Modify: `perovskite_sim/experiments/jv_sweep.py:255-322`
 
-With correct band offsets, V_oc can exceed the old V_bi. The default `V_max = stack.V_bi` would cut off the J-V curve before V_oc. Use the computed V_bi_eff with headroom.
+With correct band offsets, V<sub>oc</sub> can exceed the old V<sub>bi</sub>. The default `V_max = stack.V_bi` would cut off the J-V curve before V<sub>oc</sub>. Use the computed V<sub>bi,eff</sub> with headroom.
 
 - [ ] **Step 1: Write failing test**
 
@@ -368,9 +368,9 @@ def test_jv_sweep_captures_voc_with_band_offsets():
 - [ ] **Step 2: Run test to check current behavior**
 
 Run: `cd perovskite-sim && python -m pytest tests/unit/experiments/test_jv_vmax.py -v --timeout=120`
-Expected: May PASS or FAIL depending on current V_oc — this establishes baseline.
+Expected: May PASS or FAIL depending on current V<sub>oc</sub> — this establishes baseline.
 
-- [ ] **Step 3: Update V_max default to use compute_V_bi with headroom**
+- [ ] **Step 3: Update V<sub>max</sub> default to use compute_V_bi with headroom**
 
 In `perovskite_sim/experiments/jv_sweep.py`, in `run_jv_sweep()` at line 322:
 
@@ -847,7 +847,7 @@ git commit -m "feat(continuity): cap SG flux with thermionic emission at heteroi
 
 ---
 
-### Task 7: Integration test — V_oc benchmark validation
+### Task 7: Integration test — V<sub>oc</sub> benchmark validation
 
 **Files:**
 - Create: `tests/integration/test_voc_benchmark.py`
@@ -914,7 +914,7 @@ Expected: `test_legacy_config_no_regression` PASS. Slow tests skipped.
 
 Run the slow tests:
 Run: `cd perovskite-sim && python -m pytest tests/integration/test_voc_benchmark.py -v --timeout=300 -m slow`
-Expected: Check whether V_oc has improved. If still below 0.95, investigate — see Task 8.
+Expected: Check whether V<sub>oc</sub> has improved. If still below 0.95, investigate — see Task 8.
 
 - [ ] **Step 3: Commit**
 
@@ -930,7 +930,7 @@ git commit -m "test(integration): V_oc benchmark validation against IonMonger"
 **Files:**
 - Possibly modify: any of the files from Tasks 1-6
 
-This is the debugging/tuning task. After running the benchmark test, if V_oc is not in the expected range, investigate:
+This is the debugging/tuning task. After running the benchmark test, if V<sub>oc</sub> is not in the expected range, investigate:
 
 - [ ] **Step 1: Run a diagnostic J-V sweep and inspect**
 
@@ -950,9 +950,9 @@ print(f"FF  (rev): {result.metrics_rev.FF:.3f}")
 print(f"PCE (rev): {result.metrics_rev.PCE:.4f}")
 ```
 
-- [ ] **Step 2: Check the computed V_bi is reasonable**
+- [ ] **Step 2: Check the computed V<sub>bi</sub> is reasonable**
 
-Expected: V_bi ≈ 1.0-1.3 V for the ionmonger stack. If it's wildly different, check the Fermi level calculation in `compute_V_bi()`.
+Expected: V<sub>bi</sub> ≈ 1.0-1.3 V for the ionmonger stack. If it's wildly different, check the Fermi level calculation in `compute_V_bi()`.
 
 - [ ] **Step 3: Check TE is actually capping fluxes**
 
@@ -963,7 +963,7 @@ Add temporary debug prints in `carrier_continuity_rhs` to see whether TE capping
 Run: `cd perovskite-sim && python -m pytest tests/ -x --timeout=120`
 Expected: All PASS
 
-- [ ] **Step 5: If V_oc is in range, commit any tuning changes**
+- [ ] **Step 5: If V<sub>oc</sub> is in range, commit any tuning changes**
 
 ```bash
 git add -u
@@ -972,13 +972,13 @@ git commit -m "fix(phase1): tune band-offset contacts and TE capping for V_oc ac
 
 ---
 
-### Task 9: Update existing tests for new V_oc range
+### Task 9: Update existing tests for new V<sub>oc</sub> range
 
 **Files:**
 - Modify: `tests/integration/test_end_to_end_device.py`
 - Modify: `tests/regression/test_jv_regression.py`
 
-After the physics fix, the V_oc range for configs with band offsets may shift. Update test bounds.
+After the physics fix, the V<sub>oc</sub> range for configs with band offsets may shift. Update test bounds.
 
 - [ ] **Step 1: Run all tests and note which bounds need updating**
 

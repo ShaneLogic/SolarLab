@@ -28,7 +28,7 @@ the loader extension unblocked, comparing against the xlsx ground truth.
 
 ## Step 4 results (working-regime closure)
 
-Working regime = points where SolarLab brackets V_oc within `V_max=1.6 V`.
+Working regime = points where SolarLab brackets V<sub>oc</sub> within `V_max=1.6 V`.
 
 | Sheet | n (brk) | SCAPS Δ_subset | SolarLab Δ | Closure | Median Δ | Max |Δ| |
 |---|---|---|---|---|---|---|
@@ -50,21 +50,21 @@ cd perovskite-sim && python scripts/run_scaps_v2_regression.py
 
 | Sweep | Parked (v1) | E6.4 (v2) | Shift |
 |---|---|---|---|
-| CBO V_oc range | 85 % | 83 % | noise (-2 pp) |
-| iface N_t V_oc range | 74 % | **109 %** | **+35 pp** |
-| ETL doping V_oc range | **784 % OVER** (1075/137) | **30 % UNDER** (30/100) | **sign flipped** |
-| Bulk N_t V_oc range | 0 % | 0.2 % | unchanged (masked) |
+| CBO V<sub>oc</sub> range | 85 % | 83 % | noise (-2 pp) |
+| iface N<sub>t</sub> V<sub>oc</sub> range | 74 % | **109 %** | **+35 pp** |
+| ETL doping V<sub>oc</sub> range | **784 % OVER** (1075/137) | **30 % UNDER** (30/100) | **sign flipped** |
+| Bulk N<sub>t</sub> V<sub>oc</sub> range | 0 % | 0.2 % | unchanged (masked) |
 
 **The ETL doping diagnosis was wrong.** Parked memory attributed the
 1075 mV / 137 mV ratio to "MoL+Scharfetter-Gummel cannot sample SCAPS'
 analytical interface-plane carrier density" and recommended Newton-Krylov
 or QSS reduction (multi-week research-grade refactor). Step 4 shows the
-parked 1075 mV SolarLab range was inflated by **unbracketed V_oc=0
+parked 1075 mV SolarLab range was inflated by **unbracketed V<sub>oc</sub>=0
 sentinels at low ETL doping** — the device "looks dead" because the
-sweep V_max=1.6 V did not extend far enough, NOT because the solver
+sweep V<sub>max</sub>=1.6 V did not extend far enough, NOT because the solver
 over-amplifies doping changes. The Step 4 script's per-point CSV reveals
-SolarLab's 3 low-Nd points (1e10/1e11/1e12 cm^-3) all return
-`voc_bracketed=False` with V_oc=0.
+SolarLab's 3 low-Nd points (1e10/1e11/1e12 cm<sup>−3</sup>) all return
+`voc_bracketed=False` with V<sub>oc</sub>=0.
 
 Once unbracketed points are filtered, v2 is 3× **under**-sensitive — the
 opposite sign of the parked diagnosis. Architectural Newton-Krylov /
@@ -80,20 +80,20 @@ remaining shortfalls are diagnostic, not structural:
 1. **CBO (83 %)** — close to parked baseline; remaining 17 % shortfall
    is concentrated on the spike side (Δ_E_C ≥ 0). Plateau height differs
    ~150 mV — likely band-offset thermionic-emission cap behaviour at
-   |ΔE_C| > 0.1 eV. Out of scope for E6.
-2. **Interface N_t (109 %)** — major improvement vs parked 74 %.
-   Loader's correct σ=1e-19 + N_t=1e12 cm^-2 (vs v1's 1e-15 + cf=1e-4)
+   |ΔE<sub>C</sub>| > 0.1 eV. Out of scope for E6.
+2. **Interface N<sub>t</sub> (109 %)** — major improvement vs parked 74 %.
+   Loader's correct σ=1e-19 + N<sub>t</sub>=1e12 cm<sup>−2</sup> (vs v1's 1e-15 + cf=1e-4)
    gives bit-equivalent SRV math but with transparent partner-facing
    units. Slight over-sensitivity within noise; magnitude excellent.
-3. **PVK bulk N_t (0 %)** — known mask: PVK/ETL interface SRV=0.01 m/s
-   sets the recombination ceiling; bulk N_t changes within
-   [1e9, 1e15] cm^-3 do not move V_oc until they exceed the interface
+3. **PVK bulk N<sub>t</sub> (0 %)** — known mask: PVK/ETL interface SRV=0.01 m/s
+   sets the recombination ceiling; bulk N<sub>t</sub> changes within
+   [1e9, 1e15] cm<sup>−3</sup> do not move V<sub>oc</sub> until they exceed the interface
    contribution. NOT an architectural problem — interface tuning OR
    correct multi-defect SRH solver hook would unmask.
 4. **ETL doping (30 %)** — direction preserved, magnitude
-   under-sensitive in the working regime. The unbracketed-V_oc artifact
+   under-sensitive in the working regime. The unbracketed-V<sub>oc</sub> artifact
    at low Nd_ETL is a separate gap — needs investigation of contact
-   equilibrium / V_max sweep range, not a discretisation refactor.
+   equilibrium / V<sub>max</sub> sweep range, not a discretisation refactor.
 
 ## Action items (post-E6.4)
 
@@ -107,23 +107,23 @@ remaining shortfalls are diagnostic, not structural:
 
 ### Near-term (E6.5+, separate branch)
 
-- **Low-Nd V_oc bracket failure** — sweep `V_max` up from 1.6 V to e.g.
+- **Low-Nd V<sub>oc</sub> bracket failure** — sweep `V_max` up from 1.6 V to e.g.
   2.5 V at low ETL doping; check whether bracketed range matches SCAPS
-  ~100 mV. Likely V_bi(N_D) shifts the open-circuit beyond 1.6 V.
-- **PVK bulk N_t mask** — verify by setting PVK/ETL interface to
+  ~100 mV. Likely V<sub>bi</sub>(N<sub>D</sub>) shifts the open-circuit beyond 1.6 V.
+- **PVK bulk N<sub>t</sub> mask** — verify by setting PVK/ETL interface to
   near-zero SRV in an isolated sweep, then re-running Nt_C_PVK to
   confirm bulk SRH becomes visible. If yes, the mask is interface-SRV;
   if no, multi-defect collapse approximation under-counts at trap-rich
   bulk.
 - **CBO spike-side plateau gap** — investigate thermionic-emission cap
-  in `continuity.py` for |ΔE_C| > 0.1 eV. SCAPS may have softer TE
+  in `continuity.py` for |ΔE<sub>C</sub>| > 0.1 eV. SCAPS may have softer TE
   thresholds than SolarLab's Richardson-Dushman implementation.
 
 ### Do NOT pursue
 
 - **Newton-Krylov reformulation** with iface-plane state as full DAE
   block — solving wrong problem; the parked diagnosis was driven by
-  unbracketed-V_oc artifact, not by genuine discretisation insufficiency.
+  unbracketed-V<sub>oc</sub> artifact, not by genuine discretisation insufficiency.
 - **QSS reduction** to Pauwels-Vanhoutte algebraic constraint — same
   reason; would widen the now-under-sensitive ETL doping gap.
 - **Any retry of `failed-prototype/*` tagged refactors** without
@@ -134,7 +134,7 @@ remaining shortfalls are diagnostic, not structural:
 - `pair-nt-cbo-pvk-etl` 2D sweep (100 points) — not run in Step 4
   because per-point wall time would push regression to >15 min. Worth
   running once for the final report.
-- Optics parity — SolarLab J_sc=333 A/m^2 vs SCAPS 263 A/m^2. The
+- Optics parity — SolarLab J<sub>sc</sub>=333 A/m<sup>2</sup> vs SCAPS 263 A/m<sup>2</sup>. The
   +27 % gap is consistent across all four sweeps and is dominated by
   TMM vs SCAPS' scalar-alpha integral on the 800 nm MAPbI3 absorber.
   Out of scope for SCAPS parameter parity (the loader doesn't touch

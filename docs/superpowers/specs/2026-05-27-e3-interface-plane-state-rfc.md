@@ -62,7 +62,7 @@ FULL tier: ON by default IF stack has heterointerfaces with defects.
 
 ## Initial condition (dark equilibrium)
 
-Per interface k, at thermal equilibrium (V_app = 0, no illumination):
+Per interface k, at thermal equilibrium (V<sub>app</sub> = 0, no illumination):
 
 ```
 V_2_eq = partition_2_left[k] * V_bi_eff       # PVK side band-bending
@@ -194,7 +194,7 @@ bulk node idx+1 has the TE-controlled step (the heart of SCAPS' model).
 | `test_e3_dark_eq_n_1s_matches_boltzmann` | n_1s_eq computed correctly from n_R_eq + V_1_eq |
 | `test_e3_dark_eq_n_2s_matches_boltzmann` | Same for n_2s |
 | `test_e3_dark_eq_partition_heavy_doping_limit` | Partition → unity on heavy-doped side |
-| `test_e3_voc_moves_with_env_active` | V_oc shifts when env=1 (proves wiring) |
+| `test_e3_voc_moves_with_env_active` | V<sub>oc</sub> shifts when env=1 (proves wiring) |
 | `test_e3_finite_jv_under_activation` | No NaN/Inf in JV |
 
 ## Risk mitigations
@@ -213,8 +213,8 @@ bulk node idx+1 has the TE-controlled step (the heart of SCAPS' model).
 |---|---|---|
 | ETL doping range | ≤ 200 mV | RFC primary |
 | CBO closure | ≥ 80 % | RFC primary |
-| Base V_oc | ∈ [1.05, 1.25] V | RFC envelope |
-| Interface defect N_t | ≥ 200 mV (NOT collapsed) | survives the failure mode that killed single-sided PV |
+| Base V<sub>oc</sub> | ∈ [1.05, 1.25] V | RFC envelope |
+| Interface defect N<sub>t</sub> | ≥ 200 mV (NOT collapsed) | survives the failure mode that killed single-sided PV |
 | All 23 SCAPS-subset tests | PASS | regression |
 | Full slow regression (TMM baselines) | PASS | architectural change must not break TMM |
 | PVK doping direction | match SCAPS | bonus |
@@ -223,7 +223,7 @@ If gate fails on Newton stability: bisection-budget tuning, FAST-tier
 fallback, or escalate.
 
 If gate fails on ETL doping: investigate whether TE flux v_t convention
-matches SCAPS' "smallest v_th of two neighbouring layers" rule
+matches SCAPS' "smallest v<sub>th</sub> of two neighbouring layers" rule
 (Manual §3.8).
 
 ## Commit discipline

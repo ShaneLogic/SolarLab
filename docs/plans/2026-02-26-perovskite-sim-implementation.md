@@ -2218,6 +2218,6 @@ Run: `pytest --cov=perovskite_sim --cov-report=html`
 Target: ≥ 80% line coverage across all modules.
 
 If below 80%, add missing unit tests for uncovered branches in:
-- `solver/mol.py` (edge cases: no illumination, zero V_app)
+- `solver/mol.py` (edge cases: no illumination, zero V<sub>app</sub>)
 - `physics/poisson.py` (non-trivial BC values)
 - `models/config_loader.py` (missing keys)

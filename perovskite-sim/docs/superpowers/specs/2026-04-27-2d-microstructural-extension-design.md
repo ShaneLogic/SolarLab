@@ -2,7 +2,7 @@
 
 > **For Claude:** This is the design (spec) phase. The implementation plan should be produced via `superpowers:writing-plans` from this document. Do not start implementation from this file directly.
 
-**Goal.** Extend the existing 1D drift-diffusion + Poisson + ion migration simulator to a 2D variant that resolves lateral microstructure inside the absorber (grain boundaries, defect clusters, halide-segregated patches) while leaving the 1D solver fully intact and improving its tooling, not replacing it. The first scientific deliverable is the V_oc penalty as a function of grain size for a single vertical grain boundary on a MAPbI3 stack, validated against published data.
+**Goal.** Extend the existing 1D drift-diffusion + Poisson + ion migration simulator to a 2D variant that resolves lateral microstructure inside the absorber (grain boundaries, defect clusters, halide-segregated patches) while leaving the 1D solver fully intact and improving its tooling, not replacing it. The first scientific deliverable is the V<sub>oc</sub> penalty as a function of grain size for a single vertical grain boundary on a MAPbI3 stack, validated against published data.
 
 **Non-goals.** Cell-scale lateral physics (finger / busbar geometry), 2D light management (textures, photonic structures), module-scale string modelling, full 3D, and axisymmetric geometries are explicitly out of scope for this design. Each is a separate project with a different solver core.
 
@@ -15,7 +15,7 @@ This design covers two stages.
 | Stage | Name | Purpose | Ships when |
 |------|------|---------|-----------|
 | 2D-α (Stage A) | Validation gate | 2D solver on a laterally uniform device must reproduce the 1D answer within tight tolerances | All six checks in §7 pass |
-| 2D-β (Stage B) | First 2D physics | Single vertical grain boundary in the absorber; J–V sweep and field maps as a function of grain size | V_oc(L_g) trend matches published MAPbI3 data within ~30 mV |
+| 2D-β (Stage B) | First 2D physics | Single vertical grain boundary in the absorber; J–V sweep and field maps as a function of grain size | V<sub>oc</sub>(L_g) trend matches published MAPbI3 data within ~30 mV |
 
 The following are deliberately deferred to future stages and are NOT part of this spec:
 
@@ -108,7 +108,7 @@ Two-phase plan on the existing single Vite frontend at `perovskite-sim/frontend/
 
 - `2D J–V Sweep` (kind: `jv_2d`) — same form chrome as the 1D J–V panel, line plot of J–V plus heatmap thumbnails of n(x,y), p(x,y), φ(x,y) at user-selected V.
 - `2D Field Maps` (kind: `field_maps_2d`) — single steady-state run at a given V, full-resolution heatmaps + vector field of (J_x, J_y).
-- `V_oc vs Grain Size` (kind: `voc_grain_sweep`) — Stage-B headline experiment. Sweeps L_g, returns V_oc(L_g) plus per-L_g field maps.
+- `V_oc vs Grain Size` (kind: `voc_grain_sweep`) — Stage-B headline experiment. Sweeps L_g, returns V<sub>oc</sub>(L_g) plus per-L_g field maps.
 
 These reuse `device-panel.ts`, `api.ts`, `job-stream.ts`, the SSE progress-bar pattern, and `plot-theme.ts` unchanged. Each new panel adds its own form module and its own Plotly render function.
 
@@ -163,8 +163,8 @@ A single regression test, `tests/regression/test_twod_validation.py`, runs the 2
 
 | Check | Tolerance |
 |-------|-----------|
-| V_oc(2D) − V_oc(1D) | ≤ 0.1 mV |
-| (J_sc(2D) − J_sc(1D)) / J_sc(1D) | ≤ 5×10⁻⁴ |
+| V<sub>oc</sub>(2D) − V<sub>oc</sub>(1D) | ≤ 0.1 mV |
+| (J<sub>sc</sub>(2D) − J<sub>sc</sub>(1D)) / J<sub>sc</sub>(1D) | ≤ 5×10⁻⁴ |
 | FF(2D) − FF(1D) | ≤ 1×10⁻³ |
 | max\|n(x,y) − n(0,y)\| / max\|n(0,y)\| | ≤ 1×10⁻⁹ (lateral invariance of n) |
 | max\|∇·J\| at interior nodes in steady state | ≤ 1×10⁻³ A/m³ |
@@ -191,18 +191,18 @@ def run_voc_grain_sweep(
 ) -> VocGrainSweepResult: ...
 ```
 
-For each L_g it constructs a `Microstructure` with one GB at x = L_g/2, runs a forward-only J–V sweep (illuminated, periodic lateral BC, lateral domain length = L_g), extracts V_oc, J_sc, FF, and stores spatial snapshots of n(x,y), p(x,y), φ(x,y), J_x(x,y), J_y(x,y) at V_oc and at MPP.
+For each L_g it constructs a `Microstructure` with one GB at x = L_g/2, runs a forward-only J–V sweep (illuminated, periodic lateral BC, lateral domain length = L_g), extracts V<sub>oc</sub>, J<sub>sc</sub>, FF, and stores spatial snapshots of n(x,y), p(x,y), φ(x,y), J_x(x,y), J_y(x,y) at V<sub>oc</sub> and at MPP.
 
 Deliverable artefacts:
 
 1. J–V curve overlay — 1D bulk τ vs 2D for each L_g (line plot)
-2. n(x,y) heatmap at V_oc (one per L_g)
+2. n(x,y) heatmap at V<sub>oc</sub> (one per L_g)
 3. |J|(x,y) heatmap at MPP (one per L_g)
 4. (J_x, J_y) vector field at MPP (one per L_g)
-5. V_oc(L_g) plot, with the 1D-bulk-τ V_oc as a horizontal reference line and the published deQuilettes / Stranks data as overlay points
-6. τ_eff(L_g) plot — the effective bulk τ that, when fed into the 1D solver, reproduces the 2D V_oc at that L_g. Useful as a 1D-modelling shortcut for future workflows.
+5. V<sub>oc</sub>(L_g) plot, with the 1D-bulk-τ V<sub>oc</sub> as a horizontal reference line and the published deQuilettes / Stranks data as overlay points
+6. τ_eff(L_g) plot — the effective bulk τ that, when fed into the 1D solver, reproduces the 2D V<sub>oc</sub> at that L_g. Useful as a 1D-modelling shortcut for future workflows.
 
-The Stage-B success criterion is artefact 5: V_oc(L_g) trend must agree with published MAPbI3 data in shape (monotone increasing toward bulk) and absolute value (within ~30 mV at L_g = 1 µm), and the τ_eff(L_g = 1 µm) extracted from artefact 6 must be within a factor of 2 of the absorber bulk τ used in the 1D simulation.
+The Stage-B success criterion is artefact 5: V<sub>oc</sub>(L_g) trend must agree with published MAPbI3 data in shape (monotone increasing toward bulk) and absolute value (within ~30 mV at L_g = 1 µm), and the τ_eff(L_g = 1 µm) extracted from artefact 6 must be within a factor of 2 of the absorber bulk τ used in the 1D simulation.
 
 ---
 
@@ -252,7 +252,7 @@ Per the standing rule that README and technical docs must stay in sync with code
 
 **Stage B merge:**
 - `perovskite-sim/CLAUDE.md` — extend the Phase 6 block with a "Single grain boundary" subsection describing the `voc_grain_sweep` experiment, the `GrainBoundary` / `Microstructure` data model, and the artefact list.
-- `perovskite-sim/README.md` — a single user-facing paragraph in Key Features describing the V_oc vs grain size experiment.
+- `perovskite-sim/README.md` — a single user-facing paragraph in Key Features describing the V<sub>oc</sub> vs grain size experiment.
 - A new `perovskite-sim/docs/twod_overview.md` written for end users, describing how to construct a `Microstructure`, run the headline experiment, and interpret the artefacts. This is the "tutorial" companion to the existing `perovskite-sim/docs/benchmark_*` files.
 
 **Future stages (γ/δ/ε):** each adds its own subsection to the Phase 6 block in `CLAUDE.md`, following the existing "Phase 4a, 4b, 5" structure. The README gets at most one paragraph per major capability, not per stage.

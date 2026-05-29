@@ -1,15 +1,30 @@
 """Convert physics symbols in a markdown doc to real <sub>/<sup> typography.
 
-Protects code fences/spans, links, and HTML; converts only prose physics
-symbols (V_oc → V<sub>oc</sub>, cm^-3 → cm<sup>-3</sup>, etc.). Sheet-name
-identifiers (Nt_C_PVK, Nd_ETL) have a different token shape and are left alone.
-Idempotent. Usage: python md_physics_typography.py <file.md> [--check]
+Protects (leaves untouched): fenced code blocks (line-anchored ``` open/close),
+inline code spans `...` (may span lines), LaTeX math $...$ and $$...$$, link
+targets ](...), and HTML tags. Converts only prose physics symbols
+(V_oc → V<sub>oc</sub>, cm^-3 → cm<sup>-3</sup>). Sheet-name identifiers
+(Nt_C_PVK, Nd_ETL) and code tokens (N_t_cm2) have a different shape and are
+left alone via boundary lookarounds. Idempotent.
+
+Usage: python md_physics_typography.py <file.md> [--check]
 """
 import re, sys
 
-PROTECT = re.compile(r'(```.*?```|`[^`]*`|\]\([^)]*\)|</?[A-Za-z][^>]*>)', re.DOTALL)
+# Protected spans, longest/most-specific first. Line-anchored fences avoid the
+# odd-pairing bug of an unanchored ```.*?```; DOTALL lets fences, $$..$$ and
+# multi-line inline code span newlines.
+PROTECT = re.compile(
+    r"(?ms)("
+    r"^[ \t]*```.*?^[ \t]*```[ \t]*$"   # fenced code block (line-anchored)
+    r"|\$\$.*?\$\$"                       # display math
+    r"|\$[^$\n]+?\$"                       # inline math (single line)
+    r"|`[^`]*`"                            # inline code (may span lines)
+    r"|\]\([^)]*\)"                       # link target
+    r"|</?[A-Za-z][^>]*>"                 # HTML tag
+    r")"
+)
 
-# longer keys first so V_bi_eff beats V_bi
 SUBS = [
     ("V_bi_eff", "V<sub>bi,eff</sub>"), ("V_oc", "V<sub>oc</sub>"),
     ("V_bi", "V<sub>bi</sub>"), ("V_max", "V<sub>max</sub>"),
@@ -27,7 +42,6 @@ SUBS = [
     ("C_p", "C<sub>p</sub>"), ("v_th", "v<sub>th</sub>"),
     ("Phi_b", "Φ<sub>b</sub>"), ("P_esc", "P<sub>esc</sub>"),
 ]
-# build one regex per symbol with boundaries that avoid mid-token (code-like) hits
 SUB_PATS = [(re.compile(r'(?<![A-Za-z0-9_])' + re.escape(k) + r'(?![A-Za-z0-9_])'), v)
             for k, v in SUBS]
 SUP = re.compile(r'\b(cm|m|s|µm|nm)\^(-?\d+)')
@@ -40,27 +54,27 @@ def _sup(m):
 def convert_prose(s):
     for pat, rep in SUB_PATS:
         s = pat.sub(rep, s)
-    s = SUP.sub(_sup, s)
-    return s
+    return SUP.sub(_sup, s)
 
 
 def convert(text):
-    out = []
-    for i, seg in enumerate(PROTECT.split(text)):
-        # PROTECT.split with one capture group -> odd indices are protected
-        out.append(seg if i % 2 else convert_prose(seg))
+    out, last = [], 0
+    for m in PROTECT.finditer(text):
+        out.append(convert_prose(text[last:m.start()]))
+        out.append(m.group(0))            # protected span verbatim
+        last = m.end()
+    out.append(convert_prose(text[last:]))
     return "".join(out)
 
 
 def main():
     path = sys.argv[1]
-    check = "--check" in sys.argv
-    src = open(path).read()
+    src = open(path, encoding="utf-8").read()
     new = convert(src)
-    if check:
+    if "--check" in sys.argv:
         print("unchanged" if new == src else "WOULD CHANGE")
         return
-    open(path, "w").write(new)
+    open(path, "w", encoding="utf-8").write(new)
     print(f"normalized {path}")
 
 

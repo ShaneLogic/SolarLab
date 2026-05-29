@@ -285,10 +285,10 @@ Field & Unit & Physical role & Beginner guidance \\
 \midrule
 \endhead
 \path{eps_r} & 1 & relative dielectric constant in Poisson's equation & Larger values screen charge and reduce field gradients. Use layer-specific literature values rather than a single generic perovskite value. \\
-\path{mu_n} & \(m^2 V^{-1} s^{-1}\) & low-field electron mobility & Controls electron extraction and transport resistance. Remember that \(1\,cm^2 V^{-1}s^{-1}=10^{-4}\,m^2 V^{-1}s^{-1}\). \\
-\path{mu_p} & \(m^2 V^{-1} s^{-1}\) & low-field hole mobility & Same unit conversion convention as \path{mu_n}. Low mobility typically affects FF before producing a large change in \(V_\mathrm{oc}\). \\
-\path{N_A} & \(m^{-3}\) & ionized acceptor density & Represents p-type doping. Values reported in \(cm^{-3}\) must be multiplied by \(10^6\). \\
-\path{N_D} & \(m^{-3}\) & ionized donor density & Represents n-type doping. Use compensated doping only when it is part of the intended physical model. \\
+\path{mu_n} & \(m<sup>2</sup> V^{-1} s^{-1}\) & low-field electron mobility & Controls electron extraction and transport resistance. Remember that \(1\,cm<sup>2</sup> V^{-1}s^{-1}=10^{-4}\,m<sup>2</sup> V^{-1}s^{-1}\). \\
+\path{mu_p} & \(m<sup>2</sup> V^{-1} s^{-1}\) & low-field hole mobility & Same unit conversion convention as \path{mu_n}. Low mobility typically affects FF before producing a large change in \(V_\mathrm{oc}\). \\
+\path{N<sub>A</sub>} & \(m^{-3}\) & ionized acceptor density & Represents p-type doping. Values reported in \(cm^{-3}\) must be multiplied by \(10^6\). \\
+\path{N<sub>D</sub>} & \(m^{-3}\) & ionized donor density & Represents n-type doping. Use compensated doping only when it is part of the intended physical model. \\
 \path{ni} & \(m^{-3}\) & intrinsic carrier density & Appears in mass action and SRH terms. It should be consistent with the effective band gap and temperature when doing parameter studies. \\
 \path{chi} & eV & electron affinity & Sets approximate conduction-band alignment. Inconsistent \(\chi\) values can introduce artificial transport barriers. \\
 \path{Eg} & eV & band gap & Sets band offsets and thermodynamic interpretation. Beer-Lambert optics do not automatically shift spectral absorption when \path{Eg} changes. \\
@@ -304,10 +304,10 @@ Field & Unit & Physical role & Beginner guidance \\
 Field & Unit & Physical role & Beginner guidance \\
 \midrule
 \endhead
-\path{D_ion} & \(m^2 s^{-1}\) & positive mobile-ion diffusion coefficient & Set to zero when mobile ions are excluded from the model. Nonzero values can produce scan-rate dependence. \\
+\path{D_ion} & \(m<sup>2</sup> s^{-1}\) & positive mobile-ion diffusion coefficient & Set to zero when mobile ions are excluded from the model. Nonzero values can produce scan-rate dependence. \\
 \path{P0} & \(m^{-3}\) & initial positive ion density & Represents the equilibrium mobile-vacancy population before redistribution. \\
 \path{P_lim} & \(m^{-3}\) & steric upper density for positive ions & Limits ion accumulation through a finite-site-density approximation. The value should be consistent with the assumed mobile-site density. \\
-\path{D_ion_neg} & \(m^2 s^{-1}\) & negative mobile-ion diffusion coefficient & Enables a second mobile species. Leave zero for the default single-ion model. \\
+\path{D_ion_neg} & \(m<sup>2</sup> s^{-1}\) & negative mobile-ion diffusion coefficient & Enables a second mobile species. Leave zero for the default single-ion model. \\
 \path{P0_neg} & \(m^{-3}\) & initial negative ion density & Use only when the negative species is part of the physical hypothesis. \\
 \path{P_lim_neg} & \(m^{-3}\) & steric upper density for negative ions & Same interpretation as \path{P_lim}. \\
 \path{E_a_ion} & eV & Arrhenius activation energy for ion diffusion & Used for temperature-dependent ion mobility. Fitted or literature-derived values should be reported with provenance. \\
@@ -327,9 +327,9 @@ Field & Unit & Physical role & Beginner guidance \\
 \path{tau_p} & s & hole SRH lifetime & Interpret with \path{tau_n}; asymmetry can model carrier-selective trap response. \\
 \path{n1} & \(m^{-3}\) & SRH electron reference density & Encodes the effective trap-energy position and should be changed consistently with the trap model. \\
 \path{p1} & \(m^{-3}\) & SRH hole reference density & Companion to \path{n1}. \\
-\path{B_rad} & \(m^3 s^{-1}\) & radiative recombination coefficient & Central to radiative-limit and photon-recycling studies. \\
-\path{C_n} & \(m^6 s^{-1}\) & electron Auger coefficient & Most relevant when high carrier densities are expected. \\
-\path{C_p} & \(m^6 s^{-1}\) & hole Auger coefficient & Same caution as \path{C_n}. \\
+\path{B<sub>rad</sub>} & \(m<sup>3</sup> s^{-1}\) & radiative recombination coefficient & Central to radiative-limit and photon-recycling studies. \\
+\path{C<sub>n</sub>} & \(m<sup>6</sup> s^{-1}\) & electron Auger coefficient & Most relevant when high carrier densities are expected. \\
+\path{C<sub>p</sub>} & \(m<sup>6</sup> s^{-1}\) & hole Auger coefficient & Same caution as \path{C<sub>n</sub>}. \\
 \path{trap_N_t_interface} & \(m^{-3}\) & interface-near trap density & Activates spatial trap profiles when supplied with decay information. \\
 \path{trap_N_t_bulk} & \(m^{-3}\) & bulk trap density & The asymptotic trap density away from the interface. \\
 \path{trap_decay_length} & m & decay length or Gaussian width & Must be physically resolvable by the grid. \\
@@ -386,7 +386,7 @@ Field & Unit & Physical role & Beginner guidance \\
 Field & Unit & Physical role & Beginner guidance \\
 \midrule
 \endhead
-\path{V_bi} & V & built-in voltage in Poisson boundary condition & This is not always identical to the derived heterostack Fermi-level separation. \\
+\path{V<sub>bi</sub>} & V & built-in voltage in Poisson boundary condition & This is not always identical to the derived heterostack Fermi-level separation. \\
 \path{Phi} & \(m^{-2}s^{-1}\) & incident photon flux for Beer-Lambert generation & For spectral experiments use TMM data rather than only changing \path{Phi}. \\
 \path{T} & K & device temperature & Affects thermal voltage and enabled temperature-dependent hooks. \\
 \path{mode} & string & \path{legacy}, \path{fast}, or \path{full} physics tier & The mode is a ceiling; hooks still need required parameters. \\
@@ -410,7 +410,7 @@ Field & Unit & Physical role & Beginner guidance \\
 Field & Meaning \\
 \midrule
 \endhead
-\path{V_bi} & built-in voltage used in the Poisson boundary condition \\
+\path{V<sub>bi</sub>} & built-in voltage used in the Poisson boundary condition \\
 \path{Phi} & incident photon flux for Beer-Lambert generation \\
 \path{interfaces} & interface recombination velocities \((v_n,v_p)\) \\
 \path{T} & device temperature in K \\
@@ -540,7 +540,7 @@ The electron continuity equation is:
 \label{eq:electron-continuity}
 \frac{\partial n}{\partial t}
 =
-\frac{1}{q}\frac{\partial J_n}{\partial x}
+\frac{1}{q}\frac{\partial J<sub>n</sub>}{\partial x}
 +G-R .
 \end{equation}
 
@@ -550,7 +550,7 @@ The hole continuity equation is:
 \label{eq:hole-continuity}
 \frac{\partial p}{\partial t}
 =
--\frac{1}{q}\frac{\partial J_p}{\partial x}
+-\frac{1}{q}\frac{\partial J<sub>p</sub>}{\partial x}
 +G-R .
 \end{equation}
 
@@ -559,7 +559,7 @@ In heterojunctions, SolarLab uses band-corrected potentials:
 \begin{equation}
 \label{eq:band-corrected-potentials}
 \phi_n=\phi+\chi, \qquad
-\phi_p=\phi+\chi+E_g .
+\phi_p=\phi+\chi+E<sub>g</sub> .
 \end{equation}
 
 These effective potentials allow the same numerical flux formulation to
@@ -679,7 +679,7 @@ Auger recombination is:
 \begin{equation}
 \label{eq:auger}
 R_\mathrm{Auger}
-=(C_n n+C_p p)(np-n_i^2).
+=(C<sub>n</sub> n+C<sub>p</sub> p)(np-n_i^2).
 \end{equation}
 
 The total bulk rate is:

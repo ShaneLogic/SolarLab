@@ -19,31 +19,31 @@ p_face = p[idx-1] · exp(-(φ[idx] − φ[idx-1])/V_T)  # PVK side, hole minorit
 Only same-layer φ band-bending; no χ step crossing ⇒ photo-injection
 safe (does not amplify Q-Fermi splitting through χ).
 
-## Probe results (V_oc baseline + ΔE_C ∈ {−0.5, +0.3} V)
+## Probe results (V<sub>oc</sub> baseline + ΔE<sub>C</sub> ∈ {−0.5, +0.3} V)
 
 | Probe point | Δφ(M−R) | Δφ(M−L) | E1.5 np | BBD np | BBD/E1.5 |
 |---|---|---|---|---|---|
-| V_oc baseline (ΔE_C=0)    | +0.5 mV   | −19.8 mV  | 7.4e46 | 1.6e47 | 2.2× |
-| Cliff (ΔE_C=−0.5)         | +1.3 mV   | −51.2 mV  | 3.0e47 | 2.2e48 | 7.6× |
-| Spike (ΔE_C=+0.3)         | −5.4 mV   | +125.3 mV | 7.6e41 | 4.8e39 | 0.006× |
+| V<sub>oc</sub> baseline (ΔE<sub>C</sub>=0)    | +0.5 mV   | −19.8 mV  | 7.4e46 | 1.6e47 | 2.2× |
+| Cliff (ΔE<sub>C</sub>=−0.5)         | +1.3 mV   | −51.2 mV  | 3.0e47 | 2.2e48 | 7.6× |
+| Spike (ΔE<sub>C</sub>=+0.3)         | −5.4 mV   | +125.3 mV | 7.6e41 | 4.8e39 | 0.006× |
 
 **Key observations:**
 
 1. BBD produces **physically sensible positive values** at all three
    probe points. No machine-epsilon collapse (vs SG-Selberherr at
-   1e−5 m⁻³), no exp(ΔE_V/V_T) blow-up (vs Boltzmann-from-Fermi at
+   1e−5 m⁻³), no exp(ΔE<sub>V</sub>/V<sub>T</sub>) blow-up (vs Boltzmann-from-Fermi at
    1e+35).
 
-2. **Cliff direction is preserved.** Cliff side (ΔE_C=−0.5) yields
+2. **Cliff direction is preserved.** Cliff side (ΔE<sub>C</sub>=−0.5) yields
    BBD np = 2.2e48 — 14× rise from baseline. E1.5 only rises 4×.
-   More sensitivity to cliff direction means a stronger V_oc cliff —
+   More sensitivity to cliff direction means a stronger V<sub>oc</sub> cliff —
    which is what SCAPS shows.
 
-3. **Spike side under-shoots BBD.** At ΔE_C=+0.3 the spike Δφ
+3. **Spike side under-shoots BBD.** At ΔE<sub>C</sub>=+0.3 the spike Δφ
    reverses (Δφ_M−L = +125 mV positive), giving p_face = p_L ·
    exp(−4.8) = p_L · 8e−3. The np product collapses to 4.8e39 — 5
    orders below baseline. E1.5 only drops 5×. This is the right
-   direction for a V_oc spike (less recombination at the favourable
+   direction for a V<sub>oc</sub> spike (less recombination at the favourable
    band offset) but the magnitude may overshoot.
 
 ## Caveats

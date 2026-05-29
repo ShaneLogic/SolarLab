@@ -8,11 +8,11 @@
 
 | Sweep | Legacy | BBD | Thin-shell | Single-sided PV | **Full PV** | SCAPS |
 |---|---|---|---|---|---|---|
-| Base V_oc | 1.069 | 1.054 | 1.088 | 1.0905 | **1.0905** | 1.168 |
+| Base V<sub>oc</sub> | 1.069 | 1.054 | 1.088 | 1.0905 | **1.0905** | 1.168 |
 | CBO range | 782 | 847 | 16 | 663 | **663** | 918 |
 | ETL doping range | 1075 | 1542 | 17 | 1419 | **1 mV** | 137 |
 | PVK doping | 34 | 21 | 48 | 50 | **stuck** | 34 |
-| Interface N_t | 210 | 208 | 206 | 8 | n/a | 282 |
+| Interface N<sub>t</sub> | 210 | 208 | 206 | 8 | n/a | 282 |
 
 Full PV with charge-balance partition + two-sided SRH: ETL doping
 collapsed to 1 mV (over-suppression, same disease as thin-shell);
@@ -25,8 +25,8 @@ hung Newton.
 |---|---|---|---|
 | ETL doping range ≤ 200 mV | ≤ 200 | 1 mV (over-suppressed) | **FAIL (overshoot)** |
 | CBO closure ≥ 80 % | ≥ 80 | 72 % | **FAIL** |
-| Interface defect N_t ≥ 150 mV | ≥ 150 | (untested, sweep killed) | unknown |
-| Base V_oc ∈ [1.05, 1.25] V | bounded | 1.0905 | PASS |
+| Interface defect N<sub>t</sub> ≥ 150 mV | ≥ 150 | (untested, sweep killed) | unknown |
+| Base V<sub>oc</sub> ∈ [1.05, 1.25] V | bounded | 1.0905 | PASS |
 | No new test failures | 0 | 0 (23/23) | PASS |
 | Newton converges on full sweep | yes | NO (PVK doping hang) | **FAIL** |
 
@@ -34,10 +34,10 @@ hung Newton.
 
 ## Diagnosis — four-prototype pattern
 
-|  | CBO | ETL doping | Interface N_t | Other |
+|  | CBO | ETL doping | Interface N<sub>t</sub> | Other |
 |---|---|---|---|---|
 | Legacy E1.5 | 85 % | 1075 mV (over) | 210 mV | balanced |
-| BBD | 92 % ✓ | 1542 mV ✗ | 208 ✓ | over-sensitive to N_D |
+| BBD | 92 % ✓ | 1542 mV ✗ | 208 ✓ | over-sensitive to N<sub>D</sub> |
 | Thin-shell w=2 | 1.7 % ✗ | 17 mV ✓ | 206 ✓ | kills band-offset response |
 | Single-sided PV | 72 % | 1419 mV ✗ | 8 mV ✗ | suppresses interface SRH |
 | **Full PV** | 72 % | 1 mV (over) | n/a | over-suppression + Newton hang |
@@ -59,9 +59,9 @@ SolarLab MoL + SG assumes Q-Fermi continuity across all grid nodes
 where the solver hands off between two layers — no Q-Fermi step lives
 there.
 
-When we project bulk densities to "interface plane" via exp(-V_2/V_T):
-- At V_app = 0 dark: V_2 ≈ V_bi → exp(-42) ≈ 1e-18 → R ≈ 0 (over-suppressed)
-- At V_app = V_oc: V_2 ≈ 0 → exp(0) = 1 → R = bulk-bulk product (legacy-like)
+When we project bulk densities to "interface plane" via exp(-V_2/V<sub>T</sub>):
+- At V<sub>app</sub> = 0 dark: V_2 ≈ V<sub>bi</sub> → exp(-42) ≈ 1e-18 → R ≈ 0 (over-suppressed)
+- At V<sub>app</sub> = V<sub>oc</sub>: V_2 ≈ 0 → exp(0) = 1 → R = bulk-bulk product (legacy-like)
 
 SCAPS doesn't suffer from this collapse because TE boundary lets
 n_1s, n_2s evolve independently as separate unknowns, NOT both
@@ -85,7 +85,7 @@ through TE flux + SRH.
 Three E2 prototype attempts have demonstrated that the MoL + SG
 discretisation cannot replicate SCAPS' interface-plane physics
 without research-grade refactor. Main branch state (CBO 85 %,
-interface defect 74 %, base V_oc within envelope) is the best
+interface defect 74 %, base V<sub>oc</sub> within envelope) is the best
 attainable in this framework.
 
 Effort: 0 days (already shipped at `ba10b10` / Phase H).
@@ -112,9 +112,9 @@ ratio shifts dramatically.
 
 ### (C) Phase E3 — Boltzmann-degenerate carrier statistics
 
-Phase G base V_oc audit identified Boltzmann-degenerate statistics
-as a candidate for the residual 74 mV base V_oc gap AND potentially
-for ETL doping at N_D > 1e18 where bands approach degenerate.
+Phase G base V<sub>oc</sub> audit identified Boltzmann-degenerate statistics
+as a candidate for the residual 74 mV base V<sub>oc</sub> gap AND potentially
+for ETL doping at N<sub>D</sub> > 1e18 where bands approach degenerate.
 Implementing this would refactor `physics/recombination.py` to use
 Fermi-Dirac statistics instead of Maxwell-Boltzmann. Doesn't directly
 fix interface SRH but may unlock parity in a different way.

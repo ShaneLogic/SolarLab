@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the headline Stage-B physics — single vertical grain boundary in the absorber with reduced (τ_n, τ_p) — end-to-end (config loader → solver → experiment → backend → frontend → docs), with a regression that pins the V_oc(L_g) trend.
+**Goal:** Land the headline Stage-B physics — single vertical grain boundary in the absorber with reduced (τ_n, τ_p) — end-to-end (config loader → solver → experiment → backend → frontend → docs), with a regression that pins the V<sub>oc</sub>(L_g) trend.
 
 **Architecture:** The data model (`GrainBoundary`, `Microstructure`) and the τ-heterogeneity hook (`build_tau_field` → `MaterialArrays2D.tau_n/tau_p`) already exist from Stage A. `assemble_rhs_2d` already passes per-node τ into the recombination kernel. So Stage B(a) is mostly the *outer* layers: YAML schema, presets, regression coverage, headline experiment (`voc_grain_sweep`), and UI/backend exposure.
 
@@ -292,12 +292,12 @@ git commit -m "feat(twod): run_jv_sweep_2d picks up stack.microstructure when ar
 
 ---
 
-### Task 5: Stage-B regression — V_oc drops with GB
+### Task 5: Stage-B regression — V<sub>oc</sub> drops with GB
 
 **Files:**
 - Test: `perovskite-sim/tests/regression/test_twod_microstructure.py` (NEW)
 
-Pin the qualitative physics: a single absorber GB with τ_GB = 1 ns lowers V_oc relative to the no-GB baseline. Quantitative band: 5 mV ≤ ΔV_oc ≤ 100 mV (the published MAPbI3 GB-induced V_oc penalty range; tightening to a specific number depends on geometry which we explore in Task 7).
+Pin the qualitative physics: a single absorber GB with τ_GB = 1 ns lowers V<sub>oc</sub> relative to the no-GB baseline. Quantitative band: 5 mV ≤ ΔV<sub>oc</sub> ≤ 100 mV (the published MAPbI3 GB-induced V<sub>oc</sub> penalty range; tightening to a specific number depends on geometry which we explore in Task 7).
 
 - [ ] **Step 1: Write the regression test**
 
@@ -336,11 +336,11 @@ def test_twod_singleGB_lowers_voc():
 - [ ] **Step 2: Run to verify failure (baseline doesn't yet match)**
 
 Run: `pytest -m slow perovskite-sim/tests/regression/test_twod_microstructure.py -v`
-Expected: FAIL on the V_oc drop bound (or PASS if the physics already lands cleanly — in which case the test pins the existing behavior).
+Expected: FAIL on the V<sub>oc</sub> drop bound (or PASS if the physics already lands cleanly — in which case the test pins the existing behavior).
 
 - [ ] **Step 3: Tune τ_GB / GB width if the drop is outside the band**
 
-If ΔV_oc < 5 mV, shorten τ_GB (e.g. 1e-10 s) or widen the GB. If > 100 mV, lengthen τ_GB or narrow the GB. Aim for a 20–40 mV drop on the chosen geometry. Record the chosen parameters in the YAML preset.
+If ΔV<sub>oc</sub> < 5 mV, shorten τ_GB (e.g. 1e-10 s) or widen the GB. If > 100 mV, lengthen τ_GB or narrow the GB. Aim for a 20–40 mV drop on the chosen geometry. Record the chosen parameters in the YAML preset.
 
 - [ ] **Step 4: Run again, expect PASS**
 
@@ -427,7 +427,7 @@ git commit -m "test(twod): non-empty Microstructure → τ heterogeneity in buil
 - Create: `perovskite-sim/perovskite_sim/twod/experiments/voc_grain_sweep.py`
 - Test: `perovskite-sim/tests/integration/twod/test_voc_grain_sweep.py` (NEW)
 
-The headline experiment: sweep grain size L_g, return V_oc(L_g). Each L_g is a separate 2D run with `lateral_length = L_g`, periodic lateral BC, and a single centered GB. Output is a `VocGrainSweepResult(grain_sizes_m, V_oc_V, J_sc, FF, snapshots_per_size)`.
+The headline experiment: sweep grain size L_g, return V<sub>oc</sub>(L_g). Each L_g is a separate 2D run with `lateral_length = L_g`, periodic lateral BC, and a single centered GB. Output is a `VocGrainSweepResult(grain_sizes_m, V_oc_V, J_sc, FF, snapshots_per_size)`.
 
 - [ ] **Step 1: Write the failing integration test**
 
@@ -576,11 +576,11 @@ git commit -m "feat(backend): kind=voc_grain_sweep + microstructure on jv_2d"
 
 - [ ] **Step 1: Add types** (`VocGrainSweepResult` with `grain_sizes_nm`, `V_oc_V`, `J_sc_Am2`, `FF`).
 
-- [ ] **Step 2: Mount VocGrainSweepPane** with grain-size list (CSV input), τ_GB_n/τ_GB_p numerics, gb_width, Nx, Ny_per_layer, V_max, V_step.
+- [ ] **Step 2: Mount VocGrainSweepPane** with grain-size list (CSV input), τ_GB_n/τ_GB_p numerics, gb_width, Nx, Ny_per_layer, V<sub>max</sub>, V_step.
 
 - [ ] **Step 3: Microstructure block on jv-2d-pane** — checkbox "single GB", revealing four numeric fields (x_position_nm, width_nm, τ_n, τ_p). When checked, packs into `params.microstructure = { grain_boundaries: [{...}] }` on `startJob`.
 
-- [ ] **Step 4: Renderer in main-plot-pane** — V_oc(L_g) plot in mV vs nm, log-x axis, with J_sc and FF as text annotations.
+- [ ] **Step 4: Renderer in main-plot-pane** — V<sub>oc</sub>(L_g) plot in mV vs nm, log-x axis, with J<sub>sc</sub> and FF as text annotations.
 
 - [ ] **Step 5: Verify build green**
 
@@ -601,9 +601,9 @@ git commit -m "feat(frontend): VocGrainSweepPane + microstructure UI on jv-2d-pa
 - Modify: `perovskite-sim/CLAUDE.md` (extend Phase 6 block with a "Microstructure (Stage B)" subsection)
 - Modify: `README.md` (root, add a row to the Dimensionality table or extend the Stage-A row)
 
-- [ ] **Step 1: Inner CLAUDE.md** — add a paragraph on `Microstructure` / `GrainBoundary`, the YAML schema, `voc_grain_sweep`, and the regression bound (5 ≤ ΔV_oc ≤ 100 mV).
+- [ ] **Step 1: Inner CLAUDE.md** — add a paragraph on `Microstructure` / `GrainBoundary`, the YAML schema, `voc_grain_sweep`, and the regression bound (5 ≤ ΔV<sub>oc</sub> ≤ 100 mV).
 
-- [ ] **Step 2: Root README** — extend the Dimensionality "🟦 2D Stage A" row description: "Stage A is lateral-uniform parity; Stage B adds a single absorber grain boundary (`voc_grain_sweep` experiment) that drops V_oc by 20–40 mV on the shipped MAPbI3 preset."
+- [ ] **Step 2: Root README** — extend the Dimensionality "🟦 2D Stage A" row description: "Stage A is lateral-uniform parity; Stage B adds a single absorber grain boundary (`voc_grain_sweep` experiment) that drops V<sub>oc</sub> by 20–40 mV on the shipped MAPbI3 preset."
 
 - [ ] **Step 3: Commit**
 
