@@ -1145,16 +1145,18 @@ def _apply_interface_recombination(
     if not ifaces:
         return
     proj = phi is not None and os.environ.get("SOLARLAB_IFACE_PROJ", "") == "1"
-    # Phase E9.2 — forbid net interface SRH *generation* (R_s < 0). The
-    # cross-carrier ni_sq_eff = nR_eq·pL_eq is a bulk-asymptotic product; at a
-    # thin transport interface (HTL/PVK) it is orders too high (1e44), so under
-    # illumination np < ni_sq_eff and the SRH rate flips to spurious generation
-    # — measured −82 A/m² at short circuit, which inflates J_sc above the
-    # photogeneration (and the SQ limit) and makes the HTL/PVK N_t sweep rise
-    # the wrong way. A passive recombination centre cannot be a net carrier
-    # *source* at illuminated short circuit; clamp R_s ≥ 0 so HTL/PVK goes
-    # inert (matching SCAPS, which holds V_oc flat across that sweep).
-    nogen = os.environ.get("SOLARLAB_IFACE_NOGEN", "") == "1"
+    # Phase E9.3 — forbid net interface SRH *generation* (R_s < 0), DEFAULT ON.
+    # The cross-carrier ni_sq_eff = nR_eq·pL_eq is a bulk-asymptotic product; at
+    # a thin transport interface (HTL/PVK) it is orders too high (1e44), so
+    # under illumination np < ni_sq_eff and the SRH rate flips to spurious
+    # generation — measured −82 A/m² at short circuit, which inflated J_sc
+    # above the photogeneration (and the SQ limit, 33.3 vs 26.3 mA/cm²) and made
+    # the HTL/PVK N_t sweep rise the wrong way. A passive recombination centre
+    # cannot be a net carrier *source* at illuminated short circuit; clamp
+    # R_s ≥ 0 so HTL/PVK goes inert (matching SCAPS, which holds V_oc flat
+    # across that sweep). Escape hatch ``SOLARLAB_IFACE_ALLOW_GEN=1`` restores
+    # the legacy (unphysical-generation) branch for back-comparison only.
+    nogen = os.environ.get("SOLARLAB_IFACE_ALLOW_GEN", "") != "1"
     V_T_dev = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
     for k, idx in enumerate(mat.interface_nodes):
         if k >= len(ifaces):

@@ -773,3 +773,61 @@ mainline changes. Three commits land on `main`: `522c527` (design),
 `094bd6c` (Day 1 spike), `6a001b9` (Y1 follow-up + cascade theory),
 plus this commit (manual + A* probe + close-out).
 
+---
+
+## Update 2026-05-29 — Phase E8/E9: trend projection + physicality fixes
+
+Re-scoped to **trends + absolute** matching against the partner xlsx
+(`1R-Parameters.xlsx`, all 10 single-variable sweeps). Four substantive
+fixes landed (full per-sweep detail in
+`docs/superpowers/specs/2026-05-29-e8-interface-plane-projection.md`):
+
+| Commit | Fix | Effect |
+|---|---|---|
+| `eef38da` | E8 interface-plane band-bending projection (env `SOLARLAB_IFACE_PROJ`) | CBO 83→92 %, Nd_ETL high-N_D arm direction-correct; the ni² co-projection term that 7 prior prototypes missed (Newton-stable, zero new DOF) |
+| `28c41fa` | Interface-N_t **sweep σ-consistency** | the Nt_PVK/ETL "106 % closure" was a 10 000× SRV artifact (sweep hardcoded σ=1e-15 vs config 1e-19); honest closure **74 %** |
+| `7c2c961`→`E9.3` | **Clamp spurious interface SRH generation, now DEFAULT ON** (escape hatch `SOLARLAB_IFACE_ALLOW_GEN=1`) | **J_sc 333→240 A/m² (33.3→24.0 mA/cm², now ≤ SQ limit, was unphysical)**; HTL/PVK N_t sweep flips wrong-direction→flat (matches SCAPS) |
+| `09985c6` | `interface_defect_E_t_eV` sweep axis | PVK/ETL E_t trend now exercised (dir + shape match) |
+
+**Root cause of the J_sc>SQ artifact** (Phase E9.2): the HTL/PVK
+cross-carrier interface SRH ran *backwards* — `ni_sq_eff = nR_eq·pL_eq =
+1e44` (bulk-asymptotic) far exceeds the illuminated `np` at the depleted
+HTL junction, so `np−ni² < 0` and the rate generated −82 A/m² at short
+circuit. J_sc = photogeneration (224.6) + spurious 82.1 = 306.7 = measured.
+The clamp (a passive trap cannot be a net carrier *source* at illuminated
+short circuit) removes it. Default-on is safe: v1 `scaps_mirror.yaml`
+baseline and all `test_jv_regression` presets are bit-identical (no HTL/PVK
+spurious-generation interface); 40 interface/regression tests pass.
+
+### Absolute + trend scorecard (`scripts/scaps_absolute_scorecard.py`, vs xlsx)
+
+| sweep | trend | absolute |
+|---|---|---|
+| CHI_ETL (CBO) | 86 % ✓ | — |
+| Nt_PVK/ETL | 74 % ✓ | — |
+| Nt_HTL/PVK | flat-both ✓ (was wrong-dir) | — |
+| Et_C/V/HTL | flat-both ✓ | — |
+| PVK/ETL E_t | dir ✓ | — |
+| **J_sc (all sweeps)** | — | **240 vs 263 (−9 %, PHYSICAL; was +27 % over-SQ)** |
+| Nd_ETL | 38 %, low-N_D dir off | — |
+| Nt_C/V_PVK | flat (SCAPS −39/−11 mV) | cascade-masked |
+| **base V_oc** | — | **1.069 vs 1.168 (−99 mV)** |
+
+### Remaining gaps (deferred, characterised)
+
+1. **Base V_oc −99 mV** — the dominant absolute gap, propagates ~100 mV to
+   every sweep. Eliminated as causes (all tested): absorber ni=1.408e12 =
+   exactly SCAPS; selective/Robin contacts at SCAPS-realistic S (1e7 cm/s)
+   = Dirichlet (V_oc moves only at unphysical S≤1e-3); interface SRH ~15 mV.
+   Residual ~50 mV is the contact-convention / carrier-statistics model
+   difference (Dirichlet-at-doping vs SCAPS workfunction; SolarLab zero-recomb
+   ceiling 1199 vs SCAPS 1249). Needs SCAPS contact spec or acceptance.
+2. **J_sc −9 %** — real TMM under-generation (absorber generates ~9 % low).
+3. **Nd_ETL low-N_D direction** + **Nt_C/V_PVK cascade mask** — interface-SRH
+   formulation limits; the in-tree route is the interface-plane-state QSS
+   solver (multi-day, scoped in the E8 spec).
+
+Ship state: physically reasonable across all 10 sweeps; trends matched/close on
+7 of 10; absolute J_sc now physical; base V_oc absolute deferred to the
+characterised bulk/contact wall.
+
