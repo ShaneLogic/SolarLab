@@ -95,6 +95,29 @@ Jacobian-feedback instability. This is the documented intended path
   provably unaffected** by all QSS work. env-gate OFF default + golden master
   guarantee this regardless of QSS outcome.
 
+### E11.3 — Phase 3 gap validation: QSS does NOT solve the 3 gaps (decisive)
+Ran the 3 target sweeps under QSS (bulk/doping sweeps are stable; no extreme-SRV
+stiffness):
+- **Nd_ETL**: 1.090→1.039 (dip @1e16) →1.079 — STILL V-shaped, not monotonic.
+  Identical dip to production. The dip is **contact/V_bi physics at low N_D**,
+  NOT interface sampling → QSS cannot fix it.
+- **Nt_C_PVK**: flat 1.050 across 1e9-1e15 (0.1 mV). STILL masked. The interface
+  V_oc ceiling (now 1.050, even lower than production 1.073) is far below the
+  bulk-N_t-sensitive regime (~1.29 V). Unmasking needs a HIGHER ceiling = LESS
+  total recombination, which conflicts with the interface SRH the CBO/PVK-ETL
+  trends need (the R3 cascade/ceiling wall). QSS lowers the ceiling → WORSE.
+- **HTL/PVK**: QSS gives physical interface recombination STRONGER than SCAPS's
+  near-inert interface → SolarLab-vs-SCAPS interface-model divergence.
+
+**Hypothesis "all 3 gaps = R1 (interface-plane sampling)" is FALSIFIED.** QSS
+correctly fixes interface *sampling* (physical, no clamp, no spurious
+generation) but the 3 gaps live elsewhere: Nd_ETL=contact/V_bi,
+Nt_C_PVK=recombination cascade/V_oc ceiling (R3, base-V_oc-linked),
+HTL/PVK=SCAPS interface-model divergence. QSS also lowers base V_oc (more
+physical, further from SCAPS). **Decision: do NOT promote QSS** (more rigorous
+but does not improve SCAPS match; would regress base V_oc). Keep env-gated as a
+documented physically-rigorous alternative interface model.
+
 ### Verdict (this session)
 QSS Phases 0-2 complete: math-validated, Newton-stable at base, HTL/PVK flat
 (promising). It does NOT yet cleanly solve all 3 gaps (base V_oc regresses,
