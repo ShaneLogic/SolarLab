@@ -302,6 +302,48 @@ reporting a root cause — TMM over-absorption (sub-gap band-tail in the MAPbI3
 n,k, or missing reflection / flux normalization) is the leading hypothesis;
 re-investigation pending.
 
+## Phase E9.2 — J_sc fixed (physical), base V_oc wall isolated
+
+The J_sc>SQ "optics over-generation" was actually the **HTL/PVK interface SRH
+running backwards**. Current balance at illuminated short circuit (V=0):
+q·∫G = 224.6 A/m², bulk SRH/rad/Auger ≈ 0, HTL/PVK interface R_s = **−82.1
+A/m² (generation)**, PVK/ETL R_s = +0.0. J_sc = 224.6 + 82.1 = 306.7 = measured
+306 — closes to <1 A/m². Root: cross-carrier `ni_sq_eff = nR_eq·pL_eq = 1e44`
+≫ the illuminated np at the depleted HTL junction → np−ni² < 0. Fix:
+`SOLARLAB_IFACE_NOGEN=1` clamps R_s ≥ 0 (commit 7c2c961).
+
+**Full absolute+trend scorecard (`scripts/scaps_absolute_scorecard.py`,
+NOGEN on, vs 1R-Parameters.xlsx):**
+
+| sheet | closure | dir | note |
+|---|---|---|---|
+| CHI_ETL (CBO) | 86 % | ok | ✓ |
+| Nt_PVK ETL | 74 % | ok | ✓ (real, post σ-fix) |
+| Nt_HTL PVK | flat-both | ok | ✓ matched (was wrong-dir) |
+| Nd_ETL | 38 % | ✗ | low-N_D dir |
+| Nt_C/V_PVK | 0–1 % | ok | cascade-masked |
+| Et_C/V_PVK, Et_HTL | flat-ish | — | SCAPS-flat |
+| Et_PVK ETL | 38 % | ok | dir ok |
+| **J_sc** | — | — | **240 A/m² everywhere (−9 % vs 263, PHYSICAL; was 333 = +27 %, over-SQ)** |
+
+**Dominant absolute gap = base V_oc −99 mV, which propagates as VocΔmed
+≈100 mV on EVERY sweep.** Eliminated as causes (all tested):
+- absorber **ni = 1.408e12 m⁻³ = exactly SCAPS-expected** (√(NcNv)·exp(−Eg/2kT)) — not ni.
+- **selective/Robin contacts** (S_min 1→1e-2, minority-blocking): base V_oc
+  unchanged 1.069→1.069 — NOT contact-BC-fixable (reconfirms E7).
+- interface SRH with NOGEN: HTL/PVK contributes 0; PVK/ETL ~15 mV.
+- knockout (Agent B): all-recomb-off ceiling 1199 mV < SCAPS low-Nt ceiling
+  1249 mV → ~50 mV residual is the **contact-convention / carrier-statistics
+  model difference** (SolarLab Dirichlet-at-doping vs SCAPS workfunction
+  contacts); the other ~49 mV is residual PVK/ETL + Auger + radiative that
+  SolarLab over-counts because its V_oc carrier densities run higher.
+
+**Verdict:** base V_oc absolute match (→1.168) is the genuine remaining wall —
+not ni, not contacts, not interface-calibratable. It needs either SCAPS's exact
+contact-workfunction spec + a matching BC, or accepting the −99 mV under the
+trend bar. Everything else (J_sc physicality, CBO, PVK/ETL N_t, HTL/PVK,
+Et sweeps) is matched or close after the E8/E9 fixes.
+
 ## Open integration decision
 
 The hook is env-gated for safety. Promoting it (SimulationMode flag /
