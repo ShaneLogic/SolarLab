@@ -40,6 +40,12 @@ class InterfaceDefect:
     """
     E_t_eV: float
     calibration_factor: float = 1.0
+    # Phase E9 — SCAPS-declared areal trap density [cm^-2] this defect was
+    # built from. The loader derives the base SRV in ``DeviceStack.interfaces``
+    # as σ·v_th·N_t; storing N_t here lets a sweep over interface N_t scale the
+    # base SRV by the N_t ratio (σ-consistent) instead of re-deriving with a
+    # hardcoded σ. 0.0 = not set (sweep falls back to legacy σ=1e-15 path).
+    N_t_cm2: float = 0.0
 
 
 @dataclass(frozen=True)
