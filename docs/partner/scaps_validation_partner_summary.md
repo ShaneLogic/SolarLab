@@ -3,6 +3,23 @@ title: "Validation of the SolarLab Device Simulator against SCAPS-1D"
 subtitle: "A perovskite solar cell case study on the partner Base Model"
 author: "SolarLab — HKUST(GZ)"
 date: "2026-05-29"
+header-includes: |
+  \usepackage{float}
+  \makeatletter
+  \let\oldfigure\figure
+  \let\endoldfigure\endfigure
+  \renewenvironment{figure}[1][]{\oldfigure[htbp]}{\endoldfigure}
+  \makeatother
+  \renewcommand{\topfraction}{0.95}
+  \renewcommand{\bottomfraction}{0.95}
+  \renewcommand{\textfraction}{0.05}
+  \renewcommand{\floatpagefraction}{0.80}
+  \setcounter{topnumber}{3}
+  \setcounter{bottomnumber}{3}
+  \setcounter{totalnumber}{4}
+  \setlength{\intextsep}{8pt plus 2pt minus 2pt}
+  \setlength{\floatsep}{8pt plus 2pt minus 2pt}
+  \setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
 ---
 
 # Executive summary
@@ -12,12 +29,12 @@ device simulator coupling drift–diffusion transport, the Poisson equation, and
 mobile-ion migration with transfer-matrix optics — against the established
 reference solver SCAPS-1D. The test case is the partner's three-layer
 perovskite Base Model, and the comparison spans the base current–voltage
-operating point together with all ten single-variable parameter sweeps recorded
+operating point together with all eleven single-variable parameter sweeps recorded
 in the partner workbook. At the operating point, SolarLab reproduces the
 short-circuit current density to within −2 % and the fill factor to within
 −1.4 percentage points of SCAPS, while the open-circuit voltage is 96 mV lower.
-Across the ten sweeps, seven match SCAPS in both direction and shape, one matches
-partially, and two remain open. Every SolarLab result satisfies the governing
+Across the eleven sweeps, seven match SCAPS in both direction and shape, two
+match partially, and two remain open. Every SolarLab result satisfies the governing
 physical bounds — the short-circuit current stays below the Shockley–Queisser
 limit, the open-circuit voltage below the built-in potential, and recombination
 remains non-negative throughout. The three residual discrepancies are not
@@ -38,8 +55,8 @@ and perovskite cells and serves here as the reference against which SolarLab is
 benchmarked.
 
 The validation device is the partner Base Model: a hole-transport layer (spiro,
-20 nm), a methylammonium lead iodide absorber (MAPbI<sub>3</sub>, 800 nm, bandgap
-E<sub>g</sub> = 1.53 eV), and an electron-transport layer (TiO<sub>2</sub>, 25 nm). All
+20 nm), a methylammonium lead iodide absorber (MAPbI~3~, 800 nm, bandgap
+E~g~ = 1.53 eV), and an electron-transport layer (TiO~2~, 25 nm). All
 material and defect parameters, and the reference sweep data, are taken from the
 partner workbook `1R-Parameters.xlsx`.
 
@@ -57,15 +74,15 @@ report applies that standard throughout.
 SolarLab is configured to mirror the SCAPS Base Model through the
 `scaps_mirror_v2.yaml` device definition, which encodes the partner layer stack,
 doping, mobilities, defect levels, and optical constants, and adds a glass front
-substrate so that the optical stack is complete. Each of the ten single-variable
+substrate so that the optical stack is complete. Each of the eleven single-variable
 sweeps varies one physical parameter across the range tabulated in the workbook
 while holding all others fixed, and the resulting figures of merit
-(V<sub>oc</sub>, J<sub>sc</sub>, FF, PCE) are compared directly against the SCAPS values.
+(V~oc~, J~sc~, FF, PCE) are compared directly against the SCAPS values.
 
 Every simulation is checked against a set of physical gates that must hold for
 the result to be admissible: the short-circuit current density must not exceed
-the Shockley–Queisser limit for the absorber bandgap (≈ 27.5 mA/cm<sup>2</sup> at
-E<sub>g</sub> = 1.53 eV); the open-circuit voltage must not exceed the built-in
+the Shockley–Queisser limit for the absorber bandgap (≈ 27.5 mA/cm^2^ at
+E~g~ = 1.53 eV); the open-circuit voltage must not exceed the built-in
 potential; recombination must be non-negative at illuminated forward bias; the
 optical balance R + T + A = 1 must be conserved; and each sweep must reproduce
 the monotonic direction expected from device physics. Results that fail any gate
@@ -77,8 +94,8 @@ Table 1 compares the base J–V figures of merit.
 
 | Metric | SolarLab | SCAPS | Difference |
 |---|---|---|---|
-| V<sub>oc</sub> (V) | 1.072 | 1.168 | −96 mV |
-| J<sub>sc</sub> (mA/cm<sup>2</sup>) | 25.73 | 26.28 | −2 % |
+| V~oc~ (V) | 1.072 | 1.168 | −96 mV |
+| J~sc~ (mA/cm^2^) | 25.73 | 26.28 | −2 % |
 | FF (%) | 85.6 | 87.0 | −1.4 pp |
 | PCE (%) | 22.1 | 26.69 | −4.6 pp |
 
@@ -89,22 +106,22 @@ consequence of completing the optical stack with the glass front substrate; the
 small residual is front-surface reflection that SolarLab retains and SCAPS
 idealizes away (Section 5). The fill factor agrees to within 1.4 percentage
 points. The open-circuit voltage is the single dominant discrepancy: its 96 mV
-shortfall propagates through the V<sub>oc</sub>-limited power conversion efficiency and
+shortfall propagates through the V~oc~-limited power conversion efficiency and
 accounts for essentially the entire PCE gap. The origin of that shortfall is
 examined in Section 5.
 
 # 4. Sweep-by-sweep comparison
 
-The ten single-variable sweeps are presented below as overlays of SolarLab
+The eleven single-variable sweeps are presented below as overlays of SolarLab
 (solid blue) against SCAPS (dashed red), with all four figures of merit per
 panel. Grouped by outcome, the results fall into three categories.
 
 **Matched (seven sweeps).** The ETL/PVK conduction-band offset sweep
 (Figure 1) reproduces the SCAPS behaviour closely: a recombination cliff near
-ΔE<sub>C</sub> = 0.30 eV giving way to a V<sub>oc</sub> spike toward 1.08 V, with the
+ΔE~C~ = 0.30 eV giving way to a V~oc~ spike toward 1.08 V, with the
 direction and cliff slope both matched. The PVK/ETL interface defect-density and
 defect-level sweeps (Figures 2 and 3) match in direction and saturating shape,
-the defect-density response spanning roughly 75 % of the SCAPS V<sub>oc</sub> range.
+the defect-density response spanning roughly 75 % of the SCAPS V~oc~ range.
 The HTL/PVK interface defect-density sweep (Figure 4) is near-flat in both
 solvers, as are the perovskite conduction- and valence-band defect-level sweeps
 and the HTL/PVK defect-level sweep (Figures 8–10), where SCAPS likewise shows no
@@ -112,47 +129,58 @@ significant response. These seven constitute the core of the validation: where
 SCAPS responds, SolarLab responds in the same direction and shape; where SCAPS
 is flat, SolarLab is flat.
 
-**Partial (one sweep).** The ETL donor-doping sweep (Figure 5) is correct on the
-high-doping arm — V<sub>oc</sub> rises with N<sub>D</sub> in the right direction — but the
-low-doping points show a V<sub>oc</sub> dip not present in SCAPS. This is discussed in
-Section 5.
+**Partial (two sweeps).** The ETL donor-doping sweep (Figure 5) is correct on the
+high-doping arm — V~oc~ rises with N~D~ in the right direction — but the
+low-doping points show a V~oc~ dip not present in SCAPS. The PVK donor-doping
+sweep (Figure 11) is flat in both solvers through 10^16^ cm^−3^ and then
+collapses at the degenerate 10^18^ cm^−3^ point, where SolarLab reproduces
+the SCAPS fill-factor and efficiency cliff in direction but the V~oc~ diverges —
+SCAPS rises as the absorber turns degenerate n-type, while SolarLab dips. Both are
+discussed in Section 5.
 
 **Open (two sweeps).** The perovskite-bulk conduction- and valence-band
 defect-density sweeps (Figures 6 and 7) are flat in SolarLab, whereas SCAPS
 shows a small response (−39 mV and −11 mV respectively). The mechanism is
 explained in Section 5.
 
-![ETL/PVK conduction-band offset (ΔE<sub>C</sub>).](../figures/scaps_validation/sweep_CHI_ETL.png)
+![ETL/PVK conduction-band offset (ΔE~C~).](../figures/scaps_validation/sweep_CHI_ETL.png){width=86%}
 
-![PVK/ETL interface defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_PVK_ETL.png)
+![PVK/ETL interface defect density (N~t~).](../figures/scaps_validation/sweep_Nt_PVK_ETL.png){width=86%}
 
-![PVK/ETL interface defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_PVK_ETL.png)
+![PVK/ETL interface defect level (E~t~).](../figures/scaps_validation/sweep_Et_PVK_ETL.png){width=86%}
 
-![HTL/PVK interface defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_HTL_PVK.png)
+![HTL/PVK interface defect density (N~t~).](../figures/scaps_validation/sweep_Nt_HTL_PVK.png){width=86%}
 
-![ETL donor doping (N<sub>D</sub>).](../figures/scaps_validation/sweep_Nd_ETL.png)
+![ETL donor doping (N~D~).](../figures/scaps_validation/sweep_Nd_ETL.png){width=86%}
 
-![Perovskite conduction-band bulk defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_C_PVK.png)
+![Perovskite conduction-band bulk defect density (N~t~).](../figures/scaps_validation/sweep_Nt_C_PVK.png){width=86%}
 
-![Perovskite valence-band bulk defect density (N<sub>t</sub>).](../figures/scaps_validation/sweep_Nt_V_PVK.png)
+![Perovskite valence-band bulk defect density (N~t~).](../figures/scaps_validation/sweep_Nt_V_PVK.png){width=86%}
 
-![Perovskite conduction-band bulk defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_C_PVK.png)
+![Perovskite conduction-band bulk defect level (E~t~).](../figures/scaps_validation/sweep_Et_C_PVK.png){width=86%}
 
-![Perovskite valence-band bulk defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_V_PVK.png)
+![Perovskite valence-band bulk defect level (E~t~).](../figures/scaps_validation/sweep_Et_V_PVK.png){width=86%}
 
-![HTL/PVK interface defect level (E<sub>t</sub>).](../figures/scaps_validation/sweep_Et_HTL_PVK.png)
+![HTL/PVK interface defect level (E~t~).](../figures/scaps_validation/sweep_Et_HTL_PVK.png){width=86%}
+
+![PVK donor doping (N~D,PVK~).](../figures/scaps_validation/sweep_Nd_PVK.png){width=86%}
+
+```{=latex}
+\clearpage
+```
 
 For at-a-glance reference, Table 2 summarizes the per-sweep outcome.
 
 | Sweep | SolarLab vs SCAPS | Status |
 |---|---|---|
-| ETL/PVK conduction-band offset (ΔE<sub>C</sub>) | cliff 0.30 → spike 1.08 V; direction and cliff slope match | match |
-| PVK/ETL interface N<sub>t</sub> | 1.08 → 0.87 V (≈ 75 % of SCAPS range) | match |
-| PVK/ETL interface E<sub>t</sub> | direction and saturating shape match | match |
-| HTL/PVK interface N<sub>t</sub> | near-flat (SCAPS near-flat) | match |
-| PVK-CB / PVK-VB / HTL-PVK E<sub>t</sub> | flat (SCAPS flat) | match |
-| ETL donor doping N<sub>D</sub> | high-N<sub>D</sub> arm correct; low-N<sub>D</sub> dip | partial |
-| PVK-CB / PVK-VB bulk N<sub>t</sub> | flat (SCAPS shows −39 / −11 mV) | open |
+| ETL/PVK conduction-band offset (ΔE~C~) | cliff 0.30 → spike 1.08 V; direction and cliff slope match | match |
+| PVK/ETL interface N~t~ | 1.08 → 0.87 V (≈ 75 % of SCAPS range) | match |
+| PVK/ETL interface E~t~ | direction and saturating shape match | match |
+| HTL/PVK interface N~t~ | near-flat (SCAPS near-flat) | match |
+| PVK-CB / PVK-VB / HTL-PVK E~t~ | flat (SCAPS flat) | match |
+| ETL donor doping N~D~ | high-N~D~ arm correct; low-N~D~ dip | partial |
+| PVK donor doping N~D,PVK~ | flat to 10^16^; FF/J~sc~/PCE cliff at 10^18^ matches, V~oc~ inverts | partial |
+| PVK-CB / PVK-VB bulk N~t~ | flat (SCAPS shows −39 / −11 mV) | open |
 
 Table 2. Per-sweep scorecard.
 
@@ -174,12 +202,19 @@ an intrinsic-carrier-density, contact-boundary, or interface-calibration error �
 each was tested and ruled out — but rather a high-injection carrier-statistics
 and heterojunction-transport difference between the two solvers.
 
-**ETL donor doping (N<sub>D,ETL</sub>).** The high-doping arm rises with N<sub>D</sub> in
-the correct direction; the low-doping V<sub>oc</sub> dip is tied to the contact and
-built-in-potential treatment at very low ETL doping, not to interface
-recombination. The dip persists under an independent quasi-steady-state
-interface solver, confirming it originates in the contact physics rather than in
-interface sampling.
+**Donor doping (N~D,ETL~, N~D,PVK~).** The high-doping arm of the ETL
+sweep rises with N~D~ in the correct direction; the low-doping V~oc~ dip is
+tied to the contact and built-in-potential treatment at very low ETL doping, not
+to interface recombination. The dip persists under an independent
+quasi-steady-state interface solver, confirming it originates in the contact
+physics rather than in interface sampling. The PVK donor-doping sweep shows the
+same signature at the opposite extreme: through 10^16^ cm^−3^ SolarLab
+tracks the flat SCAPS response, and at the degenerate 10^18^ cm^−3^ point
+both solvers reproduce the fill-factor and efficiency collapse, but the V~oc~
+moves oppositely — SCAPS rises as the heavily n-type absorber reshapes the
+built-in field, whereas SolarLab's high-injection treatment lowers it. As with
+the ETL arm, this is a contact / built-in-potential and high-injection
+difference, not a fitting error.
 
 **Perovskite bulk defect density (CB / VB).** SolarLab's open-circuit voltage is
 pinned by the interface-recombination ceiling, which sits below the voltage at
@@ -189,7 +224,7 @@ total recombination, which conflicts with the interface model the seven matched
 sweeps depend on — so closing this gap by tuning would regress the matched
 results.
 
-**Short-circuit current residual (−2 %).** The remaining 2 % of J<sub>sc</sub> is
+**Short-circuit current residual (−2 %).** The remaining 2 % of J~sc~ is
 front-surface reflection. SCAPS treats the optical front as ideal; SolarLab
 retains the physical reflection. Removing it would improve the absolute match at
 the cost of physical fidelity, so it is kept.
@@ -203,12 +238,13 @@ agreement under that constraint.
 
 SolarLab reproduces the SCAPS-1D reference on the partner Base Model to a degree
 appropriate for a validated device simulator: short-circuit current within −2 %,
-fill factor within −1.4 percentage points, and seven of ten parameter-sweep
+fill factor within −1.4 percentage points, and seven of eleven parameter-sweep
 trends matched in direction and shape, with every result satisfying the physical
 bounds. The remaining discrepancies are characterized rather than incidental —
 the open-circuit-voltage shortfall is a heterojunction-transport and
-carrier-statistics difference; the ETL-doping dip is contact / built-in-potential
-physics; the bulk-defect insensitivity is the interface-recombination ceiling.
+carrier-statistics difference; the donor-doping divergences are contact /
+built-in-potential and high-injection physics; the bulk-defect insensitivity is
+the interface-recombination ceiling.
 Each has been isolated, and in each case the SolarLab choice is the physically
 defensible one.
 

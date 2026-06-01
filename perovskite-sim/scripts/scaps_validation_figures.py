@@ -39,6 +39,7 @@ JV = dict(N_grid=30, n_points=24, v_rate=5.0, V_max=1.6)
 SHEETS = {
     "CHI_ETL":    (lambda v: {"etl_delta_ec_eV": v}, r"$\Delta E_C$ (eV)", False, "ETL/PVK conduction-band offset"),
     "Nd_ETL":     (lambda v: {"etl_doping_cm3": v}, r"$N_{D,ETL}$ (cm$^{-3}$)", True, "ETL donor doping"),
+    "Nd_PVK":     (lambda v: {"absorber_doping_cm3": v, "absorber_doping_type": "donor"}, r"$N_{D,PVK}$ (cm$^{-3}$)", True, "PVK donor doping"),
     "Nt_C_PVK":   (lambda v: {"absorber_defect_density_cm3": v}, r"$N_t$ PVK-CB (cm$^{-3}$)", True, "Perovskite-CB bulk defect density"),
     "Nt_V_PVK":   (lambda v: {"absorber_defect_density_cm3": v}, r"$N_t$ PVK-VB (cm$^{-3}$)", True, "Perovskite-VB bulk defect density"),
     "Nt_HTL PVK": (lambda v: {"interface_defect_N_t_cm2": v, "interface_defect_target": "htl/pvk"}, r"$N_t$ HTL/PVK (cm$^{-2}$)", True, "HTL/PVK interface defect density"),
