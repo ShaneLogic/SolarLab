@@ -1,8 +1,5 @@
 ---
 title: "Validation of the SolarLab Device Simulator against SCAPS-1D"
-subtitle: "A perovskite solar cell case study on the partner Base Model"
-author: "SolarLab — HKUST(GZ)"
-date: "2026-05-29"
 header-includes: |
   \usepackage{float}
   \makeatletter
@@ -22,7 +19,7 @@ header-includes: |
   \setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
 ---
 
-# Executive summary
+# Summary
 
 This report documents the validation of SolarLab — an in-house one-dimensional
 device simulator coupling drift–diffusion transport, the Poisson equation, and
@@ -44,7 +41,7 @@ would make the SolarLab result less faithful, not more. We therefore regard the
 present configuration as the physically honest maximum of agreement and
 recommend it as the validated baseline for ongoing partner work.
 
-# 1. Introduction and scope
+# 1. Introduction
 
 SolarLab solves the coupled drift–diffusion and Poisson system for electrons,
 holes, and mobile ionic species in one spatial dimension, using a
@@ -85,8 +82,7 @@ the Shockley–Queisser limit for the absorber bandgap (≈ 27.5 mA/cm^2^ at
 E~g~ = 1.53 eV); the open-circuit voltage must not exceed the built-in
 potential; recombination must be non-negative at illuminated forward bias; the
 optical balance R + T + A = 1 must be conserved; and each sweep must reproduce
-the monotonic direction expected from device physics. Results that fail any gate
-are rejected rather than reported.
+the monotonic direction expected from device physics.
 
 # 3. Base operating point
 
