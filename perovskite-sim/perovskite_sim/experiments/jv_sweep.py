@@ -169,7 +169,7 @@ def _state_fields(
         P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
     )
     phi = solve_poisson_prefactored(
-        mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_bc,
+        mat.poisson_factor, rho, phi_left=0.0, phi_right=mat.V_bi_bc - V_bc,
     )
     return n, p, phi, sv
 
