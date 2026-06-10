@@ -47,10 +47,10 @@ def save(fig, name):
 # ---------------------------------------------------------------------------
 def fig_overview():
     metrics = [
-        ("$V_{oc}$ (V)", 1.072, 1.168, "$-$96 mV"),
-        ("$J_{sc}$ (mA/cm$^2$)", 25.73, 26.28, "$-$2 %"),
-        ("FF (%)", 85.6, 87.0, "$-$1.4 pp"),
-        ("PCE (%)", 22.1, 26.69, "$-$4.6 pp"),
+        ("$V_{oc}$ (V)", 1.118, 1.168, "$-$50 mV"),
+        ("$J_{sc}$ (mA/cm$^2$)", 25.70, 26.28, "$-$2 %"),
+        ("FF (%)", 87.9, 87.0, "$+$0.9 pp"),
+        ("PCE (%)", 25.26, 26.69, "$-$1.4 pp"),
     ]
     fig, axes = plt.subplots(1, 4, figsize=(11, 3.3), layout="constrained")
     for ax, (label, sl, sc, gap) in zip(axes, metrics):
@@ -120,50 +120,63 @@ def fig_band_diagram():
         ax.plot([xP1, xP1], [band["HTL"], band["PVK"]], color="black", lw=2)
         ax.plot([xP2, xP2], [band["PVK"], band["ETL"]], color="black", lw=2)
 
-    EFn, EFp = 1.62, 0.75
-    ax.plot([xP1, xP2], [EFn, EFn], color=BLUE, ls="--", lw=1.8)
-    ax.plot([xP1, xP2], [EFp, EFp], color=RED, ls="--", lw=1.8)
-    ax.text(xP1 + 0.12, EFn + 0.08, r"$E_{Fn}$ (electron quasi-Fermi level)",
+    # Absorber quasi-Fermi levels: flat at the absorber's internal split.
+    EFn, EFp = 1.55, 0.78
+    ax.plot([xP1, xP2], [EFn, EFn], color=BLUE, ls="--", lw=1.9)
+    ax.plot([xP1, xP2], [EFp, EFp], color=RED, ls="--", lw=1.9)
+    ax.text(xP1 + 0.12, EFn + 0.07, r"$E_{Fn}$ (electron quasi-Fermi level)",
             color=BLUE, va="bottom", fontsize=10)
-    ax.text(xP1 + 0.12, EFp - 0.08, r"$E_{Fp}$ (hole quasi-Fermi level)",
+    ax.text(xP1 + 0.12, EFp - 0.07, r"$E_{Fp}$ (hole quasi-Fermi level)",
             color=RED, va="top", fontsize=10)
 
-    EFn_c, EFp_c = EFn - 0.16, EFp + 0.15
-    ax.plot([xP2, xE], [EFn, EFn_c], color=BLUE, ls="--", lw=1.8)
-    ax.plot([xH, xP1], [EFp_c, EFp], color=RED, ls="--", lw=1.8)
+    # Pre-fix (omitted effective-DOS terms): spurious QFL steps of
+    # kT*ln(DOS ratio) AT the heterojunctions — EFp jumps up entering the
+    # HTL (kT*ln 25 = 83 meV), EFn drops entering the ETL (kT*ln 8 = 54 meV).
+    dV_htl, dC_etl = 0.20, 0.14  # exaggerated for visibility
+    ax.plot([xH, xP1], [EFp + dV_htl, EFp + dV_htl], color=RED, ls=":", lw=1.9)
+    ax.plot([xP1, xP1], [EFp + dV_htl, EFp], color=RED, ls=":", lw=1.6)
+    ax.plot([xP2, xE], [EFn - dC_etl, EFn - dC_etl], color=BLUE, ls=":", lw=1.9)
+    ax.plot([xP2, xP2], [EFn, EFn - dC_etl], color=BLUE, ls=":", lw=1.6)
+    # Corrected (dos_band_potentials): QFLs continue flat to the contacts.
+    ax.plot([xH, xP1], [EFp, EFp], color=RED, ls="--", lw=1.9)
+    ax.plot([xP2, xE], [EFn, EFn], color=BLUE, ls="--", lw=1.9)
 
     xm = 3.3
     ax.annotate("", xy=(xm, EFn), xytext=(xm, EFp),
                 arrowprops=dict(arrowstyle="<->", color="green", lw=2.0))
     ax.text(xm + 0.18, (EFn + EFp) / 2,
-            r"bulk $\Delta E_F$" + "\n(internal separation)",
-            color="green", fontsize=10, va="center")
+            "absorber $\\Delta E_F$\n(internal voltage)",
+            color="green", fontsize=9.5, va="center")
 
-    ax.annotate("QFL step across\nPVK/ETL offset",
-                xy=(6.78, (EFn + EFn_c) / 2), xytext=(4.7, 2.50),
-                fontsize=9, color=GREY, ha="center", bbox=BOX,
+    ax.annotate("spurious $E_{Fp}$ step\n$kT\\,\\ln(N_{V,HTL}/N_{V,PVK})$"
+                "\n$= kT\\,\\ln 25 = 83$ meV",
+                xy=(xP1, EFp + dV_htl / 2), xytext=(1.95, -0.40),
+                fontsize=8.5, color=GREY, ha="center", bbox=BOX,
                 arrowprops=dict(arrowstyle="->", color=GREY))
-    ax.annotate("QFL step across\nHTL/PVK offset",
-                xy=(0.22, (EFp + EFp_c) / 2), xytext=(2.2, -0.42),
-                fontsize=9, color=GREY, ha="center", bbox=BOX,
+    ax.annotate("spurious $E_{Fn}$ step\n$kT\\,\\ln(N_{C,ETL}/N_{C,PVK})$"
+                "\n$= kT\\,\\ln 8 = 54$ meV",
+                xy=(xP2, EFn - dC_etl / 2), xytext=(5.0, -0.40),
+                fontsize=8.5, color=GREY, ha="center", bbox=BOX,
                 arrowprops=dict(arrowstyle="->", color=GREY))
-    ax.text(3.4, 0.02,
-            r"$\approx$135 mV of $\Delta E_F$ is dropped across the two band"
-            "\noffsets, so external $qV_{oc}<$ bulk $\\Delta E_F$",
-            color="black", fontsize=9.5, ha="center", va="center", bbox=BOX)
+    ax.text(3.4, 2.42,
+            "dotted: omitted effective-DOS terms $\\rightarrow$ the terminal reads the split\n"
+            "minus 137 mV of junction steps.  dashed: corrected transport\n"
+            "($V_T\\ln N_C$ / $V_T\\ln N_V$ included) — the steps vanish.",
+            color="black", fontsize=9.0, ha="center", va="center", bbox=BOX)
 
     for x0, x1, name, c in [(xH, xP1, "HTL\n(spiro)", "#eef2ff"),
                             (xP1, xP2, "perovskite (MAPbI$_3$)", "#fff7ee"),
                             (xP2, xE, "ETL\n(TiO$_2$)", "#eefcf0")]:
         ax.axvspan(x0, x1, color=c, zorder=0)
-        ax.text((x0 + x1) / 2, 2.80, name, ha="center", fontsize=9.5)
+        ax.text((x0 + x1) / 2, 2.86, name, ha="center", fontsize=9.5)
 
     ax.set_xlim(xH, xE + 0.9)
     ax.set_ylim(-0.85, 3.05)
     ax.set_xticks([]); ax.set_yticks([])
     ax.set_ylabel("electron energy", fontsize=11)
-    ax.set_title("Quasi-Fermi-level separation lost across heterojunction "
-                 "band offsets", fontsize=11.5)
+    ax.set_title("Spurious quasi-Fermi-level steps from the omitted effective-DOS\n"
+                 "transport terms (removed by the dos_band_potentials correction)",
+                 fontsize=11.5)
     save(fig, "03_voc_band_diagram.png")
 
 
