@@ -185,6 +185,11 @@ class MaterialArrays:
     poisson_factor: PoissonFactor | None = None
     # Effective built-in potential computed from band offsets (or manual V_bi fallback)
     V_bi_eff: float = 1.1
+    # Built-in potential actually applied in the Poisson Dirichlet BC
+    # (phi_right = V_bi_bc - V_app). Equals stack.V_bi by default (IonMonger
+    # convention); under flat_band_contacts it is the flat-band
+    # work-function difference compute_V_bi() (SCAPS convention).
+    V_bi_bc: float = 1.1
     # Per-node Richardson constants for thermionic emission capping
     A_star_n: np.ndarray | None = None
     A_star_p: np.ndarray | None = None
@@ -743,6 +748,23 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         )
     )
 
+    # SCAPS-style flat-band contacts (2026-06). Device-level opt-in that
+    # activates the Robin path on ALL FOUR carrier/side channels regardless
+    # of tier (the SCAPS contact model is finite-S, default 1e7 cm/s), with
+    # the existing doping-derived boundary equilibria as the flat-band
+    # references, and routes the flat-band work-function difference
+    # compute_V_bi() into the Poisson BC via V_bi_bc below. Default False =
+    # ideal-ohmic pins + frozen stack.V_bi, bit-identical.
+    _flat_band = bool(getattr(stack, "flat_band_contacts", False))
+    if _flat_band:
+        _has_selective_contacts = True
+    _S_FLAT_BAND = 1.0e5  # SCAPS contact default: 1e7 cm/s
+
+    def _s_contact(v):
+        if v is not None:
+            return v
+        return _S_FLAT_BAND if _flat_band else None
+
     # Dual-grid cell widths for surface→volumetric conversion at interfaces.
     dx = np.diff(x)
     dx_cell = np.empty(N)
@@ -1126,11 +1148,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         pf_gamma_p_face=pf_gamma_p_face if _has_field_mobility else None,
         has_field_mobility=_has_field_mobility,
         iface_plane_projection=_iface_plane_projection,
-        S_n_L=stack.S_n_left if _has_selective_contacts else None,
-        S_p_L=stack.S_p_left if _has_selective_contacts else None,
-        S_n_R=stack.S_n_right if _has_selective_contacts else None,
-        S_p_R=stack.S_p_right if _has_selective_contacts else None,
+        S_n_L=_s_contact(stack.S_n_left) if _has_selective_contacts else None,
+        S_p_L=_s_contact(stack.S_p_left) if _has_selective_contacts else None,
+        S_n_R=_s_contact(stack.S_n_right) if _has_selective_contacts else None,
+        S_p_R=_s_contact(stack.S_p_right) if _has_selective_contacts else None,
         has_selective_contacts=_has_selective_contacts,
+        V_bi_bc=(stack.compute_V_bi() if _flat_band else stack.V_bi),
         absorber_masks=tuple(absorber_masks_list) if _has_radiative_reabsorption else (),
         absorber_p_esc=tuple(absorber_p_esc_list) if _has_radiative_reabsorption else (),
         absorber_thicknesses=tuple(absorber_thicknesses_list) if _has_radiative_reabsorption else (),
@@ -1387,7 +1410,7 @@ def assemble_rhs(
         P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
     )
     phi = solve_poisson_prefactored(
-        mat.poisson_factor, rho, phi_left=0.0, phi_right=stack.V_bi - V_app,
+        mat.poisson_factor, rho, phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
     )
 
     # Generation: TMM-computed profile if available, else Beer-Lambert fallback.
@@ -1784,7 +1807,7 @@ def split_step(
             )
             phi = solve_poisson_prefactored(
                 mat.poisson_factor, rho,
-                phi_left=0.0, phi_right=stack.V_bi - V_app,
+                phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
             )
             dP_pos = ion_continuity_rhs(
                 x, phi, P_pos, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
@@ -1812,7 +1835,7 @@ def split_step(
             )
             phi = solve_poisson_prefactored(
                 mat.poisson_factor, rho,
-                phi_left=0.0, phi_right=stack.V_bi - V_app,
+                phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
             )
             return ion_continuity_rhs(
                 x, phi, P_nn, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,

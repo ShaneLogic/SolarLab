@@ -85,6 +85,18 @@ class DeviceStack:
     # layers without DOS data are left untouched, so legacy configs are
     # bit-identical under the flag. Default False = pre-fix behaviour.
     dos_band_potentials: bool = False
+    # SCAPS-style flat-band contacts (2026-06). When True, both contacts are
+    # treated as flat-band metals with finite surface-recombination kinetics
+    # (the SCAPS contact model): the Phase-3.3 Robin path is activated on all
+    # four carrier/side channels (S = 1e5 m/s, the SCAPS 1e7 cm/s default,
+    # unless explicit ``S_*`` fields are set) referenced to the existing
+    # doping-derived boundary equilibria, and the Poisson BC uses the
+    # flat-band work-function difference ``compute_V_bi()`` instead of the
+    # frozen ``V_bi`` field (via ``MaterialArrays.V_bi_bc``). Keeps the
+    # contact well-posed when a contact layer is weakly doped — the regime
+    # where the default ideal-ohmic pin degenerates. Default False =
+    # IonMonger-convention pins, bit-identical.
+    flat_band_contacts: bool = False
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().
