@@ -148,6 +148,30 @@ def _build_sweep_point(axis: str, x: float) -> SweepPoint:
     return SweepPoint("p", axis, f"{x:.3e}", updates)
 
 
+def _radiative_voc_ceiling(stack, j_gen_a_m2: float) -> float:
+    """Detailed-balance V_oc ceiling of the absorber [V].
+
+    V_T*ln(J_gen / (q*d*B_rad*ni^2)) — the V_oc at which radiative
+    recombination alone balances the photocurrent. No physical J-V can
+    cross above it. (The previous guard criterion, V_oc >= V_bi, was too
+    strict: selective-contact stacks can legitimately exceed the contact
+    work-function difference — SCAPS itself does at low ETL doping — and
+    it wrongly excluded the valid N_D=1e14 point.)
+    """
+    from perovskite_sim.models.device import electrical_layers
+    V_T = 0.025852
+    for L in electrical_layers(stack):
+        p = L.params
+        if L.role == "absorber" and p.B_rad > 0 and p.ni > 0 and L.thickness > 0:
+            denom = 1.602e-19 * L.thickness * p.B_rad * p.ni * p.ni
+            if denom > 0 and j_gen_a_m2 > 0:
+                return V_T * math.log(j_gen_a_m2 / denom)
+    for L in electrical_layers(stack):
+        if L.role == "absorber":
+            return float(L.params.Eg)  # no radiative data: band-gap bound
+    return float("inf")
+
+
 def run_axis(
     base_path: Path, axis: str, points: Iterable[float], jv_kwargs: dict,
 ) -> list[dict[str, float]]:
@@ -160,19 +184,20 @@ def run_axis(
             stack = apply_sweep_point(base_stack, pt)
             result = run_jv_sweep(stack, **jv_kwargs)
             m = result.metrics_fwd
-            # Physical-validity guard: a single-junction V_oc cannot exceed
-            # the built-in potential. Degenerate sweep points (e.g. an
-            # essentially undoped ETL) produce a non-diode J-V whose
-            # adaptive-V_max pseudo-crossing lands above V_bi — flag those
-            # rows so they are excluded from range/closure statistics
-            # instead of polluting them (the old Nd_ETL "1448 mV" artifact).
-            v_bi_pt = max(stack.V_bi, stack.compute_V_bi())
-            if m.voc_bracketed and m.V_oc >= v_bi_pt:
+            # Physical-validity guard: no J-V can cross above the absorber's
+            # detailed-balance (radiative-limit) ceiling. Degenerate sweep
+            # points (e.g. an essentially undoped ETL) produce a non-diode
+            # curve whose adaptive-V_max pseudo-crossing lands far above it
+            # with a collapsed FF (the old Nd_ETL "1448 mV" artifact). Rows
+            # are flagged — excluded from range/closure statistics — but
+            # still recorded, since their J_sc is valid V=0 data.
+            ceiling = _radiative_voc_ceiling(stack, max(float(m.J_sc), 1.0))
+            if m.voc_bracketed and m.V_oc >= ceiling:
                 records.append(
                     {
                         "x": x, "V_oc_V": m.V_oc, "J_sc_A_m2": m.J_sc,
                         "FF": m.FF, "PCE": m.PCE, "voc_bracketed": 0,
-                        "status": "unphysical_voc_ge_vbi",
+                        "status": "unphysical_voc_ge_ceiling",
                     }
                 )
                 continue
@@ -222,6 +247,7 @@ def write_plot(
     fig, axes = plt.subplots(2, 2, figsize=(10, 7))
     axes = axes.ravel()
     xs_solar = [r["x"] for r in records if r["status"] == "ok"]
+    excluded = [r for r in records if str(r["status"]).startswith("unphysical")]
     for ax, (key, ylabel, fn, scaps_key) in zip(axes, metrics):
         ys_solar = [fn(r) for r in records if r["status"] == "ok"]
         xs_scaps = sorted(scaps_ref.keys())
@@ -230,6 +256,12 @@ def write_plot(
             ax.set_xscale("log")
         ax.plot(xs_solar, ys_solar, "o-", label="SolarLab", color="C0")
         ax.plot(xs_scaps, ys_scaps, "s--", label="SCAPS", color="C3")
+        if excluded:
+            # Excluded points stay visible (grey, open) so the truncation is
+            # explicit; their J_sc is valid V=0 data even when V_oc is not.
+            ax.plot([r["x"] for r in excluded], [fn(r) for r in excluded],
+                    "o", mfc="none", color="grey",
+                    label="SolarLab (excluded: degenerate)")
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.grid(True, alpha=0.3)

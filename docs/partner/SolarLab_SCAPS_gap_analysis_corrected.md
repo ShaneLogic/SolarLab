@@ -33,7 +33,7 @@ imposes a spurious quasi-Fermi-level step of $kT\ln(\mathrm{DOS\ ratio})$ at eve
 DOS-contrast heterojunction — 137 mV on this stack (83 meV at HTL/PVK, 54 meV at
 PVK/ETL), matching the measured quasi-Fermi-level profile exactly. With the
 correction implemented (`dos_band_potentials`), a refined voltage grid, and a
-$V_{oc} < V_{bi}$ physical-validity guard on the sweep pipeline, **all six
+detailed-balance-ceiling validity guard on the sweep pipeline, **all six
 parameter-sweep trends now match SCAPS in direction** — including the two
 historical direction mismatches (ETL donor doping and perovskite donor doping) —
 and the base figures of merit agree to $-50$ mV in V~oc~, $+0.9$ pp in FF, and
@@ -158,21 +158,30 @@ errors; they are documented and bounded rather than tuned away.
 **ETL donor doping.** Two corrections apply. First, the previously reported
 "1448 mV divergence" at low doping was a numerical artifact: at
 N~D~ = 10^10^–10^12^ cm^−3^ the ETL cannot form a junction, the J–V curve is
-degenerate (FF $\approx$ 0.24), and the adaptive sweep located a spurious
-crossing at 2.50 V — **above the built-in potential**, violating the bound
-V~oc~ < V~bi~. The pipeline now flags such points (`unphysical_voc_ge_vbi`) and
-excludes them from trend statistics. Second, with the transport correction the
-physically well-posed arm now **matches SCAPS in direction**. The magnitude
-remains under-sensitive (6 mV versus SCAPS's 137 mV across the swept range),
-which tracks the interface-recombination residual of Section 2.3.
+degenerate (FF $\approx$ 0.30–0.56), and the adaptive sweep located spurious
+crossings at 2.18 V and 1.38 V — at or above the absorber's $\approx$ 1.25 V
+detailed-balance ceiling, which no physical curve can exceed. The pipeline
+flags such points (`unphysical_voc_ge_ceiling`) and excludes them from trend
+statistics while keeping them visible in the figures (grey open markers; their
+J~sc~ remains valid V = 0 data). The ceiling criterion deliberately replaces a
+stricter V~oc~ < V~bi~ test: with selective transport layers a cell can
+legitimately exceed the contact work-function difference (SCAPS itself does at
+low ETL doping), and the stricter test wrongly discarded the valid
+N~D~ = 10^14^ cm^−3^ point — now retained (V~oc~ = 1.111 V, FF = 0.79, within
+30 mV of SCAPS). Second, with the transport correction the
+physically well-posed arm (N~D~ = 10^14^–10^20^ cm^−3^) now **matches SCAPS in
+direction**. The magnitude remains under-sensitive (6 mV versus SCAPS's 137 mV
+across the swept range), which tracks the interface-recombination residual of
+Section 2.3.
 
 **Perovskite donor doping.** Previously the V~oc~ direction at the degenerate
 10^18^ cm^−3^ point opposed SCAPS. With the corrected transport the sweep
 **matches SCAPS in both direction and magnitude** (39 mV versus 34 mV).
 
 ![ETL donor-doping sweep, corrected configuration. Degenerate low-doping points
-(V~oc~ $\ge$ V~bi~) are excluded by the validity guard; the well-posed arm
-matches SCAPS in direction.](../figures/scaps_validation/sweep_Nd_ETL.png){width=86%}
+(extracted V~oc~ at or above the detailed-balance ceiling) are excluded from the
+statistics and shown as grey open markers; the well-posed arm
+(N~D~ $\ge$ 10^14^ cm^−3^) matches SCAPS in direction.](../figures/scaps_validation/sweep_Nd_ETL.png){width=86%}
 
 ![Perovskite donor-doping sweep, corrected configuration. Direction and
 magnitude now match
@@ -212,7 +221,7 @@ reflection.](../figures/scaps_gap_explainer/06_optical_budget.png){width=72%}
 |---|---|
 | V~oc~ | −50 mV (was −96): 137 mV DOS-step omission **fixed**; 10–16 mV grid artifact **fixed**; residual = HTL/PVK interface-channel model difference, named and bounded |
 | Sweep directions | **6 of 6 match** (was 4 of 6): ETL-doping and PVK-doping mismatches resolved |
-| ETL low-doping points | excluded as unphysical (V~oc~ $\ge$ V~bi~, degenerate FF) by the new validity guard |
+| ETL low-doping points | excluded as unphysical (V~oc~ at/above the detailed-balance ceiling, collapsed FF); shown greyed in the figures; the valid 10^14^ cm^−3^ point is retained |
 | FF | +0.9 pp (was −1.4): matches SCAPS |
 | J~sc~ | −2 %: retained front-surface reflection (SCAPS idealisation) |
 | Bulk-defect insensitivity | consistent interface-limited physics; tracks the same interface residual |
@@ -220,18 +229,21 @@ reflection.](../figures/scaps_gap_explainer/06_optical_budget.png){width=72%}
 Table 3. Residual differences after the corrections.
 
 Every physically well-posed result satisfies the governing bounds
-(V~oc~ < V~bi~, V~oc~ < E~g~/q, J~sc~ below the radiative limit); the degenerate
-low-doping sweep points violate V~oc~ < V~bi~ and are excluded as numerical
-artifacts rather than interpreted. The corrected transport is the physically
+(V~oc~ below the detailed-balance ceiling, V~oc~ < E~g~/q, J~sc~ below the
+radiative limit); the two degenerate lowest-doping sweep points exceed the
+detailed-balance ceiling with collapsed fill factors and are excluded as
+numerical artifacts rather than interpreted (shown greyed in the figures). The corrected transport is the physically
 standard heterostructure formulation; it was verified to be bit-identical for
 single-material and legacy configurations and is therefore enabled as an explicit
 option rather than silently changing historical results.
 
 # Appendix A — Nomenclature
 
-- V~oc~ — open-circuit voltage; bounded above by the built-in potential
-  (**V~oc~ < V~bi~** always: a flat-band junction has no field to separate
-  carriers).
+- V~oc~ — open-circuit voltage; bounded above by the absorber's
+  detailed-balance (radiative-limit) ceiling. The classical homojunction
+  heuristic V~oc~ < V~bi~ does **not** bind stacks with selective transport
+  layers, which can legitimately exceed the contact work-function difference
+  (SCAPS itself does at low ETL doping).
 - J~sc~ — short-circuit current density.
 - FF — fill factor; a collapsed FF (well below ~0.8) indicates a degenerate,
   non-diode J–V curve.
@@ -257,9 +269,10 @@ SOLARLAB_DOS_BAND=1 python scripts/run_scaps_validation.py \
 ```
 
 The validation pipeline defaults to the refined 40-point voltage grid and flags
-sweep points whose extracted V~oc~ exceeds the built-in potential
-(`status = unphysical_voc_ge_vbi`); flagged points are excluded from the range
-and closure statistics. The explanatory schematics are regenerated with
+sweep points whose extracted V~oc~ reaches the absorber's detailed-balance
+ceiling (`status = unphysical_voc_ge_ceiling`); flagged points are excluded
+from the range and closure statistics but remain visible in the figures as
+grey open markers. The explanatory schematics are regenerated with
 `python docs/figures/scaps_gap_explainer/make_figures.py`; the donor-doping
 overlays are the validation-pipeline figures from the run above. The transport
 correction and its tests are in `perovskite_sim/solver/mol.py`
