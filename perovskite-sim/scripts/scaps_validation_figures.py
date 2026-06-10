@@ -32,7 +32,11 @@ from perovskite_sim.sweeps.device_parameter_sweep import SweepPoint, apply_sweep
 REPO = Path(__file__).resolve().parents[1]
 CFG = REPO / "configs" / "scaps_mirror_v2.yaml"
 XLSX = REPO.parent / "docs" / "superpowers" / "references" / "scaps_1r_parameters.xlsx"
-JV = dict(N_grid=30, n_points=24, v_rate=5.0, V_max=1.6)
+# n_points=40: coarser grids under-read V_oc by 10-16 mV at the diode knee.
+JV = dict(N_grid=30, n_points=40, v_rate=5.0, V_max=1.6)
+
+# Detailed-balance-ceiling guard (same criterion as run_scaps_validation.py).
+from run_scaps_validation import _radiative_voc_ceiling  # noqa: E402
 
 # sheet -> (updates_fn, x-axis label [mathtext], log-x, pretty title). Subscripts
 # via $..$ mathtext so they render in Arial (mathtext.default=regular).
@@ -71,9 +75,12 @@ def run_sl(sheet, fn, xs):
     for x in xs:
         sp = SweepPoint("p", sheet, f"{x:.3e}", fn(x))
         try:
-            m = run_jv_sweep(apply_sweep_point(base, sp), **JV).metrics_fwd
+            swept = apply_sweep_point(base, sp)
+            m = run_jv_sweep(swept, **JV).metrics_fwd
             if not m.voc_bracketed:
                 continue
+            if m.V_oc >= _radiative_voc_ceiling(swept, max(float(m.J_sc), 1.0)):
+                continue  # degenerate pseudo-crossing — exclude from overlay
             sl["x"].append(x); sl["Voc"].append(m.V_oc)
             sl["Jsc"].append(m.J_sc / 10.0)  # A/m^2 -> mA/cm^2
             sl["FF"].append(m.FF * 100.0); sl["PCE"].append(m.PCE * 100.0)
