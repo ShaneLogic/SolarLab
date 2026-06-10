@@ -134,6 +134,14 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
         mode=str(dev["mode"]),
         interfaces=interfaces,
         interface_defects=interface_defects,
+        interface_plane_projection=(
+            str(dev.get("interface_plane_projection", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        dos_band_potentials=(
+            str(dev.get("dos_band_potentials", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         S_n_left=_opt_S(dev.get("S_n_left")),
         S_p_left=_opt_S(dev.get("S_p_left")),
         S_n_right=_opt_S(dev.get("S_n_right")),
@@ -328,6 +336,10 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
         N_D=cm3_to_m3(float(row["N_D_cm3"])),
         chi=chi,
         Eg=Eg,
+        # Effective DOS [m⁻³] — consumed by the dos_band_potentials flag
+        # (V_T·ln(N_C)/ln(N_V) heterojunction transport terms).
+        Nc300=N_C,
+        Nv300=N_V,
         optical_material=row.get("optical_material"),
         trap_N_t_interface=trap_N_t_interface,
         trap_N_t_bulk=trap_N_t_bulk,

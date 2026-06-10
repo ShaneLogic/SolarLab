@@ -66,6 +66,25 @@ class DeviceStack:
     # interface so the SCAPS cliff/spike direction at heterointerfaces with
     # a defect-rich face becomes physically accessible.
     interface_defects: tuple[Optional[InterfaceDefect], ...] = ()
+    # Interface-plane projection for SCAPS-parity interface SRH (2026-06).
+    # When True (or env ``SOLARLAB_IFACE_PROJ=1``), the cross-carrier
+    # interface recombination samples the band-bending-suppressed
+    # *interface-plane* carrier densities (Boltzmann-projected from the
+    # bulk-interior eval nodes, with ni_eff² co-projected) instead of the
+    # bulk-interior densities — matching SCAPS's Pauwels-Vanhoutte interface
+    # model. Default False = bit-identical to the pre-projection (E1.5
+    # bulk-interior) path. See docs/partner/SCAPS_interface_SRH_scope.md.
+    interface_plane_projection: bool = False
+    # Effective-DOS band potentials for heterojunction transport (2026-06).
+    # When True (or env ``SOLARLAB_DOS_BAND=1``), build_material_arrays folds
+    # V_T·ln(N_C/N_C_ref) and V_T·ln(N_V/N_V_ref) into the cached chi/Eg
+    # arrays used by the SG flux and TE capping, removing the spurious
+    # kT·ln(DOS-ratio) quasi-Fermi-level step at DOS-contrast heterojunctions
+    # (measured 137 mV on scaps_mirror_v2 — the SolarLab-vs-SCAPS V_oc root
+    # cause). Requires per-layer Nc300/Nv300 (populated by the SCAPS loader);
+    # layers without DOS data are left untouched, so legacy configs are
+    # bit-identical under the flag. Default False = pre-fix behaviour.
+    dos_band_potentials: bool = False
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().
@@ -188,6 +207,32 @@ def electrical_interfaces(
     desired = max(0, elec_n - 1)
     start = substrate_prefix
     return tuple(stack.interfaces[start : start + desired])
+
+
+def electrical_interface_defects(
+    stack: "DeviceStack",
+) -> tuple[Optional[InterfaceDefect], ...]:
+    """Return interface defects aligned to electrical_layers.
+
+    ``stack.interface_defects`` is parallel to ``stack.interfaces`` (full
+    layer list); apply the same substrate-prefix offset as
+    ``electrical_interfaces`` so consumers that index by the electrical
+    interface number get the right defect. Pads with ``None`` when the
+    stack tuple is shorter than the electrical interface count (legacy
+    configs may omit it entirely).
+    """
+    defects = tuple(getattr(stack, "interface_defects", ()) or ())
+    substrate_prefix = 0
+    for layer in stack.layers:
+        if layer.role == "substrate":
+            substrate_prefix += 1
+        else:
+            break
+    elec_n = sum(1 for l in stack.layers if l.role != "substrate")
+    desired = max(0, elec_n - 1)
+    out = list(defects[substrate_prefix : substrate_prefix + desired])
+    out.extend([None] * (desired - len(out)))
+    return tuple(out)
 
 
 def _fermi_level(p: MaterialParams) -> float:

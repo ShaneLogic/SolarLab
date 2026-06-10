@@ -22,6 +22,7 @@ from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
 from perovskite_sim.models.device import (
     DeviceStack, electrical_layers, electrical_interfaces,
+    electrical_interface_defects,
 )
 
 from perovskite_sim.physics.recombination import interface_recombination
@@ -257,6 +258,13 @@ class MaterialArrays:
     # profile.
     N_t_node: np.ndarray | None = None
     has_trap_profile: bool = False
+    # Interface-plane projection toggle (2026-06). When True,
+    # ``_apply_interface_recombination`` Boltzmann-projects the cross-carrier
+    # eval densities onto the interface plane (SCAPS Pauwels-Vanhoutte
+    # sampling). Computed at build from ``stack.interface_plane_projection``
+    # OR the ``SOLARLAB_IFACE_PROJ=1`` env var. Default False = bit-identical
+    # to the bulk-interior (E1.5) path.
+    iface_plane_projection: bool = False
     # Override the dark/illuminated branch in ``assemble_rhs``: when True,
     # ``G_optical`` is used verbatim regardless of the ``illuminated`` kwarg.
     # Set by the lagged-G_rad fallback in ``_bake_radiative_reabsorption_step``
@@ -647,6 +655,38 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
         offset += layer.thickness
 
+    # Effective-DOS band potentials (2026-06). With Boltzmann statistics the
+    # heterostructure drift-diffusion potentials are phi + chi + V_T·ln(N_C)
+    # (electrons) and phi + chi + Eg − V_T·ln(N_V) (holes); the SG flux in
+    # continuity.py carries only phi+chi / phi+chi+Eg, so layers with
+    # different effective DOS acquire a spurious kT·ln(DOS-ratio) QFL step
+    # at the junction. Fold the corrections into the cached chi/Eg arrays
+    # (transport + TE see them) with the absorber as reference — only the
+    # cross-junction differences matter. ni / n1 / p1 / boundary densities
+    # are deliberately untouched (they are statistics, not transport).
+    # Gated default-OFF; layers without Nc300/Nv300 data are skipped, so
+    # legacy configs are bit-identical even with the flag on.
+    _dos_band = bool(
+        getattr(stack, "dos_band_potentials", False)
+        or os.environ.get("SOLARLAB_DOS_BAND") == "1"
+    )
+    if _dos_band:
+        _ref = next(
+            (L.params for L in elec_layers if L.role == "absorber"),
+            elec_layers[0].params,
+        )
+        if _ref.Nc300 and _ref.Nv300:
+            _off = 0.0
+            for layer in elec_layers:
+                _m = (x >= _off - 1e-12) & (x <= _off + layer.thickness + 1e-12)
+                _q = layer.params
+                if _q.Nc300 and _q.Nv300:
+                    _dC = V_T_dev * math.log(_q.Nc300 / _ref.Nc300)
+                    _dV = V_T_dev * math.log(_q.Nv300 / _ref.Nv300)
+                    chi[_m] = chi[_m] + _dC
+                    Eg[_m] = Eg[_m] - _dC - _dV  # (chi+Eg) shifts by −dV
+                _off += layer.thickness
+
     # Per-face diffusion via harmonic mean of adjacent nodal values.
     # Matches solve_poisson's eps_r treatment and the legacy
     # _build_carrier_params / _build_ion_face_params outputs exactly.
@@ -677,6 +717,16 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             or np.any(pf_gamma_n_face > 0.0)
             or np.any(pf_gamma_p_face > 0.0)
         )
+    )
+
+    # Interface-plane projection (SCAPS Pauwels-Vanhoutte sampling). Enabled
+    # by the stack-level config flag OR the legacy ``SOLARLAB_IFACE_PROJ=1``
+    # env var; tier-independent (works on FAST, the SCAPS-parity tier).
+    # Default off → ``_apply_interface_recombination`` keeps the bulk-interior
+    # (E1.5) path, bit-identical.
+    _iface_plane_projection = bool(
+        getattr(stack, "interface_plane_projection", False)
+        or os.environ.get("SOLARLAB_IFACE_PROJ") == "1"
     )
 
     # Selective / Schottky outer contact Robin BCs (Phase 3.3). Gated by the
@@ -731,7 +781,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_p_R_eq_list: list[float] = []
     interface_chi_step_list: list[float] = []
     interface_Eg_step_list: list[float] = []
-    defects = getattr(stack, "interface_defects", ()) or ()
+    # Substrate-offset-aligned defects (2026-06 fix): stack.interface_defects
+    # is full-layer-aligned; this loop indexes by the ELECTRICAL interface
+    # number, so apply the same offset electrical_interfaces uses. Without it
+    # a substrate-prefixed stack silently shifted every defect by one slot
+    # (E10.1 glass regression: HTL/PVK fell back to the legacy path).
+    defects = electrical_interface_defects(stack)
     N_grid = len(x)
 
     def _eq_n_p_layer(p_):
@@ -1070,6 +1125,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         pf_gamma_n_face=pf_gamma_n_face if _has_field_mobility else None,
         pf_gamma_p_face=pf_gamma_p_face if _has_field_mobility else None,
         has_field_mobility=_has_field_mobility,
+        iface_plane_projection=_iface_plane_projection,
         S_n_L=stack.S_n_left if _has_selective_contacts else None,
         S_p_L=stack.S_p_left if _has_selective_contacts else None,
         S_n_R=stack.S_n_right if _has_selective_contacts else None,
@@ -1185,7 +1241,7 @@ def _apply_interface_recombination(
     ifaces = electrical_interfaces(stack)
     if not ifaces:
         return
-    proj = phi is not None and os.environ.get("SOLARLAB_IFACE_PROJ", "") == "1"
+    proj = phi is not None and mat.iface_plane_projection
     # Phase E9.3 — forbid net interface SRH *generation* (R_s < 0), DEFAULT ON.
     # The cross-carrier ni_sq_eff = nR_eq·pL_eq is a bulk-asymptotic product; at
     # a thin transport interface (HTL/PVK) it is orders too high (1e44), so
