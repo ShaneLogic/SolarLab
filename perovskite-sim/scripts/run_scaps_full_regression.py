@@ -85,7 +85,15 @@ SHEET_MAP = {
     "Et_PVK ETL": (_updates_iface_et_pvk_etl, "PVK/ETL interface E_t"),
 }
 
-JV_KWARGS = dict(N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
+# n_points=40: the 20-point grid's linear interpolation across the diode knee
+# under-read V_oc by 10-16 mV (see run_scaps_validation.py).
+JV_KWARGS = dict(N_grid=30, n_points=40, v_rate=5.0, V_max=1.6)
+
+# Detailed-balance-ceiling guard (same criterion as run_scaps_validation.py):
+# degenerate sweep points whose extracted V_oc reaches the absorber's
+# radiative-limit ceiling are counted as unbracketed so they cannot pollute
+# the direction/range statistics.
+from run_scaps_validation import _radiative_voc_ceiling  # noqa: E402
 
 
 def run_sheet(sheet, updates_fn, ref_points):
@@ -97,7 +105,13 @@ def run_sheet(sheet, updates_fn, ref_points):
         try:
             swept = apply_sweep_point(base, sp)
             m = run_jv_sweep(swept, **JV_KWARGS).metrics_fwd
-            rows.append((x, m.V_oc, m.voc_bracketed, pt["Voc_V"]))
+            bracketed = m.voc_bracketed
+            if bracketed:
+                ceiling = _radiative_voc_ceiling(swept, max(float(m.J_sc), 1.0))
+                if m.V_oc >= ceiling:
+                    print(f"    x={x:.2e} EXCLUDED V_oc={m.V_oc:.3f} >= ceiling {ceiling:.3f}")
+                    bracketed = False
+            rows.append((x, m.V_oc, bracketed, pt["Voc_V"]))
         except Exception as e:
             rows.append((x, float("nan"), False, pt["Voc_V"]))
             print(f"    x={x:.2e} FAILED {type(e).__name__}: {e}")
@@ -148,7 +162,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     ref = json.loads(REF_PATH.read_text())
     proj = os.environ.get("SOLARLAB_IFACE_PROJ", "") == "1"
-    print(f"PROJ={'ON' if proj else 'off'}  config={CFG_PATH.name}\n")
+    dos = os.environ.get("SOLARLAB_DOS_BAND", "") == "1"
+    print(f"PROJ={'ON' if proj else 'off'}  DOS={'ON' if dos else 'off'}  config={CFG_PATH.name}\n")
     summary = {}
     t0 = time.time()
     for sheet, (fn, note) in SHEET_MAP.items():
@@ -165,7 +180,7 @@ def main():
                               rows=[[r[0], r[1], r[2], r[3]] for r in rows])
         print(f"{sheet:14s} {v:32s} [{note}]")
     (out / "summary.json").write_text(json.dumps(
-        {"proj": proj, "summary": summary}, indent=2))
+        {"proj": proj, "dos": dos, "summary": summary}, indent=2))
     print(f"\nWrote {out/'summary.json'}  ({time.time()-t0:.0f}s)")
 
 
