@@ -144,6 +144,10 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         interfaces=interfaces,
         T=_f(dev.get("T", 300.0)),
         mode=str(dev.get("mode", "full")),
+        interface_plane_projection=(
+            str(dev.get("interface_plane_projection", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         S_n_left=S_n_left,
         S_p_left=S_p_left,
         S_n_right=S_n_right,

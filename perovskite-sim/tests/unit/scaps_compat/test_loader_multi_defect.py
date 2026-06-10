@@ -466,6 +466,16 @@ def test_scaps_mirror_v2_loads_with_finite_tau():
     single_tau = 1.0 / (1.0e-15 * 1.0e-4 * cms_to_ms(1.0e7) * cm3_to_m3(1.0e12))
     assert math.isclose(pvk.params.tau_n, single_tau / 2.0, rel_tol=1e-9)
     assert math.isclose(pvk.params.tau_p, single_tau / 2.0, rel_tol=1e-9)
-    # Both interfaces populated.
-    assert stack.interface_defects[0] is not None, "HTL/PVK interface missing"
-    assert stack.interface_defects[1] is not None, "PVK/ETL interface missing"
+    # Both ELECTRICAL interfaces populated. stack.interface_defects is
+    # full-layer-aligned (v2 has a glass substrate at index 0, so the raw
+    # tuple is [None, HTL/PVK, PVK/ETL]); consume it through the
+    # substrate-offset-aware helper, exactly as the solver does.
+    from perovskite_sim.models.device import electrical_interface_defects
+    defects = electrical_interface_defects(stack)
+    assert defects[0] is not None, "HTL/PVK interface missing"
+    assert defects[1] is not None, "PVK/ETL interface missing"
+    # Raw-tuple alignment: glass/HTL slot empty, the two declared targets
+    # resolved against the full layer list.
+    assert stack.interface_defects[0] is None
+    assert stack.interface_defects[1] is not None
+    assert stack.interface_defects[2] is not None

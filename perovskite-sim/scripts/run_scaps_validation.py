@@ -160,6 +160,22 @@ def run_axis(
             stack = apply_sweep_point(base_stack, pt)
             result = run_jv_sweep(stack, **jv_kwargs)
             m = result.metrics_fwd
+            # Physical-validity guard: a single-junction V_oc cannot exceed
+            # the built-in potential. Degenerate sweep points (e.g. an
+            # essentially undoped ETL) produce a non-diode J-V whose
+            # adaptive-V_max pseudo-crossing lands above V_bi — flag those
+            # rows so they are excluded from range/closure statistics
+            # instead of polluting them (the old Nd_ETL "1448 mV" artifact).
+            v_bi_pt = max(stack.V_bi, stack.compute_V_bi())
+            if m.voc_bracketed and m.V_oc >= v_bi_pt:
+                records.append(
+                    {
+                        "x": x, "V_oc_V": m.V_oc, "J_sc_A_m2": m.J_sc,
+                        "FF": m.FF, "PCE": m.PCE, "voc_bracketed": 0,
+                        "status": "unphysical_voc_ge_vbi",
+                    }
+                )
+                continue
             records.append(
                 {
                     "x": x,
@@ -312,7 +328,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=Path("configs/scaps_mirror.yaml"))
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--N-grid", type=int, default=30)
-    parser.add_argument("--n-points", type=int, default=20)
+    # 40 points halves the V_oc grid spacing vs the original 20 — the coarse
+    # grid's linear interpolation across the exponential diode knee under-read
+    # V_oc by 10-16 mV (n_points=80 converges to the steady-state value).
+    parser.add_argument("--n-points", type=int, default=40)
     parser.add_argument("--v-rate", type=float, default=5.0)
     parser.add_argument("--V-max", type=float, default=1.6)
     args = parser.parse_args(argv)
