@@ -97,6 +97,14 @@ class DeviceStack:
     # where the default ideal-ohmic pin degenerates. Default False =
     # IonMonger-convention pins, bit-identical.
     flat_band_contacts: bool = False
+    # Two-sided Pauwels-Vanhoutte interface capture (2026-06). When True (or
+    # env ``SOLARLAB_IFACE_TWOSIDED=1``), interface recombination adds the
+    # mirror cross-carrier pair (electrons from the left slab x holes from
+    # the right slab) with its own detailed-balance reference n_L_eq*p_R_eq,
+    # approximating SCAPS's two-sided trap coupling (jn1/jn2 + jp1/jp2).
+    # Only interfaces with an InterfaceDefect are affected; default False is
+    # bit-identical to the one-sided E1.5 formulation.
+    interface_two_sided: bool = False
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().
