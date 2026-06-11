@@ -113,6 +113,14 @@ class DeviceStack:
     # equilibrium-consistent numerator reference. Replaces the one-sided
     # cross-pair rate at those interfaces; default False is bit-identical.
     interface_shared_occupancy: bool = False
+    # QSS interface-plane closure (2026-06). When True (or env
+    # ``SOLARLAB_IFACE_PLANE=1``), defect-interface recombination is
+    # evaluated on true interface-plane densities solved from a local
+    # 2x2 flux balance (supply-limited, reduced-interface-gap, trap-level-
+    # visible — see physics/interface_plane.py). Activates only with
+    # ``dos_band_potentials`` + reference-layer DOS data; takes precedence
+    # over the other interface formulations. Default False bit-identical.
+    interface_plane_closure: bool = False
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().

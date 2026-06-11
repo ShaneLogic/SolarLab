@@ -26,6 +26,10 @@ from perovskite_sim.models.device import (
 )
 
 from perovskite_sim.physics.recombination import interface_recombination
+from perovskite_sim.physics.interface_plane import (
+    build_plane_params,
+    solve_plane_densities,
+)
 from perovskite_sim.physics.temperature import (
     thermal_voltage, ni_at_T, mu_at_T, D_ion_at_T, B_rad_at_T, eg_at_T,
 )
@@ -283,6 +287,11 @@ class MaterialArrays:
     interface_p1_L: tuple[float, ...] = ()
     interface_n1_R: tuple[float, ...] = ()
     interface_p1_R: tuple[float, ...] = ()
+    # QSS interface-plane closure (2026-06): per-interface build-time
+    # constants (None at interfaces without a defect or without the parity
+    # configuration's DOS data). See physics/interface_plane.py.
+    iface_plane_closure: bool = False
+    interface_plane_prm: tuple = ()
     # Override the dark/illuminated branch in ``assemble_rhs``: when True,
     # ``G_optical`` is used verbatim regardless of the ``illuminated`` kwarg.
     # Set by the lagged-G_rad fallback in ``_bake_radiative_reabsorption_step``
@@ -757,6 +766,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         or os.environ.get("SOLARLAB_IFACE_SHARED_OCC") == "1"
     )
 
+    _iface_plane_closure = bool(
+        getattr(stack, "interface_plane_closure", False)
+        or os.environ.get("SOLARLAB_IFACE_PLANE") == "1"
+    )
+
     # Selective / Schottky outer contact Robin BCs (Phase 3.3). Gated by the
     # active mode AND the stack supplying at least one finite S_* value.
     # When inactive the flag stays False and the Dirichlet pin remains the
@@ -820,6 +834,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_p1_L_list: list[float] = []
     interface_n1_R_list: list[float] = []
     interface_p1_R_list: list[float] = []
+    interface_plane_prm_list: list = []
     # Phase E3 — charge-balance partition + equilibrium bulk densities
     # per interface. Populated for EVERY interface (defect or not) so
     # the interface-plane state initial condition can build a sensible
@@ -904,6 +919,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             interface_p1_L_list.append(0.0)
             interface_n1_R_list.append(0.0)
             interface_p1_R_list.append(0.0)
+            interface_plane_prm_list.append(None)
             continue
         left = elec_layers[k].params
         right = elec_layers[k + 1].params
@@ -990,6 +1006,22 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_p1_L_list.append(float(_p1_L))
         interface_n1_R_list.append(float(_n1_R))
         interface_p1_R_list.append(float(_p1_R))
+        # QSS plane-closure constants from the FOLDED chi/Eg node values
+        # (the DOS fold ran before this loop; its shift is zero on the
+        # reference layer, so E_t below the raw reference CB needs no
+        # correction). Requires the parity configuration: dos_band_potentials
+        # + reference-layer DOS data — otherwise None (closure inactive).
+        if _dos_band and ref.Nc300 and ref.Nv300:
+            _iL, _iR = max(idx - 1, 0), min(idx + 1, len(x) - 1)
+            interface_plane_prm_list.append(build_plane_params(
+                float(chi[_iL]), float(chi[_iR]),
+                float(chi[_iL]) + float(Eg[_iL]),
+                float(chi[_iR]) + float(Eg[_iR]),
+                float(ref.Nc300), float(ref.Nv300), float(ref.chi),
+                float(defect.E_t_eV), V_T_dev,
+            ))
+        else:
+            interface_plane_prm_list.append(None)
 
     # Interface face indices where band offset exceeds the TE threshold.
     # A face index f corresponds to the interval between nodes f and f+1.
@@ -1171,6 +1203,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_p1_L=tuple(interface_p1_L_list),
         interface_n1_R=tuple(interface_n1_R_list),
         interface_p1_R=tuple(interface_p1_R_list),
+        iface_plane_closure=_iface_plane_closure,
+        interface_plane_prm=tuple(interface_plane_prm_list),
         interface_V_partition_2=tuple(interface_V_partition_2_list),
         interface_n_L_eq=tuple(interface_n_L_eq_list),
         interface_p_L_eq=tuple(interface_p_L_eq_list),
@@ -1379,6 +1413,37 @@ def _apply_interface_recombination(
         )
         n_eval = float(n[eval_n_idx])
         p_eval = float(p[eval_p_idx])
+        # QSS interface-plane closure (2026-06): evaluate the P-V rate on
+        # TRUE plane densities from a local implicit 2x2 flux balance —
+        # supply-limited, reduced-interface-gap, trap-level-visible (see
+        # physics/interface_plane.py). Node densities are Boltzmann-
+        # projected to the plane potential here; band-offset penalties and
+        # plane-gap constants are cached in mat.interface_plane_prm.
+        # Takes precedence over every other interface formulation.
+        if (
+            mat.iface_plane_closure
+            and eval_n_idx != idx
+            and mat.interface_plane_prm
+            and mat.interface_plane_prm[k] is not None
+        ):
+            prm_k = mat.interface_plane_prm[k]
+            eL = (float(phi[idx]) - float(phi[idx - 1])) / V_T_dev
+            eR = (float(phi[idx]) - float(phi[idx + 1])) / V_T_dev
+            eL = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, eL))
+            eR = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, eR))
+            fL = math.exp(eL)
+            fR = math.exp(eR)
+            _n_s, _p_s, R_s = solve_plane_densities(
+                max(float(n[idx - 1]), 0.0) * fL,
+                max(float(n[idx + 1]), 0.0) * fR,
+                max(float(p[idx - 1]), 0.0) / fL,
+                max(float(p[idx + 1]), 0.0) / fR,
+                prm_k, v_n, v_p,
+            )
+            R_vol = R_s / mat.dx_cell[idx]
+            dn[idx] -= R_vol
+            dp[idx] -= R_vol
+            continue
         # Shared-occupancy P-V (2026-06): ONE trap occupancy fed by both
         # layers — the coupled closed form with per-side trap-level
         # densities in the denominator (the occupancy mechanism) and the
