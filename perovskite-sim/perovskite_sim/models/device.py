@@ -105,6 +105,14 @@ class DeviceStack:
     # Only interfaces with an InterfaceDefect are affected; default False is
     # bit-identical to the one-sided E1.5 formulation.
     interface_two_sided: bool = False
+    # Shared-occupancy Pauwels-Vanhoutte interface recombination (2026-06).
+    # When True (or env ``SOLARLAB_IFACE_SHARED_OCC=1``), defect interfaces
+    # use the coupled single-occupancy closed form: both layers feed one
+    # trap level, with per-side n1/p1 referenced to each side's own band
+    # edge and effective DOS in the denominator, and the discrete-
+    # equilibrium-consistent numerator reference. Replaces the one-sided
+    # cross-pair rate at those interfaces; default False is bit-identical.
+    interface_shared_occupancy: bool = False
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().
