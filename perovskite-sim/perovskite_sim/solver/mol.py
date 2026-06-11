@@ -274,6 +274,15 @@ class MaterialArrays:
     # ``_apply_interface_recombination``. From stack.interface_two_sided OR
     # env SOLARLAB_IFACE_TWOSIDED=1. Default False = one-sided E1.5 path.
     iface_two_sided: bool = False
+    # Shared-occupancy P-V toggle (2026-06) + per-side trap-level densities
+    # n1_i/p1_i [m^-3], each referenced to that side's own band edge and
+    # effective DOS (depth_i = E_t + (chi_ref - chi_i)). Zero placeholders
+    # at interfaces without an InterfaceDefect.
+    iface_shared_occ: bool = False
+    interface_n1_L: tuple[float, ...] = ()
+    interface_p1_L: tuple[float, ...] = ()
+    interface_n1_R: tuple[float, ...] = ()
+    interface_p1_R: tuple[float, ...] = ()
     # Override the dark/illuminated branch in ``assemble_rhs``: when True,
     # ``G_optical`` is used verbatim regardless of the ``illuminated`` kwarg.
     # Set by the lagged-G_rad fallback in ``_bake_radiative_reabsorption_step``
@@ -743,6 +752,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         or os.environ.get("SOLARLAB_IFACE_TWOSIDED") == "1"
     )
 
+    _iface_shared_occ = bool(
+        getattr(stack, "interface_shared_occupancy", False)
+        or os.environ.get("SOLARLAB_IFACE_SHARED_OCC") == "1"
+    )
+
     # Selective / Schottky outer contact Robin BCs (Phase 3.3). Gated by the
     # active mode AND the stack supplying at least one finite S_* value.
     # When inactive the flag stays False and the Dirichlet pin remains the
@@ -801,6 +815,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_ni_sq_eff_list: list[float] = []
     # Phase E1.6 — per-interface attenuation factor multiplied into v_n, v_p.
     interface_calibration_factor_list: list[float] = []
+    # Shared-occupancy P-V (2026-06): per-side trap-level densities.
+    interface_n1_L_list: list[float] = []
+    interface_p1_L_list: list[float] = []
+    interface_n1_R_list: list[float] = []
+    interface_p1_R_list: list[float] = []
     # Phase E3 — charge-balance partition + equilibrium bulk densities
     # per interface. Populated for EVERY interface (defect or not) so
     # the interface-plane state initial condition can build a sensible
@@ -881,6 +900,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             interface_eval_p_list.append(idx)
             interface_ni_sq_eff_list.append(float(ni_sq[idx]))
             interface_calibration_factor_list.append(1.0)
+            interface_n1_L_list.append(0.0)
+            interface_p1_L_list.append(0.0)
+            interface_n1_R_list.append(0.0)
+            interface_p1_R_list.append(0.0)
             continue
         left = elec_layers[k].params
         right = elec_layers[k + 1].params
@@ -942,6 +965,31 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_calibration_factor_list.append(
             float(defect.calibration_factor)
         )
+        # Shared-occupancy P-V: per-side trap-level densities. The trap sits
+        # at a fixed absolute energy E_t below the REFERENCE side's CB, so
+        # each side sees depth_i = E_t + (chi_ref - chi_i) below its own CB.
+        # With per-layer effective DOS available (SCAPS loader populates
+        # Nc300/Nv300), n1_i = N_C,i*exp(-depth_i/V_T) and
+        # p1_i = N_V,i*exp(-(Eg_i - depth_i)/V_T); otherwise fall back to the
+        # ni/Eg midgap-symmetric form.
+        def _side_n1p1(p_, depth):
+            if p_.Nc300 and p_.Nv300:
+                return (
+                    p_.Nc300 * math.exp(-depth / V_T_dev),
+                    p_.Nv300 * math.exp(-(p_.Eg - depth) / V_T_dev),
+                )
+            return srh_n1_p1_from_trap_depth(
+                p_.ni, p_.Eg, depth,
+                reference="below_cb", thermal_voltage=V_T_dev,
+            )
+        _depth_L = float(defect.E_t_eV) + (float(ref.chi) - float(left.chi))
+        _depth_R = float(defect.E_t_eV) + (float(ref.chi) - float(right.chi))
+        _n1_L, _p1_L = _side_n1p1(left, _depth_L)
+        _n1_R, _p1_R = _side_n1p1(right, _depth_R)
+        interface_n1_L_list.append(float(_n1_L))
+        interface_p1_L_list.append(float(_p1_L))
+        interface_n1_R_list.append(float(_n1_R))
+        interface_p1_R_list.append(float(_p1_R))
 
     # Interface face indices where band offset exceeds the TE threshold.
     # A face index f corresponds to the interval between nodes f and f+1.
@@ -1119,6 +1167,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_eval_node_n=tuple(interface_eval_n_list),
         interface_eval_node_p=tuple(interface_eval_p_list),
         interface_ni_sq_eff=tuple(interface_ni_sq_eff_list),
+        interface_n1_L=tuple(interface_n1_L_list),
+        interface_p1_L=tuple(interface_p1_L_list),
+        interface_n1_R=tuple(interface_n1_R_list),
+        interface_p1_R=tuple(interface_p1_R_list),
         interface_V_partition_2=tuple(interface_V_partition_2_list),
         interface_n_L_eq=tuple(interface_n_L_eq_list),
         interface_p_L_eq=tuple(interface_p_L_eq_list),
@@ -1158,6 +1210,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         has_field_mobility=_has_field_mobility,
         iface_plane_projection=_iface_plane_projection,
         iface_two_sided=_iface_two_sided,
+        iface_shared_occ=_iface_shared_occ,
         S_n_L=_s_contact(stack.S_n_left) if _has_selective_contacts else None,
         S_p_L=_s_contact(stack.S_p_left) if _has_selective_contacts else None,
         S_n_R=_s_contact(stack.S_n_right) if _has_selective_contacts else None,
@@ -1326,6 +1379,31 @@ def _apply_interface_recombination(
         )
         n_eval = float(n[eval_n_idx])
         p_eval = float(p[eval_p_idx])
+        # Shared-occupancy P-V (2026-06): ONE trap occupancy fed by both
+        # layers — the coupled closed form with per-side trap-level
+        # densities in the denominator (the occupancy mechanism) and the
+        # discrete-equilibrium-consistent numerator reference (R = 0
+        # exactly when the sampled nodes sit at their cached dark-
+        # equilibrium values; the textbook n1S*p1S reference assumes
+        # interface-plane sampling). Replaces the one-sided pair at defect
+        # interfaces; not composed with proj / QSS / two-sided. Densities
+        # floored at zero (SG minority overshoots destabilise Radau).
+        if mat.iface_shared_occ and eval_n_idx != idx and mat.interface_n1_L:
+            nS = max(float(n[eval_p_idx]), 0.0) + max(float(n[eval_n_idx]), 0.0)
+            pS = max(float(p[eval_p_idx]), 0.0) + max(float(p[eval_n_idx]), 0.0)
+            refS = (
+                (mat.interface_n_L_eq[k] + mat.interface_n_R_eq[k])
+                * (mat.interface_p_L_eq[k] + mat.interface_p_R_eq[k])
+            )
+            n1S = mat.interface_n1_L[k] + mat.interface_n1_R[k]
+            p1S = mat.interface_p1_L[k] + mat.interface_p1_R[k]
+            R_s = interface_recombination(nS, pS, refS, n1S, p1S, v_n, v_p)
+            if nogen and R_s < 0.0:
+                R_s = 0.0
+            R_vol = R_s / mat.dx_cell[idx]
+            dn[idx] -= R_vol
+            dp[idx] -= R_vol
+            continue
         if qss:
             # Interface-plane projection (live bulk → plane via local band
             # bending) then QSS 1-D root-find. Co-project ni² so detailed
