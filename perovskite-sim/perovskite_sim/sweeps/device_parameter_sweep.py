@@ -619,7 +619,18 @@ def _apply_absorber_defect_density(
     trap_tau_reference_density_m3: float,
 ) -> DeviceStack:
     absorber = _require_params_by_role(stack, "absorber")
-    scale = _trap_tau_scale(density_m3, trap_tau_reference_density_m3)
+    # Ratio-scale tau off the config's DECLARED bulk density when available
+    # (sigma-consistent, mirrors the E9 interface-N_t fix). The absolute
+    # trap_tau_reference_density_m3 (1e22 m^-3) remains the fallback for
+    # configs that declare no bulk defects; with the hardcoded reference a
+    # SCAPS-mirror sweep over 1e9-1e15 cm^-3 ran every point at a LONGER
+    # lifetime than the baseline and was flat by construction.
+    reference = (
+        absorber.trap_N_t_bulk
+        if absorber.trap_N_t_bulk is not None and absorber.trap_N_t_bulk > 0.0
+        else trap_tau_reference_density_m3
+    )
+    scale = _trap_tau_scale(density_m3, reference)
     return _replace_layer_params_by_role(
         stack,
         "absorber",

@@ -309,7 +309,13 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
         n1 = p1 = ni
 
     iface = row.get("interface_defect") or {}
-    trap_N_t_interface = trap_N_t_bulk = trap_decay_length = None
+    trap_N_t_interface = trap_decay_length = None
+    # Record the combined declared bulk density so sweeps can ratio-scale
+    # tau off the config's own base (sigma-consistent, like the E9 interface
+    # fix) instead of the absolute 1e22 m^-3 fallback. Setting this alone
+    # does NOT activate the Phase-4a trap profile (which also requires
+    # trap_N_t_interface + trap_decay_length).
+    trap_N_t_bulk = N_t_bulk_m3
     trap_profile_shape = "exponential"
     trap_edge = "both"
     if iface:

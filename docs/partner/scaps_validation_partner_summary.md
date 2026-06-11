@@ -36,10 +36,12 @@ grid; a detailed-balance-ceiling validity guard on degenerate sweep points). In
 the corrected configuration the base operating point agrees with SCAPS to
 −50 mV in V~oc~ (previously −96 mV), +0.9 percentage points in FF, and −2 % in
 J~sc~. Across the eleven sweeps, six match SCAPS (in direction and shape, or
-flat in both solvers), one matches partially, and four remain open; every
-physically well-posed result satisfies the governing bounds. The open items all
-trace to one named residual — the interface-recombination channel — and are
-documented rather than tuned away.
+flat in both solvers), two match partially, and three remain open; every
+physically well-posed result satisfies the governing bounds. Notably, the
+perovskite bulk-defect sweeps — previously flat — now reproduce the SCAPS
+V~oc~/PCE descent in direction after a sweep-wiring defect was found and fixed
+(Section 5). The remaining open items trace to one named residual — the
+interface-recombination channel — and are documented rather than tuned away.
 
 # 1. Introduction
 
@@ -136,19 +138,23 @@ defect-density sweep (Figure 4) is near-flat in both solvers (0 vs 5 mV), and
 the three defect-level sweeps that SCAPS holds flat — perovskite CB, perovskite
 VB, and HTL/PVK (Figures 8–10) — are flat in SolarLab as well ($\le$ 0.3 mV both).
 
-**Partial (one).** The PVK/ETL interface defect-density sweep (Figure 2) matches
+**Partial (two).** The PVK/ETL interface defect-density sweep (Figure 2) matches
 in direction and saturating shape with 53 % of the SCAPS V~oc~ range (149 of
 282 mV; 72 % with the transport correction off — see Section 5 for why the
-correction trades interface-sweep closure for base-point accuracy).
+correction trades interface-sweep closure for base-point accuracy). The
+perovskite-VB bulk defect-density sweep (Figure 7) now matches SCAPS in
+direction with 41 % of its range (4.4 of 10.8 mV) after the sweep-wiring fix
+of Section 5.
 
-**Open (four).** The ETL donor-doping sweep (Figure 5): the two degenerate
+**Open (three).** The ETL donor-doping sweep (Figure 5): the two degenerate
 low-doping points are excluded by the validity guard, and on the well-posed arm
 (10^14^–10^20^ cm^−3^) SolarLab is essentially flat (11 mV) where SCAPS rises by
 100 mV — the direction is within noise of flat, so the trend is counted open
 rather than matched. The PVK/ETL interface defect-level sweep (Figure 3)
-responds only weakly (2 of 35 mV). The perovskite-bulk CB and VB defect-density
-sweeps (Figures 6–7) are flat in SolarLab where SCAPS shows −39 and −11 mV.
-All four open items share one mechanism (Section 5).
+responds only weakly (2 of 35 mV). The perovskite-CB bulk defect-density sweep
+(Figure 6) now responds in the correct direction but covers only 11 % of the
+SCAPS range (4.3 of 38.6 mV). All three open items share one mechanism
+(Section 5).
 
 ![ETL/PVK conduction-band offset (ΔE~C~).](../figures/scaps_validation/sweep_CHI_ETL.png){width=86%}
 
@@ -188,8 +194,8 @@ detailed-balance-ceiling guard.](../figures/scaps_validation/sweep_Nd_ETL.png){w
 | 7 | PVK/ETL interface N~t~ | 149 mV | 282 mV | partial (53 %) |
 | 8 | ETL donor doping | 11 mV | 100 mV | open (flat vs rising) |
 | 9 | PVK/ETL interface E~t~ | 2 mV | 35 mV | open |
-| 10 | PVK-CB bulk N~t~ | 0 mV | 39 mV | open (masked) |
-| 11 | PVK-VB bulk N~t~ | 0 mV | 11 mV | open (masked) |
+| 10 | PVK-VB bulk N~t~ | 4.4 mV | 11 mV | partial (41 %) |
+| 11 | PVK-CB bulk N~t~ | 4.3 mV | 39 mV | open (direction match, 11 %) |
 
 Table 2. Per-sweep scorecard, corrected configuration (V~oc~ ranges over the
 physically well-posed points).
@@ -208,14 +214,27 @@ radiative-only configuration reaches its analytic detailed-balance ceiling,
 offsets and the contact boundary condition — were tested and refuted in the
 process. The full account is in `SolarLab_SCAPS_gap_analysis_corrected.pdf`.
 
+**The bulk-defect sweeps: a sweep-wiring defect, found and fixed.** The
+previous revision reported the perovskite CB/VB bulk defect-density sweeps as
+fully masked (0 mV). Most of that flatness was an artifact: the sweep machinery
+ratio-scaled the bulk SRH lifetime against a hardcoded absolute reference of
+10^16^ cm^−3^, while the configuration's base lifetime corresponds to its
+declared 10^12^ cm^−3^ defects — so every swept point in the partner range ran
+with a *longer* lifetime than the baseline and the recombination knob was never
+actually turned. With the lifetime now ratio-scaled off the configuration's own
+declared density, both sweeps reproduce the SCAPS V~oc~/PCE descent in
+direction (VB: 41 % of the SCAPS range; CB: 11 %). The residual magnitude gap
+is the genuine physics remainder: the swept trap is shallow (0.1 eV below the
+conduction band, hence weakly recombining even in SCAPS), and SolarLab's higher
+interface-recombination floor partially masks the response.
+
 **The remaining residual: one interface channel.** With the transport
-corrected, the −50 mV base residual and all four open sweeps reduce to the
+corrected, the −50 mV base residual and the remaining open sweeps reduce to the
 interface-recombination channel. The PVK/ETL interface dominates SolarLab's
 recombination at the corrected operating point; its strength (i) sets the −50 mV
 base offset, (ii) absorbs the ETL-doping response that SCAPS expresses as a
-+100 mV V~oc~ rise, (iii) keeps V~oc~ pinned below the regime where the bulk
-trap densities become visible (SCAPS's −39/−11 mV responses), and (iv) damps
-the interface-E~t~ response. The interface-sweep closure also explains the one
++100 mV V~oc~ rise, (iii) partially masks the bulk-defect responses discussed
+above, and (iv) damps the interface-E~t~ response. The interface-sweep closure also explains the one
 regression in Table 2: lifting the 137 mV transport floor raises the V~oc~
 baseline into a regime where the interface channel saturates differently, so the
 PVK/ETL N~t~ closure moves from 72 % (correction off) to 53 % (on) — the
@@ -240,7 +259,7 @@ transfer-matrix optics retains and SCAPS idealises away; kept deliberately.
 
 With the effective-DOS transport correction the base operating point agrees with
 SCAPS to −50 mV in V~oc~ (from −96 mV), +0.9 pp in FF, and −2 % in J~sc~, and
-six of the eleven parameter-sweep trends match with one partial. The four open
+six of the eleven parameter-sweep trends match with two partial. The three open
 trends share a single named mechanism — the interface-recombination channel —
 rather than being independent defects, and every physically well-posed result
 satisfies the governing bounds. We recommend the corrected configuration
@@ -275,9 +294,13 @@ root-cause analysis is in `SolarLab_SCAPS_gap_analysis_corrected.pdf`.
 | PVK/ETL interface E~t~ | 8 mV | 35 mV | weak (22 %) |
 | ETL donor doping | 23 mV | 100 mV | open (flat vs rising) |
 | HTL/PVK interface N~t~ | 0 mV | 5 mV | near-flat both |
-| bulk N~t~ (CB/VB) | 0 mV | 39/11 mV | open (masked) |
+| bulk N~t~ (CB/VB) | 65 mV | 39/11 mV | over-responds (less masked) |
 | bulk + HTL/PVK E~t~ | $\le$ 2 mV | $\le$ 0.4 mV | flat both |
 
 Table 3. Flag-off reference (base V~oc~ 1.079 V at the corrected grid). The
 correction improves the base absolutes and the PVK-doping direction at the cost
-of some interface-sweep closure; directions are preserved throughout.
+of some interface-sweep closure; directions are preserved throughout. Note the
+bulk-N~t~ sweep *over*-responds with the transport correction off (65 mV vs the
+SCAPS 39/11 mV): the lower flag-off V~oc~ baseline sits further from the
+interface-recombination ceiling, so the bulk traps are less masked there — the
+corrected-configuration 4 mV (Table 2) is the physically consistent value.
