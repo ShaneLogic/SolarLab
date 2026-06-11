@@ -255,6 +255,33 @@ engine-level difference, documented and bounded.
 **Short-circuit current (−2 %).** Front-surface reflection that SolarLab's
 transfer-matrix optics retains and SCAPS idealises away; kept deliberately.
 
+## 5.x Update: interface-plane closure (2026-06-12)
+
+After this report's main analysis was frozen, the named residual mechanism was
+addressed directly: an optional *interface-plane closure*
+(`interface_plane_closure`, default off) evaluates defect-interface
+recombination on true interface-plane carrier densities, solved per evaluation
+from a local implicit flux balance (supply-limited; the plane gap is the
+reduced interface gap, which carries the band-offset cliff physics; the trap
+level is clamped to that gap). It is the fifth interface formulation attempted
+and the first with a net-positive measured outcome:
+
+| Sweep | corrected config | + plane closure | SCAPS |
+|---|---|---|---|
+| HTL/PVK interface N~t~ | 0 mV (flat) | **3.6 mV (70 %)** | 5.2 mV |
+| ETL/PVK band offset | 734 mV (80 %) | 707 mV (77 %) | 918 mV |
+| PVK/ETL interface N~t~ | 149 mV (53 %) | 127 mV (45 %) | 282 mV |
+| base V~oc~ / other sweeps | — | unchanged | — |
+
+The HTL/PVK interface — flat in SolarLab under every previous formulation
+across six decades of surface-recombination velocity — now reproduces 70 % of
+SCAPS's response, at a small cost in the two large interface sweeps and no
+change elsewhere. A combined probe (closure + flat-band contacts) did *not*
+recover the ETL-doping rising arm, confirming that sweep, the PVK/ETL trap
+energy, and the residual base offset as the remaining open items; their
+common dependency is a direct steady-state solve, which is the planned next
+step.
+
 # 6. Conclusion and outlook
 
 With the effective-DOS transport correction the base operating point agrees with
@@ -264,10 +291,13 @@ trends share a single named mechanism — the interface-recombination channel �
 rather than being independent defects, and every physically well-posed result
 satisfies the governing bounds. We recommend the corrected configuration
 (`dos_band_potentials` on the SCAPS-mirror device) as the validated baseline.
-The natural next step, if closer interface-sweep agreement is required, is to
-adopt SCAPS's two-sided interface-recombination formulation; the groundwork
-(interface-plane projection, flat-band contacts) is already in the codebase
-behind explicit flags.
+The first structural step toward closing it — the interface-plane closure of
+Section 5.x — is now in the codebase behind an explicit flag and improves the
+HTL/PVK interface response from flat to 70 % of SCAPS without degrading any
+matched trend. The remaining open items (ETL-doping arm, PVK/ETL trap-energy
+magnitude, residual base offset) share a dependency on a direct steady-state
+solve, which is the planned next step; the transient ion-migration capability
+is unaffected throughout.
 
 # Appendix A: Reproducibility
 
