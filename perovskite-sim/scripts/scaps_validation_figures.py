@@ -72,6 +72,7 @@ def read_sheet(ws):
 def run_sl(sheet, fn, xs):
     base = load_scaps_yaml(CFG)
     sl = {"x": [], "Voc": [], "Jsc": [], "FF": [], "PCE": []}
+    ex = {"x": [], "Voc": [], "Jsc": [], "FF": [], "PCE": []}  # ceiling-excluded
     for x in xs:
         sp = SweepPoint("p", sheet, f"{x:.3e}", fn(x))
         try:
@@ -79,32 +80,38 @@ def run_sl(sheet, fn, xs):
             m = run_jv_sweep(swept, **JV).metrics_fwd
             if not m.voc_bracketed:
                 continue
-            if m.V_oc >= _radiative_voc_ceiling(swept, max(float(m.J_sc), 1.0)):
-                continue  # degenerate pseudo-crossing — exclude from overlay
-            sl["x"].append(x); sl["Voc"].append(m.V_oc)
-            sl["Jsc"].append(m.J_sc / 10.0)  # A/m^2 -> mA/cm^2
-            sl["FF"].append(m.FF * 100.0); sl["PCE"].append(m.PCE * 100.0)
+            # Degenerate pseudo-crossings (V_oc at/above the detailed-balance
+            # ceiling) are kept VISIBLE as grey open markers, excluded from
+            # the connected curve; their J_sc is valid V=0 data.
+            dst = ex if m.V_oc >= _radiative_voc_ceiling(
+                swept, max(float(m.J_sc), 1.0)) else sl
+            dst["x"].append(x); dst["Voc"].append(m.V_oc)
+            dst["Jsc"].append(m.J_sc / 10.0)  # A/m^2 -> mA/cm^2
+            dst["FF"].append(m.FF * 100.0); dst["PCE"].append(m.PCE * 100.0)
         except Exception:
             continue
-    return sl
+    return sl, ex
 
 
 def plot_sheet(sheet, fn, xlabel, logx, title, ref, out):
     xs = [p["x"] for p in ref]
-    sl = run_sl(sheet, fn, xs)
+    sl, ex = run_sl(sheet, fn, xs)
     fig, axes = plt.subplots(2, 2, figsize=(9, 6))
     metrics = [("Voc", r"$V_{oc}$ (V)"), ("Jsc", r"$J_{sc}$ (mA/cm$^2$)"),
                ("FF", "FF (%)"), ("PCE", "PCE (%)")]
     for ax, (key, ylabel) in zip(axes.ravel(), metrics):
         sc_x = [p["x"] for p in ref]; sc_y = [p[key] for p in ref]
-        ax.plot(sc_x, sc_y, "k--o", ms=4, label="SCAPS", lw=1.3)
-        if sl["x"]:
-            ax.plot(sl["x"], sl[key], "C0-s", ms=4, label="SolarLab", lw=1.3)
+        ax.plot(sl["x"], sl[key], "o-", color="C0", ms=4, lw=1.3,
+                label="SolarLab")
+        ax.plot(sc_x, sc_y, "s--", color="C3", ms=4, lw=1.3, label="SCAPS")
+        if ex["x"]:
+            ax.plot(ex["x"], ex[key], "o", mfc="none", color="grey",
+                    label="SolarLab (excluded: degenerate)")
         if logx:
             ax.set_xscale("log")
         ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3); ax.legend(fontsize=8)
-    fig.suptitle(f"{title}  —  SolarLab (current models) vs SCAPS", fontsize=11)
+    fig.suptitle(f"{title}  —  SolarLab vs SCAPS", fontsize=11)
     fig.tight_layout()
     slug = sheet.replace(" ", "_").replace("/", "_")
     p = out / f"sweep_{slug}.png"

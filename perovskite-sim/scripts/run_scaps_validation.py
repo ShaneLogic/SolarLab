@@ -105,12 +105,12 @@ SCAPS_REF: dict[str, dict[float, dict[str, float]]] = {
 
 
 SWEEP_LABELS = {
-    "cbo_delta_ec_eV": ("ETL/PVK conduction band offset", "DeltaE_C (eV)", False),
-    "etl_doping_cm3": ("ETL donor doping", "N_D,ETL (cm^-3)", True),
-    "absorber_doping_cm3": ("PVK donor doping", "N_D,PVK (cm^-3)", True),
-    "absorber_defect_density_cm3": ("PVK-CB bulk defect density", "N_t (cm^-3)", True),
-    "interface_defect_N_t_cm2": ("PVK/ETL interface defect density", "N_t (cm^-2)", True),
-    "absorber_defect_depth_eV": ("PVK-CB bulk defect energy", "E_t below CB (eV)", False),
+    "cbo_delta_ec_eV": ("ETL/PVK conduction band offset", r"$\Delta E_C$ (eV)", False),
+    "etl_doping_cm3": ("ETL donor doping", r"$N_{D,ETL}$ (cm$^{-3}$)", True),
+    "absorber_doping_cm3": ("PVK donor doping", r"$N_{D,PVK}$ (cm$^{-3}$)", True),
+    "absorber_defect_density_cm3": ("PVK-CB bulk defect density", r"$N_t$ (cm$^{-3}$)", True),
+    "interface_defect_N_t_cm2": ("PVK/ETL interface defect density", r"$N_t$ (cm$^{-2}$)", True),
+    "absorber_defect_depth_eV": ("PVK-CB bulk defect energy", r"$E_t$ below CB (eV)", False),
 }
 
 
@@ -240,9 +240,9 @@ def write_plot(
     title, xlabel, log_x = SWEEP_LABELS[axis]
     metrics = [
         ("PCE", "PCE (%)", lambda r: r["PCE"] * 100.0, "PCE"),
-        ("Voc", "V_oc (V)", lambda r: r["V_oc_V"], "Voc"),
+        ("Voc", r"$V_{oc}$ (V)", lambda r: r["V_oc_V"], "Voc"),
         ("FF", "FF (%)", lambda r: r["FF"] * 100.0, "FF"),
-        ("Jsc", "J_sc (mA/cm^2)", lambda r: r["J_sc_A_m2"] / 10.0, "Jsc"),
+        ("Jsc", r"$J_{sc}$ (mA/cm$^2$)", lambda r: r["J_sc_A_m2"] / 10.0, "Jsc"),
     ]
     fig, axes = plt.subplots(2, 2, figsize=(10, 7))
     axes = axes.ravel()
