@@ -270,6 +270,10 @@ class MaterialArrays:
     # OR the ``SOLARLAB_IFACE_PROJ=1`` env var. Default False = bit-identical
     # to the bulk-interior (E1.5) path.
     iface_plane_projection: bool = False
+    # Two-sided P-V toggle (2026-06): adds the mirror cross-carrier pair in
+    # ``_apply_interface_recombination``. From stack.interface_two_sided OR
+    # env SOLARLAB_IFACE_TWOSIDED=1. Default False = one-sided E1.5 path.
+    iface_two_sided: bool = False
     # Override the dark/illuminated branch in ``assemble_rhs``: when True,
     # ``G_optical`` is used verbatim regardless of the ``illuminated`` kwarg.
     # Set by the lagged-G_rad fallback in ``_bake_radiative_reabsorption_step``
@@ -734,6 +738,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         or os.environ.get("SOLARLAB_IFACE_PROJ") == "1"
     )
 
+    _iface_two_sided = bool(
+        getattr(stack, "interface_two_sided", False)
+        or os.environ.get("SOLARLAB_IFACE_TWOSIDED") == "1"
+    )
+
     # Selective / Schottky outer contact Robin BCs (Phase 3.3). Gated by the
     # active mode AND the stack supplying at least one finite S_* value.
     # When inactive the flag stays False and the Dirichlet pin remains the
@@ -1148,6 +1157,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         pf_gamma_p_face=pf_gamma_p_face if _has_field_mobility else None,
         has_field_mobility=_has_field_mobility,
         iface_plane_projection=_iface_plane_projection,
+        iface_two_sided=_iface_two_sided,
         S_n_L=_s_contact(stack.S_n_left) if _has_selective_contacts else None,
         S_p_L=_s_contact(stack.S_p_left) if _has_selective_contacts else None,
         S_n_R=_s_contact(stack.S_n_right) if _has_selective_contacts else None,
@@ -1362,6 +1372,39 @@ def _apply_interface_recombination(
         R_vol = R_s / mat.dx_cell[idx]
         dn[idx] -= R_vol
         dp[idx] -= R_vol
+        # Two-sided P-V (2026-06): mirror pair B — electrons from the LEFT
+        # slab (n[eval_p_idx]) with holes from the RIGHT slab (p[eval_n_idx])
+        # against its own detailed-balance reference n_L_eq*p_R_eq (Phase-E3
+        # caches), so R_B vanishes exactly at dark equilibrium. Active only
+        # where an InterfaceDefect set cross-carrier eval nodes; legacy
+        # single-node interfaces (eval == idx) are untouched. Clamped
+        # non-negative independently of the pair-A NOGEN clamp.
+        if mat.iface_two_sided and eval_n_idx != idx and mat.interface_n_L_eq:
+            # Floor at zero: pair B samples MINORITY densities at
+            # heterojunction-adjacent nodes, where SG transients can
+            # overshoot negative; a sign-flipping R_B destabilises Radau.
+            nB = max(float(n[eval_p_idx]), 0.0)
+            pB = max(float(p[eval_n_idx]), 0.0)
+            ni_sq_B = mat.interface_n_L_eq[k] * mat.interface_p_R_eq[k]
+            if proj:
+                enB = (float(phi[idx]) - float(phi[eval_p_idx])) / V_T_dev
+                epB = (float(phi[idx]) - float(phi[eval_n_idx])) / V_T_dev
+                enB = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, enB))
+                epB = max(-_IFACE_PROJ_EXP_CAP, min(_IFACE_PROJ_EXP_CAP, epB))
+                fnB = math.exp(enB)
+                fpB = math.exp(-epB)
+                nB *= fnB
+                pB *= fpB
+                ni_sq_B = ni_sq_B * fnB * fpB
+            R_B = interface_recombination(
+                nB, pB, ni_sq_B,
+                mat.interface_n1[k], mat.interface_p1[k],
+                v_n, v_p,
+            )
+            if R_B > 0.0:
+                R_vol_B = R_B / mat.dx_cell[idx]
+                dn[idx] -= R_vol_B
+                dp[idx] -= R_vol_B
 
 
 def assemble_rhs(

@@ -146,6 +146,10 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
             str(dev.get("flat_band_contacts", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        interface_two_sided=(
+            str(dev.get("interface_two_sided", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         S_n_left=_opt_S(dev.get("S_n_left")),
         S_p_left=_opt_S(dev.get("S_p_left")),
         S_n_right=_opt_S(dev.get("S_n_right")),
