@@ -266,3 +266,168 @@ def compute_interface_srh_on_state(
         out[base + 2] = -R_s2   # n_2s
         out[base + 3] = -R_s1   # p_2s
     return out
+
+
+# =====================================================================
+# QSS algebraic interface-plane closure (2026-06) — the "Sprint 7 Day 4+
+# QSS algebraic reduction" anticipated above, finally built.
+#
+# Instead of carrying the four plane densities as ODE state (whose explicit
+# TE coupling made Newton diverge at full thermal velocity and whose bounded
+# cross-flux flattened the CBO response — see module header), the plane
+# densities (n_s, p_s) are solved as a LOCAL steady-state flux balance per
+# RHS call:
+#
+#     S*(nb - 2*n_s) = R(n_s, p_s)        nb = bn_L*n_L + bn_R*n_R
+#     S*(pb - 2*p_s) = R(n_s, p_s)        pb = bp_L*p_L + bp_R*p_R
+#
+# with the P-V single-level rate on the plane densities. Plane band edges
+# are the FAVOURABLE edges (electrons: lower E_C of the two sides; holes:
+# higher E_V), so the plane gap Eg_s = E_C,s - E_V,s is the reduced
+# interface gap — a conduction-band cliff shrinks Eg_s and raises ni_s^2
+# exponentially (the SCAPS cliff mechanism). The b factors are the
+# Boltzmann barrier penalties from each side's node (already projected to
+# the plane potential by the caller) onto the favourable edge.
+#
+# Detailed balance is analytic: at dark equilibrium the SG zero-flux
+# condition makes node ratios exactly Boltzmann, both sides' projected
+# supplies agree, and n_s*p_s = ni_s^2 exactly -> R = 0 with no
+# cross-product reference needed.
+#
+# Structural properties the bulk-node formulations lacked:
+#   * supply limitation: R <= S*(nb + pb)/2 by construction (the measured
+#     HTL/PVK six-decade SRV insensitivity emerges as saturation);
+#   * trap-level visibility: plane minority densities are small enough
+#     that n1_s/p1_s compete in the denominator (E_t responds);
+#   * locally implicit: no sign-flipping explicit rates (the historical
+#     Radau wall).
+# =====================================================================
+
+from dataclasses import dataclass
+
+
+# Effusion supply velocity [m/s]: v_th/4 with the SCAPS default thermal
+# velocity 1e7 cm/s = 1e5 m/s. Supply is huge except where a band offset
+# blocks it, so results are weakly sensitive to the exact prefactor.
+S_SUPPLY = 2.5e4
+
+_QSS_MAX_NEWTON = 40
+_QSS_TOL = 1.0e-12
+_QSS_FLOOR = 1.0e-30
+
+
+@dataclass(frozen=True)
+class PlaneInterfaceParams:
+    """Build-time constants of one defect interface's plane closure.
+
+    Built from the POST-DOS-fold chi/Eg node arrays (the closure is part of
+    the parity configuration and activates only under
+    ``dos_band_potentials`` + reference-layer DOS data). Densities m^-3.
+    """
+    bn_L: float      # exp(-(chi_s - chi_L)/V_T) <= 1
+    bn_R: float
+    bp_L: float      # exp(-((chi+Eg)_L - (chi+Eg)_s)/V_T) <= 1
+    bp_R: float
+    ni_s_sq: float   # N_C,ref * N_V,ref * exp(-Eg_s/V_T)
+    n1_s: float      # trap level vs plane edges; n1_s*p1_s == ni_s_sq
+    p1_s: float
+
+
+def build_plane_params(
+    chi_L: float, chi_R: float, ceg_L: float, ceg_R: float,
+    Nc_ref: float, Nv_ref: float, chi_ref: float, E_t_eV: float,
+    V_T: float,
+) -> PlaneInterfaceParams:
+    """Derive the closure constants from folded band quantities.
+
+    ``chi_i`` are the folded chi values at the two interface-adjacent nodes;
+    ``ceg_i = chi_i + Eg_i`` (folded). ``chi_ref`` is the RAW reference-layer
+    chi (the fold shift is zero on the reference layer, so the trap energy
+    E_t below the reference CB needs no fold correction).
+    """
+    chi_s = max(chi_L, chi_R)            # electron edge: lower E_C
+    ceg_s = min(ceg_L, ceg_R)            # hole edge: higher E_V
+    eg_s = ceg_s - chi_s                 # reduced interface gap [eV]
+    def _b(d):                           # Boltzmann penalty, d >= 0
+        return math.exp(-min(max(d, 0.0), 60.0 * V_T) / V_T)
+    depth_n = E_t_eV - (chi_s - chi_ref)  # trap depth below plane E_C [eV]
+    # Clamp the level to the (reduced) plane gap: a trap pushed energetically
+    # outside the gap by a band offset acts as a band-edge state — emission
+    # cannot outrun the band-edge DOS. Without this, a deep cliff puts the
+    # trap above the plane E_C and n1_s = N_C*exp(+|depth|/V_T) explodes,
+    # suppressing the cliff recombination SCAPS resolves (measured: R 8
+    # orders low at dE_C = -1.0, V_oc arm collapsed 734 -> 284 mV).
+    depth_n = min(max(depth_n, 0.0), max(eg_s, 0.0))
+    # exponentials guarded: |args| <= ~60 in practice (Eg/V_T ~ 60 worst)
+    def _e(a):
+        return math.exp(max(-120.0, min(120.0, a)))
+    return PlaneInterfaceParams(
+        bn_L=_b(chi_s - chi_L),
+        bn_R=_b(chi_s - chi_R),
+        bp_L=_b(ceg_L - ceg_s),
+        bp_R=_b(ceg_R - ceg_s),
+        ni_s_sq=Nc_ref * Nv_ref * _e(-eg_s / V_T),
+        n1_s=Nc_ref * _e(-depth_n / V_T),
+        p1_s=Nv_ref * _e(-(eg_s - depth_n) / V_T),
+    )
+
+
+def plane_rate(n_s: float, p_s: float, prm: PlaneInterfaceParams,
+               v_n: float, v_p: float) -> float:
+    """P-V single-level rate on plane densities [m^-2 s^-1], NOGEN-clamped."""
+    num = n_s * p_s - prm.ni_s_sq
+    if num <= 0.0:
+        return 0.0
+    den = (n_s + prm.n1_s) / v_p + (p_s + prm.p1_s) / v_n
+    return num / den
+
+
+def solve_plane_densities(
+    n_L: float, n_R: float, p_L: float, p_R: float,
+    prm: PlaneInterfaceParams, v_n: float, v_p: float,
+    s_supply: float = S_SUPPLY,
+) -> tuple[float, float, float]:
+    """Solve the 2x2 plane closure; return ``(n_s, p_s, R)``.
+
+    Inputs are the adjacent node densities already Boltzmann-projected to
+    the plane POTENTIAL (caller applies the phi factors); the band-offset
+    penalties live in ``prm``. Newton in (ln n_s, ln p_s) — positivity by
+    construction, analytic Jacobian, damped steps. On the rare
+    non-convergence the last iterate is used with the NOGEN-clamped rate:
+    fail-bounded (R <= delivery flux), never fail-wild.
+    """
+    nb = prm.bn_L * max(n_L, 0.0) + prm.bn_R * max(n_R, 0.0)
+    pb = prm.bp_L * max(p_L, 0.0) + prm.bp_R * max(p_R, 0.0)
+    s2 = 2.0 * s_supply
+    ln_n = math.log(max(nb / 2.0, _QSS_FLOOR))
+    ln_p = math.log(max(pb / 2.0, _QSS_FLOOR))
+    for _ in range(_QSS_MAX_NEWTON):
+        n_s, p_s = math.exp(ln_n), math.exp(ln_p)
+        num = n_s * p_s - prm.ni_s_sq
+        den = (n_s + prm.n1_s) / v_p + (p_s + prm.p1_s) / v_n
+        R = num / den if num > 0.0 else 0.0
+        F1 = s_supply * nb - s2 * n_s - R
+        F2 = s_supply * pb - s2 * p_s - R
+        scale = s_supply * (nb + pb) + abs(R) + _QSS_FLOOR
+        if abs(F1) + abs(F2) < _QSS_TOL * scale:
+            break
+        if num > 0.0:
+            dR_dn = (p_s * den - num / v_p) / (den * den)
+            dR_dp = (n_s * den - num / v_n) / (den * den)
+        else:
+            dR_dn = dR_dp = 0.0
+        J11 = (-s2 - dR_dn) * n_s
+        J12 = (-dR_dp) * p_s
+        J21 = (-dR_dn) * n_s
+        J22 = (-s2 - dR_dp) * p_s
+        det = J11 * J22 - J12 * J21
+        if det == 0.0 or not math.isfinite(det):
+            break
+        d_ln_n = (-F1 * J22 + F2 * J12) / det
+        d_ln_p = (-F2 * J11 + F1 * J21) / det
+        d_ln_n = max(-30.0, min(30.0, d_ln_n))
+        d_ln_p = max(-30.0, min(30.0, d_ln_p))
+        ln_n += d_ln_n
+        ln_p += d_ln_p
+    n_s, p_s = math.exp(ln_n), math.exp(ln_p)
+    return n_s, p_s, plane_rate(n_s, p_s, prm, v_n, v_p)

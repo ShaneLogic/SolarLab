@@ -154,6 +154,10 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
             str(dev.get("interface_shared_occupancy", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        interface_plane_closure=(
+            str(dev.get("interface_plane_closure", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         S_n_left=_opt_S(dev.get("S_n_left")),
         S_p_left=_opt_S(dev.get("S_p_left")),
         S_n_right=_opt_S(dev.get("S_n_right")),
