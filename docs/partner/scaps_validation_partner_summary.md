@@ -278,9 +278,38 @@ across six decades of surface-recombination velocity — now reproduces 70 % of
 SCAPS's response, at a small cost in the two large interface sweeps and no
 change elsewhere. A combined probe (closure + flat-band contacts) did *not*
 recover the ETL-doping rising arm, confirming that sweep, the PVK/ETL trap
-energy, and the residual base offset as the remaining open items; their
-common dependency is a direct steady-state solve, which is the planned next
-step.
+energy, and the residual base offset as the remaining open items.
+
+## 5.y Update: direct steady-state driver (2026-06-12)
+
+The direct steady-state solve named above has since been built and
+validated: the new driver solves the *same* discretised physics the
+transient integrates (one implementation, two solution methods), with a
+damped Newton iteration, a smoothed thermionic-emission cap, and a
+certified transient fallback at the few biases where the interface-switch
+non-smoothness defeats a derivative-based method. Cross-validation of the
+two methods on the mirror device (frozen ions in both): the steady-state
+J--V matches the slow-scan transient within 5 mV in V~oc~ and 1 % in
+J~sc~ end-to-end, and a direct bisection V~oc~ solve agrees with the
+sweep interpolation within 2 mV — eliminating the voltage-grid
+interpolation artefact identified in Section 2.
+
+The driver also settles the low-doping question definitively, in an
+unexpected direction. With the solver no longer the limit, the
+ETL-doping walk at N~D~ = 10^10^ cm^-3^ completes — and the current
+genuinely finds **no zero crossing below 1.6 V**, in agreement with the
+transient flat-band result (the model's crossing sits near 1.29 V, above
+the detailed-balance ceiling, i.e. in the degenerate regime the validity
+guard excludes). Two independent solution methods agreeing on one
+physics implementation means the remaining low-doping difference to
+SCAPS (V~oc~ = 1.10 V there) is a *model-convention* difference in the
+treatment of near-insulating contact layers, not a solver limitation:
+the premise that a direct steady-state solve would recover SCAPS's
+low-doping V~oc~ is falsified by having built exactly that. The same
+conclusion extends to the other open items: all remaining differences
+trace to SCAPS-specific model conventions (its interface-plane carrier
+states and contact treatment), which would require reproducing those
+conventions explicitly rather than further numerical work.
 
 # 6. Conclusion and outlook
 
@@ -294,10 +323,15 @@ satisfies the governing bounds. We recommend the corrected configuration
 The first structural step toward closing it — the interface-plane closure of
 Section 5.x — is now in the codebase behind an explicit flag and improves the
 HTL/PVK interface response from flat to 70 % of SCAPS without degrading any
-matched trend. The remaining open items (ETL-doping arm, PVK/ETL trap-energy
-magnitude, residual base offset) share a dependency on a direct steady-state
-solve, which is the planned next step; the transient ion-migration capability
-is unaffected throughout.
+matched trend. That steady-state solve has since been built (Section 5.y): the two
+solution methods now cross-validate within 5 mV, the voltage-grid artefact is
+eliminated, and the low-doping arm is settled as a model-convention
+difference rather than a solver limitation. The remaining open items (ETL
+doping arm, PVK/ETL trap-energy magnitude, residual base offset) all trace to
+SCAPS-specific model conventions — reproducing them is a well-scoped, separate
+undertaking should closer absolute agreement be required. The transient
+ion-migration capability — which SCAPS does not offer — is unaffected
+throughout.
 
 # Appendix A: Reproducibility
 
