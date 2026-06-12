@@ -594,3 +594,80 @@ def compute_interface_srh_shared_on_state(
         out[base + 2] = -R * (n_2s / nS)
         out[base + 3] = -R * (p_2s / pS)
     return out
+
+
+def compute_interface_trap_charge(
+    iface_state: np.ndarray,
+    stack,
+    mat,
+) -> np.ndarray:
+    """Occupancy-derived interface trapped charge (P1 of scaps_mode,
+    2026-06) — the surviving E_t mechanism after three rate-algebra
+    falsifications.
+
+    Steady-state single-level occupancy on the plane-state densities:
+
+        f = (v_n*nS + v_p*p1S) / (v_n*(nS + n1S) + v_p*(pS + p1S))
+
+    (capture of electrons + emission of holes fill the trap; the standard
+    SRH occupancy with per-side trap-level sums). The trapped areal
+    charge MAGNITUDE q*N_t*(f - f_eq) is returned per interface [C/m^2];
+    the caller applies the sign convention (acceptor-like -1 / donor-like
+    +1 via ``MaterialArrays.iface_state_charge``) and converts to a
+    volumetric Poisson contribution at the interface node. ``f_eq`` is
+    evaluated on the dark-equilibrium state projections, so equilibrium
+    is exactly charge-neutral by construction.
+    """
+    from perovskite_sim.models.device import electrical_interface_defects
+
+    ifaces = electrical_interfaces(stack)
+    defects = electrical_interface_defects(stack)
+    n_iface = len(mat.interface_V_partition_2)
+    out = np.zeros(n_iface, dtype=float)
+    if n_iface == 0 or not ifaces:
+        return out
+    V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
+    V_total = float(mat.V_bi_eff)
+    CAP = 30.0
+
+    def _f(nS, pS, n1S, p1S, v_n, v_p):
+        den = v_n * (nS + n1S) + v_p * (pS + p1S)
+        if den <= 0.0:
+            return 0.0
+        return (v_n * nS + v_p * p1S) / den
+
+    for k in range(n_iface):
+        if k >= len(ifaces) or k >= len(defects):
+            break
+        defect = defects[k]
+        if defect is None or not getattr(defect, "N_t_cm2", None):
+            continue
+        v_n, v_p = ifaces[k]
+        if mat.interface_calibration_factor:
+            cf = float(mat.interface_calibration_factor[k])
+            v_n = v_n * cf
+            v_p = v_p * cf
+        if v_n == 0.0 and v_p == 0.0:
+            continue
+        base = 4 * k
+        nS = (max(float(iface_state[base + 0]), 0.0)
+              + max(float(iface_state[base + 2]), 0.0))
+        pS = (max(float(iface_state[base + 1]), 0.0)
+              + max(float(iface_state[base + 3]), 0.0))
+        n1S = (float(mat.interface_n1_L[k]) + float(mat.interface_n1_R[k])
+               if mat.interface_n1_L else 2.0 * float(mat.interface_n1[k]))
+        p1S = (float(mat.interface_p1_L[k]) + float(mat.interface_p1_R[k])
+               if mat.interface_p1_L else 2.0 * float(mat.interface_p1[k]))
+        f = _f(nS, pS, n1S, p1S, v_n, v_p)
+        # dark-equilibrium state projections -> f_eq (neutral reference)
+        part = float(mat.interface_V_partition_2[k])
+        v2 = max(-CAP, min(CAP, part * V_total / V_T_local))
+        v1 = max(-CAP, min(CAP, (1.0 - part) * V_total / V_T_local))
+        nS_eq = (float(mat.interface_n_R_eq[k]) * math.exp(-v1)
+                 + float(mat.interface_n_L_eq[k]) * math.exp(+v2))
+        pS_eq = (float(mat.interface_p_R_eq[k]) * math.exp(+v1)
+                 + float(mat.interface_p_L_eq[k]) * math.exp(-v2))
+        f_eq = _f(nS_eq, pS_eq, n1S, p1S, v_n, v_p)
+        N_t_m2 = float(defect.N_t_cm2) * 1.0e4      # cm^-2 -> m^-2
+        out[k] = 1.602176634e-19 * N_t_m2 * (f - f_eq)
+    return out
