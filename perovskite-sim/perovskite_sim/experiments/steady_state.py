@@ -99,7 +99,8 @@ def _enable_iface_states(mat: MaterialArrays) -> MaterialArrays:
         return mat
     return dataclasses.replace(mat, N_iface_state=n_av,
                                iface_state_v_th=_IFACE_STATE_V_TH,
-                               iface_state_live_proj=True)
+                               iface_state_live_proj=True,
+                               iface_state_shared_occ=True)
 
 
 def _ensure_iface_block(y: np.ndarray, mat: MaterialArrays) -> np.ndarray:

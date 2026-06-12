@@ -518,3 +518,79 @@ def compute_interface_te_fluxes_live(
             out[base + 1] += J_cross_p
             out[base + 3] -= J_cross_p
     return out
+
+
+def compute_interface_srh_shared_on_state(
+    iface_state: np.ndarray,
+    stack,
+    mat,
+) -> np.ndarray:
+    """Shared-occupancy single-trap P-V on the interface-plane STATE
+    densities (2026-06, P1 of scaps_mode).
+
+    The cross-pair form (``compute_interface_srh_on_state``) pairs
+    majority-side densities (n_1s*p_2s), so the trap-level densities
+    never compete and the E_t response is dead; on BULK-node samples the
+    shared-occupancy form collapsed the CBO trend (densities 6-13 orders
+    above n1/p1 — falsified). On the live-projected PLANE states — the
+    substrate SCAPS actually evaluates on — it is the correct object:
+
+        R = (nS*pS - refS) / ((nS + n1S)/v_p + (pS + p1S)/v_n)
+
+    with nS = n_1s + n_2s, pS = p_1s + p_2s, per-side trap-level
+    densities from the existing caches (interface_n1_L/R, p1_L/R), and
+    the reference evaluated on the DARK-EQUILIBRIUM STATE projections
+    (same V-partition formula as ``_compute_iface_state_dark_eq``) so
+    R = 0 exactly at the dark-equilibrium state block. Consumption is
+    split between the two faces by capture share (n_is/nS, p_is/pS) so
+    the sink layout stays compatible with the assemble_rhs drain mapping.
+    """
+    ifaces = electrical_interfaces(stack)
+    n_iface = len(mat.interface_V_partition_2)
+    out = np.zeros(4 * n_iface, dtype=float)
+    if n_iface == 0 or not ifaces:
+        return out
+    V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
+    V_total = float(mat.V_bi_eff)
+    CAP = 30.0
+    for k in range(n_iface):
+        if k >= len(ifaces):
+            break
+        v_n, v_p = ifaces[k]
+        if mat.interface_calibration_factor:
+            cf = float(mat.interface_calibration_factor[k])
+            v_n = v_n * cf
+            v_p = v_p * cf
+        if v_n == 0.0 and v_p == 0.0:
+            continue
+        base = 4 * k
+        n_1s = max(float(iface_state[base + 0]), 0.0)
+        p_1s = max(float(iface_state[base + 1]), 0.0)
+        n_2s = max(float(iface_state[base + 2]), 0.0)
+        p_2s = max(float(iface_state[base + 3]), 0.0)
+        nS = n_1s + n_2s
+        pS = p_1s + p_2s
+        if nS <= 0.0 or pS <= 0.0:
+            continue
+        # dark-equilibrium state projections (the dark-eq init values)
+        part = float(mat.interface_V_partition_2[k])
+        v2 = max(-CAP, min(CAP, part * V_total / V_T_local))
+        v1 = max(-CAP, min(CAP, (1.0 - part) * V_total / V_T_local))
+        n1s_eq = float(mat.interface_n_R_eq[k]) * math.exp(-v1)
+        p1s_eq = float(mat.interface_p_R_eq[k]) * math.exp(+v1)
+        n2s_eq = float(mat.interface_n_L_eq[k]) * math.exp(+v2)
+        p2s_eq = float(mat.interface_p_L_eq[k]) * math.exp(-v2)
+        refS = (n1s_eq + n2s_eq) * (p1s_eq + p2s_eq)
+        n1S = (float(mat.interface_n1_L[k]) + float(mat.interface_n1_R[k])
+               if mat.interface_n1_L else 2.0 * float(mat.interface_n1[k]))
+        p1S = (float(mat.interface_p1_L[k]) + float(mat.interface_p1_R[k])
+               if mat.interface_p1_L else 2.0 * float(mat.interface_p1[k]))
+        num = nS * pS - refS
+        if num <= 0.0:
+            continue                       # NOGEN clamp
+        R = num / ((nS + n1S) / v_p + (pS + p1S) / v_n)
+        out[base + 0] = -R * (n_1s / nS)
+        out[base + 1] = -R * (p_1s / pS)
+        out[base + 2] = -R * (n_2s / nS)
+        out[base + 3] = -R * (p_2s / pS)
+    return out

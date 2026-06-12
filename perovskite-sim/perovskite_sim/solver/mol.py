@@ -192,6 +192,11 @@ class MaterialArrays:
     # the states at equilibrium scale under illumination — measured).
     # Set by the steady-state driver together with iface_state_v_th.
     iface_state_live_proj: bool = False
+    # Shared-occupancy single-trap SRH on the state block (P1): the
+    # cross-pair form pairs majority sides and kills the E_t response;
+    # the shared-occupancy form on PLANE densities is SCAPS's actual
+    # formulation on the right substrate. Set by the SS driver.
+    iface_state_shared_occ: bool = False
     # Phase E3 Day 4-6 — band offsets per interface for cross-flux χ
     # step coupling (paper eq 15). ΔE_c = chi_R − chi_L (eV) is
     # positive when electron sees a barrier going right→left; the
@@ -1782,6 +1787,7 @@ def assemble_rhs(
     if mat.N_iface_state > 0 and sv.iface_state is not None:
         from perovskite_sim.physics.interface_plane import (
             compute_interface_srh_on_state,
+            compute_interface_srh_shared_on_state,
             compute_interface_te_fluxes,
             compute_interface_te_fluxes_live,
         )
@@ -1801,9 +1807,14 @@ def assemble_rhs(
                 v_th_eff=mat.iface_state_v_th,
                 v_cross_eff=mat.iface_state_v_th,
             )
-        srh_sinks = compute_interface_srh_on_state(
-            sv.iface_state, stack, mat,
-        )
+        if mat.iface_state_shared_occ:
+            srh_sinks = compute_interface_srh_shared_on_state(
+                sv.iface_state, stack, mat,
+            )
+        else:
+            srh_sinks = compute_interface_srh_on_state(
+                sv.iface_state, stack, mat,
+            )
         diface_state = np.zeros_like(sv.iface_state)
         for k in range(mat.N_iface_state):
             if k >= len(mat.interface_nodes):
