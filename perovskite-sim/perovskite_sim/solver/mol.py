@@ -177,6 +177,21 @@ class MaterialArrays:
     # len(interface_V_partition_2) when SOLARLAB_INTERFACE_PLANE_STATE=1
     # AND at least one interface has charge-balance partition cached.
     N_iface_state: int = 0
+    # TE coupling velocity for the interface-plane state block [m/s].
+    # The 1e-2 default is the Sprint-7 throttle that keeps the block's
+    # ODE timescale integrable by Radau (full thermal velocity makes the
+    # transient Jacobian too stiff at the diode knee). The steady-state
+    # driver overrides this to the FULL thermal velocity (1e5 m/s) on its
+    # own mats — in an algebraic Newton solve the stiffness constraint
+    # does not exist, which is what finally makes the SCAPS-style
+    # interface-plane states feasible (P1 of scaps_mode, 2026-06).
+    iface_state_v_th: float = 1.0e-2
+    # Live-projection fill fluxes for the state block (P1 of scaps_mode):
+    # targets from the LIVE adjacent node densities phi-projected to the
+    # plane instead of the E3 equilibrium-cache projections (which pin
+    # the states at equilibrium scale under illumination — measured).
+    # Set by the steady-state driver together with iface_state_v_th.
+    iface_state_live_proj: bool = False
     # Phase E3 Day 4-6 — band offsets per interface for cross-flux χ
     # step coupling (paper eq 15). ΔE_c = chi_R − chi_L (eV) is
     # positive when electron sees a barrier going right→left; the
@@ -1768,14 +1783,24 @@ def assemble_rhs(
         from perovskite_sim.physics.interface_plane import (
             compute_interface_srh_on_state,
             compute_interface_te_fluxes,
+            compute_interface_te_fluxes_live,
         )
         # Phase E3 Day 4-6 — pass v_cross_eff=v_th_eff to activate the
         # χ-step cross-interface TE flux (paper eq 15). Restores CBO
         # sensitivity by coupling n_1s ↔ n_2s and p_1s ↔ p_2s across
         # the χ step.
-        te_fluxes = compute_interface_te_fluxes(
-            mat, sv.iface_state, V_app=V_app, v_cross_eff=1.0e-2,
-        )
+        if mat.iface_state_live_proj:
+            te_fluxes = compute_interface_te_fluxes_live(
+                mat, sv.iface_state, n, p, phi,
+                v_th_eff=mat.iface_state_v_th,
+                v_cross_eff=mat.iface_state_v_th,
+            )
+        else:
+            te_fluxes = compute_interface_te_fluxes(
+                mat, sv.iface_state, V_app=V_app,
+                v_th_eff=mat.iface_state_v_th,
+                v_cross_eff=mat.iface_state_v_th,
+            )
         srh_sinks = compute_interface_srh_on_state(
             sv.iface_state, stack, mat,
         )
