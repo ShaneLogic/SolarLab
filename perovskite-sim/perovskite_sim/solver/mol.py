@@ -197,6 +197,11 @@ class MaterialArrays:
     # the shared-occupancy form on PLANE densities is SCAPS's actual
     # formulation on the right substrate. Set by the SS driver.
     iface_state_shared_occ: bool = False
+    # Occupancy-derived interface trapped charge in Poisson (P1): the
+    # surviving E_t mechanism after three rate-algebra falsifications.
+    # 0.0 = off (bit-identical); -1.0 = acceptor-like (charge -q*N_t*f),
+    # +1.0 = donor-like. Set by the SS driver.
+    iface_state_charge: float = 0.0
     # Phase E3 Day 4-6 — band offsets per interface for cross-flux χ
     # step coupling (paper eq 15). ΔE_c = chi_R − chi_L (eV) is
     # positive when electron sees a barrier going right→left; the
@@ -1625,6 +1630,22 @@ def assemble_rhs(
         p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
         P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
     )
+    # Occupancy-derived interface trapped charge (P1 of scaps_mode):
+    # areal q*N_t*(f - f_eq) at each defect interface, signed by the
+    # acceptor/donor convention, as a volumetric source at the node.
+    if (
+        mat.N_iface_state > 0
+        and mat.iface_state_charge != 0.0
+        and sv.iface_state is not None
+    ):
+        from perovskite_sim.physics.interface_plane import (
+            compute_interface_trap_charge,
+        )
+        _dQ = compute_interface_trap_charge(sv.iface_state, stack, mat)
+        rho = rho.copy()
+        for _k in range(min(mat.N_iface_state, len(mat.interface_nodes))):
+            _ix = mat.interface_nodes[_k]
+            rho[_ix] += mat.iface_state_charge * _dQ[_k] / mat.dx_cell[_ix]
     phi = solve_poisson_prefactored(
         mat.poisson_factor, rho, phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
     )
