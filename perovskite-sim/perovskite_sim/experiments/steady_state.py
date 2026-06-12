@@ -62,8 +62,11 @@ from perovskite_sim.experiments.jv_sweep import (
     compute_metrics,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.constants import Q
+from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.mol import (
     MaterialArrays,
+    _charge_density,
     assemble_rhs,
     build_material_arrays,
     run_transient,
@@ -217,6 +220,9 @@ def solve_steady_state(
         )
         if sol.success:
             y0 = sol.y[:, -1]
+    # Gummel phi-step: kill the dielectric-relaxation mode analytically
+    # before Newton sees the state (decisive in near-insulating layers)
+    y0 = _qfl_poisson_relax(x, mat, y0, V_app)
 
     pin = _pin_mask(mat, N)
     z_pin = np.zeros(2 * N)
@@ -328,10 +334,77 @@ def solve_steady_state(
             )
             if not sol.success:
                 break
-            z = np.log(np.maximum(sol.y[: n_unk, -1], _DENSITY_FLOOR))
+            y_rel = y0.copy()
+            y_rel[:n_unk] = sol.y[: n_unk, -1]
+            y_rel = _qfl_poisson_relax(x, mat, y_rel, V_app)
+            z = np.log(np.maximum(y_rel[: n_unk], _DENSITY_FLOOR))
             z[pin] = z_pin[pin]
         del stalled
     raise SteadyStateError(last_msg + " (transient assists exhausted)")
+
+def _qfl_poisson_relax(x, mat, y, V_app, *, tol_phi=1e-10, max_iter=60):
+    """Gummel phi-step: nonlinear Poisson at frozen quasi-Fermi levels.
+
+    In a near-insulating layer the dielectric-relaxation mode is
+    seconds-slow for the transient and produces the enormous phi-mediated
+    Jacobian coupling that defeats the coupled Newton (measured: singular
+    Jacobians / ridge fallback in the Nd_ETL=1e10 regime). This step does
+    that relaxation analytically: solve Poisson with the Boltzmann carrier
+    response n(phi) = n_k*exp((phi-phi_k)/V_T), p(phi) = n_k*exp(-...)
+    — quasi-Fermi levels exactly preserved — then update the densities to
+    the converged phi. The phi-Newton is unconditionally well-posed (the
+    operator and the response term are both negative-definite). Ions and
+    boundary phi stay fixed; boundary densities are untouched (delta-phi
+    is zero at the Dirichlet phi BCs).
+    """
+    from scipy.linalg import solve_banded
+
+    N = len(x)
+    n = np.maximum(y[:N].astype(float), 0.0)
+    p = np.maximum(y[N: 2 * N].astype(float), 0.0)
+    P = y[2 * N: 3 * N]
+    P_neg = y[3 * N: 4 * N] if getattr(mat, "has_dual_ions", False) else None
+    P_neg0 = mat.P_ion0_neg if P_neg is not None else None
+    fac = mat.poisson_factor
+    V_T = mat.V_T_device
+    rho0 = _charge_density(p, n, P, mat.P_ion0, mat.N_A, mat.N_D,
+                           P_neg=P_neg, P_neg0=P_neg0)
+    phi_k = solve_poisson_prefactored(fac, rho0, 0.0, mat.V_bi_bc - V_app)
+    rho_static = rho0 + Q * (n - p)          # phi-independent part
+    C, h_cell = fac.C, fac.h_cell
+
+    phi = phi_k.copy()
+    for _ in range(max_iter):
+        dlt = np.clip((phi - phi_k) / V_T, -60.0, 60.0)
+        n_phi = n * np.exp(dlt)
+        p_phi = p * np.exp(-dlt)
+        rho = rho_static + Q * (p_phi - n_phi)
+        F = (C[:-1] * (phi[:-2] - phi[1:-1])
+             + C[1:] * (phi[2:] - phi[1:-1])
+             + rho[1:-1] * h_cell)
+        ab = np.zeros((3, N - 2))
+        ab[0, 1:] = C[1:-1]                              # super
+        ab[1, :] = -(C[:-1] + C[1:]) - Q * (
+            n_phi[1:-1] + p_phi[1:-1]) / V_T * h_cell    # main
+        ab[2, :-1] = C[1:-1]                             # sub
+        dphi = solve_banded((1, 1), ab, -F)
+        dphi = np.clip(dphi, -0.5, 0.5)
+        phi[1:-1] += dphi
+        if float(np.max(np.abs(dphi))) < tol_phi:
+            break
+    dlt = np.clip((phi - phi_k) / V_T, -60.0, 60.0)
+    out = y.copy()
+    # Update only strictly-positive densities: a transient-overshoot
+    # negative (known Radau artifact at heterojunction nodes) must pass
+    # through untouched — flooring it to a hard zero makes the RHS
+    # evaluate catastrophically (measured res 2e-3 -> 5.5e+02), while the
+    # tiny negative itself is tolerated by assemble_rhs.
+    n_raw = y[:N]
+    p_raw = y[N: 2 * N]
+    out[:N] = np.where(n_raw > 0.0, n_raw * np.exp(dlt), n_raw)
+    out[N: 2 * N] = np.where(p_raw > 0.0, p_raw * np.exp(-dlt), p_raw)
+    return out
+
 
 def _transient_point_fallback(x, stack, mat, V_app, y_seed, *,
                               illuminated=True,
@@ -360,7 +433,7 @@ def _transient_point_fallback(x, stack, mat, V_app, y_seed, *,
         if not sol.success:
             raise SteadyStateError(
                 f"transient point-fallback failed at V={V_app:.4f}")
-        y = sol.y[:, -1]
+        y = _qfl_poisson_relax(x, mat, sol.y[:, -1], V_app)
         dydt = assemble_rhs(0.0, y, x, stack, mat,
                             illuminated=illuminated, V_app=V_app)
         n_ref = float(np.max(y[: 2 * N]))

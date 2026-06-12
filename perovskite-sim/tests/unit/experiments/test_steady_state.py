@@ -96,13 +96,16 @@ def test_direct_voc_consistent_with_jv():
 
 
 @pytest.mark.xfail(
-    reason="Nd_ETL=1e10 near-insulating regime: J(V) does not cross zero "
-    "below 1.6 V — the certified transient point-fallback cannot settle "
-    "this regime by definition (it is WHY the steady-state driver exists) "
-    "and the Newton path cannot yet converge it either. Needs the Gummel "
-    "decoupled iteration. The V*~0.858 interface-switch wall that blocked "
-    "the other two gates is RESOLVED (smoothed TE cap + certified "
-    "transient point-fallback, 2026-06-12).",
+    reason="PREMISE FALSIFIED (2026-06-12): with the Gummel phi-step in "
+    "place the voltage walk COMPLETES (points converge/certify) and J(V) "
+    "genuinely finds no zero below 1.6 V — the SS driver AGREES with the "
+    "transient flat-band result (honest no-crossing; the model's crossing "
+    "sits ~1.29 V, above the detailed-balance ceiling). Two independent "
+    "drivers agreeing means the remaining low-doping gap to SCAPS "
+    "(V_oc 1.10 there) is MODEL-level (near-insulating contact physics / "
+    "BCs), not solve-method — the premise that a direct steady-state "
+    "solve recovers SCAPS's low-doping V_oc is falsified by building "
+    "exactly that. scaps_engine-tier physics scope.",
     strict=False)
 def test_low_doping_etl_converges():
     """The payoff regime: Nd_ETL = 1e10 cm^-3 — the transient solver cannot
@@ -129,3 +132,39 @@ def test_nonconvergence_raises():
         solve_steady_state(x, stack, V_app=0.0, illuminated=True,
                            max_newton=1, tol=1e-30, tol_step=0.0,
                            tol_accept=0.0, assist_times=())
+
+
+# ----------------------- Gummel phi-step primitive --------------------------
+
+def test_qfl_relax_identity_at_converged_state():
+    """The phi-step is an identity at a Poisson-consistent converged state
+    (quasi-Fermi levels preserved, delta-phi ~ 0)."""
+    from perovskite_sim.experiments.steady_state import (
+        _TE_SOFTNESS, _qfl_poisson_relax)
+    from perovskite_sim.solver.mol import build_material_arrays
+    stack = _frozen_ion(_stack())
+    x = _grid(stack)
+    mat = dataclasses.replace(build_material_arrays(x, stack),
+                              te_softness=_TE_SOFTNESS)
+    r = solve_steady_state(x, stack, 0.5, illuminated=True, mat=mat)
+    y2 = _qfl_poisson_relax(x, mat, r.y, 0.5)
+    N = len(x)
+    np.testing.assert_allclose(y2[: 2 * N], r.y[: 2 * N], rtol=1e-9)
+
+
+def test_qfl_relax_preserves_negative_overshoots():
+    """A transient-overshoot negative density passes through untouched —
+    flooring it to hard zero made the RHS evaluate catastrophically
+    (measured res 2e-3 -> 5.5e+02 at the V=0.8625 fallback)."""
+    from perovskite_sim.experiments.steady_state import (
+        _TE_SOFTNESS, _qfl_poisson_relax)
+    from perovskite_sim.solver.mol import build_material_arrays
+    stack = _frozen_ion(_stack())
+    x = _grid(stack)
+    mat = dataclasses.replace(build_material_arrays(x, stack),
+                              te_softness=_TE_SOFTNESS)
+    r = solve_steady_state(x, stack, 0.3, illuminated=True, mat=mat)
+    y = r.y.copy()
+    y[5] = -1.0e10          # inject an overshoot-style negative
+    y2 = _qfl_poisson_relax(x, mat, y, 0.3)
+    assert y2[5] == y[5]
