@@ -67,6 +67,7 @@ from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.mol import (
     MaterialArrays,
     _charge_density,
+    _compute_iface_state_dark_eq,
     assemble_rhs,
     build_material_arrays,
     run_transient,
@@ -80,6 +81,44 @@ _DENSITY_FLOOR = 1.0e6   # m^-3 — log-space floor for the carrier unknowns
 # V*~0.858 wall — while shifting fluxes only within ~2% of the crossover
 # region. Transient experiments never see this.
 _TE_SOFTNESS = 0.02
+# Full thermal velocity for the interface-plane state block [m/s] in the
+# steady-state Newton (P1 of scaps_mode, 2026-06). The transient's 1e-2
+# throttle exists only because full velocity makes the ODE block too
+# stiff for Radau; an algebraic solve has no such constraint.
+_IFACE_STATE_V_TH = 1.0e5
+
+
+def _enable_iface_states(mat: MaterialArrays) -> MaterialArrays:
+    """Activate the SCAPS-style interface-plane state block on a built
+    mat: densities AT each heterointerface plane become true unknowns,
+    TE-coupled to the adjacent nodes, with the two-sided P-V
+    recombination evaluated on them (assemble_rhs's Phase-E3 block; the
+    bulk-sampled interface recombination disables automatically)."""
+    n_av = len(mat.interface_V_partition_2)
+    if n_av == 0:
+        return mat
+    return dataclasses.replace(mat, N_iface_state=n_av,
+                               iface_state_v_th=_IFACE_STATE_V_TH,
+                               iface_state_live_proj=True)
+
+
+def _ensure_iface_block(y: np.ndarray, mat: MaterialArrays) -> np.ndarray:
+    """Append the dark-equilibrium interface-state block when the seed
+    predates activation (e.g. solve_equilibrium built its own mat)."""
+    k = 4 * mat.N_iface_state
+    if k == 0:
+        return y
+    # StateVec layout: [n, p, P, (P_neg), iface(4K)] — block at the end.
+    # Without the block len(y) is 3N (single ion) or 4N (dual); with it,
+    # that plus 4K. Anything else is a caller bug — fail loudly.
+    N = mat.poisson_factor.N
+    base = 4 * N if getattr(mat, "has_dual_ions", False) else 3 * N
+    if len(y) == base + k:
+        return y
+    if len(y) == base:
+        return np.concatenate([y, _compute_iface_state_dark_eq(mat)])
+    raise SteadyStateError(
+        f"state length {len(y)} matches neither {base} nor {base + k}")
 _LN_STEP_CAP = 5.0       # max Newton step per unknown in ln-space (e^5 ~ 150x)
 _FD_EPS = 1.0e-7         # relative FD perturbation in ln-space
 
@@ -127,7 +166,7 @@ def _pin_mask(mat: MaterialArrays, N: int) -> np.ndarray:
 
 
 def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
-                 pin, z_pin, n_ref):
+                 pin, z_pin, n_ref, unk_idx):
     """Return F(z) over the 2N log-density unknowns.
 
     The full state vector is rebuilt from the template each call — only
@@ -147,10 +186,10 @@ def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
     def F(z):
         dens = np.exp(z)
         y = y_template.copy()
-        y[: 2 * N] = dens
+        y[unk_idx] = dens
         dydt = assemble_rhs(0.0, y, x, stack, mat,
                             illuminated=illuminated, V_app=V_app)
-        f = dydt[: 2 * N] / n_ref      # peak-density-relative rate [1/s]
+        f = dydt[unk_idx] / n_ref      # peak-density-relative rate [1/s]
         f[pin] = z[pin] - z_pin[pin]   # identity rows
         return f
 
@@ -170,6 +209,7 @@ def solve_steady_state(
     tol_accept: float = 0.5,
     max_newton: int = 60,
     assist_times: tuple[float, ...] = (1e-4, 1e-3, 1e-2),
+    iface_states: bool = False,
 ) -> SteadyStateResult:
     """Solve the carrier steady state at ``V_app`` with frozen ions.
 
@@ -208,37 +248,46 @@ def solve_steady_state(
     if mat is None:
         mat = dataclasses.replace(
             build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
+        if iface_states:
+            mat = _enable_iface_states(mat)
     if y0 is None:
         # Seed with a short transient AT THE TARGET voltage — the
         # quasi-neutral closed form sits far outside Newton's basin at
         # heterojunction nodes. The transient only seeds; the Newton
         # solve below owns convergence and raises on failure.
-        y0 = solve_equilibrium(x, stack)
+        y0 = _ensure_iface_block(solve_equilibrium(x, stack), mat)
         sol = run_transient(
             x, y0, (0.0, 1e-4), np.array([1e-4]), stack,
             illuminated=illuminated, V_app=V_app, mat=mat,
         )
         if sol.success:
             y0 = sol.y[:, -1]
+    else:
+        y0 = _ensure_iface_block(y0, mat)
     # Gummel phi-step: kill the dielectric-relaxation mode analytically
     # before Newton sees the state (decisive in near-insulating layers)
     y0 = _qfl_poisson_relax(x, mat, y0, V_app)
 
-    pin = _pin_mask(mat, N)
-    z_pin = np.zeros(2 * N)
+    # unknowns: carriers (first 2N) + interface-plane block (trailing 4K)
+    K = 4 * mat.N_iface_state
+    unk_idx = (np.r_[0: 2 * N, len(y0) - K: len(y0)]
+               if K else np.arange(2 * N))
+    n_unk = len(unk_idx)
+    pin = np.zeros(n_unk, dtype=bool)
+    pin[: 2 * N] = _pin_mask(mat, N)
+    z_pin = np.zeros(n_unk)
     z_pin[0], z_pin[N - 1] = np.log(mat.n_L), np.log(mat.n_R)
     z_pin[N], z_pin[2 * N - 1] = np.log(mat.p_L), np.log(mat.p_R)
 
-    z = np.log(np.maximum(y0[: 2 * N], _DENSITY_FLOOR))
+    z = np.log(np.maximum(y0[unk_idx], _DENSITY_FLOOR))
     z[pin] = z_pin[pin]
     n_ref = float(np.max(y0[: 2 * N]))
     F = _residual_fn(x, stack, mat, y0, V_app, illuminated, pin, z_pin,
-                     n_ref)
-    n_unk = 2 * N
+                     n_ref, unk_idx)
 
     def _done(z_fin, res_fin, step_inf, it):
         y = y0.copy()
-        y[:n_unk] = np.exp(z_fin)
+        y[unk_idx] = np.exp(z_fin)
         return SteadyStateResult(y=y, converged=True, residual=res_fin,
                                  step_inf=step_inf, iterations=it)
 
@@ -326,7 +375,7 @@ def solve_steady_state(
             # max_step capped per the near-flat-band Radau gotcha
             t_a = assist_times[attempt]
             y_cur = y0.copy()
-            y_cur[:n_unk] = np.exp(z_best)   # assist from the best iterate
+            y_cur[unk_idx] = np.exp(z_best)  # assist from the best iterate
             sol = run_transient(
                 x, y_cur, (0.0, t_a), np.array([t_a]), stack,
                 illuminated=illuminated, V_app=V_app, mat=mat,
@@ -335,9 +384,9 @@ def solve_steady_state(
             if not sol.success:
                 break
             y_rel = y0.copy()
-            y_rel[:n_unk] = sol.y[: n_unk, -1]
+            y_rel[unk_idx] = sol.y[unk_idx, -1]
             y_rel = _qfl_poisson_relax(x, mat, y_rel, V_app)
-            z = np.log(np.maximum(y_rel[: n_unk], _DENSITY_FLOOR))
+            z = np.log(np.maximum(y_rel[unk_idx], _DENSITY_FLOOR))
             z[pin] = z_pin[pin]
         del stalled
     raise SteadyStateError(last_msg + " (transient assists exhausted)")
@@ -421,7 +470,7 @@ def _transient_point_fallback(x, stack, mat, V_app, y_seed, *,
     attractor, residual ~14) and raises on failure — no silent fallback.
     """
     N = len(x)
-    y = y_seed
+    y = _ensure_iface_block(y_seed, mat)
     res = float("inf")
     # escalate: near V_oc the slowest carrier mode needs 10-100 ms
     for t_settle in t_settles:
@@ -460,6 +509,7 @@ def run_jv_sweep_ss(
     V_max: float = 1.25,
     n_points: int = 26,
     illuminated: bool = True,
+    iface_states: bool = False,
     progress=None,
 ) -> JVSweepSSResult:
     """Steady-state J-V: voltage continuation with warm starts.
@@ -470,6 +520,8 @@ def run_jv_sweep_ss(
     x = _grid_for(stack, N_grid)
     mat = dataclasses.replace(
         build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
+    if iface_states:
+        mat = _enable_iface_states(mat)
     V_targets = list(np.linspace(0.0, V_max, n_points))
     V_out, J_out = [], []
     y_prev = None
@@ -509,6 +561,7 @@ def solve_voc_ss(
     V_lo: float = 0.0,
     V_hi: float = 1.6,
     tol_v: float = 2.0e-4,
+    iface_states: bool = False,
 ) -> float:
     """Direct V_oc: bisection on the steady-state J(V) zero crossing.
 
@@ -519,6 +572,8 @@ def solve_voc_ss(
     x = _grid_for(stack, N_grid)
     mat = dataclasses.replace(
         build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
+    if iface_states:
+        mat = _enable_iface_states(mat)
 
     y_cache: dict[float, np.ndarray] = {}
 

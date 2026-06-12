@@ -431,3 +431,90 @@ def solve_plane_densities(
         ln_p += d_ln_p
     n_s, p_s = math.exp(ln_n), math.exp(ln_p)
     return n_s, p_s, plane_rate(n_s, p_s, prm, v_n, v_p)
+
+
+def compute_interface_te_fluxes_live(
+    mat,
+    iface_state: np.ndarray,
+    n: np.ndarray,
+    p: np.ndarray,
+    phi: np.ndarray,
+    *,
+    v_th_eff: float,
+    v_cross_eff: float,
+    V_T: float | None = None,
+) -> np.ndarray:
+    """Live-referenced variant of ``compute_interface_te_fluxes`` (2026-06,
+    P1 of scaps_mode).
+
+    The original projects the state targets from EQUILIBRIUM-cache
+    densities via the V-partition — an E3 approximation that under
+    illumination pins the plane states at equilibrium scale (measured:
+    ETL-side eq holes ~1e-4 m^-3 vs 1e22 live; SRH through the states
+    ~1e-15 A/m^2; V_oc insensitive to every interface parameter). Here the
+    targets are the LIVE adjacent node densities Boltzmann-projected to
+    the plane potential (the supply construction validated by the QSS
+    closure), so the plane carries quasi-Fermi-consistent densities and
+    the two-sided SRH on it becomes the real SCAPS-style channel.
+
+    Block convention (matches ``compute_interface_srh_on_state`` and the
+    bulk-drain mapping in ``assemble_rhs``): per interface k at node idx,
+    side 1 = right/ETL face fed from node idx+1, side 2 = left/PVK face
+    fed from node idx-1; components (n_1s, p_1s, n_2s, p_2s).
+    """
+    n_iface = len(mat.interface_V_partition_2)
+    if n_iface == 0:
+        return np.zeros(0, dtype=float)
+    V_T_local = V_T if V_T is not None else (
+        mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
+    )
+    out = np.zeros(4 * n_iface, dtype=float)
+    for k in range(n_iface):
+        if k >= len(mat.interface_nodes):
+            break
+        idx = int(mat.interface_nodes[k])
+        if idx <= 0 or idx >= len(phi) - 1:
+            continue
+        # phi-projection of the live neighbours onto the plane (node idx)
+        eR = (float(phi[idx]) - float(phi[idx + 1])) / V_T_local
+        eL = (float(phi[idx]) - float(phi[idx - 1])) / V_T_local
+        eR = max(-_EXP_CAP, min(_EXP_CAP, eR))
+        eL = max(-_EXP_CAP, min(_EXP_CAP, eL))
+        n_1s_t = max(float(n[idx + 1]), 0.0) * math.exp(eR)
+        p_1s_t = max(float(p[idx + 1]), 0.0) * math.exp(-eR)
+        n_2s_t = max(float(n[idx - 1]), 0.0) * math.exp(eL)
+        p_2s_t = max(float(p[idx - 1]), 0.0) * math.exp(-eL)
+        base = 4 * k
+        n_1s = float(iface_state[base + 0])
+        p_1s = float(iface_state[base + 1])
+        n_2s = float(iface_state[base + 2])
+        p_2s = float(iface_state[base + 3])
+        out[base + 0] = te_flux(n_1s_t, n_1s, v_th_eff)
+        out[base + 1] = te_flux(p_1s_t, p_1s, v_th_eff)
+        out[base + 2] = te_flux(n_2s_t, n_2s, v_th_eff)
+        out[base + 3] = te_flux(p_2s_t, p_2s, v_th_eff)
+        # cross-plane chi-step exchange — identical bounded form to the
+        # eq-referenced variant (factored-larger-exponential, arg <= 0)
+        if (
+            v_cross_eff > 0.0
+            and mat.interface_chi_step
+            and len(mat.interface_chi_step) > k
+        ):
+            dE_c = float(mat.interface_chi_step[k])
+            dE_g = float(mat.interface_Eg_step[k])
+            dE_v = dE_c - dE_g
+            ec_norm = dE_c / V_T_local
+            ev_norm = dE_v / V_T_local
+            if ec_norm >= 0.0:
+                J_cross_n = v_cross_eff * (n_2s - n_1s * math.exp(-ec_norm))
+            else:
+                J_cross_n = v_cross_eff * (n_2s * math.exp(ec_norm) - n_1s)
+            if ev_norm >= 0.0:
+                J_cross_p = v_cross_eff * (p_2s - p_1s * math.exp(-ev_norm))
+            else:
+                J_cross_p = v_cross_eff * (p_2s * math.exp(ev_norm) - p_1s)
+            out[base + 0] += J_cross_n
+            out[base + 2] -= J_cross_n
+            out[base + 1] += J_cross_p
+            out[base + 3] -= J_cross_p
+    return out
