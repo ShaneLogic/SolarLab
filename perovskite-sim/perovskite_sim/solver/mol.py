@@ -292,6 +292,14 @@ class MaterialArrays:
     # configuration's DOS data). See physics/interface_plane.py.
     iface_plane_closure: bool = False
     interface_plane_prm: tuple = ()
+    # Smooth TE-cap blend width (relative). 0.0 = exact hard cap
+    # (bit-identical legacy). Set ONLY by the steady-state driver
+    # (experiments/steady_state.py): the hard magnitude-min kink at
+    # heterointerface faces is the dominant non-smoothness blocking
+    # Newton there (measured 15x stall-residual reduction with the cap
+    # off at the V*~0.858 wall on scaps_mirror_v2). Transient
+    # experiments never set this — their physics is unchanged.
+    te_softness: float = 0.0
     # Override the dark/illuminated branch in ``assemble_rhs``: when True,
     # ``G_optical`` is used verbatim regardless of the ``illuminated`` kwarg.
     # Set by the lagged-G_rad fallback in ``_bake_radiative_reabsorption_step``
@@ -322,6 +330,8 @@ class MaterialArrays:
             d["A_star_n"] = self.A_star_n
             d["A_star_p"] = self.A_star_p
             d["T"] = self.T_device
+            if self.te_softness > 0.0:
+                d["te_softness"] = self.te_softness
         return d
 
 

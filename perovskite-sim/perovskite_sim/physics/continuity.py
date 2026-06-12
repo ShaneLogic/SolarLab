@@ -148,6 +148,22 @@ def carrier_continuity_rhs(
         A_star_n_arr = params["A_star_n"]
         A_star_p_arr = params["A_star_p"]
         T_val = params["T"]
+        # Smooth magnitude-min blend (steady-state driver only; see
+        # MaterialArrays.te_softness). 0.0 = exact hard cap below.
+        te_soft = params.get("te_softness", 0.0)
+
+        def _cap(J_sg, J_te):
+            if te_soft <= 0.0:
+                return J_te if abs(J_sg) > abs(J_te) else J_sg
+            t_arg = (abs(J_sg) - abs(J_te)) / (
+                te_soft * (abs(J_sg) + abs(J_te)) + 1e-300)
+            if t_arg > 40.0:
+                w = 1.0
+            elif t_arg < -40.0:
+                w = 0.0
+            else:
+                w = 1.0 / (1.0 + np.exp(-t_arg))
+            return w * J_te + (1.0 - w) * J_sg
         # Ensure flux arrays are writable (they may be views)
         J_n = J_n.copy()
         J_p = J_p.copy()
@@ -166,8 +182,7 @@ def carrier_continuity_rhs(
                     float(n[f_idx]), float(n[f_idx + 1]), float(delta_Ec), T_val,
                     float(A_star_n_arr[f_idx]),
                 )
-                if abs(J_n[f_idx]) > abs(J_te_n):
-                    J_n[f_idx] = J_te_n
+                J_n[f_idx] = _cap(float(J_n[f_idx]), float(J_te_n))
             # Hole VB offset. E_v = E_vac - chi - Eg, so
             # E_v_right - E_v_left = (chi_left + Eg_left) - (chi_right + Eg_right),
             # which is what's written below — the VB sign was already correct.
@@ -177,8 +192,7 @@ def carrier_continuity_rhs(
                     float(p[f_idx]), float(p[f_idx + 1]), float(delta_Ev), T_val,
                     float(A_star_p_arr[f_idx]),
                 )
-                if abs(J_p[f_idx]) > abs(J_te_p):
-                    J_p[f_idx] = J_te_p
+                J_p[f_idx] = _cap(float(J_p[f_idx]), float(J_te_p))
 
     R = total_recombination(
         n, p, params["ni_sq"], params["tau_n"], params["tau_p"],

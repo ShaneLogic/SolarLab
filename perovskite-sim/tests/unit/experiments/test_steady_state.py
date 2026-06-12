@@ -77,14 +77,6 @@ def test_illuminated_jsc_physical():
     assert 230.0 < J < 280.0  # ~25.7 mA/cm^2 = 257 A/m^2
 
 
-@pytest.mark.xfail(
-    reason="V*~0.858 wall on scaps_mirror_v2: path-dependent multi-stability "
-    "at the HTL/PVK interface-clamp switch — the transient orbits a "
-    "chattering attractor (residual pinned at 14 across 100us-10ms bursts) "
-    "while a slow ladder walk reaches a true fixed point (res 4.8e-3). "
-    "Full-Newton on the raw clamped F cannot cross it; next iteration: "
-    "smooth the NOGEN clamp or Gummel decoupling. 2026-06-12 diagnosis.",
-    strict=False)
 def test_ss_jv_matches_frozen_ion_transient():
     """Parity gate: same physics, two drivers, frozen ions both."""
     stack = _frozen_ion(_stack())
@@ -96,14 +88,6 @@ def test_ss_jv_matches_frozen_ion_transient():
     assert ss.metrics.J_sc == pytest.approx(tr.metrics_fwd.J_sc, rel=0.01)
 
 
-@pytest.mark.xfail(
-    reason="V*~0.858 wall on scaps_mirror_v2: path-dependent multi-stability "
-    "at the HTL/PVK interface-clamp switch — the transient orbits a "
-    "chattering attractor (residual pinned at 14 across 100us-10ms bursts) "
-    "while a slow ladder walk reaches a true fixed point (res 4.8e-3). "
-    "Full-Newton on the raw clamped F cannot cross it; next iteration: "
-    "smooth the NOGEN clamp or Gummel decoupling. 2026-06-12 diagnosis.",
-    strict=False)
 def test_direct_voc_consistent_with_jv():
     stack = _frozen_ion(_stack())
     ss = run_jv_sweep_ss(stack, N_grid=30, V_max=1.25, n_points=26)
@@ -112,12 +96,13 @@ def test_direct_voc_consistent_with_jv():
 
 
 @pytest.mark.xfail(
-    reason="V*~0.858 wall on scaps_mirror_v2: path-dependent multi-stability "
-    "at the HTL/PVK interface-clamp switch — the transient orbits a "
-    "chattering attractor (residual pinned at 14 across 100us-10ms bursts) "
-    "while a slow ladder walk reaches a true fixed point (res 4.8e-3). "
-    "Full-Newton on the raw clamped F cannot cross it; next iteration: "
-    "smooth the NOGEN clamp or Gummel decoupling. 2026-06-12 diagnosis.",
+    reason="Nd_ETL=1e10 near-insulating regime: J(V) does not cross zero "
+    "below 1.6 V — the certified transient point-fallback cannot settle "
+    "this regime by definition (it is WHY the steady-state driver exists) "
+    "and the Newton path cannot yet converge it either. Needs the Gummel "
+    "decoupled iteration. The V*~0.858 interface-switch wall that blocked "
+    "the other two gates is RESOLVED (smoothed TE cap + certified "
+    "transient point-fallback, 2026-06-12).",
     strict=False)
 def test_low_doping_etl_converges():
     """The payoff regime: Nd_ETL = 1e10 cm^-3 — the transient solver cannot
