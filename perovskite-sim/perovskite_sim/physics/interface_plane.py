@@ -442,6 +442,7 @@ def compute_interface_te_fluxes_live(
     *,
     v_th_eff: float,
     v_cross_eff: float,
+    V_app: float = 0.0,
     V_T: float | None = None,
 ) -> np.ndarray:
     """Live-referenced variant of ``compute_interface_te_fluxes`` (2026-06,
@@ -475,15 +476,35 @@ def compute_interface_te_fluxes_live(
         idx = int(mat.interface_nodes[k])
         if idx <= 0 or idx >= len(phi) - 1:
             continue
-        # phi-projection of the live neighbours onto the plane (node idx)
-        eR = (float(phi[idx]) - float(phi[idx + 1])) / V_T_local
-        eL = (float(phi[idx]) - float(phi[idx - 1])) / V_T_local
-        eR = max(-_EXP_CAP, min(_EXP_CAP, eR))
-        eL = max(-_EXP_CAP, min(_EXP_CAP, eL))
-        n_1s_t = max(float(n[idx + 1]), 0.0) * math.exp(eR)
-        p_1s_t = max(float(p[idx + 1]), 0.0) * math.exp(-eR)
-        n_2s_t = max(float(n[idx - 1]), 0.0) * math.exp(eL)
-        p_2s_t = max(float(p[idx - 1]), 0.0) * math.exp(-eL)
+        if getattr(mat, "iface_state_partition", False):
+            # V-partition x live-QFL merge (P1, 2026-06): the sub-grid
+            # interface band bending — per-side, per-carrier,
+            # bias-dependent, with OPPOSITE signs for majority/minority
+            # (the structure the uniform-suppression scan proved
+            # necessary) — applied to the LIVE node densities. E3 used
+            # this bending on equilibrium densities (wrong QFLs); the
+            # plain live projection used node potentials only (no
+            # bending). V_1 depletes ETL-side electrons / accumulates
+            # holes; V_2 the mirror on the PVK side.
+            V_tot = max(0.0, float(mat.V_bi_eff) - float(V_app))
+            part = float(mat.interface_V_partition_2[k])
+            v2 = max(-_EXP_CAP, min(_EXP_CAP, part * V_tot / V_T_local))
+            v1 = max(-_EXP_CAP, min(_EXP_CAP,
+                                    (1.0 - part) * V_tot / V_T_local))
+            n_1s_t = max(float(n[idx + 1]), 0.0) * math.exp(-v1)
+            p_1s_t = max(float(p[idx + 1]), 0.0) * math.exp(+v1)
+            n_2s_t = max(float(n[idx - 1]), 0.0) * math.exp(+v2)
+            p_2s_t = max(float(p[idx - 1]), 0.0) * math.exp(-v2)
+        else:
+            # phi-projection of the live neighbours onto the plane
+            eR = (float(phi[idx]) - float(phi[idx + 1])) / V_T_local
+            eL = (float(phi[idx]) - float(phi[idx - 1])) / V_T_local
+            eR = max(-_EXP_CAP, min(_EXP_CAP, eR))
+            eL = max(-_EXP_CAP, min(_EXP_CAP, eL))
+            n_1s_t = max(float(n[idx + 1]), 0.0) * math.exp(eR)
+            p_1s_t = max(float(p[idx + 1]), 0.0) * math.exp(-eR)
+            n_2s_t = max(float(n[idx - 1]), 0.0) * math.exp(eL)
+            p_2s_t = max(float(p[idx - 1]), 0.0) * math.exp(-eL)
         base = 4 * k
         n_1s = float(iface_state[base + 0])
         p_1s = float(iface_state[base + 1])
@@ -659,14 +680,18 @@ def compute_interface_trap_charge(
         p1S = (float(mat.interface_p1_L[k]) + float(mat.interface_p1_R[k])
                if mat.interface_p1_L else 2.0 * float(mat.interface_p1[k]))
         f = _f(nS, pS, n1S, p1S, v_n, v_p)
-        # dark-equilibrium state projections -> f_eq (neutral reference)
-        part = float(mat.interface_V_partition_2[k])
-        v2 = max(-CAP, min(CAP, part * V_total / V_T_local))
-        v1 = max(-CAP, min(CAP, (1.0 - part) * V_total / V_T_local))
-        nS_eq = (float(mat.interface_n_R_eq[k]) * math.exp(-v1)
-                 + float(mat.interface_n_L_eq[k]) * math.exp(+v2))
-        pS_eq = (float(mat.interface_p_R_eq[k]) * math.exp(+v1)
-                 + float(mat.interface_p_L_eq[k]) * math.exp(-v2))
+        # Neutral reference IN THE SAME GAUGE as the live states: plain
+        # bulk-equilibrium sums. The E3 partition projections explode
+        # their accumulation factors to ~1e33, forcing f_eq = 1 while the
+        # live f computes ~0 at shallow E_t — the resulting full-sheet
+        # artifact charge (q*N_t, measured -1.6e-3 C/m^2 at EVERY bias)
+        # reversed the terminal current. The live states at dark
+        # equilibrium settle near the phi-projected node densities, whose
+        # gauge the bulk-eq sums match to O(1).
+        nS_eq = (float(mat.interface_n_R_eq[k])
+                 + float(mat.interface_n_L_eq[k]))
+        pS_eq = (float(mat.interface_p_R_eq[k])
+                 + float(mat.interface_p_L_eq[k]))
         f_eq = _f(nS_eq, pS_eq, n1S, p1S, v_n, v_p)
         N_t_m2 = float(defect.N_t_cm2) * 1.0e4      # cm^-2 -> m^-2
         out[k] = 1.602176634e-19 * N_t_m2 * (f - f_eq)

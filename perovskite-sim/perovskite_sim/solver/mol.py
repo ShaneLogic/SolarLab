@@ -202,6 +202,12 @@ class MaterialArrays:
     # 0.0 = off (bit-identical); -1.0 = acceptor-like (charge -q*N_t*f),
     # +1.0 = donor-like. Set by the SS driver.
     iface_state_charge: float = 0.0
+    # V-partition x live-QFL merge for the state targets (P1): sub-grid
+    # interface band bending applied to the live node densities. The
+    # uniform-suppression scan falsified every scalar model — the
+    # bending's per-side/per-carrier/bias-dependent structure is the
+    # surviving form. Set by the SS driver.
+    iface_state_partition: bool = False
     # Phase E3 Day 4-6 — band offsets per interface for cross-flux χ
     # step coupling (paper eq 15). ΔE_c = chi_R − chi_L (eV) is
     # positive when electron sees a barrier going right→left; the
@@ -1821,6 +1827,7 @@ def assemble_rhs(
                 mat, sv.iface_state, n, p, phi,
                 v_th_eff=mat.iface_state_v_th,
                 v_cross_eff=mat.iface_state_v_th,
+                V_app=V_app,
             )
         else:
             te_fluxes = compute_interface_te_fluxes(
