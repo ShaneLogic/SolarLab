@@ -125,8 +125,13 @@ J~sc~ residuals.
 # 4. Sweep-by-sweep comparison
 
 The eleven sweeps are shown as overlays of SolarLab (solid blue) against SCAPS
-(dashed red), four figures of merit per panel, all in the corrected
-configuration. Grouped by outcome:
+(dashed red), four figures of merit per panel. **All figures and the Table 2
+scorecard below are the faithful-default mode** (`dos_band_potentials`, base
+V~oc~ 1.118 V — the device-realistic value of Section 5.z); the SCAPS-emulation
+mode (`het_recomb_despike`, Section 5.z) shifts the base to SCAPS's 1.168 V and
+tightens the trend magnitudes as tabulated there (e.g. CBO 80 to 85 %, bulk
+N~t~ 11 to 69 %, interface N~t~ 53 to 72 %) without changing any sweep
+direction. Grouped by outcome (faithful default):
 
 **Matched (six).** The ETL/PVK conduction-band-offset sweep (Figure 1)
 reproduces the SCAPS recombination cliff and recovery with 80 % of the SCAPS
@@ -197,8 +202,10 @@ detailed-balance-ceiling guard.](../figures/scaps_validation/sweep_Nd_ETL.png){w
 | 10 | PVK-VB bulk N~t~ | 4.4 mV | 11 mV | partial (41 %) |
 | 11 | PVK-CB bulk N~t~ | 4.3 mV | 39 mV | open (direction match, 11 %) |
 
-Table 2. Per-sweep scorecard, corrected configuration (V~oc~ ranges over the
-physically well-posed points).
+Table 2. Per-sweep scorecard, **faithful-default mode** (V~oc~ ranges over the
+physically well-posed points). The SCAPS-emulation mode of Section 5.z tightens
+these magnitudes (CBO 85 %, bulk N~t~ 69 %, interface N~t~ 72 %) and matches the
+base V~oc~ to within 1 mV; all sweep directions are identical in both modes.
 
 # 5. Analysis
 
