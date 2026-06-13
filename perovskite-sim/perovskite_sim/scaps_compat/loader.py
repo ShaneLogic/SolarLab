@@ -158,6 +158,7 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
             str(dev.get("interface_plane_closure", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
         S_n_left=_opt_S(dev.get("S_n_left")),
         S_p_left=_opt_S(dev.get("S_p_left")),
         S_n_right=_opt_S(dev.get("S_n_right")),

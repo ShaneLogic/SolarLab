@@ -202,6 +202,11 @@ class MaterialArrays:
     # 0.0 = off (bit-identical); -1.0 = acceptor-like (charge -q*N_t*f),
     # +1.0 = donor-like. Set by the SS driver.
     iface_state_charge: float = 0.0
+    # Heterointerface bulk-recombination de-spike fraction (SCAPS-emulation,
+    # default 0.0 = off). See DeviceStack.het_recomb_despike.
+    het_recomb_despike: float = 0.0
+    # Heterointerface node indices (where a band offset produces the spike).
+    het_recomb_nodes: tuple[int, ...] = ()
     # V-partition x live-QFL merge for the state targets (P1): sub-grid
     # interface band bending applied to the live node densities. The
     # uniform-suppression scan falsified every scalar model — the
@@ -363,6 +368,9 @@ class MaterialArrays:
             d["T"] = self.T_device
             if self.te_softness > 0.0:
                 d["te_softness"] = self.te_softness
+        if self.het_recomb_despike > 0.0 and self.het_recomb_nodes:
+            d["het_recomb_despike"] = self.het_recomb_despike
+            d["het_recomb_nodes"] = self.het_recomb_nodes
         return d
 
 
@@ -1246,6 +1254,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_p1_R=tuple(interface_p1_R_list),
         iface_plane_closure=_iface_plane_closure,
         interface_plane_prm=tuple(interface_plane_prm_list),
+        het_recomb_despike=float(getattr(stack, "het_recomb_despike", 0.0)),
+        het_recomb_nodes=(
+            tuple(iface_list)
+            if float(getattr(stack, "het_recomb_despike", 0.0)) > 0.0
+            else ()
+        ),
         interface_V_partition_2=tuple(interface_V_partition_2_list),
         interface_n_L_eq=tuple(interface_n_L_eq_list),
         interface_p_L_eq=tuple(interface_p_L_eq_list),

@@ -160,6 +160,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             str(dev.get("interface_plane_closure", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
         S_n_left=S_n_left,
         S_p_left=S_p_left,
         S_n_right=S_n_right,
