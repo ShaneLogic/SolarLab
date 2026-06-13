@@ -194,8 +194,26 @@ def carrier_continuity_rhs(
                 )
                 J_p[f_idx] = _cap(float(J_p[f_idx]), float(J_te_p))
 
+    # Heterointerface bulk-recombination de-spike (SCAPS-emulation, off by
+    # default). The band offset produces a Boltzmann carrier spike at the
+    # junction node that double-counts against the interface SRH channel;
+    # blend those nodes' recomb density toward the geometric mean of the
+    # neighbours by the de-spike fraction. Transport (n,p) is untouched —
+    # only the density fed to the BULK recombination rate is corrected.
+    _despike = params.get("het_recomb_despike", 0.0)
+    if _despike > 0.0:
+        n_rec = np.array(n, dtype=float, copy=True)
+        p_rec = np.array(p, dtype=float, copy=True)
+        for _i in params.get("het_recomb_nodes", ()):
+            if 0 < _i < len(n_rec) - 1:
+                nb_n = np.sqrt(max(n[_i - 1], 1.0) * max(n[_i + 1], 1.0))
+                nb_p = np.sqrt(max(p[_i - 1], 1.0) * max(p[_i + 1], 1.0))
+                n_rec[_i] = nb_n + (n[_i] - nb_n) * (1.0 - _despike)
+                p_rec[_i] = nb_p + (p[_i] - nb_p) * (1.0 - _despike)
+    else:
+        n_rec, p_rec = n, p
     R = total_recombination(
-        n, p, params["ni_sq"], params["tau_n"], params["tau_p"],
+        n_rec, p_rec, params["ni_sq"], params["tau_n"], params["tau_p"],
         params["n1"], params["p1"], params["B_rad"], params["C_n"], params["C_p"]
     )
 

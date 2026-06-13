@@ -121,6 +121,19 @@ class DeviceStack:
     # ``dos_band_potentials`` + reference-layer DOS data; takes precedence
     # over the other interface formulations. Default False bit-identical.
     interface_plane_closure: bool = False
+    # Heterointerface bulk-recombination de-spike (2026-06, SCAPS-emulation,
+    # default 0.0 = OFF / more physically faithful). The VB/CB band offset
+    # produces a Boltzmann carrier spike (exp(dE/kT)) at the junction NODE
+    # that feeds BULK Auger/radiative using the absorber's coefficients,
+    # while the SAME interface loss is counted by interface SRH — a partial
+    # double-count, amplified by the (correct) effective-DOS fold. SCAPS,
+    # lacking the DOS fold + with its own interface treatment, under-counts
+    # this. Setting 0<f<=1 blends the heterointerface-node recomb density
+    # toward the geometric mean of neighbours by fraction f, emulating
+    # SCAPS's lower interface recombination. Default 0.0 keeps SolarLab's
+    # more-faithful (higher-Auger) base. Calibrated value for scaps_mirror
+    # parity ~0.56. See project_scaps_root_cause_reanalysis memory.
+    het_recomb_despike: float = 0.0
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().

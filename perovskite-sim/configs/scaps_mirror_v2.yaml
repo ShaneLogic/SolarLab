@@ -37,6 +37,7 @@
 #     keys, which masked the calibration_factor unit-error class.
 
 device:
+  het_recomb_despike: 0.53   # SCAPS-emulation: de-spike heterointerface bulk-Auger double-count (base 1.121->1.168)
   V_bi: 1.30
   Phi: 2.5e21
   mode: fast
