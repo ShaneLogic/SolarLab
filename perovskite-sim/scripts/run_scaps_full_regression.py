@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
+from perovskite_sim.experiments.steady_state import solve_voc_ss, SteadyStateError
 from perovskite_sim.scaps_compat import load_scaps_yaml
 from perovskite_sim.sweeps.device_parameter_sweep import SweepPoint, apply_sweep_point
 
@@ -98,20 +99,40 @@ from run_scaps_validation import _radiative_voc_ceiling  # noqa: E402
 
 def run_sheet(sheet, updates_fn, ref_points):
     base = load_scaps_yaml(CFG_PATH)
+    iface = os.environ.get("SOLARLAB_IFACE_STATES", "") == "1"
+    pts = ref_points
+    if iface:
+        # SS-driver + interface-plane states is ~5-7 min per V_oc; the
+        # direction + range verdict needs only the endpoints + a midpoint,
+        # so sub-sample the reference sheet (env override SOLARLAB_IFACE_NPTS).
+        npts = int(os.environ.get("SOLARLAB_IFACE_NPTS", "3"))
+        if len(ref_points) > npts:
+            idx = [round(i * (len(ref_points) - 1) / (npts - 1)) for i in range(npts)]
+            pts = [ref_points[i] for i in sorted(set(idx))]
     rows = []
-    for pt in ref_points:
+    for pt in pts:
         x = float(pt["x"])
         sp = SweepPoint("p", sheet, f"{x:.3e}", updates_fn(x))
         try:
             swept = apply_sweep_point(base, sp)
-            m = run_jv_sweep(swept, **JV_KWARGS).metrics_fwd
-            bracketed = m.voc_bracketed
-            if bracketed:
-                ceiling = _radiative_voc_ceiling(swept, max(float(m.J_sc), 1.0))
-                if m.V_oc >= ceiling:
-                    print(f"    x={x:.2e} EXCLUDED V_oc={m.V_oc:.3f} >= ceiling {ceiling:.3f}")
-                    bracketed = False
-            rows.append((x, m.V_oc, bracketed, pt["Voc_V"]))
+            if iface:
+                # interface-plane states via the steady-state driver — the
+                # path that flips Nd_ETL / HTL-PVK directions (bulk-node
+                # sampling is direction-blind on those interface sweeps).
+                voc = solve_voc_ss(swept, N_grid=30, iface_states=True)
+                rows.append((x, voc, True, pt["Voc_V"]))
+            else:
+                m = run_jv_sweep(swept, **JV_KWARGS).metrics_fwd
+                bracketed = m.voc_bracketed
+                if bracketed:
+                    ceiling = _radiative_voc_ceiling(swept, max(float(m.J_sc), 1.0))
+                    if m.V_oc >= ceiling:
+                        print(f"    x={x:.2e} EXCLUDED V_oc={m.V_oc:.3f} >= ceiling {ceiling:.3f}")
+                        bracketed = False
+                rows.append((x, m.V_oc, bracketed, pt["Voc_V"]))
+        except SteadyStateError:
+            rows.append((x, float("nan"), False, pt["Voc_V"]))
+            print(f"    x={x:.2e} SS no-cross (excluded)")
         except Exception as e:
             rows.append((x, float("nan"), False, pt["Voc_V"]))
             print(f"    x={x:.2e} FAILED {type(e).__name__}: {e}")
@@ -163,7 +184,8 @@ def main():
     ref = json.loads(REF_PATH.read_text())
     proj = os.environ.get("SOLARLAB_IFACE_PROJ", "") == "1"
     dos = os.environ.get("SOLARLAB_DOS_BAND", "") == "1"
-    print(f"PROJ={'ON' if proj else 'off'}  DOS={'ON' if dos else 'off'}  config={CFG_PATH.name}\n")
+    iface = os.environ.get("SOLARLAB_IFACE_STATES", "") == "1"
+    print(f"PROJ={'ON' if proj else 'off'}  DOS={'ON' if dos else 'off'}  IFACE_STATES={'ON' if iface else 'off'}  config={CFG_PATH.name}\n")
     summary = {}
     t0 = time.time()
     for sheet, (fn, note) in SHEET_MAP.items():
