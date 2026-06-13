@@ -311,14 +311,62 @@ trace to SCAPS-specific model conventions (its interface-plane carrier
 states and contact treatment), which would require reproducing those
 conventions explicitly rather than further numerical work.
 
+## 5.z Update: the base-V~oc~ absolute — root cause and the faithful-vs-emulation choice (2026-06-13)
+
+The residual base-V~oc~ offset (SolarLab below SCAPS) was attributed throughout
+this work to *interface recombination*. A direct decomposition of the
+recombination current at the operating point overturns that attribution: the
+dominant loss is **Auger recombination** (about 105 A/m$^2$ of the recombination
+current, versus about 26 A/m$^2$ for the interface channel and a negligible bulk SRH
+contribution). The base offset is therefore an *absorber* effect, not an
+interface effect.
+
+The Auger loss concentrates at the HTL/PVK heterojunction. The 0.18 eV
+valence-band offset there produces a Boltzmann hole accumulation
+(`exp(ΔE_v/kT)` $\approx 10^3$) at the junction; since the Auger rate scales as
+`c_p · p² · n`, that accumulation dominates the absorber's Auger loss. Both
+codes use the identical Auger coefficient and rate formula (audit-confirmed),
+so the difference is the *carrier density*: SolarLab's effective-density-of-
+states correction (`dos_band_potentials`, the term that fixed the larger
+quasi-Fermi-level discrepancy) raises the interface hole density that SCAPS,
+lacking that correction, does not carry. SolarLab consequently models a larger —
+and arguably more complete — Auger loss.
+
+This produces a genuine, non-removable tension between two legitimate goals:
+
+| objective | base V~oc~ | basis |
+|---|---|---|
+| **Most-faithful physics** (default) | 1.12–1.13 V | effective-DOS transport + interface-plane recombination; sits at the **measured-device median** (1.05–1.13 V) for this MAPbI~3~/spiro/TiO~2~ stack |
+| **SCAPS reproduction** (explicit flag) | 1.168 V | reproduces SCAPS by emulating its interface-Auger convention |
+
+Five independent fit-free configurations all place SolarLab's faithful base at
+1.12–1.13 V; SCAPS's 1.168 V is reachable only by an explicit emulation setting.
+SCAPS's value sits at the published champion ceiling rather than the device
+median, so SolarLab's lower base is the more device-realistic figure. We
+therefore ship **both** modes: the faithful physics as the default, and a
+flag-gated SCAPS-emulation correction (`het_recomb_despike`) for partner
+cross-validation, which recovers the SCAPS base to within 1 mV and, as a
+by-product, tightens five trend magnitudes (CBO 80→85 %, bulk N~t~ 11→69 %,
+interface N~t~ 53→72 %).
+
+The **trends** reproduce faithfully in both modes — every sweep direction
+matches, with magnitudes at 53–87 % of SCAPS through the interface-plane
+sampling; the residual magnitude gap is SCAPS's specific thermionic-emission /
+Pauwels-Vanhoutte interface convention. Only the base *absolute* requires the
+faithful-versus-emulation choice above.
+
 # 6. Conclusion and outlook
 
-With the effective-DOS transport correction the base operating point agrees with
-SCAPS to −50 mV in V~oc~ (from −96 mV), +0.9 pp in FF, and −2 % in J~sc~, and
-six of the eleven parameter-sweep trends match with two partial. The three open
-trends share a single named mechanism — the interface-recombination channel —
-rather than being independent defects, and every physically well-posed result
-satisfies the governing bounds. We recommend the corrected configuration
+With the effective-DOS transport correction every sweep trend reproduces in
+direction, six of eleven matching SCAPS in magnitude with the remainder partial,
+and the base operating point agreeing with SCAPS to −50 mV in V~oc~ in the
+faithful default mode (to within 1 mV in the SCAPS-emulation mode of Section
+5.z). The base offset is now root-caused to absorber Auger recombination at the
+HTL/PVK band offset (Section 5.z), not the interface channel as previously
+believed; SolarLab's faithful base sits at the measured-device median while
+SCAPS sits at the champion ceiling, so the two are reconciled by an explicit,
+flag-gated emulation rather than by degrading either model. Every physically
+well-posed result satisfies the governing bounds. We recommend the corrected configuration
 (`dos_band_potentials` on the SCAPS-mirror device) as the validated baseline.
 The first structural step toward closing it — the interface-plane closure of
 Section 5.x — is now in the codebase behind an explicit flag and improves the
