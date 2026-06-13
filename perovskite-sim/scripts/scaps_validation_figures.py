@@ -25,7 +25,9 @@ plt.rcParams["axes.unicode_minus"] = True
 import numpy as np
 import openpyxl
 
+import os
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
+from perovskite_sim.experiments.steady_state import run_jv_sweep_ss, SteadyStateError
 from perovskite_sim.scaps_compat import load_scaps_yaml
 from perovskite_sim.sweeps.device_parameter_sweep import SweepPoint, apply_sweep_point
 
@@ -73,11 +75,17 @@ def run_sl(sheet, fn, xs):
     base = load_scaps_yaml(CFG)
     sl = {"x": [], "Voc": [], "Jsc": [], "FF": [], "PCE": []}
     ex = {"x": [], "Voc": [], "Jsc": [], "FF": [], "PCE": []}  # ceiling-excluded
+    iface = os.environ.get("SOLARLAB_IFACE_STATES", "") == "1"
     for x in xs:
         sp = SweepPoint("p", sheet, f"{x:.3e}", fn(x))
         try:
             swept = apply_sweep_point(base, sp)
-            m = run_jv_sweep(swept, **JV).metrics_fwd
+            if iface:
+                # full-metric interface-plane path (steady-state driver):
+                # the V_oc-direction-correct mode; ~5-10 min per point.
+                m = run_jv_sweep_ss(swept, N_grid=30, iface_states=True).metrics
+            else:
+                m = run_jv_sweep(swept, **JV).metrics_fwd
             if not m.voc_bracketed:
                 continue
             # Degenerate pseudo-crossings (V_oc at/above the detailed-balance
@@ -88,7 +96,7 @@ def run_sl(sheet, fn, xs):
             dst["x"].append(x); dst["Voc"].append(m.V_oc)
             dst["Jsc"].append(m.J_sc / 10.0)  # A/m^2 -> mA/cm^2
             dst["FF"].append(m.FF * 100.0); dst["PCE"].append(m.PCE * 100.0)
-        except Exception:
+        except (SteadyStateError, Exception):
             continue
     return sl, ex
 
