@@ -76,6 +76,11 @@ def run_sl(sheet, fn, xs):
     sl = {"x": [], "Voc": [], "Jsc": [], "FF": [], "PCE": []}
     ex = {"x": [], "Voc": [], "Jsc": [], "FF": [], "PCE": []}  # ceiling-excluded
     iface = os.environ.get("SOLARLAB_IFACE_STATES", "") == "1"
+    npts = int(os.environ.get("SOLARLAB_FIG_NPTS", "0"))
+    if npts and len(xs) > npts:
+        xs = list(xs)
+        idx = sorted(set(round(i*(len(xs)-1)/(npts-1)) for i in range(npts)))
+        xs = [xs[i] for i in idx]
     for x in xs:
         sp = SweepPoint("p", sheet, f"{x:.3e}", fn(x))
         try:
