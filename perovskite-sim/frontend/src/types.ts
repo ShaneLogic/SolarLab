@@ -114,6 +114,14 @@ export interface DeviceConfig {
     S_p_left?: number | null
     S_n_right?: number | null
     S_p_right?: number | null
+    // SCAPS-validation physics flags — device-level, FULL-tier-only.
+    // Mirror load_device_from_yaml / stack_from_dict. Absent → off / 0.0
+    // (legacy default, bit-identical). See perovskite-sim/CLAUDE.md.
+    dos_band_potentials?: boolean
+    flat_band_contacts?: boolean
+    interface_plane_closure?: boolean
+    interface_plane_projection?: boolean
+    het_recomb_despike?: number
   }
   layers: LayerConfig[]
 }

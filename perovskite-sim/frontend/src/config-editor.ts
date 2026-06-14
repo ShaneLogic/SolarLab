@@ -331,6 +331,39 @@ function renderRobinContacts(config: DeviceConfig): string {
 }
 
 /**
+ * FULL-tier-only SCAPS-validation physics panel (device-level). Surfaces the
+ * five flags the YAML loader and ``stack_from_dict`` both parse — DOS band
+ * potentials, flat-band contacts, interface-plane closure / projection, and
+ * the heterointerface bulk-Auger de-spike fraction — so a user loading a
+ * parity preset (e.g. scaps_mirror_v2) can see and round-trip them instead
+ * of having them silently stripped at the inline-device boundary.
+ */
+function renderScapsPhysics(config: DeviceConfig): string {
+  const d = config.device
+  const help = '<p class="param-help">SCAPS-validation physics (device-level). <strong>DOS band potentials</strong> adds the V<sub>T</sub>·ln(N<sub>C</sub>/N<sub>V</sub>) quasi-Fermi step at DOS-contrast heterojunctions (closes the V<sub>oc</sub> gap; needs per-layer N<sub>C</sub>/N<sub>V</sub>). <strong>Flat-band contacts</strong> uses SCAPS finite-S metal contacts. <strong>Interface-plane closure / projection</strong> evaluate interface recombination on the band-bending-suppressed plane. <strong>De-spike f</strong> blends the heterointerface-node density toward the neighbour geometric mean in the bulk Auger rate (0 = off, 0.53 = SCAPS-emulation).</p>'
+  const cb = (id: string, label: string, on: boolean, title: string): string => `
+          <label class="param" title="${title}">
+            <span class="param-label">${label}</span>
+            <input type="checkbox" id="${id}"${on ? ' checked' : ''}>
+          </label>`
+  return `
+      <details class="param-group">
+        <summary><h5>SCAPS-validation physics</h5></summary>
+        ${help}
+        <div class="param-grid">
+          ${cb('dev-dos', 'DOS band potentials', !!d.dos_band_potentials, 'V_T·ln(DOS) quasi-Fermi step (YAML dos_band_potentials)')}
+          ${cb('dev-flatband', 'Flat-band contacts', !!d.flat_band_contacts, 'SCAPS finite-S metal contacts (YAML flat_band_contacts)')}
+          ${cb('dev-iface-closure', 'Interface-plane closure', !!d.interface_plane_closure, 'QSS plane-density interface SRH (YAML interface_plane_closure)')}
+          ${cb('dev-iface-proj', 'Interface-plane projection', !!d.interface_plane_projection, 'phi-projected interface densities (YAML interface_plane_projection)')}
+          <label class="param" title="Heterointerface bulk-Auger de-spike fraction (YAML het_recomb_despike). 0 = off; 0.53 = SCAPS-emulation.">
+            <span class="param-label"><span class="sym">de-spike <i>f</i></span></span>
+            ${numAttr('dev-despike', d.het_recomb_despike, { placeholder: '0 — off', title: 'het_recomb_despike (0 = off, 0.53 = SCAPS-emulation)' })}
+          </label>
+        </div>
+      </details>`
+}
+
+/**
  * Phase E1.8 — FULL-tier-only per-heterointerface SCAPS defect panel.
  * Collapsed ``<details>`` placed below the Robin contacts panel; one
  * row per electrical heterointerface (HTL/PVK, PVK/ETL, …) auto-derived
@@ -436,10 +469,16 @@ export function renderDeviceEditor(
   // the panel is device-level.
   const interfaceDefectsHtml =
     !singleLayer && tier === 'full' ? renderInterfaceDefects(config) : ''
+  // SCAPS-validation physics panel — FULL-tier-only and device-level, same
+  // gating as Robin contacts. Hidden panels round-trip as a no-op because
+  // readDeviceEditor falls back to original.device.* when the inputs are
+  // absent (and single-layer drill-down returns original.device verbatim).
+  const scapsHtml = !singleLayer && tier === 'full' ? renderScapsPhysics(config) : ''
   container.innerHTML = `
     <div class="editor">
       ${deviceGroup}
       ${robinHtml}
+      ${scapsHtml}
       ${interfaceDefectsHtml}
       ${interfacesHtml}
       <div class="layer-list">${layerHtml}</div>
@@ -571,6 +610,23 @@ export function readDeviceEditor(
     : (original.device.interface_defects !== undefined
       ? { interface_defects }
       : {})
+  // SCAPS-validation physics flags. Read only when the FULL-tier panel is
+  // rendered; otherwise parseCheckbox / parseNumOrNull fall back to the
+  // original value so a non-FULL round-trip preserves them verbatim. Each
+  // flag is spread in only when truthy / non-zero so non-SCAPS configs keep
+  // a clean device payload (no spurious ``false`` / ``0`` fields).
+  const scapsPhysicsField: Record<string, boolean | number> = {}
+  if (parseCheckbox('dev-dos', !!original.device.dos_band_potentials))
+    scapsPhysicsField.dos_band_potentials = true
+  if (parseCheckbox('dev-flatband', !!original.device.flat_band_contacts))
+    scapsPhysicsField.flat_band_contacts = true
+  if (parseCheckbox('dev-iface-closure', !!original.device.interface_plane_closure))
+    scapsPhysicsField.interface_plane_closure = true
+  if (parseCheckbox('dev-iface-proj', !!original.device.interface_plane_projection))
+    scapsPhysicsField.interface_plane_projection = true
+  const despike = parseNumOrNull('dev-despike', original.device.het_recomb_despike ?? null)
+  if (typeof despike === 'number' && despike !== 0)
+    scapsPhysicsField.het_recomb_despike = despike
   const rawMode = parseText('dev-mode', original.device.mode ?? 'full')
   const mode: SimulationModeName = isModeName(rawMode) ? rawMode : 'full'
   const T = parseNum('dev-T', original.device.T ?? 300)
@@ -595,6 +651,7 @@ export function readDeviceEditor(
       // for presets that pre-date E1.5 or for non-FULL tier round-trips
       // where the panel is hidden).
       ...interfaceDefectsField,
+      ...scapsPhysicsField,
     },
     layers,
   }
