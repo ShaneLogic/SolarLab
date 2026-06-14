@@ -125,13 +125,16 @@ J~sc~ residuals.
 # 4. Sweep-by-sweep comparison
 
 The eleven sweeps are shown as overlays of SolarLab (solid blue) against SCAPS
-(dashed red), four figures of merit per panel. **All figures and the Table 2
-scorecard below are the faithful-default mode** (`dos_band_potentials`, base
+(dashed red), four figures of merit per panel. **The figures and Table 2
+scorecard are the faithful-default mode** (`dos_band_potentials`, base
 V~oc~ 1.118 V — the device-realistic value of Section 5.z); the SCAPS-emulation
 mode (`het_recomb_despike`, Section 5.z) shifts the base to SCAPS's 1.168 V and
 tightens the trend magnitudes as tabulated there (e.g. CBO 80 to 85 %, bulk
-N~t~ 11 to 69 %, interface N~t~ 53 to 72 %) without changing any sweep
-direction. Grouped by outcome (faithful default):
+N~t~ 11 to 69 %, interface N~t~ 53 to 72 %)  without changing any sweep
+direction. (The two interface-doping figures — ETL donor doping and HTL/PVK
+interface N~t~ — are shown in the interface-plane-states mode, where their
+direction reverses to match SCAPS as explained in Section 5.z; on the faithful
+transient path those two flatten/reverse.) Grouped by outcome (faithful default):
 
 **Matched (six).** The ETL/PVK conduction-band-offset sweep (Figure 1)
 reproduces the SCAPS recombination cliff and recovery with 80 % of the SCAPS
