@@ -35,6 +35,7 @@ from perovskite_sim.experiments import dark_jv as dark_jv_exp
 from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
 from perovskite_sim.experiments import mott_schottky as ms_exp
+from perovskite_sim.experiments.steady_state import run_jv_sweep_ss
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.models.mode import resolve_mode
@@ -127,6 +128,13 @@ def _opt_S(v) -> Optional[float]:
     if v is None:
         return None
     return float(v)
+
+
+def _flag(v) -> bool:
+    """Parse a boolean device flag with the same string-truthiness rule as
+    config_loader (so ``true``/``1``/``yes``/``on`` and real booleans all
+    read as True). Absent / None → False."""
+    return str(v).strip().lower() in ("true", "1", "yes", "on")
 
 
 def stack_from_dict(cfg: dict) -> DeviceStack:
@@ -252,6 +260,15 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         interface_defects=interface_defects,
         T=float(dev.get("T", 300.0)),
         mode=mode_name,
+        # SCAPS-validation physics flags — mirror load_device_from_yaml so the
+        # inline-device path (the frontend's only path) no longer silently
+        # drops them. Same string-truthiness parsing as the YAML loader;
+        # absent → legacy defaults (off / 0.0), bit-identical to before.
+        interface_plane_projection=_flag(dev.get("interface_plane_projection")),
+        dos_band_potentials=_flag(dev.get("dos_band_potentials")),
+        flat_band_contacts=_flag(dev.get("flat_band_contacts")),
+        interface_plane_closure=_flag(dev.get("interface_plane_closure")),
+        het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
         # Stage B(c.1) Robin / selective contacts. None = ohmic Dirichlet
         # (the pre-3.3 default); 0 = Neumann blocking; positive finite =
         # Robin. The frontend distinguishes these three states via
@@ -521,15 +538,64 @@ class JVRequest(BaseModel):
     n_points: int = 40
     v_rate: float = 1.0
     V_max: Optional[float] = None
+    # "transient" (default) = legacy Radau forward/reverse sweep;
+    # "steady_state" = ion-free Newton driver (run_jv_sweep_ss).
+    solver: str = "transient"
+    iface_states: bool = False  # SS driver only: interface-plane carrier states
+
+
+def _run_jv_dispatch(
+    stack,
+    *,
+    N_grid: int,
+    n_points: int,
+    v_rate: float,
+    V_max: Optional[float],
+    illuminated: bool,
+    solver: str = "transient",
+    iface_states: bool = False,
+    progress=None,
+):
+    """Route a J-V sweep to the requested solver.
+
+    ``solver="transient"`` (default) runs the legacy Radau forward/reverse
+    sweep — unchanged behaviour. ``solver="steady_state"`` runs the ion-free
+    steady-state Newton driver; its single zero-scan-rate curve has no
+    hysteresis by construction, so it is wrapped in a ``JVResult`` with
+    forward == reverse and ``hysteresis_index = 0.0`` — same response shape
+    the frontend already consumes.
+    """
+    if solver == "steady_state":
+        ss = run_jv_sweep_ss(
+            stack,
+            N_grid=N_grid,
+            n_points=n_points,
+            V_max=V_max if V_max is not None else 1.25,
+            illuminated=illuminated,
+            iface_states=iface_states,
+            progress=progress,
+        )
+        return jv_sweep.JVResult(
+            V_fwd=ss.V, J_fwd=ss.J, V_rev=ss.V, J_rev=ss.J,
+            metrics_fwd=ss.metrics, metrics_rev=ss.metrics,
+            hysteresis_index=0.0,
+        )
+    if solver != "transient":
+        raise ValueError(f"unknown solver {solver!r}")
+    return jv_sweep.run_jv_sweep(
+        stack, N_grid=N_grid, n_points=n_points, v_rate=v_rate,
+        V_max=V_max, illuminated=illuminated, progress=progress,
+    )
 
 
 @app.post("/api/jv")
 def run_jv(req: JVRequest):
     try:
         stack = build_stack(req.config_path, req.device)
-        result = jv_sweep.run_jv_sweep(
+        result = _run_jv_dispatch(
             stack, N_grid=req.N_grid, n_points=req.n_points, v_rate=req.v_rate,
-            V_max=req.V_max,
+            V_max=req.V_max, illuminated=True, solver=req.solver,
+            iface_states=req.iface_states,
         )
         return {"status": "ok", "result": to_serializable(result)}
     except HTTPException:
@@ -700,13 +766,15 @@ def start_job(req: JobRequest):
             # illuminated defaults to True; frontend sends False for dark J-V
             _illum = p.get("illuminated", True)
             illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
-            result = jv_sweep.run_jv_sweep(
+            result = _run_jv_dispatch(
                 stack,
                 N_grid=int(p.get("N_grid", 60)),
                 n_points=int(p.get("n_points", 30)),
                 v_rate=float(p.get("v_rate", 1.0)),
                 V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
                 illuminated=illuminated,
+                solver=str(p.get("solver", "transient")),
+                iface_states=bool(p.get("iface_states", False)),
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

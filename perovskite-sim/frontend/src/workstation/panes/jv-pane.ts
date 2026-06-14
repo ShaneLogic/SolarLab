@@ -25,6 +25,8 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         ${numField('jvp-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
         ${checkField('jvp-decomp', 'Decompose current (J<sub>n</sub> / J<sub>p</sub> / J<sub>ion</sub> / J<sub>disp</sub>)', false)}
         ${checkField('jvp-spatial', 'Save spatial profiles (φ, E, n, p, P)', false)}
+        ${checkField('jvp-ss', 'Steady-state solver (ion-free Newton)', false)}
+        ${checkField('jvp-iface', 'Interface-plane states (steady-state only)', false)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jvp">Run J–V Sweep</button>
@@ -60,12 +62,18 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     }
     const kind: ExperimentKind = wantDecomp ? 'current_decomp' : wantSpatial ? 'spatial' : 'jv'
 
+    // Steady-state solver only applies to the plain J–V kind; the decompose /
+    // spatial kinds always run the transient sweep (they return the per-RHS
+    // decomposition / snapshots the SS Newton driver does not produce).
+    const useSS = readCheck('jvp-ss', false)
     const params = {
       N_grid: Math.max(3, Math.round(readNum('jvp-N', 60))),
       n_points: Math.max(2, Math.round(readNum('jvp-np', 30))),
       v_rate: readNum('jvp-rate', 1.0),
       V_max: readNum('jvp-vmax', 1.4),
       illuminated: true,
+      solver: useSS ? 'steady_state' : 'transient',
+      iface_states: readCheck('jvp-iface', false),
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))
