@@ -41,6 +41,19 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   )
   const btn = container.querySelector<HTMLButtonElement>('#btn-jvp')!
 
+  // Interface-plane states only take effect in the steady-state Newton driver
+  // (the transient sweep ignores the iface_states param — it is env-gated on a
+  // separate path). Gate the checkbox on the SS toggle so the no-op combo
+  // (iface ticked, transient) is impossible: disable + clear it when SS is off.
+  const ssBox = container.querySelector<HTMLInputElement>('#jvp-ss')!
+  const ifaceBox = container.querySelector<HTMLInputElement>('#jvp-iface')!
+  const syncIfaceEnabled = (): void => {
+    ifaceBox.disabled = !ssBox.checked
+    if (!ssBox.checked) ifaceBox.checked = false
+  }
+  ssBox.addEventListener('change', syncIfaceEnabled)
+  syncIfaceEnabled()  // initial: SS off → iface disabled
+
   btn.addEventListener('click', () => {
     const active = opts.getActiveDevice()
     if (!active) {
