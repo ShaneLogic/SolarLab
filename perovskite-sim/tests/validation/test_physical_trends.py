@@ -15,7 +15,9 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack, LayerSpec
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep, JVResult
 
-pytestmark = pytest.mark.validation
+# Heavy trend-validation sweeps; also `slow` so the default `pytest`
+# (-m 'not slow') stays fast. Run via `pytest -m slow` (or `-m validation`).
+pytestmark = [pytest.mark.validation, pytest.mark.slow]
 
 
 @pytest.fixture(scope="module")

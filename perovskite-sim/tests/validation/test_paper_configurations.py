@@ -16,7 +16,10 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep, JVResult
 
-pytestmark = pytest.mark.validation
+# Heavy literature-gate sweeps (~16 FULL-tier J-V runs); also `slow` so the
+# default `pytest` (-m 'not slow') stays fast. Run via `pytest -m slow` (or
+# `-m validation`).
+pytestmark = [pytest.mark.validation, pytest.mark.slow]
 
 
 @dataclass(frozen=True)

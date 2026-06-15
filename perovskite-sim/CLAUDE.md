@@ -304,3 +304,4 @@ Canonical invocations:
 - Unit + integration: `pytest` (default, ~15 s, no coverage)
 - Unit with coverage: `pytest --cov=perovskite_sim --cov-report=term-missing`
 - Slow regression: `pytest -m slow` (BLAS pinned automatically, ~27 s for the TMM baselines)
+- Literature validation: `pytest -m validation` (paper-config + physical-trend gates; also `slow`-marked — ~12 FULL-tier sweeps each, minutes — so the default `pytest` excludes them)
