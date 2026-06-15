@@ -9,10 +9,12 @@ HTL/PVK = kT*ln 25 and 53 meV at PVK/ETL = kT*ln 8 on scaps_mirror_v2 — the
 root cause of the SolarLab-vs-SCAPS V_oc gap).
 
 The fix folds the DOS corrections into the cached chi/Eg ARRAYS used by the
-flux + TE (never into ni / n1 / p1 / boundary densities), gated by the
-default-OFF ``DeviceStack.dos_band_potentials`` flag (or SOLARLAB_DOS_BAND=1),
-with the absorber layer as the reference (only ratios matter physically).
-Legacy configs carry no Nc300/Nv300 data, so the flag is a no-op there.
+flux + TE (never into ni / n1 / p1 / boundary densities), with the absorber
+layer as the reference (only ratios matter physically). The
+``DeviceStack.dos_band_potentials`` flag defaults ON (2026-06) — it is correct
+heterojunction transport physics; set it False (or run the LEGACY tier) to
+force the pre-fix transport. Legacy configs carry no Nc300/Nv300 data, so the
+fold is a no-op there regardless.
 """
 from __future__ import annotations
 
@@ -66,9 +68,21 @@ def test_scaps_loader_populates_dos_fields():
         assert L.params.Nv300 is not None and L.params.Nv300 > 0
 
 
-def test_devicestack_dos_flag_default_off():
-    stack = load_scaps_yaml(_V2)
-    assert stack.dos_band_potentials is False
+def test_devicestack_dos_flag_default_on():
+    # 2026-06: DOS-band transport is the correct default. Tested on a bare
+    # DeviceStack so it pins the dataclass default itself (the shipped parity
+    # configs additionally set the key explicitly for self-documentation).
+    from perovskite_sim.models.device import DeviceStack
+    assert DeviceStack(layers=()).dos_band_potentials is True
+    assert load_scaps_yaml(_V2).dos_band_potentials is True
+
+
+def test_dos_flag_explicit_false_roundtrips(tmp_path):
+    cfg = yaml.safe_load(Path(_V2).read_text())
+    cfg["device"]["dos_band_potentials"] = False
+    dst = tmp_path / "dos_off.yaml"
+    dst.write_text(yaml.safe_dump(cfg))
+    assert load_scaps_yaml(str(dst)).dos_band_potentials is False
 
 
 def test_scaps_yaml_dos_key_roundtrip(tmp_path):
@@ -81,8 +95,22 @@ def test_scaps_yaml_dos_key_roundtrip(tmp_path):
 
 # ----------------------------- build -----------------------------
 
-def test_flag_off_chi_eg_unchanged():
-    stack = load_scaps_yaml(_V2)
+def test_flag_explicit_false_leaves_chi_eg_unchanged():
+    # The config now defaults DOS-on; force it off explicitly to check the
+    # pre-fix transport (raw chi, no DOS fold).
+    stack = dataclasses.replace(load_scaps_yaml(_V2), dos_band_potentials=False)
+    x, mat = _build(stack)
+    i_etl = _node_in_layer(x, stack, "ETL")
+    i_htl = _node_in_layer(x, stack, "HTL")
+    assert mat.chi[i_etl] == pytest.approx(4.1)
+    assert mat.chi[i_htl] == pytest.approx(2.4)
+
+
+def test_legacy_tier_disables_dos_even_with_data():
+    # LEGACY is bit-identical to IonMonger (no DOS-folded transport); the fold
+    # must NOT apply under LEGACY even though scaps_mirror_v2 carries DOS data
+    # and the flag defaults on.
+    stack = dataclasses.replace(load_scaps_yaml(_V2), mode="legacy")
     x, mat = _build(stack)
     i_etl = _node_in_layer(x, stack, "ETL")
     i_htl = _node_in_layer(x, stack, "HTL")
@@ -110,7 +138,7 @@ def test_flag_on_shifts_chi_eg_by_dos_ratios():
 
 
 def test_flag_on_leaves_ni_and_boundaries_unchanged():
-    base = load_scaps_yaml(_V2)
+    base = dataclasses.replace(load_scaps_yaml(_V2), dos_band_potentials=False)
     x, m_off = _build(base)
     _, m_on = _build(dataclasses.replace(base, dos_band_potentials=True))
     np.testing.assert_array_equal(m_off.ni_sq, m_on.ni_sq)
@@ -120,9 +148,11 @@ def test_flag_on_leaves_ni_and_boundaries_unchanged():
     assert m_off.n_R == m_on.n_R and m_off.p_R == m_on.p_R
 
 
-def test_env_var_enables_dos(monkeypatch):
+def test_env_var_force_enables_dos_over_explicit_false(monkeypatch):
+    # SOLARLAB_DOS_BAND=1 is a legacy force-ON: it activates the fold even when
+    # the stack flag is explicitly False.
     monkeypatch.setenv("SOLARLAB_DOS_BAND", "1")
-    stack = load_scaps_yaml(_V2)  # flag stays False; env drives it
+    stack = dataclasses.replace(load_scaps_yaml(_V2), dos_band_potentials=False)
     x, mat = _build(stack)
     i_etl = _node_in_layer(x, stack, "ETL")
     assert mat.chi[i_etl] == pytest.approx(4.1 + _V_T * math.log(_RATIO_ETL), abs=1e-4)

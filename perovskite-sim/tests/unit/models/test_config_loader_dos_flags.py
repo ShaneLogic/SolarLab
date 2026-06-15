@@ -39,9 +39,12 @@ def _build(stack):
     return multilayer_grid(layers), stack
 
 
-def test_flags_default_off(tmp_path):
+def test_flags_default(tmp_path):
+    # 2026-06: dos_band_potentials defaults ON (correct heterojunction
+    # transport; a no-op without per-layer DOS data anyway). flat_band_contacts
+    # stays default-off.
     stack = load_device_from_yaml(_write_cfg(tmp_path))
-    assert stack.dos_band_potentials is False
+    assert stack.dos_band_potentials is True
     assert stack.flat_band_contacts is False
 
 
@@ -57,7 +60,8 @@ def test_dos_fold_activates_from_standard_yaml(tmp_path):
     """End-to-end: standard YAML with per-layer Nc300/Nv300 + the flag folds
     the DOS terms into the cached chi arrays (transport-layer nodes shift,
     absorber reference nodes do not)."""
-    off = load_device_from_yaml(_write_cfg(tmp_path, dos_layers=True))
+    off = load_device_from_yaml(_write_cfg(
+        tmp_path, dev_extra={"dos_band_potentials": False}, dos_layers=True))
     on = load_device_from_yaml(_write_cfg(
         tmp_path, dev_extra={"dos_band_potentials": True}, dos_layers=True))
     x, _ = _build(off)

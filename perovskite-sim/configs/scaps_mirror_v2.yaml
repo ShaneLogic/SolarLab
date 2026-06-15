@@ -38,6 +38,7 @@
 
 device:
   het_recomb_despike: 0.53   # SCAPS-emulation: de-spike heterointerface bulk-Auger double-count (base 1.121->1.168)
+  dos_band_potentials: true  # effective-DOS QFL fold (now the code default; pinned so the validated baseline is self-contained)
   V_bi: 1.30
   Phi: 2.5e21
   mode: fast

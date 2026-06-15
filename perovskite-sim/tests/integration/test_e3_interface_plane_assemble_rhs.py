@@ -17,6 +17,7 @@ solver pipeline:
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -114,7 +115,10 @@ def test_assemble_rhs_finite_at_dark_eq(monkeypatch):
 def test_jv_sweep_legacy_voc_when_env_unset(monkeypatch):
     """env unset -> V_oc bit-identical to current main 1.0694 +- 5 mV."""
     monkeypatch.delenv("SOLARLAB_INTERFACE_PLANE_STATE", raising=False)
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    # Pin DOS-off so this measures the interface-plane-state env effect against
+    # the pre-DOS legacy baseline (DOS now defaults on and would lift V_oc).
+    stack = dataclasses.replace(
+        load_scaps_yaml("configs/scaps_mirror.yaml"), dos_band_potentials=False)
     r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
     assert r.metrics_fwd.voc_bracketed
     assert r.metrics_fwd.V_oc == pytest.approx(_LEGACY_V_OC, abs=5.0e-3)
@@ -123,7 +127,9 @@ def test_jv_sweep_legacy_voc_when_env_unset(monkeypatch):
 def test_jv_sweep_voc_moves_when_env_active(monkeypatch):
     """env=1 -> V_oc moves measurably from legacy (proves new path participates)."""
     monkeypatch.setenv("SOLARLAB_INTERFACE_PLANE_STATE", "1")
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    # Same DOS-off pin: keep the comparison against legacy 1.0694 coherent.
+    stack = dataclasses.replace(
+        load_scaps_yaml("configs/scaps_mirror.yaml"), dos_band_potentials=False)
     r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
     assert r.metrics_fwd.voc_bracketed
     voc = float(r.metrics_fwd.V_oc)
