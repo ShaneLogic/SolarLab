@@ -28,6 +28,7 @@ device:
   #   V_bi    = 5.51 - 4.21 = 1.30 V
   V_bi: 1.30
   Phi: 2.5e21        # AM1.5G above-gap photon flux [m^-2 s^-1]
+  dos_band_potentials: true  # effective-DOS QFL fold (now the code default; pinned so the validated baseline is self-contained)
   mode: fast
 
 layers:

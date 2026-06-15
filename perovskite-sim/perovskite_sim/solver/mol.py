@@ -740,12 +740,16 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     # (transport + TE see them) with the absorber as reference — only the
     # cross-junction differences matter. ni / n1 / p1 / boundary densities
     # are deliberately untouched (they are statistics, not transport).
-    # Gated default-OFF; layers without Nc300/Nv300 data are skipped, so
-    # legacy configs are bit-identical even with the flag on.
+    # Default-ON (2026-06): the fold is correct heterojunction transport
+    # physics. Layers without Nc300/Nv300 are skipped, so non-DOS configs are
+    # bit-identical regardless. LEGACY tier always disables it — LEGACY is
+    # contractually bit-identical to IonMonger, which has no DOS-folded
+    # transport. ``SOLARLAB_DOS_BAND=1`` is a legacy force-ON (now redundant);
+    # set ``dos_band_potentials=False`` on the stack to force the pre-fix path.
     _dos_band = bool(
-        getattr(stack, "dos_band_potentials", False)
+        getattr(stack, "dos_band_potentials", True)
         or os.environ.get("SOLARLAB_DOS_BAND") == "1"
-    )
+    ) and sim_mode.name != "legacy"
     if _dos_band:
         _ref = next(
             (L.params for L in elec_layers if L.role == "absorber"),

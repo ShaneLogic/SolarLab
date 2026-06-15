@@ -17,6 +17,7 @@ Pins the contract for the new ``interface_split_data`` params dispatch:
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -74,7 +75,10 @@ def test_legacy_path_bit_identical_when_env_unset(monkeypatch):
     cover this end-to-end; this test pins it at the unit-integration level.
     """
     monkeypatch.delenv("SOLARLAB_INTERFACE_PLANE_STATE", raising=False)
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    # DOS-band potentials now default on; pin them off so this keeps measuring
+    # the pre-DOS legacy reference (the split-path bit-identity, not the DOS fold).
+    stack = dataclasses.replace(
+        load_scaps_yaml("configs/scaps_mirror.yaml"), dos_band_potentials=False)
     r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
     assert r.metrics_fwd.voc_bracketed
     assert r.metrics_fwd.V_oc == pytest.approx(_LEGACY_V_OC, abs=5.0e-3)

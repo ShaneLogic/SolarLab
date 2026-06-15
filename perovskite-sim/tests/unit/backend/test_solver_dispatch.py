@@ -67,11 +67,12 @@ def test_stack_from_dict_plumbs_physics_flags():
     assert s.interface_plane_projection is True
 
 
-def test_stack_from_dict_flags_default_off():
-    """Absent flags → legacy defaults (off / 0.0); preserves bit-identical
-    behaviour for every existing inline-device submission."""
+def test_stack_from_dict_flag_defaults():
+    """Absent flags → defaults. dos_band_potentials defaults ON (2026-06,
+    correct heterojunction transport; a no-op without per-layer DOS data, so
+    inline-device submissions stay bit-identical). The rest default off / 0.0."""
     s = bm.stack_from_dict(_min_cfg())
-    assert s.dos_band_potentials is False
+    assert s.dos_band_potentials is True
     assert s.het_recomb_despike == 0.0
     assert s.flat_band_contacts is False
     assert s.interface_plane_closure is False

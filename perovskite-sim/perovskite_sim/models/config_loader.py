@@ -149,7 +149,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             in ("true", "1", "yes", "on")
         ),
         dos_band_potentials=(
-            str(dev.get("dos_band_potentials", False)).strip().lower()
+            str(dev.get("dos_band_potentials", True)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
         flat_band_contacts=(

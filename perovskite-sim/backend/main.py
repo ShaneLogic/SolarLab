@@ -262,10 +262,12 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         mode=mode_name,
         # SCAPS-validation physics flags — mirror load_device_from_yaml so the
         # inline-device path (the frontend's only path) no longer silently
-        # drops them. Same string-truthiness parsing as the YAML loader;
-        # absent → legacy defaults (off / 0.0), bit-identical to before.
+        # drops them. Same string-truthiness parsing as the YAML loader.
+        # dos_band_potentials defaults ON (absent → True), matching the loader
+        # default; the rest default off / 0.0. DOS is a no-op without per-layer
+        # Nc300/Nv300, so non-DOS device dicts are bit-identical.
         interface_plane_projection=_flag(dev.get("interface_plane_projection")),
-        dos_band_potentials=_flag(dev.get("dos_band_potentials")),
+        dos_band_potentials=_flag(dev.get("dos_band_potentials", True)),
         flat_band_contacts=_flag(dev.get("flat_band_contacts")),
         interface_plane_closure=_flag(dev.get("interface_plane_closure")),
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),

@@ -83,8 +83,11 @@ class DeviceStack:
     # (measured 137 mV on scaps_mirror_v2 — the SolarLab-vs-SCAPS V_oc root
     # cause). Requires per-layer Nc300/Nv300 (populated by the SCAPS loader);
     # layers without DOS data are left untouched, so legacy configs are
-    # bit-identical under the flag. Default False = pre-fix behaviour.
-    dos_band_potentials: bool = False
+    # bit-identical under the flag. Default True (2026-06): the fold is real
+    # heterojunction transport physics (omitting it is the bug); set False to
+    # force the pre-fix transport. LEGACY tier always disables it regardless
+    # (IonMonger bit-identity contract — see build_material_arrays).
+    dos_band_potentials: bool = True
     # SCAPS-style flat-band contacts (2026-06). When True, both contacts are
     # treated as flat-band metals with finite surface-recombination kinetics
     # (the SCAPS contact model): the Phase-3.3 Robin path is activated on all
