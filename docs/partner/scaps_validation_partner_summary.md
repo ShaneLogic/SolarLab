@@ -27,7 +27,7 @@ mobile-ion migration with transfer-matrix optics — against the established
 reference solver SCAPS-1D. The test case is the partner's three-layer perovskite
 Base Model, and the comparison spans the base current–voltage operating point
 together with all eleven single-variable parameter sweeps recorded in the
-partner workbook. This revision (2026-06-11) supersedes the 2026-05-29 report:
+partner workbook. This revision (2026-06-15) supersedes the 2026-06-11 report:
 since then the dominant open-circuit-voltage discrepancy was root-caused to a
 missing effective-density-of-states term in the heterojunction transport
 discretisation, the correction was implemented and verified
@@ -127,13 +127,13 @@ J~sc~ residuals.
 The eleven sweeps are shown as overlays of SolarLab (solid blue) against SCAPS
 (dashed red), four figures of merit per panel. **The figures and Table 2
 scorecard are the faithful-default mode** (`dos_band_potentials`, base
-V~oc~ 1.118 V — the device-realistic value of Section 5.z); the SCAPS-emulation
-mode (`het_recomb_despike`, Section 5.z) shifts the base to SCAPS's 1.168 V and
+V~oc~ 1.118 V — the device-realistic value of Section 5.3); the SCAPS-emulation
+mode (`het_recomb_despike`, Section 5.3) shifts the base to SCAPS's 1.168 V and
 tightens the trend magnitudes as tabulated there (e.g. CBO 80 to 85 %, bulk
 N~t~ 11 to 69 %, interface N~t~ 53 to 72 %)  without changing any sweep
 direction. (The two interface-doping figures — ETL donor doping and HTL/PVK
 interface N~t~ — are shown in the interface-plane-states mode, where their
-direction reverses to match SCAPS as explained in Section 5.z; on the faithful
+direction reverses to match SCAPS as explained in Section 5.3; on the faithful
 transient path those two flatten/reverse.) Grouped by outcome (faithful default):
 
 **Matched (six).** The ETL/PVK conduction-band-offset sweep (Figure 1)
@@ -206,7 +206,7 @@ detailed-balance-ceiling guard.](../figures/scaps_validation/sweep_Nd_ETL.png){w
 | 11 | PVK-CB bulk N~t~ | 4.3 mV | 39 mV | open (direction match, 11 %) |
 
 Table 2. Per-sweep scorecard, **faithful-default mode** (V~oc~ ranges over the
-physically well-posed points). The SCAPS-emulation mode of Section 5.z tightens
+physically well-posed points). The SCAPS-emulation mode of Section 5.3 tightens
 these magnitudes (CBO 85 %, bulk N~t~ 69 %, interface N~t~ 72 %) and matches the
 base V~oc~ to within 1 mV; all sweep directions are identical in both modes.
 
@@ -265,7 +265,7 @@ engine-level difference, documented and bounded.
 **Short-circuit current (−2 %).** Front-surface reflection that SolarLab's
 transfer-matrix optics retains and SCAPS idealises away; kept deliberately.
 
-## 5.x Update: interface-plane closure (2026-06-12)
+## 5.1 Interface-plane closure for defect-interface recombination
 
 After this report's main analysis was frozen, the named residual mechanism was
 addressed directly: an optional *interface-plane closure*
@@ -290,7 +290,7 @@ change elsewhere. A combined probe (closure + flat-band contacts) did *not*
 recover the ETL-doping rising arm, confirming that sweep, the PVK/ETL trap
 energy, and the residual base offset as the remaining open items.
 
-## 5.y Update: direct steady-state driver (2026-06-12)
+## 5.2 A direct steady-state solver and two-method cross-validation
 
 The direct steady-state solve named above has since been built and
 validated: the new driver solves the *same* discretised physics the
@@ -321,7 +321,7 @@ trace to SCAPS-specific model conventions (its interface-plane carrier
 states and contact treatment), which would require reproducing those
 conventions explicitly rather than further numerical work.
 
-## 5.z Update: the base-V~oc~ absolute — root cause and the faithful-vs-emulation choice (2026-06-13)
+## 5.3 The base-V~oc~ offset: Auger origin and the faithful-versus-emulation modes
 
 The residual base-V~oc~ offset (SolarLab below SCAPS) was attributed throughout
 this work to *interface recombination*. A direct decomposition of the
@@ -385,17 +385,17 @@ With the effective-DOS transport correction every sweep trend reproduces in
 direction, six of eleven matching SCAPS in magnitude with the remainder partial,
 and the base operating point agreeing with SCAPS to −50 mV in V~oc~ in the
 faithful default mode (to within 1 mV in the SCAPS-emulation mode of Section
-5.z). The base offset is now root-caused to absorber Auger recombination at the
-HTL/PVK band offset (Section 5.z), not the interface channel as previously
+5.3). The base offset is now root-caused to absorber Auger recombination at the
+HTL/PVK band offset (Section 5.3), not the interface channel as previously
 believed; SolarLab's faithful base sits at the measured-device median while
 SCAPS sits at the champion ceiling, so the two are reconciled by an explicit,
 flag-gated emulation rather than by degrading either model. Every physically
 well-posed result satisfies the governing bounds. We recommend the corrected configuration
 (`dos_band_potentials` on the SCAPS-mirror device) as the validated baseline.
 The first structural step toward closing it — the interface-plane closure of
-Section 5.x — is now in the codebase behind an explicit flag and improves the
+Section 5.1 — is now in the codebase behind an explicit flag and improves the
 HTL/PVK interface response from flat to 70 % of SCAPS without degrading any
-matched trend. That steady-state solve has since been built (Section 5.y): the two
+matched trend. That steady-state solve has since been built (Section 5.2): the two
 solution methods now cross-validate within 5 mV, the voltage-grid artefact is
 eliminated, and the low-doping arm is settled as a model-convention
 difference rather than a solver limitation. The remaining open items (ETL
