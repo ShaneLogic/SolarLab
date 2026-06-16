@@ -83,3 +83,20 @@ class RandomSearchOptimizer:
             pce, bracketed = objective(design)
             trials.append(Trial(design=design, pce=pce, bracketed=bracketed))
         return tuple(sorted(trials, key=lambda t: t.pce, reverse=True))
+
+
+def make_design_objective(config_path, jv_kwargs: dict):
+    """Returns objective(design: dict) -> (pce, bracketed). Applies the design to
+    the base stack and runs a J-V; a failed/unbracketed design scores PCE=0."""
+    base = load_scaps_yaml(config_path)
+
+    def objective(design: dict) -> tuple:
+        try:
+            stack = apply_sweep_point(base, SweepPoint("design", "multi", "design", dict(design)))
+            m = run_jv_sweep(stack, **jv_kwargs).metrics_fwd
+            return (m.PCE if m.voc_bracketed else 0.0, bool(m.voc_bracketed))
+        except Exception as exc:                       # logged, not swallowed
+            logger.warning("design eval failed %s: %r", design, exc)
+            return (0.0, False)
+
+    return objective
