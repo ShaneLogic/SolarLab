@@ -22,13 +22,13 @@ def test_attribution_pass_produces_hypothesis(tmp_path):
     if not open_gaps:
         pytest.skip("no open gaps produced on this config — nothing to attribute")
 
-    top = max(open_gaps, key=lambda g: g.gap_mag)
-    runner = SubprocessProbeRunner(config_path=CFG, reference_path=REF, gap=top)
     hyp = attribute_top_gap(
         ledger_root=tmp_path / "ledger", outputs_root=tmp_path / "out",
         config_path=CFG, reference_path=REF, cycle=1,
         timestamp="2026-06-16T00:00:00Z",
-        probe_runner=runner, attributor=HeuristicAttributor())
+        probe_runner_factory=lambda g: SubprocessProbeRunner(
+            config_path=CFG, reference_path=REF, gap=g),
+        attributor=HeuristicAttributor())
     assert hyp is not None
     assert hyp.cause in {"bug", "numerics", "physics", "data", "uncertain"}
     assert (tmp_path / "out" / "attr-1" / "hypothesis.json").exists()

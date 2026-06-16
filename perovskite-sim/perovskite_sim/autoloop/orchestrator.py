@@ -70,10 +70,14 @@ def guardian_once(*, ledger_root: Path, outputs_root: Path,
 def attribute_top_gap(*, ledger_root: Path, outputs_root: Path,
                       config_path: Path, reference_path: Path,
                       cycle: int, timestamp: str,
-                      probe_runner, attributor,
+                      probe_runner_factory, attributor,
                       flags: Optional[dict[str, str]] = None, seed: int = 0,
                       run_ablation_fn=None) -> Optional[Hypothesis]:
     """One attribution pass: pick the top open gap, ablate, attribute, record.
+
+    ``probe_runner_factory(gap) -> ProbeRunner`` is called with the gap THIS
+    function selected, so the probe runner can never target a different gap
+    than the one being attributed (single source of truth for the selection).
 
     Read-only re: code — writes only the ledger + run artifacts.
     """
@@ -85,6 +89,7 @@ def attribute_top_gap(*, ledger_root: Path, outputs_root: Path,
         return None
     gap = max(open_gaps, key=lambda g: g.gap_mag)
 
+    probe_runner = probe_runner_factory(gap)
     run_ablation = run_ablation_fn or _run_ablation
     matrix = run_ablation(gap, probe_runner)
     hyp = attributor.attribute(gap, matrix, led)
