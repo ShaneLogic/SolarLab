@@ -32,6 +32,9 @@ class Gap:
             last_attempt_cycle=self.last_attempt_cycle if last_attempt_cycle is None else last_attempt_cycle,
         )
 
+    def with_mechanism(self, mechanism: str) -> "Gap":
+        return dataclasses.replace(self, mechanism=mechanism)
+
 
 @dataclass(frozen=True)
 class Hypothesis:
@@ -97,3 +100,24 @@ class Provenance:
     flags: dict[str, str]
     seed: int
     timestamp: str           # ISO-8601, passed in (not generated, for reproducibility)
+
+
+@dataclass(frozen=True)
+class AblationProbe:
+    """One ablation variant's effect on the gap's badness scalar."""
+    name: str
+    kind: str            # "flag" | "grid" | "limiting"
+    variant: dict        # the variant applied (env_flags / jv_overrides summary)
+    baseline_val: float
+    variant_val: float
+    delta: float         # variant_val - baseline_val (negative = closer to reference)
+    ok: bool
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class AblationMatrix:
+    gap_id: str
+    baseline_val: float
+    probes: tuple[AblationProbe, ...]
+    skipped: tuple[str, ...] = ()
