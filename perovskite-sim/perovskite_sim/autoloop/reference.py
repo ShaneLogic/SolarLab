@@ -124,6 +124,23 @@ class LabReferenceSource:
         return []
 
 
+class TieredReferenceSource:
+    """base_metrics() from base_source (Lab); sweep()/sweep_sheets() from sweep_source (SCAPS)."""
+
+    def __init__(self, base_source: ReferenceSource, sweep_source: ReferenceSource):
+        self._base = base_source
+        self._sweep = sweep_source
+
+    def base_metrics(self) -> dict:
+        return self._base.base_metrics()
+
+    def sweep(self, sheet: str):
+        return self._sweep.sweep(sheet)
+
+    def sweep_sheets(self) -> list:
+        return self._sweep.sweep_sheets()
+
+
 def build_reference_source(path) -> ReferenceSource:
     """Dispatch on file shape: scaps-json -> ScapsReferenceSource;
     reference descriptor ({scaps, lab}) -> TieredReferenceSource (Task 3)."""
@@ -131,4 +148,14 @@ def build_reference_source(path) -> ReferenceSource:
     data = json.loads(path.read_text(encoding="utf-8"))
     if "base_model" in data and "sweeps" in data:
         return ScapsReferenceSource(path)
+    if "scaps" in data and "lab" in data:
+        base_dir = path.parent
+        scaps = ScapsReferenceSource(base_dir / data["scaps"])
+        lab_cfg = data["lab"]
+        lab = LabReferenceSource(
+            base_dir / lab_cfg["jv_csv"],
+            units=lab_cfg.get("units", "mA/cm2"),
+            sign=lab_cfg.get("sign", "positive"),
+            aggregate=lab_cfg.get("aggregate", "median"))
+        return TieredReferenceSource(base_source=lab, sweep_source=scaps)
     raise ValueError(f"unrecognised reference file shape: {path}")
