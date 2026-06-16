@@ -1,0 +1,68 @@
+#!/usr/bin/env python
+"""Autoloop guardian CLI (Stage 1).
+
+Run one sense-and-record guardian cycle against the SCAPS reference:
+
+    python scripts/autoloop_run.py --once
+
+Exits non-zero if the gate stack fails (CI-friendly).
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import sys
+from pathlib import Path
+
+from perovskite_sim.autoloop import guardian_once
+
+REPO_ROOT = Path(__file__).resolve().parents[1]                      # perovskite-sim/
+DEFAULT_REFERENCE = REPO_ROOT / "tests" / "integration" / "scaps_reference.json"
+DEFAULT_CONFIG = REPO_ROOT / "configs" / "scaps_mirror_v2.yaml"
+DEFAULT_LEDGER = REPO_ROOT.parent / "docs" / "autoloop" / "ledger"   # SolarLab/docs/...
+DEFAULT_OUTPUTS = REPO_ROOT.parent / "outputs" / "autoloop"
+DEFAULT_BASELINE = REPO_ROOT / "tests" / "integration" / "autoloop_parity_baseline.json"
+
+
+def iso_timestamp_utc() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Autoloop guardian (Stage 1)")
+    ap.add_argument("--once", action="store_true", help="run a single cycle")
+    ap.add_argument("--cycle", type=int, default=0)
+    ap.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE)
+    ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    ap.add_argument("--ledger-root", type=Path, default=DEFAULT_LEDGER)
+    ap.add_argument("--outputs-root", type=Path, default=DEFAULT_OUTPUTS)
+    ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    ap.add_argument("--l0-paths", nargs="*", default=["tests/unit/autoloop"])
+    return ap.parse_args(argv)
+
+
+def _load_baseline(path: Path):
+    if not path.exists():
+        return None
+    from perovskite_sim.autoloop.types import ParityScore, SweepScore
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    per = {k: SweepScore(**v) for k, v in raw.get("per_sweep", {}).items()}
+    return ParityScore(overall=raw["overall"], base_deltas=raw.get("base_deltas", {}),
+                       per_sweep=per)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ns = parse_args(argv if argv is not None else sys.argv[1:])
+    report = guardian_once(
+        ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
+        reference_path=ns.reference, config_path=ns.config,
+        cycle=ns.cycle, timestamp=iso_timestamp_utc(),
+        l0_paths=ns.l0_paths, baseline=_load_baseline(ns.baseline),
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["gate_passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
