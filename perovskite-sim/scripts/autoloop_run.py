@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Autoloop guardian CLI (Stage 1).
+"""Autoloop CLI (Stage 1 guardian + Stage 2 attribution).
 
 Run one sense-and-record guardian cycle against the SCAPS reference:
 
@@ -30,7 +30,7 @@ def iso_timestamp_utc() -> str:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Autoloop guardian (Stage 1)")
+    ap = argparse.ArgumentParser(description="Autoloop (Stage 1 guardian + Stage 2 attribution)")
     ap.add_argument("--once", action="store_true", help="run a single cycle")
     ap.add_argument("--attribute", action="store_true",
                     help="run one attribution pass on the top open gap")
@@ -58,23 +58,20 @@ def main(argv: list[str] | None = None) -> int:
     ns = parse_args(argv if argv is not None else sys.argv[1:])
 
     if ns.attribute:
+        import dataclasses
         from perovskite_sim.autoloop.orchestrator import attribute_top_gap
         from perovskite_sim.autoloop.attribution import HeuristicAttributor
         from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
-        from perovskite_sim.autoloop.ledger import Ledger
-        led = Ledger.load(ns.ledger_root)
-        open_gaps = [g for g in led.gaps if g.status == "open"]
-        if not open_gaps:
-            print(json.dumps({"attributed": None, "reason": "no open gaps"}))
-            return 0
-        top = max(open_gaps, key=lambda g: g.gap_mag)
-        runner = SubprocessProbeRunner(config_path=ns.config, reference_path=ns.reference, gap=top)
         hyp = attribute_top_gap(
             ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
             config_path=ns.config, reference_path=ns.reference, cycle=ns.cycle,
-            timestamp=iso_timestamp_utc(), probe_runner=runner,
+            timestamp=iso_timestamp_utc(),
+            probe_runner_factory=lambda g: SubprocessProbeRunner(
+                config_path=ns.config, reference_path=ns.reference, gap=g),
             attributor=HeuristicAttributor())
-        import dataclasses
+        if hyp is None:
+            print(json.dumps({"attributed": None, "reason": "no open gaps"}))
+            return 0
         print(json.dumps({"attributed": dataclasses.asdict(hyp)}, indent=2, sort_keys=True))
         return 0
 

@@ -31,7 +31,7 @@ def test_attribute_top_gap_picks_highest_open_and_records(tmp_path):
         ledger_root=tmp_path / "ledger", outputs_root=tmp_path / "out",
         config_path=tmp_path / "c.yaml", reference_path=tmp_path / "r.json",
         cycle=1, timestamp="2026-06-16T00:00:00Z",
-        probe_runner=object(), attributor=_FakeAttributor(),
+        probe_runner_factory=lambda g: object(), attributor=_FakeAttributor(),
         run_ablation_fn=_fake_ablation,
     )
     assert hyp is not None and hyp.gap_id == "trend:Nd_ETL:V_oc"   # highest gap_mag
@@ -53,7 +53,7 @@ def test_attribute_top_gap_skips_non_open_and_returns_none(tmp_path):
         ledger_root=tmp_path / "ledger", outputs_root=tmp_path / "out",
         config_path=tmp_path / "c.yaml", reference_path=tmp_path / "r.json",
         cycle=1, timestamp="2026-06-16T00:00:00Z",
-        probe_runner=object(), attributor=_FakeAttributor(),
+        probe_runner_factory=lambda g: object(), attributor=_FakeAttributor(),
         run_ablation_fn=_fake_ablation,
     )
     assert hyp is None
