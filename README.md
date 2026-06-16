@@ -607,6 +607,9 @@ and records open gaps to the ledger.
   promotes a confirmed lever flag in the parity config, runs the full gate stack
   (legacy-bit-identical + parity-improved + reconciliation), and lands it on the
   current branch only on `--apply`. Dry-run by default.
+- **Autoloop boulder** (`python perovskite-sim/scripts/autoloop_run.py --boulder [--converge]`) —
+  the continuous driver: sweep drains gaps into a proposal report; --converge auto-applies
+  fixes and loops until the parity target (on an autoloop branch, never main).
 
 <br>
 
