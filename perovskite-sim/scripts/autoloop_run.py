@@ -42,6 +42,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="run the continuous boulder (sweep dry-run unless --converge)")
     ap.add_argument("--converge", action="store_true",
                     help="with --boulder/--implement: auto-apply landable fixes and loop")
+    ap.add_argument("--search", action="store_true",
+                    help="run a parity-gated, advisory device-design search")
+    ap.add_argument("--budget", type=int, default=50, help="design-search eval budget")
     ap.add_argument("--parity-target", type=float, default=0.90)
     ap.add_argument("--max-cycles", type=int, default=10)
     ap.add_argument("--reject-streak", type=int, default=3)
@@ -67,6 +70,24 @@ def _load_baseline(path: Path):
 
 def main(argv: list[str] | None = None) -> int:
     ns = parse_args(argv if argv is not None else sys.argv[1:])
+
+    if ns.search:
+        import dataclasses
+        from perovskite_sim.autoloop.search import run_design_search, SearchNotTrusted
+        try:
+            result = run_design_search(
+                config_path=ns.config, reference_path=ns.reference,
+                outputs_root=ns.outputs_root, timestamp=iso_timestamp_utc(),
+                budget=ns.budget, parity_target=ns.parity_target)
+        except SearchNotTrusted as exc:
+            print(json.dumps({"search": None, "error": str(exc)}))
+            return 1
+        print(json.dumps({"search": {
+            "parity_overall": result.parity_overall, "n_evaluated": result.n_evaluated,
+            "best": (dataclasses.asdict(result.best) if result.best else None),
+            "top": [dataclasses.asdict(t) for t in result.trials[:5]]}},
+            indent=2, sort_keys=True, default=str))
+        return 0
 
     if ns.boulder:
         import dataclasses

@@ -392,3 +392,19 @@ boulder are untouched. To anchor absolutes to hardware, point `--reference` at a
 
 Default `--reference` stays scaps_reference.json (pure SCAPS, bit-identical). Real lab
 CSVs replace the synthetic `tests/integration/lab_data_example/*.csv` fixtures.
+
+### Stage 4c — L4 design-search (advisory)
+
+`autoloop/search.py` searches the device-design space (band offsets / doping /
+defects via `apply_sweep_point`) to maximize PCE, via a pluggable `Optimizer` seam
+(ships a no-dep seeded `RandomSearchOptimizer`; optuna/pymoo adapters plug in later).
+`run_design_search` REFUSES unless `score_parity().overall >= parity_target` (don't
+optimize an untrusted model), then reports the best design + top trials **advisorily**
+— nothing is applied to any config. Each design eval = a real J-V sweep, so use a
+modest `--budget`.
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --search --budget 50 --parity-target 0.9
+
+Note: the model's current parity (~0.69) is below 0.9, so search refuses by default
+until the boulder/converge loop improves parity — the correct trust coupling.
