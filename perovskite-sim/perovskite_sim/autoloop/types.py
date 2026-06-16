@@ -121,3 +121,21 @@ class AblationMatrix:
     baseline_val: float
     probes: tuple[AblationProbe, ...]
     skipped: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConfigEdit:
+    config_path: str
+    device_key: str
+    new_value: bool
+    old_text: str       # full prior file text, for exact revert
+
+
+@dataclass(frozen=True)
+class ImplementResult:
+    status: str         # "applied"|"dry_run"|"gates_failed"|"no_confirmed"|"not_promotable"
+    hypothesis_gap_id: Optional[str]
+    device_key: Optional[str]
+    gate_verdicts: tuple
+    committed_sha: Optional[str]
+    note: str = ""
