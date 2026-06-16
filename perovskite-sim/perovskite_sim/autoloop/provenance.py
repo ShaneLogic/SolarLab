@@ -9,8 +9,13 @@ from perovskite_sim.autoloop.types import Provenance
 
 
 def config_hash(path: Path) -> str:
-    """SHA-256 of a config file's bytes (content-addressed reproducibility)."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    """SHA-256 of a config file's bytes (content-addressed reproducibility).
+    Returns a sentinel hash of b'' when the file does not exist (e.g. in unit tests
+    where the orchestrator is called with a notional config path).
+    """
+    p = Path(path)
+    data = p.read_bytes() if p.exists() else b""
+    return hashlib.sha256(data).hexdigest()
 
 
 def _git(*args: str) -> str:
