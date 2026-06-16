@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -10,10 +11,13 @@ from perovskite_sim.autoloop.ablation import run_ablation as _run_ablation
 from perovskite_sim.autoloop.gates import run_gate_stack, all_passed
 from perovskite_sim.autoloop.ladder import run_ladder as _run_ladder
 from perovskite_sim.autoloop.ledger import Ledger
+from perovskite_sim.autoloop.promote import propose_promotion, apply_edit, revert_edit
 from perovskite_sim.autoloop.provenance import stamp
 from perovskite_sim.autoloop.scorecard import gaps_from_score
 from perovskite_sim.autoloop.seeds import seed_negative_results
-from perovskite_sim.autoloop.types import Hypothesis, LadderResult, ParityScore
+from perovskite_sim.autoloop.types import (
+    ConfigEdit, Hypothesis, ImplementResult, LadderResult, NegativeResult, ParityScore,
+)
 
 
 def guardian_once(*, ledger_root: Path, outputs_root: Path,
@@ -110,3 +114,70 @@ def attribute_top_gap(*, ledger_root: Path, outputs_root: Path,
     (run_dir / "provenance.json").write_text(
         json.dumps(dataclasses.asdict(prov), indent=2, sort_keys=True), encoding="utf-8")
     return hyp
+
+
+def commit_promotion(edit: ConfigEdit, gap, hypothesis, verdicts, *, git_cwd=None) -> str:
+    """Commit the (already-applied) config edit to the CURRENT branch. Guards:
+    refuse main/master, refuse a dirty tree (other than the edited config)."""
+    cwd = str(git_cwd) if git_cwd is not None else None
+    branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            capture_output=True, text=True, cwd=cwd).stdout.strip()
+    if branch in ("main", "master"):
+        raise RuntimeError(f"refuse to auto-commit on '{branch}'; create an autoloop branch first")
+    dirty = subprocess.run(["git", "status", "--porcelain"],
+                           capture_output=True, text=True, cwd=cwd).stdout.strip().splitlines()
+    cfg_name = Path(edit.config_path).name
+    stray = [ln for ln in dirty if cfg_name not in ln]
+    if stray:
+        raise RuntimeError(f"refuse to commit: working tree has unrelated changes: {stray[:3]}")
+    gate_summary = " ".join(f"{v.name}{'✓' if v.passed else '✗'}" for v in verdicts)
+    msg = (f"feat(autoloop): promote {edit.device_key} (closes gap {gap.id})\n\n"
+           f"Auto-implemented by autoloop Stage 3 from a confirmed hypothesis.\n"
+           f"Mechanism: {hypothesis.mechanism}\n"
+           f"Gates: {gate_summary}\n"
+           f"Gap: {gap.id} | Hypothesis-cycle: {hypothesis.cycle}")
+    subprocess.run(["git", "add", edit.config_path], cwd=cwd, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=cwd, check=True)
+    return subprocess.run(["git", "rev-parse", "HEAD"],
+                          capture_output=True, text=True, cwd=cwd).stdout.strip()
+
+
+def implement_top_confirmed(*, ledger_root: Path, outputs_root: Path,
+                            config_path, reference_path,
+                            cycle: int, timestamp: str, apply: bool = False,
+                            gate_runner, committer=None, git_cwd=None) -> ImplementResult:
+    """One implement pass: top confirmed gap -> propose -> apply -> gate ->
+    (revert+report | commit). Read-only on solver code."""
+    led = Ledger.load(Path(ledger_root))
+    confirmed_ids = {h.gap_id for h in led.hypotheses if h.verdict == "confirmed"}
+    candidates = [g for g in led.gaps if g.status == "open" and g.id in confirmed_ids]
+    if not candidates:
+        return ImplementResult("no_confirmed", None, None, (), None)
+    gap = max(candidates, key=lambda g: g.gap_mag)
+    hyp = next(h for h in led.hypotheses if h.gap_id == gap.id and h.verdict == "confirmed")
+
+    edit = propose_promotion(hyp, led, config_path)
+    if edit is None:
+        return ImplementResult("not_promotable", gap.id, None, (), None, note=hyp.mechanism)
+
+    apply_edit(edit)
+    verdicts = list(gate_runner(edit, gap, hyp))
+
+    if not all(v.passed for v in verdicts):
+        revert_edit(edit)
+        led.add_negative(NegativeResult(
+            approach=hyp.mechanism,
+            why_failed="gate(s) failed: " + ",".join(v.name for v in verdicts if not v.passed),
+            evidence=f"autoloop Stage 3 implement cycle {cycle}"))
+        led.save()
+        return ImplementResult("gates_failed", gap.id, edit.device_key, tuple(verdicts), None)
+
+    if apply:
+        commit = committer or commit_promotion
+        sha = commit(edit, gap, hyp, verdicts, git_cwd=git_cwd)
+        led.add_gap(gap.with_status("closed").with_mechanism(hyp.mechanism))
+        led.save()
+        return ImplementResult("applied", gap.id, edit.device_key, tuple(verdicts), sha)
+
+    revert_edit(edit)
+    return ImplementResult("dry_run", gap.id, edit.device_key, tuple(verdicts), None)
