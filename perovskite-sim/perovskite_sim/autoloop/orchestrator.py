@@ -116,6 +116,32 @@ def attribute_top_gap(*, ledger_root: Path, outputs_root: Path,
     return hyp
 
 
+def _parse_porcelain_paths(porcelain_lines: list[str]) -> list[str]:
+    """Return the file path(s) referenced by each porcelain v1 status line.
+
+    Each line has the form ``XY <path>`` or ``XY <orig> -> <path>`` (renames).
+    Paths may be quoted (git quotes names containing spaces or special chars).
+    Returns ALL paths mentioned (both sides of a rename) so the caller can
+    test whether any path is unrelated to the intended edit.
+    """
+    paths: list[str] = []
+    for raw in porcelain_lines:
+        if len(raw) < 4:
+            continue
+        # columns 0-1: XY status codes; column 2: space; column 3+: path field
+        path_field = raw[3:]
+        # Handle renames: "old -> new"
+        parts = path_field.split(" -> ")
+        for part in parts:
+            part = part.strip()
+            # Git quotes paths that contain spaces/special chars
+            if part.startswith('"') and part.endswith('"'):
+                part = part[1:-1]
+            if part:
+                paths.append(part)
+    return paths
+
+
 def commit_promotion(edit: ConfigEdit, gap, hypothesis, verdicts, *, git_cwd=None) -> str:
     """Commit the (already-applied) config edit to the CURRENT branch. Guards:
     refuse main/master, refuse a dirty tree (other than the edited config)."""
@@ -124,20 +150,64 @@ def commit_promotion(edit: ConfigEdit, gap, hypothesis, verdicts, *, git_cwd=Non
                             capture_output=True, text=True, cwd=cwd).stdout.strip()
     if branch in ("main", "master"):
         raise RuntimeError(f"refuse to auto-commit on '{branch}'; create an autoloop branch first")
-    dirty = subprocess.run(["git", "status", "--porcelain"],
-                           capture_output=True, text=True, cwd=cwd).stdout.strip().splitlines()
-    cfg_name = Path(edit.config_path).name
-    stray = [ln for ln in dirty if cfg_name not in ln]
+
+    # Determine config path relative to the git root for exact comparison.
+    # Git porcelain output is always relative to the repo root, so we must
+    # compute the same relative path.  We resolve both sides to handle symlinks
+    # (macOS /var → /private/var, etc.).
+    git_root_raw = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                                  capture_output=True, text=True, cwd=cwd).stdout.strip()
+    git_root = str(Path(git_root_raw).resolve())
+    cfg_abs = str(Path(edit.config_path).resolve())
+    try:
+        cfg_rel = str(Path(cfg_abs).relative_to(git_root))
+    except ValueError:
+        # Config is outside the repo tree; fall back to absolute path so the
+        # comparison below still works (porcelain lines will never match it,
+        # flagging everything as stray — the right conservative behaviour).
+        cfg_rel = cfg_abs
+
+    # Do NOT strip() the whole output — porcelain lines begin with two status
+    # chars (e.g. " M") and a leading strip() would consume the first char.
+    dirty = [ln for ln in subprocess.run(["git", "status", "--porcelain"],
+                                         capture_output=True, text=True,
+                                         cwd=cwd).stdout.splitlines() if ln]
+
+    stray: list[str] = []
+    for line in dirty:
+        for path in _parse_porcelain_paths([line]):
+            # Porcelain paths are relative to the repo root.  Resolve them
+            # against the resolved git_root so symlinks don't confuse us, then
+            # compare EXACTLY against cfg_abs (never a substring match).
+            path_abs = str((Path(git_root) / path).resolve())
+            if path_abs != cfg_abs:
+                stray.append(line)
+                break  # one stray match per dirty line is enough
     if stray:
         raise RuntimeError(f"refuse to commit: working tree has unrelated changes: {stray[:3]}")
+
+    # Verify the index contains ONLY the config file before committing.
+    # This catches a race where an external process staged something between
+    # the status check and the add.
+    subprocess.run(["git", "add", edit.config_path], cwd=cwd, check=True)
+    staged = subprocess.run(["git", "diff", "--cached", "--name-only"],
+                            capture_output=True, text=True, cwd=cwd).stdout.strip().splitlines()
+    extra = [p for p in staged
+             if str((Path(git_root) / p).resolve()) != cfg_abs]
+    if extra:
+        raise RuntimeError(
+            f"refuse to commit: index contains unexpected staged files: {extra[:3]}")
+
     gate_summary = " ".join(f"{v.name}{'✓' if v.passed else '✗'}" for v in verdicts)
     msg = (f"feat(autoloop): promote {edit.device_key} (closes gap {gap.id})\n\n"
            f"Auto-implemented by autoloop Stage 3 from a confirmed hypothesis.\n"
            f"Mechanism: {hypothesis.mechanism}\n"
            f"Gates: {gate_summary}\n"
            f"Gap: {gap.id} | Hypothesis-cycle: {hypothesis.cycle}")
-    subprocess.run(["git", "add", edit.config_path], cwd=cwd, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=cwd, check=True)
+    # Scope the commit to the exact config path so a pre-staged unrelated file
+    # can never be swept in even if the stray-file guard above is bypassed.
+    subprocess.run(["git", "commit", "-q", "-m", msg, "--", edit.config_path],
+                   cwd=cwd, check=True)
     return subprocess.run(["git", "rev-parse", "HEAD"],
                           capture_output=True, text=True, cwd=cwd).stdout.strip()
 
@@ -161,23 +231,27 @@ def implement_top_confirmed(*, ledger_root: Path, outputs_root: Path,
         return ImplementResult("not_promotable", gap.id, None, (), None, note=hyp.mechanism)
 
     apply_edit(edit)
-    verdicts = list(gate_runner(edit, gap, hyp))
+    try:
+        verdicts = list(gate_runner(edit, gap, hyp))
 
-    if not all(v.passed for v in verdicts):
+        if not all(v.passed for v in verdicts):
+            revert_edit(edit)
+            led.add_negative(NegativeResult(
+                approach=hyp.mechanism,
+                why_failed="gate(s) failed: " + ",".join(v.name for v in verdicts if not v.passed),
+                evidence=f"autoloop Stage 3 implement cycle {cycle}"))
+            led.save()
+            return ImplementResult("gates_failed", gap.id, edit.device_key, tuple(verdicts), None)
+
+        if apply:
+            commit = committer or commit_promotion
+            sha = commit(edit, gap, hyp, verdicts, git_cwd=git_cwd)
+            led.add_gap(gap.with_status("closed").with_mechanism(hyp.mechanism))
+            led.save()
+            return ImplementResult("applied", gap.id, edit.device_key, tuple(verdicts), sha)
+
         revert_edit(edit)
-        led.add_negative(NegativeResult(
-            approach=hyp.mechanism,
-            why_failed="gate(s) failed: " + ",".join(v.name for v in verdicts if not v.passed),
-            evidence=f"autoloop Stage 3 implement cycle {cycle}"))
-        led.save()
-        return ImplementResult("gates_failed", gap.id, edit.device_key, tuple(verdicts), None)
-
-    if apply:
-        commit = committer or commit_promotion
-        sha = commit(edit, gap, hyp, verdicts, git_cwd=git_cwd)
-        led.add_gap(gap.with_status("closed").with_mechanism(hyp.mechanism))
-        led.save()
-        return ImplementResult("applied", gap.id, edit.device_key, tuple(verdicts), sha)
-
-    revert_edit(edit)
-    return ImplementResult("dry_run", gap.id, edit.device_key, tuple(verdicts), None)
+        return ImplementResult("dry_run", gap.id, edit.device_key, tuple(verdicts), None)
+    except Exception:
+        revert_edit(edit)
+        raise

@@ -122,3 +122,140 @@ def test_commit_promotion_refuses_on_main(tmp_path):
                       new_value=True, old_text=_YAML)
     with pytest.raises(RuntimeError, match="main"):
         commit_promotion(edit, _gap(), _confirmed_hyp(), [], git_cwd=repo)
+
+
+# ---------------------------------------------------------------------------
+# Dirty-tree guard tests (issue #1 + #2 from Stage 3 review)
+# ---------------------------------------------------------------------------
+
+def _make_autoloop_repo(tmp_path):
+    """Create a minimal git repo on an autoloop/* branch with one tracked file."""
+    repo = tmp_path / "repo"; repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    # seed commit on main so branch creation works
+    seed = repo / "seed.txt"; seed.write_text("seed", encoding="utf-8")
+    subprocess.run(["git", "add", "seed.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=repo, check=True)
+    subprocess.run(["git", "checkout", "-q", "-b", "autoloop/test"], cwd=repo, check=True)
+    return repo
+
+
+def test_commit_promotion_refuses_when_unrelated_modified_file(tmp_path):
+    """Dirty working tree with an unrelated modified tracked file must raise."""
+    from perovskite_sim.autoloop.types import ConfigEdit
+    repo = _make_autoloop_repo(tmp_path)
+
+    # tracked config file
+    cfg = repo / "scaps_mirror_v2.yaml"; cfg.write_text(_YAML, encoding="utf-8")
+    # tracked unrelated file
+    other = repo / "README.md"; other.write_text("readme", encoding="utf-8")
+    subprocess.run(["git", "add", "scaps_mirror_v2.yaml", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add files"], cwd=repo, check=True)
+
+    # simulate applied edit (modify config) + unrelated dirty file
+    cfg.write_text(_YAML + "# edited\n", encoding="utf-8")
+    other.write_text("readme modified", encoding="utf-8")
+
+    edit = ConfigEdit(config_path=str(cfg), device_key="interface_plane_projection",
+                      new_value=True, old_text=_YAML)
+    with pytest.raises(RuntimeError, match="unrelated changes"):
+        commit_promotion(edit, _gap(), _confirmed_hyp(), [], git_cwd=repo)
+
+
+def test_commit_promotion_refuses_when_unrelated_staged_file(tmp_path):
+    """Pre-staged unrelated file must be caught by the dirty-tree guard."""
+    from perovskite_sim.autoloop.types import ConfigEdit
+    repo = _make_autoloop_repo(tmp_path)
+
+    cfg = repo / "scaps_mirror_v2.yaml"; cfg.write_text(_YAML, encoding="utf-8")
+    other = repo / "README.md"; other.write_text("readme", encoding="utf-8")
+    subprocess.run(["git", "add", "scaps_mirror_v2.yaml", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add files"], cwd=repo, check=True)
+
+    # Stage the unrelated file without touching the config yet
+    other.write_text("readme staged", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    # also apply the config edit
+    cfg.write_text(_YAML + "# edited\n", encoding="utf-8")
+
+    edit = ConfigEdit(config_path=str(cfg), device_key="interface_plane_projection",
+                      new_value=True, old_text=_YAML)
+    with pytest.raises(RuntimeError, match="unrelated changes"):
+        commit_promotion(edit, _gap(), _confirmed_hyp(), [], git_cwd=repo)
+
+
+def test_commit_promotion_basename_collision_not_confused(tmp_path):
+    """A file whose path merely CONTAINS the config basename as a substring
+    must still be detected as unrelated (regression for the substring-match bug).
+
+    e.g. config is ``scaps_mirror_v2.yaml`` but ``my_scaps_mirror_v2.yaml.notes``
+    is also dirty — the old ``cfg_name not in ln`` test passed it through.
+    """
+    from perovskite_sim.autoloop.types import ConfigEdit
+    repo = _make_autoloop_repo(tmp_path)
+
+    cfg = repo / "scaps_mirror_v2.yaml"; cfg.write_text(_YAML, encoding="utf-8")
+    # colliding name: contains the config basename as a substring
+    collider = repo / "my_scaps_mirror_v2.yaml.notes"
+    collider.write_text("notes", encoding="utf-8")
+    subprocess.run(["git", "add", "scaps_mirror_v2.yaml", "my_scaps_mirror_v2.yaml.notes"],
+                   cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add files"], cwd=repo, check=True)
+
+    # Dirty the collider (staged), apply the config edit
+    collider.write_text("notes modified", encoding="utf-8")
+    subprocess.run(["git", "add", "my_scaps_mirror_v2.yaml.notes"], cwd=repo, check=True)
+    cfg.write_text(_YAML + "# edited\n", encoding="utf-8")
+
+    edit = ConfigEdit(config_path=str(cfg), device_key="interface_plane_projection",
+                      new_value=True, old_text=_YAML)
+    with pytest.raises(RuntimeError, match="unrelated changes"):
+        commit_promotion(edit, _gap(), _confirmed_hyp(), [], git_cwd=repo)
+
+
+def test_commit_promotion_commit_contains_only_config_file(tmp_path):
+    """After a successful commit, git show must list ONLY the config file."""
+    from perovskite_sim.autoloop.types import ConfigEdit
+    repo = _make_autoloop_repo(tmp_path)
+
+    cfg = repo / "scaps_mirror_v2.yaml"; cfg.write_text(_YAML, encoding="utf-8")
+    subprocess.run(["git", "add", "scaps_mirror_v2.yaml"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add config"], cwd=repo, check=True)
+
+    # Apply edit
+    cfg.write_text(_YAML + "interface_plane_projection: true\n", encoding="utf-8")
+
+    edit = ConfigEdit(config_path=str(cfg), device_key="interface_plane_projection",
+                      new_value=True, old_text=_YAML)
+    sha = commit_promotion(edit, _gap(), _confirmed_hyp(),
+                           [GateVerdict("G1_numerics", True, "")], git_cwd=repo)
+
+    assert sha  # non-empty SHA
+    changed = subprocess.run(
+        ["git", "show", "--name-only", "--format=", sha],
+        capture_output=True, text=True, cwd=repo,
+    ).stdout.strip().splitlines()
+    assert changed == ["scaps_mirror_v2.yaml"], (
+        f"commit touched unexpected files: {changed}")
+
+
+def test_gate_runner_exception_reverts_config(tmp_path):
+    """If gate_runner raises unexpectedly, the config edit must be reverted."""
+    cfg = _setup(tmp_path)
+    original_text = cfg.read_text(encoding="utf-8")
+
+    def _exploding_gates(edit, gap, hyp):
+        raise OSError("subprocess exploded")
+
+    with pytest.raises(OSError, match="subprocess exploded"):
+        implement_top_confirmed(
+            ledger_root=tmp_path / "ledger", outputs_root=tmp_path / "out",
+            config_path=cfg, reference_path=tmp_path / "r.json",
+            cycle=1, timestamp="2026-06-16T00:00:00Z",
+            gate_runner=_exploding_gates, apply=False,
+        )
+
+    assert cfg.read_text(encoding="utf-8") == original_text, (
+        "config was not reverted after gate_runner exception")
