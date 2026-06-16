@@ -613,6 +613,9 @@ and records open gaps to the ledger.
 - **Autoloop L3 lab data** — point `--reference` at a tiered descriptor
   (`scaps_lab_tiered.json`) to score absolutes against measured J-V (LabReferenceSource)
   while keeping SCAPS trend sweeps. Default stays pure-SCAPS.
+- **Autoloop design-search** (`python perovskite-sim/scripts/autoloop_run.py --search`) —
+  parity-gated, advisory search of the device-design space for max-PCE designs (no-dep
+  random search; pluggable for optuna later). Reports designs; applies nothing.
 
 <br>
 
