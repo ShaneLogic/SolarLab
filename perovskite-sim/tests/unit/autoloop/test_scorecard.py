@@ -53,5 +53,17 @@ def test_gaps_from_score_emits_gap_when_closure_low(tmp_path):
     assert any("base" in i and "V_oc" in i for i in ids)  # base abs delta -> gap
 
 
+def test_gaps_from_score_emits_coverage_gap_on_total_bracket_failure():
+    from perovskite_sim.autoloop.types import SweepScore
+    # A mapped sweep that ran 5 points but bracketed <2 -> NaN closure. Without
+    # the blind-spot guard this vanishes from the gate; it must surface instead.
+    score = ParityScore(
+        overall=0.0, base_deltas={"V_oc": 0.0},
+        per_sweep={"Nd_ETL": SweepScore("Nd_ETL", float("nan"), 5, 1)},
+    )
+    gaps = gaps_from_score(score, cycle=0, base_tol={"V_oc": 0.02})
+    assert any(g.id == "coverage:Nd_ETL:V_oc" for g in gaps)
+
+
 def test_sheet_to_axis_has_four_scoreable_sheets():
     assert set(SHEET_TO_AXIS) == {"CHI_ETL", "Nd_ETL", "Nt_PVK ETL", "Nt_C_PVK"}

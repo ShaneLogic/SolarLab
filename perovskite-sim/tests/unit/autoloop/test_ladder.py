@@ -15,6 +15,27 @@ def test_run_l0_reports_pass_on_green_subprocess(monkeypatch):
     assert "passed" in detail
 
 
+def test_run_l0_runs_from_package_root(monkeypatch):
+    """run_l0 must run pytest from perovskite-sim/, not the caller's cwd, so
+    relative test paths resolve regardless of where the guardian is invoked."""
+    captured = {}
+
+    class _CP:
+        returncode = 0
+        stdout = "1 passed"
+        stderr = ""
+
+    def _fake_run(*a, **k):
+        captured.update(k)
+        return _CP()
+
+    monkeypatch.setattr("perovskite_sim.autoloop.ladder.subprocess.run", _fake_run)
+    run_l0(["tests/unit/autoloop"])
+    from perovskite_sim.autoloop.ladder import _PKG_ROOT
+    assert captured.get("cwd") == str(_PKG_ROOT)
+    assert _PKG_ROOT.name == "perovskite-sim"
+
+
 def test_run_l0_reports_fail_on_red_subprocess(monkeypatch):
     class _CP:
         returncode = 1

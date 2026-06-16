@@ -1,6 +1,7 @@
 # perovskite_sim/autoloop/ladder.py
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -10,15 +11,28 @@ from perovskite_sim.autoloop.scorecard import (
 )
 from perovskite_sim.autoloop.types import LadderResult, ParityScore
 
+logger = logging.getLogger(__name__)
+
 # Default JV envelope — the campaign parity setting (verified).
 DEFAULT_JV_KWARGS = dict(N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
 
+# perovskite-sim/ package root: ladder.py is at perovskite_sim/autoloop/ladder.py,
+# so parents[2] is the package root. L0 pytest paths resolve relative to THIS,
+# not the caller's cwd (guardian_once may be invoked from the SolarLab repo root).
+_PKG_ROOT = Path(__file__).resolve().parents[2]
+
 
 def run_l0(paths: list[str]) -> tuple[bool, str]:
-    """L0 numerics gate: run a fast pytest subset; pass iff returncode == 0."""
+    """L0 numerics gate: run a fast pytest subset; pass iff returncode == 0.
+
+    Runs from the ``perovskite-sim/`` package root so relative test paths
+    resolve regardless of the caller's working directory — otherwise a
+    guardian run from the SolarLab repo root would hand pytest a
+    non-existent path and report a spurious L0 failure.
+    """
     proc = subprocess.run(
         ["python", "-m", "pytest", "-q", "-m", "not slow", *paths],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=str(_PKG_ROOT),
     )
     ok = proc.returncode == 0
     tail = (proc.stdout or proc.stderr).strip().splitlines()
@@ -62,7 +76,13 @@ def build_run_callables(config_path: Path,
         sp = SweepPoint("p", axis, f"{x:.3e}", {axis: x})
         try:
             return _metrics(apply_sweep_point(base_stack, sp))
-        except Exception:
+        except Exception as exc:
+            # Never silently swallow: a systematically failing sweep must be
+            # visible in the logs, not indistinguishable from an unbracketed
+            # point. The NaN/False sentinel is still returned so the scorecard
+            # treats this point as non-contributing.
+            logger.warning("autoloop scorecard: sweep point %s=%.3e failed: %r",
+                           axis, x, exc)
             return (float("nan"), float("nan"), float("nan"), float("nan"), False)
 
     def base_point():
