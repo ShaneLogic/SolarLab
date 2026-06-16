@@ -610,6 +610,9 @@ and records open gaps to the ledger.
 - **Autoloop boulder** (`python perovskite-sim/scripts/autoloop_run.py --boulder [--converge]`) —
   the continuous driver: sweep drains gaps into a proposal report; --converge auto-applies
   fixes and loops until the parity target (on an autoloop branch, never main).
+- **Autoloop L3 lab data** — point `--reference` at a tiered descriptor
+  (`scaps_lab_tiered.json`) to score absolutes against measured J-V (LabReferenceSource)
+  while keeping SCAPS trend sweeps. Default stays pure-SCAPS.
 
 <br>
 

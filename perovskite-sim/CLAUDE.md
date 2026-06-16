@@ -376,3 +376,19 @@ Stage 3 commit_promotion on the current branch (never pushes).
     python scripts/autoloop_run.py --boulder            # sweep: drain -> report, no commits
     git checkout -b autoloop/$(date +%F)
     python scripts/autoloop_run.py --boulder --converge --max-cycles 5   # auto-apply loop
+
+### Stage 4b — L3 real-lab-data ingest seam
+
+`autoloop/reference.py` makes ground truth pluggable: `build_reference_source(path)`
+returns a `ScapsReferenceSource` for a `scaps_reference.json`, or a
+`TieredReferenceSource` (LabReferenceSource base + SCAPS sweeps) for a reference
+**descriptor** `{"scaps": "...json", "lab": {"jv_csv": "...", "units", "sign", "aggregate"}}`.
+`LabReferenceSource` ingests measured J-V CSV(s) → base {Voc,Jsc,FF,PCE} via the
+simulator's own `compute_metrics` (skips V_oc-unbracketed devices; median/champion/mean
+aggregate). `scorecard` + `_probe_worker` read through the factory — guardian/ladder/
+boulder are untouched. To anchor absolutes to hardware, point `--reference` at a descriptor:
+
+    python scripts/autoloop_run.py --once --reference tests/integration/scaps_lab_tiered.json
+
+Default `--reference` stays scaps_reference.json (pure SCAPS, bit-identical). Real lab
+CSVs replace the synthetic `tests/integration/lab_data_example/*.csv` fixtures.
