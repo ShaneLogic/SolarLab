@@ -34,6 +34,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--once", action="store_true", help="run a single cycle")
     ap.add_argument("--attribute", action="store_true",
                     help="run one attribution pass on the top open gap")
+    ap.add_argument("--implement", action="store_true",
+                    help="run one implement pass on the top confirmed gap (dry-run unless --apply)")
+    ap.add_argument("--apply", action="store_true",
+                    help="with --implement: commit the change to the current branch if all gates pass")
     ap.add_argument("--cycle", type=int, default=0)
     ap.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE)
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -74,6 +78,29 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(json.dumps({"attributed": dataclasses.asdict(hyp)}, indent=2, sort_keys=True))
         return 0
+
+    if ns.implement:
+        import dataclasses
+        from perovskite_sim.autoloop.orchestrator import implement_top_confirmed
+        from perovskite_sim.autoloop.types import GateVerdict
+        from perovskite_sim.autoloop.ladder import run_l0, run_ladder
+        from perovskite_sim.autoloop.gates_impl import gate_g0_bit_identical, gate_g4_reconciles
+
+        def real_gates(edit, gap, hyp):
+            # G1 numerics (fast subset) + G0 legacy/golden regression suite.
+            v = []
+            ok1, d1 = run_l0(["tests/unit/autoloop"]); v.append(GateVerdict("G1_numerics", ok1, d1))
+            ok0, d0 = run_l0(["tests/regression", "-m", "not slow"])  # golden oracle
+            v.append(gate_g0_bit_identical(lambda: (ok0, d0)))
+            return v
+
+        hyp_result = implement_top_confirmed(
+            ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
+            config_path=ns.config, reference_path=ns.reference, cycle=ns.cycle,
+            timestamp=iso_timestamp_utc(), gate_runner=real_gates, apply=ns.apply)
+        print(json.dumps({"implement": dataclasses.asdict(hyp_result)}, indent=2,
+                         sort_keys=True, default=str))
+        return 1 if hyp_result.status == "gates_failed" and ns.apply else 0
 
     report = guardian_once(
         ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
