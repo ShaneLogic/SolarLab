@@ -329,3 +329,18 @@ Run one guardian cycle (exits non-zero if the gate stack fails):
 Scoreable sweeps are the four with a SolarLab axis mapping (`scorecard.SHEET_TO_AXIS`);
 unmapped reference sheets are skipped and logged. Stages 2–4 (cognition attribution,
 auto-implement, continuous boulder) are not built yet.
+
+### Stage 2 — attribution leg (deterministic)
+
+`autoloop/ablation.py` + `autoloop/attribution.py` diagnose the top open gap
+(read-only). `run_ablation` toggles candidate `SOLARLAB_*` flags + a grid
+(n_points→80) + a dark-J probe through a `ProbeRunner` (real =
+`SubprocessProbeRunner` → `_probe_worker`, env-set fresh interpreter; fake for
+tests), recording a badness scalar (lower = closer to SCAPS). `HeuristicAttributor`
+classifies: grid-sensitive→numerics, flag-improves→physics, dark-J≠0→bug, else
+uncertain — with a negatives-guard (never confirms a refuted mechanism). Writes a
+`Hypothesis` to the ledger; the LLM adapter + multi-skeptic verify are deferred.
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --once        # populate the gap ledger
+    python scripts/autoloop_run.py --attribute   # diagnose the top open gap

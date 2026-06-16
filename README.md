@@ -596,6 +596,14 @@ pytest tests/unit/experiments/test_jv_sweep.py          # a single file
 | **Integration** | End-to-end experiment runs on shipped presets |
 | **Regression** | Physical sanity envelopes ($V_{\text{oc}}$, $J_{\text{sc}}$, HI bounds); BLAS pinned via `conftest.py` |
 
+**Autoloop guardian** (`python perovskite-sim/scripts/autoloop_run.py --once`) —
+sense-and-record cycle: runs the test ladder, scores SolarLab vs the SCAPS reference,
+and records open gaps to the ledger.
+
+- **Autoloop attribution** (`python perovskite-sim/scripts/autoloop_run.py --attribute`) —
+  diagnoses the top open gap (bug / numerics / physics / uncertain) by ablating
+  physics flags + grid + dark-current probes; records a Hypothesis. Read-only.
+
 <br>
 
 ---
