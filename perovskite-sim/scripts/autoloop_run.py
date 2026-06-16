@@ -38,6 +38,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="run one implement pass on the top confirmed gap (dry-run unless --apply)")
     ap.add_argument("--apply", action="store_true",
                     help="with --implement: commit the change to the current branch if all gates pass")
+    ap.add_argument("--boulder", action="store_true",
+                    help="run the continuous boulder (sweep dry-run unless --converge)")
+    ap.add_argument("--converge", action="store_true",
+                    help="with --boulder/--implement: auto-apply landable fixes and loop")
+    ap.add_argument("--parity-target", type=float, default=0.90)
+    ap.add_argument("--max-cycles", type=int, default=10)
+    ap.add_argument("--reject-streak", type=int, default=3)
     ap.add_argument("--cycle", type=int, default=0)
     ap.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE)
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -60,6 +67,57 @@ def _load_baseline(path: Path):
 
 def main(argv: list[str] | None = None) -> int:
     ns = parse_args(argv if argv is not None else sys.argv[1:])
+
+    if ns.boulder:
+        import dataclasses
+        from perovskite_sim.autoloop.orchestrator import (
+            run_boulder, guardian_once, attribute_top_gap, implement_top_confirmed)
+        from perovskite_sim.autoloop.attribution import HeuristicAttributor
+        from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
+        from perovskite_sim.autoloop.gates_impl import make_implement_gate_runner
+        from perovskite_sim.autoloop.provenance import _git
+
+        if ns.converge:
+            branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+            if branch in ("main", "master"):
+                print(json.dumps({"boulder": None,
+                                  "error": f"refuse --boulder --converge on '{branch}'; "
+                                           "create an autoloop branch first"}))
+                return 1
+
+        def sense(cycle):
+            rep = guardian_once(ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
+                                reference_path=ns.reference, config_path=ns.config,
+                                cycle=cycle, timestamp=iso_timestamp_utc(),
+                                l0_paths=ns.l0_paths, baseline=None)
+            return rep["overall"]
+
+        def attribute(cycle):
+            attribute_top_gap(ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
+                              config_path=ns.config, reference_path=ns.reference, cycle=cycle,
+                              timestamp=iso_timestamp_utc(),
+                              probe_runner_factory=lambda g: SubprocessProbeRunner(
+                                  config_path=ns.config, reference_path=ns.reference, gap=g),
+                              attributor=HeuristicAttributor())
+
+        def implement(cycle, apply):
+            def _measure(edit, gap):
+                return SubprocessProbeRunner(config_path=edit.config_path,
+                                             reference_path=ns.reference, gap=gap).run(
+                    {"env_flags": {}, "jv_overrides": {}, "measure": "gap"})
+            return implement_top_confirmed(
+                ledger_root=ns.ledger_root, outputs_root=ns.outputs_root, config_path=ns.config,
+                reference_path=ns.reference, cycle=cycle, timestamp=iso_timestamp_utc(),
+                gate_runner=make_implement_gate_runner(measure_badness=_measure), apply=apply)
+
+        result = run_boulder(ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
+                             timestamp=iso_timestamp_utc(), converge=ns.converge,
+                             parity_target=ns.parity_target, max_cycles=ns.max_cycles,
+                             reject_streak=ns.reject_streak,
+                             sense=sense, attribute=attribute, implement=implement)
+        print(json.dumps({"boulder": dataclasses.asdict(result)}, indent=2,
+                         sort_keys=True, default=str))
+        return 1 if result.stop_reason == "halt" else 0
 
     if ns.attribute:
         import dataclasses

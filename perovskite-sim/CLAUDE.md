@@ -361,3 +361,18 @@ current branch (`--apply`, refuses main/dirty, never pushes). A failed gate reve
     python scripts/autoloop_run.py --attribute     # diagnose -> confirmed Hypothesis
     python scripts/autoloop_run.py --implement     # dry-run: diff + gate verdicts
     python scripts/autoloop_run.py --implement --apply   # commit to current branch
+
+### Stage 4a — boulder driver (continuous loop)
+
+`autoloop/orchestrator.run_boulder` chains guardian->attribute->implement.
+**Sweep** (default) drains current open gaps into a batch proposal report (dry-run,
+no commits), advancing via a new `attempted` gap status. **`--converge`** auto-applies
+each landable fix, re-senses the evolved config (guardian_once preserves
+attempted/refuted statuses so it terminates), and loops until parity-target / drained /
+max-cycles / reject-streak. Converge refuses to start on main/master and commits via
+Stage 3 commit_promotion on the current branch (never pushes).
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --boulder            # sweep: drain -> report, no commits
+    git checkout -b autoloop/$(date +%F)
+    python scripts/autoloop_run.py --boulder --converge --max-cycles 5   # auto-apply loop
