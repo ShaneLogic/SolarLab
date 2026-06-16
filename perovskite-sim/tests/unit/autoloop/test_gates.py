@@ -1,6 +1,8 @@
 import pytest
 from perovskite_sim.autoloop.types import LadderResult, ParityScore, SweepScore
-from perovskite_sim.autoloop.gates import run_gate_stack, gate_g4_deferred
+from perovskite_sim.autoloop.gates import (
+    run_gate_stack, gate_g4_deferred, gate_g5_deferred,
+)
 
 
 def _score(overall, closure):
@@ -31,3 +33,5 @@ def test_g3_fails_on_parity_regression():
 def test_g4_g5_are_deferred_stubs():
     with pytest.raises(NotImplementedError):
         gate_g4_deferred(mechanism=None, residual=None)
+    with pytest.raises(NotImplementedError):
+        gate_g5_deferred()

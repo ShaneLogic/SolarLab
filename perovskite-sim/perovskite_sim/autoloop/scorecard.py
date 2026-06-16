@@ -90,7 +90,23 @@ def gaps_from_score(score: ParityScore, *, cycle: int,
     gaps: list[Gap] = []
 
     for sheet, s in score.per_sweep.items():
-        if s.voc_closure_pct == s.voc_closure_pct and s.voc_closure_pct < closure_target:
+        closure_is_nan = s.voc_closure_pct != s.voc_closure_pct
+        if closure_is_nan:
+            # Blind-spot guard: a mapped sweep that fails to bracket V_oc at >=2
+            # points yields a NaN closure — excluded from `overall` AND, without
+            # this branch, emits no Gap, so total bracket failure would vanish
+            # from the gate. Surface it as a high-rank coverage gap instead.
+            if s.n_points >= 2 and s.n_bracketed < 2:
+                gaps.append(Gap(
+                    id=f"coverage:{sheet}:V_oc", metric="V_oc", sweep=sheet,
+                    sweep_point=float("nan"), solarlab_val=float(s.n_bracketed),
+                    reference_val=float(s.n_points), gap_mag=1.0,
+                    kind="trend", status="open", found_cycle=cycle,
+                    last_attempt_cycle=cycle,
+                    mechanism="SolarLab failed to bracket V_oc at >=2 sweep points",
+                ))
+            continue
+        if s.voc_closure_pct < closure_target:
             mag = (closure_target - s.voc_closure_pct) / 100.0
             gaps.append(Gap(
                 id=f"trend:{sheet}:V_oc", metric="V_oc", sweep=sheet, sweep_point=float("nan"),
