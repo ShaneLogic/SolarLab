@@ -19,6 +19,9 @@ class SubprocessProbeRunner:
     config_path: Path
     reference_path: Path
     gap: Gap
+    timeout_s: float = 240.0    # hard backstop: a flag that destabilises solver
+    # convergence can crawl through Radau/Newton fallbacks on every sweep point
+    # (~tens of minutes) — without this the whole attribution pass hangs forever.
 
     def run(self, variant: dict) -> float:
         env = dict(os.environ)
@@ -32,10 +35,19 @@ class SubprocessProbeRunner:
             "jv_overrides": variant.get("jv_overrides", {}),
             "measure": variant.get("measure", "gap"),
         }
-        proc = subprocess.run(
-            ["python", "-m", "perovskite_sim.autoloop._probe_worker", json.dumps(payload)],
-            capture_output=True, text=True, env=env, cwd=str(_PKG_ROOT),
-        )
+        try:
+            proc = subprocess.run(
+                ["python", "-m", "perovskite_sim.autoloop._probe_worker", json.dumps(payload)],
+                capture_output=True, text=True, env=env, cwd=str(_PKG_ROOT),
+                timeout=self.timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # A timed-out probe is a signal, not a crash: raise so _safe_run
+            # records it ok=False (the destabilising flag did not help).
+            raise RuntimeError(
+                f"probe worker timed out after {self.timeout_s}s "
+                f"(env={variant.get('env_flags')}, jv={variant.get('jv_overrides')}) — "
+                f"flag likely destabilises solver convergence") from exc
         if proc.returncode != 0:
             raise RuntimeError(f"probe worker failed (rc={proc.returncode}): "
                                f"{proc.stderr.strip()[-400:]}")
