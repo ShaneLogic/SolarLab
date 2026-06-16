@@ -141,3 +141,24 @@ class ImplementResult:
     gate_verdicts: tuple
     committed_sha: Optional[str]
     note: str = ""
+
+
+@dataclass(frozen=True)
+class BoulderProposal:
+    gap_id: str
+    cause: str
+    mechanism: str
+    device_key: Optional[str]
+    gate_status: str          # implement status: dry_run|applied|gates_failed|not_promotable|no_confirmed
+    landed: bool
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class BoulderResult:
+    mode: str                 # "sweep" | "converge"
+    cycles: int
+    proposals: tuple
+    landed_count: int
+    stop_reason: str          # "sweep_complete"|"success"|"drained"|"cap"|"halt"
+    final_overall: Optional[float]
