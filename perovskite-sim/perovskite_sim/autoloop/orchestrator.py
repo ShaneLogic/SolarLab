@@ -6,13 +6,14 @@ import json
 from pathlib import Path
 from typing import Callable, Optional
 
+from perovskite_sim.autoloop.ablation import run_ablation as _run_ablation
 from perovskite_sim.autoloop.gates import run_gate_stack, all_passed
 from perovskite_sim.autoloop.ladder import run_ladder as _run_ladder
 from perovskite_sim.autoloop.ledger import Ledger
 from perovskite_sim.autoloop.provenance import stamp
 from perovskite_sim.autoloop.scorecard import gaps_from_score
 from perovskite_sim.autoloop.seeds import seed_negative_results
-from perovskite_sim.autoloop.types import LadderResult, ParityScore
+from perovskite_sim.autoloop.types import Hypothesis, LadderResult, ParityScore
 
 
 def guardian_once(*, ledger_root: Path, outputs_root: Path,
@@ -64,3 +65,43 @@ def guardian_once(*, ledger_root: Path, outputs_root: Path,
     (run_dir / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True),
                                          encoding="utf-8")
     return report
+
+
+def attribute_top_gap(*, ledger_root: Path, outputs_root: Path,
+                      config_path: Path, reference_path: Path,
+                      cycle: int, timestamp: str,
+                      probe_runner, attributor,
+                      flags: Optional[dict[str, str]] = None, seed: int = 0,
+                      run_ablation_fn=None) -> Optional[Hypothesis]:
+    """One attribution pass: pick the top open gap, ablate, attribute, record.
+
+    Read-only re: code — writes only the ledger + run artifacts.
+    """
+    ledger_root = Path(ledger_root)
+    led = Ledger.load(ledger_root)
+
+    open_gaps = [g for g in led.gaps if g.status == "open"]
+    if not open_gaps:
+        return None
+    gap = max(open_gaps, key=lambda g: g.gap_mag)
+
+    run_ablation = run_ablation_fn or _run_ablation
+    matrix = run_ablation(gap, probe_runner)
+    hyp = attributor.attribute(gap, matrix, led)
+
+    led.add_hypothesis(hyp)
+    if hyp.verdict == "confirmed":
+        led.add_gap(gap.with_mechanism(hyp.mechanism))   # add_gap replaces on id
+    led.save()
+
+    run_dir = Path(outputs_root) / f"attr-{cycle}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    prov = stamp(run_id=f"attr-{cycle}", config_path=config_path,
+                 flags=flags or {}, seed=seed, timestamp=timestamp)
+    (run_dir / "hypothesis.json").write_text(
+        json.dumps(dataclasses.asdict(hyp), indent=2, sort_keys=True), encoding="utf-8")
+    (run_dir / "matrix.json").write_text(
+        json.dumps(dataclasses.asdict(matrix), indent=2, sort_keys=True), encoding="utf-8")
+    (run_dir / "provenance.json").write_text(
+        json.dumps(dataclasses.asdict(prov), indent=2, sort_keys=True), encoding="utf-8")
+    return hyp
