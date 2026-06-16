@@ -47,6 +47,8 @@ class Hypothesis:
     verifier_votes: int = 0
     verdict: str = "uncertain"   # "confirmed" | "refuted" | "uncertain"
     cycle: int = 0
+    predicted_delta: float = 0.0  # badness change the lever is predicted to
+                                  # produce (negative = improvement); fed to G4
 
 
 @dataclass(frozen=True)

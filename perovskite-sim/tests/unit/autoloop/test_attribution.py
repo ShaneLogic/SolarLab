@@ -39,6 +39,7 @@ def test_physics_when_flag_improves(tmp_path):
     hyp = h.attribute(_gap(), _matrix(flag_delta=-18.0), _empty_ledger(tmp_path))
     assert hyp.cause == "physics"
     assert "SOLARLAB_IFACE_PROJ" in hyp.mechanism
+    assert hyp.predicted_delta == -18.0     # the flag probe's delta, fed to G4
 
 
 def test_bug_when_dark_current_nonzero(tmp_path):
