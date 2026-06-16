@@ -45,9 +45,14 @@ def guardian_once(*, ledger_root: Path, outputs_root: Path,
 
     gap_ids: list[str] = []
     if result.score is not None:
+        existing = {g.id: g for g in led.gaps}
         for g in gaps_from_score(result.score, cycle=cycle):
-            if led.is_refuted(g.id):         # never resurface a refuted approach
+            if led.is_refuted(g.id):          # never resurface a refuted approach
                 continue
+            prior = existing.get(g.id)
+            if prior is not None and prior.status != "open":
+                continue   # preserve attempted/blocked/refuted/closed — do NOT
+                           # resurrect to open (the boulder converge termination guard)
             led.add_gap(g)
             gap_ids.append(g.id)
 
