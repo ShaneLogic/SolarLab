@@ -51,3 +51,35 @@ DEFAULT_DESIGN_SPACE = [
     DesignKnob("etl_doping_cm3", 1e15, 1e19, "log"),
     DesignKnob("absorber_defect_density_cm3", 1e14, 1e17, "log"),
 ]
+
+
+class Optimizer(Protocol):
+    def optimize(self, objective: Callable[[dict], tuple], space: list, budget: int) -> tuple: ...
+
+
+class RandomSearchOptimizer:
+    """Seeded uniform random search over the design space (no dependency)."""
+
+    def __init__(self, *, seed: int = 0):
+        self.seed = seed
+
+    def _sample(self, rng: random.Random, space: list) -> dict:
+        out = {}
+        for k in space:
+            r = rng.random()
+            if k.scale == "log":
+                out[k.axis] = 10.0 ** (math.log10(k.low) + r * (math.log10(k.high) - math.log10(k.low)))
+            else:
+                out[k.axis] = k.low + r * (k.high - k.low)
+        return out
+
+    def optimize(self, objective, space, budget) -> tuple:
+        if budget <= 0:
+            raise ValueError(f"budget must be > 0, got {budget}")
+        rng = random.Random(self.seed)
+        trials = []
+        for _ in range(budget):
+            design = self._sample(rng, space)
+            pce, bracketed = objective(design)
+            trials.append(Trial(design=design, pce=pce, bracketed=bracketed))
+        return tuple(sorted(trials, key=lambda t: t.pce, reverse=True))
