@@ -100,3 +100,47 @@ def make_design_objective(config_path, jv_kwargs: dict):
             return (0.0, False)
 
     return objective
+
+
+import dataclasses
+import json
+
+
+def _default_parity(config_path, reference_path) -> Callable[[], float]:
+    def fn() -> float:
+        run_point, base_point = build_run_callables(config_path)
+        return score_parity(reference_path=reference_path, config_path=config_path,
+                            run_point=run_point, base_point=base_point).overall
+    return fn
+
+
+def run_design_search(*, config_path, reference_path, outputs_root, timestamp,
+                      space=None, budget: int = 50, parity_target: float = 0.90,
+                      optimizer=None, objective=None, parity_fn=None) -> SearchResult:
+    """Parity-gated, advisory design search. Refuses unless parity >= target,
+    then runs the optimizer and writes an advisory report. Applies nothing."""
+    space = space if space is not None else DEFAULT_DESIGN_SPACE
+    overall = (parity_fn or _default_parity(config_path, reference_path))()
+    if overall < parity_target:
+        raise SearchNotTrusted(
+            f"model parity {overall:.3f} < target {parity_target} — "
+            "refuse to optimize an untrusted model")
+
+    optimizer = optimizer or RandomSearchOptimizer()
+    objective = objective or make_design_objective(config_path, DEFAULT_JV_KWARGS)
+    trials = optimizer.optimize(objective, space, budget)
+    result = SearchResult(best=(trials[0] if trials else None), trials=trials,
+                          n_evaluated=len(trials), parity_overall=overall, budget=budget)
+
+    run_dir = Path(outputs_root) / f"search-{timestamp}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "parity_overall": overall, "parity_target": parity_target, "budget": budget,
+        "n_evaluated": result.n_evaluated,
+        "best": (dataclasses.asdict(result.best) if result.best else None),
+        "trials": [dataclasses.asdict(t) for t in trials],
+        "note": "ADVISORY — proposed designs, nothing applied to any config",
+    }
+    (run_dir / "result.json").write_text(json.dumps(payload, indent=2, sort_keys=True),
+                                         encoding="utf-8")
+    return result
