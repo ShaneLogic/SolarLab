@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from perovskite_sim.autoloop.ladder import DEFAULT_JV_KWARGS, build_run_callables
+from perovskite_sim.autoloop.reference import build_reference_source
 from perovskite_sim.autoloop.scorecard import SHEET_TO_AXIS, _voc_closure
 
 _METRIC_KEY = {"V_oc": "Voc_V", "J_sc": "Jsc_mA_cm2", "FF": "FF_percent", "PCE": "PCE_percent"}
@@ -28,13 +29,13 @@ def _badness(payload: dict) -> float:
         _voc, jsc, _ff, _pce, _brk = base_point()
         return abs(jsc)
 
-    ref = json.loads(Path(payload["reference"]).read_text(encoding="utf-8"))
+    source = build_reference_source(payload["reference"])
 
     if payload["gap_kind"] == "trend":
         sheet = payload["gap_sweep"]
         axis = SHEET_TO_AXIS[sheet]
         sl, scaps = [], []
-        for pt in ref["sweeps"][sheet]["points"]:
+        for pt in source.sweep(sheet)["points"]:
             x = float(pt["x"])
             voc, _j, _f, _p, brk = run_point(axis, x)
             if brk and voc == voc:
@@ -46,7 +47,7 @@ def _badness(payload: dict) -> float:
     # absolute base gap
     voc, jsc_A, ff, pce, _brk = base_point()
     sl_map = {"V_oc": voc, "J_sc": jsc_A, "FF": ff, "PCE": pce}
-    bm = ref["base_model"]
+    bm = source.base_metrics()
     ref_v = float(bm[_METRIC_KEY[payload["gap_metric"]]])
     if payload["gap_metric"] == "J_sc":
         ref_v *= 10.0

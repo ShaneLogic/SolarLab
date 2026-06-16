@@ -1,11 +1,11 @@
 # perovskite_sim/autoloop/scorecard.py
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from statistics import mean
 from typing import Callable, Optional
 
+from perovskite_sim.autoloop.reference import build_reference_source
 from perovskite_sim.autoloop.types import Gap, ParityScore, SweepScore
 
 # Only these reference sheets have a SolarLab sweep-axis mapping (Stage 1).
@@ -42,11 +42,11 @@ def score_parity(*, reference_path: Path, config_path: Path,
     without the solver; the orchestrator wires the real ``run_jv_sweep``.
     Unmapped reference sheets are skipped and logged (no silent cap).
     """
-    ref = json.loads(Path(reference_path).read_text(encoding="utf-8"))
+    source = build_reference_source(reference_path)
     per_sweep: dict[str, SweepScore] = {}
 
     for sheet, axis in SHEET_TO_AXIS.items():
-        sweep = ref["sweeps"].get(sheet)
+        sweep = source.sweep(sheet)
         if sweep is None:
             if skip_log is not None:
                 skip_log.append(f"reference missing sweep '{sheet}' — skipped")
@@ -68,7 +68,7 @@ def score_parity(*, reference_path: Path, config_path: Path,
         )
 
     # base-point absolute deltas (solarlab - reference)
-    bm = ref["base_model"]
+    bm = source.base_metrics()
     voc, jsc_A, ff, pce, _brk = base_point()
     base_deltas = {
         "V_oc": voc - float(bm["Voc_V"]),
