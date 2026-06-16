@@ -49,3 +49,21 @@ def test_runner_raises_on_worker_failure(monkeypatch, tmp_path):
     import pytest
     with pytest.raises(RuntimeError):
         runner.run({"env_flags": {}, "jv_overrides": {}, "measure": "gap"})
+
+
+def test_runner_forwards_timeout_and_raises_on_timeout(monkeypatch, tmp_path):
+    import subprocess as _sp
+    captured = {}
+
+    def _fake_run(cmd, **kw):
+        captured["timeout"] = kw.get("timeout")
+        raise _sp.TimeoutExpired(cmd, kw.get("timeout"))
+
+    monkeypatch.setattr("perovskite_sim.autoloop.subprocess_probe.subprocess.run", _fake_run)
+    runner = SubprocessProbeRunner(config_path=tmp_path / "c.yaml",
+                                   reference_path=tmp_path / "r.json", gap=_gap(),
+                                   timeout_s=5.0)
+    import pytest
+    with pytest.raises(RuntimeError, match="timed out"):
+        runner.run({"env_flags": {}, "jv_overrides": {}, "measure": "gap"})
+    assert captured["timeout"] == 5.0           # timeout forwarded to subprocess.run
