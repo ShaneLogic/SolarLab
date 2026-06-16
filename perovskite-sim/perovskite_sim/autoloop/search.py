@@ -1,6 +1,8 @@
 # perovskite_sim/autoloop/search.py
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 import math
 import random
@@ -100,10 +102,6 @@ def make_design_objective(config_path, jv_kwargs: dict):
             return (0.0, False)
 
     return objective
-
-
-import dataclasses
-import json
 
 
 def _default_parity(config_path, reference_path) -> Callable[[], float]:
