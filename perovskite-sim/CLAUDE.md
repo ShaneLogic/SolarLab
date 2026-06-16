@@ -344,3 +344,20 @@ uncertain — with a negatives-guard (never confirms a refuted mechanism). Write
     cd perovskite-sim
     python scripts/autoloop_run.py --once        # populate the gap ledger
     python scripts/autoloop_run.py --attribute   # diagnose the top open gap
+
+### Stage 3 — auto-implement leg (deterministic flag-promotion)
+
+`autoloop/promote.py` + `autoloop/gates_impl.py` turn a CONFIRMED Hypothesis into a
+config flag-promotion (set `device.<key>: true` in `configs/scaps_mirror_v2.yaml`)
+— the lever is an existing device flag, so no solver code changes and legacy tier
+forces it off (G0 holds by construction). `implement_top_confirmed` proposes →
+applies → runs the gate stack (G1–G3 reuse + G4 realized-reconciles-predicted +
+G0 regression-suite green; G5 deferred) → reverts (dry-run) or commits to the
+current branch (`--apply`, refuses main/dirty, never pushes). A failed gate reverts
++ records a negative result (anti-thrash).
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --once          # populate gaps
+    python scripts/autoloop_run.py --attribute     # diagnose -> confirmed Hypothesis
+    python scripts/autoloop_run.py --implement     # dry-run: diff + gate verdicts
+    python scripts/autoloop_run.py --implement --apply   # commit to current branch

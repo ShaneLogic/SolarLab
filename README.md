@@ -603,6 +603,10 @@ and records open gaps to the ledger.
 - **Autoloop attribution** (`python perovskite-sim/scripts/autoloop_run.py --attribute`) —
   diagnoses the top open gap (bug / numerics / physics / uncertain) by ablating
   physics flags + grid + dark-current probes; records a Hypothesis. Read-only.
+- **Autoloop implement** (`python perovskite-sim/scripts/autoloop_run.py --implement [--apply]`) —
+  promotes a confirmed lever flag in the parity config, runs the full gate stack
+  (legacy-bit-identical + parity-improved + reconciliation), and lands it on the
+  current branch only on `--apply`. Dry-run by default.
 
 <br>
 
