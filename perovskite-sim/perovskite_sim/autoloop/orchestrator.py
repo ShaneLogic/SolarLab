@@ -16,6 +16,7 @@ from perovskite_sim.autoloop.provenance import stamp
 from perovskite_sim.autoloop.scorecard import gaps_from_score
 from perovskite_sim.autoloop.seeds import seed_negative_results
 from perovskite_sim.autoloop.types import (
+    BoulderProposal, BoulderResult,
     ConfigEdit, Hypothesis, ImplementResult, LadderResult, NegativeResult, ParityScore,
 )
 
@@ -266,3 +267,82 @@ def implement_top_confirmed(*, ledger_root: Path, outputs_root: Path,
     except Exception:
         revert_edit(edit)
         raise
+
+
+def _boulder_top_open(ledger_root):
+    led = Ledger.load(ledger_root)
+    open_gaps = [g for g in led.gaps if g.status == "open"]
+    return max(open_gaps, key=lambda g: g.gap_mag) if open_gaps else None
+
+
+def _boulder_proposal(ledger_root, gap, result) -> BoulderProposal:
+    led = Ledger.load(ledger_root)
+    hyp = next((h for h in led.hypotheses if h.gap_id == gap.id), None)
+    status = result.status if result is not None else "no_confirmed"
+    return BoulderProposal(
+        gap_id=gap.id,
+        cause=(hyp.cause if hyp else "uncertain"),
+        mechanism=(hyp.mechanism if hyp else ""),
+        device_key=(result.device_key if result is not None else None),
+        gate_status=status,
+        landed=(status == "applied"))
+
+
+def _boulder_mark_attempted(ledger_root, gap):
+    led = Ledger.load(ledger_root)
+    led.add_gap(gap.with_status("attempted"))
+    led.save()
+
+
+def run_boulder(*, ledger_root, outputs_root, timestamp, converge: bool = False,
+                parity_target: float = 0.90, max_cycles: int = 10, reject_streak: int = 3,
+                sense, attribute, implement) -> BoulderResult:
+    """Continuous driver. sweep (dry-run) drains current gaps into proposals;
+    converge auto-applies + re-senses + loops to a stop condition. The three
+    step-functions are injected (CLI binds real ones; tests inject fakes)."""
+    ledger_root = Path(ledger_root)
+    proposals: list[BoulderProposal] = []
+
+    if not converge:
+        sense(0)
+        cycle = 0
+        while True:
+            gap = _boulder_top_open(ledger_root)
+            if gap is None:
+                break
+            attribute(cycle)
+            result = implement(cycle, False)
+            proposals.append(_boulder_proposal(ledger_root, gap, result))
+            _boulder_mark_attempted(ledger_root, gap)
+            cycle += 1
+        return BoulderResult("sweep", cycle, tuple(proposals), 0, "sweep_complete", None)
+
+    cycle = 0
+    landed = 0
+    reject = 0
+    overall = None
+    stop = "cap"
+    while cycle < max_cycles:
+        overall = sense(cycle)
+        if overall is not None and overall >= parity_target:
+            stop = "success"
+            break
+        gap = _boulder_top_open(ledger_root)
+        if gap is None:
+            stop = "drained"
+            break
+        attribute(cycle)
+        result = implement(cycle, True)
+        proposals.append(_boulder_proposal(ledger_root, gap, result))
+        if result is not None and result.status == "applied":
+            landed += 1
+            reject = 0
+        else:
+            _boulder_mark_attempted(ledger_root, gap)
+            if result is not None and result.status == "gates_failed":
+                reject += 1
+        if reject >= reject_streak:
+            stop = "halt"
+            break
+        cycle += 1
+    return BoulderResult("converge", cycle, tuple(proposals), landed, stop, overall)
