@@ -82,22 +82,21 @@ def main(argv: list[str] | None = None) -> int:
     if ns.implement:
         import dataclasses
         from perovskite_sim.autoloop.orchestrator import implement_top_confirmed
-        from perovskite_sim.autoloop.types import GateVerdict
-        from perovskite_sim.autoloop.ladder import run_l0, run_ladder
-        from perovskite_sim.autoloop.gates_impl import gate_g0_bit_identical, gate_g4_reconciles
+        from perovskite_sim.autoloop.gates_impl import make_implement_gate_runner
+        from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
 
-        def real_gates(edit, gap, hyp):
-            # G1 numerics (fast subset) + G0 legacy/golden regression suite.
-            v = []
-            ok1, d1 = run_l0(["tests/unit/autoloop"]); v.append(GateVerdict("G1_numerics", ok1, d1))
-            ok0, d0 = run_l0(["tests/regression", "-m", "not slow"])  # golden oracle
-            v.append(gate_g0_bit_identical(lambda: (ok0, d0)))
-            return v
+        def _measure_realized(edit, gap):
+            # G4: re-measure the gap's badness on the flag-on (edited) config.
+            runner = SubprocessProbeRunner(config_path=edit.config_path,
+                                           reference_path=ns.reference, gap=gap)
+            return runner.run({"env_flags": {}, "jv_overrides": {}, "measure": "gap"})
+
+        gate_runner = make_implement_gate_runner(measure_badness=_measure_realized)
 
         hyp_result = implement_top_confirmed(
             ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
             config_path=ns.config, reference_path=ns.reference, cycle=ns.cycle,
-            timestamp=iso_timestamp_utc(), gate_runner=real_gates, apply=ns.apply)
+            timestamp=iso_timestamp_utc(), gate_runner=gate_runner, apply=ns.apply)
         print(json.dumps({"implement": dataclasses.asdict(hyp_result)}, indent=2,
                          sort_keys=True, default=str))
         return 1 if hyp_result.status == "gates_failed" and ns.apply else 0

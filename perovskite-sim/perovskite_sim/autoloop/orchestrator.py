@@ -220,7 +220,13 @@ def implement_top_confirmed(*, ledger_root: Path, outputs_root: Path,
     (revert+report | commit). Read-only on solver code."""
     led = Ledger.load(Path(ledger_root))
     confirmed_ids = {h.gap_id for h in led.hypotheses if h.verdict == "confirmed"}
-    candidates = [g for g in led.gaps if g.status == "open" and g.id in confirmed_ids]
+    # Exclude coverage:* gaps: their solarlab_val is a bracket COUNT, not a closure
+    # %, so gap_baseline_badness would be nonsensical. (They also never carry a
+    # SOLARLAB_* lever, so propose_promotion already returns None — this is a
+    # defensive guard against that coupling silently breaking.)
+    candidates = [g for g in led.gaps
+                  if g.status == "open" and g.id in confirmed_ids
+                  and not g.id.startswith("coverage:")]
     if not candidates:
         return ImplementResult("no_confirmed", None, None, (), None)
     gap = max(candidates, key=lambda g: g.gap_mag)

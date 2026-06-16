@@ -57,7 +57,8 @@ class HeuristicAttributor:
             return Hypothesis(
                 gap_id=gap.id, cause="physics", mechanism=mechanism,
                 evidence_for=(f"{best_flag.name} improves badness by {flag_sig:.3g} (> tol {FLAG_TOL})",),
-                verifier_votes=1, verdict="confirmed")
+                verifier_votes=1, verdict="confirmed",
+                predicted_delta=best_flag.delta)   # negative = improvement, fed to G4
 
         # 3. bug
         if dark_sig > DARK_TOL:
