@@ -5,7 +5,7 @@ from perovskite_sim.autoloop.attribution import HeuristicAttributor
 from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
 from perovskite_sim.autoloop.ledger import Ledger
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 REF = REPO_ROOT / "tests" / "integration" / "scaps_reference.json"
 CFG = REPO_ROOT / "configs" / "scaps_mirror_v2.yaml"
 
