@@ -62,6 +62,9 @@ pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 
 - **Autoloop guardian** (`python perovskite-sim/scripts/autoloop_run.py --once`) — runs the
   L0–L2 ladder, scores SolarLab-vs-SCAPS parity, and records regressions to the gap ledger.
+- **Autoloop L3 lab data** — point `--reference` at a tiered descriptor (`scaps_lab_tiered.json`)
+  to score absolutes against measured J-V (`LabReferenceSource`) while keeping SCAPS trend sweeps.
+  Default stays pure-SCAPS.
 
 <br>
 
