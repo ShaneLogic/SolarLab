@@ -40,3 +40,6 @@ htmlcov/
 
 # Phase 2b user-saved device presets (per-developer; not version-controlled)
 configs/user/
+
+# Autoloop run artifacts (ledger is tracked under docs/autoloop/, outputs are not)
+outputs/autoloop/

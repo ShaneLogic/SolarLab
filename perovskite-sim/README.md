@@ -60,6 +60,9 @@ pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 | `05_comprehensive_benchmark.py` | Full physics sweep |
 | `06_e2e_notebook_vs_api.py` | Notebook vs API parity check |
 
+- **Autoloop guardian** (`python perovskite-sim/scripts/autoloop_run.py --once`) — runs the
+  L0–L2 ladder, scores SolarLab-vs-SCAPS parity, and records regressions to the gap ledger.
+
 <br>
 
 ## Physical Model

@@ -305,3 +305,27 @@ Canonical invocations:
 - Unit with coverage: `pytest --cov=perovskite_sim --cov-report=term-missing`
 - Slow regression: `pytest -m slow` (BLAS pinned automatically, ~27 s for the TMM baselines)
 - Literature validation: `pytest -m validation` (paper-config + physical-trend gates; also `slow`-marked — ~12 FULL-tier sweeps each, minutes — so the default `pytest` excludes them)
+
+## Autoloop (Stage 1 — guardian)
+
+`perovskite_sim/autoloop/` is the deterministic spine of the continuous
+research-loop orchestrator (design: `docs/superpowers/specs/2026-06-16-autoloop-research-pipeline-design.md`).
+Stage 1 ships the guardian only — no agents, no auto-implementation.
+
+- `scorecard.py` scores SolarLab vs the SCAPS reference (`tests/integration/scaps_reference.json`)
+  by V_oc trend closure per sweep + base-point absolute deltas → `ParityScore`.
+- `ladder.py` runs L0 (pytest subset) → L1 (limiting cases) → L2 (scorecard), fail-fast.
+- `gates.py` G1–G3 are deterministic regression barriers; G0/G4/G5 are deferred
+  stubs (need a proposed flag-gated change + cognition, Stage 3) and raise if called.
+- `ledger.py` persists gap / hypothesis / negative-result ledgers under
+  `docs/autoloop/ledger/`; the negative-results ledger is seeded from known-refuted
+  approaches (`seeds.py`) so the loop never re-tries them.
+
+Run one guardian cycle (exits non-zero if the gate stack fails):
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --once
+
+Scoreable sweeps are the four with a SolarLab axis mapping (`scorecard.SHEET_TO_AXIS`);
+unmapped reference sheets are skipped and logged. Stages 2–4 (cognition attribution,
+auto-implement, continuous boulder) are not built yet.
