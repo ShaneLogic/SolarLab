@@ -4,25 +4,21 @@
 assembled MaterialArrays, but only when the `autoloop_generated_lever` device
 flag (or env `SOLARLAB_AUTOLOOP_GEN=1`) is set. The default body is the identity
 transform; with the flag off (every legacy/parity config) this module is never
-imported, so the solver is bit-identical. Stage 5.3 codegen overwrites ONLY the
-body of `adjust_material_arrays` — never the signature, the context, or the hook."""
+imported, so the solver is bit-identical.
+
+Stage 5.3 codegen replaces ONLY the statements between the
+`# >>> AUTOLOOP BODY` / `# <<< AUTOLOOP BODY` sentinels (via
+`codegen.splice_lever_body`) — never the signature and never the imports. The
+read-only context type the hook passes as `ctx` lives in the non-overwritten
+`_ctx` module, so a freshly spliced `lever.py` can never drop it. This module is
+re-entrant-safe only because `solver.mol` is fully imported by the time the hook
+runs (the import is guarded inside `build_material_arrays`)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class _LeverContext:
-    """Read-only inputs a generated lever may use: the spatial grid `x` and the
-    `DeviceStack` (`stack`). Typed as `object` to keep this module dependency-light
-    (no solver/models import → no cycle when imported inside the hook guard)."""
-    x: object
-    stack: object
+import dataclasses
 
 
 def adjust_material_arrays(arrays, ctx):
-    """Identity transform (default). A generated lever returns
-    `dataclasses.replace(arrays, <field>=...)` with shifted band parameters
-    (chi / Eg / ni_sq / tau_n / tau_p / B_rad ...). MUST be pure: no I/O, no
-    globals, no mutation of `arrays` (it is frozen) — return a replaced copy."""
+    # >>> AUTOLOOP BODY
     return arrays
+    # <<< AUTOLOOP BODY

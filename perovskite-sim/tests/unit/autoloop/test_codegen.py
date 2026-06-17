@@ -59,3 +59,14 @@ def test_prompt_contains_contract_and_mechanism():
 def test_claudecodegen_propagates_runtime_error():
     with pytest.raises(RuntimeError):
         ClaudeCodegen(_Runtime(RuntimeError("claude down"))).generate(_gap(), _hyp(), _matrix())
+
+
+def test_splice_produces_importable_module(tmp_path):
+    from perovskite_sim.autoloop.codegen import splice_lever_body, LEVER_TEMPLATE
+    body = "import dataclasses\n" if False else "return dataclasses.replace(arrays, chi=arrays.chi + 0.0)"
+    src = splice_lever_body(LEVER_TEMPLATE, body)
+    f = tmp_path / "lever.py"; f.write_text(src)
+    import ast; ast.parse(src)                       # must be syntactically valid
+    assert "def adjust_material_arrays(arrays, ctx):" in src
+    assert "return dataclasses.replace(arrays, chi=arrays.chi + 0.0)" in src
+    assert "_LeverContext" not in src                # _LeverContext lives in _ctx, not spliced file

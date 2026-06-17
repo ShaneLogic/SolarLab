@@ -1,6 +1,7 @@
 # perovskite_sim/autoloop/codegen.py
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
@@ -11,10 +12,70 @@ CODEGEN_SCHEMA = {"required": ["body", "rationale"]}   # consumed by cognition._
 # Fields a generated lever may shift (per-node arrays on the frozen MaterialArrays).
 _ALLOWED_FIELDS = ("chi", "Eg", "ni_sq", "tau_n", "tau_p", "B_rad", "alpha")
 
+# Sentinels (4-space indented under the def) bounding the spliced body region.
+_BODY_OPEN = "    # >>> AUTOLOOP BODY"
+_BODY_CLOSE = "    # <<< AUTOLOOP BODY"
+
+# Canonical text of the identity ``generated/lever.py``. ``splice_lever_body`` swaps
+# ONLY the statements between the indented sentinels; splicing ``return arrays`` must
+# reproduce this byte-for-byte so the flag-OFF / identity path stays bit-identical.
+# Keep in exact sync with ``perovskite_sim/autoloop/generated/lever.py``.
+LEVER_TEMPLATE = '''\
+"""Sandboxed extension point for autoloop Stage 5.3 LLM codegen.
+
+`solver/mol.build_material_arrays` calls `adjust_material_arrays` ONCE on the
+assembled MaterialArrays, but only when the `autoloop_generated_lever` device
+flag (or env `SOLARLAB_AUTOLOOP_GEN=1`) is set. The default body is the identity
+transform; with the flag off (every legacy/parity config) this module is never
+imported, so the solver is bit-identical.
+
+Stage 5.3 codegen replaces ONLY the statements between the
+`# >>> AUTOLOOP BODY` / `# <<< AUTOLOOP BODY` sentinels (via
+`codegen.splice_lever_body`) — never the signature and never the imports. The
+read-only context type the hook passes as `ctx` lives in the non-overwritten
+`_ctx` module, so a freshly spliced `lever.py` can never drop it. This module is
+re-entrant-safe only because `solver.mol` is fully imported by the time the hook
+runs (the import is guarded inside `build_material_arrays`)."""
+from __future__ import annotations
+
+import dataclasses
+
+
+def adjust_material_arrays(arrays, ctx):
+    # >>> AUTOLOOP BODY
+    return arrays
+    # <<< AUTOLOOP BODY
+'''
+
+
+def splice_lever_body(template: str, body: str) -> str:
+    """Return ``template`` with the region between the indented
+    ``# >>> AUTOLOOP BODY`` / ``# <<< AUTOLOOP BODY`` sentinels replaced by ``body``.
+
+    ``body`` is body-only statements (no ``def`` line, no imports). It is dedented
+    then re-indented to the function-body level (the same column as the sentinels,
+    i.e. one indent under the module-scope ``def``). Splicing ``return arrays`` into
+    ``LEVER_TEMPLATE`` reproduces the identity module byte-for-byte."""
+    lines = template.splitlines(keepends=True)
+    try:
+        open_i = next(i for i, ln in enumerate(lines) if ln.rstrip("\n") == _BODY_OPEN)
+        close_i = next(i for i, ln in enumerate(lines)
+                       if i > open_i and ln.rstrip("\n") == _BODY_CLOSE)
+    except StopIteration as exc:  # pragma: no cover - template is a constant
+        raise ValueError("lever template is missing the AUTOLOOP BODY sentinels") from exc
+    body_indent = _BODY_OPEN[: len(_BODY_OPEN) - len(_BODY_OPEN.lstrip())]
+    indented = textwrap.indent(textwrap.dedent(body).strip("\n") + "\n", body_indent)
+    spliced = (
+        "".join(lines[:open_i + 1])      # through the open sentinel
+        + indented                       # the (re-indented) body
+        + "".join(lines[close_i:])       # from the close sentinel onward
+    )
+    return spliced
+
 
 @dataclass(frozen=True)
 class GeneratedLever:
-    body: str          # source statements for the adjust_material_arrays body (NO def line)
+    body: str          # ONLY the adjust_material_arrays body statements (NO def line, NO imports)
     rationale: str     # one-paragraph why, for the provenance/report
 
 
@@ -39,14 +100,14 @@ def codegen_prompt(gap, hyp, matrix=None) -> str:
                            for p in matrix.probes)
     ev = "; ".join(hyp.evidence_for) if hyp.evidence_for else "(none)"
     return (
-        "You write ONE pure Python function body for a perovskite drift-diffusion "
-        "solver extension point. The function is:\n\n"
+        "You write ONLY the function body statements for a perovskite drift-diffusion "
+        "solver extension point. The function (already declared for you) is:\n\n"
         "    def adjust_material_arrays(arrays, ctx):\n"
         "        # arrays: a frozen MaterialArrays (per-node numpy arrays). ctx.x is the\n"
         "        # spatial grid, ctx.stack is the DeviceStack. Return a NEW arrays via\n"
         "        # dataclasses.replace(arrays, <field>=...). MUST be pure: no I/O, no\n"
-        "        # globals, no mutation. Use `import dataclasses` and `import numpy as np`\n"
-        "        # at the top of the body if needed.\n\n"
+        "        # globals, no mutation. `dataclasses` is already imported at module\n"
+        "        # scope — do NOT emit a `def` line and do NOT emit any `import`.\n\n"
         f"CONFIRMED CAUSE: cause={hyp.cause}; mechanism={hyp.mechanism}\n"
         f"GAP: metric={gap.metric}, sweep={gap.sweep}, "
         f"solarlab={gap.solarlab_val:.4g} vs reference={gap.reference_val:.4g}\n"
@@ -55,7 +116,8 @@ def codegen_prompt(gap, hyp, matrix=None) -> str:
         f"You may shift ONLY these MaterialArrays fields: {', '.join(_ALLOWED_FIELDS)}.\n"
         "If you cannot justify a change from the evidence, return arrays unchanged "
         "(`return arrays`). Output ONLY a JSON object: "
-        '{"body": "<python statements, no def line>", "rationale": "<one paragraph>"}')
+        '{"body": "<python body statements ONLY, no def line, no imports>", '
+        '"rationale": "<one paragraph>"}')
 
 
 class ClaudeCodegen:

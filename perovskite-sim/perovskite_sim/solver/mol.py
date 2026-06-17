@@ -1319,8 +1319,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     )
 
     if getattr(stack, "autoloop_generated_lever", False) or os.environ.get("SOLARLAB_AUTOLOOP_GEN") == "1":
-        from perovskite_sim.autoloop.generated.lever import (
-            adjust_material_arrays, _LeverContext)
+        from perovskite_sim.autoloop.generated.lever import adjust_material_arrays
+        from perovskite_sim.autoloop.generated._ctx import _LeverContext
         arrays = adjust_material_arrays(arrays, _LeverContext(x=x, stack=stack))
     return arrays
 
