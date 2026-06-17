@@ -64,3 +64,47 @@ def make_implement_gate_runner(*, measure_badness: Callable, l0_runner: Callable
         return verdicts
 
     return gate_runner
+
+
+def gate_g6_build(*, golden_runner: Callable[[], tuple[bool, str]],
+                  flag_on_runner: Callable[[], tuple[bool, str]],
+                  lever_module: str = "perovskite_sim.autoloop.generated.lever") -> GateVerdict:
+    """G6 (codegen): the generated lever must (1) import/compile, (2) keep the
+    legacy suite green with the flag OFF (reuse G0's golden suite), (3) run a
+    flag-ON parity sweep to a finite, voc-bracketed result. Cheap fail-fast
+    before the G1/G3 physics checks. Runners are injected so unit tests run
+    without the solver."""
+    import importlib
+    try:
+        mod = importlib.import_module(lever_module)
+        importlib.reload(mod)
+    except Exception as exc:                       # SyntaxError/ImportError/etc.
+        return GateVerdict("G6_build", False, f"lever import/compile failed: {exc!r}")
+    ok_off, d_off = golden_runner()
+    if not ok_off:
+        return GateVerdict("G6_build", False, f"flag-OFF not bit-identical: {d_off}")
+    ok_on, d_on = flag_on_runner()
+    if not ok_on:
+        return GateVerdict("G6_build", False, f"flag-ON run failed: {d_on}")
+    return GateVerdict("G6_build", True, f"import ok; OFF[{d_off}]; ON[{d_on}]")
+
+
+def make_codegen_gate_runner(*, golden_runner, flag_on_runner, realized_badness,
+                             lever_module: str = "perovskite_sim.autoloop.generated.lever"):
+    """Codegen gate stack: G6 (build/import + flag-OFF bit-identical + flag-ON
+    runs finite) then G3 (flag-ON badness improves vs the gap's sense-time
+    baseline). Short-circuits if G6 fails. Returns a callable(gap, hyp, lever).
+    `realized_badness(gap) -> float` re-measures the flag-ON gap badness; injected
+    so unit tests run without the solver. (G4 reconcile is N/A: a brand-new lever
+    has no prior ablation prediction — G3-improves is the honest benefit check.)"""
+    def gate_runner(gap, hyp, lever):
+        verdicts = [gate_g6_build(golden_runner=golden_runner, flag_on_runner=flag_on_runner,
+                                  lever_module=lever_module)]
+        if verdicts[0].passed:
+            realized = realized_badness(gap)
+            base = gap_baseline_badness(gap)
+            verdicts.append(GateVerdict("G3_improves", realized < base,
+                                        f"badness {realized:.3g} vs baseline {base:.3g}"))
+        return verdicts
+
+    return gate_runner
