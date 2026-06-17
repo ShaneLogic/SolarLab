@@ -82,7 +82,7 @@ def attribute_top_gap(*, ledger_root: Path, outputs_root: Path,
                       cycle: int, timestamp: str,
                       probe_runner_factory, attributor,
                       flags: Optional[dict[str, str]] = None, seed: int = 0,
-                      run_ablation_fn=None) -> Optional[Hypothesis]:
+                      run_ablation_fn=None, verifier=None) -> Optional[Hypothesis]:
     """One attribution pass: pick the top open gap, ablate, attribute, record.
 
     ``probe_runner_factory(gap) -> ProbeRunner`` is called with the gap THIS
@@ -104,7 +104,15 @@ def attribute_top_gap(*, ledger_root: Path, outputs_root: Path,
     matrix = run_ablation(gap, probe_runner)
     hyp = attributor.attribute(gap, matrix, led)
 
+    # G5 (Stage 5.2): adjudicate an LLM novel-cause lead before recording it.
+    if verifier is not None and hyp.verdict == "uncertain" and hyp.cause != "uncertain":
+        hyp = verifier.verify(hyp, gap, matrix)
+
     led.add_hypothesis(hyp)
+    if hyp.verdict == "refuted":
+        led.add_negative(NegativeResult(
+            approach=hyp.mechanism, why_failed="refuted by G5 multi-skeptic verify",
+            evidence=f"attribution cycle {cycle}"))
     if hyp.verdict == "confirmed":
         led.add_gap(gap.with_mechanism(hyp.mechanism))   # add_gap replaces on id
     led.save()
