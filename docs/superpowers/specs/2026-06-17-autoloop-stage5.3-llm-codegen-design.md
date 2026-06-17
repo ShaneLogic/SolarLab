@@ -42,9 +42,10 @@ not_promotable confirmed gap
   -> codegen_top_not_promotable(*, ..., codegen, apply=False, ...)
        hyp = the confirmed not-promotable hypothesis (top by gap_mag)
        lever = codegen.generate(gap, hyp, matrix)        # GeneratedLever(body, rationale)
-       write lever.body into autoloop/generated/lever.py  # overwrites identity body
-       verdicts = gate_runner(...)  # G6 build FIRST, then G1 numerics, G2 limiting,
-                                    # G3 scorecard-improved, G4 fudge-guard (flag ON)
+       splice lever.body into autoloop/generated/lever.py between sentinels (template
+           owns the def header; _LeverContext lives in the never-overwritten _ctx module)
+       verdicts = gate_runner(...)  # G6 build FIRST -> G2 limiting ->
+                                    # G3 badness-improves (flag ON)
        if not all passed:
            restore identity lever.py; add_negative(mechanism, "codegen gate(s) failed: ...")
            -> CodegenResult("gates_failed", ...)
@@ -119,16 +120,19 @@ identity body in `lever.py`.
 
 A new **G6 build gate runs FIRST** (cheap fail-fast before the expensive physics gates):
 
-- **imports/compiles:** `importlib.reload` of `autoloop.generated.lever`; a `SyntaxError`/
-  `ImportError` → G6 fail.
+- **imports/compiles:** the candidate is AST-validated (body-only statements; no imports /
+  denylisted names / dunders / `def`) then imported in a FRESH SUBPROCESS (never the parent
+  process); a `SyntaxError`/`ImportError` → G6 fail.
 - **flag-OFF bit-identical:** reuse the existing Stage-3 G0 golden-suite runner (with the
   flag off, the new lever module is not imported → must be bit-identical).
 - **flag-ON runs:** a parity J-V sweep with `SOLARLAB_AUTOLOOP_GEN=1` completes, all metrics
   finite (no NaN/Inf), `voc_bracketed` holds.
 
-Then reuse the existing flag-ON gates: **G1 numerics → G2 limiting → G3 scorecard-improved →
-G4 realized-reconciles-predicted (fudge-guard)**. Any failure → restore identity body +
-`add_negative` (anti-thrash) + `gates_failed`.
+The implemented flag-ON stack is **G6 → G2 limiting (limiting cases hold) → G3 (badness
+improves vs the sense-time baseline)**. G1 numerics is folded into G6's flag-OFF
+bit-identical + flag-ON finiteness check; G4 realized-reconciles-predicted is N/A — a
+brand-new LLM lever has no prior ablation prediction, so G3-improves is the honest benefit
+check. Any failure → restore identity body + `add_negative` (anti-thrash) + `gates_failed`.
 
 ## 6. Landing (`orchestrator.codegen_top_not_promotable` + CLI)
 
@@ -170,7 +174,7 @@ python scripts/autoloop_run.py --codegen --llm --apply    # commit to a fresh fe
   module is not imported; with the flag on + identity body, output is byte-identical; with a
   non-identity body, the targeted array field shifts as written.
 - **gates:** G6 — identity body → pass + bit-identical; a syntactically broken body → fail
-  (import); a body that NaNs flag-ON → fail; reuse-path G1–G4 exercised via the existing
+  (import); a body that NaNs flag-ON → fail; reuse-path G2/G3 exercised via the existing
   gate tests with the flag on.
 - **orchestrator/landing:** `codegen_top_not_promotable` with a `FakeCodegen` + fake gate
   runner: all-pass + `--apply` → fresh-branch commit (fake committer, assert branch name +

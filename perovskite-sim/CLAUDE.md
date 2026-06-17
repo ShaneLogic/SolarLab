@@ -454,8 +454,9 @@ into the sandboxed `autoloop/generated/lever.py`. A pre-wired, default-OFF flag
 (`autoloop_generated_lever` / env `SOLARLAB_AUTOLOOP_GEN`) gates a single hook at the
 end of `solver/mol.build_material_arrays` (import-inside-guard → with the flag off the
 generated module is never imported → structurally bit-identical). The codegen gate stack
-is G6 build (import/compile + flag-OFF bit-identical via G0 + flag-ON parity sweep runs
-finite) then G3 (flag-ON badness improves). On `--apply`, `commit_generated_lever` commits
+is G6 build (AST-validated body + fresh-subprocess import/compile + flag-OFF bit-identical
+via G0 + flag-ON parity sweep runs finite) → G2 limiting → G3 (flag-ON badness improves).
+On `--apply`, `commit_generated_lever` commits
 the lever to a **fresh `feat/autoloop-gen-<gapslug>` branch** off HEAD (refuses main/current,
 never pushes) and restores the identity body on the working branch; a human merges. Opt-in:
 
