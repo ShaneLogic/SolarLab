@@ -619,6 +619,10 @@ and records open gaps to the ledger.
 - **Autoloop G5 verify** (`--attribute --llm --verify`) — N diverse-lens skeptics
   adversarially adjudicate an LLM novel-cause lead: survives → confirmed (actionable),
   majority-refute → refuted + recorded as never-retry. Opt-in.
+- **Autoloop codegen** (`--codegen --llm`) — for a confirmed cause with no existing flag,
+  an LLM writes a flag-gated band-parameter lever; the spine verifies it (build + flag-OFF
+  bit-identical + flag-ON improves) and commits it to a fresh branch for human merge. Opt-in,
+  default OFF.
 
 <br>
 
