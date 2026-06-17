@@ -156,6 +156,54 @@ def test_codegen_generate_failure_degrades_to_no_op(tmp_path):
     assert lever.read_text(encoding="utf-8") == identity
 
 
+def test_dry_run_persists_candidate_to_outputs_root(tmp_path):
+    # Spec §2/§6: the dry-run candidate lever body + gate report must be persisted
+    # under outputs_root/codegen-<cycle>/ (they were previously discarded when the
+    # identity body was restored), and CodegenResult.body carries the spliced source.
+    import json
+    _setup(tmp_path)
+    lever = _lever_file(tmp_path)
+    body = "return dataclasses.replace(arrays, chi=arrays.chi + 0.0)"
+    res = codegen_top_not_promotable(
+        **_common(tmp_path), codegen=FakeCodegen(body, rationale="band-tail shift"),
+        gate_runner=_passing_runner, apply=False, lever_path=lever)
+    assert res.status == "dry_run"
+    run_dir = (tmp_path / "out") / "codegen-1"
+    lever_out = run_dir / "lever.py"
+    report_out = run_dir / "report.json"
+    assert lever_out.exists() and report_out.exists()
+    # the persisted lever is the SPLICED candidate (def line present, body spliced)
+    persisted = lever_out.read_text(encoding="utf-8")
+    assert "def adjust_material_arrays(arrays, ctx):" in persisted
+    assert body in persisted
+    # CodegenResult.body is populated with that same spliced source
+    assert res.body == persisted
+    # report.json carries the gap, mechanism, rationale, and gate verdicts
+    report = json.loads(report_out.read_text(encoding="utf-8"))
+    assert report["gap_id"] == "trend:Et_PVK ETL:V_oc"
+    assert report["mechanism"] == "missing band-tail Urbach absorption"
+    assert report["rationale"] == "band-tail shift"
+    assert any(v["name"] == "G6_build" and v["passed"] for v in report["verdicts"])
+
+
+def test_gates_failed_persists_candidate_to_outputs_root(tmp_path):
+    # The gates_failed branch persists the rejected candidate + its failing report
+    # so a human can inspect why codegen was refused.
+    import json
+    _setup(tmp_path)
+    lever = _lever_file(tmp_path)
+    body = "return dataclasses.replace(arrays, chi=arrays.chi + 0.0)"
+    res = codegen_top_not_promotable(
+        **_common(tmp_path), codegen=FakeCodegen(body, rationale="why"),
+        gate_runner=_failing_runner, apply=True, committer=None, lever_path=lever)
+    assert res.status == "gates_failed"
+    run_dir = (tmp_path / "out") / "codegen-1"
+    assert (run_dir / "lever.py").exists() and (run_dir / "report.json").exists()
+    assert res.body is not None and body in res.body
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert any(v["name"] == "G6_build" and not v["passed"] for v in report["verdicts"])
+
+
 def test_commit_generated_lever_ignores_untracked(tmp_path):
     # Untracked files in the tree (e.g. outputs/) must NOT trip the dirty-tree
     # guard — only TRACKED modifications other than the lever block a commit.
