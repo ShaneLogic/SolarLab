@@ -12,6 +12,29 @@ logger = logging.getLogger(__name__)
 SKEPTIC_LENSES = ["physical-plausibility", "numerical-artifact", "data-support"]
 VOTE_SCHEMA = {"required": ["refuted"]}
 
+_TRUE_TOKENS = {"true", "1", "yes"}
+_FALSE_TOKENS = {"false", "0", "no"}
+
+
+def _parse_refuted(raw) -> bool:
+    """Coerce a skeptic's `refuted` field to a bool, defensively.
+
+    The schema only enforces key-presence, so a live runtime can hand back a
+    stringly-typed verdict (e.g. {"refuted": "false"}). A bare bool() would
+    coerce the non-empty string "false" to True — a FALSE refute that bans a
+    valid mechanism. Recognised bool/string tokens parse exactly; anything
+    unrecognised raises so the caller excludes the vote (degrade to uncertain,
+    never a false refute)."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        tok = raw.strip().lower()
+        if tok in _TRUE_TOKENS:
+            return True
+        if tok in _FALSE_TOKENS:
+            return False
+    raise ValueError(f"unparseable refuted verdict {raw!r}")
+
 _LENS_QUESTION = {
     "physical-plausibility": "Could this mechanism physically produce the observed gap in a "
                              "perovskite drift-diffusion model?",
@@ -52,7 +75,7 @@ class MultiSkepticVerifier:
         for lens in self.lenses:
             try:
                 v = self.runtime.complete(refute_prompt(hyp, gap, matrix, lens), VOTE_SCHEMA)
-                ran.append((lens, bool(v["refuted"]), str(v.get("reason", ""))))
+                ran.append((lens, _parse_refuted(v["refuted"]), str(v.get("reason", ""))))
             except Exception as exc:               # excluded, NOT a refutation
                 logger.warning("G5 skeptic %s failed: %r", lens, exc)
         if len(ran) < self.quorum:
