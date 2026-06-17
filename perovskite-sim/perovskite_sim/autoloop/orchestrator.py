@@ -384,7 +384,12 @@ def commit_generated_lever(target_path, lever, gap, hypothesis, verdicts, *, git
 
     git_root = str(Path(_git("rev-parse", "--show-toplevel").stdout.strip()).resolve())
     tgt_abs = str(Path(target_path).resolve())
-    dirty = [ln for ln in _git("status", "--porcelain").stdout.splitlines() if ln]
+    # Only TRACKED modifications block a commit. Untracked entries ("?? <path>",
+    # e.g. an artifact `outputs/` dir) are present in essentially every real
+    # working tree and are never swept into the lever-scoped commit, so they must
+    # not trip the guard. The commit is path-scoped to the lever file regardless.
+    dirty = [ln for ln in _git("status", "--porcelain").stdout.splitlines()
+             if ln and not ln.startswith("??")]
     stray = []
     for line in dirty:
         for p in _parse_porcelain_paths([line]):
@@ -441,7 +446,13 @@ def codegen_top_not_promotable(*, ledger_root: Path, outputs_root: Path, config_
     if led.is_refuted(hyp.mechanism):
         return CodegenResult("refuted", gap.id, None, (), None, None)
 
-    lever = codegen.generate(gap, hyp, None)
+    # A codegen/LLM runtime failure must NEVER crash the dispatch (spec §7):
+    # degrade to a no-op result, mirroring LLMAttributor's degrade pattern.
+    try:
+        lever = codegen.generate(gap, hyp, None)
+    except Exception as exc:
+        return CodegenResult("no_target", gap.id, None, (), None,
+                             f"codegen generate failed: {exc!r}")
     target = Path(lever_path) if lever_path is not None else _DEFAULT_LEVER_PATH
     identity = target.read_text(encoding="utf-8")
     try:
@@ -460,7 +471,14 @@ def codegen_top_not_promotable(*, ledger_root: Path, outputs_root: Path, config_
             return CodegenResult("gates_failed", gap.id, None, tuple(verdicts), None, lever.rationale)
         if apply:
             commit = committer or commit_generated_lever
-            branch, sha = commit(target, lever, gap, hyp, verdicts, git_cwd=git_cwd)
+            # A commit failure (dirty-tree refusal, git error, …) must not crash
+            # the dispatch: degrade to a dry-run-equivalent with the error in the
+            # rationale. The finally block still restores the identity body.
+            try:
+                branch, sha = commit(target, lever, gap, hyp, verdicts, git_cwd=git_cwd)
+            except Exception as exc:
+                return CodegenResult("gates_failed", gap.id, None, tuple(verdicts), None,
+                                     f"commit failed: {exc!r}")
             led.add_gap(gap.with_status("closed").with_mechanism(hyp.mechanism))
             led.save()
             return CodegenResult("applied", gap.id, branch, tuple(verdicts), sha, lever.rationale)
