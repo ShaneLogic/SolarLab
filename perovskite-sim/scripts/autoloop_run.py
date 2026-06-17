@@ -101,6 +101,52 @@ def _build_codegen(ns):
     return ClaudeCodegen(ClaudeCliRuntime(model=ns.llm_model))
 
 
+def _build_codegen_gate_runner(*, config, reference, golden_runner):
+    """Build the live --codegen gate stack, threading the gap the orchestrator
+    selects into every flag-ON probe.
+
+    The orchestrator calls ``gate_runner(gap, hyp, lever)`` with the gap it just
+    picked, so we bind that real ``gap`` into both the flag-ON parity probe (G6)
+    and the realized-badness probe (G3). Two correctness requirements that the
+    pre-fix inline closures violated:
+
+      * ``SubprocessProbeRunner`` must be built with a REAL ``gap`` — its ``.run``
+        dereferences ``self.gap.sweep`` / ``.metric`` / ``.kind``, so ``gap=None``
+        raises ``AttributeError`` on every flag-ON probe and G6 never passes.
+      * The variant must use ``measure="gap"`` — the only mode ``_probe_worker``
+        supports (``"base"`` falls through to the absolute-gap path and KeyErrors
+        on the ``None`` metric).
+    """
+    import math
+    from perovskite_sim.autoloop.gates_impl import make_codegen_gate_runner
+    from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
+
+    def gate_runner(gap, hyp, lever):
+        def _flag_on():
+            # flag-ON parity sweep must complete to a finite badness scalar.
+            try:
+                val = SubprocessProbeRunner(
+                    config_path=config, reference_path=reference, gap=gap).run(
+                    {"env_flags": {"SOLARLAB_AUTOLOOP_GEN": "1"},
+                     "jv_overrides": {}, "measure": "gap"})
+                return (math.isfinite(val), f"badness={val}")
+            except Exception as exc:  # noqa: BLE001 — a crashed probe is a fail signal
+                return (False, repr(exc))
+
+        def _realized(g):
+            return SubprocessProbeRunner(
+                config_path=config, reference_path=reference, gap=g).run(
+                {"env_flags": {"SOLARLAB_AUTOLOOP_GEN": "1"},
+                 "jv_overrides": {}, "measure": "gap"})
+
+        inner = make_codegen_gate_runner(golden_runner=golden_runner,
+                                         flag_on_runner=_flag_on,
+                                         realized_badness=_realized)
+        return inner(gap, hyp, lever)
+
+    return gate_runner
+
+
 def main(argv: list[str] | None = None) -> int:
     ns = parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -217,9 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     if ns.codegen:
         import dataclasses
         from perovskite_sim.autoloop.orchestrator import codegen_top_not_promotable
-        from perovskite_sim.autoloop.gates_impl import make_codegen_gate_runner
         from perovskite_sim.autoloop.ladder import run_l0
-        from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
 
         codegen = _build_codegen(ns)
         if codegen is None:
@@ -229,25 +273,8 @@ def main(argv: list[str] | None = None) -> int:
         def _golden():
             return run_l0(["tests/regression"])
 
-        def _flag_on():
-            # flag-ON parity sweep must complete finite; SubprocessProbeRunner
-            # returns a badness float (inf/failure -> not ok).
-            try:
-                val = SubprocessProbeRunner(config_path=ns.config, reference_path=ns.reference,
-                                            gap=None).run({"env_flags": {"SOLARLAB_AUTOLOOP_GEN": "1"},
-                                                           "jv_overrides": {}, "measure": "base"})
-                import math
-                return (math.isfinite(val), f"badness={val}")
-            except Exception as exc:
-                return (False, repr(exc))
-
-        def _realized(gap):
-            return SubprocessProbeRunner(config_path=ns.config, reference_path=ns.reference,
-                                         gap=gap).run({"env_flags": {"SOLARLAB_AUTOLOOP_GEN": "1"},
-                                                       "jv_overrides": {}, "measure": "gap"})
-
-        gate_runner = make_codegen_gate_runner(golden_runner=_golden, flag_on_runner=_flag_on,
-                                               realized_badness=_realized)
+        gate_runner = _build_codegen_gate_runner(
+            config=ns.config, reference=ns.reference, golden_runner=_golden)
         result = codegen_top_not_promotable(
             ledger_root=ns.ledger_root, outputs_root=ns.outputs_root, config_path=ns.config,
             reference_path=ns.reference, cycle=ns.cycle, timestamp=iso_timestamp_utc(),
