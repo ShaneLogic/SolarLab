@@ -443,3 +443,25 @@ false refute); below quorum the lead stays `uncertain` (re-verify later). Wired 
     python scripts/autoloop_run.py --boulder --llm --verify
 
 5.3 (LLM codegen) is the last deferred leg.
+
+### Stage 5.3 — LLM codegen for non-promotable levers (cognition leg 3, last)
+
+When G5 (5.2) confirms a cause whose mechanism has no existing promotable flag,
+`implement_top_confirmed` dead-ends at `not_promotable`. Stage 5.3 routes that gap
+to `orchestrator.codegen_top_not_promotable`: `autoloop/codegen.py:ClaudeCodegen`
+(over the 5.1 `CognitionRuntime`) writes ONLY the body of `adjust_material_arrays`
+into the sandboxed `autoloop/generated/lever.py`. A pre-wired, default-OFF flag
+(`autoloop_generated_lever` / env `SOLARLAB_AUTOLOOP_GEN`) gates a single hook at the
+end of `solver/mol.build_material_arrays` (import-inside-guard → with the flag off the
+generated module is never imported → structurally bit-identical). The codegen gate stack
+is G6 build (import/compile + flag-OFF bit-identical via G0 + flag-ON parity sweep runs
+finite) then G3 (flag-ON badness improves). On `--apply`, `commit_generated_lever` commits
+the lever to a **fresh `feat/autoloop-gen-<gapslug>` branch** off HEAD (refuses main/current,
+never pushes) and restores the identity body on the working branch; a human merges. Opt-in:
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --codegen --llm            # dry-run: candidate lever + gate report
+    python scripts/autoloop_run.py --codegen --llm --apply    # commit to a fresh feat/autoloop-gen-* branch
+
+Default OFF (no flag, no LLM, no cost). This is the last cognition leg — the full
+sense → attribute → verify → implement/codegen → land loop is now complete.

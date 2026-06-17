@@ -47,6 +47,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--llm-model", default="sonnet", help="model for --llm (default sonnet)")
     ap.add_argument("--verify", action="store_true",
                     help="adjudicate LLM novel-cause leads with the G5 multi-skeptic verifier")
+    ap.add_argument("--codegen", action="store_true",
+                    help="codegen a flag-gated lever for a confirmed, non-promotable cause "
+                         "(dry-run unless --apply; commits to a fresh feat/autoloop-gen-* branch)")
     ap.add_argument("--search", action="store_true",
                     help="run a parity-gated, advisory device-design search")
     ap.add_argument("--budget", type=int, default=50, help="design-search eval budget")
@@ -88,6 +91,14 @@ def _build_verifier(ns):
     from perovskite_sim.autoloop.cognition import ClaudeCliRuntime
     from perovskite_sim.autoloop.verify import MultiSkepticVerifier
     return MultiSkepticVerifier(ClaudeCliRuntime(model=ns.llm_model))
+
+
+def _build_codegen(ns):
+    if not getattr(ns, "codegen", False):
+        return None
+    from perovskite_sim.autoloop.cognition import ClaudeCliRuntime
+    from perovskite_sim.autoloop.codegen import ClaudeCodegen
+    return ClaudeCodegen(ClaudeCliRuntime(model=ns.llm_model))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -202,6 +213,47 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"implement": dataclasses.asdict(hyp_result)}, indent=2,
                          sort_keys=True, default=str))
         return 1 if hyp_result.status == "gates_failed" and ns.apply else 0
+
+    if ns.codegen:
+        import dataclasses
+        from perovskite_sim.autoloop.orchestrator import codegen_top_not_promotable
+        from perovskite_sim.autoloop.gates_impl import make_codegen_gate_runner
+        from perovskite_sim.autoloop.ladder import run_l0
+        from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
+
+        codegen = _build_codegen(ns)
+        if codegen is None:
+            print(json.dumps({"codegen": None, "error": "use --codegen together with --llm-capable runtime"}))
+            return 1
+
+        def _golden():
+            return run_l0(["tests/regression"])
+
+        def _flag_on():
+            # flag-ON parity sweep must complete finite; SubprocessProbeRunner
+            # returns a badness float (inf/failure -> not ok).
+            try:
+                val = SubprocessProbeRunner(config_path=ns.config, reference_path=ns.reference,
+                                            gap=None).run({"env_flags": {"SOLARLAB_AUTOLOOP_GEN": "1"},
+                                                           "jv_overrides": {}, "measure": "base"})
+                import math
+                return (math.isfinite(val), f"badness={val}")
+            except Exception as exc:
+                return (False, repr(exc))
+
+        def _realized(gap):
+            return SubprocessProbeRunner(config_path=ns.config, reference_path=ns.reference,
+                                         gap=gap).run({"env_flags": {"SOLARLAB_AUTOLOOP_GEN": "1"},
+                                                       "jv_overrides": {}, "measure": "gap"})
+
+        gate_runner = make_codegen_gate_runner(golden_runner=_golden, flag_on_runner=_flag_on,
+                                               realized_badness=_realized)
+        result = codegen_top_not_promotable(
+            ledger_root=ns.ledger_root, outputs_root=ns.outputs_root, config_path=ns.config,
+            reference_path=ns.reference, cycle=ns.cycle, timestamp=iso_timestamp_utc(),
+            codegen=codegen, gate_runner=gate_runner, apply=ns.apply)
+        print(json.dumps({"codegen": dataclasses.asdict(result)}, indent=2, sort_keys=True, default=str))
+        return 1 if result.status == "gates_failed" and ns.apply else 0
 
     report = guardian_once(
         ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
