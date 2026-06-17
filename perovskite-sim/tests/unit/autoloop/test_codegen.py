@@ -70,3 +70,13 @@ def test_splice_produces_importable_module(tmp_path):
     assert "def adjust_material_arrays(arrays, ctx):" in src
     assert "return dataclasses.replace(arrays, chi=arrays.chi + 0.0)" in src
     assert "_LeverContext" not in src                # _LeverContext lives in _ctx, not spliced file
+
+
+def test_validate_lever_body_rejects_imports_and_dangerous_calls():
+    from perovskite_sim.autoloop.codegen import validate_lever_body
+    for bad in ["import os\nreturn arrays",
+                "__import__('os').system('x')\nreturn arrays",
+                "open('/tmp/x','w').write('h')\nreturn arrays"]:
+        with pytest.raises(ValueError):
+            validate_lever_body(bad)
+    validate_lever_body("return dataclasses.replace(arrays, chi=arrays.chi + 0.0)")  # ok

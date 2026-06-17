@@ -1,6 +1,7 @@
 # perovskite_sim/autoloop/codegen.py
 from __future__ import annotations
 
+import ast
 import textwrap
 from dataclasses import dataclass
 from typing import Optional, Protocol
@@ -8,6 +9,16 @@ from typing import Optional, Protocol
 from perovskite_sim.autoloop.cognition import CognitionRuntime
 
 CODEGEN_SCHEMA = {"required": ["body", "rationale"]}   # consumed by cognition._validate
+
+# Static-analysis denylist for a generated lever body. Defence-in-depth: G6 runs
+# the candidate in a child interpreter (real containment), but the body must be a
+# pure per-node MaterialArrays transform — no I/O, no imports, no introspection —
+# so we reject anything that names these out of hand BEFORE it is ever spliced or
+# imported. Names that cannot appear in a pure dataclasses.replace transform.
+_DENYLISTED_NAMES = frozenset({
+    "os", "sys", "subprocess", "open", "exec", "eval", "compile",
+    "__import__", "globals", "locals", "getattr", "setattr",
+})
 
 # Fields a generated lever may shift (per-node arrays on the frozen MaterialArrays).
 _ALLOWED_FIELDS = ("chi", "Eg", "ni_sq", "tau_n", "tau_p", "B_rad", "alpha")
@@ -73,6 +84,35 @@ def splice_lever_body(template: str, body: str) -> str:
     return spliced
 
 
+def validate_lever_body(body: str) -> None:
+    """Statically reject an unsafe generated lever body BEFORE it is spliced or
+    imported. Raises ``ValueError`` if the body (parsed as the statements of a
+    dummy ``def``) contains any ``import`` / ``from ... import``, references any
+    denylisted name (``os``/``sys``/``subprocess``/``open``/``exec``/``eval``/
+    ``compile``/``__import__``/``globals``/``locals``/``getattr``/``setattr``),
+    or uses any dunder name. This is defence-in-depth in front of G6's real
+    subprocess containment, not a replacement for it.
+
+    The body is wrapped in a dummy ``def`` so a bare ``return`` statement parses;
+    a syntax error in the body surfaces as ``ValueError`` too."""
+    wrapped = "def _lever(arrays, ctx):\n" + textwrap.indent(
+        textwrap.dedent(body).strip("\n") + "\n", "    ")
+    try:
+        tree = ast.parse(wrapped)
+    except SyntaxError as exc:
+        raise ValueError(f"lever body is not valid Python: {exc}") from exc
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            raise ValueError("lever body may not import (imports are denied)")
+        if isinstance(node, ast.Name) and node.id in _DENYLISTED_NAMES:
+            raise ValueError(f"lever body references denylisted name {node.id!r}")
+        if isinstance(node, ast.Attribute) and node.attr in _DENYLISTED_NAMES:
+            raise ValueError(f"lever body references denylisted attribute {node.attr!r}")
+        name = getattr(node, "id", None) or getattr(node, "attr", None)
+        if isinstance(name, str) and name.startswith("__") and name.endswith("__"):
+            raise ValueError(f"lever body uses dunder name {name!r}")
+
+
 @dataclass(frozen=True)
 class GeneratedLever:
     body: str          # ONLY the adjust_material_arrays body statements (NO def line, NO imports)
@@ -127,4 +167,6 @@ class ClaudeCodegen:
 
     def generate(self, gap, hyp, matrix=None) -> GeneratedLever:
         out = self.runtime.complete(codegen_prompt(gap, hyp, matrix), CODEGEN_SCHEMA)
-        return GeneratedLever(body=str(out["body"]), rationale=str(out.get("rationale", "")))
+        body = str(out["body"])
+        validate_lever_body(body)   # reject unsafe bodies before they leave codegen
+        return GeneratedLever(body=body, rationale=str(out.get("rationale", "")))

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from perovskite_sim.autoloop.ablation import run_ablation as _run_ablation
-from perovskite_sim.autoloop.codegen import LEVER_TEMPLATE, splice_lever_body
+from perovskite_sim.autoloop.codegen import LEVER_TEMPLATE, splice_lever_body, validate_lever_body
 from perovskite_sim.autoloop.gates import run_gate_stack, all_passed
 from perovskite_sim.autoloop.ladder import run_ladder as _run_ladder
 from perovskite_sim.autoloop.ledger import Ledger
@@ -445,6 +445,10 @@ def codegen_top_not_promotable(*, ledger_root: Path, outputs_root: Path, config_
     target = Path(lever_path) if lever_path is not None else _DEFAULT_LEVER_PATH
     identity = target.read_text(encoding="utf-8")
     try:
+        # Re-validate at the splice boundary: the body may come from any Codegen
+        # (e.g. a FakeCodegen that does not self-validate). Reject before it ever
+        # lands on disk / gets imported.
+        validate_lever_body(lever.body)
         target.write_text(splice_lever_body(LEVER_TEMPLATE, lever.body), encoding="utf-8")
         verdicts = list(gate_runner(gap, hyp, lever))
         if not all(v.passed for v in verdicts):
