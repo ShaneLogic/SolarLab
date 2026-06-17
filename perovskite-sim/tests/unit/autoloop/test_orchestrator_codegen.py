@@ -132,3 +132,48 @@ def test_commit_generated_lever_refuses_main(tmp_path):
     with pytest.raises(RuntimeError):
         commit_generated_lever(target, GeneratedLever("y", "r"), _gap(),
                                _confirmed_hyp("g", "m"), [], git_cwd=repo)
+
+
+class _RaisingCodegen:
+    """A Codegen whose generate() raises — exercises the degrade-to-no-op path."""
+    def generate(self, gap, hyp, matrix=None):
+        raise RuntimeError("LLM runtime unavailable")
+
+
+def test_codegen_generate_failure_degrades_to_no_op(tmp_path):
+    # An LLM/codegen runtime failure must NOT crash the dispatch (spec §7): it
+    # degrades to a no-op CodegenResult with the error captured, not an exception.
+    _setup(tmp_path)
+    lever = _lever_file(tmp_path)
+    identity = lever.read_text(encoding="utf-8")
+    res = codegen_top_not_promotable(
+        **_common(tmp_path), codegen=_RaisingCodegen(),
+        gate_runner=_passing_runner, apply=False, lever_path=lever)
+    assert res.status in ("no_target", "dry_run")
+    assert res.committed_sha is None and res.branch is None
+    assert res.gate_verdicts == ()
+    # the lever file is untouched (no splice attempted)
+    assert lever.read_text(encoding="utf-8") == identity
+
+
+def test_commit_generated_lever_ignores_untracked(tmp_path):
+    # Untracked files in the tree (e.g. outputs/) must NOT trip the dirty-tree
+    # guard — only TRACKED modifications other than the lever block a commit.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=repo, capture_output=True, text=True, check=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    target = repo / "lever.py"
+    target.write_text("def adjust_material_arrays(arrays, ctx):\n    return arrays\n", encoding="utf-8")
+    git("add", "lever.py"); git("commit", "-q", "-m", "init")
+    git("checkout", "-q", "-b", "feat/work")
+    target.write_text("def adjust_material_arrays(arrays, ctx):\n    return arrays  # gen\n", encoding="utf-8")
+    # an untracked artifact directory (the real-world `outputs/` case)
+    (repo / "outputs").mkdir()
+    (repo / "outputs" / "report.json").write_text("{}\n", encoding="utf-8")
+    lever = GeneratedLever(body="return arrays  # gen", rationale="why")
+    branch, sha = commit_generated_lever(target, lever, _gap(), _confirmed_hyp("g", "m"),
+                                         [GateVerdict("G6_build", True, "ok")], git_cwd=repo)
+    assert branch == "feat/autoloop-gen-trend-et-pvk-etl-v-oc"
+    assert sha
