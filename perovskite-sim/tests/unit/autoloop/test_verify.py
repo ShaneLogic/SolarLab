@@ -66,6 +66,34 @@ def test_errored_skeptic_excluded_not_counted_as_refute():
     assert hyp.verdict == "confirmed" and hyp.verifier_votes == 2
 
 
+def test_stringly_false_does_not_become_false_refute():
+    # A live runtime returning {"refuted": "false"} must NOT be coerced to True
+    # (bare bool("false") == True would wrongly refute a valid mechanism).
+    rt = _ScriptedRuntime([{"refuted": "false", "reason": "plausible"}] * 3)
+    hyp = MultiSkepticVerifier(rt).verify(_lead(), _gap(), _matrix())
+    assert hyp.verdict == "confirmed"
+    assert hyp.verifier_votes == 3
+
+
+def test_stringly_true_refutes():
+    rt = _ScriptedRuntime([{"refuted": "true", "reason": "no support"},
+                           {"refuted": "true", "reason": "artifact"},
+                           {"refuted": "false", "reason": "maybe"}])
+    hyp = MultiSkepticVerifier(rt).verify(_lead(), _gap(), _matrix())
+    assert hyp.verdict == "refuted"
+    assert any("artifact" in e for e in hyp.evidence_against)
+
+
+def test_unparseable_refuted_is_excluded_degrades_to_uncertain():
+    # Two malformed verdicts are excluded (like errored skeptics); 1 valid
+    # vote < quorum(2) -> hypothesis left uncertain, never a false refute.
+    rt = _ScriptedRuntime([{"refuted": "maybe", "reason": "?"},
+                           {"refuted": None, "reason": "?"},
+                           {"refuted": True, "reason": "r"}])
+    hyp = MultiSkepticVerifier(rt).verify(_lead(), _gap(), _matrix())
+    assert hyp.verdict == "uncertain"
+
+
 def test_refute_prompt_has_mechanism_and_lens():
     p = refute_prompt(_lead(), _gap(), _matrix(), "numerical-artifact")
     assert "Urbach" in p and "numerical-artifact" in p and "JSON" in p
