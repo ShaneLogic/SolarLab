@@ -45,6 +45,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--llm", action="store_true",
                     help="use the LLM attributor (fallback on gaps the heuristic can't diagnose)")
     ap.add_argument("--llm-model", default="sonnet", help="model for --llm (default sonnet)")
+    ap.add_argument("--verify", action="store_true",
+                    help="adjudicate LLM novel-cause leads with the G5 multi-skeptic verifier")
     ap.add_argument("--search", action="store_true",
                     help="run a parity-gated, advisory device-design search")
     ap.add_argument("--budget", type=int, default=50, help="design-search eval budget")
@@ -78,6 +80,14 @@ def _build_attributor(ns):
     from perovskite_sim.autoloop.cognition import ClaudeCliRuntime
     from perovskite_sim.autoloop.llm_attribution import LLMAttributor
     return LLMAttributor(ClaudeCliRuntime(model=ns.llm_model))
+
+
+def _build_verifier(ns):
+    if not getattr(ns, "verify", False):
+        return None
+    from perovskite_sim.autoloop.cognition import ClaudeCliRuntime
+    from perovskite_sim.autoloop.verify import MultiSkepticVerifier
+    return MultiSkepticVerifier(ClaudeCliRuntime(model=ns.llm_model))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -118,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
 
         _attr = _build_attributor(ns)
+        _verifier = _build_verifier(ns)
 
         def sense(cycle):
             rep = guardian_once(ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
@@ -132,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
                               timestamp=iso_timestamp_utc(),
                               probe_runner_factory=lambda g: SubprocessProbeRunner(
                                   config_path=ns.config, reference_path=ns.reference, gap=g),
-                              attributor=_attr)
+                              attributor=_attr, verifier=_verifier)
 
         def implement(cycle, apply):
             def _measure(edit, gap):
@@ -163,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             timestamp=iso_timestamp_utc(),
             probe_runner_factory=lambda g: SubprocessProbeRunner(
                 config_path=ns.config, reference_path=ns.reference, gap=g),
-            attributor=_build_attributor(ns))
+            attributor=_build_attributor(ns), verifier=_build_verifier(ns))
         if hyp is None:
             print(json.dumps({"attributed": None, "reason": "no open gaps"}))
             return 0

@@ -616,6 +616,9 @@ and records open gaps to the ledger.
 - **Autoloop design-search** (`python perovskite-sim/scripts/autoloop_run.py --search`) —
   parity-gated, advisory search of the device-design space for max-PCE designs (no-dep
   random search; pluggable for optuna later). Reports designs; applies nothing.
+- **Autoloop G5 verify** (`--attribute --llm --verify`) — N diverse-lens skeptics
+  adversarially adjudicate an LLM novel-cause lead: survives → confirmed (actionable),
+  majority-refute → refuted + recorded as never-retry. Opt-in.
 
 <br>
 

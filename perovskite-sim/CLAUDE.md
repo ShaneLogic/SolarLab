@@ -425,3 +425,21 @@ heuristic's uncertain (the LLM never confirms, never blocks the loop). Opt-in:
 
 Default (no `--llm`) stays fully deterministic, no LLM, no cost. G5 multi-skeptic verify
 (5.2) and LLM codegen (5.3) are deferred behind this runtime seam.
+
+### Stage 5.2 — G5 multi-skeptic verify (cognition leg 2)
+
+`autoloop/verify.py:MultiSkepticVerifier` adjudicates an LLM novel-cause lead (5.1):
+N=3 diverse-lens skeptics (physical-plausibility / numerical-artifact / data-support),
+each prompted via the `CognitionRuntime` to REFUTE the mechanism (default refuted if no
+solid support). Strict majority of a quorum (≥2 skeptics that ran) decides: survives →
+`verdict="confirmed"` (now Stage-3-actionable); majority-refute → `verdict="refuted"` +
+`add_negative` (5.1's LLM never re-proposes it). An errored skeptic is EXCLUDED (never a
+false refute); below quorum the lead stays `uncertain` (re-verify later). Wired into
+`attribute_top_gap` (verifies LLM leads only — `cause != "uncertain"`) and fills the
+`gate_g5` stub via `gate_g5_verify`. Opt-in, with `--llm`:
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --attribute --llm --verify
+    python scripts/autoloop_run.py --boulder --llm --verify
+
+5.3 (LLM codegen) is the last deferred leg.
