@@ -73,6 +73,13 @@ def propose_promotion(hypothesis: Hypothesis, ledger: Ledger,
         return None
     if ledger.is_refuted(hypothesis.mechanism):
         return None
-    old_text = Path(config_path).read_text(encoding="utf-8")
+    # old_text is only needed to revert an applied edit. A promotable mechanism is
+    # promotable regardless of whether the config exists yet (callers that only test
+    # ``propose_promotion(...) is None`` for promotability must not see a raise);
+    # fall back to empty text when the file is absent rather than crashing.
+    try:
+        old_text = Path(config_path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        old_text = ""
     return ConfigEdit(config_path=str(config_path), device_key=key,
                       new_value=True, old_text=old_text)

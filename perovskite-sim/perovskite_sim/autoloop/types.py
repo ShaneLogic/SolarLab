@@ -162,3 +162,13 @@ class BoulderResult:
     landed_count: int
     stop_reason: str          # "sweep_complete"|"success"|"drained"|"cap"|"halt"
     final_overall: Optional[float]
+
+
+@dataclass(frozen=True)
+class CodegenResult:
+    status: str         # "applied"|"dry_run"|"gates_failed"|"no_target"|"refuted"
+    gap_id: Optional[str]
+    branch: Optional[str]
+    gate_verdicts: tuple
+    committed_sha: Optional[str]
+    rationale: Optional[str] = None
