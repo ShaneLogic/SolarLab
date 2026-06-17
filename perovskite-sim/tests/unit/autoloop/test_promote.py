@@ -4,7 +4,7 @@ from perovskite_sim.autoloop.ledger import Ledger
 from perovskite_sim.autoloop.types import NegativeResult
 from perovskite_sim.autoloop.promote import (
     FLAG_TO_CONFIG_KEY, parse_lever, set_device_flag,
-    apply_edit, revert_edit, propose_promotion,
+    apply_edit, revert_edit, propose_promotion, is_promotable,
 )
 
 _YAML = "name: x\ndevice:\n  mode: fast\n  dos_band_potentials: true\nlayers:\n  - a\n"
@@ -85,3 +85,27 @@ def test_propose_promotion_none_when_refuted(tmp_path):
 def test_flag_map_keys():
     assert set(FLAG_TO_CONFIG_KEY) == {
         "SOLARLAB_IFACE_PROJ", "SOLARLAB_IFACE_PLANE", "SOLARLAB_DOS_BAND"}
+
+
+def test_is_promotable_decouples_promotability_from_config_existence():
+    # Task 7(c): promotability is a property of the (confirmed, flag-mapped,
+    # not-refuted) Hypothesis — it must NOT depend on whether the config file
+    # exists. is_promotable answers it WITHOUT touching the filesystem.
+    led = Ledger(root="/nonexistent/ledger")
+    assert is_promotable(_hyp(), led) is True                      # confirmed + mapped flag
+    assert is_promotable(_hyp(verdict="uncertain"), led) is False  # not confirmed
+    assert is_promotable(_hyp(mech="flag SOLARLAB_INTERFACE_PLANE_STATE term"), led) is False  # unmapped
+    refuted = Ledger(root="/nonexistent/ledger")
+    refuted.add_negative(NegativeResult(approach="flag SOLARLAB_IFACE_PROJ term",
+                                        why_failed="x", evidence="y"))
+    assert is_promotable(_hyp(), refuted) is False                 # refuted
+
+
+def test_propose_promotion_raises_on_missing_config(tmp_path):
+    # Task 7(c): revert the contract-broadening. propose_promotion needs the old
+    # text to revert an applied edit, so an ABSENT config for an otherwise
+    # promotable mechanism must raise (not silently fall back to empty text).
+    import pytest
+    missing = tmp_path / "does_not_exist.yaml"
+    with pytest.raises(FileNotFoundError):
+        propose_promotion(_hyp(), Ledger(root=tmp_path), missing)
