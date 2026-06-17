@@ -66,6 +66,36 @@ def make_implement_gate_runner(*, measure_badness: Callable, l0_runner: Callable
     return gate_runner
 
 
+def _subprocess_import_check(lever_module: str, *, timeout_s: float = 60.0) -> tuple[bool, str]:
+    """Import/compile ``lever_module`` in a FRESH child interpreter, never the
+    parent. The generated lever can run arbitrary module-level code at import; a
+    real sandbox imports it in a separate process so the parent only reads the
+    child's structured (rc/stderr) result and is never tainted. Returns
+    ``(ok, detail)``."""
+    import os
+    import subprocess
+    import sys
+    from perovskite_sim.autoloop.ladder import _PKG_ROOT
+    code = f"import importlib; importlib.import_module({lever_module!r})"
+    # Propagate the parent's import roots so the child resolves the same module
+    # (including non-package paths the parent appended at runtime), but the child
+    # is still a FRESH interpreter — no parent module state leaks across.
+    env = dict(os.environ)
+    extra = os.pathsep.join(p for p in sys.path if p)
+    env["PYTHONPATH"] = extra + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:
+        proc = subprocess.run(
+            ["python", "-c", code],
+            capture_output=True, text=True, cwd=str(_PKG_ROOT), timeout=timeout_s, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"lever import/compile timed out after {timeout_s}s"
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout).strip().splitlines()
+        return False, f"lever import/compile failed: {tail[-1] if tail else 'nonzero rc'}"
+    return True, "import ok"
+
+
 def gate_g6_build(*, golden_runner: Callable[[], tuple[bool, str]],
                   flag_on_runner: Callable[[], tuple[bool, str]],
                   lever_module: str = "perovskite_sim.autoloop.generated.lever") -> GateVerdict:
@@ -73,13 +103,15 @@ def gate_g6_build(*, golden_runner: Callable[[], tuple[bool, str]],
     legacy suite green with the flag OFF (reuse G0's golden suite), (3) run a
     flag-ON parity sweep to a finite, voc-bracketed result. Cheap fail-fast
     before the G1/G3 physics checks. Runners are injected so unit tests run
-    without the solver."""
-    import importlib
-    try:
-        mod = importlib.import_module(lever_module)
-        importlib.reload(mod)
-    except Exception as exc:                       # SyntaxError/ImportError/etc.
-        return GateVerdict("G6_build", False, f"lever import/compile failed: {exc!r}")
+    without the solver.
+
+    The import/compile check runs in a SUBPROCESS (``_subprocess_import_check``):
+    the candidate module can execute arbitrary code at import, so it is imported
+    in a child interpreter and never in the parent — the parent only reads the
+    child's structured result."""
+    ok_import, d_import = _subprocess_import_check(lever_module)
+    if not ok_import:
+        return GateVerdict("G6_build", False, d_import)
     ok_off, d_off = golden_runner()
     if not ok_off:
         return GateVerdict("G6_build", False, f"flag-OFF not bit-identical: {d_off}")
