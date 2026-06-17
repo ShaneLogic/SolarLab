@@ -122,7 +122,8 @@ def test_flag_default_off_and_yaml(tmp_path):
 def test_mat_caches_require_parity_configuration():
     """prm tuples built only under dos_band_potentials + reference DOS."""
     base = load_scaps_yaml(_V2)
-    _, m_no_dos = _build(dataclasses.replace(base, interface_plane_closure=True))
+    _, m_no_dos = _build(dataclasses.replace(
+        base, interface_plane_closure=True, dos_band_potentials=False))
     assert all(p is None for p in m_no_dos.interface_plane_prm)
     _, m_full = _build(dataclasses.replace(
         base, interface_plane_closure=True, dos_band_potentials=True))

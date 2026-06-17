@@ -135,9 +135,11 @@ def test_low_doped_etl_flat_band_eliminates_pseudo_crossing():
     assert m.J_sc / 10 == pytest.approx(25.7, abs=0.5), "photocurrent stays healthy"
     if m.voc_bracketed:
         assert m.V_oc < 1.27, "any reported crossing must be below the ceiling"
-    # ohmic-pin reference: same point -> spurious crossing (~1.64 V without
-    # the DOS flag, well above the ~1.25 V ceiling); needs the wider window.
-    m_pin = run_jv_sweep(low, N_grid=30, n_points=48, v_rate=5.0, V_max=1.7,
+    # ohmic-pin reference: same point -> spurious crossing, well above the
+    # ~1.25 V ceiling. With the default DOS-band fold the whole J-V curve is
+    # lifted ~132 mV, so the pin's spurious crossing sits at ~1.78 V (was
+    # ~1.64 V pre-fold); the window is widened to keep it bracketed.
+    m_pin = run_jv_sweep(low, N_grid=30, n_points=56, v_rate=5.0, V_max=1.9,
                          v_max_max_attempts=1).metrics_fwd
     assert m_pin.voc_bracketed and m_pin.V_oc > 1.30, \
         "regression guard: the pin's pseudo-crossing must remain detectable"
