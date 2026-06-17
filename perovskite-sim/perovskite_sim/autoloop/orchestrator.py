@@ -420,6 +420,27 @@ def commit_generated_lever(target_path, lever, gap, hypothesis, verdicts, *, git
     return branch, sha
 
 
+def _persist_codegen_candidate(*, outputs_root, cycle, gap, hyp, lever, verdicts,
+                               spliced_body, status) -> None:
+    """Persist the dry-run / gates_failed candidate lever + gate report under
+    ``outputs_root/codegen-<cycle>/`` (mirrors ``guardian_once``'s run_dir). The
+    spliced ``lever.py`` and a ``report.json`` are kept so a human can inspect the
+    candidate even though the identity body is restored on the working branch."""
+    run_dir = Path(outputs_root) / f"codegen-{cycle}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "lever.py").write_text(spliced_body, encoding="utf-8")
+    report = {
+        "cycle": cycle,
+        "status": status,
+        "gap_id": gap.id,
+        "mechanism": hyp.mechanism,
+        "rationale": lever.rationale,
+        "verdicts": [dataclasses.asdict(v) for v in verdicts],
+    }
+    (run_dir / "report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def codegen_top_not_promotable(*, ledger_root: Path, outputs_root: Path, config_path,
                                reference_path, cycle: int, timestamp: str, codegen,
                                gate_runner, apply: bool = False, committer=None,
@@ -460,7 +481,8 @@ def codegen_top_not_promotable(*, ledger_root: Path, outputs_root: Path, config_
         # (e.g. a FakeCodegen that does not self-validate). Reject before it ever
         # lands on disk / gets imported.
         validate_lever_body(lever.body)
-        target.write_text(splice_lever_body(LEVER_TEMPLATE, lever.body), encoding="utf-8")
+        spliced = splice_lever_body(LEVER_TEMPLATE, lever.body)
+        target.write_text(spliced, encoding="utf-8")
         verdicts = list(gate_runner(gap, hyp, lever))
         if not all(v.passed for v in verdicts):
             led.add_negative(NegativeResult(
@@ -468,7 +490,11 @@ def codegen_top_not_promotable(*, ledger_root: Path, outputs_root: Path, config_
                 why_failed="codegen gate(s) failed: " + ",".join(v.name for v in verdicts if not v.passed),
                 evidence=f"autoloop Stage 5.3 codegen cycle {cycle}"))
             led.save()
-            return CodegenResult("gates_failed", gap.id, None, tuple(verdicts), None, lever.rationale)
+            _persist_codegen_candidate(
+                outputs_root=outputs_root, cycle=cycle, gap=gap, hyp=hyp, lever=lever,
+                verdicts=verdicts, spliced_body=spliced, status="gates_failed")
+            return CodegenResult("gates_failed", gap.id, None, tuple(verdicts), None,
+                                 lever.rationale, spliced)
         if apply:
             commit = committer or commit_generated_lever
             # A commit failure (dirty-tree refusal, git error, …) must not crash
@@ -482,6 +508,10 @@ def codegen_top_not_promotable(*, ledger_root: Path, outputs_root: Path, config_
             led.add_gap(gap.with_status("closed").with_mechanism(hyp.mechanism))
             led.save()
             return CodegenResult("applied", gap.id, branch, tuple(verdicts), sha, lever.rationale)
-        return CodegenResult("dry_run", gap.id, None, tuple(verdicts), None, lever.rationale)
+        _persist_codegen_candidate(
+            outputs_root=outputs_root, cycle=cycle, gap=gap, hyp=hyp, lever=lever,
+            verdicts=verdicts, spliced_body=spliced, status="dry_run")
+        return CodegenResult("dry_run", gap.id, None, tuple(verdicts), None,
+                             lever.rationale, spliced)
     finally:
         target.write_text(identity, encoding="utf-8")   # ALWAYS restore identity on the working branch

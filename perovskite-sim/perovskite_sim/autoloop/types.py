@@ -172,3 +172,4 @@ class CodegenResult:
     gate_verdicts: tuple
     committed_sha: Optional[str]
     rationale: Optional[str] = None
+    body: Optional[str] = None   # spliced candidate lever.py source (dry_run / gates_failed)
