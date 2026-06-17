@@ -65,6 +65,9 @@ pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 - **Autoloop L3 lab data** — point `--reference` at a tiered descriptor (`scaps_lab_tiered.json`)
   to score absolutes against measured J-V (`LabReferenceSource`) while keeping SCAPS trend sweeps.
   Default stays pure-SCAPS.
+- **Autoloop LLM attributor** (`--attribute --llm`) — when the deterministic heuristic can't
+  diagnose a gap, an LLM proposes a novel root cause (always a `verdict=uncertain` lead; never
+  auto-confirmed). Opt-in; default stays deterministic.
 
 <br>
 
