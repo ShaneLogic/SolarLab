@@ -42,6 +42,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="run the continuous boulder (sweep dry-run unless --converge)")
     ap.add_argument("--converge", action="store_true",
                     help="with --boulder/--implement: auto-apply landable fixes and loop")
+    ap.add_argument("--llm", action="store_true",
+                    help="use the LLM attributor (fallback on gaps the heuristic can't diagnose)")
+    ap.add_argument("--llm-model", default="sonnet", help="model for --llm (default sonnet)")
     ap.add_argument("--search", action="store_true",
                     help="run a parity-gated, advisory device-design search")
     ap.add_argument("--budget", type=int, default=50, help="design-search eval budget")
@@ -66,6 +69,15 @@ def _load_baseline(path: Path):
     per = {k: SweepScore(**v) for k, v in raw.get("per_sweep", {}).items()}
     return ParityScore(overall=raw["overall"], base_deltas=raw.get("base_deltas", {}),
                        per_sweep=per)
+
+
+def _build_attributor(ns):
+    from perovskite_sim.autoloop.attribution import HeuristicAttributor
+    if not getattr(ns, "llm", False):
+        return HeuristicAttributor()
+    from perovskite_sim.autoloop.cognition import ClaudeCliRuntime
+    from perovskite_sim.autoloop.llm_attribution import LLMAttributor
+    return LLMAttributor(ClaudeCliRuntime(model=ns.llm_model))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,7 +105,6 @@ def main(argv: list[str] | None = None) -> int:
         import dataclasses
         from perovskite_sim.autoloop.orchestrator import (
             run_boulder, guardian_once, attribute_top_gap, implement_top_confirmed)
-        from perovskite_sim.autoloop.attribution import HeuristicAttributor
         from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
         from perovskite_sim.autoloop.gates_impl import make_implement_gate_runner
         from perovskite_sim.autoloop.provenance import _git
@@ -105,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
                                   "error": f"refuse --boulder --converge on '{branch}'; "
                                            "create an autoloop branch first"}))
                 return 1
+
+        _attr = _build_attributor(ns)
 
         def sense(cycle):
             rep = guardian_once(ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
@@ -119,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
                               timestamp=iso_timestamp_utc(),
                               probe_runner_factory=lambda g: SubprocessProbeRunner(
                                   config_path=ns.config, reference_path=ns.reference, gap=g),
-                              attributor=HeuristicAttributor())
+                              attributor=_attr)
 
         def implement(cycle, apply):
             def _measure(edit, gap):
@@ -143,7 +156,6 @@ def main(argv: list[str] | None = None) -> int:
     if ns.attribute:
         import dataclasses
         from perovskite_sim.autoloop.orchestrator import attribute_top_gap
-        from perovskite_sim.autoloop.attribution import HeuristicAttributor
         from perovskite_sim.autoloop.subprocess_probe import SubprocessProbeRunner
         hyp = attribute_top_gap(
             ledger_root=ns.ledger_root, outputs_root=ns.outputs_root,
@@ -151,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             timestamp=iso_timestamp_utc(),
             probe_runner_factory=lambda g: SubprocessProbeRunner(
                 config_path=ns.config, reference_path=ns.reference, gap=g),
-            attributor=HeuristicAttributor())
+            attributor=_build_attributor(ns))
         if hyp is None:
             print(json.dumps({"attributed": None, "reason": "no open gaps"}))
             return 0

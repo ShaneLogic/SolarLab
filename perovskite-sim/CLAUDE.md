@@ -408,3 +408,20 @@ modest `--budget`.
 
 Note: the model's current parity (~0.69) is below 0.9, so search refuses by default
 until the boulder/converge loop improves parity — the correct trust coupling.
+
+### Stage 5.1 — LLM attributor (cognition leg 1)
+
+`autoloop/cognition.py` is the pluggable `CognitionRuntime` seam (`ClaudeCliRuntime`
+runs `claude -p --output-format json`, schema-validated, timeout + 1 retry; `FakeRuntime`
+for tests). `autoloop/llm_attribution.py:LLMAttributor` composes over `HeuristicAttributor`:
+the heuristic runs first, and the LLM is called ONLY on `uncertain` gaps to propose a
+NOVEL cause beyond the flag menu. The LLM result is ALWAYS `verdict="uncertain"` (a lead —
+confirmation is the deferred G5 / human review); any runtime failure degrades to the
+heuristic's uncertain (the LLM never confirms, never blocks the loop). Opt-in:
+
+    cd perovskite-sim
+    python scripts/autoloop_run.py --attribute --llm --llm-model sonnet
+    python scripts/autoloop_run.py --boulder --llm
+
+Default (no `--llm`) stays fully deterministic, no LLM, no cost. G5 multi-skeptic verify
+(5.2) and LLM codegen (5.3) are deferred behind this runtime seam.
