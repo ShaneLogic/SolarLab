@@ -79,4 +79,8 @@ def test_validate_lever_body_rejects_imports_and_dangerous_calls():
                 "open('/tmp/x','w').write('h')\nreturn arrays"]:
         with pytest.raises(ValueError):
             validate_lever_body(bad)
+    # body-only contract: a full `def` body must be rejected (it would splice to a
+    # nested def whose outer fn falls through to None — caught here, not at G6).
+    with pytest.raises(ValueError):
+        validate_lever_body("def adjust_material_arrays(arrays, ctx):\n    return arrays\n")
     validate_lever_body("return dataclasses.replace(arrays, chi=arrays.chi + 0.0)")  # ok

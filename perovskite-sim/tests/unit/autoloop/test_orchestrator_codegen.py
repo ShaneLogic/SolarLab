@@ -55,7 +55,7 @@ def test_applied_commits_branch_and_restores_identity(tmp_path):
         return ("feat/autoloop-gen-trend-et-pvk-etl-v-oc", "abc123")
 
     res = codegen_top_not_promotable(
-        **_common(tmp_path), codegen=FakeCodegen("def adjust_material_arrays(arrays, ctx):\n    return arrays\n"),
+        **_common(tmp_path), codegen=FakeCodegen("return arrays"),    # body-only statements (post-remediation contract)
         gate_runner=_passing_runner, apply=True, committer=_committer, lever_path=lever)
     assert res.status == "applied" and res.branch.startswith("feat/autoloop-gen-")
     assert res.committed_sha == "abc123"
@@ -66,7 +66,7 @@ def test_gates_failed_adds_negative(tmp_path):
     _setup(tmp_path)
     lever = _lever_file(tmp_path)
     res = codegen_top_not_promotable(
-        **_common(tmp_path), codegen=FakeCodegen("def adjust_material_arrays(arrays, ctx):\n    return arrays\n"),
+        **_common(tmp_path), codegen=FakeCodegen("return arrays"),    # body-only statements (post-remediation contract)
         gate_runner=_failing_runner, apply=True, committer=None, lever_path=lever)
     assert res.status == "gates_failed"
     led = Ledger.load(tmp_path / "ledger")
@@ -78,7 +78,7 @@ def test_dry_run_no_commit(tmp_path):
     lever = _lever_file(tmp_path)
     identity = lever.read_text(encoding="utf-8")
     res = codegen_top_not_promotable(
-        **_common(tmp_path), codegen=FakeCodegen("def adjust_material_arrays(arrays, ctx):\n    return arrays\n"),
+        **_common(tmp_path), codegen=FakeCodegen("return arrays"),    # body-only statements (post-remediation contract)
         gate_runner=_passing_runner, apply=False, lever_path=lever)
     assert res.status == "dry_run" and res.committed_sha is None
     assert lever.read_text(encoding="utf-8") == identity

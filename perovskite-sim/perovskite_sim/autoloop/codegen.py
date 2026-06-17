@@ -101,6 +101,10 @@ def validate_lever_body(body: str) -> None:
         tree = ast.parse(wrapped)
     except SyntaxError as exc:
         raise ValueError(f"lever body is not valid Python: {exc}") from exc
+    for stmt in tree.body[0].body:          # the lever's own top-level statements
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            raise ValueError("lever body must be statements only, not a function "
+                             "definition (the template already supplies the def header)")
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             raise ValueError("lever body may not import (imports are denied)")
