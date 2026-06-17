@@ -121,18 +121,39 @@ def gate_g6_build(*, golden_runner: Callable[[], tuple[bool, str]],
     return GateVerdict("G6_build", True, f"import ok; OFF[{d_off}]; ON[{d_on}]")
 
 
+def gate_g2_limiting(limiting_runner: Callable[[], tuple[bool, str]] | None) -> GateVerdict:
+    """G2 (codegen): the flag-ON lever must respect the cheap physics limiting
+    cases (rad-only V_oc <= detailed-balance ceiling AND dark J_sc ~ 0) — the
+    same L1 sanity checks ``ladder.run_l1_limiting_cases`` / ``gates.G2_limiting``
+    enforce, here on the highest-risk leg (a NOVEL LLM-written lever). The probe
+    is injected (``limiting_runner() -> (ok, detail)``) so unit tests run without
+    the solver. ``None`` means no limiting probe was wired — recorded as a
+    non-blocking, un-evaluated verdict rather than silently dropped."""
+    if limiting_runner is None:
+        return GateVerdict("G2_limiting", True, "no limiting probe wired (skipped)")
+    ok, detail = limiting_runner()
+    return GateVerdict("G2_limiting", ok, detail)
+
+
 def make_codegen_gate_runner(*, golden_runner, flag_on_runner, realized_badness,
+                             limiting_runner=None,
                              lever_module: str = "perovskite_sim.autoloop.generated.lever"):
-    """Codegen gate stack: G6 (build/import + flag-OFF bit-identical + flag-ON
-    runs finite) then G3 (flag-ON badness improves vs the gap's sense-time
-    baseline). Short-circuits if G6 fails. Returns a callable(gap, hyp, lever).
-    `realized_badness(gap) -> float` re-measures the flag-ON gap badness; injected
-    so unit tests run without the solver. (G4 reconcile is N/A: a brand-new lever
-    has no prior ablation prediction — G3-improves is the honest benefit check.)"""
+    """Codegen gate stack (spec §5): G6 (build/import + flag-OFF bit-identical +
+    flag-ON runs finite) -> G2 (flag-ON limiting cases hold) -> G3 (flag-ON
+    badness improves vs the gap's sense-time baseline). Short-circuits if G6
+    fails. Returns a callable(gap, hyp, lever).
+
+    `realized_badness(gap) -> float` re-measures the flag-ON gap badness;
+    `limiting_runner() -> (ok, detail)` runs the cheap rad-ceiling / dark-Jsc
+    limiting checks on the flag-ON lever; both injected so unit tests run without
+    the solver. (G1 is folded into G6's flag-OFF bit-identical + flag-ON
+    finiteness; G4 reconcile is N/A — a brand-new lever has no prior ablation
+    prediction, so G3-improves is the honest benefit check.)"""
     def gate_runner(gap, hyp, lever):
         verdicts = [gate_g6_build(golden_runner=golden_runner, flag_on_runner=flag_on_runner,
                                   lever_module=lever_module)]
         if verdicts[0].passed:
+            verdicts.append(gate_g2_limiting(limiting_runner))
             realized = realized_badness(gap)
             base = gap_baseline_badness(gap)
             verdicts.append(GateVerdict("G3_improves", realized < base,

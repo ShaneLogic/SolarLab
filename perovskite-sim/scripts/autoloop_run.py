@@ -133,6 +133,22 @@ def _build_codegen_gate_runner(*, config, reference, golden_runner):
             except Exception as exc:  # noqa: BLE001 — a crashed probe is a fail signal
                 return (False, repr(exc))
 
+        def _limiting():
+            # G2 limiting case on the highest-risk leg: a NOVEL flag-ON lever must
+            # not break the dark-J_sc sanity bound (|dark J_sc| < 1 A/m^2 — no
+            # photocurrent without light), the solver-backed half of
+            # ``ladder.run_l1_limiting_cases``. (The rad-only-V_oc-vs-ceiling half
+            # has no probe-worker mode yet, so it is not evaluated here.)
+            try:
+                dark = SubprocessProbeRunner(
+                    config_path=config, reference_path=reference, gap=gap).run(
+                    {"env_flags": {"SOLARLAB_AUTOLOOP_GEN": "1"},
+                     "jv_overrides": {}, "measure": "dark"})
+                ok = math.isfinite(dark) and abs(dark) < 1.0  # A/m^2
+                return (ok, f"dark_jsc={dark}")
+            except Exception as exc:  # noqa: BLE001 — a crashed probe is a fail signal
+                return (False, repr(exc))
+
         def _realized(g):
             return SubprocessProbeRunner(
                 config_path=config, reference_path=reference, gap=g).run(
@@ -141,6 +157,7 @@ def _build_codegen_gate_runner(*, config, reference, golden_runner):
 
         inner = make_codegen_gate_runner(golden_runner=golden_runner,
                                          flag_on_runner=_flag_on,
+                                         limiting_runner=_limiting,
                                          realized_badness=_realized)
         return inner(gap, hyp, lever)
 

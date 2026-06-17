@@ -32,9 +32,10 @@ def test_codegen_gate_closures_pass_real_gap_and_measure_gap(monkeypatch, tmp_pa
     """Build the CLI --codegen gate closures and run them against a stubbed probe.
 
     Asserts: (1) the SubprocessProbeRunner is constructed with a real Gap (never
-    None), (2) the variant always requests measure="gap" (the only mode
-    _probe_worker supports — "base" is unrecognised), and (3) the flag-ON G6
-    runner returns (True, ...) for a finite stub instead of (False, AttributeError)."""
+    None), (2) every variant requests a _probe_worker-supported measure mode
+    ("gap" for G6/G3, "dark" for the G2 limiting check — "base" is unrecognised),
+    and (3) the flag-ON G6 runner returns (True, ...) for a finite stub instead
+    of (False, AttributeError)."""
     mod = _load_cli()
 
     captured = {"gaps": [], "measures": []}
@@ -63,11 +64,17 @@ def test_codegen_gate_closures_pass_real_gap_and_measure_gap(monkeypatch, tmp_pa
     g6 = next(v for v in verdicts if v.name == "G6_build")
     assert g6.passed is True, g6.reason
 
+    # Spec §5: the G2 limiting verdict sits on the stack between G6 and G3 and
+    # was actually evaluated (its dark-Jsc probe ran).
+    assert [v.name for v in verdicts] == ["G6_build", "G2_limiting", "G3_improves"]
+
     # Every probe was built with the REAL gap (never None).
     assert captured["gaps"], "probe was never constructed"
     assert all(g is not None for g in captured["gaps"])
     assert all(getattr(g, "sweep", None) == "Nd_ETL" for g in captured["gaps"])
 
-    # Every probe used the supported measure mode.
+    # Every probe used a _probe_worker-supported measure mode (gap for G6/G3,
+    # dark for the G2 limiting check) — never the unrecognised "base".
     assert captured["measures"], "probe.run was never called"
-    assert set(captured["measures"]) == {"gap"}
+    assert set(captured["measures"]) <= {"gap", "dark"}
+    assert "dark" in captured["measures"]  # the G2 limiting probe ran
