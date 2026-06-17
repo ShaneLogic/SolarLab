@@ -1220,7 +1220,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                             B_rad[mask_abs] = B_rad[mask_abs] * P_esc
             offset_pr += layer.thickness
 
-    return MaterialArrays(
+    arrays = MaterialArrays(
         eps_r=eps_r,
         D_ion_node=D_ion_node,
         P_lim_node=P_lim_node,
@@ -1317,6 +1317,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         N_t_node=N_t_node_arr,
         has_trap_profile=_has_trap_profile,
     )
+
+    if getattr(stack, "autoloop_generated_lever", False) or os.environ.get("SOLARLAB_AUTOLOOP_GEN") == "1":
+        from perovskite_sim.autoloop.generated.lever import (
+            adjust_material_arrays, _LeverContext)
+        arrays = adjust_material_arrays(arrays, _LeverContext(x=x, stack=stack))
+    return arrays
 
 
 def _harmonic_face_average(values: np.ndarray) -> np.ndarray:

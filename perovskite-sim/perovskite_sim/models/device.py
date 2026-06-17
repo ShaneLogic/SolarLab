@@ -88,6 +88,12 @@ class DeviceStack:
     # force the pre-fix transport. LEGACY tier always disables it regardless
     # (IonMonger bit-identity contract — see build_material_arrays).
     dos_band_potentials: bool = True
+    # Autoloop Stage 5.3 codegen lever (2026-06). When True (or env
+    # ``SOLARLAB_AUTOLOOP_GEN=1``), build_material_arrays calls the sandboxed
+    # ``autoloop.generated.lever.adjust_material_arrays`` once on the assembled
+    # MaterialArrays. Default False = the generated module is never imported →
+    # bit-identical. The autoloop writes the lever body; a human merges the branch.
+    autoloop_generated_lever: bool = False
     # SCAPS-style flat-band contacts (2026-06). When True, both contacts are
     # treated as flat-band metals with finite surface-recombination kinetics
     # (the SCAPS contact model): the Phase-3.3 Robin path is activated on all
