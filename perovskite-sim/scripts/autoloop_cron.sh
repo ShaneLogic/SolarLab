@@ -9,7 +9,11 @@
 #   sweep-<TS>.log    full stdout/stderr of each sweep (the proposal JSON is at the end)
 
 REPO="/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/perovskite-sim"
-PY="/Users/shane/Applications/anaconda3/bin/python"
+CONDA_BIN="/Users/shane/Applications/anaconda3/bin"
+PY="$CONDA_BIN/python"
+# launchd gives a minimal PATH (/usr/bin:/bin) — the loop shells out to a bare
+# `python -m pytest` (run_l0), so anaconda MUST be on PATH or that subprocess fails.
+export PATH="$CONDA_BIN:$PATH"
 LOGDIR="$HOME/Library/Logs/autoloop"
 LOCKDIR="$LOGDIR/.sweep.lock.d"
 
