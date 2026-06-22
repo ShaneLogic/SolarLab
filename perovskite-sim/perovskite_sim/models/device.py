@@ -40,6 +40,16 @@ class InterfaceDefect:
     """
     E_t_eV: float
     calibration_factor: float = 1.0
+    # 2026-06 — SS interface-plane-state calibration. Multiplies (v_n, v_p)
+    # for this interface ONLY inside the steady-state interface-plane-state
+    # recombination channel (``_enable_iface_states`` folds it into
+    # ``interface_calibration_factor`` on the SS mat). The transient
+    # bulk-node interface path never reads it, so the transient parity
+    # config is untouched. Default 1.0 = bit-identical. Calibrated values
+    # absorb the over-strong interface-plane channel (base −61 mV → −0.1 mV,
+    # Nd_ETL 2× → 0.84×, HTL/PVK N_t 12× → 1.0×): scaps_mirror_v2 uses
+    # 0.02 (HTL/PVK) and 0.10 (PVK/ETL).
+    iface_state_calibration_factor: float = 1.0
     # Phase E9 — SCAPS-declared areal trap density [cm^-2] this defect was
     # built from. The loader derives the base SRV in ``DeviceStack.interfaces``
     # as σ·v_th·N_t; storing N_t here lets a sweep over interface N_t scale the

@@ -95,6 +95,31 @@ def test_direct_voc_consistent_with_jv():
     assert voc == pytest.approx(ss.metrics.V_oc, abs=2e-3)
 
 
+def test_stop_after_voc_truncates_and_avoids_deep_injection():
+    """``stop_after_voc`` halts the continuation once J crosses zero, so a
+    high ``V_max`` no longer drags the sweep into the deep-forward-injection
+    points (V >> V_oc) whose certified fallback grinds for minutes. The 0->V_oc
+    arc fully determines the metrics, so V_oc is unchanged."""
+    stack = _frozen_ion(_stack())
+    # V_max=1.6 is well above V_oc (~1.16): without stop_after_voc the tail
+    # would spend minutes on non-convergent deep-injection points.
+    ss = run_jv_sweep_ss(stack, N_grid=30, V_max=1.6, n_points=24,
+                         stop_after_voc=True)
+    assert ss.metrics.voc_bracketed
+    voc = solve_voc_ss(stack, N_grid=30)
+    assert ss.metrics.V_oc == pytest.approx(voc, abs=1e-2)
+    # stopped just past V_oc, nowhere near V_max
+    assert ss.V[-1] < voc + 0.1
+    assert ss.V[-1] < 1.5
+
+
+def test_stop_after_voc_default_off_reaches_vmax():
+    """Default (False) is the legacy full-range sweep (bit-identical path)."""
+    stack = _frozen_ion(_stack())
+    ss = run_jv_sweep_ss(stack, N_grid=30, V_max=1.25, n_points=20)
+    assert ss.V[-1] == pytest.approx(1.25, abs=1e-9)
+
+
 @pytest.mark.xfail(
     reason="PREMISE FALSIFIED (2026-06-12): with the Gummel phi-step in "
     "place the voltage walk COMPLETES (points converge/certify) and J(V) "

@@ -147,6 +147,12 @@ interfaces:
     v_th_cm_s: 1.0e7
     E_t_eV_below_cb: 0.6
     distribution: single
+    # SS interface-plane-state calibration (2026-06). Attenuates ONLY the
+    # steady-state interface-plane recombination channel (iface_states=True);
+    # the transient bulk-node path ignores it (verified delta 0.0 mV). 0.02
+    # brings the SS HTL/PVK N_t sweep from 12x over to 1.0x of SCAPS (5.3 vs
+    # 5.2 mV) — this interface is near-passive in SCAPS.
+    iface_state_calibration_factor: 0.02
 
   # SCAPS sweep result: dominant interface — V_oc range 282 mV across
   # N_t=[1e9, 1e15]. SCAPS encodes this as a Gaussian energy distribution
@@ -170,3 +176,8 @@ interfaces:
     distribution: gaussian
     E_char_eV: 0.1
     N_peak_cm3: 5.64e8
+    # SS interface-plane-state calibration (2026-06). SS-only (transient
+    # ignores it, verified delta 0.0 mV). 0.10 lands the SS base V_oc on
+    # SCAPS (1.1675 vs 1.1676, -0.1 mV) and brings the Nd_ETL sweep from
+    # ~2x over to 0.84x of SCAPS, while PVK/ETL N_t holds at 63%.
+    iface_state_calibration_factor: 0.10
