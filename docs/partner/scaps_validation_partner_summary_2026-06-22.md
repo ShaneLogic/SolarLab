@@ -132,6 +132,7 @@ Table 1c. Base operating point, four configurations. The SS driver with the cali
 
 
 
+
 The previous −96 mV V~oc~ shortfall decomposed into a 10–16 mV grid artifact, a
 137 mV transport-discretisation omission, and compensating model differences;
 with both fixes the residual is −50 mV, attributed to the interface
@@ -142,9 +143,9 @@ J~sc~ residuals.
 
 # 4. Sweep-by-sweep comparison: transient f=0.53 / f=0.66 / SS interface-states
 
-Each of the eleven sweeps is a four-panel overlay (V~oc~ / J~sc~ / FF / PCE). Four configurations are compared: SCAPS (red, dashed), the two transient de-spike fractions **f = 0.53** (blue) and **f = 0.66** (green), and the **steady-state interface-plane-states** driver (purple, calibrated interface channel). All four carry the full set of figures of merit at every sweep point: the SS **V~oc~** is a direct J=0 bisection (`solve_voc_ss`), and the SS **J~sc~ / FF / PCE** come from a steady-state J-V continuation (`run_jv_sweep_ss`) run to just past each point's V~oc~ (continuing into deep forward injection, V >> V~oc~, was the sole cause of the earlier non-convergence — bounding V~max~ to V~oc~ + 40 mV makes the full-FOM SS curve fast and complete). Grey open markers are degenerate points excluded by the detailed-balance-ceiling guard. The per-sweep V~oc~ scorecard is Table 2. (The CBO sweep, Figure 1, carries SS only over its flat-band region — see its caption.)
+Each of the eleven sweeps is a four-panel overlay (V~oc~ / J~sc~ / FF / PCE). Four configurations are compared: SCAPS (red, dashed), the two transient de-spike fractions **f = 0.53** (blue) and **f = 0.66** (green), and the **steady-state interface-plane-states** driver (purple, calibrated interface channel). All four carry the full set of figures of merit at every sweep point: the SS **V~oc~** is a direct J=0 bisection (`solve_voc_ss`), and the SS **J~sc~ / FF / PCE** come from a steady-state J-V continuation (`run_jv_sweep_ss`) run to just past each point's V~oc~ (continuing into deep forward injection, V >> V~oc~, was the sole cause of the earlier non-convergence — bounding V~max~ to V~oc~ + 40 mV makes the full-FOM SS curve fast and complete). Grey open markers are degenerate points excluded by the detailed-balance-ceiling guard. The per-sweep V~oc~ scorecard is Table 2. (The CBO sweep, Figure 1, now carries SS over the full range: a genuine flat-band solve, FILLED diamonds, plus a certified transient fallback over the deep-CBO arm, HOLLOW diamonds — see its caption.)
 
-![ETL/PVK conduction-band offset (delta E~C~). The SS-states curve (purple) covers the flat-band operative region (delta E~C~ >= -0.16 eV, 8 of 14 points), where it sits directly on the transient curves — CBO is a band-offset effect, so SS approx the transient (not interface-limited). The deep-CBO points (delta E~C~ <= -0.2 eV) collapse V_oc below ~1.1 V and destroy the junction: the SS interface-states Newton cannot converge there (>60 s/point), so those points carry only the transient/SCAPS series.](../figures/scaps_ss_compare/sweep_CHI_ETL.png){width=86%}
+![ETL/PVK conduction-band offset (delta E~C~). The SS-states curve (purple) now spans the FULL sweep. FILLED diamonds are the genuine SS interface-states solve over the flat-band operative region (delta E~C~ >= -0.16 eV), where the purple sits directly on the transient curves — CBO is a band-offset effect, so SS approx the transient (not interface-limited). HOLLOW diamonds are the deep-CBO arm (delta E~C~ <= -0.2 eV): the 1 eV cliff collapses V_oc and destroys the junction, and the SS root there is unreachable by ANY algebraic Newton (coupled Newton best residual 4e4, decoupled Gummel 1e9, Anderson 3e9, PTC 2e9 — all >> tol; only a long transient settles it, to residual ~1e-2 in ~0.6 s). The SS driver's documented behaviour is to fall back to that certified plain-transient settle; the interface states are inactive in the collapsed regime, so SS == transient and the hollow points EQUAL the f=0.53 transient (the parity config's despike). The full-range purple curve therefore overlays the transient throughout the CBO sweep — the honest statement that on this sweep interface-states add nothing over band-offset physics.](../figures/scaps_ss_compare/sweep_CHI_ETL.png){width=86%}
 
 ![ETL donor doping (N~D~). The transient curves are U-shaped (direction mismatch); the SS interface-states V~oc~ rises with doping, matching the SCAPS direction.](../figures/scaps_ss_compare/sweep_Nd_ETL.png){width=86%}
 
@@ -172,7 +173,7 @@ Each of the eleven sweeps is a four-panel overlay (V~oc~ / J~sc~ / FF / PCE). Fo
 
 | # | Sweep | SCAPS range (mV) | f = 0.53 | f = 0.66 | SS states |
 |---|---|---|---|---|---|
-| 1 | ETL/PVK conduction-band offset | 918.0 | 85% ok | 88% ok | flat-band (8/14) |
+| 1 | ETL/PVK conduction-band offset | 918.0 | 85% ok | 88% ok | 86% ok (8 SS + 6 fb) |
 | 2 | ETL donor doping | 137.1 | 18% MISMATCH | 23% MISMATCH | 189% ok |
 | 3 | PVK donor doping | 34.0 | 17% ok | 29% MISMATCH | 10% ok |
 | 4 | Perovskite-CB bulk N~t~ | 38.6 | 69% ok | 94% ok | 63% ok |

@@ -26,7 +26,7 @@ stay documented as gapped (the transient covers that regime; SS ~ transient
 there). The `phi_frozen` seam is the reusable, bit-identical foundation M4
 builds on.
 
-### M4 result (2026-06-22) — Anderson tried; deep-CBO confirmed INFEASIBLE *and* UNNECESSARY. CLOSED.
+### M4 result (2026-06-22) — Anderson + PTC tried, deep-CBO INFEASIBLE by Newton; figure COMPLETED via certified transient fallback. CLOSED.
 
 M4 was attempted and the leg is now **closed as won't-fix**. Two findings settle it:
 
@@ -49,8 +49,14 @@ shipped driver already fails FAST.** Best peak-density-relative residual
 | coupled SS Newton (shipped `solve_steady_state`) | **4.2e4** | raises in **0.6 s** |
 | decoupled Gummel (M1+M2 scaffold) | 1e9 | stall |
 | Anderson-accelerated Gummel (M4) | 3e9 | stall |
+| pseudo-transient continuation (PTC, implicit-Euler + SER dt ramp) | 2e8-2e9 | stall (5 deep pts) |
 
-All three are 10-15 orders above tol. The coupled Newton gets *closest* (4.2e4)
+PTC was the last untried algebraic remedy and was prototyped (full-coupling
+implicit-Euler residual `(exp(z)-anchor)/(n_ref*dt) - F(z)`, switched-evolution dt
+ramp, damped-Newton inner solve): it **STALLS at 2e8-2e9** across five deep points
+(delta E_C = -1.0/-0.5/-0.2 at several V), same plateau as Gummel. So four
+independent Newton-family methods (coupled, decoupled Gummel, Anderson, PTC) all
+plateau 8-15 orders above tol. All are 10-15 orders above tol. The coupled Newton gets *closest* (4.2e4)
 and, critically, **raises a clean `SteadyStateError` in 0.6 s** ("line search
 stalled ... transient assists exhausted") — it does **not** hang. So the deep-CBO
 SS root is genuinely pathological for *any* algebraic Newton (coupled or
@@ -62,20 +68,33 @@ worse-conditioned path, not a better one.
 interface-limited one — **SS approx transient** over the whole CBO sweep (verified
 in the flat-band region where both converge). The deep-CBO points therefore add
 **zero** scientific value as SS points: the transient curves already cover that
-regime in every figure, and the full-FOM figures correctly carry transient-only
-there (the shipped driver's fast 0.6 s raise means the figure pipeline skips the
-point cleanly, no grind).
+regime in every figure, and the CHI_ETL figure now draws the deep-CBO arm as the
+SS driver's certified transient fallback (hollow markers), which equals the
+transient (see "The figure IS completed" below).
 
-**Disposition.** M4 is closed won't-fix. The `_gummel_point` scaffold and the
-`phi_frozen` seam stay in-tree, **dormant + bit-identical** (env-gated
-`SOLARLAB_SS_GUMMEL`, not wired into any sweep), as the documented foundation if a
-*genuinely new* approach appears (pseudo-transient continuation with an unbounded
-dt ramp == the transient, so PTC reduces to "just run the transient"). The
-shipped solution for the deep tail is the existing transient driver, which is
-correct and fast. The net deliverable of this campaign is the **interface-channel
-calibration + Newton/LU reuse + `stop_after_voc`** (the operative regime — fast,
-accurate, complete on all 10 flat-band-operative sweeps); the deep-CBO tail is a
-documented engine boundary, not a gap to be closed with more solver machinery.
+**The figure IS completed — via the certified transient fallback (the actual
+resolution).** The plain (iface-stripped) transient settles the deep-CBO point to
+residual ~1e-2 in ~0.6 s (terminal-J error ~1e-4 A/m^2 vs J_sc ~260 — negligible);
+the SS-driver's own certified fallback already does exactly this, its settle ladder
+(6.4 ms / 25 ms / 100 ms) was simply too short (res still 1.8e3 at 100 ms, 1.6e-2
+by 600 ms). In the band-offset-collapsed regime the interface states are inactive
+(the 1 eV cliff destroys the junction), so SS == transient and the fallback point
+EQUALS the f=0.53 transient (the parity config's despike). The CHI_ETL figure now
+carries the **full-range** purple SS curve: 8 genuine SS-Newton points (flat-band,
+filled diamonds) + 6 certified transient-fallback points (deep-CBO + the +0.5
+spike, hollow diamonds), full-range V_oc closure 86 % / match — it overlays the
+transient throughout, the honest statement that interface-states add nothing over
+band-offset physics on this sweep.
+
+**Disposition.** M4 (closing the deep-CBO gap with a *Newton* solver) is closed
+won't-fix — no algebraic Newton reaches it and it adds no information (SS ==
+transient there). The `_gummel_point` scaffold + `phi_frozen` seam stay in-tree,
+**dormant + bit-identical** (env-gated `SOLARLAB_SS_GUMMEL`, not wired). The net
+campaign deliverable is the **interface-channel calibration + Newton/LU reuse +
+`stop_after_voc`** (operative regime — fast, accurate) plus the **complete CHI_ETL
+figure** (genuine SS where reachable, certified transient fallback elsewhere). The
+deep-CBO tail is a documented engine boundary, now explicitly shown rather than
+left blank.
 
 ## 1. Motivation
 
