@@ -51,9 +51,11 @@ iteration; the gate is xfail'd with this diagnosis.
 from __future__ import annotations
 
 import dataclasses
+import os
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.linalg import lu_factor, lu_solve
 
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.experiments.jv_sweep import (
@@ -86,6 +88,12 @@ _TE_SOFTNESS = 0.02
 # throttle exists only because full velocity makes the ODE block too
 # stiff for Radau; an algebraic solve has no such constraint.
 _IFACE_STATE_V_TH = 1.0e5
+# Modified-Newton Jacobian/LU reuse in solve_steady_state (2026-06). On =
+# chord iterations reuse the cached LU factor (~2-4x fewer assemble_rhs
+# evals on warm-started solves); a freshly built step stays bit-identical
+# to the original full-Newton path. Set SOLARLAB_SS_JAC_REUSE=0 to force a
+# fresh Jacobian every iteration (the legacy behaviour / kill-switch).
+_SS_JAC_REUSE = os.environ.get("SOLARLAB_SS_JAC_REUSE", "1") != "0"
 
 
 def _enable_iface_states(mat: MaterialArrays) -> MaterialArrays:
@@ -97,10 +105,26 @@ def _enable_iface_states(mat: MaterialArrays) -> MaterialArrays:
     n_av = len(mat.interface_V_partition_2)
     if n_av == 0:
         return mat
-    return dataclasses.replace(mat, N_iface_state=n_av,
-                               iface_state_v_th=_IFACE_STATE_V_TH,
-                               iface_state_live_proj=True,
-                               iface_state_shared_occ=True)
+    repl = dict(N_iface_state=n_av,
+                iface_state_v_th=_IFACE_STATE_V_TH,
+                iface_state_live_proj=True,
+                iface_state_shared_occ=True)
+    # SS-only interface-channel calibration: fold the per-interface
+    # iface_state_calibration into the cf the state-SRH rate already reads
+    # (compute_interface_srh_on_state is reached only on this SS path, so
+    # the transient bulk-node interface path is untouched). Default 1.0 =
+    # bit-identical.
+    ss_cal = getattr(mat, "iface_state_calibration", ())
+    if ss_cal and any(float(c) != 1.0 for c in ss_cal):
+        base_cf = (mat.interface_calibration_factor
+                   or tuple(1.0 for _ in range(len(ss_cal))))
+        folded = tuple(
+            float(base_cf[k]) * float(ss_cal[k]) if k < len(ss_cal)
+            else float(base_cf[k])
+            for k in range(len(base_cf))
+        )
+        repl["interface_calibration_factor"] = folded
+    return dataclasses.replace(mat, **repl)
 
 
 def _ensure_iface_block(y: np.ndarray, mat: MaterialArrays) -> np.ndarray:
@@ -305,34 +329,54 @@ def solve_steady_state(
         if res < res_best:
             z_best, res_best = z.copy(), res
         stalled = False
+        # Modified-Newton Jacobian reuse (2026-06): build+factor the dense FD
+        # Jacobian only when no usable factor exists (first iter, or after a
+        # stale factor loses contraction). Chord iterations reuse the cached
+        # LU factor at ~1 F-eval vs n_unk full assemble_rhs evals — the
+        # dominant cost. A freshly built+solved step is bit-identical to the
+        # original full-Newton np.linalg.solve path; only reused (chord)
+        # iterations differ, and they converge to the same residual tol.
+        lu = None          # cached LU factor of the current Jacobian; None => rebuild
+        jac_fresh = False  # True when this iter's step came from a fresh factor
         for it in range(1, max_newton + 1):
             if res < tol:
                 return _done(z, res, 0.0, it - 1)
-            # dense FD Jacobian in ln-space
-            J = np.empty((n_unk, n_unk))
-            for j in range(n_unk):
-                dz = _FD_EPS * max(1.0, abs(z[j]))
-                zj = z.copy()
-                zj[j] += dz
-                J[:, j] = (F(zj) - f) / dz
-            try:
-                step = np.linalg.solve(J, -f)
-            except np.linalg.LinAlgError:
-                # ridge (Levenberg) fallback: a fully-floored carrier
-                # column can zero out at extreme dopings
-                lam_r = 1e-10 * float(np.max(np.abs(np.diag(J))) or 1.0)
-                step = None
-                for _ in range(4):
-                    try:
-                        step = np.linalg.solve(
-                            J + lam_r * np.eye(n_unk), -f)
-                        break
-                    except np.linalg.LinAlgError:
-                        lam_r *= 1e3
-                if step is None:
-                    raise SteadyStateError(
-                        f"singular Jacobian at V={V_app:.4f} (iter {it}, "
-                        f"residual {res:.3e})")
+            if lu is None or not _SS_JAC_REUSE:
+                # dense FD Jacobian in ln-space (rebuilt only when needed)
+                J = np.empty((n_unk, n_unk))
+                for j in range(n_unk):
+                    dz = _FD_EPS * max(1.0, abs(z[j]))
+                    zj = z.copy()
+                    zj[j] += dz
+                    J[:, j] = (F(zj) - f) / dz
+                try:
+                    step = np.linalg.solve(J, -f)
+                    lu = lu_factor(J)   # cache for subsequent chord steps
+                except np.linalg.LinAlgError:
+                    # ridge (Levenberg) fallback: a fully-floored carrier
+                    # column can zero out at extreme dopings
+                    lam_r = 1e-10 * float(np.max(np.abs(np.diag(J))) or 1.0)
+                    step = None
+                    for _ in range(4):
+                        try:
+                            step = np.linalg.solve(
+                                J + lam_r * np.eye(n_unk), -f)
+                            break
+                        except np.linalg.LinAlgError:
+                            lam_r *= 1e3
+                    if step is None:
+                        raise SteadyStateError(
+                            f"singular Jacobian at V={V_app:.4f} (iter {it}, "
+                            f"residual {res:.3e})")
+                    lu = None   # ridge-perturbed singular J — do not reuse it
+                jac_fresh = True
+            else:
+                # chord step: reuse the cached factor (no Jacobian rebuild)
+                step = lu_solve(lu, -f)
+                if not np.all(np.isfinite(step)):
+                    lu = None
+                    continue
+                jac_fresh = False
             step_inf = float(np.max(np.abs(step)))
             if step_inf < tol_step:
                 # residual at the cancellation-noise floor and the state
@@ -355,7 +399,19 @@ def solve_steady_state(
                     accepted = True
                     break
                 lam *= 0.5
-            if not accepted:
+            if accepted:
+                # a reused factor that needed real backtracking is losing
+                # contraction — refresh it next iteration
+                if not jac_fresh and lam < 0.5:
+                    lu = None
+            else:
+                if not jac_fresh:
+                    # the rejected step used a STALE factor — rebuild and
+                    # retry this iteration with a fresh Jacobian before
+                    # declaring a stall (preserves the original
+                    # fresh-Jacobian stall semantics)
+                    lu = None
+                    continue
                 if res_best < tol_accept:
                     # kink-stall at a physically-converged state — accept
                     # the BEST iterate seen, not the last
@@ -511,12 +567,21 @@ def run_jv_sweep_ss(
     n_points: int = 26,
     illuminated: bool = True,
     iface_states: bool = False,
+    stop_after_voc: bool = False,
     progress=None,
 ) -> JVSweepSSResult:
     """Steady-state J-V: voltage continuation with warm starts.
 
     On a failed point the voltage step bisects (up to 4 levels) so the
     continuation path stays connected; a point that still fails raises.
+
+    ``stop_after_voc`` (default False = legacy: sweep the full ``V_max``
+    range): stop the continuation as soon as J crosses zero (V_oc is
+    bracketed). Continuing past V_oc into deep forward injection
+    (V >> V_oc) reaches non-convergent points whose certified transient
+    fallback grinds for minutes — so when only the figures of merit are
+    needed, set this True to keep the sweep fast and robust for any
+    ``V_max``. All four metrics are fully determined by the 0->V_oc arc.
     """
     x = _grid_for(stack, N_grid)
     mat = dataclasses.replace(
@@ -549,6 +614,12 @@ def run_jv_sweep_ss(
         J_out.append(_compute_current_ss(x, y_new, stack, V, mat=mat))
         if progress is not None:
             progress("jv_ss", len(V_out), len(V_targets), f"V={V:.3f}")
+        if (stop_after_voc and len(J_out) >= 2
+                and J_out[-2] > 0.0 >= J_out[-1]):
+            # J just crossed zero -> V_oc bracketed; the remaining
+            # V > V_oc points are deep-injection and only grind the
+            # transient fallback. The 0->V_oc arc fully determines the FOM.
+            break
         i += 1
     V_arr, J_arr = np.asarray(V_out), np.asarray(J_out)
     return JVSweepSSResult(V=V_arr, J=J_arr,

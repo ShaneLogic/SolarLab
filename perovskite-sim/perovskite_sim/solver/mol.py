@@ -158,6 +158,12 @@ class MaterialArrays:
     # ``N_t_cm2: 1e8``). See Phase A probe data + RFC at
     # ``docs/superpowers/specs/2026-05-26-e1.6-sg-face-density-spec.md``.
     interface_calibration_factor: tuple[float, ...] = ()
+    # 2026-06 — per-interface SS interface-plane-state calibration. Folded
+    # into ``interface_calibration_factor`` by ``_enable_iface_states`` on
+    # the steady-state mat ONLY, so the SS state-channel rate is attenuated
+    # without touching the transient bulk-node interface path. Empty/1.0 =
+    # bit-identical.
+    iface_state_calibration: tuple[float, ...] = ()
     interface_eval_node_n: tuple[int, ...] = ()
     interface_eval_node_p: tuple[int, ...] = ()
     interface_ni_sq_eff: tuple[float, ...] = ()
@@ -882,6 +888,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     interface_ni_sq_eff_list: list[float] = []
     # Phase E1.6 — per-interface attenuation factor multiplied into v_n, v_p.
     interface_calibration_factor_list: list[float] = []
+    # 2026-06 — per-interface SS interface-plane-state calibration (folded
+    # into interface_calibration_factor on the SS mat only).
+    iface_state_calibration_list: list[float] = []
     # Shared-occupancy P-V (2026-06): per-side trap-level densities.
     interface_n1_L_list: list[float] = []
     interface_p1_L_list: list[float] = []
@@ -968,6 +977,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             interface_eval_p_list.append(idx)
             interface_ni_sq_eff_list.append(float(ni_sq[idx]))
             interface_calibration_factor_list.append(1.0)
+            iface_state_calibration_list.append(1.0)
             interface_n1_L_list.append(0.0)
             interface_p1_L_list.append(0.0)
             interface_n1_R_list.append(0.0)
@@ -1033,6 +1043,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         # validation script).
         interface_calibration_factor_list.append(
             float(defect.calibration_factor)
+        )
+        iface_state_calibration_list.append(
+            float(getattr(defect, "iface_state_calibration_factor", 1.0))
         )
         # Shared-occupancy P-V: per-side trap-level densities. The trap sits
         # at a fixed absolute energy E_t below the REFERENCE side's CB, so
@@ -1249,6 +1262,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_n1=tuple(interface_n1_list),
         interface_p1=tuple(interface_p1_list),
         interface_calibration_factor=tuple(interface_calibration_factor_list),
+        iface_state_calibration=tuple(iface_state_calibration_list),
         interface_eval_node_n=tuple(interface_eval_n_list),
         interface_eval_node_p=tuple(interface_eval_p_list),
         interface_ni_sq_eff=tuple(interface_ni_sq_eff_list),

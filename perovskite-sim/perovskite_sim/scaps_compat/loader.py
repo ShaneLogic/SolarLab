@@ -85,6 +85,7 @@ _REQUIRED_INTERFACE_KEYS = (
 )
 _OPTIONAL_INTERFACE_KEYS = (
     "E_t_eV_below_cb", "E_t_eV_above_vb", "calibration_factor",
+    "iface_state_calibration_factor",
     "distribution", "E_char_eV", "N_peak_cm3",
 )
 _REQUIRED_BULK_DEFECT_KEYS = ("sigma_n_cm2", "sigma_p_cm2", "N_t_cm3")
@@ -234,9 +235,16 @@ def _parse_interfaces_block(
         # so SCAPS YAML and inline-device dicts surface the same partner-
         # facing field.
         calibration_factor = float(entry.get("calibration_factor", 1.0))
+        # 2026-06 — optional SS interface-plane-state calibration (default
+        # 1.0). Attenuates the steady-state interface-plane recombination
+        # channel ONLY; the transient bulk-node path never reads it.
+        iface_state_calibration_factor = float(
+            entry.get("iface_state_calibration_factor", 1.0)
+        )
         defects[k] = InterfaceDefect(
             E_t_eV=depth,
             calibration_factor=calibration_factor,
+            iface_state_calibration_factor=iface_state_calibration_factor,
             N_t_cm2=float(entry["N_t_cm2"]),
         )
     return tuple(interfaces), tuple(defects)
