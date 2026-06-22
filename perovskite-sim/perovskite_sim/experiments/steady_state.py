@@ -191,11 +191,16 @@ def _pin_mask(mat: MaterialArrays, N: int) -> np.ndarray:
 
 
 def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
-                 pin, z_pin, n_ref, unk_idx):
+                 pin, z_pin, n_ref, unk_idx, phi_frozen=None):
     """Return F(z) over the 2N log-density unknowns.
 
     The full state vector is rebuilt from the template each call — only
     the n/p blocks vary; ions and any auxiliary blocks stay frozen.
+
+    ``phi_frozen`` (Gummel carrier half) holds the electrostatic potential
+    fixed in ``assemble_rhs``, so F is the carrier-continuity residual at a
+    given field — decoupled from the dense phi-mediated Jacobian tail.
+    None on the coupled path (bit-identical).
 
     Residuals are scaled by the GLOBAL peak density ``n_ref`` (not the
     local density): at dark depletion nodes the local density is ~1e10
@@ -213,7 +218,8 @@ def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
         y = y_template.copy()
         y[unk_idx] = dens
         dydt = assemble_rhs(0.0, y, x, stack, mat,
-                            illuminated=illuminated, V_app=V_app)
+                            illuminated=illuminated, V_app=V_app,
+                            phi_frozen=phi_frozen)
         f = dydt[unk_idx] / n_ref      # peak-density-relative rate [1/s]
         f[pin] = z[pin] - z_pin[pin]   # identity rows
         return f
@@ -557,6 +563,170 @@ def _grid_for(stack: DeviceStack, N_grid: int) -> np.ndarray:
     elec = electrical_layers(stack)
     return multilayer_grid(
         [Layer(thickness=L.thickness, N=N_grid // len(elec)) for L in elec])
+
+
+# ---------------------------------------------------------------------------
+# Gummel decoupled-Newton point fallback (2026-06). Design:
+# docs/superpowers/specs/2026-06-22-gummel-ss-solver-scope.md
+#
+# The coupled damped-Newton (solve_steady_state) goes singular in the
+# collapsed-junction / deep-band-offset regime (deep CBO offsets, near-
+# insulating contacts): every assemble_rhs call solves Poisson globally, so
+# the carrier Jacobian carries a dense phi-mediated tail that the dielectric-
+# relaxation mode makes catastrophically ill-conditioned. Gummel decouples it:
+# solve the carrier+state block at FROZEN phi (assemble_rhs phi_frozen=...,
+# well-conditioned), then relax phi at frozen quasi-Fermi levels (the analytic
+# _qfl_poisson_relax), under-relax in ln-space, and iterate to the SAME coupled
+# residual solve_steady_state checks. Used ONLY as an opt-in fallback AFTER the
+# coupled Newton has already raised, so every point that converges today is
+# untouched. Certified against res_guard; raises on failure (fail-loud).
+_SS_GUMMEL = os.environ.get("SOLARLAB_SS_GUMMEL", "1") != "0"
+
+
+def _phi_from_y(x, mat, y, V_app):
+    """One Poisson solve from the current (n, p, P) — the frozen phi for a
+    Gummel carrier sweep. Mirrors the Poisson block of assemble_rhs (without
+    the default-off iface trapped-charge term)."""
+    N = len(x)
+    dual = getattr(mat, "has_dual_ions", False)
+    rho = _charge_density(
+        np.maximum(y[N:2 * N], 0.0), np.maximum(y[:N], 0.0), y[2 * N:3 * N],
+        mat.P_ion0, mat.N_A, mat.N_D,
+        P_neg=(y[3 * N:4 * N] if dual else None),
+        P_neg0=(mat.P_ion0_neg if dual else None),
+    )
+    return solve_poisson_prefactored(
+        mat.poisson_factor, rho, 0.0, mat.V_bi_bc - V_app)
+
+
+def _damped_newton(F, z0, n_unk, *, max_it, tol, tol_step=1e-9):
+    """Compact damped FD-Jacobian Newton with backtracking line search and a
+    ridge fallback for a singular column. Returns (z, res). No assists — the
+    caller (Gummel) supplies the outer robustness."""
+    z = z0.copy()
+    f = F(z)
+    res = float(np.max(np.abs(f)))
+    for _ in range(max_it):
+        if res < tol:
+            break
+        J = np.empty((n_unk, n_unk))
+        for j in range(n_unk):
+            dz = _FD_EPS * max(1.0, abs(z[j]))
+            zj = z.copy()
+            zj[j] += dz
+            J[:, j] = (F(zj) - f) / dz
+        try:
+            step = np.linalg.solve(J, -f)
+        except np.linalg.LinAlgError:
+            lam_r = 1e-10 * float(np.max(np.abs(np.diag(J))) or 1.0)
+            step = None
+            for _r in range(4):
+                try:
+                    step = np.linalg.solve(J + lam_r * np.eye(n_unk), -f)
+                    break
+                except np.linalg.LinAlgError:
+                    lam_r *= 1e3
+            if step is None:
+                break
+        if float(np.max(np.abs(step))) < tol_step:
+            break
+        step = np.clip(step, -_LN_STEP_CAP, _LN_STEP_CAP)
+        nrm = float(np.linalg.norm(f))
+        lam, accepted = 1.0, False
+        for _ls in range(12):
+            f_try = F(z + lam * step)
+            if float(np.linalg.norm(f_try)) < nrm * (1.0 - 1.0e-4 * lam):
+                z = z + lam * step
+                f = f_try
+                res = float(np.max(np.abs(f)))
+                accepted = True
+                break
+            lam *= 0.5
+        if not accepted:
+            break
+    return z, res
+
+
+def _gummel_point(x, stack, mat, V_app, y_seed, *, illuminated=True,
+                  max_outer=300, tol=1.0e-4, res_guard=1.0,
+                  carrier_max_it=8):
+    """Decoupled Gummel point solve — see the module note above. Returns a
+    SteadyStateResult; raises SteadyStateError if it cannot certify.
+
+    STATUS (2026-06-22): EXPERIMENTAL / WIP — scaffold only, NOT wired into
+    run_jv_sweep_ss / solve_voc_ss yet. Measured on the deep-CBO point
+    (delta E_C = -1.0, the regime the coupled Newton goes singular on): the
+    plain carrier-frozen-phi + qfl_poisson_relax iteration reduces the seed
+    residual by ~13 orders (4e13 -> O(1-1e9)) but then **STALLS at a fixed
+    point above the certification guard** (res ~3.6 with iface_states, ~2e9
+    without) — identical at carrier_max_it 20 and 40, so it is a genuine
+    decoupled-Gummel stall, not slow convergence. This empirically confirms
+    the scope's primary risk: the basic decoupled scheme stalls in the
+    strong-coupling collapsed-junction regime. Converging it needs the M4
+    acceleration that scope flags as the real work and the schedule risk
+    (Anderson acceleration, a coupled-Newton polish that survives the singular
+    Jacobian, or a transient-assisted Gummel). Until then the deep-CBO SS
+    points stay gapped (the transient covers that regime; SS ~ transient
+    there). The phi_frozen seam (assemble_rhs / _residual_fn) is the reusable,
+    bit-identical foundation a future M4 build sits on.
+    Design + risk: docs/superpowers/specs/2026-06-22-gummel-ss-solver-scope.md
+    """
+    N = len(x)
+    y = _ensure_iface_block(y_seed, mat)
+    K = 4 * mat.N_iface_state
+    unk_idx = (np.r_[0:2 * N, len(y) - K:len(y)] if K else np.arange(2 * N))
+    n_unk = len(unk_idx)
+    pin = np.zeros(n_unk, dtype=bool)
+    pin[:2 * N] = _pin_mask(mat, N)
+    z_pin = np.zeros(n_unk)
+    z_pin[0], z_pin[N - 1] = np.log(mat.n_L), np.log(mat.n_R)
+    z_pin[N], z_pin[2 * N - 1] = np.log(mat.p_L), np.log(mat.p_R)
+
+    y = _qfl_poisson_relax(x, mat, y, V_app)            # clean seed
+    n_ref = float(np.max(y[:2 * N]))
+    F_coupled = _residual_fn(x, stack, mat, y, V_app, illuminated,
+                             pin, z_pin, n_ref, unk_idx)  # phi_frozen=None
+    z = np.log(np.maximum(y[unk_idx], _DENSITY_FLOOR))
+    z[pin] = z_pin[pin]
+    res = float(np.max(np.abs(F_coupled(z))))
+    z_best, res_best = z.copy(), res
+    omega, prev = 1.0, res
+    for _it in range(max_outer):
+        if res < tol:
+            break
+        # rebuild y from z, freeze phi, solve carriers + states at that phi
+        y[unk_idx] = np.exp(z)
+        phi = _phi_from_y(x, mat, y, V_app)
+        F_carrier = _residual_fn(x, stack, mat, y, V_app, illuminated,
+                                 pin, z_pin, n_ref, unk_idx, phi_frozen=phi)
+        z_new, _ = _damped_newton(F_carrier, z, n_unk,
+                                  max_it=carrier_max_it, tol=tol)
+        # under-relax in ln-space (Gummel is linearly convergent; damping is
+        # load-bearing at high injection), keep pins exact
+        z = (1.0 - omega) * z + omega * z_new
+        z[pin] = z_pin[pin]
+        # Poisson half: analytic dielectric relaxation at frozen QFL
+        y[unk_idx] = np.exp(z)
+        y = _qfl_poisson_relax(x, mat, y, V_app)
+        z = np.log(np.maximum(y[unk_idx], _DENSITY_FLOOR))
+        z[pin] = z_pin[pin]
+        res = float(np.max(np.abs(F_coupled(z))))
+        if res < res_best:
+            z_best, res_best = z.copy(), res
+        if res > prev:
+            omega = max(0.1, 0.5 * omega)    # backtrack the relaxation
+        prev = res
+    z_fin = z if res <= res_best else z_best
+    res_fin = min(res, res_best)
+    if res_fin > res_guard:
+        raise SteadyStateError(
+            f"Gummel point uncertified at V={V_app:.4f} "
+            f"(residual {res_fin:.3e} > guard {res_guard:.1e})")
+    y_out = y.copy()
+    y_out[unk_idx] = np.exp(z_fin)
+    y_out = _qfl_poisson_relax(x, mat, y_out, V_app)
+    return SteadyStateResult(y=y_out, converged=True, residual=res_fin,
+                             step_inf=0.0, iterations=_it + 1)
 
 
 def run_jv_sweep_ss(

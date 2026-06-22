@@ -1,7 +1,30 @@
 # Scope: Gummel decoupled-Newton fallback for the steady-state driver
 
-**Date:** 2026-06-22  **Status:** SCOPE / PROPOSED (not implemented)
+**Date:** 2026-06-22  **Status:** SCOPE + SCAFFOLD BUILT (M1+M2); M3/M4 OPEN
 **Owner area:** `perovskite_sim/experiments/steady_state.py`, `physics/continuity.py`, `physics/interface_plane.py`
+
+## 0. Empirical update (2026-06-22) — scaffold built, basic Gummel STALLS
+
+The M1+M2 scaffold is implemented (dormant, default-bit-identical):
+- `assemble_rhs(phi_frozen=...)` + `_residual_fn(phi_frozen=...)` — the
+  frozen-phi carrier residual seam (`solver/mol.py`, `steady_state.py`).
+- `_gummel_point` — the decoupled outer loop (carrier Newton at frozen phi +
+  `_qfl_poisson_relax` Poisson half + ln-space under-relaxation). Env-gated
+  `SOLARLAB_SS_GUMMEL`; NOT wired into `run_jv_sweep_ss`/`solve_voc_ss` yet.
+
+**Measured on the deep-CBO point (delta E_C = -1.0, where the coupled Newton
+goes singular):** the loop reduces the seed residual by ~13 orders
+(4e13 -> O(1-1e9)) but then **STALLS at a fixed point above the certification
+guard** — res ~3.6 with iface_states, ~2e9 without, and **identical at
+carrier_max_it 20 and 40**, i.e. a genuine *decoupled-Gummel stall*, not slow
+convergence. **This confirms the Section 9 primary risk: the basic decoupled
+scheme stalls at strong coupling.** So M1+M2 alone do NOT close the deep-CBO
+gaps. Closing them is the **M4 acceleration** work (the schedule risk):
+Anderson acceleration, a coupled-Newton polish that survives the singular
+Jacobian, or a transient-assisted Gummel. Until then the deep-CBO SS points
+stay documented as gapped (the transient covers that regime; SS ~ transient
+there). The `phi_frozen` seam is the reusable, bit-identical foundation M4
+builds on.
 
 ## 1. Motivation
 

@@ -1637,6 +1637,7 @@ def assemble_rhs(
     mat: MaterialArrays,
     illuminated: bool = True,
     V_app: float = 0.0,
+    phi_frozen: np.ndarray | None = None,
 ) -> np.ndarray:
     """Method of Lines RHS: dy/dt = f(t, y).
 
@@ -1667,32 +1668,40 @@ def assemble_rhs(
         if mat.S_p_R is None:
             p[-1] = mat.p_R
 
-    # Solve Poisson
+    # Solve Poisson — UNLESS a frozen phi is supplied (the Gummel carrier
+    # half of experiments/steady_state.py evaluates the carrier-continuity
+    # residual at a held electrostatic potential, decoupling the dense
+    # phi-mediated Jacobian tail). phi_frozen is None on every default path,
+    # so this is bit-identical when unused.
     # phi_right = V_bi - V_app: forward bias (V_app > 0) reduces the
     # built-in field; V_app = 0 → short circuit, V_app ≈ V_oc → open circuit.
-    rho = _charge_density(
-        p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
-        P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
-    )
-    # Occupancy-derived interface trapped charge (P1 of scaps_mode):
-    # areal q*N_t*(f - f_eq) at each defect interface, signed by the
-    # acceptor/donor convention, as a volumetric source at the node.
-    if (
-        mat.N_iface_state > 0
-        and mat.iface_state_charge != 0.0
-        and sv.iface_state is not None
-    ):
-        from perovskite_sim.physics.interface_plane import (
-            compute_interface_trap_charge,
+    if phi_frozen is not None:
+        phi = phi_frozen
+    else:
+        rho = _charge_density(
+            p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+            P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
         )
-        _dQ = compute_interface_trap_charge(sv.iface_state, stack, mat)
-        rho = rho.copy()
-        for _k in range(min(mat.N_iface_state, len(mat.interface_nodes))):
-            _ix = mat.interface_nodes[_k]
-            rho[_ix] += mat.iface_state_charge * _dQ[_k] / mat.dx_cell[_ix]
-    phi = solve_poisson_prefactored(
-        mat.poisson_factor, rho, phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
-    )
+        # Occupancy-derived interface trapped charge (P1 of scaps_mode):
+        # areal q*N_t*(f - f_eq) at each defect interface, signed by the
+        # acceptor/donor convention, as a volumetric source at the node.
+        if (
+            mat.N_iface_state > 0
+            and mat.iface_state_charge != 0.0
+            and sv.iface_state is not None
+        ):
+            from perovskite_sim.physics.interface_plane import (
+                compute_interface_trap_charge,
+            )
+            _dQ = compute_interface_trap_charge(sv.iface_state, stack, mat)
+            rho = rho.copy()
+            for _k in range(min(mat.N_iface_state, len(mat.interface_nodes))):
+                _ix = mat.interface_nodes[_k]
+                rho[_ix] += mat.iface_state_charge * _dQ[_k] / mat.dx_cell[_ix]
+        phi = solve_poisson_prefactored(
+            mat.poisson_factor, rho, phi_left=0.0,
+            phi_right=mat.V_bi_bc - V_app,
+        )
 
     # Generation: TMM-computed profile if available, else Beer-Lambert fallback.
     # ``force_use_g_optical`` lets the lagged-G_rad bake step keep its
