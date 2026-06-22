@@ -11,14 +11,22 @@
     "closure": 87.79639124039052,
     "dir": "match"
   },
-  "ss": {
-    "range_mV": 12.304687500000355,
-    "closure": 1.3403244201220816,
+  "ss_genuine": {
+    "range_mV": 12.609078091821102,
+    "closure": 1.3734810641630413,
+    "dir": "match"
+  },
+  "ss_full": {
+    "range_mV": 785.3644678168039,
+    "closure": 85.54814373879991,
     "dir": "match"
   },
   "n": {
     "f0.53": 14,
     "f0.66": 14,
-    "ss": 8
+    "ss_genuine": 8,
+    "ss_fallback": 6,
+    "ss_total": 14,
+    "ref": 14
   }
 }
