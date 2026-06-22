@@ -77,32 +77,48 @@ for x in sorted(f053_by_x):
         for kk in ("Voc", "Jsc", "FF", "PCE"): S["ss_fb"][kk].append(d[kk])
         S["ss_fb"]["x"].append(x)
 
-SER = {"scaps": ("s--", "C3", "SCAPS"), "f0.53": ("o-", "C0", "transient f=0.53"),
-       "f0.66": ("^-", "C2", "transient f=0.66"),
-       "ss": ("D-", "#7B1FA2", "SS interface-states (calib)")}
-fig, axes = plt.subplots(2, 2, figsize=(9.5, 6.2))
-for ax, (key, yl) in zip(axes.ravel(),
-        [("Voc", r"$V_{oc}$ (V)"), ("Jsc", r"$J_{sc}$ (mA/cm$^2$)"),
-         ("FF", "FF (%)"), ("PCE", "PCE (%)")]):
-    ax.plot([q["x"] for q in ref], [q[key] for q in ref], SER["scaps"][0],
-            color=SER["scaps"][1], ms=4, lw=1.3, label=SER["scaps"][2])
-    for k in ("f0.53", "f0.66"):
-        ax.plot(S[k]["x"], S[k][key], SER[k][0], color=SER[k][1], ms=4, lw=1.3, label=SER[k][2])
-    # genuine SS (filled) + transient-fallback (hollow), one combined ordered curve
-    fb = S["ss_fb"]; gg = S["ss"]
-    allx = sorted(set(gg["x"]) | set(fb["x"]))
-    gmap = {gg["x"][i]: gg[key][i] for i in range(len(gg["x"]))}
-    fmap = {fb["x"][i]: fb[key][i] for i in range(len(fb["x"]))}
-    yline = [gmap.get(xx, fmap.get(xx)) for xx in allx]
-    ax.plot(allx, yline, "-", color=SER["ss"][1], lw=1.3, zorder=4)            # connecting line
-    ax.plot(gg["x"], gg[key], "D", color=SER["ss"][1], ms=4, zorder=5, label=SER["ss"][2])
-    if fb["x"]:
-        ax.plot(fb["x"], fb[key], "D", mfc="none", mec=SER["ss"][1], ms=4, zorder=5,
-                label="SS: transient fallback (deep-CBO, iface inactive)")
-    if EX["x"]: ax.plot(EX["x"], EX[key], "o", mfc="none", color="grey", ms=4)
-    ax.set_xlabel(xlabel); ax.set_ylabel(yl); ax.grid(alpha=0.3); ax.legend(fontsize=6.0)
-fig.suptitle(f"{title}  —  SCAPS vs transient f=0.53/0.66 vs SS interface-states", fontsize=10)
-fig.tight_layout(); fig.savefig(OUT / "sweep_CHI_ETL.png", dpi=110); plt.close(fig)
+# dump the computed series so the figure can be re-styled without recomputing
+(OUT / "data_CHI_ETL.json").write_text(json.dumps(
+    {"ref": [{kk: q[kk] for kk in ("x", "Voc", "Jsc", "FF", "PCE")} for q in ref],
+     "S": S, "EX": EX}))
+
+
+def render(S, EX, ref, out):
+    """Plot the 4-panel CHI_ETL figure from the computed series.
+
+    On the CBO sweep the SolarLab curves (f=0.53, f=0.66, SS) physically
+    COINCIDE — CBO is band-offset-limited, so de-spike and interface states
+    barely move V_oc. To keep them all legible despite the overlap: the f=0.53
+    transient is drawn on top of f=0.66 as the visible SolarLab reference; the
+    genuine SS points are filled diamonds; and the deep-CBO transient-fallback
+    points are LARGE HOLLOW diamonds whose open centre lets the coincident
+    f=0.53 marker show through. No purple connecting line (it masked the
+    coincident transient).
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(9.5, 6.2))
+    for ax, (key, yl) in zip(axes.ravel(),
+            [("Voc", r"$V_{oc}$ (V)"), ("Jsc", r"$J_{sc}$ (mA/cm$^2$)"),
+             ("FF", "FF (%)"), ("PCE", "PCE (%)")]):
+        ax.plot([q["x"] for q in ref], [q[key] for q in ref], "s--",
+                color="C3", ms=4, lw=1.3, zorder=2, label="SCAPS")
+        ax.plot(S["f0.66"]["x"], S["f0.66"][key], "^-", color="C2", ms=5, lw=1.4,
+                zorder=3, label="transient f=0.66")
+        ax.plot(S["f0.53"]["x"], S["f0.53"][key], "o-", color="C0", ms=5, lw=1.7,
+                zorder=4, label="transient f=0.53")
+        gg, fb = S["ss"], S["ss_fb"]
+        ax.plot(gg["x"], gg[key], "D", color="#7B1FA2", ms=5, zorder=6,
+                label="SS interface-states (calib)")
+        if fb["x"]:
+            ax.plot(fb["x"], fb[key], "D", mfc="none", mec="#7B1FA2", ms=10, mew=1.6,
+                    zorder=6, label="SS: transient fallback (deep-CBO)")
+        if EX["x"]:
+            ax.plot(EX["x"], EX[key], "o", mfc="none", color="grey", ms=4, zorder=2)
+        ax.set_xlabel(xlabel); ax.set_ylabel(yl); ax.grid(alpha=0.3); ax.legend(fontsize=6.0)
+    fig.suptitle(f"{title}  —  SCAPS vs transient f=0.53/0.66 vs SS interface-states", fontsize=10)
+    fig.tight_layout(); fig.savefig(out, dpi=110); plt.close(fig)
+
+
+render(S, EX, ref, OUT / "sweep_CHI_ETL.png")
 
 def rd(s, rv):
     if len(s["Voc"]) < 2: return dict(range_mV=0.0, closure=0.0, dir="n/a")
