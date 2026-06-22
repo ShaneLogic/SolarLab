@@ -26,6 +26,57 @@ stay documented as gapped (the transient covers that regime; SS ~ transient
 there). The `phi_frozen` seam is the reusable, bit-identical foundation M4
 builds on.
 
+### M4 result (2026-06-22) — Anderson tried; deep-CBO confirmed INFEASIBLE *and* UNNECESSARY. CLOSED.
+
+M4 was attempted and the leg is now **closed as won't-fix**. Two findings settle it:
+
+**(1) Anderson acceleration does not crack it.** Anderson(m=5) was prototyped on
+the Gummel fixed-point map G(z) = [carrier-Newton-at-frozen-phi -> qfl-Poisson-
+relax] (Type-II, f-difference least-squares mixing). Measured on four deep
+points (delta E_C = -1.0 / -0.5 at V in {0, 0.3, 0.7}, with and without
+iface_states): **STALL at res 3.0e9-6.5e9 after 120 iterations** — the same
+plateau as plain Gummel. The carrier half alone reduces 5 orders (1.30e12 ->
+4.76e7 at it0) but the Poisson re-coupling pushes it back up and the outer map
+has a contraction factor >= 1 at this coupling strength; the Anderson
+extrapolation cannot fix a map whose fixed-point iteration diverges.
+
+**(2) Gummel is strictly WORSE than the shipped coupled Newton here, and the
+shipped driver already fails FAST.** Best peak-density-relative residual
+(tol = 1e-6) at delta E_C = -1.0, V = 0.3:
+
+| solver | best residual | wall |
+|---|---|---|
+| coupled SS Newton (shipped `solve_steady_state`) | **4.2e4** | raises in **0.6 s** |
+| decoupled Gummel (M1+M2 scaffold) | 1e9 | stall |
+| Anderson-accelerated Gummel (M4) | 3e9 | stall |
+
+All three are 10-15 orders above tol. The coupled Newton gets *closest* (4.2e4)
+and, critically, **raises a clean `SteadyStateError` in 0.6 s** ("line search
+stalled ... transient assists exhausted") — it does **not** hang. So the deep-CBO
+SS root is genuinely pathological for *any* algebraic Newton (coupled or
+decoupled); the stiff modes only damp under a **long** transient (~8 s), which is
+exactly why the bounded SS transient-assist exhausts. A Gummel fallback adds a
+worse-conditioned path, not a better one.
+
+**Why this is also UNNECESSARY.** CBO is a band-offset effect, not an
+interface-limited one — **SS approx transient** over the whole CBO sweep (verified
+in the flat-band region where both converge). The deep-CBO points therefore add
+**zero** scientific value as SS points: the transient curves already cover that
+regime in every figure, and the full-FOM figures correctly carry transient-only
+there (the shipped driver's fast 0.6 s raise means the figure pipeline skips the
+point cleanly, no grind).
+
+**Disposition.** M4 is closed won't-fix. The `_gummel_point` scaffold and the
+`phi_frozen` seam stay in-tree, **dormant + bit-identical** (env-gated
+`SOLARLAB_SS_GUMMEL`, not wired into any sweep), as the documented foundation if a
+*genuinely new* approach appears (pseudo-transient continuation with an unbounded
+dt ramp == the transient, so PTC reduces to "just run the transient"). The
+shipped solution for the deep tail is the existing transient driver, which is
+correct and fast. The net deliverable of this campaign is the **interface-channel
+calibration + Newton/LU reuse + `stop_after_voc`** (the operative regime — fast,
+accurate, complete on all 10 flat-band-operative sweeps); the deep-CBO tail is a
+documented engine boundary, not a gap to be closed with more solver machinery.
+
 ## 1. Motivation
 
 The steady-state interface-states driver (`run_jv_sweep_ss(iface_states=True)`,
