@@ -109,7 +109,7 @@ def render(S, EX, ref, out):
         ax.plot(gg["x"], gg[key], "D", color="#7B1FA2", ms=5, zorder=6,
                 label="SS interface-states (calib)")
         if fb["x"]:
-            ax.plot(fb["x"], fb[key], "D", mfc="none", mec="#7B1FA2", ms=10, mew=1.6,
+            ax.plot(fb["x"], fb[key], "D", mfc="none", mec="#7B1FA2", ms=7, mew=1.3,
                     zorder=6, label="SS: transient fallback (deep-CBO)")
         if EX["x"]:
             ax.plot(EX["x"], EX[key], "o", mfc="none", color="grey", ms=4, zorder=2)
