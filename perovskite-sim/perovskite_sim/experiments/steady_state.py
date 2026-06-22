@@ -42,11 +42,22 @@ starts). Measured outcome: SS J-V matches the frozen-ion transient
 within 5 mV V_oc / 1% J_sc end-to-end; direct V_oc agrees with the sweep
 within 2 mV.
 
-KNOWN LIMIT: the near-insulating contact regime (e.g. Nd_ETL = 1e10)
-still fails honestly — J(V) finds no zero crossing below 1.6 V; the
-transient fallback cannot settle that regime by definition and the
-Newton path cannot yet converge it. Needs the Gummel decoupled
-iteration; the gate is xfail'd with this diagnosis.
+KNOWN LIMIT (documented engine boundary, not a convergence bug): two
+deep-tail regimes fail honestly and a Gummel fallback does NOT help.
+(a) Near-insulating contacts (e.g. Nd_ETL = 1e10): J(V) finds no zero
+crossing below 1.6 V — a physics absence, not a solver miss (the
+transient agrees). (b) Deep CBO (delta E_C <= -0.2): the collapsed-
+junction SS root is pathological for ANY algebraic Newton. Measured at
+delta E_C = -1.0, V = 0.3 (peak-relative residual, tol 1e-6): coupled
+Newton best 4.2e4 (raises cleanly in 0.6 s), decoupled Gummel 1e9,
+Anderson-accelerated Gummel 3e9 — all 10-15 orders above tol. The stiff
+modes only damp under a LONG transient (~8 s), so the bounded SS
+transient-assist exhausts by design. CBO is a band-offset effect
+(SS ~ transient there), so these points carry transient-only in the
+figures and need no SS. The dormant _gummel_point scaffold + phi_frozen
+seam stay in-tree (env SOLARLAB_SS_GUMMEL, bit-identical) as a
+foundation; M4 is closed won't-fix. See
+docs/superpowers/specs/2026-06-22-gummel-ss-solver-scope.md Section 0.
 """
 from __future__ import annotations
 
@@ -653,23 +664,25 @@ def _gummel_point(x, stack, mat, V_app, y_seed, *, illuminated=True,
     """Decoupled Gummel point solve — see the module note above. Returns a
     SteadyStateResult; raises SteadyStateError if it cannot certify.
 
-    STATUS (2026-06-22): EXPERIMENTAL / WIP — scaffold only, NOT wired into
-    run_jv_sweep_ss / solve_voc_ss yet. Measured on the deep-CBO point
-    (delta E_C = -1.0, the regime the coupled Newton goes singular on): the
-    plain carrier-frozen-phi + qfl_poisson_relax iteration reduces the seed
-    residual by ~13 orders (4e13 -> O(1-1e9)) but then **STALLS at a fixed
-    point above the certification guard** (res ~3.6 with iface_states, ~2e9
-    without) — identical at carrier_max_it 20 and 40, so it is a genuine
-    decoupled-Gummel stall, not slow convergence. This empirically confirms
-    the scope's primary risk: the basic decoupled scheme stalls in the
-    strong-coupling collapsed-junction regime. Converging it needs the M4
-    acceleration that scope flags as the real work and the schedule risk
-    (Anderson acceleration, a coupled-Newton polish that survives the singular
-    Jacobian, or a transient-assisted Gummel). Until then the deep-CBO SS
-    points stay gapped (the transient covers that regime; SS ~ transient
-    there). The phi_frozen seam (assemble_rhs / _residual_fn) is the reusable,
-    bit-identical foundation a future M4 build sits on.
-    Design + risk: docs/superpowers/specs/2026-06-22-gummel-ss-solver-scope.md
+    STATUS (2026-06-22): DORMANT — CLOSED won't-fix. Scaffold only, env-gated
+    (SOLARLAB_SS_GUMMEL), NOT wired into run_jv_sweep_ss / solve_voc_ss, and it
+    should stay that way. Measured on the deep-CBO point (delta E_C = -1.0, the
+    regime the coupled Newton goes singular on): the plain carrier-frozen-phi +
+    qfl_poisson_relax iteration reduces the seed residual ~13 orders but STALLS
+    at res ~1e9 (carrier-only) above the guard, and **Anderson(m=5) acceleration
+    of the Gummel map does NOT fix it** — STALL at res 3e9-6.5e9 over four deep
+    points. The carrier half alone reaches 4.76e7 but the Poisson re-coupling
+    has contraction factor >= 1 here, so the outer map diverges and Anderson
+    cannot rescue a diverging fixed-point iteration. Decisively, Gummel is WORSE
+    than the shipped coupled Newton at this point (1e9 / 3e9 vs the coupled
+    Newton's best 4.2e4, which itself raises cleanly in 0.6 s) — a Gummel
+    fallback is a worse-conditioned path, not a better one. The deep-CBO root is
+    pathological for ANY algebraic Newton; only a LONG transient (~8 s) damps it,
+    and CBO is a band-offset effect (SS ~ transient), so those points need no SS
+    and the figures carry transient-only there. Kept in-tree, bit-identical, as
+    the documented phi_frozen foundation if a genuinely new method appears.
+    Verdict + table: docs/superpowers/specs/2026-06-22-gummel-ss-solver-scope.md
+    Section 0 (M4 result).
     """
     N = len(x)
     y = _ensure_iface_block(y_seed, mat)
