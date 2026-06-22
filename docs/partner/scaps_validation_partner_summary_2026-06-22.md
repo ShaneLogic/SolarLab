@@ -18,6 +18,9 @@ header-includes: |
   \setlength{\intextsep}{8pt plus 2pt minus 2pt}
   \setlength{\floatsep}{8pt plus 2pt minus 2pt}
   \setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
+  \usepackage{etoolbox}
+  \AtBeginEnvironment{longtable}{\footnotesize}
+  \setlength{\tabcolsep}{4pt}
 ---
 
 # Summary
@@ -136,6 +139,7 @@ Table 1c. Base operating point, four configurations. The SS driver with the cali
 
 
 
+
 The previous −96 mV V~oc~ shortfall decomposed into a 10–16 mV grid artifact, a
 137 mV transport-discretisation omission, and compensating model differences;
 with both fixes the residual is −50 mV, attributed to the interface
@@ -174,9 +178,9 @@ Each of the eleven sweeps is a four-panel overlay (V~oc~ / J~sc~ / FF / PCE). Fo
 \clearpage
 ```
 
-| # | Sweep | SCAPS range (mV) | f = 0.53 | f = 0.66 | SS states |
+| # | Sweep | SCAPS (mV) | f=0.53 | f=0.66 | SS-states |
 |---|---|---|---|---|---|
-| 1 | ETL/PVK conduction-band offset | 918.0 | 85% ok | 88% ok | 86% ok (8 SS + 6 fb) |
+| 1 | ETL/PVK conduction-band offset | 918.0 | 85% ok | 88% ok | 86% ok (8+6fb) |
 | 2 | ETL donor doping | 137.1 | 18% MISMATCH | 23% MISMATCH | 189% ok |
 | 3 | PVK donor doping | 34.0 | 17% ok | 29% MISMATCH | 10% ok |
 | 4 | Perovskite-CB bulk N~t~ | 38.6 | 69% ok | 94% ok | 63% ok |
