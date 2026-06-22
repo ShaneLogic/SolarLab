@@ -1,0 +1,24 @@
+{
+  "title": "HTL/PVK interface defect density",
+  "scaps_range_mV": 5.206000000000044,
+  "f0.53": {
+    "range_mV": 0.0,
+    "closure": 0.0,
+    "dir": "MISMATCH"
+  },
+  "f0.66": {
+    "range_mV": 0.0,
+    "closure": 0.0,
+    "dir": "MISMATCH"
+  },
+  "ss": {
+    "range_mV": 5.273437499999645,
+    "closure": 101.29538033038033,
+    "dir": "match"
+  },
+  "n": {
+    "f0.53": 7,
+    "f0.66": 7,
+    "ss": 7
+  }
+}

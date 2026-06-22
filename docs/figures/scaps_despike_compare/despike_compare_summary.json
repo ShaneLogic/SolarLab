@@ -1,0 +1,249 @@
+{
+  "f_values": [
+    0.53,
+    0.66
+  ],
+  "scaps_base": {
+    "Voc": 1.1676,
+    "Jsc": 26.282,
+    "FF": 86.99,
+    "PCE": 26.69
+  },
+  "base": {
+    "0.53": {
+      "Voc": 1.1637809850411776,
+      "Jsc": 25.71961700910698,
+      "FF": 87.3208952521436,
+      "PCE": 26.136891430213392
+    },
+    "0.66": {
+      "Voc": 1.1808732723376425,
+      "Jsc": 25.72082700509639,
+      "FF": 86.95872870986506,
+      "PCE": 26.412006978596462
+    }
+  },
+  "sheets": {
+    "CHI_ETL": {
+      "title": "ETL/PVK conduction-band offset",
+      "scaps_range_mV": 918.038,
+      "f0.53": {
+        "sl_range_mV": 784.4923343334247,
+        "sc_range_mV": 918.038,
+        "closure": 85.45314402382304,
+        "dir": "match"
+      },
+      "f0.66": {
+        "sl_range_mV": 806.0042693137051,
+        "sc_range_mV": 918.038,
+        "closure": 87.79639506357091,
+        "dir": "match"
+      },
+      "n_bracketed": {
+        "0.53": 14,
+        "0.66": 14
+      }
+    },
+    "Nd_ETL": {
+      "title": "ETL donor doping",
+      "scaps_range_mV": 137.06300000000016,
+      "f0.53": {
+        "sl_range_mV": 24.464184035896565,
+        "sc_range_mV": 137.06300000000016,
+        "closure": 17.848860769059876,
+        "dir": "MISMATCH"
+      },
+      "f0.66": {
+        "sl_range_mV": 31.77756947052557,
+        "sc_range_mV": 137.06300000000016,
+        "closure": 23.184644630954768,
+        "dir": "MISMATCH"
+      },
+      "n_bracketed": {
+        "0.53": 8,
+        "0.66": 8
+      }
+    },
+    "Nd_PVK": {
+      "title": "PVK donor doping",
+      "scaps_range_mV": 34.01999999999994,
+      "f0.53": {
+        "sl_range_mV": 5.762959739866291,
+        "sc_range_mV": 34.01999999999994,
+        "closure": 16.93991693082393,
+        "dir": "match"
+      },
+      "f0.66": {
+        "sl_range_mV": 9.939171612063591,
+        "sc_range_mV": 34.01999999999994,
+        "closure": 29.215671993132304,
+        "dir": "MISMATCH"
+      },
+      "n_bracketed": {
+        "0.53": 6,
+        "0.66": 6
+      }
+    },
+    "Nt_C_PVK": {
+      "title": "Perovskite-CB bulk defect density",
+      "scaps_range_mV": 38.573999999999884,
+      "f0.53": {
+        "sl_range_mV": 26.661249238021156,
+        "sc_range_mV": 38.573999999999884,
+        "closure": 69.11714947379383,
+        "dir": "match"
+      },
+      "f0.66": {
+        "sl_range_mV": 36.44300274423995,
+        "sc_range_mV": 38.573999999999884,
+        "closure": 94.47556059584191,
+        "dir": "match"
+      },
+      "n_bracketed": {
+        "0.53": 7,
+        "0.66": 7
+      }
+    },
+    "Nt_V_PVK": {
+      "title": "Perovskite-VB bulk defect density",
+      "scaps_range_mV": 10.758999999999963,
+      "f0.53": {
+        "sl_range_mV": 26.661249238021156,
+        "sc_range_mV": 10.758999999999963,
+        "closure": 247.80415687351285,
+        "dir": "match"
+      },
+      "f0.66": {
+        "sl_range_mV": 36.44300274423995,
+        "sc_range_mV": 10.758999999999963,
+        "closure": 338.721096237941,
+        "dir": "match"
+      },
+      "n_bracketed": {
+        "0.53": 7,
+        "0.66": 7
+      }
+    },
+    "Nt_HTL PVK": {
+      "title": "HTL/PVK interface defect density",
+      "scaps_range_mV": 5.206000000000044,
+      "f0.53": {
+        "sl_range_mV": 0.0,
+        "sc_range_mV": 5.206000000000044,
+        "closure": 0.0,
+        "dir": "flat both"
+      },
+      "f0.66": {
+        "sl_range_mV": 0.0,
+        "sc_range_mV": 5.206000000000044,
+        "closure": 0.0,
+        "dir": "flat both"
+      },
+      "n_bracketed": {
+        "0.53": 7,
+        "0.66": 7
+      }
+    },
+    "Nt_PVK ETL": {
+      "title": "PVK/ETL interface defect density",
+      "scaps_range_mV": 281.718,
+      "f0.53": {
+        "sl_range_mV": 202.45522277091288,
+        "sc_range_mV": 281.718,
+        "closure": 71.86449668495193,
+        "dir": "match"
+      },
+      "f0.66": {
+        "sl_range_mV": 226.25175336002857,
+        "sc_range_mV": 281.718,
+        "closure": 80.3114296424185,
+        "dir": "match"
+      },
+      "n_bracketed": {
+        "0.53": 7,
+        "0.66": 7
+      }
+    },
+    "Et_C_PVK": {
+      "title": "Perovskite-CB bulk defect level",
+      "scaps_range_mV": 0.4290000000000127,
+      "f0.53": {
+        "sl_range_mV": 0.8868010599880627,
+        "sc_range_mV": 0.4290000000000127,
+        "closure": 206.71353379674508,
+        "dir": "flat both"
+      },
+      "f0.66": {
+        "sl_range_mV": 1.833567992554963,
+        "sc_range_mV": 0.4290000000000127,
+        "closure": 427.4051264696757,
+        "dir": "flat both"
+      },
+      "n_bracketed": {
+        "0.53": 8,
+        "0.66": 8
+      }
+    },
+    "Et_V_PVK": {
+      "title": "Perovskite-VB bulk defect level",
+      "scaps_range_mV": 0.4310000000000702,
+      "f0.53": {
+        "sl_range_mV": 0.8868001647115431,
+        "sc_range_mV": 0.4310000000000702,
+        "closure": 205.75409854092777,
+        "dir": "flat both"
+      },
+      "f0.66": {
+        "sl_range_mV": 1.8335729636524967,
+        "sc_range_mV": 0.4310000000000702,
+        "closure": 425.4229614042223,
+        "dir": "flat both"
+      },
+      "n_bracketed": {
+        "0.53": 8,
+        "0.66": 8
+      }
+    },
+    "Et_HTL PVK": {
+      "title": "HTL/PVK interface defect level",
+      "scaps_range_mV": 0.005999999999950489,
+      "f0.53": {
+        "sl_range_mV": 0.0,
+        "sc_range_mV": 0.005999999999950489,
+        "closure": 0.0,
+        "dir": "flat both"
+      },
+      "f0.66": {
+        "sl_range_mV": 0.0,
+        "sc_range_mV": 0.005999999999950489,
+        "closure": 0.0,
+        "dir": "flat both"
+      },
+      "n_bracketed": {
+        "0.53": 8,
+        "0.66": 8
+      }
+    },
+    "Et_PVK ETL": {
+      "title": "PVK/ETL interface defect level",
+      "scaps_range_mV": 34.48000000000007,
+      "f0.53": {
+        "sl_range_mV": 7.975082329736871,
+        "sc_range_mV": 34.48000000000007,
+        "closure": 23.12958912336675,
+        "dir": "match"
+      },
+      "f0.66": {
+        "sl_range_mV": 16.977172326277046,
+        "sc_range_mV": 34.48000000000007,
+        "closure": 49.23773876530456,
+        "dir": "match"
+      },
+      "n_bracketed": {
+        "0.53": 8,
+        "0.66": 8
+      }
+    }
+  },
+  "wall_s": 1215.7661900520325
+}

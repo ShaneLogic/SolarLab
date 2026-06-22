@@ -1,0 +1,24 @@
+{
+  "title": "PVK/ETL interface defect level",
+  "scaps_range_mV": 34.48000000000007,
+  "f0.53": {
+    "range_mV": 7.975082513323795,
+    "closure": 23.129589655811426,
+    "dir": "match"
+  },
+  "f0.66": {
+    "range_mV": 16.977172353165535,
+    "closure": 49.237738843287424,
+    "dir": "match"
+  },
+  "ss": {
+    "range_mV": 12.304687500000355,
+    "closure": 35.68644866589423,
+    "dir": "match"
+  },
+  "n": {
+    "f0.53": 8,
+    "f0.66": 8,
+    "ss": 8
+  }
+}
