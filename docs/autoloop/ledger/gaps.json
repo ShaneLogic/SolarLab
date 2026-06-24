@@ -1,0 +1,16 @@
+[
+  {
+    "found_cycle": 0,
+    "gap_mag": 0.3262291280397611,
+    "id": "trend:Nd_ETL:V_oc",
+    "kind": "trend",
+    "last_attempt_cycle": 0,
+    "mechanism": null,
+    "metric": "V_oc",
+    "reference_val": 70.0,
+    "solarlab_val": 37.377087196023886,
+    "status": "attempted",
+    "sweep": "Nd_ETL",
+    "sweep_point": NaN
+  }
+]
