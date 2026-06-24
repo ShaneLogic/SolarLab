@@ -83,7 +83,7 @@ class DeviceStack:
     # bulk-interior eval nodes, with ni_eff² co-projected) instead of the
     # bulk-interior densities — matching SCAPS's Pauwels-Vanhoutte interface
     # model. Default False = bit-identical to the pre-projection (E1.5
-    # bulk-interior) path. See docs/partner/SCAPS_interface_SRH_scope.md.
+    # bulk-interior) path. See docs/reference/SCAPS_interface_SRH_scope.md.
     interface_plane_projection: bool = False
     # Effective-DOS band potentials for heterojunction transport (2026-06).
     # When True (or env ``SOLARLAB_DOS_BAND=1``), build_material_arrays folds
