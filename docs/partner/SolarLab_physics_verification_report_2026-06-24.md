@@ -15,7 +15,7 @@ header-includes: |
 The SolarLab one-dimensional drift--diffusion solar-cell simulator is verified against
 the fundamental physics of a planar $n$--$i$--$p$ perovskite cell using seven
 independent, depth-resolved and integral diagnostics computed on the SCAPS-1D
-reference device (the partner stack `scaps_mirror_v2`: spiro-OMeTAD hole-transport
+reference device (the reference configuration `scaps_mirror_v2`: spiro-OMeTAD hole-transport
 layer / methylammonium lead iodide absorber / titanium dioxide electron-transport
 layer, with full transfer-matrix optics). The diagnostics confirm that the solver
 satisfies the defining invariants of the drift--diffusion framework: a flat,
@@ -60,7 +60,7 @@ capacitance--voltage analysis).
 
 All diagnostics use the reference device `scaps_mirror_v2`, a planar three-layer stack
 (hole-transport layer / perovskite absorber / electron-transport layer) on a glass
-substrate, parameterised from the partner's SCAPS-1D definition. The absorber is intrinsic
+substrate, parameterised from the reference SCAPS-1D definition. The absorber is intrinsic
 methylammonium lead iodide ($E_g \approx 1.6~\mathrm{eV}$, thickness $\approx 800$ nm);
 the transport layers are wide-gap and asymmetrically doped. Wavelength-resolved optics are
 treated with the coherent transfer-matrix method using tabulated $n(\lambda)$, $k(\lambda)$
