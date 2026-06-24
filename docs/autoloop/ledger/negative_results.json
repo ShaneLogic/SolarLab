@@ -1,0 +1,32 @@
+[
+  {
+    "approach": "DOS-cap projection target",
+    "evidence": "project_scaps_validation_parked memory; TE-ceiling analysis 2026-06-14",
+    "never_retry": true,
+    "why_failed": "false convergence, high residual at bulk node 19"
+  },
+  {
+    "approach": "BBD face-density interface term",
+    "evidence": "project_scaps_validation_parked memory (E8 prototype)",
+    "never_retry": true,
+    "why_failed": "V=0.08 blow-up"
+  },
+  {
+    "approach": "1.40 V_bi fudge",
+    "evidence": "project_scaps_root_cause_reanalysis memory 2026-06-07",
+    "never_retry": true,
+    "why_failed": "+106 mV unexplained over derived flat-band V_bi; fails G4 honest-residual"
+  },
+  {
+    "approach": "two-sided additive mirror interface channel",
+    "evidence": "perovskite-sim CLAUDE.md interface_two_sided note",
+    "never_retry": true,
+    "why_failed": "measured no-op (mirror pair minority-limited, ~uA/m2)"
+  },
+  {
+    "approach": "shared-occupancy on bulk-node densities",
+    "evidence": "perovskite-sim CLAUDE.md interface_shared_occupancy note",
+    "never_retry": true,
+    "why_failed": "CBO trend collapse 80->22%; trap algebra invisible under bulk-node sampling"
+  }
+]
