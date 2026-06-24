@@ -37,11 +37,14 @@ cfg = Path(sys.argv[1]) if len(sys.argv) > 1 else (
 stack = load_scaps_yaml(cfg)
 
 # EQE spectrum. The partner stack has NO mobile ions (D_ion=0), so only the
-# fast electronic transient must settle — a short t_settle + modest grid is
-# correct and avoids the high-N Radau stall. 16 wavelengths resolve the
-# plateau + the ~780 nm band edge without a multi-minute per-point settle.
-wl = np.linspace(320.0, 880.0, 12)
-eq = compute_eqe(stack, wavelengths_nm=wl, N_grid=30, t_settle=1e-2)
+# fast electronic transient settles (~7 s/point on a mat-reuse path) — run this
+# script ALONE (concurrent settle jobs contend for CPU and stall it). A finer
+# grid + higher probe flux suppress the terminal-current sampling noise that
+# otherwise nudges a few EQE points above 1; 20 wavelengths resolve the plateau
+# and the ~780 nm band edge.
+wl = np.linspace(320.0, 880.0, 20)
+eq = compute_eqe(stack, wavelengths_nm=wl, N_grid=60, t_settle=5e-2, Phi_incident=1e22,
+                 rtol=1e-5, atol=1e-8)
 
 # full-spectrum device J_sc at V=0 (the cross-check target)
 x = _grid_for(stack, 80)
