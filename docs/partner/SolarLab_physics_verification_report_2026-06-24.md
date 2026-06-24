@@ -147,10 +147,14 @@ at the level of the charge distribution. The net space charge (panels a, b) is e
 unchanged between dark and illuminated conditions: it is dominated by the fixed depletion
 charge at the two contacts, and the absorber remains quasi-neutral because illumination
 generates electrons and holes in equal numbers. The carrier densities (panels c, d) tell
-the contrasting story: under illumination the minority-carrier population in the absorber
-rises by approximately twenty orders of magnitude, and both carrier species reach
-$\sim 10^{15}$--$10^{17}~\mathrm{cm^{-3}}$ across the bulk. This photogenerated population is
-the reservoir that the built-in field of Section 3.2 subsequently extracts as photocurrent.
+the contrasting story: under illumination the minority-carrier population rises by many
+orders of magnitude from its dark, deeply suppressed level, lifting both species to
+$\sim 10^{11}~\mathrm{cm^{-3}}$ across the bulk and to $10^{15}$--$10^{17}~\mathrm{cm^{-3}}$
+at the contacts. The bulk density remains comparatively modest at short circuit precisely
+because the built-in field of Section 3.2 extracts the photogenerated carriers almost as
+fast as they are created; under forward bias, where that field is largely cancelled, the
+same generation floods the bulk to far higher densities (Section 3.4). This photogenerated
+population is the reservoir from which the device delivers photocurrent.
 
 ### 3.4 Current continuity and mechanism-resolved recombination
 
