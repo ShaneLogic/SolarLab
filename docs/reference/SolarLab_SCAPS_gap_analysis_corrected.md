@@ -1,5 +1,5 @@
 ---
-title: "Mechanistic Analysis and Resolution of the SolarLab–SCAPS-1D Discrepancies on the Partner Base Model"
+title: "Mechanistic Analysis and Resolution of the SolarLab–SCAPS-1D Discrepancies on the Reference Base Model"
 header-includes: |
   \usepackage{float}
   \makeatletter
@@ -22,7 +22,7 @@ header-includes: |
 # Abstract
 
 This document identifies, verifies, and resolves the residual differences between
-the SolarLab device simulator and the reference solver SCAPS-1D on the partner
+the SolarLab device simulator and the reference solver SCAPS-1D on the reference
 Base Model. The open-circuit-voltage deficit — previously attributed first to
 quasi-Fermi-level dissipation across the heterojunction band offsets and then to
 the contact boundary condition, both of which are refuted here — is traced to a

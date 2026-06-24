@@ -178,7 +178,7 @@ sb = s.shapes.add_textbox(Inches(0.6), Inches(4.05), Inches(12.1), Inches(2.2))
 stf = sb.text_frame
 stf.word_wrap = True
 subs = [
-    "Drift-diffusion cross-validation on the partner MAPbI_{3} base stack",
+    "Drift-diffusion cross-validation on the reference MAPbI_{3} base stack",
     "Primary discrepancy: V_{oc} 1.072 V vs. 1.1676 V (−96 mV)",
     "Multi-agent adversarial review; trend-first evaluation standard",
     "One survivor of seven candidate root causes",
@@ -199,7 +199,7 @@ add_notes(s, "This deck reports a cross-validation of two 1D drift-diffusion sol
 
 # ===================== SLIDE 2 =====================
 figure_slide(
-    "Context: Two DD Solvers on the Partner MAPbI_{3} Base Model",
+    "Context: Two DD Solvers on the Reference MAPbI_{3} Base Model",
     "f4_solver_arch.png",
     [
         "Stack: glass / spiro HTL 20 nm / MAPbI_{3} 800 nm (E_{g}=1.53 eV) / TiO_{2} ETL 25 nm",
@@ -324,7 +324,7 @@ figure_slide(
         "Prior \"true PCE ~23.6%\" re-commits the splice — also wrong",
         "Classification: reporting artifact (held 3/3 at top level)",
     ],
-    "The four FOMs must satisfy PCE = Voc*Jsc*FF in any single run. The partner table glued a coarse-grid Jsc onto a fine-grid Voc/FF/PCE triple. The fix is to re-extract all four from one J-V array; this alone erases the headline -4.6 pp PCE gap.",
+    "The four FOMs must satisfy PCE = Voc*Jsc*FF in any single run. The reference table glued a coarse-grid Jsc onto a fine-grid Voc/FF/PCE triple. The fix is to re-extract all four from one J-V array; this alone erases the headline -4.6 pp PCE gap.",
 )
 
 # ===================== SLIDE 11 =====================

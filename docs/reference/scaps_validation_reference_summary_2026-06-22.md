@@ -30,10 +30,10 @@ header-includes: |
 This report documents the validation of SolarLab — an in-house one-dimensional
 device simulator coupling drift–diffusion transport, the Poisson equation, and
 mobile-ion migration with transfer-matrix optics — against the established
-reference solver SCAPS-1D. The test case is the partner's three-layer perovskite
+reference solver SCAPS-1D. The test case is the reference's three-layer perovskite
 Base Model, and the comparison spans the base current–voltage operating point
 together with all eleven single-variable parameter sweeps recorded in the
-partner workbook. This revision (2026-06-15) supersedes the 2026-06-11 report:
+reference workbook. This revision (2026-06-15) supersedes the 2026-06-11 report:
 since then the dominant open-circuit-voltage discrepancy was root-caused to a
 missing effective-density-of-states term in the heterojunction transport
 discretisation, the correction was implemented and verified
@@ -59,10 +59,10 @@ stack. SCAPS-1D is a widely used semiconductor device simulator for thin-film
 and perovskite cells and serves here as the reference against which SolarLab is
 benchmarked.
 
-The validation device is the partner Base Model: a hole-transport layer (spiro,
+The validation device is the reference Base Model: a hole-transport layer (spiro,
 20 nm), a methylammonium lead iodide absorber (MAPbI~3~, 800 nm, bandgap
 E~g~ = 1.53 eV), and an electron-transport layer (TiO~2~, 25 nm). All material
-and defect parameters, and the reference sweep data, are taken from the partner
+and defect parameters, and the reference sweep data, are taken from the reference
 workbook `1R-Parameters.xlsx`.
 
 The validation philosophy prioritizes trend fidelity and physical validity over
@@ -77,7 +77,7 @@ report applies that standard throughout.
 # 2. Methodology
 
 SolarLab mirrors the SCAPS Base Model through the `scaps_mirror_v2.yaml` device
-definition (partner layer stack, doping, mobilities, defect levels, optical
+definition (reference layer stack, doping, mobilities, defect levels, optical
 constants, and a glass front substrate completing the optical stack). Each of
 the eleven single-variable sweeps varies one parameter across the workbook range
 while holding all others fixed, and the figures of merit (V~oc~, J~sc~, FF, PCE)
@@ -114,18 +114,18 @@ balance R + T + A = 1.
 | Metric | SolarLab 2026-05-29 | SolarLab corrected | SCAPS | Residual |
 |---|---|---|---|---|
 | V~oc~ (V) | 1.072 | **1.118** | 1.168 | −50 mV |
-| J~sc~ (mA/cm^2^) | 25.73 | 25.70 | 26.28 | −2 % |
+| J~sc~ (mA/cm<sup>2</sup>^) | 25.73 | 25.70 | 26.28 | −2 % |
 | FF (%) | 85.6 | **87.9** | 87.0 | +0.9 pp |
 | PCE (%) | 23.6 | **25.26** | 26.69 | −1.4 pp |
 
-Table 1. Base operating-point comparison on the partner Base Model (faithful-default history).
+Table 1. Base operating-point comparison on the reference Base Model (faithful-default history).
 
 **Four-config comparison (2026-06-22).** Table 1c is the base operating point for the three SolarLab configurations compared in this revision against SCAPS: the two transient de-spike fractions (f = 0.53, 0.66) and the **steady-state interface-plane-states** driver with the calibrated per-interface channel (`iface_state_calibration_factor` = 0.02 HTL/PVK, 0.10 PVK/ETL; Section 5.3).
 
 | Metric | f=0.53 | f=0.66 | SS interface-states | SCAPS | diff(SS) |
 |---|---|---|---|---|---|
 | V~oc~ (V) | 1.1638 | 1.1809 | **1.1675** | 1.1676 | -0 mV |
-| J~sc~ (mA/cm^2^) | 25.72 | 25.72 | 25.72 | 26.28 | -0.56 |
+| J~sc~ (mA/cm<sup>2</sup>^) | 25.72 | 25.72 | 25.72 | 26.28 | -0.56 |
 | FF (%) | 87.32 | 86.96 | 88.76 | 86.99 | +1.77 |
 | PCE (%) | 26.14 | 26.41 | 26.52 | 26.69 | -0.17 |
 
@@ -214,7 +214,7 @@ Routing the same sweep through the steady-state interface-plane-states driver
 (`solve_voc_ss(iface_states=True)`, which uses the doping-dependent flat-band
 $V_{bi}$ and live interface-plane carrier densities) recovers the SCAPS
 direction: V~oc~ now rises monotonically with $N_{D,ETL}$ (0.979 -> 1.171 V
-across 10^13^ -> 10^20^ cm^-3^, +192 mV; SCAPS +99 mV over the same arm). The
+across 10^13^ -> 10^20^ cm<sup>−3</sup>^, +192 mV; SCAPS +99 mV over the same arm). The
 direction is correct --- the campaign's longest-standing mismatch resolved ---
 though the interface channel over-responds in magnitude and the absolute sits
 ~70-160 mV below SCAPS (its carrier-density calibration is the named residual).
@@ -251,7 +251,7 @@ previous revision reported the perovskite CB/VB bulk defect-density sweeps as
 fully masked (0 mV). Most of that flatness was an artifact: the sweep machinery
 ratio-scaled the bulk SRH lifetime against a hardcoded absolute reference of
 10^16^ cm^−3^, while the configuration's base lifetime corresponds to its
-declared 10^12^ cm^−3^ defects — so every swept point in the partner range ran
+declared 10^12^ cm^−3^ defects — so every swept point in the reference range ran
 with a *longer* lifetime than the baseline and the recombination knob was never
 actually turned. With the lifetime now ratio-scaled off the configuration's own
 declared density, both sweeps reproduce the SCAPS V~oc~/PCE descent in
@@ -328,7 +328,7 @@ interpolation artefact identified in Section 2.
 
 The driver also settles the low-doping question definitively, in an
 unexpected direction. With the solver no longer the limit, the
-ETL-doping walk at N~D~ = 10^10^ cm^-3^ completes — and the current
+ETL-doping walk at N~D~ = 10^10^ cm<sup>−3</sup>^ completes — and the current
 genuinely finds **no zero crossing below 1.6 V**, in agreement with the
 transient flat-band result (the model's crossing sits near 1.29 V, above
 the detailed-balance ceiling, i.e. in the degenerate regime the validity
@@ -376,7 +376,7 @@ Five independent fit-free configurations all place SolarLab's faithful base at
 SCAPS's value sits at the published champion ceiling rather than the device
 median, so SolarLab's lower base is the more device-realistic figure. We
 therefore ship **both** modes: the faithful physics as the default, and a
-flag-gated SCAPS-emulation correction (`het_recomb_despike`) for partner
+flag-gated SCAPS-emulation correction (`het_recomb_despike`) for reference
 cross-validation, which recovers the SCAPS base to within 1 mV and, as a
 by-product, tightens five trend magnitudes (CBO 80→85 %, bulk N~t~ 11→69 %,
 interface N~t~ 53→72 %).

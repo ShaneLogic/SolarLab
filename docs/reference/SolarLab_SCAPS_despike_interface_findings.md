@@ -33,7 +33,7 @@ the sweep harness).
 
 # 1. The four configurations
 
-All share the partner Base Model (`configs/scaps_mirror_v2.yaml`,
+All share the reference Base Model (`configs/scaps_mirror_v2.yaml`,
 `dos_band_potentials: true`). They differ only in which interface correction is
 active.
 
@@ -79,14 +79,14 @@ meaningless-but-matched.
 |---|---|---|---|---|
 | CBO ($\chi_\text{ETL}$) | 918 | 85 % OK | 77 % OK | 83 % OK |
 | **N_d (ETL doping)** | 100 | 25 % **Xdir** | 11 % **Xdir** | 28 % **Xdir** |
-| N_t PVK (CB) | 38.6 | 69 % OK | 11 % OK | 63 % OK |
-| N_t PVK (VB) | 10.8 | 248 % OK | 41 % OK | 227 % OK |
-| **N_t HTL/PVK** | 5.2 | 0 % **Xflat** | **70 % OK** | 425 % OK **(4$\times$ over)** |
-| N_t PVK/ETL | 282 | 72 % OK | 45 % OK | 64 % OK |
-| E_t PVK (CB) | 0.4 | flat/flat | flat/flat | flat/flat |
-| E_t PVK (VB) | 0.4 | flat/flat | flat/flat | flat/flat |
-| E_t HTL/PVK | 0.006 | flat/flat | flat/flat | flat/flat |
-| E_t PVK/ETL | 34.5 | 23 % OK | 6 % OK | 32 % OK |
+| N<sub>t</sub> PVK (CB) | 38.6 | 69 % OK | 11 % OK | 63 % OK |
+| N<sub>t</sub> PVK (VB) | 10.8 | 248 % OK | 41 % OK | 227 % OK |
+| **N<sub>t</sub> HTL/PVK** | 5.2 | 0 % **Xflat** | **70 % OK** | 425 % OK **(4$\times$ over)** |
+| N<sub>t</sub> PVK/ETL | 282 | 72 % OK | 45 % OK | 64 % OK |
+| E<sub>t</sub> PVK (CB) | 0.4 | flat/flat | flat/flat | flat/flat |
+| E<sub>t</sub> PVK (VB) | 0.4 | flat/flat | flat/flat | flat/flat |
+| E<sub>t</sub> HTL/PVK | 0.006 | flat/flat | flat/flat | flat/flat |
+| E<sub>t</sub> PVK/ETL | 34.5 | 23 % OK | 6 % OK | 32 % OK |
 
 Table 3. Reading the columns: **A** (de-spike) carries the bulk $N_t$ trends
 (69 %, 72 %) but cannot move the near-passive HTL/PVK interface $N_t$ at all
@@ -125,7 +125,7 @@ carries the trap energy $E_t$ only through $n_1, p_1$. At a junction node where
 $n, p$ are huge from the pile-up, $n \gg n_1$ and $p \gg p_1$ for any $E_t$, so
 the $E_t$-bearing terms vanish from the denominator and the rate becomes
 $E_t$-independent. De-spiking the carrier densities partially restores
-sensitivity (E_t PVK/ETL: B = 6 % $\rightarrow$ A = 23 % $\rightarrow$ AB = 32 %), **but it caps around
+sensitivity (E<sub>t</sub> PVK/ETL: B = 6 % $\rightarrow$ A = 23 % $\rightarrow$ AB = 32 %), **but it caps around
 32 %** because the de-spiked node is still a single bulk node, not a true
 interface state with its own occupancy. Closing the remaining $E_t$ gap requires
 the interface-plane states (the steady-state path, configuration C / the

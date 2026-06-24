@@ -26,7 +26,7 @@ n1  = N_C·exp(−(E_C−E_t)/kT) ,  p1 = N_V·exp(−(E_t−E_V)/kT)
 band-bending-suppressed values at the metallurgical junction, NOT the bulk densities a
 node away.
 
-**Parameters** (partner PDF `1D-SCAPS 模拟.pdf` p.1, already in `configs/scaps_mirror_v2.yaml`):
+**Parameters** (reference PDF `1D-SCAPS 模拟.pdf` p.1, already in `configs/scaps_mirror_v2.yaml`):
 HTL/PVK & PVK/ETL interfaces — neutral, σ_n=σ_p=1e-19 cm², E_t=0.6 eV, N_t=1e12 cm⁻³
 (HTL/PVK single level; PVK/ETL Gaussian, char-energy 0.1 eV, peak 5.64e8). Tunnelling off.
 
@@ -104,7 +104,7 @@ new solver math.
 3. **Calibration entanglement.** `ni_sq_eff = n_R_eq·p_L_eq` is tuned so PVK/ETL matches;
    a global self-consistent eq-reference (the reverted `SOLARLAB_IFACE_EQREF`) fixed HTL/PVK
    but broke PVK/ETL. The interface references + σ are an entangled empirical calibration.
-4. **N_t units check.** Partner PDF lists interface N_t as **1e12 cm⁻³** (volumetric), but
+4. **N_t units check.** Reference PDF lists interface N_t as **1e12 cm⁻³** (volumetric), but
    SCAPS interface defects are natively **areal (cm⁻²)**. Verify the loader's σ·v_th·N_t maps
    to SCAPS's S_n with consistent units before trusting absolute magnitudes.
 
@@ -142,5 +142,5 @@ parity needle.
 - `perovskite_sim/physics/recombination.py:28` — `interface_recombination` (the SRH form)
 - `perovskite_sim/solver/mol.py:1159` — `_apply_interface_recombination` (E1.5 + E8 proj + E11 QSS)
 - `perovskite_sim/solver/mol.py:749-858` — interface eval-node / n1,p1 / ni_sq_eff build
-- `configs/scaps_mirror_v2.yaml` — partner params
-- SCAPS manual `/tmp/scaps_manual.pdf` §3.9 p.45 (+ ref [13] p.159); partner `docs/partner/1D-SCAPS 模拟.pdf` p.1
+- `configs/scaps_mirror_v2.yaml` — reference params
+- SCAPS manual `/tmp/scaps_manual.pdf` §3.9 p.45 (+ ref [13] p.159); reference `docs/reference/1D-SCAPS 模拟.pdf` p.1

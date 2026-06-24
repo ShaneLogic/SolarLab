@@ -24,10 +24,10 @@ header-includes: |
 This report documents the validation of SolarLab — an in-house one-dimensional
 device simulator coupling drift–diffusion transport, the Poisson equation, and
 mobile-ion migration with transfer-matrix optics — against the established
-reference solver SCAPS-1D. The test case is the partner's three-layer perovskite
+reference solver SCAPS-1D. The test case is the reference's three-layer perovskite
 Base Model, and the comparison spans the base current–voltage operating point
 together with all eleven single-variable parameter sweeps recorded in the
-partner workbook. This revision (2026-06-15) supersedes the 2026-06-11 report:
+reference workbook. This revision (2026-06-15) supersedes the 2026-06-11 report:
 since then the dominant open-circuit-voltage discrepancy was root-caused to a
 missing effective-density-of-states term in the heterojunction transport
 discretisation, the correction was implemented and verified
@@ -53,10 +53,10 @@ stack. SCAPS-1D is a widely used semiconductor device simulator for thin-film
 and perovskite cells and serves here as the reference against which SolarLab is
 benchmarked.
 
-The validation device is the partner Base Model: a hole-transport layer (spiro,
+The validation device is the reference Base Model: a hole-transport layer (spiro,
 20 nm), a methylammonium lead iodide absorber (MAPbI~3~, 800 nm, bandgap
 E~g~ = 1.53 eV), and an electron-transport layer (TiO~2~, 25 nm). All material
-and defect parameters, and the reference sweep data, are taken from the partner
+and defect parameters, and the reference sweep data, are taken from the reference
 workbook `1R-Parameters.xlsx`.
 
 The validation philosophy prioritizes trend fidelity and physical validity over
@@ -71,7 +71,7 @@ report applies that standard throughout.
 # 2. Methodology
 
 SolarLab mirrors the SCAPS Base Model through the `scaps_mirror_v2.yaml` device
-definition (partner layer stack, doping, mobilities, defect levels, optical
+definition (reference layer stack, doping, mobilities, defect levels, optical
 constants, and a glass front substrate completing the optical stack). Each of
 the eleven single-variable sweeps varies one parameter across the workbook range
 while holding all others fixed, and the figures of merit (V~oc~, J~sc~, FF, PCE)
@@ -112,7 +112,7 @@ balance R + T + A = 1.
 | FF (%) | 85.6 | **87.9** | 87.0 | +0.9 pp |
 | PCE (%) | 23.6 | **25.26** | 26.69 | −1.4 pp |
 
-Table 1. Base operating-point comparison on the partner Base Model.
+Table 1. Base operating-point comparison on the reference Base Model.
 
 The previous −96 mV V~oc~ shortfall decomposed into a 10–16 mV grid artifact, a
 137 mV transport-discretisation omission, and compensating model differences;
@@ -229,7 +229,7 @@ previous revision reported the perovskite CB/VB bulk defect-density sweeps as
 fully masked (0 mV). Most of that flatness was an artifact: the sweep machinery
 ratio-scaled the bulk SRH lifetime against a hardcoded absolute reference of
 10^16^ cm^−3^, while the configuration's base lifetime corresponds to its
-declared 10^12^ cm^−3^ defects — so every swept point in the partner range ran
+declared 10^12^ cm^−3^ defects — so every swept point in the reference range ran
 with a *longer* lifetime than the baseline and the recombination knob was never
 actually turned. With the lifetime now ratio-scaled off the configuration's own
 declared density, both sweeps reproduce the SCAPS V~oc~/PCE descent in
@@ -354,7 +354,7 @@ Five independent fit-free configurations all place SolarLab's faithful base at
 SCAPS's value sits at the published champion ceiling rather than the device
 median, so SolarLab's lower base is the more device-realistic figure. We
 therefore ship **both** modes: the faithful physics as the default, and a
-flag-gated SCAPS-emulation correction (`het_recomb_despike`) for partner
+flag-gated SCAPS-emulation correction (`het_recomb_despike`) for reference
 cross-validation, which recovers the SCAPS base to within 1 mV and, as a
 by-product, tightens five trend magnitudes (CBO 80→85 %, bulk N~t~ 11→69 %,
 interface N~t~ 53→72 %).
