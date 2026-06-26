@@ -24,9 +24,9 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
         ${numField('eqe-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('eqe-lmin', '\u03bb<sub>min</sub> (nm)', 300, '1')}
         ${numField('eqe-lmax', '\u03bb<sub>max</sub> (nm)', 1000, '1')}
-        ${numField('eqe-nl', 'n<sub>\u03bb</sub>', 29, '1')}
-        ${numField('eqe-phi', '\u03a6<sub>inc</sub> (ph/m\u00b2/s)', 1e20, 'any')}
-        ${numField('eqe-tset', 't<sub>settle</sub> (s)', 1e-3, 'any')}
+        ${numField('eqe-nl', 'n<sub>\u03bb</sub>', 80, '1')}
+        ${numField('eqe-phi', '\u03a6<sub>inc</sub> (ph/m\u00b2/s)', 1e22, 'any')}
+        ${numField('eqe-tset', 't<sub>settle</sub> (s)', 1e-1, 'any')}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-eqe">Compute EQE(\u03bb)</button>
@@ -60,7 +60,7 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
 
     const lmin = readNum('eqe-lmin', 300)
     const lmax = readNum('eqe-lmax', 1000)
-    const nl = Math.max(3, Math.round(readNum('eqe-nl', 29)))
+    const nl = Math.max(3, Math.round(readNum('eqe-nl', 80)))
     if (!(lmax > lmin)) {
       setStatus('status-eqe', '\u03bb_max must exceed \u03bb_min.', true)
       btn.disabled = false
@@ -72,8 +72,8 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
       lambda_min_nm: lmin,
       lambda_max_nm: lmax,
       n_lambda: nl,
-      Phi_incident: readNum('eqe-phi', 1e20),
-      t_settle: readNum('eqe-tset', 1e-3),
+      Phi_incident: readNum('eqe-phi', 1e22),
+      t_settle: readNum('eqe-tset', 1e-1),
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

@@ -98,13 +98,18 @@ describe('renderEQE — toolbar + style mode', () => {
     expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
   })
 
-  it('engineering trace color and y-range match the pre-publication renderer', () => {
+  it('engineering: faint raw markers + smoothed line, blue, y-range [0,100]', () => {
     renderEQE(el, makeEQE())
     const traces = _lastNewPlotTraces()!
-    expect(traces).toHaveLength(1)
-    expect(traces[0].mode).toBe('lines+markers')
-    expect(traces[0].line.color).toBe('#2563eb')
+    expect(traces).toHaveLength(2)
+    // trace 0 = faint raw markers (data stays visible)
+    expect(traces[0].mode).toBe('markers')
     expect(traces[0].marker.color).toBe('#2563eb')
+    expect(traces[0].marker.opacity).toBe(0.22)
+    expect(traces[0].showlegend).toBe(false)
+    // trace 1 = smoothed headline line
+    expect(traces[1].mode).toBe('lines')
+    expect(traces[1].line.color).toBe('#2563eb')
     expect(_lastNewPlotLayout()!.yaxis.range).toEqual([0, 100])
   })
 
@@ -116,6 +121,19 @@ describe('renderEQE — toolbar + style mode', () => {
     expect(ann[0].text).toContain('22.00 mA')
     expect(ann[0].xanchor).toBe('right')
     expect(ann[0].yanchor).toBe('top')
+  })
+
+  it('caps display at 100% and smooths an unphysical EQE>1 spike', () => {
+    // index 2 spikes to 1.5 (150%) — numerical noise, physically impossible.
+    renderEQE(el, makeEQE({ EQE: [0.10, 0.65, 1.5, 0.85, 0.80, 0.05] }))
+    const traces = _lastNewPlotTraces()!
+    const rawY = traces[0].y as number[]
+    const smoothY = traces[1].y as number[]
+    // raw markers clamp the 150% spike to 100%
+    expect(Math.max(...rawY)).toBeLessThanOrEqual(100)
+    // the median stage removes the lone spike entirely
+    expect(Math.max(...smoothY)).toBeLessThanOrEqual(100)
+    expect(smoothY[2]).toBeLessThan(100)
   })
 })
 
@@ -147,16 +165,18 @@ describe('renderEQE — publication style mode', () => {
     expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
   })
 
-  it('publication EQE trace: hollow circle, muted blue, lines+markers', () => {
+  it('publication EQE: faint raw markers + smoothed muted-blue line', () => {
     renderEQE(el, makeEQE())
     _toggleStyle(el, 'eqe-style-mode', 'publication')
-    const data = _lastNewPlotTraces()![0]
-    expect(data.mode).toBe('lines+markers')
-    expect(data.marker.symbol).toBe('circle-open')
-    expect(data.marker.color).toBe('rgba(0,0,0,0)')
-    expect(data.marker.line.color).toBe('#2B6FA3')
-    expect(data.line.color).toBe('#2B6FA3')
-    expect(data.line.width).toBe(1.75)
+    const traces = _lastNewPlotTraces()!
+    expect(traces).toHaveLength(2)
+    expect(traces[0].mode).toBe('markers')
+    expect(traces[0].marker.color).toBe('#2B6FA3')
+    expect(traces[0].marker.opacity).toBe(0.22)
+    expect(traces[0].showlegend).toBe(false)
+    expect(traces[1].mode).toBe('lines')
+    expect(traces[1].line.color).toBe('#2B6FA3')
+    expect(traces[1].line.width).toBe(1.75)
   })
 
   it('publication annotation lives at upper-RIGHT under the falling tail', () => {

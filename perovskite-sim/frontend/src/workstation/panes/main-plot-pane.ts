@@ -10,6 +10,7 @@ import {
   PUBLICATION_PALETTE, PUBLICATION_FONT_FAMILY, PUBLICATION_LINE_WIDTH,
 } from '../../plot-theme'
 import { metricCard } from '../../ui-helpers'
+import { smoothEQE } from '../../signal-smooth'
 import type {
   JVResult,
   ISResult,
@@ -1772,7 +1773,12 @@ export function renderEQE(el: HTMLElement, r: EQEResult): void {
   _eqePlotDiv.id = 'eqe-plot-inner'
   el.appendChild(_eqePlotDiv)
 
-  const eqePct = r.EQE.map(x => x * 100)
+  // Display-only smoothing of per-point numerical noise (see signal-smooth.ts):
+  // faint raw markers keep the data visible, the smoothed line is the headline
+  // curve. Both capped at 100% — EQE > 1 is unphysical (residual noise prints
+  // ~101%). J_sc_integrated is computed server-side from the RAW EQE, untouched.
+  const eqeRawPct = r.EQE.map(x => Math.min(x, 1) * 100)
+  const eqeSmoothPct = smoothEQE(r.EQE).map(x => Math.min(x, 1) * 100)
   const mAcm2 = r.J_sc_integrated / 10
 
   if (_eqeStyle === 'publication') {
@@ -1780,12 +1786,14 @@ export function renderEQE(el: HTMLElement, r: EQEResult): void {
       _eqePlotDiv,
       [
         {
-          x: r.wavelengths_nm, y: eqePct, name: 'EQE(<i>\u03bb</i>)',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
+          x: r.wavelengths_nm, y: eqeRawPct, name: 'raw', mode: 'markers',
+          marker: { color: PUBLICATION_PALETTE.forward, size: 3, opacity: 0.22 },
+          showlegend: false, hoverinfo: 'skip',
+        },
+        {
+          x: r.wavelengths_nm, y: eqeSmoothPct, name: 'EQE(<i>\u03bb</i>)',
+          mode: 'lines',
+          line: { color: PUBLICATION_PALETTE.forward, width: PUBLICATION_LINE_WIDTH },
         },
       ],
       publicationLayout({
@@ -1815,10 +1823,13 @@ export function renderEQE(el: HTMLElement, r: EQEResult): void {
       _eqePlotDiv,
       [
         {
-          x: r.wavelengths_nm, y: eqePct, name: 'EQE(\u03bb)',
-          mode: 'lines+markers',
+          x: r.wavelengths_nm, y: eqeRawPct, name: 'raw', mode: 'markers',
+          marker: { color: PALETTE.forward, size: 3, opacity: 0.22 },
+          showlegend: false, hoverinfo: 'skip',
+        },
+        {
+          x: r.wavelengths_nm, y: eqeSmoothPct, name: 'EQE(\u03bb)', mode: 'lines',
           line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
         },
       ],
       baseLayout({
