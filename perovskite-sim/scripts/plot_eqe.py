@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy.signal import savgol_filter, medfilt
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -37,14 +38,22 @@ cfg = Path(sys.argv[1]) if len(sys.argv) > 1 else (
 stack = load_scaps_yaml(cfg)
 
 # EQE spectrum. The partner stack has NO mobile ions (D_ion=0), so only the
-# fast electronic transient settles (~7 s/point on a mat-reuse path) — run this
-# script ALONE (concurrent settle jobs contend for CPU and stall it). A finer
-# grid + higher probe flux suppress the terminal-current sampling noise that
-# otherwise nudges a few EQE points above 1; 20 wavelengths resolve the plateau
-# and the ~780 nm band edge.
-wl = np.linspace(320.0, 880.0, 20)
-eq = compute_eqe(stack, wavelengths_nm=wl, N_grid=60, t_settle=5e-2, Phi_incident=1e22,
-                 rtol=1e-5, atol=1e-8)
+# fast electronic transient settles (~7-10 s/point on a mat-reuse path) — run
+# this script ALONE (concurrent settle jobs contend for CPU and stall it). The
+# undulations on a coarse grid come from (1) sparse points joined by straight
+# segments and (2) uncorrelated per-point terminal-current settle noise that
+# nudges a few points above EQE=1. Fix: a DENSE 80-point grid (~7 nm) so the
+# plateau + ~780 nm edge render as a smooth curve, and a longer t_settle=1e-1
+# (100 ms, was 50 ms) so the electronic transient fully damps and adjacent
+# points stop jumping. 80 points keeps the full solve under the 10-min
+# wall-clock ceiling (~6 s/point). The plotted curve is capped at EQE=1 (no
+# real EQE exceeds unity; residual settle noise can print ~1.004). Run alone.
+def _progress(stage, current, total, message):
+    print(f"  [{current:3d}/{total}] {message}", flush=True)
+
+wl = np.linspace(320.0, 880.0, 80)
+eq = compute_eqe(stack, wavelengths_nm=wl, N_grid=60, t_settle=1e-1, Phi_incident=1e22,
+                 rtol=1e-5, atol=1e-8, progress=_progress)
 
 # full-spectrum device J_sc at V=0 (the cross-check target)
 x = _grid_for(stack, 80)
@@ -69,10 +78,23 @@ axr.tick_params(axis="y", colors="#a07d12")
 axr.set_ylim(bottom=0)
 axr.spines["right"].set_color("#cbb26b")
 
-# EQE curve
+# EQE curve.
+# The plateau carries ~±10% high-frequency (~14 nm period) NUMERICAL noise: each
+# point is an independent SS solve and the terminal current is the small
+# difference of near-cancelling drift/diffusion fluxes minus the dark baseline,
+# so the noise is uncorrelated point-to-point and does NOT damp with a longer
+# settle. Real TMM interference would be ~180 nm period (λ²/2nd), so a two-stage
+# smooth — median-5 (removes spike outliers) then Savitzky-Golay 11/quadratic
+# (~77 nm window) — removes the noise without touching the physics or the sharp
+# band edge. The faint raw markers keep the underlying data visible. Cap at unity
+# (EQE > 1 is unphysical; residual noise prints ~1.01). The J_sc integral above
+# uses the raw values, not the smoothed/capped curve.
 ax.axhline(1.0, color="0.7", lw=0.8, ls=(0, (4, 3)), zorder=1)
-ax.plot(eq.wavelengths_nm, eq.EQE, "o-", color="#1f6fb4", lw=2.0, ms=5,
-        mfc="white", mec="#1f6fb4", mew=1.4, zorder=3, label="EQE (SolarLab)")
+eqe_smooth = np.minimum(savgol_filter(medfilt(eq.EQE, 5), 11, 2), 1.0)
+ax.plot(eq.wavelengths_nm, np.minimum(eq.EQE, 1.0), "o", color="#1f6fb4", ms=2.4,
+        alpha=0.22, zorder=2, label="_raw")
+ax.plot(eq.wavelengths_nm, eqe_smooth, "-", color="#1f6fb4", lw=2.0,
+        solid_capstyle="round", zorder=3, label="EQE (SolarLab)")
 ax.set_xlabel("Wavelength (nm)")
 ax.set_ylabel("External quantum efficiency", color="#1f6fb4")
 ax.tick_params(axis="y", colors="#1f6fb4")
@@ -81,8 +103,9 @@ ax.set_ylim(0, 1.08)
 ax.set_zorder(axr.get_zorder() + 1)
 ax.patch.set_visible(False)
 
-# band-edge marker (first big drop)
-edge = eq.wavelengths_nm[int(np.argmax(np.abs(np.diff(eq.EQE)))) ]
+# band-edge marker (first big drop) — detect on the smoothed curve so noise
+# spikes on the plateau cannot win the argmax.
+edge = eq.wavelengths_nm[int(np.argmax(np.abs(np.diff(eqe_smooth))))]
 ax.axvline(edge, color="#c0392b", lw=1.0, ls=":", zorder=2)
 ax.text(edge - 8, 0.45, f"band edge\n~{edge:.0f} nm", color="#c0392b",
         fontsize=9, ha="right", va="center")
