@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.ticker import SymmetricalLogLocator
 from scipy.interpolate import PchipInterpolator
 
 plt.rcParams.update({
@@ -147,6 +148,11 @@ for tag, (V, col, lab) in BIAS.items():
     plot_curve(aE, xf, E, col, lw=1.6)
 aE.axhline(0, color="0.6", lw=0.8)
 aE.set_yscale("symlog", linthresh=1.0e5)
+aE.set_ylim(-1.0e16, 1.0e16)
+# Thin the symlog decade ticks: label every 2 decades, minor mark every decade
+# (autoscaled per-decade labels over 11 decades/side overlap illegibly).
+aE.yaxis.set_major_locator(SymmetricalLogLocator(base=100.0, linthresh=1.0e5))
+aE.yaxis.set_minor_locator(SymmetricalLogLocator(base=10.0, linthresh=1.0e5))
 aE.set_ylabel(r"electric field  (V m$^{-1}$)")
 aE.set_xlabel("Depth (nm)")
 aE.set_title("electric field", fontsize=12, pad=4)
