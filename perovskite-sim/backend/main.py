@@ -304,13 +304,92 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
     )
 
 
+def _is_scaps_schema(cfg: dict) -> bool:
+    """True if the config uses the SCAPS layer schema (``mu_n_cm2`` / ``N_C_cm3``
+    / ``thickness_nm``, cm/eV units, ``ni`` computed from the DOS) rather than
+    the standard schema. Only ``scaps_compat.load_scaps_yaml`` can parse it; the
+    rest of the backend / frontend assumes the standard schema."""
+    for layer in cfg.get("layers", []) or []:
+        if "mu_n_cm2" in layer or "thickness_nm" in layer or "N_C_cm3" in layer:
+            return True
+    return False
+
+
+def _stack_to_config_dict(stack: DeviceStack) -> dict:
+    """Serialize a DeviceStack to the standard config dict the frontend edits and
+    ``stack_from_dict`` rebuilds, so SCAPS-schema presets (parsed only by
+    scaps_compat) flow through the standard UI / inline-device path.
+
+    Layer params come straight from ``dataclasses.asdict(MaterialParams)`` — flat
+    standard fields, including the Nc300/Nv300 the SCAPS loader computes — so the
+    round-trip is exact for every field ``stack_from_dict`` reads. Interface
+    recombination is emitted as the resolved (v_n, v_p) SRV pairs; the original
+    SCAPS sigma/N_t/E_t granularity collapses to the SRV the solver actually uses
+    (the InterfaceDefect trap level used by the SS interface-state path is not
+    reconstructed — a documented limitation of editing a SCAPS preset in the
+    standard UI)."""
+    layers = []
+    for ls in stack.layers:
+        # Drop None-valued fields: stack_from_dict treats several optional
+        # params (Eg_back / chi_back / grading_char_length / n_optical …) as
+        # "absent" via key-presence and does float(value) when the key exists,
+        # so a serialized None would crash with float(None). None == absent.
+        d = {k: v for k, v in asdict(ls.params).items() if v is not None}
+        d["name"] = ls.name
+        d["role"] = ls.role
+        d["thickness"] = ls.thickness
+        layers.append(d)
+    device = {
+        "mode": str(stack.mode),
+        "V_bi": stack.V_bi,
+        "Phi": stack.Phi,
+        "T": stack.T,
+        "interfaces": [list(p) for p in stack.interfaces],
+        "dos_band_potentials": stack.dos_band_potentials,
+        "flat_band_contacts": stack.flat_band_contacts,
+        "interface_plane_closure": stack.interface_plane_closure,
+        "interface_plane_projection": stack.interface_plane_projection,
+        "het_recomb_despike": stack.het_recomb_despike,
+        "band_grading": stack.band_grading,
+        "interface_tunneling": stack.interface_tunneling,
+        "tunnel_mass_eff": stack.tunnel_mass_eff,
+        "S_n_left": stack.S_n_left,
+        "S_p_left": stack.S_p_left,
+        "S_n_right": stack.S_n_right,
+        "S_p_right": stack.S_p_right,
+    }
+    return {"device": device, "layers": layers}
+
+
+def _config_dict_from_path(path: str) -> dict:
+    """Load a config file as a STANDARD-schema dict. SCAPS-schema files are
+    converted via scaps_compat; standard files pass through unchanged."""
+    with open(path) as f:
+        cfg = yaml.safe_load(f)
+    if _is_scaps_schema(cfg):
+        from perovskite_sim.scaps_compat import load_scaps_yaml
+        return _stack_to_config_dict(load_scaps_yaml(path))
+    return cfg
+
+
 def build_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceStack:
     """Return a DeviceStack from either an inline device dict (preferred) or a YAML path."""
     if device is not None:
         return stack_from_dict(device)
     if not config_path:
         raise HTTPException(status_code=400, detail="Either 'device' or 'config_path' must be provided")
-    return load_device_from_yaml(resolve_config_path(config_path))
+    resolved = resolve_config_path(config_path)
+    # SCAPS-schema files need the scaps_compat parser; load_device_from_yaml
+    # assumes the standard schema and raises KeyError 'mu_n' on them.
+    try:
+        with open(resolved) as f:
+            is_scaps = _is_scaps_schema(yaml.safe_load(f))
+    except (OSError, yaml.YAMLError):
+        is_scaps = False
+    if is_scaps:
+        from perovskite_sim.scaps_compat import load_scaps_yaml
+        return load_scaps_yaml(resolved)
+    return load_device_from_yaml(resolved)
 
 
 def to_serializable(obj):
@@ -516,8 +595,10 @@ def get_config(name: str):
     if path is None:
         raise HTTPException(status_code=404, detail=f"Config '{safe_name}' not found")
     try:
-        with open(path) as f:
-            cfg = yaml.safe_load(f)
+        # SCAPS-schema presets (mu_n_cm2 / N_C_cm3 / …) are converted to the
+        # standard schema so the frontend, which assumes the standard fields,
+        # gets real editable values instead of an all-zero device.
+        cfg = _config_dict_from_path(path)
         return {"status": "ok", "name": safe_name, "config": _coerce_numbers(cfg)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
