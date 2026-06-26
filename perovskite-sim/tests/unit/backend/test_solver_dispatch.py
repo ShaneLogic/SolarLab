@@ -86,6 +86,30 @@ def test_stack_from_dict_flag_string_truthiness():
     assert bm.stack_from_dict(cfg).dos_band_potentials is True
 
 
+def test_stack_from_dict_plumbs_optical_material():
+    """Inline-device path must carry TMM optics (optical_material / n_optical /
+    incoherent); without them wavelength-resolved EQE/EL raise 'requires
+    optical_material' even on a *_tmm preset (the frontend always submits the
+    device inline). Mirrors config_loader.py."""
+    cfg = _min_cfg()
+    cfg["layers"][0].update(
+        optical_material="MAPbI3", n_optical=2.4, incoherent=True
+    )
+    p = bm.stack_from_dict(cfg).layers[0].params
+    assert p.optical_material == "MAPbI3"
+    assert p.n_optical == 2.4
+    assert p.incoherent is True
+
+
+def test_stack_from_dict_optical_defaults():
+    """Absent optics → Beer-Lambert sentinels (None / None / False),
+    bit-identical to the pre-fix inline path."""
+    p = bm.stack_from_dict(_min_cfg()).layers[0].params
+    assert p.optical_material is None
+    assert p.n_optical is None
+    assert p.incoherent is False
+
+
 # --- fix #2: solver dispatch ------------------------------------------------
 
 def test_dispatch_steady_state_maps_to_hysteresis_free_jvresult(monkeypatch):

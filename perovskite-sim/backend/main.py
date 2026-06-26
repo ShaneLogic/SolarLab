@@ -182,6 +182,14 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
             grading_bowing=float(layer_cfg.get("grading_bowing", 0.0)),
             grading_char_length=float(layer_cfg["grading_char_length"]) if "grading_char_length" in layer_cfg else None,
             grading_N_mult=int(layer_cfg.get("grading_N_mult", 1)),
+            # TMM optics — mirror config_loader.py:95-97. Without these the
+            # inline-device path (the only path the frontend uses) silently
+            # drops the n,k data, so wavelength-resolved experiments (EQE / EL)
+            # raise "requires optical_material" even on a *_tmm preset. Absent
+            # → None/False → Beer-Lambert, bit-identical to before.
+            optical_material=layer_cfg.get("optical_material"),
+            n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
+            incoherent=_flag(layer_cfg.get("incoherent", False)),
         )
         layers.append(
             LayerSpec(
