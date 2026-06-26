@@ -101,6 +101,13 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             ct_beta_p=_f(layer_cfg.get("ct_beta_p", 2.0)),
             pf_gamma_n=_f(layer_cfg.get("pf_gamma_n", 0.0)),
             pf_gamma_p=_f(layer_cfg.get("pf_gamma_p", 0.0)),
+            Eg_back=float(layer_cfg["Eg_back"]) if "Eg_back" in layer_cfg else None,
+            chi_back=float(layer_cfg["chi_back"]) if "chi_back" in layer_cfg else None,
+            grading_profile=str(layer_cfg.get("grading_profile", "linear")),
+            grading_direction=str(layer_cfg.get("grading_direction", "front_to_back")),
+            grading_bowing=_f(layer_cfg.get("grading_bowing", 0.0)),
+            grading_char_length=float(layer_cfg["grading_char_length"]) if "grading_char_length" in layer_cfg else None,
+            grading_N_mult=int(layer_cfg.get("grading_N_mult", 1)),
         )
         layers.append(LayerSpec(
             name=layer_cfg["name"],
@@ -165,6 +172,15 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             in ("true", "1", "yes", "on")
         ),
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
+        band_grading=(
+            str(dev.get("band_grading", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        interface_tunneling=(
+            str(dev.get("interface_tunneling", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        tunnel_mass_eff=_f(dev.get("tunnel_mass_eff", 0.2)),
         S_n_left=S_n_left,
         S_p_left=S_p_left,
         S_n_right=S_n_right,

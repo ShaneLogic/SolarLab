@@ -614,10 +614,37 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             "stack has no electrical layers (all layers have role:substrate)"
         )
 
+    # Continuous bandgap grading (2026-06). When enabled (and not LEGACY),
+    # a graded layer interpolates its per-node chi/Eg — and the Eg-derived
+    # ni²/n1/p1 — from the front scalar (chi/Eg) to the back endpoint
+    # (chi_back/Eg_back) via the SCAPS material law, replacing the uniform
+    # scalar broadcast below. This is a static (build-time) coefficient
+    # transform threaded through the immutable MaterialArrays — never on the
+    # per-RHS path, so it carries no Newton-contraction risk. Layers without
+    # back endpoints are untouched (has_grading_params False), so legacy and
+    # ungraded configs are bit-identical even with the flag on. LEGACY tier
+    # forces it off (mirrors dos_band_potentials). See physics/grading.py.
+    from perovskite_sim.physics.grading import (
+        has_grading_params,
+        grading_coordinate,
+        band_gap_profile,
+        affinity_profile,
+        grade_ni_sq,
+        grade_n1_p1,
+    )
+    _band_grading = bool(
+        getattr(stack, "band_grading", False)
+        or os.environ.get("SOLARLAB_BAND_GRADING") == "1"
+    ) and sim_mode.name != "legacy"
+
     offset = 0.0
     for layer in elec_layers:
         mask = (x >= offset - 1e-12) & (x <= offset + layer.thickness + 1e-12)
         p = layer.params
+        # Local coordinate from the layer's front face — used by both the
+        # grading profile and the trap profile below (hoisted to avoid
+        # recomputation).
+        x_local = x[mask] - offset
         eps_r[mask] = p.eps_r
 
         # Temperature-scaled ion diffusion
@@ -643,8 +670,26 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             Eg_T = eg_at_T(p.Eg, T_dev, p.varshni_alpha, p.varshni_beta)
         else:
             Eg_T = p.Eg
-        chi[mask] = p.chi
-        Eg[mask] = Eg_T
+        if _band_grading and has_grading_params(p):
+            # Graded layer: front endpoints are the scalar chi / Eg_T; the
+            # back endpoints are chi_back / Eg_back (Varshni-shifted to match
+            # the front when T-scaling is on). The SCAPS material law fills
+            # the per-node transport gap; the DOS fold (below) composes on top.
+            y_grade = grading_coordinate(
+                x_local, layer.thickness, p.grading_profile,
+                p.grading_char_length, p.grading_direction,
+            )
+            Eg_back = p.Eg_back if p.Eg_back is not None else p.Eg
+            if sim_mode.use_temperature_scaling:
+                Eg_back_T = eg_at_T(Eg_back, T_dev, p.varshni_alpha, p.varshni_beta)
+            else:
+                Eg_back_T = Eg_back
+            chi_back = p.chi_back if p.chi_back is not None else p.chi
+            chi[mask] = affinity_profile(y_grade, p.chi, chi_back)
+            Eg[mask] = band_gap_profile(y_grade, Eg_T, Eg_back_T, p.grading_bowing)
+        else:
+            chi[mask] = p.chi
+            Eg[mask] = Eg_T
 
         # Temperature-scaled mobility → diffusion (Einstein: D = mu * V_T)
         mu_n_T = mu_at_T(p.mu_n, T_dev, p.mu_T_gamma)
@@ -657,12 +702,22 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         # the user opts in; when varshni_alpha=0, Eg_T == p.Eg and the
         # result is identical to the Phase 4 path.
         ni_T = ni_at_T(p.ni, Eg_T, T_dev, p.Nc300, p.Nv300)
-        ni_sq[mask] = ni_T ** 2
+        if _band_grading and has_grading_params(p):
+            # Front-anchored DOS law: ni²(x) = ni_front²·exp(-(Eg(x)-Eg_front)/V_T).
+            # Eg[mask] holds the graded transport gap (pre-DOS-fold), so ni
+            # references the true statistical gap — the existing invariant.
+            ni_sq[mask] = grade_ni_sq(ni_T ** 2, Eg[mask], Eg_T, V_T_dev)
+        else:
+            ni_sq[mask] = ni_T ** 2
 
         tau_n[mask] = p.tau_n
         tau_p[mask] = p.tau_p
-        n1[mask] = p.n1
-        p1[mask] = p.p1
+        if _band_grading and has_grading_params(p):
+            # Trap level fixed relative to midgap → n1·p1 = ni²(x) per node.
+            n1[mask], p1[mask] = grade_n1_p1(p.n1, p.p1, Eg[mask], Eg_T, V_T_dev)
+        else:
+            n1[mask] = p.n1
+            p1[mask] = p.p1
         # Phase 4b: temperature-scaled radiative coefficient. gamma=0
         # (the default) short-circuits to B_300 so pre-Phase-4b configs
         # are unaffected.
@@ -698,7 +753,6 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             has_trap_profile_params,
         )
         if sim_mode.use_trap_profile and has_trap_profile_params(p):
-            x_local = x[mask] - offset
             shape = getattr(p, "trap_profile_shape", "exponential") or "exponential"
             edge_target = str(getattr(p, "trap_edge", "both") or "both").lower()
             if str(shape).lower() == "gaussian":
@@ -1102,6 +1156,42 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                 if delta_Ec > TE_THRESHOLD or delta_Ev > TE_THRESHOLD:
                     interface_face_list.append(idx - 1)
 
+    # Intra-band thermionic-field-emission (TFE) tunnelling (2026-06,
+    # DeviceStack.interface_tunneling, default OFF). Fold a static, symmetric
+    # Padovani-Stratton enhancement Gamma >= 1 into the per-face Richardson
+    # constants A* at the TE-capped faces (A*_eff = Gamma·A*). Symmetric ⇒
+    # equilibrium J_TE = 0 preserved exactly; the continuity TE cap keeps the
+    # SG flux as the ceiling (apply side is byte-identical — A* is read only at
+    # these faces). Static ⇒ no per-RHS state ⇒ no Newton risk. Uses the SAME
+    # (graded + DOS-folded) chi/Eg the TE cap sees. Requires TE on; LEGACY
+    # disables TE so this is off by construction.
+    _iface_tunnel = bool(
+        getattr(stack, "interface_tunneling", False)
+        or os.environ.get("SOLARLAB_IFACE_TUNNEL") == "1"
+    ) and sim_mode.use_thermionic_emission and len(interface_face_list) > 0
+    if _iface_tunnel:
+        from perovskite_sim.physics.tunneling import tfe_gamma
+        m_eff = float(getattr(stack, "tunnel_mass_eff", 0.2))
+        _capped = set(interface_face_list)
+        for k, idx in enumerate(iface_list):
+            f = idx - 1
+            if f not in _capped or k + 1 >= len(elec_layers):
+                continue
+            pl = elec_layers[k].params
+            pr = elec_layers[k + 1].params
+            net_l = abs(pl.N_D - pl.N_A)
+            net_r = abs(pr.N_D - pr.N_A)
+            # Depletion sits on the lighter-doped side — its doping + eps set
+            # the field-emission characteristic energy E_00.
+            if net_l <= net_r:
+                N_iface, eps_iface = net_l, pl.eps_r
+            else:
+                N_iface, eps_iface = net_r, pr.eps_r
+            dEc = abs(chi[f] - chi[f + 1])
+            dEv = abs((chi[f] + Eg[f]) - (chi[f + 1] + Eg[f + 1]))
+            A_star_n_node[f] *= tfe_gamma(dEc, N_iface, m_eff, eps_iface, V_T_dev)
+            A_star_p_node[f] *= tfe_gamma(dEv, N_iface, m_eff, eps_iface, V_T_dev)
+
     # Ohmic-contact equilibrium carrier densities from doping.
     def _equilibrium_np(N_D_val: float, N_A_val: float, ni_val: float) -> tuple[float, float]:
         net = 0.5 * (N_D_val - N_A_val)
@@ -1188,7 +1278,15 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         for i_elec, layer in enumerate(elec_layers):
             if layer.role == "absorber":
                 p = layer.params
-                Eg_eV = float(p.Eg) if p is not None else 0.0
+                if _band_grading and has_grading_params(p):
+                    # Graded absorber: photon recycling escapes at the
+                    # dominant (narrowest) emission edge — the smaller of the
+                    # front/back endpoint gaps. Uses the true (un-DOS-folded)
+                    # endpoint gaps, not the folded transport array.
+                    Eg_back = p.Eg_back if p.Eg_back is not None else p.Eg
+                    Eg_eV = float(min(p.Eg, Eg_back))
+                else:
+                    Eg_eV = float(p.Eg) if p is not None else 0.0
                 if Eg_eV > 0.0:
                     mask_abs = (
                         (x >= offset_pr - 1e-12)

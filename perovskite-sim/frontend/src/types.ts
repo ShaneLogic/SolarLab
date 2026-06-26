@@ -55,6 +55,17 @@ export interface LayerConfig {
   ct_beta_p?: number
   pf_gamma_n?: number
   pf_gamma_p?: number
+  // Continuous bandgap grading — optional, FULL-tier-only. The scalar chi/Eg
+  // above are the FRONT endpoints; these are the BACK (far-face) endpoints +
+  // profile. A layer is graded iff Eg_back or chi_back is set (and the
+  // device-level band_grading flag is on). Absent → uniform layer.
+  Eg_back?: number
+  chi_back?: number
+  grading_profile?: 'linear' | 'parabolic' | 'exponential'
+  grading_direction?: 'front_to_back' | 'back_to_front'
+  grading_bowing?: number
+  grading_char_length?: number
+  grading_N_mult?: number
 }
 
 export type SimulationModeName = 'legacy' | 'fast' | 'full'
@@ -122,6 +133,15 @@ export interface DeviceConfig {
     interface_plane_closure?: boolean
     interface_plane_projection?: boolean
     het_recomb_despike?: number
+    // Continuous bandgap grading master switch (device-level, FULL-tier-only).
+    // Absent → off → uniform layers (bit-identical). See physics/grading.py.
+    band_grading?: boolean
+    // Intra-band TFE tunnelling at heterointerfaces (device-level, FULL-tier).
+    // Folds a static Padovani-Stratton enhancement into A* at TE-capped faces.
+    // Absent → off (bit-identical). tunnel_mass_eff = tunnelling effective
+    // mass / m_e (only used when interface_tunneling on). See physics/tunneling.py.
+    interface_tunneling?: boolean
+    tunnel_mass_eff?: number
   }
   layers: LayerConfig[]
 }

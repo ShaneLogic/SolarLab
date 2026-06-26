@@ -153,6 +153,33 @@ class DeviceStack:
     # more-faithful (higher-Auger) base. Calibrated value for scaps_mirror
     # parity ~0.56. See project_scaps_root_cause_reanalysis memory.
     het_recomb_despike: float = 0.0
+    # Continuous bandgap grading (2026-06). When True (or env
+    # ``SOLARLAB_BAND_GRADING=1``), build_material_arrays interpolates each
+    # graded layer's per-node chi/Eg (and the Eg-derived ni²/n1/p1) from the
+    # front scalar (chi/Eg) to the back endpoint (chi_back/Eg_back) via the
+    # SCAPS material law, instead of the uniform scalar broadcast. Requires a
+    # layer to set Eg_back/chi_back (has_grading_params); layers without them
+    # are untouched, so legacy configs are bit-identical even with the flag on.
+    # Default False = bit-identical; LEGACY tier always forces it off (mirrors
+    # dos_band_potentials). See physics/grading.py.
+    band_grading: bool = False
+    # Intra-band thermionic-field-emission (TFE) tunnelling at heterointerfaces
+    # (2026-06). When True (or env ``SOLARLAB_IFACE_TUNNEL=1``),
+    # build_material_arrays folds a static Padovani-Stratton enhancement
+    # Gamma >= 1 into the per-face Richardson constants A* at the TE-capped
+    # interface faces (A*_eff = Gamma·A*), modelling carriers that tunnel
+    # through a CB/VB spike rather than only crossing over it (the channel
+    # SCAPS's intra-band-tunnelling option exposes). Gamma is symmetric (both
+    # legs) so equilibrium J_TE = 0 is preserved exactly, and the existing TE
+    # cap keeps the SG flux as the ceiling. Static build-time term → no
+    # per-RHS state → no Newton-contraction risk. Requires thermionic emission
+    # active (the cap face set is only built then); LEGACY tier disables TE so
+    # tunnelling is off by construction. Default False = bit-identical.
+    # ``tunnel_mass_eff`` is the tunnelling effective mass (relative to the
+    # free-electron mass) in the characteristic energy E_00; only used when
+    # ``interface_tunneling`` is on. See physics/tunneling.py.
+    interface_tunneling: bool = False
+    tunnel_mass_eff: float = 0.2
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().
@@ -213,8 +240,13 @@ class DeviceStack:
         if all_zero:
             return self.V_bi
 
-        left = elec[0].params
-        right = elec[-1].params
+        # When the outer layers are graded, the contacts sit at their face
+        # endpoints: the left contact at the front (= the scalar params,
+        # unchanged) and the right contact at the back endpoints. Non-graded
+        # stacks return the identical params object → identical float.
+        band_grading = getattr(self, "band_grading", False)
+        left = _edge_params(elec[0].params, "front", band_grading)
+        right = _edge_params(elec[-1].params, "back", band_grading)
 
         e_f_left = _fermi_level(left)
         e_f_right = _fermi_level(right)
@@ -301,6 +333,25 @@ def electrical_interface_defects(
     out = list(defects[substrate_prefix : substrate_prefix + desired])
     out.extend([None] * (desired - len(out)))
     return tuple(out)
+
+
+def _edge_params(p: "MaterialParams", side: str, band_grading: bool) -> "MaterialParams":
+    """Contact-face MaterialParams for ``compute_V_bi``.
+
+    For an ungraded layer (or ``band_grading`` off) returns ``p`` unchanged so
+    the Fermi level — and hence V_bi — is bit-identical. For a graded layer's
+    BACK contact, returns a ``replace``-d copy whose chi/Eg/ni are the back
+    endpoints (ni scaled by the same front-anchored DOS law as the solver:
+    ni_back = ni·exp(-(Eg_back - Eg_front)/2V_T)). The front side never changes.
+    """
+    import dataclasses
+    from perovskite_sim.physics.grading import has_grading_params
+    if not band_grading or p is None or side != "back" or not has_grading_params(p):
+        return p
+    Eg_back = p.Eg_back if p.Eg_back is not None else p.Eg
+    chi_back = p.chi_back if p.chi_back is not None else p.chi
+    ni_back = p.ni * math.exp(-(Eg_back - p.Eg) / (2.0 * V_T))
+    return dataclasses.replace(p, chi=chi_back, Eg=Eg_back, ni=ni_back)
 
 
 def _fermi_level(p: MaterialParams) -> float:

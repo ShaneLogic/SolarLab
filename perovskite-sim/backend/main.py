@@ -172,6 +172,16 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
             ct_beta_p=float(layer_cfg.get("ct_beta_p", 2.0)),
             pf_gamma_n=float(layer_cfg.get("pf_gamma_n", 0.0)),
             pf_gamma_p=float(layer_cfg.get("pf_gamma_p", 0.0)),
+            # Continuous bandgap grading (2026-06). Front endpoints are the
+            # scalar chi/Eg above; these are the back endpoints + profile.
+            # Absent → None/sentinel → has_grading_params False → bit-identical.
+            Eg_back=float(layer_cfg["Eg_back"]) if "Eg_back" in layer_cfg else None,
+            chi_back=float(layer_cfg["chi_back"]) if "chi_back" in layer_cfg else None,
+            grading_profile=str(layer_cfg.get("grading_profile", "linear")),
+            grading_direction=str(layer_cfg.get("grading_direction", "front_to_back")),
+            grading_bowing=float(layer_cfg.get("grading_bowing", 0.0)),
+            grading_char_length=float(layer_cfg["grading_char_length"]) if "grading_char_length" in layer_cfg else None,
+            grading_N_mult=int(layer_cfg.get("grading_N_mult", 1)),
         )
         layers.append(
             LayerSpec(
@@ -271,6 +281,9 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         flat_band_contacts=_flag(dev.get("flat_band_contacts")),
         interface_plane_closure=_flag(dev.get("interface_plane_closure")),
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
+        band_grading=_flag(dev.get("band_grading")),
+        interface_tunneling=_flag(dev.get("interface_tunneling")),
+        tunnel_mass_eff=float(dev.get("tunnel_mass_eff", 0.2)),
         # Stage B(c.1) Robin / selective contacts. None = ohmic Dirichlet
         # (the pre-3.3 default); 0 = Neumann blocking; positive finite =
         # Robin. The frontend distinguishes these three states via
