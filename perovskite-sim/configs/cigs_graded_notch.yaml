@@ -1,0 +1,108 @@
+# CIGS with a Ga-rich back-graded absorber (continuous bandgap grading demo).
+#
+# DEMO PRESET — NOT a calibration baseline. Mirrors cigs_baseline.yaml but
+# turns on continuous bandgap grading (device.band_grading: true) and grades
+# the CIGS absorber toward a wider, raised-conduction-band back face:
+#   Eg_back = 1.40 eV (Ga-rich, wider gap than the 1.15 eV front)
+#   chi_back = 4.05 eV (raised E_C = electron back-surface field; E_C = -chi)
+# This is the canonical SCAPS graded-bandgap structure (Burgelman & Marlein,
+# 23rd EU PVSEC 2008): the back-surface field repels electrons from the
+# recombination-active back contact, lifting V_oc without collapsing J_sc.
+# A finite back-contact electron SRV (device.S_n_right) is set so the BSF has
+# something to suppress — the documented precondition for the V_oc gain.
+#
+# Limitation: the optical absorption (alpha) is NOT graded, so a graded
+# absorber's absorption edge does not shift spatially (SCAPS grades
+# alpha(lambda, y)); J_sc here reflects the uniform-optics electrical effect
+# only. See perovskite_sim/physics/grading.py.
+
+simulation_hints:
+  min_N_grid: 120
+  notes: >-
+    Ga-rich back-graded CIGS demo (continuous bandgap grading). Requires
+    N_grid >= 120 for the 2 um absorber; the graded absorber additionally
+    refines its own mesh via grading_N_mult. Each sweep takes minutes.
+
+device:
+  V_bi: 1.0
+  Phi: 2.5e21
+  band_grading: true          # master switch for continuous bandgap grading
+  S_n_right: 1.0e3            # finite back-contact electron SRV (Mo side)
+  interfaces:
+    - [1.0e-1, 1.0e5]
+    - [1.0e5, 1.0e-1]
+
+layers:
+  - name: ZnO_window
+    role: ETL
+    thickness: 200e-9
+    eps_r: 9.0
+    mu_n: 1.0e-2
+    mu_p: 2.5e-3
+    ni: 1e-3
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 4.4
+    Eg: 3.3
+
+  - name: CdS_buffer
+    role: buffer
+    thickness: 50e-9
+    eps_r: 10.0
+    mu_n: 1.0e-2
+    mu_p: 2.5e-3
+    ni: 1e-3
+    N_D: 1e22
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-10
+    tau_p: 1e-10
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1e6
+    chi: 4.2
+    Eg: 2.4
+
+  - name: CIGS_absorber
+    role: absorber
+    thickness: 2.0e-6
+    eps_r: 13.6
+    mu_n: 1.0e-2
+    mu_p: 2.5e-3
+    ni: 7.3e9
+    N_D: 0.0
+    N_A: 1e22
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-8
+    tau_p: 1e-8
+    n1: 7.3e9
+    p1: 7.3e9
+    B_rad: 1e-16
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1e7
+    chi: 4.2            # front-face electron affinity [eV]
+    Eg: 1.15           # front-face band gap [eV]
+    # --- continuous bandgap grading (back endpoints) ---
+    Eg_back: 1.40       # Ga-rich back face: wider gap [eV]
+    chi_back: 4.05      # raised E_C at the back (electron BSF) [eV]
+    grading_profile: linear
+    grading_N_mult: 2   # refine this layer's mesh for the graded gradient

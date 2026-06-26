@@ -20,6 +20,7 @@ from perovskite_sim.solver.mol import (
     _harmonic_face_average,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.physics.grading import has_grading_params
 from perovskite_sim.models.current import CurrentComponents
 from perovskite_sim.models.spatial import SpatialSnapshot
 from perovskite_sim.constants import EPS_0, Q
@@ -581,6 +582,27 @@ def quasi_static_sweep(
     return np.asarray(voltages, dtype=float), J_arr
 
 
+def _layer_node_counts(stack: DeviceStack, N_grid: int) -> list[int]:
+    """Per-electrical-layer interval count for the multilayer grid.
+
+    Base is ``n_per = N_grid // n_elec`` per layer. A graded layer (when
+    ``band_grading`` is on and it declares back endpoints) is refined by its
+    ``grading_N_mult`` so a steep notch's band step is resolved over enough
+    cells instead of landing on a single over-injecting face. With no graded
+    layer every multiplier is 1, recovering the legacy sizing exactly.
+    """
+    elec = electrical_layers(stack)
+    n_per = N_grid // len(elec)
+    band_grading = bool(getattr(stack, "band_grading", False))
+    counts: list[int] = []
+    for l in elec:
+        mult = 1
+        if band_grading and l.params is not None and has_grading_params(l.params):
+            mult = max(1, int(getattr(l.params, "grading_N_mult", 1)))
+        counts.append(n_per * mult)
+    return counts
+
+
 def _grid_node_count(stack: DeviceStack, N_grid: int) -> int:
     """Return the number of electrical grid nodes run_jv_sweep will build.
 
@@ -588,16 +610,12 @@ def _grid_node_count(stack: DeviceStack, N_grid: int) -> int:
     Both run_jv_sweep (internally) and tandem callers (to pre-size generation
     profiles) must use this helper so the two sites can never silently diverge.
 
-    Formula derivation:
-    - Only electrical layers (non-substrate) are gridded.
-    - Each layer receives  n_per = N_grid // n_elec  intervals.
-    - multilayer_grid deduplicates shared boundary points, giving
-      N = 1 + n_elec * n_per  total nodes.
+    Formula: ``1 + sum(_layer_node_counts(stack, N_grid))``. multilayer_grid
+    deduplicates shared boundary points, so the total node count is one more
+    than the sum of per-layer intervals. With no graded layer this reduces to
+    ``1 + n_elec * (N_grid // n_elec)`` — byte-identical to the legacy formula.
     """
-    elec = electrical_layers(stack)
-    n_elec = len(elec)
-    n_per = N_grid // n_elec
-    return 1 + n_elec * n_per
+    return 1 + sum(_layer_node_counts(stack, N_grid))
 
 
 def _default_V_max(stack: DeviceStack) -> float:
@@ -731,7 +749,10 @@ def run_jv_sweep(
     # grid nodes inside them would desync MaterialArrays masks with the
     # solver state vector. TMM/optics paths still see the full stack.
     elec = electrical_layers(stack)
-    layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
+    layers_grid = [
+        Layer(l.thickness, n)
+        for l, n in zip(elec, _layer_node_counts(stack, N_grid))
+    ]
     x = multilayer_grid(layers_grid)
     N = _grid_node_count(stack, N_grid)
     assert N == len(x), "grid node count mismatch — _grid_node_count is out of sync"

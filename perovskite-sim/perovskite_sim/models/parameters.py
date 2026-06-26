@@ -95,6 +95,21 @@ class MaterialParams:
     # ~3e-4 (V/m)^-0.5 (arg ~ 3 at |E| = 1e8 V/m, i.e. μ ≈ 20·μ₀).
     pf_gamma_n: float = 0.0   # PF prefactor for electrons [(V/m)^-0.5]
     pf_gamma_p: float = 0.0   # PF prefactor for holes [(V/m)^-0.5]
+    # Continuous bandgap / electron-affinity grading (2026-06). The existing
+    # scalar ``chi`` / ``Eg`` are the FRONT (x=0) endpoints; these are the
+    # BACK (far-face) endpoints. A layer is graded iff ``Eg_back is not None
+    # or chi_back is not None`` (physics/grading.has_grading_params). All
+    # default None/sentinel so legacy configs stay bit-identical, and grading
+    # only activates when ``DeviceStack.band_grading`` is on (LEGACY tier
+    # forces it off). SCAPS material-driven law — see physics/grading.py
+    # (Burgelman & Marlein, 23rd EU PVSEC 2008).
+    Eg_back: float | None = None     # band gap at far face [eV]; None = uniform
+    chi_back: float | None = None    # electron affinity at far face [eV]; None = uniform
+    grading_profile: str = "linear"  # "linear" | "parabolic" | "exponential"
+    grading_direction: str = "front_to_back"  # or "back_to_front" (flips y)
+    grading_bowing: float = 0.0      # alloy bowing b in Eg(y) law [eV]
+    grading_char_length: float | None = None  # notch length L for exponential y(x) [m]
+    grading_N_mult: int = 1          # per-layer mesh refinement factor (1 = unchanged)
 
     @property
     def D_n(self) -> float:

@@ -359,6 +359,12 @@ function renderScapsPhysics(config: DeviceConfig): string {
             <span class="param-label"><span class="sym">de-spike <i>f</i></span></span>
             ${numAttr('dev-despike', d.het_recomb_despike, { placeholder: '0 — off', title: 'het_recomb_despike (0 = off, 0.53 = SCAPS-emulation)' })}
           </label>
+          ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Continuous bandgap grading: layer front (chi/Eg) → back (chi_back/Eg_back) endpoints via the SCAPS material law (YAML band_grading). Set per-layer Eg_back/chi_back in the config YAML.')}
+          ${cb('dev-iface-tunnel', 'Interface tunnelling (TFE)', !!d.interface_tunneling, 'Intra-band thermionic-field-emission through CB/VB spikes — static Padovani-Stratton enhancement of A* at TE-capped faces (YAML interface_tunneling).')}
+          <label class="param" title="Tunnelling effective mass relative to the free-electron mass (YAML tunnel_mass_eff). Only used when Interface tunnelling is on.">
+            <span class="param-label"><span class="sym"><i>m</i><sub>tun</sub>/<i>m</i><sub>e</sub></span></span>
+            ${numAttr('dev-tunnel-mass', d.tunnel_mass_eff, { placeholder: '0.2', title: 'tunnel_mass_eff (relative to m_e; default 0.2)' })}
+          </label>
         </div>
       </details>`
 }
@@ -627,6 +633,13 @@ export function readDeviceEditor(
   const despike = parseNumOrNull('dev-despike', original.device.het_recomb_despike ?? null)
   if (typeof despike === 'number' && despike !== 0)
     scapsPhysicsField.het_recomb_despike = despike
+  if (parseCheckbox('dev-band-grading', !!original.device.band_grading))
+    scapsPhysicsField.band_grading = true
+  if (parseCheckbox('dev-iface-tunnel', !!original.device.interface_tunneling)) {
+    scapsPhysicsField.interface_tunneling = true
+    const tmass = parseNumOrNull('dev-tunnel-mass', original.device.tunnel_mass_eff ?? null)
+    if (typeof tmass === 'number') scapsPhysicsField.tunnel_mass_eff = tmass
+  }
   const rawMode = parseText('dev-mode', original.device.mode ?? 'full')
   const mode: SimulationModeName = isModeName(rawMode) ? rawMode : 'full'
   const T = parseNum('dev-T', original.device.T ?? 300)
