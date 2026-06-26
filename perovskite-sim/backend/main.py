@@ -953,7 +953,13 @@ def start_job(req: JobRequest):
         def _run(reporter: ProgressReporter) -> dict:
             lam_min = float(p.get("lambda_min_nm", 300.0))
             lam_max = float(p.get("lambda_max_nm", 1000.0))
-            n_lam = int(p.get("n_lambda", 29))
+            # Dense grid + full settle + 1-sun flux match scripts/plot_eqe.py so
+            # the UI reproduces the publication figure: a coarse grid joined by
+            # straight segments looks jagged, a short settle leaves the electronic
+            # transient undamped, and a low probe flux lets the small photo-signal
+            # sit in residual noise (EQE > 1). The frontend smooths the remaining
+            # per-point numerical noise for display.
+            n_lam = int(p.get("n_lambda", 80))
             if n_lam < 2 or lam_max <= lam_min:
                 raise ValueError(
                     "EQE sweep needs n_lambda >= 2 and lambda_max > lambda_min"
@@ -962,9 +968,9 @@ def start_job(req: JobRequest):
             result = eqe_exp.compute_eqe(
                 stack,
                 wavelengths_nm=wavelengths_nm,
-                Phi_incident=float(p.get("Phi_incident", 1e20)),
+                Phi_incident=float(p.get("Phi_incident", 1e22)),
                 N_grid=int(p.get("N_grid", 60)),
-                t_settle=float(p.get("t_settle", 1e-3)),
+                t_settle=float(p.get("t_settle", 1e-1)),
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)
