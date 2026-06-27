@@ -49,66 +49,79 @@ def _parse_bool(v) -> bool:
     return bool(v)
 
 
+def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
+    """Build a MaterialParams from one layer dict (standard schema).
+
+    Single source of truth for layer-field parsing, shared by the YAML loader
+    here and the backend inline-device path (``backend.main.stack_from_dict``).
+    Keeping both on this one function is what stops the two parsers from
+    drifting — the inline path historically dropped fields (TE A_star, effective
+    DOS, trap profiles, dual-ion, temperature scaling) the loader carried, which
+    silently disabled that physics for UI-built devices.
+    """
+    return MaterialParams(
+        eps_r=_f(layer_cfg["eps_r"]),
+        mu_n=_f(layer_cfg["mu_n"]),
+        mu_p=_f(layer_cfg["mu_p"]),
+        D_ion=_f(layer_cfg["D_ion"]),
+        P_lim=_f(layer_cfg["P_lim"]),
+        P0=_f(layer_cfg["P0"]),
+        ni=_f(layer_cfg["ni"]),
+        tau_n=_f(layer_cfg["tau_n"]),
+        tau_p=_f(layer_cfg["tau_p"]),
+        n1=_f(layer_cfg["n1"]),
+        p1=_f(layer_cfg["p1"]),
+        B_rad=_f(layer_cfg["B_rad"]),
+        C_n=_f(layer_cfg["C_n"]),
+        C_p=_f(layer_cfg["C_p"]),
+        alpha=_f(layer_cfg["alpha"]),
+        N_A=_f(layer_cfg["N_A"]),
+        N_D=_f(layer_cfg["N_D"]),
+        chi=_f(layer_cfg.get("chi", 0.0)),
+        Eg=_f(layer_cfg.get("Eg", 0.0)),
+        A_star_n=_f(layer_cfg.get("A_star_n", 1.2017e6)),
+        A_star_p=_f(layer_cfg.get("A_star_p", 1.2017e6)),
+        D_ion_neg=_f(layer_cfg.get("D_ion_neg", 0.0)),
+        P0_neg=_f(layer_cfg.get("P0_neg", 0.0)),
+        P_lim_neg=_f(layer_cfg.get("P_lim_neg", 1e30)),
+        Nc300=float(layer_cfg["Nc300"]) if "Nc300" in layer_cfg else None,
+        Nv300=float(layer_cfg["Nv300"]) if "Nv300" in layer_cfg else None,
+        mu_T_gamma=_f(layer_cfg.get("mu_T_gamma", -1.5)),
+        E_a_ion=_f(layer_cfg.get("E_a_ion", 0.58)),
+        B_rad_T_gamma=_f(layer_cfg.get("B_rad_T_gamma", 0.0)),
+        varshni_alpha=_f(layer_cfg.get("varshni_alpha", 0.0)),
+        varshni_beta=_f(layer_cfg.get("varshni_beta", 0.0)),
+        trap_N_t_interface=float(layer_cfg["trap_N_t_interface"]) if "trap_N_t_interface" in layer_cfg else None,
+        trap_N_t_bulk=float(layer_cfg["trap_N_t_bulk"]) if "trap_N_t_bulk" in layer_cfg else None,
+        trap_decay_length=float(layer_cfg["trap_decay_length"]) if "trap_decay_length" in layer_cfg else None,
+        trap_profile_shape=str(layer_cfg.get("trap_profile_shape", "exponential")),
+        trap_edge=str(layer_cfg.get("trap_edge", "both")),
+        optical_material=layer_cfg.get("optical_material"),
+        n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
+        incoherent=_parse_bool(layer_cfg.get("incoherent", False)),
+        v_sat_n=_f(layer_cfg.get("v_sat_n", 0.0)),
+        v_sat_p=_f(layer_cfg.get("v_sat_p", 0.0)),
+        ct_beta_n=_f(layer_cfg.get("ct_beta_n", 2.0)),
+        ct_beta_p=_f(layer_cfg.get("ct_beta_p", 2.0)),
+        pf_gamma_n=_f(layer_cfg.get("pf_gamma_n", 0.0)),
+        pf_gamma_p=_f(layer_cfg.get("pf_gamma_p", 0.0)),
+        Eg_back=float(layer_cfg["Eg_back"]) if "Eg_back" in layer_cfg else None,
+        chi_back=float(layer_cfg["chi_back"]) if "chi_back" in layer_cfg else None,
+        grading_profile=str(layer_cfg.get("grading_profile", "linear")),
+        grading_direction=str(layer_cfg.get("grading_direction", "front_to_back")),
+        grading_bowing=_f(layer_cfg.get("grading_bowing", 0.0)),
+        grading_char_length=float(layer_cfg["grading_char_length"]) if "grading_char_length" in layer_cfg else None,
+        grading_N_mult=int(layer_cfg.get("grading_N_mult", 1)),
+    )
+
+
 def load_device_from_yaml(path: str) -> DeviceStack:
     with open(path) as f:
         cfg = yaml.safe_load(f)
     dev = cfg["device"]
     layers = []
     for layer_cfg in cfg["layers"]:
-        p = MaterialParams(
-            eps_r=_f(layer_cfg["eps_r"]),
-            mu_n=_f(layer_cfg["mu_n"]),
-            mu_p=_f(layer_cfg["mu_p"]),
-            D_ion=_f(layer_cfg["D_ion"]),
-            P_lim=_f(layer_cfg["P_lim"]),
-            P0=_f(layer_cfg["P0"]),
-            ni=_f(layer_cfg["ni"]),
-            tau_n=_f(layer_cfg["tau_n"]),
-            tau_p=_f(layer_cfg["tau_p"]),
-            n1=_f(layer_cfg["n1"]),
-            p1=_f(layer_cfg["p1"]),
-            B_rad=_f(layer_cfg["B_rad"]),
-            C_n=_f(layer_cfg["C_n"]),
-            C_p=_f(layer_cfg["C_p"]),
-            alpha=_f(layer_cfg["alpha"]),
-            N_A=_f(layer_cfg["N_A"]),
-            N_D=_f(layer_cfg["N_D"]),
-            chi=_f(layer_cfg.get("chi", 0.0)),
-            Eg=_f(layer_cfg.get("Eg", 0.0)),
-            A_star_n=_f(layer_cfg.get("A_star_n", 1.2017e6)),
-            A_star_p=_f(layer_cfg.get("A_star_p", 1.2017e6)),
-            D_ion_neg=_f(layer_cfg.get("D_ion_neg", 0.0)),
-            P0_neg=_f(layer_cfg.get("P0_neg", 0.0)),
-            P_lim_neg=_f(layer_cfg.get("P_lim_neg", 1e30)),
-            Nc300=float(layer_cfg["Nc300"]) if "Nc300" in layer_cfg else None,
-            Nv300=float(layer_cfg["Nv300"]) if "Nv300" in layer_cfg else None,
-            mu_T_gamma=_f(layer_cfg.get("mu_T_gamma", -1.5)),
-            E_a_ion=_f(layer_cfg.get("E_a_ion", 0.58)),
-            B_rad_T_gamma=_f(layer_cfg.get("B_rad_T_gamma", 0.0)),
-            varshni_alpha=_f(layer_cfg.get("varshni_alpha", 0.0)),
-            varshni_beta=_f(layer_cfg.get("varshni_beta", 0.0)),
-            trap_N_t_interface=float(layer_cfg["trap_N_t_interface"]) if "trap_N_t_interface" in layer_cfg else None,
-            trap_N_t_bulk=float(layer_cfg["trap_N_t_bulk"]) if "trap_N_t_bulk" in layer_cfg else None,
-            trap_decay_length=float(layer_cfg["trap_decay_length"]) if "trap_decay_length" in layer_cfg else None,
-            trap_profile_shape=str(layer_cfg.get("trap_profile_shape", "exponential")),
-            trap_edge=str(layer_cfg.get("trap_edge", "both")),
-            optical_material=layer_cfg.get("optical_material"),
-            n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
-            incoherent=_parse_bool(layer_cfg.get("incoherent", False)),
-            v_sat_n=_f(layer_cfg.get("v_sat_n", 0.0)),
-            v_sat_p=_f(layer_cfg.get("v_sat_p", 0.0)),
-            ct_beta_n=_f(layer_cfg.get("ct_beta_n", 2.0)),
-            ct_beta_p=_f(layer_cfg.get("ct_beta_p", 2.0)),
-            pf_gamma_n=_f(layer_cfg.get("pf_gamma_n", 0.0)),
-            pf_gamma_p=_f(layer_cfg.get("pf_gamma_p", 0.0)),
-            Eg_back=float(layer_cfg["Eg_back"]) if "Eg_back" in layer_cfg else None,
-            chi_back=float(layer_cfg["chi_back"]) if "chi_back" in layer_cfg else None,
-            grading_profile=str(layer_cfg.get("grading_profile", "linear")),
-            grading_direction=str(layer_cfg.get("grading_direction", "front_to_back")),
-            grading_bowing=_f(layer_cfg.get("grading_bowing", 0.0)),
-            grading_char_length=float(layer_cfg["grading_char_length"]) if "grading_char_length" in layer_cfg else None,
-            grading_N_mult=int(layer_cfg.get("grading_N_mult", 1)),
-        )
+        p = material_params_from_dict(layer_cfg)
         layers.append(LayerSpec(
             name=layer_cfg["name"],
             thickness=_f(layer_cfg["thickness"]),

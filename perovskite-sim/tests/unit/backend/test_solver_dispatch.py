@@ -67,6 +67,63 @@ def test_stack_from_dict_plumbs_physics_flags():
     assert s.interface_plane_projection is True
 
 
+def test_stack_from_dict_carries_all_material_params():
+    """The inline path must plumb the SAME layer fields the YAML loader does. It
+    silently dropped 17 — TE Richardson constants (A_star), the effective DOS
+    (Nc300/Nv300, which the default-ON dos_band_potentials fold needs), trap
+    profiles, the 2nd ion species, and temperature scaling — so a UI-built device
+    lost that physics. Pinned via delegation to the shared loader parser."""
+    cfg = _min_cfg()
+    cfg["layers"][0].update(
+        A_star_n=5.0e5, A_star_p=6.0e5,
+        Nc300=2.2e25, Nv300=1.8e25,
+        D_ion_neg=3e-17, P0_neg=1e24, P_lim_neg=5e29,
+        mu_T_gamma=-2.0, E_a_ion=0.4, B_rad_T_gamma=-1.0,
+        varshni_alpha=4.7e-4, varshni_beta=636.0,
+        trap_N_t_interface=1e22, trap_N_t_bulk=1e20,
+        trap_decay_length=2e-8, trap_profile_shape="gaussian", trap_edge="left",
+    )
+    p = bm.stack_from_dict(cfg).layers[0].params
+    assert (p.A_star_n, p.A_star_p) == (5.0e5, 6.0e5)
+    assert (p.Nc300, p.Nv300) == (2.2e25, 1.8e25)
+    assert (p.D_ion_neg, p.P0_neg, p.P_lim_neg) == (3e-17, 1e24, 5e29)
+    assert (p.mu_T_gamma, p.E_a_ion, p.B_rad_T_gamma) == (-2.0, 0.4, -1.0)
+    assert (p.varshni_alpha, p.varshni_beta) == (4.7e-4, 636.0)
+    assert (p.trap_N_t_interface, p.trap_N_t_bulk) == (1e22, 1e20)
+    assert p.trap_decay_length == 2e-8
+    assert (p.trap_profile_shape, p.trap_edge) == ("gaussian", "left")
+
+
+def test_stack_from_dict_layer_parity_with_loader():
+    """Inline path and YAML loader build byte-identical MaterialParams from the
+    same layer dict — the regression guard against the two parsers drifting."""
+    import dataclasses
+    from perovskite_sim.models import config_loader as cl
+
+    layer = {
+        **_min_cfg()["layers"][0],
+        "Nc300": 2.5e25, "A_star_p": 7e5, "trap_N_t_bulk": 1e21,
+        "varshni_alpha": 3e-4, "v_sat_n": 1e5, "Eg_back": 1.7,
+    }
+    cfg = {"device": {"mode": "full"}, "layers": [layer]}
+    inline = bm.stack_from_dict(cfg).layers[0].params
+    shared = cl.material_params_from_dict(layer)
+    assert dataclasses.asdict(inline) == dataclasses.asdict(shared)
+
+
+def test_stack_from_dict_nested_contacts_block():
+    """Device-level: the nested ``contacts:`` block (not just flat S_* keys) must
+    be honoured, mirroring the YAML loader."""
+    cfg = _min_cfg()
+    cfg["device"]["contacts"] = {
+        "left": {"S_n": 1e3, "S_p": 2e3},
+        "right": {"S_n": 3e3, "S_p": 4e3},
+    }
+    s = bm.stack_from_dict(cfg)
+    assert (s.S_n_left, s.S_p_left) == (1e3, 2e3)
+    assert (s.S_n_right, s.S_p_right) == (3e3, 4e3)
+
+
 def test_stack_from_dict_flag_defaults():
     """Absent flags → defaults. dos_band_potentials defaults ON (2026-06,
     correct heterojunction transport; a no-op without per-layer DOS data, so
