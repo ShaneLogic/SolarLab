@@ -36,10 +36,12 @@ from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
 from perovskite_sim.experiments import mott_schottky as ms_exp
 from perovskite_sim.experiments.steady_state import run_jv_sweep_ss
-from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.models.config_loader import (
+    load_device_from_yaml,
+    material_params_from_dict,
+)
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.models.mode import resolve_mode
-from perovskite_sim.models.parameters import MaterialParams
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
 from backend.user_configs import (
@@ -142,55 +144,12 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
     dev = cfg.get("device", {}) or {}
     layers: list[LayerSpec] = []
     for layer_cfg in cfg.get("layers", []) or []:
-        p = MaterialParams(
-            eps_r=float(layer_cfg["eps_r"]),
-            mu_n=float(layer_cfg["mu_n"]),
-            mu_p=float(layer_cfg["mu_p"]),
-            D_ion=float(layer_cfg["D_ion"]),
-            P_lim=float(layer_cfg["P_lim"]),
-            P0=float(layer_cfg["P0"]),
-            ni=float(layer_cfg["ni"]),
-            tau_n=float(layer_cfg["tau_n"]),
-            tau_p=float(layer_cfg["tau_p"]),
-            n1=float(layer_cfg["n1"]),
-            p1=float(layer_cfg["p1"]),
-            B_rad=float(layer_cfg["B_rad"]),
-            C_n=float(layer_cfg["C_n"]),
-            C_p=float(layer_cfg["C_p"]),
-            alpha=float(layer_cfg["alpha"]),
-            N_A=float(layer_cfg["N_A"]),
-            N_D=float(layer_cfg["N_D"]),
-            chi=float(layer_cfg.get("chi", 0.0)),
-            Eg=float(layer_cfg.get("Eg", 0.0)),
-            # Stage B(c.2) field-dependent mobility μ(E). Defaults match
-            # MaterialParams: v_sat / pf_gamma at 0 (= disabled); ct_beta
-            # at 2 (= Canali silicon-electron form, the safe default
-            # documented in field_mobility.py).
-            v_sat_n=float(layer_cfg.get("v_sat_n", 0.0)),
-            v_sat_p=float(layer_cfg.get("v_sat_p", 0.0)),
-            ct_beta_n=float(layer_cfg.get("ct_beta_n", 2.0)),
-            ct_beta_p=float(layer_cfg.get("ct_beta_p", 2.0)),
-            pf_gamma_n=float(layer_cfg.get("pf_gamma_n", 0.0)),
-            pf_gamma_p=float(layer_cfg.get("pf_gamma_p", 0.0)),
-            # Continuous bandgap grading (2026-06). Front endpoints are the
-            # scalar chi/Eg above; these are the back endpoints + profile.
-            # Absent → None/sentinel → has_grading_params False → bit-identical.
-            Eg_back=float(layer_cfg["Eg_back"]) if "Eg_back" in layer_cfg else None,
-            chi_back=float(layer_cfg["chi_back"]) if "chi_back" in layer_cfg else None,
-            grading_profile=str(layer_cfg.get("grading_profile", "linear")),
-            grading_direction=str(layer_cfg.get("grading_direction", "front_to_back")),
-            grading_bowing=float(layer_cfg.get("grading_bowing", 0.0)),
-            grading_char_length=float(layer_cfg["grading_char_length"]) if "grading_char_length" in layer_cfg else None,
-            grading_N_mult=int(layer_cfg.get("grading_N_mult", 1)),
-            # TMM optics — mirror config_loader.py:95-97. Without these the
-            # inline-device path (the only path the frontend uses) silently
-            # drops the n,k data, so wavelength-resolved experiments (EQE / EL)
-            # raise "requires optical_material" even on a *_tmm preset. Absent
-            # → None/False → Beer-Lambert, bit-identical to before.
-            optical_material=layer_cfg.get("optical_material"),
-            n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
-            incoherent=_flag(layer_cfg.get("incoherent", False)),
-        )
+        # Delegate to the shared loader parser so the inline-device path (the
+        # frontend's only path) carries EVERY layer field the YAML loader does.
+        # It previously hand-rolled a subset and silently dropped 17 (TE A_star,
+        # effective DOS Nc300/Nv300, trap profiles, dual-ion, temperature
+        # scaling), disabling that physics for UI-built devices.
+        p = material_params_from_dict(layer_cfg)
         layers.append(
             LayerSpec(
                 name=str(layer_cfg["name"]),
@@ -270,6 +229,12 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
     else:
         from perovskite_sim.twod.microstructure import Microstructure
         microstructure = Microstructure()
+    # Robin contacts: accept the nested ``contacts: {left/right: {S_n, S_p}}``
+    # block as well as flat top-level S_* keys, mirroring config_loader. Flat
+    # keys win when both are present. Absent → None (ohmic Dirichlet).
+    contacts_cfg = dev.get("contacts", {}) or {}
+    left_cfg = contacts_cfg.get("left", {}) or {}
+    right_cfg = contacts_cfg.get("right", {}) or {}
     return DeviceStack(
         layers=tuple(layers),
         V_bi=float(dev.get("V_bi", 1.1)),
@@ -296,10 +261,11 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         # (the pre-3.3 default); 0 = Neumann blocking; positive finite =
         # Robin. The frontend distinguishes these three states via
         # parseNumOrNull in config-editor.ts.
-        S_n_left=_opt_S(dev.get("S_n_left")),
-        S_p_left=_opt_S(dev.get("S_p_left")),
-        S_n_right=_opt_S(dev.get("S_n_right")),
-        S_p_right=_opt_S(dev.get("S_p_right")),
+        S_n_left=_opt_S(dev.get("S_n_left", left_cfg.get("S_n"))),
+        S_p_left=_opt_S(dev.get("S_p_left", left_cfg.get("S_p"))),
+        S_n_right=_opt_S(dev.get("S_n_right", right_cfg.get("S_n"))),
+        S_p_right=_opt_S(dev.get("S_p_right", right_cfg.get("S_p"))),
+        autoloop_generated_lever=_flag(dev.get("autoloop_generated_lever")),
         microstructure=microstructure,
     )
 
