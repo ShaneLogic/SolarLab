@@ -32,14 +32,24 @@ const PER_RHS_KEYS = [
   'pf_gamma_n', 'pf_gamma_p',
 ] as const
 
+/**
+ * Continuous bandgap grading (2026-06) per-layer fields — FULL-only, matching
+ * the device-level ``band_grading`` master flag (LEGACY forces grading off).
+ */
+const GRADING_KEYS = [
+  'Eg_back', 'chi_back', 'grading_profile', 'grading_direction',
+  'grading_bowing', 'grading_char_length', 'grading_N_mult',
+] as const
+
 /** Keys hidden in FAST mode: no TMM, no dual ions, no trap profile, no T,
- *  no per-RHS hooks (B(c.1) / B(c.2) parameter fields). */
+ *  no per-RHS hooks (B(c.1) / B(c.2) parameter fields), no grading. */
 const FAST_HIDDEN = new Set<string>([
   ...TMM_KEYS,
   ...DUAL_ION_KEYS,
   ...TRAP_PROFILE_KEYS,
   ...TEMPERATURE_KEYS,
   ...PER_RHS_KEYS,
+  ...GRADING_KEYS,
 ])
 
 /** Keys hidden in LEGACY mode — identical to FAST today (mode.py:54-86). */
