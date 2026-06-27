@@ -15,7 +15,7 @@ function isModeName(v: unknown): v is SimulationModeName {
 // Discriminator for per-layer field rendering. Most parameters are numeric;
 // optical_material is a select populated from the backend's n,k CSV scan, and
 // incoherent is a boolean checkbox (thick substrate Fresnel handling in TMM).
-type FieldKind = 'numeric' | 'select-optical-material' | 'boolean'
+type FieldKind = 'numeric' | 'numeric-optional' | 'select' | 'select-optical-material' | 'boolean'
 
 interface FieldDef {
   key: keyof LayerConfig
@@ -27,6 +27,8 @@ interface FieldDef {
   /** Placeholder hint for an empty numeric input — used to convey the
    *  "0.0 / disabled" sentinel for opt-in physics fields. */
   placeholder?: string
+  /** Option list for ``kind: 'select'`` (generic string-enum dropdown). */
+  options?: ReadonlyArray<string>
 }
 
 // Groups of parameters for a single layer. Grouping makes long forms scannable.
@@ -121,6 +123,52 @@ const LAYER_GROUPS: ParamGroup[] = [
       },
     ],
   },
+  // Continuous bandgap grading. FULL-tier-only (tier-gating GRADING_KEYS);
+  // takes effect only when the device "Bandgap grading" flag is on AND the
+  // layer sets a back endpoint. The front endpoints are the scalar χ / E_g
+  // in the Geometry group; these are the back-face endpoints + profile.
+  // Empty Eg_back/chi_back → uniform layer (numeric-optional omits the key).
+  {
+    title: 'Bandgap grading (front = χ / E_g above)',
+    collapsed: true,
+    fields: [
+      {
+        key: 'Eg_back', label: '<i>E</i><sub>g</sub><sup>back</sup>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: 'uniform',
+        tooltip: 'Band gap at the back face. Set (with the device Bandgap-grading flag) to grade E_g front→back via the SCAPS material law. Empty = uniform layer.',
+      },
+      {
+        key: 'chi_back', label: '<i>χ</i><sup>back</sup>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: 'uniform',
+        tooltip: 'Electron affinity at the back face. chi_back < chi raises E_C toward the back (electron back-surface field). Empty = uniform.',
+      },
+      {
+        key: 'grading_profile', label: 'profile', kind: 'select',
+        options: ['linear', 'parabolic', 'exponential'],
+        tooltip: 'Composition profile y(x): linear, parabolic, or exponential (notch).',
+      },
+      {
+        key: 'grading_direction', label: 'direction', kind: 'select',
+        options: ['front_to_back', 'back_to_front'],
+        tooltip: 'Which face the grade runs toward (back_to_front flips y).',
+      },
+      {
+        key: 'grading_bowing', label: '<i>b</i>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: '0',
+        tooltip: 'Alloy bowing in E_g(y) = (1-y)·E_front + y·E_back − b·y(1-y). 0 = linear.',
+      },
+      {
+        key: 'grading_char_length', label: '<i>L</i><sub>grade</sub>',
+        kind: 'numeric-optional', unit: 'm', placeholder: 'linear',
+        tooltip: 'Characteristic length for the exponential (notch) profile. Unused for linear/parabolic.',
+      },
+      {
+        key: 'grading_N_mult', label: '<i>N</i><sub>mult</sub>',
+        kind: 'numeric-optional', unit: '', placeholder: '1',
+        tooltip: 'Mesh refinement factor for this layer — raise (2–4) for steep notches.',
+      },
+    ],
+  },
 ]
 
 // Module-level cache for optical-material option list. Populated once per
@@ -194,11 +242,22 @@ function renderField(layer: LayerConfig, idx: number, f: FieldDef): string {
   let control: string
   switch (f.kind) {
     case 'numeric':
+    case 'numeric-optional':
+      // Same control; the kinds differ only on READ — 'numeric-optional'
+      // treats an empty input as "absent" (omits the key) rather than 0.
       control = numAttr(id, layer[f.key] as number | undefined, {
         placeholder: f.placeholder,
         title: f.tooltip,
       })
       break
+    case 'select': {
+      const cur = (layer[f.key] as string | undefined) ?? (f.options?.[0] ?? '')
+      const opts = (f.options ?? [])
+        .map(o => `<option value="${escapeHtml(o)}"${cur === o ? ' selected' : ''}>${escapeHtml(o)}</option>`)
+        .join('')
+      control = `<select class="num-input" id="${id}">${opts}</select>`
+      break
+    }
     case 'select-optical-material':
       control = renderOpticalMaterialSelect(idx, layer.optical_material)
       break
@@ -565,6 +624,21 @@ export function readDeviceEditor(
             ;(next as unknown as Record<string, number>)[f.key as string] = parseNum(id, original_v)
             break
           }
+          case 'numeric-optional': {
+            // Empty input → null → omit the key (absent / disabled sentinel),
+            // so an empty Eg_back/chi_back keeps the layer ungraded rather
+            // than coercing to 0 (which would mis-mark it graded).
+            const val = parseNumOrNull(id, (layer[f.key] as number | undefined) ?? null)
+            const rec = next as unknown as Record<string, unknown>
+            if (val === null || val === undefined) delete rec[f.key as string]
+            else rec[f.key as string] = val
+            break
+          }
+          case 'select': {
+            const cur = (layer[f.key] as string | undefined) ?? (f.options?.[0] ?? '')
+            ;(next as unknown as Record<string, string>)[f.key as string] = parseText(id, cur)
+            break
+          }
           case 'select-optical-material': {
             next.optical_material = parseOpticalMaterial(idx, layer.optical_material)
             break
@@ -575,6 +649,18 @@ export function readDeviceEditor(
           }
         }
       }
+    }
+    // Keep ungraded layers clean: with no back endpoint the layer is not
+    // graded, so strip any stray grading-spec keys (the 'select' reads always
+    // emit a profile/direction default) — leaves the payload bit-identical to
+    // a layer that never had grading fields.
+    if (next.Eg_back == null && next.chi_back == null) {
+      const g = next as unknown as Record<string, unknown>
+      delete g.grading_profile
+      delete g.grading_direction
+      delete g.grading_bowing
+      delete g.grading_char_length
+      delete g.grading_N_mult
     }
     return next
   })
