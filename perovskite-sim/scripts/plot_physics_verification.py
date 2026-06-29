@@ -112,7 +112,10 @@ for j, (label, V) in enumerate(COLS):
             + "  (interfaces excl.)", transform=aJ.transAxes, ha="center", fontsize=8.5, color="0.25")
     if j == 0:
         aJ.set_ylabel(r"current density (mA cm$^{-2}$)")
-        aJ.legend(loc="center left", fontsize=8.5, ncol=1)
+        # center-right: J_n plateaus near J_total at the top and J_p decays to
+        # ~0 at the bottom by mid-depth, leaving an empty band on the right.
+        # center-left overlapped the J_n / J_p crossover.
+        aJ.legend(loc="center right", fontsize=8.5, ncol=1)
     for i, nm in enumerate(names):
         xc = 0.5 * (edges_nm[i] + edges_nm[i + 1])
         aJ.text(xc, 1.02, nm, transform=aJ.get_xaxis_transform(),
@@ -135,7 +138,10 @@ for j, (label, V) in enumerate(COLS):
     aR.text(0.025, 0.95, tags[1][j], transform=aR.transAxes, fontsize=13, fontweight="bold", va="top")
     if j == 0:
         aR.set_ylabel(r"recombination $R$ (cm$^{-3}$ s$^{-1}$)")
-        aR.legend(loc="lower center", fontsize=8.5, ncol=2)
+        # upper-right: at short circuit the recombination peaks near the HTL and
+        # decays away within the first ~250 nm, so the upper-right of the panel
+        # is empty. lower-center sat on the decaying tails.
+        aR.legend(loc="upper right", fontsize=8.5, ncol=2)
 
 ylo = min(axes[1, 0].get_ylim()[0], axes[1, 1].get_ylim()[0])
 for j in (0, 1):
