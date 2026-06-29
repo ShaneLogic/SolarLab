@@ -84,7 +84,11 @@ def draw(ax, bd, title, tag, annotate_qv=False):
     ax.set_title(title, fontsize=12.5, pad=16)
     ax.text(0.025, 0.95, tag, transform=ax.transAxes, fontsize=13,
             fontweight="bold", va="top", ha="left")
-    ax.legend(loc="center left", fontsize=11, handlelength=1.9,
+    # Upper-right: clears the bands in both panels — the dark panel's E_C
+    # descends to the right (open triangle above it) and the illuminated panel's
+    # E_C sits flat near -4.3 with empty space above. center-left overlapped the
+    # E_C / E_V curves.
+    ax.legend(loc="upper right", fontsize=11, handlelength=1.9,
               borderpad=0.5, labelspacing=0.4)
 
 
