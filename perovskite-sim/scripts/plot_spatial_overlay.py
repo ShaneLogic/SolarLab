@@ -17,7 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.ticker import SymmetricalLogLocator
+from matplotlib.ticker import SymmetricalLogLocator, FixedLocator
 from scipy.interpolate import PchipInterpolator
 
 plt.rcParams.update({
@@ -149,9 +149,13 @@ for tag, (V, col, lab) in BIAS.items():
 aE.axhline(0, color="0.6", lw=0.8)
 aE.set_yscale("symlog", linthresh=1.0e5)
 aE.set_ylim(-1.0e16, 1.0e16)
-# Thin the symlog decade ticks: label every 2 decades, minor mark every decade
-# (autoscaled per-decade labels over 11 decades/side overlap illegibly).
-aE.yaxis.set_major_locator(SymmetricalLogLocator(base=100.0, linthresh=1.0e5))
+# Label only well-separated decades (every 3) ABOVE the 1e5 linear threshold,
+# plus zero. The auto SymmetricalLogLocator(base=100) emits powers of 100 —
+# including 1e0/1e2/1e4, which sit *below* linthresh in the compressed near-zero
+# linear band and pile their labels on top of each other. A FixedLocator skips
+# that band; minor decade marks stay (unlabeled) for scale.
+_E_MAJOR = [0.0] + [s * 10.0 ** e for e in (6, 9, 12, 15) for s in (1.0, -1.0)]
+aE.yaxis.set_major_locator(FixedLocator(_E_MAJOR))
 aE.yaxis.set_minor_locator(SymmetricalLogLocator(base=10.0, linthresh=1.0e5))
 aE.set_ylabel(r"electric field  (V m$^{-1}$)")
 aE.set_xlabel("Depth (nm)")
