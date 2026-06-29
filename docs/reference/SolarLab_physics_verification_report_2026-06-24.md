@@ -23,7 +23,7 @@ coincident Fermi level at zero-current equilibrium (terminal current
 $J = 5\times10^{-27}~\mathrm{A\,m^{-2}}$); a quasi-Fermi-level splitting equal to
 $qV$ under bias; current continuity to a bulk relative residual of
 $1\times10^{-3}$; and an external-quantum-efficiency spectrum whose AM1.5G integral
-reproduces the full-spectrum short-circuit current density to within $2.6\%$. The
+reproduces the full-spectrum short-circuit current density to within $0.6\%$. The
 spatial diagnostics localise the dominant recombination loss to the hole-transport-layer
 heterointerface and resolve the built-in field collapsing from the short-circuit to
 the open-circuit condition. The capacitance--voltage analysis correctly identifies
@@ -218,13 +218,13 @@ short-circuit current densities.}
 
 The quantum-efficiency spectrum closes the optical--electrical consistency loop. The
 collection plateau sits near unity across the visible, falls sharply at the
-$\approx 765~\mathrm{nm}$ absorber band edge (consistent with $E_g \approx 1.6~\mathrm{eV}$),
+$\approx 781~\mathrm{nm}$ absorber band edge (consistent with $E_g \approx 1.59~\mathrm{eV}$),
 and dips in the blue where parasitic absorption in the glass and hole-transport-layer window
 removes short-wavelength photons before they reach the absorber. The decisive test is the
 current integral: the short-circuit current density obtained by integrating
 $\mathrm{EQE}(\lambda)$ against the AM1.5G reference spectrum,
-$J_{sc} = 24.4~\mathrm{mA\,cm^{-2}}$, reproduces the full-spectrum value of
-$23.8~\mathrm{mA\,cm^{-2}}$ to within $2.6\%$. The agreement verifies that the
+$J_{sc} = 23.9~\mathrm{mA\,cm^{-2}}$, reproduces the full-spectrum value of
+$23.8~\mathrm{mA\,cm^{-2}}$ to within $0.6\%$. The agreement verifies that the
 transfer-matrix optics and the drift--diffusion collection are mutually consistent.
 
 ### 3.7 Capacitance--voltage analysis
@@ -258,7 +258,7 @@ $10^{-3}$) and the correct hand-off between electron and hole currents across th
 The *recombination* is resolved by mechanism and spatially localised to the
 hole-transport-layer interface, consistent across the recombination-profile and
 generation--recombination diagnostics. The *optics* are confirmed by the quantum-efficiency
-integral reproducing the short-circuit current to $2.6\%$. No internal inconsistency is
+integral reproducing the short-circuit current to $0.6\%$. No internal inconsistency is
 observed at any operating point.
 
 Two capabilities exercised by the reference SCAPS-family literature lie outside the present
@@ -276,7 +276,7 @@ reference device and read directly from the solver's internal state, establish t
 SolarLab drift--diffusion simulator is internally consistent and physically correct: it
 satisfies detailed balance at equilibrium, the $qV$ quasi-Fermi splitting under bias,
 current continuity to a part in a thousand, optical--electrical current consistency to
-$2.6\%$, and the correct fully-depleted electrostatic signature of an intrinsic absorber.
+$0.6\%$, and the correct fully-depleted electrostatic signature of an intrinsic absorber.
 The verification is fully reproducible from the device configuration. On the basis of this
 evidence the solver's electrostatics, transport, recombination, and optics are sound on the
 reference device; the only excluded behaviours are two clearly delineated transport
