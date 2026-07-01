@@ -45,6 +45,7 @@ export function mountSpatialPane(container: HTMLElement, opts: SpatialPaneOption
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-sp', 'Starting job…')
 
     const isDark = readCheck('sp-dark', false)

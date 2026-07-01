@@ -40,6 +40,7 @@ export function mountSunsVocPane(container: HTMLElement, opts: SunsVocPaneOption
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-sv', 'Starting job\u2026')
 
     const sunsStr = container.querySelector<HTMLInputElement>('#sv-suns')!.value

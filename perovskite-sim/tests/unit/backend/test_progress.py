@@ -61,6 +61,35 @@ def test_reporter_eta_monotone_decreasing():
     assert etas[0] >= etas[-1]
 
 
+def test_reporter_eta_baseline_resets_on_stage_change():
+    """A new stage restarts the ETA baseline so a slow kickoff phase does not
+    inflate the next phase's ETA (its first sample reports eta_s=None again)."""
+    reporter = ProgressReporter()
+    reporter.report("jv_init", 0, 30)          # kickoff — first sample, eta None
+    time.sleep(0.05)
+    reporter.report("jv_forward", 1, 30)       # new stage — baseline resets
+    time.sleep(0.05)
+    reporter.report("jv_forward", 2, 30)       # same stage — eta computed
+
+    events: list[ProgressEvent] = []
+    while True:
+        try:
+            ev = reporter.drain(timeout=0.0)
+        except queue.Empty:
+            break
+        if ev is None:
+            break
+        events.append(ev)
+
+    assert events[0].stage == "jv_init"
+    assert events[0].eta_s is None
+    # First sample of the NEW stage also has no ETA (fresh baseline), rather
+    # than an ETA computed off the jv_init timestamp (which would be inflated).
+    assert events[1].stage == "jv_forward"
+    assert events[1].eta_s is None
+    assert events[2].eta_s is not None and events[2].eta_s >= 0.0
+
+
 def test_reporter_finish_marks_done():
     reporter = ProgressReporter()
     reporter.report("impedance", 0, 3)

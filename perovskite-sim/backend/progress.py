@@ -37,6 +37,7 @@ class ProgressReporter:
         self._lock = threading.Lock()
         self._first_report_time: Optional[float] = None
         self._first_report_current: int = 0
+        self._last_stage: Optional[str] = None
 
     def report(
         self,
@@ -45,12 +46,19 @@ class ProgressReporter:
         total: int,
         message: str = "",
     ) -> None:
-        """Post a progress update, computing a best-effort ETA on the fly."""
+        """Post a progress update, computing a best-effort ETA on the fly.
+
+        The ETA baseline resets whenever ``stage`` changes so that a slow
+        kickoff phase (e.g. the silent illuminated-steady-state settle
+        reported as ``*_init``) does not inflate the following phase's ETA,
+        and each phase's ETA is estimated from its own first sample.
+        """
         now = time.monotonic()
         with self._lock:
-            if self._first_report_time is None:
+            if self._first_report_time is None or stage != self._last_stage:
                 self._first_report_time = now
                 self._first_report_current = current
+                self._last_stage = stage
                 eta: Optional[float] = None
             else:
                 elapsed = now - self._first_report_time

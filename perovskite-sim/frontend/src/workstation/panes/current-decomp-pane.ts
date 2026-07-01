@@ -46,6 +46,7 @@ export function mountCurrentDecompPane(container: HTMLElement, opts: CurrentDeco
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-cd', 'Starting job…')
 
     const isDark = readCheck('cd-dark', false)

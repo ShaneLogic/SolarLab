@@ -40,6 +40,7 @@ export function mountDegradationPane(container: HTMLElement, opts: DegradationPa
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-deg', 'Starting job…')
 
     const params = {

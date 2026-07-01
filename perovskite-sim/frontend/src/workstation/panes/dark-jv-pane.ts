@@ -40,6 +40,7 @@ export function mountDarkJVPane(container: HTMLElement, opts: DarkJVPaneOptions)
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-djv', 'Starting job\u2026')
 
     const params = {

@@ -82,6 +82,7 @@ export function mountVocGrainSweepPane(
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-vgs', 'Starting job…')
 
     const params = {

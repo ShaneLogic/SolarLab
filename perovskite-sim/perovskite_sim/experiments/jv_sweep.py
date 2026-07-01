@@ -779,6 +779,14 @@ def run_jv_sweep(
             mat, G_optical=np.asarray(fixed_generation, dtype=float).copy()
         )
 
+    # Kick off progress BEFORE the initial equilibration solve. That solve
+    # (solve_illuminated_ss / dark settle) can be slow on stiff, high-mobility
+    # stacks and emits nothing itself, so without this frame the UI sits at a
+    # frozen "Idle 0%" for the whole settle. current=0 marks the indeterminate
+    # "equilibrating" phase; the sweep loop then reports "jv_forward" from 1.
+    if progress is not None:
+        progress("jv_init", 0, n_points, "equilibrating")
+
     # Start from the appropriate equilibrium state:
     # - Dark mode: use dark equilibrium directly (no illumination settle)
     # - Fixed generation: inline the illuminated-SS logic with overridden mat

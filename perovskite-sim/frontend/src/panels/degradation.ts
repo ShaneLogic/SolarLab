@@ -37,6 +37,7 @@ export async function mountDegradationPanel(root: HTMLElement): Promise<void> {
   btn.addEventListener('click', async () => {
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-deg', 'Starting job…')
     try {
       const device = devicePanel.getConfig()

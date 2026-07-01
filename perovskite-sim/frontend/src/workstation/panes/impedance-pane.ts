@@ -41,6 +41,7 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-imp', 'Starting job…')
 
     const params = {
