@@ -723,6 +723,26 @@ input[type="number"] {
 }
 .progress-fill.done { background: linear-gradient(90deg, #16a34a, #4ade80); }
 .progress-fill.error { background: linear-gradient(90deg, #dc2626, #f87171); }
+/* Indeterminate "equilibrating" state: full-width barber-pole stripes that
+   scroll, signalling activity while the initial solve emits no percentage. */
+.progress-fill.indeterminate {
+  width: 100%;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--primary) 0, var(--primary) 10px,
+    #7aa7fb 10px, #7aa7fb 20px
+  );
+  background-size: 40px 40px;
+  animation: progress-stripes 1s linear infinite;
+  transition: none;
+}
+@keyframes progress-stripes {
+  from { background-position: 0 0; }
+  to   { background-position: 40px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill.indeterminate { animation: none; }
+}
 .progress-footer {
   display: flex;
   justify-content: space-between;

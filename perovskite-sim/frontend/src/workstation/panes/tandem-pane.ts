@@ -115,6 +115,7 @@ export function mountTandemPane(container: HTMLElement): void {
     stackViz.clear()
     resultsEl.innerHTML = ''
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-tandem', 'Dispatching tandem job…')
 
     try {

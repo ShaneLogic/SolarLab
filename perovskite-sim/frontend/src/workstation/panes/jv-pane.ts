@@ -62,6 +62,10 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     }
     btn.disabled = true
     progressBar.reset()
+    // Show an active "equilibrating" state immediately: the initial
+    // steady-state solve emits no progress and can be slow, so without this
+    // the bar would sit at a frozen 0% until the first sweep point lands.
+    progressBar.busy('Equilibrating…')
     setStatus('status-jvp', 'Starting job…')
 
     const wantDecomp = readCheck('jvp-decomp', false)

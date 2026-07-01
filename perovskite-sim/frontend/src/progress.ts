@@ -3,6 +3,12 @@ import type { ProgressEvent } from './types'
 export interface ProgressBarHandle {
   readonly root: HTMLElement
   update(ev: ProgressEvent): void
+  /**
+   * Show an indeterminate (animated, no percentage) "working" state. Use on
+   * run start so the bar signals activity during the initial equilibration
+   * solve — which can be slow and emits no progress — instead of a frozen 0%.
+   */
+  busy(label?: string): void
   done(): void
   error(message: string): void
   reset(): void
@@ -121,6 +127,8 @@ export function createProgressBar(container: HTMLElement): ProgressBarHandle {
   }
 
   function stageLabel(stage: string): string {
+    // Any "*_init" kickoff stage is the pre-loop equilibration phase.
+    if (stage.endsWith('_init')) return 'Equilibrating…'
     switch (stage) {
       case 'jv_forward': return 'J–V forward sweep'
       case 'jv_reverse': return 'J–V reverse sweep'
@@ -131,33 +139,60 @@ export function createProgressBar(container: HTMLElement): ProgressBarHandle {
     }
   }
 
+  // Render the animated, percentage-less "working" state. Used both by busy()
+  // (client-initiated on run start) and by update() when a kickoff frame with
+  // current=0 (or total=0) arrives — neither has a meaningful percentage.
+  function setIndeterminate(label: string, message: string): void {
+    fillEl.classList.remove('done', 'error')
+    fillEl.classList.add('indeterminate')
+    fillEl.style.width = ''      // hand width back to the CSS animation
+    stageEl.textContent = label
+    percentEl.textContent = ''
+    renderProgressMessage(messageEl, message)
+    etaEl.textContent = ''
+  }
+
   return {
     root,
     update(ev) {
-      fillEl.classList.remove('done', 'error')
-      const pct = ev.total > 0 ? Math.round((100 * ev.current) / ev.total) : 0
+      // A kickoff / phase-start frame (current<=0) or an unknown total has no
+      // meaningful percentage — show the indeterminate "equilibrating" state.
+      if (ev.current <= 0 || ev.total <= 0) {
+        setIndeterminate(stageLabel(ev.stage), ev.message ?? '')
+        return
+      }
+      fillEl.classList.remove('done', 'error', 'indeterminate')
+      const pct = Math.round((100 * ev.current) / ev.total)
       fillEl.style.width = `${pct}%`
       percentEl.textContent = `${pct}%`
       stageEl.textContent = stageLabel(ev.stage)
       renderProgressMessage(messageEl, ev.message ?? '')
       etaEl.textContent = fmtEta(ev.eta_s)
     },
+    busy(label = 'Equilibrating…') {
+      setIndeterminate(label, '')
+    },
     done() {
       fillEl.classList.add('done')
-      fillEl.classList.remove('error')
+      fillEl.classList.remove('error', 'indeterminate')
       fillEl.style.width = '100%'
       percentEl.textContent = '100%'
       etaEl.textContent = 'Done'
     },
     error(message) {
+      // If the failure hit during the indeterminate phase the fill has no
+      // inline width — pin it full so the red bar is visible; otherwise leave
+      // the determinate width where it stopped.
+      const wasIndeterminate = fillEl.classList.contains('indeterminate')
       fillEl.classList.add('error')
-      fillEl.classList.remove('done')
+      fillEl.classList.remove('done', 'indeterminate')
+      if (wasIndeterminate) fillEl.style.width = '100%'
       stageEl.textContent = 'Error'
       renderProgressMessage(messageEl, message)
       etaEl.textContent = ''
     },
     reset() {
-      fillEl.classList.remove('done', 'error')
+      fillEl.classList.remove('done', 'error', 'indeterminate')
       fillEl.style.width = '0%'
       percentEl.textContent = '0%'
       stageEl.textContent = 'Idle'

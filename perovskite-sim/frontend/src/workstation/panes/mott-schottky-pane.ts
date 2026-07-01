@@ -42,6 +42,7 @@ export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottky
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-ms', 'Starting job\u2026')
 
     const vlo = readNum('ms-vlo', -0.3)

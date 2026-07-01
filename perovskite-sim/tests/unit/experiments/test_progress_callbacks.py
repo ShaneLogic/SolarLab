@@ -16,6 +16,9 @@ def test_jv_sweep_reports_progress():
         progress=lambda stage, cur, tot, msg: events.append((stage, cur, tot)),
     )
     stages = {e[0] for e in events}
+    # A kickoff frame fires before the (silent, sometimes slow) initial
+    # equilibration solve so the UI shows activity instead of a frozen 0%.
+    assert events[0] == ("jv_init", 0, 5)
     assert "jv_forward" in stages
     assert "jv_reverse" in stages
     fwd_counts = [cur for stage, cur, _ in events if stage == "jv_forward"]

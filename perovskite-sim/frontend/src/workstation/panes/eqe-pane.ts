@@ -56,6 +56,7 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
     if (banner) banner.style.display = 'none'
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-eqe', 'Starting job\u2026')
 
     const lmin = readNum('eqe-lmin', 300)

@@ -41,6 +41,7 @@ export function mountTPVPane(container: HTMLElement, opts: TPVPaneOptions): void
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-tpv', 'Starting job…')
 
     const params = {

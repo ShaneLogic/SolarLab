@@ -42,6 +42,7 @@ export function mountVocTPane(container: HTMLElement, opts: VocTPaneOptions): vo
     }
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-voct', 'Starting job…')
 
     const params = {

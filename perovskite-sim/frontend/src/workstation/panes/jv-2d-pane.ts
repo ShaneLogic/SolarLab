@@ -106,6 +106,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
     refreshActivePhysics()
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-jv2d', 'Starting job…')
 
     const Lx_nm = readNum('jv2d-Lx-nm', 500)

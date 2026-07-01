@@ -57,6 +57,7 @@ export function mountELPane(container: HTMLElement, opts: ELPaneOptions): void {
     if (banner) banner.style.display = 'none'
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-el', 'Starting job…')
 
     const params = {

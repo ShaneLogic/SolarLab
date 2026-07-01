@@ -46,6 +46,7 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
   btn.addEventListener('click', async () => {
     btn.disabled = true
     progressBar.reset()
+    progressBar.busy()
     setStatus('status-jv', 'Starting job…')
     try {
       const device = devicePanel.getConfig()
