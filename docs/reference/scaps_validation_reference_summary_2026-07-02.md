@@ -1,6 +1,6 @@
 ---
 title: "Validation of the SolarLab Device Simulator against SCAPS-1D --- Transient (f = 0.53 / 0.66) vs Steady-State Interface-States Comparison"
-date: "2026-06-22"
+date: "2026-07-02"
 header-includes: |
   \usepackage{float}
   \makeatletter
@@ -24,6 +24,25 @@ header-includes: |
 ---
 
 # Summary
+
+**2026-07-02 revision --- transient contact-reservoir fix + extended CBO sweep.**
+Two updates since 2026-06-22. **(i)** The ETL-donor-doping direction --- previously
+the one trend no de-spike fraction could fix (Section 4.1) --- is now recovered on
+the **transient** path by a work-function contact-reservoir floor
+(`flat_band_metal_contacts`, $\phi_B$ = 0.42 eV; shipped on `scaps_mirror_v2`):
+V~oc~ brackets all eleven doping points and rises with doping, RMS 39 mV vs SCAPS.
+The root cause was the contact carrier reservoir tied to the semiconductor doping,
+which starves the near-insulating low-N~D~ cathode; the floor supplies the metal
+work-function density instead and is dormant at normal doping (bit-identical
+elsewhere). This **supersedes** the earlier "structural, needs the
+interface-plane-states driver" verdict *for direction and physicality* (the
+Nd_ETL figure and Section 4.1 note are updated). **(ii)** The ETL/PVK CBO sweep
+(Section 4) is extended to $\Delta E_C$ = +1.0 eV: the transient reproduces the
+positive-spike **cell death** --- J~sc~ / FF / PCE collapse at $\Delta E_C \approx$
++0.7 eV (vs SCAPS +0.5) while V~oc~ stays flat, and the device goes dead
+(J~sc~ → 0) beyond --- confirming the spike blocks electron *collection*, not the
+open-circuit voltage. All other results are unchanged from the 2026-06-22 revision
+below.
 
 **2026-06-22 revision --- de-spike fraction comparison.** This revision supersedes the 2026-06-15 report by running the complete validation suite (base operating point + all eleven single-variable sweeps) at **two values of the SCAPS-emulation de-spike fraction** `het_recomb_despike`: **f = 0.53** (calibrated to land the base V~oc~ on SCAPS) and **f = 0.66** (a higher fraction that tightens the responding-sweep magnitudes). Every figure in Section 4 now overlays SCAPS against *both* SolarLab fractions, and Tables 1b and 2 tabulate the base absolutes and per-sweep closure at each. Headline: raising f from 0.53 to 0.66 tightens five responding sweeps toward SCAPS (CBO 85->88 %, perovskite-CB bulk N~t~ 69->94 %, PVK/ETL interface N~t~ 72->80 %, PVK/ETL interface E~t~ 23->49 %) but **over-shoots the base V~oc~ to +13 mV** (vs -4 mV at f = 0.53) and **flips the PVK-donor-doping sweep to a direction mismatch**; the ETL-donor-doping mismatch persists at both fractions (it needs the interface-plane states, Section 5.3). f = 0.53 is the recommended emulation default; f = 0.66 trades base-absolute accuracy and one sweep direction for tighter trend magnitudes. **This revision additionally overlays a third SolarLab configuration: the steady-state interface-plane-states driver with a newly calibrated per-interface channel (`iface_state_calibration_factor` = 0.02 HTL/PVK, 0.10 PVK/ETL).** It is the only configuration that recovers the ETL-donor-doping rising direction both transient fractions get backwards, and the calibration brings its over-strong interface channel from base −61 mV / HTL/PVK N~t~ ~12× over to base −0.1 mV / HTL/PVK N~t~ 1.0× of SCAPS, fixing the Nd_ETL direction (flat → rising) with all interface directions matched; the residual sweep-*magnitude* errors (the Nd_ETL V~oc~ range is calibration-insensitive and window-sensitive — 52 % closure over N~D~ = 1e13–1e18 vs 189 % over the wider SCAPS window, i.e. not pinned — and PVK/ETL N~t~ holds at 63 %) are **structural**: the per-interface scalar is a rate knob that sets absolutes / base, not sweep amplitudes, so closing them needs a change to the interface-state response model (Section 5.3). The SS-states curves are shown in all four panels (V~oc~ / J~sc~ / FF / PCE) of each Section-4 figure (Table 1c gives its base absolutes; Table 2 its per-sweep V~oc~ closure). The remaining narrative (root-cause, interface residual, steady-state cross-validation) is unchanged from 2026-06-15 and retained below.
 
@@ -154,7 +173,7 @@ Each of the eleven sweeps is a four-panel overlay (V~oc~ / J~sc~ / FF / PCE). Fo
 
 ![ETL/PVK conduction-band offset ($\Delta E_C$). Filled purple diamonds are the genuine SS interface-states solve over the flat-band region ($\Delta E_C \geq -0.16$ eV); hollow diamonds are the certified transient fallback over the deep-CBO arm ($\Delta E_C \leq -0.2$ eV), where the collapsed junction is unreachable by the SS Newton. The SS curve sits on the transient throughout --- CBO is a band-offset effect, so SS $\approx$ the transient (not interface-limited).](../figures/scaps_ss_compare/sweep_CHI_ETL.png){width=86%}
 
-![ETL donor doping (N~D~). The transient curves are U-shaped (direction mismatch); the SS interface-states V~oc~ rises with doping, matching the SCAPS direction.](../figures/scaps_ss_compare/sweep_Nd_ETL.png){width=86%}
+![ETL donor doping (N~D~). *Updated 2026-07-02:* with the work-function contact-reservoir floor (`flat_band_metal_contacts`, $\phi_B$ = 0.42 eV) the transient curves now bracket the full doping range and rise with doping at low N~D~ — the contact starvation that previously left the three lowest points unbracketed / on an unphysical &gt;E~g~ branch is fixed (RMS 39 mV vs SCAPS at f = 0.53); a shallow mid-doping de-spike residual (the ~10^13^–10^16^ dip) remains. The SS interface-states V~oc~ also rises with doping. All three SolarLab configurations now match the SCAPS rising direction.](../figures/scaps_ss_compare/sweep_Nd_ETL.png){width=86%}
 
 ![PVK donor doping (N~D,PVK~).](../figures/scaps_ss_compare/sweep_Nd_PVK.png){width=86%}
 
@@ -210,6 +229,28 @@ enters the solution; and the interface recombination is sampled at bulk grid
 nodes where the band-offset pile-up swamps the doping-dependent ETL selectivity.
 De-spike acts only on bulk Auger, so it cannot reach either mechanism.
 
+**Update (2026-07-02) --- the transient path now recovers this direction too.**
+A root-cause reanalysis pinned the specific missing physics: SolarLab's contact
+carrier reservoir was tied to the semiconductor doping ($n_R = N_{D,ETL}$), so at
+$N_{D,ETL} \le \sim$10^12^ cm<sup>−3</sup> the cathode *starves* and the transient forward
+sweep finds no physical $J=0$ crossing (V~oc~ unbracketed, or on an unphysical
+$>E_g$ branch) --- the actual origin of the U-shape's missing/mismatched low arm.
+It is the contact **model**, not the solver: the steady-state Newton fails
+*identically* with the same ideal pin, and neither `flat_band_contacts` nor
+finite-S Robin contacts fix it (all measured). Adding SCAPS's flat-band-metal
+contact convention --- flooring each contact's *majority-carrier* reservoir at the
+work-function density $\max(N_{D/A}\text{-eq},\, N_{C/V}\,e^{-\phi_B/V_T})$
+(`flat_band_metal_contacts`, doping-sign selected, and *dormant* at heavily-doped
+contacts so it is bit-identical everywhere except the weakly-doped contact it
+rescues) --- makes the **transient** V~oc~ bracket all eleven points and rise with
+doping: 0.98 → 1.17 V (f = 0.53, $\phi_B$ = 0.42 eV), RMS 39 mV vs SCAPS, all
+physical. The Section-4 ETL-doping figure now uses this fixed transient path. The
+earlier "structural, needs the interface-plane-states driver" verdict is
+**superseded for direction and physicality**; the remaining residuals are a
+shallow mid-doping de-spike dip (10^13^–10^16^) and a low-doping absolute ~80–120 mV
+under SCAPS (the reservoir arm is steeper than SCAPS's flat-then-steep shape).
+Shipped on `scaps_mirror_v2` (commit `b40ec68`); default-off elsewhere.
+
 Routing the same sweep through the steady-state interface-plane-states driver
 (`solve_voc_ss(iface_states=True)`, which uses the doping-dependent flat-band
 $V_{bi}$ and live interface-plane carrier densities) recovers the SCAPS
@@ -221,11 +262,12 @@ though the interface channel over-responds in magnitude and the absolute sits
 The cost is ~0.5-12 min per V~oc~ point vs 7 s for the transient, which is why
 the eleven-sweep figures above use the fast transient path.
 
-![ETL donor doping V~oc~: the transient de-spike curves (f=0.53 blue, f=0.66
-green) are U-shaped --- direction mismatch --- while the steady-state
-interface-states driver (purple) rises monotonically with doping, matching the
-SCAPS direction. Magnitude over-responds and the absolute sits below SCAPS (the
-interface-channel calibration residual).
+![ETL donor doping V~oc~ (*predates the 2026-07-02 contact-reservoir fix* — see
+the update note above and the Section-4 panels for the fixed transient): the
+transient de-spike curves (f=0.53 blue, f=0.66 green) are U-shaped --- direction
+mismatch --- while the steady-state interface-states driver (purple) rises
+monotonically with doping, matching the SCAPS direction. Magnitude over-responds
+and the absolute sits below SCAPS (the interface-channel calibration residual).
 ](../figures/scaps_despike_compare/sweep_Nd_ETL_SS_voc.png){width=84%}
 
 ```{=latex}
