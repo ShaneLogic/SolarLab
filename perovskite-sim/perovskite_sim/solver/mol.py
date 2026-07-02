@@ -1209,6 +1209,37 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     n_L, p_L = _equilibrium_np(first.N_D, first.N_A, first.ni)
     n_R, p_R = _equilibrium_np(last.N_D, last.N_A, last.ni)
 
+    # Flat-band metal-contact reservoir floor (2026-07) — see DeviceStack.
+    # flat_band_metal_contacts. The contact carrier reservoir is the LARGER of
+    # the doping-equilibrium density and the metal work-function density
+    # N_C/N_V·exp(-phi_B/V_T): dormant (bit-identical) at heavily-doped
+    # contacts, doping-independent metal supply at weakly-doped contacts. Fixes
+    # the low-doping contact starvation that leaves V_oc unbracketed. LEGACY
+    # forces off; a contact layer without Nc300/Nv300 is skipped (bit-identical).
+    if getattr(stack, "flat_band_metal_contacts", False) and sim_mode.name != "legacy":
+        _gate = math.exp(-float(getattr(stack, "contact_phi_B_eV", 0.0)) / V_T_dev)
+
+        def _floor_contact(pm, n_c: float, p_c: float) -> tuple[float, float]:
+            # Floor the MAJORITY-carrier reservoir at the metal work-function
+            # density N_C/N_V·exp(-phi_B/V_T). The doping sign picks the carrier,
+            # so nip (n-type right / p-type left) and pin (the reverse) are both
+            # correct. n·p = ni² is preserved; a layer missing its DOS is left
+            # untouched (bit-identical).
+            if pm.N_D >= pm.N_A:                     # n-type contact -> electrons
+                if pm.Nc300:
+                    wf = float(pm.Nc300) * _gate
+                    if wf > n_c:
+                        return wf, float(pm.ni) ** 2 / wf
+            else:                                    # p-type contact -> holes
+                if pm.Nv300:
+                    wf = float(pm.Nv300) * _gate
+                    if wf > p_c:
+                        return float(pm.ni) ** 2 / wf, wf
+            return n_c, p_c
+
+        n_R, p_R = _floor_contact(last, n_R, p_R)
+        n_L, p_L = _floor_contact(first, n_L, p_L)
+
     # LAPACK LU of the Poisson tridiagonal — constant across the experiment,
     # so we pay the factor cost exactly once and each RHS call becomes a
     # single dgttrs back-substitution.

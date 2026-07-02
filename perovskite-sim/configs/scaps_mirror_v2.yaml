@@ -39,6 +39,8 @@
 device:
   het_recomb_despike: 0.53   # SCAPS-emulation: de-spike heterointerface bulk-Auger double-count (base 1.121->1.168)
   dos_band_potentials: true  # effective-DOS QFL fold (now the code default; pinned so the validated baseline is self-contained)
+  flat_band_metal_contacts: true   # work-function contact-reservoir floor: rescues low-N_D,ETL contact starvation so the ETL-doping V_oc trend rises with SCAPS (RMS 39 mV; the trend no de-spike fraction could fix). DORMANT at base doping -> base point + every other sweep bit-identical.
+  contact_phi_B_eV: 0.42           # metal work-function offset (calibration knob); 0.42 eV minimizes the Nd_ETL RMS vs SCAPS.
   V_bi: 1.30
   Phi: 2.5e21
   mode: fast

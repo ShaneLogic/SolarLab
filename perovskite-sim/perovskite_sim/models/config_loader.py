@@ -180,6 +180,11 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             str(dev.get("flat_band_contacts", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        flat_band_metal_contacts=(
+            str(dev.get("flat_band_metal_contacts", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        contact_phi_B_eV=_f(dev.get("contact_phi_B_eV", 0.0)),
         interface_plane_closure=(
             str(dev.get("interface_plane_closure", False)).strip().lower()
             in ("true", "1", "yes", "on")
