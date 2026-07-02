@@ -39,7 +39,7 @@ All eleven single-variable sweeps (CBO, ETL/PVK doping, the four interface/bulk
 N~t~, the four E~t~) match the SCAPS trend direction under the steady-state
 interface-plane-states driver. Detailed four-config overlay (SCAPS / transient
 f=0.53 / f=0.66 / SS interface-states), all four figures of merit per sweep:
-**`SolarLab_SCAPS_validation_2026-06-22.pdf`**.
+**`SolarLab_SCAPS_validation_2026-07-02.pdf`**.
 
 # 3. Documented boundaries (not matched — and why)
 
