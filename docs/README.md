@@ -39,6 +39,7 @@ docs/
 | `SolarLab_SCAPS_2Dscan_comparison_2026-06-23` | 2D defect-parameter (Nt×Et, Nt×ΔE_C) validation |
 | `SolarLab_SCAPS_despike_interface_findings` | De-spike + interface-plane closure decomposition |
 | `SolarLab_SCAPS_validation_2026-07-02` (+ `scaps_validation_reference_summary_2026-07-02.md`) | Transient vs steady-state interface-states comparison (2026-07-02: transient Nd_ETL contact-reservoir fix + CBO sweep extended to +1.0 eV) |
+| `SolarLab_SCAPS_model_numerics_2026-07-02` (+ `SolarLab_SCAPS_model_numerics_2026-07-02.md`) | SCAPS vs SolarLab (f=0.53) across all 11 sweeps — physical-model & numerical-algorithm attribution; publication-style figures |
 | `SolarLab_SCAPS_gap_analysis_corrected` | Mechanistic gap analysis (referenced by the 06-22 summary) |
 | `SCAPS_interface_SRH_scope.md` | Interface-SRH scope note (cited from `device.py`) |
 
