@@ -143,8 +143,13 @@ def test_low_doping_etl_converges():
         load_scaps_yaml(_V2),
         SweepPoint("p", "nd", "1e10", {"etl_doping_cm3": 1e10}),
     )
+    # Isolate the SS-driver claim from the new work-function reservoir floor
+    # (scaps_mirror_v2 now ships flat_band_metal_contacts=True): this xfail is
+    # about whether a direct steady-state SOLVE alone recovers SCAPS's
+    # low-doping V_oc, a different mechanism from the contact-reservoir floor.
     stack = _frozen_ion(dataclasses.replace(
-        base, dos_band_potentials=True, flat_band_contacts=True))
+        base, dos_band_potentials=True, flat_band_contacts=True,
+        flat_band_metal_contacts=False))
     voc = solve_voc_ss(stack, N_grid=30)
     assert np.isfinite(voc)
     assert 0.5 < voc < 1.30

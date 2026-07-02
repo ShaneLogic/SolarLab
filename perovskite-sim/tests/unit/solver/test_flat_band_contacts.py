@@ -125,7 +125,12 @@ def test_low_doped_etl_flat_band_eliminates_pseudo_crossing():
     from perovskite_sim.sweeps.device_parameter_sweep import (
         apply_sweep_point, SweepPoint,
     )
-    base = load_scaps_yaml(_V2)
+    # Isolate the flat_band_contacts behaviour under test: scaps_mirror_v2 now
+    # ships flat_band_metal_contacts=True (the work-function reservoir floor),
+    # which would itself rescue the starved-pin reference this test relies on.
+    # Turn it off so `low` is the true ideal-Dirichlet-pin baseline that shows
+    # the unphysical pseudo-crossing flat_band_contacts is meant to eliminate.
+    base = dataclasses.replace(load_scaps_yaml(_V2), flat_band_metal_contacts=False)
     low = apply_sweep_point(
         base, SweepPoint("p", "etl_doping", "1e12", {"etl_doping_cm3": 1e12}),
     )

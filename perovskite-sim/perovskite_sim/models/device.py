@@ -116,6 +116,30 @@ class DeviceStack:
     # where the default ideal-ohmic pin degenerates. Default False =
     # IonMonger-convention pins, bit-identical.
     flat_band_contacts: bool = False
+    # Flat-band METAL contact reservoir (2026-07). When True (LEGACY forces
+    # off), the contact carrier reservoir is set by the metal work function
+    # rather than the semiconductor doping: build_material_arrays FLOORS each
+    # contact's MAJORITY-carrier ohmic-equilibrium density at the flat-band
+    # metal value (the majority carrier is chosen by the contact-layer doping
+    # sign, so nip and pin stacks are both correct):
+    #   n-type contact: n = max(N_D-eq, N_C·exp(-contact_phi_B_eV / V_T))
+    #   p-type contact: p = max(N_A-eq, N_V·exp(-contact_phi_B_eV / V_T))
+    # (the paired minority is set to ni²/majority). A heavily-doped contact
+    # keeps the ideal-ohmic value (max picks doping →
+    # bit-identical); only a weakly-doped contact gets the doping-independent
+    # metal supply. This fixes the low-N_D contact starvation where the default
+    # ideal pin leaves V_oc unbracketed / on an unphysical super-bandgap branch
+    # (the ETL-donor-doping trend no de-spike fraction can fix). The floor is
+    # DORMANT at normal doping, so every sweep that holds the contacts at their
+    # base doping (CBO, Nt, Et, absorber doping, base point) is bit-identical —
+    # only weakly-doped-contact sweeps are affected. Requires the contact layer
+    # to carry Nc300/Nv300; a layer without them is skipped (bit-identical).
+    # ``contact_phi_B_eV`` is the metal work-function offset (electron barrier
+    # at the cathode / hole barrier at the anode); a calibration knob — ~0.42
+    # eV lands scaps_mirror_v2's Nd_ETL sweep within ~40 mV RMS of SCAPS.
+    # Default False = doping-derived reservoir, bit-identical.
+    flat_band_metal_contacts: bool = False
+    contact_phi_B_eV: float = 0.0
     # Two-sided Pauwels-Vanhoutte interface capture (2026-06). When True (or
     # env ``SOLARLAB_IFACE_TWOSIDED=1``), interface recombination adds the
     # mirror cross-carrier pair (electrons from the left slab x holes from
