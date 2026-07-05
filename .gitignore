@@ -18,3 +18,4 @@ perovskite-sim/notebooks/outputs/
 # Python bytecode caches anywhere in the tree
 __pycache__/
 *.pyc
+.gstack/
