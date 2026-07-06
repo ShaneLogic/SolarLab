@@ -1,0 +1,13 @@
+{
+  "cause": "physics",
+  "cycle": 0,
+  "evidence_against": [],
+  "evidence_for": [
+    "SOLARLAB_IFACE_PROJ improves badness by 21.5 (> tol 5.0)"
+  ],
+  "gap_id": "trend:Nd_ETL:V_oc",
+  "mechanism": "flag SOLARLAB_IFACE_PROJ term",
+  "predicted_delta": -21.528819173530586,
+  "verdict": "confirmed",
+  "verifier_votes": 1
+}

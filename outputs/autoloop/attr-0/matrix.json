@@ -1,0 +1,67 @@
+{
+  "baseline_val": 62.622912803976114,
+  "gap_id": "trend:Nd_ETL:V_oc",
+  "probes": [
+    {
+      "baseline_val": 62.622912803976114,
+      "delta": -21.528819173530586,
+      "kind": "flag",
+      "name": "SOLARLAB_IFACE_PROJ",
+      "note": "",
+      "ok": true,
+      "variant": {
+        "flag": "SOLARLAB_IFACE_PROJ"
+      },
+      "variant_val": 41.09409363044553
+    },
+    {
+      "baseline_val": 62.622912803976114,
+      "delta": NaN,
+      "kind": "flag",
+      "name": "SOLARLAB_IFACE_PLANE",
+      "note": "RuntimeError: probe worker timed out after 240.0s (env={'SOLARLAB_IFACE_PLANE': '1'}, jv={}) \u2014 flag likely destabilises solver convergence",
+      "ok": false,
+      "variant": {
+        "flag": "SOLARLAB_IFACE_PLANE"
+      },
+      "variant_val": NaN
+    },
+    {
+      "baseline_val": 62.622912803976114,
+      "delta": NaN,
+      "kind": "flag",
+      "name": "SOLARLAB_INTERFACE_PLANE_STATE",
+      "note": "RuntimeError: probe worker timed out after 240.0s (env={'SOLARLAB_INTERFACE_PLANE_STATE': '1'}, jv={}) \u2014 flag likely destabilises solver convergence",
+      "ok": false,
+      "variant": {
+        "flag": "SOLARLAB_INTERFACE_PLANE_STATE"
+      },
+      "variant_val": NaN
+    },
+    {
+      "baseline_val": 62.622912803976114,
+      "delta": 19.53381983947758,
+      "kind": "grid",
+      "name": "grid_n80",
+      "note": "",
+      "ok": true,
+      "variant": {
+        "n_points": 80
+      },
+      "variant_val": 82.1567326434537
+    },
+    {
+      "baseline_val": 0.0,
+      "delta": 0.011068702193388957,
+      "kind": "limiting",
+      "name": "dark_jsc",
+      "note": "dark J_sc; expect ~0",
+      "ok": true,
+      "variant": {
+        "illuminated": false
+      },
+      "variant_val": 0.011068702193388957
+    }
+  ],
+  "skipped": []
+}

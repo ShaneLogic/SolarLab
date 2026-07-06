@@ -1,0 +1,113 @@
+section,f,metric,value,scaps,unit
+base_fom,0.00,Voc_V,1.1175,1.1676,
+base_fom,0.00,Jsc_mAcm2,25.7033,26.2800,
+base_fom,0.00,FF_pct,87.9383,86.9900,
+base_fom,0.00,PCE_pct,25.2583,26.6900,
+base_fom,0.10,Voc_V,1.1238,1.1676,
+base_fom,0.10,Jsc_mAcm2,25.7082,26.2800,
+base_fom,0.10,FF_pct,88.2648,86.9900,
+base_fom,0.10,PCE_pct,25.5001,26.6900,
+base_fom,0.20,Voc_V,1.1320,1.1676,
+base_fom,0.20,Jsc_mAcm2,25.7121,26.2800,
+base_fom,0.20,FF_pct,88.2854,86.9900,
+base_fom,0.20,PCE_pct,25.6961,26.6900,
+base_fom,0.30,Voc_V,1.1431,1.1676,
+base_fom,0.30,Jsc_mAcm2,25.7152,26.2800,
+base_fom,0.30,FF_pct,87.9380,86.9900,
+base_fom,0.30,PCE_pct,25.8504,26.6900,
+base_fom,0.40,Voc_V,1.1526,1.1676,
+base_fom,0.40,Jsc_mAcm2,25.7175,26.2800,
+base_fom,0.40,FF_pct,87.6019,86.9900,
+base_fom,0.40,PCE_pct,25.9675,26.6900,
+base_fom,0.50,Voc_V,1.1608,1.1676,
+base_fom,0.50,Jsc_mAcm2,25.7192,26.2800,
+base_fom,0.50,FF_pct,87.2640,86.9900,
+base_fom,0.50,PCE_pct,26.0521,26.6900,
+base_fom,0.53,Voc_V,1.1638,1.1676,
+base_fom,0.53,Jsc_mAcm2,25.7196,26.2800,
+base_fom,0.53,FF_pct,87.3209,86.9900,
+base_fom,0.53,PCE_pct,26.1369,26.6900,
+base_fom,0.60,Voc_V,1.1721,1.1676,
+base_fom,0.60,Jsc_mAcm2,25.7204,26.2800,
+base_fom,0.60,FF_pct,87.2603,86.9900,
+base_fom,0.60,PCE_pct,26.3060,26.6900,
+base_fom,0.70,Voc_V,1.1875,1.1676,
+base_fom,0.70,Jsc_mAcm2,25.7211,26.2800,
+base_fom,0.70,FF_pct,86.6462,86.9900,
+base_fom,0.70,PCE_pct,26.4653,26.6900,
+base_fom,0.80,Voc_V,1.1957,1.1676,
+base_fom,0.80,Jsc_mAcm2,25.7214,26.2800,
+base_fom,0.80,FF_pct,86.3199,86.9900,
+base_fom,0.80,PCE_pct,26.5487,26.6900,
+base_fom,0.85,Voc_V,1.1986,1.1676,
+base_fom,0.85,Jsc_mAcm2,25.7215,26.2800,
+base_fom,0.85,FF_pct,86.1844,86.9900,
+base_fom,0.85,PCE_pct,26.5696,26.6900,
+base_fom,0.90,Voc_V,1.2004,1.1676,
+base_fom,0.90,Jsc_mAcm2,25.7216,26.2800,
+base_fom,0.90,FF_pct,86.0873,86.9900,
+base_fom,0.90,PCE_pct,26.5806,26.6900,
+base_fom,1.00,Voc_V,1.2014,1.1676,
+base_fom,1.00,Jsc_mAcm2,25.7216,26.2800,
+base_fom,1.00,FF_pct,86.0345,86.9900,
+base_fom,1.00,PCE_pct,26.5858,26.6900,
+trend,0.00,CHI_ETL,79.9,918.0,closure%
+trend,0.20,CHI_ETL,81.5,918.0,closure%
+trend,0.40,CHI_ETL,83.8,918.0,closure%
+trend,0.53,CHI_ETL,85.5,918.0,closure%
+trend,0.70,CHI_ETL,88.4,918.0,closure%
+trend,1.00,CHI_ETL,91.2,918.0,closure%
+trend,0.00,Nd_ETL,11.1,99.6,closure%
+trend,0.20,Nd_ETL,17.5,99.6,closure%
+trend,0.40,Nd_ETL,18.5,99.6,closure%
+trend,0.53,Nd_ETL,24.6,99.6,closure%
+trend,0.70,Nd_ETL,37.1,99.6,closure%
+trend,1.00,Nd_ETL,52.4,99.6,closure%
+trend,0.00,Nt_PVK ETL,53.0,281.7,closure%
+trend,0.20,Nt_PVK ETL,58.4,281.7,closure%
+trend,0.40,Nt_PVK ETL,66.7,281.7,closure%
+trend,0.53,Nt_PVK ETL,71.9,281.7,closure%
+trend,0.70,Nt_PVK ETL,81.9,281.7,closure%
+trend,1.00,Nt_PVK ETL,91.6,281.7,closure%
+trend,0.00,Nt_C_PVK,11.4,38.6,closure%
+trend,0.20,Nt_C_PVK,23.9,38.6,closure%
+trend,0.40,Nt_C_PVK,59.1,38.6,closure%
+trend,0.53,Nt_C_PVK,69.1,38.6,closure%
+trend,0.70,Nt_C_PVK,106.4,38.6,closure%
+trend,1.00,Nt_C_PVK,141.9,38.6,closure%
+trend,0.00,Et_PVK ETL,6.0,34.5,closure%
+trend,0.20,Et_PVK ETL,12.2,34.5,closure%
+trend,0.40,Et_PVK ETL,13.2,34.5,closure%
+trend,0.53,Et_PVK ETL,23.1,34.5,closure%
+trend,0.70,Et_PVK ETL,44.0,34.5,closure%
+trend,1.00,Et_PVK ETL,57.4,34.5,closure%
+trend,0.00,Nt_V_PVK,40.7,10.8,closure%
+trend,0.20,Nt_V_PVK,85.8,10.8,closure%
+trend,0.40,Nt_V_PVK,211.8,10.8,closure%
+trend,0.53,Nt_V_PVK,247.8,10.8,closure%
+trend,0.70,Nt_V_PVK,381.6,10.8,closure%
+trend,1.00,Nt_V_PVK,508.9,10.8,closure%
+trend,0.00,Nt_HTL PVK,0.0,5.2,closure%
+trend,0.20,Nt_HTL PVK,0.0,5.2,closure%
+trend,0.40,Nt_HTL PVK,0.0,5.2,closure%
+trend,0.53,Nt_HTL PVK,0.0,5.2,closure%
+trend,0.70,Nt_HTL PVK,0.0,5.2,closure%
+trend,1.00,Nt_HTL PVK,0.0,5.2,closure%
+trend,0.00,Et_HTL PVK,0.0,0.0,closure%
+trend,0.20,Et_HTL PVK,0.0,0.0,closure%
+trend,0.40,Et_HTL PVK,0.0,0.0,closure%
+trend,0.53,Et_HTL PVK,0.0,0.0,closure%
+trend,0.70,Et_HTL PVK,0.0,0.0,closure%
+trend,1.00,Et_HTL PVK,0.0,0.0,closure%
+trend,0.00,Et_C_PVK,62.0,0.4,closure%
+trend,0.20,Et_C_PVK,116.6,0.4,closure%
+trend,0.40,Et_C_PVK,290.1,0.4,closure%
+trend,0.53,Et_C_PVK,210.6,0.4,closure%
+trend,0.70,Et_C_PVK,544.7,0.4,closure%
+trend,1.00,Et_C_PVK,515.1,0.4,closure%
+trend,0.00,Et_V_PVK,61.7,0.4,closure%
+trend,0.20,Et_V_PVK,116.1,0.4,closure%
+trend,0.40,Et_V_PVK,288.7,0.4,closure%
+trend,0.53,Et_V_PVK,209.6,0.4,closure%
+trend,0.70,Et_V_PVK,542.2,0.4,closure%
+trend,1.00,Et_V_PVK,512.7,0.4,closure%
