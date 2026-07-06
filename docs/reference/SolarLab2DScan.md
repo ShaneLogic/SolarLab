@@ -92,7 +92,7 @@ as overall brightness shifts of a whole panel rather than as rescaled detail.
 ```{=latex}
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.62\textwidth]{../../outputs/scan2d/compare_ntet.png}
+\includegraphics[width=0.80\textwidth]{../../outputs/scan2d/compare_ntet.png}
 \caption{Scan A ($N_t \times E_t$) on the perovskite/ETL interface. SolarLab (upper block) and SCAPS-1D (lower block) four-panel maps of PCE, $V_{oc}$, FF and $J_{sc}$; the vertical axis is $\log_{10} N_t$ and the horizontal axis is the trap energy $E_t$.}
 \end{figure}
 ```
@@ -117,7 +117,7 @@ recombination.
 ```{=latex}
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.62\textwidth]{../../outputs/scan2d/compare_ntcbo.png}
+\includegraphics[width=0.80\textwidth]{../../outputs/scan2d/compare_ntcbo.png}
 \caption{Scan B ($N_t \times \Delta E_C$) on the perovskite/ETL interface. Panels and axes as in Figure 1, with the horizontal axis the conduction-band offset $\Delta E_C$. White cells in the SCAPS block are grid points the reference solver did not resolve.}
 \end{figure}
 ```

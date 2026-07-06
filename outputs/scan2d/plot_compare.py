@@ -39,7 +39,7 @@ def load_grids():
 
 def draw_block(fig, top, bottom, grids, limits, xvals, xlabel):
     gs = fig.add_gridspec(2, 2, top=top, bottom=bottom,
-                          left=0.075, right=0.965, hspace=0.42, wspace=0.28)
+                          left=0.085, right=0.96, hspace=0.5, wspace=0.32)
     for k, (key, lab) in enumerate(zip(METRICS, PANEL_LABELS)):
         ax = fig.add_subplot(gs[k // 2, k % 2])
         vmin, vmax = limits[key]
@@ -47,13 +47,14 @@ def draw_block(fig, top, bottom, grids, limits, xvals, xlabel):
                            np.ma.masked_invalid(grids[key]),
                            cmap="viridis", shading="flat", vmin=vmin, vmax=vmax)
         ax.set_xticks(np.arange(len(xvals)) + 0.5)
-        ax.set_xticklabels([f"{v:g}" for v in xvals], rotation=45, fontsize=9)
+        ax.set_xticklabels([f"{v:g}" for v in xvals], rotation=45, fontsize=10)
         ax.set_yticks(np.arange(len(LOGN)) + 0.5)
-        ax.set_yticklabels(LOGN, fontsize=10)
-        ax.set_xlabel(xlabel, fontsize=12)
-        ax.set_ylabel("log$_{10}$ $N_t$ (cm$^{-2}$)", fontsize=12)
-        ax.set_title(lab, fontsize=13, fontweight="bold")
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_yticklabels(LOGN, fontsize=11)
+        ax.set_xlabel(xlabel, fontsize=13)
+        ax.set_ylabel("log$_{10}$ $N_t$ (cm$^{-2}$)", fontsize=13)
+        ax.set_title(lab, fontsize=15, fontweight="bold")
+        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cb.ax.tick_params(labelsize=10)
 
 
 def draw_banner(fig, y, text, fg, bg):
@@ -63,21 +64,21 @@ def draw_banner(fig, y, text, fg, bg):
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
-    ax.text(0.02, 0.5, text, color=fg, fontsize=13, va="center", ha="left",
+    ax.text(0.02, 0.5, text, color=fg, fontsize=15, va="center", ha="left",
             transform=ax.transAxes)
 
 
 def compare_figure(sl, sc, xvals, xlabel, fname):
     limits = {k: (float(min(np.nanmin(sl[k]), np.nanmin(sc[k]))),
                   float(max(np.nanmax(sl[k]), np.nanmax(sc[k])))) for k in METRICS}
-    fig = plt.figure(figsize=(13.636, 18.573))
+    fig = plt.figure(figsize=(10.0, 13.62))
     draw_banner(fig, 0.978, "SolarLab  —  scaps_mirror_v2 (transient)",
                 fg="#1a237e", bg="#e8eaf6")
-    draw_block(fig, 0.952, 0.552, sl, limits, xvals, xlabel)
-    draw_banner(fig, 0.492, "SCAPS-1D  —  reference",
+    draw_block(fig, 0.948, 0.578, sl, limits, xvals, xlabel)
+    draw_banner(fig, 0.484, "SCAPS-1D  —  reference",
                 fg="#b71c1c", bg="#fdecea")
-    draw_block(fig, 0.466, 0.066, sc, limits, xvals, xlabel)
-    fig.savefig(OUT / fname, dpi=110)
+    draw_block(fig, 0.452, 0.062, sc, limits, xvals, xlabel)
+    fig.savefig(OUT / fname, dpi=150)
     plt.close(fig)
     print(f"wrote {OUT / fname}")
     for k in METRICS:
