@@ -7,7 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/ppt_root_cause/figures/f5_fom_bars.png"
+OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/Reasoning/figures/f5_fom_bars.png"
 REF = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/perovskite-sim/tests/integration/scaps_reference.json"
 
 # SCAPS base FOM read from reference (verify against verbatim numbers)

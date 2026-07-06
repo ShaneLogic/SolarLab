@@ -11,7 +11,7 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIG = os.path.join(HERE, "figures")
-OUT = os.path.join(HERE, "SolarLab_SCAPS_root_cause.pptx")
+OUT = os.path.join(HERE, "SolarLabSCAPS.pptx")
 GEN_DATE = "2026-06-04"
 
 # Palette

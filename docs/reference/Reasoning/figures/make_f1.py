@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, Rectangle
 
 ROOT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab"
-OUT = os.path.join(ROOT, "docs/reference/ppt_root_cause/figures/f1_voc_lever.png")
+OUT = os.path.join(ROOT, "docs/reference/Reasoning/figures/f1_voc_lever.png")
 
 plt.rcParams.update({
     "font.size": 12, "axes.titlesize": 12.5, "axes.labelsize": 12,

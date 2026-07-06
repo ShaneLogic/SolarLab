@@ -6,7 +6,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/ppt_root_cause/figures/f6_survival.png"
+OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/Reasoning/figures/f6_survival.png"
 
 # Verified findings: (label, lenses held / 3, sublabel)
 # Ordered bottom-to-top so the survivor sits at the top of the chart.

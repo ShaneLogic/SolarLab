@@ -286,7 +286,7 @@ profile exactly and verified constructively (with the correction the
 radiative-only configuration reaches its analytic detailed-balance ceiling,
 1.2535 V). Two prior hypotheses — quasi-Fermi-level dissipation across the band
 offsets and the contact boundary condition — were tested and refuted in the
-process. The full account is in `SolarLab_SCAPS_gap_analysis_corrected.pdf`.
+process. The full account is in `SolarLabSCAPSGapAnal.pdf`.
 
 **The bulk-defect sweeps: a sweep-wiring defect, found and fixed.** The
 previous revision reported the perovskite CB/VB bulk defect-density sweeps as
@@ -482,7 +482,7 @@ SOLARLAB_DOS_BAND=1 python scripts/scaps_validation_figures.py \
 ```
 
 Full technical detail is in `docs/scaps_validation_report.md`; the V~oc~
-root-cause analysis is in `SolarLab_SCAPS_gap_analysis_corrected.pdf`.
+root-cause analysis is in `SolarLabSCAPSGapAnal.pdf`.
 
 # Appendix B: Reference results with the transport correction off
 

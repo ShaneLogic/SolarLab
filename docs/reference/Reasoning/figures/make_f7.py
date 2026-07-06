@@ -16,7 +16,7 @@ RED = "#d81f2a"     # SCAPS
 GREEN = "#2e8b57"   # measured-device median band
 GREY = "#555555"
 
-OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/ppt_root_cause/figures/f7_experiment_voc.png"
+OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/Reasoning/figures/f7_experiment_voc.png"
 
 # Verified literature/anchor values (V)
 MEAS_LO, MEAS_HI = 1.05, 1.13        # measured-device Voc median band

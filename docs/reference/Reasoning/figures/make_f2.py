@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
 
 SUMMARY = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/outputs/scaps_full_off/summary.json"
-OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/ppt_root_cause/figures/f2_cbo_refute.png"
+OUT = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/Reasoning/figures/f2_cbo_refute.png"
 
 with open(SUMMARY) as f:
     data = json.load(f)
