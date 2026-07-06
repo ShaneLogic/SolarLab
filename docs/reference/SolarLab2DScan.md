@@ -74,7 +74,12 @@ the SCAPS maps.
 For legibility, the SCAPS reference maps are colour-digitised and re-rendered at
 the same scale and font size as the SolarLab maps; the digitisation was validated
 against the reported best-point values and reproduces them to the displayed
-precision (e.g. Scan~A: PCE~$=29.83\,\%$, $V_{oc}=1.250$~V).
+precision (e.g. Scan~A: PCE~$=29.83\,\%$, $V_{oc}=1.250$~V). In each comparison
+figure the SolarLab and SCAPS panels of a given figure of merit share a single
+colour scale spanning the union of the two solvers' ranges, so a colour denotes
+the same value in both blocks; systematic offsets between the solvers (e.g. the
+Scan~A $J_{sc}$ difference of ${\sim}0.56~\mathrm{mA\,cm^{-2}}$) therefore appear
+as overall brightness shifts of a whole panel rather than as rescaled detail.
 
 ```{=latex}
 \clearpage
