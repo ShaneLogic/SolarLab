@@ -1602,7 +1602,7 @@ and validation are also supplied.
 The manual was drafted from:
 
 - `docs/solarlab_manual_source_dossier.md`
-- `docs/manual/validation_evidence_2026-05-19.md`
+- `docs/manual/valEvidence260519.md`
 - `perovskite-sim/AGENTS.md`
 - `README.md`
 - `perovskite-sim/README.md`
@@ -1628,7 +1628,7 @@ Figure & Source & Reproducibility note \\
 \midrule
 \endhead
 Architecture flow & \path{docs/manual/generate_manual_figures.py} & Diagrammatic summary of repo architecture described in \path{perovskite-sim/AGENTS.md}. \\
-Validation gate summary & \path{docs/manual/validation_evidence_2026-05-19.md} & Uses pass counts and runtimes from the completed validation pass. \\
+Validation gate summary & \path{docs/manual/valEvidence260519.md} & Uses pass counts and runtimes from the completed validation pass. \\
 IonMonger reference metrics & \path{tests/integration/test_voc_benchmark.py} & Shows pinned benchmark metrics and tolerances, not a new simulation run. \\
 TMM \(J_\mathrm{sc}\) baselines & \path{tests/regression/test_tmm_baseline.py} & Shows pinned n-i-p and p-i-n TMM baselines with ±5 \(A\,m^{-2}\) tolerance. \\
 Photon-recycling window & \path{tests/regression/test_photon_recycling_voc.py} & Shows the acceptance window used by the slow regression gate. \\
