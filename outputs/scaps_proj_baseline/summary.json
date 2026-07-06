@@ -1,0 +1,66 @@
+{
+  "config": "configs/scaps_mirror_v2.yaml",
+  "reference": "tests/integration/scaps_reference.json",
+  "extracted_at": "2026-05-28",
+  "jv_kwargs": {
+    "N_grid": 30,
+    "n_points": 20,
+    "v_rate": 5.0,
+    "V_max": 1.6
+  },
+  "total_wall_time_s": 467.6142041683197,
+  "summaries": [
+    {
+      "sheet": "CHI_ETL",
+      "n_points": 14,
+      "n_voc_bracketed": 14,
+      "scaps_voc_range_full_mV": 918.038,
+      "scaps_voc_range_bracketed_subset_mV": 918.038,
+      "sl_voc_range_mV": 761.7172748224829,
+      "voc_range_closure_pct": 82.97230341472607,
+      "voc_delta_mean_mV": -106.0858279313449,
+      "voc_delta_median_mV": -140.21346284197477,
+      "voc_delta_max_abs_mV": 166.0515326316434,
+      "wall_time_s": 82.90628504753113
+    },
+    {
+      "sheet": "Nd_ETL",
+      "n_points": 11,
+      "n_voc_bracketed": 8,
+      "scaps_voc_range_full_mV": 137.06300000000016,
+      "scaps_voc_range_bracketed_subset_mV": 99.64400000000006,
+      "sl_voc_range_mV": 29.720792307011745,
+      "voc_range_closure_pct": 29.826976342792065,
+      "voc_delta_mean_mV": -89.65262661498136,
+      "voc_delta_median_mV": -82.90894587488529,
+      "voc_delta_max_abs_mV": 152.85594672277392,
+      "wall_time_s": 52.29733395576477
+    },
+    {
+      "sheet": "Nt_PVK ETL",
+      "n_points": 7,
+      "n_voc_bracketed": 6,
+      "scaps_voc_range_full_mV": 281.718,
+      "scaps_voc_range_bracketed_subset_mV": 226.661,
+      "sl_voc_range_mV": 246.1914462341227,
+      "voc_range_closure_pct": 108.61658875330238,
+      "voc_delta_mean_mV": -296.72928382387136,
+      "voc_delta_median_mV": -304.0164505219563,
+      "voc_delta_max_abs_mV": 357.75899313914704,
+      "wall_time_s": 303.4371259212494
+    },
+    {
+      "sheet": "Nt_C_PVK",
+      "n_points": 7,
+      "n_voc_bracketed": 7,
+      "scaps_voc_range_full_mV": 38.573999999999884,
+      "scaps_voc_range_bracketed_subset_mV": 38.573999999999884,
+      "sl_voc_range_mV": 0.06916681448077,
+      "voc_range_closure_pct": 0.17930941691494326,
+      "voc_delta_mean_mV": -89.08992569403316,
+      "voc_delta_median_mV": -95.79942869812852,
+      "voc_delta_max_abs_mV": 95.89835120516832,
+      "wall_time_s": 28.97016406059265
+    }
+  ]
+}

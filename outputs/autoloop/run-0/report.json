@@ -1,0 +1,34 @@
+{
+  "cycle": 0,
+  "gap_ids": [],
+  "gate_passed": true,
+  "l0_pass": true,
+  "l1_pass": true,
+  "overall": 0.8771926530800123,
+  "provenance": {
+    "config_hash": "5500c9485f6a9518430511019546933277cdc3274fd3a005182394f39d2fcf67",
+    "flags": {},
+    "git_dirty": true,
+    "git_sha": "98a739315916faa687f1dfe75d44cb97d1ea64bc",
+    "run_id": "run-0",
+    "seed": 0,
+    "timestamp": "2026-07-04T19:00:04Z"
+  },
+  "verdicts": [
+    {
+      "name": "G1_numerics",
+      "passed": true,
+      "reason": "pytest subset green"
+    },
+    {
+      "name": "G2_limiting",
+      "passed": true,
+      "reason": "limiting cases hold"
+    },
+    {
+      "name": "G3_scorecard",
+      "passed": true,
+      "reason": "no baseline; overall=0.877"
+    }
+  ]
+}
