@@ -1,10 +1,11 @@
 """Render the SolarLab-vs-SCAPS 2D-scan comparison figures (compare_ntet.png,
 compare_ntcbo.png) from the cached grids.
 
-Each figure stacks the SolarLab 4-panel block over the SCAPS-1D 4-panel block.
-For every figure of merit the two blocks share one colour scale (vmin/vmax =
-union of both grids) so colours are directly comparable between solvers; the
-unresolved SCAPS cells (NaN) stay white.
+Each figure stacks the SolarLab 4-panel block over the SCAPS-1D 4-panel block,
+with a full-width banner strip directly above each block. For every figure of
+merit the two blocks share one colour scale (vmin/vmax = union of both grids)
+so colours are directly comparable between solvers; the unresolved SCAPS cells
+(NaN) stay white.
 
 Inputs : scan2d_results.json (SolarLab, from scan2d.py), scaps_digitized.json
 Outputs: compare_ntet.png, compare_ntcbo.png
@@ -36,48 +37,47 @@ def load_grids():
     }
 
 
-def draw_block(fig, gs, row0, grids, limits, xvals, xlabel):
+def draw_block(fig, top, bottom, grids, limits, xvals, xlabel):
+    gs = fig.add_gridspec(2, 2, top=top, bottom=bottom,
+                          left=0.075, right=0.965, hspace=0.42, wspace=0.28)
     for k, (key, lab) in enumerate(zip(METRICS, PANEL_LABELS)):
-        ax = fig.add_subplot(gs[row0 + k // 2, k % 2])
+        ax = fig.add_subplot(gs[k // 2, k % 2])
         vmin, vmax = limits[key]
         im = ax.pcolormesh(np.arange(len(xvals) + 1), np.arange(len(LOGN) + 1),
                            np.ma.masked_invalid(grids[key]),
                            cmap="viridis", shading="flat", vmin=vmin, vmax=vmax)
         ax.set_xticks(np.arange(len(xvals)) + 0.5)
-        ax.set_xticklabels([f"{v:g}" for v in xvals], rotation=45, fontsize=7)
+        ax.set_xticklabels([f"{v:g}" for v in xvals], rotation=45, fontsize=9)
         ax.set_yticks(np.arange(len(LOGN)) + 0.5)
-        ax.set_yticklabels(LOGN, fontsize=8)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel("log$_{10}$ $N_t$ (cm$^{-2}$)")
-        ax.set_title(lab, fontsize=11, fontweight="bold")
+        ax.set_yticklabels(LOGN, fontsize=10)
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel("log$_{10}$ $N_t$ (cm$^{-2}$)", fontsize=12)
+        ax.set_title(lab, fontsize=13, fontweight="bold")
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
 
-def draw_banner(fig, gs, row, text, fg, bg):
-    ax = fig.add_subplot(gs[row, :])
+def draw_banner(fig, y, text, fg, bg):
+    ax = fig.add_axes([0.0, y, 1.0, 0.018])
     ax.set_facecolor(bg)
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
-    ax.text(0.005, 0.5, text, color=fg, fontsize=12, va="center", ha="left",
+    ax.text(0.02, 0.5, text, color=fg, fontsize=13, va="center", ha="left",
             transform=ax.transAxes)
 
 
 def compare_figure(sl, sc, xvals, xlabel, fname):
     limits = {k: (float(min(np.nanmin(sl[k]), np.nanmin(sc[k]))),
                   float(max(np.nanmax(sl[k]), np.nanmax(sc[k])))) for k in METRICS}
-    fig = plt.figure(figsize=(11, 15.5))
-    gs = fig.add_gridspec(6, 2, height_ratios=[0.14, 1, 1, 0.14, 1, 1],
-                          hspace=0.55, wspace=0.28,
-                          left=0.07, right=0.97, top=0.985, bottom=0.045)
-    draw_banner(fig, gs, 0, "SolarLab  —  scaps_mirror_v2 (transient)",
+    fig = plt.figure(figsize=(13.636, 18.573))
+    draw_banner(fig, 0.978, "SolarLab  —  scaps_mirror_v2 (transient)",
                 fg="#1a237e", bg="#e8eaf6")
-    draw_block(fig, gs, 1, sl, limits, xvals, xlabel)
-    draw_banner(fig, gs, 3, "SCAPS-1D  —  reference",
+    draw_block(fig, 0.952, 0.552, sl, limits, xvals, xlabel)
+    draw_banner(fig, 0.492, "SCAPS-1D  —  reference",
                 fg="#b71c1c", bg="#fdecea")
-    draw_block(fig, gs, 4, sc, limits, xvals, xlabel)
-    fig.savefig(OUT / fname, dpi=140)
+    draw_block(fig, 0.466, 0.066, sc, limits, xvals, xlabel)
+    fig.savefig(OUT / fname, dpi=110)
     plt.close(fig)
     print(f"wrote {OUT / fname}")
     for k in METRICS:
