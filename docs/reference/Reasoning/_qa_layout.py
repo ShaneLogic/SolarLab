@@ -6,8 +6,8 @@ from pptx.util import Emu
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from PIL import Image
 
-PPTX = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/ppt_root_cause/SolarLab_SCAPS_root_cause.pptx"
-FIGDIR = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/ppt_root_cause/figures"
+PPTX = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/Reasoning/SolarLabSCAPS.pptx"
+FIGDIR = "/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/SolarLab/docs/reference/Reasoning/figures"
 
 EMU_PER_IN = 914400
 prs = Presentation(PPTX)

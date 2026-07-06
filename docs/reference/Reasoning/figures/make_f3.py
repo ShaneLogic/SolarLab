@@ -122,7 +122,7 @@ fig.suptitle(
 fig.tight_layout(rect=[0, 0, 1, 0.945])
 
 OUT = ("/Users/shane/Library/CloudStorage/OneDrive-HKUST(Guangzhou)/"
-       "SolarLab/docs/reference/ppt_root_cause/figures/f3_pce_splice.png")
+       "SolarLab/docs/reference/Reasoning/figures/f3_pce_splice.png")
 fig.savefig(OUT, dpi=200, facecolor="white", bbox_inches="tight")
 plt.close(fig)
 

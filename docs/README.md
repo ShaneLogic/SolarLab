@@ -14,10 +14,8 @@ and `perovskite-sim/CLAUDE.md`.
 docs/
 ├── reference/     SolarLab vs SCAPS-1D validation deliverables
 │   ├── *.md / *.pdf        current reports (see "Reference reports" below)
-│   ├── ppt_root_cause/     slide decks + figure-generation scripts
-│   ├── _archive/           superseded report versions (kept for history)
-│   ├── 1D-SCAPS 模拟.pdf    ⎫ SCAPS source INPUTS (reference device + params)
-│   └── 1R-Parameters.xlsx  ⎭
+│   ├── Reasoning/     slide decks + figure-generation scripts
+│   └── _archive/           superseded report versions (kept for history)
 ├── manual/        SolarLab technical user manual (md + tex + pdf, figures, slides)
 ├── figures/       shared SCAPS sweep figure sets (validation / ss_compare /
 │                  despike_compare / gap_explainer) — referenced by reports
@@ -34,14 +32,13 @@ docs/
 
 | File | What |
 |------|------|
-| `SolarLab_SCAPS_parity_status_2026-06-23` | Campaign capstone — parity verdict |
-| `SolarLab_physics_verification_report_2026-06-24` | Depth-resolved physics diagnostics |
-| `SolarLab_SCAPS_2Dscan_comparison_2026-06-23` | 2D defect-parameter (Nt×Et, Nt×ΔE_C) validation |
-| `SolarLab_SCAPS_despike_interface_findings` | De-spike + interface-plane closure decomposition |
-| `SolarLab_SCAPS_validation_2026-07-02` (+ `scaps_validation_reference_summary_2026-07-02.md`) | Transient vs steady-state interface-states comparison (2026-07-02: transient Nd_ETL contact-reservoir fix + CBO sweep extended to +1.0 eV) |
-| `SolarLab_SCAPS_model_numerics_2026-07-02` (+ `SolarLab_SCAPS_model_numerics_2026-07-02.md`) | SCAPS vs SolarLab (f=0.53) across all 11 sweeps — physical-model & numerical-algorithm attribution; publication-style figures |
-| `SolarLab_SCAPS_gap_analysis_corrected` | Mechanistic gap analysis (referenced by the 06-22 summary) |
-| `SCAPS_interface_SRH_scope.md` | Interface-SRH scope note (cited from `device.py`) |
+| `SolarLabPhyVerify260624.md` (+ `PhysicsVerify260624.pdf`) | Depth-resolved physics diagnostics |
+| `SolarLab2DScan` | 2D defect-parameter (Nt×Et, Nt×ΔE_C) validation |
+| `SolarLabDespikeIface` | De-spike + interface-plane closure decomposition |
+| `SolarLabValid260702.pdf` (+ `ScapsValidSum.md`) | Transient vs steady-state interface-states comparison (2026-07-02: transient Nd_ETL contact-reservoir fix + CBO sweep extended to +1.0 eV) |
+| `SolarLabVerifyFormal260702.pdf` | SCAPS vs SolarLab (f=0.53) across all 11 sweeps — physical-model & numerical-algorithm attribution; publication-style figures |
+| `SolarLabSCAPSGapAnal` | Mechanistic gap analysis (referenced by the 06-22 summary) |
+| `SCAPSIfaceSRH.md` | Interface-SRH scope note (cited from `device.py`) |
 
 Superseded versions (06-15 validation, root-cause analysis) live in `reference/_archive/`.
 
@@ -52,7 +49,7 @@ pandoc <file>.md -o <file>.pdf --toc --pdf-engine=xelatex \
   --resource-path=docs/reference \
   -V mainfont="Arial" -V monofont="Menlo" -V geometry:margin=2cm -V colorlinks=true
 ```
-Decks: `python docs/reference/ppt_root_cause/build_deck.py`.
+Decks: `python docs/reference/Reasoning/build_deck.py`.
 
 ## Loose docs
 
