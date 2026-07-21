@@ -2,7 +2,7 @@
 title: "SolarLab Technical and User Manual"
 subtitle: "Technical guide to thin-film solar-cell simulation, workflows, and validation"
 author: "SolarLab Project"
-date: "2026-05-19"
+date: "2026-07-21"
 lang: en-US
 documentclass: report
 fontsize: 11pt
@@ -51,6 +51,7 @@ The manual is based on the current SolarLab repository state:
 
 - Commit: `43c81d7fefd009ffca598f58f85a40ad4e661e1e`
 - Validation date: 2026-05-19
+- Manual revision date: 2026-07-21
 - Primary simulator tree: `perovskite-sim/`
 
 The validation evidence collected before writing this PDF is summarized in
@@ -72,17 +73,21 @@ for the repository state listed above.
 
 # How To Read This Manual
 
-If you are new to device simulation, read Chapters 2 to 6 in order. These
+If you are new to device simulation, read the chapters in order through
+*Device Definition*, *Governing Equations*, and *Numerical Method*. These
 chapters explain the device, the variables, the equations, and the numerical
 method before introducing the software workflow.
 
-If you are already familiar with semiconductor drift-diffusion, start with
-Chapters 5, 7, 8, and 11:
+If you are already familiar with semiconductor drift-diffusion, start with:
 
-- Chapter 5 defines the model equations.
-- Chapter 7 explains the solver.
-- Chapter 8 explains YAML/Python/API workflows.
-- Chapter 11 gives validation evidence and limitations.
+- Chapter \ref{governing-equations} (*Governing Equations*), which defines the
+  physical model in continuous form;
+- Chapter \ref{numerical-method} (*Numerical Method*), which describes the
+  discretization, the time integrator, and the steady-state solver;
+- Chapter \ref{running-solarlab} (*Running SolarLab*), which covers the
+  YAML/Python/API workflows;
+- Chapter \ref{validation-and-evidence} (*Validation And Evidence*), which
+  gives validation evidence and limitations.
 
 The notation in this manual follows standard solar-cell convention:
 
@@ -285,10 +290,10 @@ Field & Unit & Physical role & Beginner guidance \\
 \midrule
 \endhead
 \path{eps_r} & 1 & relative dielectric constant in Poisson's equation & Larger values screen charge and reduce field gradients. Use layer-specific literature values rather than a single generic perovskite value. \\
-\path{mu_n} & \(m<sup>2</sup> V^{-1} s^{-1}\) & low-field electron mobility & Controls electron extraction and transport resistance. Remember that \(1\,cm<sup>2</sup> V^{-1}s^{-1}=10^{-4}\,m<sup>2</sup> V^{-1}s^{-1}\). \\
-\path{mu_p} & \(m<sup>2</sup> V^{-1} s^{-1}\) & low-field hole mobility & Same unit conversion convention as \path{mu_n}. Low mobility typically affects FF before producing a large change in \(V_\mathrm{oc}\). \\
-\path{N<sub>A</sub>} & \(m^{-3}\) & ionized acceptor density & Represents p-type doping. Values reported in \(cm^{-3}\) must be multiplied by \(10^6\). \\
-\path{N<sub>D</sub>} & \(m^{-3}\) & ionized donor density & Represents n-type doping. Use compensated doping only when it is part of the intended physical model. \\
+\path{mu_n} & \(m^2 V^{-1} s^{-1}\) & low-field electron mobility & Controls electron extraction and transport resistance. Remember that \(1\,cm^2 V^{-1}s^{-1}=10^{-4}\,m^2 V^{-1}s^{-1}\). \\
+\path{mu_p} & \(m^2 V^{-1} s^{-1}\) & low-field hole mobility & Same unit conversion convention as \path{mu_n}. Low mobility typically affects FF before producing a large change in \(V_\mathrm{oc}\). \\
+\path{N_A} & \(m^{-3}\) & ionized acceptor density & Represents p-type doping. Values reported in \(cm^{-3}\) must be multiplied by \(10^6\). \\
+\path{N_D} & \(m^{-3}\) & ionized donor density & Represents n-type doping. Use compensated doping only when it is part of the intended physical model. \\
 \path{ni} & \(m^{-3}\) & intrinsic carrier density & Appears in mass action and SRH terms. It should be consistent with the effective band gap and temperature when doing parameter studies. \\
 \path{chi} & eV & electron affinity & Sets approximate conduction-band alignment. Inconsistent \(\chi\) values can introduce artificial transport barriers. \\
 \path{Eg} & eV & band gap & Sets band offsets and thermodynamic interpretation. Beer-Lambert optics do not automatically shift spectral absorption when \path{Eg} changes. \\
@@ -304,10 +309,10 @@ Field & Unit & Physical role & Beginner guidance \\
 Field & Unit & Physical role & Beginner guidance \\
 \midrule
 \endhead
-\path{D_ion} & \(m<sup>2</sup> s^{-1}\) & positive mobile-ion diffusion coefficient & Set to zero when mobile ions are excluded from the model. Nonzero values can produce scan-rate dependence. \\
+\path{D_ion} & \(m^2 s^{-1}\) & positive mobile-ion diffusion coefficient & Set to zero when mobile ions are excluded from the model. Nonzero values can produce scan-rate dependence. \\
 \path{P0} & \(m^{-3}\) & initial positive ion density & Represents the equilibrium mobile-vacancy population before redistribution. \\
 \path{P_lim} & \(m^{-3}\) & steric upper density for positive ions & Limits ion accumulation through a finite-site-density approximation. The value should be consistent with the assumed mobile-site density. \\
-\path{D_ion_neg} & \(m<sup>2</sup> s^{-1}\) & negative mobile-ion diffusion coefficient & Enables a second mobile species. Leave zero for the default single-ion model. \\
+\path{D_ion_neg} & \(m^2 s^{-1}\) & negative mobile-ion diffusion coefficient & Enables a second mobile species. Leave zero for the default single-ion model. \\
 \path{P0_neg} & \(m^{-3}\) & initial negative ion density & Use only when the negative species is part of the physical hypothesis. \\
 \path{P_lim_neg} & \(m^{-3}\) & steric upper density for negative ions & Same interpretation as \path{P_lim}. \\
 \path{E_a_ion} & eV & Arrhenius activation energy for ion diffusion & Used for temperature-dependent ion mobility. Fitted or literature-derived values should be reported with provenance. \\
@@ -327,9 +332,9 @@ Field & Unit & Physical role & Beginner guidance \\
 \path{tau_p} & s & hole SRH lifetime & Interpret with \path{tau_n}; asymmetry can model carrier-selective trap response. \\
 \path{n1} & \(m^{-3}\) & SRH electron reference density & Encodes the effective trap-energy position and should be changed consistently with the trap model. \\
 \path{p1} & \(m^{-3}\) & SRH hole reference density & Companion to \path{n1}. \\
-\path{B<sub>rad</sub>} & \(m<sup>3</sup> s^{-1}\) & radiative recombination coefficient & Central to radiative-limit and photon-recycling studies. \\
-\path{C<sub>n</sub>} & \(m<sup>6</sup> s^{-1}\) & electron Auger coefficient & Most relevant when high carrier densities are expected. \\
-\path{C<sub>p</sub>} & \(m<sup>6</sup> s^{-1}\) & hole Auger coefficient & Same caution as \path{C<sub>n</sub>}. \\
+\path{B_rad} & \(m^3 s^{-1}\) & radiative recombination coefficient & Central to radiative-limit and photon-recycling studies. \\
+\path{C_n} & \(m^6 s^{-1}\) & electron Auger coefficient & Most relevant when high carrier densities are expected. \\
+\path{C_p} & \(m^6 s^{-1}\) & hole Auger coefficient & Same caution as \path{C_n}. \\
 \path{trap_N_t_interface} & \(m^{-3}\) & interface-near trap density & Activates spatial trap profiles when supplied with decay information. \\
 \path{trap_N_t_bulk} & \(m^{-3}\) & bulk trap density & The asymptotic trap density away from the interface. \\
 \path{trap_decay_length} & m & decay length or Gaussian width & Must be physically resolvable by the grid. \\
@@ -386,7 +391,7 @@ Field & Unit & Physical role & Beginner guidance \\
 Field & Unit & Physical role & Beginner guidance \\
 \midrule
 \endhead
-\path{V<sub>bi</sub>} & V & built-in voltage in Poisson boundary condition & This is not always identical to the derived heterostack Fermi-level separation. \\
+\path{V_bi} & V & built-in voltage in Poisson boundary condition & This is not always identical to the derived heterostack Fermi-level separation. \\
 \path{Phi} & \(m^{-2}s^{-1}\) & incident photon flux for Beer-Lambert generation & For spectral experiments use TMM data rather than only changing \path{Phi}. \\
 \path{T} & K & device temperature & Affects thermal voltage and enabled temperature-dependent hooks. \\
 \path{mode} & string & \path{legacy}, \path{fast}, or \path{full} physics tier & The mode is a ceiling; hooks still need required parameters. \\
@@ -410,7 +415,7 @@ Field & Unit & Physical role & Beginner guidance \\
 Field & Meaning \\
 \midrule
 \endhead
-\path{V<sub>bi</sub>} & built-in voltage used in the Poisson boundary condition \\
+\path{V_bi} & built-in voltage used in the Poisson boundary condition \\
 \path{Phi} & incident photon flux for Beer-Lambert generation \\
 \path{interfaces} & interface recombination velocities \((v_n,v_p)\) \\
 \path{T} & device temperature in K \\
@@ -490,16 +495,25 @@ YAML 1.1 can parse bare scientific notation such as `1e-9` as a string.
 SolarLab coerces numeric-looking strings to floats, but writing values as
 `1.0e-9` is clearer and safer.
 
-# Governing Equations
+# Governing Equations {#governing-equations}
 
-This chapter states the governing equations in dimensional SI form. The
-implementation evaluates discretized node and face arrays, but the continuous
-form clarifies the model assumptions and the physical meaning of each state
-variable.
+This chapter states the governing equations in dimensional SI form. The model
+belongs to the class of coupled Poisson/drift-diffusion (van Roosbroeck)
+systems, extended by Nernst-Planck transport for mobile ionic defects,
+heterojunction band alignment, and wavelength-resolved optical generation.
+The implementation evaluates discretized node and face arrays (Chapter
+\ref{numerical-method}), but the continuous form stated here clarifies the
+model assumptions and the physical meaning of each state variable.
 
-## Poisson Equation
+Throughout, $q$ is the elementary charge, $k_B$ Boltzmann's constant, $T$ the
+lattice temperature, and $V_T = k_B T/q$ the thermal voltage. Carrier
+statistics are Maxwell-Boltzmann (non-degenerate); Fermi-Dirac corrections
+are outside the present scope and matter only for degenerately doped layers.
 
-The electrostatic potential is obtained from:
+## Electrostatics: The Poisson Equation
+
+The electrostatic potential $\phi(x,t)$ is obtained from the quasistatic
+Poisson equation
 
 \begin{equation}
 \label{eq:poisson}
@@ -508,11 +522,38 @@ The electrostatic potential is obtained from:
 \varepsilon_0 \varepsilon_r
 \frac{\partial \phi}{\partial x}
 \right)
-= -\rho .
+= -\rho ,
 \end{equation}
 
-Here $\rho$ includes electrons, holes, dopants, and mobile ions. The
-discretization uses a harmonic face permittivity:
+with the space-charge density assembled from every charged species in the
+model:
+
+\begin{equation}
+\label{eq:charge-density}
+\rho
+=
+q\left[
+p - n + \left(P - P_0\right) - \left(P^- - P^-_0\right)
++ N_D - N_A
+\right].
+\end{equation}
+
+The mobile-ion contributions are measured relative to their neutral background
+densities $P_0$ and $P^-_0$: an undisturbed vacancy population together with
+its immobile counter-charge is electrically neutral, so only the
+*redistribution* of ions contributes net space charge. The negative-species
+term is present only when a second mobile species is configured
+(dual-ion mode).
+
+The quasistatic approximation asserts that the potential responds
+instantaneously to the charge configuration — Eq. \ref{eq:poisson} is Gauss's
+law $\nabla\cdot(\varepsilon_0\varepsilon_r \mathbf{E}) = \rho$ with
+$E = -\partial\phi/\partial x$, solved at every instant of the transient.
+Retardation, magnetic effects, and electromagnetic wave propagation are
+excluded from the electrical solve (the optical field is treated separately by
+the transfer-matrix machinery of the *Optical Generation* section).
+
+The discretization is finite-volume with a harmonic-mean face permittivity:
 
 \begin{equation}
 \label{eq:harmonic-eps}
@@ -522,120 +563,270 @@ discretization uses a harmonic face permittivity:
 {\varepsilon_i+\varepsilon_{i+1}} .
 \end{equation}
 
-The harmonic mean is appropriate for a sharp dielectric interface because it
-matches the series-capacitor limit.
+The harmonic mean is the exact series-capacitor composition of two dielectric
+half-cells and therefore preserves the continuity of the normal dielectric
+displacement $D = \varepsilon_0\varepsilon_r E$ across an abrupt material
+interface. Arithmetic (nodal) interpolation would instead equate the electric
+*fields* on both sides of the interface, concentrating the voltage drop in the
+wrong layer.
 
 Assumptions and limits:
 
 - electrostatics is quasistatic;
 - magnetic effects and wave propagation in the electrical solve are ignored;
 - layer interfaces are abrupt on the scale of the grid;
-- $\rho$ is built from the configured mobile species, carriers, and dopants.
+- $\rho$ is built from the configured mobile species, carriers, and dopants,
+  with dopants assumed fully ionized and immobile.
 
-## Carrier Continuity
+## Carrier Transport: Continuity And Drift-Diffusion
 
-The electron continuity equation is:
+The electron and hole densities obey the continuity equations
 
 \begin{equation}
 \label{eq:electron-continuity}
 \frac{\partial n}{\partial t}
 =
-\frac{1}{q}\frac{\partial J<sub>n</sub>}{\partial x}
-+G-R .
+\frac{1}{q}\frac{\partial J_n}{\partial x}
++G-R ,
 \end{equation}
-
-The hole continuity equation is:
 
 \begin{equation}
 \label{eq:hole-continuity}
 \frac{\partial p}{\partial t}
 =
--\frac{1}{q}\frac{\partial J<sub>p</sub>}{\partial x}
-+G-R .
+-\frac{1}{q}\frac{\partial J_p}{\partial x}
++G-R ,
 \end{equation}
 
-In heterojunctions, SolarLab uses band-corrected potentials:
+closed by the drift-diffusion constitutive relations
+
+\begin{equation}
+\label{eq:dd-currents}
+J_n = q\mu_n n E + qD_n\frac{\partial n}{\partial x},
+\qquad
+J_p = q\mu_p p E - qD_p\frac{\partial p}{\partial x},
+\end{equation}
+
+with the Einstein relation $D = \mu V_T$ linking diffusivity and mobility.
+The Einstein relation expresses local thermal equilibrium between the carrier
+gas and the lattice; it is exact for non-degenerate (Boltzmann) statistics.
+
+An equivalent and physically transparent form writes each current as a
+quasi-Fermi-level gradient,
+
+\begin{equation}
+\label{eq:qfl-currents}
+J_n = \mu_n\, n\, \frac{\partial E_{Fn}}{\partial x},
+\qquad
+J_p = \mu_p\, p\, \frac{\partial E_{Fp}}{\partial x},
+\end{equation}
+
+where, under Boltzmann statistics,
+$n = N_C \exp[-(E_C - E_{Fn})/k_BT]$ and
+$p = N_V \exp[-(E_{Fp} - E_V)/k_BT]$.
+Equations \ref{eq:dd-currents} and \ref{eq:qfl-currents} are the same model;
+the quasi-Fermi form makes explicit that current vanishes exactly when the
+quasi-Fermi levels are flat, which is the thermodynamic-equilibrium and
+open-circuit-limit condition.
+
+### Heterojunction Band Alignment
+
+Band edges are referenced to the local vacuum level through the electron
+affinity $\chi$ and the band gap $E_g$:
+
+$$
+E_C/q = -(\phi + \chi),
+\qquad
+E_V/q = -(\phi + \chi + E_g),
+$$
+
+with $\chi$ and $E_g$ expressed in volts (numerically equal to their eV
+values). In heterojunction stacks SolarLab therefore drives the carrier
+fluxes with *band-effective* potentials,
 
 \begin{equation}
 \label{eq:band-corrected-potentials}
 \phi_n=\phi+\chi, \qquad
-\phi_p=\phi+\chi+E<sub>g</sub> .
+\phi_p=\phi+\chi+E_g ,
 \end{equation}
 
-These effective potentials allow the same numerical flux formulation to
-represent conduction-band and valence-band offsets in heterojunction stacks.
+so that electrons respond to gradients of the conduction band edge and holes
+to gradients of the valence band edge. An abrupt change in $\chi$ or $E_g$
+between layers then produces Anderson-rule band offsets
+($\Delta E_C$ from the affinity step, $\Delta E_V$ from the combined
+affinity-plus-gap step) inside the same numerical flux formulation, with no
+special-case interface treatment in the discretization.
+
+### Effective-Density-of-States Correction
+
+For a heterostructure with unequal effective densities of states, the
+band-effective potentials of Eq. \ref{eq:band-corrected-potentials} are
+incomplete. Under Boltzmann statistics the carrier density couples to the
+quasi-Fermi level through the local $N_C$ or $N_V$, so the exact
+drift potentials carry an additional logarithmic term:
+
+\begin{equation}
+\label{eq:dos-potentials}
+\phi_n = \phi + \chi + V_T\ln\!\frac{N_C}{N_C^{\mathrm{ref}}},
+\qquad
+\phi_p = \phi + \chi + E_g - V_T\ln\!\frac{N_V}{N_V^{\mathrm{ref}}} .
+\end{equation}
+
+Omitting these terms imposes a spurious quasi-Fermi-level discontinuity of
+$k_BT\,\ln(N_{C,1}/N_{C,2})$ (and the $N_V$ analogue) at every interface with
+a density-of-states contrast — on a representative
+HTL/perovskite/ETL stack the accumulated error exceeds 100 mV of
+open-circuit voltage. SolarLab therefore folds the corrections of
+Eq. \ref{eq:dos-potentials} into the cached per-layer $\chi$/$E_g$ arrays at
+build time, using the absorber as the reference layer (only cross-junction
+*differences* matter). The fold applies to transport and thermionic emission
+only; purely statistical quantities ($n_i$, the SRH references $n_1$/$p_1$,
+and the contact equilibrium densities) are deliberately left unchanged. The
+correction is active by default whenever per-layer `Nc300`/`Nv300` data are
+supplied, and is disabled in the `legacy` tier, which reproduces the
+IonMonger convention without DOS-folded transport.
 
 Assumptions and limits:
 
 - carriers are described by drift-diffusion transport, not ballistic
   transport;
+- carrier statistics are non-degenerate (Maxwell-Boltzmann); degenerately
+  doped layers would require Fermi-Dirac corrections that are out of scope;
 - the model is most natural when local quasi-equilibrium is a reasonable
   approximation;
 - strongly quantum-confined structures, tunneling-dominated contacts, and hot
   carrier effects require additional modeling beyond this implementation.
 
-## Scharfetter-Gummel Flux
+## Heterointerface Thermionic Emission And Tunnelling
 
-The Bernoulli function is:
+The drift-diffusion picture assumes that the band edges vary smoothly on the
+scale of a grid cell. At an abrupt heterojunction the band offset is instead
+resolved within a *single* cell, and the exponential-fitting flux
+discretization (Chapter \ref{numerical-method}) then systematically
+overestimates the current across the discontinuity. SolarLab therefore bounds
+the drift-diffusion face flux by an interface-limited thermionic-emission
+(TE) flux of Richardson-Dushman form at every face where the conduction- or
+valence-band offset exceeds 50 meV:
 
 \begin{equation}
-\label{eq:bernoulli}
-B(\xi)=\frac{\xi}{\exp(\xi)-1}.
-\end{equation}
-
-The electron face current is:
-
-\begin{equation}
-\label{eq:sg-electron}
-J_{n,i+1/2}
-=
-\frac{qD_n}{\Delta x}
+\label{eq:te-flux}
+J_{\mathrm{TE}}
+\;\propto\;
+A^{*}T^{2}
 \left[
-B(\xi)n_{i+1}-B(-\xi)n_i
-\right].
+n_{L}\, e^{-\max(\Delta E,\,0)/V_T}
+-
+n_{R}\, e^{-\max(-\Delta E,\,0)/V_T}
+\right],
 \end{equation}
 
-The hole face current is:
+where $\Delta E$ is the band-edge step across the face, $n_L$ and $n_R$ are
+the adjacent carrier densities, and $A^{*}$ is a per-face Richardson constant
+(default: the free-electron value
+$1.2017\times10^{6}\,A\,m^{-2}K^{-2}$, overridable per layer). Only the
+*uphill* term carries the Boltzmann barrier penalty; a downhill offset leaves
+the emission term unpenalized, so carriers flowing down a band step are not
+artificially blocked. Because both terms scale with the same $A^{*}T^{2}$
+prefactor and the equilibrium densities on either side of a barrier are
+related by the same Boltzmann factor, Eq. \ref{eq:te-flux} vanishes
+identically at thermodynamic equilibrium — detailed balance is preserved
+exactly.
+
+The TE flux acts as a *cap*: at each flagged face the solver takes the
+smaller-magnitude of the drift-diffusion flux and $J_{\mathrm{TE}}$, so the
+interface-limited current can only reduce, never enhance, the
+drift-diffusion prediction. (The steady-state Newton driver replaces the hard
+minimum with a smooth sigmoid blend of adjustable width to restore
+differentiability; see Chapter \ref{numerical-method}.)
+
+### Thermionic-Field-Emission Tunnelling
+
+Pure thermionic emission transports carriers *over* the barrier only. An
+optional intra-band tunnelling channel augments it with transport *through*
+the top of a band spike, following the Padovani-Stratton
+thermionic-field-emission theory. The characteristic tunnelling energy is
 
 \begin{equation}
-\label{eq:sg-hole}
-J_{p,i+1/2}
-=
-\frac{qD_p}{\Delta x}
-\left[
-B(\xi)p_i-B(-\xi)p_{i+1}
-\right].
+\label{eq:tfe-e00}
+E_{00} = \frac{q\hbar}{2}\sqrt{\frac{N_{\mathrm{if}}}{m^{*}\varepsilon_s}},
+\qquad
+E_{0} = E_{00}\coth\!\left(\frac{E_{00}}{V_T}\right),
 \end{equation}
 
-The Scharfetter-Gummel form is used because it preserves stable exponential
-fitting in drift-dominated regimes.
+where $N_{\mathrm{if}}$ is the net doping of the lighter-doped (depletion)
+side of the junction, $m^{*}$ the effective tunnelling mass (default
+$0.2\,m_e$), and $\varepsilon_s$ the semiconductor permittivity. The
+tunnelling-transparent fraction of the barrier,
+$\delta_{\mathrm{tun}} = |\Delta E|\,(1 - V_T/E_0)$, clamped to
+$[0, |\Delta E|)$, defines a static enhancement factor
+
+\begin{equation}
+\label{eq:tfe-gamma}
+\Gamma = \exp\!\left(\frac{\delta_{\mathrm{tun}}}{V_T}\right) \geq 1,
+\end{equation}
+
+which is folded into the per-face Richardson constants
+($A^{*}_{\mathrm{eff}} = \Gamma A^{*}$) at build time. Because the same
+$\Gamma$ scales *both* legs of Eq. \ref{eq:te-flux}, equilibrium detailed
+balance is preserved to machine precision, and because the factor is static
+(doping-derived, no dependence on the evolving field) it cannot perturb the
+stability of the time integration. The channel is opt-in and captures the
+doping-direction trend of tunnelling-assisted interface transport; the
+bias-dependent flattening of a spike under forward bias would require a
+field-dependent $E_{00}(F)$ evaluated per step, which is deliberately not
+implemented.
 
 Assumptions and limits:
 
-- the potential and material properties are represented between adjacent grid
-  nodes by a face-based discretization;
-- the method is robust for high drift fields, but accuracy still depends on
-  resolving layer thicknesses, interfaces, and trap profiles.
+- TE capping applies only at faces whose band offset exceeds 50 meV; smaller
+  offsets are handled by the drift-diffusion flux alone;
+- the tunnelling enhancement is static and doping-derived; an
+  intrinsic-absorber interface ($N_{\mathrm{if}}\!\to\!0$) gives
+  $E_{00}\!\to\!0$ and hence $\Gamma\!\to\!1$ (no enhancement);
+- the `legacy` tier disables thermionic emission entirely (IonMonger has no
+  TE), and with it the tunnelling channel by construction.
 
 ## Ion Migration
 
-Positive ion vacancies satisfy:
+Mobile ionic defects — in halide perovskites, predominantly halide vacancies
+acting as an effective positive species — are transported by a
+Nernst-Planck equation of the same drift-diffusion form as the electronic
+carriers. The positive vacancy density $P$ satisfies the conservation law
 
 \begin{equation}
 \label{eq:ion-continuity}
 \frac{\partial P}{\partial t}
 =
--\frac{\partial F_P}{\partial x}.
+-\frac{\partial F_P}{\partial x},
 \end{equation}
 
-Ions cannot leave the device, so:
+with the flux (for a $+1$ charge, using the Einstein relation for the ionic
+mobility)
+
+\begin{equation}
+\label{eq:ion-flux}
+F_P
+=
+-\,s(P)\, D_I
+\left(
+\frac{\partial P}{\partial x}
++\frac{P}{V_T}\frac{\partial \phi}{\partial x}
+\right).
+\end{equation}
+
+There is no generation or recombination term: the total number of mobile ions
+in the device is conserved. Consistently, the contacts are ion-blocking,
 
 \begin{equation}
 \label{eq:ion-zero-flux}
-F_P(0)=F_P(L)=0.
+F_P(0)=F_P(L)=0,
 \end{equation}
 
-The ion flux includes a steric saturation correction:
+so that $\int_0^L P\,dx$ is an exact invariant of the dynamics — ions
+redistribute internally but never leave through the electrodes.
+
+The prefactor $s(P)$ is a steric (excluded-volume) correction in the spirit
+of modified Poisson-Nernst-Planck / lattice-gas theories:
 
 \begin{equation}
 \label{eq:steric}
@@ -645,8 +836,28 @@ s(P)
 {\max(1-P_\mathrm{avg}/P_\mathrm{lim},10^{-6})}.
 \end{equation}
 
-This term limits ion accumulation as the local density approaches the
-configured site-density limit.
+As the local occupancy approaches the finite site density
+$P_\mathrm{lim}$, the effective chemical potential of the ion gas diverges
+and the restoring flux is sharply enhanced, which bounds interfacial ion
+accumulation at the physically available site density instead of allowing
+the unphysical unbounded pile-up of the ideal-solution model.
+
+Because ionic diffusivities ($D_I \sim 10^{-16}\,m^2 s^{-1}$) are many orders
+of magnitude below carrier diffusivities, ionic redistribution introduces a
+slow time scale ($\tau_\mathrm{ion} \sim L^2/D_I$, typically milliseconds to
+seconds) that coexists with nanosecond electronic relaxation. This stiff
+two-time-scale structure is the physical origin of scan-rate-dependent J-V
+hysteresis, and it is what the implicit time integration of Chapter
+\ref{numerical-method} is designed to handle.
+
+Additional model features:
+
+- a second, negatively charged mobile species is optional and obeys the same
+  equations with the drift sign reversed;
+- ionic diffusivity is Arrhenius-activated in temperature through the
+  per-layer activation energy `E_a_ion` when temperature scaling is enabled;
+- non-ionic layers simply set $D_I = 0$; the ion equations still integrate
+  but contribute zero flux.
 
 Assumptions and limits:
 
@@ -657,7 +868,11 @@ Assumptions and limits:
 
 ## Recombination
 
-SRH recombination is:
+All bulk recombination channels share the mass-action driving term
+$np - n_i^2$, which vanishes at thermodynamic equilibrium and guarantees that
+no channel generates or destroys carriers in the dark equilibrium state.
+
+### Shockley-Read-Hall (Trap-Assisted) Recombination
 
 \begin{equation}
 \label{eq:srh}
@@ -667,20 +882,74 @@ R_\mathrm{SRH}
 {\tau_p(n+n_1)+\tau_n(p+p_1)} .
 \end{equation}
 
-Radiative recombination is:
+The reference densities $n_1$ and $p_1$ encode the trap energy level $E_t$
+through the Boltzmann relations
+
+$$
+n_1 = N_C\, e^{-(E_C-E_t)/k_BT},
+\qquad
+p_1 = N_V\, e^{-(E_t-E_V)/k_BT},
+\qquad
+n_1 p_1 = n_i^2 .
+$$
+
+Midgap traps ($n_1, p_1 \ll n, p$) maximize the rate; the asymmetric
+lifetimes $\tau_n \neq \tau_p$ model carrier-selective capture. In SolarLab
+the SRH parameters are *effective* quantities per layer unless trap-energy
+provenance is supplied.
+
+### Radiative Recombination And Photon Recycling
+
+Band-to-band radiative recombination is bimolecular:
 
 \begin{equation}
 \label{eq:radiative}
 R_\mathrm{rad}=B_\mathrm{rad}(np-n_i^2).
 \end{equation}
 
-Auger recombination is:
+In a high-refractive-index absorber most internally emitted photons are
+trapped by total internal reflection and reabsorbed, regenerating carriers —
+photon recycling. Following Yablonovitch's statistical ray optics, the
+single-pass escape probability of an internally emitted photon is
+
+\begin{equation}
+\label{eq:p-esc}
+P_\mathrm{esc}
+=
+\min\!\left(1,\ \frac{1}{4\, n_r^2\, \alpha(\lambda_g)\, d}\right),
+\end{equation}
+
+evaluated at the band-edge wavelength $\lambda_g = hc/E_g$ from the
+absorber's tabulated $n,k$ data, with $d$ the absorber thickness. Only the
+escaping fraction is a true loss. SolarLab implements this at two levels of
+self-consistency:
+
+1. **Net-coefficient form** (photon recycling on): the absorber's
+   $B_\mathrm{rad}$ is rescaled by $P_\mathrm{esc}$ once at build time.
+   Exact whenever the $np$ product is spatially uniform across the absorber
+   (the open-circuit regime where the $V_\mathrm{oc}$ boost is measured).
+2. **Self-consistent reabsorption** (full tier): $B_\mathrm{rad}$ keeps its
+   intrinsic value as a sink, and at every solver evaluation the total
+   emission $\int B_\mathrm{rad}\, n\, p\, dx$ over the absorber is
+   redistributed as a uniform generation source
+   $G_\mathrm{rad} = (1-P_\mathrm{esc})\, \big[\textstyle\int B\, n\, p\,
+   dx\big]/d$. This closes the recycling loop and remains accurate when
+   $np$ is non-uniform (strong injection, near-contact gradients, tandem
+   sub-cells); it reduces to form 1 in the uniform limit.
+
+On the canonical radiative-limit configuration the recycling boost falls in
+the 40–100 mV literature window for MAPbI3 (Pazos-Outón et al.).
+
+### Auger Recombination
 
 \begin{equation}
 \label{eq:auger}
 R_\mathrm{Auger}
-=(C<sub>n</sub> n+C<sub>p</sub> p)(np-n_i^2).
+=(C_n n+C_p p)(np-n_i^2),
 \end{equation}
+
+the three-particle channel that dominates at high carrier density (heavily
+doped layers, concentrator conditions, band-offset accumulation spikes).
 
 The total bulk rate is:
 
@@ -689,8 +958,55 @@ The total bulk rate is:
 R=R_\mathrm{SRH}+R_\mathrm{rad}+R_\mathrm{Auger}.
 \end{equation}
 
-Interface recombination uses surface velocities and is converted to a local
-volumetric source term near the interface.
+### Interface Recombination
+
+Each internal electrical interface carries an areal SRH channel
+parameterized by surface recombination velocities $(v_n, v_p)$:
+
+\begin{equation}
+\label{eq:interface-srh}
+R_s
+=
+\frac{n_s\, p_s - n_{i,\mathrm{eff}}^2}
+{\dfrac{n_s+n_1}{v_p} + \dfrac{p_s+p_1}{v_n}}
+\qquad [m^{-2}s^{-1}],
+\end{equation}
+
+converted to a volumetric sink at the interface node by dividing by the local
+dual-cell width. Three details matter for heterojunctions:
+
+- **Cross-carrier sampling.** At a defect-bearing heterointerface the
+  electron density is sampled on the transport-layer side and the hole
+  density on the absorber side of the junction — the carrier populations
+  that actually accumulate under cliff-type band offsets, following the
+  polycrystalline-heterojunction treatment of Pauwels and Vanhoutte. This
+  reproduces the characteristic cliff/spike asymmetry of interface-limited
+  $V_\mathrm{oc}$.
+- **Detailed balance.** The reference $n_{i,\mathrm{eff}}^2$ is the *product
+  of the adjacent layers' equilibrium densities* ($n_{\mathrm{eq},R}\,
+  p_{\mathrm{eq},L}$), not $n_{i,L}\, n_{i,R}$: with a heavily doped
+  transport layer the equilibrium cross product exceeds the intrinsic
+  product by many orders of magnitude, and a naive intrinsic reference would
+  make the interface a spurious generator at dark equilibrium.
+- **Non-negativity.** The rate is clamped at $R_s \geq 0$: a passive defect
+  channel must not act as a net carrier source under illumination.
+
+Optional refinements (default off, used for SCAPS cross-validation) evaluate
+the rate on Boltzmann-projected *interface-plane* densities, or solve a local
+supply-limited flux balance for the true plane densities, in which the plane
+carries the reduced interface gap
+$E_{g,s} = \min(E_C) - \max(E_V)$ across the junction — the mechanism behind
+the interface-gap rule of thumb
+$V_\mathrm{oc} \lesssim (E_g - |\Delta E_C|)/q$.
+
+A related optional correction (`het_recomb_despike`, a fraction
+$f \in [0,1]$) addresses a discretization artifact: an abrupt valence-band
+offset produces a Boltzmann accumulation *spike* of majority carriers on the
+single interface node, and because $R_\mathrm{Auger} \propto p^2 n$, the bulk
+Auger channel over-counts an interface loss that the areal channel of
+Eq. \ref{eq:interface-srh} already represents. The correction blends the
+junction-node densities toward the geometric mean of their neighbours *for
+the bulk-recombination evaluation only* — transport fluxes are untouched.
 
 Assumptions and limits:
 
@@ -702,7 +1018,11 @@ Assumptions and limits:
 
 ## Optical Generation
 
-For Beer-Lambert absorption:
+SolarLab supports two optical models of increasing fidelity.
+
+### Beer-Lambert Absorption
+
+The scalar model uses a single absorption coefficient per layer:
 
 \begin{equation}
 \label{eq:beer-lambert}
@@ -714,23 +1034,211 @@ G(x)
 \right].
 \end{equation}
 
-For transfer-matrix optics, SolarLab loads tabulated $n(\lambda)$ and
-$k(\lambda)$ data and computes a wavelength-resolved absorption profile. The
-generation profile is integrated over the incident spectrum and cached before
-the transient solve.
+It captures exponential attenuation of a monochromatic-equivalent photon flux
+$\Phi$ but no interference, reflection, or spectral structure.
 
-EQE and electroluminescence require this wavelength-resolved optical
-machinery; Beer-Lambert-only stacks do not contain sufficient spectral
+### Transfer-Matrix Optics
+
+For wavelength-resolved generation, SolarLab implements the coherent
+transfer-matrix method (TMM) for multilayer thin films at normal incidence,
+following Pettersson et al. and Burkhard et al. Each layer is described by
+its complex refractive index $\tilde n(\lambda) = n + ik$ from tabulated
+$n,k$ data. For every wavelength, $2\times2$ *interface* matrices built from
+the Fresnel coefficients
+
+$$
+r_{ab} = \frac{\tilde n_a - \tilde n_b}{\tilde n_a + \tilde n_b},
+\qquad
+t_{ab} = \frac{2\tilde n_a}{\tilde n_a + \tilde n_b},
+$$
+
+alternate with *propagation* matrices carrying the complex phase
+$\delta_j = 2\pi \tilde n_j d_j/\lambda$ through each layer of thickness
+$d_j$. The assembled system matrix yields the stack reflectance and the
+forward/backward field amplitudes at every depth, from which the normalized
+internal intensity $|E(x,\lambda)|^2/|E_0|^2$ follows. The local spectral
+absorption rate is
+
+\begin{equation}
+\label{eq:tmm-absorption}
+A(x,\lambda)
+=
+\frac{4\pi\, n(\lambda)\, k(\lambda)}{\lambda\, n_\mathrm{amb}}
+\,\frac{|E(x,\lambda)|^2}{|E_0|^2}
+\qquad [m^{-1}],
+\end{equation}
+
+where the $n/n_\mathrm{amb}$ factor converts field energy density to the
+Poynting-vector (energy-flux) normalization; this is the normalization under
+which the computed reflectance, transmittance, and layer-resolved absorptance
+satisfy $R+T+A=1$, which the regression suite checks explicitly. The
+generation profile is the spectral integral against the incident AM1.5G
+photon flux,
+
+\begin{equation}
+\label{eq:tmm-generation}
+G(x)
+=
+\int A(x,\lambda)\,\Phi_\mathrm{AM1.5G}(\lambda)\,d\lambda ,
+\end{equation}
+
+evaluated over 300–1000 nm by default, assuming unit internal quantum
+efficiency of photogeneration, and cached once before the transient solve.
+
+A millimetre-scale glass substrate is far thicker than the coherence length
+of sunlight, so treating it coherently would produce unphysical interference
+fringes. The first layer of the stack may therefore be flagged *incoherent*:
+it contributes a phase-free power-form Fresnel reflection and Beer-Lambert
+bulk attenuation, and hands the transmitted intensity to the coherent
+sub-stack beneath it.
+
+EQE and electroluminescence require this wavelength-resolved machinery
+(monochromatic TMM generation plus a short-circuit drift-diffusion solve per
+wavelength); Beer-Lambert-only stacks do not contain sufficient spectral
 information for those experiments.
 
 Assumptions and limits:
 
 - Beer-Lambert optics are fast and useful for trends, but cannot represent
   interference, reflection, or wavelength-dependent collection;
+- the TMM assumes planar layers, normal incidence, and coherent propagation
+  (except the optional incoherent first substrate);
 - TMM quality is limited by the provenance and wavelength coverage of the
   supplied optical constants;
 - synthetic or placeholder optical constants should be treated as workflow
   demonstrations, not material-specific evidence.
+
+## Field-Dependent Mobility
+
+Two empirical high-field mobility models can modify the low-field mobilities,
+composed multiplicatively and evaluated per face from the Poisson-solved
+electric field at every solver evaluation. The Caughey-Thomas form imposes
+velocity saturation,
+
+\begin{equation}
+\label{eq:caughey-thomas}
+\mu_\mathrm{CT}(E)
+=
+\mu_0\left[1+\left(\frac{\mu_0 |E|}{v_\mathrm{sat}}\right)^{\beta}
+\right]^{-1/\beta},
+\end{equation}
+
+with $\beta = 2$ (the Canali form, typical for electrons) and $\beta = 1$
+(the Thornber form, typical for holes) as conventional exponents. The
+Poole-Frenkel form describes field-assisted barrier lowering in disordered or
+organic transport layers,
+
+\begin{equation}
+\label{eq:poole-frenkel}
+\mu_\mathrm{PF}(E)
+=
+\mu_0 \exp\!\left(\gamma_\mathrm{PF}\sqrt{|E|}\right),
+\end{equation}
+
+with $\gamma_\mathrm{PF} \sim 3\times10^{-4}\,(V/m)^{-1/2}$ representative of
+spiro-OMeTAD. Both hooks are opt-in per layer ($v_\mathrm{sat} = 0$ and
+$\gamma_\mathrm{PF} = 0$ disable them) and, because they must be re-evaluated
+from the instantaneous field, they are active only in the `full` tier.
+
+## Temperature Dependence
+
+When temperature scaling is enabled, the device temperature $T$ enters the
+model self-consistently:
+
+- the thermal voltage $V_T = k_BT/q$ rescales every Einstein relation;
+- carrier mobilities follow a power law
+  $\mu(T) = \mu_{300}\,(T/300\,K)^{\gamma_\mu}$, the standard
+  scattering-limited parameterization;
+- the band gap follows a Varshni shift *referenced to 300 K*, so that the
+  configured $E_g$ retains its meaning as the room-temperature gap:
+
+\begin{equation}
+\label{eq:varshni}
+E_g(T)
+=
+E_g^{300}
+-\alpha\left[
+\frac{T^2}{T+\beta}-\frac{T_0^2}{T_0+\beta}
+\right],
+\qquad T_0 = 300\,K .
+\end{equation}
+
+  Conventional semiconductors (silicon: $\alpha \approx 4.73\times10^{-4}$
+  eV/K, $\beta \approx 636$ K) narrow on heating; halide perovskites show the
+  opposite sign and widen with temperature, reproduced by a negative
+  $\alpha$;
+- the intrinsic density $n_i(T)$ is recomputed self-consistently with the
+  shifted gap (and with the 300 K effective densities of states when
+  supplied);
+- the radiative coefficient follows
+  $B_\mathrm{rad}(T) = B_{300}\,(T/300\,K)^{\gamma_B}$;
+- ionic diffusivity is Arrhenius-activated through `E_a_ion`.
+
+All temperature hooks are gated by the temperature-scaling flag; the
+`legacy` tier pins the model at 300 K regardless of the configured $T$.
+
+## Spatial Trap Profiles
+
+Grain-boundary and interface-adjacent defects concentrate near the transport
+layers. A per-layer trap-density profile with exponentially decaying edge
+enhancement,
+
+\begin{equation}
+\label{eq:trap-profile}
+N_t(x)
+=
+N_t^\mathrm{bulk}
++\left(N_t^\mathrm{if}-N_t^\mathrm{bulk}\right)
+\left(e^{-x/L_d}+e^{-(d-x)/L_d}\right),
+\end{equation}
+
+(or a Gaussian variant with faster tail decay for defect slabs of
+well-defined width) is mapped onto the local SRH lifetimes through the
+inverse-proportionality of the SRH lifetime to trap density,
+
+$$
+\tau(x)
+=
+\tau_\mathrm{bulk}\,
+\frac{N_t^\mathrm{bulk}}{\max\!\big(N_t(x),\,N_t^\mathrm{bulk}\big)} ,
+$$
+
+where the floor makes a passivation profile
+($N_t^\mathrm{if} < N_t^\mathrm{bulk}$) behave monotonically. The two
+exponentials are summed rather than maximized so thin layers with
+overlapping tails saturate smoothly at $N_t^\mathrm{if}$.
+
+## Band-Gap Grading
+
+Compositionally graded absorbers (e.g. Ga-graded CIGS) are modelled with the
+SCAPS material-interpolation law of Burgelman and Marlein: a graded layer is
+a mixture of two endpoint materials A (front face) and B (back face) with a
+composition profile $y(x)$ that may be linear, parabolic, or an exponential
+notch. The graded gap includes an optional bowing term,
+
+\begin{equation}
+\label{eq:grading-eg}
+E_g(y) = (1-y)\,E_g^{A} + y\,E_g^{B} - b\, y\,(1-y),
+\end{equation}
+
+while the electron affinity interpolates linearly (Vegard's rule). The
+statistical quantities are anchored to the front face,
+
+$$
+n_i^2(x) = n_{i,\mathrm{front}}^2
+\exp\!\left[-\frac{E_g(x)-E_g^\mathrm{front}}{V_T}\right],
+$$
+
+so no per-node density-of-states data are required (the DOS prefactors
+cancel in the ratio), and the SRH references $n_1, p_1$ are graded so that
+$n_1 p_1 = n_i^2(x)$ holds node by node. Independent grading of $\chi$ and
+$E_g$ controls the conduction- and valence-band profiles separately, which
+is how back-surface fields are configured. The transform is applied once at
+build time; a graded layer automatically refines its mesh so that a steep
+notch is resolved over several cells. Documented limitation: the *optical*
+constants are not graded — a graded absorber's absorption edge does not
+shift spatially, so $J_\mathrm{sc}$ reflects the electrical effect of
+grading under uniform optics only.
 
 # Boundary And Initial Conditions
 
@@ -744,7 +1252,12 @@ $$
 \phi(L)=\phi_\mathrm{left}+V_\mathrm{bi}-V_\mathrm{app}.
 $$
 
-Forward bias reduces the built-in field.
+Forward bias reduces the built-in field. By default the boundary value uses
+the configured `V_bi` (the IonMonger convention, in which $V_\mathrm{bi}$ is
+a free parameter representing the degenerate-doping limit). With the optional
+SCAPS-style flat-band contact convention, the boundary instead uses the
+derived flat-band work-function difference `compute_V_bi()`, so the contact
+potential is fixed by the band alignment rather than by an input parameter.
 
 ## Carrier Contacts
 
@@ -755,32 +1268,58 @@ $$
 np=n_i^2, \qquad n-p=N_D-N_A.
 $$
 
-The stable two-branch solution avoids numerical cancellation for heavily doped
-layers.
+The implementation evaluates the numerically stable two-branch closed form,
 
-In `full` mode, selected contacts can use a Robin flux:
+$$
+n_\mathrm{eq} = \eta+\sqrt{\eta^2+n_i^2},
+\quad
+p_\mathrm{eq} = \frac{n_i^2}{n_\mathrm{eq}}
+\qquad
+\left(\eta = \tfrac{1}{2}(N_D-N_A) \geq 0\right),
+$$
+
+and the mirrored branch for p-type material, which avoids catastrophic
+cancellation at heavy doping. An ohmic (Dirichlet) pin represents an ideal
+contact with infinite surface exchange velocity: the contact acts as an
+inexhaustible carrier reservoir at the dark doping equilibrium.
+
+In `full` mode, selected contacts can instead use a finite-kinetics Robin
+flux boundary condition:
 
 $$
 J=\pm qS(u-u_\mathrm{eq}),
 $$
 
-where $u$ is $n$ or $p$, and $S$ is a surface recombination/extraction
-velocity. $S=0$ is blocking; large $S$ approaches the ohmic limit.
+where $u$ is $n$ or $p$, $u_\mathrm{eq}$ its contact equilibrium value, and
+$S$ a surface recombination/extraction velocity. $S=0$ is a perfectly
+blocking (Neumann) contact, finite $S$ lets the boundary density evolve with
+a relaxation time $\sim \Delta x/S$, and $S\to\infty$ recovers the ohmic
+limit. Selective contacts are modelled by choosing a large $S$ for the
+extracted carrier and a small $S$ for the blocked carrier. For
+Schottky-type contacts the equilibrium reference can be taken as the
+thermionic reservoir density at the barrier,
+$n_\mathrm{eq} = N_C\, e^{-\phi_B/V_T}$ (and the $N_V$ analogue for holes),
+which makes the contact carrier supply work-function-limited rather than
+doping-limited.
 
 ## Ion Boundaries
 
-Both positive and negative mobile ions use zero-flux boundaries. This reflects
-the physical assumption that ions redistribute inside the device but do not
-leave through the contacts.
+Both positive and negative mobile ions use zero-flux boundaries. This
+reflects the physical assumption that ions redistribute inside the device
+but do not leave through the contacts; it also makes the total ion content
+an exact conserved quantity of the simulation.
 
 ## Initial States
 
-The dark equilibrium state starts from charge neutrality and mass action. The
-illuminated state is obtained by integrating the transient equations under
-illumination at the starting voltage.
+The dark equilibrium state starts from charge neutrality and mass action.
+The illuminated state is obtained by integrating the transient equations
+under illumination at the starting voltage until the coupled
+electron/hole/ion system reaches its light-soaked quasi-steady state.
 
 For J-V, impedance, and degradation, this light-soaked initial state matters
-because ion and carrier memory affect the measurement.
+because ion and carrier memory affect the measurement: the same voltage
+grid scanned from a different pre-conditioning state produces a different
+transient current — this is the hysteresis mechanism, not an artifact.
 
 # Physics Tiers
 
@@ -792,53 +1331,335 @@ SolarLab uses three fidelity modes:
 | `fast` | build-once upgrades, no expensive per-RHS hooks | screening |
 | `full` | every configured hook | high-fidelity single runs |
 
-The tier is a ceiling, not a command to fabricate missing data. For example:
+The distinction between `fast` and `full` is architectural: *build-once*
+physics is folded into the cached material arrays before the time integrator
+starts, while *per-evaluation* physics must be recomputed from the evolving
+state inside every right-hand-side call (Chapter \ref{numerical-method}).
+The flag matrix is:
+
+| Physics hook | `legacy` | `fast` | `full` | Evaluation |
+|---|---|---|---|---|
+| Band offsets + thermionic emission | off | on | on | build-once |
+| Transfer-matrix optics | off | on | on | build-once |
+| Dual mobile-ion species | off | on | on | build-once |
+| Spatial trap profiles | off | on | on | build-once |
+| Temperature scaling | off | on | on | build-once |
+| Photon recycling (net coefficient) | off | on | on | build-once |
+| Self-consistent radiative reabsorption | off | off | on | per-evaluation |
+| Field-dependent mobility | off | off | on | per-evaluation |
+| Selective/Robin contacts | off | off | on | per-evaluation |
+
+`legacy` disables every upgraded hook and is contractually reproducible
+against the IonMonger reference implementation.
+
+The tier is a ceiling, not a command to fabricate missing data — a hook
+activates only when the configuration supplies the parameters it needs. For
+example:
 
 - TMM requires `optical_material`.
 - Field-dependent mobility requires nonzero `v_sat_*` or `pf_gamma_*`.
 - Selective contacts require finite `S_*` values.
 - Radiative reabsorption requires TMM/photon-recycling support.
 
-# Numerical Method
+This "enable-if-configured" pattern makes the tier strings safe to set on any
+preset: flags whose prerequisites are absent stay silent instead of forcing
+physics the stack cannot support.
+
+# Numerical Method {#numerical-method}
 
 ![SolarLab solver pipeline](perovskite-sim/docs/images/solver_pipeline.png)
 
-The solver discretizes Eqs. \ref{eq:poisson}--\ref{eq:beer-lambert} on the
-device grid and then advances the coupled state in time. The important point
-for users is that a J-V point is not a closed-form diode equation; it is the
-terminal current read from a relaxed drift-diffusion state at a specified
-applied voltage.
+The solver discretizes the governing equations of Chapter
+\ref{governing-equations} on the device grid and then advances the coupled
+state in time. The important point for users is that a J-V point is not a
+closed-form diode equation; it is the terminal current read from a relaxed
+drift-diffusion state at a specified applied voltage.
 
-## Grid
+## Spatial Grid
 
-The 1D solver builds a multilayer grid over electrical layers. Substrate layers
-are excluded from the electrical grid but retained for TMM optics.
+The 1D solver builds a multilayer grid over the electrical layers only;
+substrate layers are excluded from the electrical grid but retained for TMM
+optics. Within each layer of thickness $L$ the $N+1$ nodes follow a
+hyperbolic-tangent stretching,
 
-## Method Of Lines
+\begin{equation}
+\label{eq:tanh-grid}
+x(\xi)
+=
+\frac{L}{2}\left[1+\frac{\tanh(a\,\xi)}{\tanh a}\right],
+\qquad \xi \in [-1, 1],\ a = 3,
+\end{equation}
 
-The PDEs are discretized in space first. The result is a coupled system of
-ordinary differential equations in time. This is the method-of-lines approach.
+which clusters nodes toward both layer boundaries. This resolves the space-
+charge regions and interface carrier gradients — where densities vary over
+Debye-length scales — without wasting nodes in the quasi-neutral interior.
+Layer grids are concatenated with duplicate interface points removed, and a
+compositionally graded layer is automatically refined by an integer
+multiplier so a steep band-gap notch spans several cells.
 
-The state vector contains the node values for:
+## Method Of Lines And State Vector
+
+The PDEs are discretized in space first, producing a coupled system of
+ordinary differential equations in time — the method-of-lines approach. The
+packed state vector contains the nodal values
 
 $$
-\mathbf{y}=(n,p,P)
+\mathbf{y}=(n,\,p,\,P\,[,P^-]\,[,\mathbf{s}_\mathrm{if}]),
 $$
 
-and optionally a negative ion species.
+with the optional negative-ion block in dual-ion mode and an optional
+trailing block of interface-plane carrier states used by the steady-state
+SCAPS-comparison machinery. The electrostatic potential is *not* a dynamical
+unknown: Eq. \ref{eq:poisson} is elliptic and is re-solved exactly, from the
+instantaneous charge configuration, inside every right-hand-side (RHS)
+evaluation. This eliminates any splitting error between electrostatics and
+transport at the cost of one linear solve per evaluation, which the
+prefactored Poisson path below makes essentially free.
 
-## Time Integration
+## Scharfetter-Gummel Flux Discretization
 
-SolarLab uses SciPy `solve_ivp`, primarily with the implicit Radau method.
-Selected difficult J-V steps use bounded fallback logic, including step
-bisection and BDF fallback. The code caps `max_step` around voltage transitions
-to avoid large near-flat-band integration jumps.
+Central differencing of the drift-diffusion current
+(Eq. \ref{eq:dd-currents}) becomes unstable when the potential drop per cell
+exceeds a few $V_T$ — the standard failure of naive discretizations in
+depletion regions. The Scharfetter-Gummel (SG) scheme instead solves the
+constitutive relation *exactly* on each cell under the assumptions of
+constant current and constant field between adjacent nodes; the resulting
+face flux is the optimal exponential fit,
+
+\begin{equation}
+\label{eq:sg-electron}
+J_{n,i+1/2}
+=
+\frac{qD_n}{\Delta x}
+\left[
+B(\xi)\,n_{i+1}-B(-\xi)\,n_i
+\right],
+\qquad
+\xi = \frac{\phi_{n,i+1}-\phi_{n,i}}{V_T},
+\end{equation}
+
+\begin{equation}
+\label{eq:sg-hole}
+J_{p,i+1/2}
+=
+\frac{qD_p}{\Delta x}
+\left[
+B(\xi)\,p_i-B(-\xi)\,p_{i+1}
+\right],
+\qquad
+\xi = \frac{\phi_{p,i+1}-\phi_{p,i}}{V_T},
+\end{equation}
+
+with the Bernoulli function
+
+\begin{equation}
+\label{eq:bernoulli}
+B(\xi)=\frac{\xi}{e^{\xi}-1}.
+\end{equation}
+
+The scheme reduces to central differencing in the diffusion limit
+($|\xi| \ll 1$) and to pure upwinding in the drift limit
+($|\xi| \gg 1$), remaining positivity-preserving and stable at arbitrarily
+large cell Peclet numbers (Scharfetter and Gummel 1969; Selberherr 1984).
+Three implementation details matter:
+
+- the drift argument $\xi$ is built from the *band-effective* potentials
+  $\phi_n$, $\phi_p$ of Eqs.
+  \ref{eq:band-corrected-potentials}–\ref{eq:dos-potentials}, so
+  heterojunction offsets and density-of-states contrasts enter the flux
+  without any special-case interface treatment;
+- $B(\xi)$ is evaluated in three numerically safe branches: a Taylor series
+  for $|\xi|<10^{-8}$ (removing the $0/0$ singularity), the analytic zero
+  limit for $\xi > 700$ (preventing floating-point overflow of $e^{\xi}$),
+  and the `expm1` form elsewhere (preserving precision near zero);
+- face diffusivities use the harmonic mean of the adjacent nodal values,
+  the composition consistent with flux continuity across a material
+  discontinuity (it also preserves exact zeros, so an ion-blocking layer
+  boundary carries strictly zero ionic flux).
+
+The divergence of the face fluxes is taken over dual-grid (finite-volume)
+cells, so the semi-discrete continuity equations conserve charge exactly on
+the non-uniform mesh. The same SG form, with the drift sign set by the ionic
+charge and the steric factor of Eq. \ref{eq:steric} folded into the face
+diffusivity, discretizes the ion flux of Eq. \ref{eq:ion-flux}.
 
 ## Poisson Fast Path
 
-The Poisson equation becomes a tridiagonal linear system. SolarLab prefactors
-this operator and reuses the factorization. This is why `build_material_arrays`
-must be called outside the RHS and not inside the time-step loop.
+The finite-volume Poisson operator is tridiagonal. Its LU factorization
+depends only on the grid and the permittivity profile — both constant for the
+lifetime of an experiment — so it is computed once (LAPACK `dgttrf`) and
+cached; every subsequent RHS evaluation performs a single $O(N)$
+back-substitution (`dgttrs`) with the Dirichlet boundary values absorbed
+into the right-hand side. This is roughly forty times faster than a
+general sparse solve and is the reason the per-experiment material cache
+must be built *outside* the time-step loop.
+
+The same build-once philosophy applies to all static coefficient fields:
+per-node and per-face material arrays, band-edge and density-of-states
+folds, trap-profile lifetime maps, grading profiles, tunnelling-enhanced
+Richardson constants, and the TMM generation profile are all assembled once
+into an immutable cache. Only three hooks are inherently state-dependent and
+re-evaluated per RHS call — field-dependent mobility, self-consistent
+radiative reabsorption, and Robin contact fluxes — which is exactly the set
+excluded from the `fast` tier.
+
+## Right-Hand-Side Assembly
+
+Each RHS evaluation proceeds in a fixed order:
+
+1. apply contact conditions to the carrier arrays (ohmic Dirichlet pins, or
+   free boundary densities on Robin sides);
+2. assemble the space charge $\rho$ (Eq. \ref{eq:charge-density});
+3. solve Poisson for $\phi$ via the prefactored path;
+4. form the generation profile $G(x)$ (cached TMM or Beer-Lambert; plus the
+   reabsorption source when self-consistent photon recycling is active);
+5. recompute face diffusivities from the face field if field-dependent
+   mobility is active;
+6. evaluate SG fluxes, apply the thermionic-emission cap at flagged
+   heterointerface faces, and take flux divergences with $G-R$;
+7. subtract interface recombination at interface nodes;
+8. evaluate ion continuity (and the negative species in dual-ion mode);
+9. enforce the boundary treatment (zero time-derivative on Dirichlet-pinned
+   entries; Robin fluxes otherwise), and verify all derivatives are finite.
+
+## Time Integration And Robustness
+
+The semi-discrete system is stiff: electronic relaxation (nanoseconds),
+dielectric relaxation, and ionic migration (milliseconds-seconds) coexist in
+one state vector. SolarLab integrates it with SciPy's Radau IIA method — a
+fifth-order, L-stable, fully implicit Runge-Kutta scheme appropriate for
+stiff differential systems (Hairer and Wanner 1996) — with BDF as a
+fallback. Stability of the implicit iteration, not accuracy, sets the
+practical step size, and a layered set of safeguards keeps difficult J-V
+steps bounded:
+
+- **Step-size ceiling near flat band.** Close to $V_\mathrm{app} \approx
+  V_\mathrm{bi}$ the Jacobian is nearly singular and Radau's local-error
+  estimator can under-report the truncation error, accepting one giant step
+  onto a wrong branch of the implicit equations (visible as an isolated
+  non-physical J-V spike). Every voltage step therefore caps the internal
+  step at $1/20$ of the settle interval.
+- **Evaluation budget.** A per-step ceiling on RHS evaluations converts a
+  non-contracting implicit iteration (which would otherwise spin without
+  wall-time bound) into a recoverable failure.
+- **Bisection in time.** A failed settle interval is halved and re-chained,
+  up to $2^{10}$ sub-intervals.
+- **Frozen-source retry.** The self-consistent reabsorption source couples
+  all absorber nodes through a non-local integral; at the diode-injection
+  knee this can prevent Newton contraction inside Radau. The failed step is
+  retried with the reabsorption source frozen at its entry-state value —
+  a lag bounded by one settle interval, well below the regression tolerance.
+- **Method fallback.** A step that exhausts bisection is attempted once with
+  BDF, which occasionally converges where Radau's error estimator stalls.
+- **Finite-value guard.** Any NaN/Inf in the assembled derivatives raises
+  immediately rather than letting the integrator accept corrupted state.
+
+## Direct Steady-State Solver
+
+The transient integrator is the reference engine for ion-coupled dynamics,
+but steady-state comparisons (e.g. against ion-free steady-state simulators
+such as SCAPS) and artifact-free open-circuit voltages benefit from solving
+$F(\mathbf{y}) = 0$ directly on the *same* discretized RHS — one physics
+implementation, two drivers. The steady-state driver freezes the ion profile
+from its seed state and applies a damped Newton method with:
+
+- **Logarithmic unknowns** $z = (\ln n, \ln p)$, which enforce positivity by
+  construction and equidistribute sensitivity across densities spanning
+  twenty orders of magnitude;
+- **Peak-density residual scaling**: residuals are normalized by the global
+  peak density rather than the local one, because at dark depletion nodes
+  the local-relative rate floors at double-precision cancellation noise and
+  no tolerance could ever be met; on the peak-density scale that noise sits
+  near $10^{-10}$ while a genuine imbalance registers at order unity, and
+  the tolerance translates into a terminal-current error bound of
+  $\sim 10^{-8}\,A\,m^{-2}$;
+- **Finite-difference Jacobian with chord reuse**: the dense Jacobian is
+  built by forward differences and its LU factorization is reused across
+  chord iterations, rebuilt only when a stale factor loses contraction —
+  the dominant cost saving on warm-started continuation solves;
+- **Backtracking line search** on the residual 2-norm, with the Newton step
+  capped in log space;
+- **Smoothed thermionic-emission cap**: the hard magnitude-minimum of the TE
+  cap is non-differentiable exactly where it binds; the steady-state driver
+  (and only it) replaces it with a narrow sigmoid blend so Newton retains a
+  usable derivative;
+- **Quasi-Fermi-preserving Poisson relaxation**: before Newton starts (and
+  after every transient assist), a nonlinear Poisson solve with
+  Boltzmann-responding carriers at frozen quasi-Fermi levels performs the
+  dielectric relaxation analytically. This step is unconditionally
+  well-posed and removes the seconds-slow relaxation mode that otherwise
+  dominates the Jacobian conditioning in near-insulating layers;
+- **Certified fallbacks**: where the TE-cap kink makes Newton stall at an
+  already-physically-converged state, the best iterate is accepted under an
+  explicit residual bound; where Newton cannot finish at all, escalating
+  Radau settles compute the point and are *certified* against the same
+  residual scale — no silent fallback exists, and an uncertifiable point
+  raises an error.
+
+Steady-state J-V curves are computed by voltage continuation with
+warm-started seeds and automatic voltage-step bisection; the open-circuit
+voltage can additionally be located by direct bisection on the steady-state
+$J(V)$ zero crossing, eliminating sweep-grid interpolation error. Measured
+agreement between the two drivers on the reference configuration is within
+5 mV in $V_\mathrm{oc}$ and 1% in $J_\mathrm{sc}$. Two deep-tail regimes
+fail honestly by design: near-insulating contact doping produces no $J = 0$
+crossing below the scan ceiling (a physical absence the transient confirms),
+and deeply collapsed conduction-band-offset junctions are pathological for
+any algebraic Newton method and are handled by the transient engine only.
+
+## Operator Splitting For Slow Ion Dynamics
+
+Long-time experiments (degradation) use an operator-splitting step matched
+to the two-time-scale structure: the ion subsystem is advanced over a
+macroscopic interval with the carrier densities frozen (Poisson re-solved
+inside the ion RHS so the ions always see a self-consistent field), and the
+carriers are then re-equilibrated by a short full-system transient of order
+one carrier lifetime. Snapshot J-V measurements inside degradation freeze
+the ion profile entirely, so each snapshot reports the instantaneous
+electronic response of the current ionic configuration.
+
+## Terminal Current Evaluation
+
+The reported current density combines conduction, ionic, and displacement
+contributions at mesh faces:
+
+$$
+J = J_n + J_p + J_\mathrm{ion} + \varepsilon_0\varepsilon_r
+\frac{\partial E}{\partial t}.
+$$
+
+Transient sweeps read the contact-adjacent face, where the displacement term
+is part of the physical external-circuit current. Steady-state probes
+(Suns-$V_\mathrm{oc}$, EQE) instead take the *median* across interior faces:
+charge conservation makes $J(x)$ uniform at steady state, so any face is
+formally correct, but residual ionic and displacement transients concentrate
+at the boundary faces and the median is robust to those outliers. Metrics
+extraction interpolates $J_\mathrm{sc}$ at $V = 0$ and $V_\mathrm{oc}$ at the
+first positive-to-negative zero crossing, computes FF and PCE from the
+maximum-power point over the operating quadrant, and reports an explicit
+`voc_bracketed` flag instead of fabricating metrics when the sweep window
+misses the crossing. The hysteresis index compares scan directions as
+
+$$
+\mathrm{HI}
+=
+\frac{PCE_\mathrm{rev}-PCE_\mathrm{fwd}}{PCE_\mathrm{rev}} .
+$$
+
+## Two-Dimensional Extension
+
+The experimental 2D solver reuses the same physics on a tensor-product grid:
+the tanh-clustered stack axis crossed with a uniform lateral axis. The 2D
+Poisson operator is a five-point finite-volume stencil with harmonic-mean
+face permittivities, factorized once with a sparse LU and reused per
+evaluation; the carrier fluxes are vectorized 2D SG forms with the same
+band-effective potentials, and the thermionic-emission cap applies on
+vertical (stack-direction) heterointerface faces. Mobile ions are held as a
+static Poisson background extruded from the 1D solution — the documented 2D
+model assumption. Lateral boundaries are periodic or zero-flux. The 2D
+solver is regression-gated against 1D in the lateral-uniform limit to
+$|\Delta V_\mathrm{oc}| \leq 0.1$ mV, relative $\Delta J_\mathrm{sc} \leq
+5\times10^{-4}$, and $|\Delta FF| \leq 10^{-3}$.
 
 ## Numerical Safety
 
@@ -847,15 +1668,19 @@ Important safety mechanisms include:
 - finite-value guards in the RHS;
 - harmonic face permittivity;
 - stable Bernoulli-function branches;
+- the thermionic-emission cap at abrupt heterointerfaces;
+- step-size ceilings, evaluation budgets, and bisection/fallback logic in
+  every voltage-stepping experiment;
 - TMM transfer-matrix determinant guard;
 - median-current steady-state readout;
-- explicit `voc_bracketed` flags when a J-V sweep misses the zero crossing.
+- explicit `voc_bracketed` flags when a J-V sweep misses the zero crossing;
+- fail-loud steady-state convergence (no silent fallback).
 
 For publication work, numerical settings are part of the method. Report the
 grid size, voltage spacing, settling time or scan rate, tolerances when
 modified, and whether the run used `legacy`, `fast`, or `full` mode.
 
-# Running SolarLab
+# Running SolarLab {#running-solarlab}
 
 ## Installation
 
@@ -1061,6 +1886,13 @@ If the sweep never crosses $J=0$, `voc_bracketed=false`. In that case
 $V_\mathrm{oc}$, FF, and PCE are sentinel values and the user should increase
 `V_max`.
 
+The J-V job additionally accepts a solver selector: the default
+`transient` driver is the state-preserving Radau sweep described above,
+while `steady_state` routes the same device through the ion-frozen direct
+Newton driver of Chapter \ref{numerical-method}, returning a single
+hysteresis-free steady-state curve. The steady-state driver is the
+appropriate choice when comparing against ion-free steady-state simulators.
+
 ## Current Decomposition
 
 Current decomposition separates:
@@ -1181,9 +2013,16 @@ This experiment also requires TMM optical data.
 
 ## Impedance
 
-Impedance applies a small sinusoidal voltage perturbation around a DC bias and
-extracts the current response by lock-in fitting. The result is $Z(f)$ in
-$\Omega m^2$, suitable for Nyquist and Bode plots.
+Impedance applies a small sinusoidal voltage perturbation around a DC bias,
+integrates a few AC cycles of the full nonlinear transient at each frequency,
+and extracts the amplitude and phase of the current response by lock-in
+demodulation (sine/cosine multiplication followed by low-pass filtering). The
+displacement current $\varepsilon_0\varepsilon_r\,\partial E/\partial t$ is
+included, so the capacitive branch is physical rather than post-processed.
+The result is $Z(f)$ in $\Omega\, m^2$, suitable for Nyquist and Bode plots.
+Because the ionic and electronic subsystems respond on different time
+scales, the spectrum resolves both relaxations without any equivalent-
+circuit assumption.
 
 ## Mott-Schottky
 
@@ -1354,7 +2193,9 @@ check that the backend was started from the SolarLab root with
 
 # Validation And Evidence {#validation-and-evidence}
 
-This manual was generated after a full evidence pass on 2026-05-19.
+The evidence pass for this manual was executed on 2026-05-19 at commit
+`43c81d7`; the manual text was last revised on 2026-07-21 against the same
+validated repository state.
 
 ![Validation gate summary](figures/validation_gate_summary.png)
 
@@ -1596,6 +2437,33 @@ and validation are also supplied.
     **4**, 3623--3630 (2013). doi:10.1021/jz4020162.
 16. L. M. Pazos-Outón et al., "Photon recycling in lead iodide perovskite
     solar cells," *Science* **351**, 1430--1433 (2016).
+17. S. Selberherr, *Analysis and Simulation of Semiconductor Devices*
+    (Springer, Vienna, 1984).
+18. E. Hairer and G. Wanner, *Solving Ordinary Differential Equations II:
+    Stiff and Differential-Algebraic Problems*, 2nd ed. (Springer, Berlin,
+    1996).
+19. G. F. Burkhard, E. T. Hoke, and M. D. McGehee, "Accounting for
+    interference, scattering, and electrode absorption to make accurate
+    internal quantum efficiency measurements in organic and other thin solar
+    cells," *Advanced Materials* **22**, 3293--3297 (2010).
+    doi:10.1002/adma.201000883.
+20. F. A. Padovani and R. Stratton, "Field and thermionic-field emission in
+    Schottky barriers," *Solid-State Electronics* **9**, 695--707 (1966).
+    doi:10.1016/0038-1101(66)90097-9.
+21. Y. P. Varshni, "Temperature dependence of the energy gap in
+    semiconductors," *Physica* **34**, 149--154 (1967).
+    doi:10.1016/0031-8914(67)90062-6.
+22. M. S. Kilic, M. Z. Bazant, and A. Ajdari, "Steric effects in the dynamics
+    of electrolytes at large applied voltages. II. Modified Poisson-Nernst-
+    Planck equations," *Physical Review E* **75**, 021503 (2007).
+    doi:10.1103/PhysRevE.75.021503.
+23. H. Pauwels and G. Vanhoutte, "The influence of interface state and energy
+    barriers on the efficiency of heterojunction solar cells," *Journal of
+    Physics D: Applied Physics* **11**, 649--667 (1978).
+    doi:10.1088/0022-3727/11/5/009.
+24. M. Burgelman and J. Marlein, "Analysis of graded band gap solar cells
+    with SCAPS," *Proceedings of the 23rd European Photovoltaic Solar Energy
+    Conference*, 2151--2155 (2008).
 
 # Appendix A: Manual Source Trail
 
@@ -1644,13 +2512,23 @@ Physics trend matrix & \path{tests/validation/test_physical_trends.py} & Summari
 |---|---|
 | AM1.5G | Standard terrestrial solar spectrum used for photovoltaic testing. |
 | Beer-Lambert | Scalar absorption law using an absorption coefficient $\alpha$. |
+| Bernoulli function | $B(\xi)=\xi/(e^{\xi}-1)$; the weighting function of the Scharfetter-Gummel flux. |
+| Detailed balance | Requirement that every generation/recombination channel vanishes exactly at thermodynamic equilibrium. |
+| Displacement current | Capacitive current $\varepsilon_0\varepsilon_r\,\partial E/\partial t$ included in the terminal current. |
 | Drift-diffusion | Continuum transport model combining diffusion from concentration gradients and drift from electric fields. |
 | FF | Fill factor, the ratio between maximum power and $V_\mathrm{oc}J_\mathrm{sc}$. |
 | Hysteresis | Difference between forward and reverse J-V scans caused by state memory, often ionic in perovskites. |
+| Ideality factor | Slope parameter $n_\mathrm{id}$ of the dark diode characteristic. |
 | Method of lines | Numerical method that discretizes space first and integrates the resulting ODE system in time. |
 | PCE | Power-conversion efficiency. |
+| Photon recycling | Reabsorption of internally emitted photons, reducing the net radiative loss. |
+| Quasi-Fermi level | Electrochemical potential of one carrier population out of equilibrium; flat quasi-Fermi levels mean zero current. |
+| Radau IIA | L-stable fully implicit Runge-Kutta method used for the stiff time integration. |
+| Richardson constant | Prefactor $A^{*}$ of the thermionic-emission flux across a band offset. |
 | SG flux | Scharfetter-Gummel flux discretization, used for stable drift-dominated carrier transport. |
 | SRH | Shockley-Read-Hall trap-assisted recombination. |
+| Steric limit | Finite site density $P_\mathrm{lim}$ bounding mobile-ion accumulation. |
+| Thermionic emission | Interface-limited carrier transport over a heterojunction band offset. |
 | TMM | Transfer-matrix method for wavelength-resolved multilayer optics. |
 | $J_\mathrm{sc}$ | Short-circuit current density. |
 | $V_\mathrm{oc}$ | Open-circuit voltage. |
