@@ -50,29 +50,11 @@ This manual serves two purposes:
    assumptions, and limitations needed for technical review and reproducible
    use.
 
-The manual is based on the current SolarLab repository state:
-
-- Commit: `43c81d7fefd009ffca598f58f85a40ad4e661e1e`
-- Validation date: 2026-05-19
-- Manual revision date: 2026-07-21
-- Primary simulator tree: `perovskite-sim/`
-
-The validation evidence collected before writing this PDF is summarized in
-Chapter \ref{validation-and-evidence}. The short version is:
-
-| Validation gate | Result |
-|---|---:|
-| `pytest` | 647 passed, 1 skipped |
-| `pytest -m slow` | 72 passed |
-| `pytest -m validation` | 18 passed |
-| `npm run build` | passed |
-| `npm run test:run` | 320 passed |
-
-The validation evidence should be interpreted as implementation evidence, not
-as a guarantee of predictive accuracy for arbitrary material stacks. It shows
-that the equations, numerical coupling, backend/frontend interfaces,
-regression envelopes, and documented benchmark cases are internally consistent
-for the repository state listed above.
+The software validation status — the unit, regression, and physics-trend
+test suites, the benchmark envelopes, and the repository state they certify
+— is reported in Chapter \ref{validation-and-evidence}; the corresponding
+model assumptions and limitations are collected in the chapters that follow
+it.
 
 # How To Read This Manual
 
@@ -2211,8 +2193,13 @@ check that the backend was started from the SolarLab root with
 # Validation And Evidence {#validation-and-evidence}
 
 The evidence pass for this manual was executed on 2026-05-19 at commit
-`43c81d7`; the manual text was last revised on 2026-07-21 against the same
-validated repository state.
+`43c81d7` of the SolarLab repository (primary simulator tree
+`perovskite-sim/`); the manual text was last revised on 2026-07-21 against
+the same validated repository state. The evidence should be read as
+implementation evidence — internal consistency of the equations, numerical
+coupling, backend/frontend interfaces, and benchmark envelopes at that
+repository state — not as a guarantee of predictive accuracy for arbitrary
+material stacks.
 
 ![Validation gate summary](figures/validation_gate_summary.png)
 
