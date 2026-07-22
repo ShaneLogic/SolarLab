@@ -1865,7 +1865,12 @@ def assemble_rhs(
             # Integrate B_rad · n · p across the absorber. Trapezoidal on
             # the electrical grid is plenty — the absorber span is always
             # resolved with ≥ 20 nodes in production configs.
-            emission = mat.B_rad[mask] * n[mask] * p[mask]
+            # NET emission B(np - ni^2), not gross B*n*p: the sink in
+            # carrier_continuity_rhs is the net rate, so detailed balance
+            # requires the recycled source to vanish at mass action too
+            # (2026-07 review F08 — gross form generated carriers at dark
+            # equilibrium).
+            emission = mat.B_rad[mask] * (n[mask] * p[mask] - mat.ni_sq[mask])
             x_abs = x[mask]
             if x_abs.size < 2:
                 continue

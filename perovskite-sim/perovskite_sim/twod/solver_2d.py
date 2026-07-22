@@ -663,6 +663,7 @@ def assemble_rhs_2d(
     if mat.has_radiative_reabsorption_2d and mat.absorber_y_ranges_2d:
         G_to_use = recompute_g_with_rad_2d(
             G_optical=mat.G_optical, n=n, p=p, B_rad=mat.B_rad,
+            ni_sq=mat.ni ** 2,
             x=g.x, y=g.y,
             absorber_y_ranges=mat.absorber_y_ranges_2d,
             absorber_p_esc=mat.absorber_p_esc_2d,
