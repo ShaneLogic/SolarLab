@@ -39,7 +39,11 @@ def interface_recombination(
     n1, p1 : SRH trap-level carrier densities [m⁻³]
     v_n, v_p : surface recombination velocities [m/s]
     """
-    if v_n == 0.0 and v_p == 0.0:
+    if v_n <= 0.0 or v_p <= 0.0:
+        # A single blocked capture channel blocks the full SRH cycle: the
+        # denominator diverges as v -> 0, so the physical limit is R -> 0.
+        # Guarding both (not just the both-zero case) also prevents a
+        # ZeroDivisionError for configs with one-sided passivation.
         return 0.0
     return (n * p - ni_sq) / ((n + n1) / v_p + (p + p1) / v_n)
 

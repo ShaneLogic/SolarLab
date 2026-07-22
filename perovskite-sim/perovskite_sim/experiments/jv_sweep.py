@@ -70,6 +70,7 @@ def compute_metrics(
     J: np.ndarray,
     *,
     assume_jsc_positive: bool = True,
+    P_in: float = 1000.0,
 ) -> JVMetrics:
     """Compute V_oc, J_sc, FF, PCE from a J-V array (J in A/m²).
 
@@ -118,7 +119,11 @@ def compute_metrics(
     mask = (V_s >= 0.0) & (V_s <= V_oc)
     P_mpp = float(np.max(V_s[mask] * J_s[mask])) if mask.any() else 0.0
     FF = P_mpp / (V_oc * J_sc) if (V_oc * J_sc) > 0 else 0.0
-    PCE = P_mpp / 1000.0
+    # PCE is defined against the incident optical power density P_in
+    # [W/m^2]. The default 1000 W/m^2 is the AM1.5G 1-sun convention;
+    # callers sweeping illumination intensity or spectra must pass the
+    # actual P_in or the reported efficiency is wrong (2026-07 review F18).
+    PCE = P_mpp / P_in if P_in > 0.0 else 0.0
     return JVMetrics(
         V_oc=V_oc, J_sc=J_sc, FF=FF, PCE=PCE, voc_bracketed=True,
     )
@@ -436,7 +441,9 @@ def _bake_radiative_reabsorption_step(
     ):
         if thickness <= 0.0 or P_esc >= 1.0:
             continue
-        emission = mat.B_rad[mask] * sv.n[mask] * sv.p[mask]
+        # NET emission B(np - ni^2) — must match the per-RHS form in
+        # assemble_rhs so the baked step preserves detailed balance (F08).
+        emission = mat.B_rad[mask] * (sv.n[mask] * sv.p[mask] - mat.ni_sq[mask])
         x_abs = x[mask]
         if x_abs.size < 2:
             continue

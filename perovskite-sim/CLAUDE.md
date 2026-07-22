@@ -178,6 +178,15 @@ On every RHS call, `assemble_rhs_2d` calls `recompute_g_with_rad_2d` (in `perovs
 
 **Out of scope.** Optical-profile-weighted redistribution (where `G_rad` would be weighted by `α(x)·I(x)` rather than uniform) is explicitly deferred. See `docs/superpowers/specs/2026-04-30-2d-stage-b-c3-radiative-reabsorption-design.md`. Per-grain absorber heterogeneity in the reabsorption integral, μ(T)-coupled `B_rad(T)` beyond the existing temperature-scaling hook, and any backend / frontend changes are out of scope for Stage B(c.3).
 
+### 2026-07 factual-review fixes (behavioral)
+
+Three small behavioral corrections from the external manual review (tests: `tests/unit/physics/test_review_fixes.py`):
+- **F07** `interface_recombination` now returns 0.0 when **either** v_n ≤ 0 or v_p ≤ 0 (blocked-cycle limit; previously a single zero velocity raised `ZeroDivisionError`).
+- **F08** The radiative-reabsorption source integrand is the **net** emission `B·(np − ni²)` (was gross `B·n·p`) in all three sites — `assemble_rhs`, `jv_sweep._bake_radiative_reabsorption_step`, and `twod/radiative_reabsorption_2d.py` (which now takes a required `ni_sq` kwarg). Preserves detailed balance at mass action; shifts illuminated results by ≪1 mV (ni² is negligible vs np under illumination).
+- **F18** `compute_metrics` gained `P_in: float = 1000.0`; PCE = P_mpp/P_in. Default is bit-identical 1-sun; intensity/spectrum sweeps must pass the real incident power.
+
+Deliberately NOT changed (documented formulation limitations in the manual, Ch17): the density-weighted TE cap scale (F02) and the full-flux per-species steric factor (F05) — both are calibrated-result-shifting and need a re-baselining campaign before revision.
+
 ### Solver gotcha — RHS finite-check
 
 `assemble_rhs` includes a `np.all(np.isfinite(dydt))` guard that raises `ValueError` if any element is NaN or Inf. This catches blow-ups from singular TMM matrices, zero-thickness layers, or extreme doping imbalances early — before Radau can silently accept them and produce garbage. Do not remove this check.

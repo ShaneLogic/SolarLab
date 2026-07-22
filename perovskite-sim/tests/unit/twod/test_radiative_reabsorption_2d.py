@@ -20,7 +20,7 @@ def test_recompute_returns_new_array_with_same_shape():
     x, y, n, p, B, G = _setup()
     G_in = G.copy()
     G_out = recompute_g_with_rad_2d(
-        G_optical=G_in, n=n, p=p, B_rad=B, x=x, y=y,
+        G_optical=G_in, n=n, p=p, B_rad=B, ni_sq=np.zeros_like(B), x=x, y=y,
         absorber_y_ranges=((2, 6),),
         absorber_p_esc=(0.5,),
         absorber_areas=(2.0e-7 * 1e-6,),   # thickness 200 nm × lateral 1 µm
@@ -35,7 +35,7 @@ def test_recompute_no_absorbers_returns_g_optical_copy():
     x, y, n, p, B, G = _setup()
     G_in = np.full_like(G, 1.5e25)
     G_out = recompute_g_with_rad_2d(
-        G_optical=G_in, n=n, p=p, B_rad=B, x=x, y=y,
+        G_optical=G_in, n=n, p=p, B_rad=B, ni_sq=np.zeros_like(B), x=x, y=y,
         absorber_y_ranges=(),
         absorber_p_esc=(),
         absorber_areas=(),
@@ -49,7 +49,7 @@ def test_recompute_p_esc_one_no_augmentation():
     x, y, n, p, B, G = _setup()
     G_in = np.full_like(G, 1.5e25)
     G_out = recompute_g_with_rad_2d(
-        G_optical=G_in, n=n, p=p, B_rad=B, x=x, y=y,
+        G_optical=G_in, n=n, p=p, B_rad=B, ni_sq=np.zeros_like(B), x=x, y=y,
         absorber_y_ranges=((2, 6),),
         absorber_p_esc=(1.0,),
         absorber_areas=(2.0e-7 * 1e-6,),
@@ -80,7 +80,7 @@ def test_recompute_uniform_state_lateral_extension_matches_1d():
     y[y_lo:y_hi] = y_abs
     area = thickness * lateral
     G_out = recompute_g_with_rad_2d(
-        G_optical=G_in, n=n, p=p, B_rad=B, x=x, y=y,
+        G_optical=G_in, n=n, p=p, B_rad=B, ni_sq=np.zeros_like(B), x=x, y=y,
         absorber_y_ranges=((y_lo, y_hi),),
         absorber_p_esc=(p_esc,),
         absorber_areas=(area,),
@@ -106,7 +106,7 @@ def test_recompute_only_absorber_rows_augmented():
     G_in = np.full((Ny, Nx), 7.0e25)         # non-zero baseline for visibility
     y_lo, y_hi = 4, 8
     G_out = recompute_g_with_rad_2d(
-        G_optical=G_in, n=n, p=p, B_rad=B, x=x, y=y,
+        G_optical=G_in, n=n, p=p, B_rad=B, ni_sq=np.zeros_like(B), x=x, y=y,
         absorber_y_ranges=((y_lo, y_hi),),
         absorber_p_esc=(0.5,),
         absorber_areas=(2e-7 * 1e-6,),
@@ -124,7 +124,7 @@ def test_recompute_zero_n_p_returns_g_optical_copy():
     p0 = np.full((Ny, Nx), 1e22)
     G_in = np.full_like(G, 1.5e25)
     G_out = recompute_g_with_rad_2d(
-        G_optical=G_in, n=n0, p=p0, B_rad=B, x=x, y=y,
+        G_optical=G_in, n=n0, p=p0, B_rad=B, ni_sq=np.zeros_like(B), x=x, y=y,
         absorber_y_ranges=((2, 6),),
         absorber_p_esc=(0.5,),
         absorber_areas=(2e-7 * 1e-6,),
@@ -138,7 +138,7 @@ def test_recompute_shape_mismatch_raises():
     bad_G = np.zeros((n.shape[0] + 1, n.shape[1]))
     with pytest.raises(ValueError, match="G_optical"):
         recompute_g_with_rad_2d(
-            G_optical=bad_G, n=n, p=p, B_rad=B, x=x, y=y,
+            G_optical=bad_G, n=n, p=p, B_rad=B, ni_sq=np.zeros_like(B), x=x, y=y,
             absorber_y_ranges=((2, 6),),
             absorber_p_esc=(0.5,),
             absorber_areas=(2e-7 * 1e-6,),

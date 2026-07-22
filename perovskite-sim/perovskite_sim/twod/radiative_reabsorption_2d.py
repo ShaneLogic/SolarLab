@@ -34,6 +34,7 @@ def recompute_g_with_rad_2d(
     n: np.ndarray,                                      # (Ny, Nx)
     p: np.ndarray,                                      # (Ny, Nx)
     B_rad: np.ndarray,                                  # (Ny, Nx)
+    ni_sq: np.ndarray,                                  # (Ny, Nx)
     x: np.ndarray,                                      # (Nx,)
     y: np.ndarray,                                      # (Ny,)
     absorber_y_ranges: tuple[tuple[int, int], ...],
@@ -68,6 +69,7 @@ def recompute_g_with_rad_2d(
     _check_2d_shape("n", n, Ny, Nx)
     _check_2d_shape("p", p, Ny, Nx)
     _check_2d_shape("B_rad", B_rad, Ny, Nx)
+    _check_2d_shape("ni_sq", ni_sq, Ny, Nx)
     if not (len(absorber_y_ranges) == len(absorber_p_esc) == len(absorber_areas)):
         raise ValueError(
             f"Stage B(c.3): per-absorber tuple length mismatch — "
@@ -84,7 +86,11 @@ def recompute_g_with_rad_2d(
             continue
         if y_hi - y_lo < 2 or Nx < 2:
             continue
-        emission = B_rad[y_lo:y_hi, :] * n[y_lo:y_hi, :] * p[y_lo:y_hi, :]   # (n_y_abs, Nx)
+        # NET emission B(np - ni^2) — matches the 1D per-RHS form so the
+        # recycled source vanishes at mass-action equilibrium (F08).
+        emission = B_rad[y_lo:y_hi, :] * (
+            n[y_lo:y_hi, :] * p[y_lo:y_hi, :] - ni_sq[y_lo:y_hi, :]
+        )                                                                    # (n_y_abs, Nx)
         # Integrate over y first (axis=0), giving (Nx,), then over x → scalar.
         emission_x = trapezoid(emission, y[y_lo:y_hi], axis=0)               # (Nx,)
         R_tot = float(trapezoid(emission_x, x))                              # scalar

@@ -104,6 +104,7 @@ def _bake_radiative_reabsorption_step_2d(
     p0 = y_state[N:].reshape((g.Ny, g.Nx))
     G_with_rad = recompute_g_with_rad_2d(
         G_optical=mat.G_optical, n=n0, p=p0, B_rad=mat.B_rad,
+        ni_sq=mat.ni ** 2,
         x=g.x, y=g.y,
         absorber_y_ranges=mat.absorber_y_ranges_2d,
         absorber_p_esc=mat.absorber_p_esc_2d,
