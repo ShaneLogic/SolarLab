@@ -189,42 +189,11 @@ This manual serves two purposes:
   reproducible use.
 \end{enumerate}
 
-The manual is based on the current SolarLab repository state:
-
-\begin{itemize}
-\tightlist
-\item
-  Commit: \texttt{43c81d7fefd009ffca598f58f85a40ad4e661e1e}
-\item
-  Validation date: 2026-05-19
-\item
-  Manual revision date: 2026-07-21
-\item
-  Primary simulator tree: \texttt{perovskite-sim/}
-\end{itemize}
-
-The validation evidence collected before writing this PDF is summarized
-in Chapter \ref{validation-and-evidence}. The short version is:
-
-\begin{longtable}[]{@{}lr@{}}
-\toprule
-Validation gate & Result \\
-\midrule
-\endhead
-\texttt{pytest} & 647 passed, 1 skipped \\
-\texttt{pytest\ -m\ slow} & 72 passed \\
-\texttt{pytest\ -m\ validation} & 18 passed \\
-\texttt{npm\ run\ build} & passed \\
-\texttt{npm\ run\ test:run} & 320 passed \\
-\bottomrule
-\end{longtable}
-
-The validation evidence should be interpreted as implementation
-evidence, not as a guarantee of predictive accuracy for arbitrary
-material stacks. It shows that the equations, numerical coupling,
-backend/frontend interfaces, regression envelopes, and documented
-benchmark cases are internally consistent for the repository state
-listed above.
+The software validation status --- the unit, regression, and
+physics-trend test suites, the benchmark envelopes, and the repository
+state they certify --- is reported in Chapter
+\ref{validation-and-evidence}; the corresponding model assumptions and
+limitations are collected in the chapters that follow it.
 
 \hypertarget{how-to-read-this-manual}{%
 \chapter{How To Read This Manual}\label{how-to-read-this-manual}}
@@ -2938,8 +2907,13 @@ update, check that the backend was started from the SolarLab root with
 \chapter{Validation And Evidence}\label{validation-and-evidence}}
 
 The evidence pass for this manual was executed on 2026-05-19 at commit
-\texttt{43c81d7}; the manual text was last revised on 2026-07-21 against
-the same validated repository state.
+\texttt{43c81d7} of the SolarLab repository (primary simulator tree
+\texttt{perovskite-sim/}); the manual text was last revised on
+2026-07-21 against the same validated repository state. The evidence
+should be read as implementation evidence --- internal consistency of
+the equations, numerical coupling, backend/frontend interfaces, and
+benchmark envelopes at that repository state --- not as a guarantee of
+predictive accuracy for arbitrary material stacks.
 
 \begin{figure}
 \centering
