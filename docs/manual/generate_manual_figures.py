@@ -41,11 +41,11 @@ def _save(fig: plt.Figure, name: str) -> None:
 
 def validation_gate_summary() -> None:
     rows = [
-        ("Default Python suite", "pytest", "647 passed, 1 skipped", "11.7 min"),
-        ("Slow regression suite", "pytest -m slow", "72 passed", "35.9 min"),
-        ("Physics validation suite", "pytest -m validation", "18 passed", "3.6 min"),
-        ("Frontend production build", "npm run build", "passed", "<0.1 min"),
-        ("Frontend unit tests", "npm run test:run", "320 passed", "0.02 min"),
+        ("Default Python suite", "pytest", "1101 passed, 3 skipped, 1 xfailed", "18.3 min"),
+        ("Slow regression suite", "pytest -m slow", "99 passed, 2 failed*, 4 skipped", "80.9 min"),
+        ("Physics validation suite", "pytest -m validation", "22 passed", "7.4 min"),
+        ("Frontend production build", "npm run build", "not re-executed (no FE changes)", "—"),
+        ("Frontend unit tests", "npm run test:run", "not re-executed (2026-05-19: 320 passed)", "—"),
     ]
 
     fig, ax = plt.subplots(figsize=(7.5, 3.3))
