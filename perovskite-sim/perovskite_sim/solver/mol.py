@@ -1498,6 +1498,7 @@ def _charge_density(
 
 _IFACE_PROJ_EXP_CAP = 40.0  # cap |Δφ/V_T| before exp() to avoid overflow
 
+
 # Phase E11 — TE equilibration velocity for the QSS interface-plane balance.
 # Large → interface-plane state ≈ projected bulk for weak SRH (R = SRH(proj));
 # self-limiting (depletion) for strong SRH. Env-overridable for tuning probes.
@@ -1714,7 +1715,18 @@ def _apply_interface_recombination(
             mat.interface_n1[k], mat.interface_p1[k],
             v_n, v_p,
         )
-        if nogen and R_s < 0.0:
+        # E9.3 clamp, DEFECT-SCOPED (2026-07 perf+physics fix): the
+        # spurious-generation artifact the clamp targets comes from the
+        # cross-carrier bulk-asymptotic ni_eff^2 reference, which exists
+        # only at interfaces with a declared InterfaceDefect
+        # (eval_n_idx != idx). On defect-free interfaces ni_sq_eff is the
+        # legacy per-node ni^2, R_s < 0 is REAL depletion generation
+        # (review F06), and clamping it both suppresses physics and makes
+        # Radau ride a non-differentiable corner through the V_oc knee and
+        # the reverse leg (measured ~150x sweep slowdown on
+        # ionmonger_benchmark; smooth zero-centred and bounded-floor
+        # variants relocate but do not remove the ridden corner).
+        if nogen and eval_n_idx != idx and R_s < 0.0:
             R_s = 0.0
         # Volumetric loss conversion uses the interface-node dual cell.
         # The depletion is applied at the interface node itself —
