@@ -16,10 +16,13 @@ urlcolor: blue
 linktoc: all
 toc: true
 lof: true
-lot: true
 numbersections: true
 header-includes:
   - \hypersetup{linktoc=all}
+  - |
+    \widowpenalty=10000
+    \clubpenalty=10000
+    \displaywidowpenalty=10000
   - |
     \makeatletter
     \renewcommand*\l@section{\@dottedtocline{1}{1.5em}{3.2em}}
@@ -165,6 +168,13 @@ a static Poisson background during 2D J-V runs; this is an explicit model
 assumption and should be reported when interpreting 2D results.
 
 ![SolarLab device structure](perovskite-sim/docs/images/device_structure.png)
+
+Illumination is always incident at $x=0$, through the first listed
+electrical layer (after any optical-only substrate layers). The
+device-structure figure shows the layer order of the shipped `nip_MAPbI3`
+preset — HTL at the illuminated front face, then absorber, then ETL — so
+the coordinate direction in the figure matches the YAML layer order
+exactly.
 
 ![SolarLab band-diagram concept](perovskite-sim/docs/images/band_diagram.png)
 
@@ -833,22 +843,28 @@ of modified Poisson-Nernst-Planck / lattice-gas theories:
 s(P)
 =
 \frac{1}
-{\max(1-P_\mathrm{avg}/P_\mathrm{lim},10^{-6})}.
+{\max(1-P/P_\mathrm{lim},\,10^{-6})}.
 \end{equation}
 
-As the local occupancy approaches the finite site density
+As the local occupancy $P$ approaches the finite site density
 $P_\mathrm{lim}$, the effective chemical potential of the ion gas diverges
 and the restoring flux is sharply enhanced, which bounds interfacial ion
 accumulation at the physically available site density instead of allowing
-the unphysical unbounded pile-up of the ideal-solution model.
+the unphysical unbounded pile-up of the ideal-solution model. (In the
+discretization, $P$ in Eq. \ref{eq:steric} is evaluated as the average of
+the two face-adjacent nodal densities; the $10^{-6}$ floor guards the
+division at full saturation.)
 
-Because ionic diffusivities ($D_I \sim 10^{-16}\,m^2 s^{-1}$) are many orders
-of magnitude below carrier diffusivities, ionic redistribution introduces a
-slow time scale ($\tau_\mathrm{ion} \sim L^2/D_I$, typically milliseconds to
-seconds) that coexists with nanosecond electronic relaxation. This stiff
-two-time-scale structure is the physical origin of scan-rate-dependent J-V
-hysteresis, and it is what the implicit time integration of Chapter
-\ref{numerical-method} is designed to handle.
+Because ionic diffusivities ($D_I \sim 10^{-16}\,m^2 s^{-1}$) are many
+orders of magnitude below carrier diffusivities, ionic redistribution
+introduces a slow time scale that coexists with nanosecond electronic
+relaxation. The governing relaxation is the drift-assisted screening of the
+built-in field across the interfacial, Debye-scale charge layers —
+typically milliseconds to seconds at perovskite ion mobilities — rather
+than diffusion over the full device length, which would be slower still.
+This stiff two-time-scale structure is the physical origin of
+scan-rate-dependent J-V hysteresis, and it is what the implicit time
+integration of Chapter \ref{numerical-method} is designed to handle.
 
 Additional model features:
 
@@ -1143,14 +1159,15 @@ from the instantaneous field, they are active only in the `full` tier.
 ## Temperature Dependence
 
 When temperature scaling is enabled, the device temperature $T$ enters the
-model self-consistently:
+model self-consistently. The thermal voltage $V_T = k_BT/q$ rescales every
+Einstein relation; carrier mobilities follow the standard scattering-style
+power law $\mu(T) = \mu_{300}\,(T/300\,K)^{\gamma_\mu}$; the radiative
+coefficient follows $B_\mathrm{rad}(T) = B_{300}\,(T/300\,K)^{\gamma_B}$;
+and ionic diffusivity is Arrhenius-activated through the per-layer
+activation energy `E_a_ion`.
 
-- the thermal voltage $V_T = k_BT/q$ rescales every Einstein relation;
-- carrier mobilities follow a power law
-  $\mu(T) = \mu_{300}\,(T/300\,K)^{\gamma_\mu}$, the standard
-  scattering-limited parameterization;
-- the band gap follows a Varshni shift *referenced to 300 K*, so that the
-  configured $E_g$ retains its meaning as the room-temperature gap:
+The band gap follows a Varshni shift *referenced to 300 K*, so that the
+configured $E_g$ retains its meaning as the room-temperature gap:
 
 \begin{equation}
 \label{eq:varshni}
@@ -1163,16 +1180,13 @@ E_g^{300}
 \qquad T_0 = 300\,K .
 \end{equation}
 
-  Conventional semiconductors (silicon: $\alpha \approx 4.73\times10^{-4}$
-  eV/K, $\beta \approx 636$ K) narrow on heating; halide perovskites show the
-  opposite sign and widen with temperature, reproduced by a negative
-  $\alpha$;
-- the intrinsic density $n_i(T)$ is recomputed self-consistently with the
-  shifted gap (and with the 300 K effective densities of states when
-  supplied);
-- the radiative coefficient follows
-  $B_\mathrm{rad}(T) = B_{300}\,(T/300\,K)^{\gamma_B}$;
-- ionic diffusivity is Arrhenius-activated through `E_a_ion`.
+Conventional semiconductors (silicon: $\alpha \approx 4.73\times10^{-4}$
+eV/K, $\beta \approx 636$ K) narrow on heating; halide perovskites show the
+opposite sign and widen with temperature, reproduced by a negative
+$\alpha$. The intrinsic density $n_i(T)$ is recomputed self-consistently
+with the shifted gap (and with the 300 K effective densities of states when
+supplied), so mass action and the SRH driving terms remain thermodynamically
+consistent at every temperature.
 
 All temperature hooks are gated by the temperature-scaling flag; the
 `legacy` tier pins the model at 300 K regardless of the configured $T$.
@@ -1203,10 +1217,13 @@ $$
 \frac{N_t^\mathrm{bulk}}{\max\!\big(N_t(x),\,N_t^\mathrm{bulk}\big)} ,
 $$
 
-where the floor makes a passivation profile
-($N_t^\mathrm{if} < N_t^\mathrm{bulk}$) behave monotonically. The two
-exponentials are summed rather than maximized so thin layers with
-overlapping tails saturate smoothly at $N_t^\mathrm{if}$.
+where the denominator floor caps the lifetime at $\tau_\mathrm{bulk}$: an
+edge-*passivation* profile ($N_t^\mathrm{if} < N_t^\mathrm{bulk}$) is
+deliberately clamped to the bulk lifetime rather than extrapolated to
+lifetimes above $\tau_\mathrm{bulk}$, so the profile can only ever add
+recombination. The two exponentials are summed rather than maximized so
+thin layers with overlapping tails saturate smoothly at
+$N_t^\mathrm{if}$.
 
 ## Band-Gap Grading
 
@@ -1390,8 +1407,8 @@ x(\xi)
 \qquad \xi \in [-1, 1],\ a = 3,
 \end{equation}
 
-which clusters nodes toward both layer boundaries. This resolves the space-
-charge regions and interface carrier gradients — where densities vary over
+which clusters nodes toward both layer boundaries. This resolves the
+space-charge regions and interface carrier gradients — where densities vary over
 Debye-length scales — without wasting nodes in the quasi-neutral interior.
 Layer grids are concatenated with duplicate interface points removed, and a
 compositionally graded layer is automatically refined by an integer
@@ -1934,9 +1951,9 @@ $$
 The output includes ideality factor $n_\mathrm{id}$, saturation current
 $J_0$, and the fitted voltage window.
 
-## Suns-Voc
+## Suns-$V_\mathrm{oc}$
 
-Suns-Voc varies illumination intensity and extracts $V_\mathrm{oc}$ at each
+Suns-$V_\mathrm{oc}$ varies illumination intensity and extracts $V_\mathrm{oc}$ at each
 level. It constructs a pseudo-JV curve:
 
 $$
@@ -2021,8 +2038,8 @@ displacement current $\varepsilon_0\varepsilon_r\,\partial E/\partial t$ is
 included, so the capacitive branch is physical rather than post-processed.
 The result is $Z(f)$ in $\Omega\, m^2$, suitable for Nyquist and Bode plots.
 Because the ionic and electronic subsystems respond on different time
-scales, the spectrum resolves both relaxations without any equivalent-
-circuit assumption.
+scales, the spectrum resolves both relaxations without any
+equivalent-circuit assumption.
 
 ## Mott-Schottky
 
@@ -2182,7 +2199,7 @@ large, check:
 
 - whether 1D ions were allowed to move while 2D ions were frozen;
 - lateral boundary condition;
-- `Nx`, `Ny_per_layer`, and settlement time;
+- `Nx`, `Ny_per_layer`, and the settling time (`settle_t`);
 - whether a microstructure block was unintentionally active.
 
 ## Frontend Job Appears To Hang
@@ -2206,10 +2223,10 @@ Gate & Command & Result & Time \\
 \midrule
 \endhead
 Python default suite & \path{pytest} & 647 passed, 1 skipped, 72 deselected & 704.90 s \\
-Python slow suite & \path{pytest -m slow} & 72 passed, 648 deselected & 2156.96 s \\
-Python validation suite & \path{pytest -m validation} & 18 passed, 702 deselected & 217.65 s \\
-Frontend build & \path{npm run build} & passed & build step 0.25 s \\
-Frontend unit tests & \path{npm run test:run} & 22 files, 320 tests passed & 1.29 s \\
+Python slow suite & \texttt{pytest -m slow} & 72 passed, 648 deselected & 2156.96 s \\
+Python validation suite & \texttt{pytest -m validation} & 18 passed, 702 deselected & 217.65 s \\
+Frontend build & \texttt{npm run build} & passed & build step 0.25 s \\
+Frontend unit tests & \texttt{npm run test:run} & 22 files, 320 tests passed & 1.29 s \\
 \bottomrule
 \end{longtable}
 \endgroup
@@ -2218,7 +2235,7 @@ The passing suites cover:
 
 - core Poisson, recombination, ion, optics, contact, temperature, and trap
   modules;
-- J-V, dark J-V, Suns-Voc, EQE, EL, impedance, Mott-Schottky, TPV,
+- J-V, dark J-V, Suns-$V_\mathrm{oc}$, EQE, EL, impedance, Mott-Schottky, TPV,
   degradation, tandem, and 2D workflows;
 - backend API and SSE job dispatch;
 - frontend result rendering and validation UI;
@@ -2228,7 +2245,7 @@ The passing suites cover:
 - 1D/2D lateral-uniform parity;
 - 2D microstructure regression;
 - physical trends for bandgap, thickness, mobility, dark ideality, and
-  Suns-Voc slope.
+  Suns-$V_\mathrm{oc}$ slope.
 
 ## Validation Figures
 
@@ -2263,7 +2280,7 @@ regression.
 
 The validation suite checks qualitative semiconductor-physics trends: current
 decreases with increasing band gap, mobility affects FF, dark J-V returns an
-ideality factor in the expected range, and Suns-Voc produces a physically
+ideality factor in the expected range, and Suns-$V_\mathrm{oc}$ produces a physically
 plausible slope.
 
 ![2D validation and microstructure summary](figures/twod_validation_summary.png)
@@ -2281,15 +2298,15 @@ Evidence item & Source test or file & What it defends \\
 \midrule
 \endhead
 Default Python suite & \path{pytest} & broad unit/integration coverage for solver, models, backend, and experiments \\
-Slow Python suite & \path{pytest -m slow} & expensive regression baselines, TMM, 2D parity, microstructure, benchmark envelopes \\
-Validation suite & \path{pytest -m validation} & expected semiconductor-physics trends \\
+Slow Python suite & \texttt{pytest -m slow} & expensive regression baselines, TMM, 2D parity, microstructure, benchmark envelopes \\
+Validation suite & \texttt{pytest -m validation} & expected semiconductor-physics trends \\
 IonMonger metric envelope & \path{tests/integration/test_voc_benchmark.py} & benchmark-scale J-V metrics and hysteresis bounds \\
 TMM \(J_\mathrm{sc}\) baselines & \path{tests/regression/test_tmm_baseline.py} & optical-stack regression stability \\
 Photon-recycling boost & \path{tests/regression/test_photon_recycling_voc.py} & radiative-limit voltage boost sanity \\
 2D parity & \path{tests/regression/test_twod_validation.py} & lateral-uniform 2D consistency with 1D \\
 Grain-boundary voltage loss & \path{tests/regression/test_twod_microstructure.py} & bounded microstructure-induced voltage penalty \\
-Frontend production build & \path{npm run build} & TypeScript/Vite production surface \\
-Frontend unit tests & \path{npm run test:run} & UI result rendering, validation, progress, and workstation state \\
+Frontend production build & \texttt{npm run build} & TypeScript/Vite production surface \\
+Frontend unit tests & \texttt{npm run test:run} & UI result rendering, validation, progress, and workstation state \\
 \bottomrule
 \end{longtable}
 \endgroup
@@ -2403,11 +2420,11 @@ and validation are also supplied.
    "IonMonger: a free and fast planar perovskite solar cell simulator with
    coupled ion vacancy and charge carrier dynamics," *Journal of
    Computational Electronics* **18**, 1435--1449 (2019).
-5. P. Calado, B. Telford, D. Bryant, X. Li, J. Nelson, B. C. O'Regan, and
+5. P. Calado, I. Gelmetti, B. Hilton, M. Azzouzi, J. Nelson, and
    P. R. F. Barnes, "Driftfusion: an open source code for simulating ordered
    semiconductor devices with mixed ionic-electronic conducting materials in
-   one dimension," *Journal of Computational Electronics* **15**, 1--20
-   (2016).
+   one dimension," *Journal of Computational Electronics* **21**, 960--991
+   (2022). doi:10.1007/s10825-021-01827-z.
 6. M. Burgelman, P. Nollet, and S. Degrave, "Modelling polycrystalline
    semiconductor solar cells," *Thin Solid Films* **361--362**, 527--532
    (2000). doi:10.1016/S0040-6090(99)00825-1.
@@ -2454,8 +2471,8 @@ and validation are also supplied.
     semiconductors," *Physica* **34**, 149--154 (1967).
     doi:10.1016/0031-8914(67)90062-6.
 22. M. S. Kilic, M. Z. Bazant, and A. Ajdari, "Steric effects in the dynamics
-    of electrolytes at large applied voltages. II. Modified Poisson-Nernst-
-    Planck equations," *Physical Review E* **75**, 021503 (2007).
+    of electrolytes at large applied voltages. II. Modified
+    Poisson-Nernst-Planck equations," *Physical Review E* **75**, 021503 (2007).
     doi:10.1103/PhysRevE.75.021503.
 23. H. Pauwels and G. Vanhoutte, "The influence of interface state and energy
     barriers on the efficiency of heterojunction solar cells," *Journal of
