@@ -39,19 +39,6 @@ def _save(fig: plt.Figure, name: str) -> None:
     plt.close(fig)
 
 
-def _panel_label(ax: plt.Axes, label: str) -> None:
-    ax.text(
-        -0.08,
-        1.05,
-        label,
-        transform=ax.transAxes,
-        fontsize=12,
-        fontweight="bold",
-        color=INK,
-        va="bottom",
-    )
-
-
 def validation_gate_summary() -> None:
     rows = [
         ("Default Python suite", "pytest", "647 passed, 1 skipped", "11.7 min"),
@@ -64,7 +51,6 @@ def validation_gate_summary() -> None:
     fig, ax = plt.subplots(figsize=(7.5, 3.3))
     ax.set_axis_off()
     ax.set_title("Validation evidence executed before manual generation", loc="left", pad=12)
-    _panel_label(ax, "A")
 
     headers = ["Gate", "Command", "Result", "Runtime"]
     x = [0.02, 0.38, 0.63, 0.86]
@@ -86,7 +72,6 @@ def validation_gate_summary() -> None:
 def architecture_flow() -> None:
     fig, ax = plt.subplots(figsize=(8.0, 4.3))
     ax.set_axis_off()
-    _panel_label(ax, "A")
 
     boxes = [
         ("YAML / UI\nDevice definition", (0.06, 0.70), "#EAF1F8"),
@@ -143,7 +128,6 @@ def tmm_jsc_baselines() -> None:
     x = np.arange(len(labels))
 
     fig, ax = plt.subplots(figsize=(6.2, 3.8))
-    _panel_label(ax, "A")
     ax.bar(x, pinned, yerr=tolerance, capsize=7, color=[BLUE, RUST], alpha=0.82, edgecolor=INK, linewidth=0.7)
     ax.set_xticks(x, labels)
     ax.set_ylabel(r"$J_\mathrm{sc}$ baseline (A m$^{-2}$)")
@@ -170,7 +154,6 @@ def ionmonger_reference_metrics() -> None:
     colors = [BLUE, TEAL, GREEN, RUST]
 
     fig, ax = plt.subplots(figsize=(6.6, 3.8))
-    _panel_label(ax, "A")
     x = np.arange(len(names))
     for xi, tol, color in zip(x, rel_tol, colors):
         ax.fill_between([xi - 0.32, xi + 0.32], 1 - tol, 1 + tol, color=color, alpha=0.20)
@@ -194,7 +177,6 @@ def ionmonger_reference_metrics() -> None:
 
 def photon_recycling_window() -> None:
     fig, ax = plt.subplots(figsize=(6.7, 2.8))
-    _panel_label(ax, "A")
     ax.set_xlim(0, 130)
     ax.set_ylim(0, 1)
     ax.axvspan(40, 100, color=BLUE, alpha=0.16)
@@ -220,7 +202,6 @@ def physical_trend_matrix() -> None:
     ]
     fig, ax = plt.subplots(figsize=(7.6, 3.9))
     ax.set_axis_off()
-    _panel_label(ax, "A")
     y0 = 0.83
     ax.text(0.02, 0.94, "Validation trend", weight="bold", color=INK, transform=ax.transAxes)
     ax.text(0.28, 0.94, "Expected physical behavior", weight="bold", color=INK, transform=ax.transAxes)
@@ -250,7 +231,6 @@ def twod_validation_summary() -> None:
     x = np.arange(len(checks))
 
     fig, ax = plt.subplots(figsize=(7.0, 3.5))
-    _panel_label(ax, "A")
     ax.bar(x, np.ones(len(checks)), color=[BLUE, TEAL, GREEN, GOLD, RUST], alpha=0.72, edgecolor=INK, linewidth=0.7)
     ax.set_xticks(x, checks)
     ax.set_yticks([])
