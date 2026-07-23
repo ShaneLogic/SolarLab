@@ -148,6 +148,23 @@ def carrier_continuity_rhs(
         A_star_n_arr = params["A_star_n"]
         A_star_p_arr = params["A_star_p"]
         T_val = params["T"]
+        # Physical TE normalization (review F02). When on, divide the TE flux
+        # at each capped face by the band-edge DOS (geometric mean of the two
+        # face nodes — a single divisor scales both legs equally, preserving
+        # equilibrium J=0). A face whose DOS is NaN (a layer without
+        # Nc300/Nv300) falls back to the legacy density-weighted form, so
+        # mixed / DOS-free configs stay bit-identical.
+        _te_phys = params.get("te_physical_norm", False)
+        _N_C = params.get("N_C_node")
+        _N_V = params.get("N_V_node")
+
+        def _face_dos(dos_arr, i):
+            if dos_arr is None:
+                return None
+            a, b = dos_arr[i], dos_arr[i + 1]
+            if not (np.isfinite(a) and np.isfinite(b) and a > 0.0 and b > 0.0):
+                return None
+            return float(np.sqrt(a * b))
         # Smooth magnitude-min blend (steady-state driver only; see
         # MaterialArrays.te_softness). 0.0 = exact hard cap below.
         te_soft = params.get("te_softness", 0.0)
@@ -181,6 +198,7 @@ def carrier_continuity_rhs(
                 J_te_n = thermionic_emission_flux(
                     float(n[f_idx]), float(n[f_idx + 1]), float(delta_Ec), T_val,
                     float(A_star_n_arr[f_idx]),
+                    N_dos=(_face_dos(_N_C, f_idx) if _te_phys else None),
                 )
                 J_n[f_idx] = _cap(float(J_n[f_idx]), float(J_te_n))
             # Hole VB offset. E_v = E_vac - chi - Eg, so
@@ -191,6 +209,7 @@ def carrier_continuity_rhs(
                 J_te_p = thermionic_emission_flux(
                     float(p[f_idx]), float(p[f_idx + 1]), float(delta_Ev), T_val,
                     float(A_star_p_arr[f_idx]),
+                    N_dos=(_face_dos(_N_V, f_idx) if _te_phys else None),
                 )
                 J_p[f_idx] = _cap(float(J_p[f_idx]), float(J_te_p))
 

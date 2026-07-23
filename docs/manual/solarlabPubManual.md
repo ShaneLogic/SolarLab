@@ -729,21 +729,34 @@ $1.2017\times10^{6}\,A\,m^{-2}K^{-2}$, overridable per layer). Only the
 the emission term unpenalized, so carriers flowing down a band step are not
 artificially blocked.
 
-Two honest qualifications apply. First, the density-weighted form of
-Eq. \ref{eq:te-flux} is an *empirical interface-limited bound*, not the
+Two honest qualifications apply. First, the default density-weighted form
+of Eq. \ref{eq:te-flux} is an *empirical interface-limited bound*, not the
 dimensional Richardson-Dushman current: $A^{*}T^{2}$ is already a current
 density, so multiplying by an absolute carrier density leaves the bound's
-magnitude tied to the SI unit system rather than to a physical
-reservoir normalization (a strictly normalized form would use $n/N_C$ or a
-thermal-velocity coefficient $q\,v_{th}\,n$; this is a documented
-formulation limitation, see Chapter 17). Second, the two-leg bracket itself
-vanishes at thermodynamic equilibrium only when the adjacent layers share
-the same effective density of states or when the density-of-states-folded
-potentials of Eq. \ref{eq:dos-potentials} are active. System-level
-equilibrium is nevertheless preserved unconditionally by the *cap
-construction*: at equilibrium the drift-diffusion flux is exactly zero, and
-the smaller-magnitude selection below therefore returns zero regardless of
-the value of $J_{\mathrm{TE}}$.
+magnitude tied to the SI unit system. In practice this makes $|J_{TE}|$
+enormous (order $10^{28}$–$10^{35}$ on a perovskite stack), so the
+smaller-magnitude cap almost never binds and the term is close to inert —
+the observed heterojunction $V_\mathrm{oc}$ behaviour is driven by the
+band-offset potentials of Eqs.
+\ref{eq:band-corrected-potentials}–\ref{eq:dos-potentials}, not by the TE
+cap. A dimensionally correct *emission-velocity* form is available as an
+opt-in (`te_physical_norm`): dividing Eq. \ref{eq:te-flux} by the
+band-edge density of states converts $A^{*}T^{2}$ into an emission velocity
+$v_R = A^{*}T^{2}/(qN_C)$, giving $J = qv_R(\dots)$, which binds at real
+interface densities. Enabling it is a genuine physics change with a large
+measured effect — on the SCAPS-comparison configuration it raises the
+steady-state $V_\mathrm{oc}$ by roughly 0.3 V, overshooting the calibrated
+parity value, because the interface-recombination calibration was tuned
+against the near-inert default cap. It is therefore kept off by default
+pending a dedicated re-calibration (Chapter 17); configurations without
+per-layer effective-DOS data are bit-identical whether it is on or off.
+Second, the two-leg bracket itself vanishes at thermodynamic equilibrium
+only when the adjacent layers share the same effective density of states or
+when the density-of-states-folded potentials of Eq. \ref{eq:dos-potentials}
+are active. System-level equilibrium is nevertheless preserved
+unconditionally by the *cap construction*: at equilibrium the
+drift-diffusion flux is exactly zero, and the smaller-magnitude selection
+below therefore returns zero regardless of the value of $J_{\mathrm{TE}}$.
 
 The TE flux acts as a *cap*: at each flagged face the solver takes the
 smaller-magnitude of the drift-diffusion flux and $J_{\mathrm{TE}}$, so the
@@ -2513,10 +2526,18 @@ covers the intended regime.
 Four model-formulation limitations are documented rather than hidden; each
 is flagged at its point of use in Chapter \ref{governing-equations}:
 
-- the thermionic-emission bound is density-weighted and therefore an
-  empirical interface-limited cap, not the dimensionally normalized
+- the *default* thermionic-emission bound is density-weighted and therefore
+  an empirical interface-limited cap, not the dimensionally normalized
   Richardson-Dushman current (its equilibrium safety comes from the cap
-  construction, not from the bracket itself);
+  construction, not from the bracket itself). A dimensionally correct
+  emission-velocity form is implemented as an opt-in (`te_physical_norm`),
+  but it is off by default: on the SCAPS-comparison configuration it raises
+  the steady-state $V_\mathrm{oc}$ by about 0.3 V, overshooting the
+  calibrated parity value, because the interface-recombination calibration
+  was tuned against the near-inert default cap. Making it the default would
+  require re-calibrating the interface-recombination model against the
+  reference with the physical cap active — a dedicated campaign, not a
+  drive-by change;
 - the ionic steric factor multiplies the full flux (drift and diffusion)
   and is applied per species, an empirical crowding regularization rather
   than the strict shared-site lattice-gas flux;
@@ -2527,7 +2548,8 @@ is flagged at its point of use in Chapter \ref{governing-equations}:
 - the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel.
 
-Revising the first two changes calibrated heterojunction and ion-transport
+Adopting the physical thermionic-emission normalization or revising the
+steric ion flux would change calibrated heterojunction and ion-transport
 results and therefore requires a dedicated re-baselining campaign, not a
 drive-by correction.
 
