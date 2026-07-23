@@ -1242,13 +1242,19 @@ is numerically immaterial for the shipped presets: the mobile-ion
 occupancy stays dilute (peak \(P/P_\mathrm{lim} \approx 0.011\) on the
 IonMonger benchmark, so \(s \approx 1.011\)), and enabling the physical
 form shifts \(V_\mathrm{oc}\) by under 0.1 mV. The two forms diverge
-only as \(P \to P_\mathrm{lim}\) (extreme interfacial pile-up). A
-multi-species lattice gas would further couple the species through a
-\emph{shared} site fraction \(1-(P_+ + P_-)/P_\mathrm{lim}\) rather than
-independent per-species factors; this refinement is likewise negligible
-in the dilute regime and is not yet implemented. The default whole-flux
-form should therefore be read as an empirical crowding regularization
-with the correct saturation limit (Chapter 17).
+only as \(P \to P_\mathrm{lim}\) (extreme interfacial pile-up). For a
+dual mobile-ion system the diffusion-only form additionally couples the
+species through their occupancy: with \texttt{ion\_steric\_shared\_site}
+(default) the crowding potential uses the total occupancy
+\(1-(P_+ + P_-)/P_\mathrm{lim}\), the standard multi-species finite-size
+treatment in which both species compete for one finite reservoir (it
+reduces exactly to the single-species form when one density vanishes);
+setting it false gives distinct sublattices, each species crowding only
+against its own \(P_\mathrm{lim}\) --- a physical assumption that should
+be stated explicitly for the device in question. The negative-species
+equation carries the same diffusion-only form symmetrically. The default
+whole-flux form should still be read as an empirical crowding
+regularization with the correct saturation limit (Chapter 17).
 
 Because ionic diffusivities (\(D_I \sim 10^{-16}\,m^2 s^{-1}\)) are many
 orders of magnitude below carrier diffusivities, ionic redistribution

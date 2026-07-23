@@ -253,6 +253,10 @@ class MaterialArrays:
     # ion continuity RHS folds the crowding potential into the SG drift
     # argument instead of scaling the whole flux. Default False = legacy.
     ion_steric_diffusion_only: bool = False
+    # Dual-ion shared-site crowding (F05). When True (default) the two mobile
+    # species share one reservoir → crowding uses total occupancy. Set by the
+    # device flag; no effect single-species.
+    ion_steric_shared_site: bool = True
     # Face indices where thermionic emission capping applies (band offset > threshold)
     interface_faces: tuple[int, ...] = ()
     # TMM-computed generation profile G(x) [m^-3 s^-1]; None = use Beer-Lambert
@@ -1471,6 +1475,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         N_V_node=(N_V_node_arr if _te_phys else None),
         te_physical_norm=_te_phys,
         ion_steric_diffusion_only=_ion_steric_diff,
+        ion_steric_shared_site=bool(getattr(stack, "ion_steric_shared_site", True)),
         interface_faces=tuple(interface_face_list),
         G_optical=G_optical,
         D_ion_neg_face=D_ion_neg_face if _has_dual_ions else None,
@@ -2014,10 +2019,15 @@ def assemble_rhs(
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
+    # Shared-site crowding couples the two species through their total
+    # occupancy (F05); pass the partner density only when dual + shared.
+    _shared = (mat.ion_steric_diffusion_only and mat.ion_steric_shared_site
+               and mat.has_dual_ions and sv.P_neg is not None)
     dP = ion_continuity_rhs(
         x, phi, sv.P, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
         steric_diffusion_only=mat.ion_steric_diffusion_only,
         P_lim_node=mat.P_lim_node,
+        P_other_node=(sv.P_neg if _shared else None),
     )
 
     # Negative ion continuity (dual-species mode)
@@ -2026,6 +2036,9 @@ def assemble_rhs(
         from perovskite_sim.physics.ion_migration import ion_continuity_rhs_neg
         dP_neg = ion_continuity_rhs_neg(
             x, phi, sv.P_neg, mat.D_ion_neg_face, mat.V_T_device, mat.P_lim_neg_face,
+            steric_diffusion_only=mat.ion_steric_diffusion_only,
+            P_lim_node=mat.P_lim_neg_node,
+            P_other_node=(sv.P if _shared else None),
         )
 
     # Enforce Dirichlet BCs: hold boundary nodes fixed. With selective /
@@ -2309,13 +2322,19 @@ def split_step(
                 mat.poisson_factor, rho,
                 phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
             )
+            _shared_ss = (mat.ion_steric_diffusion_only
+                          and mat.ion_steric_shared_site)
             dP_pos = ion_continuity_rhs(
                 x, phi, P_pos, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
                 steric_diffusion_only=mat.ion_steric_diffusion_only,
                 P_lim_node=mat.P_lim_node,
+                P_other_node=(P_neg_v if _shared_ss else None),
             )
             dP_neg = ion_continuity_rhs_neg(
                 x, phi, P_neg_v, mat.D_ion_neg_face, mat.V_T_device, mat.P_lim_neg_face,
+                steric_diffusion_only=mat.ion_steric_diffusion_only,
+                P_lim_node=mat.P_lim_neg_node,
+                P_other_node=(P_pos if _shared_ss else None),
             )
             return np.concatenate([dP_pos, dP_neg])
 
