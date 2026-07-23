@@ -7,6 +7,16 @@
 device:
   V_bi: 1.1
   Phi: 2.5e21
+# Device orientation & naming convention (read before comparing to literature):
+#   Layer order is FRONT -> BACK: index 0 is the illuminated front face (x=0,
+#   where AM1.5G enters and the Beer-Lambert / TMM generation profile peaks);
+#   the last layer is the back contact. Here the front layer is the HTL, so the
+#   simulator illuminates through the hole-transport side: holes are collected
+#   at the front contact (phi_left = 0) and electrons at the back (phi_right =
+#   V_bi). The "pin" label denotes the TRANSPORT-MATERIAL system (NiO HTL +
+#   PCBM ETL = the classic inverted / p-i-n material set), NOT which side faces
+#   the sun. To model illumination through the ETL side instead, reverse the
+#   layer order.
 layers:
   - name: NiO_HTL
     role: HTL
