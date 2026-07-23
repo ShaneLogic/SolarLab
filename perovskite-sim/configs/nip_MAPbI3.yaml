@@ -7,11 +7,17 @@
 device:
   V_bi: 1.1
   Phi: 2.5e21
-# Layer order: HTL (left / hole-contact) → absorber → ETL (right / electron-contact)
-# This matches the code's phi convention: phi_left=0 (p-contact), phi_right=V_bi (n-contact).
-# Physically this represents a p-i-n band diagram; the label "nip" refers to the
-# illumination direction (light enters through the ETL / electron-transport side in the
-# experimental stack).
+# Device orientation & naming convention (read before comparing to literature):
+#   Layer order is FRONT -> BACK: index 0 is the illuminated front face (x=0,
+#   where AM1.5G enters and the Beer-Lambert / TMM generation profile peaks);
+#   the last layer is the back contact. Here the front layer is the HTL, so the
+#   simulator illuminates through the hole-transport side: holes are collected
+#   at the front contact (phi_left = 0) and electrons at the back (phi_right =
+#   V_bi). The "nip" label denotes the TRANSPORT-MATERIAL system (spiro-OMeTAD
+#   HTL + TiO2 ETL = the classic regular / n-i-p material set), NOT which side
+#   faces the sun. This front-HTL ordering matches the IonMonger reference
+#   implementation, so ionmonger_benchmark reproduces its published metrics.
+#   To model illumination through the ETL side instead, reverse the layer order.
 layers:
   - name: spiro_HTL
     role: HTL
