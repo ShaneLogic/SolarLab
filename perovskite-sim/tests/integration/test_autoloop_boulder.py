@@ -42,6 +42,15 @@ def test_boulder_sweep_real(tmp_path):
     result = run_boulder(ledger_root=lr, outputs_root=orr, timestamp="t",
                          converge=False, sense=sense, attribute=attribute, implement=implement)
     assert result.mode == "sweep" and result.stop_reason == "sweep_complete"
-    # validation established Nd_ETL is the surfaced gap with the IFACE_PROJ lever
-    assert any(p.gap_id == "trend:Nd_ETL:V_oc" for p in result.proposals)
+    # The sweep drains every open gap into exactly one proposal and marks it
+    # "attempted" in the ledger. WHICH gaps are open evolves as parity
+    # improves — the originally pinned trend:Nd_ETL:V_oc closed after the
+    # SS interface-channel calibration — so assert the structural contract
+    # (proposals == attempted ledger gaps) rather than a specific gap id.
+    from perovskite_sim.autoloop.ledger import Ledger
+    led = Ledger.load(lr)
+    proposal_ids = [p.gap_id for p in result.proposals]
+    attempted_ids = {g.id for g in led.gaps if g.status == "attempted"}
+    assert set(proposal_ids) == attempted_ids
+    assert len(proposal_ids) == len(set(proposal_ids))  # one proposal per gap
     assert CFG.read_text(encoding="utf-8") == cfg_before     # sweep commits nothing
