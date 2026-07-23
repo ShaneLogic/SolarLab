@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "overleaf": {
+      "source": "aloth/olcli",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "0022fabc2049a40695e19ee45be19ebb15e23dc413943d7f7639767687e51d8e"
+    }
+  }
+}
