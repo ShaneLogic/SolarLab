@@ -273,11 +273,10 @@ field-dependent mobility, trap profiles, and optical fallbacks.
 
 ## Parameter Dictionary
 
-This section is intentionally detailed because input specification is often the
-dominant source of error in device simulation. SolarLab cannot infer whether a
-parameter comes from measurement, literature, fitting, or exploratory
-screening. Each field should therefore be treated as a documented scientific
-assumption.
+Input specification is a dominant source of simulation error. SolarLab cannot
+infer whether a parameter comes from measurement, literature, fitting, or
+exploratory screening, so each field should be recorded with its source and
+value.
 
 ### Electrical And Transport Fields
 
@@ -287,7 +286,7 @@ assumption.
 Field & Unit & Physical role & Beginner guidance \\
 \midrule
 \endhead
-\path{eps_r} & 1 & relative dielectric constant in Poisson's equation & Larger values screen charge and reduce field gradients. Use layer-specific literature values rather than a single generic perovskite value. \\
+\path{eps_r} & 1 & relative permittivity in Poisson's equation & Larger values screen charge and reduce field gradients. Use layer-specific literature values rather than a single generic perovskite value. \\
 \path{mu_n} & \(m^2 V^{-1} s^{-1}\) & low-field electron mobility & Controls electron extraction and transport resistance. Remember that \(1\,cm^2 V^{-1}s^{-1}=10^{-4}\,m^2 V^{-1}s^{-1}\). \\
 \path{mu_p} & \(m^2 V^{-1} s^{-1}\) & low-field hole mobility & Same unit conversion convention as \path{mu_n}. Low mobility typically affects FF before producing a large change in \(V_\mathrm{oc}\). \\
 \path{N_A} & \(m^{-3}\) & ionized acceptor density & Represents p-type doping. Values reported in \(cm^{-3}\) must be multiplied by \(10^6\). \\
@@ -433,7 +432,7 @@ SolarLab has two related built-in potentials:
 2. `stack.compute_V_bi()`: a derived effective built-in potential computed from
    Fermi-level differences across the electrical stack.
 
-This distinction matters. Some legacy and benchmark configurations use a
+The two differ because some legacy and benchmark configurations use a
 manual $V_\mathrm{bi}$ convention. Heterostacks with $\chi$ and $E_g$
 also have band-alignment information that can imply a different effective
 Fermi-level separation.
@@ -682,7 +681,7 @@ Eq. \ref{eq:dos-potentials} into the cached per-layer $\chi$/$E_g$ arrays at
 build time, using the absorber as the reference layer (only cross-junction
 *differences* matter). The fold applies to transport and thermionic emission
 only; purely statistical quantities ($n_i$, the SRH references $n_1$/$p_1$,
-and the contact equilibrium densities) are deliberately left unchanged. The
+and the contact equilibrium densities) are left unchanged. The
 correction is active by default whenever per-layer `Nc300`/`Nv300` data are
 supplied, and is disabled in the `legacy` tier, which reproduces the
 IonMonger convention without DOS-folded transport.
@@ -729,24 +728,24 @@ $1.2017\times10^{6}\,A\,m^{-2}K^{-2}$, overridable per layer). Only the
 the emission term unpenalized, so carriers flowing down a band step are not
 artificially blocked.
 
-Two honest qualifications apply. First, the default density-weighted form
-of Eq. \ref{eq:te-flux} is an *empirical interface-limited bound*, not the
+The default form carries two qualifications. First, the density-weighted
+form of Eq. \ref{eq:te-flux} is an *empirical interface-limited bound*, not the
 dimensional Richardson-Dushman current: $A^{*}T^{2}$ is already a current
 density, so multiplying by an absolute carrier density leaves the bound's
-magnitude tied to the SI unit system. In practice this makes $|J_{TE}|$
-enormous (order $10^{28}$–$10^{35}$ on a perovskite stack), so the
-smaller-magnitude cap almost never binds and the term is close to inert —
-the observed heterojunction $V_\mathrm{oc}$ behaviour is driven by the
+magnitude tied to the SI unit system. This makes $|J_{TE}|$ very large (order
+$10^{28}$–$10^{35}$ on a perovskite stack), so the smaller-magnitude cap
+is rarely active; the observed heterojunction $V_\mathrm{oc}$ behaviour is
+driven by the
 band-offset potentials of Eqs.
 \ref{eq:band-corrected-potentials}–\ref{eq:dos-potentials}, not by the TE
 cap. A dimensionally correct *emission-velocity* form is available as an
 opt-in (`te_physical_norm`): dividing Eq. \ref{eq:te-flux} by the
 band-edge density of states converts $A^{*}T^{2}$ into an emission velocity
 $v_R = A^{*}T^{2}/(qN_C)$, giving $J = qv_R(\dots)$, which binds at real
-interface densities. Enabling it is a genuine physics change with a large
-measured effect where it acts: on a density-of-states-bearing stack the
+interface densities. Enabling it changes the physics measurably where it
+acts: on a density-of-states-bearing stack the
 steady-state $V_\mathrm{oc}$ rises by roughly 0.3 V once the cap begins to
-bind. Importantly, this hook acts only on the bulk-node transport cap
+bind. This hook acts only on the bulk-node transport cap
 (used by the transient driver and the direct steady-state solver); the
 interface-plane-state formulation employed for the SCAPS comparison carries
 its own thermionic fluxes and is *unaffected* by the flag (measured
@@ -809,8 +808,8 @@ balance is preserved to machine precision, and because the factor is static
 stability of the time integration. The channel is opt-in and captures the
 doping-direction trend of tunnelling-assisted interface transport; the
 bias-dependent flattening of a spike under forward bias would require a
-field-dependent $E_{00}(F)$ evaluated per step, which is deliberately not
-implemented.
+field-dependent $E_{00}(F)$ evaluated per step, which is outside the present
+scope.
 
 Assumptions and limits:
 
@@ -881,8 +880,8 @@ discretization, $P$ in Eq. \ref{eq:steric} is evaluated as the average of
 the two face-adjacent nodal densities; the $10^{-6}$ floor guards the
 division at full saturation.)
 
-A formulation caveat: by default SolarLab applies $s(P)$ to the *entire*
-flux of Eq. \ref{eq:ion-flux} — diffusion and drift alike — whereas the
+By default SolarLab applies $s(P)$ to the *entire* flux of
+Eq. \ref{eq:ion-flux}, scaling diffusion and drift together; the
 strict lattice-gas chemical-potential derivation enhances only the
 concentration-gradient term. The dimensionally faithful form is available
 as an opt-in (`ion_steric_diffusion_only`): it folds the crowding chemical
@@ -905,8 +904,8 @@ setting it false gives distinct sublattices, each species crowding only
 against its own $P_\mathrm{lim}$ — a physical assumption that should be
 stated explicitly for the device in question. The negative-species equation
 carries the same diffusion-only form symmetrically. The
-default whole-flux form should still be read as an empirical crowding
-regularization with the correct saturation limit (Chapter 17).
+default whole-flux form is an empirical crowding regularization with the
+correct saturation limit (Chapter 17).
 
 Because ionic diffusivities ($D_I \sim 10^{-16}\,m^2 s^{-1}$) are many
 orders of magnitude below carrier diffusivities, ionic redistribution
@@ -1002,7 +1001,7 @@ self-consistency:
    emission $\int B_\mathrm{rad}\,(np - n_i^2)\, dx$ over the absorber is
    redistributed as a uniform generation source
    $G_\mathrm{rad} = (1-P_\mathrm{esc})\, \big[\textstyle\int
-   B\,(np-n_i^2)\, dx\big]/d$. The net-emission integrand makes the
+   B_\mathrm{rad}\,(np-n_i^2)\, dx\big]/d$. The net-emission integrand makes the
    recycled source vanish at mass-action equilibrium together with the
    sink, so the channel preserves detailed balance. This closes the
    recycling loop and retains the *global* coupling when $np$ is
@@ -1016,10 +1015,10 @@ self-consistency:
 On the canonical radiative-limit configuration the recycling boost falls
 within the 40–100 mV regression acceptance window adopted for that
 configuration (motivated by reported MAPbI3 recycling effects, e.g.
-Pazos-Outón et al.); the recycling gain is device- and parameter-specific
-— internal radiative efficiency, parasitic absorption, and out-coupling
-all shift it — so the window is a regression gate for the canonical
-preset, not a universal MAPbI3 constant.
+Pazos-Outón et al.). The recycling gain depends on the internal radiative
+efficiency, parasitic absorption, and out-coupling, so the window is a
+regression gate for the canonical preset rather than a general MAPbI3
+figure.
 
 ### Auger Recombination
 
@@ -1074,20 +1073,16 @@ dual-cell width. Three details matter for heterojunctions:
   approximation installs a bulk-asymptotic reference
   $n_{i,\mathrm{eff}}^2$ that can exceed the true interface-plane product
   by orders of magnitude — the implementation clamps $R_s \geq 0$ to
-  suppress the resulting spurious generation (measured tens of A/m$^2$ at
+  suppress the resulting spurious generation (of order 10 A/m$^2$ at
   illuminated short circuit). This clamp is *not* a general physical
   property: a real interface defect does generate carriers when
   $n_s p_s < n_{i,\mathrm{eff}}^2$, the origin of depletion-region
   generation current and reverse dark current. Interfaces *without* a
-  declared defect use the local mass-action reference and are deliberately
-  left unclamped, so physical depletion generation is retained there
-  (revision of 2026-07-23; the earlier global clamp additionally parked
-  the transient trajectory on the clamp's non-differentiable corner and
-  degraded ion-coupled sweep performance by two orders of magnitude). The
-  accepted residual cost is suppressed reverse-bias generation at
-  declared-defect interfaces; an occupancy-consistent interface-state
-  treatment that removes the need for the clamp is the preferred long-term
-  resolution.
+  declared defect use the local mass-action reference and are left
+  unclamped, so physical depletion generation is retained there. The clamp
+  suppresses reverse-bias generation at declared-defect interfaces; an
+  occupancy-consistent interface-state treatment would remove this
+  restriction.
 
 Optional refinements (default off, used for SCAPS cross-validation) evaluate
 the rate on Boltzmann-projected *interface-plane* densities, or solve a local
@@ -1301,7 +1296,7 @@ $$
 
 where the denominator floor caps the lifetime at $\tau_\mathrm{bulk}$: an
 edge-*passivation* profile ($N_t^\mathrm{if} < N_t^\mathrm{bulk}$) is
-deliberately clamped to the bulk lifetime rather than extrapolated to
+clamped to the bulk lifetime rather than extrapolated to
 lifetimes above $\tau_\mathrm{bulk}$, so the profile can only ever add
 recombination. The two exponentials are summed rather than maximized so
 thin layers with overlapping tails saturate smoothly at
@@ -1577,7 +1572,7 @@ The scheme reduces to central differencing in the diffusion limit
 ($|\xi| \ll 1$) and to pure upwinding in the drift limit
 ($|\xi| \gg 1$), remaining positivity-preserving and stable at arbitrarily
 large cell Peclet numbers (Scharfetter and Gummel 1969; Selberherr 1984).
-Three implementation details matter:
+The scheme rests on three implementation details:
 
 - the drift argument $\xi$ is built from the *band-effective* potentials
   $\phi_n$, $\phi_p$ of Eqs.
@@ -1610,7 +1605,7 @@ into the right-hand side. This is roughly forty times faster than a
 general sparse solve and is the reason the per-experiment material cache
 must be built *outside* the time-step loop.
 
-The same build-once philosophy applies to all static coefficient fields:
+The same build-once strategy applies to all static coefficient fields:
 per-node and per-face material arrays, band-edge and density-of-states
 folds, trap-profile lifetime maps, grading profiles, tunnelling-enhanced
 Richardson constants, and the TMM generation profile are all assembled once
@@ -1651,8 +1646,8 @@ steps bounded:
 
 - **Step-size ceiling near flat band.** Close to $V_\mathrm{app} \approx
   V_\mathrm{bi}$ the Jacobian is nearly singular and Radau's local-error
-  estimator can under-report the truncation error, accepting one giant step
-  onto a wrong branch of the implicit equations (visible as an isolated
+  estimator can under-report the truncation error, accepting a single
+  oversized step onto a spurious branch of the implicit equations (visible as an isolated
   non-physical J-V spike). Every voltage step therefore caps the internal
   step at $1/20$ of the settle interval.
 - **Evaluation budget.** A per-step ceiling on RHS evaluations converts a
@@ -1686,7 +1681,7 @@ from its seed state and applies a damped Newton method with:
   peak density rather than the local one, because at dark depletion nodes
   the local-relative rate floors at double-precision cancellation noise and
   no tolerance could ever be met; on the peak-density scale that noise sits
-  near $10^{-10}$ while a genuine imbalance registers at order unity, and
+  near $10^{-10}$ while a physical imbalance registers at order unity, and
   the tolerance translates into a terminal-current error bound of
   $\sim 10^{-8}\,A\,m^{-2}$;
 - **Finite-difference Jacobian with chord reuse**: the dense Jacobian is
@@ -1709,8 +1704,8 @@ from its seed state and applies a damped Newton method with:
   already-physically-converged state, the best iterate is accepted under an
   explicit residual bound; where Newton cannot finish at all, escalating
   Radau settles compute the point and are *certified* against the same
-  residual scale — no silent fallback exists, and an uncertifiable point
-  raises an error.
+  residual scale; an uncertifiable point raises an error rather than
+  returning an unconverged result.
 
 Steady-state J-V curves are computed by voltage continuation with
 warm-started seeds and automatic voltage-step bisection; the open-circuit
@@ -1718,7 +1713,8 @@ voltage can additionally be located by direct bisection on the steady-state
 $J(V)$ zero crossing, eliminating sweep-grid interpolation error. Measured
 agreement between the two drivers on the reference configuration is within
 5 mV in $V_\mathrm{oc}$ and 1% in $J_\mathrm{sc}$. Two deep-tail regimes
-fail honestly by design: near-insulating contact doping produces no $J = 0$
+are handled by the transient engine rather than the Newton driver:
+near-insulating contact doping produces no $J = 0$
 crossing below the scan ceiling (a physical absence the transient confirms),
 and deeply collapsed conduction-band-offset junctions are pathological for
 any algebraic Newton method and are handled by the transient engine only.
@@ -1753,8 +1749,8 @@ at the boundary faces and the median is robust to those outliers. Metrics
 extraction interpolates $J_\mathrm{sc}$ at $V = 0$ and $V_\mathrm{oc}$ at the
 first positive-to-negative zero crossing, computes FF and PCE from the
 maximum-power point over the operating quadrant, and reports an explicit
-`voc_bracketed` flag instead of fabricating metrics when the sweep window
-misses the crossing. The hysteresis index compares scan directions as
+`voc_bracketed` flag rather than metrics extrapolated from a sweep that does
+not bracket the crossing. The hysteresis index compares scan directions as
 
 $$
 \mathrm{HI}
@@ -1787,10 +1783,10 @@ Important safety mechanisms include:
 - the thermionic-emission cap at abrupt heterointerfaces;
 - step-size ceilings, evaluation budgets, and bisection/fallback logic in
   every voltage-stepping experiment;
-- TMM transfer-matrix determinant guard;
+- TMM determinant guard;
 - median-current steady-state readout;
 - explicit `voc_bracketed` flags when a J-V sweep misses the zero crossing;
-- fail-loud steady-state convergence (no silent fallback).
+- steady-state convergence raises on non-convergence.
 
 For publication work, numerical settings are part of the method. Report the
 grid size, voltage spacing, settling time or scan rate, tolerances when
@@ -1912,7 +1908,7 @@ for thickness_nm in (200, 400, 700, 1000):
 
 Expected interpretation:
 
-- Larger absorbers can absorb more light, but can also increase
+- Thicker absorbers can absorb more light, but can also increase
   recombination or transport loss.
 - If $J_\mathrm{sc}$ does not change under Beer-Lambert optics, check
   whether `alpha` and `Phi` are physically configured.
@@ -2089,8 +2085,7 @@ $$
 
 The intercept at $T=0$ is reported as $E_A$ in eV.
 
-When comparing $V_\mathrm{oc}(T)$ against other simulators, note that the
-temperature models are generally not equivalent: SolarLab applies
+When comparing $V_\mathrm{oc}(T)$ against other simulators, the temperature models are generally not equivalent: SolarLab applies
 $E_g(T)$, $\mu(T)$, $B_\mathrm{rad}(T)$, $n_i(T)$, and Arrhenius ion
 scaling automatically when temperature scaling is enabled, whereas
 reference tools (e.g. SCAPS) treat only a subset of quantities as
@@ -2114,8 +2109,8 @@ problem at short circuit, subtracts a dark baseline current $J_\mathrm{dark}$
 (the device settled at $V=0$ with $G=0$, which cancels any residual ionic
 drift that has not fully damped), and integrates against AM1.5G for
 $J_\mathrm{sc}$. The incremental $\Delta J$ definition matches the standard
-measurement convention; note that the baseline state is the settled dark
-short-circuit state — bias-light protocols are not modelled. This
+measurement convention. The baseline state is the settled dark
+short-circuit state; bias-light protocols are not modelled. This
 experiment requires `optical_material`.
 
 ## Electroluminescence
@@ -2187,8 +2182,7 @@ The result is $Z(f)$ in $\Omega\, m^2$, suitable for Nyquist and Bode plots.
 
 This is a *time-domain, small-amplitude, full-nonlinear-model* method — it
 is not a linearized small-signal AC solver of the kind SCAPS implements, and
-results from the two approaches are comparable only in the truly linear
-small-signal regime. Because the ionic and electronic subsystems respond on
+results from the two approaches are comparable only in the linear small-signal regime. Because the ionic and electronic subsystems respond on
 different time scales, the spectrum can resolve both relaxations without an
 equivalent-circuit assumption, provided the selected frequency window spans
 both time constants and the per-frequency integration reaches a periodic
@@ -2210,7 +2204,7 @@ V_\mathrm{bi}^\mathrm{app}=-\frac{b}{a},
 \qquad
 N_\mathrm{eff}^\mathrm{app}
 =
--\frac{2}{q\varepsilon_s\varepsilon_0 a}.
+-\frac{2}{q\varepsilon_r\varepsilon_0 a}.
 $$
 
 Both extracted quantities are *apparent* values: the textbook
@@ -2262,7 +2256,7 @@ resistance, and any electrical inter-cell coupling beyond ideal series
 current matching.
 
 Some tandem optical constants are documented as placeholder/stub data. These
-must be replaced before claiming publication-grade material-specific tandem
+must be replaced before using the tandem driver for material-specific
 predictions.
 
 ## 2D J-V
@@ -2383,9 +2377,9 @@ commit `35e2f51` of the SolarLab repository (primary simulator tree
 `perovskite-sim/`), the same revision the manual text describes; an earlier
 full pass (2026-05-19, commit `43c81d7`) is superseded. The evidence should
 be read as
-implementation evidence — internal consistency of the equations, numerical
+implementation evidence: internal consistency of the equations, numerical
 coupling, backend/frontend interfaces, and benchmark envelopes at that
-repository state — not as a guarantee of predictive accuracy for arbitrary
+repository state. It does not guarantee predictive accuracy for arbitrary
 material stacks.
 
 The evidence in this chapter divides into three layers of increasing
@@ -2393,10 +2387,11 @@ strength: (1) *unit/integration correctness* — the equations and interfaces
 compute what they claim; (2) *regression stability* — pinned baselines and
 acceptance envelopes that detect silent numerical drift; and (3) *external
 validation* — comparison against independent simulators or experiments.
-The figures below belong to layers 1 and 2 (they are generated from test
-thresholds and pinned baselines, not from independent data); layer-3
-evidence is currently limited to the pinned IonMonger-style benchmark
-envelope and the SCAPS-comparison campaigns documented separately.
+The figures below belong to layers 1 and 2: they are generated from test
+thresholds and pinned baselines rather than from independent data. Layer-3
+evidence, the comparison of simulated metrics against the IonMonger and
+SCAPS reference outputs themselves, is documented in the benchmark and
+comparison campaigns separately.
 
 ![Validation gate summary](figures/validation_gate_summary.png)
 
@@ -2499,16 +2494,14 @@ Frontend unit tests & \texttt{npm run test:run} & UI result rendering, validatio
 tree; the wall time is dominated by cloud-synced-filesystem I/O, not
 compilation. \textsuperscript{b}\,Executed at the same commit from a git
 checkout on local disk: the cloud-sync file provider stalls the test
-runner's parallel file access when run in place — an environment
-limitation of the development machine, not a property of the code.
+runner's parallel file access when run in place; this reflects the
+cloud-synced filesystem rather than the test code.
 
-The slow suite carries one expected failure (`xfail`), documented rather
-than hidden:
+The slow suite carries one expected failure (`xfail`):
 
 - `test_grading_cigs_notch.py::test_cigs_back_grading_raises_voc_without_`
   `jsc_collapse` — a graded-CIGS back-surface-field regression that
-  exercises the three hardest ingredients for the coupled Radau engine at
-  once: a 2 µm CIGS absorber (stiff; full transient J-V on 2 µm CIGS is
+  combines three conditions that jointly stress the coupled Radau solver: a 2 µm CIGS absorber (stiff; full transient J-V on 2 µm CIGS is
   outside the practical solver envelope, Chapter \ref{running-solarlab}),
   a recombination-active Robin heterocontact (required by the
   back-surface-field premise, so it cannot be dropped), and a graded
@@ -2518,8 +2511,8 @@ than hidden:
   configuration. The underlying back-surface-field physics is covered at
   the unit level; the test is marked `xfail` (non-strict, so it reports
   `XPASS` and flags itself if the CIGS solver envelope is later widened).
-  It is a documented solver-envelope limitation, not a physics defect, and
-  pre-dates this revision (it fails identically at the 2026-07-22 baseline).
+  This is a solver-envelope limitation, not a physics defect, present at the
+  2026-07-22 baseline commit.
 
 An earlier autoloop-integration failure
 (`test_autoloop_boulder.py::test_boulder_sweep_real`, which pinned a gap
@@ -2532,8 +2525,8 @@ Observed warnings:
 - `pytest_asyncio` future-default warning for fixture loop scope;
 - `np.trapz` deprecation warnings in compatibility and conservation tests.
 
-None of these warnings are simulator correctness failures, but they should
-be tracked before a formal software release.
+These warnings do not affect simulator correctness but should be resolved
+before a formal software release.
 
 # Limitations And Best Practices
 
@@ -2545,13 +2538,13 @@ covers the intended regime.
 
 ## Known Formulation Limitations
 
-Four model-formulation limitations are documented rather than hidden; each
-is flagged at its point of use in Chapter \ref{governing-equations}:
+Four model-formulation limitations apply, each flagged at its point of use
+in Chapter \ref{governing-equations}:
 
 - the *default* thermionic-emission bound is density-weighted and therefore
   an empirical interface-limited cap, not the dimensionally normalized
-  Richardson-Dushman current (its equilibrium safety comes from the cap
-  construction, not from the bracket itself). A dimensionally correct
+  Richardson-Dushman current (equilibrium safety follows from the cap
+  construction). A dimensionally correct
   emission-velocity form is implemented as an opt-in (`te_physical_norm`),
   but it is off by default: on a density-of-states-bearing stack it raises
   the steady-state $V_\mathrm{oc}$ by about 0.3 V where the cap binds. It
@@ -2567,21 +2560,18 @@ is flagged at its point of use in Chapter \ref{governing-equations}:
   (`ion_steric_diffusion_only`); it is numerically immaterial for the
   shipped presets (dilute ions, peak $P/P_\mathrm{lim} \approx 0.011$, so
   $V_\mathrm{oc}$ shifts under 0.1 mV) and matters only near saturation;
-- the interface-SRH non-negativity clamp — scoped since 2026-07-23 to
-  declared-defect interfaces only — suppresses physical depletion-region
-  generation at those interfaces as the accepted cost of the cross-carrier
-  approximation (defect-free interfaces retain physical generation);
+- the interface-SRH non-negativity clamp (scoped to declared-defect
+  interfaces) suppresses physical depletion-region generation there as the
+  cost of the cross-carrier approximation; defect-free interfaces retain
+  physical generation;
 - the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel.
 
-The physical thermionic-emission normalization does not disturb the
-calibrated SCAPS-comparison result (the interface-plane-state path it would
-need to affect is orthogonal to the flag), but the bulk-node transport
-paths it does affect have no independent reference with the physical cap
-active, so it is off by default pending validation there. The diffusion-only
-ion-steric form is drop-in-safe on the current presets (sub-0.1 mV) and is
-off by default only conservatively, pending a check against high-ion-density
-configurations.
+Both optional forms are off by default: the physical thermionic-emission
+normalization changes bulk-node transport results that have no independent
+reference baseline, and the diffusion-only ion-steric form, though it does
+not perturb the current presets (sub-0.1 mV), is held pending validation
+against high-ion-density configurations.
 
 ## Data And Optical Limits
 
@@ -2623,7 +2613,7 @@ A reproducible SolarLab study should report:
 
 ## Publication Boundary Statement
 
-A SolarLab figure is publication-ready only when all of the following are
+A SolarLab figure is publication-grade only when all of the following are
 true:
 
 - the device stack and all changed parameters are reported;
@@ -2679,6 +2669,7 @@ and validation are also supplied.
    "IonMonger: a free and fast planar perovskite solar cell simulator with
    coupled ion vacancy and charge carrier dynamics," *Journal of
    Computational Electronics* **18**, 1435--1449 (2019).
+   doi:10.1007/s10825-019-01396-2.
 5. P. Calado, I. Gelmetti, B. Hilton, M. Azzouzi, J. Nelson, and
    P. R. F. Barnes, "Driftfusion: an open source code for simulating ordered
    semiconductor devices with mixed ionic-electronic conducting materials in
@@ -2690,7 +2681,7 @@ and validation are also supplied.
 7. U. Rau, "Reciprocity relation between photovoltaic quantum efficiency and
    electroluminescent emission of solar cells," *Physical Review B* **76**,
    085303 (2007). doi:10.1103/PhysRevB.76.085303.
-8. L. A. A. Pettersson, L. S. Roman, and O. Inganas, "Modeling photocurrent
+8. L. A. A. Pettersson, L. S. Roman, and O. Inganäs, "Modeling photocurrent
    action spectra of photovoltaic devices based on organic thin films,"
    *Journal of Applied Physics* **86**, 487--496 (1999). doi:10.1063/1.370757.
 9. E. Yablonovitch, "Statistical ray optics," *Journal of the Optical Society
@@ -2713,6 +2704,7 @@ and validation are also supplied.
     **4**, 3623--3630 (2013). doi:10.1021/jz4020162.
 16. L. M. Pazos-Outón et al., "Photon recycling in lead iodide perovskite
     solar cells," *Science* **351**, 1430--1433 (2016).
+    doi:10.1126/science.aaf1168.
 17. S. Selberherr, *Analysis and Simulation of Semiconductor Devices*
     (Springer, Vienna, 1984).
 18. E. Hairer and G. Wanner, *Solving Ordinary Differential Equations II:

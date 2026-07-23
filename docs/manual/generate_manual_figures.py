@@ -40,20 +40,23 @@ def _save(fig: plt.Figure, name: str) -> None:
 
 
 def validation_gate_summary() -> None:
+    # Concise result strings for the figure; the following table in the
+    # manual carries the full skipped/xfailed breakdown. Gate names match
+    # that table exactly to avoid a figure/table naming mismatch.
     rows = [
-        ("Default Python suite", "pytest", "1101 passed, 3 skipped, 1 xfailed", "18.3 min"),
-        ("Slow regression suite", "pytest -m slow", "99 passed, 1 xfailed, 4 skipped", "80.9 min"),
-        ("Physics validation suite", "pytest -m validation", "22 passed", "7.4 min"),
-        ("Frontend production build", "npm run build", "passed (86 modules)", "6.3 min*"),
+        ("Python default suite", "pytest", "1101 passed", "18.3 min"),
+        ("Python slow suite", "pytest -m slow", "99 passed, 1 xfail", "80.9 min"),
+        ("Python validation suite", "pytest -m validation", "22 passed", "7.4 min"),
+        ("Frontend build", "npm run build", "passed", "6.3 min"),
         ("Frontend unit tests", "npm run test:run", "371 passed", "1.3 s"),
     ]
 
-    fig, ax = plt.subplots(figsize=(7.5, 3.3))
+    fig, ax = plt.subplots(figsize=(8.4, 3.3))
     ax.set_axis_off()
     ax.set_title("Validation evidence executed before manual generation", loc="left", pad=12)
 
     headers = ["Gate", "Command", "Result", "Runtime"]
-    x = [0.02, 0.38, 0.63, 0.86]
+    x = [0.02, 0.32, 0.55, 0.84]
     y_top = 0.82
     row_h = 0.135
     ax.add_patch(plt.Rectangle((0.01, y_top + 0.02), 0.98, 0.11, facecolor="#EEF3F8", edgecolor=GRID, transform=ax.transAxes))
