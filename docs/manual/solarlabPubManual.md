@@ -2374,8 +2374,8 @@ Gate & Command & Result & Time \\
 Python default suite & \path{pytest} & 1101 passed, 3 skipped, 1 xfailed & 1098 s \\
 Python slow suite & \texttt{pytest -m slow} & 99 passed, 2 failed (pre-existing, see below), 4 skipped & 4856 s \\
 Python validation suite & \texttt{pytest -m validation} & 22 passed & 443 s \\
-Frontend build & \texttt{npm run build} & not re-executed (no frontend changes in this revision; last certified 2026-05-19) & --- \\
-Frontend unit tests & \texttt{npm run test:run} & not re-executed (last certified 2026-05-19: 320 passed) & --- \\
+Frontend build & \texttt{npm run build} & passed (tsc clean; 86 modules) & 380 s\textsuperscript{a} \\
+Frontend unit tests & \texttt{npm run test:run} & 27 files, 371 tests passed & 1.34 s\textsuperscript{b} \\
 \bottomrule
 \end{longtable}
 \endgroup
@@ -2459,6 +2459,13 @@ Frontend unit tests & \texttt{npm run test:run} & UI result rendering, validatio
 \bottomrule
 \end{longtable}
 \endgroup
+
+\textsuperscript{a}\,Executed in an interactive terminal from the working
+tree; the wall time is dominated by cloud-synced-filesystem I/O, not
+compilation. \textsuperscript{b}\,Executed at the same commit from a git
+checkout on local disk: the cloud-sync file provider stalls the test
+runner's parallel file access when run in place — an environment
+limitation of the development machine, not a property of the code.
 
 Two slow-suite tests fail at the certified commit; both failures pre-date
 the 2026-07 revision (verified by running the identical tests at the
