@@ -744,12 +744,17 @@ opt-in (`te_physical_norm`): dividing Eq. \ref{eq:te-flux} by the
 band-edge density of states converts $A^{*}T^{2}$ into an emission velocity
 $v_R = A^{*}T^{2}/(qN_C)$, giving $J = qv_R(\dots)$, which binds at real
 interface densities. Enabling it is a genuine physics change with a large
-measured effect — on the SCAPS-comparison configuration it raises the
-steady-state $V_\mathrm{oc}$ by roughly 0.3 V, overshooting the calibrated
-parity value, because the interface-recombination calibration was tuned
-against the near-inert default cap. It is therefore kept off by default
-pending a dedicated re-calibration (Chapter 17); configurations without
-per-layer effective-DOS data are bit-identical whether it is on or off.
+measured effect where it acts: on a density-of-states-bearing stack the
+steady-state $V_\mathrm{oc}$ rises by roughly 0.3 V once the cap begins to
+bind. Importantly, this hook acts only on the bulk-node transport cap
+(used by the transient driver and the direct steady-state solver); the
+interface-plane-state formulation employed for the SCAPS comparison carries
+its own thermionic fluxes and is *unaffected* by the flag (measured
+$V_\mathrm{oc}$ identical to four decimals with it on or off), so the
+calibrated parity result is untouched. It is kept off by default because
+the paths it does affect have no independent reference baseline with the
+physical cap active (Chapter 17); configurations without per-layer
+effective-DOS data are bit-identical whether it is on or off.
 Second, the two-leg bracket itself vanishes at thermodynamic equilibrium
 only when the adjacent layers share the same effective density of states or
 when the density-of-states-folded potentials of Eq. \ref{eq:dos-potentials}
@@ -2543,13 +2548,13 @@ is flagged at its point of use in Chapter \ref{governing-equations}:
   Richardson-Dushman current (its equilibrium safety comes from the cap
   construction, not from the bracket itself). A dimensionally correct
   emission-velocity form is implemented as an opt-in (`te_physical_norm`),
-  but it is off by default: on the SCAPS-comparison configuration it raises
-  the steady-state $V_\mathrm{oc}$ by about 0.3 V, overshooting the
-  calibrated parity value, because the interface-recombination calibration
-  was tuned against the near-inert default cap. Making it the default would
-  require re-calibrating the interface-recombination model against the
-  reference with the physical cap active — a dedicated campaign, not a
-  drive-by change;
+  but it is off by default: on a density-of-states-bearing stack it raises
+  the steady-state $V_\mathrm{oc}$ by about 0.3 V where the cap binds. It
+  acts only on the bulk-node transport cap, not on the interface-plane-state
+  formulation used for the SCAPS comparison (which is unaffected), so it
+  does not disturb the calibrated parity result; it stays off by default
+  because the paths it does affect lack an independent reference baseline
+  with the physical cap active;
 - the *default* ionic steric factor multiplies the full flux (drift and
   diffusion) and is applied per species, an empirical crowding
   regularization rather than the strict shared-site lattice-gas flux. The
@@ -2564,12 +2569,14 @@ is flagged at its point of use in Chapter \ref{governing-equations}:
 - the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel.
 
-Adopting the physical thermionic-emission normalization as the default
-would change calibrated heterojunction results (the +0.3 V overshoot above)
-and therefore requires a dedicated re-baselining campaign, not a drive-by
-correction. The diffusion-only ion-steric form, by contrast, is
-drop-in-safe on the current presets (sub-0.1 mV) and is off by default only
-conservatively, pending a check against high-ion-density configurations.
+The physical thermionic-emission normalization does not disturb the
+calibrated SCAPS-comparison result (the interface-plane-state path it would
+need to affect is orthogonal to the flag), but the bulk-node transport
+paths it does affect have no independent reference with the physical cap
+active, so it is off by default pending validation there. The diffusion-only
+ion-steric form is drop-in-safe on the current presets (sub-0.1 mV) and is
+off by default only conservatively, pending a check against high-ion-density
+configurations.
 
 ## Data And Optical Limits
 
