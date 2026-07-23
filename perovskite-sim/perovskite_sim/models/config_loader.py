@@ -180,6 +180,10 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             str(dev.get("ion_steric_diffusion_only", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        ion_steric_shared_site=(
+            str(dev.get("ion_steric_shared_site", True)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         autoloop_generated_lever=(
             str(dev.get("autoloop_generated_lever", False)).strip().lower()
             in ("true", "1", "yes", "on")

@@ -120,6 +120,16 @@ class DeviceStack:
     # (max P/P_lim ~ 0.011 -> steric ~ 1.011); it only matters near P_lim.
     # LEGACY tier forces it off. See physics/ion_migration.py.
     ion_steric_diffusion_only: bool = False
+    # Dual-ion site-sharing model for the diffusion-only steric flux (F05).
+    # Only relevant when ion_steric_diffusion_only is on AND a negative
+    # species is configured. True (default) = the two species share one
+    # finite-site reservoir, so the crowding potential uses the TOTAL
+    # occupancy (P_+ + P_-)/P_lim (standard multi-species finite-size PNP;
+    # reduces to the single-species form when one density is zero). False =
+    # distinct sublattices, each species crowds only against itself with its
+    # own P_lim — declare this only when the defects genuinely occupy
+    # different sites. No effect on single-species runs.
+    ion_steric_shared_site: bool = True
     # Autoloop Stage 5.3 codegen lever (2026-06). When True (or env
     # ``SOLARLAB_AUTOLOOP_GEN=1``), build_material_arrays calls the sandboxed
     # ``autoloop.generated.lever.adjust_material_arrays`` once on the assembled
