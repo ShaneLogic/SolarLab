@@ -8,8 +8,8 @@ Python evidence pass at commit `35e2f51` (quiet machine, load ~4-5,
 | Python default suite | `pytest` | 1101 passed, 3 skipped, 1 xfailed | 1098 s |
 | Python slow suite | `pytest -m slow` | 99 passed, 2 failed (pre-existing), 4 skipped | 4856 s |
 | Python validation suite | `pytest -m validation` | 22 passed | 443 s |
-| Frontend build | `npm run build` | not re-executed (no frontend changes in this revision) | — |
-| Frontend unit tests | `npm run test:run` | not re-executed (last certified 2026-05-19: 320 passed) | — |
+| Frontend build | `npm run build` | passed (tsc clean; 86 modules; interactive terminal, I/O-bound wall time) | 380 s |
+| Frontend unit tests | `npm run test:run` | 27 files, 371 tests passed (git checkout on local disk; in-place run stalls on the cloud-sync FS) | 1.34 s |
 
 ## Known failing slow tests (pre-existing)
 
