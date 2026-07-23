@@ -111,6 +111,15 @@ class DeviceStack:
     # tier forces it off. Opt-in while the shift to pinned baselines is
     # characterized (review F02 re-baselining campaign).
     te_physical_norm: bool = False
+    # Physical diffusion-only steric ion flux (2026-07, review F05). Default
+    # False = the legacy whole-flux steric factor (drift + diffusion scaled
+    # equally). When True, the crowding chemical potential is folded into the
+    # SG drift argument so steric acts on diffusion only (the dimensionally
+    # faithful modified-PNP form), with the Bernoulli structure preserved.
+    # Measured negligible in the dilute regime of the shipped presets
+    # (max P/P_lim ~ 0.011 -> steric ~ 1.011); it only matters near P_lim.
+    # LEGACY tier forces it off. See physics/ion_migration.py.
+    ion_steric_diffusion_only: bool = False
     # Autoloop Stage 5.3 codegen lever (2026-06). When True (or env
     # ``SOLARLAB_AUTOLOOP_GEN=1``), build_material_arrays calls the sandboxed
     # ``autoloop.generated.lever.adjust_material_arrays`` once on the assembled

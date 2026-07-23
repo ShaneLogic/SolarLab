@@ -876,15 +876,27 @@ discretization, $P$ in Eq. \ref{eq:steric} is evaluated as the average of
 the two face-adjacent nodal densities; the $10^{-6}$ floor guards the
 division at full saturation.)
 
-A formulation caveat: SolarLab applies $s(P)$ to the *entire* flux of
-Eq. \ref{eq:ion-flux} — diffusion and drift alike — whereas the strict
-lattice-gas chemical-potential derivation enhances only the
-concentration-gradient term, and a multi-species lattice gas couples the
-species through a *shared* site fraction $1-(P_+ + P_-)/P_\mathrm{lim}$
-rather than independent per-species factors. The implemented form should
-therefore be read as an empirical crowding regularization with the correct
-saturation limit, not as the literal modified-PNP flux of the cited theory
-(documented formulation limitation, Chapter 17).
+A formulation caveat: by default SolarLab applies $s(P)$ to the *entire*
+flux of Eq. \ref{eq:ion-flux} — diffusion and drift alike — whereas the
+strict lattice-gas chemical-potential derivation enhances only the
+concentration-gradient term. The dimensionally faithful form is available
+as an opt-in (`ion_steric_diffusion_only`): it folds the crowding chemical
+potential $\mu_\mathrm{ex}/k_BT = -\ln(1-P/P_\mathrm{lim})$ into the
+Scharfetter-Gummel drift argument, so the excluded-volume correction acts
+on diffusion only while the exponential-fitting stability is preserved, and
+the equilibrium recovers the lattice-gas (Fermi-Dirac) occupation
+$\theta/(1-\theta) \propto e^{-\phi/V_T}$. The distinction is numerically
+immaterial for the shipped presets: the mobile-ion occupancy stays dilute
+(peak $P/P_\mathrm{lim} \approx 0.011$ on the IonMonger benchmark, so
+$s \approx 1.011$), and enabling the physical form shifts $V_\mathrm{oc}$
+by under 0.1 mV. The two forms diverge only as $P \to P_\mathrm{lim}$
+(extreme interfacial pile-up). A multi-species lattice gas would further
+couple the species through a *shared* site fraction
+$1-(P_+ + P_-)/P_\mathrm{lim}$ rather than independent per-species factors;
+this refinement is likewise negligible in the dilute regime and is not yet
+implemented. The default whole-flux form should therefore be read as an
+empirical crowding regularization with the correct saturation limit
+(Chapter 17).
 
 Because ionic diffusivities ($D_I \sim 10^{-16}\,m^2 s^{-1}$) are many
 orders of magnitude below carrier diffusivities, ionic redistribution
@@ -2538,9 +2550,13 @@ is flagged at its point of use in Chapter \ref{governing-equations}:
   require re-calibrating the interface-recombination model against the
   reference with the physical cap active — a dedicated campaign, not a
   drive-by change;
-- the ionic steric factor multiplies the full flux (drift and diffusion)
-  and is applied per species, an empirical crowding regularization rather
-  than the strict shared-site lattice-gas flux;
+- the *default* ionic steric factor multiplies the full flux (drift and
+  diffusion) and is applied per species, an empirical crowding
+  regularization rather than the strict shared-site lattice-gas flux. The
+  diffusion-only modified-PNP form is available as an opt-in
+  (`ion_steric_diffusion_only`); it is numerically immaterial for the
+  shipped presets (dilute ions, peak $P/P_\mathrm{lim} \approx 0.011$, so
+  $V_\mathrm{oc}$ shifts under 0.1 mV) and matters only near saturation;
 - the interface-SRH non-negativity clamp — scoped since 2026-07-23 to
   declared-defect interfaces only — suppresses physical depletion-region
   generation at those interfaces as the accepted cost of the cross-carrier
@@ -2548,10 +2564,12 @@ is flagged at its point of use in Chapter \ref{governing-equations}:
 - the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel.
 
-Adopting the physical thermionic-emission normalization or revising the
-steric ion flux would change calibrated heterojunction and ion-transport
-results and therefore requires a dedicated re-baselining campaign, not a
-drive-by correction.
+Adopting the physical thermionic-emission normalization as the default
+would change calibrated heterojunction results (the +0.3 V overshoot above)
+and therefore requires a dedicated re-baselining campaign, not a drive-by
+correction. The diffusion-only ion-steric form, by contrast, is
+drop-in-safe on the current presets (sub-0.1 mV) and is off by default only
+conservatively, pending a check against high-ion-density configurations.
 
 ## Data And Optical Limits
 

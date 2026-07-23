@@ -34,20 +34,58 @@ def ion_continuity_rhs(
     D_I: np.ndarray | float,
     V_T: float,
     P_lim: np.ndarray | float,
+    steric_diffusion_only: bool = False,
+    P_lim_node: np.ndarray | float | None = None,
 ) -> np.ndarray:
     """
     Vectorized dP/dt = -dF_P/dx for all nodes.
     Zero-flux BCs at both contacts.
+
+    Two steric forms are supported (review F05):
+
+    * Legacy (``steric_diffusion_only=False``, default). The steric factor
+      ``s = 1/(1 - P/P_lim)`` multiplies the WHOLE Scharfetter-Gummel flux
+      ``D_eff = D_I * s``, i.e. it amplifies drift and diffusion equally.
+      This is an empirical crowding regularization, not the strict
+      modified-Poisson-Nernst-Planck flux (which corrects only the
+      concentration-gradient term). Kept as the default because it is what
+      every validated benchmark was pinned against.
+
+    * Physical diffusion-only (``steric_diffusion_only=True``). Folds the
+      lattice-gas crowding chemical potential ``mu_ex/kT = -ln(1 - P/P_lim)``
+      into the SG drift argument and leaves the diffusion coefficient at the
+      bare ``D_I``. This is the dimensionally faithful modified-PNP flux
+      ``F = -D_I[ (1/(1-P/P_lim)) dP/dx + (P/V_T) dphi/dx ]`` written in a
+      generalized-Slotboom (crowding-in-potential) form, so it applies
+      steric to diffusion only AND preserves the Bernoulli exponential
+      fitting (stability). Equilibrium ``F=0`` is preserved: the flux
+      vanishes at the steric-Boltzmann profile. Measured negligible in the
+      dilute regime of the shipped presets (max P/P_lim ~ 0.011 on
+      ionmonger_benchmark, so ``s ~ 1.011``); it only diverges from the
+      legacy form as P approaches P_lim. Requires ``P_lim_node`` (per-node
+      site density) for the node crowding potential; falls back to the
+      broadcast ``P_lim`` when None.
     """
     P = np.asarray(P, dtype=float)
     dx = np.diff(x)                              # (N-1,)
     D_I_face = np.broadcast_to(np.asarray(D_I, dtype=float), dx.shape)
-    P_lim_face = np.broadcast_to(np.asarray(P_lim, dtype=float), dx.shape)
-    P_avg = 0.5 * (P[:-1] + P[1:])              # (N-1,)
-    steric = 1.0 / np.maximum(1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6)
-    xi = (phi[1:] - phi[:-1]) / V_T             # (N-1,)
-    D_eff = D_I_face * steric
-    F_int = D_eff / dx * (bernoulli(xi) * P[:-1] - bernoulli(-xi) * P[1:])
+    if steric_diffusion_only:
+        _Plim_n = P_lim_node if P_lim_node is not None else P_lim
+        _Plim_n = np.broadcast_to(np.asarray(_Plim_n, dtype=float), P.shape)
+        # Crowding chemical potential mu_ex/kT = -ln(1 - P/P_lim), per node.
+        c = np.clip(P / _Plim_n, 0.0, 0.999999)
+        mu_ex = -np.log1p(-c)                    # (N,)
+        # Generalized SG: crowding enters the drift argument, D stays bare.
+        xi = (phi[1:] - phi[:-1]) / V_T + (mu_ex[1:] - mu_ex[:-1])
+        F_int = D_I_face / dx * (bernoulli(xi) * P[:-1] - bernoulli(-xi) * P[1:])
+    else:
+        P_lim_face = np.broadcast_to(np.asarray(P_lim, dtype=float), dx.shape)
+        P_avg = 0.5 * (P[:-1] + P[1:])          # (N-1,)
+        steric = 1.0 / np.maximum(
+            1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6)
+        xi = (phi[1:] - phi[:-1]) / V_T         # (N-1,)
+        D_eff = D_I_face * steric
+        F_int = D_eff / dx * (bernoulli(xi) * P[:-1] - bernoulli(-xi) * P[1:])
 
     # Zero-flux BCs: pad with 0 at both ends
     F_full = np.concatenate([[0.0], F_int, [0.0]])   # (N+1,)

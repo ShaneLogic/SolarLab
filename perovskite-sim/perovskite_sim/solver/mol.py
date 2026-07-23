@@ -249,6 +249,10 @@ class MaterialArrays:
     N_C_node: np.ndarray | None = None
     N_V_node: np.ndarray | None = None
     te_physical_norm: bool = False
+    # Physical diffusion-only steric ion flux (review F05). When True, the
+    # ion continuity RHS folds the crowding potential into the SG drift
+    # argument instead of scaling the whole flux. Default False = legacy.
+    ion_steric_diffusion_only: bool = False
     # Face indices where thermionic emission capping applies (band offset > threshold)
     interface_faces: tuple[int, ...] = ()
     # TMM-computed generation profile G(x) [m^-3 s^-1]; None = use Beer-Lambert
@@ -839,6 +843,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     _te_phys = bool(
         getattr(stack, "te_physical_norm", False)
         or os.environ.get("SOLARLAB_TE_PHYSICAL") == "1"
+    ) and sim_mode.name != "legacy"
+    # Physical diffusion-only steric ion flux gate (review F05).
+    _ion_steric_diff = bool(
+        getattr(stack, "ion_steric_diffusion_only", False)
+        or os.environ.get("SOLARLAB_ION_STERIC_DIFF") == "1"
     ) and sim_mode.name != "legacy"
     if _dos_band:
         _ref = next(
@@ -1461,6 +1470,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         N_C_node=(N_C_node_arr if _te_phys else None),
         N_V_node=(N_V_node_arr if _te_phys else None),
         te_physical_norm=_te_phys,
+        ion_steric_diffusion_only=_ion_steric_diff,
         interface_faces=tuple(interface_face_list),
         G_optical=G_optical,
         D_ion_neg_face=D_ion_neg_face if _has_dual_ions else None,
@@ -2004,7 +2014,11 @@ def assemble_rhs(
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
-    dP = ion_continuity_rhs(x, phi, sv.P, mat.D_ion_face, mat.V_T_device, mat.P_lim_face)
+    dP = ion_continuity_rhs(
+        x, phi, sv.P, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
+        steric_diffusion_only=mat.ion_steric_diffusion_only,
+        P_lim_node=mat.P_lim_node,
+    )
 
     # Negative ion continuity (dual-species mode)
     dP_neg = None
@@ -2297,6 +2311,8 @@ def split_step(
             )
             dP_pos = ion_continuity_rhs(
                 x, phi, P_pos, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
+                steric_diffusion_only=mat.ion_steric_diffusion_only,
+                P_lim_node=mat.P_lim_node,
             )
             dP_neg = ion_continuity_rhs_neg(
                 x, phi, P_neg_v, mat.D_ion_neg_face, mat.V_T_device, mat.P_lim_neg_face,
@@ -2325,6 +2341,8 @@ def split_step(
             )
             return ion_continuity_rhs(
                 x, phi, P_nn, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,
+                steric_diffusion_only=mat.ion_steric_diffusion_only,
+                P_lim_node=mat.P_lim_node,
             )
 
         sol_ion = solve_ivp(
