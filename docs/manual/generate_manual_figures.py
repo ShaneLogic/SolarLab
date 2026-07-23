@@ -42,7 +42,7 @@ def _save(fig: plt.Figure, name: str) -> None:
 def validation_gate_summary() -> None:
     rows = [
         ("Default Python suite", "pytest", "1101 passed, 3 skipped, 1 xfailed", "18.3 min"),
-        ("Slow regression suite", "pytest -m slow", "99 passed, 2 failed*, 4 skipped", "80.9 min"),
+        ("Slow regression suite", "pytest -m slow", "99 passed, 1 xfailed, 4 skipped", "80.9 min"),
         ("Physics validation suite", "pytest -m validation", "22 passed", "7.4 min"),
         ("Frontend production build", "npm run build", "passed (86 modules)", "6.3 min*"),
         ("Frontend unit tests", "npm run test:run", "371 passed", "1.3 s"),
