@@ -251,6 +251,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         # Nc300/Nv300, so non-DOS device dicts are bit-identical.
         interface_plane_projection=_flag(dev.get("interface_plane_projection")),
         dos_band_potentials=_flag(dev.get("dos_band_potentials", True)),
+        te_physical_norm=_flag(dev.get("te_physical_norm")),
         flat_band_contacts=_flag(dev.get("flat_band_contacts")),
         flat_band_metal_contacts=_flag(dev.get("flat_band_metal_contacts")),
         contact_phi_B_eV=float(dev.get("contact_phi_B_eV", 0.0)),

@@ -239,6 +239,16 @@ class MaterialArrays:
     # Per-node Richardson constants for thermionic emission capping
     A_star_n: np.ndarray | None = None
     A_star_p: np.ndarray | None = None
+    # Physical TE normalization (2026-07, review F02). When
+    # ``te_physical_norm`` is True, the TE cap divides the flux by the
+    # band-edge DOS at each capped face (N_C for electrons, N_V for holes),
+    # turning the near-inert density-weighted bound into the dimensionally
+    # correct emission-velocity current. Per-node DOS arrays; None entries
+    # (layers without Nc300/Nv300) leave that face on the legacy form, so
+    # non-DOS configs are bit-identical even with the flag on.
+    N_C_node: np.ndarray | None = None
+    N_V_node: np.ndarray | None = None
+    te_physical_norm: bool = False
     # Face indices where thermionic emission capping applies (band offset > threshold)
     interface_faces: tuple[int, ...] = ()
     # TMM-computed generation profile G(x) [m^-3 s^-1]; None = use Beer-Lambert
@@ -374,6 +384,10 @@ class MaterialArrays:
             d["T"] = self.T_device
             if self.te_softness > 0.0:
                 d["te_softness"] = self.te_softness
+            if self.te_physical_norm and self.N_C_node is not None:
+                d["te_physical_norm"] = True
+                d["N_C_node"] = self.N_C_node
+                d["N_V_node"] = self.N_V_node
         if self.het_recomb_despike > 0.0 and self.het_recomb_nodes:
             d["het_recomb_despike"] = self.het_recomb_despike
             d["het_recomb_nodes"] = self.het_recomb_nodes
@@ -585,6 +599,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     C_p = np.empty(N)
     A_star_n_node = np.empty(N)
     A_star_p_node = np.empty(N)
+    # Band-edge DOS per node for the physical TE normalization (review F02).
+    # NaN where a layer lacks Nc300/Nv300 → those faces keep the legacy TE
+    # form (bit-identical), so non-DOS configs are unaffected by the flag.
+    N_C_node_arr = np.full(N, np.nan)
+    N_V_node_arr = np.full(N, np.nan)
     # Field-dependent mobility parameters per node (Phase 3.2).
     v_sat_n_node = np.zeros(N)
     v_sat_p_node = np.zeros(N)
@@ -727,6 +746,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             B_rad[mask] = p.B_rad
         C_n[mask] = p.C_n
         C_p[mask] = p.C_p
+        if p.Nc300:
+            N_C_node_arr[mask] = float(p.Nc300)
+        if p.Nv300:
+            N_V_node_arr[mask] = float(p.Nv300)
         A_star_n_node[mask] = p.A_star_n
         A_star_p_node[mask] = p.A_star_p
 
@@ -809,6 +832,13 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     _dos_band = bool(
         getattr(stack, "dos_band_potentials", True)
         or os.environ.get("SOLARLAB_DOS_BAND") == "1"
+    ) and sim_mode.name != "legacy"
+    # Physical TE normalization gate (review F02). Device flag / env, off in
+    # LEGACY. Activation additionally requires per-node DOS (checked at the
+    # face in continuity.py), so DOS-free configs stay bit-identical.
+    _te_phys = bool(
+        getattr(stack, "te_physical_norm", False)
+        or os.environ.get("SOLARLAB_TE_PHYSICAL") == "1"
     ) and sim_mode.name != "legacy"
     if _dos_band:
         _ref = next(
@@ -1428,6 +1458,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         V_bi_eff=V_bi_eff,
         A_star_n=A_star_n_node,
         A_star_p=A_star_p_node,
+        N_C_node=(N_C_node_arr if _te_phys else None),
+        N_V_node=(N_V_node_arr if _te_phys else None),
+        te_physical_norm=_te_phys,
         interface_faces=tuple(interface_face_list),
         G_optical=G_optical,
         D_ion_neg_face=D_ion_neg_face if _has_dual_ions else None,

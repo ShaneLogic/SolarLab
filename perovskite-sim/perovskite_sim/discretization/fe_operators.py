@@ -83,16 +83,39 @@ def sg_fluxes_p(
 
 def thermionic_emission_flux(
     n_left: float, n_right: float, delta_E: float, T: float, A_star: float,
+    N_dos: float | None = None,
 ) -> float:
-    """Richardson-Dushman thermionic emission current [A/m^2] across a band offset.
+    """Thermionic emission current [A/m^2] across a band offset.
 
     delta_E: band offset E_right - E_left [eV]. Positive = step-up barrier left->right.
     A_star: Richardson constant [A/(m^2 K^2)]
+    N_dos: effective band-edge density of states of the emitting reservoir
+        [m^-3] (N_C for electrons, N_V for holes). See the two forms below.
 
-    J = A*T^2 * (n_left * exp(-max(delta_E, 0) / V_T)
-                - n_right * exp(-max(-delta_E, 0) / V_T))
+    Two normalizations are supported:
+
+    * Legacy density-weighted bound (``N_dos is None``, the historical
+      default). ``J = A*T^2 * (n_L e^(...) - n_R e^(...))``. This is
+      dimensionally A/m^2 * m^-3 = A/m^5, so it is NOT the physical
+      Richardson-Dushman current; it functions only as an empirical
+      magnitude cap whose scale is tied to the SI unit system. In practice
+      the density weighting makes ``|J_TE|`` enormous (~1e28-1e35 on a
+      perovskite stack), so the ``min(|J_SG|, |J_TE|)`` cap almost never
+      binds and the term is close to inert.
+
+    * Physical emission-velocity form (``N_dos`` supplied). Dividing by the
+      band-edge DOS converts the Richardson constant into an emission
+      velocity ``v_R = A*T^2 / (q N_dos)`` [m/s], giving the dimensionally
+      correct interface-limited current ``J = q v_R (n_L e^(...) -
+      n_R e^(...))``. At real interface densities this lands in the same
+      range as the drift-diffusion flux, so the cap binds meaningfully. A
+      single ``N_dos`` scales both legs equally, so the equilibrium
+      cancellation ``J = 0`` is preserved exactly.
     """
     v_t = K_B * T / Q
     left_term = n_left * math.exp(-max(delta_E, 0.0) / v_t)
     right_term = n_right * math.exp(-max(-delta_E, 0.0) / v_t)
-    return A_star * T**2 * (left_term - right_term)
+    J = A_star * T**2 * (left_term - right_term)
+    if N_dos is not None and N_dos > 0.0:
+        J = J / N_dos
+    return J

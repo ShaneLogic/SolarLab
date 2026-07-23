@@ -98,6 +98,19 @@ class DeviceStack:
     # force the pre-fix transport. LEGACY tier always disables it regardless
     # (IonMonger bit-identity contract — see build_material_arrays).
     dos_band_potentials: bool = True
+    # Physical thermionic-emission normalization (2026-07, review F02).
+    # Default False = the legacy density-weighted TE cap (dimensionally
+    # A/m^5; empirical, near-inert because |J_TE| is ~1e28-1e35 so the
+    # magnitude-min cap almost never binds). When True AND the adjacent
+    # layers carry Nc300/Nv300, the TE flux is divided by the band-edge DOS
+    # at each capped face, giving the dimensionally correct emission-velocity
+    # current J = q v_R (...) with v_R = A*T^2/(q N_dos); the cap then binds
+    # at real interface densities. A single face DOS scales both legs equally,
+    # so equilibrium J=0 is preserved. Configs without Nc300/Nv300 (e.g.
+    # ionmonger_benchmark) are bit-identical even with the flag on. LEGACY
+    # tier forces it off. Opt-in while the shift to pinned baselines is
+    # characterized (review F02 re-baselining campaign).
+    te_physical_norm: bool = False
     # Autoloop Stage 5.3 codegen lever (2026-06). When True (or env
     # ``SOLARLAB_AUTOLOOP_GEN=1``), build_material_arrays calls the sandboxed
     # ``autoloop.generated.lever.adjust_material_arrays`` once on the assembled
