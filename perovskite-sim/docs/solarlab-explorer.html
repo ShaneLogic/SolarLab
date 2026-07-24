@@ -179,16 +179,16 @@
 
     <div class="eq">
       <span class="lbl">— electron continuity —</span><br>
-      ∂<span class="n">n</span>/∂t = (1/q)·∂<sub>x</sub><span class="n">J<sub>n</sub></span> + G − R<br><br>
+      ∂<span class="n">n</span>/∂t = (1/q)·∂<span class="n">J<sub>n</sub></span>/∂x + G − R<br><br>
       <span class="lbl">— hole continuity —</span><br>
-      ∂<span class="p">p</span>/∂t = −(1/q)·∂<sub>x</sub><span class="p">J<sub>p</sub></span> + G − R<br><br>
+      ∂<span class="p">p</span>/∂t = −(1/q)·∂<span class="p">J<sub>p</sub></span>/∂x + G − R<br><br>
       <span class="lbl">— drift-diffusion fluxes (Scharfetter–Gummel) —</span><br>
-      <span class="n">J<sub>n</sub></span> = q·D<sub>n</sub>(∂<sub>x</sub><span class="n">n</span> − <span class="n">n</span>·∂<sub>x</sub><span class="fc">φ</span>/V<sub>T</sub>)<br>
-      <span class="p">J<sub>p</sub></span> = −q·D<sub>p</sub>(∂<sub>x</sub><span class="p">p</span> + <span class="p">p</span>·∂<sub>x</sub><span class="fc">φ</span>/V<sub>T</sub>)<br><br>
+      <span class="n">J<sub>n</sub></span> = q·D<sub>n</sub>(∂<span class="n">n</span>/∂x − (<span class="n">n</span>/V<sub>T</sub>)·∂<span class="fc">φ</span>/∂x)<br>
+      <span class="p">J<sub>p</sub></span> = −q·D<sub>p</sub>(∂<span class="p">p</span>/∂x + (<span class="p">p</span>/V<sub>T</sub>)·∂<span class="fc">φ</span>/∂x)<br><br>
       <span class="lbl">— ion drift-diffusion (Nernst–Planck) —</span><br>
-      ∂<span class="ionc">P</span>/∂t = ∂<sub>x</sub>[ D<sub>I</sub>(∂<sub>x</sub><span class="ionc">P</span> + <span class="ionc">P</span>·∂<sub>x</sub><span class="fc">φ</span>/V<sub>T</sub>) ]<br><br>
+      ∂<span class="ionc">P</span>/∂t = ∂/∂x[ D<sub>I</sub>(∂<span class="ionc">P</span>/∂x + (<span class="ionc">P</span>/V<sub>T</sub>)·∂<span class="fc">φ</span>/∂x) ]<br><br>
       <span class="lbl">— Poisson (solved, not integrated) —</span><br>
-      −∂<sub>x</sub>(ε ∂<sub>x</sub><span class="fc">φ</span>) = q(<span class="p">p</span> − <span class="n">n</span> + <span class="ionc">P</span> − N<sub>A</sub> + N<sub>D</sub>)
+      −∂/∂x(ε·∂<span class="fc">φ</span>/∂x) = q(<span class="p">p</span> − <span class="n">n</span> + <span class="ionc">P</span> − N<sub>A</sub> + N<sub>D</sub>)
     </div>
 
     <div class="prose">
@@ -207,7 +207,7 @@
 
     <div class="code-note">
       <span class="tag">in the code</span>
-      <span class="body"><span class="path">solver/mol.py:assemble_rhs</span> builds ∂<sub>t</sub>(n,p,P); <span class="path">physics/poisson.py</span> does the tridiagonal φ solve each call. <span class="cm"># state y=(n,p,P), φ derived — never part of y</span></span>
+      <span class="body"><span class="path">solver/mol.py:assemble_rhs</span> builds ∂(n,p,P)/∂t; <span class="path">physics/poisson.py</span> does the tridiagonal φ solve each call. <span class="cm"># state y=(n,p,P), φ derived — never part of y</span></span>
     </div>
   </section>
 
@@ -237,7 +237,7 @@
     <div class="sec-head"><span class="sec-num">SEC 03</span><h2>Recombination — where the carriers die</h2></div>
     <div class="prose">
       <p>The loss term <code>R</code> accounts for every carrier pair that recombines before collection. Three bulk mechanisms act in parallel; their relative magnitude depends on the injection level (carrier density).</p>
-      <p><b class="n">Shockley–Read–Hall</b> recombination (trap-assisted, ∝ n) dominates at low injection. <b class="fc">Radiative</b> band-to-band recombination (∝ n², rate <span class="m">B·(np−n<sub>i</sub>²)</span>, the detailed-balance inverse of generation) dominates at intermediate density. <b class="p">Auger</b> recombination (three-body, ∝ n²p) dominates at high injection. Open-circuit voltage is set by the condition that total recombination balances total generation. Interface recombination is a distinct surface mechanism, treated in section 12.</p>
+      <p><b class="n">Shockley–Read–Hall</b> recombination (trap-assisted, ∝ n) dominates at low injection. <b class="fc">Radiative</b> band-to-band recombination (∝ n², rate <span class="m">B·(np−n<sub>i</sub><sup>2</sup>)</span>, the detailed-balance inverse of generation) dominates at intermediate density. <b class="p">Auger</b> recombination (three-body, ∝ n²p) dominates at high injection. Open-circuit voltage is set by the condition that total recombination balances total generation. Interface recombination is a distinct surface mechanism, treated in section 12.</p>
     </div>
     <figure class="fig" id="figRec">
       <div class="cvwrap"><canvas data-h="300" aria-label="Recombination rate versus carrier density for SRH, radiative, Auger"></canvas></div>
@@ -352,7 +352,7 @@
     <figure class="fig" id="figMOL">
       <div class="cvwrap"><canvas data-h="440" aria-label="Method of Lines: grid, global state vector, banded Jacobian, time integration"></canvas></div>
       <div class="controls">
-        <div class="ctl" style="min-width:210px"><label>Highlight node <span class="val" data-v="mnode">x3</span></label><input type="range" min="0" max="6" step="1" value="3" data-r="mnode"></div>
+        <div class="ctl" style="min-width:210px"><label>Highlight node <span class="val" data-v="mnode">x<sub>3</sub></span></label><input type="range" min="0" max="6" step="1" value="3" data-r="mnode"></div>
         <button class="btn" data-act="mplay">&#9654; march in time</button>
         <div style="font-size:.71rem;letter-spacing:.03em;color:var(--muted);margin-left:auto">shown with 7 nodes &#8212; production grids have hundreds; the structure is identical</div>
       </div>
@@ -370,7 +370,7 @@
 
     <div class="eq">
       <span class="lbl">— one Newton iteration —</span><br>
-      1&nbsp;·&nbsp;residual&nbsp;&nbsp;&nbsp; F(y<sub>k</sub>) = ∂<sub>t</sub>(<span class="n">n</span>,<span class="p">p</span>,<span class="ionc">P</span>)&nbsp;&nbsp;<span class="lbl">(= 0 at steady state)</span><br>
+      1&nbsp;·&nbsp;residual&nbsp;&nbsp;&nbsp; F(y<sub>k</sub>) = ∂(<span class="n">n</span>,<span class="p">p</span>,<span class="ionc">P</span>)/∂t&nbsp;&nbsp;<span class="lbl">(= 0 at steady state)</span><br>
       2&nbsp;·&nbsp;Jacobian&nbsp;&nbsp; J = ∂F/∂y&nbsp;&nbsp;<span class="lbl">(finite-difference, LU-factored once, reused across chords)</span><br>
       3&nbsp;·&nbsp;linear solve&nbsp; J·Δy = −F&nbsp;&nbsp;<span class="lbl">(tridiagonal sweep — the second figure)</span><br>
       4&nbsp;·&nbsp;line search&nbsp; y<sub>k+1</sub> = y<sub>k</sub> + λ·Δy&nbsp;&nbsp;<span class="lbl">(damped, in log-density space)</span><br>
@@ -685,12 +685,32 @@
     ctx.stroke();
   }
   function labelMono(ctx,txt,x,y,color,size,align){
-    var sz=Math.max(size||11,10.5);
+    var sz=Math.max(size||11,10.5), fam="Arial,'Helvetica Neue',Helvetica,sans-serif";
+    var mainF="600 "+sz+"px "+fam, subF="600 "+Math.max(7.5,sz*0.72)+"px "+fam;
+    txt=""+txt;
+    var runs=[], i=0;
+    while(i<txt.length){
+      var c=txt[i];
+      if((c==="_"||c==="^") && txt[i+1]==="{"){
+        var j=txt.indexOf("}",i+2);
+        if(j>=0){ runs.push({t:txt.slice(i+2,j), k:(c==="_"?1:2)}); i=j+1; continue; }
+      }
+      if(runs.length && runs[runs.length-1].k===0) runs[runs.length-1].t+=c;
+      else runs.push({t:c, k:0});
+      i++;
+    }
     ctx.save();
-    ctx.font="600 "+sz+"px Arial,'Helvetica Neue',Helvetica,sans-serif";
-    ctx.fillStyle=color; ctx.textAlign=align||"left"; ctx.textBaseline="alphabetic";
-    ctx.shadowColor="rgba(3,8,15,0.82)"; ctx.shadowBlur=3.5;
-    ctx.fillText(txt,x,y);
+    var total=0;
+    for(var r=0;r<runs.length;r++){ ctx.font=runs[r].k?subF:mainF; total+=ctx.measureText(runs[r].t).width; }
+    var cx = align==="right"? x-total : (align==="center"? x-total/2 : x);
+    ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+    ctx.shadowColor="rgba(3,8,15,0.82)"; ctx.shadowBlur=3.5; ctx.fillStyle=color;
+    for(var r2=0;r2<runs.length;r2++){
+      var run=runs[r2]; ctx.font=run.k?subF:mainF;
+      var dy = run.k===1? sz*0.20 : (run.k===2? -sz*0.34 : 0);
+      ctx.fillText(run.t, cx, y+dy);
+      cx += ctx.measureText(run.t).width;
+    }
     ctx.restore();
   }
 
@@ -900,8 +920,8 @@
         labelMono(ctx,lab,cx,ly+lh+16,color,10,"center");
         labelMono(ctx,val.toFixed(2),cx,ly+lh-bh-6,P.ink,11,"center");
       }
-      bar(lx+lw*0.30, wL, P.electron, "B(+Δφ/VT)·n_L");
-      bar(lx+lw*0.72, wR, P.hole, "B(−Δφ/VT)·n_R");
+      bar(lx+lw*0.30, wL, P.electron, "B(+Δφ/V_{T})·n_{L}");
+      bar(lx+lw*0.72, wR, P.hole, "B(−Δφ/V_{T})·n_{R}");
 
       // RIGHT: density profile across one cell (exponential)
       var rm={l:16,r:20,t:26,b:34}, rx=half+rm.l,ry=rm.t,rw=half-rm.l-rm.r,rh=H-rm.t-rm.b;
@@ -922,8 +942,8 @@
       ctx.lineTo(rx+rw,ry+rh); ctx.lineTo(rx,ry+rh); ctx.closePath();
       ctx.fillStyle=alpha(P.electron,.14); ctx.fill();
       poly(ctx,pts,P.electron,2.2);
-      labelMono(ctx,"n_L",rx+2,ry+rh+16,P.muted,10,"left");
-      labelMono(ctx,"n_R",rx+rw-2,ry+rh+16,P.muted,10,"right");
+      labelMono(ctx,"n_{L}",rx+2,ry+rh+16,P.muted,10,"left");
+      labelMono(ctx,"n_{R}",rx+rw-2,ry+rh+16,P.muted,10,"right");
     }
     var f=Fig("figSG",draw,{animate:false,init:function(self){
       self.get('[data-r="dphi"]').addEventListener("input",function(e){
@@ -1009,7 +1029,7 @@
       for(var i=0;i<=100;i++){ var u=i/100; var f=u*u*(3-2*u); pts.push([px(u),py(phiL+(phiR-phiL)*f)]); }
       poly(ctx,pts,P.field,2.6);
       labelMono(ctx,"φ(0)=0",px(0.02),py(0)-8,P.muted,10);
-      labelMono(ctx,"φ(L)=V_bi−V_app = "+phiR.toFixed(2)+"V",px(0.98),py(phiR)-8,P.field,10,"right");
+      labelMono(ctx,"φ(L) = V_{bi} − V_{app} = "+phiR.toFixed(2)+"V",px(0.98),py(phiR)-8,P.field,10,"right");
       // contacts
       ctx.fillStyle=alpha(P.hole,.6); ctx.fillRect(x-3,y,3,h);
       ctx.fillStyle=alpha(P.electron,.6); ctx.fillRect(x+w,y,3,h);
@@ -1021,7 +1041,7 @@
           ctx.strokeStyle=c[1]; ctx.lineWidth=2;
           for(var k=0;k<5;k++){ var yy=y+8+k*(h-16)/4; ctx.beginPath(); ctx.moveTo(xx-6,yy); ctx.lineTo(xx+6,yy); ctx.stroke(); }
         });
-        labelMono(ctx,"densities pinned to n_eq / p_eq (clamped)",px(0.5),y+h-8,P.muted,10,"center");
+        labelMono(ctx,"densities pinned to n_{eq} / p_{eq} (clamped)",px(0.5),y+h-8,P.muted,10,"center");
       } else {
         // robin: arrows of flux proportional to S
         var S=Math.pow(10,svel);
@@ -1032,7 +1052,7 @@
           for(var k=0;k<3;k++){ var yy=y+20+k*(h-40)/2; ctx.beginPath(); ctx.moveTo(xx,yy); ctx.lineTo(xx+c[1]*(8+arr*22),yy); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(xx+c[1]*(8+arr*22),yy); ctx.lineTo(xx+c[1]*(8+arr*22)-c[1]*5,yy-3); ctx.lineTo(xx+c[1]*(8+arr*22)-c[1]*5,yy+3); ctx.closePath(); ctx.fillStyle=alpha(P.ion,.9); ctx.fill(); }
         });
-        labelMono(ctx,"J = ±qS(density − eq),  S = "+(S>=1e6?(S/1e6).toFixed(1)+"e6":S.toExponential(0))+" cm/s",px(0.5),y+h-8,P.ion,10,"center");
+        labelMono(ctx,"J = ±qS(n − n_{eq}),  S = "+(S>=1e6?(S/1e6).toFixed(1)+"e6":S.toExponential(0))+" cm/s",px(0.5),y+h-8,P.ion,10,"center");
       }
     }
     var f=Fig("figBC",draw,{animate:false,init:function(self){
@@ -1151,7 +1171,7 @@
       poly(ctx,pv,P.hole,2.6);
       // junction line
       ctx.strokeStyle=alpha(P.muted,.5); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(px(jx),y); ctx.lineTo(px(jx),y+h); ctx.stroke(); ctx.setLineDash([]);
-      labelMono(ctx,"ΔE_C = "+(dec>=0?"+":"")+dec.toFixed(2)+" eV",px(jx),y+h+16,P.ink,11,"center");
+      labelMono(ctx,"ΔE_{C} = "+(dec>=0?"+":"")+dec.toFixed(2)+" eV",px(jx),y+h+16,P.ink,11,"center");
 
       // spike vs cliff behaviour
       var spike = dec>0.02; // positive offset = barrier spike
@@ -1171,7 +1191,7 @@
       if(teActive){
         ctx.fillStyle=alpha(P.electron,.16);
         ctx.fillRect(px(jx)-10,y+6,20,h-12);
-        labelMono(ctx,"TE cap active (|ΔE_C|>0.05)",px(jx),y-8,P.electron,10,"center");
+        labelMono(ctx,"TE cap active (|ΔE_{C}| > 0.05)",px(jx),y-8,P.electron,10,"center");
       } else if(Math.abs(dec)>0.05 && !tecap){
         labelMono(ctx,"no cap → SG over-emits across the step",px(jx),y-8,P.hole,10,"center");
       }
@@ -1182,10 +1202,10 @@
       for(var q=0;q<=100;q++){ var u4=q/100; var st2 = u4<jx?0:stepDOS; ef.push([px(u4), py(efbase + st2)]); }
       ctx.setLineDash([5,4]); poly(ctx,ef,alpha(P.field,.9),1.4); ctx.setLineDash([]);
       if(!dosfold){ labelMono(ctx,"⚠ spurious kT·ln(DOS ratio) QFL step",px(0.5),py(efbase+stepDOS)-8,P.field,10,"center"); }
-      else { labelMono(ctx,"E_Fn continuous (DOS fold on)",px(0.28),py(efbase)-8,P.muted,9,"center"); }
+      else { labelMono(ctx,"E_{Fn} continuous (DOS fold on)",px(0.28),py(efbase)-8,P.muted,9,"center"); }
       // legend bottom
-      labelMono(ctx,"E_C",px(0.02),py(ecL)-6,P.electron,10);
-      labelMono(ctx,"E_V",px(0.02),py(evL)+14,P.hole,10);
+      labelMono(ctx,"E_{C}",px(0.02),py(ecL)-6,P.electron,10);
+      labelMono(ctx,"E_{V}",px(0.02),py(evL)+14,P.hole,10);
     }
     var f=Fig("figHet",draw,{animate:false,init:function(self){
       self.all('[data-seg="iface"] button').forEach(function(b){
@@ -1449,7 +1469,7 @@
   // ============ 08 coupling loop ============
   (function(){
     var running=false, speed=1, prog=0, k=0, res=1.0, clock=0;
-    var nodes=[["charge","q(p-n+P-N_A+N_D)","ion"],["Poisson","solve -> phi","field"],["SG fluxes","J_n, J_p, J_I","electron"],["continuity","dt (n,p,P)","hole"]];
+    var nodes=[["charge","q(p−n+P−N_{A}+N_{D})","ion"],["Poisson","solve → φ","field"],["SG fluxes","J_{n}, J_{p}, J_{I}","electron"],["continuity","∂(n,p,P)/∂t","hole"]];
     var arrowLbl=["sets the field","tilts the bands","move carriers","reshape charge"];
     function rr(ctx,X,Y,Wd,Ht,r){ ctx.beginPath(); ctx.moveTo(X+r,Y); ctx.arcTo(X+Wd,Y,X+Wd,Y+Ht,r); ctx.arcTo(X+Wd,Y+Ht,X,Y+Ht,r); ctx.arcTo(X,Y+Ht,X,Y,r); ctx.arcTo(X,Y,X+Wd,Y,r); ctx.closePath(); }
     function onLap(st){ if(res<1e-6){ running=false; return; } res=res*0.12; k++; var hist=st._hist||(st._hist=[1.0]); hist.push(res); if(res<1e-6) running=false; }
@@ -1531,7 +1551,7 @@
         ctx.strokeStyle=on?P.electron:alpha(P.ink,.55); ctx.lineWidth=on?2:1;
         ctx.beginPath(); ctx.moveTo(xx,y1+h1*0.32); ctx.lineTo(xx,y1+h1*0.88); ctx.stroke();
         ctx.fillStyle=on?P.electron:alpha(P.ink,.7); ctx.beginPath(); ctx.arc(xx,y1+h1*0.6,on?5:3,0,7); ctx.fill();
-        labelMono(ctx,"x"+i,xx,y1+h1+13,on?P.electron:P.muted,10,"center");
+        labelMono(ctx,"x_{"+i+"}",xx,y1+h1+13,on?P.electron:P.muted,10,"center");
       }
       // band 2: node -> vector + matrix
       var y2=y1+h1+46, h2=H*0.36;
@@ -1596,7 +1616,7 @@
       if(playing&&!reduce){ clock++; if(clock>=1){ clock=0; tprog+=0.02; if(tprog>=1) playing=false; } }
     }
     var f=Fig("figMOL",draw,{animate:true,init:function(self){
-      self.get('[data-r="mnode"]').addEventListener("input",function(e){ ni=parseInt(e.target.value,10); self.get('[data-v="mnode"]').textContent="x"+ni; if(reduce)self.render(); });
+      self.get('[data-r="mnode"]').addEventListener("input",function(e){ ni=parseInt(e.target.value,10); self.get('[data-v="mnode"]').innerHTML="x<sub>"+ni+"</sub>"; if(reduce)self.render(); });
       self.get('[data-act="mplay"]').addEventListener("click",function(){ playing=true; tprog=0; if(reduce){ tprog=1; playing=false; self.render(); } });
     }});
     if(reduce&&f) f.render();
