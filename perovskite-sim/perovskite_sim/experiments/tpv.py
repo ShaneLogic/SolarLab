@@ -274,7 +274,12 @@ def run_tpv(
 
     # Step 1: Equilibrate at V_oc under steady illumination
     y_illum = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
-    V_oc, y_oc = _find_voc(x, y_illum, stack, mat_ss, V_guess=stack.compute_V_bi(),
+    # V_guess is a positive-magnitude upper bracket for the forward V_oc
+    # search. compute_V_bi returns the SIGNED phi(right)-phi(left), which is
+    # negative for n-contact-left devices; take its magnitude so the bracket
+    # [0, V_guess*1.5] stays forward-biased instead of scanning into reverse.
+    V_oc, y_oc = _find_voc(x, y_illum, stack, mat_ss,
+                            V_guess=abs(stack.compute_V_bi()),
                             rtol=rtol, atol=atol)
 
     if progress is not None:

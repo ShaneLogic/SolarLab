@@ -237,7 +237,7 @@ def run_degradation(
     N = len(x)
     # V_oc can exceed V_bi when heterojunction band offsets are present, so
     # sweep beyond V_bi; the caller may override. Default gives ~30 % headroom.
-    v_upper = metric_V_max if metric_V_max is not None else max(stack.compute_V_bi() * 1.3, 1.4)
+    v_upper = metric_V_max if metric_V_max is not None else max(abs(stack.compute_V_bi()) * 1.3, 1.4)
     metric_voltages = np.linspace(0.0, v_upper, metric_n_points)
     absorber_layer, absorber_mask = _absorber_region(x, stack)
     P0_abs = absorber_layer.params.P0
