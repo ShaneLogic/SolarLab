@@ -1,0 +1,1616 @@
+<title>Inside SolarLab — how the device solver works</title>
+<style>
+  :root{
+    --ground:#070B12; --ground2:#0A1220; --panel:rgba(14,22,38,.72); --panelSolid:#0C1420;
+    --ink:#DCE8F6; --muted:#9DAFC8; --line:rgba(90,160,230,.16); --line2:rgba(90,160,230,.32);
+    --cyan:#35DBFF; --electron:#35DBFF; --hole:#FF9D45; --ion:#B98CFF; --field:#FFD35C;
+    --good:#46E5A0; --warn:#FF8A5B; --glow:rgba(53,219,255,.55);
+    --sans:Arial,"Helvetica Neue",Helvetica,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,"Roboto Mono",monospace;
+    --maxw:1140px; --col:66ch; --tsh:0 0 18px var(--glow);
+  }
+  :root.nofx{ --glow:transparent; --tsh:none; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0; color:var(--ink); font-family:var(--sans); font-size:16.5px; line-height:1.62;
+    background:
+      radial-gradient(1200px 720px at 80% -10%, rgba(53,150,255,.10), transparent 60%),
+      radial-gradient(900px 620px at 6% 6%, rgba(150,90,255,.075), transparent 55%),
+      var(--ground);
+    -webkit-font-smoothing:antialiased; letter-spacing:.004em;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:46px 46px;
+    -webkit-mask-image:radial-gradient(130% 100% at 50% -5%, #000 38%, transparent 88%);
+    mask-image:radial-gradient(130% 100% at 50% -5%, #000 38%, transparent 88%);
+    opacity:.55;
+  }
+  :root.nofx body::before{display:none}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 26px; position:relative; z-index:1}
+
+  header.top{position:sticky; top:0; z-index:50; -webkit-backdrop-filter:blur(12px) saturate(1.3); backdrop-filter:blur(12px) saturate(1.3);
+    background:linear-gradient(180deg, rgba(7,11,18,.94), rgba(7,11,18,.62)); border-bottom:1px solid var(--line2); box-shadow:0 1px 0 rgba(53,219,255,.12)}
+  header.top .row{display:flex; align-items:center; gap:16px; height:56px; max-width:var(--maxw); margin:0 auto; padding:0 26px}
+  .brand{font-size:.8rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase; white-space:nowrap; display:flex; align-items:center; gap:9px; color:var(--ink)}
+  .brand::before{content:""; width:8px; height:8px; border-radius:50%; background:var(--cyan); box-shadow:0 0 10px var(--cyan); animation:pulse 2.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  @media (prefers-reduced-motion:reduce){.brand::before{animation:none}}
+  .brand .dot{color:var(--cyan)}
+  nav.sec{display:flex; gap:3px; margin-left:auto; overflow-x:auto; scrollbar-width:none}
+  nav.sec::-webkit-scrollbar{display:none}
+  nav.sec a{font-size:.7rem; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); text-decoration:none; padding:7px 10px; border-radius:5px; white-space:nowrap; border:1px solid transparent; transition:.16s}
+  nav.sec a:hover{color:var(--ink); border-color:var(--line2)}
+  nav.sec a.active{color:var(--cyan); border-color:var(--line2); background:rgba(53,219,255,.10); box-shadow:0 0 15px rgba(53,219,255,.18)}
+  .themebtn{font-size:.66rem; letter-spacing:.12em; text-transform:uppercase; border:1px solid var(--line2); background:transparent; color:var(--cyan); border-radius:5px; padding:6px 11px; cursor:pointer; white-space:nowrap}
+  .themebtn:hover{background:rgba(53,219,255,.12); box-shadow:0 0 15px rgba(53,219,255,.22)}
+
+  .hero{padding:66px 0 32px; position:relative}
+  .eyebrow{font-size:.72rem; letter-spacing:.34em; text-transform:uppercase; color:var(--cyan); margin:0 0 16px; text-shadow:var(--tsh)}
+  h1{font-size:clamp(2.2rem,5.5vw,3.7rem); line-height:1.02; letter-spacing:-.01em; margin:0 0 18px; text-wrap:balance; font-weight:800; text-shadow:var(--tsh)}
+  .lede{font-size:clamp(1.04rem,2.1vw,1.24rem); color:#B0C0D6; max-width:60ch; margin:0 0 8px; line-height:1.55}
+  .lede b{color:var(--ink); font-weight:700}
+
+  section.s{padding:54px 0; border-top:1px solid var(--line2); position:relative}
+  .sec-head{display:flex; align-items:center; gap:15px; margin-bottom:12px}
+  .sec-num{font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--cyan); border:1px solid var(--line2); padding:6px 10px; border-radius:6px; white-space:nowrap; background:rgba(53,219,255,.07); box-shadow:inset 0 0 16px rgba(53,219,255,.08)}
+  h2{font-size:clamp(1.5rem,3.1vw,2.15rem); line-height:1.1; letter-spacing:-.01em; margin:0; font-weight:800; text-wrap:balance}
+  .prose{max-width:var(--col)}
+  .prose p{margin:15px 0; color:#C4D2E4}
+  .prose .kicker{color:var(--muted)}
+  code,.m{font-family:var(--mono); font-size:.86em}
+  .prose code{background:rgba(53,219,255,.10); padding:.08em .36em; border-radius:4px; font-size:.82em; color:#BEE9FF; border:1px solid var(--line)}
+  b{color:var(--ink)}
+  .n{color:var(--electron); font-weight:700} .p{color:var(--hole); font-weight:700} .ionc{color:var(--ion); font-weight:700} .fc{color:var(--field); font-weight:700}
+
+  .eq{font-family:var(--mono); font-size:.9rem; line-height:1.95; background:linear-gradient(180deg, rgba(10,18,32,.92), rgba(7,13,23,.92)); border:1px solid var(--line2); border-radius:12px; padding:18px 20px; margin:20px 0; overflow-x:auto; box-shadow:inset 0 0 34px rgba(53,120,200,.09); position:relative}
+  .eq .lbl{color:var(--muted); font-size:.76rem; text-transform:uppercase; letter-spacing:.09em}
+
+  figure.fig{margin:28px 0 10px; background:var(--panel); border:1px solid var(--line2); border-radius:14px; box-shadow:0 24px 64px rgba(0,0,0,.45), inset 0 0 44px rgba(40,110,200,.05); overflow:hidden; position:relative; -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px)}
+  figure.fig::before, figure.fig::after{content:""; position:absolute; width:18px; height:18px; z-index:3; pointer-events:none}
+  figure.fig::before{top:9px; left:9px; border-top:2px solid var(--cyan); border-left:2px solid var(--cyan); box-shadow:-1px -1px 9px rgba(53,219,255,.45)}
+  figure.fig::after{bottom:9px; right:9px; border-bottom:2px solid var(--cyan); border-right:2px solid var(--cyan); box-shadow:1px 1px 9px rgba(53,219,255,.45)}
+  :root.nofx figure.fig::before,:root.nofx figure.fig::after{box-shadow:none}
+  .fig .cvwrap{position:relative; width:100%; background:radial-gradient(130% 130% at 50% 0%, rgba(22,44,76,.35), transparent 70%)}
+  .fig canvas{display:block; width:100%; height:auto}
+  .fig .controls{display:flex; flex-wrap:wrap; align-items:center; gap:16px 24px; padding:15px 20px; border-top:1px solid var(--line2); background:rgba(8,14,24,.6)}
+  .ctl{display:flex; flex-direction:column; gap:6px; min-width:150px}
+  .ctl label{font-size:.64rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); display:block; overflow:hidden}
+  .ctl label .val{float:right; color:var(--cyan); font-variant-numeric:tabular-nums; text-shadow:var(--tsh)}
+  input[type=range]{-webkit-appearance:none; appearance:none; height:3px; border-radius:3px; background:var(--line2); outline:none; margin:7px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--cyan); cursor:pointer; box-shadow:0 0 10px var(--glow), 0 0 0 3px rgba(53,219,255,.15)}
+  input[type=range]::-moz-range-thumb{width:14px; height:14px; border-radius:50%; background:var(--cyan); cursor:pointer; border:none; box-shadow:0 0 10px var(--glow)}
+  .seg{display:inline-flex; border:1px solid var(--line2); border-radius:7px; overflow:hidden}
+  .seg button{font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; padding:8px 12px; background:transparent; color:var(--muted); border:none; cursor:pointer; border-right:1px solid var(--line2)}
+  .seg button:last-child{border-right:none}
+  .seg button.on{background:rgba(53,219,255,.16); color:var(--cyan); box-shadow:inset 0 0 15px rgba(53,219,255,.22)}
+  .toggle{display:inline-flex; align-items:center; gap:8px; font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); cursor:pointer; user-select:none}
+  .toggle input{accent-color:var(--cyan); width:15px; height:15px}
+  .btn{font-size:.66rem; letter-spacing:.08em; text-transform:uppercase; padding:9px 14px; border:1px solid var(--line2); background:rgba(53,219,255,.06); color:var(--cyan); border-radius:7px; cursor:pointer; transition:.15s}
+  .btn:hover{background:rgba(53,219,255,.16); box-shadow:0 0 17px rgba(53,219,255,.28)}
+  figcaption{font-size:.79rem; color:var(--muted); padding:13px 20px 16px; line-height:1.55; border-top:1px dashed var(--line2)}
+  figcaption b{color:var(--ink)}
+  .legend{display:flex; flex-wrap:wrap; gap:15px; padding:12px 20px; font-size:.68rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); border-top:1px solid var(--line2)}
+  .legend span{display:inline-block; white-space:nowrap}
+  .sw{width:11px; height:11px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:6px; box-shadow:0 0 8px currentColor}
+
+  .code-note{display:flex; gap:12px; align-items:flex-start; margin:24px 0 4px; padding:14px 16px; max-width:var(--col); border-left:2px solid var(--cyan); background:linear-gradient(90deg, rgba(53,219,255,.09), transparent); border-radius:0 8px 8px 0; box-shadow:-9px 0 26px -13px rgba(53,219,255,.35)}
+  .code-note .tag{font-size:.6rem; letter-spacing:.15em; text-transform:uppercase; color:var(--cyan); padding-top:3px; white-space:nowrap; text-shadow:var(--tsh)}
+  .code-note .body{font-family:var(--mono); font-size:.78rem; line-height:1.6; color:#C4D2E4}
+  .code-note .body .path{color:var(--field)} .code-note .body .cm{color:var(--muted)}
+
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px; max-width:var(--col); margin:20px 0}
+  @media (max-width:620px){.grid2{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line2); border-radius:11px; padding:15px 16px; background:var(--panel); box-shadow:inset 0 0 26px rgba(40,110,200,.055)}
+  .card h4{font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; margin:0 0 7px; color:var(--ink)}
+  .card p{margin:0; font-size:.9rem; color:var(--muted); line-height:1.5}
+
+  footer{border-top:1px solid var(--line2); padding:40px 0 72px; color:var(--muted); font-size:.79rem; line-height:1.7; position:relative; z-index:1}
+  footer .wrap{max-width:var(--col)}
+  ::selection{background:rgba(53,219,255,.3)}
+  a.inl{color:var(--cyan); text-decoration:none; border-bottom:1px solid var(--line2)}
+  :focus-visible{outline:2px solid var(--cyan); outline-offset:2px; border-radius:4px}
+  sub,sup{text-transform:none; letter-spacing:0; font-size:.72em; position:relative}
+  sub{vertical-align:baseline; top:.28em}
+  sup{vertical-align:baseline; top:-.45em}
+</style>
+
+<header class="top">
+  <div class="row">
+    <span class="brand">SolarLab<span class="dot">·</span>solver internals</span>
+    <nav class="sec" id="secnav">
+      <a href="#s1">01 system</a>
+      <a href="#sgen">02 generation</a>
+      <a href="#srec">03 recombination</a>
+      <a href="#s2">04 grid</a>
+      <a href="#s3">05 flux</a>
+      <a href="#s4">06 time</a>
+      <a href="#smol">07 method of lines</a>
+      <a href="#ssolve">08 solve</a>
+      <a href="#scouple">09 coupling</a>
+      <a href="#s5">10 boundaries</a>
+      <a href="#s6">11 initial state</a>
+      <a href="#s7">12 interfaces</a>
+      <a href="#sarch">13 architecture</a>
+    </nav>
+    <button class="themebtn" id="themebtn" title="Toggle visual FX (glow + grid)">◈ FX on</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <p class="eyebrow">A visual walkthrough of the simulator</p>
+    <h1>What the solver computes</h1>
+    <p class="lede">SolarLab solves three coupled fields — <b class="n">electrons&nbsp;n</b>, <b class="p">holes&nbsp;p</b>, and <b class="ionc">mobile ions&nbsp;P</b> — self-consistently with electrostatics across a thin-film stack, to steady state or through a bias sweep. Each section isolates one part of the formulation: the governing equations, the spatial and temporal discretisation, the contact and initial conditions, and the ETL/absorber and absorber/HTL heterojunction physics that governs perovskite device behaviour.</p>
+    <p class="lede kicker" style="font-size:1rem;margin-top:14px">Drag the slider under the band diagram. The rest of the page reads top to bottom.</p>
+
+    <figure class="fig" id="figHero">
+      <div class="cvwrap"><canvas data-h="360" aria-label="Animated band diagram of a p-i-n perovskite cell"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:230px">
+          <label>Applied bias V<sub>app</sub> <span class="val" data-v="bias">0.00 V</span></label>
+          <input type="range" min="-0.2" max="1.15" step="0.01" value="0" data-r="bias">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="illum" checked> illuminated (AM1.5)</label>
+        <label class="toggle"><input type="checkbox" data-c="flow" checked> carrier flow</label>
+        <div style="font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-left:auto" data-txt="op">operating point: short circuit</div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--electron)"></span>E<sub>C</sub> / electrons</span>
+        <span><span class="sw" style="background:var(--hole)"></span>E<sub>V</sub> / holes</span>
+        <span><span class="sw" style="background:var(--field);opacity:.9"></span>quasi-Fermi levels E<sub>Fn</sub>, E<sub>Fp</sub></span>
+      </div>
+      <figcaption>Band bending follows the built-in field; forward bias reduces it, and the quasi-Fermi-level splitting <b>qΔ</b> collapses toward zero. <b>V<sub>oc</sub></b> is the bias at which the splitting no longer sustains net current. The applied-bias control traces the J–V characteristic point by point.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 01 -->
+  <section class="s" id="s1">
+    <div class="sec-head"><span class="sec-num">SEC 01</span><h2>Three fields, one coupled system</h2></div>
+    <div class="prose">
+      <p>The state vector is <code>y = (n, p, P)</code> per grid node. Two carrier-continuity equations transport charge, the ionic species obeys a Nernst–Planck drift-diffusion equation in the same field, and Poisson’s equation relates the electrostatic potential <span class="fc">φ</span> to the net space charge. There is no fourth unknown: <span class="fc">φ</span> is obtained from the current <code>(n,p,P)</code> by a direct solve once per right-hand-side evaluation, not time-integrated.</p>
+    </div>
+
+    <div class="eq">
+      <span class="lbl">— electron continuity —</span><br>
+      ∂<span class="n">n</span>/∂t = (1/q)·∂<sub>x</sub><span class="n">J<sub>n</sub></span> + G − R<br><br>
+      <span class="lbl">— hole continuity —</span><br>
+      ∂<span class="p">p</span>/∂t = −(1/q)·∂<sub>x</sub><span class="p">J<sub>p</sub></span> + G − R<br><br>
+      <span class="lbl">— drift-diffusion fluxes (Scharfetter–Gummel) —</span><br>
+      <span class="n">J<sub>n</sub></span> = q·D<sub>n</sub>(∂<sub>x</sub><span class="n">n</span> − <span class="n">n</span>·∂<sub>x</sub><span class="fc">φ</span>/V<sub>T</sub>)<br>
+      <span class="p">J<sub>p</sub></span> = −q·D<sub>p</sub>(∂<sub>x</sub><span class="p">p</span> + <span class="p">p</span>·∂<sub>x</sub><span class="fc">φ</span>/V<sub>T</sub>)<br><br>
+      <span class="lbl">— ion drift-diffusion (Nernst–Planck) —</span><br>
+      ∂<span class="ionc">P</span>/∂t = ∂<sub>x</sub>[ D<sub>I</sub>(∂<sub>x</sub><span class="ionc">P</span> + <span class="ionc">P</span>·∂<sub>x</sub><span class="fc">φ</span>/V<sub>T</sub>) ]<br><br>
+      <span class="lbl">— Poisson (solved, not integrated) —</span><br>
+      −∂<sub>x</sub>(ε ∂<sub>x</sub><span class="fc">φ</span>) = q(<span class="p">p</span> − <span class="n">n</span> + <span class="ionc">P</span> − N<sub>A</sub> + N<sub>D</sub>)
+    </div>
+
+    <div class="prose">
+      <p>The equations are bidirectionally coupled: a perturbation to the ionic profile changes the space charge, hence the potential, hence the carrier fluxes, which feed back into the space charge. This mutual dependence is the origin of the numerical stiffness and of the hysteresis seen in perovskite J–V measurements.</p>
+    </div>
+
+    <figure class="fig" id="figCoupled">
+      <div class="cvwrap"><canvas data-h="300" aria-label="Coupled relaxation of potential, carriers and ions"></canvas></div>
+      <div class="controls">
+        <button class="btn" data-act="kick">⚡ perturb the ion profile</button>
+        <label class="toggle"><input type="checkbox" data-c="showion" checked> show ion feedback</label>
+        <div style="font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-left:auto" data-txt="rlx">settled</div>
+      </div>
+      <figcaption>A displacement of the <b class="ionc">ion</b> profile relaxes back through <b class="fc">φ</b> and then <b class="n">n</b>/<b class="p">p</b>. With ionic feedback disabled the field is held fixed and the carriers relax alone — the fast electronic subsystem that the steady-state driver isolates.</figcaption>
+    </figure>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">solver/mol.py:assemble_rhs</span> builds ∂<sub>t</sub>(n,p,P); <span class="path">physics/poisson.py</span> does the tridiagonal φ solve each call. <span class="cm"># state y=(n,p,P), φ derived — never part of y</span></span>
+    </div>
+  </section>
+
+  <!-- 02 generation -->
+  <section class="s" id="sgen">
+    <div class="sec-head"><span class="sec-num">SEC 02</span><h2>Generation — where the carriers come from</h2></div>
+    <div class="prose">
+      <p>The generation term <code>G</code> in the continuity equations is set by optical absorption. Under AM1.5G illumination, each absorbed above-gap photon generates one electron–hole pair; the resulting position-dependent rate is the <b>optical generation profile G(x)</b>, the source that drives photocurrent.</p>
+      <p>Two optical models are available. <b>Beer–Lambert</b> gives exponential attenuation, <span class="m">G(x) = α·Φ·e<sup>−αx</sup></span>, concentrating generation near the illuminated face. The <b>transfer-matrix method (TMM)</b> resolves coherent thin-film optics — forward and backward waves in every layer — so back-contact reflection produces a standing-wave interference pattern in G(x). The two models are selectable in the figure.</p>
+    </div>
+    <figure class="fig" id="figGen">
+      <div class="cvwrap"><canvas data-h="320" aria-label="Optical generation profile G(x) under Beer-Lambert or TMM"></canvas></div>
+      <div class="controls">
+        <div class="seg" data-seg="gen"><button class="on" data-val="tmm">TMM</button><button data-val="bl">Beer–Lambert</button></div>
+        <div class="ctl" style="min-width:220px"><label>Absorption α <span class="val" data-v="acoef">1.3</span></label><input type="range" min="0.4" max="3" step="0.1" value="1.3" data-r="acoef"></div>
+        <label class="toggle"><input type="checkbox" data-c="gflow" checked> photon flow</label>
+        <div style="font-size:.72rem;letter-spacing:.03em;color:var(--muted);margin-left:auto" data-txt="gmode">TMM: interference fringes from back-reflection</div>
+      </div>
+      <div class="legend"><span><span class="sw" style="background:var(--field)"></span>G(x) / photons</span><span><span class="sw" style="background:var(--electron)"></span>electron</span><span><span class="sw" style="background:var(--hole)"></span>hole</span></div>
+      <figcaption>Illumination is incident from the left. Larger <b>α</b> concentrates generation near the front surface; smaller α increases the penetration depth. The <b>TMM</b> interference fringes are physical standing-wave structure absent from the Beer–Lambert approximation, and they shift the collected <b>J<sub>sc</sub></b>.</figcaption>
+    </figure>
+    <div class="code-note"><span class="tag">in the code</span><span class="body"><span class="path">physics/optics.py</span> (TMM, Pettersson/Burkhard) · <span class="path">data/am15g.csv</span> · <span class="path">mol._compute_tmm_generation</span>. <span class="cm"># no optical_material → Beer–Lambert; R+T+A=1 energy check</span></span></div>
+  </section>
+
+  <!-- 03 recombination -->
+  <section class="s" id="srec">
+    <div class="sec-head"><span class="sec-num">SEC 03</span><h2>Recombination — where the carriers die</h2></div>
+    <div class="prose">
+      <p>The loss term <code>R</code> accounts for every carrier pair that recombines before collection. Three bulk mechanisms act in parallel; their relative magnitude depends on the injection level (carrier density).</p>
+      <p><b class="n">Shockley–Read–Hall</b> recombination (trap-assisted, ∝ n) dominates at low injection. <b class="fc">Radiative</b> band-to-band recombination (∝ n², rate <span class="m">B·(np−n<sub>i</sub>²)</span>, the detailed-balance inverse of generation) dominates at intermediate density. <b class="p">Auger</b> recombination (three-body, ∝ n²p) dominates at high injection. Open-circuit voltage is set by the condition that total recombination balances total generation. Interface recombination is a distinct surface mechanism, treated in section 12.</p>
+    </div>
+    <figure class="fig" id="figRec">
+      <div class="cvwrap"><canvas data-h="300" aria-label="Recombination rate versus carrier density for SRH, radiative, Auger"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:260px"><label>Operating density n <span class="val" data-v="logn">1e22</span></label><input type="range" min="20" max="25" step="0.1" value="22" data-r="logn"></div>
+        <div style="font-size:.72rem;letter-spacing:.03em;color:var(--muted);margin-left:auto" data-txt="rdom">n = 1e22 m⁻³ · dominant: radiative</div>
+      </div>
+      <figcaption>Recombination rate versus carrier density (log–log). The slopes 1, 2, 3 are the SRH, radiative, and Auger density dependences; the crossover points determine the dominant loss mechanism at a given injection level.</figcaption>
+    </figure>
+    <div class="code-note"><span class="tag">in the code</span><span class="body"><span class="path">physics/recombination.py</span> (SRH n₁/p₁, radiative, Auger) · <span class="path">DeviceStack.het_recomb_despike</span>. <span class="cm"># radiative uses net B·(np−ni²) — detailed balance at equilibrium</span></span></div>
+  </section>
+
+  <!-- 02 -->
+  <section class="s" id="s2">
+    <div class="sec-head"><span class="sec-num">SEC 04</span><h2>Space — a tanh-clustered multilayer mesh</h2></div>
+    <div class="prose">
+      <p>Under the method of lines, space is discretised first. The solution varies most rapidly in the thin depletion regions at the heterojunctions, so a uniform mesh would under-resolve the interfaces while over-resolving the quasi-neutral bulk. SolarLab applies <code>tanh</code> node-clustering within each layer and concatenates the per-layer meshes into a single non-uniform grid.</p>
+      <p>Nodes concentrate at the layer boundaries and thin out through the bulk. Each layer carries its own node count, so an interface is never bracketed by two widely spaced nodes — a single over-wide cell there would smear the band offset.</p>
+    </div>
+
+    <figure class="fig" id="figGrid">
+      <div class="cvwrap"><canvas data-h="220" aria-label="Tanh-clustered grid over the layer stack"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:220px">
+          <label>Nodes per layer <span class="val" data-v="npl">14</span></label>
+          <input type="range" min="6" max="40" step="1" value="14" data-r="npl">
+        </div>
+        <div class="ctl" style="min-width:220px">
+          <label>Clustering strength <span class="val" data-v="clu">2.4</span></label>
+          <input type="range" min="0" max="4" step="0.1" value="2.4" data-r="clu">
+        </div>
+      </div>
+      <figcaption>A clustering strength of zero gives a uniform mesh; larger values concentrate nodes toward each boundary. Local node density is the spatial resolution presented to the Scharfetter–Gummel discretisation.</figcaption>
+    </figure>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">discretization</span> builds the tanh mesh; <span class="path">jv_sweep._layer_node_counts</span> sizes each layer. <span class="cm"># graded layers get grading_N_mult extra refinement</span></span>
+    </div>
+  </section>
+
+  <!-- 03 -->
+  <section class="s" id="s3">
+    <div class="sec-head"><span class="sec-num">SEC 05</span><h2>The flux — Scharfetter–Gummel &amp; the Bernoulli function</h2></div>
+    <div class="prose">
+      <p>When the potential drop across a cell exceeds the thermal voltage, the carrier density varies exponentially between adjacent nodes, and a central-difference flux becomes inaccurate and unstable. The <b>Scharfetter–Gummel</b> flux is the exact solution of the constant-field drift-diffusion equation across a single cell:</p>
+    </div>
+
+    <div class="eq">
+      <span class="n">J<sub>n</sub></span> = (qD<sub>n</sub>/Δx) · [ B(−Δ<span class="fc">φ</span>/V<sub>T</sub>)·<span class="n">n<sub>R</sub></span> − B(+Δ<span class="fc">φ</span>/V<sub>T</sub>)·<span class="n">n<sub>L</sub></span> ]<br>
+      <span class="lbl">Bernoulli&nbsp;&nbsp;B(x) = x / (e<sup>x</sup> − 1)&nbsp;&nbsp;→&nbsp;&nbsp;B(0)=1 (pure diffusion),&nbsp; large x → upwind drift</span>
+    </div>
+
+    <div class="prose">
+      <p>At <span class="m">Δφ = 0</span> the Bernoulli weights are symmetric and the flux reduces to central-difference diffusion. As the field increases, the weighting shifts continuously onto the upwind node and the scheme becomes drift-dominated, with no change of formula and no loss of stability. This continuous upwinding is what keeps the discretisation stable across the 10<sup>3</sup>× density contrasts at a heterojunction.</p>
+    </div>
+
+    <figure class="fig" id="figSG">
+      <div class="cvwrap"><canvas data-h="300" aria-label="Scharfetter-Gummel flux weighting versus potential drop"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:260px">
+          <label>Potential drop Δφ / V<sub>T</sub> <span class="val" data-v="dphi">0.0</span></label>
+          <input type="range" min="-8" max="8" step="0.1" value="0" data-r="dphi">
+        </div>
+        <div style="font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-left:auto" data-txt="regime">regime: diffusion (central difference)</div>
+      </div>
+      <figcaption>Left: the Bernoulli weights <b>B(∓Δφ/V<sub>T</sub>)</b> applied to the upwind and downwind nodes. Right: the intra-cell density profile — linear under diffusion, exponential under strong drift. The Scharfetter–Gummel flux integrates it exactly at every potential drop.</figcaption>
+    </figure>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">discretization/fe_operators.py</span> (Bernoulli-weighted flux) → <span class="path">physics/continuity.py:carrier_continuity_rhs</span>. <span class="cm"># harmonic-mean face D; same form for J_p with sign flipped</span></span>
+    </div>
+  </section>
+
+  <!-- 04 -->
+  <section class="s" id="s4">
+    <div class="sec-head"><span class="sec-num">SEC 06</span><h2>Time — implicit Radau over a stiff system</h2></div>
+    <div class="prose">
+      <p>Spatial discretisation reduces the PDE system to a large set of coupled ODEs — one per field per node, the "lines" of the method of lines. The system is <b>stiff</b>: the dielectric-relaxation and ionic time constants span many orders of magnitude. An explicit integrator would be step-size limited by the fastest mode; SolarLab uses <b>Radau IIA</b>, an L-stable implicit Runge–Kutta method that damps the fast modes and takes large stable steps toward steady state.</p>
+      <p>The figure relaxes an illuminated state toward its steady-state operating point. The implicit integrator converges monotonically; the overlaid explicit trajectory shows the oscillation an explicit method incurs near the stiff regime, which motivates the choice of an implicit method.</p>
+    </div>
+
+    <figure class="fig" id="figTime">
+      <div class="cvwrap"><canvas data-h="280" aria-label="Implicit versus explicit time stepping toward steady state"></canvas></div>
+      <div class="controls">
+        <button class="btn" data-act="run">▶ integrate to steady state</button>
+        <label class="toggle"><input type="checkbox" data-c="expl"> overlay explicit attempt</label>
+        <div style="font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-left:auto" data-txt="tstat">t = 0</div>
+      </div>
+      <figcaption>Each marker is an accepted implicit step: large where the solution is smooth, short through the stiff transition. Near flat band the step size is bounded (<b>max_step</b>) so the error estimator cannot accept an oversized step onto a spurious solution branch.</figcaption>
+    </figure>
+
+    <div class="grid2">
+      <div class="card"><h4>Method of Lines</h4><p>Space → SG finite elements. Time → <code>solve_ivp(Radau)</code>. One RHS, many drivers.</p></div>
+      <div class="card"><h4>Build-once cache</h4><p><code>MaterialArrays</code> holds every per-node/face array + a pre-factored Poisson operator, reused across all steps.</p></div>
+    </div>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">experiments/jv_sweep._integrate_step</span> caps <span class="path">max_step</span>; falls back Radau→BDF after the bisection budget. <span class="cm"># RHS finite-check raises on any NaN/Inf before Radau accepts it</span></span>
+    </div>
+  </section>
+
+  <!-- 07 method of lines -->
+  <section class="s" id="smol">
+    <div class="sec-head"><span class="sec-num">SEC 07</span><h2>Method of Lines — grid to the global system</h2></div>
+    <div class="prose">
+      <p>Sections 04 and 06 treated the spatial and temporal discretisations separately; the method of lines combines them. Space is represented by the tanh-clustered nodes x<sub>0</sub>…x<sub>N</sub>. Each node carries three unknowns — <b class="n">n</b>, <b class="p">p</b>, <b class="ionc">P</b> — and stacking them over all nodes forms the <b>global state vector</b> y of length 3(N+1): the full discrete representation of the device.</p>
+      <p>The spatial operators — the Scharfetter–Gummel flux and the Poisson coupling — reach only a node's immediate neighbours, so the Jacobian &#8706;F/&#8706;y is <b>block-tridiagonal</b>: each node's rows couple only to nodes i&#8722;1, i, i+1. This banded structure gives an O(N) linear solve. Time integration is a single evolution equation over the whole vector, <span class="m">dy/dt = F(y)</span>. Each node's trajectory in time is one "line" — the origin of the method's name.</p>
+    </div>
+    <figure class="fig" id="figMOL">
+      <div class="cvwrap"><canvas data-h="440" aria-label="Method of Lines: grid, global state vector, banded Jacobian, time integration"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:210px"><label>Highlight node <span class="val" data-v="mnode">x3</span></label><input type="range" min="0" max="6" step="1" value="3" data-r="mnode"></div>
+        <button class="btn" data-act="mplay">&#9654; march in time</button>
+        <div style="font-size:.71rem;letter-spacing:.03em;color:var(--muted);margin-left:auto">shown with 7 nodes &#8212; production grids have hundreds; the structure is identical</div>
+      </div>
+      <figcaption>&#9312; the device becomes clustered grid nodes; &#9313; each node contributes its (n,p,P) to the global vector y and couples only to its neighbours &#8594; a block-tridiagonal Jacobian; &#9314; the whole vector marches in time, each node a line. Inside each 3&#215;3 block: <b class="n">T</b> = transport (SG flux, on the diagonal) &#183; <b class="p">R</b> = recombination (binds <b class="n">n</b>&#8211;<b class="p">p</b>) &#183; <b class="fc">E</b> = electrostatic (Poisson, binds all three).</figcaption>
+    </figure>
+    <div class="code-note"><span class="tag">in the code</span><span class="body">packed state <span class="path">y = (n,p,P)</span> per node · <span class="path">solver/mol.py</span> assembles F(y) · <span class="path">solve_ivp(Radau)</span> marches it. <span class="cm"># block-tridiagonal Poisson factored once (dgttrf)</span></span></div>
+  </section>
+
+  <!-- 05 the solve -->
+  <section class="s" id="ssolve">
+    <div class="sec-head"><span class="sec-num">SEC 08</span><h2>The solve, step by step</h2></div>
+    <div class="prose">
+      <p>Both drivers — a Radau stage in the transient integrator and the direct steady-state solver — reduce to the same <b>Newton–Raphson iteration</b>: from a trial state, evaluate the residual (the equation imbalance), solve a linearised system for the correction, apply a damped update, and repeat until the residual falls below tolerance.</p>
+    </div>
+
+    <div class="eq">
+      <span class="lbl">— one Newton iteration —</span><br>
+      1&nbsp;·&nbsp;residual&nbsp;&nbsp;&nbsp; F(y<sub>k</sub>) = ∂<sub>t</sub>(<span class="n">n</span>,<span class="p">p</span>,<span class="ionc">P</span>)&nbsp;&nbsp;<span class="lbl">(= 0 at steady state)</span><br>
+      2&nbsp;·&nbsp;Jacobian&nbsp;&nbsp; J = ∂F/∂y&nbsp;&nbsp;<span class="lbl">(finite-difference, LU-factored once, reused across chords)</span><br>
+      3&nbsp;·&nbsp;linear solve&nbsp; J·Δy = −F&nbsp;&nbsp;<span class="lbl">(tridiagonal sweep — the second figure)</span><br>
+      4&nbsp;·&nbsp;line search&nbsp; y<sub>k+1</sub> = y<sub>k</sub> + λ·Δy&nbsp;&nbsp;<span class="lbl">(damped, in log-density space)</span><br>
+      5&nbsp;·&nbsp;test&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ‖F‖ &lt; tol&nbsp;?&nbsp; stop&nbsp;:&nbsp;repeat
+    </div>
+
+    <div class="prose">
+      <p>The early iterations are <b>damped</b> (λ&lt;1): a full Newton step is not taken while the residual is large. Once the iterate is within the region of convergence, the method enters its <b>quadratic</b> regime and the residual drops by orders of magnitude per iteration. The state is accepted once the residual crosses the tolerance.</p>
+    </div>
+
+    <figure class="fig" id="figNewton">
+      <div class="cvwrap"><canvas data-h="320" aria-label="Newton iteration: profile converging and residual dropping"></canvas></div>
+      <div class="controls">
+        <button class="btn" data-act="auto">▶ auto-solve</button>
+        <button class="btn" data-act="step">⏭ one Newton step</button>
+        <button class="btn" data-act="reset">↺ reset guess</button>
+        <div style="font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-left:auto" data-txt="nstat">iteration 0 · ‖F‖ = 1.0e+00</div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--electron)"></span>current iterate</span>
+        <span><span class="sw" style="background:var(--muted)"></span>converged φ*</span>
+        <span><span class="sw" style="background:var(--field)"></span>‖F‖ trace</span>
+        <span><span class="sw" style="background:var(--hole)"></span>tolerance</span>
+      </div>
+      <figcaption>Left: the potential profile evolving from an initial guess toward the converged solution φ*. Right: the residual norm <b>‖F‖</b> on a logarithmic axis — linear (damped) early, quadratic near convergence. Each iteration is one marker.</figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>The linear solve <span class="m">J·Δy = −F</span> exploits the banded structure. The Poisson operator is tridiagonal, so it is factored and solved by the Thomas algorithm (LAPACK <code>dgttrf</code>/<code>dgttrs</code>): a <b>forward elimination</b> of the sub-diagonal, then a <b>back-substitution</b> that fills in the correction Δφ. Applying the correction updates the profile; the residual is eliminated over a small number of sweeps.</p>
+    </div>
+
+    <figure class="fig" id="figNode">
+      <div class="cvwrap"><canvas data-h="330" aria-label="Per-grid-point tridiagonal Thomas sweep"></canvas></div>
+      <div class="controls">
+        <button class="btn" data-act="play">▶ play the grid sweep</button>
+        <button class="btn" data-act="stepn">⏭ step one node</button>
+        <button class="btn" data-act="resetn">↺ reset</button>
+        <div class="ctl" style="min-width:160px">
+          <label>Speed <span class="val" data-v="nspeed">1.0×</span></label>
+          <input type="range" min="0.4" max="3" step="0.1" value="1" data-r="nspeed">
+        </div>
+        <div style="font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-left:auto" data-txt="nodestat">sweep 1 · node 0 · assembling residual</div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--field)"></span>φ(x)</span>
+        <span><span class="sw" style="background:var(--hole)"></span>residual per node</span>
+        <span><span class="sw" style="background:var(--electron)"></span>active node</span>
+        <span><span class="sw" style="background:var(--ion)"></span>correction Δφ</span>
+      </div>
+      <figcaption>Top: the potential φ(x) vs its target. Middle: each node's residual (how far its equation is from satisfied) and the active node the sweep is processing. Bottom: the correction Δφ filled in during back-substitution. One full sweep = one Newton linear solve.</figcaption>
+    </figure>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">experiments/steady_state.solve_steady_state</span> (damped log-space Newton, LU reuse) · <span class="path">physics/poisson.py:factor_poisson</span> / <span class="path">solve_poisson_prefactored</span> (dgttrf/dgttrs). <span class="cm"># residual scaled by peak density; dual convergence criteria + J-error-bounded stall accept</span></span>
+    </div>
+  </section>
+
+  <!-- 08 coupling -->
+  <section class="s" id="scouple">
+    <div class="sec-head"><span class="sec-num">SEC 09</span><h2>The coupling loop</h2></div>
+    <div class="prose">
+      <p>The full system is nonlinear and self-referential. The four equations form a closed dependency cycle: the carrier and ion densities determine the <b class="ionc">space charge</b>; the charge determines the <b class="fc">potential</b> through Poisson; the potential drives the <b class="n">fluxes</b>; the fluxes <b class="p">update</b> the densities, which change the charge. No single pass satisfies all four simultaneously, so the system is iterated to a <b>self-consistent</b> fixed point.</p>
+      <p>Each traversal of the cycle is one evaluation of <code>assemble_rhs</code>: Poisson re-solved from the current densities, fluxes recomputed, the state advanced; the self-consistency residual decreases with each pass. Both the transient integrator (Radau) and the steady-state Newton solver drive the cycle to its fixed point. Newton couples all four blocks in a single Jacobian, converging in few iterations rather than the many required by a decoupled (Gummel-type) sweep.</p>
+    </div>
+    <figure class="fig" id="figCouple2">
+      <div class="cvwrap"><canvas data-h="340" aria-label="Self-consistent coupling loop between Poisson and the transport equations"></canvas></div>
+      <div class="controls">
+        <button class="btn" data-act="run">&#9654; run loop</button>
+        <button class="btn" data-act="one">&#9197; step one edge</button>
+        <button class="btn" data-act="rst">&#8635; reset</button>
+        <div class="ctl" style="min-width:150px"><label>Speed <span class="val" data-v="cspeed">1.0&#215;</span></label><input type="range" min="0.4" max="3" step="0.1" value="1" data-r="cspeed"></div>
+        <div style="font-size:.72rem;letter-spacing:.03em;color:var(--muted);margin-left:auto" data-txt="cstat">pass 0 &#183; self-consistency residual = 1.0e+00</div>
+      </div>
+      <div class="legend"><span><span class="sw" style="background:var(--ion)"></span>charge &#961;</span><span><span class="sw" style="background:var(--field)"></span>Poisson &#8594; &#966;</span><span><span class="sw" style="background:var(--electron)"></span>SG fluxes</span><span><span class="sw" style="background:var(--hole)"></span>update n,p,P</span></div>
+      <figcaption>Each traversal of the cycle re-solves Poisson and advances the state; the <b>self-consistency residual</b> (below) decreases until the potential and space charge are mutually consistent. That fixed point is the solution at the given bias.</figcaption>
+    </figure>
+    <div class="code-note"><span class="tag">in the code</span><span class="body">one lap = one <span class="path">solver/mol.assemble_rhs</span> call (Poisson solve &#8594; SG fluxes &#8594; &#8706;t). <span class="cm"># Radau iterates laps per step; steady-state Newton couples all blocks in J</span></span></div>
+  </section>
+
+  <!-- 05 -->
+  <section class="s" id="s5">
+    <div class="sec-head"><span class="sec-num">SEC 10</span><h2>Boundaries — how the contacts are held</h2></div>
+    <div class="prose">
+      <p>The contact boundary conditions specify both the potential and the carrier densities at the terminals. The potential is fixed by Dirichlet conditions <span class="fc">φ(0)=0</span> and <span class="fc">φ(L)=V<sub>bi</sub>−V<sub>app</sub></span>; applied bias lowers the right-contact potential and reduces the built-in field.</p>
+      <p>Two carrier-boundary models are provided. The default is an ideal-ohmic <b>Dirichlet</b> condition: terminal densities are held at their dark-equilibrium values. The <b>Robin (selective-contact)</b> model instead imposes a finite surface-recombination flux <span class="m">J = ±qS(density − density<sub>eq</sub>)</span>, recovering a blocking contact as <span class="m">S→0</span> and the ohmic limit as <span class="m">S→∞</span>.</p>
+    </div>
+
+    <figure class="fig" id="figBC">
+      <div class="cvwrap"><canvas data-h="300" aria-label="Contact boundary conditions and built-in potential"></canvas></div>
+      <div class="controls">
+        <div class="seg" data-seg="bc">
+          <button class="on" data-val="dir">Dirichlet pin</button>
+          <button data-val="robin">Robin / selective</button>
+        </div>
+        <div class="ctl" style="min-width:210px">
+          <label>V<sub>bi</sub> (built-in) <span class="val" data-v="vbi">1.10 V</span></label>
+          <input type="range" min="0.4" max="1.4" step="0.01" value="1.10" data-r="vbi">
+        </div>
+        <div class="ctl" style="min-width:210px">
+          <label>V<sub>app</sub> <span class="val" data-v="vapp">0.00 V</span></label>
+          <input type="range" min="-0.2" max="1.2" step="0.01" value="0" data-r="vapp">
+        </div>
+        <div class="ctl" style="min-width:210px" data-show="robin" hidden>
+          <label>Contact velocity S <span class="val" data-v="svel">10⁵ cm/s</span></label>
+          <input type="range" min="0" max="7" step="0.1" value="5" data-r="svel">
+        </div>
+      </div>
+      <figcaption>The right-contact potential is <b>V<sub>bi</sub>−V<sub>app</sub></b>. Under the Dirichlet condition the terminal densities are fixed (clamp bars); under the Robin condition they evolve with surface-recombination velocity <b>S</b>, representing a Schottky or selective contact rather than the ideal-ohmic limit.</figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>Two built-in potentials with different sign conventions coexist. The configured <code>stack.V_bi</code> is a positive magnitude (the IonMonger free-parameter convention) used by the default boundary. <code>compute_V_bi()</code> returns the signed work-function difference <span class="m">φ(right)−φ(left)</span>: positive for the conventional p-contact-left stack, and negative for an n-contact-left device (CIGS, n⁺/p silicon). Consumers requiring a magnitude (sweep range, V<sub>oc</sub> bracket) take its absolute value; the flat-band contact model uses the signed value directly.</p>
+    </div>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">solver/mol.py</span> — <span class="path">V_bi_bc = compute_V_bi() if flat_band else stack.V_bi</span>; Robin flux in <span class="path">physics/contacts.py</span>. <span class="cm"># φ(L)=V_bi_bc−V_app at every Poisson BC site</span></span>
+    </div>
+  </section>
+
+  <!-- 06 -->
+  <section class="s" id="s6">
+    <div class="sec-head"><span class="sec-num">SEC 11</span><h2>The starting state — equilibrium seed &amp; ionic memory</h2></div>
+    <div class="prose">
+      <p>Each run is initialised from a physically consistent state rather than zero. A dark run is seeded from <code>solve_equilibrium</code> and settled to the true zero-current state; an illuminated run is seeded from the illuminated steady state. The initial state is significant because the mobile-ion distribution retains memory of the prior bias history.</p>
+      <p>In a J–V sweep, each voltage step is initialised from the previous step's settled state. Because the ionic response is slow relative to the scan rate, the forward and reverse scans reach each bias with different ionic configurations, and hysteresis emerges directly from the physics rather than being imposed. The ion profile lags the applied bias, while the electronic subsystem responds essentially instantaneously.</p>
+    </div>
+
+    <figure class="fig" id="figIC">
+      <div class="cvwrap"><canvas data-h="270" aria-label="Voltage sweep with lagging ion profile producing hysteresis"></canvas></div>
+      <div class="controls">
+        <button class="btn" data-act="sweep">▶ run forward + reverse sweep</button>
+        <div class="ctl" style="min-width:230px">
+          <label>Scan speed <span class="val" data-v="rate">medium</span></label>
+          <input type="range" min="0" max="2" step="1" value="1" data-r="rate">
+        </div>
+        <div style="font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-left:auto" data-txt="hyst">hysteresis index: —</div>
+      </div>
+      <figcaption>Left: the J–V characteristic; the separation between the forward (▲) and reverse (▼) branches is the hysteresis. Right: the <b class="ionc">ion</b> front lagging the applied bias. Higher scan rates widen the loop, as the ionic response falls further behind.</figcaption>
+    </figure>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">experiments/jv_sweep.run_jv_sweep</span> reuses the prior steady state as IC → ionic memory preserved. <span class="cm"># degradation freezes ions (D_ion=0 copy) for each snapshot</span></span>
+    </div>
+  </section>
+
+  <!-- 07 -->
+  <section class="s" id="s7">
+    <div class="sec-head"><span class="sec-num">SEC 12</span><h2>Heterojunctions — the ETL/absorber &amp; absorber/HTL interfaces</h2></div>
+    <div class="prose">
+      <p>At each heterointerface the electron affinity <span class="m">χ</span> and band gap <span class="m">E<sub>g</sub></span> are discontinuous, producing conduction- and valence-band offsets. Three distinct mechanisms act at this discontinuity, each treated explicitly; the conduction-band-offset control <b>ΔE<sub>C</sub></b> varies its magnitude.</p>
+    </div>
+
+    <div class="grid2">
+      <div class="card"><h4><span class="n">1 · Thermionic-emission cap</span></h4><p>Past a 0.05&nbsp;eV offset the SG flux would over-emit across one cell. The flux is capped to the Richardson–Dushman thermionic limit at that face.</p></div>
+      <div class="card"><h4><span class="fc">2 · Effective-DOS QFL step</span></h4><p>Boltzmann transport requires a <code>V<sub>T</sub>·ln N<sub>C</sub></code> term in the band potential. Omitting it introduces a spurious <code>kT·ln(DOS-ratio)</code> quasi-Fermi-level step — a V<sub>oc</sub> offset.</p></div>
+      <div class="card"><h4><span class="p">3 · Interface SRH</span></h4><p>Cross-carrier recombination on the interface trap, referenced to detailed balance, using densities projected onto the junction plane.</p></div>
+      <div class="card"><h4><span class="ionc">+ · TFE tunnelling</span></h4><p>Optional Padovani–Stratton enhancement lets carriers tunnel <em>through</em> a sharp spike, lifting the thermionic cap toward the SG ceiling.</p></div>
+    </div>
+
+    <figure class="fig" id="figHet">
+      <div class="cvwrap"><canvas data-h="330" aria-label="Heterojunction band offset, thermionic cap and carrier pileup"></canvas></div>
+      <div class="controls">
+        <div class="seg" data-seg="iface">
+          <button class="on" data-val="etl">absorber / ETL</button>
+          <button data-val="htl">HTL / absorber</button>
+        </div>
+        <div class="ctl" style="min-width:230px">
+          <label>Band offset ΔE<sub>C</sub> <span class="val" data-v="dec">−0.10 eV</span></label>
+          <input type="range" min="-0.5" max="0.4" step="0.01" value="-0.10" data-r="dec">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="tecap" checked> thermionic cap</label>
+        <label class="toggle"><input type="checkbox" data-c="dosfold" checked> effective-DOS fold</label>
+      </div>
+      <figcaption>A positive offset (a barrier spike) produces carrier accumulation at the junction node. The <b class="n">thermionic-emission cap</b> limits the flux to the physical emission rate; disabling the <b class="fc">effective-DOS fold</b> re-introduces the spurious quasi-Fermi-level step at the heterojunction.</figcaption>
+    </figure>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">fe_operators.thermionic_emission_flux</span> · <span class="path">DeviceStack.dos_band_potentials</span> · <span class="path">physics/interface_plane.py</span>. <span class="cm"># TE faces where |ΔE_C| or |ΔE_V| &gt; 0.05 eV are precomputed in MaterialArrays</span></span>
+    </div>
+  </section>
+
+  <!-- 11 architecture -->
+  <section class="s" id="sarch">
+    <div class="sec-head"><span class="sec-num">SEC 13</span><h2>The architecture — from YAML to a J–V curve</h2></div>
+    <div class="prose">
+      <p>The data flow is unidirectional. A <b>YAML</b> preset (or the UI) constructs an immutable <code>DeviceStack</code>; this is compiled <b>once</b> into a <code>MaterialArrays</code> cache — all per-node and per-face arrays plus a pre-factored Poisson operator; an experiment driver then evaluates <code>assemble_rhs</code> against that cache many times and assembles the result.</p>
+      <p>The central design distinction is <b>build-once versus per-RHS</b>. Most physics is folded into the cache at build time — static, evaluated once. A small number of state-dependent hooks (radiative reabsorption, field-dependent mobility, Robin contacts) deliberately break the build-once invariant and recompute on every evaluation. This distinction organises much of the code structure.</p>
+      <p>A single right-hand side serves <b>two drivers</b>: the transient <b>Radau</b> integrator (full dynamics, mobile ions, hysteresis) and the ion-free steady-state <b>Newton</b> solver (the SCAPS-comparison operating point). Three <b>tiers</b> — LEGACY ⊆ FAST ⊆ FULL — act as a physics ceiling: a flag activates only when the configuration supplies the required parameters.</p>
+    </div>
+    <figure class="fig" id="figArch">
+      <div class="cvwrap"><canvas data-h="240" aria-label="Data-flow pipeline and experiment drivers"></canvas></div>
+      <div class="controls">
+        <div style="font-size:.72rem;letter-spacing:.03em;color:var(--muted)">click an experiment ↓</div>
+        <div style="font-size:.74rem;letter-spacing:.02em;color:var(--cyan);margin-left:auto" data-txt="expdesc">J–V sweep — forward + reverse voltage scan; hysteresis from ionic memory</div>
+      </div>
+      <figcaption>The pipeline: <b>MaterialArrays</b> is built once, <b>assemble_rhs</b> is evaluated repeatedly. Each experiment chip drives the same solver, sampled in a different way.</figcaption>
+    </figure>
+    <div class="grid2">
+      <div class="card"><h4>LEGACY</h4><p>All optional physics disabled — bit-exact IonMonger reproduction; the regression baseline.</p></div>
+      <div class="card"><h4>FAST</h4><p>All build-once upgrades on (TE, TMM, ions, trap profile, photon recycling); per-RHS hooks off.</p></div>
+      <div class="card"><h4>FULL</h4><p>Everything, including the three per-RHS hooks (reabsorption, μ(E), Robin).</p></div>
+      <div class="card"><h4>Two drivers, one RHS</h4><p>Transient Radau for dynamics; steady-state Newton for the parity operating point.</p></div>
+    </div>
+    <div class="code-note"><span class="tag">in the code</span><span class="body"><span class="path">solver/mol.build_material_arrays</span> (the cache) · <span class="path">experiments/*.py</span> (drivers) · <span class="path">models/mode.py</span> (tiers). <span class="cm"># frozen dataclasses everywhere — dataclasses.replace, never mutate</span></span></div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>An explanatory model of the SolarLab 1-D drift-diffusion / Poisson / mobile-ion solver. The figures are qualitative schematics; quantitative results are produced by the Python library. File and function references indicate where each mechanism is implemented.</p>
+    <p style="margin-top:14px;color:var(--field)">n electrons · p holes · P mobile ions · φ potential · V<sub>T</sub> thermal voltage · χ electron affinity · E<sub>g</sub> gap</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion:reduce)").matches;
+  var VT = 0.02585; // thermal voltage display
+
+  // ---- theme ----
+  var btn = document.getElementById("themebtn");
+  function curDark(){
+    var t = document.documentElement.getAttribute("data-theme");
+    if(t) return t==="dark";
+    return matchMedia("(prefers-color-scheme:dark)").matches;
+  }
+  btn.addEventListener("click", function(){
+    var off = document.documentElement.classList.toggle("nofx");
+    btn.textContent = off ? "◇ FX off" : "◈ FX on";
+    themeChanged();
+  });
+
+  function pal(){
+    var s = getComputedStyle(document.documentElement);
+    function g(k){return s.getPropertyValue(k).trim();}
+    return {ground:g("--ground"),panel:g("--panel"),ink:g("--ink"),muted:g("--muted"),line:g("--line"),
+            electron:g("--electron"),hole:g("--hole"),ion:g("--ion"),field:g("--field")};
+  }
+  function alpha(hex,a){
+    hex=hex.replace('#','');
+    if(hex.length===3) hex=hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    var r=parseInt(hex.slice(0,2),16),g=parseInt(hex.slice(2,4),16),b=parseInt(hex.slice(4,6),16);
+    if(isNaN(r)) return hex;
+    return "rgba("+r+","+g+","+b+","+a+")";
+  }
+
+  var figs = [];
+  function themeChanged(){ figs.forEach(function(f){ try{f.render();}catch(e){} }); }
+  matchMedia("(prefers-color-scheme:dark)").addEventListener("change", themeChanged);
+
+  // generic canvas fig
+  function Fig(rootId, draw, opts){
+    opts = opts||{};
+    var root = document.getElementById(rootId);
+    if(!root) return null;
+    var cv = root.querySelector("canvas");
+    var ctx = cv.getContext("2d");
+    var self = {root:root, cv:cv, ctx:ctx, state:{}, animate:!!opts.animate, running:false, t0:0};
+    function fit(){
+      var r = cv.getBoundingClientRect();
+      var H = parseInt(cv.getAttribute("data-h")||"260",10);
+      var dpr = Math.min(2, window.devicePixelRatio||1);
+      cv.style.height = H+"px";
+      cv.width = Math.max(1, Math.round(r.width*dpr));
+      cv.height = Math.round(H*dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      self.W = r.width; self.H = H;
+    }
+    self.render = function(){ try{ draw(ctx, self.W, self.H, pal(), self.state, self); }catch(e){} };
+    self.fit = function(){ fit(); self.render(); };
+    var raf=null;
+    self.loop = function(ts){
+      if(!self.running) return;
+      if(!self.t0) self.t0=ts;
+      self.state._t = (ts - self.t0)/1000;
+      self.render();
+      raf = requestAnimationFrame(self.loop);
+    };
+    self.start = function(){ if(reduce){self.render();return;} if(self.running) return; self.running=true; self.t0=0; raf=requestAnimationFrame(self.loop); };
+    self.stop = function(){ self.running=false; if(raf) cancelAnimationFrame(raf); };
+    self.get = function(sel){ return root.querySelector(sel); };
+    self.all = function(sel){ return Array.prototype.slice.call(root.querySelectorAll(sel)); };
+    figs.push(self);
+    // lazy start when visible
+    if(opts.animate){
+      var io = new IntersectionObserver(function(es){
+        es.forEach(function(e){ if(e.isIntersecting){ self.start(); } else { self.stop(); } });
+      }, {threshold:0.15});
+      io.observe(root);
+    }
+    window.addEventListener("resize", function(){ clearTimeout(self._rt); self._rt=setTimeout(self.fit,120); });
+    if(opts.init) opts.init(self);
+    self.fit();
+    return self;
+  }
+
+  function axes(ctx,x,y,w,h,pal){
+    ctx.strokeStyle = "rgba(120,172,230,0.38)"; ctx.lineWidth=1;
+    ctx.strokeRect(x,y,w,h);
+  }
+  function poly(ctx, pts, color, lw){
+    ctx.beginPath();
+    for(var i=0;i<pts.length;i++){ if(i===0)ctx.moveTo(pts[i][0],pts[i][1]); else ctx.lineTo(pts[i][0],pts[i][1]); }
+    ctx.strokeStyle=color; ctx.lineWidth=lw||2; ctx.lineJoin="round"; ctx.lineCap="round";
+    if(!document.documentElement.classList.contains("nofx")){ ctx.save(); ctx.shadowColor=color; ctx.shadowBlur=8; ctx.stroke(); ctx.restore(); }
+    ctx.stroke();
+  }
+  function labelMono(ctx,txt,x,y,color,size,align){
+    var sz=Math.max(size||11,10.5);
+    ctx.save();
+    ctx.font="600 "+sz+"px Arial,'Helvetica Neue',Helvetica,sans-serif";
+    ctx.fillStyle=color; ctx.textAlign=align||"left"; ctx.textBaseline="alphabetic";
+    ctx.shadowColor="rgba(3,8,15,0.82)"; ctx.shadowBlur=3.5;
+    ctx.fillText(txt,x,y);
+    ctx.restore();
+  }
+
+  // ============ HERO band diagram ============
+  // schematic p(HTL)-i(absorber)-n(ETL), left->right
+  (function(){
+    var bias=0, illum=true, flow=true, parts=[];
+    function segEnergies(){
+      // display energies (eV, up = electron energy, higher on screen = lower y)
+      // absorber gap 1.6; HTL blocks electrons (high Ec); ETL blocks holes (deep Ev)
+      return {
+        htl:{x0:0.00,x1:0.20, Ec:-2.55, Ev:-5.45},
+        abs:{x0:0.20,x1:0.80, Ec:-3.95, Ev:-5.55},
+        etl:{x0:0.80,x1:1.00, Ec:-4.05, Ev:-7.30}
+      };
+    }
+    function bandsAt(u, E, bend){
+      // u in [0,1] device coordinate; return {Ec,Ev}
+      // band bending 'bend' (V) dropped across absorber, linear-ish, tapering into contacts
+      var s;
+      if(u<E.abs.x0){ s=E.htl; return {Ec:s.Ec, Ev:s.Ev, band:0}; }
+      if(u>E.abs.x1){ s=E.etl; return {Ec:s.Ec, Ev:s.Ev, band:bend}; }
+      // absorber: interpolate a smooth bending from HTL-side (0) to ETL-side (bend)
+      var f=(u-E.abs.x0)/(E.abs.x1-E.abs.x0);
+      var sh = bend*(f*f*(3-2*f)); // smoothstep
+      return {Ec:E.abs.Ec - sh, Ev:E.abs.Ev - sh, band:sh};
+    }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var m={l:44,r:16,t:20,b:34};
+      var x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      var E=segEnergies();
+      // energy range
+      var Emin=-7.6, Emax=-2.2;
+      function px(u){return x+u*w;}
+      function py(en){return y + (Emax-en)/(Emax-Emin)*h;}
+      // layer bg
+      var cols={htl:alpha(P.hole,.07), abs:alpha(P.field,.09), etl:alpha(P.electron,.07)};
+      [["htl",E.htl],["abs",E.abs],["etl",E.etl]].forEach(function(s){
+        ctx.fillStyle=cols[s[0]];
+        ctx.fillRect(px(s[1].x0),y,(s[1].x1-s[1].x0)*w,h);
+      });
+      // labels
+      labelMono(ctx,"HTL (p)",px(0.02),y+14,P.hole,11);
+      labelMono(ctx,"absorber (i)",px(0.42),y+14,P.field,11);
+      labelMono(ctx,"ETL (n)",px(0.82),y+14,P.electron,11);
+      // axis label
+      ctx.save();ctx.translate(14,y+h/2);ctx.rotate(-Math.PI/2);labelMono(ctx,"electron energy",0,0,P.muted,10,"center");ctx.restore();
+
+      var bend = (1.10 - bias); // built-in minus applied, drives absorber tilt
+      // build band polylines
+      var N=120, ecP=[], evP=[];
+      for(var i=0;i<=N;i++){
+        var u=i/N, bb=bandsAt(u,E,bend*0.72);
+        ecP.push([px(u),py(bb.Ec)]); evP.push([px(u),py(bb.Ev)]);
+      }
+      // fill gap
+      ctx.beginPath();
+      ecP.forEach(function(p,i){i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);});
+      for(var j=evP.length-1;j>=0;j--) ctx.lineTo(evP[j][0],evP[j][1]);
+      ctx.closePath(); ctx.fillStyle=alpha(P.field,.06); ctx.fill();
+      poly(ctx,ecP,P.electron,2.4);
+      poly(ctx,evP,P.hole,2.4);
+      // quasi-Fermi levels (illuminated split)
+      var split = illum ? Math.max(0, 1.02 - bias)*0.5 : 0.02;
+      // Efn near Ec side, Efp near Ev side, meeting-ish at contacts
+      var efn=[], efp=[];
+      for(var k=0;k<=N;k++){
+        var uu=k/N, b2=bandsAt(uu,E,bend*0.72);
+        var mid=(b2.Ec+b2.Ev)/2;
+        efn.push([px(uu), py(mid + split)]);
+        efp.push([px(uu), py(mid - split)]);
+      }
+      ctx.setLineDash([5,4]);
+      poly(ctx,efn,alpha(P.field,.95),1.4);
+      poly(ctx,efp,alpha(P.field,.6),1.4);
+      ctx.setLineDash([]);
+
+      // particles: electrons drift toward ETL(right) in Ec; holes toward HTL(left) in Ev
+      if(flow && !reduce){
+        var t=st._t||0;
+        if(parts.length===0){ for(var q=0;q<26;q++) parts.push({u:Math.random(),e:q%2===0}); }
+        var v = 0.06 + Math.max(0, bend)*0.05; // faster field -> faster drift
+        parts.forEach(function(pt){
+          if(pt.e){ pt.u += v*0.016; if(pt.u>0.995){pt.u=0.21;} }
+          else    { pt.u -= v*0.016; if(pt.u<0.005){pt.u=0.79;} }
+          var bb2=bandsAt(pt.u,E, bend*0.72);
+          var en = pt.e ? bb2.Ec+0.06 : bb2.Ev-0.06;
+          ctx.beginPath(); ctx.arc(px(pt.u), py(en), pt.e?3:3, 0, 7);
+          ctx.fillStyle = pt.e?P.electron:P.hole; ctx.globalAlpha=.9; ctx.fill(); ctx.globalAlpha=1;
+        });
+      }
+    }
+    var f = Fig("figHero", draw, {animate:true, init:function(self){
+      self.get('[data-r="bias"]').addEventListener("input", function(e){
+        bias=parseFloat(e.target.value);
+        self.get('[data-v="bias"]').textContent=bias.toFixed(2)+" V";
+        var op = bias<=0.02?"short circuit": (bias>=1.0?"near open circuit":"forward bias");
+        self.get('[data-txt="op"]').textContent="operating point: "+op;
+        if(reduce) self.render();
+      });
+      self.get('[data-c="illum"]').addEventListener("change",function(e){illum=e.target.checked; if(reduce)self.render();});
+      self.get('[data-c="flow"]').addEventListener("change",function(e){flow=e.target.checked; if(reduce)self.render();});
+    }});
+    if(reduce && f) f.render();
+  })();
+
+  // ============ 01 coupled relaxation ============
+  (function(){
+    var kick=0, showion=true;
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var t=st._t||0;
+      // three stacked mini-panels: phi, carriers, ions
+      var pad=12, gap=10, pw=W-2*pad, ph=(H-2*pad-2*gap)/3;
+      var decay = Math.exp(-Math.max(0,t)*1.1);
+      var amp = kick*decay;
+      function panel(row,label,color,fn){
+        var y0=pad+row*(ph+gap);
+        ctx.strokeStyle=P.line; ctx.strokeRect(pad,y0,pw,ph);
+        labelMono(ctx,label,pad+8,y0+14,P.muted,10);
+        var pts=[];
+        for(var i=0;i<=80;i++){ var u=i/80; pts.push([pad+u*pw, y0+ph/2 - fn(u)*ph*0.36]); }
+        poly(ctx,pts,color,2);
+      }
+      // ion perturbation: a gaussian bump that decays; delayed for phi/carriers
+      function ionF(u){ var base=Math.sin(u*Math.PI)*0.15; var bump=amp*Math.exp(-Math.pow((u-0.5)/0.12,2)); return showion?base+bump:base; }
+      function phiF(u){ var lag=Math.exp(-Math.max(0,t-0.15)*1.1); var b=(showion?kick*lag:0)*Math.exp(-Math.pow((u-0.5)/0.16,2)); return (u-0.5)*0.9 + b*0.7; }
+      function carrF(u){ var lag=Math.exp(-Math.max(0,t-0.3)*1.1); var b=(showion?kick*lag:0)*Math.exp(-Math.pow((u-0.5)/0.18,2)); return Math.sin(u*Math.PI)*0.6 - b*0.5; }
+      panel(0,"φ  potential",P.field,phiF);
+      panel(1,"n , p  carriers",P.electron,carrF);
+      panel(2,"P  mobile ions",P.ion,ionF);
+      if(kick>0.01 && decay>0.02){ self.get('[data-txt="rlx"]').textContent="relaxing…"; }
+      else { self.get('[data-txt="rlx"]').textContent="settled"; if(!reduce && kick>0) {} }
+    }
+    var f=Fig("figCoupled", draw, {animate:true, init:function(self){
+      self.get('[data-act="kick"]').addEventListener("click",function(){ kick=1; self.t0=0; self.state._t=0; if(reduce){self.render();} });
+      self.get('[data-c="showion"]').addEventListener("change",function(e){showion=e.target.checked; if(reduce)self.render();});
+    }});
+    if(reduce&&f){kick=1;f.render();}
+  })();
+
+  // ============ 02 grid ============
+  (function(){
+    var npl=14, clu=2.4;
+    function tanhMesh(n,strength,x0,x1){
+      var pts=[];
+      for(var i=0;i<n;i++){
+        var s=i/(n-1); // 0..1
+        var v;
+        if(strength<0.01){ v=s; }
+        else{
+          // cluster both ends: map via tanh
+          var a=strength;
+          v=0.5*(1+Math.tanh(a*(s-0.5))/Math.tanh(a*0.5));
+        }
+        pts.push(x0+v*(x1-x0));
+      }
+      return pts;
+    }
+    function draw(ctx,W,H,P,st){
+      ctx.clearRect(0,0,W,H);
+      var m={l:16,r:16,t:26,b:40}, x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      var layers=[["HTL",0.0,0.20,P.hole],["absorber",0.20,0.80,P.field],["ETL",0.80,1.0,P.electron]];
+      layers.forEach(function(L){
+        ctx.fillStyle=alpha(L[3],.08); ctx.fillRect(x+L[1]*w,y,(L[2]-L[1])*w,h);
+        ctx.strokeStyle=alpha(L[3],.5); ctx.beginPath(); ctx.moveTo(x+L[1]*w,y); ctx.lineTo(x+L[1]*w,y+h); ctx.stroke();
+        labelMono(ctx,L[0],x+L[1]*w+6,y+h+16,L[3],10);
+      });
+      // nodes
+      var total=0;
+      layers.forEach(function(L){
+        var mesh=tanhMesh(npl,clu,L[1],L[2]); total+=mesh.length;
+        mesh.forEach(function(u){
+          var xx=x+u*w;
+          ctx.strokeStyle=alpha(P.ink,.5); ctx.beginPath(); ctx.moveTo(xx,y+h*0.28); ctx.lineTo(xx,y+h*0.72); ctx.stroke();
+          ctx.fillStyle=P.ink; ctx.beginPath(); ctx.arc(xx,y+h*0.28,2,0,7); ctx.fill();
+        });
+      });
+      labelMono(ctx,total+" total nodes",x+w-4,y-8,P.muted,11,"right");
+      labelMono(ctx,"resolution clusters at every layer boundary",x+4,y-8,P.muted,11,"left");
+    }
+    var f=Fig("figGrid",draw,{animate:false,init:function(self){
+      function up(){ self.get('[data-v="npl"]').textContent=npl; self.get('[data-v="clu"]').textContent=clu.toFixed(1); self.render(); }
+      self.get('[data-r="npl"]').addEventListener("input",function(e){npl=parseInt(e.target.value,10);up();});
+      self.get('[data-r="clu"]').addEventListener("input",function(e){clu=parseFloat(e.target.value);up();});
+    }});
+    if(f) f.render();
+  })();
+
+  // ============ 03 Scharfetter-Gummel ============
+  (function(){
+    var dphi=0;
+    function bern(x){ if(Math.abs(x)<1e-6) return 1 - x/2; return x/(Math.exp(x)-1); }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var half=W/2;
+      // LEFT: weights bar
+      var lm={l:20,r:20,t:26,b:34}, lx=lm.l,ly=lm.t,lw=half-lm.l-lm.r,lh=H-lm.t-lm.b;
+      labelMono(ctx,"Bernoulli weights",lx,ly-8,P.muted,11);
+      var wL=bern(+dphi), wR=bern(-dphi);
+      var maxw=Math.max(wL,wR,1.2);
+      function bar(cx,val,color,lab){
+        var bw=lw*0.32, bh=val/maxw*lh;
+        ctx.fillStyle=alpha(color,.85); ctx.fillRect(cx-bw/2, ly+lh-bh, bw, bh);
+        ctx.strokeStyle=color; ctx.strokeRect(cx-bw/2, ly+lh-bh, bw, bh);
+        labelMono(ctx,lab,cx,ly+lh+16,color,10,"center");
+        labelMono(ctx,val.toFixed(2),cx,ly+lh-bh-6,P.ink,11,"center");
+      }
+      bar(lx+lw*0.30, wL, P.electron, "B(+Δφ/VT)·n_L");
+      bar(lx+lw*0.72, wR, P.hole, "B(−Δφ/VT)·n_R");
+
+      // RIGHT: density profile across one cell (exponential)
+      var rm={l:16,r:20,t:26,b:34}, rx=half+rm.l,ry=rm.t,rw=half-rm.l-rm.r,rh=H-rm.t-rm.b;
+      labelMono(ctx,"density across one cell",rx,ry-8,P.muted,11);
+      ctx.strokeStyle=P.line; ctx.strokeRect(rx,ry,rw,rh);
+      var pts=[], fill=[];
+      for(var i=0;i<=60;i++){
+        var s=i/60;
+        // n(s) ∝ exp(-dphi*s) normalized, endpoints nL=1, nR=exp(-dphi)
+        var val=Math.exp(-dphi*s);
+        pts.push([rx+s*rw, ry+rh - val/Math.max(1,Math.exp(Math.abs(dphi)))*rh*0.9]);
+      }
+      // normalize better: scale to visible
+      var vmax=Math.max(Math.exp(0),Math.exp(-dphi)), vmin=Math.min(1,Math.exp(-dphi));
+      pts=[];
+      for(var j=0;j<=60;j++){ var s2=j/60; var v=Math.exp(-dphi*s2); var yv=(v-vmin)/((vmax-vmin)||1); pts.push([rx+s2*rw, ry+rh - yv*rh*0.86 - rh*0.06]); }
+      ctx.beginPath(); pts.forEach(function(p,i){i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);});
+      ctx.lineTo(rx+rw,ry+rh); ctx.lineTo(rx,ry+rh); ctx.closePath();
+      ctx.fillStyle=alpha(P.electron,.14); ctx.fill();
+      poly(ctx,pts,P.electron,2.2);
+      labelMono(ctx,"n_L",rx+2,ry+rh+16,P.muted,10,"left");
+      labelMono(ctx,"n_R",rx+rw-2,ry+rh+16,P.muted,10,"right");
+    }
+    var f=Fig("figSG",draw,{animate:false,init:function(self){
+      self.get('[data-r="dphi"]').addEventListener("input",function(e){
+        dphi=parseFloat(e.target.value);
+        self.get('[data-v="dphi"]').textContent=dphi.toFixed(1);
+        var r = Math.abs(dphi)<0.5?"diffusion (central difference)": (Math.abs(dphi)<3?"mixed drift–diffusion":"drift-dominated (upwind)");
+        self.get('[data-txt="regime"]').textContent="regime: "+r;
+        self.render();
+      });
+    }});
+    if(f) f.render();
+  })();
+
+  // ============ 04 time stepping ============
+  (function(){
+    var expl=false, running=false, prog=0;
+    function traj(t){ // relaxation curve to steady state with a stiff knee
+      return 1 - Math.exp(-t*2.4) + 0.12*Math.exp(-t*9)*Math.cos(t*10);
+    }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var m={l:44,r:16,t:20,b:34},x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      axes(ctx,x,y,w,h,P);
+      labelMono(ctx,"J (current)",x-6,y+8,P.muted,10,"right");
+      labelMono(ctx,"time →",x+w,y+h+18,P.muted,10,"right");
+      var Tmax=2.2;
+      function px(t){return x+(t/Tmax)*w;}
+      function py(v){return y+h-(v/1.15)*h;}
+      // full analytic curve (faint)
+      var full=[]; for(var i=0;i<=200;i++){var tt=i/200*Tmax; full.push([px(tt),py(traj(tt))]);}
+      poly(ctx,full,alpha(P.muted,.35),1.2);
+      // implicit accepted steps (dots), spacing grows where smooth
+      var tcur = running? Math.min(Tmax, prog) : Tmax;
+      var steps=[], t=0, dt=0.06;
+      while(t<=tcur+1e-9){
+        steps.push(t);
+        var curv=Math.abs(traj(t+0.01)-2*traj(t)+traj(Math.max(0,t-0.01)));
+        dt = 0.05 + 0.28*Math.min(1, t/1.2); // steps lengthen over time
+        if(t<0.5) dt=0.05+0.05*t; // shorter through knee
+        t+=dt;
+      }
+      var sp=steps.map(function(tt){return [px(tt),py(traj(tt))];});
+      poly(ctx,sp,P.electron,2);
+      sp.forEach(function(p){ ctx.beginPath(); ctx.arc(p[0],p[1],3,0,7); ctx.fillStyle=P.electron; ctx.fill(); });
+      // explicit attempt overlay (oscillating, small steps)
+      if(expl){
+        var ep=[], te=0, ov=0.9;
+        while(te<=Math.min(tcur,0.9)){
+          var base=traj(te);
+          var osc=0.10*Math.sin(te*60)*Math.exp(-te*1.5);
+          ep.push([px(te),py(base+osc)]); te+=0.012;
+        }
+        poly(ctx,ep,alpha(P.hole,.8),1.4);
+        labelMono(ctx,"explicit: tiny steps, fights stiffness",px(0.1),py(1.08),P.hole,10);
+      }
+      self.get('[data-txt="tstat"]').textContent = "t = "+tcur.toFixed(2)+(running&&tcur<Tmax?"  (integrating)":"  steady");
+      if(running){ prog+=0.02; if(prog>=Tmax){running=false;} }
+    }
+    var f=Fig("figTime",draw,{animate:true,init:function(self){
+      self.get('[data-act="run"]').addEventListener("click",function(){ running=true; prog=0; if(reduce){running=false;prog=2.2;self.render();} });
+      self.get('[data-c="expl"]').addEventListener("change",function(e){expl=e.target.checked; if(reduce)self.render();});
+    }});
+    if(reduce&&f){prog=2.2;f.render();}
+  })();
+
+  // ============ 05 boundary conditions ============
+  (function(){
+    var mode="dir", vbi=1.10, vapp=0, svel=5;
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var m={l:44,r:20,t:22,b:34},x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      // potential profile phi(0)=0 left, phi(L)=vbi-vapp right
+      var phiL=0, phiR=vbi-vapp;
+      var Emin=-0.4, Emax=1.5;
+      function px(u){return x+u*w;}
+      function py(v){return y+h-(v-Emin)/(Emax-Emin)*h;}
+      ctx.strokeStyle=P.line; ctx.strokeRect(x,y,w,h);
+      labelMono(ctx,"φ (V)",x-6,y+8,P.muted,10,"right");
+      // baseline zero
+      ctx.strokeStyle=alpha(P.muted,.4); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(x,py(0)); ctx.lineTo(x+w,py(0)); ctx.stroke(); ctx.setLineDash([]);
+      // phi profile: depletion-like S curve from 0 to phiR
+      var pts=[];
+      for(var i=0;i<=100;i++){ var u=i/100; var f=u*u*(3-2*u); pts.push([px(u),py(phiL+(phiR-phiL)*f)]); }
+      poly(ctx,pts,P.field,2.6);
+      labelMono(ctx,"φ(0)=0",px(0.02),py(0)-8,P.muted,10);
+      labelMono(ctx,"φ(L)=V_bi−V_app = "+phiR.toFixed(2)+"V",px(0.98),py(phiR)-8,P.field,10,"right");
+      // contacts
+      ctx.fillStyle=alpha(P.hole,.6); ctx.fillRect(x-3,y,3,h);
+      ctx.fillStyle=alpha(P.electron,.6); ctx.fillRect(x+w,y,3,h);
+      // carrier boundary treatment illustration
+      if(mode==="dir"){
+        // vertical clamp bars at both contacts
+        [[0,P.electron],[1,P.hole]].forEach(function(c){
+          var xx=px(c[0]);
+          ctx.strokeStyle=c[1]; ctx.lineWidth=2;
+          for(var k=0;k<5;k++){ var yy=y+8+k*(h-16)/4; ctx.beginPath(); ctx.moveTo(xx-6,yy); ctx.lineTo(xx+6,yy); ctx.stroke(); }
+        });
+        labelMono(ctx,"densities pinned to n_eq / p_eq (clamped)",px(0.5),y+h-8,P.muted,10,"center");
+      } else {
+        // robin: arrows of flux proportional to S
+        var S=Math.pow(10,svel);
+        var arr=Math.min(1, (svel)/7);
+        [[0,1],[1,-1]].forEach(function(c){
+          var xx=px(c[0]);
+          ctx.strokeStyle=alpha(P.ion,.9); ctx.lineWidth=2;
+          for(var k=0;k<3;k++){ var yy=y+20+k*(h-40)/2; ctx.beginPath(); ctx.moveTo(xx,yy); ctx.lineTo(xx+c[1]*(8+arr*22),yy); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(xx+c[1]*(8+arr*22),yy); ctx.lineTo(xx+c[1]*(8+arr*22)-c[1]*5,yy-3); ctx.lineTo(xx+c[1]*(8+arr*22)-c[1]*5,yy+3); ctx.closePath(); ctx.fillStyle=alpha(P.ion,.9); ctx.fill(); }
+        });
+        labelMono(ctx,"J = ±qS(density − eq),  S = "+(S>=1e6?(S/1e6).toFixed(1)+"e6":S.toExponential(0))+" cm/s",px(0.5),y+h-8,P.ion,10,"center");
+      }
+    }
+    var f=Fig("figBC",draw,{animate:false,init:function(self){
+      self.all('[data-seg="bc"] button').forEach(function(b){
+        b.addEventListener("click",function(){
+          self.all('[data-seg="bc"] button').forEach(function(o){o.classList.remove("on");});
+          b.classList.add("on"); mode=b.getAttribute("data-val");
+          var rob=self.get('[data-show="robin"]'); if(rob) rob.hidden = mode!=="robin";
+          self.render();
+        });
+      });
+      function up(){
+        self.get('[data-v="vbi"]').textContent=vbi.toFixed(2)+" V";
+        self.get('[data-v="vapp"]').textContent=vapp.toFixed(2)+" V";
+        self.get('[data-v="svel"]').textContent="10"+String(svel.toFixed(1)).replace('.','·')+" cm/s";
+        self.render();
+      }
+      self.get('[data-r="vbi"]').addEventListener("input",function(e){vbi=parseFloat(e.target.value);up();});
+      self.get('[data-r="vapp"]').addEventListener("input",function(e){vapp=parseFloat(e.target.value);up();});
+      self.get('[data-r="svel"]').addEventListener("input",function(e){svel=parseFloat(e.target.value);self.get('[data-v="svel"]').textContent="10^"+svel.toFixed(1)+" cm/s";self.render();});
+    }});
+    if(f) f.render();
+  })();
+
+  // ============ 06 sweep + hysteresis ============
+  (function(){
+    var running=false, rate=1, prog=0, dir=1;
+    function jv(v, shift){ // schematic solar J(V), Voc shifted by ion lag
+      var Jsc=1.0, Voc=0.95+shift, a=0.05;
+      var J = Jsc*(1 - Math.exp((v-Voc)/a));
+      return Math.max(-0.42, Math.min(1.18, J));
+    }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var half=W*0.5;
+      // LEFT: J-V loop
+      var m={l:42,r:14,t:18,b:34},x=m.l,y=m.t,w=half-m.l-m.r,h=H-m.t-m.b;
+      axes(ctx,x,y,w,h,P);
+      labelMono(ctx,"J",x-6,y+8,P.muted,10,"right");
+      labelMono(ctx,"V",x+w,y+h+18,P.muted,10,"right");
+      function px(v){return x+(v/1.15)*w;}
+      function py(J){return y+h-((J+0.42)/1.6)*h;}
+      ctx.strokeStyle=alpha(P.muted,.35); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(x,py(0)); ctx.lineTo(x+w,py(0)); ctx.stroke(); ctx.setLineDash([]);
+      labelMono(ctx,"0",x-6,py(0)+3,P.muted,9,"right");
+      var lag = (rate+0.4);
+      // forward branch (ions lag one way), reverse branch (lag other way)
+      var fb=[],rb=[];
+      for(var i=0;i<=70;i++){var v=i/70*1.15; fb.push([px(v),py(jv(v,+lag*0.04))]); rb.push([px(v),py(jv(v,-lag*0.04))]);}
+      poly(ctx,fb,alpha(P.electron,.85),2);
+      poly(ctx,rb,alpha(P.hole,.85),2);
+      // moving marker
+      var vcur=prog*1.15;
+      var curJ = jv(vcur, dir>0? lag*0.04 : -lag*0.04);
+      ctx.beginPath(); ctx.arc(px(vcur),py(curJ),4,0,7); ctx.fillStyle=dir>0?P.electron:P.hole; ctx.fill();
+      labelMono(ctx,dir>0?"forward ▲":"reverse ▼",x+6,y+14,dir>0?P.electron:P.hole,10);
+
+      // RIGHT: ion front lagging bias
+      var rx=half+30,ry=m.t,rw=W-half-30-14,rh=h;
+      ctx.strokeStyle=P.line; ctx.strokeRect(rx,ry,rw,rh);
+      labelMono(ctx,"applied bias vs ion front",rx,ry-6,P.muted,10);
+      // bias line (target) and ion front (lagging)
+      var target=prog; var ionfront= st._ion!==undefined? st._ion : prog;
+      // integrate ion toward target with lag
+      if(running){ var k=0.02*(3-rate); st._ion = ionfront + (target-ionfront)*Math.min(1,k*3); }
+      var ionpos = st._ion!==undefined?st._ion:target;
+      // draw absorber with a moving ion front
+      ctx.fillStyle=alpha(P.field,.06); ctx.fillRect(rx,ry,rw,rh);
+      var bx=rx+target*rw, ix=rx+ionpos*rw;
+      ctx.strokeStyle=alpha(P.muted,.7); ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(bx,ry); ctx.lineTo(bx,ry+rh); ctx.stroke(); ctx.setLineDash([]);
+      labelMono(ctx,"bias",bx,ry+12,P.muted,9,"center");
+      ctx.fillStyle=alpha(P.ion,.85); ctx.fillRect(rx,ry,ix-rx,rh);
+      labelMono(ctx,"ion front",Math.min(rx+ix-rx,rx+rw-4),ry+rh-8,P.ion,9,"right");
+
+      // progress the sweep
+      if(running){
+        prog += dir*0.006*(rate+0.5);
+        if(prog>=1){dir=-1;} if(prog<=0 && dir<0){running=false;prog=0;dir=1; if(st._ion!==undefined) delete st._ion;}
+      }
+      var HI = Math.min(0.4, lag*0.09);
+      self.get('[data-txt="hyst"]').textContent="hysteresis index: "+(running||prog>0?HI.toFixed(2):"—");
+    }
+    var f=Fig("figIC",draw,{animate:true,init:function(self){
+      self.get('[data-act="sweep"]').addEventListener("click",function(){ running=true; prog=0; dir=1; self.state._ion=0; });
+      self.get('[data-r="rate"]').addEventListener("input",function(e){ rate=parseInt(e.target.value,10); self.get('[data-v="rate"]').textContent=["slow","medium","fast"][rate]; });
+    }});
+    if(reduce&&f){ f.render(); }
+  })();
+
+  // ============ 07 heterojunction ============
+  (function(){
+    var iface="etl", dec=-0.10, tecap=true, dosfold=true;
+    function draw(ctx,W,H,P,st){
+      ctx.clearRect(0,0,W,H);
+      var m={l:44,r:16,t:24,b:52},x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      var jx=0.5; // junction at center
+      var leftIsAbs = (iface==="etl"); // absorber on left, ETL on right ; or HTL left / absorber right
+      // conduction band with an offset step of dec at junction
+      var Emin=-0.6, Emax=0.6;
+      function px(u){return x+u*w;}
+      function py(v){return y+h*0.55-(v)/(Emax-Emin)*h*0.8;}
+      // regions bg
+      var lc = iface==="etl"? P.field : P.hole;
+      var rc = iface==="etl"? P.electron : P.field;
+      ctx.fillStyle=alpha(lc,.08); ctx.fillRect(x,y,w*jx,h);
+      ctx.fillStyle=alpha(rc,.08); ctx.fillRect(x+w*jx,y,w*(1-jx),h);
+      labelMono(ctx, iface==="etl"?"absorber":"HTL", x+6,y+14, lc,10);
+      labelMono(ctx, iface==="etl"?"ETL":"absorber", x+w*jx+6,y+14, rc,10);
+      // Ec line with step
+      var ecL=0.12, ecR=0.12 - dec; // dec = Ec(left)-Ec(right)? define offset as right minus contact
+      var pts=[];
+      for(var i=0;i<=100;i++){ var u=i/100; var base = u<jx? ecL : ecR; var tilt=(u-0.5)*0.15; pts.push([px(u),py(base - tilt)]); }
+      poly(ctx,pts,P.electron,2.6);
+      // Ev line
+      var evL=ecL-0.45, evR=ecR-0.5;
+      var pv=[]; for(var j=0;j<=100;j++){var u2=j/100; var base2=u2<jx?evL:evR; var tilt2=(u2-0.5)*0.15; pv.push([px(u2),py(base2 - tilt2)]);}
+      poly(ctx,pv,P.hole,2.6);
+      // junction line
+      ctx.strokeStyle=alpha(P.muted,.5); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(px(jx),y); ctx.lineTo(px(jx),y+h); ctx.stroke(); ctx.setLineDash([]);
+      labelMono(ctx,"ΔE_C = "+(dec>=0?"+":"")+dec.toFixed(2)+" eV",px(jx),y+h+16,P.ink,11,"center");
+
+      // spike vs cliff behaviour
+      var spike = dec>0.02; // positive offset = barrier spike
+      // TE cap region
+      var teActive = tecap && Math.abs(dec)>0.05;
+      // carrier pileup at junction (electrons pile against a spike)
+      if(spike){
+        var pileX=px(jx- (leftIsAbs?0.0:0.0));
+        var bump= Math.min(1, dec/0.4);
+        // draw density bump
+        ctx.beginPath();
+        for(var k=0;k<=40;k++){ var u3=jx-0.14+k/40*0.14; var g=Math.exp(-Math.pow((u3-(jx-0.005))/0.04,2)); var yy=py(ecL - 0.16 - g*bump*0.22); if(k===0)ctx.moveTo(px(u3),yy); else ctx.lineTo(px(u3),yy);}
+        ctx.strokeStyle=alpha(P.electron,.9); ctx.lineWidth=1.6; ctx.stroke();
+        labelMono(ctx,"pileup",px(jx-0.10),py(ecL-0.42),P.electron,10);
+      }
+      // TE cap annotation at junction
+      if(teActive){
+        ctx.fillStyle=alpha(P.electron,.16);
+        ctx.fillRect(px(jx)-10,y+6,20,h-12);
+        labelMono(ctx,"TE cap active (|ΔE_C|>0.05)",px(jx),y-8,P.electron,10,"center");
+      } else if(Math.abs(dec)>0.05 && !tecap){
+        labelMono(ctx,"no cap → SG over-emits across the step",px(jx),y-8,P.hole,10,"center");
+      }
+      // DOS fold: quasi-Fermi step
+      var efbase = (ecL+evL)/2;
+      var stepDOS = dosfold? 0 : 0.06*(iface==="etl"?1:0.8);
+      var ef=[];
+      for(var q=0;q<=100;q++){ var u4=q/100; var st2 = u4<jx?0:stepDOS; ef.push([px(u4), py(efbase + st2)]); }
+      ctx.setLineDash([5,4]); poly(ctx,ef,alpha(P.field,.9),1.4); ctx.setLineDash([]);
+      if(!dosfold){ labelMono(ctx,"⚠ spurious kT·ln(DOS ratio) QFL step",px(0.5),py(efbase+stepDOS)-8,P.field,10,"center"); }
+      else { labelMono(ctx,"E_Fn continuous (DOS fold on)",px(0.28),py(efbase)-8,P.muted,9,"center"); }
+      // legend bottom
+      labelMono(ctx,"E_C",px(0.02),py(ecL)-6,P.electron,10);
+      labelMono(ctx,"E_V",px(0.02),py(evL)+14,P.hole,10);
+    }
+    var f=Fig("figHet",draw,{animate:false,init:function(self){
+      self.all('[data-seg="iface"] button').forEach(function(b){
+        b.addEventListener("click",function(){
+          self.all('[data-seg="iface"] button').forEach(function(o){o.classList.remove("on");});
+          b.classList.add("on"); iface=b.getAttribute("data-val"); self.render();
+        });
+      });
+      self.get('[data-r="dec"]').addEventListener("input",function(e){dec=parseFloat(e.target.value); self.get('[data-v="dec"]').textContent=(dec>=0?"+":"")+dec.toFixed(2)+" eV"; self.render();});
+      self.get('[data-c="tecap"]').addEventListener("change",function(e){tecap=e.target.checked;self.render();});
+      self.get('[data-c="dosfold"]').addEventListener("change",function(e){dosfold=e.target.checked;self.render();});
+    }});
+    if(f) f.render();
+  })();
+
+  // ============ 05a Newton convergence ============
+  (function(){
+    var running=false, k=0, res=[1.0], timer=0;
+    function nextRes(r,i){ if(i<3) return r*0.42; return Math.max(1e-12, r*r*2.2); }
+    function step(){ if(res[k]<1e-9) return; var r=nextRes(res[k],k); res.push(r); k++; }
+    function shape(u){ return Math.sin(u*Math.PI*3)*0.34 + Math.sin(u*Math.PI)*0.16; }
+    function phiStar(u){ return u*u*(3-2*u); }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var split=W*0.56;
+      var m={l:40,r:14,t:22,b:30},x=m.l,y=m.t,w=split-m.l-m.r,h=H-m.t-m.b;
+      axes(ctx,x,y,w,h,P);
+      labelMono(ctx,"φ(x) iterate",x-2,y-8,P.muted,10,"left");
+      var err=res[k]/res[0];
+      function px(u){return x+u*w;} function py(v){var yy=y+h*0.06+(1.5-v)/2.0*h*0.88; return Math.max(y+1,Math.min(y+h-1,yy));}
+      var star=[]; for(var i=0;i<=90;i++){var u=i/90; star.push([px(u),py(phiStar(u))]);}
+      poly(ctx,star,alpha(P.muted,.45),1.4);
+      var it=[]; for(var j=0;j<=90;j++){var u2=j/90; it.push([px(u2),py(phiStar(u2)+err*shape(u2))]);}
+      poly(ctx,it,P.electron,2.4);
+      // right convergence plot
+      var rx=split+34,ry=m.t,rw=W-split-34-14,rh=h;
+      ctx.strokeStyle=P.line; ctx.strokeRect(rx,ry,rw,rh);
+      labelMono(ctx,"‖F‖ (log)",rx-2,ry-8,P.muted,10,"left");
+      var top=0.3, bot=-11, kmax=8;
+      function ly(logv){return ry + (top-logv)/(top-bot)*rh;}
+      // gridlines per decade
+      ctx.strokeStyle=alpha(P.line,.7); ctx.lineWidth=1;
+      for(var d=0;d>=-10;d-=2){ var yy=ly(d); ctx.beginPath(); ctx.moveTo(rx,yy); ctx.lineTo(rx+rw,yy); ctx.stroke(); labelMono(ctx,"1e"+d,rx+3,yy-2,P.muted,10,"left"); }
+      var tolLog=-9;
+      ctx.strokeStyle=alpha(P.hole,.6); ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(rx,ly(tolLog)); ctx.lineTo(rx+rw,ly(tolLog)); ctx.stroke(); ctx.setLineDash([]);
+      labelMono(ctx,"tol",rx+rw-2,ly(tolLog)-3,P.hole,9,"right");
+      var pts=[];
+      for(var q=0;q<=k;q++){ var lv=Math.log10(Math.max(1e-11,res[q])); pts.push([rx+(q/kmax)*rw, ly(lv)]); }
+      poly(ctx,pts,P.field,2);
+      pts.forEach(function(p,i){ ctx.beginPath(); ctx.arc(p[0],p[1],i===k?4:2.6,0,7); ctx.fillStyle=i===k?P.electron:P.field; ctx.fill(); });
+      var conv=res[k]<1e-9;
+      self.get('[data-txt="nstat"]').textContent="iteration "+k+" · ‖F‖ = "+res[k].toExponential(1)+(conv?" · converged ✓":(k<3?" · damped (λ<1)":" · quadratic"));
+      if(running && !reduce){ timer+=1; if(timer>34){ timer=0; if(!conv) step(); else running=false; } }
+    }
+    var f=Fig("figNewton",draw,{animate:true,init:function(self){
+      self.get('[data-act="auto"]').addEventListener("click",function(){ running=!running; if(reduce){ while(res[k]>=1e-9) step(); self.render(); } });
+      self.get('[data-act="step"]').addEventListener("click",function(){ step(); if(reduce)self.render(); });
+      self.get('[data-act="reset"]').addEventListener("click",function(){ k=0; res=[1.0]; running=false; timer=0; if(reduce)self.render(); });
+    }});
+    if(reduce&&f) f.render();
+  })();
+
+  // ============ 05b per-grid-point tridiagonal sweep ============
+  (function(){
+    var N=22, phase=0, node=0, playing=false, speed=1, clock=0, sweep=0;
+    var resid=[], corr=[], phi=[], tgt=[];
+    function initArr(){
+      resid=[]; corr=[]; phi=[]; tgt=[];
+      for(var i=0;i<N;i++){ var u=i/(N-1); tgt.push(u*u*(3-2*u)); phi.push(u*0.5 + ((i%3)-1)*0.07); resid.push(0); corr.push(0); }
+    }
+    initArr();
+    function rAt(i){ return Math.abs(phi[i]-tgt[i]); }
+    function advance(){
+      if(phase===0){ resid[node]=Math.min(1,rAt(node)*2.6); node++; if(node>=N){ node=0; phase=1; } }
+      else if(phase===1){ node++; if(node>=N){ node=N-1; phase=2; } }
+      else if(phase===2){ corr[node]=(tgt[node]-phi[node]); node--; if(node<0){ node=0; phase=3; } }
+      else if(phase===3){ for(var i=0;i<N;i++){ phi[i]+=corr[i]*0.88; corr[i]=0; } sweep++; var tot=0; for(var j=0;j<N;j++) tot+=rAt(j); if(tot<0.06){ playing=false; phase=4; } else phase=5; }
+      else if(phase===5){ for(var k2=0;k2<N;k2++) resid[k2]=0; node=0; phase=0; }
+    }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var m={l:22,r:16,t:18,b:34},x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      var topH=h*0.30, rowY=y+topH+h*0.24, resH=h*0.18, corrH=h*0.16;
+      function nx(i){return x+(i/(N-1))*w;}
+      // phi profile top
+      var tf=[],pf=[];
+      for(var i=0;i<N;i++){ tf.push([nx(i), y+topH - tgt[i]*topH*0.8 - topH*0.08]); pf.push([nx(i), y+topH - phi[i]*topH*0.8 - topH*0.08]); }
+      poly(ctx,tf,alpha(P.muted,.4),1.2);
+      poly(ctx,pf,P.field,2.2);
+      labelMono(ctx,"φ(x)",x,y+8,P.muted,10);
+      // node row + bars
+      for(var n=0;n<N;n++){
+        var cx=nx(n);
+        var rbar=Math.min(1,resid[n])*resH;
+        ctx.fillStyle=alpha(P.hole,.65); ctx.fillRect(cx-3, rowY-10-rbar, 6, rbar);
+        var isact=(n===node && phase<=2);
+        ctx.beginPath(); ctx.arc(cx,rowY,5,0,7); ctx.fillStyle=isact?P.electron:alpha(P.ink,.45); ctx.fill();
+        if(isact){ ctx.strokeStyle=P.electron; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(cx,rowY,9,0,7); ctx.stroke(); }
+        var cbar=Math.min(1,Math.abs(corr[n]))*corrH*2.2;
+        ctx.fillStyle=alpha(P.ion,.7); ctx.fillRect(cx-3, rowY+11, 6, Math.min(corrH,cbar));
+      }
+      labelMono(ctx,"residual",x,rowY-12-resH,P.hole,9);
+      labelMono(ctx,"Δφ correction",x,rowY+13+corrH+9,P.ion,9);
+      // sweep direction arrow
+      var pn=["assembling residual →","forward elimination →","back substitution ←","applying correction","converged ✓","next sweep"];
+      if(phase===1){ ctx.strokeStyle=alpha(P.electron,.5); ctx.beginPath(); ctx.moveTo(x,rowY+corrH+34); ctx.lineTo(nx(node),rowY+corrH+34); ctx.stroke(); }
+      if(phase===2){ ctx.strokeStyle=alpha(P.ion,.5); ctx.beginPath(); ctx.moveTo(x+w,rowY+corrH+34); ctx.lineTo(nx(node),rowY+corrH+34); ctx.stroke(); }
+      self.get('[data-txt="nodestat"]').textContent="sweep "+(sweep+1)+" · node "+Math.min(node,N-1)+" / "+(N-1)+" · "+pn[phase];
+      if(playing && !reduce){ clock+=speed; if(clock>=5){ clock=0; advance(); } }
+    }
+    var f=Fig("figNode",draw,{animate:true,init:function(self){
+      self.get('[data-act="play"]').addEventListener("click",function(){ playing=!playing; if(reduce){ for(var z=0;z<240;z++) advance(); self.render(); } });
+      self.get('[data-act="stepn"]').addEventListener("click",function(){ advance(); if(reduce)self.render(); });
+      self.get('[data-act="resetn"]').addEventListener("click",function(){ initArr(); node=0; phase=0; sweep=0; playing=false; clock=0; if(reduce)self.render(); });
+      self.get('[data-r="nspeed"]').addEventListener("input",function(e){ speed=parseFloat(e.target.value); self.get('[data-v="nspeed"]').textContent=speed.toFixed(1)+"×"; });
+    }});
+    if(reduce&&f) f.render();
+  })();
+
+  // ============ 02 generation / optics ============
+  (function(){
+    var mode="tmm", acoef=1.3, flow=true, ph=[];
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var m={l:20,r:16,t:26,b:34},x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      var aX0=0.17,aX1=0.83;
+      function px(u){return x+u*w;}
+      ctx.fillStyle=alpha(P.hole,.06); ctx.fillRect(px(0),y,aX0*w,h);
+      ctx.fillStyle=alpha(P.field,.10); ctx.fillRect(px(aX0),y,(aX1-aX0)*w,h);
+      ctx.fillStyle=alpha(P.electron,.06); ctx.fillRect(px(aX1),y,(1-aX1)*w,h);
+      labelMono(ctx,"HTL",px(0.02),y+14,P.hole,10);
+      labelMono(ctx,"absorber",px(0.44),y+14,P.field,10);
+      labelMono(ctx,"ETL",px(0.86),y+14,P.electron,10);
+      labelMono(ctx,"☀ AM1.5G →",px(0.0),y-9,P.field,11,"left");
+      var pts=[],N=120;
+      for(var i=0;i<=N;i++){ var u=aX0+(i/N)*(aX1-aX0); var d=(u-aX0)/(aX1-aX0);
+        var g=Math.exp(-acoef*d*3);
+        if(mode==="tmm"){ g*=(1+0.32*Math.cos((d*(6+acoef*3))*Math.PI)); if(g<0)g=0; }
+        pts.push([px(u), y+h - g*h*0.72 - h*0.10]); }
+      ctx.beginPath(); ctx.moveTo(px(aX0),y+h); pts.forEach(function(p){ctx.lineTo(p[0],p[1]);}); ctx.lineTo(px(aX1),y+h); ctx.closePath();
+      ctx.fillStyle=alpha(P.field,.16); ctx.fill();
+      poly(ctx,pts,P.field,2.2);
+      labelMono(ctx,"G(x)",px(aX0)+6,pts[8][1]-8,P.field,10);
+      if(flow&&!reduce){
+        if(ph.length===0){ for(var q=0;q<16;q++) ph.push({u:Math.random()*aX0,yy:y+10+Math.random()*(h-20),ab:false,ax:0,rs:0}); }
+        ph.forEach(function(p){
+          if(!p.ab){ p.u+=0.012;
+            if(p.u>aX0){ if(Math.random()<acoef*0.05 || p.u>=aX1){ p.ab=true; p.ax=Math.min(p.u,aX1); } }
+            ctx.fillStyle=P.field; ctx.globalAlpha=.85; ctx.beginPath(); ctx.arc(px(p.u),p.yy,2,0,7); ctx.fill(); ctx.globalAlpha=1;
+          } else {
+            p.rs++; var sp=Math.min(6,p.rs*0.4);
+            ctx.fillStyle=P.electron; ctx.beginPath(); ctx.arc(px(p.ax),p.yy-sp,2.4,0,7); ctx.fill();
+            ctx.fillStyle=P.hole; ctx.beginPath(); ctx.arc(px(p.ax),p.yy+sp,2.4,0,7); ctx.fill();
+            if(p.rs>22){ p.u=Math.random()*aX0*0.6; p.yy=y+10+Math.random()*(h-20); p.ab=false; p.rs=0; }
+          }
+        });
+      }
+      self.get('[data-txt="gmode"]').textContent=(mode==="tmm"?"TMM: interference fringes from back-reflection":"Beer–Lambert: pure exponential decay");
+    }
+    var f=Fig("figGen",draw,{animate:true,init:function(self){
+      self.all('[data-seg="gen"] button').forEach(function(b){ b.addEventListener("click",function(){ self.all('[data-seg="gen"] button').forEach(function(o){o.classList.remove("on");}); b.classList.add("on"); mode=b.getAttribute("data-val"); if(reduce)self.render(); }); });
+      self.get('[data-r="acoef"]').addEventListener("input",function(e){ acoef=parseFloat(e.target.value); self.get('[data-v="acoef"]').textContent=acoef.toFixed(1); if(reduce)self.render(); });
+      self.get('[data-c="gflow"]').addEventListener("change",function(e){ flow=e.target.checked; if(reduce)self.render(); });
+    }});
+    if(reduce&&f) f.render();
+  })();
+
+  // ============ 03 recombination ============
+  (function(){
+    var logn=22, A1=1e5, A2=1e-16, A3=1e-39;
+    function R(ln){ var n=Math.pow(10,ln); return {srh:A1*n, rad:A2*n*n, aug:A3*n*n*n}; }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var m={l:48,r:16,t:22,b:40},x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      axes(ctx,x,y,w,h,P);
+      labelMono(ctx,"log R",x-4,y+8,P.muted,10,"right");
+      labelMono(ctx,"carrier density n (log) →",x+w,y+h+22,P.muted,10,"right");
+      var nmin=20,nmax=25,rmin=20.5,rmax=36.5;
+      function px(ln){return x+(ln-nmin)/(nmax-nmin)*w;}
+      function py(lr){return y+h-(lr-rmin)/(rmax-rmin)*h;}
+      function line(key,color){
+        var pts=[]; for(var ln=nmin;ln<=nmax+1e-9;ln+=0.1){ pts.push([px(ln),py(Math.log10(R(ln)[key]))]); }
+        poly(ctx,pts,color,2);
+      }
+      line("srh",P.electron);
+      line("rad",P.field);
+      line("aug",P.hole);
+      function chLabel(txt,ln,key,color,align,dy){
+        var lx=px(ln)+(align==="left"?5:-4);
+        var lyy=Math.max(y+13,Math.min(y+h-6,py(Math.log10(R(ln)[key]))+dy));
+        labelMono(ctx,txt,lx,lyy,color,10,align);
+      }
+      chLabel("SRH ∝ n",nmax,"srh",P.electron,"right",-7);
+      chLabel("radiative ∝ n²",nmax,"rad",P.field,"right",-7);
+      chLabel("Auger ∝ n³",nmin,"aug",P.hole,"left",16);
+      var ox=px(logn);
+      ctx.strokeStyle=alpha(P.ion,.85); ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(ox,y); ctx.lineTo(ox,y+h); ctx.stroke(); ctx.setLineDash([]);
+      var r=R(logn); var dom=(r.aug>r.rad&&r.aug>r.srh)?"Auger":((r.rad>r.srh)?"radiative":"SRH");
+      var domr=Math.max(r.srh,r.rad,r.aug);
+      ctx.beginPath(); ctx.arc(ox,py(Math.log10(domr)),4,0,7); ctx.fillStyle=P.ion; ctx.fill();
+      self.get('[data-txt="rdom"]').textContent="n = 1e"+logn.toFixed(1)+" m⁻³ · dominant: "+dom;
+    }
+    var f=Fig("figRec",draw,{animate:false,init:function(self){
+      self.get('[data-r="logn"]').addEventListener("input",function(e){ logn=parseFloat(e.target.value); self.get('[data-v="logn"]').textContent="1e"+logn.toFixed(1); self.render(); });
+    }});
+    if(f) f.render();
+  })();
+
+  // ============ 11 architecture ============
+  (function(){
+    var exp="jv", rhs=0;
+    var EXPS={
+      jv:["J–V sweep","forward + reverse voltage scan; hysteresis from ionic memory"],
+      eqe:["EQE","per-wavelength collected electrons / incident photons"],
+      imp:["Impedance","small AC perturbation, lock-in amplitude + phase, + displacement current"],
+      suns:["Suns–Voc","V_oc vs light intensity — recombination ideality, series-resistance-free"],
+      tpv:["TPV","photovoltage decay after a light pulse → carrier lifetime τ"],
+      deg:["Degradation","long-time ion / defect evolution; frozen-ion J–V snapshots"],
+      tan:["Tandem","2-terminal series-matched top + bottom sub-cells"],
+      td:["2D","lateral grain-boundary / microstructure effects"]
+    };
+    var keys=["jv","eqe","imp","suns","tpv","deg","tan","td"];
+    var boxes=[["YAML / UI","input"],["DeviceStack","frozen"],["MaterialArrays","build ×1"],["assemble_rhs","×N"],["experiment","driver"],["Result","output"]];
+    function roundRect(ctx,X,Y,Wd,Ht,r){ ctx.beginPath(); ctx.moveTo(X+r,Y); ctx.arcTo(X+Wd,Y,X+Wd,Y+Ht,r); ctx.arcTo(X+Wd,Y+Ht,X,Y+Ht,r); ctx.arcTo(X,Y+Ht,X,Y,r); ctx.arcTo(X,Y,X+Wd,Y,r); ctx.closePath(); }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var m={l:14,r:14,t:20},x=m.l,y=m.t,w=W-m.l-m.r;
+      var n=boxes.length, bw=(w-(n-1)*9)/n, bh=52, by=y+10;
+      var t=st._t||0, pidx=Math.floor((t*0.5)%n);
+      for(var i=0;i<n;i++){
+        var bx=x+i*(bw+9), active=(pidx===i), isCache=(i===2), isRhs=(i===3), isExp=(i===4);
+        ctx.fillStyle=active?alpha(P.electron,.18):alpha(P.ink,.05);
+        ctx.strokeStyle=active?P.electron:(isExp?P.field:P.line); ctx.lineWidth=active?2:1;
+        roundRect(ctx,bx,by,bw,bh,8); ctx.fill(); ctx.stroke();
+        labelMono(ctx,boxes[i][0],bx+bw/2,by+bh/2-1,P.ink,Math.min(11,bw/7.5),"center");
+        labelMono(ctx,boxes[i][1],bx+bw/2,by+bh/2+14,(isCache||isRhs)?P.field:P.muted,9,"center");
+        if(i<n-1){ var ax=bx+bw+1; ctx.strokeStyle=alpha(P.muted,.55); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(ax,by+bh/2); ctx.lineTo(ax+7,by+bh/2); ctx.stroke(); }
+        if(isCache&&active) labelMono(ctx,"once",bx+bw/2,by-3,P.field,9,"center");
+        if(isRhs&&active&&!reduce) rhs+=9;
+      }
+      labelMono(ctx,"cache built ONCE  ·  assemble_rhs called ×"+rhs.toLocaleString(),x,by+bh+22,P.muted,10);
+      var chipY=by+bh+34, cw=(w-3*8)/4, ch=24;
+      keys.forEach(function(k,i){
+        var col=i%4, row=(i/4)|0, cx=x+col*(cw+8), cy=chipY+row*(ch+8), on=(k===exp);
+        ctx.fillStyle=on?alpha(P.field,.18):alpha(P.ink,.05); ctx.strokeStyle=on?P.field:P.line; ctx.lineWidth=1;
+        roundRect(ctx,cx,cy,cw,ch,6); ctx.fill(); ctx.stroke();
+        labelMono(ctx,EXPS[k][0],cx+cw/2,cy+ch/2+3,on?P.field:P.muted,Math.min(10,cw/6.5),"center");
+        st["_hb_"+k]=[cx,cy,cw,ch];
+      });
+      self.get('[data-txt="expdesc"]').textContent=EXPS[exp][0]+" — "+EXPS[exp][1];
+    }
+    var f=Fig("figArch",draw,{animate:true,init:function(self){
+      self.cv.addEventListener("click",function(e){
+        var r=self.cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top, st=self.state;
+        keys.forEach(function(k){ var hb=st["_hb_"+k]; if(hb&&mx>=hb[0]&&mx<=hb[0]+hb[2]&&my>=hb[1]&&my<=hb[1]+hb[3]){ exp=k; if(reduce)self.render(); } });
+      });
+    }});
+    if(reduce&&f) f.render();
+  })();
+
+  // ============ 08 coupling loop ============
+  (function(){
+    var running=false, speed=1, prog=0, k=0, res=1.0, clock=0;
+    var nodes=[["charge","q(p-n+P-N_A+N_D)","ion"],["Poisson","solve -> phi","field"],["SG fluxes","J_n, J_p, J_I","electron"],["continuity","dt (n,p,P)","hole"]];
+    var arrowLbl=["sets the field","tilts the bands","move carriers","reshape charge"];
+    function rr(ctx,X,Y,Wd,Ht,r){ ctx.beginPath(); ctx.moveTo(X+r,Y); ctx.arcTo(X+Wd,Y,X+Wd,Y+Ht,r); ctx.arcTo(X+Wd,Y+Ht,X,Y+Ht,r); ctx.arcTo(X,Y+Ht,X,Y,r); ctx.arcTo(X,Y,X+Wd,Y,r); ctx.closePath(); }
+    function onLap(st){ if(res<1e-6){ running=false; return; } res=res*0.12; k++; var hist=st._hist||(st._hist=[1.0]); hist.push(res); if(res<1e-6) running=false; }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var glow=!document.documentElement.classList.contains("nofx");
+      var colmap={ion:P.ion,field:P.field,electron:P.electron,hole:P.hole};
+      var m={l:18,r:18,t:22}, x=m.l, y=m.t, w=W-m.l-m.r, avail=H-y-14;
+      var cx=x+w/2, cyc=y+avail*0.34, ry=Math.min(70,avail*0.22), rx=Math.min(w*0.34,300);
+      var pos=[[cx,cyc-ry],[cx+rx,cyc],[cx,cyc+ry],[cx-rx,cyc]];
+      var bw=Math.min(188,w*0.33), bh=44;
+      var seg=(prog*4)%4, si=Math.floor(seg), sf=seg-si;
+      for(var i=0;i<4;i++){
+        var a=pos[i], b=pos[(i+1)%4], activeArrow=(si===i);
+        var mx=(a[0]+b[0])/2+(cx-(a[0]+b[0])/2)*0.16, my=(a[1]+b[1])/2+(cyc-(a[1]+b[1])/2)*0.16;
+        ctx.strokeStyle=activeArrow?P.electron:alpha(P.muted,.5); ctx.lineWidth=activeArrow?2.4:1.4;
+        ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.quadraticCurveTo(mx,my,b[0],b[1]);
+        if(activeArrow&&glow){ ctx.save(); ctx.shadowColor=P.electron; ctx.shadowBlur=8; ctx.stroke(); ctx.restore(); }
+        ctx.stroke();
+        var ang=Math.atan2(b[1]-my,b[0]-mx);
+        ctx.fillStyle=activeArrow?P.electron:alpha(P.muted,.6);
+        ctx.beginPath(); ctx.moveTo(b[0]-9*Math.cos(ang),b[1]-9*Math.sin(ang));
+        ctx.lineTo(b[0]-9*Math.cos(ang)-8*Math.cos(ang-0.45),b[1]-9*Math.sin(ang)-8*Math.sin(ang-0.45));
+        ctx.lineTo(b[0]-9*Math.cos(ang)-8*Math.cos(ang+0.45),b[1]-9*Math.sin(ang)-8*Math.sin(ang+0.45));
+        ctx.closePath(); ctx.fill();
+        labelMono(ctx,arrowLbl[i],mx,my-4,activeArrow?P.ink:P.muted,10,"center");
+      }
+      for(var n2=0;n2<4;n2++){
+        var pp=pos[n2], on=(si===n2), c=colmap[nodes[n2][2]];
+        ctx.fillStyle=on?alpha(c,.20):alpha(P.ink,.06); ctx.strokeStyle=on?c:P.line; ctx.lineWidth=on?2:1;
+        rr(ctx,pp[0]-bw/2,pp[1]-bh/2,bw,bh,9); ctx.fill(); ctx.stroke();
+        labelMono(ctx,nodes[n2][0],pp[0],pp[1]-3,on?P.ink:P.muted,11,"center");
+        labelMono(ctx,nodes[n2][1],pp[0],pp[1]+13,c,10,"center");
+      }
+      var a2=pos[si], b2=pos[(si+1)%4];
+      var mx2=(a2[0]+b2[0])/2+(cx-(a2[0]+b2[0])/2)*0.16, my2=(a2[1]+b2[1])/2+(cyc-(a2[1]+b2[1])/2)*0.16;
+      var qx=(1-sf)*(1-sf)*a2[0]+2*(1-sf)*sf*mx2+sf*sf*b2[0], qy=(1-sf)*(1-sf)*a2[1]+2*(1-sf)*sf*my2+sf*sf*b2[1];
+      ctx.beginPath(); ctx.arc(qx,qy,5,0,7); ctx.fillStyle=P.electron;
+      if(glow){ ctx.save(); ctx.shadowColor=P.electron; ctx.shadowBlur=12; ctx.fill(); ctx.restore(); } ctx.fill();
+      var ry0=cyc+ry+30, rh=H-ry0-16;
+      ctx.strokeStyle="rgba(120,172,230,0.38)"; ctx.lineWidth=1; ctx.strokeRect(x,ry0,w,rh);
+      labelMono(ctx,"self-consistency residual (log)",x+4,ry0-4,P.muted,10);
+      var hist=st._hist||(st._hist=[1.0]), kmax=6, top=0.3, bot=-6.5;
+      function ly(lv){return ry0+(top-lv)/(top-bot)*rh;}
+      for(var d=0;d>=-6;d-=2){ var yy=ly(d); ctx.strokeStyle=alpha(P.line,.8); ctx.beginPath(); ctx.moveTo(x,yy); ctx.lineTo(x+w,yy); ctx.stroke(); labelMono(ctx,"1e"+d,x+4,yy-2,alpha(P.muted,.8),10,"left"); }
+      var pts=[]; for(var q=0;q<hist.length;q++){ pts.push([x+(q/kmax)*w, ly(Math.log10(Math.max(1e-7,hist[q])))]); }
+      poly(ctx,pts,P.field,2);
+      pts.forEach(function(p,i){ ctx.beginPath(); ctx.arc(p[0],p[1],i===pts.length-1?4:2.6,0,7); ctx.fillStyle=i===pts.length-1?P.electron:P.field; ctx.fill(); });
+      self.get('[data-txt="cstat"]').textContent="pass "+k+" · self-consistency residual = "+res.toExponential(1)+(res<1e-6?" · converged":"");
+      if(running && !reduce){ clock+=speed; if(clock>=1){ clock=0; prog+=0.02; if(prog>=1){ prog=0; onLap(st); } } }
+    }
+    var f=Fig("figCouple2",draw,{animate:true,init:function(self){
+      self.get('[data-act="run"]').addEventListener("click",function(){ running=!running; if(reduce){ while(res>=1e-6) onLap(self.state); self.render(); } });
+      self.get('[data-act="one"]').addEventListener("click",function(){ prog+=0.25; if(prog>=1-1e-9){ prog=0; onLap(self.state); } if(reduce)self.render(); });
+      self.get('[data-act="rst"]').addEventListener("click",function(){ prog=0; k=0; res=1.0; running=false; clock=0; self.state._hist=[1.0]; if(reduce)self.render(); });
+      self.get('[data-r="cspeed"]').addEventListener("input",function(e){ speed=parseFloat(e.target.value); self.get('[data-v="cspeed"]').textContent=speed.toFixed(1)+"×"; });
+    }});
+    if(reduce&&f) f.render();
+  })();
+
+  // ============ 07 method of lines ============
+  (function(){
+    var N=7, ni=3, playing=false, tprog=0, clock=0;
+    function nodeX(i){ var sN=i/(N-1); return 0.5*(1+Math.tanh(2.2*(sN-0.5))/Math.tanh(1.1)); }
+    function val(nl,tt){ return 0.5+0.32*Math.sin((nl+1)*0.7+tt*4.5)*Math.exp(-tt*1.1)+0.08*(nl/N); }
+    function draw(ctx,W,H,P,st,self){
+      ctx.clearRect(0,0,W,H);
+      var fcol=[P.electron,P.hole,P.ion];
+      var m={l:18,r:18}, x=m.l, w=W-m.l-m.r;
+      // band 1: space -> grid
+      var y1=22, h1=H*0.17;
+      labelMono(ctx,"① space → grid   (tanh-clustered nodes)",x,y1-6,P.field,11);
+      ctx.fillStyle=alpha(P.hole,.06); ctx.fillRect(x,y1,w*0.22,h1);
+      ctx.fillStyle=alpha(P.field,.08); ctx.fillRect(x+w*0.22,y1,w*0.56,h1);
+      ctx.fillStyle=alpha(P.electron,.06); ctx.fillRect(x+w*0.78,y1,w*0.22,h1);
+      ctx.strokeStyle=alpha(P.muted,.5); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x,y1+h1*0.6); ctx.lineTo(x+w,y1+h1*0.6); ctx.stroke();
+      for(var i=0;i<N;i++){
+        var xx=x+nodeX(i)*w, on=(i===ni);
+        ctx.strokeStyle=on?P.electron:alpha(P.ink,.55); ctx.lineWidth=on?2:1;
+        ctx.beginPath(); ctx.moveTo(xx,y1+h1*0.32); ctx.lineTo(xx,y1+h1*0.88); ctx.stroke();
+        ctx.fillStyle=on?P.electron:alpha(P.ink,.7); ctx.beginPath(); ctx.arc(xx,y1+h1*0.6,on?5:3,0,7); ctx.fill();
+        labelMono(ctx,"x"+i,xx,y1+h1+13,on?P.electron:P.muted,10,"center");
+      }
+      // band 2: node -> vector + matrix
+      var y2=y1+h1+46, h2=H*0.36;
+      labelMono(ctx,"② each node → the global state vector, coupled only to neighbours",x,y2-8,P.field,11);
+      var vw=w*0.52, cellW=vw/(N*3), vy=y2+14, cellH=Math.min(26,cellW*1.5);
+      labelMono(ctx,"y = ( n, p, P ) per node   ·   length 3(N+1)",x,vy-2,P.muted,10);
+      for(var j=0;j<N;j++){
+        for(var fp=0;fp<3;fp++){
+          var cx=x+(j*3+fp)*cellW, on2=(j===ni);
+          ctx.fillStyle=on2?alpha(fcol[fp],.5):alpha(fcol[fp],.15); ctx.fillRect(cx+0.5,vy+8,cellW-1,cellH);
+          ctx.strokeStyle=on2?fcol[fp]:alpha(P.line,1); ctx.lineWidth=on2?1.4:0.5; ctx.strokeRect(cx+0.5,vy+8,cellW-1,cellH);
+        }
+        if(j===ni){ ctx.strokeStyle=P.electron; ctx.lineWidth=2; ctx.strokeRect(x+j*3*cellW,vy+6,cellW*3,cellH+4); }
+      }
+      var srcx=x+nodeX(ni)*w, dstx=x+(ni*3+1.5)*cellW;
+      ctx.strokeStyle=alpha(P.electron,.55); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(srcx,y1+h1+18); ctx.lineTo(dstx,vy+6); ctx.stroke(); ctx.setLineDash([]);
+      ["n","p","P"].forEach(function(lab,fi){ labelMono(ctx,lab,x+(ni*3+fi)*cellW+cellW/2,vy+8+cellH+12,fcol[fi],9,"center"); });
+      var mx0=x+w*0.62, mw=w*0.38, by0=y2+22, bs=Math.min(mw/N,(h2-30)/N);
+      labelMono(ctx,"∂F/∂y  block-tridiagonal",mx0,by0-4,P.muted,10);
+      for(var r=0;r<N;r++){ for(var c=0;c<N;c++){
+        var band=Math.abs(r-c)<=1, bx=mx0+c*bs, byy=by0+r*bs, active=(r===ni&&band);
+        ctx.fillStyle= band?(active?alpha(P.electron,.55):alpha(P.field,.18)):alpha(P.ink,.04);
+        ctx.fillRect(bx,byy,bs-1.2,bs-1.2);
+      }}
+      ctx.strokeStyle=alpha(P.electron,.6); ctx.lineWidth=1.5; ctx.strokeRect(mx0,by0+ni*bs,N*bs-1,bs-1);
+      labelMono(ctx,"row "+ni+" → cols "+Math.max(0,ni-1)+"…"+Math.min(N-1,ni+1),mx0,by0+N*bs+13,P.electron,10);
+      // zoom: one cell = a 3×3 block, each entry coloured by coupling type
+      var mEndX=mx0+N*bs, availR=(x+w)-mEndX-20;
+      if(availR>=3*16+8){
+        var zs=Math.max(16,Math.min(32,availR/3)), zx=mEndX+20, zy=by0+Math.max(0,(N*bs-3*zs)/2);
+        var ccx=mx0+ni*bs+bs/2, ccy=by0+ni*bs+bs/2;
+        ctx.strokeStyle=alpha(P.electron,.55); ctx.setLineDash([3,3]); ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(ccx,ccy); ctx.lineTo(zx,zy+1.5*zs); ctx.stroke(); ctx.setLineDash([]);
+        var labs=["n","p","P"], typ=[["T","R","E"],["R","T","E"],["E","E","T"]], tcol={T:P.electron,R:P.hole,E:P.field};
+        for(var rz=0;rz<3;rz++){ for(var cz=0;cz<3;cz++){
+          var tk=typ[rz][cz], c=tcol[tk];
+          ctx.fillStyle=alpha(c,.16); ctx.fillRect(zx+cz*zs,zy+rz*zs,zs-1.4,zs-1.4);
+          ctx.strokeStyle=alpha(c,.6); ctx.lineWidth=1; ctx.strokeRect(zx+cz*zs,zy+rz*zs,zs-1.4,zs-1.4);
+          labelMono(ctx,tk,zx+cz*zs+zs/2,zy+rz*zs+zs/2+5,c,Math.min(14,zs*0.52),"center");
+        }}
+        for(var tz=0;tz<3;tz++){
+          labelMono(ctx,labs[tz],zx+tz*zs+zs/2,zy-6,fcol[tz],10,"center");
+          labelMono(ctx,labs[tz],zx-8,zy+tz*zs+zs/2+4,fcol[tz],10,"right");
+        }
+        labelMono(ctx,"1 cell = 3×3 block  (see caption)",zx-16,zy+3*zs+16,P.ink,10,"left");
+      } else {
+        labelMono(ctx,"each cell = 3×3 block: T transport, R recomb, E field",mx0,by0+N*bs+27,P.muted,9,"left");
+      }
+      // band 3: time -> the lines
+      var y3=y2+h2+40, h3=H-y3-16;
+      labelMono(ctx,"③ time → the Method of Lines:  dy/dt = F(y), marched step by step",x,y3-8,P.field,11);
+      ctx.strokeStyle="rgba(120,172,230,0.38)"; ctx.lineWidth=1; ctx.strokeRect(x,y3,w,h3);
+      var tShow=playing?tprog:1, lines=[1,3,5];
+      lines.forEach(function(nl,idx){
+        var base=[P.hole,P.ion,P.muted][idx%3], col=(nl===ni)?P.electron:base, pts=[];
+        for(var tt=0;tt<=tShow+1e-9;tt+=0.02){ pts.push([x+tt*w, y3+h3-val(nl,tt)*h3*0.78-h3*0.11]); }
+        poly(ctx,pts,(nl===ni)?P.electron:alpha(col,.85),(nl===ni)?2.4:1.6);
+        for(var ts=0;ts<=tShow+1e-9;ts+=0.1){ ctx.beginPath(); ctx.arc(x+ts*w,y3+h3-val(nl,ts)*h3*0.78-h3*0.11,2,0,7); ctx.fillStyle=(nl===ni)?P.electron:alpha(col,.7); ctx.fill(); }
+        labelMono(ctx,"node "+nl,x+w-6,y3+15+idx*13,(nl===ni)?P.electron:alpha(col,.9),9,"right");
+      });
+      labelMono(ctx,"time →",x+w-6,y3+h3-5,P.muted,9,"right");
+      if(playing&&!reduce){ clock++; if(clock>=1){ clock=0; tprog+=0.02; if(tprog>=1) playing=false; } }
+    }
+    var f=Fig("figMOL",draw,{animate:true,init:function(self){
+      self.get('[data-r="mnode"]').addEventListener("input",function(e){ ni=parseInt(e.target.value,10); self.get('[data-v="mnode"]').textContent="x"+ni; if(reduce)self.render(); });
+      self.get('[data-act="mplay"]').addEventListener("click",function(){ playing=true; tprog=0; if(reduce){ tprog=1; playing=false; self.render(); } });
+    }});
+    if(reduce&&f) f.render();
+  })();
+
+  // ---- section nav active state ----
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav.sec a'));
+    var map={}; links.forEach(function(a){ map[a.getAttribute("href").slice(1)]=a; });
+    var io=new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ links.forEach(function(a){a.classList.remove("active");}); var l=map[e.target.id]; if(l)l.classList.add("active"); } });
+    },{rootMargin:"-45% 0px -50% 0px"});
+    document.querySelectorAll("section.s").forEach(function(s){io.observe(s);});
+  })();
+
+})();
+</script>
