@@ -425,17 +425,38 @@ Field & Meaning \\
 
 ## Built-In Potential
 
-SolarLab has two related built-in potentials:
+SolarLab distinguishes two built-in potentials that follow two different
+sign conventions. Keeping them separate is deliberate.
 
-1. `stack.V_bi`: the value read from YAML and used in the Poisson boundary
-   condition.
-2. `stack.compute_V_bi()`: a derived effective built-in potential computed from
-   Fermi-level differences across the electrical stack.
+1. `stack.V_bi` — the value read from YAML. It is a *positive built-in-potential
+   magnitude* and is the value the **default** Poisson boundary condition uses.
+   This is the IonMonger convention, in which $V_\mathrm{bi}$ is treated as a
+   free parameter representing the degenerate-doping (flat-band-metal) limit
+   rather than a quantity derived from the band structure. The orientation of
+   the internal field is carried by the doping-derived contact densities, so
+   the boundary value itself is supplied as a positive magnitude.
 
-The two differ because some legacy and benchmark configurations use a
-manual $V_\mathrm{bi}$ convention. Heterostacks with $\chi$ and $E_g$
-also have band-alignment information that can imply a different effective
-Fermi-level separation.
+2. `stack.compute_V_bi()` — a *derived, signed* built-in potential equal to the
+   contact work-function difference,
+
+$$
+V_\mathrm{bi}^{\mathrm{eff}} = \phi(L)-\phi(0) = W_\mathrm{left}-W_\mathrm{right},
+$$
+
+   obtained from the equilibrium Fermi-level separation across the electrical
+   stack ($\chi$, $E_g$, doping, and $n_i$). Because it is the signed contact
+   potential, it is *positive for the usual p-contact-left orientation and
+   negative for an n-contact-left device* (for example an n-window / p-absorber
+   CIGS stack, or an n$^+$/p silicon homojunction). The negative sign is
+   physically correct: the n-side contact holds the positive donor space charge
+   and equilibrates at the higher electrostatic potential. When every electrical
+   layer has $\chi = E_g = 0$ (legacy configurations with no band data),
+   `compute_V_bi()` falls back to the manual `stack.V_bi`.
+
+The two therefore need not agree even in magnitude — a benchmark may pin a
+free-parameter $V_\mathrm{bi}$ that differs from the band-derived value (the
+IonMonger reference, for instance, uses $1.10$ V where the Fermi-level
+construction gives $0.86$ V).
 
 The Poisson boundary is:
 
@@ -444,14 +465,20 @@ $$
 \phi(L)=\phi_\mathrm{left}+V_\mathrm{bi}-V_\mathrm{app}.
 $$
 
-The effective built-in potential is used for defaults such as the automatic
-upper voltage in J-V sweeps.
+By default the boundary uses the manual `stack.V_bi` (item 1). Setting
+`flat_band_contacts: true` switches it to the derived, signed `compute_V_bi()`
+(item 2), reproducing the SCAPS flat-band-metal contact convention. The derived
+value is also used — as a magnitude, via $|\cdot|$ — for solver defaults such as
+the automatic upper voltage of a J-V sweep and the initial bracket of an
+open-circuit search.
 
 ## YAML Example
 
 ```yaml
 device:
-  V_bi: 1.1
+  V_bi: 1.1              # manual built-in-potential magnitude (default Poisson
+                         # BC, IonMonger convention). Set flat_band_contacts to
+                         # derive the signed value from the bands instead.
   Phi: 2.5e21
   T: 300.0
   mode: full

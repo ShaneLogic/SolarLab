@@ -278,6 +278,17 @@ class DeviceStack:
         density: net = 0.5*(N_D - N_A), disc = sqrt(net**2 + ni**2), then
         n or p = net + disc  (or  -net + disc for minority branch).
 
+        Returns the SIGNED contact potential phi(right) - phi(left) =
+        W_left - W_right at equilibrium (the value the flat-band Poisson
+        boundary condition consumes directly). This is positive for the
+        usual p-contact-left orientation and NEGATIVE for n-contact-left
+        devices (e.g. ZnO/CdS/CIGS, n+/p c-Si) -- the negative sign is
+        physically correct, not a bug. Consumers that need the built-in
+        potential MAGNITUDE instead (J-V sweep V_max, V_oc-search brackets)
+        must take ``abs()`` of this value; the default Poisson BC instead
+        uses the positive-magnitude manual ``self.V_bi`` (IonMonger
+        convention) -- see the "Band-offset contact BCs" note in CLAUDE.md.
+
         Falls back to the manual ``self.V_bi`` field when all layers have
         chi = Eg = 0 (backward compatibility with legacy configs).
         """

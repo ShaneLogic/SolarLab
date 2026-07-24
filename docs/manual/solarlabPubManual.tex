@@ -705,24 +705,45 @@ Field & Meaning \\
 \hypertarget{built-in-potential}{%
 \section{Built-In Potential}\label{built-in-potential}}
 
-SolarLab has two related built-in potentials:
+SolarLab distinguishes two built-in potentials that follow two different
+sign conventions. Keeping them separate is deliberate.
 
 \begin{enumerate}
 \def\labelenumi{\arabic{enumi}.}
-\tightlist
 \item
-  \texttt{stack.V\_bi}: the value read from YAML and used in the Poisson
-  boundary condition.
+  \texttt{stack.V\_bi} --- the value read from YAML. It is a
+  \emph{positive built-in-potential magnitude} and is the value the
+  \textbf{default} Poisson boundary condition uses. This is the
+  IonMonger convention, in which \(V_\mathrm{bi}\) is treated as a free
+  parameter representing the degenerate-doping (flat-band-metal) limit
+  rather than a quantity derived from the band structure. The
+  orientation of the internal field is carried by the doping-derived
+  contact densities, so the boundary value itself is supplied as a
+  positive magnitude.
 \item
-  \texttt{stack.compute\_V\_bi()}: a derived effective built-in
-  potential computed from Fermi-level differences across the electrical
-  stack.
+  \texttt{stack.compute\_V\_bi()} --- a \emph{derived, signed} built-in
+  potential equal to the contact work-function difference,
 \end{enumerate}
 
-The two differ because some legacy and benchmark configurations use a
-manual \(V_\mathrm{bi}\) convention. Heterostacks with \(\chi\) and
-\(E_g\) also have band-alignment information that can imply a different
-effective Fermi-level separation.
+\[
+V_\mathrm{bi}^{\mathrm{eff}} = \phi(L)-\phi(0) = W_\mathrm{left}-W_\mathrm{right},
+\]
+
+obtained from the equilibrium Fermi-level separation across the
+electrical stack (\(\chi\), \(E_g\), doping, and \(n_i\)). Because it is
+the signed contact potential, it is \emph{positive for the usual
+p-contact-left orientation and negative for an n-contact-left device}
+(for example an n-window / p-absorber CIGS stack, or an n\(^+\)/p
+silicon homojunction). The negative sign is physically correct: the
+n-side contact holds the positive donor space charge and equilibrates at
+the higher electrostatic potential. When every electrical layer has
+\(\chi = E_g = 0\) (legacy configurations with no band data),
+\texttt{compute\_V\_bi()} falls back to the manual \texttt{stack.V\_bi}.
+
+The two therefore need not agree even in magnitude --- a benchmark may
+pin a free-parameter \(V_\mathrm{bi}\) that differs from the
+band-derived value (the IonMonger reference, for instance, uses \(1.10\)
+V where the Fermi-level construction gives \(0.86\) V).
 
 The Poisson boundary is:
 
@@ -731,8 +752,13 @@ The Poisson boundary is:
 \phi(L)=\phi_\mathrm{left}+V_\mathrm{bi}-V_\mathrm{app}.
 \]
 
-The effective built-in potential is used for defaults such as the
-automatic upper voltage in J-V sweeps.
+By default the boundary uses the manual \texttt{stack.V\_bi} (item 1).
+Setting \texttt{flat\_band\_contacts:\ true} switches it to the derived,
+signed \texttt{compute\_V\_bi()} (item 2), reproducing the SCAPS
+flat-band-metal contact convention. The derived value is also used ---
+as a magnitude, via \(|\cdot|\) --- for solver defaults such as the
+automatic upper voltage of a J-V sweep and the initial bracket of an
+open-circuit search.
 
 \hypertarget{yaml-example}{%
 \section{YAML Example}\label{yaml-example}}
@@ -740,7 +766,9 @@ automatic upper voltage in J-V sweeps.
 \begin{Shaded}
 \begin{Highlighting}[]
 \FunctionTok{device}\KeywordTok{:}
-\AttributeTok{  }\FunctionTok{V\_bi}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.1}
+\AttributeTok{  }\FunctionTok{V\_bi}\KeywordTok{:}\AttributeTok{ }\FloatTok{1.1}\CommentTok{              \# manual built{-}in{-}potential magnitude (default Poisson}
+\CommentTok{                         \# BC, IonMonger convention). Set flat\_band\_contacts to}
+\CommentTok{                         \# derive the signed value from the bands instead.}
 \AttributeTok{  }\FunctionTok{Phi}\KeywordTok{:}\AttributeTok{ }\FloatTok{2.5e21}
 \AttributeTok{  }\FunctionTok{T}\KeywordTok{:}\AttributeTok{ }\FloatTok{300.0}
 \AttributeTok{  }\FunctionTok{mode}\KeywordTok{:}\AttributeTok{ full}

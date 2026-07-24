@@ -648,7 +648,9 @@ def _default_V_max(stack: DeviceStack) -> float:
     This is the single source of truth for the default V_max and is unit-tested
     directly so the formula can be audited without running a full sweep.
     """
-    V_bi_eff = stack.compute_V_bi()
+    # compute_V_bi is the SIGNED phi(right)-phi(left) (negative for
+    # n-contact-left devices); the sweep range needs its magnitude.
+    V_bi_eff = abs(stack.compute_V_bi())
     return max(V_bi_eff * 1.3, 1.4)
 
 
@@ -711,7 +713,7 @@ def run_jv_sweep(
         V_max_initial = (
             V_max
             if V_max is not None
-            else max(stack.compute_V_bi() * 1.3, 1.4)
+            else max(abs(stack.compute_V_bi()) * 1.3, 1.4)
         )
         V_max_cap = V_max_initial + 2.0
         V_max_attempt = V_max_initial
