@@ -559,9 +559,34 @@
 
   <!-- 13 interface defects -->
   <section class="s" id="sdef">
-    <div class="sec-head"><span class="sec-num">SEC 13</span><h2>Interface defects — trap depth and the SRH cycle</h2></div>
+    <div class="sec-head"><span class="sec-num">SEC 13</span><h2>Interface defects — band offsets, trap depth &amp; the SRH cycle</h2></div>
     <div class="prose">
       <p>A real heterointerface carries a sheet of trap states — dangling bonds at the ETL oxide, halide vacancies at the HTL — sitting at an energy <span class="m">E<sub>t</sub></span> inside the local gap. SolarLab treats them as a <b>surface Shockley–Read–Hall</b> channel: an electron captured from the conduction band and a hole captured from the valence band annihilate at the same trap. Two numbers govern the rate — the areal density <span class="m">N<sub>t</sub></span> sets the <em>magnitude</em> through the capture velocities <span class="m">v<sub>n</sub>, v<sub>p</sub></span>; the depth <span class="m">E<sub>t</sub></span> sets the <em>shape</em> through the emission densities <span class="m">n<sub>1</sub>, p<sub>1</sub></span>.</p>
+      <p>At a heterojunction two materials meet, each with its own bands. The electron affinity <span class="m">χ</span> fixes the conduction edge <span class="m">E<sub>C</sub> = −χ</span> and the gap fixes the valence edge <span class="m">E<sub>V</sub> = −χ − E<sub>g</sub></span>, so across the junction both edges step: the <b>conduction-band offset</b> <span class="m">ΔE<sub>C</sub></span> (CBO) and the <b>valence-band offset</b> <span class="m">ΔE<sub>V</sub></span> (VBO). SolarLab reads <span class="m">χ</span> and <span class="m">E<sub>g</sub></span> per layer and folds these steps into the band-potential arrays directly; the drift-diffusion flux across a step is <b>thermionic-emission-capped</b> (section 12), and interface recombination acts as a sink on the junction plane.</p>
+      <p><b>The trap depth is referenced to the interface-plane band edges — not to the offsets.</b> A carrier recombining at the interface sees the <em>favourable</em> edges: the lower of the two <span class="m">E<sub>C</sub></span> and the higher of the two <span class="m">E<sub>V</sub></span>, which bound the <b>reduced interface gap</b> <span class="m">E<sub>g,s</sub> = min(E<sub>C</sub>) − max(E<sub>V</sub>)</span>. The emission densities measure the trap from those plane edges — <span class="m">n<sub>1</sub></span> from the distance below <span class="m">E<sub>C,s</sub></span>, <span class="m">p<sub>1</sub></span> from the distance above <span class="m">E<sub>V,s</sub></span>. So the CBO and VBO do not set the depth; they set the <em>edges the depth is measured from</em>, and clamp it to the reduced gap.</p>
+    </div>
+
+    <figure class="fig" id="figJunc">
+      <div class="cvwrap"><canvas data-h="360" aria-label="Two-material heterojunction band offsets CBO and VBO, the reduced interface gap, and the trap level referenced to the interface-plane band edges"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:236px">
+          <label>Conduction offset ΔE<sub>C</sub> (CBO) <span class="val" data-v="dec2">−0.10 eV · cliff</span></label>
+          <input type="range" min="-0.4" max="0.4" step="0.01" value="-0.10" data-r="dec2">
+        </div>
+        <div class="ctl" style="min-width:236px">
+          <label>Valence offset ΔE<sub>V</sub> (VBO) <span class="val" data-v="dev2">+0.20 eV · barrier</span></label>
+          <input type="range" min="-0.4" max="0.4" step="0.01" value="0.20" data-r="dev2">
+        </div>
+        <div class="ctl" style="min-width:210px">
+          <label>Trap level (in reduced gap) <span class="val" data-v="etf2">0.50 · mid-gap</span></label>
+          <input type="range" min="0.08" max="0.92" step="0.01" value="0.50" data-r="etf2">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="showref" checked> show trap referencing</label>
+      </div>
+      <figcaption>Two materials meet, each with its own <b class="n">E<sub>C</sub></b> and <b class="p">E<sub>V</sub></b>; across the junction the edges step by the <b class="n">conduction offset ΔE<sub>C</sub></b> (CBO) and the <b class="p">valence offset ΔE<sub>V</sub></b> (VBO), built from <span class="m">χ</span> and <span class="m">E<sub>g</sub></span>. The flux across each step is thermionic-emission-capped. Interface recombination sees the <b class="ionc">reduced interface gap</b> bounded by the favourable edges E<sub>C,s</sub> = min(E<sub>C</sub>), E<sub>V,s</sub> = max(E<sub>V</sub>); the <b>trap depth is measured from those plane edges</b> — <span class="n">n<sub>1</sub></span> from E<sub>C,s</sub>−E<sub>t</sub>, <span class="p">p<sub>1</sub></span> from E<sub>t</sub>−E<sub>V,s</sub>. The offsets do not set the depth; they set the edges it is measured from.</figcaption>
+    </figure>
+
+    <div class="prose">
       <div class="eq">
         <span class="lbl">— interface (surface) Shockley–Read–Hall —</span><br>
         <span class="p">R<sub>iface</sub></span> = (<span class="n">n</span>&thinsp;<span class="p">p</span> − n<sub>i</sub><sup>2</sup>) / [ (<span class="n">n</span> + n<sub>1</sub>)/v<sub>p</sub> + (<span class="p">p</span> + p<sub>1</sub>)/v<sub>n</sub> ]&nbsp;&nbsp;<span class="cm"># m⁻² s⁻¹</span><br><br>
@@ -599,7 +624,7 @@
 
     <div class="code-note">
       <span class="tag">in the code</span>
-      <span class="body"><span class="path">recombination.interface_recombination</span> · <span class="path">physics/interface_plane.py</span> (plane densities) · <span class="path">physics/traps.py</span> (N<sub>t</sub>(x) edge profile) · <span class="path">InterfaceDefect</span> (v<sub>n</sub>, v<sub>p</sub>, E<sub>t</sub>, N<sub>t</sub>). <span class="cm"># n₁·p₁ = n_i² pins detailed balance; bulk-node densities are E_t-blind</span></span>
+      <span class="body"><span class="path">recombination.interface_recombination</span> · <span class="path">physics/interface_plane.py</span> (plane densities + <span class="cm">depth = clip(E_t − (χ_s − χ_ref), 0, Eg_s)</span>) · <span class="path">physics/traps.py</span> (N<sub>t</sub>(x) edge profile) · <span class="path">InterfaceDefect</span> (v<sub>n</sub>, v<sub>p</sub>, E<sub>t</sub>, N<sub>t</sub>). <span class="cm"># depth referenced to the plane band edges, clamped to the reduced gap; n₁·p₁ = n_i²</span></span>
     </div>
   </section>
 
@@ -1266,6 +1291,99 @@
       self.get('[data-c="dosfold"]').addEventListener("change",function(e){dosfold=e.target.checked;self.render();});
     }});
     if(f) f.render();
+  })();
+
+  // ============ 13a junction band offsets & trap referencing ============
+  (function(){
+    var ECL=-4.00, EVL=-5.60;               // material A (absorber): E_C=-χ, E_V=-χ-Eg (Eg_A=1.60)
+    var dEc=-0.10, dEv=0.20, etf=0.50, showref=true;
+    function geom(){
+      var ECR=ECL+dEc, EVR=EVL+dEv;         // material B edges from the offsets
+      var pEC=Math.min(ECL,ECR), pEV=Math.max(EVL,EVR);  // interface-plane favourable edges
+      var Egs=pEC-pEV, Et=pEV+etf*Egs;
+      return {ECR:ECR,EVR:EVR,pEC:pEC,pEV:pEV,Egs:Egs,Et:Et};
+    }
+    function vArrow2(ctx,x,y0,y1,color,lw){   // double-headed vertical measure
+      ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=lw||1.4;
+      ctx.beginPath(); ctx.moveTo(x,y0); ctx.lineTo(x,y1); ctx.stroke();
+      var s=4;
+      ctx.beginPath(); ctx.moveTo(x,y0); ctx.lineTo(x-s,y0+s); ctx.lineTo(x+s,y0+s); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x,y1); ctx.lineTo(x-s,y1-s); ctx.lineTo(x+s,y1-s); ctx.closePath(); ctx.fill();
+    }
+    function draw(ctx,W,H,P){
+      ctx.clearRect(0,0,W,H);
+      var m={l:18,r:18,t:48,b:42}, x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      var g=geom(), cx=x+w*0.5;
+      var Emax=Math.max(ECL,g.ECR)+0.42, Emin=Math.min(EVL,g.EVR)-0.42;
+      function eY(E){ return y+(Emax-E)/(Emax-Emin)*h; }
+      // region tints + labels
+      ctx.fillStyle=alpha(P.field,.05); ctx.fillRect(x,y,w*0.5,h);
+      ctx.fillStyle=alpha(P.electron,.05); ctx.fillRect(cx,y,w*0.5,h);
+      labelMono(ctx,"material A (absorber)",x+6,y-12,alpha(P.field,.9),10,"left");
+      labelMono(ctx,"material B (ETL)",x+w-6,y-12,alpha(P.electron,.9),10,"right");
+      // reduced-gap shaded band at the junction plane
+      var jw=w*0.135;
+      ctx.fillStyle=alpha(P.ion,.10); ctx.fillRect(cx-jw,eY(g.pEC),2*jw,eY(g.pEV)-eY(g.pEC));
+      ctx.strokeStyle=alpha(P.ion,.30); ctx.lineWidth=1; ctx.strokeRect(cx-jw,eY(g.pEC),2*jw,eY(g.pEV)-eY(g.pEC));
+      // conduction band (left, right, dashed step)
+      ctx.strokeStyle=P.electron; ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.moveTo(x+2,eY(ECL)); ctx.lineTo(cx,eY(ECL)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx,eY(g.ECR)); ctx.lineTo(x+w-2,eY(g.ECR)); ctx.stroke();
+      ctx.strokeStyle=alpha(P.electron,.6); ctx.setLineDash([4,3]); ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(cx,eY(ECL)); ctx.lineTo(cx,eY(g.ECR)); ctx.stroke(); ctx.setLineDash([]);
+      // valence band
+      ctx.strokeStyle=P.hole; ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.moveTo(x+2,eY(EVL)); ctx.lineTo(cx,eY(EVL)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx,eY(g.EVR)); ctx.lineTo(x+w-2,eY(g.EVR)); ctx.stroke();
+      ctx.strokeStyle=alpha(P.hole,.6); ctx.setLineDash([4,3]); ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(cx,eY(EVL)); ctx.lineTo(cx,eY(g.EVR)); ctx.stroke(); ctx.setLineDash([]);
+      labelMono(ctx,"E_{C}",x+5,eY(ECL)-6,P.electron,10,"left");
+      labelMono(ctx,"E_{V}",x+5,eY(EVL)+14,P.hole,10,"left");
+      // CBO / VBO annotations (above / below the plot)
+      var cboTag=Math.abs(dEc)<0.02?"aligned":(dEc>0?"spike":"cliff");
+      var vboTag=Math.abs(dEv)<0.02?"aligned":(dEv>0?"barrier":"cliff");
+      labelMono(ctx,"ΔE_{C} (CBO) = "+(dEc>=0?"+":"")+dEc.toFixed(2)+" eV · "+cboTag, cx, y-28, P.electron, 10, "center");
+      labelMono(ctx,"ΔE_{V} (VBO) = "+(dEv>=0?"+":"")+dEv.toFixed(2)+" eV · "+vboTag, cx, y+h+32, P.hole, 10, "center");
+      // reduced-gap value in the clear top-centre strip (avoids the E_C band lines)
+      labelMono(ctx,"reduced gap E_{g,s} = "+g.Egs.toFixed(2)+" eV", cx, y-12, P.ion, 9, "center");
+      // trap level across the plane band
+      var ty=eY(g.Et);
+      ctx.strokeStyle=alpha(P.ion,.9); ctx.setLineDash([5,3]); ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(cx-jw-6,ty); ctx.lineTo(cx+jw+6,ty); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle=P.ion; ctx.beginPath();
+      ctx.moveTo(cx,ty-5); ctx.lineTo(cx+5,ty); ctx.lineTo(cx,ty+5); ctx.lineTo(cx-5,ty); ctx.closePath(); ctx.fill();
+      labelMono(ctx,"E_{t}",cx, ty-9, P.ion, 9, "center");
+      // plane-edge markers
+      labelMono(ctx,"E_{C,s}",cx-jw+3,eY(g.pEC)+12,alpha(P.electron,.85),8,"left");
+      labelMono(ctx,"E_{V,s}",cx-jw+3,eY(g.pEV)-4,alpha(P.hole,.85),8,"left");
+      // referencing depth brackets — the trap depth is measured from the plane edges
+      if(showref){
+        var xn=cx-jw*0.42, xp=cx+jw*0.42;
+        vArrow2(ctx,xn,eY(g.pEC),ty,alpha(P.electron,.9),1.4);
+        vArrow2(ctx,xp,ty,eY(g.pEV),alpha(P.hole,.9),1.4);
+        labelMono(ctx,"E_{C,s}−E_{t} → n_{1}", cx-jw-10, (eY(g.pEC)+ty)/2, P.electron, 9, "right");
+        labelMono(ctx,"E_{t}−E_{V,s} → p_{1}", cx+jw+10, (ty+eY(g.pEV))/2, P.hole, 9, "left");
+      }
+    }
+    var fj=Fig("figJunc",draw,{animate:false,init:function(self){
+      self.get('[data-r="dec2"]').addEventListener("input",function(e){
+        dEc=parseFloat(e.target.value);
+        var t=Math.abs(dEc)<0.02?"aligned":(dEc>0?"spike":"cliff");
+        self.get('[data-v="dec2"]').textContent=(dEc>=0?"+":"")+dEc.toFixed(2)+" eV · "+t; self.render();
+      });
+      self.get('[data-r="dev2"]').addEventListener("input",function(e){
+        dEv=parseFloat(e.target.value);
+        var t=Math.abs(dEv)<0.02?"aligned":(dEv>0?"barrier":"cliff");
+        self.get('[data-v="dev2"]').textContent=(dEv>=0?"+":"")+dEv.toFixed(2)+" eV · "+t; self.render();
+      });
+      self.get('[data-r="etf2"]').addEventListener("input",function(e){
+        etf=parseFloat(e.target.value);
+        var t=Math.abs(etf-0.5)<0.06?"mid-gap":(etf>0.5?"toward E_C":"toward E_V");
+        self.get('[data-v="etf2"]').textContent=etf.toFixed(2)+" · "+t; self.render();
+      });
+      self.get('[data-c="showref"]').addEventListener("change",function(e){showref=e.target.checked;self.render();});
+    }});
+    if(fj) fj.render();
   })();
 
   // ============ 13 interface defects & trap depth ============
