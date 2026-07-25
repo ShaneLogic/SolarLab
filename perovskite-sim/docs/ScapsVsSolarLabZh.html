@@ -1,4 +1,4 @@
-<title>SCAPS-1D 与 SolarLab：同一套器件物理，两个引擎</title>
+<title>SCAPS-1D 与 SolarLab：同一套器件物理的两个引擎</title>
 <style>
   :root{
     --ground:#05080E; --panel:rgba(13,20,33,.72); --panelSolid:#0B1220;
@@ -175,28 +175,28 @@
   <section class="hero">
     <p class="eyebrow"><b>稳态</b> &nbsp;·&nbsp; <i>时域</i> &nbsp;·&nbsp; 同一组半导体方程</p>
     <h1>两个引擎，同一套器件物理</h1>
-    <p class="lede">面对同一个薄膜叠层，SCAPS-1D 和 SolarLab 解的是<b>同一套</b>方程：泊松方程与载流子连续性方程耦合成的方程组。分歧集中在三处，其余差别都由这三处派生：<b>把哪些量当作未知量</b>、<b>时间算不算一个坐标</b>、<b>光以什么方式进入薄膜</b>。本页把这三处选择并排摆开，逐一说清各自换来了什么。</p>
-    <p class="lede" style="font-size:1rem;color:var(--muted);margin-top:14px">本页是 SolarLab 求解器讲解页《求解器算的是什么》的姊妹篇。琥珀色一侧全部出自 SCAPS 手册（v3.3.03，2016 年 2 月）和 Burgelman 课题组公开发表的算法论文；青色一侧全部出自 SolarLab 源码树。</p>
+    <p class="lede">SCAPS-1D 与 SolarLab 对同一个薄膜叠层求解<b>同一套</b>方程组，即泊松方程与载流子连续性方程的耦合形式。两者的差别集中在三处选择上，其余分歧都由它们派生：<b>哪些量作为未知量</b>、<b>时间是否算作一个坐标</b>、<b>光以什么方式进入薄膜</b>。本页并列这三处选择，逐项说明各自的代价与所得。</p>
+    <p class="lede" style="font-size:1rem;color:var(--muted);margin-top:14px">本页是 SolarLab 求解器讲解页的配套材料。琥珀色一侧的内容全部出自 SCAPS 手册（v3.3.03，2016 年 2 月）和 Burgelman 课题组已发表的算法论文，青色一侧全部出自 SolarLab 源码树。</p>
 
     <figure class="fig" id="figPath">
-      <div class="cvwrap"><canvas data-h="330" aria-label="两个引擎各自如何得到一个 J-V 点：SCAPS 每个偏置点都重算一次收敛的稳态，SolarLab 则积分同一条连续轨迹"></canvas></div>
+      <div class="cvwrap"><canvas data-h="330" aria-label="两个引擎如何各自得到一个 J-V 点：SCAPS 为每个偏压重新求解一个收敛的稳态，SolarLab 积分一条连续轨迹"></canvas></div>
       <div class="controls">
         <div class="ctl" style="min-width:220px">
-          <label>当前偏置点 <span class="val" data-v="step">V = 0.00 V</span></label>
+          <label>正在计算的偏压点 <span class="val" data-v="step">V = 0.00 V</span></label>
           <input type="range" min="0" max="10" step="1" value="0" data-r="step">
         </div>
         <label class="toggle"><input type="checkbox" data-c="run" checked> 自动推进</label>
-        <div class="readout" data-txt="path">SCAPS：每点重走一遍延拓阶梯 &nbsp;·&nbsp; SolarLab：状态直接带到下一点</div>
+        <div class="readout" data-txt="path">SCAPS：逐点重建延拓阶梯 &nbsp;·&nbsp; SolarLab：状态延续至下一点</div>
       </div>
-      <figcaption><b>一张图看清结构性差异。</b>SCAPS 把每个偏置点当成一个独立的稳态来算，沿延拓阶梯逐级推进（起点 → 暗平衡态 → 短路 → 工作点），每一级都跑一轮 Gummel/Newton 迭代；解一旦收敛，就不再记得自己是怎么走过来的。SolarLab 则按偏置随时间变化的顺序积分，走的是<b>真实时间轴上的一条连续轨迹</b>：V<sub>k</sub> 处的离子分布，就是扫描真正走到这一点时离子的实际分布，实测的 J-V 迟滞正是这么来的。</figcaption>
+      <figcaption><b>一图概括结构性差异。</b>SCAPS 逐点求解独立稳态，沿延拓阶梯逐级到达：起点 → 暗平衡 → 短路 → 工作点，每一级都执行 Gummel/Newton 迭代。收敛得到的解不保留到达该点的路径信息。SolarLab 沿偏压时序积分，得到<b>真实时间轴上的一条连续轨迹</b>。因此 V<sub>k</sub> 处的离子分布，就是扫描到达该点时离子实际达到的分布，实测的 J-V 迟滞回线记录的正是这一过程。</figcaption>
     </figure>
   </section>
 
   <!-- UNKNOWNS -->
 <section class="s" id="unknowns">
-    <div class="sec-head"><span class="axis">维度 · 未知量</span><h2>求解器把什么当作未知量</h2></div>
+    <div class="sec-head"><span class="axis">维度 · 未知量</span><h2>求解器以什么为未知量</h2></div>
     <div class="prose">
-      <p>两套程序离散的是同一组方程：一条泊松方程，加两条载流子连续性方程。分岔从<em>因变量</em>的选取开始：SCAPS 解准费米能级，SolarLab 解载流子浓度，而且多带一种粒子。</p>
+      <p>两套程序离散同一组方程：泊松方程一条，载流子连续性方程两条。第一处分歧出现在<em>因变量</em>的选取上：SCAPS 取准费米能级，SolarLab 取载流子浓度，并额外输运第三种粒子。</p>
     </div>
 
     <div class="dip">
@@ -213,10 +213,10 @@
           J<sub>n</sub> = μ<sub>n</sub> n ∂E<sub>Fn</sub>/∂x &nbsp;&nbsp; J<sub>p</sub> = μ<sub>p</sub> p ∂E<sub>Fp</sub>/∂x
         </div>
         <ul>
-          <li>电流写成<b>准费米能级的梯度</b>，有效态密度项和能带偏移项已经藏在变量里面。</li>
-          <li>全程玻尔兹曼统计；费米-狄拉克统计和带隙收窄都<b>没有</b>实现。</li>
-          <li>缺陷电荷 ρ<sub>def</sub> 这一块做得很足：单价、二价到多价缺陷，两性缺陷，单能级 / 均匀 / 高斯 / 带尾分布，还有用独立占据率迭代求解的亚稳缺陷组态。</li>
-          <li>时间只以独立的<b>小信号</b>线性化形式出现，Y = δJ/δu<sub>ext</sub> = jωC + G。</li>
+          <li>电流写成<b>准费米能级的梯度</b>，有效态密度与能带偏移已包含在变量定义之中。</li>
+          <li>全程采用玻尔兹曼统计，费米-狄拉克统计与带隙收窄<b>均未</b>实现。</li>
+          <li>缺陷电荷 ρ<sub>def</sub> 的模型相当丰富：单价、二价与多价缺陷，两性缺陷，单能级 / 均匀 / 高斯 / 带尾分布，以及需另设占据率迭代求解的亚稳组态。</li>
+          <li>时间仅出现在一次独立的<b>小信号</b>线性化中：Y = δJ/δu<sub>ext</sub> = jωC + G。</li>
         </ul>
       </div>
       <div class="side b">
@@ -231,16 +231,16 @@
           −∂/∂x( ε ∂φ/∂x ) = q( p − n + P − N<sub>A</sub> + N<sub>D</sub> )
         </div>
         <ul>
-          <li>状态量是载流子浓度；φ 由<b>预先分解好的三对角方程</b>直接解出，每次右端项求值只解一次，没有内层的泊松–牛顿迭代。</li>
-          <li>第三种粒子是<b>可动离子空位 P</b>，在同一个电场里漂移（Nernst–Planck 形式，可选第二种离子，可选空间位阻占据上限）。</li>
-          <li>SG 通量把 φ+χ 和 φ+χ+E<sub>g</sub> 分别当作电子和空穴的驱动势，SCAPS 里自带的有效态密度项在这里必须显式折进来（<code>dos_band_potentials</code>）；在对标器件上，这一项合计 137 mV。</li>
-          <li>费米-狄拉克统计可以逐层开启，默认刻意关掉：参照程序用的是玻尔兹曼统计。</li>
+          <li>状态量是载流子浓度；电势 φ 在每次右端项求值时由<b>预先分解的三对角方程</b>直接解出，不设内层泊松–牛顿迭代。</li>
+          <li>第三种粒子为<b>可动离子空位 P</b>，在同一电场中漂移，遵循 Nernst–Planck 形式；第二种离子与空间位阻占据上限均为可选项。</li>
+          <li>SG 通量以 φ+χ 驱动电子，以 φ+χ+E<sub>g</sub> 驱动空穴，SCAPS 中自动包含的有效态密度项在此必须显式折入（<code>dos_band_potentials</code>）；在对标器件上，该项合计 137 mV。</li>
+          <li>费米-狄拉克统计可逐层开启；默认关闭为有意设定，与参照程序采用的玻尔兹曼统计一致。</li>
         </ul>
       </div>
     </div>
     <div class="delta">
       <span class="tag">差异</span>
-      <span class="body">纯稳态问题上，准费米能级是条件数更好的未知量，浓度型牛顿迭代停滞的那些叠层，SCAPS 照样收敛。可一旦 <b>∂/∂t ≠ 0</b>，浓度就没得选：离子输运、陷阱俘获、位移电流，讲的都是某个浓度怎么随时间变。</span>
+      <span class="body">在纯稳态问题上，准费米能级的条件数更好：同一叠层若用浓度型牛顿迭代会停滞，SCAPS 仍能收敛。一旦要求 <b>∂/∂t ≠ 0</b>，浓度就成为必需的状态量：离子输运、陷阱俘获与位移电流，描述的都是某个浓度随时间的变化。</span>
     </div>
   </section>
 
@@ -248,7 +248,7 @@
   <section class="s" id="mesh">
     <div class="sec-head"><span class="axis">维度 · 离散化</span><h2>网格点放在哪里</h2></div>
     <div class="prose">
-      <p>两套程序都把节点堆在能带弯曲的地方。差别在于 SCAPS 是在求解<em>过程中</em>重新决定网格，而且把每个界面节点加倍，这一手在异质结处会实实在在地改变算出来的物理。</p>
+      <p>两套程序都在能带弯曲处加密节点。差别有两处：SCAPS 在求解<em>过程中</em>重新生成网格，且每个界面坐标上放置两个节点；界面双节点在异质结处带来实质的物理差异。</p>
     </div>
 
     <div class="dip">
@@ -256,40 +256,40 @@
         <h3>SCAPS-1D</h3>
         <p class="sub">自适应网格，迭代之间重新生成</p>
         <ul>
-          <li>体内稀疏，界面和接触处加密。</li>
-          <li><b>每个界面坐标上有两个网格点</b>，相邻两层各占一个，界面载流子浓度因此是真正分属两侧的平面量。</li>
-          <li>可以选每次迭代都重算网格：把相邻节点上 exp(qψ/kT)、exp(E<sub>Fn</sub>/kT)、exp(E<sub>Fp</sub>/kT)、R 和 G 的比值与 f<sub>max</sub> = 1.60（约 12 mV）比较，据此插入节点；与 f<sub>min</sub> = 1.05（约 1.2 mV）比较，据此删除节点。</li>
-          <li>最多 7 层半导体；每个电压点最多 10 次网格重构。</li>
+          <li>体内网格稀疏，界面与接触处加密。</li>
+          <li><b>每个界面坐标上有两个网格点</b>，相邻两层各占一个；界面载流子浓度因而按两侧分别定义，是真实的平面量。</li>
+          <li>网格可在每次迭代后重算，为可选项：相邻节点上 exp(qψ/kT)、exp(E<sub>Fn</sub>/kT)、exp(E<sub>Fp</sub>/kT)、R 与 G 的比值超过 f<sub>max</sub> = 1.60（约 12 mV）则插入节点，低于 f<sub>min</sub> = 1.05（约 1.2 mV）则删除节点。</li>
+          <li>半导体层最多 7 层；每个电压点最多重构 10 次网格。</li>
         </ul>
       </div>
       <div class="side b">
         <h3>SolarLab</h3>
-        <p class="sub">静态的 tanh 加密多层网格</p>
+        <p class="sub">静态 tanh 加密多层网格</p>
         <ul>
-          <li>逐层给定节点数，用 tanh 往每个界面加密，只建一次，整个运行都复用。</li>
-          <li><b>每个界面只有一个节点</b>，两层共用，能带偏移于是落在单个网格单元内，只能靠热电子发射上限对 Scharfetter–Gummel 通量作限幅来兜底。</li>
-          <li>固定网格才撑得起 <code>MaterialArrays</code> 缓存和预分解的泊松 LU：依赖几何的计算只做一次，不必每次迭代重做。</li>
-          <li>要界面平面浓度时，靠物理重构，不靠网格：用准稳态的 2×2 通量平衡（<code>interface_plane_closure</code>），或者在稳态牛顿迭代里显式引入界面平面态未知量。</li>
+          <li>各层节点数逐层指定，以 tanh 向每个界面加密；网格只构建一次，整个运行过程复用。</li>
+          <li><b>每个界面只有一个节点</b>，两层共用；能带偏移因此落在单个网格单元内，需要以热电子发射上限对 Scharfetter–Gummel 通量限幅。</li>
+          <li>固定网格是 <code>MaterialArrays</code> 缓存与预分解泊松 LU 的前提：依赖几何的计算只执行一次，不必每次迭代重复。</li>
+          <li>需要界面平面浓度时，由物理关系重构，而非依靠网格分辨：可用准稳态的 2×2 通量平衡（<code>interface_plane_closure</code>），也可在稳态牛顿迭代中显式引入界面平面态未知量。</li>
         </ul>
       </div>
     </div>
     <div class="delta">
       <span class="tag">差异</span>
-      <span class="body">SCAPS 拿每次迭代的额外开销，换陡峭带隙渐变和多价缺陷下的稳健性。SolarLab 拿自适应性换一份缓存，这份缓存要撑过每次扫描约 10<sup>5</sup> 次右端项求值；同一套几何要走上千个时间步而不是只求解几百次时，这笔账才划算。SCAPS 的网格只在界面双节点这一处<b>多给了物理</b>；为了补上这个差距，SolarLab 前后写过五版不同的实现。</span>
+      <span class="body">SCAPS 以每次迭代的额外开销换取稳健性，在陡峭带隙渐变与多价缺陷下获益。SolarLab 放弃自适应，换来可复用的缓存：一次扫描约 10<sup>5</sup> 次右端项求值共用同一套几何数据。几何不变，而时间步成千上万，缓存的收益因此高于自适应。界面双节点是 SCAPS 网格在<b>物理</b>上更丰富的唯一一处，SolarLab 先后尝试五种表述，才补足这处差距。</span>
     </div>
   </section>
 
   <!-- DRIVER -->
 <section class="s" id="driver">
-    <div class="sec-head"><span class="axis">维度 · 求解驱动</span><h2>解到底是怎么求出来的</h2></div>
+    <div class="sec-head"><span class="axis">维度 · 求解驱动</span><h2>解是如何求得的</h2></div>
     <div class="prose">
-      <p>两者分歧最深的地方就在这里。SCAPS 本质是一台非线性方程组求解器，外面裹一层延拓策略；SolarLab 默认把器件当作刚性<em>初值</em>问题来做时间积分，后来才补上一个直接求稳态的牛顿驱动，为的就是把能跟 SCAPS 对照的量定义出来。</p>
+      <p>求解驱动这一层的分歧最深。SCAPS 是一个非线性方程组求解器，外层由延拓策略逐级推进。SolarLab 默认按刚性<em>初值</em>问题对器件做时间积分；直接求稳态的牛顿驱动为后续增补，用于定义可与 SCAPS 对照的物理量。</p>
     </div>
 
     <div class="dip">
       <div class="side a">
         <h3>SCAPS-1D</h3>
-        <p class="sub">Gummel 外迭代 + 方程内 Newton 子迭代</p>
+        <p class="sub">Gummel 迭代 + Newton–Raphson 子步</p>
         <div class="mini">
           <span class="lbl">— 延拓阶梯 —</span><br>
           起点（E<sub>F</sub> 平直，无电势降）<br>
@@ -299,73 +299,73 @@
           &nbsp;&nbsp;↓ &nbsp;第一个测量点 → 扫描
         </div>
         <ul>
-          <li>外层是解耦的 Gummel 循环，每个方程内部再做 Newton–Raphson 子步。</li>
-          <li>ψ、E<sub>Fn</sub>、E<sub>Fp</sub> 每次迭代的更新量<b>限幅</b>在 0.5 kT/q；更新量全部降到 0.001 kT 以下就算收敛；迭代上限 1000 次。</li>
-          <li>相邻两级隔得太远时会自动插入中间子步，这是应对迭代发散的常规手段。</li>
-          <li>可以选“过 V<sub>oc</sub> 就停”；一次扫描最多 201 个测量点。</li>
+          <li>外层为解耦的 Gummel 循环，每个方程内部再执行 Newton–Raphson 子步。</li>
+          <li>ψ、E<sub>Fn</sub>、E<sub>Fp</sub> 每次迭代的更新量<b>限幅</b>于 0.5 kT/q；更新量全部降至 0.001 kT 以下即判定收敛；迭代上限 1000 次。</li>
+          <li>相邻两级相距过远时自动插入中间子步，是处理发散的常规手段。</li>
+          <li>可选“过 V<sub>oc</sub> 即停”；单次扫描最多 201 个测量点。</li>
         </ul>
       </div>
       <div class="side b">
         <h3>SolarLab</h3>
-        <p class="sub">线方法 + 隐式 Radau（另配一个稳态牛顿）</p>
+        <p class="sub">线方法 + 隐式 Radau（另配稳态牛顿）</p>
         <div class="mini">
           <span class="lbl">— 每个电压步 —</span><br>
-          y(t<sub>k</sub>) → solve_ivp(Radau IIA，max_step 设上限)<br>
-          &nbsp;&nbsp;↳ 失败时：把稳定时间折半细分（≤ 10 次）<br>
+          y(t<sub>k</sub>) → solve_ivp(Radau IIA, max_step 设上限)<br>
+          &nbsp;&nbsp;↳ 失败时：稳定时间二分细分（≤ 10 次）<br>
           &nbsp;&nbsp;↳ 最后手段：改用 BDF 重试<br>
-          y(t<sub>k+1</sub>) 把 n、p <b>连同离子分布</b>一起带到下一步<br><br>
-          <span class="lbl">— 可选的无离子稳态（离子冻结）—</span><br>
-          阻尼对数空间牛顿解 F(y) = 0，LU 分解复用
+          y(t<sub>k+1</sub>) 将 n、p <b>连同离子分布</b>一并传入下一步<br><br>
+          <span class="lbl">— 可选的无离子稳态 —</span><br>
+          阻尼对数空间牛顿求解 F(y) = 0，复用 LU 分解
         </div>
         <ul>
-          <li>离子–载流子–电场耦合带来的刚性，交给 Radau IIA（L 稳定，5 阶）来扛；步长之所以要设上限，是因为接近平带时雅可比矩阵接近奇异，误差估计器会低估真实误差。</li>
-          <li>稳态驱动用的是<b>同一套</b>装配好的右端项：一套物理，两个驱动；牛顿收不下来的点交给经校验的瞬态回退计算，不会有哪一点被悄悄编出来。</li>
-          <li>离子在偏置点之间的记忆不靠后处理去凑：上一步收敛的状态<em>就是</em>下一步的初始条件。</li>
+          <li>Radau IIA（L 稳定，5 阶）吸收离子–载流子–电场耦合的刚性。之所以给步长设上限，是因为临近平带时雅可比矩阵趋于奇异，误差估计器会低估真实误差。</li>
+          <li>稳态驱动与瞬态积分共用<b>同一套</b>装配好的右端项：一套物理，两个驱动。牛顿无法收敛处改由已验证的瞬态回退计算，结果均如实记录。</li>
+          <li>偏压点之间的离子记忆并非后处理产物：上一步收敛的状态<em>就是</em>下一步的初始条件。</li>
         </ul>
       </div>
     </div>
     <div class="delta">
       <span class="tag">差异</span>
-      <span class="body">稳态求解器回答的是器件在电压 V 下是什么表现，时域积分器回答的是电压以速率 r 变化的<b>过程中</b>器件是什么表现。钙钛矿恰好是这两个答案能测出差别的材料，而实验记下来的是后一个。</span>
+      <span class="body">稳态求解器回答器件在偏压 V 下如何工作，时域积分器回答电压以速率 r 变化<b>过程中</b>器件如何工作。钙钛矿属于两个答案存在可测差别的体系，实验测得的即为后者。</span>
     </div>
   </section>
 
   <!-- CONTACTS -->
   <section class="s" id="contacts">
-    <div class="sec-head"><span class="axis">维度 · 边界条件</span><h2>接触是怎么约束的</h2></div>
+    <div class="sec-head"><span class="axis">维度 · 边界条件</span><h2>接触边界如何约束</h2></div>
     <div class="dip">
       <div class="side a">
         <h3>SCAPS-1D</h3>
         <p class="sub">金属功函数，或反解得到的平带</p>
         <ul>
-          <li>前后接触各给多数载流子一个<b>金属功函数 Φ<sub>m</sub></b>；也可以选“平带”，由 SCAPS 在每个温度下反解 Φ<sub>m</sub>，让能带保持平直。2014 年以后的版本换了做法，改从含深能级缺陷的总电荷中性条件反解。</li>
-          <li>接触处的动力学，由电子和空穴各自的有限表面复合速度定下来，默认值惯用 10<sup>7</sup> cm/s。</li>
-          <li>隧穿进出接触是可选项；每个接触还能挂一份随波长变化的反射/透射滤光片文件。</li>
-          <li>外部串联电阻和并联电阻是仿真<b>之后</b>才加进来的，靠重新映射端电压实现，并不进入输运问题本身；量子效率的计算同样不包含这两个电阻。</li>
+          <li>前后接触对多数载流子各取一个<b>金属功函数 Φ<sub>m</sub></b>。另一种选项是“平带”：SCAPS 在每个温度下反解 Φ<sub>m</sub>，使能带保持平直；2014 年之后的版本改用包含深能级缺陷的总电荷中性条件求解。</li>
+          <li>电子与空穴各有一个有限的表面复合速度，决定接触处的动力学，惯用默认值为 10<sup>7</sup> cm/s。</li>
+          <li>隧穿进出接触为可选项；每个接触还可指定一份随波长变化的反射/透射滤光片文件。</li>
+          <li>外部串联电阻与并联电阻在仿真<b>之后</b>施加：重新映射端电压，不进入输运问题本身；量子效率的计算同样不含这两项。</li>
         </ul>
       </div>
       <div class="side b">
         <h3>SolarLab</h3>
         <p class="sub">三种接触约定可选</p>
         <ul>
-          <li><b>欧姆接触的狄利克雷钉扎</b>（默认，IonMonger 约定）：边界上的载流子浓度钉在暗态掺杂平衡值，泊松方程以配置里写定的 V<sub>bi</sub> 为参考。</li>
-          <li><b>罗宾 / 选择性 / 肖特基</b>：每一侧、每种载流子各给一个有限的 S<sub>n</sub>、S<sub>p</sub>，J = ±q·S·(浓度 − 浓度<sub>eq</sub>)；S → ∞ 回到欧姆接触，S = 0 就是完全阻挡。</li>
-          <li><b>平带金属接触</b>，也就是 SCAPS 的约定：泊松边界由 <code>compute_V_bi()</code> 算出的功函数差驱动，不是一个写死的输入值。</li>
-          <li>已记录在案的限制：平带接触配稳态牛顿是一对不兼容的组合（罗宾边界叠上陡峭的 V<sub>bi</sub>，条件数变差，牛顿迭代会停滞）。这条按引擎边界如实记下，没有拿补丁盖过去。</li>
+          <li><b>欧姆接触的狄利克雷钉扎</b>（默认，IonMonger 约定）：边界载流子浓度钉在暗态掺杂平衡值，泊松方程以配置中给定的 V<sub>bi</sub> 为参考。</li>
+          <li><b>罗宾 / 选择性 / 肖特基</b>：每一侧、每种载流子各取有限的 S<sub>n</sub>、S<sub>p</sub>，J = ±q·S·(浓度 − 浓度<sub>eq</sub>)；S → ∞ 回到欧姆接触，S = 0 为完全阻挡。</li>
+          <li><b>平带金属接触</b>，即 SCAPS 的约定：泊松边界取 <code>compute_V_bi()</code> 算出的功函数差，而不是配置中的固定输入值。</li>
+          <li>已记录的限制：平带接触与稳态牛顿互不兼容（罗宾边界叠加陡峭的 V<sub>bi</sub>，条件数恶化，牛顿迭代停滞）。SolarLab 将其记为引擎边界，未以补丁掩盖。</li>
         </ul>
       </div>
     </div>
     <div class="delta">
       <span class="tag">差异</span>
-      <span class="body">掺杂扫描上两套程序看着不一致，最主要的来源就是接触约定：V<sub>bi</sub> 边界会随偏置、随掺杂摆动，它对 ETL 掺杂的响应，和 SCAPS 固定金属功函数下的响应很不一样。如今 SolarLab 两种约定都做了，正是这一步把“趋势错了”落实成<b>有名有姓、可复现的边界条件差异</b>。</span>
+      <span class="body">两套程序在掺杂扫描上的表观分歧，最大的单一来源是接触约定：SolarLab 的 V<sub>bi</sub> 边界随偏压与掺杂变化，在 ETL 掺杂扫描下的变化方式与 SCAPS 的固定金属功函数差异明显。SolarLab 现已实现两种约定，原先记作“趋势错误”的问题，现在归结为一处<b>明确、可复现的边界条件差异</b>。</span>
     </div>
   </section>
 
-<!-- INTERFACES -->
-  <section class="s" id="iface">
+  <!-- INTERFACES -->
+<section class="s" id="iface">
     <div class="sec-head"><span class="axis">维度 · 异质结</span><h2>界面上发生了什么</h2></div>
     <div class="prose">
-      <p>两套程序的界面输运都按热电子发射算，界面复合都按 SRH 型循环算。分歧在别处：复合速率用的到底是哪一处的载流子浓度。</p>
+      <p>两套程序都用热电子发射描述界面输运，界面复合都写成 SRH 型循环。差别在于复合速率能取到哪一处的载流子浓度。</p>
     </div>
 
     <div class="dip">
@@ -373,24 +373,24 @@
         <h3>SCAPS-1D</h3>
         <p class="sub">界面双节点上的热电子发射</p>
         <ul>
-          <li>界面输运按热电子发射处理，热速度 v<sub>th</sub> 取相邻两层中较小的一个。每个界面上因此都留有一小段准费米能级台阶，能带偏移为零时也不例外。</li>
-          <li>界面复合走 <b>Pauwels–Vanhoutte</b> 理论，是 SRH 的一种推广：用一个陷阱占据率同时平衡两侧过来的俘获。</li>
-          <li>半经典隧穿有四条通道：带间、带内、能带 ↔ 界面缺陷、能带 ↔ 接触。四条都只在直流下起作用，交流问题里看不见。</li>
+          <li>界面输运按热电子发射计算，热速度 v<sub>th</sub> 取相邻两层中较小的一个。每个界面上因此都有一个小的准费米能级台阶，能带偏移为零时也不例外。</li>
+          <li>界面复合采用 <b>Pauwels–Vanhoutte</b> 理论，即 SRH 的一种推广：单一陷阱占据率同时平衡两侧的俘获。</li>
+          <li>半经典隧穿有四条通道：带间、带内、能带 ↔ 界面缺陷、能带 ↔ 接触，均只在直流问题中生效，交流计算不予计入。</li>
         </ul>
       </div>
       <div class="side b">
         <h3>SolarLab</h3>
-        <p class="sub">SG 通量取 TE 上限，另做平面浓度闭合</p>
+        <p class="sub">SG 通量取 TE 上限，另加平面浓度闭合</p>
         <ul>
-          <li>只要界面上 |ΔE<sub>C</sub>| 或 |ΔE<sub>V</sub>| 超过 0.05 eV，Scharfetter–Gummel 通量就限幅到 Richardson–Dushman 热电子发射极限，免得能带偏移挤在一个网格单元里造成过量注入。</li>
-          <li>界面 SRH 的 (v<sub>n</sub>, v<sub>p</sub>) 逐个界面单独给。界面在网格上只占一个共用节点，平面浓度得另外重建：要么每次右端项求值时解一个 2×2 隐式通量平衡，要么在稳态牛顿迭代里把界面平面态直接当作未知量。</li>
-          <li>隧穿只留一条通道：把静态的 Padovani–Stratton 热场发射增强因子 Γ ≥ 1 折进 Richardson 常数。这一步刻意放在构建阶段做完，牛顿迭代的收缩性不受它干扰。</li>
+          <li>界面上 |ΔE<sub>C</sub>| 或 |ΔE<sub>V</sub>| 超过 0.05 eV 时，Scharfetter–Gummel 通量限幅到 Richardson–Dushman 热电子发射极限；能带偏移落在单个网格单元上，不限幅会造成过量注入。</li>
+          <li>界面 SRH 的 (v<sub>n</sub>, v<sub>p</sub>) 逐个界面指定。界面在网格上只占一个共用节点，平面浓度必须另行重建：或在每次右端项求值时解一个 2×2 隐式通量平衡，或在稳态 Newton 中把界面平面态列为显式未知量。</li>
+          <li>隧穿只保留一条通道：静态的 Padovani–Stratton 热场发射增强因子 Γ ≥ 1，折入 Richardson 常数。增强因子刻意在构建阶段一次算定，不进入迭代，也就不会扰动 Newton 的收缩性。</li>
         </ul>
       </div>
     </div>
     <div class="delta">
       <span class="tag">差异</span>
-      <span class="body">这一节是 SCAPS 领先，记录里也照实写着：平面浓度这条路走通之前，先后试过三版基于体节点浓度的速率代数改写，对照 SCAPS 的界面趋势全部<b>被证伪</b>。这个教训可以复用：在这一区间里，只要速率公式取的是体节点上的浓度乘积（那里的浓度已按准费米能级自洽过），算出来的复合就完全看不到陷阱能级；只有真正的界面平面浓度才给得出这一响应。</span>
+      <span class="body">界面处理上 SCAPS 领先，记录中也照实写明。在平面浓度方案成立之前，基于体节点浓度的速率代数改写过三版，对照 SCAPS 的界面趋势全部<b>被证伪</b>。由此得到一条可复用的结论：浓度取自准费米能级已自洽的体节点时，任何密度乘积型速率式在该区间都无法体现陷阱能级的影响，只有界面平面浓度才反映这一依赖关系。</span>
     </div>
   </section>
 
@@ -398,7 +398,7 @@
   <section class="s" id="optics">
     <div class="sec-head"><span class="axis">维度 · 光学</span><h2>光如何变成 G(x)</h2></div>
     <div class="prose">
-      <p>SCAPS 的内置光学模型有意做得简单：非相干比尔-朗伯吸收，反射只允许出现在接触处，<b>内部界面不反射</b>。吸收系数要么读文件，要么用模型 α(λ) = (A + B/hν)·√(hν − E<sub>g</sub>)。想要更精细的光学，手册留的出口是从外部导入 g(x) 文件。SolarLab 则自己算光学，而且算的是相干光学。</p>
+      <p>SCAPS 的内置光学模型有意从简：非相干比尔-朗伯吸收，反射只允许发生在接触处，<b>内部界面不反射</b>。吸收系数由文件给出，或取自模型 α(λ) = (A + B/hν)·√(hν − E<sub>g</sub>)。手册预期更精细的光学由外部 g(x) 文件提供。SolarLab 自行求解光学，并计入相干效应。</p>
     </div>
 
     <figure class="fig" id="figOptics">
@@ -420,7 +420,7 @@
         <span><span class="sw" style="background:var(--cy)"></span>相干传输矩阵法（SolarLab）</span>
         <span><span class="sw" style="background:rgba(150,170,200,.45)"></span>传输层</span>
       </div>
-      <figcaption><b>页面内现算的传输矩阵</b>：五个波长，每层 n、k 取常数，能量守恒 R+T+A = 1。接上金属背反射层，驻波就把产生率的极大和零点摆进吸收层<b>内部</b>；比尔-朗伯只给得出单调衰减。真正的求解器用同一套公式，只是换成实测 n、k 数据表和完整 AM1.5G 光谱，另加 Yablonovitch 光子再循环逃逸概率；FULL 档下，每次右端项求值都把再吸收的那一份还回 G(x)。</figcaption>
+      <figcaption><b>页面内实时计算的传输矩阵</b>：五个波长，每层 n、k 取常数，满足能量守恒 R+T+A = 1。加上金属背反射层后，驻波使产生率的极大与零点落在吸收层<b>内部</b>；比尔-朗伯只能给出单调衰减。真实求解器沿用同一套公式，输入换成实测 n、k 数据表与完整 AM1.5G 光谱，并计入 Yablonovitch 光子再循环逃逸概率；FULL 模式下，每次右端项求值均将再吸收份额计回 G(x)。</figcaption>
     </figure>
 
     <div class="dip">
@@ -428,25 +428,25 @@
         <h3>SCAPS-1D</h3>
         <p class="sub">非相干，单次通过</p>
         <ul>
-          <li>整个叠层都按比尔-朗伯吸收算，α 来自模型或文件，α(λ,y) 可以随组分渐变。</li>
-          <li>反射/透射滤光片只能加在接触处；此外有中性密度滤光片、截止滤光片、从任一侧照射的选项，还带一个光谱库（AM0、AM1.5D、AM1.5G、单色光）。</li>
-          <li>没有干涉，没有内部界面反射，也没有背反射层驻波。手册对此写得很明白，留给用户的变通出口是导入 g(x)。</li>
+          <li>整个叠层按比尔-朗伯吸收计算，α 取自模型或文件，α(λ,y) 可随组分渐变。</li>
+          <li>反射/透射滤光片只能置于接触处；此外提供中性密度滤光片、截止滤光片、任一侧入射，以及一个光谱库（AM0、AM1.5D、AM1.5G、单色光）。</li>
+          <li>没有干涉，没有内部界面反射，也没有背反射层驻波。手册对此有明确说明，并以导入 g(x) 作为替代途径。</li>
         </ul>
       </div>
       <div class="side b">
         <h3>SolarLab</h3>
         <p class="sub">相干传输矩阵法，光学闭环</p>
         <ul>
-          <li>Pettersson/Burkhard 传输矩阵覆盖整个叠层，只参与光学的衬底也算在内；带 n<sub>real</sub>/n<sub>ambient</sub> 坡印廷修正，R+T+A = 1 严格成立。</li>
-          <li><b>光子再循环</b>：凡是标记为吸收层的层，辐射复合系数按带边逃逸概率 P<sub>esc</sub> = min(1, 1/4n²αd) 缩放。</li>
-          <li><b>自洽再吸收</b>：每次右端项求值，把没逃出去的那一份当产生源加回来；高 np 区发出的光就能喂给低 np 区。</li>
-          <li>叠层电池只做一次 TMM，G(x) 直接分到各子电池，复合结层计入寄生吸收。</li>
+          <li>Pettersson/Burkhard 传输矩阵覆盖整个叠层，只参与光学的衬底同样计入；配合 n<sub>real</sub>/n<sub>ambient</sub> 坡印廷修正，R+T+A = 1 严格成立。</li>
+          <li><b>光子再循环</b>：辐射复合系数按带边逃逸概率 P<sub>esc</sub> = min(1, 1/4n²αd) 缩放，只作用于标记为吸收层的材料。</li>
+          <li><b>自洽再吸收</b>：未逃逸的份额在每次右端项求值时作为产生源返回，高 np 区的发射可以进入低 np 区。</li>
+          <li>叠层电池只做一次 TMM，G(x) 按子电池划分，复合结层计入寄生吸收。</li>
         </ul>
       </div>
     </div>
     <div class="delta">
       <span class="tag">差异</span>
-      <span class="body">这是本页最清楚的一处能力差距。带金属背电极的薄膜钙钛矿电池<b>本身就是</b>一个光学腔，干涉极大离结多远，直接决定 J<sub>sc</sub> 和 EQE 的形状。这部分物理在 SCAPS 里只能靠导入；在 SolarLab 里，它和输运参数出自同一套叠层，改一处光学和改一处电学天然对得上。</span>
+      <span class="body">两者能力差距最明显的一处即在光学。带金属背电极的薄膜钙钛矿电池<b>本身就是</b>光学腔，干涉极大相对于结的位置决定 J<sub>sc</sub> 的量值与 EQE 的形状。SCAPS 中这部分物理只能由外部导入；SolarLab 在承载输运参数的同一套叠层上求解光学，修改光学与修改电学在构造上自动保持一致。</span>
     </div>
   </section>
 
@@ -454,7 +454,7 @@
 <section class="s" id="matrix">
     <div class="sec-head"><span class="axis">维度 · 覆盖</span><h2>两个引擎各自能算什么</h2></div>
     <div class="prose">
-      <p>这张表列的是各自能算什么，不是比谁更强。有几行的强弱正好反过来。</p>
+      <p>下表按能力覆盖列出，不作优劣评判；其中若干行 SCAPS 的覆盖更完整。</p>
     </div>
 
     <div class="tablewrap">
@@ -465,67 +465,67 @@
         <tbody>
           <tr>
             <td class="cap">J-V、C-V、C-f、QE</td>
-            <td><span class="pill yes">原生支持</span><span class="note">四种测量全部内置，还带批量运行、记录器、脚本和曲线拟合</span></td>
+            <td><span class="pill yes">原生支持</span><span class="note">四种测量均已内置，另有批量运行、记录器、脚本与曲线拟合</span></td>
             <td><span class="pill yes">支持</span><span class="note">J-V（1D / 2D / 叠层）、阻抗、EQE、Suns-V<sub>oc</sub>、能带图、TPV、性能衰减</span></td>
           </tr>
           <tr>
             <td class="cap">可动离子</td>
-            <td><span class="pill no">不支持</span></td>
-            <td><span class="pill yes">核心变量</span><span class="note">单离子或双离子物种，计入空间位阻占据上限；离子记忆在偏置点之间延续</span></td>
+            <td><span class="pill no">未建模</span></td>
+            <td><span class="pill yes">核心状态量</span><span class="note">单物种或双物种，计入空间位阻拥挤效应，离子记忆跨偏压点保留</span></td>
           </tr>
           <tr>
             <td class="cap">瞬态与大信号</td>
-            <td><span class="pill no">仅稳态</span><span class="note">“SCAPS 给出的始终是平衡态，相当于时间过去无限长之后的结果”</span></td>
-            <td><span class="pill yes">时域求解</span><span class="note">整个刚性方程组用隐式 Radau 积分；扫描速率本身就是输入参数</span></td>
+            <td><span class="pill no">仅稳态</span><span class="note">“SCAPS 计算的始终是平衡态，相当于已经等待了无限长的时间”</span></td>
+            <td><span class="pill yes">时域求解</span><span class="note">隐式 Radau 积分整个刚性方程组；扫描速率是输入参数</span></td>
           </tr>
           <tr>
             <td class="cap">J-V 迟滞</td>
-            <td><span class="pill no">结构上做不到</span></td>
-            <td><span class="pill yes">自然涌现</span><span class="note">正向扫描接反向扫描，出自同一条轨迹，不是后处理拼出来的</span></td>
+            <td><span class="pill no">结构上无法给出</span></td>
+            <td><span class="pill yes">自然涌现</span><span class="note">正向扫描与反向扫描出自同一条轨迹，未经后处理</span></td>
           </tr>
           <tr>
             <td class="cap">小信号导纳</td>
-            <td><span class="pill yes">精确线性化</span><span class="note">在工作点上直接给出 Y = jωC + G，另配导纳解读面板</span></td>
-            <td><span class="pill part">时域锁相</span><span class="note">积分几个交流周期再解调；慢一些，但把大信号的离子响应也算进来</span></td>
+            <td><span class="pill yes">精确线性化</span><span class="note">在工作点上给出 Y = jωC + G，另配导纳解读面板</span></td>
+            <td><span class="pill part">时域锁相</span><span class="note">积分若干交流周期后解调；速度较慢，但包含大信号离子响应</span></td>
           </tr>
           <tr>
             <td class="cap">相干光学</td>
-            <td><span class="pill no">仅比尔-朗伯</span><span class="note">手册给的变通办法是导入外部 g(x) 文件</span></td>
+            <td><span class="pill no">仅比尔-朗伯</span><span class="note">手册给出的变通方案是导入外部 g(x) 文件</span></td>
             <td><span class="pill yes">TMM + 光子再循环</span></td>
           </tr>
           <tr>
             <td class="cap">缺陷物理</td>
             <td><span class="pill yes">覆盖广泛</span><span class="note">多价缺陷、两性缺陷、高斯与带尾分布、IPV 光激发、亚稳组态跃迁</span></td>
-            <td><span class="pill part">单能级 + 分布</span><span class="note">体内 SRH 复合，近界面处的陷阱密度可取指数或高斯分布；界面缺陷可指定陷阱深度 E<sub>t</sub></span></td>
+            <td><span class="pill part">单能级 + 分布</span><span class="note">体内 SRH 复合，近界面陷阱密度可取指数或高斯分布；界面缺陷可指定陷阱深度 E<sub>t</sub></span></td>
           </tr>
           <tr>
             <td class="cap">隧穿</td>
             <td><span class="pill yes">四条通道</span><span class="note">带间、带内、到界面缺陷、到接触电极（仅直流）</span></td>
-            <td><span class="pill part">一条通道</span><span class="note">在受 TE 限幅的界面上加一项静态热场发射增强</span></td>
+            <td><span class="pill part">一条通道</span><span class="note">在受 TE 限幅的界面上引入静态热场发射增强项</span></td>
           </tr>
           <tr>
             <td class="cap">参数渐变</td>
-            <td><span class="pill yes">几乎全参数</span><span class="note">连 α(λ,y) 都能渐变</span></td>
-            <td><span class="pill part">能带 + 派生量</span><span class="note">由同一套材料参数驱动的 A/B 混合律；光学 n、k 不参与渐变，文档里写明了</span></td>
+            <td><span class="pill yes">几乎全参数</span><span class="note">包括 α(λ,y)</span></td>
+            <td><span class="pill part">能带 + 派生量</span><span class="note">沿用材料驱动的 A/B 混合律；光学 n、k 不参与渐变，此限制已在文档中注明</span></td>
           </tr>
           <tr>
             <td class="cap">空间维度</td>
             <td><span class="pill no">1D，≤ 7 层</span></td>
-            <td><span class="pill yes">1D + 2D</span><span class="note">张量积网格加稀疏泊松求解；横向晶界可以逐晶粒各给一套载流子寿命</span></td>
+            <td><span class="pill yes">1D + 2D</span><span class="note">张量积网格，稀疏泊松求解；横向晶界可逐晶粒指定载流子寿命</span></td>
           </tr>
           <tr>
             <td class="cap">单片叠层</td>
             <td><span class="pill no">仅单结</span></td>
-            <td><span class="pill yes">两端子</span><span class="note">共用一次 TMM，两个子电池分别扫描，最后做串联电流匹配</span></td>
+            <td><span class="pill yes">两端子</span><span class="note">共用一次 TMM，子电池独立扫描，最后按串联电流匹配</span></td>
           </tr>
           <tr>
             <td class="cap">随时间衰减</td>
             <td><span class="pill no">—</span></td>
-            <td><span class="pill yes">长时程驱动</span><span class="note">每个探测时刻取一条冻结离子的快照 J-V</span></td>
+            <td><span class="pill yes">长时程驱动</span><span class="note">每个探测时刻给出一条冻结离子的快照 J-V</span></td>
           </tr>
           <tr>
             <td class="cap">自动化接口</td>
-            <td><span class="pill yes">脚本 + 批量</span><span class="note">Windows 图形界面程序，科研免费，不开源</span></td>
+            <td><span class="pill yes">脚本 + 批量</span><span class="note">Windows 图形界面程序，科研用途免费，不开源</span></td>
             <td><span class="pill yes">库 + HTTP + 图形界面</span><span class="note">Python 包，FastAPI/SSE 后端，浏览器工作台，YAML 配置，pytest 门禁</span></td>
           </tr>
         </tbody>
@@ -535,9 +535,9 @@
 
   <!-- DYNAMICS -->
   <section class="s" id="dynamics">
-    <div class="sec-head"><span class="axis">维度 · 后果</span><h2>稳态引擎给不出的那个测量</h2></div>
+    <div class="sec-head"><span class="axis">维度 · 后果</span><h2>稳态引擎无法给出的那个测量</h2></div>
     <div class="prose">
-      <p>迟滞不是要消掉的数值伪影，它本身就是可观测量，离子的时间常数写在里面。稳态求解器只给一条准静态曲线，也就是扫描速率趋于零时的极限。拖动下面的扫描速率滑块，看正扫和反扫两族曲线怎么向它靠拢。</p>
+      <p>迟滞不是需要消除的数值伪影，它承载着离子的时间常数，是可观测量。稳态求解器只返回一条准静态曲线，即扫描速率趋于零时的极限。拖动下方的速率滑块，正反两族曲线会向该极限收拢。</p>
     </div>
 
     <figure class="fig" id="figHyst">
@@ -557,84 +557,84 @@
       <div class="legend">
         <span><span class="sw" style="background:var(--cy)"></span>反向扫描（V<sub>max</sub> → 0）</span>
         <span><span class="sw" style="background:#B98CFF"></span>正向扫描（0 → V<sub>max</sub>）</span>
-        <span><span class="sw" style="background:var(--am)"></span>准静态曲线：稳态求解器给出的那条</span>
+        <span><span class="sw" style="background:var(--am)"></span>准静态曲线：稳态求解器给出的结果</span>
       </div>
-      <figcaption><b>这是示意用的简化模型</b>，不是求解器的输出：用单状态离子弛豫 dθ/dt = (θ<sub>ss</sub>(V) − θ)/τ<sub>ion</sub> 调制载流子抽取，再沿各自的扫描方向积分。它抓住的是几条结构性事实：扫得足够慢时回线闭合，正反两支都落回准静态曲线；当 r·τ<sub>ion</sub> 与偏压范围可比时回线张开；离子一旦被冻结，回线又饱和，每个方向各自保持极化后的状态。SolarLab 里，同样的行为直接来自耦合的离子漂移-扩散方程，模型里没有任何一个专门的迟滞参数。</figcaption>
+      <figcaption><b>示意性简化模型</b>，并非求解器输出：以单状态离子弛豫 dθ/dt = (θ<sub>ss</sub>(V) − θ)/τ<sub>ion</sub> 调制载流子抽取，沿正反两个方向分别积分。它复现了三条结构性事实：扫描足够慢时回线闭合，两支曲线落回准静态曲线；r·τ<sub>ion</sub> 接近偏压范围时回线张开；离子冻结之后回线饱和，每个方向保持各自极化后的状态。SolarLab 中，同样的行为来自耦合的离子漂移扩散方程，模型中不含任何迟滞参数。</figcaption>
     </figure>
   </section>
 
-<!-- NEW -->
-  <section class="s" id="new">
+  <!-- NEW -->
+<section class="s" id="new">
     <div class="sec-head"><span class="axis">维度 · 贡献</span><h2>SolarLab 真正新的部分</h2></div>
     <div class="prose">
-      <p>每一条都写得足够具体，可以逐条回源码树里核对。</p>
+      <p>以下六条的陈述范围有意收窄，每一条都可在源码树中核对。</p>
     </div>
     <div class="cards">
       <div class="card">
-        <h4><span class="n">01</span>离子与载流子的全时域耦合</h4>
-        <p>离子和载流子共用同一个泊松场，都当作被输运的物种一起解，用 L-稳定的隐式格式往前积分。<b>迟滞、TPV、性能衰减、大信号阻抗都来自同一套方程</b>，不必一个现象配一个模型。</p>
+        <h4><span class="n">01</span>离子与载流子的时域耦合</h4>
+        <p>离子作为输运物种与载流子共处同一泊松场，时间积分采用 L-稳定的隐式格式。<b>迟滞、TPV、性能衰减与大信号阻抗出自同一套方程</b>，无需为每种现象单独建模。</p>
       </div>
       <div class="card">
-        <h4><span class="n">02</span>光学是算出来的，不是外部导入的</h4>
-        <p>相干传输矩阵法直接跑在同一套带输运参数的叠层上，光子再循环与自洽再吸收把回路闭上。薄膜电池本身<b>就是</b>一个光学腔，这一点会直接体现在 G(x) 上，不用另外补。</p>
+        <h4><span class="n">02</span>光学在模型内计算，不从外部导入</h4>
+        <p>相干传输矩阵法作用于承载输运参数的同一套叠层，光子再循环与自洽再吸收把光学回路闭合。薄膜电池本身<b>就是</b>一个光学腔，腔效应自动出现在 G(x) 中。</p>
       </div>
       <div class="card">
         <h4><span class="n">03</span>横向维度</h4>
-        <p>二维求解器由稀疏泊松求解加二维 Scharfetter–Gummel 格式搭成。横向均匀的极限下，它与一维逐位一致，先过这一关，再去做一维根本写不出来的事：<b>给晶界单独指定载流子寿命，算出 V<sub>oc</sub> 随晶粒尺寸怎么走</b>。</p>
+        <p>二维求解器采用稀疏泊松求解与二维 Scharfetter–Gummel 格式。横向均匀极限下已验证与一维结果逐位一致，随后用于一维无法表达的结构：<b>为晶界单独指定载流子寿命，并给出 V<sub>oc</sub> 随晶粒尺寸的变化</b>。</p>
       </div>
       <div class="card">
         <h4><span class="n">04</span>单片叠层电池</h4>
-        <p>一次传输矩阵计算走完顶电池、复合结和底电池，把光生速率分布 G(x) 分给两节子电池；两节各扫各的，最后在同一套电流网格上做电流匹配。复合结那层按寄生吸收算进去，不是直接扔掉。</p>
+        <p>一次传输矩阵计算覆盖顶电池、复合结与底电池，把光生速率分布分配给两节子电池。两节各自独立扫描，再在同一电流网格上完成电流匹配。复合结层计为寄生吸收，不作忽略。</p>
       </div>
       <div class="card">
         <h4><span class="n">05</span>两个驱动，一套物理</h4>
-        <p>稳态牛顿求解器和瞬态积分器共用<b>同一份装配好的右端项</b>。同一个量，可以按 SCAPS 的口径定义（冻结离子的稳态），也可以按实验的口径定义（有限扫描速率），不用养两套迟早走偏的物理。</p>
+        <p>稳态 Newton 求解器与瞬态积分器共用<b>同一份装配好的右端项</b>。同一个量可以按 SCAPS 的定义取无离子稳态，也可以按实验的定义取有限扫描速率下的值，不必维护两套逐渐分歧的物理模型。</p>
       </div>
       <div class="card">
-        <h4><span class="n">06</span>把可复现性做成基础设施</h4>
-        <p>器件叠层由 YAML 构建成不可变数据类（frozen dataclass）；每项物理升级都挂在一个开关后面，默认路径逐位一致；回归门禁把 V<sub>oc</sub>、J<sub>sc</sub>、FF 钉在给定区间里；还有一条自动对标回路，拿参考数据给模型打分，顺手记下已被否掉的假设，同样的路不走第二遍。</p>
+        <h4><span class="n">06</span>可复现性作为基础设施</h4>
+        <p>器件叠层从 YAML 构建为不可变数据类（frozen dataclass）；每项物理升级都置于一个开关之后，默认路径逐位一致；回归门禁把 V<sub>oc</sub>、J<sub>sc</sub>、FF 限定在给定区间；自动对标回路以参考数据为基准对模型评分，并记录已证伪的假设，避免重复尝试。</p>
       </div>
     </div>
   </section>
 
   <!-- HONEST -->
   <section class="s" id="honest">
-    <div class="sec-head"><span class="axis">维度 · 校准</span><h2>SCAPS 强在哪，对标又对到什么程度</h2></div>
+    <div class="sec-head"><span class="axis">维度 · 校准</span><h2>SCAPS 更强的方面，以及对标达到的程度</h2></div>
     <div class="prose">
-      <p>只夸一边的对比，答辩场上站不住。有几件事 SCAPS 至今做得更好；SolarLab 和它能对上到什么程度，这里也一并写清楚。</p>
+      <p>只呈现单侧优势的对比，在学位论文答辩中并不可用。SCAPS 有几处仍然更强，SolarLab 与它一致的程度也有已记录的边界。</p>
     </div>
 
     <div class="cards">
       <div class="card warm">
         <h4><span class="n">▸</span>缺陷物理</h4>
-        <p>多价缺陷与两性缺陷，高斯分布与带尾分布，缺陷的光激发（IPV），还有单独迭代占据率的亚稳组态。这一层深度，SolarLab 一点没有。</p>
+        <p>多价缺陷与两性缺陷，高斯分布与带尾分布，缺陷的光激发（IPV），以及占据率单独迭代的亚稳组态。SolarLab 的缺陷物理未及这一深度。</p>
       </div>
       <div class="card warm">
         <h4><span class="n">▸</span>自适应网格</h4>
-        <p>每次迭代之间按 exp(qψ/kT) 的比值重划网格。陡峭的带隙渐变、深能级缺陷占据，SCAPS 扛得住，靠的就是这一手；固定网格碰上同样的题，只能人工加减节点。</p>
+        <p>SCAPS 在迭代之间按 exp(qψ/kT) 的比值重划网格，因此能处理陡峭的带隙渐变与深能级缺陷占据。固定网格在同类问题上依赖人工指定节点数。</p>
       </div>
       <div class="card warm">
         <h4><span class="n">▸</span>交流分析</h4>
-        <p>精确的小信号线性化，比把积分出来的波形拿去解调更快也更干净。做 C-V 和 C-f，本来就该用它。</p>
+        <p>精确的小信号线性化比解调积分波形更快，数值上也更清晰。C–V 与 C–f 分析正适合这一方法。</p>
       </div>
       <div class="card warm">
         <h4><span class="n">▸</span>成熟度</h4>
-        <p>二十年的使用积累，大量已发表参数构成的生态，曲线拟合，批处理与记录流程，外加一套脚本语言。整个领域读结果，用的就是这把尺子。</p>
+        <p>二十年的使用积累，大量已发表参数构成的生态，曲线拟合、批处理与记录流程，以及一套脚本语言。同行阅读结果时默认以它为参照。</p>
       </div>
     </div>
 
     <div class="prose" style="margin-top:30px">
-      <p>拿它当参照，在镜像出来的对标器件上：</p>
+      <p>以它为参照，在镜像的对标器件上：</p>
     </div>
     <div class="stats">
-      <div class="stat"><div class="k">11 / 11</div><div class="l">项参数扫描的趋势与正负号全部一致</div></div>
-      <div class="stat"><div class="k">1.168 V</div><div class="l">基准 V<sub>oc</sub>，靠物理对上，不是拟合来的</div></div>
-      <div class="stat"><div class="k">137 mV</div><div class="l">历史差距中，已追溯到一个漏掉的有效态密度项</div></div>
-      <div class="stat"><div class="k">≈26.7%</div><div class="l">对标器件的 PCE；SCAPS 给的是 26.69%</div></div>
+      <div class="stat"><div class="k">11 / 11</div><div class="l">项参数扫描方向复现，符号正确</div></div>
+      <div class="stat"><div class="k">1.168 V</div><div class="l">基准 V<sub>oc</sub>，由物理给出，未经拟合</div></div>
+      <div class="stat"><div class="k">137 mV</div><div class="l">历史差距中已归因于有效态密度项缺失的部分</div></div>
+      <div class="stat"><div class="k">≈ 26.7%</div><div class="l">对标器件的 PCE，SCAPS 为 26.69%</div></div>
     </div>
     <div class="delta" style="margin-top:20px">
       <span class="tag">未决</span>
-      <span class="body">扫描<b>幅度</b>还是一条记录在案的结构性边界：接触边界条件随掺杂来回摆，体内俄歇又压出一个 V<sub>oc</sub> 下限，这类差距不是靠调参去追的目标。深导带偏移（ΔE<sub>C</sub> ≤ −0.2 eV）对任何代数形式的牛顿法都是病态的，那一段因此改走瞬态。两条都当作引擎边界，连同证据一起记下来；对标结论本来就该这么写。</span>
+      <span class="body">扫描<b>幅度</b>仍是记录在案的结构性边界：来源是随掺杂变化的接触边界条件，以及体内俄歇复合给出的 V<sub>oc</sub> 下限，不作为调参目标。深导带偏移（ΔE<sub>C</sub> ≤ −0.2 eV）对任何代数形式的 Newton 法都属病态，该区间改由瞬态求解。两者均已列为引擎边界，并附相应证据；对标结论本应以这种形式给出。</span>
     </div>
   </section>
 
@@ -642,9 +642,9 @@
 
 <footer>
   <div class="wrap">
-    <p><b>资料来源。</b>琥珀色一侧：<i>SCAPS 手册</i>（SCAPS manual）3.3.03 版，2016 年 2 月（M. Burgelman 等，根特大学），§3.3 接触、§3.8 界面、§3.9 隧穿、§4.2 光照、§5.1 计算流程、§5.3 数值参数，以及其中引用的算法论文。青色一侧：SolarLab 源码树和配套的架构说明。文中引的那些默认值（f<sub>max</sub> = 1.60，更新量限幅 0.5 kT/q，0.001 kT 收敛判据，201 个测量点上限），都是 SCAPS 手册里写明的数字。</p>
-    <p><b>如实说明。</b>光学那张图取常数 n、k 现算传输矩阵，旁边并排放同一叠层的比尔-朗伯分布。迟滞那张图是简化的单状态示意，图上已经标了，不是求解器的输出。能力对照表里每写一条，背后都能指到一个具体模块，或手册的某一节。</p>
-    <p>本页与 SolarLab 求解器讲解页 <b>“求解器算的是什么”</b> 配套阅读。</p>
+    <p><b>资料来源。</b>琥珀色一侧：<i>SCAPS 手册</i> 3.3.03 版，2016 年 2 月，M. Burgelman 等，根特大学；引用范围为 §3.3 接触、§3.8 界面、§3.9 隧穿、§4.2 光照、§5.1 计算流程、§5.3 数值参数，以及其中引用的算法论文。青色一侧：SolarLab 源码树及其架构说明。文中引用的默认值（f<sub>max</sub> = 1.60、更新量限幅 0.5 kT/q、0.001 kT 收敛判据、201 点上限）都是 SCAPS 手册自身给出的值。</p>
+    <p><b>如实说明。</b>光学图是常数 n、k 下的实时传输矩阵计算，与同一叠层的比尔-朗伯分布并排显示。迟滞图是简化的单状态示意，图中已注明，不是求解器输出。能力对照表中的每一条，都对应一个具名模块或手册中的某一节。</p>
+    <p>本页与 SolarLab 求解器讲解页<b>“求解器算的是什么”</b>配套阅读。</p>
   </div>
 </footer>
 
@@ -735,7 +735,7 @@
       ctx.beginPath(); ctx.moveTo(mid, 26); ctx.lineTo(mid, h - 16); ctx.stroke(); ctx.setLineDash([]);
 
       ctx.font = "600 11px " + CSS("--sans"); ctx.textAlign = "left";
-      ctx.fillStyle = AM; ctx.fillText("SCAPS  ·  每个偏压单独求一次稳态", 18, 22);
+      ctx.fillStyle = AM; ctx.fillText("SCAPS  ·  每个偏压单独求解稳态", 18, 22);
       ctx.fillStyle = CY; ctx.fillText("SolarLab  ·  时间上的一条连续轨迹", mid + 18, 22);
 
       /* --- left: continuation ladder, restarted every bias --- */
@@ -766,7 +766,7 @@
       ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--sans");
       ctx.fillText("Gummel 外迭代 · Newton 内迭代 · 限幅 0.5 kT/q", lx, ly0 + 5 * dy + 4);
       ctx.fillStyle = "rgba(245,169,58,.75)";
-      ctx.fillText("状态不保留，下一个偏压重走一遍阶梯", lx, ly0 + 5 * dy + 22);
+      ctx.fillText("状态不保留，下一偏压重新起步", lx, ly0 + 5 * dy + 22);
 
       /* --- right: time trajectory --- */
       const rx0 = mid + 46, rx1 = w - 26, ry = h - 74;
@@ -807,7 +807,7 @@
 
       txt.innerHTML = phase < 4
         ? "SCAPS：正沿延拓阶梯推进 &nbsp;·&nbsp; <b>" + RUNGS[phase] + "</b>"
-        : "SCAPS：已在 V = " + V.toFixed(2) + " V 收敛 &nbsp;·&nbsp; SolarLab：状态继续向前传递";
+        : "SCAPS：已在 V = " + V.toFixed(2) + " V 收敛 &nbsp;·&nbsp; SolarLab：状态延续至下一点";
     };
 
     function loop(){
@@ -956,7 +956,7 @@
       plot(res.gB, AM, "rgba(245,169,58,.10)");
       plot(res.gT, CY, "rgba(53,219,255,.12)");
 
-      axes(ctx, x0, y0, pw, ph, "沿膜厚方向的位置 (nm) →", "G(x)  任意单位");
+      axes(ctx, x0, y0, pw, ph, "沿膜厚方向的位置（nm）→", "G(x) 任意单位");
       ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
       ctx.fillText("0", x0 - 4, y0 + 14);
       ctx.textAlign = "right"; ctx.fillText(totalNm + " nm", x0 + pw, y0 + 14); ctx.textAlign = "left";
@@ -1041,7 +1041,7 @@
       line(fw, VI, 2);
       line(rv, CY, 2);
 
-      axes(ctx, x0, y0, pw, ph, "外加偏压 V (V) →", "J (mA/cm²)");
+      axes(ctx, x0, y0, pw, ph, "外加偏压 V（V）→", "J (mA/cm²)");
       ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono"); ctx.textAlign = "right";
       for(let j = 5; j <= 25; j += 5) ctx.fillText(String(j), x0 - 7, Y(j) + 3);
       ctx.textAlign = "center";
@@ -1054,7 +1054,7 @@
 
       // annotation of the regime
       let msg;
-      if(rate * tau < 0.05) msg = "准稳态：离子跟得上偏压变化，回线闭合";
+      if(rate * tau < 0.05) msg = "准稳态：离子随偏压同步弛豫，回线闭合";
       else if(rate * tau > 6) msg = "离子冻结：两个方向各自保持极化后的状态";
       else msg = "r·τ 与偏压量程相当，回线在此最宽";
       ctx.fillStyle = "rgba(220,230,245,.7)"; ctx.font = "11px " + CSS("--sans");
