@@ -379,8 +379,67 @@ def _compute_current_ss(
 
     Convention: J > 0 when the device delivers power (J_sc > 0 at V=0).
     """
+    return _compute_current_ss_with_spread(x, y, stack, V_app, mat=mat)[0]
+
+
+def _compute_current_ss_with_spread(
+    x: np.ndarray,
+    y: np.ndarray,
+    stack: DeviceStack,
+    V_app: float,
+    mat: MaterialArrays | None = None,
+) -> tuple[float, float]:
+    """Return ``(J_median, dJ_spread)`` — the SS current and its certificate.
+
+    Charge conservation makes ``J(x)`` uniform at true steady state, so the
+    face-to-face disagreement is a direct measure of how far the state is
+    from that limit. Taking the median (see ``_compute_current_ss``) makes
+    the reported number robust to that disagreement, but robustness is not
+    convergence: without the spread alongside it, a median can look clean
+    while the underlying state still carries a continuity residual. This
+    helper returns both so callers can gate on the certificate rather than
+    trusting the summary (2026-07 review finding F-13).
+
+    ``dJ_spread`` is ``max - min`` over the **interior** faces only. The two
+    contact-adjacent faces are excluded on purpose: there the displacement
+    term is part of the physical external-circuit current and, on ionic-rich
+    presets, legitimately swings by ~1e3 A/m2 while the interior faces agree
+    to many digits — including them would report a physical boundary
+    transient as a conservation error. Grids with fewer than three faces
+    fall back to the full set.
+
+    IMPORTANT — report it, do NOT gate on it. The review that requested
+    this certificate also proposed refusing to extract V_oc / J_sc / FF
+    until the spread falls below a fixed tolerance. Measured on the TMM
+    presets at V=0, that gate is not defensible, because the spread is
+    neither monotone in settling time nor stable under mesh refinement
+    while the reported median is both:
+
+        preset            N/layer  t_settle   median J   interior spread
+        nip_MAPbI3_tmm      20      1e-3       213.02      7.99e+01
+        nip_MAPbI3_tmm      20      1e-1       213.02      1.47e+01
+        ionmonger_bm_tmm    20      1e-3       212.99      1.63e+02
+        ionmonger_bm_tmm    20      1e-1       213.00      7.06e+03   (!)
+        ionmonger_bm_tmm    12      1e-1       218.65      8.80e+01
+
+    The median moves by <0.02 % across settling times while the spread
+    grows 43x with a *longer* settle and swings ~80x with the mesh, so a
+    threshold would fire on converged runs and its natural remedy
+    ("settle longer") is backwards. Normalising by the largest current
+    component does not rescue it either (0.33 at N=12 vs ~26 at N=20).
+    The cause is the documented terminal-current flux cancellation: J is
+    a sum of large, nearly-cancelling electron, hole, ionic, and
+    displacement contributions, so a small relative error in the parts
+    becomes a large absolute error in their sum — which is exactly the
+    condition under which the median is the right summary and the raw
+    spread is a poor convergence proxy. Treat ``dJ_spread`` as a
+    magnitude diagnostic to report, and use mesh convergence of the
+    extracted metrics for the convergence question it cannot answer.
+    """
     J_faces = _total_current_faces(x, y, stack, V_app, mat=mat)
-    return float(np.median(J_faces))
+    J = float(np.median(J_faces))
+    interior = J_faces[1:-1] if J_faces.size > 2 else J_faces
+    return J, float(np.max(interior) - np.min(interior))
 
 
 # Upper bound on RHS evaluations per run_transient call inside a JV sweep.

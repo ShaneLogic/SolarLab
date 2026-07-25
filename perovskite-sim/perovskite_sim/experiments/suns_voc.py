@@ -65,6 +65,7 @@ from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.experiments.jv_sweep import (
     _compute_current,
     _compute_current_ss,
+    _compute_current_ss_with_spread,
     _integrate_step,
     _grid_node_count,
 )
@@ -99,6 +100,16 @@ class SunsVocResult:
         X < 1 sit in the power quadrant (V < V_oc_ref, J > 0); the
         X = 1 point anchors at (V_oc_ref, 0); points with X > 1 lie
         above V_oc_ref with J < 0 (injection direction).
+    J_spread_max : float
+        Diagnostic [A/m²]: the largest interior face-to-face current
+        spread seen across the dark baseline and every suns level (see
+        ``jv_sweep._compute_current_ss_with_spread``). Charge conservation
+        makes ``J(x)`` uniform at true steady state, so this reports how
+        much face-to-face disagreement the reported medians are
+        summarising over. Report it; do **not** threshold on it — it is
+        neither monotone in settling time nor stable under mesh
+        refinement, for the reasons measured in
+        ``_compute_current_ss_with_spread``.
     pseudo_FF : float
         Pseudo fill factor = max(V·J) on the pseudo-JV power quadrant
         (clipped to V ∈ [0, V_oc_ref], J ∈ [0, J_sc_ref], with (0,
@@ -112,6 +123,7 @@ class SunsVocResult:
     J_pseudo_V: np.ndarray
     J_pseudo_J: np.ndarray
     pseudo_FF: float
+    J_spread_max: float = 0.0
 
 
 def _materialise_G_optical(
@@ -262,7 +274,9 @@ def run_suns_voc(
         x, stack, mat_dark, V_app=0.0,
         t_settle=t_settle, rtol=rtol, atol=atol,
     )
-    J_dark = float(_compute_current_ss(x, y_dark, stack, 0.0, mat=mat_dark))
+    J_dark, spread_max = _compute_current_ss_with_spread(
+        x, y_dark, stack, 0.0, mat=mat_dark
+    )
 
     for k, suns in enumerate(suns_sorted):
         mat_k = dataclasses.replace(mat_baseline, G_optical=G_unit * suns)
@@ -272,7 +286,10 @@ def run_suns_voc(
             x, stack, mat_k, V_app=0.0,
             t_settle=t_settle, rtol=rtol, atol=atol,
         )
-        J_total = float(_compute_current_ss(x, y_ss, stack, 0.0, mat=mat_k))
+        J_total, spread_k = _compute_current_ss_with_spread(
+            x, y_ss, stack, 0.0, mat=mat_k
+        )
+        spread_max = max(spread_max, spread_k)
         # Photo-only current = total at V=0 with light minus dark at V=0.
         J_sc_arr[k] = J_total - J_dark
 
@@ -316,4 +333,5 @@ def run_suns_voc(
         J_pseudo_V=V_pseudo,
         J_pseudo_J=J_pseudo,
         pseudo_FF=pff,
+        J_spread_max=float(spread_max),
     )

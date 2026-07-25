@@ -60,7 +60,11 @@ from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.constants import Q
 from perovskite_sim.data import load_am15g, load_nk
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
-from perovskite_sim.experiments.jv_sweep import _compute_current, _compute_current_ss
+from perovskite_sim.experiments.jv_sweep import (
+    _compute_current,
+    _compute_current_ss,
+    _compute_current_ss_with_spread,
+)
 from perovskite_sim.experiments.suns_voc import _solve_illuminated_ss_with_mat
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.optics import TMMLayer, tmm_absorption_profile
@@ -92,6 +96,16 @@ class EQEResult:
         J_sc predicted by integrating EQE against AM1.5G
         [A/m²]. Should match a full-spectrum TMM simulation at V=0 to
         within ~10-20 % (wavelength-grid discretisation error).
+    J_spread_max : float
+        Diagnostic [A/m²]: the largest interior face-to-face current
+        spread observed across the dark baseline and every probe
+        wavelength (see ``jv_sweep._compute_current_ss_with_spread``).
+        Charge conservation makes ``J(x)`` uniform at true steady state,
+        so this reports how much face-to-face disagreement the reported
+        medians are summarising over. Report it; do **not** threshold on
+        it — it is neither monotone in settling time nor stable under
+        mesh refinement, for the reasons measured in
+        ``_compute_current_ss_with_spread``.
     Phi_incident : float
         Monochromatic probe flux [m⁻² s⁻¹] used for each wavelength.
         EQE is independent of this choice to first order, but J_sc
@@ -102,6 +116,7 @@ class EQEResult:
     J_sc_per_lambda: np.ndarray
     J_sc_integrated: float
     Phi_incident: float
+    J_spread_max: float = 0.0
 
 
 def _build_tmm_layers_single_wavelength(
@@ -286,7 +301,9 @@ def compute_eqe(
         x, stack, mat_dark, V_app=0.0,
         t_settle=t_settle, rtol=rtol, atol=atol,
     )
-    J_dark = float(_compute_current_ss(x, y_dark, stack, 0.0, mat=mat_dark))
+    J_dark, spread_max = _compute_current_ss_with_spread(
+        x, y_dark, stack, 0.0, mat=mat_dark
+    )
 
     eqe = np.zeros_like(wavelengths_nm)
     J_sc_lambda = np.zeros_like(wavelengths_nm)
@@ -298,7 +315,10 @@ def compute_eqe(
             x, stack, mat_k, V_app=0.0,
             t_settle=t_settle, rtol=rtol, atol=atol,
         )
-        J_total = float(_compute_current_ss(x, y_ss, stack, 0.0, mat=mat_k))
+        J_total, spread_k = _compute_current_ss_with_spread(
+            x, y_ss, stack, 0.0, mat=mat_k
+        )
+        spread_max = max(spread_max, spread_k)
         # Photo-only current = total at V=0 with λ minus dark at V=0.
         J_k = J_total - J_dark
         J_sc_lambda[k] = J_k
@@ -353,4 +373,5 @@ def compute_eqe(
         J_sc_per_lambda=J_sc_lambda,
         J_sc_integrated=J_sc_integrated,
         Phi_incident=float(Phi_incident),
+        J_spread_max=float(spread_max),
     )

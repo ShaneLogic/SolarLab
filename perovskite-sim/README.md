@@ -511,19 +511,30 @@ from perovskite_sim.experiments.eqe import compute_eqe
 
 wavelengths = np.linspace(350.0, 850.0, 20)
 r = compute_eqe(stack, wavelengths_nm=wavelengths)
-# r.EQE                         — per-λ external quantum efficiency
+# r.EQE                         — per-λ external quantum efficiency (signed)
 # r.J_sc_per_lambda             — J_sc at each probe wavelength [A/m²]
 # r.J_sc_integrated             — q · ∫ EQE(λ) · Φ_AM15G(λ) dλ [A/m²]
+# r.J_spread_max                — interior face-to-face current spread [A/m²]
 ```
 
 At each wavelength, the wrapper builds a single-wavelength TMM
 generation profile (absorption $A(x; \lambda)$ scaled by
 `Phi_incident`), solves the drift-diffusion problem at $V = 0$ under
-that monochromatic source, and reads $\text{EQE}(\lambda) = |J_{\text{sc}}(\lambda)| / (q \cdot \Phi_{\text{inc}})$.
+that monochromatic source, and reads
+$\text{EQE}(\lambda) = \Delta J(\lambda) / (q \cdot \Phi_{\text{inc}})$
+from the **signed** incremental current against the dark baseline. The
+sign is kept rather than taking a magnitude, so a wrong-way photocurrent
+(contact polarity, sign convention, or an unconverged dark baseline)
+surfaces as a negative EQE plus a `RuntimeWarning` instead of being
+disguised as a physical curve.
 A `ValueError` is raised if no layer carries tabulated `optical_material`
 data — Beer-Lambert-only stacks cannot produce a wavelength-resolved
 EQE. The integrated $J_{\text{sc}}$ cross-checks against a full-spectrum
 TMM run to within ~25 % on a 15-point wavelength grid.
+`J_spread_max` reports how far the settled states were from the uniform
+$J(x)$ that charge conservation implies at steady state; it is a
+magnitude diagnostic, not a convergence threshold (see
+`perovskite-sim/CLAUDE.md`).
 
 *Source:* `perovskite_sim/experiments/eqe.py`
 

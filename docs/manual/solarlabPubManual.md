@@ -587,12 +587,37 @@ The discretization is finite-volume with a harmonic-mean face permittivity:
 {\varepsilon_i+\varepsilon_{i+1}} .
 \end{equation}
 
-The harmonic mean is the exact series-capacitor composition of two dielectric
-half-cells and therefore preserves the continuity of the normal dielectric
-displacement $D = \varepsilon_0\varepsilon_r E$ across an abrupt material
-interface. Arithmetic (nodal) interpolation would instead equate the electric
-*fields* on both sides of the interface, concentrating the voltage drop in the
-wrong layer.
+When the material interface falls at the midpoint between the two nodes,
+the harmonic mean is the exact series composition of the two dielectric
+half-cells: it is the face permittivity for which the discrete flux
+reproduces a continuous normal displacement
+$D = \varepsilon_0\varepsilon_r E$ across the discontinuity, with the
+field jumping between the layers as it physically must. An arithmetic
+(nodal) mean is the *parallel* composition instead, which is the correct
+average for a face-tangential field, so using it here misallocates the
+potential drop between the two layers. Neither choice literally imposes a
+boundary condition on $E$; the difference is which equivalent
+series-versus-parallel dielectric response the face flux represents.
+
+For a general non-symmetric geometry, where the interface does not sit at
+the midpoint, the correct series composition is the *distance-weighted*
+harmonic mean
+
+$$
+\varepsilon_f=
+\frac{\Delta x_L+\Delta x_R}
+{\Delta x_L/\varepsilon_L+\Delta x_R/\varepsilon_R},
+$$
+
+which reduces to Eq. \ref{eq:harmonic-eps} for equal half-widths. SolarLab
+places every material interface *on* a grid node and assigns that node the
+permittivity of the layer to its right, so each face lies entirely within
+one material and Eq. \ref{eq:harmonic-eps} smears the discontinuity over
+one half-cell rather than weighting two dissimilar half-cells. This is the
+usual node-centred finite-volume treatment and its error is first order in
+the local cell width; it is *not* a distance-weighting bug, but it does
+mean the interface is resolved to within half a cell, so interface-sensitive
+quantities should be checked for mesh convergence.
 
 Assumptions and limits:
 
@@ -728,9 +753,17 @@ Assumptions and limits:
 
 The drift-diffusion picture assumes that the band edges vary smoothly on the
 scale of a grid cell. At an abrupt heterojunction the band offset is instead
-resolved within a *single* cell, and the exponential-fitting flux
-discretization (Chapter \ref{numerical-method}) then systematically
-overestimates the current across the discontinuity. SolarLab therefore bounds
+resolved within a *single* cell. With the band offsets and
+density-of-states corrections carried in the exponentially fitted
+potentials, the Scharfetter-Gummel flux (Chapter \ref{numerical-method})
+is then the ideal-interface limit: it assumes local equilibrium across the
+step and unlimited interface transmission, i.e. no additional kinetic
+resistance at the junction. That is an upper bound on the transport a real
+interface supports whenever interface scattering, a finite emission
+velocity, tunnelling, or interface-state supply actually limit it — it is
+not a systematic discretization error for every band step, and the size of
+the discrepancy is a property of the interface, not of the scheme.
+SolarLab therefore bounds
 the drift-diffusion face flux by an interface-limited thermionic-emission
 (TE) flux of Richardson-Dushman form at every face where the conduction- or
 valence-band offset exceeds 50 meV:
@@ -800,8 +833,20 @@ differentiability; see Chapter \ref{numerical-method}.)
 
 Pure thermionic emission transports carriers *over* the barrier only. An
 optional intra-band tunnelling channel augments it with transport *through*
-the top of a band spike, following the Padovani-Stratton
-thermionic-field-emission theory. The characteristic tunnelling energy is
+the top of a band spike, as a **doping-derived static tunnelling
+enhancement** scaled by the Padovani-Stratton characteristic energy
+$E_{00}$. It is not an implementation of the Padovani-Stratton
+thermionic-field-emission current: that theory evaluates a
+current-voltage relation from an energy integral over a specific barrier
+shape, whereas the enhancement below is a single bias-independent factor
+derived from the doping. In particular it does not solve for the
+bias-dependent depletion width, the local field, or the barrier profile,
+and it is therefore not equation-level equivalent to the WKB tunnelling
+model in SCAPS (which computes a transmission probability with a
+numerical floor on the barrier height and enters the DC solution only).
+Cross-simulator comparisons should either disable tunnelling on both
+sides or benchmark the two channels separately against a common barrier
+and effective mass. The characteristic tunnelling energy is
 
 \begin{equation}
 \label{eq:tfe-e00}
@@ -899,13 +944,30 @@ s(P)
 \end{equation}
 
 As the local occupancy $P$ approaches the finite site density
-$P_\mathrm{lim}$, the effective chemical potential of the ion gas diverges
-and the restoring flux is sharply enhanced, which bounds interfacial ion
-accumulation at the physically available site density instead of allowing
-the unphysical unbounded pile-up of the ideal-solution model. (In the
-discretization, $P$ in Eq. \ref{eq:steric} is evaluated as the average of
-the two face-adjacent nodal densities; the $10^{-6}$ floor guards the
-division at full saturation.)
+$P_\mathrm{lim}$, the prefactor diverges and the flux is sharply enhanced,
+which accelerates the relaxation of an interfacial pile-up relative to the
+ideal-solution model. (In the discretization, $P$ in Eq. \ref{eq:steric}
+is evaluated as the average of the two face-adjacent nodal densities; the
+$10^{-6}$ floor guards the division at full saturation.)
+
+This default form does **not** impose $P \le P_\mathrm{lim}$, and should
+not be read as a finite-site-occupancy constraint. Because $s(P)>0$
+multiplies the whole flux, the zero-flux condition is unchanged,
+
+$$
+\frac{\partial P}{\partial x}
++\frac{P}{V_T}\frac{\partial\phi}{\partial x}=0,
+$$
+
+i.e. the equilibrium is still the ideal-solution Boltzmann distribution,
+which itself admits $P>P_\mathrm{lim}$; a common positive factor rescales
+the kinetics, not the equilibrium occupancy. The $10^{-6}$ floor makes the
+coefficient large, but largeness is not a bound, and a finite time step
+can still cross the limit. A true finite-occupancy model requires the
+lattice-gas chemical potential
+$\mu/k_BT = \ln[\theta/(1-\theta)] + q\phi/k_BT$ with
+$\theta = P/P_\mathrm{lim}$, which is what the opt-in form below
+implements.
 
 By default SolarLab applies $s(P)$ to the *entire* flux of
 Eq. \ref{eq:ion-flux}, scaling diffusion and drift together; the
@@ -931,8 +993,8 @@ setting it false gives distinct sublattices, each species crowding only
 against its own $P_\mathrm{lim}$ — a physical assumption that should be
 stated explicitly for the device in question. The negative-species equation
 carries the same diffusion-only form symmetrically. The
-default whole-flux form is an empirical crowding regularization with the
-correct saturation limit (Chapter 17).
+default whole-flux form is an empirical crowding regularization, not a
+finite-occupancy constraint (Chapter 17).
 
 Because ionic diffusivities ($D_I \sim 10^{-16}\,m^2 s^{-1}$) are many
 orders of magnitude below carrier diffusivities, ionic redistribution
@@ -988,9 +1050,17 @@ p_1 = N_V\, e^{-(E_t-E_V)/k_BT},
 n_1 p_1 = n_i^2 .
 $$
 
-Midgap traps ($n_1, p_1 \ll n, p$) maximize the rate; the asymmetric
-lifetimes $\tau_n \neq \tau_p$ model carrier-selective capture. In SolarLab
-the SRH parameters are *effective* quantities per layer unless trap-energy
+For approximately symmetric capture and at the injection levels typical of
+an operating cell, deep levels near midgap produce the strongest SRH
+recombination, because $n_1$ and $p_1$ are then smallest relative to $n$
+and $p$ and the denominator is minimized. The statement is conditional in
+both respects: the rate-maximizing level depends on $n$, $p$, $\tau_n$ and
+$\tau_p$, and shifts away from midgap for strongly asymmetric capture; and
+$n_1, p_1 \ll n, p$ is not guaranteed at midgap, since inside the
+depletion region or under low injection the carrier densities can fall to
+the order of $n_i$ themselves. The asymmetric lifetimes
+$\tau_n \neq \tau_p$ model carrier-selective capture. In SolarLab the SRH
+parameters are *effective* quantities per layer unless trap-energy
 provenance is supplied.
 
 ### Radiative Recombination And Photon Recycling
@@ -1365,11 +1435,17 @@ renormalized.
 
 ## Band-Gap Grading
 
-Compositionally graded absorbers (e.g. Ga-graded CIGS) are modelled with the
-SCAPS material-interpolation law of Burgelman and Marlein: a graded layer is
-a mixture of two endpoint materials A (front face) and B (back face) with a
-composition profile $y(x)$ that may be linear, parabolic, or an exponential
-notch. The graded gap includes an optional bowing term,
+Compositionally graded absorbers (e.g. Ga-graded CIGS) are modelled with a
+*simplified subset* of the SCAPS material-interpolation framework of
+Burgelman and Marlein: a graded layer is a mixture of two endpoint
+materials A (front face) and B (back face) with a composition profile
+$y(x)$ that may be linear, parabolic, or an exponential notch. SCAPS
+itself admits a wider family — uniform, linear, logarithmic, parabolic,
+power-law, effective-medium, tabulated and Beta laws, selectable
+*per material parameter*, with the effective densities of states and the
+absorption coefficient gradeable alongside $E_g$ and $\chi$. Only the
+common subset should be compared across the two tools. The graded gap
+includes an optional bowing term,
 
 \begin{equation}
 \label{eq:grading-eg}
@@ -1384,8 +1460,13 @@ n_i^2(x) = n_{i,\mathrm{front}}^2
 \exp\!\left[-\frac{E_g(x)-E_g^\mathrm{front}}{V_T}\right],
 $$
 
-so no per-node density-of-states data are required (the DOS prefactors
-cancel in the ratio), and the SRH references $n_1, p_1$ are graded so that
+which is the ratio form of $n_i^2 = N_CN_V e^{-E_g/k_BT}$ under the
+assumption that $N_C N_V$ is *constant across the graded layer* — SolarLab
+does not grade the effective densities of states, so within this model the
+prefactors cancel exactly and no per-node DOS data are required. The
+cancellation is a consequence of that modelling choice, not a general
+identity: it would not hold against a tool that grades $N_C$ and $N_V$
+with composition. The SRH references $n_1, p_1$ are graded so that
 $n_1 p_1 = n_i^2(x)$ holds node by node. Independent grading of $\chi$ and
 $E_g$ controls the conduction- and valence-band profiles separately, which
 is how back-surface fields are configured. The transform is applied once at
@@ -1481,7 +1562,15 @@ electron/hole/ion system reaches its light-soaked quasi-steady state.
 For J-V, impedance, and degradation, this light-soaked initial state matters
 because ion and carrier memory affect the measurement: the same voltage
 grid scanned from a different pre-conditioning state produces a different
-transient current — this is the hysteresis mechanism, not an artifact.
+transient current. Within this model that mobile-ion memory *is* the
+hysteresis mechanism, and the resulting loop is physical rather than a
+numerical artifact — but only once the time step, mesh, and convergence
+checks confirm it, since an unconverged transient produces a spurious loop
+of its own. It should not be read as a claim about experiment: measured
+J-V hysteresis in perovskite devices can also carry interface trapping,
+reversible polarization, slow contact processes, ion-electron coupling,
+measurement capacitance, and pre-conditioning differences, none of which
+this model separates.
 
 # Physics Tiers
 
@@ -1631,8 +1720,17 @@ B(\xi)=\frac{\xi}{e^{\xi}-1}.
 
 The scheme reduces to central differencing in the diffusion limit
 ($|\xi| \ll 1$) and to pure upwinding in the drift limit
-($|\xi| \gg 1$), remaining positivity-preserving and stable at arbitrarily
-large cell Peclet numbers (Scharfetter and Gummel 1969; Selberherr 1984).
+($|\xi| \gg 1$), remaining stable at arbitrarily large cell Peclet numbers
+(Scharfetter and Gummel 1969; Selberherr 1984). Its positivity property is
+a statement about the *spatial semi-discretization* — the face flux is
+monotone, so the semi-discrete operator does not manufacture negative
+densities — and does not carry over automatically to the fully discrete
+transient: the state vector $(n,p,P)$ is advanced by a general-purpose
+implicit integrator, which does not enforce non-negativity at each
+internal stage or accepted step, and SolarLab applies no clipping or
+projection to $n$ and $p$ during the transient. Positivity *is* enforced
+by construction in the direct steady-state driver, which solves in
+logarithmic unknowns (Chapter \ref{numerical-method}).
 The scheme rests on three implementation details:
 
 - the drift argument $\xi$ is built from the *band-effective* potentials
@@ -1785,9 +1883,18 @@ any algebraic Newton method and are handled by the transient engine only.
 Long-time experiments (degradation) use an operator-splitting step matched
 to the two-time-scale structure: the ion subsystem is advanced over a
 macroscopic interval with the carrier densities frozen (Poisson re-solved
-inside the ion RHS so the ions always see a self-consistent field), and the
-carriers are then re-equilibrated by a short full-system transient of order
-one carrier lifetime. Snapshot J-V measurements inside degradation freeze
+inside the ion RHS, so the ions always see a field consistent with the
+*current ion profile and the frozen carriers*), and the carriers are then
+re-equilibrated by a short full-system transient of order one carrier
+lifetime. Re-solving Poisson makes the potential consistent with the
+instantaneous charge density; it does not keep the electrons and holes
+quasi-stationary with respect to the evolving ionic field, so this is a
+first-order operator splitting rather than a fully self-consistent
+electron-ion advance. Its error grows with the macro-step and with the
+band-bending change the ions produce over that step, so a macro-step
+halving study against the fully coupled solution is the appropriate check
+before quoting long-time results — most importantly near open circuit and
+near flat band, where the ionic screening moves the bands the furthest. Snapshot J-V measurements inside degradation freeze
 the ion profile entirely, so each snapshot reports the instantaneous
 electronic response of the current ionic configuration.
 
@@ -1806,7 +1913,41 @@ is part of the physical external-circuit current. Steady-state probes
 (Suns-$V_\mathrm{oc}$, EQE) instead take the *median* across interior faces:
 charge conservation makes $J(x)$ uniform at steady state, so any face is
 formally correct, but residual ionic and displacement transients concentrate
-at the boundary faces and the median is robust to those outliers. Metrics
+at the boundary faces and the median is robust to those outliers.
+
+Because a median summarises the face-to-face disagreement rather than
+removing it, both steady-state probes also report how large that
+disagreement was,
+
+$$
+\Delta J_\mathrm{spread}=\max_x J(x)-\min_x J(x),
+$$
+
+evaluated over the interior faces only — the two contact-adjacent faces are
+excluded because their displacement term is physical external-circuit
+current and legitimately swings on ionic-rich stacks, so including them
+would report a real boundary transient as a conservation error. The value
+is returned as `J_spread_max` on both result objects.
+
+It is deliberately reported rather than enforced. Charge conservation does
+make $J(x)$ uniform at an exact steady state, which suggests using
+$\Delta J_\mathrm{spread}$ as an acceptance threshold for
+$V_\mathrm{oc}$, $J_\mathrm{sc}$ and FF — but measured on the TMM presets
+at $V=0$ that threshold is not defensible. The reported median moves by
+less than 0.02 % between a 1 ms and a 100 ms settle, while over the same
+change the spread on the IonMonger TMM preset *grows* by a factor of 43,
+and it swings by roughly 80x between 12 and 20 nodes per layer at fixed
+settling time. Normalising by the largest individual current component
+does not repair the behaviour. The cause is the terminal-current flux
+cancellation discussed above: $J$ is a sum of large, nearly-cancelling
+electron, hole, ionic and displacement contributions, so a small relative
+error in the parts appears as a large absolute error in their sum. That is
+precisely the regime in which the median is the appropriate summary and
+the raw spread is a poor convergence proxy — a fixed tolerance would
+reject converged runs, and its natural remedy of settling longer makes the
+number worse. Use $\Delta J_\mathrm{spread}$ as a magnitude diagnostic,
+and establish convergence by refining the mesh and confirming that the
+*extracted metrics* stop moving. Metrics
 extraction interpolates $J_\mathrm{sc}$ at $V = 0$ and $V_\mathrm{oc}$ at the
 first positive-to-negative zero crossing, computes FF and PCE from the
 maximum-power point over the operating quadrant, and reports an explicit
@@ -2140,11 +2281,21 @@ V_\mathrm{oc}(T)
 \approx
 \frac{E_A}{q}
 -
-\frac{kT}{q}
-\ln\left(\frac{J_{00}}{J_\mathrm{sc}}\right).
+\frac{A k T}{q}
+\ln\left(\frac{J_{00}}{J_\mathrm{sc}}\right),
 $$
 
-The intercept at $T=0$ is reported as $E_A$ in eV.
+which follows from the single-diode forms $J = J_0\exp(qV/Ak_BT)$ and
+$J_0 = J_{00}\exp(-E_A/Ak_BT)$ with ideality factor $A$.
+
+The intercept at $T=0$ is reported as $E_A$ in eV. Note that a
+*temperature-independent* $A$ enters the slope only and leaves that
+intercept unchanged, so the extracted activation energy is insensitive to
+the value of $A$ — it is $A(T)$, $J_\mathrm{sc}(T)$ and $E_g(T)$ varying
+across the fitted window that bias it. The linear extrapolation to 0 K is
+therefore an empirical activation energy for the fitted temperature range,
+not a zero-temperature physical quantity; report the range, the fit
+quality, and whether $J_\mathrm{sc}$ was allowed to vary alongside it.
 
 When comparing $V_\mathrm{oc}(T)$ against other simulators, the temperature models are generally not equivalent: SolarLab applies
 $E_g(T)$, $\mu(T)$, $B_\mathrm{rad}(T)$, $n_i(T)$, and Arrhenius ion
@@ -2615,7 +2766,7 @@ covers the intended regime.
 
 ## Known Formulation Limitations
 
-Four model-formulation limitations apply, each flagged at its point of use
+Seven model-formulation limitations apply, each flagged at its point of use
 in Chapter \ref{governing-equations}:
 
 - the *default* thermionic-emission bound is density-weighted and therefore
@@ -2642,7 +2793,24 @@ in Chapter \ref{governing-equations}:
   cost of the cross-carrier approximation; defect-free interfaces retain
   physical generation;
 - the photon-recycling redistribution is spatially uniform, with no
-  spatial or spectral reabsorption kernel.
+  spatial or spectral reabsorption kernel;
+- the Scharfetter-Gummel positivity property is a property of the *spatial*
+  semi-discretization. The transient advances $(n,p,P)$ with a
+  general-purpose implicit integrator and applies no clipping or
+  projection, so non-negativity is not guaranteed at every internal stage
+  or accepted step. The direct steady-state driver does enforce it, by
+  solving in logarithmic unknowns;
+- the slow-ion operator splitting freezes the carriers over the macro-step
+  and re-solves Poisson inside the ion RHS. That makes the field consistent
+  with the instantaneous charge density but does not hold the carriers
+  quasi-stationary against the evolving ionic field, so it is a
+  first-order splitting whose error grows with the macro-step and with the
+  ion-induced band bending;
+- the interface-plane thermal velocities and the density-of-states
+  prefactor of the per-side interface-defect trap levels are fixed at their
+  300 K values, so the default-off interface formulations that use them are
+  calibrated for room temperature and should not be combined with a
+  temperature sweep without supplying that dependence explicitly.
 
 Both optional forms are off by default: the physical thermionic-emission
 normalization changes bulk-node transport results that have no independent
