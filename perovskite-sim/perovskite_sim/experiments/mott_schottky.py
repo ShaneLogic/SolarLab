@@ -6,14 +6,16 @@ In the dark at reverse/zero bias a p-n junction is a parallel-plate
 capacitor whose "plate separation" is the depletion width. For a
 one-sided junction (N_heavy >> N_light) the capacitance per area is
 
-    C(V) = sqrt(q · ε_s · ε_0 · N_eff / (2 (V_bi − V)))
+    C(V) = sqrt(q · ε_s · ε_0 · N_eff / (2 (V_bi − V − kT/q)))
 
-where N_eff is the lighter-doped side's net ionised density. Plotting
-``1/C²`` against V gives a straight line with slope
-``−2 / (q·ε_s·ε_0·N_eff)`` and V-axis intercept at V_bi. Fitting that
-line is the standard way experimentalists extract both the built-in
-voltage and the doping density from a C-V measurement — the so-called
-Mott-Schottky plot.
+where N_eff is the lighter-doped side's net ionised density and the
+``kT/q`` term is the majority-carrier tail at the depletion edge (the
+space charge does not terminate abruptly). Plotting ``1/C²`` against V
+gives a straight line with slope ``−2 / (q·ε_s·ε_0·N_eff)`` and V-axis
+intercept at ``V_bi − kT/q``, so the reported built-in voltage adds
+``kT/q`` back (25.9 mV at 300 K). Fitting that line is the standard way
+experimentalists extract both the built-in voltage and the doping
+density from a C-V measurement — the so-called Mott-Schottky plot.
 
 This experiment is a thin wrapper over ``run_impedance``: at each DC
 bias a single AC excitation at ``frequency`` is driven and the
@@ -63,7 +65,7 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from perovskite_sim.constants import Q
+from perovskite_sim.constants import K_B, Q
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.experiments.impedance import run_impedance
 
@@ -88,12 +90,16 @@ class MottSchottkyResult:
     V_bi_fit : float
         Built-in voltage extracted from the V-axis intercept of the
         linear fit of ``1/C² = a·V + b`` over the fit window:
-        ``V_bi_fit = -b/a``. NaN if the fit failed (e.g. fewer than
-        3 linear points).
+        ``V_bi_fit = -b/a + kT/q``. The ``kT/q`` term is the majority-
+        carrier tail correction — the bare intercept ``-b/a`` corresponds
+        to ``V_bi - kT/q`` (25.9 mV at 300 K). NaN if the fit failed
+        (e.g. fewer than 3 linear points).
     N_eff_fit : float
         Ionised dopant density on the lighter-doped side of the
-        junction [m⁻³], from ``N = -2/(q·ε_s·ε_0·a)``. NaN on fit
-        failure.
+        junction [m⁻³], from ``N = -2/(q·ε_s·ε_0·a)``. The fit slope
+        ``a`` is negative for a depletion capacitance, so ``N > 0``;
+        the doping *type* is not determined by the fit and must be read
+        off the stack. NaN on fit failure.
     V_fit_lo, V_fit_hi : float
         Bias range over which the linear fit was performed.
     frequency : float
@@ -195,14 +201,14 @@ def _select_ms_window(
 
 
 def _fit_mott_schottky(
-    V: np.ndarray, C: np.ndarray, eps_r: float
+    V: np.ndarray, C: np.ndarray, eps_r: float, T: float
 ) -> tuple[float, float, float, float]:
     """Linear fit of 1/C² vs V → (V_bi_fit, N_eff_fit, V_lo, V_hi).
 
-    The V-intercept of the line gives V_bi; the slope gives N_eff via
-    the Mott-Schottky relation. NaNs are returned if the fit is
-    degenerate (flat line, or fewer than 3 points after window
-    selection).
+    The V-intercept of the line gives V_bi (after the ``kT/q`` majority-
+    carrier tail correction, see below); the slope gives N_eff via the
+    Mott-Schottky relation. NaNs are returned if the fit is degenerate
+    (flat line, or fewer than 3 points after window selection).
     """
     y = 1.0 / (C * C)
     lo, hi = _select_ms_window(V, y)
@@ -220,10 +226,16 @@ def _fit_mott_schottky(
     y_mid = float(np.median(np.abs(y_fit)))
     if y_mid > 0 and y_span / y_mid < 0.05:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
-    # For 1/C² = a·V + b: in Mott-Schottky a < 0, V_bi = -b/a.
+    # For 1/C² = a·V + b with a < 0, the V-axis intercept -b/a equals
+    # V_bi - kT/q, not V_bi: the depletion-approximation capacitance for a
+    # one-sided abrupt junction is
+    #     1/C² = 2·(V_bi - V - kT/q) / (q·ε_s·ε_0·N),
+    # where the kT/q term is the majority-carrier tail at the depletion
+    # edge (the space charge does not terminate abruptly). Omitting it
+    # under-reports V_bi by 25.9 mV at 300 K — 2026-07 review finding F-16.
     if abs(slope) < 1e-30:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
-    V_bi_fit = -intercept / slope
+    V_bi_fit = -intercept / slope + K_B * T / Q
     # N_eff = -2 / (q · ε_s · ε_0 · slope). Slope is negative, so N_eff > 0.
     N_eff_fit = -2.0 / (Q * eps_r * EPS_0 * slope)
     return (
@@ -311,7 +323,9 @@ def run_mott_schottky(
                 f"V={V_dc:.3f} V, C={C_arr[k]:.3e} F/m²",
             )
 
-    V_bi_fit, N_eff_fit, V_lo, V_hi = _fit_mott_schottky(V_arr, C_arr, eps_r)
+    V_bi_fit, N_eff_fit, V_lo, V_hi = _fit_mott_schottky(
+        V_arr, C_arr, eps_r, float(stack.T)
+    )
 
     return MottSchottkyResult(
         V=V_arr,

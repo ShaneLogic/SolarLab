@@ -21,19 +21,37 @@ def x_local():
 
 
 class TestExponentialEdgeProfile:
-    def test_endpoints_equal_two_decayed_contributions(self, x_local):
-        """At x=0 one decay term is 1 (left interface) and the other is
-        exp(-d/L_d). The profile value there is
-        N_t_bulk + (N_t_interface - N_t_bulk) * (1 + exp(-d/L_d)).
+    def test_endpoints_equal_interface_density(self, x_local):
+        """Review F-05: the two-sided shape is normalized by its analytic
+        supremum, so each face carries exactly ``N_t_interface`` — not the
+        un-normalized ``N_t_if + (N_t_if - N_t_bulk)·exp(-d/L_d)``.
         """
         L_d = 20e-9
         N_t = exponential_edge_profile(
             x_local, THICKNESS, 1e22, 1e20, L_d,
         )
-        expected_left = 1e20 + (1e22 - 1e20) * (1.0 + np.exp(-THICKNESS / L_d))
-        assert N_t[0] == pytest.approx(expected_left, rel=1e-10)
+        assert N_t[0] == pytest.approx(1e22, rel=1e-12)
         # Symmetric around the midpoint.
         assert N_t[0] == pytest.approx(N_t[-1], rel=1e-10)
+
+    def test_thin_layer_saturates_at_interface_density(self):
+        """Review F-05: for d << L_d the un-normalized form gave
+        ~2·N_t_if - N_t_bulk everywhere. The normalized shape saturates
+        at N_t_if instead."""
+        thin = 2e-9
+        x = np.linspace(0.0, thin, 51)
+        N_t = exponential_edge_profile(x, thin, 1e22, 1e20, 200e-9)
+        assert N_t.max() <= 1e22 * (1.0 + 1e-12)
+        # Nearly uniform at the interface density across the thin layer.
+        assert N_t.min() == pytest.approx(1e22, rel=1e-2)
+
+    @pytest.mark.parametrize("L_over_d", [0.01, 0.1, 0.5, 1.0, 10.0])
+    def test_never_exceeds_interface_density(self, x_local, L_over_d):
+        """The shape function is bounded by 1 for every d/L_d regime."""
+        N_t = exponential_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, L_over_d * THICKNESS,
+        )
+        assert N_t.max() <= 1e22 * (1.0 + 1e-12)
 
     def test_midpoint_far_from_both_interfaces_recovers_bulk(self, x_local):
         """At the midpoint the smaller exponential is exp(-d/2L_d);
@@ -72,14 +90,23 @@ class TestExponentialEdgeProfile:
 
 
 class TestGaussianEdgeProfile:
-    def test_endpoints_have_full_interface_contribution(self, x_local):
-        """At x=0 the left Gaussian is 1 and the right is exp(-(d/sigma)²),
-        which is tiny when sigma ≪ d."""
+    def test_endpoints_equal_interface_density(self, x_local):
+        """Review F-05: normalized shape → each face carries exactly
+        ``N_t_interface`` (sigma ≪ d, where the face is the supremum)."""
         sigma = 10e-9
         N_t = gaussian_edge_profile(x_local, THICKNESS, 1e22, 1e20, sigma)
-        right_tail = np.exp(-((THICKNESS / sigma) ** 2))
-        expected_left = 1e20 + (1e22 - 1e20) * (1.0 + right_tail)
-        assert N_t[0] == pytest.approx(expected_left, rel=1e-10)
+        assert N_t[0] == pytest.approx(1e22, rel=1e-12)
+        assert N_t[-1] == pytest.approx(1e22, rel=1e-12)
+
+    @pytest.mark.parametrize("sig_over_d", [0.01, 0.1, 0.64, 1.0, 10.0])
+    def test_bounded_by_interface_density(self, x_local, sig_over_d):
+        """The Gaussian supremum candidates (faces / midpoint) miss the
+        true peak by <3 % in the sigma ~ 0.64·d regime, so the bound is
+        stated with that documented tolerance rather than exactly 1."""
+        N_t = gaussian_edge_profile(
+            x_local, THICKNESS, 1e22, 1e20, sig_over_d * THICKNESS,
+        )
+        assert N_t.max() <= 1e22 * 1.03
 
     def test_gaussian_decays_faster_than_exponential_in_tail(self, x_local):
         """For the same length parameter the Gaussian tail at ~3-sigma is

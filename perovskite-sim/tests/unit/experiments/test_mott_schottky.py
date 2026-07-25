@@ -24,7 +24,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from perovskite_sim.constants import Q
+from perovskite_sim.constants import K_B, Q
 from perovskite_sim.experiments.mott_schottky import (
     EPS_0,
     MottSchottkyResult,
@@ -40,12 +40,20 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 # Pure-math unit tests — synthetic Mott-Schottky data, no solver.
 # ---------------------------------------------------------------------------
 
-def _synthetic_cv(V, V_bi, N, eps_r):
+T_TEST = 300.0
+
+
+def _synthetic_cv(V, V_bi, N, eps_r, T=T_TEST):
     """Build a synthetic C(V) from the Mott-Schottky formula.
 
-    C(V) = sqrt(q·ε·ε_0·N / (2·(V_bi − V))). Only valid for V < V_bi.
+    ``C(V) = sqrt(q·ε·ε_0·N / (2·(V_bi − V − kT/q)))``. The ``kT/q``
+    majority-carrier tail term is the one ``_fit_mott_schottky`` inverts
+    (review F-16), so the round-trip recovers ``V_bi`` exactly. Only
+    valid for ``V < V_bi − kT/q``.
     """
-    return np.sqrt(Q * eps_r * EPS_0 * N / (2.0 * (V_bi - V)))
+    return np.sqrt(
+        Q * eps_r * EPS_0 * N / (2.0 * (V_bi - V - K_B * T / Q))
+    )
 
 
 def test_fit_recovers_known_vbi_and_doping():
@@ -56,7 +64,7 @@ def test_fit_recovers_known_vbi_and_doping():
     eps_r = 11.7
     C = _synthetic_cv(V, V_bi_true, N_true, eps_r)
 
-    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(V, C, eps_r)
+    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(V, C, eps_r, T_TEST)
     assert abs(V_bi_fit - V_bi_true) < 0.01, (
         f"V_bi_fit={V_bi_fit:.4f} off from {V_bi_true}"
     )
@@ -87,7 +95,7 @@ def test_fit_rejects_non_linear_tail():
     C_bad = _synthetic_cv(V_bad, V_bi, N, eps_r) / 3.0
     C = np.concatenate([C_bad, C_good])
 
-    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(V, C, eps_r)
+    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(V, C, eps_r, T_TEST)
     assert abs(V_bi_fit - V_bi) < 0.03, (
         f"V_bi_fit={V_bi_fit:.3f} off from {V_bi:.3f} — tail leaked "
         "into window"
@@ -114,7 +122,7 @@ def test_fit_returns_nan_on_flat_curve():
     """Flat 1/C² (no information) must return NaN rather than blow up."""
     V = np.linspace(0.0, 0.3, 8)
     C = np.full_like(V, 1e-4)  # constant
-    V_bi_fit, N_fit, *_ = _fit_mott_schottky(V, C, eps_r=11.7)
+    V_bi_fit, N_fit, *_ = _fit_mott_schottky(V, C, eps_r=11.7, T=T_TEST)
     assert not np.isfinite(V_bi_fit) or abs(V_bi_fit) > 1e6
     # Either NaN or absurdly large — both are acceptable "this fit is
     # meaningless" signals. An absurd V_bi also fails downstream

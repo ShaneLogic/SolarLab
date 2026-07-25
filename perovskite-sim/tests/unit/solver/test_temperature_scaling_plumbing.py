@@ -152,3 +152,81 @@ class TestDefaultsArePhase4aIdentical:
                 mat.Eg[mask], layer.params.Eg, rtol=1e-14,
             )
             total += layer.thickness
+
+
+class TestTemperatureConsistentSrhReferences:
+    """2026-07 review F-10 extension: n1, p1 and the band-edge DOS are
+    300 K YAML inputs. Freezing them while ``ni(T)`` scales breaks the
+    mass-action invariant ``n1·p1 = ni²(T)`` the SRH rate is built on,
+    which is exactly what a ``V_oc(T)`` sweep exercises.
+    """
+
+    def test_n1_p1_product_tracks_ni_squared_at_elevated_T(self, stack, x):
+        stack_hot = dataclasses.replace(stack, T=350.0)
+        mat = build_material_arrays(x, stack_hot)
+        np.testing.assert_allclose(
+            mat.n1 * mat.p1, mat.ni_sq, rtol=1e-9,
+        )
+
+    def test_n1_p1_product_tracks_ni_squared_at_reduced_T(self, stack, x):
+        stack_cold = dataclasses.replace(stack, T=250.0)
+        mat = build_material_arrays(x, stack_cold)
+        np.testing.assert_allclose(
+            mat.n1 * mat.p1, mat.ni_sq, rtol=1e-9,
+        )
+
+    def test_n1_p1_bit_identical_at_reference_temperature(self, stack, x):
+        """T = 300 K must leave the YAML values untouched."""
+        mat = build_material_arrays(x, stack)
+        total = 0.0
+        for layer in stack.layers:
+            mask = (
+                (x >= total - 1e-12)
+                & (x <= total + layer.thickness + 1e-12)
+            )
+            assert np.all(mat.n1[mask] == layer.params.n1)
+            assert np.all(mat.p1[mask] == layer.params.p1)
+            total += layer.thickness
+
+    def test_legacy_mode_freezes_n1_p1_at_300K_values(self, stack, x):
+        stack_hot = dataclasses.replace(stack, T=350.0, mode="legacy")
+        mat = build_material_arrays(x, stack_hot)
+        total = 0.0
+        for layer in stack_hot.layers:
+            mask = (
+                (x >= total - 1e-12)
+                & (x <= total + layer.thickness + 1e-12)
+            )
+            assert np.all(mat.n1[mask] == layer.params.n1)
+            total += layer.thickness
+
+    def test_band_edge_dos_scales_as_T_three_halves(self, stack, x):
+        """N_C(T) = N_C(300)·(T/300)^{3/2} once a layer carries Nc300.
+
+        ``N_C_node`` is only published on ``MaterialArrays`` under
+        ``te_physical_norm`` (its sole consumer is the emission-velocity
+        TE cap), so the flag is enabled here to observe the array.
+        """
+        layers = tuple(
+            dataclasses.replace(
+                lyr,
+                params=dataclasses.replace(
+                    lyr.params, Nc300=2.2e24, Nv300=1.8e25,
+                ),
+            )
+            for lyr in stack.layers
+        )
+        dos_stack = dataclasses.replace(
+            stack, layers=layers, te_physical_norm=True,
+        )
+        x_dos = x
+        mat_ref = build_material_arrays(x_dos, dos_stack)
+        hot = dataclasses.replace(dos_stack, T=360.0)
+        mat_hot = build_material_arrays(x_dos, hot)
+        finite = np.isfinite(mat_ref.N_C_node) & np.isfinite(mat_hot.N_C_node)
+        assert finite.any(), "preset carries no per-layer Nc300"
+        np.testing.assert_allclose(
+            mat_hot.N_C_node[finite],
+            mat_ref.N_C_node[finite] * (360.0 / 300.0) ** 1.5,
+            rtol=1e-12,
+        )

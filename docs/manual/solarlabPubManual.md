@@ -1287,10 +1287,37 @@ E_g^{300}
 Conventional semiconductors (silicon: $\alpha \approx 4.73\times10^{-4}$
 eV/K, $\beta \approx 636$ K) narrow on heating; halide perovskites show the
 opposite sign and widen with temperature, reproduced by a negative
-$\alpha$. The intrinsic density $n_i(T)$ is recomputed self-consistently
-with the shifted gap (and with the 300 K effective densities of states when
-supplied), so mass action and the SRH driving terms remain thermodynamically
-consistent at every temperature.
+$\alpha$.
+
+The band-edge effective densities of states follow the standard
+parabolic-band law,
+
+\begin{equation}
+\label{eq:dos-temperature}
+N_C(T)=N_C^{300}\left(\frac{T}{300\,K}\right)^{3/2},
+\qquad
+N_V(T)=N_V^{300}\left(\frac{T}{300\,K}\right)^{3/2},
+\end{equation}
+
+and the intrinsic density is recomputed from the shifted gap and the
+scaled densities of states,
+$n_i(T)=\sqrt{N_C(T)N_V(T)}\,e^{-E_g(T)/2k_BT}$. Because the SRH
+reference densities $n_1$, $p_1$ are configured at 300 K, they are
+rescaled by $n_i(T)/n_i(300)$ so that the mass-action invariant
+$n_1p_1=n_i^2(T)$ is preserved at every temperature; this holds the trap
+level fixed relative to midgap, the same convention used for graded
+layers. Without that rescaling the SRH reference densities would stay
+pinned at their 300 K values while $n_i(T)$ moved, which biases the dark
+and depletion-regime rates that a $V_\mathrm{oc}(T)$ sweep reads.
+
+Two quantities are deliberately *not* temperature-scaled, and both sit
+on default-off, 300 K-calibrated interface paths: the thermal velocity
+of the interface-plane state and closure formulations (fixed at the
+SCAPS value $10^{7}\,\mathrm{cm\,s^{-1}}$ rather than
+$v_\mathrm{th}\propto T^{1/2}$), and the density-of-states prefactor of
+the per-side interface-defect trap levels. Cross-simulator
+$V_\mathrm{oc}(T)$ comparisons that enable those options should hold
+$T=300$ K or supply the temperature dependence explicitly.
 
 All temperature hooks are gated by the temperature-scaling flag; the
 `legacy` tier pins the model at 300 K regardless of the configured $T$.
@@ -1325,9 +1352,16 @@ where the denominator floor caps the lifetime at $\tau_\mathrm{bulk}$: an
 edge-*passivation* profile ($N_t^\mathrm{if} < N_t^\mathrm{bulk}$) is
 clamped to the bulk lifetime rather than extrapolated to
 lifetimes above $\tau_\mathrm{bulk}$, so the profile can only ever add
-recombination. The two exponentials are summed rather than maximized so
-thin layers with overlapping tails saturate smoothly at
-$N_t^\mathrm{if}$.
+recombination. The two edge kernels are summed rather than maximized so
+that overlapping tails blend smoothly, and the sum is divided by its
+analytic supremum so that the shape function is bounded by unity and
+$N_t$ saturates *at* $N_t^\mathrm{if}$. Without that normalization the
+raw sum reaches $N_t^\mathrm{if} + (N_t^\mathrm{if}-N_t^\mathrm{bulk})
+e^{-d/L_d}$ at each face, and $\simeq 2N_t^\mathrm{if}-N_t^\mathrm{bulk}$
+for $d \ll L_d$ — up to a factor-of-two overshoot of the configured
+interface density. A single-face profile (`trap_edge` set to `left` or
+`right`) already peaks at exactly $N_t^\mathrm{if}$ and is not
+renormalized.
 
 ## Band-Gap Grading
 
@@ -2127,9 +2161,16 @@ EQE is:
 $$
 \mathrm{EQE}(\lambda)
 =
-\frac{|J(\lambda)-J_\mathrm{dark}|}
+\frac{J(\lambda)-J_\mathrm{dark}}
 {q\Phi_\mathrm{inc}(\lambda)}.
 $$
+
+The incremental current is used *signed* against the solar convention
+($J>0$ at $V=0$ under illumination), so a negative EQE is reported as
+such and raises a runtime warning rather than being hidden by an
+absolute value: a wrong-way incremental current indicates a contact
+polarity, sign-convention, or dark-baseline convergence problem, and
+must not be presented as a physical quantum efficiency.
 
 SolarLab computes monochromatic TMM generation, solves the drift-diffusion
 problem at short circuit, subtracts a dark baseline current $J_\mathrm{dark}$
@@ -2227,12 +2268,21 @@ $$
 Then:
 
 $$
-V_\mathrm{bi}^\mathrm{app}=-\frac{b}{a},
+V_\mathrm{bi}^\mathrm{app}=-\frac{b}{a}+\frac{k_BT}{q},
 \qquad
 N_\mathrm{eff}^\mathrm{app}
 =
 -\frac{2}{q\varepsilon_r\varepsilon_0 a}.
 $$
+
+The $k_BT/q$ term is the majority-carrier tail at the depletion edge:
+the one-sided abrupt-junction capacitance is
+$1/C^2 = 2(V_\mathrm{bi}-V-k_BT/q)/(q\varepsilon_s\varepsilon_0 N)$, so
+the bare $V$-axis intercept $-b/a$ corresponds to
+$V_\mathrm{bi}-k_BT/q$, i.e. 25.9 mV low at 300 K. A depletion
+capacitance has $a<0$, which makes $N_\mathrm{eff}^\mathrm{app}$
+positive; the fit does not determine the doping *type*, which must be
+read off the stack and reported separately from $|N|$.
 
 Both extracted quantities are *apparent* values: the textbook
 interpretation assumes a one-sided abrupt junction, uniform doping, a known

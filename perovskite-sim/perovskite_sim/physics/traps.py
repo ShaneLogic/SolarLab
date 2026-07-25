@@ -14,18 +14,23 @@ N_t(x)``.
 Two profile shapes are exposed:
 
 - ``exponential_edge_profile``: ``N_t(x) = N_t_bulk + (N_t_interface −
-  N_t_bulk) · (e^{−x_local/L_d} + e^{−(d−x_local)/L_d})``. This is the
-  baseline introduced in Phase 4. The two exponentials are added rather
-  than maxed so that very thin layers with overlapping decay regions
-  smoothly saturate at ``N_t_interface`` instead of double-counting only
-  one side. ``L_d`` controls how far the interface contamination reaches
-  into the bulk; a typical perovskite L_d is 5–30 nm.
+  N_t_bulk) · S(x)`` with the *normalized* two-sided shape
+  ``S(x) = (e^{−x_local/L_d} + e^{−(d−x_local)/L_d}) / S_max``. The two
+  exponentials are added rather than maxed so that overlapping decay
+  regions blend smoothly, and the sum is divided by its analytic
+  supremum ``S_max`` so ``N_t`` saturates *at* ``N_t_interface``. The
+  un-normalized Phase 4 form reached ``N_t_if + (N_t_if − N_t_bulk)
+  e^{−d/L_d}`` at each face and ``≈ 2 N_t_if − N_t_bulk`` for
+  ``d ≪ L_d`` — up to a factor-of-two overshoot of the configured
+  interface density (2026-07 review finding F-05). ``L_d`` controls how
+  far the interface contamination reaches into the bulk; a typical
+  perovskite L_d is 5–30 nm.
 
-- ``gaussian_edge_profile``: ``N_t(x) = N_t_bulk + (N_t_interface −
-  N_t_bulk) · (G(x_local) + G(d − x_local))`` where ``G(s) =
-  exp(−(s/sigma)²)``. Gaussian decay is faster than exponential at
-  ``s ≫ sigma`` and slower at ``s ≪ sigma`` — useful when the interface
-  trap layer has a finite well-defined extent rather than a long tail.
+- ``gaussian_edge_profile``: the same normalized construction with
+  ``G(s) = exp(−(s/sigma)²)``. Gaussian decay is faster than exponential
+  at ``s ≫ sigma`` and slower at ``s ≪ sigma`` — useful when the
+  interface trap layer has a finite well-defined extent rather than a
+  long tail.
 
 The conversion ``tau_from_trap_density`` is shared by both shapes; a
 floor of ``N_t_bulk`` on the denominator keeps the result physical when
@@ -48,14 +53,25 @@ _VALID_EDGE_TARGETS = ("both", "left", "right")
 
 
 def _combine_edge_kernel(
-    d_left: np.ndarray, d_right: np.ndarray, edge: str, kernel
+    d_left: np.ndarray, d_right: np.ndarray, edge: str, kernel,
+    thickness: float,
 ) -> np.ndarray:
     """Return the edge contribution honouring ``edge`` target.
 
-    ``edge="both"`` reproduces the original symmetric profile. ``"left"``
-    or ``"right"`` attach the kernel to a single absorber face only, so
-    SCAPS-style heterojunction-specific defects (e.g. PVK/ETL only) can
-    drive asymmetric recombination that responds to the band-offset.
+    ``edge="both"`` sums the two face kernels and normalizes by the
+    analytic supremum of that sum, so the shape function is bounded by 1
+    and ``N_t`` saturates *at* ``N_t_interface`` in a thin layer. Without
+    the normalization the raw sum reaches ``1 + e^{-d/L_d}`` at each face
+    (and ``≈2`` for ``d ≪ L_d``), i.e. the profile overshoots the
+    configured interface density by up to a factor of two — the 2026-07
+    review finding F-05.
+
+    ``"left"`` or ``"right"`` attach the kernel to a single absorber face
+    only, so SCAPS-style heterojunction-specific defects (e.g. PVK/ETL
+    only) can drive asymmetric recombination that responds to the
+    band-offset. A single kernel already peaks at exactly 1 on its own
+    face, so it needs no normalization.
+
     Unknown values raise ``ValueError`` so YAML typos surface at config
     load instead of silently degenerating to the symmetric profile.
     """
@@ -67,7 +83,19 @@ def _combine_edge_kernel(
         return kernel(d_left)
     if edge == "right":
         return kernel(d_right)
-    return kernel(d_left) + kernel(d_right)
+    both = kernel(d_left) + kernel(d_right)
+    # The sum is symmetric about the midpoint, so its extrema sit either
+    # at the two faces or at the midpoint. For the exponential kernel
+    # that pair is the exact supremum (the sum is convex); for the
+    # Gaussian it underestimates the true peak by <3 %, and only in the
+    # narrow sigma ~ 0.64·d regime where the layer is uniformly loaded
+    # anyway. Both candidates are closed-form, so the normalization is
+    # grid-independent.
+    peak = max(
+        float(1.0 + kernel(thickness)),
+        float(2.0 * kernel(0.5 * thickness)),
+    )
+    return both / peak
 
 
 def exponential_edge_profile(
@@ -103,7 +131,9 @@ def exponential_edge_profile(
     d_left = x_local
     d_right = thickness - x_local
     kernel = lambda d: np.exp(-d / L_d)
-    edge_contribution = _combine_edge_kernel(d_left, d_right, edge, kernel)
+    edge_contribution = _combine_edge_kernel(
+        d_left, d_right, edge, kernel, thickness,
+    )
     return N_t_bulk + (N_t_interface - N_t_bulk) * edge_contribution
 
 
@@ -131,7 +161,9 @@ def gaussian_edge_profile(
     d_left = x_local
     d_right = thickness - x_local
     kernel = lambda d: np.exp(-((d / sigma) ** 2))
-    edge_contribution = _combine_edge_kernel(d_left, d_right, edge, kernel)
+    edge_contribution = _combine_edge_kernel(
+        d_left, d_right, edge, kernel, thickness,
+    )
     return N_t_bulk + (N_t_interface - N_t_bulk) * edge_contribution
 
 

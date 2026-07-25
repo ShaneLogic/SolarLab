@@ -40,12 +40,17 @@ defined.
 Sign convention
 ---------------
 Matches ``run_jv_sweep``: under illumination at V=0, J > 0 (photocurrent
-leaves the absorber contact). EQE is reported as its unsigned
-magnitude, which is the sign experimentalists plot.
+leaves the absorber contact), so the incremental photocurrent
+``J(λ) − J_dark`` is positive and EQE is reported *signed* against that
+convention. A negative EQE is therefore a real diagnostic — a wrong-way
+incremental current from contact polarity, a sign-convention error, or an
+unconverged dark baseline — and raises a ``RuntimeWarning`` instead of
+being hidden by an absolute value (2026-07 review finding F-15).
 """
 from __future__ import annotations
 
 import dataclasses
+import warnings
 from dataclasses import dataclass
 from typing import Callable
 
@@ -297,15 +302,33 @@ def compute_eqe(
         # Photo-only current = total at V=0 with λ minus dark at V=0.
         J_k = J_total - J_dark
         J_sc_lambda[k] = J_k
-        # |J_sc| because EQE is positive by convention regardless of the
-        # solar-vs-injection sign carried by J_sc.
-        eqe[k] = abs(J_k) / (Q * Phi_incident)
+        # Signed incremental photocurrent (2026-07 review finding F-15).
+        # The historical ``abs(J_k)`` reported a positive EQE even when the
+        # incremental current flowed the wrong way, which would mask a
+        # contact-polarity or sign-convention error as a physical curve.
+        # The solar convention (J > 0 at V = 0 under illumination) makes
+        # the photo-increment positive, so no extra sign is applied here;
+        # a negative value is a genuine diagnostic and is surfaced below.
+        eqe[k] = J_k / (Q * Phi_incident)
 
         if progress is not None:
             progress(
                 "eqe", k + 1, len(wavelengths_nm),
                 f"λ={wavelengths_nm[k]:.0f} nm, EQE={eqe[k]:.3f}",
             )
+
+    neg = wavelengths_nm[eqe < 0.0]
+    if neg.size:
+        warnings.warn(
+            f"Negative EQE at {neg.size} wavelength(s) "
+            f"({', '.join(f'{w:.0f}' for w in neg[:5])}"
+            f"{' …' if neg.size > 5 else ''} nm): the incremental current "
+            "flows opposite to the solar convention. Check contact polarity, "
+            "the dark baseline convergence, and the terminal-current sign "
+            "before interpreting this curve.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     # Integrate EQE · Φ_AM15G dλ. load_am15g enforces in-range bounds,
     # so clip the integration range to the AM1.5G file's coverage.

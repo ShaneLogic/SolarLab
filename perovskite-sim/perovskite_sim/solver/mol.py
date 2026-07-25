@@ -32,6 +32,7 @@ from perovskite_sim.physics.interface_plane import (
 )
 from perovskite_sim.physics.temperature import (
     thermal_voltage, ni_at_T, mu_at_T, D_ion_at_T, B_rad_at_T, eg_at_T,
+    T_REF,
 )
 from perovskite_sim.models.mode import resolve_mode, SimulationMode
 from perovskite_sim.constants import Q, V_T as _V_T_300
@@ -739,12 +740,27 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
         tau_n[mask] = p.tau_n
         tau_p[mask] = p.tau_p
+        # Temperature-consistent SRH reference densities (2026-07 review,
+        # F-10 extension). n1 and p1 are 300 K YAML inputs; leaving them
+        # frozen while ni(T) moves breaks the mass-action invariant
+        # n1·p1 = ni²(T) that the SRH rate is built on — the dark /
+        # depletion regime of a V_oc(T) sweep reads those references
+        # directly. Both are scaled by ni(T)/ni(300), i.e. the trap level
+        # is held fixed relative to midgap — the same convention
+        # ``grade_n1_p1`` already uses for the graded branch below.
+        # Exactly 1.0 at T_REF or with the flag off → bit-identical.
+        n1_p1_scale = 1.0
+        if sim_mode.use_temperature_scaling and T_dev != T_REF and p.ni > 0.0:
+            n1_p1_scale = ni_T / p.ni
         if _band_grading and has_grading_params(p):
             # Trap level fixed relative to midgap → n1·p1 = ni²(x) per node.
-            n1[mask], p1[mask] = grade_n1_p1(p.n1, p.p1, Eg[mask], Eg_T, V_T_dev)
+            n1[mask], p1[mask] = grade_n1_p1(
+                p.n1 * n1_p1_scale, p.p1 * n1_p1_scale,
+                Eg[mask], Eg_T, V_T_dev,
+            )
         else:
-            n1[mask] = p.n1
-            p1[mask] = p.p1
+            n1[mask] = p.n1 * n1_p1_scale
+            p1[mask] = p.p1 * n1_p1_scale
         # Phase 4b: temperature-scaled radiative coefficient. gamma=0
         # (the default) short-circuits to B_300 so pre-Phase-4b configs
         # are unaffected.
@@ -754,10 +770,19 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             B_rad[mask] = p.B_rad
         C_n[mask] = p.C_n
         C_p[mask] = p.C_p
+        # Band-edge DOS at the device temperature (2026-07 review F-10):
+        # N_C(T) = N_C(300)·(T/300)^{3/2}, the same law ``ni_at_T`` applies
+        # internally. Freezing the node DOS at 300 K while ni(T) scales
+        # makes the thermionic emission velocity v_R = A*T²/(q·N_C) and
+        # the SRH references disagree about the same band edge.
+        # Exactly 1.0 at T_REF or with the flag off → bit-identical.
+        dos_T_scale = 1.0
+        if sim_mode.use_temperature_scaling and T_dev != T_REF:
+            dos_T_scale = (T_dev / T_REF) ** 1.5
         if p.Nc300:
-            N_C_node_arr[mask] = float(p.Nc300)
+            N_C_node_arr[mask] = float(p.Nc300) * dos_T_scale
         if p.Nv300:
-            N_V_node_arr[mask] = float(p.Nv300)
+            N_V_node_arr[mask] = float(p.Nv300) * dos_T_scale
         A_star_n_node[mask] = p.A_star_n
         A_star_p_node[mask] = p.A_star_p
 
