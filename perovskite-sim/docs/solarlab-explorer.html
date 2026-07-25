@@ -136,7 +136,8 @@
       <a href="#s5">10 boundaries</a>
       <a href="#s6">11 initial state</a>
       <a href="#s7">12 interfaces</a>
-      <a href="#sarch">13 architecture</a>
+      <a href="#sdef">13 defects</a>
+      <a href="#sarch">14 architecture</a>
     </nav>
     <button class="themebtn" id="themebtn" title="Toggle visual FX (glow + grid)">◈ FX on</button>
   </div>
@@ -556,9 +557,55 @@
     </div>
   </section>
 
-  <!-- 11 architecture -->
+  <!-- 13 interface defects -->
+  <section class="s" id="sdef">
+    <div class="sec-head"><span class="sec-num">SEC 13</span><h2>Interface defects — trap depth and the SRH cycle</h2></div>
+    <div class="prose">
+      <p>A real heterointerface carries a sheet of trap states — dangling bonds at the ETL oxide, halide vacancies at the HTL — sitting at an energy <span class="m">E<sub>t</sub></span> inside the local gap. SolarLab treats them as a <b>surface Shockley–Read–Hall</b> channel: an electron captured from the conduction band and a hole captured from the valence band annihilate at the same trap. Two numbers govern the rate — the areal density <span class="m">N<sub>t</sub></span> sets the <em>magnitude</em> through the capture velocities <span class="m">v<sub>n</sub>, v<sub>p</sub></span>; the depth <span class="m">E<sub>t</sub></span> sets the <em>shape</em> through the emission densities <span class="m">n<sub>1</sub>, p<sub>1</sub></span>.</p>
+      <div class="eq">
+        <span class="lbl">— interface (surface) Shockley–Read–Hall —</span><br>
+        <span class="p">R<sub>iface</sub></span> = (<span class="n">n</span>&thinsp;<span class="p">p</span> − n<sub>i</sub><sup>2</sup>) / [ (<span class="n">n</span> + n<sub>1</sub>)/v<sub>p</sub> + (<span class="p">p</span> + p<sub>1</sub>)/v<sub>n</sub> ]&nbsp;&nbsp;<span class="cm"># m⁻² s⁻¹</span><br><br>
+        <span class="lbl">— trap-level emission densities (encode the depth E<sub>t</sub>) —</span><br>
+        n<sub>1</sub> = N<sub>C</sub>&thinsp;e<sup>−(E<sub>C</sub>−E<sub>t</sub>)/kT</sup>&nbsp;&nbsp;&nbsp; p<sub>1</sub> = N<sub>V</sub>&thinsp;e<sup>−(E<sub>t</sub>−E<sub>V</sub>)/kT</sup>&nbsp;&nbsp;&nbsp;<span class="cm"># n<sub>1</sub>·p<sub>1</sub> = n<sub>i</sub>²</span>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card"><h4><span class="p">Surface SRH rate</span></h4><p>Cross-carrier capture on a single trap, referenced to detailed balance (<code>n&thinsp;p − n<sub>i</sub>²</code>). If either capture velocity falls to zero the whole cycle blocks — the code returns <code>R = 0</code> rather than dividing by zero.</p></div>
+      <div class="card"><h4><span class="ionc">Trap depth E<sub>t</sub></span></h4><p>A <b>midgap</b> trap has <code>n<sub>1</sub> = p<sub>1</sub> = n<sub>i</sub></code> and recombines hardest. A <b>shallow</b> trap near a band edge drives one emission density exponentially large, so a captured carrier re-emits before its partner arrives and the cycle self-deactivates.</p></div>
+      <div class="card"><h4><span class="fc">Magnitude from N<sub>t</sub></span></h4><p>Capture velocities <code>v<sub>n</sub>, v<sub>p</sub> = σ·v<sub>th</sub>·N<sub>t</sub></code>: density and cross-section set how fast, independent of depth. A position-dependent <code>N<sub>t</sub>(x)</code> concentrates traps within a decay length of each contact — an exponential or Gaussian edge profile.</p></div>
+      <div class="card"><h4><span class="n">Which densities feed R?</span></h4><p>On a bulk grid node one carrier outnumbers the other by orders of magnitude, so <code>n + p ≫ 2n<sub>i</sub>cosh η</code> and <b>R is blind to E<sub>t</sub></b> across the gap. The depth dependence returns only on the balanced <b>interface-plane</b> densities — the reason SolarLab solves for interface-plane carrier states, not bulk-node samples.</p></div>
+    </div>
+
+    <figure class="fig" id="figDef">
+      <div class="cvwrap"><canvas data-h="360" aria-label="Interface trap level in the junction gap and its SRH recombination rate versus trap depth"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:230px">
+          <label>Trap level E<sub>t</sub> <span class="val" data-v="et">0.80 eV (midgap)</span></label>
+          <input type="range" min="0.15" max="1.45" step="0.01" value="0.80" data-r="et">
+        </div>
+        <div class="ctl" style="min-width:200px">
+          <label>Trap density N<sub>t</sub> <span class="val" data-v="nt">1.0e12 cm⁻²</span></label>
+          <input type="range" min="10" max="14" step="0.1" value="12" data-r="nt">
+        </div>
+        <div class="seg" data-seg="dsample">
+          <button class="on" data-val="plane">interface plane</button>
+          <button data-val="bulk">bulk node</button>
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="shownp" checked> show n₁, p₁</label>
+      </div>
+      <figcaption>The trap sits at <b class="ionc">E<sub>t</sub></b> inside the reduced junction gap (left). Its recombination rate (right) <b>peaks for a midgap trap</b> and falls exponentially toward either band edge — but <em>only</em> when evaluated on the balanced <b class="fc">interface-plane</b> densities. Sampled on a <b class="n">bulk node</b>, where one carrier dominates, the same trap looks depth-independent. <b>N<sub>t</sub></b> slides the whole curve vertically without changing its shape.</figcaption>
+    </figure>
+
+    <div class="code-note">
+      <span class="tag">in the code</span>
+      <span class="body"><span class="path">recombination.interface_recombination</span> · <span class="path">physics/interface_plane.py</span> (plane densities) · <span class="path">physics/traps.py</span> (N<sub>t</sub>(x) edge profile) · <span class="path">InterfaceDefect</span> (v<sub>n</sub>, v<sub>p</sub>, E<sub>t</sub>, N<sub>t</sub>). <span class="cm"># n₁·p₁ = n_i² pins detailed balance; bulk-node densities are E_t-blind</span></span>
+    </div>
+  </section>
+
+  <!-- 14 architecture -->
   <section class="s" id="sarch">
-    <div class="sec-head"><span class="sec-num">SEC 13</span><h2>The architecture — from YAML to a J–V curve</h2></div>
+    <div class="sec-head"><span class="sec-num">SEC 14</span><h2>The architecture — from YAML to a J–V curve</h2></div>
     <div class="prose">
       <p>The data flow is unidirectional. A <b>YAML</b> preset (or the UI) constructs an immutable <code>DeviceStack</code>; this is compiled <b>once</b> into a <code>MaterialArrays</code> cache — all per-node and per-face arrays plus a pre-factored Poisson operator; an experiment driver then evaluates <code>assemble_rhs</code> against that cache many times and assembles the result.</p>
       <p>The central design distinction is <b>build-once versus per-RHS</b>. Most physics is folded into the cache at build time — static, evaluated once. A small number of state-dependent hooks (radiative reabsorption, field-dependent mobility, Robin contacts) deliberately break the build-once invariant and recompute on every evaluation. This distinction organises much of the code structure.</p>
@@ -1217,6 +1264,126 @@
       self.get('[data-r="dec"]').addEventListener("input",function(e){dec=parseFloat(e.target.value); self.get('[data-v="dec"]').textContent=(dec>=0?"+":"")+dec.toFixed(2)+" eV"; self.render();});
       self.get('[data-c="tecap"]').addEventListener("change",function(e){tecap=e.target.checked;self.render();});
       self.get('[data-c="dosfold"]').addEventListener("change",function(e){dosfold=e.target.checked;self.render();});
+    }});
+    if(f) f.render();
+  })();
+
+  // ============ 13 interface defects & trap depth ============
+  (function(){
+    var Egs=1.60, Ei=Egs/2, kT=0.02585;
+    var Et=0.80, logNt=12, sample="plane", shownp=true;
+    var Cp=60, nB=1e7, pB=1e-1;   // plane: balanced n=p=Cp·n_i ; bulk: electron-rich (ETL side)
+    function rate(et){
+      var eta=(et-Ei)/kT;
+      var n1=Math.exp(eta), p1=Math.exp(-eta);      // ×n_i (n_i=1 reference units)
+      var S=Math.pow(10,logNt-12);                  // areal-density magnitude, ref 1e12 → 1
+      var Rp=S*(Cp*Cp-1)/(2*Cp+n1+p1);              // interface plane: n=p=Cp
+      var Rb=S*(nB*pB-1)/(nB+pB+n1+p1);             // bulk node: strongly imbalanced
+      return {p:Math.max(Rp,1e-30), b:Math.max(Rb,1e-30), n1:n1, p1:p1};
+    }
+    function arrow(ctx,x0,y0,x1,y1,color,lw){
+      ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=lw||1.6;
+      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+      var a=Math.atan2(y1-y0,x1-x0), s=5;
+      ctx.beginPath(); ctx.moveTo(x1,y1);
+      ctx.lineTo(x1-s*Math.cos(a-0.5),y1-s*Math.sin(a-0.5));
+      ctx.lineTo(x1-s*Math.cos(a+0.5),y1-s*Math.sin(a+0.5));
+      ctx.closePath(); ctx.fill();
+    }
+    function draw(ctx,W,H,P){
+      ctx.clearRect(0,0,W,H);
+      var m={l:14,r:14,t:24,b:18};
+      var x=m.l,y=m.t,w=W-m.l-m.r,h=H-m.t-m.b;
+      var gapw=0.06*w, lw=0.42*w, rw=w-lw-gapw, rx=x+lw+gapw;
+
+      // ---------- LEFT : junction gap + trap level ----------
+      ctx.strokeStyle="rgba(120,172,230,0.30)"; ctx.lineWidth=1; ctx.strokeRect(x,y,lw,h);
+      labelMono(ctx,"junction gap · trap at E_{t}",x+6,y-8,P.muted,10,"left");
+      var eTop=y+18, eBot=y+h-32;
+      function eY(e){ return eBot-(e/Egs)*(eBot-eTop); }
+      ctx.fillStyle=alpha(P.field,.05); ctx.fillRect(x+1,eY(Egs),lw-2,eY(0)-eY(Egs));
+      ctx.strokeStyle=P.electron; ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.moveTo(x+2,eY(Egs)); ctx.lineTo(x+lw-2,eY(Egs)); ctx.stroke();
+      ctx.strokeStyle=P.hole;
+      ctx.beginPath(); ctx.moveTo(x+2,eY(0)); ctx.lineTo(x+lw-2,eY(0)); ctx.stroke();
+      labelMono(ctx,"E_{C}",x+5,eY(Egs)-5,P.electron,10,"left");
+      labelMono(ctx,"E_{V}",x+5,eY(0)+13,P.hole,10,"left");
+      // trap level
+      var ty=eY(Et), cx0=x+lw*0.5;
+      ctx.strokeStyle=alpha(P.ion,.85); ctx.setLineDash([5,3]); ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(x+5,ty); ctx.lineTo(x+lw-5,ty); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle=P.ion; ctx.beginPath();
+      ctx.moveTo(cx0,ty-5); ctx.lineTo(cx0+5,ty); ctx.lineTo(cx0,ty+5); ctx.lineTo(cx0-5,ty); ctx.closePath(); ctx.fill();
+      labelMono(ctx,"E_{t}",x+lw-6,ty-5,P.ion,10,"right");
+      // capture arrows (both must complete for one recombination)
+      arrow(ctx, x+lw*0.24, eY(Egs)+3, x+lw*0.24, ty-6, alpha(P.electron,.9),1.6);
+      arrow(ctx, x+lw*0.76, eY(0)-3,   x+lw*0.76, ty+6, alpha(P.hole,.9),1.6);
+      labelMono(ctx,"e⁻",x+lw*0.24-7,(eY(Egs)+ty)/2,P.electron,9,"right");
+      labelMono(ctx,"h⁺",x+lw*0.76+7,(eY(0)+ty)/2,P.hole,9,"left");
+      // n1/p1 re-emission (grows as the trap nears a band edge)
+      if(shownp){
+        var r0=rate(Et);
+        var hn=Math.min(1,Math.log(r0.n1+1)/Math.LN10/11);
+        var hp=Math.min(1,Math.log(r0.p1+1)/Math.LN10/11);
+        arrow(ctx, x+lw*0.40, ty-4, x+lw*0.40, ty-4-hn*(ty-eY(Egs)-6), alpha(P.electron,.5),1.2);
+        arrow(ctx, x+lw*0.60, ty+4, x+lw*0.60, ty+4+hp*(eY(0)-ty-6), alpha(P.hole,.5),1.2);
+        labelMono(ctx,"n_{1}",x+lw*0.40+3,ty-9,alpha(P.electron,.85),8,"left");
+        labelMono(ctx,"p_{1}",x+lw*0.60+3,ty+14,alpha(P.hole,.85),8,"left");
+      }
+      // regime caption
+      var d=Et-Ei, reg;
+      if(Math.abs(d)<0.12) reg="midgap · n_{1} ≈ p_{1} ≈ n_{i} · R peaks";
+      else if(d>0) reg="shallow → E_{C} · n_{1} ≫ p_{1} · e⁻ re-emit";
+      else reg="shallow → E_{V} · p_{1} ≫ n_{1} · h⁺ re-emit";
+      labelMono(ctx,reg,x+lw/2,y+h-9,P.ink,9,"center");
+
+      // ---------- RIGHT : R(E_t) ----------
+      ctx.strokeStyle="rgba(120,172,230,0.30)"; ctx.lineWidth=1; ctx.strokeRect(rx,y,rw,h);
+      labelMono(ctx,"interface SRH rate  R(E_{t})",rx+6,y-8,P.muted,10,"left");
+      var pTop=y+16, pBot=y+h-26, Lhi=4, Llo=-5;
+      function ly(L){ return pBot-(L-Llo)/(Lhi-Llo)*(pBot-pTop); }
+      ctx.strokeStyle="rgba(120,172,230,0.10)"; ctx.lineWidth=1;
+      for(var L=Llo; L<=Lhi; L++){ var yy=ly(L); ctx.beginPath(); ctx.moveTo(rx+2,yy); ctx.lineTo(rx+rw-2,yy); ctx.stroke();
+        if(L%3===1) labelMono(ctx,"10^{"+L+"}",rx+3,yy-2,P.muted,8,"left"); }
+      var e0=0.15, e1=Egs-0.15;
+      function ex(et){ return rx+8+(et-e0)/(e1-e0)*(rw-16); }
+      function clampL(L){ return Math.max(Llo, Math.min(Lhi, L)); }
+      var cp=[], cb=[];
+      for(var i=0;i<=120;i++){ var et=e0+(e1-e0)*i/120, r=rate(et);
+        cp.push([ex(et), ly(clampL(Math.log(r.p)/Math.LN10))]);
+        cb.push([ex(et), ly(clampL(Math.log(r.b)/Math.LN10))]); }
+      var planeActive=(sample==="plane");
+      poly(ctx, planeActive?cb:cp, alpha(planeActive?P.electron:P.field,.28), 1.2);
+      poly(ctx, planeActive?cp:cb, planeActive?P.field:P.electron, 2.4);
+      // current E_t marker + dot on active curve
+      var cur=rate(Et), curR=planeActive?cur.p:cur.b, mxE=ex(Et);
+      ctx.strokeStyle=alpha(P.ion,.7); ctx.setLineDash([4,3]); ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.moveTo(mxE,pTop); ctx.lineTo(mxE,pBot); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle=P.ion; ctx.beginPath(); ctx.arc(mxE, ly(clampL(Math.log(curR)/Math.LN10)), 4, 0, 7); ctx.fill();
+      labelMono(ctx, planeActive?"interface plane · E_{t} matters":"bulk node · E_{t}-blind", rx+rw-4, y-8, planeActive?P.field:P.electron, 9, "right");
+      // energy axis ticks
+      labelMono(ctx,"E_{V}",ex(e0),pBot+13,P.hole,8,"center");
+      labelMono(ctx,"midgap",ex(Ei),pBot+13,P.muted,8,"center");
+      labelMono(ctx,"E_{C}",ex(e1),pBot+13,P.electron,8,"center");
+    }
+    var f=Fig("figDef",draw,{animate:false,init:function(self){
+      self.get('[data-r="et"]').addEventListener("input",function(e){
+        Et=parseFloat(e.target.value);
+        var d=Et-Ei, tag=Math.abs(d)<0.12?" (midgap)":(d>0?" (shallow→E_C)":" (shallow→E_V)");
+        self.get('[data-v="et"]').textContent=Et.toFixed(2)+" eV"+tag; self.render();
+      });
+      self.get('[data-r="nt"]').addEventListener("input",function(e){
+        logNt=parseFloat(e.target.value);
+        self.get('[data-v="nt"]').textContent=Math.pow(10,logNt).toExponential(1).replace("e+","e")+" cm⁻²";
+        self.render();
+      });
+      self.all('[data-seg="dsample"] button').forEach(function(b){
+        b.addEventListener("click",function(){
+          self.all('[data-seg="dsample"] button').forEach(function(o){o.classList.remove("on");});
+          b.classList.add("on"); sample=b.getAttribute("data-val"); self.render();
+        });
+      });
+      self.get('[data-c="shownp"]').addEventListener("change",function(e){shownp=e.target.checked;self.render();});
     }});
     if(f) f.render();
   })();
