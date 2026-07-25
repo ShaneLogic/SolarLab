@@ -1,0 +1,1084 @@
+<title>SCAPS-1D 与 SolarLab：同一套器件物理，两个引擎</title>
+<style>
+  :root{
+    --ground:#05080E; --panel:rgba(13,20,33,.72); --panelSolid:#0B1220;
+    --ink:#DEE7F3; --ink2:#C0CCDD; --muted:#93A4BC;
+    --line:rgba(96,140,190,.16); --line2:rgba(96,140,190,.30);
+    --cy:#35DBFF;                 /* SolarLab — time domain */
+    --am:#F5A93A;                 /* SCAPS — steady state   */
+    --cyDim:rgba(53,219,255,.13); --amDim:rgba(245,169,58,.13);
+    --good:#46E5A0; --warn:#FF8A5B; --gone:#6C7C93;
+    --sans:Arial,"Helvetica Neue",Helvetica,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,"Roboto Mono","PingFang SC","Microsoft YaHei",monospace;
+    --maxw:1180px; --col:68ch;
+    --glowC:rgba(53,219,255,.45); --glowA:rgba(245,169,58,.40);
+  }
+  :root.nofx{ --glowC:transparent; --glowA:transparent; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0; color:var(--ink); font-family:var(--sans); font-size:16.5px; line-height:1.78;
+    background:
+      radial-gradient(1000px 640px at 88% -8%, rgba(53,150,255,.09), transparent 62%),
+      radial-gradient(880px 560px at 4% 4%, rgba(245,169,58,.065), transparent 58%),
+      var(--ground);
+    -webkit-font-smoothing:antialiased; letter-spacing:.004em;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:48px 48px;
+    -webkit-mask-image:radial-gradient(130% 100% at 50% -5%, #000 36%, transparent 86%);
+    mask-image:radial-gradient(130% 100% at 50% -5%, #000 36%, transparent 86%);
+    opacity:.5;
+  }
+  :root.nofx body::before{display:none}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 26px; position:relative; z-index:1}
+
+  header.top{position:sticky; top:0; z-index:50; -webkit-backdrop-filter:blur(12px) saturate(1.3); backdrop-filter:blur(12px) saturate(1.3);
+    background:linear-gradient(180deg, rgba(5,8,14,.95), rgba(5,8,14,.62)); border-bottom:1px solid var(--line2)}
+  header.top .row{display:flex; align-items:center; gap:16px; height:56px; max-width:var(--maxw); margin:0 auto; padding:0 26px}
+  .brand{font-size:.78rem; font-weight:700; letter-spacing:.15em; text-transform:uppercase; white-space:nowrap; display:flex; align-items:center; gap:8px}
+  .brand .a{color:var(--am)} .brand .b{color:var(--cy)} .brand .x{color:var(--muted); font-weight:400}
+  nav.sec{display:flex; gap:2px; margin-left:auto; overflow-x:auto; scrollbar-width:none}
+  nav.sec::-webkit-scrollbar{display:none}
+  nav.sec a{font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); text-decoration:none; padding:7px 9px; border-radius:5px; white-space:nowrap; border:1px solid transparent}
+  nav.sec a:hover{color:var(--ink); border-color:var(--line2)}
+  nav.sec a.active{color:var(--ink); border-color:var(--line2); background:rgba(96,140,190,.12)}
+  .themebtn{font-size:.64rem; letter-spacing:.12em; text-transform:uppercase; border:1px solid var(--line2); background:transparent; color:var(--muted); border-radius:5px; padding:6px 10px; cursor:pointer; white-space:nowrap}
+  .themebtn:hover{color:var(--ink); background:rgba(96,140,190,.12)}
+
+  .hero{padding:62px 0 26px}
+  .eyebrow{font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 16px}
+  .eyebrow b{color:var(--am); font-weight:700} .eyebrow i{color:var(--cy); font-style:normal; font-weight:700}
+  h1{font-size:clamp(2.1rem,5.2vw,3.5rem); line-height:1.03; letter-spacing:-.012em; margin:0 0 18px; text-wrap:balance; font-weight:800}
+  .lede{font-size:clamp(1.02rem,2vw,1.2rem); color:var(--ink2); max-width:62ch; margin:0 0 10px; line-height:1.56}
+  .lede b{color:var(--ink)}
+
+  section.s{padding:52px 0; border-top:1px solid var(--line2)}
+  .sec-head{display:flex; align-items:baseline; gap:14px; margin-bottom:10px; flex-wrap:wrap}
+  .axis{font-size:.66rem; letter-spacing:.10em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line2); padding:6px 10px; border-radius:6px; white-space:nowrap}
+  h2{font-size:clamp(1.42rem,3vw,2.05rem); line-height:1.12; letter-spacing:-.01em; margin:0; font-weight:800; text-wrap:balance}
+  .prose{max-width:var(--col)}
+  .prose p{margin:14px 0; color:var(--ink2)}
+  .prose code, .m{font-family:var(--mono)}
+  .prose code{background:rgba(96,140,190,.13); padding:.08em .36em; border-radius:4px; font-size:.82em; color:#CFE3F5; border:1px solid var(--line)}
+  b{color:var(--ink)}
+  .ca{color:var(--am); font-weight:700} .cb{color:var(--cy); font-weight:700}
+
+  /* ---- diptych ---- */
+  .dip{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:24px 0 0}
+  @media (max-width:780px){.dip{grid-template-columns:1fr}}
+  .side{border:1px solid var(--line2); border-radius:12px; padding:16px 18px 18px; background:var(--panel); position:relative; overflow:hidden}
+  .side::before{content:""; position:absolute; inset:0 0 auto 0; height:2px}
+  .side.a::before{background:linear-gradient(90deg, var(--am), transparent 78%); box-shadow:0 0 14px var(--glowA)}
+  .side.b::before{background:linear-gradient(90deg, var(--cy), transparent 78%); box-shadow:0 0 14px var(--glowC)}
+  .side h3{margin:2px 0 4px; font-size:.74rem; letter-spacing:.16em; text-transform:uppercase; font-weight:700}
+  .side.a h3{color:var(--am)} .side.b h3{color:var(--cy)}
+  .side .sub{margin:0 0 12px; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+  .side p{margin:11px 0; font-size:.93rem; color:var(--ink2); line-height:1.56}
+  .side ul{margin:11px 0; padding-left:18px} .side li{margin:7px 0; font-size:.91rem; color:var(--ink2)}
+  .side li::marker{color:var(--muted)}
+  .side .mini{font-family:var(--mono); font-size:.78rem; line-height:1.8; color:#CFE3F5; background:rgba(4,8,14,.6); border:1px solid var(--line); border-radius:8px; padding:11px 13px; margin:12px 0; overflow-x:auto}
+  .side .mini .lbl{color:var(--muted); font-size:.72rem; letter-spacing:.08em; text-transform:uppercase}
+
+  .delta{display:flex; gap:13px; align-items:flex-start; margin:14px 0 0; padding:13px 16px;
+    border-left:2px solid transparent;
+    border-image:linear-gradient(180deg, var(--am), var(--cy)) 1;
+    background:linear-gradient(90deg, rgba(96,140,190,.10), transparent 70%)}
+  .delta .tag{font-size:.6rem; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); padding-top:3px; white-space:nowrap}
+  .delta .body{font-size:.93rem; line-height:1.58; color:var(--ink2)}
+  .delta .body b{color:var(--ink)}
+
+  /* ---- figures ---- */
+  figure.fig{margin:26px 0 8px; background:var(--panel); border:1px solid var(--line2); border-radius:14px; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.45)}
+  .fig .cvwrap{position:relative; width:100%; background:radial-gradient(120% 130% at 50% 0%, rgba(20,38,66,.34), transparent 72%)}
+  .fig canvas{display:block; width:100%; height:auto}
+  .fig .controls{display:flex; flex-wrap:wrap; align-items:center; gap:15px 24px; padding:14px 18px; border-top:1px solid var(--line2); background:rgba(6,11,19,.6)}
+  .ctl{display:flex; flex-direction:column; gap:4px; min-width:170px}
+  .ctl label{font-size:.63rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); display:block; overflow:hidden}
+  .ctl label .val{float:right; color:var(--ink); font-family:var(--mono); font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none; appearance:none; height:3px; border-radius:3px; background:var(--line2); outline:none; margin:8px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--cy); cursor:pointer; box-shadow:0 0 9px var(--glowC)}
+  input[type=range]::-moz-range-thumb{width:14px; height:14px; border-radius:50%; background:var(--cy); cursor:pointer; border:none}
+  .toggle{display:inline-flex; align-items:center; gap:8px; font-size:.64rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); cursor:pointer; user-select:none}
+  .toggle input{accent-color:var(--cy); width:15px; height:15px}
+  .readout{font-family:var(--mono); font-size:.74rem; color:var(--muted); margin-left:auto; font-variant-numeric:tabular-nums}
+  .readout b{color:var(--ink)}
+  figcaption{font-size:.79rem; color:var(--muted); padding:12px 18px 15px; line-height:1.55; border-top:1px dashed var(--line2)}
+  figcaption b{color:var(--ink2)}
+  .legend{display:flex; flex-wrap:wrap; gap:14px; padding:11px 18px; font-size:.66rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); border-top:1px solid var(--line2)}
+  .sw{width:11px; height:11px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:6px}
+
+  /* ---- matrix ---- */
+  .tablewrap{overflow-x:auto; margin:24px 0 6px; border:1px solid var(--line2); border-radius:12px; background:var(--panel)}
+  table{border-collapse:collapse; width:100%; min-width:660px; font-size:.88rem}
+  thead th{position:sticky; top:0; text-align:left; font-size:.64rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:700; padding:13px 14px; background:var(--panelSolid); border-bottom:1px solid var(--line2)}
+  thead th.a{color:var(--am)} thead th.b{color:var(--cy)}
+  tbody td{padding:11px 14px; border-bottom:1px solid var(--line); color:var(--ink2); vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover td{background:rgba(96,140,190,.06)}
+  td.cap{color:var(--ink); font-weight:700; white-space:nowrap}
+  .pill{display:inline-block; font-size:.67rem; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid var(--line2); white-space:nowrap; font-family:var(--sans)}
+  .pill.yes{color:var(--good); border-color:rgba(70,229,160,.38); background:rgba(70,229,160,.10)}
+  .pill.part{color:var(--warn); border-color:rgba(255,138,91,.36); background:rgba(255,138,91,.10)}
+  .pill.no{color:var(--gone); border-color:rgba(108,124,147,.34)}
+  .note{font-size:.8rem; color:var(--muted); display:block; margin-top:4px; line-height:1.45}
+
+  /* ---- verdict cards ---- */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin:22px 0 0}
+  .card{border:1px solid var(--line2); border-radius:12px; padding:15px 16px; background:var(--panel)}
+  .card h4{margin:0 0 7px; font-size:.72rem; letter-spacing:.09em; text-transform:uppercase; color:var(--ink)}
+  .card h4 .n{color:var(--cy); font-family:var(--mono); margin-right:7px}
+  .card.warm h4 .n{color:var(--am)}
+  .card p{margin:0; font-size:.89rem; color:var(--muted); line-height:1.55}
+  .card p b{color:var(--ink2)}
+
+  .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:22px 0 0}
+  .stat{border:1px solid var(--line2); border-radius:11px; padding:14px 15px; background:var(--panel)}
+  .stat .k{font-size:1.5rem; font-weight:800; font-family:var(--mono); color:var(--cy); font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+  .stat .l{font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-top:5px; line-height:1.4}
+
+  footer{border-top:1px solid var(--line2); padding:38px 0 70px; color:var(--muted); font-size:.79rem; line-height:1.7}
+  footer .wrap{max-width:var(--col)}
+  footer b{color:var(--ink2)}
+  a.inl{color:var(--cy); text-decoration:none; border-bottom:1px solid var(--line2)}
+  ::selection{background:rgba(53,219,255,.28)}
+  :focus-visible{outline:2px solid var(--cy); outline-offset:2px; border-radius:4px}
+  sub,sup{text-transform:none; letter-spacing:0; font-size:.72em; position:relative}
+  sub{vertical-align:baseline; top:.28em}
+  sup{vertical-align:baseline; top:-.45em}
+</style>
+
+<header class="top">
+  <div class="row">
+    <span class="brand"><span class="a">SCAPS-1D</span><span class="x">vs</span><span class="b">SolarLab</span></span>
+    <nav class="sec" id="secnav">
+      <a href="#unknowns">未知量</a>
+      <a href="#mesh">网格</a>
+      <a href="#driver">求解驱动</a>
+      <a href="#contacts">接触</a>
+      <a href="#iface">界面</a>
+      <a href="#optics">光学</a>
+      <a href="#matrix">覆盖对照</a>
+      <a href="#dynamics">动力学</a>
+      <a href="#new">新增能力</a>
+      <a href="#honest">适用边界</a>
+    </nav>
+    <button class="themebtn" id="themebtn" title="开关辉光与网格">◈ 特效 开</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <p class="eyebrow"><b>稳态</b> &nbsp;·&nbsp; <i>时域</i> &nbsp;·&nbsp; 同一组半导体方程</p>
+    <h1>两个引擎，同一套器件物理</h1>
+    <p class="lede">面对同一个薄膜叠层，SCAPS-1D 和 SolarLab 解的是<b>同一套</b>方程：泊松方程与载流子连续性方程耦合成的方程组。分歧集中在三处，其余差别都由这三处派生：<b>把哪些量当作未知量</b>、<b>时间算不算一个坐标</b>、<b>光以什么方式进入薄膜</b>。本页把这三处选择并排摆开，逐一说清各自换来了什么。</p>
+    <p class="lede" style="font-size:1rem;color:var(--muted);margin-top:14px">本页是 SolarLab 求解器讲解页《求解器算的是什么》的姊妹篇。琥珀色一侧全部出自 SCAPS 手册（v3.3.03，2016 年 2 月）和 Burgelman 课题组公开发表的算法论文；青色一侧全部出自 SolarLab 源码树。</p>
+
+    <figure class="fig" id="figPath">
+      <div class="cvwrap"><canvas data-h="330" aria-label="两个引擎各自如何得到一个 J-V 点：SCAPS 每个偏置点都重算一次收敛的稳态，SolarLab 则积分同一条连续轨迹"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:220px">
+          <label>当前偏置点 <span class="val" data-v="step">V = 0.00 V</span></label>
+          <input type="range" min="0" max="10" step="1" value="0" data-r="step">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="run" checked> 自动推进</label>
+        <div class="readout" data-txt="path">SCAPS：每点重走一遍延拓阶梯 &nbsp;·&nbsp; SolarLab：状态直接带到下一点</div>
+      </div>
+      <figcaption><b>一张图看清结构性差异。</b>SCAPS 把每个偏置点当成一个独立的稳态来算，沿延拓阶梯逐级推进（起点 → 暗平衡态 → 短路 → 工作点），每一级都跑一轮 Gummel/Newton 迭代；解一旦收敛，就不再记得自己是怎么走过来的。SolarLab 则按偏置随时间变化的顺序积分，走的是<b>真实时间轴上的一条连续轨迹</b>：V<sub>k</sub> 处的离子分布，就是扫描真正走到这一点时离子的实际分布，实测的 J-V 迟滞正是这么来的。</figcaption>
+    </figure>
+  </section>
+
+  <!-- UNKNOWNS -->
+<section class="s" id="unknowns">
+    <div class="sec-head"><span class="axis">维度 · 未知量</span><h2>求解器把什么当作未知量</h2></div>
+    <div class="prose">
+      <p>两套程序离散的是同一组方程：一条泊松方程，加两条载流子连续性方程。分岔从<em>因变量</em>的选取开始：SCAPS 解准费米能级，SolarLab 解载流子浓度，而且多带一种粒子。</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">(ψ, E<sub>Fn</sub>, E<sub>Fp</sub>)：稳态</p>
+        <div class="mini">
+          <span class="lbl">— 泊松方程 —</span><br>
+          −∂/∂x( ε ∂ψ/∂x ) = q( p − n + N<sub>D</sub><sup>+</sup> − N<sub>A</sub><sup>−</sup> + ρ<sub>def</sub> )<br><br>
+          <span class="lbl">— 连续性方程（∂/∂t = 0）—</span><br>
+          ∂J<sub>n</sub>/∂x = q( U<sub>n</sub> − G )<br>
+          ∂J<sub>p</sub>/∂x = −q( U<sub>p</sub> − G )<br><br>
+          <span class="lbl">— 本构关系 —</span><br>
+          J<sub>n</sub> = μ<sub>n</sub> n ∂E<sub>Fn</sub>/∂x &nbsp;&nbsp; J<sub>p</sub> = μ<sub>p</sub> p ∂E<sub>Fp</sub>/∂x
+        </div>
+        <ul>
+          <li>电流写成<b>准费米能级的梯度</b>，有效态密度项和能带偏移项已经藏在变量里面。</li>
+          <li>全程玻尔兹曼统计；费米-狄拉克统计和带隙收窄都<b>没有</b>实现。</li>
+          <li>缺陷电荷 ρ<sub>def</sub> 这一块做得很足：单价、二价到多价缺陷，两性缺陷，单能级 / 均匀 / 高斯 / 带尾分布，还有用独立占据率迭代求解的亚稳缺陷组态。</li>
+          <li>时间只以独立的<b>小信号</b>线性化形式出现，Y = δJ/δu<sub>ext</sub> = jωC + G。</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">每个节点 y = (n, p, P)：时间分辨</p>
+        <div class="mini">
+          <span class="lbl">— 参与时间推进（线方法）—</span><br>
+          ∂n/∂t = (1/q) ∂J<sub>n</sub>/∂x + G − R<br>
+          ∂p/∂t = −(1/q) ∂J<sub>p</sub>/∂x + G − R<br>
+          ∂P/∂t = ∂/∂x[ D<sub>I</sub>( ∂P/∂x + (P/V<sub>T</sub>) ∂φ/∂x ) ]<br><br>
+          <span class="lbl">— 直接求解，不作时间积分 —</span><br>
+          −∂/∂x( ε ∂φ/∂x ) = q( p − n + P − N<sub>A</sub> + N<sub>D</sub> )
+        </div>
+        <ul>
+          <li>状态量是载流子浓度；φ 由<b>预先分解好的三对角方程</b>直接解出，每次右端项求值只解一次，没有内层的泊松–牛顿迭代。</li>
+          <li>第三种粒子是<b>可动离子空位 P</b>，在同一个电场里漂移（Nernst–Planck 形式，可选第二种离子，可选空间位阻占据上限）。</li>
+          <li>SG 通量把 φ+χ 和 φ+χ+E<sub>g</sub> 分别当作电子和空穴的驱动势，SCAPS 里自带的有效态密度项在这里必须显式折进来（<code>dos_band_potentials</code>）；在对标器件上，这一项合计 137 mV。</li>
+          <li>费米-狄拉克统计可以逐层开启，默认刻意关掉：参照程序用的是玻尔兹曼统计。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">差异</span>
+      <span class="body">纯稳态问题上，准费米能级是条件数更好的未知量，浓度型牛顿迭代停滞的那些叠层，SCAPS 照样收敛。可一旦 <b>∂/∂t ≠ 0</b>，浓度就没得选：离子输运、陷阱俘获、位移电流，讲的都是某个浓度怎么随时间变。</span>
+    </div>
+  </section>
+
+  <!-- MESH -->
+  <section class="s" id="mesh">
+    <div class="sec-head"><span class="axis">维度 · 离散化</span><h2>网格点放在哪里</h2></div>
+    <div class="prose">
+      <p>两套程序都把节点堆在能带弯曲的地方。差别在于 SCAPS 是在求解<em>过程中</em>重新决定网格，而且把每个界面节点加倍，这一手在异质结处会实实在在地改变算出来的物理。</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">自适应网格，迭代之间重新生成</p>
+        <ul>
+          <li>体内稀疏，界面和接触处加密。</li>
+          <li><b>每个界面坐标上有两个网格点</b>，相邻两层各占一个，界面载流子浓度因此是真正分属两侧的平面量。</li>
+          <li>可以选每次迭代都重算网格：把相邻节点上 exp(qψ/kT)、exp(E<sub>Fn</sub>/kT)、exp(E<sub>Fp</sub>/kT)、R 和 G 的比值与 f<sub>max</sub> = 1.60（约 12 mV）比较，据此插入节点；与 f<sub>min</sub> = 1.05（约 1.2 mV）比较，据此删除节点。</li>
+          <li>最多 7 层半导体；每个电压点最多 10 次网格重构。</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">静态的 tanh 加密多层网格</p>
+        <ul>
+          <li>逐层给定节点数，用 tanh 往每个界面加密，只建一次，整个运行都复用。</li>
+          <li><b>每个界面只有一个节点</b>，两层共用，能带偏移于是落在单个网格单元内，只能靠热电子发射上限对 Scharfetter–Gummel 通量作限幅来兜底。</li>
+          <li>固定网格才撑得起 <code>MaterialArrays</code> 缓存和预分解的泊松 LU：依赖几何的计算只做一次，不必每次迭代重做。</li>
+          <li>要界面平面浓度时，靠物理重构，不靠网格：用准稳态的 2×2 通量平衡（<code>interface_plane_closure</code>），或者在稳态牛顿迭代里显式引入界面平面态未知量。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">差异</span>
+      <span class="body">SCAPS 拿每次迭代的额外开销，换陡峭带隙渐变和多价缺陷下的稳健性。SolarLab 拿自适应性换一份缓存，这份缓存要撑过每次扫描约 10<sup>5</sup> 次右端项求值；同一套几何要走上千个时间步而不是只求解几百次时，这笔账才划算。SCAPS 的网格只在界面双节点这一处<b>多给了物理</b>；为了补上这个差距，SolarLab 前后写过五版不同的实现。</span>
+    </div>
+  </section>
+
+  <!-- DRIVER -->
+<section class="s" id="driver">
+    <div class="sec-head"><span class="axis">维度 · 求解驱动</span><h2>解到底是怎么求出来的</h2></div>
+    <div class="prose">
+      <p>两者分歧最深的地方就在这里。SCAPS 本质是一台非线性方程组求解器，外面裹一层延拓策略；SolarLab 默认把器件当作刚性<em>初值</em>问题来做时间积分，后来才补上一个直接求稳态的牛顿驱动，为的就是把能跟 SCAPS 对照的量定义出来。</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">Gummel 外迭代 + 方程内 Newton 子迭代</p>
+        <div class="mini">
+          <span class="lbl">— 延拓阶梯 —</span><br>
+          起点（E<sub>F</sub> 平直，无电势降）<br>
+          &nbsp;&nbsp;↓ &nbsp;暗平衡态，0 V<br>
+          &nbsp;&nbsp;↓ &nbsp;短路，1 sun，0 V<br>
+          &nbsp;&nbsp;↓ &nbsp;工作点<br>
+          &nbsp;&nbsp;↓ &nbsp;第一个测量点 → 扫描
+        </div>
+        <ul>
+          <li>外层是解耦的 Gummel 循环，每个方程内部再做 Newton–Raphson 子步。</li>
+          <li>ψ、E<sub>Fn</sub>、E<sub>Fp</sub> 每次迭代的更新量<b>限幅</b>在 0.5 kT/q；更新量全部降到 0.001 kT 以下就算收敛；迭代上限 1000 次。</li>
+          <li>相邻两级隔得太远时会自动插入中间子步，这是应对迭代发散的常规手段。</li>
+          <li>可以选“过 V<sub>oc</sub> 就停”；一次扫描最多 201 个测量点。</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">线方法 + 隐式 Radau（另配一个稳态牛顿）</p>
+        <div class="mini">
+          <span class="lbl">— 每个电压步 —</span><br>
+          y(t<sub>k</sub>) → solve_ivp(Radau IIA，max_step 设上限)<br>
+          &nbsp;&nbsp;↳ 失败时：把稳定时间折半细分（≤ 10 次）<br>
+          &nbsp;&nbsp;↳ 最后手段：改用 BDF 重试<br>
+          y(t<sub>k+1</sub>) 把 n、p <b>连同离子分布</b>一起带到下一步<br><br>
+          <span class="lbl">— 可选的无离子稳态（离子冻结）—</span><br>
+          阻尼对数空间牛顿解 F(y) = 0，LU 分解复用
+        </div>
+        <ul>
+          <li>离子–载流子–电场耦合带来的刚性，交给 Radau IIA（L 稳定，5 阶）来扛；步长之所以要设上限，是因为接近平带时雅可比矩阵接近奇异，误差估计器会低估真实误差。</li>
+          <li>稳态驱动用的是<b>同一套</b>装配好的右端项：一套物理，两个驱动；牛顿收不下来的点交给经校验的瞬态回退计算，不会有哪一点被悄悄编出来。</li>
+          <li>离子在偏置点之间的记忆不靠后处理去凑：上一步收敛的状态<em>就是</em>下一步的初始条件。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">差异</span>
+      <span class="body">稳态求解器回答的是器件在电压 V 下是什么表现，时域积分器回答的是电压以速率 r 变化的<b>过程中</b>器件是什么表现。钙钛矿恰好是这两个答案能测出差别的材料，而实验记下来的是后一个。</span>
+    </div>
+  </section>
+
+  <!-- CONTACTS -->
+  <section class="s" id="contacts">
+    <div class="sec-head"><span class="axis">维度 · 边界条件</span><h2>接触是怎么约束的</h2></div>
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">金属功函数，或反解得到的平带</p>
+        <ul>
+          <li>前后接触各给多数载流子一个<b>金属功函数 Φ<sub>m</sub></b>；也可以选“平带”，由 SCAPS 在每个温度下反解 Φ<sub>m</sub>，让能带保持平直。2014 年以后的版本换了做法，改从含深能级缺陷的总电荷中性条件反解。</li>
+          <li>接触处的动力学，由电子和空穴各自的有限表面复合速度定下来，默认值惯用 10<sup>7</sup> cm/s。</li>
+          <li>隧穿进出接触是可选项；每个接触还能挂一份随波长变化的反射/透射滤光片文件。</li>
+          <li>外部串联电阻和并联电阻是仿真<b>之后</b>才加进来的，靠重新映射端电压实现，并不进入输运问题本身；量子效率的计算同样不包含这两个电阻。</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">三种接触约定可选</p>
+        <ul>
+          <li><b>欧姆接触的狄利克雷钉扎</b>（默认，IonMonger 约定）：边界上的载流子浓度钉在暗态掺杂平衡值，泊松方程以配置里写定的 V<sub>bi</sub> 为参考。</li>
+          <li><b>罗宾 / 选择性 / 肖特基</b>：每一侧、每种载流子各给一个有限的 S<sub>n</sub>、S<sub>p</sub>，J = ±q·S·(浓度 − 浓度<sub>eq</sub>)；S → ∞ 回到欧姆接触，S = 0 就是完全阻挡。</li>
+          <li><b>平带金属接触</b>，也就是 SCAPS 的约定：泊松边界由 <code>compute_V_bi()</code> 算出的功函数差驱动，不是一个写死的输入值。</li>
+          <li>已记录在案的限制：平带接触配稳态牛顿是一对不兼容的组合（罗宾边界叠上陡峭的 V<sub>bi</sub>，条件数变差，牛顿迭代会停滞）。这条按引擎边界如实记下，没有拿补丁盖过去。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">差异</span>
+      <span class="body">掺杂扫描上两套程序看着不一致，最主要的来源就是接触约定：V<sub>bi</sub> 边界会随偏置、随掺杂摆动，它对 ETL 掺杂的响应，和 SCAPS 固定金属功函数下的响应很不一样。如今 SolarLab 两种约定都做了，正是这一步把“趋势错了”落实成<b>有名有姓、可复现的边界条件差异</b>。</span>
+    </div>
+  </section>
+
+<!-- INTERFACES -->
+  <section class="s" id="iface">
+    <div class="sec-head"><span class="axis">维度 · 异质结</span><h2>界面上发生了什么</h2></div>
+    <div class="prose">
+      <p>两套程序的界面输运都按热电子发射算，界面复合都按 SRH 型循环算。分歧在别处：复合速率用的到底是哪一处的载流子浓度。</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">界面双节点上的热电子发射</p>
+        <ul>
+          <li>界面输运按热电子发射处理，热速度 v<sub>th</sub> 取相邻两层中较小的一个。每个界面上因此都留有一小段准费米能级台阶，能带偏移为零时也不例外。</li>
+          <li>界面复合走 <b>Pauwels–Vanhoutte</b> 理论，是 SRH 的一种推广：用一个陷阱占据率同时平衡两侧过来的俘获。</li>
+          <li>半经典隧穿有四条通道：带间、带内、能带 ↔ 界面缺陷、能带 ↔ 接触。四条都只在直流下起作用，交流问题里看不见。</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">SG 通量取 TE 上限，另做平面浓度闭合</p>
+        <ul>
+          <li>只要界面上 |ΔE<sub>C</sub>| 或 |ΔE<sub>V</sub>| 超过 0.05 eV，Scharfetter–Gummel 通量就限幅到 Richardson–Dushman 热电子发射极限，免得能带偏移挤在一个网格单元里造成过量注入。</li>
+          <li>界面 SRH 的 (v<sub>n</sub>, v<sub>p</sub>) 逐个界面单独给。界面在网格上只占一个共用节点，平面浓度得另外重建：要么每次右端项求值时解一个 2×2 隐式通量平衡，要么在稳态牛顿迭代里把界面平面态直接当作未知量。</li>
+          <li>隧穿只留一条通道：把静态的 Padovani–Stratton 热场发射增强因子 Γ ≥ 1 折进 Richardson 常数。这一步刻意放在构建阶段做完，牛顿迭代的收缩性不受它干扰。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">差异</span>
+      <span class="body">这一节是 SCAPS 领先，记录里也照实写着：平面浓度这条路走通之前，先后试过三版基于体节点浓度的速率代数改写，对照 SCAPS 的界面趋势全部<b>被证伪</b>。这个教训可以复用：在这一区间里，只要速率公式取的是体节点上的浓度乘积（那里的浓度已按准费米能级自洽过），算出来的复合就完全看不到陷阱能级；只有真正的界面平面浓度才给得出这一响应。</span>
+    </div>
+  </section>
+
+  <!-- OPTICS -->
+  <section class="s" id="optics">
+    <div class="sec-head"><span class="axis">维度 · 光学</span><h2>光如何变成 G(x)</h2></div>
+    <div class="prose">
+      <p>SCAPS 的内置光学模型有意做得简单：非相干比尔-朗伯吸收，反射只允许出现在接触处，<b>内部界面不反射</b>。吸收系数要么读文件，要么用模型 α(λ) = (A + B/hν)·√(hν − E<sub>g</sub>)。想要更精细的光学，手册留的出口是从外部导入 g(x) 文件。SolarLab 则自己算光学，而且算的是相干光学。</p>
+    </div>
+
+    <figure class="fig" id="figOptics">
+      <div class="cvwrap"><canvas data-h="360" aria-label="光生分布对比：非相干比尔-朗伯与相干传输矩阵法"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:210px">
+          <label>吸收层厚度 <span class="val" data-v="d">400 nm</span></label>
+          <input type="range" min="150" max="800" step="10" value="400" data-r="d">
+        </div>
+        <div class="ctl" style="min-width:190px">
+          <label>吸收层 k（550 nm 处） <span class="val" data-v="k">0.15</span></label>
+          <input type="range" min="0.03" max="0.40" step="0.01" value="0.15" data-r="k">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="mirror" checked> 金属背反射层</label>
+        <div class="readout" data-txt="opt">A<sub>TMM</sub> — &nbsp;·&nbsp; A<sub>BL</sub> —</div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--am)"></span>比尔-朗伯（SCAPS 内置模型）</span>
+        <span><span class="sw" style="background:var(--cy)"></span>相干传输矩阵法（SolarLab）</span>
+        <span><span class="sw" style="background:rgba(150,170,200,.45)"></span>传输层</span>
+      </div>
+      <figcaption><b>页面内现算的传输矩阵</b>：五个波长，每层 n、k 取常数，能量守恒 R+T+A = 1。接上金属背反射层，驻波就把产生率的极大和零点摆进吸收层<b>内部</b>；比尔-朗伯只给得出单调衰减。真正的求解器用同一套公式，只是换成实测 n、k 数据表和完整 AM1.5G 光谱，另加 Yablonovitch 光子再循环逃逸概率；FULL 档下，每次右端项求值都把再吸收的那一份还回 G(x)。</figcaption>
+    </figure>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">非相干，单次通过</p>
+        <ul>
+          <li>整个叠层都按比尔-朗伯吸收算，α 来自模型或文件，α(λ,y) 可以随组分渐变。</li>
+          <li>反射/透射滤光片只能加在接触处；此外有中性密度滤光片、截止滤光片、从任一侧照射的选项，还带一个光谱库（AM0、AM1.5D、AM1.5G、单色光）。</li>
+          <li>没有干涉，没有内部界面反射，也没有背反射层驻波。手册对此写得很明白，留给用户的变通出口是导入 g(x)。</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">相干传输矩阵法，光学闭环</p>
+        <ul>
+          <li>Pettersson/Burkhard 传输矩阵覆盖整个叠层，只参与光学的衬底也算在内；带 n<sub>real</sub>/n<sub>ambient</sub> 坡印廷修正，R+T+A = 1 严格成立。</li>
+          <li><b>光子再循环</b>：凡是标记为吸收层的层，辐射复合系数按带边逃逸概率 P<sub>esc</sub> = min(1, 1/4n²αd) 缩放。</li>
+          <li><b>自洽再吸收</b>：每次右端项求值，把没逃出去的那一份当产生源加回来；高 np 区发出的光就能喂给低 np 区。</li>
+          <li>叠层电池只做一次 TMM，G(x) 直接分到各子电池，复合结层计入寄生吸收。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">差异</span>
+      <span class="body">这是本页最清楚的一处能力差距。带金属背电极的薄膜钙钛矿电池<b>本身就是</b>一个光学腔，干涉极大离结多远，直接决定 J<sub>sc</sub> 和 EQE 的形状。这部分物理在 SCAPS 里只能靠导入；在 SolarLab 里，它和输运参数出自同一套叠层，改一处光学和改一处电学天然对得上。</span>
+    </div>
+  </section>
+
+  <!-- MATRIX -->
+<section class="s" id="matrix">
+    <div class="sec-head"><span class="axis">维度 · 覆盖</span><h2>两个引擎各自能算什么</h2></div>
+    <div class="prose">
+      <p>这张表列的是各自能算什么，不是比谁更强。有几行的强弱正好反过来。</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>能力项</th><th class="a">SCAPS-1D</th><th class="b">SolarLab</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="cap">J-V、C-V、C-f、QE</td>
+            <td><span class="pill yes">原生支持</span><span class="note">四种测量全部内置，还带批量运行、记录器、脚本和曲线拟合</span></td>
+            <td><span class="pill yes">支持</span><span class="note">J-V（1D / 2D / 叠层）、阻抗、EQE、Suns-V<sub>oc</sub>、能带图、TPV、性能衰减</span></td>
+          </tr>
+          <tr>
+            <td class="cap">可动离子</td>
+            <td><span class="pill no">不支持</span></td>
+            <td><span class="pill yes">核心变量</span><span class="note">单离子或双离子物种，计入空间位阻占据上限；离子记忆在偏置点之间延续</span></td>
+          </tr>
+          <tr>
+            <td class="cap">瞬态与大信号</td>
+            <td><span class="pill no">仅稳态</span><span class="note">“SCAPS 给出的始终是平衡态，相当于时间过去无限长之后的结果”</span></td>
+            <td><span class="pill yes">时域求解</span><span class="note">整个刚性方程组用隐式 Radau 积分；扫描速率本身就是输入参数</span></td>
+          </tr>
+          <tr>
+            <td class="cap">J-V 迟滞</td>
+            <td><span class="pill no">结构上做不到</span></td>
+            <td><span class="pill yes">自然涌现</span><span class="note">正向扫描接反向扫描，出自同一条轨迹，不是后处理拼出来的</span></td>
+          </tr>
+          <tr>
+            <td class="cap">小信号导纳</td>
+            <td><span class="pill yes">精确线性化</span><span class="note">在工作点上直接给出 Y = jωC + G，另配导纳解读面板</span></td>
+            <td><span class="pill part">时域锁相</span><span class="note">积分几个交流周期再解调；慢一些，但把大信号的离子响应也算进来</span></td>
+          </tr>
+          <tr>
+            <td class="cap">相干光学</td>
+            <td><span class="pill no">仅比尔-朗伯</span><span class="note">手册给的变通办法是导入外部 g(x) 文件</span></td>
+            <td><span class="pill yes">TMM + 光子再循环</span></td>
+          </tr>
+          <tr>
+            <td class="cap">缺陷物理</td>
+            <td><span class="pill yes">覆盖广泛</span><span class="note">多价缺陷、两性缺陷、高斯与带尾分布、IPV 光激发、亚稳组态跃迁</span></td>
+            <td><span class="pill part">单能级 + 分布</span><span class="note">体内 SRH 复合，近界面处的陷阱密度可取指数或高斯分布；界面缺陷可指定陷阱深度 E<sub>t</sub></span></td>
+          </tr>
+          <tr>
+            <td class="cap">隧穿</td>
+            <td><span class="pill yes">四条通道</span><span class="note">带间、带内、到界面缺陷、到接触电极（仅直流）</span></td>
+            <td><span class="pill part">一条通道</span><span class="note">在受 TE 限幅的界面上加一项静态热场发射增强</span></td>
+          </tr>
+          <tr>
+            <td class="cap">参数渐变</td>
+            <td><span class="pill yes">几乎全参数</span><span class="note">连 α(λ,y) 都能渐变</span></td>
+            <td><span class="pill part">能带 + 派生量</span><span class="note">由同一套材料参数驱动的 A/B 混合律；光学 n、k 不参与渐变，文档里写明了</span></td>
+          </tr>
+          <tr>
+            <td class="cap">空间维度</td>
+            <td><span class="pill no">1D，≤ 7 层</span></td>
+            <td><span class="pill yes">1D + 2D</span><span class="note">张量积网格加稀疏泊松求解；横向晶界可以逐晶粒各给一套载流子寿命</span></td>
+          </tr>
+          <tr>
+            <td class="cap">单片叠层</td>
+            <td><span class="pill no">仅单结</span></td>
+            <td><span class="pill yes">两端子</span><span class="note">共用一次 TMM，两个子电池分别扫描，最后做串联电流匹配</span></td>
+          </tr>
+          <tr>
+            <td class="cap">随时间衰减</td>
+            <td><span class="pill no">—</span></td>
+            <td><span class="pill yes">长时程驱动</span><span class="note">每个探测时刻取一条冻结离子的快照 J-V</span></td>
+          </tr>
+          <tr>
+            <td class="cap">自动化接口</td>
+            <td><span class="pill yes">脚本 + 批量</span><span class="note">Windows 图形界面程序，科研免费，不开源</span></td>
+            <td><span class="pill yes">库 + HTTP + 图形界面</span><span class="note">Python 包，FastAPI/SSE 后端，浏览器工作台，YAML 配置，pytest 门禁</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- DYNAMICS -->
+  <section class="s" id="dynamics">
+    <div class="sec-head"><span class="axis">维度 · 后果</span><h2>稳态引擎给不出的那个测量</h2></div>
+    <div class="prose">
+      <p>迟滞不是要消掉的数值伪影，它本身就是可观测量，离子的时间常数写在里面。稳态求解器只给一条准静态曲线，也就是扫描速率趋于零时的极限。拖动下面的扫描速率滑块，看正扫和反扫两族曲线怎么向它靠拢。</p>
+    </div>
+
+    <figure class="fig" id="figHyst">
+      <div class="cvwrap"><canvas data-h="350" aria-label="扫描速率降低时，正扫与反扫的 J-V 曲线逐渐收拢到准静态曲线"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:230px">
+          <label>扫描速率 <span class="val" data-v="rate">1.00 V/s</span></label>
+          <input type="range" min="-3" max="1.3" step="0.05" value="0" data-r="rate">
+        </div>
+        <div class="ctl" style="min-width:190px">
+          <label>离子时间常数 τ<sub>ion</sub> <span class="val" data-v="tau">1.00 s</span></label>
+          <input type="range" min="-2" max="1.3" step="0.05" value="0" data-r="tau">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="ss" checked> 显示准静态曲线</label>
+        <div class="readout" data-txt="hi">迟滞指数 <b>—</b></div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--cy)"></span>反向扫描（V<sub>max</sub> → 0）</span>
+        <span><span class="sw" style="background:#B98CFF"></span>正向扫描（0 → V<sub>max</sub>）</span>
+        <span><span class="sw" style="background:var(--am)"></span>准静态曲线：稳态求解器给出的那条</span>
+      </div>
+      <figcaption><b>这是示意用的简化模型</b>，不是求解器的输出：用单状态离子弛豫 dθ/dt = (θ<sub>ss</sub>(V) − θ)/τ<sub>ion</sub> 调制载流子抽取，再沿各自的扫描方向积分。它抓住的是几条结构性事实：扫得足够慢时回线闭合，正反两支都落回准静态曲线；当 r·τ<sub>ion</sub> 与偏压范围可比时回线张开；离子一旦被冻结，回线又饱和，每个方向各自保持极化后的状态。SolarLab 里，同样的行为直接来自耦合的离子漂移-扩散方程，模型里没有任何一个专门的迟滞参数。</figcaption>
+    </figure>
+  </section>
+
+<!-- NEW -->
+  <section class="s" id="new">
+    <div class="sec-head"><span class="axis">维度 · 贡献</span><h2>SolarLab 真正新的部分</h2></div>
+    <div class="prose">
+      <p>每一条都写得足够具体，可以逐条回源码树里核对。</p>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <h4><span class="n">01</span>离子与载流子的全时域耦合</h4>
+        <p>离子和载流子共用同一个泊松场，都当作被输运的物种一起解，用 L-稳定的隐式格式往前积分。<b>迟滞、TPV、性能衰减、大信号阻抗都来自同一套方程</b>，不必一个现象配一个模型。</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">02</span>光学是算出来的，不是外部导入的</h4>
+        <p>相干传输矩阵法直接跑在同一套带输运参数的叠层上，光子再循环与自洽再吸收把回路闭上。薄膜电池本身<b>就是</b>一个光学腔，这一点会直接体现在 G(x) 上，不用另外补。</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">03</span>横向维度</h4>
+        <p>二维求解器由稀疏泊松求解加二维 Scharfetter–Gummel 格式搭成。横向均匀的极限下，它与一维逐位一致，先过这一关，再去做一维根本写不出来的事：<b>给晶界单独指定载流子寿命，算出 V<sub>oc</sub> 随晶粒尺寸怎么走</b>。</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">04</span>单片叠层电池</h4>
+        <p>一次传输矩阵计算走完顶电池、复合结和底电池，把光生速率分布 G(x) 分给两节子电池；两节各扫各的，最后在同一套电流网格上做电流匹配。复合结那层按寄生吸收算进去，不是直接扔掉。</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">05</span>两个驱动，一套物理</h4>
+        <p>稳态牛顿求解器和瞬态积分器共用<b>同一份装配好的右端项</b>。同一个量，可以按 SCAPS 的口径定义（冻结离子的稳态），也可以按实验的口径定义（有限扫描速率），不用养两套迟早走偏的物理。</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">06</span>把可复现性做成基础设施</h4>
+        <p>器件叠层由 YAML 构建成不可变数据类（frozen dataclass）；每项物理升级都挂在一个开关后面，默认路径逐位一致；回归门禁把 V<sub>oc</sub>、J<sub>sc</sub>、FF 钉在给定区间里；还有一条自动对标回路，拿参考数据给模型打分，顺手记下已被否掉的假设，同样的路不走第二遍。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- HONEST -->
+  <section class="s" id="honest">
+    <div class="sec-head"><span class="axis">维度 · 校准</span><h2>SCAPS 强在哪，对标又对到什么程度</h2></div>
+    <div class="prose">
+      <p>只夸一边的对比，答辩场上站不住。有几件事 SCAPS 至今做得更好；SolarLab 和它能对上到什么程度，这里也一并写清楚。</p>
+    </div>
+
+    <div class="cards">
+      <div class="card warm">
+        <h4><span class="n">▸</span>缺陷物理</h4>
+        <p>多价缺陷与两性缺陷，高斯分布与带尾分布，缺陷的光激发（IPV），还有单独迭代占据率的亚稳组态。这一层深度，SolarLab 一点没有。</p>
+      </div>
+      <div class="card warm">
+        <h4><span class="n">▸</span>自适应网格</h4>
+        <p>每次迭代之间按 exp(qψ/kT) 的比值重划网格。陡峭的带隙渐变、深能级缺陷占据，SCAPS 扛得住，靠的就是这一手；固定网格碰上同样的题，只能人工加减节点。</p>
+      </div>
+      <div class="card warm">
+        <h4><span class="n">▸</span>交流分析</h4>
+        <p>精确的小信号线性化，比把积分出来的波形拿去解调更快也更干净。做 C-V 和 C-f，本来就该用它。</p>
+      </div>
+      <div class="card warm">
+        <h4><span class="n">▸</span>成熟度</h4>
+        <p>二十年的使用积累，大量已发表参数构成的生态，曲线拟合，批处理与记录流程，外加一套脚本语言。整个领域读结果，用的就是这把尺子。</p>
+      </div>
+    </div>
+
+    <div class="prose" style="margin-top:30px">
+      <p>拿它当参照，在镜像出来的对标器件上：</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">11 / 11</div><div class="l">项参数扫描的趋势与正负号全部一致</div></div>
+      <div class="stat"><div class="k">1.168 V</div><div class="l">基准 V<sub>oc</sub>，靠物理对上，不是拟合来的</div></div>
+      <div class="stat"><div class="k">137 mV</div><div class="l">历史差距中，已追溯到一个漏掉的有效态密度项</div></div>
+      <div class="stat"><div class="k">≈26.7%</div><div class="l">对标器件的 PCE；SCAPS 给的是 26.69%</div></div>
+    </div>
+    <div class="delta" style="margin-top:20px">
+      <span class="tag">未决</span>
+      <span class="body">扫描<b>幅度</b>还是一条记录在案的结构性边界：接触边界条件随掺杂来回摆，体内俄歇又压出一个 V<sub>oc</sub> 下限，这类差距不是靠调参去追的目标。深导带偏移（ΔE<sub>C</sub> ≤ −0.2 eV）对任何代数形式的牛顿法都是病态的，那一段因此改走瞬态。两条都当作引擎边界，连同证据一起记下来；对标结论本来就该这么写。</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><b>资料来源。</b>琥珀色一侧：<i>SCAPS 手册</i>（SCAPS manual）3.3.03 版，2016 年 2 月（M. Burgelman 等，根特大学），§3.3 接触、§3.8 界面、§3.9 隧穿、§4.2 光照、§5.1 计算流程、§5.3 数值参数，以及其中引用的算法论文。青色一侧：SolarLab 源码树和配套的架构说明。文中引的那些默认值（f<sub>max</sub> = 1.60，更新量限幅 0.5 kT/q，0.001 kT 收敛判据，201 个测量点上限），都是 SCAPS 手册里写明的数字。</p>
+    <p><b>如实说明。</b>光学那张图取常数 n、k 现算传输矩阵，旁边并排放同一叠层的比尔-朗伯分布。迟滞那张图是简化的单状态示意，图上已经标了，不是求解器的输出。能力对照表里每写一条，背后都能指到一个具体模块，或手册的某一节。</p>
+    <p>本页与 SolarLab 求解器讲解页 <b>“求解器算的是什么”</b> 配套阅读。</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  const R = document.documentElement;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- FX toggle ---------- */
+  const fxbtn = document.getElementById("themebtn");
+  fxbtn.addEventListener("click", function(){
+    R.classList.toggle("nofx");
+    fxbtn.textContent = R.classList.contains("nofx") ? "◈ 特效 关" : "◈ 特效 开";
+    redrawAll();
+  });
+
+  /* ---------- scroll spy ---------- */
+  const links = Array.prototype.slice.call(document.querySelectorAll("#secnav a"));
+  const secs = links.map(function(a){ return document.querySelector(a.getAttribute("href")); });
+  function spy(){
+    let best = 0, bestD = 1e9;
+    secs.forEach(function(s, i){
+      if(!s) return;
+      const d = Math.abs(s.getBoundingClientRect().top - 90);
+      if(d < bestD){ bestD = d; best = i; }
+    });
+    links.forEach(function(a, i){ a.classList.toggle("active", i === best); });
+  }
+  window.addEventListener("scroll", spy, {passive:true}); spy();
+
+  /* ---------- canvas helper ---------- */
+  const canvases = [];
+  function setupCanvas(fig){
+    const cv = fig.querySelector("canvas");
+    const ctx = cv.getContext("2d");
+    const h = parseInt(cv.dataset.h, 10);
+    function resize(){
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = cv.parentNode.clientWidth;
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      cv.style.height = h + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return {w:w, h:h};
+    }
+    const obj = {cv:cv, ctx:ctx, resize:resize, dim:resize()};
+    canvases.push(obj);
+    return obj;
+  }
+  function redrawAll(){ canvases.forEach(function(c){ c.dim = c.resize(); if(c.draw) c.draw(); }); }
+  window.addEventListener("resize", redrawAll);
+
+  const CSS = function(v){ return getComputedStyle(R).getPropertyValue(v).trim(); };
+  const AM = "#F5A93A", CY = "#35DBFF", VI = "#B98CFF", MUT = "#93A4BC", LINE = "rgba(96,140,190,.30)";
+
+  function axes(ctx, x0, y0, w, h, xlab, ylab){
+    ctx.strokeStyle = LINE; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, y0 - h); ctx.lineTo(x0, y0); ctx.lineTo(x0 + w, y0); ctx.stroke();
+    ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--sans");
+    ctx.textAlign = "center"; ctx.fillText(xlab, x0 + w/2, y0 + 26);
+    ctx.save(); ctx.translate(x0 - 32, y0 - h/2); ctx.rotate(-Math.PI/2);
+    ctx.fillText(ylab, 0, 0); ctx.restore(); ctx.textAlign = "left";
+  }
+
+  /* =======================================================================
+     FIGURE 1 — solve path
+     ======================================================================= */
+  (function(){
+    const fig = document.getElementById("figPath");
+    const C = setupCanvas(fig);
+    const slider = fig.querySelector('[data-r="step"]');
+    const stepOut = fig.querySelector('[data-v="step"]');
+    const runBox = fig.querySelector('[data-c="run"]');
+    const txt = fig.querySelector('[data-txt="path"]');
+    let k = 0, phase = 0, t0 = performance.now();
+
+    const RUNGS = ["起始猜测", "暗平衡态 0 V", "短路 1 sun 光照", "工作点", "偏压 Vₖ"];
+
+    C.draw = function(){
+      const ctx = C.ctx, w = C.dim.w, h = C.dim.h;
+      ctx.clearRect(0, 0, w, h);
+      const mid = w / 2;
+      const V = k * 0.12;
+      stepOut.textContent = "V = " + V.toFixed(2) + " V";
+
+      // divider
+      ctx.strokeStyle = LINE; ctx.setLineDash([3,5]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mid, 26); ctx.lineTo(mid, h - 16); ctx.stroke(); ctx.setLineDash([]);
+
+      ctx.font = "600 11px " + CSS("--sans"); ctx.textAlign = "left";
+      ctx.fillStyle = AM; ctx.fillText("SCAPS  ·  每个偏压单独求一次稳态", 18, 22);
+      ctx.fillStyle = CY; ctx.fillText("SolarLab  ·  时间上的一条连续轨迹", mid + 18, 22);
+
+      /* --- left: continuation ladder, restarted every bias --- */
+      const lx = 46, ly0 = 52, dy = 40;
+      for(let i = 0; i < RUNGS.length; i++){
+        const y = ly0 + i * dy;
+        const active = (phase >= i);
+        ctx.strokeStyle = active ? AM : "rgba(245,169,58,.22)";
+        ctx.fillStyle = active ? "rgba(245,169,58,.14)" : "rgba(245,169,58,.05)";
+        ctx.lineWidth = active ? 1.6 : 1;
+        roundRect(ctx, lx, y - 12, mid - lx - 34, 24, 6); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = active ? "#F7DCB0" : "rgba(245,169,58,.45)";
+        ctx.font = "11px " + CSS("--sans");
+        ctx.fillText(i === 4 ? ("偏压 V = " + V.toFixed(2) + " V") : RUNGS[i], lx + 11, y + 4);
+        if(i < RUNGS.length - 1){
+          ctx.strokeStyle = active ? "rgba(245,169,58,.6)" : "rgba(245,169,58,.18)";
+          ctx.beginPath(); ctx.moveTo(lx + 14, y + 12); ctx.lineTo(lx + 14, y + dy - 12); ctx.stroke();
+          arrow(ctx, lx + 14, y + dy - 12, Math.PI/2, active ? "rgba(245,169,58,.6)" : "rgba(245,169,58,.18)");
+        }
+        // gummel/newton spinner on the active rung
+        if(active && phase === i){
+          const cx = mid - 46, cy = y, r = 8;
+          const a = (performance.now() - t0) / 200;
+          ctx.strokeStyle = AM; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(cx, cy, r, a, a + 4.2); ctx.stroke();
+        }
+      }
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--sans");
+      ctx.fillText("Gummel 外迭代 · Newton 内迭代 · 限幅 0.5 kT/q", lx, ly0 + 5 * dy + 4);
+      ctx.fillStyle = "rgba(245,169,58,.75)";
+      ctx.fillText("状态不保留，下一个偏压重走一遍阶梯", lx, ly0 + 5 * dy + 22);
+
+      /* --- right: time trajectory --- */
+      const rx0 = mid + 46, rx1 = w - 26, ry = h - 74;
+      ctx.strokeStyle = LINE; ctx.beginPath(); ctx.moveTo(rx0, ry); ctx.lineTo(rx1, ry); ctx.stroke();
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
+      ctx.fillText("t", rx1 - 6, ry + 18);
+      ctx.font = "10px " + CSS("--sans");
+      ctx.fillText("真实时间，扫描速率是输入量", rx0, ry + 34);
+
+      const N = 11;
+      // ribbon = ionic state carried forward
+      ctx.beginPath();
+      for(let i = 0; i <= 200; i++){
+        const f = i / 200;
+        const x = rx0 + f * (rx1 - rx0);
+        const yy = ry - 26 - 44 * Math.pow(Math.min(f * 11 / Math.max(k, 0.001), 1) * (f), 0.75);
+        if(i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.strokeStyle = "rgba(185,140,255,.55)"; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = "rgba(185,140,255,.9)"; ctx.font = "10px " + CSS("--sans");
+      ctx.fillText("离子分布 P(x,t)", rx0 + 6, ry - 82);
+
+      for(let i = 0; i < N; i++){
+        const f = i / (N - 1);
+        const x = rx0 + f * (rx1 - rx0);
+        const done = i <= k;
+        ctx.fillStyle = done ? CY : "rgba(53,219,255,.22)";
+        ctx.beginPath(); ctx.arc(x, ry, i === k ? 5 : 3, 0, 6.3); ctx.fill();
+        if(i < N - 1 && done){
+          ctx.strokeStyle = "rgba(53,219,255,.5)"; ctx.lineWidth = 1.4;
+          ctx.beginPath(); ctx.moveTo(x + 5, ry - 11); ctx.lineTo(rx0 + (i + 1) / (N - 1) * (rx1 - rx0) - 5, ry - 11); ctx.stroke();
+        }
+      }
+      ctx.fillStyle = CY; ctx.font = "11px " + CSS("--sans");
+      ctx.fillText("y(tₖ) = (n, p, P) 作为 Vₖ₊₁ 的初值", rx0, ry - 60);
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--sans");
+      ctx.fillText("Radau IIA · 限制最大步长 · 失败则二分", rx0, ry - 44);
+
+      txt.innerHTML = phase < 4
+        ? "SCAPS：正沿延拓阶梯推进 &nbsp;·&nbsp; <b>" + RUNGS[phase] + "</b>"
+        : "SCAPS：已在 V = " + V.toFixed(2) + " V 收敛 &nbsp;·&nbsp; SolarLab：状态继续向前传递";
+    };
+
+    function loop(){
+      if(runBox.checked && !reduce){
+        const el = (performance.now() - t0) / 1000;
+        phase = Math.min(4, Math.floor(el / 0.55));
+        if(el > 3.2){ t0 = performance.now(); k = (k + 1) % 11; slider.value = k; }
+      }
+      C.draw();
+      requestAnimationFrame(loop);
+    }
+    slider.addEventListener("input", function(){ k = +slider.value; t0 = performance.now(); phase = 4; runBox.checked = false; C.draw(); });
+    if(reduce){ phase = 4; C.draw(); } else { requestAnimationFrame(loop); }
+  })();
+
+  /* =======================================================================
+     FIGURE 2 — optics: Beer-Lambert vs coherent TMM
+     ======================================================================= */
+  (function(){
+    const fig = document.getElementById("figOptics");
+    const C = setupCanvas(fig);
+    const dS = fig.querySelector('[data-r="d"]'), kS = fig.querySelector('[data-r="k"]');
+    const dV = fig.querySelector('[data-v="d"]'), kV = fig.querySelector('[data-v="k"]');
+    const mir = fig.querySelector('[data-c="mirror"]');
+    const out = fig.querySelector('[data-txt="opt"]');
+
+    /* --- complex helpers --- */
+    const cx = function(re, im){ return {re:re, im:im || 0}; };
+    const add = function(a,b){ return cx(a.re+b.re, a.im+b.im); };
+    const sub = function(a,b){ return cx(a.re-b.re, a.im-b.im); };
+    const mul = function(a,b){ return cx(a.re*b.re - a.im*b.im, a.re*b.im + a.im*b.re); };
+    const div = function(a,b){ const d=b.re*b.re+b.im*b.im; return cx((a.re*b.re+a.im*b.im)/d, (a.im*b.re-a.re*b.im)/d); };
+    const cexp = function(a){ const e=Math.exp(a.re); return cx(e*Math.cos(a.im), e*Math.sin(a.im)); };
+    const ab2 = function(a){ return a.re*a.re + a.im*a.im; };
+    const mm = function(X,Y){ return [
+      add(mul(X[0],Y[0]), mul(X[1],Y[2])), add(mul(X[0],Y[1]), mul(X[1],Y[3])),
+      add(mul(X[2],Y[0]), mul(X[3],Y[2])), add(mul(X[2],Y[1]), mul(X[3],Y[3]))]; };
+    function Imat(nj, nk){
+      const r = div(sub(nj,nk), add(nj,nk));
+      const it = div(add(nj,nk), mul(cx(2), nj));   // 1/t
+      return [it, mul(r,it), mul(r,it), it];
+    }
+    function Lmat(n, d, lam){
+      const xi = mul(cx(0, 2*Math.PI/lam), n);
+      return [cexp(mul(cx(-1), mul(xi, cx(d)))), cx(0), cx(0), cexp(mul(xi, cx(d)))];
+    }
+
+    /* stack: HTL / absorber / ETL, ambient = glass side, exit = air or metal */
+    const LAMS = [420, 500, 580, 660, 740];
+    const WTS  = [0.85, 1.0, 1.05, 1.0, 0.75];   // rough AM1.5G photon weighting
+
+    function absorberProfile(){
+      const d = +dS.value, k550 = +kS.value, useMirror = mir.checked;
+      const NX = 160;
+      const gT = new Float64Array(NX), gB = new Float64Array(NX);
+      let A_T = 0, A_B = 0, wsum = 0;
+
+      for(let li = 0; li < LAMS.length; li++){
+        const lam = LAMS[li], wt = WTS[li];
+        // absorber k rises toward the blue (simple Tauc-like ramp)
+        const kA = k550 * Math.pow(550 / lam, 1.6);
+        const layers = [
+          {n:1.90, k:0.010, d:30},
+          {n:2.45, k:kA,    d:d},
+          {n:2.05, k:0.008, d:50}
+        ];
+        const amb = cx(1.52, 0);                              // glass
+        const exi = useMirror ? cx(0.14, 3.5) : cx(1.0, 0);   // Ag-like or air
+        const idx = [amb, cx(layers[0].n, layers[0].k), cx(layers[1].n, layers[1].k), cx(layers[2].n, layers[2].k), exi];
+
+        // full S
+        let S = Imat(idx[0], idx[1]);
+        for(let j = 1; j <= 3; j++){ S = mm(S, Lmat(idx[j], layers[j-1].d, lam)); S = mm(S, Imat(idx[j], idx[j+1])); }
+
+        // partial matrices -> field amplitudes inside layer 2 (absorber)
+        let Sj = Imat(idx[0], idx[1]);
+        let entry = null;
+        for(let j = 1; j <= 3; j++){
+          let Spp = mm(Lmat(idx[j], layers[j-1].d, lam), Imat(idx[j], idx[j+1]));
+          for(let m = j + 1; m <= 3; m++){ Spp = mm(Spp, Lmat(idx[m], layers[m-1].d, lam)); Spp = mm(Spp, Imat(idx[m], idx[m+1])); }
+          const den = add(mul(Sj[0], Spp[0]), mul(Sj[1], Spp[2]));
+          if(j === 2) entry = {tp: div(Spp[0], den), tm: div(Spp[2], den), n: idx[j]};
+          if(j < 3){ Sj = mm(Sj, Lmat(idx[j], layers[j-1].d, lam)); Sj = mm(Sj, Imat(idx[j], idx[j+1])); }
+        }
+
+        const alphaA = 4 * Math.PI * kA / lam;   // 1/nm
+        // incoherent Beer-Lambert reference: front-surface transmission then exp decay
+        const T0 = 1 - ab2(div(sub(amb, idx[1]), add(amb, idx[1])));
+        const decayHTL = Math.exp(-4 * Math.PI * layers[0].k / lam * layers[0].d);
+
+        for(let i = 0; i < NX; i++){
+          const z = (i + 0.5) / NX * d;
+          const xi = mul(cx(0, 2*Math.PI/lam), entry.n);
+          const E = add(mul(entry.tp, cexp(mul(xi, cx(z)))), mul(entry.tm, cexp(mul(cx(-1), mul(xi, cx(z))))));
+          const gt = alphaA * entry.n.re * ab2(E) / amb.re;
+          const gb = T0 * decayHTL * alphaA * Math.exp(-alphaA * z);
+          gT[i] += wt * gt; gB[i] += wt * gb;
+          A_T += wt * gt * (d / NX); A_B += wt * gb * (d / NX);
+        }
+        wsum += wt;
+      }
+      for(let i = 0; i < NX; i++){ gT[i] /= wsum; gB[i] /= wsum; }
+      return {gT:gT, gB:gB, d:d, A_T:A_T/wsum, A_B:A_B/wsum};
+    }
+
+    C.draw = function(){
+      const ctx = C.ctx, w = C.dim.w, h = C.dim.h;
+      ctx.clearRect(0, 0, w, h);
+      dV.textContent = (+dS.value) + " nm";
+      kV.textContent = (+kS.value).toFixed(2);
+
+      const res = absorberProfile();
+      const x0 = 58, y0 = h - 42, pw = w - x0 - 26, ph = h - 76;
+      const totalNm = 30 + res.d + 50;
+
+      // layer bands
+      const bands = [{n:"HTL", a:0, b:30}, {n:"吸收层", a:30, b:30+res.d}, {n:"ETL", a:30+res.d, b:totalNm}];
+      bands.forEach(function(b, i){
+        const xa = x0 + b.a / totalNm * pw, xb = x0 + b.b / totalNm * pw;
+        ctx.fillStyle = i === 1 ? "rgba(96,140,190,.07)" : "rgba(150,170,200,.10)";
+        ctx.fillRect(xa, y0 - ph, xb - xa, ph);
+        ctx.strokeStyle = LINE; ctx.beginPath(); ctx.moveTo(xb, y0 - ph); ctx.lineTo(xb, y0); ctx.stroke();
+        ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--sans"); ctx.textAlign = "center";
+        if(xb - xa > 34) ctx.fillText(b.n, (xa + xb) / 2, y0 - ph + 14);
+      });
+      ctx.textAlign = "left";
+
+      let mx = 0;
+      for(let i = 0; i < res.gT.length; i++){ mx = Math.max(mx, res.gT[i], res.gB[i]); }
+      mx = mx * 1.12 || 1;
+
+      function plot(arr, color, fill){
+        const xa = x0 + 30 / totalNm * pw, xb = x0 + (30 + res.d) / totalNm * pw;
+        ctx.beginPath();
+        for(let i = 0; i < arr.length; i++){
+          const x = xa + (i + 0.5) / arr.length * (xb - xa);
+          const y = y0 - arr[i] / mx * ph;
+          if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        if(fill){
+          ctx.lineTo(xb, y0); ctx.lineTo(xa, y0); ctx.closePath();
+          ctx.fillStyle = fill; ctx.fill();
+        }
+        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+      }
+      plot(res.gB, AM, "rgba(245,169,58,.10)");
+      plot(res.gT, CY, "rgba(53,219,255,.12)");
+
+      axes(ctx, x0, y0, pw, ph, "沿膜厚方向的位置 (nm) →", "G(x)  任意单位");
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
+      ctx.fillText("0", x0 - 4, y0 + 14);
+      ctx.textAlign = "right"; ctx.fillText(totalNm + " nm", x0 + pw, y0 + 14); ctx.textAlign = "left";
+
+      if(mir.checked){
+        ctx.fillStyle = "rgba(220,230,245,.75)";
+        ctx.fillRect(x0 + pw - 3, y0 - ph, 3, ph);
+        ctx.save(); ctx.translate(x0 + pw - 10, y0 - ph + 46); ctx.rotate(-Math.PI/2);
+        ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--sans"); ctx.textAlign = "left";
+        ctx.fillText("金属", 0, 0); ctx.restore();
+      }
+      const ratio = res.A_B > 0 ? res.A_T / res.A_B : 1;
+      out.innerHTML = "膜内吸收之比 &nbsp; TMM / 比尔-朗伯 = <b>" + ratio.toFixed(2) + "×</b>";
+    };
+
+    [dS, kS].forEach(function(s){ s.addEventListener("input", C.draw); });
+    mir.addEventListener("change", C.draw);
+    C.draw();
+  })();
+
+  /* =======================================================================
+     FIGURE 3 — hysteresis vs scan rate
+     ======================================================================= */
+  (function(){
+    const fig = document.getElementById("figHyst");
+    const C = setupCanvas(fig);
+    const rS = fig.querySelector('[data-r="rate"]'), tS = fig.querySelector('[data-r="tau"]');
+    const rV = fig.querySelector('[data-v="rate"]'), tV = fig.querySelector('[data-v="tau"]');
+    const ssBox = fig.querySelector('[data-c="ss"]');
+    const out = fig.querySelector('[data-txt="hi"]');
+
+    const VT = 0.02585, VMAX = 1.20, JPH = 22.5, J0 = 2.2e-18, MID = 1.35;
+    const thSS = function(V){ return Math.max(0, Math.min(1, V / 1.05)); };
+    const eta = function(th){ return 0.74 + 0.26 * th; };
+    const diode = function(V, th){ return JPH * eta(th) - J0 * (Math.exp(V / (MID * VT)) - 1); };
+
+    function scan(dir, rate, tau){
+      const N = 260, pts = [];
+      let th = dir > 0 ? thSS(0) * 0 + 0 : 1;      // pre-poled: fwd from SC, rev from V_max
+      const dV = VMAX / (N - 1), dt = dV / rate;
+      for(let i = 0; i < N; i++){
+        const V = dir > 0 ? i * dV : VMAX - i * dV;
+        th += (thSS(V) - th) * (1 - Math.exp(-dt / tau));
+        pts.push([V, diode(V, th)]);
+      }
+      return pts;
+    }
+    function quasi(){
+      const N = 260, pts = [];
+      for(let i = 0; i < N; i++){ const V = i * VMAX / (N - 1); pts.push([V, diode(V, thSS(V))]); }
+      return pts;
+    }
+    function pce(pts){
+      let m = 0; pts.forEach(function(p){ m = Math.max(m, p[0] * p[1]); }); return m;
+    }
+
+    C.draw = function(){
+      const ctx = C.ctx, w = C.dim.w, h = C.dim.h;
+      ctx.clearRect(0, 0, w, h);
+      const rate = Math.pow(10, +rS.value), tau = Math.pow(10, +tS.value);
+      rV.textContent = (rate >= 1 ? rate.toFixed(2) : rate.toFixed(3)) + " V/s";
+      tV.textContent = (tau >= 1 ? tau.toFixed(2) : tau.toFixed(3)) + " s";
+
+      const x0 = 62, y0 = h - 44, pw = w - x0 - 28, ph = h - 78;
+      const JMAX = 26;
+      const X = function(V){ return x0 + V / VMAX * pw; };
+      const Y = function(J){ return y0 - Math.max(-3, Math.min(JMAX, J)) / JMAX * ph; };
+
+      // grid
+      ctx.strokeStyle = "rgba(96,140,190,.10)"; ctx.lineWidth = 1;
+      for(let v = 0.2; v < VMAX; v += 0.2){ ctx.beginPath(); ctx.moveTo(X(v), y0 - ph); ctx.lineTo(X(v), y0); ctx.stroke(); }
+      for(let j = 5; j <= 25; j += 5){ ctx.beginPath(); ctx.moveTo(x0, Y(j)); ctx.lineTo(x0 + pw, Y(j)); ctx.stroke(); }
+
+      function line(pts, color, wdt, dash){
+        ctx.beginPath();
+        pts.forEach(function(p, i){ const x = X(p[0]), y = Y(p[1]); if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+        ctx.strokeStyle = color; ctx.lineWidth = wdt; ctx.setLineDash(dash || []); ctx.stroke(); ctx.setLineDash([]);
+      }
+
+      const qs = quasi(), fw = scan(+1, rate, tau), rv = scan(-1, rate, tau);
+      if(ssBox.checked) line(qs, AM, 2, [5,4]);
+      line(fw, VI, 2);
+      line(rv, CY, 2);
+
+      axes(ctx, x0, y0, pw, ph, "外加偏压 V (V) →", "J (mA/cm²)");
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono"); ctx.textAlign = "right";
+      for(let j = 5; j <= 25; j += 5) ctx.fillText(String(j), x0 - 7, Y(j) + 3);
+      ctx.textAlign = "center";
+      for(let v = 0.2; v <= 1.0001; v += 0.2) ctx.fillText(v.toFixed(1), X(v), y0 + 15);
+      ctx.textAlign = "left";
+
+      const pr = pce(rv), pf = pce(fw);
+      const HI = pr > 0 ? (pr - pf) / pr : 0;
+      out.innerHTML = "迟滞指数 <b>" + (HI * 100).toFixed(1) + " %</b> &nbsp;·&nbsp; r·τ = " + (rate * tau).toFixed(2) + " V";
+
+      // annotation of the regime
+      let msg;
+      if(rate * tau < 0.05) msg = "准稳态：离子跟得上偏压变化，回线闭合";
+      else if(rate * tau > 6) msg = "离子冻结：两个方向各自保持极化后的状态";
+      else msg = "r·τ 与偏压量程相当，回线在此最宽";
+      ctx.fillStyle = "rgba(220,230,245,.7)"; ctx.font = "11px " + CSS("--sans");
+      ctx.fillText(msg, x0 + 10, y0 - ph + 16);
+    };
+
+    [rS, tS].forEach(function(s){ s.addEventListener("input", C.draw); });
+    ssBox.addEventListener("change", C.draw);
+    C.draw();
+  })();
+
+  /* ---------- shared canvas primitives ---------- */
+  function roundRect(ctx, x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+  }
+  function arrow(ctx, x, y, ang, color){
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(-4, -3.4); ctx.lineTo(-4, 3.4); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+})();
+</script>
