@@ -1,0 +1,1083 @@
+<title>SCAPS-1D vs SolarLab — two engines for the same device physics</title>
+<style>
+  :root{
+    --ground:#05080E; --panel:rgba(13,20,33,.72); --panelSolid:#0B1220;
+    --ink:#DEE7F3; --ink2:#C0CCDD; --muted:#93A4BC;
+    --line:rgba(96,140,190,.16); --line2:rgba(96,140,190,.30);
+    --cy:#35DBFF;                 /* SolarLab — time domain */
+    --am:#F5A93A;                 /* SCAPS — steady state   */
+    --cyDim:rgba(53,219,255,.13); --amDim:rgba(245,169,58,.13);
+    --good:#46E5A0; --warn:#FF8A5B; --gone:#6C7C93;
+    --sans:Arial,"Helvetica Neue",Helvetica,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,"Roboto Mono",monospace;
+    --maxw:1180px; --col:68ch;
+    --glowC:rgba(53,219,255,.45); --glowA:rgba(245,169,58,.40);
+  }
+  :root.nofx{ --glowC:transparent; --glowA:transparent; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0; color:var(--ink); font-family:var(--sans); font-size:16.5px; line-height:1.62;
+    background:
+      radial-gradient(1000px 640px at 88% -8%, rgba(53,150,255,.09), transparent 62%),
+      radial-gradient(880px 560px at 4% 4%, rgba(245,169,58,.065), transparent 58%),
+      var(--ground);
+    -webkit-font-smoothing:antialiased; letter-spacing:.004em;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:48px 48px;
+    -webkit-mask-image:radial-gradient(130% 100% at 50% -5%, #000 36%, transparent 86%);
+    mask-image:radial-gradient(130% 100% at 50% -5%, #000 36%, transparent 86%);
+    opacity:.5;
+  }
+  :root.nofx body::before{display:none}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 26px; position:relative; z-index:1}
+
+  header.top{position:sticky; top:0; z-index:50; -webkit-backdrop-filter:blur(12px) saturate(1.3); backdrop-filter:blur(12px) saturate(1.3);
+    background:linear-gradient(180deg, rgba(5,8,14,.95), rgba(5,8,14,.62)); border-bottom:1px solid var(--line2)}
+  header.top .row{display:flex; align-items:center; gap:16px; height:56px; max-width:var(--maxw); margin:0 auto; padding:0 26px}
+  .brand{font-size:.78rem; font-weight:700; letter-spacing:.15em; text-transform:uppercase; white-space:nowrap; display:flex; align-items:center; gap:8px}
+  .brand .a{color:var(--am)} .brand .b{color:var(--cy)} .brand .x{color:var(--muted); font-weight:400}
+  nav.sec{display:flex; gap:2px; margin-left:auto; overflow-x:auto; scrollbar-width:none}
+  nav.sec::-webkit-scrollbar{display:none}
+  nav.sec a{font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); text-decoration:none; padding:7px 9px; border-radius:5px; white-space:nowrap; border:1px solid transparent}
+  nav.sec a:hover{color:var(--ink); border-color:var(--line2)}
+  nav.sec a.active{color:var(--ink); border-color:var(--line2); background:rgba(96,140,190,.12)}
+  .themebtn{font-size:.64rem; letter-spacing:.12em; text-transform:uppercase; border:1px solid var(--line2); background:transparent; color:var(--muted); border-radius:5px; padding:6px 10px; cursor:pointer; white-space:nowrap}
+  .themebtn:hover{color:var(--ink); background:rgba(96,140,190,.12)}
+
+  .hero{padding:62px 0 26px}
+  .eyebrow{font-size:.7rem; letter-spacing:.32em; text-transform:uppercase; color:var(--muted); margin:0 0 16px}
+  .eyebrow b{color:var(--am); font-weight:700} .eyebrow i{color:var(--cy); font-style:normal; font-weight:700}
+  h1{font-size:clamp(2.1rem,5.2vw,3.5rem); line-height:1.03; letter-spacing:-.012em; margin:0 0 18px; text-wrap:balance; font-weight:800}
+  .lede{font-size:clamp(1.02rem,2vw,1.2rem); color:var(--ink2); max-width:62ch; margin:0 0 10px; line-height:1.56}
+  .lede b{color:var(--ink)}
+
+  section.s{padding:52px 0; border-top:1px solid var(--line2)}
+  .sec-head{display:flex; align-items:baseline; gap:14px; margin-bottom:10px; flex-wrap:wrap}
+  .axis{font-size:.66rem; letter-spacing:.19em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line2); padding:6px 10px; border-radius:6px; white-space:nowrap}
+  h2{font-size:clamp(1.42rem,3vw,2.05rem); line-height:1.12; letter-spacing:-.01em; margin:0; font-weight:800; text-wrap:balance}
+  .prose{max-width:var(--col)}
+  .prose p{margin:14px 0; color:var(--ink2)}
+  .prose code, .m{font-family:var(--mono)}
+  .prose code{background:rgba(96,140,190,.13); padding:.08em .36em; border-radius:4px; font-size:.82em; color:#CFE3F5; border:1px solid var(--line)}
+  b{color:var(--ink)}
+  .ca{color:var(--am); font-weight:700} .cb{color:var(--cy); font-weight:700}
+
+  /* ---- diptych ---- */
+  .dip{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:24px 0 0}
+  @media (max-width:780px){.dip{grid-template-columns:1fr}}
+  .side{border:1px solid var(--line2); border-radius:12px; padding:16px 18px 18px; background:var(--panel); position:relative; overflow:hidden}
+  .side::before{content:""; position:absolute; inset:0 0 auto 0; height:2px}
+  .side.a::before{background:linear-gradient(90deg, var(--am), transparent 78%); box-shadow:0 0 14px var(--glowA)}
+  .side.b::before{background:linear-gradient(90deg, var(--cy), transparent 78%); box-shadow:0 0 14px var(--glowC)}
+  .side h3{margin:2px 0 4px; font-size:.74rem; letter-spacing:.16em; text-transform:uppercase; font-weight:700}
+  .side.a h3{color:var(--am)} .side.b h3{color:var(--cy)}
+  .side .sub{margin:0 0 12px; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+  .side p{margin:11px 0; font-size:.93rem; color:var(--ink2); line-height:1.56}
+  .side ul{margin:11px 0; padding-left:18px} .side li{margin:7px 0; font-size:.91rem; color:var(--ink2)}
+  .side li::marker{color:var(--muted)}
+  .side .mini{font-family:var(--mono); font-size:.78rem; line-height:1.8; color:#CFE3F5; background:rgba(4,8,14,.6); border:1px solid var(--line); border-radius:8px; padding:11px 13px; margin:12px 0; overflow-x:auto}
+  .side .mini .lbl{color:var(--muted); font-size:.72rem; letter-spacing:.08em; text-transform:uppercase}
+
+  .delta{display:flex; gap:13px; align-items:flex-start; margin:14px 0 0; padding:13px 16px;
+    border-left:2px solid transparent;
+    border-image:linear-gradient(180deg, var(--am), var(--cy)) 1;
+    background:linear-gradient(90deg, rgba(96,140,190,.10), transparent 70%)}
+  .delta .tag{font-size:.6rem; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); padding-top:3px; white-space:nowrap}
+  .delta .body{font-size:.93rem; line-height:1.58; color:var(--ink2)}
+  .delta .body b{color:var(--ink)}
+
+  /* ---- figures ---- */
+  figure.fig{margin:26px 0 8px; background:var(--panel); border:1px solid var(--line2); border-radius:14px; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.45)}
+  .fig .cvwrap{position:relative; width:100%; background:radial-gradient(120% 130% at 50% 0%, rgba(20,38,66,.34), transparent 72%)}
+  .fig canvas{display:block; width:100%; height:auto}
+  .fig .controls{display:flex; flex-wrap:wrap; align-items:center; gap:15px 24px; padding:14px 18px; border-top:1px solid var(--line2); background:rgba(6,11,19,.6)}
+  .ctl{display:flex; flex-direction:column; gap:4px; min-width:170px}
+  .ctl label{font-size:.63rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); display:block; overflow:hidden}
+  .ctl label .val{float:right; color:var(--ink); font-family:var(--mono); font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none; appearance:none; height:3px; border-radius:3px; background:var(--line2); outline:none; margin:8px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--cy); cursor:pointer; box-shadow:0 0 9px var(--glowC)}
+  input[type=range]::-moz-range-thumb{width:14px; height:14px; border-radius:50%; background:var(--cy); cursor:pointer; border:none}
+  .toggle{display:inline-flex; align-items:center; gap:8px; font-size:.64rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); cursor:pointer; user-select:none}
+  .toggle input{accent-color:var(--cy); width:15px; height:15px}
+  .readout{font-family:var(--mono); font-size:.74rem; color:var(--muted); margin-left:auto; font-variant-numeric:tabular-nums}
+  .readout b{color:var(--ink)}
+  figcaption{font-size:.79rem; color:var(--muted); padding:12px 18px 15px; line-height:1.55; border-top:1px dashed var(--line2)}
+  figcaption b{color:var(--ink2)}
+  .legend{display:flex; flex-wrap:wrap; gap:14px; padding:11px 18px; font-size:.66rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); border-top:1px solid var(--line2)}
+  .sw{width:11px; height:11px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:6px}
+
+  /* ---- matrix ---- */
+  .tablewrap{overflow-x:auto; margin:24px 0 6px; border:1px solid var(--line2); border-radius:12px; background:var(--panel)}
+  table{border-collapse:collapse; width:100%; min-width:660px; font-size:.88rem}
+  thead th{position:sticky; top:0; text-align:left; font-size:.64rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:700; padding:13px 14px; background:var(--panelSolid); border-bottom:1px solid var(--line2)}
+  thead th.a{color:var(--am)} thead th.b{color:var(--cy)}
+  tbody td{padding:11px 14px; border-bottom:1px solid var(--line); color:var(--ink2); vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover td{background:rgba(96,140,190,.06)}
+  td.cap{color:var(--ink); font-weight:700; white-space:nowrap}
+  .pill{display:inline-block; font-size:.67rem; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid var(--line2); white-space:nowrap; font-family:var(--sans)}
+  .pill.yes{color:var(--good); border-color:rgba(70,229,160,.38); background:rgba(70,229,160,.10)}
+  .pill.part{color:var(--warn); border-color:rgba(255,138,91,.36); background:rgba(255,138,91,.10)}
+  .pill.no{color:var(--gone); border-color:rgba(108,124,147,.34)}
+  .note{font-size:.8rem; color:var(--muted); display:block; margin-top:4px; line-height:1.45}
+
+  /* ---- verdict cards ---- */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin:22px 0 0}
+  .card{border:1px solid var(--line2); border-radius:12px; padding:15px 16px; background:var(--panel)}
+  .card h4{margin:0 0 7px; font-size:.72rem; letter-spacing:.09em; text-transform:uppercase; color:var(--ink)}
+  .card h4 .n{color:var(--cy); font-family:var(--mono); margin-right:7px}
+  .card.warm h4 .n{color:var(--am)}
+  .card p{margin:0; font-size:.89rem; color:var(--muted); line-height:1.55}
+  .card p b{color:var(--ink2)}
+
+  .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:22px 0 0}
+  .stat{border:1px solid var(--line2); border-radius:11px; padding:14px 15px; background:var(--panel)}
+  .stat .k{font-size:1.5rem; font-weight:800; font-family:var(--mono); color:var(--cy); font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+  .stat .l{font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-top:5px; line-height:1.4}
+
+  footer{border-top:1px solid var(--line2); padding:38px 0 70px; color:var(--muted); font-size:.79rem; line-height:1.7}
+  footer .wrap{max-width:var(--col)}
+  footer b{color:var(--ink2)}
+  a.inl{color:var(--cy); text-decoration:none; border-bottom:1px solid var(--line2)}
+  ::selection{background:rgba(53,219,255,.28)}
+  :focus-visible{outline:2px solid var(--cy); outline-offset:2px; border-radius:4px}
+  sub,sup{text-transform:none; letter-spacing:0; font-size:.72em; position:relative}
+  sub{vertical-align:baseline; top:.28em}
+  sup{vertical-align:baseline; top:-.45em}
+</style>
+
+<header class="top">
+  <div class="row">
+    <span class="brand"><span class="a">SCAPS-1D</span><span class="x">vs</span><span class="b">SolarLab</span></span>
+    <nav class="sec" id="secnav">
+      <a href="#unknowns">unknowns</a>
+      <a href="#mesh">mesh</a>
+      <a href="#driver">driver</a>
+      <a href="#contacts">contacts</a>
+      <a href="#iface">interfaces</a>
+      <a href="#optics">optics</a>
+      <a href="#matrix">coverage</a>
+      <a href="#dynamics">dynamics</a>
+      <a href="#new">what's new</a>
+      <a href="#honest">boundaries</a>
+    </nav>
+    <button class="themebtn" id="themebtn" title="Toggle glow and grid">◈ FX on</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <p class="eyebrow"><b>Steady state</b> &nbsp;·&nbsp; <i>time domain</i> &nbsp;·&nbsp; same semiconductor equations</p>
+    <h1>Two engines, one device physics</h1>
+    <p class="lede">SCAPS-1D and SolarLab solve the <b>same</b> coupled Poisson + continuity system for a thin-film stack. They differ in three decisions that propagate through everything else: <b>which variables are unknown</b>, <b>whether time is a coordinate</b>, and <b>how light gets into the film</b>. This page puts those decisions side by side and shows what each one buys.</p>
+    <p class="lede" style="font-size:1rem;color:var(--muted);margin-top:14px">Companion to the SolarLab solver walkthrough. Everything on the amber side is sourced from the SCAPS manual (v3.3.03, February 2016) and the Burgelman group's published algorithm papers; everything on the cyan side is sourced from the SolarLab tree.</p>
+
+    <figure class="fig" id="figPath">
+      <div class="cvwrap"><canvas data-h="330" aria-label="How each engine reaches a J-V point: SCAPS restarts a converged steady state per bias, SolarLab integrates one continuous trajectory"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:220px">
+          <label>Bias point being computed <span class="val" data-v="step">V = 0.00 V</span></label>
+          <input type="range" min="0" max="10" step="1" value="0" data-r="step">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="run" checked> auto-advance</label>
+        <div class="readout" data-txt="path">SCAPS: fresh continuation ladder &nbsp;·&nbsp; SolarLab: state carried forward</div>
+      </div>
+      <figcaption><b>The structural difference in one picture.</b> SCAPS computes each bias as an independent steady state, reached through a continuation ladder (startpoint → dark equilibrium → short circuit → working point) with Gummel/Newton iterations at every rung; the converged answer contains no memory of how it got there. SolarLab integrates <b>one trajectory in real time</b> across the bias schedule, so the ionic profile at V<sub>k</sub> is whatever the ions actually reached by the time the scan arrived — which is precisely what a measured hysteresis loop is made of.</figcaption>
+    </figure>
+  </section>
+
+  <!-- UNKNOWNS -->
+  <section class="s" id="unknowns">
+    <div class="sec-head"><span class="axis">axis · unknowns</span><h2>What the solver treats as unknown</h2></div>
+    <div class="prose">
+      <p>Both codes discretise Poisson's equation plus two carrier-continuity equations. The choice of <em>dependent variable</em> is the first fork in the road: SCAPS carries the quasi-Fermi levels, SolarLab carries the densities and adds a third transported species.</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">(ψ, E<sub>Fn</sub>, E<sub>Fp</sub>) — steady state</p>
+        <div class="mini">
+          <span class="lbl">— Poisson —</span><br>
+          −∂/∂x( ε ∂ψ/∂x ) = q( p − n + N<sub>D</sub><sup>+</sup> − N<sub>A</sub><sup>−</sup> + ρ<sub>def</sub> )<br><br>
+          <span class="lbl">— continuity (∂/∂t = 0) —</span><br>
+          ∂J<sub>n</sub>/∂x = q( U<sub>n</sub> − G )<br>
+          ∂J<sub>p</sub>/∂x = −q( U<sub>p</sub> − G )<br><br>
+          <span class="lbl">— constitutive —</span><br>
+          J<sub>n</sub> = μ<sub>n</sub> n ∂E<sub>Fn</sub>/∂x &nbsp;&nbsp; J<sub>p</sub> = μ<sub>p</sub> p ∂E<sub>Fp</sub>/∂x
+        </div>
+        <ul>
+          <li>Current is written as a <b>quasi-Fermi-level gradient</b>, so the effective-DOS and band-offset terms are inside the variable itself.</li>
+          <li>Boltzmann statistics throughout; Fermi–Dirac and band-gap narrowing are <b>not</b> implemented.</li>
+          <li>Defect charge ρ<sub>def</sub> is rich: mono-, di- and multivalent, amphoteric, single-level / uniform / Gauss / band-tail distributions, plus metastable configurations solved by their own occupancy iteration.</li>
+          <li>Time appears only through a separate <b>small-signal</b> linearisation, Y = δJ/δu<sub>ext</sub> = jωC + G.</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">y = (n, p, P) per node — time-resolved</p>
+        <div class="mini">
+          <span class="lbl">— transported (method of lines) —</span><br>
+          ∂n/∂t = (1/q) ∂J<sub>n</sub>/∂x + G − R<br>
+          ∂p/∂t = −(1/q) ∂J<sub>p</sub>/∂x + G − R<br>
+          ∂P/∂t = ∂/∂x[ D<sub>I</sub>( ∂P/∂x + (P/V<sub>T</sub>) ∂φ/∂x ) ]<br><br>
+          <span class="lbl">— solved, not integrated —</span><br>
+          −∂/∂x( ε ∂φ/∂x ) = q( p − n + P − N<sub>A</sub> + N<sub>D</sub> )
+        </div>
+        <ul>
+          <li>Carrier densities are the state; φ is recovered by a <b>prefactored tridiagonal solve once per right-hand-side evaluation</b> — no inner Poisson–Newton loop.</li>
+          <li>A third species, the <b>mobile ionic vacancy P</b>, drifts in the same field (Nernst–Planck, optional second species, optional steric crowding limit).</li>
+          <li>Because the SG flux drives carriers with φ+χ and φ+χ+E<sub>g</sub>, the effective-DOS term SCAPS gets for free must be folded in explicitly — <code>dos_band_potentials</code>, worth 137 mV on the parity stack.</li>
+          <li>Fermi–Dirac is available per layer but deliberately off by default: the reference codes are Boltzmann.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">delta</span>
+      <span class="body">Quasi-Fermi variables are the better-conditioned choice for a pure steady state — that is why SCAPS converges on stacks where a density-based Newton stalls. Densities are the necessary choice once you want <b>∂/∂t ≠ 0</b>, because ion transport, trapping and displacement current are all statements about how a density changes in time.</span>
+    </div>
+  </section>
+
+  <!-- MESH -->
+  <section class="s" id="mesh">
+    <div class="sec-head"><span class="axis">axis · discretisation</span><h2>Where the grid points go</h2></div>
+    <div class="prose">
+      <p>Both codes cluster nodes where the bands bend. The difference is that SCAPS re-decides the grid <em>during</em> the solve, and doubles every interface node — a choice with real physical consequences at heterojunctions.</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">adaptive, re-generated between iterations</p>
+        <ul>
+          <li>Coarse in the bulk, fine at interfaces and contacts.</li>
+          <li><b>Two mesh points share each interface coordinate</b> — one belonging to each adjacent layer — so interface carrier densities are genuine per-side plane quantities.</li>
+          <li>Optional mesh recalculation at every iteration: adjacent-node ratios of exp(qψ/kT), exp(E<sub>Fn</sub>/kT), exp(E<sub>Fp</sub>/kT), R and G are tested against f<sub>max</sub> = 1.60 (≈ 12 mV) to insert points and f<sub>min</sub> = 1.05 (≈ 1.2 mV) to remove them.</li>
+          <li>Up to 7 semiconductor layers; up to 10 mesh adaptions per voltage.</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">static tanh-clustered multilayer grid</p>
+        <ul>
+          <li>Per-layer node counts with tanh clustering toward every interface, built once and reused for the whole run.</li>
+          <li><b>One node per interface</b>, shared by both layers — which is why the band offset lands inside a single cell and has to be handled by a thermionic-emission cap on the Scharfetter–Gummel flux.</li>
+          <li>The fixed grid is what makes the <code>MaterialArrays</code> cache and the prefactored Poisson LU possible: geometry-dependent work happens once, not per iteration.</li>
+          <li>Interface plane densities, when needed, are reconstructed physically rather than meshed: a quasi-steady 2×2 flux balance (<code>interface_plane_closure</code>) or explicit plane-state unknowns in the steady-state Newton.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">delta</span>
+      <span class="body">SCAPS trades per-iteration cost for robustness on steep gradings and multivalent defects. SolarLab trades adaptivity for a cache that survives ~10<sup>5</sup> right-hand-side evaluations per sweep — the correct trade when the same geometry is integrated through thousands of time steps rather than solved a few hundred times. The doubled interface node is the one place where SCAPS's grid is <b>physically</b> richer, and closing that gap took SolarLab five separate formulations.</span>
+    </div>
+  </section>
+
+  <!-- DRIVER -->
+  <section class="s" id="driver">
+    <div class="sec-head"><span class="axis">axis · driver</span><h2>How a solution is actually reached</h2></div>
+    <div class="prose">
+      <p>This is the deepest split. SCAPS is a nonlinear-system solver wrapped in a continuation strategy. SolarLab is, by default, a stiff <em>initial-value</em> integrator — with a direct steady-state Newton driver added later precisely so that SCAPS-comparable quantities could be defined.</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">Gummel iteration + Newton–Raphson substeps</p>
+        <div class="mini">
+          <span class="lbl">— continuation ladder —</span><br>
+          startpoint (flat E<sub>F</sub>, no potential drop)<br>
+          &nbsp;&nbsp;↓ &nbsp;dark equilibrium, 0 V<br>
+          &nbsp;&nbsp;↓ &nbsp;short circuit, 1 sun, 0 V<br>
+          &nbsp;&nbsp;↓ &nbsp;working point<br>
+          &nbsp;&nbsp;↓ &nbsp;first measurement point → sweep
+        </div>
+        <ul>
+          <li>Decoupled Gummel outer loop, Newton–Raphson inner substeps on each equation.</li>
+          <li>Updates are <b>clamped</b> at 0.5 kT/q per iteration (ψ, E<sub>Fn</sub>, E<sub>Fp</sub>); convergence when every update falls below 0.001 kT; up to 1000 iterations.</li>
+          <li>Automatic intermediate substeps between rungs when two situations are too far apart — the standard cure for divergence.</li>
+          <li>Optional "stop after V<sub>oc</sub>"; up to 201 measurement points per sweep.</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">method of lines + implicit Radau (and an SS Newton)</p>
+        <div class="mini">
+          <span class="lbl">— per voltage step —</span><br>
+          y(t<sub>k</sub>) → solve_ivp(Radau IIA, max_step capped)<br>
+          &nbsp;&nbsp;↳ on failure: bisect settle time (≤ 10×)<br>
+          &nbsp;&nbsp;↳ last resort: BDF retry<br>
+          y(t<sub>k+1</sub>) carries n, p <b>and the ion profile</b> forward<br><br>
+          <span class="lbl">— optional ion-free steady state —</span><br>
+          F(y) = 0 by damped log-space Newton, LU reused
+        </div>
+        <ul>
+          <li>Radau IIA (L-stable, 5th order) absorbs the stiffness of the ion–carrier–field coupling; the max-step cap exists because near flat band the Jacobian is near-singular and the error estimator under-reports.</li>
+          <li>The steady-state driver runs on the <b>same</b> assembled right-hand side — one physics, two drivers — with a certified transient fallback wherever Newton cannot finish, so nothing is silently faked.</li>
+          <li>Ionic memory across bias steps is not post-processing: the previous converged state <em>is</em> the initial condition.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">delta</span>
+      <span class="body">A steady-state solver answers "what does this device do at V?". A time integrator answers "what does this device do <b>while</b> V changes at rate r?". Perovskites are the case where those two questions have measurably different answers, and where the second one is what the experiment recorded.</span>
+    </div>
+  </section>
+
+  <!-- CONTACTS -->
+  <section class="s" id="contacts">
+    <div class="sec-head"><span class="axis">axis · boundaries</span><h2>How the contacts are held</h2></div>
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">metal work function, or computed flat band</p>
+        <ul>
+          <li>Front and back contacts take a <b>metal work function Φ<sub>m</sub></b> for majority carriers, or a "flat bands" option in which SCAPS back-solves Φ<sub>m</sub> at each temperature so the bands are flat — post-2014 by solving total-charge neutrality including deep defects.</li>
+          <li>Finite surface-recombination velocities for electrons and holes set the contact kinetics (10<sup>7</sup> cm/s is the conventional default).</li>
+          <li>Optional tunnelling to and from the contact; wavelength-dependent reflection/transmission filter files per contact.</li>
+          <li>External series and shunt resistance are applied <b>after</b> the simulation by re-mapping the terminal voltage — they are not inside the transport problem (and are excluded from QE).</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">three selectable conventions</p>
+        <ul>
+          <li><b>Ohmic Dirichlet pin</b> (default, IonMonger convention): boundary densities clamped to the dark doping equilibrium, Poisson referenced to the configured V<sub>bi</sub>.</li>
+          <li><b>Robin / selective / Schottky</b>: finite S<sub>n</sub>, S<sub>p</sub> per carrier per side, J = ±q·S·(density − density<sub>eq</sub>); S → ∞ recovers ohmic, S = 0 is perfectly blocking.</li>
+          <li><b>Flat-band metal contacts</b> — the SCAPS convention — with the Poisson boundary driven by the computed work-function difference <code>compute_V_bi()</code> instead of a frozen input.</li>
+          <li>Documented limit: flat-band contacts plus the steady-state Newton is a known incompatible pair (Newton stalls on the Robin + steep-V<sub>bi</sub> conditioning). It is recorded as an engine boundary, not patched over.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">delta</span>
+      <span class="body">Contact convention is the single largest source of apparent disagreement between the two codes on doping sweeps: a bias-dependent, doping-swung V<sub>bi</sub> boundary responds to ETL doping quite differently from SCAPS's fixed metal work function. SolarLab now implements both conventions — which is what turned a "wrong trend" into a <b>named, reproducible boundary condition difference</b>.</span>
+    </div>
+  </section>
+
+  <!-- INTERFACES -->
+  <section class="s" id="iface">
+    <div class="sec-head"><span class="axis">axis · heterojunctions</span><h2>What happens at an interface</h2></div>
+    <div class="prose">
+      <p>Both codes model interface transport by thermionic emission and interface recombination by an SRH-type cycle. The formulations differ in what carrier densities the recombination rate is allowed to see.</p>
+    </div>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">thermionic emission on doubled nodes</p>
+        <ul>
+          <li>Interface transport is thermionic emission with the thermal velocity taken as the <b>smaller</b> of the two adjacent layers; a small quasi-Fermi-level step therefore exists at every interface, even with zero band offset.</li>
+          <li>Interface recombination follows <b>Pauwels–Vanhoutte</b> theory — an SRH extension in which one trap occupancy balances capture from both sides.</li>
+          <li>Four semiclassical tunnelling channels: band-to-band, intraband, band ↔ interface defect, band ↔ contact. All are DC-only; the AC problem does not see them.</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">TE cap on the SG flux + plane-density closure</p>
+        <ul>
+          <li>Where |ΔE<sub>C</sub>| or |ΔE<sub>V</sub>| exceeds 0.05 eV the Scharfetter–Gummel flux is capped at the Richardson–Dushman thermionic limit, preventing the single-cell offset from over-injecting.</li>
+          <li>Interface SRH uses per-interface (v<sub>n</sub>, v<sub>p</sub>). Because the interface is one shared node, plane densities are reconstructed: a per-RHS 2×2 implicit flux balance, or explicit interface-plane state unknowns inside the steady-state Newton.</li>
+          <li>Tunnelling is a single channel — a static Padovani–Stratton thermionic-field-emission enhancement Γ ≥ 1 folded into the Richardson constant, deliberately build-time so it cannot perturb Newton contraction.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">delta</span>
+      <span class="body">SCAPS is ahead here, and the record says so plainly: three separate rate-algebra reformulations on bulk-node densities were built and <b>falsified</b> against SCAPS's interface trends before the plane-density route worked. The lesson that came out of it is reusable — any density-product rate law evaluated on quasi-Fermi-consistent bulk nodes is blind to the trap level in this regime; only true plane densities carry the response.</span>
+    </div>
+  </section>
+
+  <!-- OPTICS -->
+  <section class="s" id="optics">
+    <div class="sec-head"><span class="axis">axis · optics</span><h2>How light becomes G(x)</h2></div>
+    <div class="prose">
+      <p>SCAPS's internal optical model is deliberately simple — incoherent Beer–Lambert absorption, with reflection allowed only at the contacts and <b>no reflections at internal interfaces</b>. Absorption comes from a file or from the model α(λ) = (A + B/hν)·√(hν − E<sub>g</sub>). Anything better is expected to arrive as an external g(x) file. SolarLab computes the optics itself, coherently.</p>
+    </div>
+
+    <figure class="fig" id="figOptics">
+      <div class="cvwrap"><canvas data-h="360" aria-label="Optical generation profile: incoherent Beer-Lambert versus coherent transfer-matrix method"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:210px">
+          <label>Absorber thickness <span class="val" data-v="d">400 nm</span></label>
+          <input type="range" min="150" max="800" step="10" value="400" data-r="d">
+        </div>
+        <div class="ctl" style="min-width:190px">
+          <label>Absorber k (at 550 nm) <span class="val" data-v="k">0.15</span></label>
+          <input type="range" min="0.03" max="0.40" step="0.01" value="0.15" data-r="k">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="mirror" checked> metal back reflector</label>
+        <div class="readout" data-txt="opt">A<sub>TMM</sub> — &nbsp;·&nbsp; A<sub>BL</sub> —</div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--am)"></span>Beer–Lambert (SCAPS internal model)</span>
+        <span><span class="sw" style="background:var(--cy)"></span>Coherent TMM (SolarLab)</span>
+        <span><span class="sw" style="background:rgba(150,170,200,.45)"></span>transport layers</span>
+      </div>
+      <figcaption><b>Live transfer-matrix calculation</b> over five wavelengths, constant n,k per layer, energy-conserving to R+T+A = 1. With a metal back reflector the standing wave puts generation maxima and nulls <b>inside</b> the absorber; Beer–Lambert can only ever produce a monotonic decay. The real solver runs the same formulation over measured n,k tables and the full AM1.5G spectrum, adds the Yablonovitch photon-recycling escape probability, and — in FULL tier — feeds the reabsorbed fraction back into G(x) on every right-hand-side evaluation.</figcaption>
+    </figure>
+
+    <div class="dip">
+      <div class="side a">
+        <h3>SCAPS-1D</h3>
+        <p class="sub">incoherent, single pass</p>
+        <ul>
+          <li>Beer–Lambert through the stack; α from a model or a file; α(λ,y) can be graded with composition.</li>
+          <li>Reflection/transmission filters at the contacts only, neutral-density and cut-off filters, illumination from either side, a library of spectra (AM0, AM1.5D, AM1.5G, monochromatic).</li>
+          <li>No interference, no interface reflection, no back-reflector standing wave — the manual states this explicitly and offers the g(x) import as the escape hatch.</li>
+        </ul>
+      </div>
+      <div class="side b">
+        <h3>SolarLab</h3>
+        <p class="sub">coherent TMM, closed optical loop</p>
+        <ul>
+          <li>Pettersson/Burkhard transfer matrix over the full stack including an optical-only substrate, with the n<sub>real</sub>/n<sub>ambient</sub> Poynting correction that makes R+T+A = 1 exactly.</li>
+          <li><b>Photon recycling</b>: band-edge escape probability P<sub>esc</sub> = min(1, 1/4n²αd) rescales the radiative coefficient of layers tagged as absorbers.</li>
+          <li><b>Self-consistent reabsorption</b>: the trapped fraction is returned as a generation source per RHS call, so emission from a high-np region can feed a low-np region.</li>
+          <li>One TMM over a full tandem stack partitions G(x) into sub-cells, junction layers counted as parasitic absorption.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="delta">
+      <span class="tag">delta</span>
+      <span class="body">This is the cleanest capability gap on the page. Thin-film perovskite cells with a metal rear electrode <b>are</b> optical cavities; where the interference maxima sit relative to the junction changes J<sub>sc</sub> and the shape of the EQE. In SCAPS that physics has to be imported; in SolarLab it is computed from the same layer stack that carries the transport parameters, so an optical and an electrical change stay consistent by construction.</span>
+    </div>
+  </section>
+
+  <!-- MATRIX -->
+  <section class="s" id="matrix">
+    <div class="sec-head"><span class="axis">axis · coverage</span><h2>What each engine can be asked for</h2></div>
+    <div class="prose">
+      <p>Read this as capability, not quality. Several rows go the other way.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Capability</th><th class="a">SCAPS-1D</th><th class="b">SolarLab</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="cap">J–V, C–V, C–f, QE</td>
+            <td><span class="pill yes">native</span><span class="note">four built-in measurements, batch + recorder + script + curve fitting</span></td>
+            <td><span class="pill yes">yes</span><span class="note">J–V (1D/2D/tandem), impedance, EQE, Suns-V<sub>oc</sub>, band diagram, TPV, degradation</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Mobile ions</td>
+            <td><span class="pill no">not modelled</span></td>
+            <td><span class="pill yes">core state variable</span><span class="note">single or dual species, steric crowding, ionic memory across bias steps</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Transient / large-signal</td>
+            <td><span class="pill no">steady state only</span><span class="note">"SCAPS always calculates equilibrium conditions, and waits in fact until an infinite amount of time has passed"</span></td>
+            <td><span class="pill yes">time domain</span><span class="note">implicit Radau over the full stiff system; scan-rate is an input</span></td>
+          </tr>
+          <tr>
+            <td class="cap">J–V hysteresis</td>
+            <td><span class="pill no">structurally out of reach</span></td>
+            <td><span class="pill yes">emergent</span><span class="note">forward then reverse on one trajectory — not post-processed</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Small-signal admittance</td>
+            <td><span class="pill yes">exact linearisation</span><span class="note">Y = jωC + G at the working point; admittance-interpretation panel</span></td>
+            <td><span class="pill part">time-domain lock-in</span><span class="note">integrates AC cycles and demodulates; slower, but includes the large-signal ionic response</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Coherent optics</td>
+            <td><span class="pill no">Beer–Lambert only</span><span class="note">external g(x) import is the intended workaround</span></td>
+            <td><span class="pill yes">TMM + photon recycling</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Defect physics</td>
+            <td><span class="pill yes">extensive</span><span class="note">multivalent, amphoteric, Gauss/tail distributions, IPV optical excitation, metastable transitions</span></td>
+            <td><span class="pill part">single-level + profiles</span><span class="note">bulk SRH with exponential/Gaussian edge trap profiles; interface defects with trap depth</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Tunnelling</td>
+            <td><span class="pill yes">four channels</span><span class="note">band-to-band, intraband, to interface defects, to contacts (DC only)</span></td>
+            <td><span class="pill part">one channel</span><span class="note">static thermionic-field-emission enhancement at capped interfaces</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Grading</td>
+            <td><span class="pill yes">nearly every parameter</span><span class="note">including α(λ,y)</span></td>
+            <td><span class="pill part">bands + derived terms</span><span class="note">same material-driven A/B mixing law; optical n,k is not graded — documented</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Dimensionality</td>
+            <td><span class="pill no">1D, ≤ 7 layers</span></td>
+            <td><span class="pill yes">1D + 2D</span><span class="note">tensor grid, sparse Poisson, lateral grain boundaries with per-grain lifetimes</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Monolithic tandem</td>
+            <td><span class="pill no">single junction</span></td>
+            <td><span class="pill yes">2-terminal</span><span class="note">shared TMM, independent sub-cell sweeps, series current matching</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Degradation over time</td>
+            <td><span class="pill no">—</span></td>
+            <td><span class="pill yes">long-time driver</span><span class="note">frozen-ion snapshot J–V at each probe time</span></td>
+          </tr>
+          <tr>
+            <td class="cap">Automation surface</td>
+            <td><span class="pill yes">script + batch</span><span class="note">Windows GUI application, free for research, closed source</span></td>
+            <td><span class="pill yes">library + HTTP + UI</span><span class="note">Python package, FastAPI/SSE backend, browser workstation, YAML configs, pytest gates</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- DYNAMICS -->
+  <section class="s" id="dynamics">
+    <div class="sec-head"><span class="axis">axis · consequence</span><h2>The measurement a steady-state engine cannot produce</h2></div>
+    <div class="prose">
+      <p>Hysteresis is not a numerical artefact to be removed — it is the observable that carries the ionic time constants. A steady-state solver returns the single quasi-static curve: the limit the scan approaches as the rate goes to zero. Drag the scan rate below and watch the two families meet it.</p>
+    </div>
+
+    <figure class="fig" id="figHyst">
+      <div class="cvwrap"><canvas data-h="350" aria-label="Forward and reverse J-V scans converging on the quasi-static curve as scan rate decreases"></canvas></div>
+      <div class="controls">
+        <div class="ctl" style="min-width:230px">
+          <label>Scan rate <span class="val" data-v="rate">1.00 V/s</span></label>
+          <input type="range" min="-3" max="1.3" step="0.05" value="0" data-r="rate">
+        </div>
+        <div class="ctl" style="min-width:190px">
+          <label>Ionic time constant τ<sub>ion</sub> <span class="val" data-v="tau">1.00 s</span></label>
+          <input type="range" min="-2" max="1.3" step="0.05" value="0" data-r="tau">
+        </div>
+        <label class="toggle"><input type="checkbox" data-c="ss" checked> show quasi-static limit</label>
+        <div class="readout" data-txt="hi">hysteresis index <b>—</b></div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--cy)"></span>reverse scan (V<sub>max</sub> → 0)</span>
+        <span><span class="sw" style="background:#B98CFF"></span>forward scan (0 → V<sub>max</sub>)</span>
+        <span><span class="sw" style="background:var(--am)"></span>quasi-static — what a steady-state solver returns</span>
+      </div>
+      <figcaption><b>Illustrative reduced model</b>, not solver output: a one-state ion relaxation dθ/dt = (θ<sub>ss</sub>(V) − θ)/τ<sub>ion</sub> modulating extraction, integrated along each scan direction. It reproduces the structural facts — the loop closes in the slow-scan limit where both directions collapse onto the quasi-static curve, opens as r·τ<sub>ion</sub> approaches the bias range, and saturates once the ions are frozen and each direction simply keeps the state it was poled into. In SolarLab the same behaviour comes out of the coupled ion drift-diffusion with no hysteresis parameter anywhere in the model.</figcaption>
+    </figure>
+  </section>
+
+  <!-- NEW -->
+  <section class="s" id="new">
+    <div class="sec-head"><span class="axis">axis · contribution</span><h2>Where SolarLab is genuinely new</h2></div>
+    <div class="prose">
+      <p>Stated narrowly, so each claim is checkable against the tree.</p>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <h4><span class="n">01</span>Ion–carrier coupling in real time</h4>
+        <p>Ions are a transported species in the same Poisson field as the carriers, integrated by an L-stable implicit method. <b>Hysteresis, TPV, degradation and large-signal impedance all fall out of one formulation</b> instead of being separate models.</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">02</span>Optics computed, not imported</h4>
+        <p>Coherent TMM over the same layer stack that carries the transport parameters, closed by photon recycling and self-consistent reabsorption. The cavity that a real thin-film cell <b>is</b> shows up in G(x) automatically.</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">03</span>Lateral dimension</h4>
+        <p>A 2D solver with sparse Poisson and 2D Scharfetter–Gummel, validated bit-identical against 1D in the lateral-uniform limit, then used for what 1D cannot express: <b>grain boundaries with their own lifetimes, and V<sub>oc</sub> as a function of grain size</b>.</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">04</span>Monolithic tandems</h4>
+        <p>One transfer matrix over top + junction + bottom partitions the generation; the sub-cells are swept independently and series-matched on a common current grid. Junction layers are accounted as parasitic absorption rather than ignored.</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">05</span>Two drivers, one physics</h4>
+        <p>The steady-state Newton and the transient integrator share the <b>same assembled right-hand side</b>. A quantity can be defined the SCAPS way (ion-free steady state) or the experimental way (finite scan rate) without maintaining two physics models that drift apart.</p>
+      </div>
+      <div class="card">
+        <h4><span class="n">06</span>Reproducibility as infrastructure</h4>
+        <p>Device stacks are immutable dataclasses built from YAML; every physics upgrade sits behind a flag with a bit-identical default; regression gates pin V<sub>oc</sub>/J<sub>sc</sub>/FF envelopes; an automated parity loop scores the model against reference data and records refuted hypotheses so they are not retried.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- HONEST -->
+  <section class="s" id="honest">
+    <div class="sec-head"><span class="axis">axis · calibration</span><h2>Where SCAPS is stronger, and what parity actually looks like</h2></div>
+    <div class="prose">
+      <p>A comparison that only flatters one side is not usable in a thesis defence. SCAPS remains the stronger tool on several axes, and the SolarLab–SCAPS agreement has documented limits.</p>
+    </div>
+
+    <div class="cards">
+      <div class="card warm">
+        <h4><span class="n">▸</span>Defect physics</h4>
+        <p>Multivalent and amphoteric states, Gaussian and band-tail distributions, optical excitation of defects (IPV), metastable configurations with their own occupancy iteration. SolarLab has none of that depth.</p>
+      </div>
+      <div class="card warm">
+        <h4><span class="n">▸</span>Adaptive meshing</h4>
+        <p>Re-gridding between iterations on the exp(qψ/kT) ratio is why SCAPS handles steep grading and deep-defect occupancy where a fixed grid needs manual node counts.</p>
+      </div>
+      <div class="card warm">
+        <h4><span class="n">▸</span>AC analysis</h4>
+        <p>An exact small-signal linearisation is both faster and cleaner than demodulating an integrated waveform — the right tool for C–V and C–f.</p>
+      </div>
+      <div class="card warm">
+        <h4><span class="n">▸</span>Maturity</h4>
+        <p>Two decades of use, a large published-parameter ecosystem, curve fitting, batch/recorder workflows and a scripting language. It is the reference the field reads results in.</p>
+      </div>
+    </div>
+
+    <div class="prose" style="margin-top:30px">
+      <p>Against that reference, on the mirrored parity device:</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">11 / 11</div><div class="l">sweep directions reproduced with the correct sign</div></div>
+      <div class="stat"><div class="k">1.168 V</div><div class="l">base V<sub>oc</sub> — matched by physics, not by fitting</div></div>
+      <div class="stat"><div class="k">137 mV</div><div class="l">of the historical gap traced to one missing effective-DOS term</div></div>
+      <div class="stat"><div class="k">≈ 26.7 %</div><div class="l">PCE on the parity stack against SCAPS 26.69 %</div></div>
+    </div>
+    <div class="delta" style="margin-top:20px">
+      <span class="tag">open</span>
+      <span class="body">Sweep <b>magnitudes</b> remain a documented structural boundary — the doping-swung contact boundary condition and a bulk-Auger V<sub>oc</sub> floor, not a tuning target. Deep conduction-band offsets (ΔE<sub>C</sub> ≤ −0.2 eV) are pathological for any algebraic Newton and are computed transiently instead. Both are recorded as engine boundaries with the evidence attached, which is the honest form of a parity claim.</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><b>Sources.</b> Amber side: <i>SCAPS manual</i>, version 3.3.03, February 2016 (M. Burgelman et al., University of Gent) — §3.3 contacts, §3.8 interfaces, §3.9 tunnelling, §4.2 illumination, §5.1 calculation roadmap, §5.3 numerical parameters — plus the algorithm papers cited there. Cyan side: the SolarLab source tree and its architecture notes. Quoted defaults (f<sub>max</sub> = 1.60, 0.5 kT/q clamping, 0.001 kT stop criterion, 201-point limit) are SCAPS's own documented values.</p>
+    <p><b>Honesty note.</b> The optics figure is a live transfer-matrix calculation with constant n,k, shown against the Beer–Lambert profile for the same stack. The hysteresis figure is a reduced one-state illustration, labelled as such — it is not solver output. Every capability claim in the coverage table maps to a named module or a manual section.</p>
+    <p>Companion page to <b>“What the solver computes”</b>, the SolarLab solver walkthrough.</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  const R = document.documentElement;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- FX toggle ---------- */
+  const fxbtn = document.getElementById("themebtn");
+  fxbtn.addEventListener("click", function(){
+    R.classList.toggle("nofx");
+    fxbtn.textContent = R.classList.contains("nofx") ? "◈ FX off" : "◈ FX on";
+    redrawAll();
+  });
+
+  /* ---------- scroll spy ---------- */
+  const links = Array.prototype.slice.call(document.querySelectorAll("#secnav a"));
+  const secs = links.map(function(a){ return document.querySelector(a.getAttribute("href")); });
+  function spy(){
+    let best = 0, bestD = 1e9;
+    secs.forEach(function(s, i){
+      if(!s) return;
+      const d = Math.abs(s.getBoundingClientRect().top - 90);
+      if(d < bestD){ bestD = d; best = i; }
+    });
+    links.forEach(function(a, i){ a.classList.toggle("active", i === best); });
+  }
+  window.addEventListener("scroll", spy, {passive:true}); spy();
+
+  /* ---------- canvas helper ---------- */
+  const canvases = [];
+  function setupCanvas(fig){
+    const cv = fig.querySelector("canvas");
+    const ctx = cv.getContext("2d");
+    const h = parseInt(cv.dataset.h, 10);
+    function resize(){
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = cv.parentNode.clientWidth;
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      cv.style.height = h + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return {w:w, h:h};
+    }
+    const obj = {cv:cv, ctx:ctx, resize:resize, dim:resize()};
+    canvases.push(obj);
+    return obj;
+  }
+  function redrawAll(){ canvases.forEach(function(c){ c.dim = c.resize(); if(c.draw) c.draw(); }); }
+  window.addEventListener("resize", redrawAll);
+
+  const CSS = function(v){ return getComputedStyle(R).getPropertyValue(v).trim(); };
+  const AM = "#F5A93A", CY = "#35DBFF", VI = "#B98CFF", MUT = "#93A4BC", LINE = "rgba(96,140,190,.30)";
+
+  function axes(ctx, x0, y0, w, h, xlab, ylab){
+    ctx.strokeStyle = LINE; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, y0 - h); ctx.lineTo(x0, y0); ctx.lineTo(x0 + w, y0); ctx.stroke();
+    ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
+    ctx.textAlign = "center"; ctx.fillText(xlab, x0 + w/2, y0 + 26);
+    ctx.save(); ctx.translate(x0 - 32, y0 - h/2); ctx.rotate(-Math.PI/2);
+    ctx.fillText(ylab, 0, 0); ctx.restore(); ctx.textAlign = "left";
+  }
+
+  /* =======================================================================
+     FIGURE 1 — solve path
+     ======================================================================= */
+  (function(){
+    const fig = document.getElementById("figPath");
+    const C = setupCanvas(fig);
+    const slider = fig.querySelector('[data-r="step"]');
+    const stepOut = fig.querySelector('[data-v="step"]');
+    const runBox = fig.querySelector('[data-c="run"]');
+    const txt = fig.querySelector('[data-txt="path"]');
+    let k = 0, phase = 0, t0 = performance.now();
+
+    const RUNGS = ["startpoint", "dark equilibrium 0 V", "short circuit 1 sun", "working point", "bias Vₖ"];
+
+    C.draw = function(){
+      const ctx = C.ctx, w = C.dim.w, h = C.dim.h;
+      ctx.clearRect(0, 0, w, h);
+      const mid = w / 2;
+      const V = k * 0.12;
+      stepOut.textContent = "V = " + V.toFixed(2) + " V";
+
+      // divider
+      ctx.strokeStyle = LINE; ctx.setLineDash([3,5]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mid, 26); ctx.lineTo(mid, h - 16); ctx.stroke(); ctx.setLineDash([]);
+
+      ctx.font = "600 11px " + CSS("--sans"); ctx.textAlign = "left";
+      ctx.fillStyle = AM; ctx.fillText("SCAPS  ·  independent steady state per bias", 18, 22);
+      ctx.fillStyle = CY; ctx.fillText("SolarLab  ·  one trajectory in time", mid + 18, 22);
+
+      /* --- left: continuation ladder, restarted every bias --- */
+      const lx = 46, ly0 = 52, dy = 40;
+      for(let i = 0; i < RUNGS.length; i++){
+        const y = ly0 + i * dy;
+        const active = (phase >= i);
+        ctx.strokeStyle = active ? AM : "rgba(245,169,58,.22)";
+        ctx.fillStyle = active ? "rgba(245,169,58,.14)" : "rgba(245,169,58,.05)";
+        ctx.lineWidth = active ? 1.6 : 1;
+        roundRect(ctx, lx, y - 12, mid - lx - 34, 24, 6); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = active ? "#F7DCB0" : "rgba(245,169,58,.45)";
+        ctx.font = "11px " + CSS("--sans");
+        ctx.fillText(i === 4 ? ("bias V = " + V.toFixed(2) + " V") : RUNGS[i], lx + 11, y + 4);
+        if(i < RUNGS.length - 1){
+          ctx.strokeStyle = active ? "rgba(245,169,58,.6)" : "rgba(245,169,58,.18)";
+          ctx.beginPath(); ctx.moveTo(lx + 14, y + 12); ctx.lineTo(lx + 14, y + dy - 12); ctx.stroke();
+          arrow(ctx, lx + 14, y + dy - 12, Math.PI/2, active ? "rgba(245,169,58,.6)" : "rgba(245,169,58,.18)");
+        }
+        // gummel/newton spinner on the active rung
+        if(active && phase === i){
+          const cx = mid - 46, cy = y, r = 8;
+          const a = (performance.now() - t0) / 200;
+          ctx.strokeStyle = AM; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(cx, cy, r, a, a + 4.2); ctx.stroke();
+        }
+      }
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
+      ctx.fillText("Gummel outer loop · Newton substeps · clamp 0.5 kT/q", lx, ly0 + 5 * dy + 4);
+      ctx.fillStyle = "rgba(245,169,58,.75)";
+      ctx.fillText("state discarded — next bias restarts the ladder", lx, ly0 + 5 * dy + 22);
+
+      /* --- right: time trajectory --- */
+      const rx0 = mid + 46, rx1 = w - 26, ry = h - 74;
+      ctx.strokeStyle = LINE; ctx.beginPath(); ctx.moveTo(rx0, ry); ctx.lineTo(rx1, ry); ctx.stroke();
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
+      ctx.fillText("t", rx1 - 6, ry + 18);
+      ctx.fillText("real time — scan rate is an input", rx0, ry + 34);
+
+      const N = 11;
+      // ribbon = ionic state carried forward
+      ctx.beginPath();
+      for(let i = 0; i <= 200; i++){
+        const f = i / 200;
+        const x = rx0 + f * (rx1 - rx0);
+        const yy = ry - 26 - 44 * Math.pow(Math.min(f * 11 / Math.max(k, 0.001), 1) * (f), 0.75);
+        if(i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.strokeStyle = "rgba(185,140,255,.55)"; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = "rgba(185,140,255,.9)"; ctx.font = "10px " + CSS("--mono");
+      ctx.fillText("ion profile P(x,t)", rx0 + 6, ry - 82);
+
+      for(let i = 0; i < N; i++){
+        const f = i / (N - 1);
+        const x = rx0 + f * (rx1 - rx0);
+        const done = i <= k;
+        ctx.fillStyle = done ? CY : "rgba(53,219,255,.22)";
+        ctx.beginPath(); ctx.arc(x, ry, i === k ? 5 : 3, 0, 6.3); ctx.fill();
+        if(i < N - 1 && done){
+          ctx.strokeStyle = "rgba(53,219,255,.5)"; ctx.lineWidth = 1.4;
+          ctx.beginPath(); ctx.moveTo(x + 5, ry - 11); ctx.lineTo(rx0 + (i + 1) / (N - 1) * (rx1 - rx0) - 5, ry - 11); ctx.stroke();
+        }
+      }
+      ctx.fillStyle = CY; ctx.font = "11px " + CSS("--sans");
+      ctx.fillText("y(tₖ) = (n, p, P) → initial condition for Vₖ₊₁", rx0, ry - 60);
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
+      ctx.fillText("Radau IIA · max_step capped · bisect on failure", rx0, ry - 44);
+
+      txt.innerHTML = phase < 4
+        ? "SCAPS: climbing the continuation ladder — <b>" + RUNGS[phase] + "</b>"
+        : "SCAPS: converged at V = " + V.toFixed(2) + " V &nbsp;·&nbsp; SolarLab: state carried forward";
+    };
+
+    function loop(){
+      if(runBox.checked && !reduce){
+        const el = (performance.now() - t0) / 1000;
+        phase = Math.min(4, Math.floor(el / 0.55));
+        if(el > 3.2){ t0 = performance.now(); k = (k + 1) % 11; slider.value = k; }
+      }
+      C.draw();
+      requestAnimationFrame(loop);
+    }
+    slider.addEventListener("input", function(){ k = +slider.value; t0 = performance.now(); phase = 4; runBox.checked = false; C.draw(); });
+    if(reduce){ phase = 4; C.draw(); } else { requestAnimationFrame(loop); }
+  })();
+
+  /* =======================================================================
+     FIGURE 2 — optics: Beer-Lambert vs coherent TMM
+     ======================================================================= */
+  (function(){
+    const fig = document.getElementById("figOptics");
+    const C = setupCanvas(fig);
+    const dS = fig.querySelector('[data-r="d"]'), kS = fig.querySelector('[data-r="k"]');
+    const dV = fig.querySelector('[data-v="d"]'), kV = fig.querySelector('[data-v="k"]');
+    const mir = fig.querySelector('[data-c="mirror"]');
+    const out = fig.querySelector('[data-txt="opt"]');
+
+    /* --- complex helpers --- */
+    const cx = function(re, im){ return {re:re, im:im || 0}; };
+    const add = function(a,b){ return cx(a.re+b.re, a.im+b.im); };
+    const sub = function(a,b){ return cx(a.re-b.re, a.im-b.im); };
+    const mul = function(a,b){ return cx(a.re*b.re - a.im*b.im, a.re*b.im + a.im*b.re); };
+    const div = function(a,b){ const d=b.re*b.re+b.im*b.im; return cx((a.re*b.re+a.im*b.im)/d, (a.im*b.re-a.re*b.im)/d); };
+    const cexp = function(a){ const e=Math.exp(a.re); return cx(e*Math.cos(a.im), e*Math.sin(a.im)); };
+    const ab2 = function(a){ return a.re*a.re + a.im*a.im; };
+    const mm = function(X,Y){ return [
+      add(mul(X[0],Y[0]), mul(X[1],Y[2])), add(mul(X[0],Y[1]), mul(X[1],Y[3])),
+      add(mul(X[2],Y[0]), mul(X[3],Y[2])), add(mul(X[2],Y[1]), mul(X[3],Y[3]))]; };
+    function Imat(nj, nk){
+      const r = div(sub(nj,nk), add(nj,nk));
+      const it = div(add(nj,nk), mul(cx(2), nj));   // 1/t
+      return [it, mul(r,it), mul(r,it), it];
+    }
+    function Lmat(n, d, lam){
+      const xi = mul(cx(0, 2*Math.PI/lam), n);
+      return [cexp(mul(cx(-1), mul(xi, cx(d)))), cx(0), cx(0), cexp(mul(xi, cx(d)))];
+    }
+
+    /* stack: HTL / absorber / ETL, ambient = glass side, exit = air or metal */
+    const LAMS = [420, 500, 580, 660, 740];
+    const WTS  = [0.85, 1.0, 1.05, 1.0, 0.75];   // rough AM1.5G photon weighting
+
+    function absorberProfile(){
+      const d = +dS.value, k550 = +kS.value, useMirror = mir.checked;
+      const NX = 160;
+      const gT = new Float64Array(NX), gB = new Float64Array(NX);
+      let A_T = 0, A_B = 0, wsum = 0;
+
+      for(let li = 0; li < LAMS.length; li++){
+        const lam = LAMS[li], wt = WTS[li];
+        // absorber k rises toward the blue (simple Tauc-like ramp)
+        const kA = k550 * Math.pow(550 / lam, 1.6);
+        const layers = [
+          {n:1.90, k:0.010, d:30},
+          {n:2.45, k:kA,    d:d},
+          {n:2.05, k:0.008, d:50}
+        ];
+        const amb = cx(1.52, 0);                              // glass
+        const exi = useMirror ? cx(0.14, 3.5) : cx(1.0, 0);   // Ag-like or air
+        const idx = [amb, cx(layers[0].n, layers[0].k), cx(layers[1].n, layers[1].k), cx(layers[2].n, layers[2].k), exi];
+
+        // full S
+        let S = Imat(idx[0], idx[1]);
+        for(let j = 1; j <= 3; j++){ S = mm(S, Lmat(idx[j], layers[j-1].d, lam)); S = mm(S, Imat(idx[j], idx[j+1])); }
+
+        // partial matrices -> field amplitudes inside layer 2 (absorber)
+        let Sj = Imat(idx[0], idx[1]);
+        let entry = null;
+        for(let j = 1; j <= 3; j++){
+          let Spp = mm(Lmat(idx[j], layers[j-1].d, lam), Imat(idx[j], idx[j+1]));
+          for(let m = j + 1; m <= 3; m++){ Spp = mm(Spp, Lmat(idx[m], layers[m-1].d, lam)); Spp = mm(Spp, Imat(idx[m], idx[m+1])); }
+          const den = add(mul(Sj[0], Spp[0]), mul(Sj[1], Spp[2]));
+          if(j === 2) entry = {tp: div(Spp[0], den), tm: div(Spp[2], den), n: idx[j]};
+          if(j < 3){ Sj = mm(Sj, Lmat(idx[j], layers[j-1].d, lam)); Sj = mm(Sj, Imat(idx[j], idx[j+1])); }
+        }
+
+        const alphaA = 4 * Math.PI * kA / lam;   // 1/nm
+        // incoherent Beer-Lambert reference: front-surface transmission then exp decay
+        const T0 = 1 - ab2(div(sub(amb, idx[1]), add(amb, idx[1])));
+        const decayHTL = Math.exp(-4 * Math.PI * layers[0].k / lam * layers[0].d);
+
+        for(let i = 0; i < NX; i++){
+          const z = (i + 0.5) / NX * d;
+          const xi = mul(cx(0, 2*Math.PI/lam), entry.n);
+          const E = add(mul(entry.tp, cexp(mul(xi, cx(z)))), mul(entry.tm, cexp(mul(cx(-1), mul(xi, cx(z))))));
+          const gt = alphaA * entry.n.re * ab2(E) / amb.re;
+          const gb = T0 * decayHTL * alphaA * Math.exp(-alphaA * z);
+          gT[i] += wt * gt; gB[i] += wt * gb;
+          A_T += wt * gt * (d / NX); A_B += wt * gb * (d / NX);
+        }
+        wsum += wt;
+      }
+      for(let i = 0; i < NX; i++){ gT[i] /= wsum; gB[i] /= wsum; }
+      return {gT:gT, gB:gB, d:d, A_T:A_T/wsum, A_B:A_B/wsum};
+    }
+
+    C.draw = function(){
+      const ctx = C.ctx, w = C.dim.w, h = C.dim.h;
+      ctx.clearRect(0, 0, w, h);
+      dV.textContent = (+dS.value) + " nm";
+      kV.textContent = (+kS.value).toFixed(2);
+
+      const res = absorberProfile();
+      const x0 = 58, y0 = h - 42, pw = w - x0 - 26, ph = h - 76;
+      const totalNm = 30 + res.d + 50;
+
+      // layer bands
+      const bands = [{n:"HTL", a:0, b:30}, {n:"absorber", a:30, b:30+res.d}, {n:"ETL", a:30+res.d, b:totalNm}];
+      bands.forEach(function(b, i){
+        const xa = x0 + b.a / totalNm * pw, xb = x0 + b.b / totalNm * pw;
+        ctx.fillStyle = i === 1 ? "rgba(96,140,190,.07)" : "rgba(150,170,200,.10)";
+        ctx.fillRect(xa, y0 - ph, xb - xa, ph);
+        ctx.strokeStyle = LINE; ctx.beginPath(); ctx.moveTo(xb, y0 - ph); ctx.lineTo(xb, y0); ctx.stroke();
+        ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono"); ctx.textAlign = "center";
+        if(xb - xa > 34) ctx.fillText(b.n, (xa + xb) / 2, y0 - ph + 14);
+      });
+      ctx.textAlign = "left";
+
+      let mx = 0;
+      for(let i = 0; i < res.gT.length; i++){ mx = Math.max(mx, res.gT[i], res.gB[i]); }
+      mx = mx * 1.12 || 1;
+
+      function plot(arr, color, fill){
+        const xa = x0 + 30 / totalNm * pw, xb = x0 + (30 + res.d) / totalNm * pw;
+        ctx.beginPath();
+        for(let i = 0; i < arr.length; i++){
+          const x = xa + (i + 0.5) / arr.length * (xb - xa);
+          const y = y0 - arr[i] / mx * ph;
+          if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        if(fill){
+          ctx.lineTo(xb, y0); ctx.lineTo(xa, y0); ctx.closePath();
+          ctx.fillStyle = fill; ctx.fill();
+        }
+        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+      }
+      plot(res.gB, AM, "rgba(245,169,58,.10)");
+      plot(res.gT, CY, "rgba(53,219,255,.12)");
+
+      axes(ctx, x0, y0, pw, ph, "depth through the stack (nm) →", "G(x)  arb.");
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono");
+      ctx.fillText("0", x0 - 4, y0 + 14);
+      ctx.textAlign = "right"; ctx.fillText(totalNm + " nm", x0 + pw, y0 + 14); ctx.textAlign = "left";
+
+      if(mir.checked){
+        ctx.fillStyle = "rgba(220,230,245,.75)";
+        ctx.fillRect(x0 + pw - 3, y0 - ph, 3, ph);
+        ctx.save(); ctx.translate(x0 + pw - 10, y0 - ph + 46); ctx.rotate(-Math.PI/2);
+        ctx.fillStyle = MUT; ctx.font = "9px " + CSS("--mono"); ctx.textAlign = "left";
+        ctx.fillText("metal", 0, 0); ctx.restore();
+      }
+      const ratio = res.A_B > 0 ? res.A_T / res.A_B : 1;
+      out.innerHTML = "absorbed in film &nbsp; TMM / Beer–Lambert = <b>" + ratio.toFixed(2) + "×</b>";
+    };
+
+    [dS, kS].forEach(function(s){ s.addEventListener("input", C.draw); });
+    mir.addEventListener("change", C.draw);
+    C.draw();
+  })();
+
+  /* =======================================================================
+     FIGURE 3 — hysteresis vs scan rate
+     ======================================================================= */
+  (function(){
+    const fig = document.getElementById("figHyst");
+    const C = setupCanvas(fig);
+    const rS = fig.querySelector('[data-r="rate"]'), tS = fig.querySelector('[data-r="tau"]');
+    const rV = fig.querySelector('[data-v="rate"]'), tV = fig.querySelector('[data-v="tau"]');
+    const ssBox = fig.querySelector('[data-c="ss"]');
+    const out = fig.querySelector('[data-txt="hi"]');
+
+    const VT = 0.02585, VMAX = 1.20, JPH = 22.5, J0 = 2.2e-18, MID = 1.35;
+    const thSS = function(V){ return Math.max(0, Math.min(1, V / 1.05)); };
+    const eta = function(th){ return 0.74 + 0.26 * th; };
+    const diode = function(V, th){ return JPH * eta(th) - J0 * (Math.exp(V / (MID * VT)) - 1); };
+
+    function scan(dir, rate, tau){
+      const N = 260, pts = [];
+      let th = dir > 0 ? thSS(0) * 0 + 0 : 1;      // pre-poled: fwd from SC, rev from V_max
+      const dV = VMAX / (N - 1), dt = dV / rate;
+      for(let i = 0; i < N; i++){
+        const V = dir > 0 ? i * dV : VMAX - i * dV;
+        th += (thSS(V) - th) * (1 - Math.exp(-dt / tau));
+        pts.push([V, diode(V, th)]);
+      }
+      return pts;
+    }
+    function quasi(){
+      const N = 260, pts = [];
+      for(let i = 0; i < N; i++){ const V = i * VMAX / (N - 1); pts.push([V, diode(V, thSS(V))]); }
+      return pts;
+    }
+    function pce(pts){
+      let m = 0; pts.forEach(function(p){ m = Math.max(m, p[0] * p[1]); }); return m;
+    }
+
+    C.draw = function(){
+      const ctx = C.ctx, w = C.dim.w, h = C.dim.h;
+      ctx.clearRect(0, 0, w, h);
+      const rate = Math.pow(10, +rS.value), tau = Math.pow(10, +tS.value);
+      rV.textContent = (rate >= 1 ? rate.toFixed(2) : rate.toFixed(3)) + " V/s";
+      tV.textContent = (tau >= 1 ? tau.toFixed(2) : tau.toFixed(3)) + " s";
+
+      const x0 = 62, y0 = h - 44, pw = w - x0 - 28, ph = h - 78;
+      const JMAX = 26;
+      const X = function(V){ return x0 + V / VMAX * pw; };
+      const Y = function(J){ return y0 - Math.max(-3, Math.min(JMAX, J)) / JMAX * ph; };
+
+      // grid
+      ctx.strokeStyle = "rgba(96,140,190,.10)"; ctx.lineWidth = 1;
+      for(let v = 0.2; v < VMAX; v += 0.2){ ctx.beginPath(); ctx.moveTo(X(v), y0 - ph); ctx.lineTo(X(v), y0); ctx.stroke(); }
+      for(let j = 5; j <= 25; j += 5){ ctx.beginPath(); ctx.moveTo(x0, Y(j)); ctx.lineTo(x0 + pw, Y(j)); ctx.stroke(); }
+
+      function line(pts, color, wdt, dash){
+        ctx.beginPath();
+        pts.forEach(function(p, i){ const x = X(p[0]), y = Y(p[1]); if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+        ctx.strokeStyle = color; ctx.lineWidth = wdt; ctx.setLineDash(dash || []); ctx.stroke(); ctx.setLineDash([]);
+      }
+
+      const qs = quasi(), fw = scan(+1, rate, tau), rv = scan(-1, rate, tau);
+      if(ssBox.checked) line(qs, AM, 2, [5,4]);
+      line(fw, VI, 2);
+      line(rv, CY, 2);
+
+      axes(ctx, x0, y0, pw, ph, "applied bias V (V) →", "J (mA/cm²)");
+      ctx.fillStyle = MUT; ctx.font = "10px " + CSS("--mono"); ctx.textAlign = "right";
+      for(let j = 5; j <= 25; j += 5) ctx.fillText(String(j), x0 - 7, Y(j) + 3);
+      ctx.textAlign = "center";
+      for(let v = 0.2; v <= 1.0001; v += 0.2) ctx.fillText(v.toFixed(1), X(v), y0 + 15);
+      ctx.textAlign = "left";
+
+      const pr = pce(rv), pf = pce(fw);
+      const HI = pr > 0 ? (pr - pf) / pr : 0;
+      out.innerHTML = "hysteresis index <b>" + (HI * 100).toFixed(1) + " %</b> &nbsp;·&nbsp; r·τ = " + (rate * tau).toFixed(2) + " V";
+
+      // annotation of the regime
+      let msg;
+      if(rate * tau < 0.05) msg = "quasi-static regime — ions track the bias, loop closed";
+      else if(rate * tau > 6) msg = "frozen-ion regime — each scan keeps its poled state";
+      else msg = "r·τ ≈ V range — loop is widest here";
+      ctx.fillStyle = "rgba(220,230,245,.7)"; ctx.font = "11px " + CSS("--sans");
+      ctx.fillText(msg, x0 + 10, y0 - ph + 16);
+    };
+
+    [rS, tS].forEach(function(s){ s.addEventListener("input", C.draw); });
+    ssBox.addEventListener("change", C.draw);
+    C.draw();
+  })();
+
+  /* ---------- shared canvas primitives ---------- */
+  function roundRect(ctx, x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+  }
+  function arrow(ctx, x, y, ang, color){
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(-4, -3.4); ctx.lineTo(-4, 3.4); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+})();
+</script>
