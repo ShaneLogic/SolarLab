@@ -2,7 +2,7 @@
 title: "SolarLab Technical and User Manual"
 subtitle: "Technical guide to thin-film solar-cell simulation, workflows, and validation"
 author: "SolarLab Project"
-date: "2026-07-23"
+date: "2026-07-26"
 lang: en-US
 documentclass: report
 fontsize: 11pt
