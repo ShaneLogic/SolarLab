@@ -37,10 +37,11 @@ from perovskite_sim.experiments import eqe as eqe_exp
 from perovskite_sim.experiments import mott_schottky as ms_exp
 from perovskite_sim.experiments.steady_state import run_jv_sweep_ss
 from perovskite_sim.models.config_loader import (
+    interfaces_from_device_dict,
     load_device_from_yaml,
     material_params_from_dict,
 )
-from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
+from perovskite_sim.models.device import DeviceStack, LayerSpec
 from perovskite_sim.models.mode import resolve_mode
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
@@ -166,47 +167,11 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
     # precedence (computes SRV via σ·v_th·N_t kinetic identity); legacy
     # ``interfaces`` survives for slots where ``interface_defects[k]`` is
     # None or absent.
-    legacy_pairs = list(dev.get("interfaces") or [])
-    defect_blocks = list(dev.get("interface_defects") or [])
-    n_iface = max(0, len(layers) - 1)
-    iface_list: list[tuple[float, float]] = []
-    defect_list: list[InterfaceDefect | None] | None = (
-        [] if defect_blocks else None
-    )
-    for k in range(n_iface):
-        pair = legacy_pairs[k] if k < len(legacy_pairs) else (0.0, 0.0)
-        defect_dict = defect_blocks[k] if k < len(defect_blocks) else None
-        if defect_dict is None:
-            iface_list.append((float(pair[0]), float(pair[1])))
-            if defect_list is not None:
-                defect_list.append(None)
-            continue
-        sigma_n_cm2 = float(defect_dict["sigma_n_cm2"])
-        sigma_p_cm2 = float(defect_dict["sigma_p_cm2"])
-        v_th_cm_s = float(defect_dict["v_th_cm_s"])
-        N_t_cm2 = float(defect_dict["N_t_cm2"])
-        E_t_eV = float(defect_dict["E_t_eV_below_cb"])
-        # Phase E1.6 — optional calibration_factor (default 1.0). Frontend
-        # live editor exposes this field on each interface_defects[k]
-        # slot; backend round-trips it here so changes survive the
-        # /api/jobs boundary.
-        calibration_factor = float(defect_dict.get("calibration_factor", 1.0))
-        v_n = sigma_n_cm2 * v_th_cm_s * N_t_cm2 * 1.0e-2
-        v_p = sigma_p_cm2 * v_th_cm_s * N_t_cm2 * 1.0e-2
-        iface_list.append((v_n, v_p))
-        assert defect_list is not None  # narrows for mypy
-        defect_list.append(
-            InterfaceDefect(E_t_eV=E_t_eV, calibration_factor=calibration_factor)
-        )
-    # Only emit the ``interfaces`` tuple if the user supplied either schema
-    # (preserves "absent → ()" legacy behaviour when neither key present).
-    if legacy_pairs or defect_blocks:
-        interfaces = tuple(iface_list)
-    else:
-        interfaces = ()
-    interface_defects = (
-        tuple(defect_list) if defect_list is not None else ()
-    )
+    # Parsed by the SAME helper the YAML loader uses (Phase E1.6's optional
+    # per-slot ``calibration_factor`` from the live editor round-trips through
+    # it). These two paths drifted apart repeatedly before they shared a
+    # parser — do not re-inline this.
+    interfaces, interface_defects = interfaces_from_device_dict(dev, len(layers))
     mode_name = str(dev.get("mode", "full"))
     # Validate early so an unknown mode fails the HTTP request rather than
     # blowing up inside the worker thread where the error is harder to surface.

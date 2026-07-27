@@ -1,8 +1,77 @@
 from __future__ import annotations
+from typing import Optional
 import yaml
 from perovskite_sim.models.parameters import MaterialParams
-from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.twod.microstructure import load_microstructure_from_yaml_block
+
+
+def interfaces_from_device_dict(
+    dev: dict, n_layers: int
+) -> tuple[tuple[tuple[float, float], ...], tuple[Optional[InterfaceDefect], ...]]:
+    """Parse a ``device:`` block's interface schemas into the two tuples
+    ``DeviceStack`` carries.
+
+    This is the single source of truth for both entry points — the YAML loader
+    below and ``backend/main.py:stack_from_dict`` (the inline-device path the
+    frontend uses). They have drifted apart before; sharing the parser is what
+    stops it happening again.
+
+    Two schemas are accepted, both FULL-layer-aligned (one slot per internal
+    interface, ``n_layers - 1`` of them, substrate included):
+
+    ``interfaces``
+        Legacy list of ``[v_n, v_p]`` surface-recombination velocities in m/s.
+
+    ``interface_defects``
+        SCAPS-style list of ``{sigma_n_cm2, sigma_p_cm2, v_th_cm_s, N_t_cm2,
+        E_t_eV_below_cb, calibration_factor?}`` or ``None`` per slot. The SRV
+        pair is derived from the kinetic identity ``v = sigma * v_th * N_t``
+        (the ``1e-2`` converts cm/s to m/s), and an :class:`InterfaceDefect`
+        carries the trap depth.
+
+    Where both supply a slot, the defect wins and the legacy pair survives only
+    on ``None`` slots. Populating a defect is not a cosmetic difference: it
+    activates the E_t-aware cross-carrier evaluation path, which carries most
+    of the interface-recombination effect (measured -143 mV of V_oc versus
+    -6.8 mV for a bare SRV of the same magnitude).
+
+    Absent keys return ``((), ())`` — byte-identical to the pre-schema
+    behaviour, so every config that does not opt in is unaffected.
+    """
+    legacy_pairs = list(dev.get("interfaces") or [])
+    defect_blocks = list(dev.get("interface_defects") or [])
+    if not legacy_pairs and not defect_blocks:
+        return (), ()
+
+    n_iface = max(0, n_layers - 1)
+    iface_list: list[tuple[float, float]] = []
+    defect_list: list[Optional[InterfaceDefect]] | None = (
+        [] if defect_blocks else None
+    )
+    for k in range(n_iface):
+        pair = legacy_pairs[k] if k < len(legacy_pairs) else (0.0, 0.0)
+        block = defect_blocks[k] if k < len(defect_blocks) else None
+        if block is None:
+            iface_list.append((float(pair[0]), float(pair[1])))
+            if defect_list is not None:
+                defect_list.append(None)
+            continue
+        v_th = float(block["v_th_cm_s"])
+        N_t = float(block["N_t_cm2"])
+        iface_list.append((
+            float(block["sigma_n_cm2"]) * v_th * N_t * 1.0e-2,
+            float(block["sigma_p_cm2"]) * v_th * N_t * 1.0e-2,
+        ))
+        assert defect_list is not None
+        defect_list.append(InterfaceDefect(
+            E_t_eV=float(block["E_t_eV_below_cb"]),
+            calibration_factor=float(block.get("calibration_factor", 1.0)),
+        ))
+    return (
+        tuple(iface_list),
+        tuple(defect_list) if defect_list is not None else (),
+    )
 
 
 def load_simulation_hints(path: str) -> dict:
@@ -128,11 +197,10 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             params=p,
             role=layer_cfg["role"],
         ))
-    # Interface recombination velocities: list of [v_n, v_p] per internal interface
-    raw_interfaces = dev.get("interfaces", [])
-    interfaces = tuple(
-        (float(pair[0]), float(pair[1])) for pair in raw_interfaces
-    )
+    # Interface recombination: legacy [v_n, v_p] SRV pairs and/or SCAPS-style
+    # defect blocks. Shared with the backend inline-device path so the two
+    # cannot drift.
+    interfaces, interface_defects = interfaces_from_device_dict(dev, len(layers))
 
     # Selective / Schottky contact surface recombination velocities
     # (Phase 3.3 — Apr 2026). YAML may supply them as a nested
@@ -162,6 +230,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         V_bi=_f(dev.get("V_bi", 1.1)),
         Phi=_f(dev.get("Phi", 2.5e21)),
         interfaces=interfaces,
+        interface_defects=interface_defects,
         T=_f(dev.get("T", 300.0)),
         mode=str(dev.get("mode", "full")),
         interface_plane_projection=(

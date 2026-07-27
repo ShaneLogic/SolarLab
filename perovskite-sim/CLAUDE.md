@@ -227,6 +227,14 @@ Suns-V<sub>oc</sub>, EQE, and any other experiment that pulls a single steady-st
 
 The original `run_suns_voc` / `compute_eqe` defaulted to `t_settle = 1e-3 s` (1 ms). On TMM presets where the absorber `D_ion = 1e-17 m²/s` (e.g. `ionmonger_benchmark_tmm`), the ionic time constant `τ_ion = L²/D_ion ≈ 16 ms` is more than an order of magnitude longer than 1 ms, so the unconverged ionic transient produces a residual J that swamps the small monochromatic photo-signal in EQE and produces oscillating pseudo-FF in Suns-V<sub>oc</sub>. **Defaults bumped to `t_settle = 1e-1 s` (100 ms)** in both experiments — covers the slowest perovskite preset with one order of magnitude of margin. EQE additionally bumps `Phi_incident` from `1e20` to `4e21` (1-sun integrated AM1.5G) so the per-wavelength photocurrent dominates the residual ionic drift. Suns-V<sub>oc</sub> and EQE both subtract a dark-`J(V=0)` baseline before reporting the photo-signal so the surviving ionic drift cancels in the difference. Pinned by `tests/unit/experiments/test_eqe.py::test_eqe_in_unit_range_on_ionic_rich_preset` — locks the worst-case preset (`ionmonger_benchmark_tmm`) to `EQE ≤ 1.10`.
 
+### Experiment gotcha — the transient `run_jv_sweep` default `V_max` is blind to V<sub>oc</sub> (2026-07-26)
+
+`_default_V_max = max(|V_bi|·1.3, 1.4)` is set by the **contact work functions** and knows nothing about the point being swept. On any device whose V<sub>oc</sub> collapses — deep cliff or spike band offsets, short lifetime, strong interface recombination — the sweep therefore grinds a long stretch of deep forward injection *above* V<sub>oc</sub>, which is the regime the steady-state notes above already flag as taking minutes per point. Measured on two spike-side screening points (|V_bi| = 0.791 → default V<sub>max</sub> 1.40, actual V<sub>oc</sub> ≈ 0.53): **1567 s and 630 s, versus 23 s and 16 s** when the range starts low and escalates only on a failed bracket — with V<sub>oc</sub> agreeing to 1.6 mV and 0.1 mV. That is pure wasted work, not a speed/accuracy trade.
+
+It is also a **silent data-quality** hazard, not just a slow one. Under any per-point timeout the affected points are recorded as *failures*, and the failures are not missing at random: on a 256-point screening design 53 % of the chi ≥ 4.0 samples failed versus 2 % mid-range, so fitting a surrogate to the survivors would have imprinted a spurious cliff-vs-spike asymmetry. Switching protocol took the loss from 54/256 to 12/256, made it uniform across chi, cut wall clock 3767 s → 1298 s, and left the best point unchanged.
+
+`run_jv_sweep_ss` already has the fix for the steady-state driver (`stop_after_voc=True`); the **transient** driver has no equivalent. Until it does, callers sweeping collapse-prone devices should pass an explicit ladder: hold the voltage **resolution** fixed and escalate the **range** (e.g. dV = 0.025 V, V<sub>max</sub> ∈ {0.7, 1.2, 1.7, 2.2} until `metrics_fwd.voc_bracketed`). Do **not** instead hold `n_points` fixed while varying the range — that gives each point a different voltage step, and the V<sub>oc</sub> interpolation error scales with the step, which re-introduces a correlated bias wherever the affected points cluster. Reference implementation: `PhD/SolarCellReverseDesign/Scripts/lhs_scan_2c.py:_sweep_to_voc`.
+
 ## Backend (`backend/main.py`)
 
 Thin FastAPI wrapper. Two endpoint families:
@@ -301,10 +309,31 @@ Presets shipped with the repo:
 - **TMM-enabled:** `nip_MAPbI3_tmm`, `pin_MAPbI3_tmm`, `ionmonger_benchmark_tmm`, `driftfusion_benchmark_tmm`
 - **Tandem sub-cells:** `nip_wideGap_FACs_1p77` (1.77 eV top), `nip_SnPb_1p22` (1.22 eV bottom)
 - **Tandem config:** `tandem_lin2019` (2T monolithic, uses `TandemConfig` not `DeviceStack`)
+- **Band-alignment screening:** `solarscale_nip_band_aligned` (fixed spiro-OMeTAD / TiO<sub>2</sub> contacts, **no interface recombination** — see the config gotcha below) and `solarscale_nip_band_aligned_iface` (same stack **with** hetero-interface SRH declared; V<sub>oc</sub> 1.0830 → 0.9382 on the shipped baseline). Use the `_iface` variant for any band-alignment study.
 
 The YAML schema mirrors `MaterialParams` + `DeviceStack.interfaces`; see any existing file for the field list. Non-perovskite stacks must set `D_ion = 0` in every layer — the ion equations still integrate but contribute zero flux. Tandem configs use a separate `TandemConfig` schema (`models/tandem_config.py`) that references two sub-cell configs plus junction layers.
 
 Practical solver envelope: the Radau transient handles sub-micron perovskite stacks comfortably (ionmonger reference ≈ 25 s for a full J–V). Thick inorganic absorbers (2 µm CIGS, 180 µm Si) are structurally valid and `solve_equilibrium` converges, but a full transient J–V sweep is impractical at default tolerances. Use thinner absorbers or a coarser grid when iterating, and prefer equilibrium-level tests for those configs.
+
+### Config gotcha — interface recombination is opt-in, silent when absent, and the YAML path is strictly weaker than the UI path
+
+Two separate traps, both measured on `solarscale_nip_band_aligned.yaml` (2026-07-26):
+
+**1. Most shipped configs declare no interface recombination at all.** Only 4 of 24 top-level configs carry a `device.interfaces` block (`scaps_mirror*`, the SCAPS-parity set). Everything else loads as `DeviceStack.interfaces == ()`, so band offsets reach **only** transport — the SG flux and the TE cap — and never the recombination channel. The failure is silent and looks like a physics result: on the band-aligned screening template, sweeping the absorber `chi` over 3.5–4.2 eV moves V<sub>oc</sub> by **9.2 mV** with the block absent versus **294 mV** with a populated interface, i.e. without it `chi` appears to move FF only and the band-alignment optimum reads as far more forgiving than it is. The frontend does not help: `config-editor.ts` renders the "Interface Recombination (SRV)" panel from `config.device.interfaces?.[i] ?? [0, 0]`, so a config without the block shows the fields **pre-filled with zeros** rather than flagging them as unset. Any band-alignment / absorber-screening conclusion drawn on a config without this block is optimistic — populate it first.
+
+**2. The defect, not the bare SRV, is the load-bearing half.** An `InterfaceDefect` does not merely supply different n1/p1 numbers — it activates the E<sub>t</sub>-aware cross-carrier evaluation path. Measured at tau = 1e-6, SRV = 0.1 m/s on both hetero-interfaces:
+
+| | E<sub>g</sub> = 1.40, chi = 3.70 | E<sub>g</sub> = 1.60, chi = 3.70 |
+|---|---|---|
+| no `interfaces` | V<sub>oc</sub> 0.9017 | 1.0913 |
+| `interfaces` only (all a plain YAML can express) | 0.8949 (**−6.8 mV**) | 1.0891 (**−2.2 mV**) |
+| `interfaces` + `InterfaceDefect(E_t)` | 0.7585 (**−143 mV**) | 0.9436 (**−148 mV**) |
+
+So the defect carries ~95 % of the effect. Do not compensate for a missing defect by inflating the bare SRV — it is a different, much weaker channel, and matching a number that way fabricates the agreement.
+
+**Both schemas now share one parser (2026-07-26).** `config_loader.interfaces_from_device_dict(dev, n_layers)` is the single source of truth for `device.interfaces` (legacy `[v_n, v_p]` pairs, m/s) **and** `device.interface_defects` (SCAPS-style `{sigma_n_cm2, sigma_p_cm2, v_th_cm_s, N_t_cm2, E_t_eV_below_cb, calibration_factor?} | None` per slot, SRV derived as `sigma·v_th·N_t`). Both `load_device_from_yaml` and `backend/main.py:stack_from_dict` call it, so a plain YAML can now express a trap level and the UI and file paths cannot drift — they had drifted repeatedly before, which is the same reason `material_params_from_dict` is shared. Where both schemas fill a slot the defect wins and the legacy pair survives only on `None` slots; absent keys still return `((), ())`, so every config that does not opt in is byte-identical. Tests: `tests/unit/models/test_config_loader_interface_defects.py` (includes a YAML-vs-inline parity case).
+
+A calibration note for whoever populates these: an SRV set here is **device-level and grid-referenced**, not a face-value physical velocity. The cross-carrier interface SRH rate is sampled on bulk-interior nodes (over-counting relative to an interface-plane evaluation) and normalised by the interface dual-cell width, so it moves with `N_grid`. Measured on this stack, N_grid 60 → 120 shifts V<sub>oc</sub> by −16.0 mV on the cliff flank but only −0.6 mV at the alignment optimum and −0.6 mV on the spike flank — the residual is localised to the cliff side, not a uniform offset.
 
 ## Data Model Invariants
 
