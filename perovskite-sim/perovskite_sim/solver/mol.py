@@ -573,6 +573,48 @@ def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
     return out
 
 
+# Half-width of the pad used when testing whether a node lies inside a layer.
+# Layer edges are accumulated by repeated addition here but by an independent
+# cumulative construction in ``discretization.grid.multilayer_grid``, so the
+# two can differ by a few ULP (~1e-19 m on µm-scale thicknesses); the pad
+# absorbs that without ever reaching a neighbouring node (grid spacings are
+# ~1e-9 m and above).
+_LAYER_EDGE_PAD = 1e-12
+
+
+def _layer_node_masks(x: np.ndarray, layers) -> list[np.ndarray]:
+    """Per-layer node ownership masks that PARTITION the grid.
+
+    A layer's span is inclusive at both ends (with ``_LAYER_EDGE_PAD``), so the
+    node that sits exactly on a shared boundary belongs to the spans of BOTH
+    neighbouring layers.  Every per-node consumer must therefore agree on which
+    single layer owns that node.  Ownership is resolved **last-layer-wins** —
+    the RIGHT layer at an internal boundary — which is exactly the node that a
+    sequence of ``arr[span] = value`` assignments in layer order already
+    produced, so assignment-style consumers are bit-identical to the
+    pre-helper code.
+
+    Accumulating consumers (``arr[m] += correction``, e.g. the effective-DOS
+    band-potential fold) are NOT safe against overlapping spans: with the raw
+    spans a boundary node picks up both neighbours' corrections on top of the
+    right layer's base value.  Routing both kinds of consumer through this one
+    helper is what keeps them from drifting apart again.
+
+    Returns one boolean mask per layer; the masks are mutually exclusive and,
+    for a grid spanning the stack, cover every node exactly once.
+    """
+    owner = np.full(x.shape, -1, dtype=np.intp)
+    offset = 0.0
+    for i, layer in enumerate(layers):
+        span = (
+            (x >= offset - _LAYER_EDGE_PAD)
+            & (x <= offset + layer.thickness + _LAYER_EDGE_PAD)
+        )
+        owner[span] = i
+        offset += layer.thickness
+    return [owner == i for i in range(len(layers))]
+
+
 def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     """Construct the immutable per-experiment material array bundle.
 
@@ -665,9 +707,14 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         or os.environ.get("SOLARLAB_BAND_GRADING") == "1"
     ) and sim_mode.name != "legacy"
 
+    # Node -> layer ownership, shared by every per-node consumer below (the
+    # base-parameter loop here and the effective-DOS fold further down). See
+    # ``_layer_node_masks``: boundary nodes are owned last-layer-wins, so this
+    # is bit-identical to the previous inline overlapping-span assignments.
+    layer_masks = _layer_node_masks(x, elec_layers)
+
     offset = 0.0
-    for layer in elec_layers:
-        mask = (x >= offset - 1e-12) & (x <= offset + layer.thickness + 1e-12)
+    for layer, mask in zip(elec_layers, layer_masks):
         p = layer.params
         # Local coordinate from the layer's front face — used by both the
         # grading profile and the trap profile below (hoisted to avoid
@@ -884,16 +931,22 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             elec_layers[0].params,
         )
         if _ref.Nc300 and _ref.Nv300:
-            _off = 0.0
-            for layer in elec_layers:
-                _m = (x >= _off - 1e-12) & (x <= _off + layer.thickness + 1e-12)
+            # This loop ACCUMULATES (+=), so it must run over the same
+            # PARTITION the base loop assigned over — the shared
+            # ``layer_masks``. With raw overlapping spans the node on a shared
+            # layer boundary received BOTH neighbours' corrections on top of
+            # the right layer's base chi/Eg (measured +83.2 meV in chi /
+            # −166.4 meV in Eg at HTL/PVK on the shipped presets, i.e.
+            # V_T·ln(N_C_HTL/N_C_PVK)) — a spurious quasi-Fermi step at dark
+            # equilibrium, which is a detailed-balance violation. Each node now
+            # gets exactly one layer's correction.
+            for layer, _m in zip(elec_layers, layer_masks):
                 _q = layer.params
                 if _q.Nc300 and _q.Nv300:
                     _dC = V_T_dev * math.log(_q.Nc300 / _ref.Nc300)
                     _dV = V_T_dev * math.log(_q.Nv300 / _ref.Nv300)
                     chi[_m] = chi[_m] + _dC
                     Eg[_m] = Eg[_m] - _dC - _dV  # (chi+Eg) shifts by −dV
-                _off += layer.thickness
 
     # Per-face diffusion via harmonic mean of adjacent nodal values.
     # Matches solve_poisson's eps_r treatment and the legacy
