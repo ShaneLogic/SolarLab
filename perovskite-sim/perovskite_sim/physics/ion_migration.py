@@ -33,6 +33,53 @@ def _steric_diffusion_only_flux(P, phi, dx, D_I_face, V_T, P_lim,
     return D_I_face / dx * (bernoulli(xi) * P[:-1] - bernoulli(-xi) * P[1:])
 
 
+def ion_face_flux(
+    phi: np.ndarray,
+    P: np.ndarray,
+    dx: np.ndarray,
+    D_I_face: np.ndarray,
+    V_T: float,
+    P_lim: np.ndarray | float,
+    *,
+    steric_diffusion_only: bool = False,
+    P_lim_node: np.ndarray | float | None = None,
+    P_other_node: np.ndarray | None = None,
+    drift_sign: float = 1.0,
+) -> np.ndarray:
+    """Face flux ``F`` [m^-2 s^-1] for one mobile-ion species.
+
+    **Single source of truth for the ionic face flux.** Both the transient
+    RHS (via ``ion_continuity_rhs`` / ``ion_continuity_rhs_neg``) and the
+    terminal-current post-processor
+    (``experiments/jv_sweep.compute_current_components``) route through
+    this helper, so the flux the solver integrates and the flux the
+    reported current is built from cannot diverge.
+
+    That divergence was a real defect: the post-processor carried its own
+    hard-coded copy of the legacy whole-flux steric form and never
+    consulted ``ion_steric_diffusion_only``, so with that flag on the
+    reported terminal current was not the current the device carried
+    (measured discrete-Ampere residual 1.9e-9 on ionmonger_benchmark and
+    8.4e-9 on nip_MAPbI3, against a ~1.3e-16 baseline — 2026-07 review).
+
+    ``drift_sign`` is ``+1`` for a positively charged species and ``-1``
+    for a negative one. See ``ion_continuity_rhs`` for the two steric
+    forms.
+    """
+    if steric_diffusion_only:
+        return _steric_diffusion_only_flux(
+            P, phi, dx, D_I_face, V_T, P_lim, P_lim_node, P_other_node,
+            drift_sign=drift_sign,
+        )
+    P_lim_face = np.broadcast_to(np.asarray(P_lim, dtype=float), dx.shape)
+    P_avg = 0.5 * (P[:-1] + P[1:])
+    steric = 1.0 / np.maximum(
+        1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6)
+    xi = drift_sign * (phi[1:] - phi[:-1]) / V_T
+    D_eff = D_I_face * steric
+    return D_eff / dx * (bernoulli(xi) * P[:-1] - bernoulli(-xi) * P[1:])
+
+
 def ion_flux_steric(
     phi: np.ndarray,   # [phi_i, phi_{i+1}]
     P: np.ndarray,     # [P_i,   P_{i+1}]
@@ -99,19 +146,13 @@ def ion_continuity_rhs(
     P = np.asarray(P, dtype=float)
     dx = np.diff(x)                              # (N-1,)
     D_I_face = np.broadcast_to(np.asarray(D_I, dtype=float), dx.shape)
-    if steric_diffusion_only:
-        F_int = _steric_diffusion_only_flux(
-            P, phi, dx, D_I_face, V_T, P_lim, P_lim_node, P_other_node,
-            drift_sign=+1.0,
-        )
-    else:
-        P_lim_face = np.broadcast_to(np.asarray(P_lim, dtype=float), dx.shape)
-        P_avg = 0.5 * (P[:-1] + P[1:])          # (N-1,)
-        steric = 1.0 / np.maximum(
-            1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6)
-        xi = (phi[1:] - phi[:-1]) / V_T         # (N-1,)
-        D_eff = D_I_face * steric
-        F_int = D_eff / dx * (bernoulli(xi) * P[:-1] - bernoulli(-xi) * P[1:])
+    F_int = ion_face_flux(
+        phi, P, dx, D_I_face, V_T, P_lim,
+        steric_diffusion_only=steric_diffusion_only,
+        P_lim_node=P_lim_node,
+        P_other_node=P_other_node,
+        drift_sign=+1.0,
+    )
 
     # Zero-flux BCs: pad with 0 at both ends
     F_full = np.concatenate([[0.0], F_int, [0.0]])   # (N+1,)
@@ -150,20 +191,14 @@ def ion_continuity_rhs_neg(
     P_neg = np.asarray(P_neg, dtype=float)
     dx = np.diff(x)
     D_I_face = np.broadcast_to(np.asarray(D_I, dtype=float), dx.shape)
-    if steric_diffusion_only:
-        F_int = _steric_diffusion_only_flux(
-            P_neg, phi, dx, D_I_face, V_T, P_lim, P_lim_node, P_other_node,
-            drift_sign=-1.0,
-        )
-    else:
-        P_lim_face = np.broadcast_to(np.asarray(P_lim, dtype=float), dx.shape)
-        P_avg = 0.5 * (P_neg[:-1] + P_neg[1:])
-        steric = 1.0 / np.maximum(
-            1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6)
-        # Reversed drift: negative charge → xi flipped
-        xi = -(phi[1:] - phi[:-1]) / V_T
-        D_eff = D_I_face * steric
-        F_int = D_eff / dx * (bernoulli(xi) * P_neg[:-1] - bernoulli(-xi) * P_neg[1:])
+    # Reversed drift: negative charge → drift_sign = -1.
+    F_int = ion_face_flux(
+        phi, P_neg, dx, D_I_face, V_T, P_lim,
+        steric_diffusion_only=steric_diffusion_only,
+        P_lim_node=P_lim_node,
+        P_other_node=P_other_node,
+        drift_sign=-1.0,
+    )
 
     F_full = np.concatenate([[0.0], F_int, [0.0]])
 

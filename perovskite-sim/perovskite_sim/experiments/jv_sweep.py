@@ -10,6 +10,7 @@ ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
+from perovskite_sim.physics.ion_migration import ion_face_flux
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.newton import solve_equilibrium
@@ -265,12 +266,22 @@ def compute_current_components(
     P_lim_face = np.broadcast_to(
         np.asarray(mat.P_lim_face, dtype=float), dx.shape,
     )
-    P_avg = 0.5 * (sv.P[:-1] + sv.P[1:])
-    steric = 1.0 / np.maximum(
-        1.0 - np.clip(P_avg / P_lim_face, 0.0, 0.999999), 1e-6,
+    # Delegate to the SAME face-flux helper the RHS integrates (2026-07
+    # review): this block used to carry its own hard-coded copy of the
+    # legacy whole-flux steric form and never consulted
+    # ``ion_steric_diffusion_only``, so with that flag on the reported
+    # terminal current was not the current the device carried.
+    _shared = (
+        mat.ion_steric_diffusion_only and mat.ion_steric_shared_site
+        and mat.has_dual_ions and sv.P_neg is not None
     )
-    D_eff = D_ion_face * steric
-    F_ion = D_eff / dx * (bernoulli(xi_ion) * sv.P[:-1] - bernoulli(-xi_ion) * sv.P[1:])
+    F_ion = ion_face_flux(
+        phi, sv.P, dx, D_ion_face, V_T_dev, P_lim_face,
+        steric_diffusion_only=mat.ion_steric_diffusion_only,
+        P_lim_node=mat.P_lim_node,
+        P_other_node=(sv.P_neg if _shared else None),
+        drift_sign=+1.0,
+    )
     J_ion = Q * F_ion
 
     # Negative ion species contribution (reversed drift)
@@ -281,14 +292,12 @@ def compute_current_components(
         P_lim_neg_face = np.broadcast_to(
             np.asarray(mat.P_lim_neg_face, dtype=float), dx.shape,
         )
-        P_neg_avg = 0.5 * (sv.P_neg[:-1] + sv.P_neg[1:])
-        steric_neg = 1.0 / np.maximum(
-            1.0 - np.clip(P_neg_avg / P_lim_neg_face, 0.0, 0.999999), 1e-6,
-        )
-        xi_neg = -(phi[1:] - phi[:-1]) / V_T_dev  # reversed sign for negative charge
-        D_eff_neg = D_neg_face * steric_neg
-        F_neg = D_eff_neg / dx * (
-            bernoulli(xi_neg) * sv.P_neg[:-1] - bernoulli(-xi_neg) * sv.P_neg[1:]
+        F_neg = ion_face_flux(
+            phi, sv.P_neg, dx, D_neg_face, V_T_dev, P_lim_neg_face,
+            steric_diffusion_only=mat.ion_steric_diffusion_only,
+            P_lim_node=mat.P_lim_neg_node,
+            P_other_node=(sv.P if _shared else None),
+            drift_sign=-1.0,
         )
         J_ion = J_ion - Q * F_neg  # negative charge: subtract
 
