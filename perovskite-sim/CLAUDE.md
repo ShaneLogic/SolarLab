@@ -357,6 +357,26 @@ Regression tests:
 - `test_tmm_baseline.py` — TMM-specific baselines (slow, BLAS-pinned)
 - `test_conservation.py` — energy conservation (R+T+A=1) and J-V monotonicity checks; catches TMM numerical issues and solver blow-ups
 
+### Measurement gotcha — hand-written probe scripts get NO BLAS pinning
+
+The pinning below lives in `tests/conftest.py`, so it only protects code run **through pytest**. A hand-written probe — `python3 - <<EOF`, a `scripts/` one-off, anything driving `solve_voc_ss` / `run_jv_sweep` / `build_material_arrays` directly — bypasses it entirely and inherits the OpenBLAS default of one thread per core.
+
+Measured 2026-07-27: a bare `python3` probe running `solve_voc_ss` on `scaps_mirror_v2` sat at **934 % CPU for 30 minutes without producing a result**, while a concurrent BLAS-pinned `pytest -m slow` on the same box was starved to **76 % of a single core**. Killing the probe returned the pytest run to 100 % immediately. The probe was not merely slow — it was ~9 cores of pure thread-thrash on matrices too small to parallelise, and it corrupted the wall-clock reading of the measurement it was competing with (an agent in the same session retracted a 314 s timing for exactly this reason).
+
+So: **pin threads in every probe script**, with the same ordering constraint the conftest hook documents — `threadpool_limits` only sees BLAS backends that are **already loaded**, so numpy (and `scipy.linalg`, which registers a second BLAS on some builds) must be imported *first*. Calling it at the very top of the file, before those imports, is a **silent no-op** — the trap this note exists to prevent:
+
+```python
+import numpy, scipy.linalg                 # MUST come first — registers the BLAS
+from threadpoolctl import threadpool_limits
+
+with threadpool_limits(limits=1, user_api="blas"):
+    ...                                    # every solver call goes inside
+```
+
+The env-var route (`OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1` in the invoking shell) has no ordering constraint and is the safer choice for a throwaway `python3 - <<EOF` probe.
+
+Numerical results are unaffected either way — this costs only wall-clock — but an unpinned probe makes every concurrent timing on the machine untrustworthy, and looks like a hang.
+
 ### Test gotcha — slow suite BLAS thread pinning
 
 The TMM regression suite (`tests/regression/test_tmm_baseline.py`) drives ~4700 calls to `scipy.linalg.lu_factor` on the ~300×300 Radau Jacobian. These matrices are too small for multi-threaded BLAS to pay off — on a 10-core box OpenBLAS spins up every LU call across all cores and the thread-creation + contention overhead turns a 14 s test into a 5-10 minute test. A Phase 2a investigation wasted four run-kills diagnosing this as a "stall" (runs were being terminated at ~4 min wall, but they would have taken another 2-3 min each to finish under oversubscription). It is NOT a hang.
