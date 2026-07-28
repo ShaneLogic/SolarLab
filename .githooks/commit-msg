@@ -1,0 +1,33 @@
+#!/bin/sh
+# Strip AI attribution from commit messages.
+#
+# The repo's contributor list is derived from commit metadata, and a
+# `Co-Authored-By: ... <noreply@anthropic.com>` trailer is enough to add the
+# `claude` account to it. Agent sessions add these trailers by default, so
+# rather than rely on every session being configured correctly, drop them here.
+#
+# Enable with:  git config core.hooksPath .githooks
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+
+TMP="$MSG_FILE.strip.$$"
+
+# Drop the attribution trailers and generation markers, then collapse the blank
+# run they leave behind so the message does not end with dangling newlines.
+awk '
+  BEGIN { IGNORECASE = 1 }
+  /^[[:space:]]*Co-[Aa]uthored-[Bb]y:.*(anthropic\.com|Claude)/  { next }
+  /^[[:space:]]*(🤖 )?Generated with \[?Claude Code\]?/          { next }
+  /^[[:space:]]*Co-[Aa]uthored-[Bb]y:.*noreply@anthropic/        { next }
+  { print }
+' "$MSG_FILE" \
+  | awk 'BEGIN{blank=0} { if ($0 ~ /^[[:space:]]*$/) { blank++ } else { blank=0 } if (blank<2) print }' \
+  > "$TMP" || { rm -f "$TMP"; exit 0; }
+
+# Trim trailing blank lines
+while [ -s "$TMP" ] && [ -z "$(tail -n 1 "$TMP" | tr -d '[:space:]')" ]; do
+    sed -i '' -e '$d' "$TMP" 2>/dev/null || sed -i -e '$d' "$TMP" 2>/dev/null || break
+done
+
+mv "$TMP" "$MSG_FILE"
+exit 0

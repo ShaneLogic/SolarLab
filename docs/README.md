@@ -37,8 +37,8 @@ docs/
 The other reports (physics diagnostics, de-spike/interface closure, the
 2026-07-02 transient-vs-steady-state comparison, the mechanistic gap analysis,
 the interface-SRH scope note, the `_archive/` snapshots and the GAPReasoning
-decks) were removed on 2026-07-28. They are in git history at `c7d4ee9` —
-restore with `git checkout c7d4ee9 -- docs/reference`.
+decks) were removed on 2026-07-28. They are in git history at `b773569` —
+restore with `git checkout b773569 -- docs/reference`.
 
 ### Rendering a report
 ```bash
@@ -48,8 +48,8 @@ pandoc <file>.md -o <file>.pdf --toc --pdf-engine=xelatex \
   -V mainfont="Arial" -V monofont="Menlo" -V geometry:margin=2cm -V colorlinks=true
 ```
 Decks: the GAPReasoning `.pptx` files and their `build_deck.py` were removed on
-2026-07-28 (`git checkout c7d4ee9 -- docs/reference/GAPReasoning` to get them
-back; the per-figure generators they call need `c8e4fde`).
+2026-07-28 (`git checkout b773569 -- docs/reference/GAPReasoning` to get them
+back; the per-figure generators they call need `551615d`).
 
 ## Loose docs
 
