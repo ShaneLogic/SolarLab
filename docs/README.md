@@ -14,11 +14,12 @@ and `perovskite-sim/CLAUDE.md`.
 docs/
 ├── reference/     SolarLab vs SCAPS-1D validation deliverables
 │   ├── *.md / *.pdf        current reports (see "Reference reports" below)
-│   ├── Reasoning/     slide decks + figure-generation scripts
+│   ├── GAPReasoning/       slide decks (.pptx) + build_deck.py
 │   └── _archive/           superseded report versions (kept for history)
 ├── manual/        SolarLab technical user manual (md + tex + pdf, figures, slides)
 ├── figures/       shared SCAPS sweep figure sets (validation / ss_compare /
-│                  despike_compare / gap_explainer) — referenced by reports
+│                  gap_explainer / ScapsSolarlabCompare) — referenced by
+│                  reports; only report-referenced figures are kept
 ├── plans/         cross-tree design + implementation plans
 ├── superpowers/   spec/plan history (specs/, plans/, references/)
 ├── autoloop/      autonomous research-loop ledger
@@ -49,7 +50,10 @@ pandoc <file>.md -o <file>.pdf --toc --pdf-engine=xelatex \
   --resource-path=docs/reference \
   -V mainfont="Arial" -V monofont="Menlo" -V geometry:margin=2cm -V colorlinks=true
 ```
-Decks: `python docs/reference/Reasoning/build_deck.py`.
+Decks: the built `.pptx` files live in `docs/reference/GAPReasoning/`.
+`GAPReasoning/build_deck.py` rebuilds them, but its per-figure generators
+(`figures/make_f*.py`) were dropped in the 2026-07-28 cleanup — recover them
+from commit `c8e4fde` before rebuilding.
 
 ## Loose docs
 
@@ -58,5 +62,5 @@ Decks: `python docs/reference/Reasoning/build_deck.py`.
 | `scaps_validation_report.md` | Internal SCAPS-mirror validation report (from `run_scaps_validation.py`); uses `figures/scaps_validation/` |
 | `SolarLab_validation_gap_analysis_2026-06-24.md` | Physics-validation gap analysis (Zotero × codebase) |
 | `solarlab_manual_source_dossier.md` | Source dossier for the user manual |
-| `SCAPS Manual february 2016.pdf` | SCAPS-1D reference manual (input) |
+| `manual/SCAPSManual2016.pdf` | SCAPS-1D reference manual (input) |
 | `docker-development.md` | Docker dev environment notes |

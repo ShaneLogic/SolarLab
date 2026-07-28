@@ -196,6 +196,16 @@ class DeviceStack:
     # ``dos_band_potentials`` + reference-layer DOS data; takes precedence
     # over the other interface formulations. Default False bit-identical.
     interface_plane_closure: bool = False
+    # Let the plane closure report NET GENERATION (review F-04, 2026-07-28).
+    # The historical clamp returns 0 whenever n_s*p_s < ni_s^2, which erases
+    # physical depletion-region generation at reverse bias — measured
+    # -8.36 A/m^2 at the HTL/PVK interface of scaps_mirror_v2 at -0.5 V.
+    # Sound HERE and not at the bulk cross-carrier sites because the plane
+    # reference ni_s^2 = N_C N_V exp(-Eg_s/V_T) is a true detailed-balance
+    # product; the signed rate is bounded by -ni_s^2/(n1_s/v_p + p1_s/v_n),
+    # the textbook depletion-generation limit. Requires
+    # ``interface_plane_closure``. Default False = bit-identical.
+    interface_plane_generation: bool = False
     # Heterointerface bulk-recombination de-spike (2026-06, SCAPS-emulation,
     # default 0.0 = OFF / more physically faithful). The VB/CB band offset
     # produces a Boltzmann carrier spike (exp(dE/kT)) at the junction NODE

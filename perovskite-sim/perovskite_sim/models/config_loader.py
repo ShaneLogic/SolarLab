@@ -270,6 +270,10 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             str(dev.get("interface_plane_closure", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        interface_plane_generation=(
+            str(dev.get("interface_plane_generation", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
         band_grading=(
             str(dev.get("band_grading", False)).strip().lower()

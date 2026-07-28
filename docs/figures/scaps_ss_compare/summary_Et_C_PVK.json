@@ -1,0 +1,24 @@
+{
+  "title": "Perovskite-CB bulk defect level",
+  "scaps_range_mV": 0.4290000000000127,
+  "f0.53": {
+    "range_mV": 0.9035804102479617,
+    "closure": 210.62480425359786,
+    "dir": "flat both"
+  },
+  "f0.66": {
+    "range_mV": 1.8335605868491367,
+    "closure": 427.40340019792126,
+    "dir": "match"
+  },
+  "ss": {
+    "range_mV": 0.9765625000004441,
+    "closure": 227.63694638704317,
+    "dir": "flat both"
+  },
+  "n": {
+    "f0.53": 8,
+    "f0.66": 8,
+    "ss": 8
+  }
+}

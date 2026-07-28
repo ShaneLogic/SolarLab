@@ -373,10 +373,33 @@ def build_plane_params(
 
 
 def plane_rate(n_s: float, p_s: float, prm: PlaneInterfaceParams,
-               v_n: float, v_p: float) -> float:
-    """P-V single-level rate on plane densities [m^-2 s^-1], NOGEN-clamped."""
+               v_n: float, v_p: float, *,
+               allow_generation: bool = False) -> float:
+    """P-V single-level rate on plane densities [m^-2 s^-1].
+
+    ``allow_generation=False`` (default) keeps the historical NOGEN clamp:
+    ``n_s p_s < n_{i,s}^2`` returns 0 instead of a negative rate.
+
+    ``allow_generation=True`` returns the signed rate, so a depleted plane
+    is a net carrier SOURCE — the physical Shockley-Read-Hall generation
+    the review's F-04 asks for. This is sound HERE and not at the
+    cross-carrier bulk sampling sites because ``prm.ni_s_sq`` is the plane
+    mass-action product ``N_C N_V exp(-Eg_s/V_T)`` built from the reduced
+    interface gap, i.e. a physically correct detailed-balance reference
+    rather than a bulk-asymptotic one whose negative excursions are partly
+    a sampling artifact.
+
+    The signed branch is BOUNDED, which is what makes it safe: as
+    ``n_s, p_s -> 0`` the numerator tends to ``-n_{i,s}^2`` while the
+    denominator tends to the finite positive ``n1_s/v_p + p1_s/v_n``, so
+
+        R -> -n_{i,s}^2 / (n1_s/v_p + p1_s/v_n)
+
+    which is exactly the textbook depletion-generation limit. There is no
+    runaway branch to guard against; the rate saturates on its own.
+    """
     num = n_s * p_s - prm.ni_s_sq
-    if num <= 0.0:
+    if num <= 0.0 and not allow_generation:
         return 0.0
     den = (n_s + prm.n1_s) / v_p + (p_s + prm.p1_s) / v_n
     return num / den
@@ -386,6 +409,8 @@ def solve_plane_densities(
     n_L: float, n_R: float, p_L: float, p_R: float,
     prm: PlaneInterfaceParams, v_n: float, v_p: float,
     s_supply: float = S_SUPPLY,
+    *,
+    allow_generation: bool = False,
 ) -> tuple[float, float, float]:
     """Solve the 2x2 plane closure; return ``(n_s, p_s, R)``.
 
@@ -393,8 +418,15 @@ def solve_plane_densities(
     the plane POTENTIAL (caller applies the phi factors); the band-offset
     penalties live in ``prm``. Newton in (ln n_s, ln p_s) — positivity by
     construction, analytic Jacobian, damped steps. On the rare
-    non-convergence the last iterate is used with the NOGEN-clamped rate:
-    fail-bounded (R <= delivery flux), never fail-wild.
+    non-convergence the last iterate is used: fail-bounded (|R| capped by
+    the delivery flux on the recombination side and by the finite depletion
+    limit on the generation side), never fail-wild.
+
+    ``allow_generation`` propagates to :func:`plane_rate`; see its docstring
+    for why the signed branch is bounded. The plane densities THEMSELVES stay
+    positive either way — the Newton unknowns are their logarithms — so
+    enabling generation flips the sign of ``R`` but cannot produce a negative
+    ``n_s`` or ``p_s``.
     """
     nb = prm.bn_L * max(n_L, 0.0) + prm.bn_R * max(n_R, 0.0)
     pb = prm.bp_L * max(p_L, 0.0) + prm.bp_R * max(p_R, 0.0)
@@ -405,13 +437,16 @@ def solve_plane_densities(
         n_s, p_s = math.exp(ln_n), math.exp(ln_p)
         num = n_s * p_s - prm.ni_s_sq
         den = (n_s + prm.n1_s) / v_p + (p_s + prm.p1_s) / v_n
-        R = num / den if num > 0.0 else 0.0
+        signed = num > 0.0 or allow_generation
+        R = num / den if signed else 0.0
         F1 = s_supply * nb - s2 * n_s - R
         F2 = s_supply * pb - s2 * p_s - R
         scale = s_supply * (nb + pb) + abs(R) + _QSS_FLOOR
         if abs(F1) + abs(F2) < _QSS_TOL * scale:
             break
-        if num > 0.0:
+        # The Jacobian has to follow the branch the residual actually took,
+        # or Newton solves a different problem than the one it evaluates.
+        if signed:
             dR_dn = (p_s * den - num / v_p) / (den * den)
             dR_dp = (n_s * den - num / v_n) / (den * den)
         else:
@@ -430,7 +465,9 @@ def solve_plane_densities(
         ln_n += d_ln_n
         ln_p += d_ln_p
     n_s, p_s = math.exp(ln_n), math.exp(ln_p)
-    return n_s, p_s, plane_rate(n_s, p_s, prm, v_n, v_p)
+    return n_s, p_s, plane_rate(
+        n_s, p_s, prm, v_n, v_p, allow_generation=allow_generation,
+    )
 
 
 def compute_interface_te_fluxes_live(

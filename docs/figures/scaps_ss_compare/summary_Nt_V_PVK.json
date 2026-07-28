@@ -1,0 +1,24 @@
+{
+  "title": "Perovskite-VB bulk defect density",
+  "scaps_range_mV": 10.758999999999963,
+  "f0.53": {
+    "range_mV": 26.661271624766947,
+    "closure": 247.80436494810894,
+    "dir": "match"
+  },
+  "f0.66": {
+    "range_mV": 36.44300219847341,
+    "closure": 338.72109116528986,
+    "dir": "match"
+  },
+  "ss": {
+    "range_mV": 24.4140625,
+    "closure": 226.91758063017087,
+    "dir": "match"
+  },
+  "n": {
+    "f0.53": 7,
+    "f0.66": 7,
+    "ss": 7
+  }
+}

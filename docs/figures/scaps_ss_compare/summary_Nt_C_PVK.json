@@ -1,0 +1,24 @@
+{
+  "title": "Perovskite-CB bulk defect density",
+  "scaps_range_mV": 38.573999999999884,
+  "f0.53": {
+    "range_mV": 26.661271624766947,
+    "closure": 69.11720750963609,
+    "dir": "match"
+  },
+  "f0.66": {
+    "range_mV": 36.44300219847341,
+    "closure": 94.47555918098594,
+    "dir": "match"
+  },
+  "ss": {
+    "range_mV": 24.4140625,
+    "closure": 63.29149815938215,
+    "dir": "match"
+  },
+  "n": {
+    "f0.53": 7,
+    "f0.66": 7,
+    "ss": 7
+  }
+}

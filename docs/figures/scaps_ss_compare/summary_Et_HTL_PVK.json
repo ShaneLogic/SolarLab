@@ -1,0 +1,24 @@
+{
+  "title": "HTL/PVK interface defect level",
+  "scaps_range_mV": 0.005999999999950489,
+  "f0.53": {
+    "range_mV": 0.0,
+    "closure": 0.0,
+    "dir": "flat both"
+  },
+  "f0.66": {
+    "range_mV": 0.0,
+    "closure": 0.0,
+    "dir": "flat both"
+  },
+  "ss": {
+    "range_mV": 0.0,
+    "closure": 0.0,
+    "dir": "flat both"
+  },
+  "n": {
+    "f0.53": 8,
+    "f0.66": 8,
+    "ss": 8
+  }
+}

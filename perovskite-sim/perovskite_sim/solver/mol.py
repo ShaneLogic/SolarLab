@@ -352,6 +352,7 @@ class MaterialArrays:
     # constants (None at interfaces without a defect or without the parity
     # configuration's DOS data). See physics/interface_plane.py.
     iface_plane_closure: bool = False
+    iface_plane_generation: bool = False
     interface_plane_prm: tuple = ()
     # Smooth TE-cap blend width (relative). 0.0 = exact hard cap
     # (bit-identical legacy). Set ONLY by the steady-state driver
@@ -1070,6 +1071,13 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         getattr(stack, "interface_plane_closure", False)
         or os.environ.get("SOLARLAB_IFACE_PLANE") == "1"
     )
+    # F-04: let the closure report net generation. Only meaningful with the
+    # closure itself active, so it is ANDed rather than ORed — turning it on
+    # without the closure must not silently change the legacy path.
+    _iface_plane_generation = _iface_plane_closure and bool(
+        getattr(stack, "interface_plane_generation", False)
+        or os.environ.get("SOLARLAB_IFACE_PLANE_GEN") == "1"
+    )
 
     # Selective / Schottky outer contact Robin BCs (Phase 3.3). Gated by the
     # active mode AND the stack supplying at least one finite S_* value.
@@ -1587,6 +1595,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         interface_n1_R=tuple(interface_n1_R_list),
         interface_p1_R=tuple(interface_p1_R_list),
         iface_plane_closure=_iface_plane_closure,
+        iface_plane_generation=_iface_plane_generation,
         interface_plane_prm=tuple(interface_plane_prm_list),
         het_recomb_despike=float(getattr(stack, "het_recomb_despike", 0.0)),
         het_recomb_nodes=(
@@ -1840,6 +1849,7 @@ def _apply_interface_recombination(
                 max(float(p[idx - 1]), 0.0) / fL,
                 max(float(p[idx + 1]), 0.0) / fR,
                 prm_k, v_n, v_p,
+                allow_generation=mat.iface_plane_generation,
             )
             R_vol = R_s / mat.dx_cell[idx]
             dn[idx] -= R_vol
