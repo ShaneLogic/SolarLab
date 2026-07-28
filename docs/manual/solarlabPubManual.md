@@ -2846,24 +2846,32 @@ in Chapter \ref{governing-equations}:
   (`ion_steric_diffusion_only`); it is numerically immaterial for the
   shipped presets (dilute ions, peak $P/P_\mathrm{lim} \approx 0.011$, so
   $V_\mathrm{oc}$ shifts under 0.1 mV) and matters only near saturation;
-- the interface-SRH non-negativity clamp (scoped to declared-defect
-  interfaces) suppresses physical depletion-region generation there as the
-  cost of the cross-carrier approximation; defect-free interfaces retain
-  physical generation. Measured on the mirrored configuration in the dark
-  at $-0.5\,\mathrm{V}$, the suppressed generation is
-  $8.4\,\mathrm{A\,m^{-2}}$ at the hole-transport-layer interface --
-  negligible against the illuminated figures of merit, but about $3.6\,\%$
-  of the absorbed-photon budget and therefore not negligible for a
-  dark-current or reverse-bias study. **The interface-plane formulations do
-  not repair this.** Both the quasi-steady-state plane rate and the
-  interface-plane closure return exactly zero at the same operating point,
-  and they do so by construction rather than by clamping: each solves for a
-  plane depletion $\delta\ge 0$ and returns $R=v_\mathrm{th}\delta$, so
-  $np<n_i^2$ yields $\delta=0$ instead of a negative rate. Promoting either
-  to the default would lock the absence in rather than remove it. A model
-  that represents interface generation needs a reference that is physically
-  correct at the plane and is therefore permitted to go negative; no
-  shipped formulation currently qualifies;
+- the interface-SRH non-negativity clamp applies only at declared-defect
+  interfaces, and what it suppresses there is **not** physical
+  depletion-region generation. The cross-carrier rate pairs electrons
+  sampled on one side with holes sampled on the other, so its
+  detailed-balance reference is the cross-side product of the two
+  *majority* equilibrium densities, $n_R^\mathrm{eq}p_L^\mathrm{eq}$. On the
+  mirrored configuration that reference is $1.0\times10^{44}\,\mathrm{m^{-6}}$
+  against a local mass-action $n_i^2$ of $1.98\times10^{24}$ at the same
+  node -- twenty orders of magnitude larger. Lifting the clamp there yields
+  $-8.4\,\mathrm{A\,m^{-2}}$ at $-0.5\,\mathrm{V}$, but that number is set by
+  the inflated reference rather than by interface physics, which is why the
+  clamp exists. Defect-free interfaces, whose reference is the node's own
+  $n_i^2$, are not clamped and retain their generation.
+
+  A physically referenced channel is available: the interface-plane closure
+  builds $n_{i,s}^2 = N_C N_V \exp(-E_{g,s}/V_T)$ on the reduced interface
+  gap -- equal to the node's own $n_i^2$ on this stack -- and with
+  `interface_plane_generation` it reports the signed rate, bounded by the
+  textbook depletion limit $-n_{i,s}^2/(n_{1,s}/v_p + p_{1,s}/v_n)$. Its
+  verdict is that interface generation is genuinely negligible at these
+  surface-recombination velocities: $-8\times10^{-21}\,\mathrm{A\,m^{-2}}$
+  at the same operating point, with an absolute ceiling near
+  $4\times10^{-12}\,\mathrm{A\,m^{-2}}$ even for a fully depleted plane. Both
+  flags default off, so the shipped default carries the clamped
+  cross-carrier channel; a reverse-bias or dark-current study that needs the
+  physically referenced answer should enable the closure;
 - the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel;
 - the Scharfetter-Gummel positivity property is a property of the *spatial*

@@ -183,6 +183,38 @@ def test_plane_closure_is_also_non_negative(base_state):
 # the clamp really is scoped to declared-defect interfaces
 # ---------------------------------------------------------------------------
 
+def test_clamped_rate_is_referenced_20_orders_above_local_mass_action(base_stack):
+    """WHY the clamp is right at defect interfaces — the decisive evidence.
+
+    The cross-carrier rate pairs electrons sampled on one side with holes
+    sampled on the other, so its detailed-balance reference is the cross-side
+    product of the two MAJORITY equilibrium densities, n_R_eq * p_L_eq. That
+    is self-consistent for that sampling (R = 0 at equilibrium) but it is not
+    the local mass-action product, and it is enormously larger:
+
+        interface 0   ni_sq_eff = 1.0000e+44    node ni_sq = 1.9821e+24
+
+    So the -8.4 A/m^2 that appears when the clamp is lifted is set by the
+    inflated reference, not by interface physics. The plane closure's
+    reference equals the node's own ni^2 and gives ~1e-20 A/m^2 instead.
+
+    If a future formulation brings the cross-carrier reference near the local
+    one, this test fails and the whole F-04 verdict should be re-derived.
+    """
+    x, mat, *_ = _reverse_bias_state(base_stack)
+    assert mat.interface_ni_sq_eff, "no cross-carrier references cached"
+    for k, idx in enumerate(mat.interface_nodes):
+        if k >= len(mat.interface_ni_sq_eff):
+            break
+        cross = float(mat.interface_ni_sq_eff[k])
+        local = float(mat.ni_sq[idx])
+        assert cross > 1e3 * local, (
+            f"interface {k}: cross-carrier reference {cross:.4e} is no longer "
+            f"far above the local mass action {local:.4e} — the artifact "
+            "argument for the NOGEN clamp no longer holds"
+        )
+
+
 def test_defect_free_interfaces_keep_their_generation(base_state):
     """Strip the InterfaceDefects and the same stack regains generation.
 
