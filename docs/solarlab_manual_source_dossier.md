@@ -1079,11 +1079,14 @@ Existing validation and regression evidence includes:
   - `V_oc` around `1.19 V` in current band-offset-aware model;
   - `J_sc` around `200-260 A/m^2`;
   - FF in physically expected envelope.
-- Integration pinned reference:
-  - IonMonger reference `V_oc = 1.1932 V`;
-  - `J_sc = 231.70 A/m^2`;
-  - `FF = 0.7774`;
-  - `PCE = 0.2149`.
+- Integration pinned reference (re-pinned 2026-07-28 with the generation
+  photon-conservation fix; superseded values `1.1932 V` / `231.70 A/m^2` /
+  `0.7774` / `0.2149`, the old `J_sc` being above this config's `q*Phi =
+  224.30 A/m^2` ceiling):
+  - IonMonger reference `V_oc = 1.1912 V`;
+  - `J_sc = 222.59 A/m^2`;
+  - `FF = 0.7755`;
+  - `PCE = 0.2056`.
 - TMM regression:
   - `nip_MAPbI3_tmm` baseline `J_sc = 211.02 A/m^2`;
   - `pin_MAPbI3_tmm` baseline `J_sc = 216.62 A/m^2`;

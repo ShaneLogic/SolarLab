@@ -152,7 +152,11 @@ def tmm_jsc_baselines() -> None:
 
 def ionmonger_reference_metrics() -> None:
     names = [r"$V_\mathrm{oc}$", r"$J_\mathrm{sc}$", "FF", "PCE"]
-    values = np.array([1.1932, 231.70, 0.7774, 0.2149])
+    # Re-pinned 2026-07-28 alongside the generation photon-conservation fix
+    # (was 1.1932 / 231.70 / 0.7774 / 0.2149). The panel is NORMALISED to the
+    # pinned reference, so the acceptance intervals below are unchanged --
+    # only these absolute values and their labels move.
+    values = np.array([1.1912, 222.59, 0.7755, 0.2056])
     rel_tol = np.array([0.02, 0.03, 0.03, 0.05])
     colors = [BLUE, TEAL, GREEN, RUST]
 
@@ -166,10 +170,10 @@ def ionmonger_reference_metrics() -> None:
     ax.set_ylabel("Metric / pinned reference")
     ax.set_title("IonMonger benchmark acceptance intervals")
     labels = [
-        "1.1932 V\n±2%",
-        r"231.70 A m$^{-2}$" + "\n±3%",
-        "0.7774\n±3%",
-        "0.2149\n±5%",
+        "1.1912 V\n±2%",
+        r"222.59 A m$^{-2}$" + "\n±3%",
+        "0.7755\n±3%",
+        "0.2056\n±5%",
     ]
     for xi, label in zip(x, labels):
         ax.text(xi, 1.115, label, ha="center", va="bottom", fontsize=9, color=INK)

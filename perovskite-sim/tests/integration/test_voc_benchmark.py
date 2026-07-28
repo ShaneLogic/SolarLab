@@ -30,10 +30,21 @@ def ionmonger_result():
 # if the physics drifts under a future change, these tests fail immediately
 # rather than waiting for a loose guardrail to flag it. Update the reference
 # ONLY when a physics change is deliberate and documented in the commit body.
-_REF_V_OC = 1.1932
-_REF_J_SC = 231.70
-_REF_FF = 0.7774
-_REF_PCE = 0.2149
+# Re-pinned 2026-07-28 (was 1.1932 / 231.70 / 0.7774 / 0.2149). The move is
+# the photon-conservation fix in physics/generation.py: the old generation
+# point-sampled the volumetric rate at the nodes while the RHS integrates it
+# with a node-centred RECTANGLE rule, which over-counted the sharply-peaked
+# front of the absorber. Against the hard ceiling q*Phi = 224.30473 A/m^2 on
+# this very config the old J_sc was 231.70 -- i.e. the device was making more
+# electron-hole pairs per second than there were photons arriving. J_sc is now
+# mesh-independent rather than drifting ~1 % between N_grid 60 and 100.
+# These are the REVERSE-scan metrics; the forward branch additionally needed
+# the wrong-branch rejector (_J_BRANCH_EXCESS) because this config samples
+# V = 1.10526 essentially exactly on V_bi = 1.1.
+_REF_V_OC = 1.1912
+_REF_J_SC = 222.59
+_REF_FF = 0.7755
+_REF_PCE = 0.2056
 
 
 def _assert_within(value: float, target: float, rel: float, name: str) -> None:
@@ -48,7 +59,7 @@ def _assert_within(value: float, target: float, rel: float, name: str) -> None:
 def test_voc_ionmonger_benchmark(ionmonger_result):
     """V_oc (reverse scan) must be within ±2% of the Phase 1 reference.
 
-    Reference: 1.1932 V at N_grid=40, n_points=20, v_rate=5.0 V/s with
+    Reference: 1.1912 V at N_grid=40, n_points=20, v_rate=5.0 V/s with
     band-offset V_bi + thermionic-emission capping. IonMonger's own value
     is ~1.07 V; our TE-corrected ~1.19 V sits inside the experimental
     MAPbI3 window (0.9-1.2 V).
@@ -57,7 +68,7 @@ def test_voc_ionmonger_benchmark(ionmonger_result):
 
 
 def test_jsc_ionmonger_benchmark(ionmonger_result):
-    """J_sc must be within ±3% of the Phase 1 reference (~231.7 A/m²)."""
+    """J_sc must be within ±3% of the re-pinned reference (~222.6 A/m²)."""
     _assert_within(ionmonger_result.metrics_rev.J_sc, _REF_J_SC, 0.03, "J_sc_rev")
 
 
@@ -67,7 +78,7 @@ def test_ff_ionmonger_benchmark(ionmonger_result):
 
 
 def test_pce_ionmonger_benchmark(ionmonger_result):
-    """PCE must be within ±5% of the Phase 1 reference (~0.2149, i.e. 21.5%).
+    """PCE must be within ±5% of the re-pinned reference (~0.2056, i.e. 20.6%).
 
     PCE is the most sensitive metric because it compounds V_oc·J_sc·FF
     drift — a 2% V_oc slip and a 3% J_sc slip alone can move PCE ~5%.

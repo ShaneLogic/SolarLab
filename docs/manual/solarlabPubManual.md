@@ -2666,8 +2666,21 @@ used to generate them is `docs/manual/generate_manual_figures.py`.
 The IonMonger benchmark gate uses `configs/ionmonger_benchmark.yaml` with
 `N_grid=40`, `n_points=20`, and `v_rate=5.0`. The plotted interval is the
 allowed tolerance around the pinned reverse-scan reference metrics:
-$V_\mathrm{oc}=1.1932\,V$, $J_\mathrm{sc}=231.70\,A\,m^{-2}$, $FF=0.7774$,
-and $PCE=0.2149$.
+$V_\mathrm{oc}=1.1912\,V$, $J_\mathrm{sc}=222.59\,A\,m^{-2}$, $FF=0.7755$,
+and $PCE=0.2056$.
+
+These references were re-pinned in July 2026 (from $1.1932\,V$,
+$231.70\,A\,m^{-2}$, $0.7774$ and $0.2149$) when the optical generation was
+made photon-conserving. The carrier-continuity equation integrates generation
+with a node-centred rectangle rule, but the generation profile was previously
+point-sampled at the nodes, which over-counts the sharply peaked front of the
+absorber. On this configuration the incident photon flux sets a hard ceiling of
+$q\Phi=224.30\,A\,m^{-2}$, and the superseded $J_\mathrm{sc}=231.70\,A\,m^{-2}$
+sat above it — the device was generating more electron-hole pairs per second
+than there were photons arriving to create them. Each dual cell now receives
+its exact absorbed-photon count, so $J_\mathrm{sc}$ is mesh-independent instead
+of drifting by about one per cent between $N_\mathrm{grid}=60$ and $100$. The
+acceptance intervals themselves are unchanged.
 
 ![TMM optical baseline envelope](figures/tmm_jsc_baselines.png)
 
