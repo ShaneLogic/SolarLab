@@ -2830,15 +2830,26 @@ in Chapter \ref{governing-equations}:
 - the *default* thermionic-emission bound is density-weighted and therefore
   an empirical interface-limited cap, not the dimensionally normalized
   Richardson-Dushman current (equilibrium safety follows from the cap
-  construction). A dimensionally correct
-  emission-velocity form is implemented as an opt-in (`te_physical_norm`),
-  but it is off by default: on a density-of-states-bearing stack it raises
-  the steady-state $V_\mathrm{oc}$ by about 0.3 V where the cap binds. It
-  acts only on the bulk-node transport cap, not on the interface-plane-state
-  formulation used for the SCAPS comparison (which is unaffected), so it
-  does not disturb the calibrated parity result; it stays off by default
-  because the paths it does affect lack an independent reference baseline
-  with the physical cap active;
+  construction). A dimensionally correct emission-velocity form is
+  implemented as an opt-in (`te_physical_norm`). It remains off by default,
+  but the reason has changed: until July 2026 enabling it raised the
+  steady-state $V_\mathrm{oc}$ by about 0.2–0.3 V, above the
+  detailed-balance ceiling for the absorber gap. That was a defect in the
+  cap itself, not in the normalization — the cap returned the thermionic
+  value complete with its own sign, so wherever that sign disagreed with the
+  drift-diffusion flux the bound *reversed* the current instead of limiting
+  it. With the magnitude-only cap the three configurations agree
+  ($V_\mathrm{oc} = 1.2013\,\mathrm{V}$ with the flag off, on, and on with
+  self-consistent Richardson constants). What keeps it opt-in now is only
+  that the physical normalization makes the bound genuinely bind, and the
+  transport paths it then constrains have no independent reference baseline;
+  promoting it needs a characterisation pass, not a bug fix. Two related
+  points remain open: the barrier passed to the thermionic expression is the
+  density-of-states-folded band offset rather than the physical one
+  ($+0.097$ against $+0.180\,\mathrm{eV}$ at the same face), and the
+  Richardson constant and the effective density of states are not drawn from
+  a common effective mass, so their ratio is not the thermal emission
+  velocity it is meant to be;
 - the ionic steric flux now defaults to the diffusion-only modified-PNP
   form (`ion_steric_diffusion_only`), which folds the crowding chemical
   potential into the drift argument so that crowding impedes only the
@@ -2908,11 +2919,12 @@ Of the two optional flux forms, the ion-steric one is now the default: the
 high-occupancy validation it was waiting on was carried out, and it found
 the superseded form producing unphysical trends rather than merely
 differing (see above). The physical thermionic-emission normalization
-remains off by default for the opposite reason — enabling it raises the
-steady-state $V_\mathrm{oc}$ above the detailed-balance ceiling for the
-absorber gap, so the form as implemented is not yet a defensible default,
-and the transport paths it changes have no independent reference baseline
-to validate it against.
+remains off by default, but no longer because it produces impossible
+results — the thermodynamic violation that blocked it was a sign defect in
+the cap, since fixed. It stays opt-in because the physical normalization is
+what makes the bound actually bind, and the transport paths it then
+constrains have no independent reference baseline to validate against.
+Promoting it is a characterisation task rather than a correctness one.
 
 ## Data And Optical Limits
 
