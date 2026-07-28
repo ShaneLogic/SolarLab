@@ -1,5 +1,6 @@
 from __future__ import annotations
 import dataclasses
+import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
@@ -34,11 +35,16 @@ class JVMetrics:
     FF: float
     PCE: float
     voc_bracketed: bool = True
-    """``True`` iff the J(V) curve crossed zero inside the sampled voltage
-    range. ``False`` means V_max stopped short of V_oc — the returned V_oc /
-    FF / PCE are sentinel zeros and the caller should warn the user to
-    expand the sweep range. ``J_sc`` is still meaningful (interpolated at
-    V=0) and is returned even when the bracket fails."""
+    """``True`` iff an open-circuit point was resolved inside the sampled
+    voltage range, in which case V_oc / FF / PCE are physical. ``False``
+    carries sentinel zeros for those three and has exactly two causes: the
+    current never reached zero in the window (V_max stopped short), or the
+    extracted V_oc exceeded the ``V_oc_max`` ceiling. ``J_sc`` is still
+    meaningful (interpolated at V=0) and is returned in both cases. See
+    ``compute_metrics`` for the full extraction contract — in particular
+    that "reached zero" means reached the current-resolution floor, so a
+    device whose photocurrent collapses before the diode turns on is
+    ``True``, not ``False``."""
 
 
 @dataclass(frozen=True)
@@ -66,20 +72,105 @@ class JVResult:
     decomp_rev: JVCurrentDecomp | None = None
 
 
+# --- V_oc extraction: terminal-current resolution floor --------------------
+#
+# ``_J_ZERO_FRACTION_OF_JSC`` is the fraction of |J_sc| below which the
+# terminal current is treated as having REACHED zero, instead of waiting for
+# a sign change.  Waiting for the sign change is what let a numerical-noise
+# flip volts past the true open-circuit point be reported as V_oc on devices
+# whose photocurrent collapses before the diode turns on (see the module
+# docstring of ``tests/unit/experiments/test_voc_collapsed_current.py``).
+#
+# Provenance — metrology and diode physics, NOT any observed residual:
+#   * Lower bound, from what a real J-V trace can resolve.  A 0.1 cm² lab cell
+#     at J_sc ≈ 200-250 A/m² carries I_sc ≈ 2 mA.  A Keithley 2400/2450-class
+#     SMU on its 10 mA range has an accuracy floor of ~0.5 µA + 0.05 % of
+#     reading ≈ 1.5 µA ≈ 7e-4 of I_sc, and a class-AAA solar simulator's
+#     temporal irradiance instability is ±0.5-1 %.  A current under ~1e-3 of
+#     J_sc is therefore not a current any real measurement can distinguish
+#     from zero, so a simulator must not either.
+#   * Upper bound, from what the truncation costs at a GENUINE V_oc.  There
+#     the curve is diode-limited, |dJ/dV| ≈ J_sc / (m·V_T), so stopping the
+#     search at |J| = ε·J_sc displaces V_oc by at most ε·m·V_T — 52 µV for
+#     ε=1e-3, m=2, V_T=25.85 mV.  Keeping that displacement an order of
+#     magnitude under the 1 mV at which V_oc is quoted requires
+#     ε ≪ 1e-3/(10·m·V_T) ≈ 2e-3.
+# 1e-3 sits at the metrology floor and just under the cost bound.
+#
+# The cost bound holds only where the diode slope does.  On a COLLAPSED
+# curve there is no such slope — the device this guard exists for drops
+# 148.8 → 0.127 A/m² across one 37 mV sample (measured, scaps_mirror +
+# Robin contacts, N_D_ETL = 1e18 m^-3) — so V_oc is then resolved only to
+# the sample spacing and is reported at the bracket edge.  That is the same
+# resolution the sign-change rule has; the difference is that this bracket
+# is anchored at the collapse instead of at a noise flip 1 V further on.
+_J_ZERO_FRACTION_OF_JSC = 1e-3
+
+
+def thermodynamic_voc_ceiling(stack: DeviceStack) -> float | None:
+    """Hard upper bound on any physical V_oc for ``stack``, in volts.
+
+    The open-circuit voltage of a single-junction cell cannot exceed the
+    smallest band gap the carriers must traverse: q·V_oc is the splitting of
+    the quasi-Fermi levels, and that splitting is bounded by the band gap
+    (the radiative / detailed-balance limit is well below it).  Returns
+    ``min(Eg)/q`` over the ELECTRICAL layers — optical-only substrates are
+    excluded, since they carry no carriers.
+
+    Returns ``None`` when no electrical layer declares a band gap (the legacy
+    ``chi = Eg = 0`` presets such as ``nip_MAPbI3``/``pin_MAPbI3``).  There is
+    no information from which to build a ceiling in that case, so the caller
+    must not apply one — a ``min()`` over all-zero gaps would reject every
+    V_oc.
+
+    Why ``min`` over the electrical layers and not the absorber's gap.  The
+    bound that is actually a theorem is ``V_oc ≤ Eg_absorber/q`` (the
+    splitting is generated in the absorber), and ``min`` is only equal to it
+    while no transport layer is narrower than the absorber.  On every shipped
+    preset it is — measured 2026-07-27 over all of ``configs/*.yaml`` +
+    ``configs/twod/*.yaml``: the ``role: absorber`` layer has the narrowest
+    electrical gap in every config that declares gaps at all (the closest
+    call is ``cSi_homojunction``, where the n-emitter ties it at 1.12 eV).
+    ``min`` is preferred because it needs no ``role`` tag, so a config that
+    omits or mistags roles still gets a ceiling.  A future stack with a
+    genuinely narrow-gap transport layer would make this ceiling TIGHTER
+    than the thermodynamic bound and could refuse a valid V_oc — the
+    equality is therefore pinned by
+    ``tests/unit/experiments/test_voc_collapsed_current.py::
+    test_ceiling_equals_the_absorber_gap_on_every_shipped_preset``, which is
+    the signal to revisit this choice rather than to relax the test.
+
+    Known plumbing gap (2026-07-27): only :func:`run_jv_sweep` passes this
+    ceiling into :func:`compute_metrics`.  The other call sites that hold a
+    ``DeviceStack`` — ``degradation._measure_snapshot_metrics``,
+    ``steady_state.run_jv_sweep_ss``, ``voc_t``,
+    ``twod.experiments.jv_sweep_2d`` and ``twod.experiments.voc_grain_sweep``
+    — still call it with the default ``V_oc_max=None``, so they keep the
+    resolution floor but not the ceiling.
+    """
+    gaps = [
+        float(layer.params.Eg)
+        for layer in electrical_layers(stack)
+        if float(layer.params.Eg) > 0.0
+    ]
+    return min(gaps) if gaps else None
+
+
 def compute_metrics(
     V: np.ndarray,
     J: np.ndarray,
     *,
     assume_jsc_positive: bool = True,
     P_in: float = 1000.0,
+    V_oc_max: float | None = None,
 ) -> JVMetrics:
     """Compute V_oc, J_sc, FF, PCE from a J-V array (J in A/m²).
 
     Reports the metrics directly from the simulated J(V) samples — it does
     NOT clamp or smooth. The caller is responsible for providing a properly
     converged, physically monotone curve (use a fine V grid and a quasi-static
-    sweep). V_oc is taken at the first positive→non-positive zero crossing,
-    and P_mpp is the maximum of V·J over the operating quadrant 0 ≤ V ≤ V_oc.
+    sweep). P_mpp is the maximum of V·J over the operating quadrant
+    0 ≤ V ≤ V_oc.
 
     Sign convention. The 1D solver follows the IonMonger / DriftFusion
     convention where J(V=0) > 0 (the photocurrent flows out of the device
@@ -89,13 +180,74 @@ def compute_metrics(
     The returned :class:`JVMetrics` is always reported in the
     "J_sc positive" convention, regardless of which sign the input used.
 
-    Bracketing. If the supplied J(V) does not cross zero in the sampled
-    range — i.e. V_max stopped short of V_oc — the returned metrics carry
-    ``voc_bracketed=False`` and ``V_oc / FF / PCE`` are sentinel zeros.
-    ``J_sc`` is still meaningful (interpolated at V=0) and is returned
-    even when the bracket fails. Callers should surface the flag to the
-    user as a "increase V_max" warning rather than reading 0 V as a
-    physical V_oc.
+    V_oc extraction
+    ---------------
+    Open circuit is the first voltage at which the terminal current REACHES
+    zero — not the first voltage at which it changes sign.  The two coincide
+    on a well-resolved curve, but they diverge badly on a device whose
+    photocurrent collapses before the diode turns on: J then sits on a
+    residual plateau whose SIGN is numerical noise, and the first sign flip
+    can land volts past the true open-circuit point.  Past flat band the
+    J-V curve is in the near-singular-Jacobian region the solver notes
+    already document, so its sign there carries no information.  Measured
+    on scaps_mirror + Robin contacts at N_D_ETL = 1e18 m^-3 (Eg = 1.53 eV,
+    J_sc = 219 A/m²), forward branch at dV = 75 mV: J falls to 2.1e-2 A/m²
+    at V = 1.425 and then plateaus at ~1.5e-3 (7e-6 of J_sc) all the way to
+    2.700, with an isolated negative excursion at 2.475 — which the
+    sign-change rule reports as V_oc = 2.4056 V, above the band gap.
+
+    The bracket is therefore the first sample pair with
+    ``J[i] > J_tol`` and ``J[i+1] <= J_tol``, where
+    ``J_tol = 1e-3 · |J_sc|`` is the current-resolution floor documented on
+    ``_J_ZERO_FRACTION_OF_JSC`` above.  V_oc is linearly interpolated to
+    J = 0 inside that pair and clamped to it.  When ``J_sc = 0`` (dark
+    sweeps) ``J_tol`` is zero and this reduces exactly to the sign-change
+    rule.
+
+    Cost on healthy curves: none measured.  On a curve with a genuine
+    crossing no sample lands in ``(0, J_tol]`` before it, so the bracket,
+    the interpolation and the clamp all reproduce the sign-change rule
+    exactly.  Verified 2026-07-27 by extracting metrics TWICE from one
+    sweep per config (N_grid=60, n_points=40, v_rate=0.5) — once with
+    ``_J_ZERO_FRACTION_OF_JSC`` monkeypatched to 0.0 (which is the
+    sign-change rule identically) and once as shipped: V_oc, J_sc, FF and
+    PCE compared exactly equal as floats on ionmonger_benchmark,
+    nip_MAPbI3, pin_MAPbI3, driftfusion_benchmark and scaps_mirror_v2,
+    forward and reverse (10/10 branches).
+
+    Cost on collapsed curves: V_oc is resolved only to the sample spacing,
+    because the interpolation inside the collapse bracket is meaningless and
+    the clamp returns its right edge.  On the fixture above at dV = 37 mV
+    this reports 1.3756 V where the (noise-signed) crossing sits at 1.4373 V
+    — 62 mV lower, and the current across that gap is ≤ 5.8e-4 of J_sc
+    (1.3 µA on a 0.1 cm² cell), i.e. inside the measurement floor the
+    threshold is derived from.  Both numbers are honest; neither is
+    resolvable.  What the guard buys is that the answer stops depending on
+    where the sweep happened to stop.
+
+    ``V_oc_max`` is an optional hard ceiling in volts.  A V_oc above it is
+    impossible regardless of the numerics, so it is refused rather than
+    reported: the result carries ``voc_bracketed=False`` and sentinel zeros.
+    ``jv_sweep`` callers get it from :func:`thermodynamic_voc_ceiling`
+    (``min(Eg)/q`` over the electrical layers).  ``None`` (the default)
+    disables the check, which is what a stack with no declared band gaps
+    must do.
+
+    Bracketing flag
+    ---------------
+    ``voc_bracketed`` means exactly one thing: **an open-circuit point was
+    resolved inside the sampled window, and V_oc / FF / PCE below are
+    physical.**  It is ``False``, with sentinel zeros for V_oc / FF / PCE,
+    when the current never reached zero in the window (V_max stopped short)
+    and when the extracted V_oc was refused by ``V_oc_max``.  It is ``True``
+    for a collapsed-current device: a cell delivering less than the
+    measurement resolution HAS reached open circuit, and reporting the
+    voltage at which it got there is the honest answer — the alternative,
+    calling it "unbracketed" and inviting the caller to widen V_max, walks
+    further into the region whose sign is noise.  ``J_sc`` is interpolated
+    at V=0 and stays meaningful in every case, including the two ``False``
+    ones.  Callers should surface ``False`` as an "increase V_max" warning
+    rather than reading 0 V as a physical V_oc.
     """
     V = np.asarray(V, dtype=float)
     J = np.asarray(J, dtype=float)
@@ -106,8 +258,10 @@ def compute_metrics(
     J_s = J[order]
 
     J_sc = float(np.interp(0.0, V_s, J_s))
-    signs = np.sign(J_s)
-    crossings = np.where((signs[:-1] > 0) & (signs[1:] <= 0))[0]
+    # Current-resolution floor. Anchored on |J_sc| so it scales with the
+    # device; zero for a dark sweep, where it degenerates to the sign rule.
+    J_tol = _J_ZERO_FRACTION_OF_JSC * abs(J_sc)
+    crossings = np.where((J_s[:-1] > J_tol) & (J_s[1:] <= J_tol))[0]
     if len(crossings) == 0:
         return JVMetrics(
             V_oc=0.0, J_sc=J_sc, FF=0.0, PCE=0.0, voc_bracketed=False,
@@ -116,6 +270,18 @@ def compute_metrics(
     dV = V_s[idx + 1] - V_s[idx]
     dJ = J_s[idx + 1] - J_s[idx]
     V_oc = float(V_s[idx] - J_s[idx] * dV / dJ) if dJ != 0.0 else float(V_s[idx])
+    # When J[idx+1] is a small POSITIVE residual rather than a sign flip the
+    # interpolation extrapolates past the bracket, and the overshoot is
+    # unbounded as J[idx] approaches J_tol from above. Clamp to the bracket.
+    # No-op whenever J[idx+1] <= 0, i.e. for every genuine sign crossing.
+    V_oc = min(max(V_oc, float(V_s[idx])), float(V_s[idx + 1]))
+
+    if V_oc_max is not None and V_oc > V_oc_max:
+        # Above the thermodynamic ceiling: impossible whatever the numerics
+        # produced, so refuse it rather than report it.
+        return JVMetrics(
+            V_oc=0.0, J_sc=J_sc, FF=0.0, PCE=0.0, voc_bracketed=False,
+        )
 
     mask = (V_s >= 0.0) & (V_s <= V_oc)
     P_mpp = float(np.max(V_s[mask] * J_s[mask])) if mask.any() else 0.0
@@ -133,9 +299,14 @@ def compute_metrics(
 def hysteresis_index(
     V_fwd: np.ndarray, J_fwd: np.ndarray,
     V_rev: np.ndarray, J_rev: np.ndarray,
+    *,
+    V_oc_max: float | None = None,
 ) -> float:
-    m_fwd = compute_metrics(V_fwd, J_fwd)
-    m_rev = compute_metrics(V_rev, J_rev)
+    """Forward/reverse PCE asymmetry. ``V_oc_max`` is forwarded to
+    :func:`compute_metrics` on both branches (see its docstring); ``None``
+    keeps the pre-existing no-ceiling behaviour."""
+    m_fwd = compute_metrics(V_fwd, J_fwd, V_oc_max=V_oc_max)
+    m_rev = compute_metrics(V_rev, J_rev, V_oc_max=V_oc_max)
     if m_rev.PCE == 0:
         return 0.0
     return (m_rev.PCE - m_fwd.PCE) / m_rev.PCE
@@ -463,6 +634,31 @@ def _compute_current_ss_with_spread(
 # leaves headroom for the bisection fallback to retry on halved intervals.
 _JV_RADAU_MAX_NFEV = 100_000
 
+# Wrong-branch detector for the forward power quadrant (see
+# _integrate_step's docstring for why step control alone cannot fix this).
+#
+# The bound is physical, not fitted: under illumination at V > 0 the
+# terminal current is J(V) = J_sc - J_dark(V) with J_dark >= 0 for forward
+# bias, so J can never RISE above its own short-circuit value. A step that
+# reports otherwise has landed on the carrier-injection branch of the
+# implicit system.
+#
+# The margin absorbs the one legitimate way J(V) can exceed J(0) on this
+# code path — a fast scan over a mobile-ion stack, where the ionic
+# configuration lags the bias and the early forward points carry a small
+# transient excess. Measured across the shipped presets, the largest
+# genuine excess is ~1e-4 of J_sc, four orders below this bound, while the
+# defect it must catch is 2.3x (509.8 vs 221.9) and the smallest wrong
+# branch seen while sweeping step control is 1.15x (255.9). 5 % therefore
+# sits ~500x above the noise and ~3x below the smallest real defect.
+_J_BRANCH_EXCESS = 0.05
+
+# Leg counts tried, in order, when the bound above rejects a step. Every
+# one of these recovered the identical physical value at the measured
+# failure (2/4/8 legs and BDF all give 161.986 vs the single-leg 509.796),
+# so the ladder is about robustness on unmeasured configs, not tuning.
+_J_BRANCH_RETRY_LEGS = (2, 4, 8)
+
 
 def _bake_radiative_reabsorption_step(
     y: np.ndarray, x: np.ndarray, mat: MaterialArrays, illuminated: bool,
@@ -542,6 +738,7 @@ def _integrate_step(
     atol: float,
     max_bisect: int = 10,
     illuminated: bool = True,
+    n_legs: int = 1,
 ) -> np.ndarray:
     """Advance the coupled MOL state from t_lo to t_hi at fixed V_app.
 
@@ -552,8 +749,27 @@ def _integrate_step(
     that landed on the wrong (carrier-injection) branch of the implicit
     system — producing isolated non-physical spikes in the J-V curve. We
     cap max_step to (t_hi - t_lo)/20 so the solver must resolve the
-    transient with at least ~20 internal steps, which removes the spikes
-    without materially slowing down well-conditioned regions.
+    transient with at least ~20 internal steps, which suppresses most of
+    those spikes without materially slowing well-conditioned regions.
+
+    **The cap is necessary but NOT sufficient, and it cannot be made
+    sufficient by tightening it** (measured 2026-07-28 on
+    ``ionmonger_benchmark`` N_grid=40/n_points=20, whose V=1.10526 sample
+    sits essentially exactly on ``V_bi`` = 1.1). Sweeping the divisor gives
+    J = 509.8 / 162.0 / 255.9 / 162.0 / 162.0 at dt/20, /100, /200, /1000,
+    /2000 — non-monotone, because a global change to max_step perturbs
+    EVERY step's trajectory and merely relocates which one lands on the
+    wrong branch. Same lesson as the E9.3 clamp-shape variants; do not
+    re-attempt a divisor fix.
+
+    What does work is re-integrating **only the offending step** with
+    forced subdivision, which is what ``n_legs`` is for: the caller detects
+    a wrong-branch landing on a physical bound and re-runs that one step as
+    ``n_legs`` chained sub-intervals. Measured at the failing step, every
+    recovery agrees to the digit — 2, 4 and 8 legs and a BDF single leg all
+    return J = 161.986 against the single-leg 509.796, and 161.986 is also
+    what four independent mesh/sampling refinements converge to. Because
+    the retry only fires on a violation, healthy sweeps are bit-identical.
 
     If the implicit solver fails to converge on the full step, subdivide
     the interval (halving up to max_bisect levels) and chain sub-steps.
@@ -570,6 +786,18 @@ def _integrate_step(
     fully self-consistent semantics; only the pathological steps fall back.
     """
     dt = t_hi - t_lo
+    if n_legs > 1 and dt > 0.0:
+        # Forced subdivision: the caller rejected the single-leg result on a
+        # physical bound (see _integrate_step_on_physical_branch). Chain
+        # `n_legs` equal sub-intervals, each with its own max_step cap.
+        edges = np.linspace(t_lo, t_hi, n_legs + 1)
+        y_k = y
+        for t_a, t_b in zip(edges[:-1], edges[1:]):
+            y_k = _integrate_step(
+                x, y_k, stack, mat, V_app, float(t_a), float(t_b),
+                rtol, atol, max_bisect, illuminated,
+            )
+        return y_k
     sol = run_transient(
         x, y, (t_lo, t_hi), np.array([t_hi]),
         stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
@@ -883,12 +1111,18 @@ def run_jv_sweep(
     else:
         y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
 
-    def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str):
+    def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str,
+               J_sc_ref: float | None = None):
         """Sweep from V_start to V_end, starting from carrier state y_init.
 
         Returns (V_arr, J_arr, y_final, snapshots, decomp) so sweeps can be
         chained. snapshots and decomp are populated only when the corresponding
         flags (save_snapshots, decompose_currents) are True.
+
+        ``J_sc_ref`` is the short-circuit current used by the wrong-branch
+        detector (``_J_BRANCH_EXCESS``). The forward sweep starts at V=0 and
+        therefore learns it from its own first point; the reverse sweep ends
+        there, so ``run_jv_sweep`` hands it the forward value.
         """
         V_arr = np.linspace(V_start, V_end, n_points)
         dt = abs(V_end - V_start) / (v_rate * (n_points - 1))
@@ -902,14 +1136,51 @@ def run_jv_sweep(
         d_Jtot: list[float] = []
         y = y_init.copy()
         V_prev = float(V_arr[0])
+        J_ref = J_sc_ref
         for k, V_k in enumerate(V_arr):
             y_prev = y.copy()
             t_lo = t_points[k]
             t_hi = t_lo + dt
             y = _integrate_step(x, y, stack, mat, V_k, t_lo, t_hi, rtol, atol,
                                illuminated=illuminated)
-            J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt,
-                                         mat=mat, V_app_prev=V_prev)
+            J_k = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt,
+                                    mat=mat, V_app_prev=V_prev)
+
+            # Wrong-branch rejection. Only fires in the illuminated forward
+            # power quadrant, where J(V) <= J_sc is a hard physical bound;
+            # healthy steps never enter this block, so results elsewhere are
+            # bit-identical.
+            if (illuminated and J_ref is not None and J_ref > 0.0
+                    and float(V_k) > 0.0
+                    and J_k > J_ref * (1.0 + _J_BRANCH_EXCESS)):
+                for n_legs in _J_BRANCH_RETRY_LEGS:
+                    y_retry = _integrate_step(
+                        x, y_prev, stack, mat, V_k, t_lo, t_hi, rtol, atol,
+                        illuminated=illuminated, n_legs=n_legs,
+                    )
+                    J_retry = _compute_current(
+                        x, y_retry, stack, V_k, y_prev=y_prev, dt=dt,
+                        mat=mat, V_app_prev=V_prev,
+                    )
+                    if J_retry <= J_ref * (1.0 + _J_BRANCH_EXCESS):
+                        y, J_k = y_retry, J_retry
+                        break
+                else:
+                    # Never silently keep a value known to break the bound.
+                    warnings.warn(
+                        f"J-V sweep: terminal current at V={float(V_k):.4f} V "
+                        f"is {J_k:.3f} A/m^2, above the physical ceiling "
+                        f"J_sc*(1+{_J_BRANCH_EXCESS:g}) = "
+                        f"{J_ref * (1.0 + _J_BRANCH_EXCESS):.3f}; forced "
+                        f"subdivision into {_J_BRANCH_RETRY_LEGS} legs did not "
+                        "recover the physical branch. Treat this point as "
+                        "unconverged.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+            J_arr[k] = J_k
+            if J_ref is None and float(V_k) == 0.0:
+                J_ref = J_k
             if save_snapshots:
                 snaps.append(extract_spatial_snapshot(x, y, stack, float(V_k), mat=mat))
             if decompose_currents:
@@ -938,11 +1209,23 @@ def run_jv_sweep(
     # Forward sweep: dark equilibrium → short circuit → open circuit
     V_fwd, J_fwd, y_oc, snaps_fwd, decomp_fwd = _sweep(0.0, V_upper, y_eq, "jv_forward")
     # Reverse sweep: continue from light-soaked OC state → short circuit
-    V_rev, J_rev, _, snaps_rev, decomp_rev = _sweep(V_upper, 0.0, y_oc, "jv_reverse")
+    # The reverse sweep reaches V=0 only at its LAST point, so it cannot learn
+    # J_sc from itself in time to police its own forward-bias points — hand it
+    # the forward sweep's value (same device, same illumination).
+    J_sc_fwd = float(J_fwd[0]) if len(J_fwd) else None
+    V_rev, J_rev, _, snaps_rev, decomp_rev = _sweep(
+        V_upper, 0.0, y_oc, "jv_reverse", J_sc_ref=J_sc_fwd,
+    )
 
-    m_fwd = compute_metrics(V_fwd, J_fwd)
-    m_rev = compute_metrics(V_rev[::-1], J_rev[::-1])
-    HI = hysteresis_index(V_fwd, J_fwd, V_rev[::-1], J_rev[::-1])
+    # Refuse a V_oc above min(Eg)/q over the electrical layers — impossible
+    # regardless of what the numerics produced past flat band. None when the
+    # stack declares no band gaps (legacy chi=Eg=0 presets), which disables
+    # the check rather than rejecting everything.
+    V_oc_ceiling = thermodynamic_voc_ceiling(stack)
+    m_fwd = compute_metrics(V_fwd, J_fwd, V_oc_max=V_oc_ceiling)
+    m_rev = compute_metrics(V_rev[::-1], J_rev[::-1], V_oc_max=V_oc_ceiling)
+    HI = hysteresis_index(V_fwd, J_fwd, V_rev[::-1], J_rev[::-1],
+                          V_oc_max=V_oc_ceiling)
 
     return JVResult(
         V_fwd=V_fwd, J_fwd=J_fwd, V_rev=V_rev, J_rev=J_rev,

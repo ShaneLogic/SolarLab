@@ -34,9 +34,12 @@ from perovskite_sim.scaps_compat import load_scaps_yaml
 
 
 def _scaps_mirror_robin_low_etl():
-    """scaps_mirror.yaml with Robin S_n_right=1e5, low ETL doping → V_oc
-    climbs above V_max=1.6 V (per Sprint 1a probe: V_oc ≈ 1.64 V at
-    N_D_ETL=1e12 cm⁻³)."""
+    """scaps_mirror.yaml with Robin S_n_right=1e5 and low ETL doping
+    (N_D = 1e12 cm⁻³ = 1e18 m⁻³) → V_oc ≈ 1.43 V, above the default
+    V_max on the low rungs of the ladders below.
+
+    This is also the device the collapsed-current V_oc defect was
+    diagnosed on; see tests/unit/experiments/test_voc_collapsed_current.py."""
     base = load_scaps_yaml("configs/scaps_mirror.yaml")
     robin = dataclasses.replace(
         base, mode="full",
@@ -52,62 +55,70 @@ def _scaps_mirror_robin_low_etl():
 
 
 # ---------------------------------------------------------------------------
-# The `_scaps_mirror_robin_low_etl` fixture is currently UNUSABLE as an
-# oracle, so the three tests built on it are skipped rather than left to
-# flap.  The auto-extend MECHANISM they cover is not in question.
+# V_max ladders — re-anchored 2026-07-27, previously skipped.
 #
-# Measured 2026-07-27.  The fixture's absorber is Eg = 1.53 eV, but the
-# "V_oc ~ 1.64 V" Sprint-1a probe the V_max ladders are anchored to is ABOVE
-# that -- thermodynamically impossible.  Past flat band (V_bi = 1.300 V) the
-# photocurrent collapses to ~0.002 A/m2, i.e. 1e-5 of J_sc, where the SIGN of
-# J is numerical noise; `compute_metrics` then takes the FIRST sign change as
-# V_oc.  The same device consequently reports 1.44 / 2.42 / 2.68 V or
-# "unbracketed" depending only on V_max and the voltage sampling, and WHICH of
-# these tests fails changes between a full-suite run and a single-file run.  A
-# fine sweep to V_max = 1.45 gives the true V_oc = 1.4406 V (< Eg/q).
+# These three tests used to be skipped because the fixture was not an oracle:
+# the ladders were anchored to a Sprint-1a probe reading "V_oc ~ 1.64 V",
+# which is ABOVE the fixture's own Eg = 1.53 eV and therefore
+# thermodynamically impossible.  The cause was in `compute_metrics`, not in
+# the fixture: past flat band (V_bi = 1.300 V) this device's photocurrent
+# collapses to ~1.5e-3 A/m2 (7e-6 of J_sc), where the SIGN of J is numerical
+# noise, and the old extractor waited for a sign CHANGE -- so the same device
+# reported "unbracketed", 1.44 V or 2.41 V depending only on V_max and the
+# sampling, and WHICH of these tests failed changed between a full-suite run
+# and a single-file run.  (Not ion history: D_ion = 0 in every layer here.)
 #
-# Not ion history: D_ion = 0 in every layer of this fixture.
-# Not caused by the DOS-fold fix: that only shifted which bogus branch is hit.
+# `compute_metrics` now takes V_oc where the current REACHES the resolution
+# floor and refuses any V_oc above Eg/q -- see
+# tests/unit/experiments/test_voc_collapsed_current.py for the full diagnosis
+# and the guard's contract.  V_oc on this fixture is now single-valued and
+# V_max-independent, so the ladders below are anchored to it:
 #
-# Re-anchor these ladders once compute_metrics stops reading V_oc off a noise
-# sign flip (it should treat a collapsed current as zero rather than waiting
-# for a sign change, and reject V_oc > Eg/q).  Do NOT just widen the bounds --
-# that pins whichever bogus value today's build happens to produce.
+#   measured 2026-07-27, N_grid=30, n_points=20, v_rate=5.0
+#     V_max = 0.5  -> no bracket (sentinel zeros)
+#     V_max = 1.0  -> no bracket (sentinel zeros)
+#     V_max = 1.2  -> no bracket (sentinel zeros)
+#     V_max = 1.7  -> V_oc = 1.4316 V, FF 0.789, bracketed
+#
+# The ladders are built so the FAILING rungs sit below 1.43 V and the passing
+# rung above it.  The bounds asserted are structural, not fitted: a value that
+# bracketed at V_max = 1.7 but not at 1.2 must lie in (1.2, 1.7], and any
+# V_oc must lie at or below Eg/q = 1.53 V.
 # ---------------------------------------------------------------------------
-_BOGUS_VOC_FIXTURE = pytest.mark.skip(
-    reason=(
-        "fixture anchored to a non-physical V_oc (1.64 V > Eg/q = 1.53 V); "
-        "compute_metrics reads V_oc off a noise sign flip past flat band, so "
-        "the result is non-deterministic. See the comment block above."
-    )
-)
+_EG_ABSORBER_EV = 1.53   # SCAPS_PVK band gap => V_oc ceiling for this stack
 
-@_BOGUS_VOC_FIXTURE
+
 def test_default_attempts_preserves_legacy_no_retry_behaviour():
     """``v_max_max_attempts=1`` (default) on a stack that fails to bracket
-    at V_max=1.6 returns sentinel zeros — bit-identical to pre-E1.9."""
+    at V_max=1.2 returns sentinel zeros — bit-identical to pre-E1.9."""
     stack = _scaps_mirror_robin_low_etl()
-    r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
+    r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.2)
     assert r.metrics_fwd.voc_bracketed is False
     assert r.metrics_fwd.V_oc == 0.0  # sentinel
+    # J_sc stays meaningful even when the bracket fails.
+    assert r.metrics_fwd.J_sc > 0.0
 
 
-@_BOGUS_VOC_FIXTURE
 def test_auto_extend_v_max_succeeds_on_second_attempt():
-    """``v_max_max_attempts=2`` retries once with V_max=2.1 → succeeds.
+    """``v_max_max_attempts=2`` retries once with V_max=1.7 → succeeds.
 
-    Per Sprint 1a probe, V_oc at this stack is ~1.64 V. V_max=1.6 fails;
-    V_max=1.6 + 0.5 = 2.1 succeeds."""
+    V_oc on this stack is ~1.43 V: V_max=1.2 fails, V_max=1.2 + 0.5 = 1.7
+    succeeds."""
     stack = _scaps_mirror_robin_low_etl()
     r = run_jv_sweep(
         stack, N_grid=30, n_points=20, v_rate=5.0,
-        V_max=1.6, v_max_max_attempts=2,
+        V_max=1.2, v_max_max_attempts=2,
     )
     assert r.metrics_fwd.voc_bracketed is True
-    assert 1.5 < r.metrics_fwd.V_oc < 2.1, (
-        f"V_oc={r.metrics_fwd.V_oc:.4f} V outside expected [1.5, 2.1] range "
-        "for Robin scaps_mirror at N_D_ETL=1e12 cm⁻³"
+    # Structural window: above the rung that failed, at or below both the
+    # rung that succeeded and the band gap.
+    assert 1.2 < r.metrics_fwd.V_oc <= min(1.7, _EG_ABSORBER_EV), (
+        f"V_oc={r.metrics_fwd.V_oc:.4f} V outside the (1.2, 1.53] window "
+        "implied by the ladder that produced it"
     )
+    # The retry actually happened — the returned curve runs to the bumped
+    # V_max, not the initial one.
+    assert r.V_fwd[-1] == pytest.approx(1.7)
 
 
 def test_already_bracketed_first_attempt_does_not_retry():
@@ -126,18 +137,18 @@ def test_already_bracketed_first_attempt_does_not_retry():
     assert r1.metrics_fwd.V_oc == pytest.approx(r2.metrics_fwd.V_oc)
 
 
-@_BOGUS_VOC_FIXTURE
 def test_exhausted_attempts_returns_unbracketed_no_exception():
-    """When all attempts exhaust without bracketing (e.g. V_oc above
-    V_initial + 2.0 V cap), return ``voc_bracketed=False`` without
-    raising — caller inspects the flag, never an exception."""
+    """When all attempts exhaust without bracketing, return
+    ``voc_bracketed=False`` without raising — caller inspects the flag,
+    never an exception."""
     stack = _scaps_mirror_robin_low_etl()
-    # Force a too-low V_max + too-few attempts. Per probe, this stack's
-    # V_oc is ~1.64 V. Start at V_max=1.0 with 1 retry → tries 1.0 and
-    # 1.5, both below V_oc → unbracketed result expected (no exception).
+    # Force a too-low V_max + too-few attempts. This stack's V_oc is
+    # ~1.43 V. Start at V_max=0.5 with 1 retry → tries 0.5 and 1.0, both
+    # below V_oc → unbracketed result expected (no exception).
     r = run_jv_sweep(
         stack, N_grid=30, n_points=20, v_rate=5.0,
-        V_max=1.0, v_max_max_attempts=2,
+        V_max=0.5, v_max_max_attempts=2,
     )
     assert r.metrics_fwd.voc_bracketed is False
     assert r.metrics_fwd.V_oc == 0.0
+    assert r.V_fwd[-1] == pytest.approx(1.0)   # the ladder did climb
