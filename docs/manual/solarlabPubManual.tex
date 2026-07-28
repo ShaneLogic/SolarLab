@@ -3559,6 +3559,107 @@ Observed warnings:
 These warnings do not affect simulator correctness but should be
 resolved before a formal software release.
 
+\hypertarget{scaps-comparison-model-alignment-table}{%
+\section{SCAPS Comparison: Model Alignment
+Table}\label{scaps-comparison-model-alignment-table}}
+
+SCAPS is not an equivalent solver reached by substituting a parameter
+set. It differs from SolarLab in operating mode, contact model,
+interface treatment and discretisation, and several of those differences
+change the computed figures of merit directly. Any quantitative
+comparison must therefore state which physics is being held common. The
+table below is that statement; each SolarLab entry was verified against
+the source rather than restated from design intent, and the right-hand
+column gives the condition under which a comparison of that row is
+meaningful.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.25}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.25}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.25}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.25}}@{}}
+\toprule
+Item & SCAPS & SolarLab & Condition for a valid comparison \\
+\midrule
+\endhead
+Operating mode & Steady state plus linear small signal; no general
+transient & Radau/BDF transient and a direct steady-state Newton driver
+& Use the ion-frozen direct steady state (\texttt{run\_jv\_sweep\_ss},
+\texttt{solve\_voc\_ss}). The transient agrees with it to 5 mV in
+\(V_\mathrm{oc}\) and 1 \% in \(J_\mathrm{sc}\), but only the steady
+state is definitionally the same quantity \\
+Contacts & Metal work function, or a flat-band work function computed
+per temperature & Manual \(V_\mathrm{bi}\) or the derived
+\texttt{compute\_V\_bi()}; Dirichlet pin by default, Robin optional &
+Enable \texttt{flat\_band\_contacts} to adopt the SCAPS convention, and
+align work functions, contact equilibrium densities and surface
+velocities together. Note the SolarLab default \emph{syncs}
+\(V_\mathrm{bi}\) to doping, so a doping sweep moves the boundary
+condition by about 59.5 mV per decade whereas SCAPS holds the work
+function fixed \\
+Temperature & \(N_C,N_V\propto T^{3/2}\);
+\(v_\mathrm{th}\propto T^{1/2}\); most other quantities constant &
+\(N_C,N_V\propto T^{3/2}\) and \(n_1,p_1\propto n_i(T)/n_i(300)\);
+\(\mu\), \(D_\mathrm{ion}\), \(B_\mathrm{rad}\) and \(E_g\) carry
+optional laws, each opt-out by default & \textbf{The interface-plane
+thermal velocities are fixed at their 300 K values and carry no
+\(T^{1/2}\) law.} A temperature comparison against SCAPS is therefore
+only valid at 300 K on any interface-state path, unless that dependence
+is supplied explicitly \\
+Interface mesh & Two co-located nodes per interface & Duplicate point
+removed; optional plane states & Matching the interface velocity is not
+sufficient --- the two codes evaluate the rate on different supports \\
+Interface transport & Thermionic-emission boundary condition &
+Scharfetter-Gummel flux with an empirical thermionic cap; optional plane
+states & Compare the face-flux formulae, not only the band offsets. The
+default cap is density-weighted and near-inert; the dimensionally
+normalised form is opt-in (\texttt{te\_physical\_norm}) \\
+Interface recombination & Pauwels-Vanhoutte interface states & Surface
+SRH with cross-carrier sampling and a defect-scoped non-negativity clamp
+& The defaults are \textbf{not} equivalent. Use
+\texttt{interface\_plane\_closure} or the steady-state
+\texttt{iface\_states} path for a like-for-like comparison \\
+Tunnelling & WKB, enabled in DC calculations & Static Padovani-Stratton
+\(E_{00}\) exponential enhancement & Disable on both sides, or validate
+separately. SolarLab's \texttt{interface\_tunneling} is off by default,
+so the aligned condition holds without action \\
+Grading & Several \(y(x)\), \(P(y)\) and \(P(x)\) laws, including
+optical grading & Simplified \(E_g\) and \(\chi\) grading;
+\textbf{optics are not graded} & Compare only the common subset. A
+graded absorber's absorption edge does not shift spatially in SolarLab,
+so \(J_\mathrm{sc}\) reflects the electrical effect alone \\
+Mesh & Interface refinement, iterative adaptive & Fixed tanh clustering
+& Demonstrate mesh convergence of the extracted metrics; equal node
+counts do not imply equal resolution \\
+Solution method & Gummel with Newton-Raphson sub-steps & Radau/BDF, or a
+dense finite-difference Newton & Compare final residuals and
+conservation, not iteration counts \\
+\bottomrule
+\end{longtable}
+
+Two consequences of this table are load-bearing for the numbers reported
+elsewhere in this chapter.
+
+First, the optical models differ, and that difference is not small.
+SCAPS integrates a scalar absorption coefficient with no Fresnel
+reflection at the transport-layer boundary, whereas SolarLab runs a
+coherent transfer-matrix calculation over the full stack. On the
+mirrored configuration this accounts for a \(J_\mathrm{sc}\) of
+\(218.2\,\mathrm{A\,m^{-2}}\) against the SCAPS
+\(262.8\,\mathrm{A\,m^{-2}}\), a \(-17\,\%\) difference. An earlier
+revision of this manual reported that gap as \(-12\,\%\); the smaller
+figure was an artefact of a generation quadrature that over-counted
+absorbed photons, and the corrected value is the larger disagreement.
+Closing it requires a SCAPS-matched optical path, not a parameter
+adjustment.
+
+Second, several rows are \emph{default mismatches} rather than
+capability gaps: contacts, interface recombination and the thermionic
+normalisation all have SCAPS-aligned modes that are off by default. A
+comparison run that does not enable them is comparing two different
+models, and the resulting agreement or disagreement carries no
+information about either.
+
 \hypertarget{limitations-and-best-practices}{%
 \chapter{Limitations And Best
 Practices}\label{limitations-and-best-practices}}
@@ -3605,7 +3706,22 @@ use in Chapter \ref{governing-equations}:
   the interface-SRH non-negativity clamp (scoped to declared-defect
   interfaces) suppresses physical depletion-region generation there as
   the cost of the cross-carrier approximation; defect-free interfaces
-  retain physical generation;
+  retain physical generation. Measured on the mirrored configuration in
+  the dark at \(-0.5\,\mathrm{V}\), the suppressed generation is
+  \(8.4\,\mathrm{A\,m^{-2}}\) at the hole-transport-layer interface --
+  negligible against the illuminated figures of merit, but about
+  \(3.6\,\%\) of the absorbed-photon budget and therefore not negligible
+  for a dark-current or reverse-bias study. \textbf{The interface-plane
+  formulations do not repair this.} Both the quasi-steady-state plane
+  rate and the interface-plane closure return exactly zero at the same
+  operating point, and they do so by construction rather than by
+  clamping: each solves for a plane depletion \(\delta\ge 0\) and
+  returns \(R=v_\mathrm{th}\delta\), so \(np<n_i^2\) yields \(\delta=0\)
+  instead of a negative rate. Promoting either to the default would lock
+  the absence in rather than remove it. A model that represents
+  interface generation needs a reference that is physically correct at
+  the plane and is therefore permitted to go negative; no shipped
+  formulation currently qualifies;
 \item
   the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel;
