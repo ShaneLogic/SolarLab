@@ -3679,7 +3679,6 @@ Seven model-formulation limitations apply, each flagged at its point of
 use in Chapter \ref{governing-equations}:
 
 \begin{itemize}
-\tightlist
 \item
   the \emph{default} thermionic-emission bound is density-weighted and
   therefore an empirical interface-limited cap, not the dimensionally
@@ -3694,34 +3693,57 @@ use in Chapter \ref{governing-equations}:
   it stays off by default because the paths it does affect lack an
   independent reference baseline with the physical cap active;
 \item
-  the \emph{default} ionic steric factor multiplies the full flux (drift
-  and diffusion) and is applied per species, an empirical crowding
-  regularization rather than the strict shared-site lattice-gas flux.
-  The diffusion-only modified-PNP form is available as an opt-in
-  (\texttt{ion\_steric\_diffusion\_only}); it is numerically immaterial
-  for the shipped presets (dilute ions, peak
-  \(P/P_\mathrm{lim} \approx 0.011\), so \(V_\mathrm{oc}\) shifts under
-  0.1 mV) and matters only near saturation;
+  the ionic steric flux now defaults to the diffusion-only modified-PNP
+  form (\texttt{ion\_steric\_diffusion\_only}), which folds the crowding
+  chemical potential into the drift argument so that crowding impedes
+  only the diffusive term. The superseded default multiplied the
+  \emph{whole} flux by \(s = 1/(1 - P/P_\mathrm{lim})\), drift included,
+  so lattice filling accelerated ion transport instead of impeding it.
+  Sweeping the initial occupancy \(\theta_0 = P_0/P_\mathrm{lim}\) at
+  fixed \(P_0\) makes the consequence visible: the old form's fill
+  factor climbs from 0.777 to 0.822 and its \(J_\mathrm{sc}\) gains 3.2
+  \% as the lattice fills, with the hysteresis index swinging to
+  \(-0.066\), while the modified-PNP form is flat across
+  \(\theta_0 \in [0.01, 0.99]\) (\(J_\mathrm{sc}\) 221.571 to 221.569).
+  The change is free where the shipped presets sit --- at their
+  \(\theta \approx 0.011\) the two forms differ by 0.04 mV in
+  \(V_\mathrm{oc}\). The LEGACY tier still forces the old form, so
+  IonMonger reproduction is unaffected. What remains a limitation is
+  narrower: the steric model is a single-site lattice gas, so it does
+  not represent ion-ion correlation beyond site exclusion, and no
+  shipped preset approaches saturation, leaving the near-singular regime
+  exercised only by the flux-level tests;
 \item
-  the interface-SRH non-negativity clamp (scoped to declared-defect
-  interfaces) suppresses physical depletion-region generation there as
-  the cost of the cross-carrier approximation; defect-free interfaces
-  retain physical generation. Measured on the mirrored configuration in
-  the dark at \(-0.5\,\mathrm{V}\), the suppressed generation is
-  \(8.4\,\mathrm{A\,m^{-2}}\) at the hole-transport-layer interface --
-  negligible against the illuminated figures of merit, but about
-  \(3.6\,\%\) of the absorbed-photon budget and therefore not negligible
-  for a dark-current or reverse-bias study. \textbf{The interface-plane
-  formulations do not repair this.} Both the quasi-steady-state plane
-  rate and the interface-plane closure return exactly zero at the same
-  operating point, and they do so by construction rather than by
-  clamping: each solves for a plane depletion \(\delta\ge 0\) and
-  returns \(R=v_\mathrm{th}\delta\), so \(np<n_i^2\) yields \(\delta=0\)
-  instead of a negative rate. Promoting either to the default would lock
-  the absence in rather than remove it. A model that represents
-  interface generation needs a reference that is physically correct at
-  the plane and is therefore permitted to go negative; no shipped
-  formulation currently qualifies;
+  the interface-SRH non-negativity clamp applies only at declared-defect
+  interfaces, and what it suppresses there is \textbf{not} physical
+  depletion-region generation. The cross-carrier rate pairs electrons
+  sampled on one side with holes sampled on the other, so its
+  detailed-balance reference is the cross-side product of the two
+  \emph{majority} equilibrium densities,
+  \(n_R^\mathrm{eq}p_L^\mathrm{eq}\). On the mirrored configuration that
+  reference is \(1.0\times10^{44}\,\mathrm{m^{-6}}\) against a local
+  mass-action \(n_i^2\) of \(1.98\times10^{24}\) at the same node --
+  twenty orders of magnitude larger. Lifting the clamp there yields
+  \(-8.4\,\mathrm{A\,m^{-2}}\) at \(-0.5\,\mathrm{V}\), but that number
+  is set by the inflated reference rather than by interface physics,
+  which is why the clamp exists. Defect-free interfaces, whose reference
+  is the node's own \(n_i^2\), are not clamped and retain their
+  generation.
+
+  A physically referenced channel is available: the interface-plane
+  closure builds \(n_{i,s}^2 = N_C N_V \exp(-E_{g,s}/V_T)\) on the
+  reduced interface gap -- equal to the node's own \(n_i^2\) on this
+  stack -- and with \texttt{interface\_plane\_generation} it reports the
+  signed rate, bounded by the textbook depletion limit
+  \(-n_{i,s}^2/(n_{1,s}/v_p + p_{1,s}/v_n)\). Its verdict is that
+  interface generation is genuinely negligible at these
+  surface-recombination velocities:
+  \(-8\times10^{-21}\,\mathrm{A\,m^{-2}}\) at the same operating point,
+  with an absolute ceiling near \(4\times10^{-12}\,\mathrm{A\,m^{-2}}\)
+  even for a fully depleted plane. Both flags default off, so the
+  shipped default carries the clamped cross-carrier channel; a
+  reverse-bias or dark-current study that needs the physically
+  referenced answer should enable the closure;
 \item
   the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel;
@@ -3747,11 +3769,15 @@ use in Chapter \ref{governing-equations}:
   with a temperature sweep without supplying that dependence explicitly.
 \end{itemize}
 
-Both optional forms are off by default: the physical thermionic-emission
-normalization changes bulk-node transport results that have no
-independent reference baseline, and the diffusion-only ion-steric form,
-though it does not perturb the current presets (sub-0.1 mV), is held
-pending validation against high-ion-density configurations.
+Of the two optional flux forms, the ion-steric one is now the default:
+the high-occupancy validation it was waiting on was carried out, and it
+found the superseded form producing unphysical trends rather than merely
+differing (see above). The physical thermionic-emission normalization
+remains off by default for the opposite reason --- enabling it raises
+the steady-state \(V_\mathrm{oc}\) above the detailed-balance ceiling
+for the absorber gap, so the form as implemented is not yet a defensible
+default, and the transport paths it changes have no independent
+reference baseline to validate it against.
 
 \hypertarget{data-and-optical-limits}{%
 \section{Data And Optical Limits}\label{data-and-optical-limits}}
