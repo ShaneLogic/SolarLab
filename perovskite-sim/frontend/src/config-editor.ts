@@ -441,7 +441,7 @@ function renderScapsPhysics(config: DeviceConfig): string {
 function renderInterfaceDefects(config: DeviceConfig): string {
   const n = Math.max(0, config.layers.length - 1)
   if (n === 0) return ''
-  const help = '<p class="param-help">SCAPS-style per-heterointerface SRH defect. Each row contributes ``σ·v_th·N_t`` surface velocities to <code>DeviceStack.interfaces[k]</code> and an <code>InterfaceDefect(E_t_eV)</code> entry to <code>DeviceStack.interface_defects[k]</code>. Empty fields = absent (no defect on this interface). Calibration ratio between SCAPS direct N_t and SolarLab effective N_t is ~10⁻⁴ for PVK/ETL — see <code>docs/reference/SolarLabSCAPSGapAnal.pdf</code>.</p>'
+  const help = '<p class="param-help">SCAPS-style per-heterointerface SRH defect. Each row contributes ``σ·v_th·N_t`` surface velocities to <code>DeviceStack.interfaces[k]</code> and an <code>InterfaceDefect(E_t_eV)</code> entry to <code>DeviceStack.interface_defects[k]</code>. Empty fields = absent (no defect on this interface). Calibration ratio between SCAPS direct N_t and SolarLab effective N_t is ~10⁻⁴ for PVK/ETL.</p>'
   const rows: string[] = []
   for (let i = 0; i < n; i++) {
     const defect = config.device.interface_defects?.[i] ?? null

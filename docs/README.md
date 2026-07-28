@@ -13,9 +13,7 @@ and `perovskite-sim/CLAUDE.md`.
 ```
 docs/
 ├── reference/     SolarLab vs SCAPS-1D validation deliverables
-│   ├── *.md / *.pdf        current reports (see "Reference reports" below)
-│   ├── GAPReasoning/       slide decks (.pptx) + build_deck.py
-│   └── _archive/           superseded report versions (kept for history)
+│                  (see "Reference reports" below)
 ├── manual/        SolarLab technical user manual (md + tex + pdf, figures, slides)
 ├── figures/       ScapsSolarlabCompare/ — SCAPS sweep overlays (2026-07-02 run).
 │                  The report figure sets were dropped 2026-07-28: the reports
@@ -33,15 +31,14 @@ docs/
 
 | File | What |
 |------|------|
-| `SolarLabPhyVerify260624.md` (+ `PhysicsVerify260624.pdf`) | Depth-resolved physics diagnostics |
-| `SolarLab2DScan` | 2D defect-parameter (Nt×Et, Nt×ΔE_C) validation |
-| `SolarLabDespikeIface` | De-spike + interface-plane closure decomposition |
-| `SolarLabValid260702.pdf` | Transient vs steady-state interface-states comparison (2026-07-02: transient Nd_ETL contact-reservoir fix + CBO sweep extended to +1.0 eV) |
+| `SolarLab2DScan` (`.md` + `.pdf`) | 2D defect-parameter (Nt×Et, Nt×ΔE_C) validation |
 | `SolarLabVerifyFormal260702.pdf` | SCAPS vs SolarLab (f=0.53) across all 11 sweeps — physical-model & numerical-algorithm attribution; publication-style figures |
-| `SolarLabSCAPSGapAnal.pdf` | Mechanistic gap analysis (referenced by the 06-22 summary) |
-| `SCAPSIfaceSRH.md` | Interface-SRH scope note (cited from `device.py`) |
 
-Superseded versions (06-15 validation, root-cause analysis) live in `reference/_archive/`.
+The other reports (physics diagnostics, de-spike/interface closure, the
+2026-07-02 transient-vs-steady-state comparison, the mechanistic gap analysis,
+the interface-SRH scope note, the `_archive/` snapshots and the GAPReasoning
+decks) were removed on 2026-07-28. They are in git history at `c7d4ee9` —
+restore with `git checkout c7d4ee9 -- docs/reference`.
 
 ### Rendering a report
 ```bash
@@ -50,10 +47,9 @@ pandoc <file>.md -o <file>.pdf --toc --pdf-engine=xelatex \
   --resource-path=docs/reference \
   -V mainfont="Arial" -V monofont="Menlo" -V geometry:margin=2cm -V colorlinks=true
 ```
-Decks: the built `.pptx` files live in `docs/reference/GAPReasoning/`.
-`GAPReasoning/build_deck.py` rebuilds them, but its per-figure generators
-(`figures/make_f*.py`) were dropped in the 2026-07-28 cleanup — recover them
-from commit `c8e4fde` before rebuilding.
+Decks: the GAPReasoning `.pptx` files and their `build_deck.py` were removed on
+2026-07-28 (`git checkout c7d4ee9 -- docs/reference/GAPReasoning` to get them
+back; the per-figure generators they call need `c8e4fde`).
 
 ## Loose docs
 
