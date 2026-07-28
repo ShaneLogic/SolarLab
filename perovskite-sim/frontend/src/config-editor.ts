@@ -430,9 +430,11 @@ function renderScapsPhysics(config: DeviceConfig): string {
 
 /**
  * Phase E1.8 — FULL-tier-only per-heterointerface SCAPS defect panel.
- * Collapsed ``<details>`` placed below the Robin contacts panel; one
- * row per electrical heterointerface (HTL/PVK, PVK/ETL, …) auto-derived
- * from ``config.layers``. Each row exposes the 5 SCAPS fields
+ * Collapsed ``<details>`` placed below the Robin contacts panel; one row per
+ * internal interface of ``config.layers`` — FULL-layer aligned, so a
+ * substrate-prefixed stack gets a leading glass|HTL row rather than starting
+ * at HTL/absorber. Row labels come from the adjacent layer names, so they
+ * stay correct either way. Each row exposes the 5 SCAPS fields
  * (σ_n, σ_p, N_t areal, v_th, E_t below CB) typed ``number | null`` —
  * empty input is the "absent" sentinel (round-trips as ``null``).
  * Mirrors the YAML schema parsed by ``scaps_compat/loader.py`` and the

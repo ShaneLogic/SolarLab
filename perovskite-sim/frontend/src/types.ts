@@ -100,8 +100,12 @@ export interface DeviceConfig {
     Phi: number
     interfaces?: Array<[number, number]>
     /**
-     * Phase E1.8 — per-interface SCAPS defect dicts aligned with
-     * ``layers.length − 1`` slots (k=0 → HTL/PVK, k=1 → PVK/ETL, etc.).
+     * Phase E1.8 — per-interface SCAPS defect dicts, one slot per internal
+     * interface of ``layers`` (``layers.length − 1`` of them). Alignment is
+     * FULL-layer, substrate included: on a substrate-prefixed stack k=0 is
+     * the glass|HTL boundary and the hetero-interfaces start at k=1 — do NOT
+     * assume k=0 is HTL/absorber. Indexing this by the *electrical* interface
+     * number is what caused the E10.1 glass regression on the Python side.
      * Each slot is either null (no defect on this heterointerface) or a
      * populated ``InterfaceDefectFields`` object. The backend computes
      * the SRV pair on ``stack.interfaces[k]`` from σ·v_th·N_t_areal and
