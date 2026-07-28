@@ -170,17 +170,48 @@ def carrier_continuity_rhs(
         te_soft = params.get("te_softness", 0.0)
 
         def _cap(J_sg, J_te):
+            """Limit the MAGNITUDE of the SG flux; never change its direction.
+
+            The thermionic bound says how much current the interface can
+            emit, not which way it flows — that is set by the drift-diffusion
+            solution. Returning ``J_te`` wholesale (as this did until
+            2026-07-28) imports the sign of a separately-computed quantity,
+            so whenever the two disagreed the "cap" REVERSED the flux instead
+            of limiting it.
+
+            Measured on scaps_mirror_v2 with ``te_physical_norm`` on, holes at
+            the HTL/PVK face, at every bias probed (V = 0, 0.9, 1.2):
+
+                J_sg = +1.30e7 ... +2.02e7      J_te = -2.33e2
+
+            i.e. the dominant hole-extraction current was replaced by a
+            reversed one five orders smaller. Carriers piled up behind the
+            interface and the steady-state V_oc rose to 1.39 V, above the
+            1.2535 V detailed-balance ceiling for this absorber gap — which
+            is how the defect was found.
+
+            Latent under the legacy density-weighted bound because that makes
+            |J_te| ~ 1e28-1e35, so ``|J_sg| > |J_te|`` is essentially never
+            true and the branch never ran: measured 0 binds in 80 checks
+            across five shipped presets, which is why this fix is
+            bit-identical on every current default.
+            """
+            a_sg, a_te = abs(J_sg), abs(J_te)
             if te_soft <= 0.0:
-                return J_te if abs(J_sg) > abs(J_te) else J_sg
-            t_arg = (abs(J_sg) - abs(J_te)) / (
-                te_soft * (abs(J_sg) + abs(J_te)) + 1e-300)
-            if t_arg > 40.0:
-                w = 1.0
-            elif t_arg < -40.0:
-                w = 0.0
+                mag = a_te if a_sg > a_te else a_sg
             else:
-                w = 1.0 / (1.0 + np.exp(-t_arg))
-            return w * J_te + (1.0 - w) * J_sg
+                t_arg = (a_sg - a_te) / (te_soft * (a_sg + a_te) + 1e-300)
+                if t_arg > 40.0:
+                    w = 1.0
+                elif t_arg < -40.0:
+                    w = 0.0
+                else:
+                    w = 1.0 / (1.0 + np.exp(-t_arg))
+                # Blend MAGNITUDES for the same reason; a blend toward J_te
+                # can otherwise drag the flux through zero and out the far
+                # side when the two disagree in sign.
+                mag = w * a_te + (1.0 - w) * a_sg
+            return float(np.copysign(mag, J_sg))
         # Ensure flux arrays are writable (they may be views)
         J_n = J_n.copy()
         J_p = J_p.copy()
