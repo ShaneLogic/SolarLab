@@ -150,7 +150,7 @@ final manual.
 
 Primary tree:
 
-- `perovskite-sim/AGENTS.md`: authoritative architecture and gotchas.
+- `perovskite-sim/CLAUDE.md`: authoritative architecture and gotchas.
 - `README.md`: top-level public overview and physics summary.
 - `perovskite-sim/README.md`: subtree orientation, equations, examples.
 - `perovskite-sim/backend/README.md`: API endpoints and job streaming.

@@ -3081,7 +3081,7 @@ The manual was drafted from:
 - `docs/solarlab_manual_source_dossier.md`
 - `docs/manual/valEvidence260723.md` (current evidence pass)
 - `docs/manual/valEvidence260519.md` (superseded 2026-05-19 pass)
-- `perovskite-sim/AGENTS.md`
+- `perovskite-sim/CLAUDE.md`
 - `README.md`
 - `perovskite-sim/README.md`
 - `perovskite-sim/backend/README.md`
@@ -3105,7 +3105,7 @@ full bibliography format against the target journal style.
 Figure & Source & Reproducibility note \\
 \midrule
 \endhead
-Architecture flow & \path{docs/manual/generate_manual_figures.py} & Diagrammatic summary of repo architecture described in \path{perovskite-sim/AGENTS.md}. \\
+Architecture flow & \path{docs/manual/generate_manual_figures.py} & Diagrammatic summary of repo architecture described in \path{perovskite-sim/CLAUDE.md}. \\
 Validation gate summary & \path{docs/manual/valEvidence260723.md} & Uses pass counts and runtimes from the completed 2026-07-23 validation pass. \\
 IonMonger reference metrics & \path{perovskite-sim/tests/integration/test_voc_benchmark.py} & Shows pinned benchmark metrics and tolerances, not a new simulation run. \\
 TMM \(J_\mathrm{sc}\) baselines & \path{perovskite-sim/tests/regression/test_tmm_baseline.py} & Shows pinned n-i-p and p-i-n TMM baselines with ±5 \(A\,m^{-2}\) tolerance. \\
