@@ -2849,7 +2849,21 @@ in Chapter \ref{governing-equations}:
 - the interface-SRH non-negativity clamp (scoped to declared-defect
   interfaces) suppresses physical depletion-region generation there as the
   cost of the cross-carrier approximation; defect-free interfaces retain
-  physical generation;
+  physical generation. Measured on the mirrored configuration in the dark
+  at $-0.5\,\mathrm{V}$, the suppressed generation is
+  $8.4\,\mathrm{A\,m^{-2}}$ at the hole-transport-layer interface --
+  negligible against the illuminated figures of merit, but about $3.6\,\%$
+  of the absorbed-photon budget and therefore not negligible for a
+  dark-current or reverse-bias study. **The interface-plane formulations do
+  not repair this.** Both the quasi-steady-state plane rate and the
+  interface-plane closure return exactly zero at the same operating point,
+  and they do so by construction rather than by clamping: each solves for a
+  plane depletion $\delta\ge 0$ and returns $R=v_\mathrm{th}\delta$, so
+  $np<n_i^2$ yields $\delta=0$ instead of a negative rate. Promoting either
+  to the default would lock the absence in rather than remove it. A model
+  that represents interface generation needs a reference that is physically
+  correct at the plane and is therefore permitted to go negative; no
+  shipped formulation currently qualifies;
 - the photon-recycling redistribution is spatially uniform, with no
   spatial or spectral reabsorption kernel;
 - the Scharfetter-Gummel positivity property is a property of the *spatial*
