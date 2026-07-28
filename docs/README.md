@@ -17,9 +17,9 @@ docs/
 │   ├── GAPReasoning/       slide decks (.pptx) + build_deck.py
 │   └── _archive/           superseded report versions (kept for history)
 ├── manual/        SolarLab technical user manual (md + tex + pdf, figures, slides)
-├── figures/       shared SCAPS sweep figure sets (validation / ss_compare /
-│                  gap_explainer / ScapsSolarlabCompare) — referenced by
-│                  reports; only report-referenced figures are kept
+├── figures/       ScapsSolarlabCompare/ — SCAPS sweep overlays (2026-07-02 run).
+│                  The report figure sets were dropped 2026-07-28: the reports
+│                  ship as PDFs with their figures already embedded
 ├── plans/         cross-tree design + implementation plans
 ├── superpowers/   spec/plan history (specs/, plans/, references/)
 ├── autoloop/      autonomous research-loop ledger
@@ -36,9 +36,9 @@ docs/
 | `SolarLabPhyVerify260624.md` (+ `PhysicsVerify260624.pdf`) | Depth-resolved physics diagnostics |
 | `SolarLab2DScan` | 2D defect-parameter (Nt×Et, Nt×ΔE_C) validation |
 | `SolarLabDespikeIface` | De-spike + interface-plane closure decomposition |
-| `SolarLabValid260702.pdf` (+ `ScapsValidSum.md`) | Transient vs steady-state interface-states comparison (2026-07-02: transient Nd_ETL contact-reservoir fix + CBO sweep extended to +1.0 eV) |
+| `SolarLabValid260702.pdf` | Transient vs steady-state interface-states comparison (2026-07-02: transient Nd_ETL contact-reservoir fix + CBO sweep extended to +1.0 eV) |
 | `SolarLabVerifyFormal260702.pdf` | SCAPS vs SolarLab (f=0.53) across all 11 sweeps — physical-model & numerical-algorithm attribution; publication-style figures |
-| `SolarLabSCAPSGapAnal` | Mechanistic gap analysis (referenced by the 06-22 summary) |
+| `SolarLabSCAPSGapAnal.pdf` | Mechanistic gap analysis (referenced by the 06-22 summary) |
 | `SCAPSIfaceSRH.md` | Interface-SRH scope note (cited from `device.py`) |
 
 Superseded versions (06-15 validation, root-cause analysis) live in `reference/_archive/`.
@@ -59,7 +59,7 @@ from commit `c8e4fde` before rebuilding.
 
 | File | What |
 |------|------|
-| `scaps_validation_report.md` | Internal SCAPS-mirror validation report (from `run_scaps_validation.py`); uses `figures/scaps_validation/` |
+| ~~`scaps_validation_report.md`~~ | Removed 2026-07-28. Regenerate with `perovskite-sim/scripts/run_scaps_validation.py`; the findings are in `reference/SolarLabSCAPSGapAnal.pdf` |
 | `SolarLab_validation_gap_analysis_2026-06-24.md` | Physics-validation gap analysis (Zotero × codebase) |
 | `solarlab_manual_source_dossier.md` | Source dossier for the user manual |
 | `manual/SCAPSManual2016.pdf` | SCAPS-1D reference manual (input) |
