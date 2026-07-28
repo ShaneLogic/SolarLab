@@ -205,7 +205,11 @@ def test_scaps_mirror_baseline_metrics_recorded(baseline_metrics):
     m = baseline_metrics
     assert m.voc_bracketed
     assert 1.05 <= m.V_oc <= 1.25
-    assert 230.0 <= m.J_sc <= 280.0
+    # Re-anchored 2026-07-28 from [230, 280] alongside the photon-exact TMM
+    # quadrature; the old envelope sat ABOVE this stack's 219.01 A/m^2
+    # absorbed-photon ceiling.  Full derivation + the widened SCAPS gap in
+    # test_scaps_mirror_baseline.py::test_baseline_jsc_within_scaps_window.
+    assert 205.0 <= m.J_sc <= 225.0
     assert 0.78 <= m.FF <= 0.92
     # PCE floor widened from 0.22 to 0.21 after Phase E1.5 activated the
     # PVK/ETL interface defect in scaps_mirror.yaml (small PCE shaving

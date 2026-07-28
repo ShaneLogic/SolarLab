@@ -154,7 +154,11 @@ def test_low_doped_etl_flat_band_eliminates_pseudo_crossing():
     except (ValueError, RuntimeError) as e:
         pytest.skip(f"near-insulating flat-band sweep hit the documented "
                     f"convergence boundary: {e}")
-    assert m.J_sc / 10 == pytest.approx(25.7, abs=0.5), "photocurrent stays healthy"
+    # Re-anchored 2026-07-28 from 25.7 to 23.4 mA/cm^2: the TMM generation
+    # quadrature became photon-exact (see test_tmm_photon_conservation.py).
+    # The old anchor was the coarse-mesh over-count, not a physics change --
+    # the claim being made here is unchanged, and so is the tolerance.
+    assert m.J_sc / 10 == pytest.approx(23.4, abs=0.5), "photocurrent stays healthy"
     # CORE assertion (hard): flat-band must not produce the spurious crossing.
     if m.voc_bracketed:
         assert m.V_oc < 1.27, "any reported crossing must be below the ceiling"

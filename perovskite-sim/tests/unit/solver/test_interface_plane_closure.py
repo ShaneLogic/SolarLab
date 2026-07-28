@@ -177,4 +177,9 @@ def test_base_jv_converges_at_validation_protocol():
                      v_max_max_attempts=3).metrics_fwd
     assert m.voc_bracketed
     assert 0.95 < m.V_oc < 1.27
-    assert m.J_sc / 10 == pytest.approx(25.7, abs=0.8)
+    # Re-anchored 2026-07-28 from 25.7 to 23.4 mA/cm^2: the TMM generation
+    # quadrature became photon-exact (see test_tmm_photon_conservation.py).
+    # The old anchor was the coarse-mesh over-count, not a physics change --
+    # this is a health check that J_sc has not collapsed, and the tolerance
+    # is unchanged.
+    assert m.J_sc / 10 == pytest.approx(23.4, abs=0.8)

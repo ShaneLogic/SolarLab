@@ -417,12 +417,54 @@ def _compute_tmm_generation(
     The computation runs once during build_material_arrays and the result
     is cached in MaterialArrays.G_optical.
 
+    Photon-conserving quadrature (mirrors ``physics/generation.py``)
+    ---------------------------------------------------------------
+    The RHS integrates generation as the node-centred rectangle rule
+    ``sum_i G[i] * dx_cell[i]``.  Point-sampling the volumetric rate
+    ``G(x) = int A(x,lam) Phi(lam) dlam`` at the nodes and handing that to
+    a rectangle rule is NOT photon-conserving: on a mesh coarse relative to
+    the absorption length it over-counts the sharply-peaked front-of-
+    absorber generation, so the device creates more pairs than there are
+    photons.  Measured on ``configs/ionmonger_benchmark_tmm.yaml`` (exact
+    absorbed budget 225.00 A/m^2) the point-sampled form gave 353.35 at
+    N_grid=10, 238.97 at 30, 226.25 at 100 — converging to the budget from
+    ABOVE, and at N_grid=10 exceeding it by 57 %.
+
+    So each node is instead given the exact absorbed-photon count of its
+    own dual cell, divided by the volume weight the RHS assigns to it::
+
+        G[i] = [ int_lam Phi(lam) (C(b_{i+1},lam) - C(b_i,lam)) dlam ]
+               / dx_cell[i]
+
+    with ``b`` the dual-cell faces and ``C`` the transfer-matrix cumulative
+    absorptance (``physics/optics.py:tmm_cumulative_absorptance``) — the
+    layer-resolved Poynting-flux drop, in closed form, so no spatial
+    quadrature is involved.  The numerators telescope, hence on ANY mesh::
+
+        sum_i G[i]*dx_cell[i] = int_lam Phi(lam) * [C(x[-1]) - C(x[0])] dlam
+
+    i.e. exactly the photons the electrical stack absorbs, which is bounded
+    by ``Phi*(1 - R - T)`` by construction.  Refinement no longer buys
+    photon conservation, only spatial detail.
+
+    Boundary-cell caveat (and why it BITES here where Beer-Lambert escaped
+    it): ``dx_cell[0] = dx[0]`` is the FULL interval, not the half-width the
+    cell geometrically spans, so at an ABSORBING outer node the returned
+    ``G`` is the cell-integrated rate spread over the solver's wider weight
+    rather than the local volumetric rate.  Every Beer-Lambert preset has
+    ``alpha = 0`` in both outer layers so this never showed; TMM presets
+    have genuinely absorbing outer layers (spiro/NiOx/PCBM), so ``G[0]`` and
+    ``G[-1]`` are now ~half the pointwise rate by design.  ``sum(G*dx_cell)``
+    — the only integral the solver performs — stays exact.  Consumers that
+    want a pointwise rate, or integrate with ``np.trapezoid``, must account
+    for this.
+
     TMM sees the *full* stack (including role=="substrate" layers) so the
     Fresnel chain and thin-film interference are correct. The electrical
-    grid ``x`` only covers the non-substrate layers, so we shift it by the
-    cumulative substrate thickness before querying ``tmm_generation``;
-    ``tmm_absorption_profile`` routes each query to the right layer via
-    ``layer_boundaries``.
+    grid ``x`` only covers the non-substrate layers, so both the nodes and
+    the dual-cell faces are shifted by the cumulative substrate thickness
+    before the optics is queried; ``layer_boundaries`` then routes each
+    query to the right layer.
 
     When ``return_absorbance`` is True the absorption profile ``A(x, λ)``
     and the per-layer refractive-index arrays are returned alongside
@@ -438,7 +480,12 @@ def _compute_tmm_generation(
             return None, None
         return None
 
-    from perovskite_sim.physics.optics import TMMLayer, tmm_generation
+    from perovskite_sim.physics.optics import (
+        TMMLayer, tmm_absorption_profile, tmm_absorbed_photon_flux_per_cell,
+    )
+    from perovskite_sim.physics.generation import (
+        dual_cell_faces, dual_cell_widths,
+    )
     from perovskite_sim.data import load_nk, load_am15g
 
     wavelengths_nm = np.linspace(lam_min, lam_max, n_wavelengths)
@@ -483,10 +530,32 @@ def _compute_tmm_generation(
     )
     x_tmm = x + substrate_offset
 
+    # Photon-conserving quadrature: exact absorbed photons of each dual
+    # cell, divided by the weight the RHS multiplies back in. Faces are
+    # shifted by the same substrate offset as the nodes; the outer faces
+    # are the electrical-stack faces themselves, so the telescoped total
+    # is exactly what the electrical layers absorb.
+    if len(x) >= 2:
+        faces_tmm = dual_cell_faces(x) + substrate_offset
+        absorbed = tmm_absorbed_photon_flux_per_cell(
+            tmm_layers, wavelengths_m, spectral_flux, faces_tmm, boundaries,
+        )
+        G = absorbed / dual_cell_widths(x)
+    else:
+        # No dual cell exists on a single node — fall back to the
+        # point-sampled volumetric rate rather than raising, matching
+        # beer_lambert_generation's degenerate-grid behaviour.
+        A_pt = tmm_absorption_profile(
+            tmm_layers, wavelengths_m, x_tmm, boundaries,
+        )
+        G = trapezoid(A_pt * spectral_flux[None, :], wavelengths_m, axis=1)
+
     if return_absorbance:
-        G, A_xl = tmm_generation(
-            tmm_layers, wavelengths_m, spectral_flux, x_tmm, boundaries,
-            return_absorbance=True,
+        # A(x, lambda) at the NODES, for the photon-recycling escape
+        # probability. This is a pointwise diagnostic (interpolated at
+        # lambda_gap), not an integrand, so it stays point-sampled.
+        A_xl = tmm_absorption_profile(
+            tmm_layers, wavelengths_m, x_tmm, boundaries,
         )
         tmm_info = {
             "wavelengths_m": wavelengths_m,
@@ -496,9 +565,6 @@ def _compute_tmm_generation(
             "substrate_offset": substrate_offset,
         }
         return G, tmm_info
-    G = tmm_generation(
-        tmm_layers, wavelengths_m, spectral_flux, x_tmm, boundaries,
-    )
     return G
 
 

@@ -70,6 +70,42 @@ def dual_cell_widths(x: np.ndarray) -> np.ndarray:
     return w
 
 
+def dual_cell_faces(x: np.ndarray) -> np.ndarray:
+    """The ``N+1`` faces bounding the node-centred dual cells.
+
+    Interior faces are the interval midpoints; the two outer faces are the
+    device faces themselves, because no absorption happens outside the
+    grid.  Paired with :func:`dual_cell_widths` this is the complete
+    definition of the solver's dual mesh::
+
+        cell i spans [faces[i], faces[i+1]]   and is weighted by dx_cell[i]
+
+    Note the deliberate mismatch at the two boundary cells: their geometric
+    extent is ``dx[0]/2`` / ``dx[-1]/2`` but the RHS weight is the FULL
+    ``dx[0]`` / ``dx[-1]``.  Any photon-conserving quadrature must divide
+    the exactly-absorbed photons of ``[faces[i], faces[i+1]]`` by
+    ``dx_cell[i]`` — see the module docstring.
+
+    Used by the TMM path (``solver/mol.py:_compute_tmm_generation``), which
+    needs the face POSITIONS to evaluate the transfer-matrix cumulative
+    absorptance.  The Beer-Lambert path below reaches the same faces
+    implicitly: its optical depth is piecewise linear between nodes, so the
+    face value is just the mean of the two node values.
+    """
+    x = np.asarray(x, dtype=float)
+    if x.ndim != 1:
+        raise ValueError(f"x must be 1-D, got shape {x.shape}")
+    if x.shape[0] < 2:
+        raise ValueError(
+            f"dual cells need at least 2 nodes, got {x.shape[0]}"
+        )
+    faces = np.empty(x.shape[0] + 1, dtype=float)
+    faces[0] = x[0]
+    faces[-1] = x[-1]
+    faces[1:-1] = 0.5 * (x[:-1] + x[1:])
+    return faces
+
+
 def _cumulative_optical_depth(x: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     """tau(x_i) = integral of alpha from x[0] to x[i], at the nodes.
 
