@@ -215,11 +215,11 @@ def build_material_arrays_2d(
     # (Ny,) extruded to (Ny, Nx). For TMM stacks, mat1d.G_optical is already
     # populated and we just extrude.
     if mat1d.G_optical is not None:
-        G_optical = extrude(mat1d.G_optical)
+        G_optical = extrude(_to_2d_dual_cell(mat1d.G_optical))
     elif mat1d.alpha is not None and float(stack.Phi) > 0.0:
         from perovskite_sim.physics.generation import beer_lambert_generation
         G_1d = beer_lambert_generation(grid.y, mat1d.alpha, stack.Phi)
-        G_optical = extrude(G_1d)
+        G_optical = extrude(_to_2d_dual_cell(G_1d))
     else:
         G_optical = np.zeros((Ny, Nx), dtype=float)
 
@@ -459,6 +459,44 @@ def build_material_arrays_2d(
         absorber_thicknesses_2d=absorber_thicknesses_2d,
         absorber_areas_2d=absorber_areas_2d,
     )
+
+
+def _to_2d_dual_cell(G_1d: np.ndarray) -> np.ndarray:
+    """Re-weight a 1D-convention generation profile for the 2D dual cells.
+
+    The two solvers weight their BOUNDARY cells differently, and only one
+    of them can be right for a shared ``G``:
+
+        1D  ``dual_cell_widths``      w[0] = dy[0]        (FULL interval)
+        2D  ``continuity_2d.hy_cell`` h[0] = dy[0] / 2    (half interval)
+
+    ``physics/generation.py`` builds ``G`` so that ``G[i] * w[i]`` is the
+    exact absorbed-photon count of cell ``i`` — the 1D convention. Feeding
+    that same array to the 2D RHS, which multiplies by ``h[i]``, hands the
+    two boundary rows HALF the photons they absorbed. Rescaling by
+    ``w / h`` (2 at the boundaries, 1 everywhere else) restores the count
+    under the 2D weights, so both solvers integrate the same spectrum.
+
+    Measured impact, absorbed-photon current 1D vs unscaled 2D:
+
+        ionmonger_benchmark   223.0581 vs 223.0581   0.000 %
+        cigs_baseline         400.5442 vs 400.5442  -1e-7 %
+        cSi_homojunction      432.5877 vs 432.4894  -0.023 %
+
+    i.e. exact on every perovskite preset (``alpha = 0`` in the outer
+    layers makes ``G[0] = G[-1] = 0``), and small but real on the stacks
+    whose absorber touches a contact. Fixing it costs nothing on the
+    presets the 2D parity gates use, which is why it can be unconditional.
+    """
+    G = np.asarray(G_1d, dtype=float)
+    if G.ndim != 1 or G.shape[0] < 2:
+        return G
+    # The ratio is exactly 2 at both ends and 1 elsewhere, independently of
+    # the spacing: w[0]/h[0] = dy[0] / (dy[0]/2). No need to form dy.
+    scale = np.ones_like(G)
+    scale[0] = 2.0
+    scale[-1] = 2.0
+    return G * scale
 
 
 def _diffusion_per_node(
