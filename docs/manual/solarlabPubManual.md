@@ -2769,6 +2769,51 @@ Observed warnings:
 These warnings do not affect simulator correctness but should be resolved
 before a formal software release.
 
+## SCAPS Comparison: Model Alignment Table
+
+SCAPS is not an equivalent solver reached by substituting a parameter set.
+It differs from SolarLab in operating mode, contact model, interface
+treatment and discretisation, and several of those differences change the
+computed figures of merit directly. Any quantitative comparison must
+therefore state which physics is being held common. The table below is
+that statement; each SolarLab entry was verified against the source rather
+than restated from design intent, and the right-hand column gives the
+condition under which a comparison of that row is meaningful.
+
+| Item | SCAPS | SolarLab | Condition for a valid comparison |
+|---|---|---|---|
+| Operating mode | Steady state plus linear small signal; no general transient | Radau/BDF transient and a direct steady-state Newton driver | Use the ion-frozen direct steady state (`run_jv_sweep_ss`, `solve_voc_ss`). The transient agrees with it to 5 mV in $V_\mathrm{oc}$ and 1 % in $J_\mathrm{sc}$, but only the steady state is definitionally the same quantity |
+| Contacts | Metal work function, or a flat-band work function computed per temperature | Manual $V_\mathrm{bi}$ or the derived `compute_V_bi()`; Dirichlet pin by default, Robin optional | Enable `flat_band_contacts` to adopt the SCAPS convention, and align work functions, contact equilibrium densities and surface velocities together. Note the SolarLab default *syncs* $V_\mathrm{bi}$ to doping, so a doping sweep moves the boundary condition by about 59.5 mV per decade whereas SCAPS holds the work function fixed |
+| Temperature | $N_C,N_V\propto T^{3/2}$; $v_\mathrm{th}\propto T^{1/2}$; most other quantities constant | $N_C,N_V\propto T^{3/2}$ and $n_1,p_1\propto n_i(T)/n_i(300)$; $\mu$, $D_\mathrm{ion}$, $B_\mathrm{rad}$ and $E_g$ carry optional laws, each opt-out by default | **The interface-plane thermal velocities are fixed at their 300 K values and carry no $T^{1/2}$ law.** A temperature comparison against SCAPS is therefore only valid at 300 K on any interface-state path, unless that dependence is supplied explicitly |
+| Interface mesh | Two co-located nodes per interface | Duplicate point removed; optional plane states | Matching the interface velocity is not sufficient — the two codes evaluate the rate on different supports |
+| Interface transport | Thermionic-emission boundary condition | Scharfetter-Gummel flux with an empirical thermionic cap; optional plane states | Compare the face-flux formulae, not only the band offsets. The default cap is density-weighted and near-inert; the dimensionally normalised form is opt-in (`te_physical_norm`) |
+| Interface recombination | Pauwels-Vanhoutte interface states | Surface SRH with cross-carrier sampling and a defect-scoped non-negativity clamp | The defaults are **not** equivalent. Use `interface_plane_closure` or the steady-state `iface_states` path for a like-for-like comparison |
+| Tunnelling | WKB, enabled in DC calculations | Static Padovani-Stratton $E_{00}$ exponential enhancement | Disable on both sides, or validate separately. SolarLab's `interface_tunneling` is off by default, so the aligned condition holds without action |
+| Grading | Several $y(x)$, $P(y)$ and $P(x)$ laws, including optical grading | Simplified $E_g$ and $\chi$ grading; **optics are not graded** | Compare only the common subset. A graded absorber's absorption edge does not shift spatially in SolarLab, so $J_\mathrm{sc}$ reflects the electrical effect alone |
+| Mesh | Interface refinement, iterative adaptive | Fixed tanh clustering | Demonstrate mesh convergence of the extracted metrics; equal node counts do not imply equal resolution |
+| Solution method | Gummel with Newton-Raphson sub-steps | Radau/BDF, or a dense finite-difference Newton | Compare final residuals and conservation, not iteration counts |
+
+Two consequences of this table are load-bearing for the numbers reported
+elsewhere in this chapter.
+
+First, the optical models differ, and that difference is not small. SCAPS
+integrates a scalar absorption coefficient with no Fresnel reflection at
+the transport-layer boundary, whereas SolarLab runs a coherent
+transfer-matrix calculation over the full stack. On the mirrored
+configuration this accounts for a $J_\mathrm{sc}$ of
+$218.2\,\mathrm{A\,m^{-2}}$ against the SCAPS
+$262.8\,\mathrm{A\,m^{-2}}$, a $-17\,\%$ difference. An earlier revision
+of this manual reported that gap as $-12\,\%$; the smaller figure was an
+artefact of a generation quadrature that over-counted absorbed photons,
+and the corrected value is the larger disagreement. Closing it requires a
+SCAPS-matched optical path, not a parameter adjustment.
+
+Second, several rows are *default mismatches* rather than capability gaps:
+contacts, interface recombination and the thermionic normalisation all
+have SCAPS-aligned modes that are off by default. A comparison run that
+does not enable them is comparing two different models, and the resulting
+agreement or disagreement carries no information about either.
+
 # Limitations And Best Practices
 
 ## Model Assumptions
