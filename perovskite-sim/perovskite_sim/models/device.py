@@ -116,10 +116,32 @@ class DeviceStack:
     # equally). When True, the crowding chemical potential is folded into the
     # SG drift argument so steric acts on diffusion only (the dimensionally
     # faithful modified-PNP form), with the Bernoulli structure preserved.
-    # Measured negligible in the dilute regime of the shipped presets
-    # (max P/P_lim ~ 0.011 -> steric ~ 1.011); it only matters near P_lim.
-    # LEGACY tier forces it off. See physics/ion_migration.py.
-    ion_steric_diffusion_only: bool = False
+    # DEFAULT SINCE 2026-07-28 (review F-03). Two reasons, both measured on
+    # ionmonger_benchmark with P_lim lowered to sweep the initial occupancy
+    # theta0 = P0/P_lim at fixed P0:
+    #
+    #   theta0   legacy FF   legacy J_sc   PNP FF    PNP J_sc
+    #    0.01     0.77668      221.573     0.77662    221.571
+    #    0.50     0.79294      221.761     0.77658    221.571
+    #    0.80     0.82237      222.099     0.77648    221.571
+    #    0.95     0.82097      223.346     0.77616    221.571
+    #    0.99     0.78163      228.586     0.77580    221.569
+    #
+    # (1) The legacy whole-flux factor s = 1/(1 - theta) multiplies DRIFT as
+    # well as diffusion, so crowding ACCELERATES ion transport instead of
+    # impeding it. The consequences are visibly unphysical: fill factor
+    # climbing from 0.777 to 0.822 and J_sc gaining 3.2 % as the lattice
+    # fills, plus a hysteresis index swinging to -0.066 and a 2.3 -> 5.2 s
+    # stiffness cost. The modified-PNP form enhances only the diffusive
+    # part, which is the term the crowding chemical potential actually
+    # steepens, and is flat across the whole range.
+    #
+    # (2) It is free where the shipped presets live: at their theta ~ 0.011
+    # the two forms differ by 0.04 mV in V_oc and 0.002 A/m^2 in J_sc.
+    #
+    # LEGACY tier still forces it OFF, so IonMonger reproduction is
+    # unaffected by this default. See physics/ion_migration.py.
+    ion_steric_diffusion_only: bool = True
     # Dual-ion site-sharing model for the diffusion-only steric flux (F05).
     # Only relevant when ion_steric_diffusion_only is on AND a negative
     # species is configured. True (default) = the two species share one

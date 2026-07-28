@@ -2839,13 +2839,25 @@ in Chapter \ref{governing-equations}:
   does not disturb the calibrated parity result; it stays off by default
   because the paths it does affect lack an independent reference baseline
   with the physical cap active;
-- the *default* ionic steric factor multiplies the full flux (drift and
-  diffusion) and is applied per species, an empirical crowding
-  regularization rather than the strict shared-site lattice-gas flux. The
-  diffusion-only modified-PNP form is available as an opt-in
-  (`ion_steric_diffusion_only`); it is numerically immaterial for the
-  shipped presets (dilute ions, peak $P/P_\mathrm{lim} \approx 0.011$, so
-  $V_\mathrm{oc}$ shifts under 0.1 mV) and matters only near saturation;
+- the ionic steric flux now defaults to the diffusion-only modified-PNP
+  form (`ion_steric_diffusion_only`), which folds the crowding chemical
+  potential into the drift argument so that crowding impedes only the
+  diffusive term. The superseded default multiplied the *whole* flux by
+  $s = 1/(1 - P/P_\mathrm{lim})$, drift included, so lattice filling
+  accelerated ion transport instead of impeding it. Sweeping the initial
+  occupancy $\theta_0 = P_0/P_\mathrm{lim}$ at fixed $P_0$ makes the
+  consequence visible: the old form's fill factor climbs from 0.777 to
+  0.822 and its $J_\mathrm{sc}$ gains 3.2 % as the lattice fills, with the
+  hysteresis index swinging to $-0.066$, while the modified-PNP form is
+  flat across $\theta_0 \in [0.01, 0.99]$ ($J_\mathrm{sc}$ 221.571 to
+  221.569). The change is free where the shipped presets sit — at their
+  $\theta \approx 0.011$ the two forms differ by 0.04 mV in
+  $V_\mathrm{oc}$. The LEGACY tier still forces the old form, so IonMonger
+  reproduction is unaffected. What remains a limitation is narrower: the
+  steric model is a single-site lattice gas, so it does not represent
+  ion-ion correlation beyond site exclusion, and no shipped preset
+  approaches saturation, leaving the near-singular regime exercised only
+  by the flux-level tests;
 - the interface-SRH non-negativity clamp applies only at declared-defect
   interfaces, and what it suppresses there is **not** physical
   depletion-region generation. The cross-carrier rate pairs electrons
@@ -2892,11 +2904,15 @@ in Chapter \ref{governing-equations}:
   calibrated for room temperature and should not be combined with a
   temperature sweep without supplying that dependence explicitly.
 
-Both optional forms are off by default: the physical thermionic-emission
-normalization changes bulk-node transport results that have no independent
-reference baseline, and the diffusion-only ion-steric form, though it does
-not perturb the current presets (sub-0.1 mV), is held pending validation
-against high-ion-density configurations.
+Of the two optional flux forms, the ion-steric one is now the default: the
+high-occupancy validation it was waiting on was carried out, and it found
+the superseded form producing unphysical trends rather than merely
+differing (see above). The physical thermionic-emission normalization
+remains off by default for the opposite reason — enabling it raises the
+steady-state $V_\mathrm{oc}$ above the detailed-balance ceiling for the
+absorber gap, so the form as implemented is not yet a defensible default,
+and the transport paths it changes have no independent reference baseline
+to validate it against.
 
 ## Data And Optical Limits
 
