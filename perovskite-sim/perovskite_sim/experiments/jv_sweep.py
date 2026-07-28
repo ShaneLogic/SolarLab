@@ -970,6 +970,17 @@ def run_jv_sweep(
     V_max : upper voltage limit. If None, defaults to max(V_bi_eff*1.3, 1.4). With
       heterojunction band offsets, V_oc can exceed V_bi, so pass a larger
       value (e.g. 1.4 V for MAPbI3) to capture the full forward curve.
+      That default is derived from the CONTACTS and knows nothing about the
+      point being swept, so it misses in both directions. Too low is loud —
+      ``voc_bracketed=False``, and ``v_max_max_attempts`` below recovers it.
+      Too high is silent and expensive: a device whose V_oc has collapsed
+      (deep cliff/spike offsets, short lifetime, strong interface
+      recombination) still gets swept to 1.4 V, grinding the deep
+      forward-injection region above its own V_oc. Measured on two
+      spike-side screening points: 1567 s and 630 s at the default versus
+      23 s and 16 s starting low and climbing, agreeing on V_oc to 1.6 mV
+      and 0.1 mV. For a sweep over devices whose V_oc varies, prefer a low
+      ``V_max`` plus ``v_max_max_attempts`` over one range that fits all.
 
     v_max_max_attempts : Phase E1.9 — opt-in adaptive V_max bump when the
       first sweep fails to bracket V_oc (forward J never crosses zero).
@@ -977,9 +988,17 @@ def run_jv_sweep(
       Values > 1 trigger up to ``v_max_max_attempts - 1`` retries with
       V_max bumped by 0.5 V per attempt (cap at V_initial + 2.0 V). The
       cost is bounded — at worst, ``v_max_max_attempts`` full forward/
-      reverse sweeps. Useful for stacks where V_oc may exceed the
+      reverse sweeps, and fewer once V_max saturates at the cap, since a
+      further rung would repeat that sweep verbatim. Each rung holds the
+      VOLTAGE STEP of the first attempt and grows ``n_points`` to match, so
+      a retry never answers more coarsely than the attempt it is correcting
+      (V_oc is interpolated between the bracketing samples, so its error
+      scales with that step). Useful for stacks where V_oc may exceed the
       default V_max (e.g. Robin contacts at low ETL doping; SCAPS
-      validation script's extreme-N_D sweep points). On exhaustion the
+      validation script's extreme-N_D sweep points), and — passed together
+      with a deliberately low ``V_max`` — as the cheap way to sweep devices
+      whose V_oc is unknown or collapses: start below every candidate and
+      let the ladder climb only where it must. On exhaustion the
       result returns ``voc_bracketed=False`` and the standard sentinel
       zeros for V_oc/FF/PCE — no exception is raised, so callers can
       inspect the flag and decide how to handle the residual gap.
@@ -1000,6 +1019,9 @@ def run_jv_sweep(
         raise ValueError(
             f"v_max_max_attempts must be >= 1, got {v_max_max_attempts}"
         )
+    if n_points < 2:
+        # Checked before the ladder below, which divides by ``n_points - 1``.
+        raise ValueError(f"n_points must be >= 2, got {n_points}")
     if v_max_max_attempts > 1:
         # Adaptive V_max bump: run the legacy single-attempt path first;
         # if it brackets V_oc successfully, return that result unchanged
@@ -1013,11 +1035,20 @@ def run_jv_sweep(
         )
         V_max_cap = V_max_initial + 2.0
         V_max_attempt = V_max_initial
+        # Hold the VOLTAGE STEP fixed and let ``n_points`` grow with the rung,
+        # instead of stretching a fixed sample count over a wider range. V_oc
+        # is interpolated between the two samples that bracket it, so its
+        # error scales with this step; passing ``n_points`` through unchanged
+        # made every retry answer more coarsely than the attempt it was
+        # correcting, and did so systematically in V_max.
+        dV = V_max_initial / (n_points - 1)
+        attempts_used = 0
         last_result: JVResult | None = None
-        for attempt in range(v_max_max_attempts):
+        while True:
             last_result = run_jv_sweep(
                 stack=stack, N_grid=N_grid, v_rate=v_rate,
-                n_points=n_points, rtol=rtol, atol=atol,
+                n_points=int(round(V_max_attempt / dV)) + 1,
+                rtol=rtol, atol=atol,
                 V_max=V_max_attempt, progress=progress,
                 fixed_generation=fixed_generation,
                 illuminated=illuminated, save_snapshots=save_snapshots,
@@ -1026,19 +1057,20 @@ def run_jv_sweep(
             )
             if last_result.metrics_fwd.voc_bracketed:
                 return last_result
-            V_max_attempt = min(V_max_attempt + 0.5, V_max_cap)
-            if V_max_attempt == last_result and attempt > 0:
-                # Hit the cap on the previous attempt already; bail out
-                # rather than spinning on the same V_max value.
+            attempts_used += 1
+            V_max_next = min(V_max_attempt + 0.5, V_max_cap)
+            if attempts_used >= v_max_max_attempts or V_max_next <= V_max_attempt:
+                # Budget spent, or V_max has saturated at the cap so a further
+                # rung would repeat this exact sweep. (The old bail-out here
+                # compared a float with a JVResult and could never fire, so an
+                # exhausted ladder re-ran the capped sweep to the last attempt.)
                 break
-        # ``last_result`` is set: outer loop always executes at least once
-        # because v_max_max_attempts >= 2 in this branch.
+            V_max_attempt = V_max_next
+        # ``last_result`` is set: the loop body always runs at least once.
         assert last_result is not None
         return last_result
     if N_grid < 3:
         raise ValueError(f"N_grid must be >= 3, got {N_grid}")
-    if n_points < 2:
-        raise ValueError(f"n_points must be >= 2, got {n_points}")
     if v_rate <= 0:
         raise ValueError(f"v_rate must be positive, got {v_rate}")
     if not illuminated and fixed_generation is not None:

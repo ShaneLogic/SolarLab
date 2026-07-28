@@ -152,3 +152,84 @@ def test_exhausted_attempts_returns_unbracketed_no_exception():
     assert r.metrics_fwd.voc_bracketed is False
     assert r.metrics_fwd.V_oc == 0.0
     assert r.V_fwd[-1] == pytest.approx(1.0)   # the ladder did climb
+
+
+# ---------------------------------------------------------------------------
+# The ladder's own defects (2026-07-29). Both concern the RETRY path only —
+# a first attempt that brackets is untouched, and so is attempts=1.
+# ---------------------------------------------------------------------------
+
+
+def test_retry_preserves_the_first_attempt_voltage_resolution():
+    """A retry must not answer at a coarser voltage step than the attempt
+    that failed.
+
+    ``n_points`` used to be passed through unchanged while ``V_max`` grew, so
+    the step dV = V_max/(n_points-1) got LARGER on every rung: here 1.2/19 =
+    0.063 V on the attempt that failed, 1.7/19 = 0.089 V on the one that
+    answered. V_oc is interpolated between the two samples that bracket it, so
+    its error scales with that step (Stage 2a measured ~10 mV between a coarse
+    and a fine grid on this class of stack) — the ladder was trading away the
+    precision of the answer it exists to produce. Worse, the degradation is
+    systematic in V_max, so on a design sweep it lands preferentially on
+    whichever points needed the retry.
+    """
+    stack = _scaps_mirror_robin_low_etl()
+    r = run_jv_sweep(
+        stack, N_grid=30, n_points=20, v_rate=5.0,
+        V_max=1.2, v_max_max_attempts=2,
+    )
+    assert r.metrics_fwd.voc_bracketed is True
+    assert r.V_fwd[-1] == pytest.approx(1.7)      # the retry did happen
+
+    dV_first_attempt = 1.2 / (20 - 1)
+    steps = [b - a for a, b in zip(r.V_fwd[:-1], r.V_fwd[1:])]
+    assert max(steps) == pytest.approx(dV_first_attempt, rel=0.05), (
+        f"retry ran at dV={max(steps):.4f} V; the attempt that failed used "
+        f"{dV_first_attempt:.4f} V. The ladder must hold the resolution and "
+        f"grow n_points with V_max."
+    )
+
+
+def test_ladder_stops_once_v_max_reaches_its_cap(monkeypatch):
+    """Exhausting the budget must not re-run the same capped sweep.
+
+    The bail-out compared ``V_max_attempt`` (a float) with ``last_result``
+    (a ``JVResult``), which is never equal, so the branch was dead: once
+    V_max saturated at ``V_initial + 2.0`` every remaining attempt repeated
+    that identical sweep. With v_rate low and a stiff stack each of those is
+    minutes of wasted work for a result already known.
+
+    The loop's control flow is what is under test, so ``compute_metrics`` is
+    forced to report "not bracketed" rather than hunting for a stack whose
+    V_oc outruns the cap — that would make the test a physics fixture again,
+    which is exactly what this file's header says went wrong before.
+    """
+    from perovskite_sim.experiments import jv_sweep as jv
+
+    real_compute_metrics = jv.compute_metrics
+
+    def never_brackets(*args, **kwargs):
+        m = real_compute_metrics(*args, **kwargs)
+        return dataclasses.replace(m, voc_bracketed=False, V_oc=0.0)
+
+    monkeypatch.setattr(jv, "compute_metrics", never_brackets)
+
+    sweeps = []
+
+    def count_sweeps(stage, current, total, message):
+        if stage == "jv_init":
+            sweeps.append(total)
+
+    stack = _scaps_mirror_robin_low_etl()
+    jv.run_jv_sweep(
+        stack, N_grid=15, n_points=5, v_rate=5.0,
+        V_max=1.0, v_max_max_attempts=10, progress=count_sweeps,
+    )
+
+    # V_max climbs 1.0 -> 1.5 -> 2.0 -> 2.5 -> 3.0 (cap = 1.0 + 2.0) and then
+    # stops: a sixth rung would repeat the 3.0 sweep verbatim.
+    assert len(sweeps) == 5, (
+        f"ran {len(sweeps)} sweeps for a 5-rung ladder — the cap bail-out "
+        "did not fire"
+    )
