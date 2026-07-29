@@ -3124,7 +3124,8 @@ and validation are also supplied.
 
 The manual was drafted from:
 
-- `docs/solarlab_manual_source_dossier.md`
+- `docs/solarlab_manual_source_dossier.md` (removed 2026-07-29; in git history
+  at `db700fe`)
 - `docs/manual/valEvidence260723.md` (current evidence pass)
 - `docs/manual/valEvidence260519.md` (superseded 2026-05-19 pass)
 - `perovskite-sim/CLAUDE.md`

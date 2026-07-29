@@ -55,8 +55,16 @@ back; the per-figure generators they call need `551615d`).
 
 | File | What |
 |------|------|
-| ~~`scaps_validation_report.md`~~ | Removed 2026-07-28. Regenerate with `perovskite-sim/scripts/run_scaps_validation.py`; the findings are in `reference/SolarLabSCAPSGapAnal.pdf` |
-| `SolarLab_validation_gap_analysis_2026-06-24.md` | Physics-validation gap analysis (Zotero × codebase) |
-| `solarlab_manual_source_dossier.md` | Source dossier for the user manual |
 | `manual/SCAPSManual2016.pdf` | SCAPS-1D reference manual (input) |
 | `docker-development.md` | Docker dev environment notes |
+
+### Removed loose docs
+
+All of these were write-once prose: no code, test, fixture or build step read
+them, so removing them changes nothing that runs.
+
+| File | Was | Get it back |
+|------|-----|-------------|
+| `SolarLab_validation_gap_analysis_2026-06-24.md` | Physics-validation gap analysis (Zotero × codebase). Superseded by `reference/SolarLabVerifyFormal260702.pdf` | `git checkout db700fe -- docs/SolarLab_validation_gap_analysis_2026-06-24.md` (removed 2026-07-29) |
+| `solarlab_manual_source_dossier.md` | Source dossier the user manual was drafted from; its content is in the manual itself | `git checkout db700fe -- docs/solarlab_manual_source_dossier.md` (removed 2026-07-29) |
+| `scaps_validation_report.md` | SCAPS validation report | Regenerate with `perovskite-sim/scripts/run_scaps_validation.py` (removed 2026-07-28) |
