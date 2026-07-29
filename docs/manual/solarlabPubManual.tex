@@ -1143,16 +1143,18 @@ the interface-plane-state formulation employed for the SCAPS comparison
 carries its own thermionic fluxes and is \emph{unaffected} by the flag
 (measured \(V_\mathrm{oc}\) identical to four decimals with it on or
 off), so the calibrated parity result is untouched. It is kept off by
-default for a reason established by measurement rather than caution: the
-Richardson constant and the effective density of states are not drawn
-from a common effective mass, so \(v_R\) is 4.6x too small at the
-hole-transport layer and the bound throttles transport far harder than
-the physics warrants --- on a near-insulating contact that reproducibly
-diverges the solve (Chapter 17). Configurations without per-layer
-effective-DOS data are bit-identical whether it is on or off. Second,
-the two-leg bracket itself vanishes at thermodynamic equilibrium only
-when the adjacent layers share the same effective density of states or
-when the density-of-states-folded potentials of Eq.
+default for a reason established by measurement rather than caution, and
+the reason is numerical rather than physical: once normalized the bound
+genuinely binds, and where it binds hard the settle becomes sharply more
+expensive. An illuminated settle at \(V=0.9\,\mathrm{V}\) costs
+\(0.17/0.47/1.21\,\mathrm{s}\) at \(N_\mathrm{grid}=20/45/90\) with the
+superseded bound and \(0.25/0.52/{>}240\,\mathrm{s}\) with the
+normalized one --- a cliff at fine mesh, which puts mesh-convergence
+studies out of reach with the flag on (Chapter 17). Configurations
+without per-layer effective-DOS data are bit-identical whether it is on
+or off. Second, the two-leg bracket itself vanishes at thermodynamic
+equilibrium only when the adjacent layers share the same effective
+density of states or when the density-of-states-folded potentials of Eq.
 \ref{eq:dos-potentials} are active. System-level equilibrium is
 nevertheless preserved unconditionally by the \emph{cap construction}:
 at equilibrium the drift-diffusion flux is exactly zero, and the
@@ -3740,27 +3742,31 @@ use in Chapter \ref{governing-equations}:
   self-consistent Richardson constants, and the steady-state driver
   agrees to six decimals with and without interface-plane states.
 
-  A characterisation pass was nevertheless run before promoting it, and
-  it found a concrete blocker, so the flag stays opt-in. The Richardson
-  constant and the effective density of states are not drawn from a
-  common effective mass --- \(A^{*}\) sits at the free-electron value
-  while \(N_C\) comes from the parameter set --- so the ratio
-  \(v_R = A^{*}T^{2}/(qN_C)\) is not the emission velocity
-  \(\sqrt{k_BT/2\pi m^{*}}\) it reduces to when both derive from one
-  \(m^{*}\). It is 4.6x too small at the hole-transport layer of the
-  mirrored stack, which makes the bound throttle transport far harder
-  than the physics warrants. On a near-insulating contact (that stack
-  with Robin contacts and an electron-transport donor density of
-  \(10^{12}\,\mathrm{cm^{-3}}\)) the consequence is not a shifted number
-  but a diverging solve: enabling the flag drives the sweep to
-  non-finite carrier densities, reproducibly, where the superseded bound
-  completes and returns \(V_\mathrm{oc} = 1.448\,\mathrm{V}\). Deriving
-  \(A^{*}\) from each layer's own \(N_C\) removes the divergence
-  (\(V_\mathrm{oc} = 1.385\,\mathrm{V}\)), which identifies the
-  inconsistency as the blocker rather than the normalization. Making the
-  two self-consistent is itself a behavioural change to every
-  configuration carrying effective-DOS data and needs its own
-  validation, so it is recorded here rather than applied;
+  Two characterisation passes were run before promoting it, and it stays
+  opt-in because each found a cost the previous had missed. The first
+  identified the Richardson constant and the effective density of states
+  not being drawn from a common effective mass, so that
+  \(v_R = A^{*}T^{2}/(qN_C)\) was not the \(\sqrt{k_BT/2\pi m^{*}}\) it
+  reduces to when both derive from one \(m^{*}\) but 4.6x too small at
+  the hole-transport layer --- enough to throttle a near-insulating
+  contact into a non-finite solve. That inconsistency has since been
+  fixed by deriving \(A^{*}\) from each layer's own DOS, and it is no
+  longer the obstacle.
+
+  The second pass found the obstacle that remains, and it is numerical
+  rather than physical. Once the bound is normalized it genuinely binds,
+  and where it binds hard the settle becomes very much more expensive
+  --- sharply, not gradually. An illuminated settle at
+  \(V=0.9\,\mathrm{V}\) on the mirrored configuration takes \(0.17\),
+  \(0.47\) and \(1.21\,\mathrm{s}\) at \(N_\mathrm{grid} = 20\), \(45\)
+  and \(90\) with the superseded bound; with the normalized one it takes
+  \(0.25\), \(0.52\) and \emph{more than 240} --- a cliff at fine mesh
+  rather than a constant factor. Mesh-convergence work, which is exactly
+  what a validation study needs, is therefore not currently practical
+  with the flag on. Making it the default awaits solver work on the
+  conditioning of the capped face (the smooth magnitude blend the
+  steady-state driver already uses is the obvious starting point), not a
+  further re-measurement;
 \item
   the ionic steric flux now defaults to the diffusion-only modified-PNP
   form (\texttt{ion\_steric\_diffusion\_only}), which folds the crowding
