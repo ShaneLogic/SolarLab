@@ -774,6 +774,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     # back endpoints are untouched (has_grading_params False), so legacy and
     # ungraded configs are bit-identical even with the flag on. LEGACY tier
     # forces it off (mirrors dos_band_potentials). See physics/grading.py.
+    from perovskite_sim.physics.thermionic_constants import (
+        is_free_electron_default, richardson_from_dos,
+    )
     from perovskite_sim.physics.grading import (
         has_grading_params,
         grading_coordinate,
@@ -910,8 +913,23 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             N_C_node_arr[mask] = float(p.Nc300) * dos_T_scale
         if p.Nv300:
             N_V_node_arr[mask] = float(p.Nv300) * dos_T_scale
-        A_star_n_node[mask] = p.A_star_n
-        A_star_p_node[mask] = p.A_star_p
+        # Richardson constants consistent with the layer's own effective DOS.
+        #
+        # A* and N are both fixed by one effective mass, so v_R = A*T^2/(qN)
+        # is the thermal emission velocity sqrt(kT/2*pi*m*) ONLY when they
+        # agree. A layer that declares Nc300/Nv300 but leaves A_star at the
+        # free-electron default gets a v_R built from two unrelated
+        # constants — measured 4.63x / 0.54x / 2.17x adrift on the HTL /
+        # absorber / ETL of the SCAPS mirror stack, in different directions.
+        # An explicitly configured A_star is a statement about the interface
+        # and always wins; only the untouched default is replaced.
+        _a_n, _a_p = p.A_star_n, p.A_star_p
+        if p.Nc300 and is_free_electron_default(_a_n):
+            _a_n = richardson_from_dos(float(p.Nc300), T_dev)
+        if p.Nv300 and is_free_electron_default(_a_p):
+            _a_p = richardson_from_dos(float(p.Nv300), T_dev)
+        A_star_n_node[mask] = _a_n
+        A_star_p_node[mask] = _a_p
 
         # Field-dependent mobility parameters (Phase 3.2). Copied verbatim
         # from the layer so per-node arrays can average to face values.
