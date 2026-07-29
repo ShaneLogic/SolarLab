@@ -212,6 +212,21 @@ def carrier_continuity_rhs(
                 # side when the two disagree in sign.
                 mag = w * a_te + (1.0 - w) * a_sg
             return float(np.copysign(mag, J_sg))
+        # Band edges for the THERMIONIC barrier. These are the physical ones
+        # when the caller supplies them: with ``dos_band_potentials`` active,
+        # ``chi``/``Eg`` above are transport potentials carrying
+        # V_T·ln(N_C/N_C_ref), which makes the Scharfetter-Gummel flux correct
+        # under Boltzmann statistics but is not a real energy shift. Thermionic
+        # emission crosses the real band step. Measured on scaps_mirror_v2, the
+        # folded valence step at the HTL/PVK face is +0.097 eV against a
+        # physical +0.180 eV — nearly a factor two in the Boltzmann exponent.
+        # Falls back to the folded arrays so hand-built params dicts still work.
+        chi_te = params.get("chi_te")
+        Eg_te = params.get("Eg_te")
+        if chi_te is None:
+            chi_te = chi
+        if Eg_te is None:
+            Eg_te = Eg
         # Ensure flux arrays are writable (they may be views)
         J_n = J_n.copy()
         J_p = J_p.copy()
@@ -224,7 +239,7 @@ def carrier_continuity_rhs(
             # must pass through unchanged. The previous sign inversion was
             # turning every downhill step into a "barrier" and capping the
             # diode injection current at Richardson * exp(-|DeltaE|/kT) ~ 0.
-            delta_Ec = chi[f_idx] - chi[f_idx + 1]
+            delta_Ec = chi_te[f_idx] - chi_te[f_idx + 1]
             if abs(delta_Ec) > 0.05:
                 J_te_n = thermionic_emission_flux(
                     float(n[f_idx]), float(n[f_idx + 1]), float(delta_Ec), T_val,
@@ -235,7 +250,8 @@ def carrier_continuity_rhs(
             # Hole VB offset. E_v = E_vac - chi - Eg, so
             # E_v_right - E_v_left = (chi_left + Eg_left) - (chi_right + Eg_right),
             # which is what's written below — the VB sign was already correct.
-            delta_Ev = (chi[f_idx] + Eg[f_idx]) - (chi[f_idx + 1] + Eg[f_idx + 1])
+            delta_Ev = ((chi_te[f_idx] + Eg_te[f_idx])
+                        - (chi_te[f_idx + 1] + Eg_te[f_idx + 1]))
             if abs(delta_Ev) > 0.05:
                 J_te_p = thermionic_emission_flux(
                     float(p[f_idx]), float(p[f_idx + 1]), float(delta_Ev), T_val,

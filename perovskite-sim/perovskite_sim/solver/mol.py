@@ -353,6 +353,14 @@ class MaterialArrays:
     # configuration's DOS data). See physics/interface_plane.py.
     iface_plane_closure: bool = False
     iface_plane_generation: bool = False
+    # Band edges BEFORE the effective-DOS fold. ``chi``/``Eg`` above are
+    # transport potentials once ``dos_band_potentials`` is active (they
+    # carry V_T·ln(N_C/N_C_ref) so the SG flux is right under Boltzmann
+    # statistics); these are the real energies. Thermionic emission crosses
+    # the real step, so the TE cap and its face-selection threshold read
+    # these. Equal to chi/Eg by construction when the fold is off.
+    chi_phys: np.ndarray | None = None
+    Eg_phys: np.ndarray | None = None
     interface_plane_prm: tuple = ()
     # Smooth TE-cap blend width (relative). 0.0 = exact hard cap
     # (bit-identical legacy). Set ONLY by the steady-state driver
@@ -392,6 +400,11 @@ class MaterialArrays:
             d["A_star_n"] = self.A_star_n
             d["A_star_p"] = self.A_star_p
             d["T"] = self.T_device
+            # TE reads the PHYSICAL band edges; the SG drift potentials keep
+            # the folded ``chi``/``Eg`` above. Same arrays when the fold is off.
+            if self.chi_phys is not None:
+                d["chi_te"] = self.chi_phys
+                d["Eg_te"] = self.Eg_phys
             if self.te_softness > 0.0:
                 d["te_softness"] = self.te_softness
             if self.te_physical_norm and self.N_C_node is not None:
@@ -992,6 +1005,22 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         getattr(stack, "ion_steric_diffusion_only", False)
         or os.environ.get("SOLARLAB_ION_STERIC_DIFF") == "1"
     ) and sim_mode.name != "legacy"
+    # Physical band edges, captured BEFORE the effective-DOS fold.
+    #
+    # The fold below turns chi/Eg into TRANSPORT potentials: it adds
+    # V_T·ln(N_C/N_C_ref) so that the Scharfetter-Gummel flux is correct
+    # under Boltzmann statistics. It is not a real energy shift. Thermionic
+    # emission crosses the REAL band step, so it must read these arrays
+    # rather than the folded ones -- measured +0.097 eV folded against a
+    # physical +0.180 eV at the HTL/PVK valence step of scaps_mirror_v2,
+    # nearly a factor two in the Boltzmann exponent, and enough to change
+    # which faces clear the 50 meV capping threshold at all.
+    #
+    # With the fold off these are the same arrays by construction, so
+    # nothing downstream of the fold can tell the difference.
+    chi_phys = chi.copy()
+    Eg_phys = Eg.copy()
+
     if _dos_band:
         _ref = next(
             (L.params for L in elec_layers if L.role == "absorber"),
@@ -1346,8 +1375,15 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     if sim_mode.use_thermionic_emission:
         for idx in iface_list:
             if idx > 0 and idx < N - 1:
-                delta_Ec = abs(chi[idx] - chi[idx - 1])
-                delta_Ev = abs((chi[idx - 1] + Eg[idx - 1]) - (chi[idx] + Eg[idx]))
+                # PHYSICAL band edges, not the DOS-folded transport
+                # potentials: the threshold asks whether a real band step
+                # exists, and the fold can move a step across 50 meV in
+                # either direction.
+                delta_Ec = abs(chi_phys[idx] - chi_phys[idx - 1])
+                delta_Ev = abs(
+                    (chi_phys[idx - 1] + Eg_phys[idx - 1])
+                    - (chi_phys[idx] + Eg_phys[idx])
+                )
                 if delta_Ec > TE_THRESHOLD or delta_Ev > TE_THRESHOLD:
                     interface_face_list.append(idx - 1)
 
@@ -1567,6 +1603,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         alpha=alpha,
         chi=chi,
         Eg=Eg,
+        chi_phys=chi_phys,
+        Eg_phys=Eg_phys,
         ni_sq=ni_sq,
         tau_n=tau_n,
         tau_p=tau_p,
