@@ -802,10 +802,13 @@ cap. A dimensionally correct *emission-velocity* form is available as an
 opt-in (`te_physical_norm`): dividing Eq. \ref{eq:te-flux} by the
 band-edge density of states converts $A^{*}T^{2}$ into an emission velocity
 $v_R = A^{*}T^{2}/(qN_C)$, giving $J = qv_R(\dots)$, which binds at real
-interface densities. Enabling it changes the physics measurably where it
-acts: on a density-of-states-bearing stack the
-steady-state $V_\mathrm{oc}$ rises by roughly 0.3 V once the cap begins to
-bind. This hook acts only on the bulk-node transport cap
+interface densities. Until July 2026 enabling it raised the steady-state
+$V_\mathrm{oc}$ by roughly 0.2–0.3 V, above the detailed-balance ceiling
+for the absorber gap; that was traced to a defect in the cap rather than in
+the normalization (see the cap contract below) and, with it fixed, the flag
+now leaves $V_\mathrm{oc}$ unchanged at
+$1.2013\,\mathrm{V}$ on the mirrored configuration. This hook acts only on
+the bulk-node transport cap
 (used by the transient driver and the direct steady-state solver); the
 interface-plane-state formulation employed for the SCAPS comparison carries
 its own thermionic fluxes and is *unaffected* by the flag (measured
@@ -822,12 +825,21 @@ unconditionally by the *cap construction*: at equilibrium the
 drift-diffusion flux is exactly zero, and the smaller-magnitude selection
 below therefore returns zero regardless of the value of $J_{\mathrm{TE}}$.
 
-The TE flux acts as a *cap*: at each flagged face the solver takes the
-smaller-magnitude of the drift-diffusion flux and $J_{\mathrm{TE}}$, so the
-interface-limited current can only reduce, never enhance, the
-drift-diffusion prediction. (The steady-state Newton driver replaces the hard
-minimum with a smooth sigmoid blend of adjustable width to restore
-differentiability; see Chapter \ref{numerical-method}.)
+The TE flux acts as a *cap* on the magnitude only: at each flagged face the
+solver takes the smaller of the two magnitudes and keeps the *direction* of
+the drift-diffusion flux, so the interface-limited current can only reduce,
+never enhance or reverse, the drift-diffusion prediction. The direction is
+retained deliberately — the thermionic bound states how much current the
+interface can emit, not which way it flows. Until July 2026 the
+implementation returned $J_{\mathrm{TE}}$ complete with its own sign, so
+wherever the two disagreed the bound reversed the flux instead of limiting
+it; at the hole-transport interface of the mirrored configuration this
+replaced a $+1.3\times10^{7}$ hole-extraction current with a reversed one
+five orders smaller, which is what produced the above-ceiling
+$V_\mathrm{oc}$ noted earlier. (The steady-state Newton driver replaces the
+hard minimum with a smooth sigmoid blend of adjustable width to restore
+differentiability; that blend interpolates magnitudes, for the same reason.
+See Chapter \ref{numerical-method}.)
 
 ### Thermionic-Field-Emission Tunnelling
 
@@ -950,8 +962,9 @@ ideal-solution model. (In the discretization, $P$ in Eq. \ref{eq:steric}
 is evaluated as the average of the two face-adjacent nodal densities; the
 $10^{-6}$ floor guards the division at full saturation.)
 
-This default form does **not** impose $P \le P_\mathrm{lim}$, and should
-not be read as a finite-site-occupancy constraint. Because $s(P)>0$
+This whole-flux form — the default until July 2026, and still what the
+LEGACY tier applies — does **not** impose $P \le P_\mathrm{lim}$, and
+should not be read as a finite-site-occupancy constraint. Because $s(P)>0$
 multiplies the whole flux, the zero-flux condition is unchanged,
 
 $$
@@ -969,21 +982,28 @@ $\mu/k_BT = \ln[\theta/(1-\theta)] + q\phi/k_BT$ with
 $\theta = P/P_\mathrm{lim}$, which is what the opt-in form below
 implements.
 
-By default SolarLab applies $s(P)$ to the *entire* flux of
-Eq. \ref{eq:ion-flux}, scaling diffusion and drift together; the
-strict lattice-gas chemical-potential derivation enhances only the
-concentration-gradient term. The dimensionally faithful form is available
-as an opt-in (`ion_steric_diffusion_only`): it folds the crowding chemical
+Applying $s(P)$ to the *entire* flux of Eq. \ref{eq:ion-flux} scales
+diffusion and drift together, whereas the strict lattice-gas
+chemical-potential derivation enhances only the concentration-gradient
+term. **Since July 2026 the dimensionally faithful form is the default**
+(`ion_steric_diffusion_only`): it folds the crowding chemical
 potential $\mu_\mathrm{ex}/k_BT = -\ln(1-P/P_\mathrm{lim})$ into the
 Scharfetter-Gummel drift argument, so the excluded-volume correction acts
 on diffusion only while the exponential-fitting stability is preserved, and
 the equilibrium recovers the lattice-gas (Fermi-Dirac) occupation
-$\theta/(1-\theta) \propto e^{-\phi/V_T}$. The distinction is numerically
-immaterial for the shipped presets: the mobile-ion occupancy stays dilute
-(peak $P/P_\mathrm{lim} \approx 0.011$ on the IonMonger benchmark, so
-$s \approx 1.011$), and enabling the physical form shifts $V_\mathrm{oc}$
-by under 0.1 mV. The two forms diverge only as $P \to P_\mathrm{lim}$
-(extreme interfacial pile-up). For a dual mobile-ion system the diffusion-only form additionally couples
+$\theta/(1-\theta) \propto e^{-\phi/V_T}$. The LEGACY tier still applies the
+whole-flux form, so IonMonger reproduction is unaffected.
+
+The two forms are numerically indistinguishable on the shipped presets,
+where the mobile-ion occupancy stays dilute (peak
+$P/P_\mathrm{lim} \approx 0.011$ on the IonMonger benchmark, so
+$s \approx 1.011$ and the $V_\mathrm{oc}$ difference is under 0.1 mV). They
+diverge as $\theta \to 1$, and that is what settled the default: sweeping
+the initial occupancy at fixed $P_0$, the whole-flux form's fill factor
+climbs from 0.777 to 0.822 and its $J_\mathrm{sc}$ gains 3.2 % as the
+lattice fills, because multiplying the drift term by $s$ makes crowding
+*accelerate* ion transport instead of impeding it. The diffusion-only form
+is flat across $\theta_0 \in [0.01, 0.99]$. For a dual mobile-ion system the diffusion-only form additionally couples
 the species through their occupancy: with `ion_steric_shared_site` (default)
 the crowding potential uses the total occupancy
 $1-(P_+ + P_-)/P_\mathrm{lim}$, the standard multi-species finite-size
@@ -993,7 +1013,7 @@ setting it false gives distinct sublattices, each species crowding only
 against its own $P_\mathrm{lim}$ — a physical assumption that should be
 stated explicitly for the device in question. The negative-species equation
 carries the same diffusion-only form symmetrically. The
-default whole-flux form is an empirical crowding regularization, not a
+superseded whole-flux form is an empirical crowding regularization, not a
 finite-occupancy constraint (Chapter 17).
 
 Because ionic diffusivities ($D_I \sim 10^{-16}\,m^2 s^{-1}$) are many
@@ -1176,10 +1196,24 @@ dual-cell width. Three details matter for heterojunctions:
   $n_s p_s < n_{i,\mathrm{eff}}^2$, the origin of depletion-region
   generation current and reverse dark current. Interfaces *without* a
   declared defect use the local mass-action reference and are left
-  unclamped, so physical depletion generation is retained there. The clamp
-  suppresses reverse-bias generation at declared-defect interfaces; an
-  occupancy-consistent interface-state treatment would remove this
-  restriction.
+  unclamped, so physical depletion generation is retained there.
+
+  How much physics the clamp actually removes was measured in July 2026,
+  and the answer is: none. The cross-carrier reference is the cross-side
+  product of two *majority* equilibrium densities, which on the mirrored
+  configuration is $1.0\times10^{44}\,\mathrm{m^{-6}}$ against a local
+  mass-action $n_i^2$ of $1.98\times10^{24}$ at the same node — twenty
+  orders of magnitude larger. Lifting the clamp there yields
+  $-8.4\,\mathrm{A\,m^{-2}}$ at $-0.5\,\mathrm{V}$, but that figure is set
+  by the inflated reference, not by interface physics. Evaluated instead
+  against a true detailed-balance reference — the interface-plane closure's
+  $n_{i,s}^2$, which equals the node's own $n_i^2$ on this stack — the
+  signed rate is $-8\times10^{-21}\,\mathrm{A\,m^{-2}}$, with a ceiling
+  near $4\times10^{-12}$ even for a fully depleted plane. Note also that an
+  occupancy-consistent interface-state treatment does **not** by itself
+  restore generation: both the quasi-steady-state plane rate and the plane
+  closure solve for a depletion $\delta \ge 0$ and so are non-negative by
+  construction, independently of any clamp.
 
 Optional refinements (default off, used for SCAPS cross-validation) evaluate
 the rate on Boltzmann-projected *interface-plane* densities, or solve a local
