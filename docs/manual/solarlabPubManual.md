@@ -813,10 +813,14 @@ the bulk-node transport cap
 interface-plane-state formulation employed for the SCAPS comparison carries
 its own thermionic fluxes and is *unaffected* by the flag (measured
 $V_\mathrm{oc}$ identical to four decimals with it on or off), so the
-calibrated parity result is untouched. It is kept off by default because
-the paths it does affect have no independent reference baseline with the
-physical cap active (Chapter 17); configurations without per-layer
-effective-DOS data are bit-identical whether it is on or off.
+calibrated parity result is untouched. It is kept off by default for a
+reason established by measurement rather than caution: the Richardson
+constant and the effective density of states are not drawn from a common
+effective mass, so $v_R$ is 4.6x too small at the hole-transport layer and
+the bound throttles transport far harder than the physics warrants — on a
+near-insulating contact that reproducibly diverges the solve (Chapter 17).
+Configurations without per-layer effective-DOS data are bit-identical
+whether it is on or off.
 Second, the two-leg bracket itself vanishes at thermodynamic equilibrium
 only when the adjacent layers share the same effective density of states or
 when the density-of-states-folded potentials of Eq. \ref{eq:dos-potentials}
@@ -2872,18 +2876,34 @@ in Chapter \ref{governing-equations}:
   cap itself, not in the normalization — the cap returned the thermionic
   value complete with its own sign, so wherever that sign disagreed with the
   drift-diffusion flux the bound *reversed* the current instead of limiting
-  it. With the magnitude-only cap the three configurations agree
-  ($V_\mathrm{oc} = 1.2013\,\mathrm{V}$ with the flag off, on, and on with
-  self-consistent Richardson constants). What keeps it opt-in now is only
-  that the physical normalization makes the bound genuinely bind, and the
-  transport paths it then constrains have no independent reference baseline;
-  promoting it needs a characterisation pass, not a bug fix. Two related
-  points remain open: the barrier passed to the thermionic expression is the
-  density-of-states-folded band offset rather than the physical one
-  ($+0.097$ against $+0.180\,\mathrm{eV}$ at the same face), and the
-  Richardson constant and the effective density of states are not drawn from
-  a common effective mass, so their ratio is not the thermal emission
-  velocity it is meant to be;
+  it. A second defect fed the same expression the density-of-states-folded
+  band offset instead of the physical one ($+0.097$ against
+  $+0.180\,\mathrm{eV}$ at the same face); the fold is a transport potential,
+  and thermionic emission crosses the real step. Both are fixed, and on the
+  mirrored configuration the flag is now inert: $V_\mathrm{oc} =
+  1.2013\,\mathrm{V}$ with it off, on, and on with self-consistent
+  Richardson constants, and the steady-state driver agrees to six decimals
+  with and without interface-plane states.
+
+  A characterisation pass was nevertheless run before promoting it, and it
+  found a concrete blocker, so the flag stays opt-in. The Richardson
+  constant and the effective density of states are not drawn from a common
+  effective mass — $A^{*}$ sits at the free-electron value while $N_C$ comes
+  from the parameter set — so the ratio $v_R = A^{*}T^{2}/(qN_C)$ is not the
+  emission velocity $\sqrt{k_BT/2\pi m^{*}}$ it reduces to when both derive
+  from one $m^{*}$. It is 4.6x too small at the hole-transport layer of the
+  mirrored stack, which makes the bound throttle transport far harder than
+  the physics warrants. On a near-insulating contact (that stack with Robin
+  contacts and an electron-transport donor density of
+  $10^{12}\,\mathrm{cm^{-3}}$) the consequence is not a shifted number but
+  a diverging solve: enabling the flag drives the sweep to non-finite
+  carrier densities, reproducibly, where the superseded bound completes and
+  returns $V_\mathrm{oc} = 1.448\,\mathrm{V}$. Deriving $A^{*}$ from each
+  layer's own $N_C$ removes the divergence ($V_\mathrm{oc} =
+  1.385\,\mathrm{V}$), which identifies the inconsistency as the blocker
+  rather than the normalization. Making the two self-consistent is itself a
+  behavioural change to every configuration carrying effective-DOS data and
+  needs its own validation, so it is recorded here rather than applied;
 - the ionic steric flux now defaults to the diffusion-only modified-PNP
   form (`ion_steric_diffusion_only`), which folds the crowding chemical
   potential into the drift argument so that crowding impedes only the
