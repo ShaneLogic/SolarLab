@@ -362,6 +362,8 @@ So the defect carries ~95 % of the effect. Do not compensate for a missing defec
 
 A calibration note for whoever populates these: an SRV set here is **device-level and grid-referenced**, not a face-value physical velocity. The cross-carrier interface SRH rate is sampled on bulk-interior nodes (over-counting relative to an interface-plane evaluation) and normalised by the interface dual-cell width, so it moves with `N_grid`. Measured on this stack, N_grid 60 → 120 shifts V<sub>oc</sub> by −16.0 mV on the cliff flank but only −0.6 mV at the alignment optimum and −0.6 mV on the spike flank — the residual is localised to the cliff side, not a uniform offset.
 
+That caveat is executable, not just prose: `tests/regression/test_interface_srv_grid_reference.py` (slow) pins the calibrated penalty on `solarscale_nip_band_aligned_iface` at its own mesh (−188.0 mV ± 10) and asserts the contrast that defines "grid-referenced" — at fixed voltage resolution, N_grid 60 → 120 leaves the interface-**free** config at −0.2 mV (converged) and moves the interface-active one by −11.8 mV, so essentially all of the mesh sensitivity is the interface channel. If that second assertion ever fails because the channel became mesh-independent, this note is stale: delete it and the test together.
+
 ## Data Model Invariants
 
 - `MaterialParams`, `SolverConfig`, `LayerSpec`, `DeviceStack` are **frozen dataclasses**. Never mutate in place — use `dataclasses.replace(...)` to produce a new instance (see `degradation._freeze_ions` for the canonical pattern).
