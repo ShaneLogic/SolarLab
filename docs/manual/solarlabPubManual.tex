@@ -1145,16 +1145,17 @@ carries its own thermionic fluxes and is \emph{unaffected} by the flag
 off), so the calibrated parity result is untouched. It is kept off by
 default for a reason established by measurement rather than caution, and
 the reason is numerical rather than physical: once normalized the bound
-genuinely binds, and where it binds hard the settle becomes sharply more
-expensive. An illuminated settle at \(V=0.9\,\mathrm{V}\) costs
-\(0.17/0.47/1.21\,\mathrm{s}\) at \(N_\mathrm{grid}=20/45/90\) with the
-superseded bound and \(0.25/0.52/{>}240\,\mathrm{s}\) with the
-normalized one --- a cliff at fine mesh, which puts mesh-convergence
-studies out of reach with the flag on (Chapter 17). Configurations
-without per-layer effective-DOS data are bit-identical whether it is on
-or off. Second, the two-leg bracket itself vanishes at thermodynamic
-equilibrium only when the adjacent layers share the same effective
-density of states or when the density-of-states-folded potentials of Eq.
+genuinely binds, and the coupled solve is fragile where it binds hard.
+Four separate attempts to promote it were each reverted by a different
+failure --- an above-ceiling \(V_\mathrm{oc}\), a divergence on a
+near-insulating contact, a fine-mesh cost cliff, and a divergence in
+deep forward injection at \(V_\mathrm{max}=3\,\mathrm{V}\) --- with the
+results identical between the two forms everywhere the solve completes.
+Chapter 17 gives the full record. Configurations without per-layer
+effective-DOS data are bit-identical whether it is on or off. Second,
+the two-leg bracket itself vanishes at thermodynamic equilibrium only
+when the adjacent layers share the same effective density of states or
+when the density-of-states-folded potentials of Eq.
 \ref{eq:dos-potentials} are active. System-level equilibrium is
 nevertheless preserved unconditionally by the \emph{cap construction}:
 at equilibrium the drift-diffusion flux is exactly zero, and the
@@ -3742,31 +3743,51 @@ use in Chapter \ref{governing-equations}:
   self-consistent Richardson constants, and the steady-state driver
   agrees to six decimals with and without interface-plane states.
 
-  Two characterisation passes were run before promoting it, and it stays
-  opt-in because each found a cost the previous had missed. The first
-  identified the Richardson constant and the effective density of states
-  not being drawn from a common effective mass, so that
-  \(v_R = A^{*}T^{2}/(qN_C)\) was not the \(\sqrt{k_BT/2\pi m^{*}}\) it
-  reduces to when both derive from one \(m^{*}\) but 4.6x too small at
-  the hole-transport layer --- enough to throttle a near-insulating
-  contact into a non-finite solve. That inconsistency has since been
-  fixed by deriving \(A^{*}\) from each layer's own DOS, and it is no
-  longer the obstacle.
+  Four attempts were made to promote it to the default, and each was
+  reverted by a distinct failure that the preceding characterisation had
+  not covered. The record is given in full because the pattern, not any
+  one entry, is the finding.
 
-  The second pass found the obstacle that remains, and it is numerical
-  rather than physical. Once the bound is normalized it genuinely binds,
-  and where it binds hard the settle becomes very much more expensive
-  --- sharply, not gradually. An illuminated settle at
-  \(V=0.9\,\mathrm{V}\) on the mirrored configuration takes \(0.17\),
-  \(0.47\) and \(1.21\,\mathrm{s}\) at \(N_\mathrm{grid} = 20\), \(45\)
-  and \(90\) with the superseded bound; with the normalized one it takes
-  \(0.25\), \(0.52\) and \emph{more than 240} --- a cliff at fine mesh
-  rather than a constant factor. Mesh-convergence work, which is exactly
-  what a validation study needs, is therefore not currently practical
-  with the flag on. Making it the default awaits solver work on the
-  conditioning of the capped face (the smooth magnitude blend the
-  steady-state driver already uses is the obvious starting point), not a
-  further re-measurement;
+  The first attempt raised the steady-state \(V_\mathrm{oc}\) above the
+  detailed-balance ceiling; that was two defects in the cap rather than
+  in the normalization --- it returned the thermionic value complete
+  with its own sign, so a sign disagreement \emph{reversed} the flux
+  instead of limiting it, and it read the barrier from the
+  density-of-states-folded transport potentials rather than the physical
+  band edges (\(+0.097\) against \(+0.180\,\mathrm{eV}\)). Both are
+  fixed. The second diverged on a near-insulating contact, traced to the
+  Richardson constant not sharing an effective mass with the effective
+  density of states, leaving \(v_R\) 4.6x too small; that is fixed too,
+  by deriving \(A^{*}\) from each layer's own DOS. The third hit a cost
+  cliff at fine mesh --- an illuminated settle at \(V=0.9\,\mathrm{V}\)
+  costing \(1.21\,\mathrm{s}\) at \(N_\mathrm{grid}=90\) with the
+  superseded bound and more than \(200\,\mathrm{s}\) with the normalized
+  one --- which turned out to be a protocol artefact: splitting the same
+  rise into three warm-started steps costs \(2.92\) and
+  \(2.54\,\mathrm{s}\) respectively, the normalized bound being the
+  faster of the two, and every production sweep steps and warm-starts.
+  The fourth diverged in deep forward injection: sweeps to
+  \(V_\mathrm{max} = 1.5\) and \(2.1\,\mathrm{V}\) agree exactly between
+  the two forms (\(V_\mathrm{oc} = 1.42500\,\mathrm{V}\)), while
+  \(V_\mathrm{max} = 3.0\,\mathrm{V}\) completes with the superseded
+  bound and fails to a non-finite solve with the normalized one.
+
+  What the sequence shows is not that the characterisation was too small
+  each time but that it could not have been large enough. The superseded
+  bound is of order \(10^{28}\)--\(10^{35}\) and therefore almost never
+  binds, so any measurement that does not place the cap in a binding
+  regime reports ``no change'' --- and the binding regimes are scattered
+  (near-insulating contacts, cold starts at large bias, fine meshes,
+  deep injection) rather than forming a region one can enumerate. Where
+  the bound does bind the results are correct and often identical, but
+  the coupled solve is fragile in several unrelated corners.
+
+  The flag therefore stays opt-in, and promoting it is a
+  solver-robustness task --- conditioning of the capped face under
+  strong binding --- rather than a further round of measurement. Users
+  comparing against a code that models interface-limited transport
+  should enable it deliberately and check convergence on their own
+  stack;
 \item
   the ionic steric flux now defaults to the diffusion-only modified-PNP
   form (\texttt{ion\_steric\_diffusion\_only}), which folds the crowding
