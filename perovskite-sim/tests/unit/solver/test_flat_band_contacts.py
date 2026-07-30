@@ -96,6 +96,7 @@ def test_flag_off_leaves_robin_inactive():
 
 # ----------------------------- behaviour ---------------------------------
 
+@pytest.mark.slow
 def test_base_jv_flat_band_close_to_baseline():
     """At normal doping flat-band ~= the ohmic pin (huge S, V_bi 1.294 vs
     1.30): base V_oc shifts by no more than a few tens of mV."""
@@ -110,6 +111,7 @@ def test_base_jv_flat_band_close_to_baseline():
     assert abs(m1.J_sc - m0.J_sc) / m0.J_sc < 0.02
 
 
+@pytest.mark.slow
 def test_low_doped_etl_flat_band_eliminates_pseudo_crossing():
     """At N_D(ETL)=1e12 cm^-3 the ohmic-pin contact produced an UNPHYSICAL
     pseudo-crossing (reported V_oc = 1.38 V, above the ~1.25 V

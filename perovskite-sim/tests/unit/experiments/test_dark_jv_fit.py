@@ -123,6 +123,7 @@ def test_run_dark_jv_returns_populated_dataclass(nip_stack):
     assert 0.0 <= r.V_fit_lo < r.V_fit_hi <= 1.0
 
 
+@pytest.mark.slow
 def test_run_dark_jv_ideality_in_physical_range(nip_stack):
     """nip_MAPbI3 is SRH-dominated; ideality should be in [1.0, 2.5]."""
     r = run_dark_jv(nip_stack, V_max=1.0, N_grid=30, n_points=25, v_rate=2.0)
@@ -131,6 +132,7 @@ def test_run_dark_jv_ideality_in_physical_range(nip_stack):
     )
 
 
+@pytest.mark.slow
 def test_run_dark_jv_fit_matches_shockley_in_window(nip_stack):
     """Predicted J from (n, J_0) must match |J| in the fit window to ~30%."""
     r = run_dark_jv(nip_stack, V_max=1.0, N_grid=30, n_points=30, v_rate=2.0)

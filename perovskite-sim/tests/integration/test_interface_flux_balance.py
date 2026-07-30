@@ -113,6 +113,7 @@ def ladder(stack):
 # flux balance: what leaves one side is what the interface consumes
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_electron_and_hole_sinks_are_exactly_paired(ladder):
     """Interface SRH annihilates one electron per hole — bit-exactly.
 

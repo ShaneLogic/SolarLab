@@ -88,6 +88,7 @@ def _scaps_mirror_robin_low_etl():
 _EG_ABSORBER_EV = 1.53   # SCAPS_PVK band gap => V_oc ceiling for this stack
 
 
+@pytest.mark.slow
 def test_default_attempts_preserves_legacy_no_retry_behaviour():
     """``v_max_max_attempts=1`` (default) on a stack that fails to bracket
     at V_max=1.2 returns sentinel zeros — bit-identical to pre-E1.9."""
@@ -99,6 +100,7 @@ def test_default_attempts_preserves_legacy_no_retry_behaviour():
     assert r.metrics_fwd.J_sc > 0.0
 
 
+@pytest.mark.slow
 def test_auto_extend_v_max_succeeds_on_second_attempt():
     """``v_max_max_attempts=2`` retries once with V_max=1.7 → succeeds.
 
@@ -121,6 +123,7 @@ def test_auto_extend_v_max_succeeds_on_second_attempt():
     assert r.V_fwd[-1] == pytest.approx(1.7)
 
 
+@pytest.mark.slow
 def test_already_bracketed_first_attempt_does_not_retry():
     """When the first sweep already brackets V_oc, ``v_max_max_attempts``
     has no effect — same result whether attempts=1 or attempts=5."""
@@ -137,6 +140,7 @@ def test_already_bracketed_first_attempt_does_not_retry():
     assert r1.metrics_fwd.V_oc == pytest.approx(r2.metrics_fwd.V_oc)
 
 
+@pytest.mark.slow
 def test_exhausted_attempts_returns_unbracketed_no_exception():
     """When all attempts exhaust without bracketing, return
     ``voc_bracketed=False`` without raising — caller inspects the flag,
@@ -160,6 +164,7 @@ def test_exhausted_attempts_returns_unbracketed_no_exception():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_retry_preserves_the_first_attempt_voltage_resolution():
     """A retry must not answer at a coarser voltage step than the attempt
     that failed.
@@ -191,6 +196,7 @@ def test_retry_preserves_the_first_attempt_voltage_resolution():
     )
 
 
+@pytest.mark.slow
 def test_ladder_stops_once_v_max_reaches_its_cap(monkeypatch):
     """Exhausting the budget must not re-run the same capped sweep.
 

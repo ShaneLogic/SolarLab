@@ -27,6 +27,7 @@ _TANDEM_CONFIG = str(
 )
 
 
+@pytest.mark.slow
 def test_tandem_endpoint_returns_metrics(client: TestClient) -> None:
     """POST /api/tandem returns 200 with J-V arrays and four key metrics.
 
@@ -57,6 +58,7 @@ def test_tandem_endpoint_missing_config(client: TestClient) -> None:
     assert r.status_code == 404
 
 
+@pytest.mark.slow
 def test_tandem_endpoint_includes_v_top_v_bot(client: TestClient) -> None:
     """POST /api/tandem response includes per-sub-cell voltage arrays."""
     payload = {

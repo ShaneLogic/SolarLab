@@ -49,6 +49,7 @@ def test_interface_defect_calibration_factor_settable():
     assert d.calibration_factor == pytest.approx(1.0e-5)
 
 
+@pytest.mark.slow
 def test_n_t_calibration_factor_equivalence_on_scaps_mirror():
     """SCAPS-mirror with N_t_cm2=1e13 + calibration_factor=1e-5 produces
     the same V_oc as N_t_cm2=1e8 + calibration_factor=1.0 because the
@@ -91,6 +92,7 @@ def test_n_t_calibration_factor_equivalence_on_scaps_mirror():
     )
 
 
+@pytest.mark.slow
 def test_scaps_mirror_baseline_unchanged_post_e1_6_migration():
     """Migrating scaps_mirror.yaml from ``N_t_cm2: 1e8`` (empirical)
     to ``N_t_cm2: 1e13 + calibration_factor: 1e-5`` (SCAPS direct +

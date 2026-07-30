@@ -77,6 +77,7 @@ def test_illuminated_jsc_physical():
     assert 230.0 < J < 280.0  # ~25.7 mA/cm^2 = 257 A/m^2
 
 
+@pytest.mark.slow
 def test_ss_jv_matches_frozen_ion_transient():
     """Parity gate: same physics, two drivers, frozen ions both."""
     stack = _frozen_ion(_stack())
@@ -88,6 +89,7 @@ def test_ss_jv_matches_frozen_ion_transient():
     assert ss.metrics.J_sc == pytest.approx(tr.metrics_fwd.J_sc, rel=0.01)
 
 
+@pytest.mark.slow
 def test_direct_voc_consistent_with_jv():
     stack = _frozen_ion(_stack())
     ss = run_jv_sweep_ss(stack, N_grid=30, V_max=1.25, n_points=26)
@@ -95,6 +97,7 @@ def test_direct_voc_consistent_with_jv():
     assert voc == pytest.approx(ss.metrics.V_oc, abs=2e-3)
 
 
+@pytest.mark.slow
 def test_stop_after_voc_truncates_and_avoids_deep_injection():
     """``stop_after_voc`` halts the continuation once J crosses zero, so a
     high ``V_max`` no longer drags the sweep into the deep-forward-injection
@@ -113,6 +116,7 @@ def test_stop_after_voc_truncates_and_avoids_deep_injection():
     assert ss.V[-1] < 1.5
 
 
+@pytest.mark.slow
 def test_stop_after_voc_default_off_reaches_vmax():
     """Default (False) is the legacy full-range sweep (bit-identical path)."""
     stack = _frozen_ion(_stack())
@@ -120,6 +124,7 @@ def test_stop_after_voc_default_off_reaches_vmax():
     assert ss.V[-1] == pytest.approx(1.25, abs=1e-9)
 
 
+@pytest.mark.slow
 @pytest.mark.xfail(
     reason="PREMISE FALSIFIED (2026-06-12): with the Gummel phi-step in "
     "place the voltage walk COMPLETES (points converge/certify) and J(V) "

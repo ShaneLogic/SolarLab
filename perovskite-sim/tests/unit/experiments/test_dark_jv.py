@@ -11,6 +11,7 @@ def nip_stack():
     return load_device_from_yaml("configs/nip_MAPbI3.yaml")
 
 
+@pytest.mark.slow
 def test_dark_jv_runs(nip_stack):
     """Dark J-V should complete without error."""
     result = run_jv_sweep(
@@ -22,6 +23,7 @@ def test_dark_jv_runs(nip_stack):
     assert len(result.J_fwd) == 15
 
 
+@pytest.mark.slow
 def test_dark_jv_no_photocurrent(nip_stack):
     """In the dark, J_sc (current at V=0) should be ≈ 0."""
     result = run_jv_sweep(
@@ -32,6 +34,7 @@ def test_dark_jv_no_photocurrent(nip_stack):
     assert abs(J_at_zero) < 1.0, f"Dark J(V=0) = {J_at_zero:.3f} A/m², expected ~0"
 
 
+@pytest.mark.slow
 def test_dark_jv_diode_shape(nip_stack):
     """Dark J-V should show diode-like behaviour: J < 0 at forward bias."""
     result = run_jv_sweep(
@@ -55,6 +58,7 @@ def test_dark_jv_rejects_fixed_generation(nip_stack):
         )
 
 
+@pytest.mark.slow
 def test_dark_vs_light_jsc_differs(nip_stack):
     """Light J-V should have significantly higher J_sc than dark."""
     result_dark = run_jv_sweep(

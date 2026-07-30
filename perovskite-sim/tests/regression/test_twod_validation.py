@@ -271,6 +271,7 @@ def test_twod_robin_bounded_shift_vs_dirichlet():
     )
 
 
+@pytest.mark.slow
 @pytest.mark.regression
 def test_twod_robin_microstructure_coexistence_smoke():
     """Robin contacts + grain boundary produce finite, ordered J-V (no NaN/Inf).
@@ -522,6 +523,7 @@ def test_twod_field_mobility_bounded_shift():
     )
 
 
+@pytest.mark.slow
 @pytest.mark.regression
 def test_twod_field_mobility_robin_microstructure_coexistence_smoke():
     """μ(E) + Robin contacts + grain boundary on a coarse mesh produce a finite,

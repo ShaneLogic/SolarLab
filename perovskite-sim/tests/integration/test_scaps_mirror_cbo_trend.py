@@ -32,6 +32,7 @@ def voc_by_delta_ec():
     return out
 
 
+@pytest.mark.slow
 def test_cbo_voc_drops_at_cliff(voc_by_delta_ec):
     """SCAPS: V_oc(ΔE_C=−0.5) significantly below V_oc(ΔE_C=0)."""
     assert voc_by_delta_ec[-0.5] < voc_by_delta_ec[0.0] - 0.10, (
@@ -40,12 +41,14 @@ def test_cbo_voc_drops_at_cliff(voc_by_delta_ec):
     )
 
 
+@pytest.mark.slow
 def test_cbo_voc_range_at_least_200mV(voc_by_delta_ec):
     """SCAPS V_oc range across ΔE_C∈[−0.5,+0.3] is ~420 mV."""
     rng = max(voc_by_delta_ec.values()) - min(voc_by_delta_ec.values())
     assert rng >= 0.20, f"V_oc range {rng*1000:.0f} mV below 200 mV threshold"
 
 
+@pytest.mark.slow
 def test_cbo_voc_holds_at_spike(voc_by_delta_ec):
     """SCAPS shows V_oc near-plateau for moderate spike (ΔE_C=+0.3).
 

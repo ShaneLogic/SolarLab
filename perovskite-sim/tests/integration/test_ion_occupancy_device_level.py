@@ -47,6 +47,7 @@ def swept():
     return x, mat, r
 
 
+@pytest.mark.slow
 def test_occupancy_stays_strictly_below_the_site_limit(swept):
     """0 <= P/P_lim < 1 at every node and every voltage.
 

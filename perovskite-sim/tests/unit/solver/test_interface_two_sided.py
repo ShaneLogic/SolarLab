@@ -125,6 +125,7 @@ def test_legacy_interfaces_unaffected():
                                   _interface_dn(base, x, m_on))
 
 
+@pytest.mark.slow
 def test_base_jv_runs_and_stays_sane():
     """Full J-V with the mirror pair: converges, brackets, V_oc within a
     bounded shift of the one-sided result (pair B is minority-limited at the

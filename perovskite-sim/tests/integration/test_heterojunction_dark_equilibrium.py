@@ -318,6 +318,7 @@ def _leg_scale(x, y, stack, mat):
 # (a) every face current vanishes
 # --------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.parametrize("key", list(CASES))
 def test_dark_equilibrium_face_currents_vanish(key):
     """No face carries current at V=0 in the dark, for ANY offset / DOS ratio."""

@@ -136,6 +136,7 @@ def test_legacy_interfaces_unaffected():
                                   _interface_dn(base, x, m_on))
 
 
+@pytest.mark.slow
 def test_base_jv_converges_at_validation_protocol():
     """The stability gate that killed the unfloored mirror pair: the base J-V
     must converge on the exact validation grid (V_max=1.6, n=40) with the

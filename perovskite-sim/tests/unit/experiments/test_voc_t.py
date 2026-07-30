@@ -40,6 +40,7 @@ def test_rejects_small_N_grid(nip_stack):
 # Functional tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_voc_t_runs(nip_stack):
     """run_voc_t should complete and return a VocTResult."""
     result = run_voc_t(nip_stack, T_min=280.0, T_max=320.0, n_points=3,
@@ -50,6 +51,7 @@ def test_voc_t_runs(nip_stack):
     assert len(result.J_sc_arr) == 3
 
 
+@pytest.mark.slow
 def test_voc_t_temperature_sweep_matches_input(nip_stack):
     """T_arr should span [T_min, T_max] inclusive in n_points linear steps."""
     result = run_voc_t(nip_stack, T_min=280.0, T_max=320.0, n_points=3,
@@ -59,6 +61,7 @@ def test_voc_t_temperature_sweep_matches_input(nip_stack):
     assert np.all(np.diff(result.T_arr) > 0)
 
 
+@pytest.mark.slow
 def test_voc_t_voc_physical(nip_stack):
     """V_oc at each T should be in a physically reasonable range."""
     result = run_voc_t(nip_stack, T_min=280.0, T_max=320.0, n_points=3,
@@ -67,6 +70,7 @@ def test_voc_t_voc_physical(nip_stack):
     assert np.all(result.V_oc_arr < 1.5)
 
 
+@pytest.mark.slow
 def test_voc_t_slope_negative(nip_stack):
     """dV_oc/dT should be negative (heating narrows V_oc for any
     non-degenerate semiconductor — the kT·ln(J_00/J_sc) term wins over
@@ -76,6 +80,7 @@ def test_voc_t_slope_negative(nip_stack):
     assert result.slope < 0, f"slope = {result.slope:.4e} V/K"
 
 
+@pytest.mark.slow
 def test_voc_t_activation_energy_below_bandgap(nip_stack):
     """The extrapolated T=0 intercept (proxy for E_A) should not exceed
     the absorber bandgap by more than a small margin — recombination can
@@ -86,6 +91,7 @@ def test_voc_t_activation_energy_below_bandgap(nip_stack):
     assert result.E_A_eV > 0.5, f"E_A = {result.E_A_eV:.3f} eV"
 
 
+@pytest.mark.slow
 def test_voc_t_all_finite(nip_stack):
     """All arrays and scalars in the result should be finite."""
     result = run_voc_t(nip_stack, T_min=280.0, T_max=320.0, n_points=3,
@@ -99,6 +105,7 @@ def test_voc_t_all_finite(nip_stack):
     assert np.isfinite(result.R_squared)
 
 
+@pytest.mark.slow
 def test_voc_t_result_frozen(nip_stack):
     """VocTResult should be immutable."""
     result = run_voc_t(nip_stack, T_min=280.0, T_max=320.0, n_points=3,
@@ -107,6 +114,7 @@ def test_voc_t_result_frozen(nip_stack):
         result.slope = 0.0
 
 
+@pytest.mark.slow
 def test_voc_t_progress_callback(nip_stack):
     """Progress callback should be called during the sweep."""
     calls = []

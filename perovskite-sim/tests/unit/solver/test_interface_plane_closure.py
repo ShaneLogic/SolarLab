@@ -168,6 +168,7 @@ def test_legacy_preset_unaffected():
                                   _interface_dn(base, x, m_on))
 
 
+@pytest.mark.slow
 def test_base_jv_converges_at_validation_protocol():
     """The stability gate: full J-V on the exact validation grid with the
     closure active. Bracketed V_oc inside the physical window."""

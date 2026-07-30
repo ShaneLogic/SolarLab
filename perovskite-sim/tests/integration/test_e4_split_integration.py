@@ -68,6 +68,7 @@ def test_d_node_consistent_with_d_face(monkeypatch):
     np.testing.assert_allclose(mat.D_n_face, expected_face, rtol=1e-12)
 
 
+@pytest.mark.slow
 def test_legacy_path_bit_identical_when_env_unset(monkeypatch):
     """env unset → V_oc bit-identical to legacy main 1.0694 +- 5 mV.
 
@@ -94,6 +95,7 @@ def test_assemble_rhs_finite_with_split_active(monkeypatch):
     assert np.all(np.isfinite(dy)), "dy/dt must be finite under split-flux"
 
 
+@pytest.mark.slow
 def test_jv_sweep_voc_in_envelope_with_split(monkeypatch):
     """env=1 → V_oc within physical envelope [0.8, 1.3] V.
 

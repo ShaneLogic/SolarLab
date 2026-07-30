@@ -112,6 +112,7 @@ def test_assemble_rhs_finite_at_dark_eq(monkeypatch):
     assert np.all(np.isfinite(dy))
 
 
+@pytest.mark.slow
 def test_jv_sweep_legacy_voc_when_env_unset(monkeypatch):
     """env unset -> V_oc bit-identical to current main 1.0694 +- 5 mV."""
     monkeypatch.delenv("SOLARLAB_INTERFACE_PLANE_STATE", raising=False)
@@ -124,6 +125,7 @@ def test_jv_sweep_legacy_voc_when_env_unset(monkeypatch):
     assert r.metrics_fwd.V_oc == pytest.approx(_LEGACY_V_OC, abs=5.0e-3)
 
 
+@pytest.mark.slow
 def test_jv_sweep_voc_moves_when_env_active(monkeypatch):
     """env=1 -> V_oc moves measurably from legacy (proves new path participates)."""
     monkeypatch.setenv("SOLARLAB_INTERFACE_PLANE_STATE", "1")

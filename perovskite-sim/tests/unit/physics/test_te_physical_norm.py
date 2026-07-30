@@ -15,6 +15,7 @@ import numpy as np
 from perovskite_sim.discretization.fe_operators import thermionic_emission_flux
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
+import pytest
 
 
 def test_primitive_legacy_form_unchanged():
@@ -46,6 +47,7 @@ def test_physical_form_preserves_equilibrium():
     assert abs(j) < 1e-6 * abs(1.2017e6 * 300.0**2 * n_L / 1e25)
 
 
+@pytest.mark.slow
 def test_ionmonger_bit_identical_no_dos():
     # ionmonger_benchmark has no Nc300/Nv300 -> the flag is a no-op.
     base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")

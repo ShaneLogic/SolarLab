@@ -47,6 +47,7 @@ def mirror_jv(mirror_stack):
     )
 
 
+@pytest.mark.slow
 def test_baseline_voc_bracketed(mirror_jv):
     assert mirror_jv.metrics_fwd.voc_bracketed, (
         "forward sweep did not bracket V_oc — expand V_max"

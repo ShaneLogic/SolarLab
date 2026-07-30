@@ -148,6 +148,7 @@ def voc_by_delta_ec_with_defect():
     return out
 
 
+@pytest.mark.slow
 def test_interface_defect_yields_cliff_direction(voc_by_delta_ec_with_defect):
     """With a PVK/ETL defect, V_oc at the cliff (ΔE_C=-0.3) drops below
     V_oc at flat band (ΔE_C=0) — matches SCAPS' cliff direction."""
@@ -158,6 +159,7 @@ def test_interface_defect_yields_cliff_direction(voc_by_delta_ec_with_defect):
     )
 
 
+@pytest.mark.slow
 def test_interface_defect_voc_range_above_100mV(voc_by_delta_ec_with_defect):
     """ΔE_C ∈ [-0.3, +0.3] V should span ≥ 100 mV in V_oc once the
     per-interface defect is wired (Phase D2 directional-profile-only
@@ -193,6 +195,7 @@ def baseline_metrics():
 _BASELINE_VOC_E98A849 = None  # type: ignore[assignment]
 
 
+@pytest.mark.slow
 def test_scaps_mirror_baseline_metrics_recorded(baseline_metrics):
     """Sanity: baseline metrics fall in the pre-E1 envelope from the
     parked-state baseline test ``test_scaps_mirror_baseline.py``.

@@ -148,6 +148,7 @@ def _make_stack_and_N(n_grid: int = 60):
     return stack, len(x)
 
 
+@pytest.mark.slow
 def test_fixed_generation_override_is_honored():
     """Zero generation profile should drive J_sc to ~0."""
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep

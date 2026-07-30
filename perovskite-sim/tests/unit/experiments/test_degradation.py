@@ -13,6 +13,7 @@ def test_result_dataclass():
     assert result.PCE[-1] < result.PCE[0]
 
 
+@pytest.mark.slow
 def test_j_sc_constant_and_positive():
     """Degradation snapshots should report finite, physically consistent metrics."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
@@ -33,6 +34,7 @@ def test_j_sc_constant_and_positive():
     assert np.any(result.PCE < 0.98 * pce_upper_bound)
 
 
+@pytest.mark.slow
 def test_degradation_metrics_decline_under_bias_stress():
     """Irreversible damage should overcome light-soaking and reduce performance."""
     from perovskite_sim.models.config_loader import load_device_from_yaml

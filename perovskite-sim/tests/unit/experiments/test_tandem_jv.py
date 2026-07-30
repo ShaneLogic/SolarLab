@@ -73,6 +73,7 @@ def test_series_match_non_overlapping_raises():
 # run_tandem_jv — smoke test with mocked load_nk (real sub-cell sweeps)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_run_tandem_jv_smoke(monkeypatch):
     """Smoke test: two identical sub-cells, mocked n,k data.
 

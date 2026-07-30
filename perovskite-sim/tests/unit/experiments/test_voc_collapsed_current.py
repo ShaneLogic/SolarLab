@@ -476,6 +476,7 @@ def collapsed_sweeps():
     }
 
 
+@pytest.mark.slow
 def test_real_collapsed_device_stays_below_its_band_gap(collapsed_sweeps):
     stack, res = collapsed_sweeps
     ceiling = thermodynamic_voc_ceiling(stack)
@@ -488,6 +489,7 @@ def test_real_collapsed_device_stays_below_its_band_gap(collapsed_sweeps):
         )
 
 
+@pytest.mark.slow
 def test_real_collapsed_device_voc_is_v_max_independent(collapsed_sweeps):
     """The sharpest form of the invariant on the real solver path.
 
@@ -524,6 +526,7 @@ def test_real_collapsed_device_voc_is_v_max_independent(collapsed_sweeps):
     )
 
 
+@pytest.mark.slow
 def test_real_collapsed_device_keeps_jsc_and_reports_a_sane_ff(
         collapsed_sweeps):
     """J_sc is measured at V=0, nowhere near the collapse, so it must be

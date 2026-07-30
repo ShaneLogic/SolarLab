@@ -42,6 +42,7 @@ def test_rejects_t_decay_le_t_pulse(nip_stack):
 # Functional tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_tpv_runs(nip_stack):
     """TPV should complete and return a TPVResult."""
     result = run_tpv(nip_stack, N_grid=40, n_points=30,
@@ -51,6 +52,7 @@ def test_tpv_runs(nip_stack):
     assert len(result.t) == len(result.J)
 
 
+@pytest.mark.slow
 def test_tpv_voc_physical(nip_stack):
     """V_oc from TPV should be in a physically reasonable range."""
     result = run_tpv(nip_stack, N_grid=40, n_points=30,
@@ -58,6 +60,7 @@ def test_tpv_voc_physical(nip_stack):
     assert 0.5 < result.V_oc < 1.5, f"V_oc = {result.V_oc:.4f} V"
 
 
+@pytest.mark.slow
 def test_tpv_tau_positive(nip_stack):
     """Fitted decay time tau should be positive."""
     result = run_tpv(nip_stack, N_grid=40, n_points=30,
@@ -65,6 +68,7 @@ def test_tpv_tau_positive(nip_stack):
     assert result.tau > 0
 
 
+@pytest.mark.slow
 def test_tpv_all_finite(nip_stack):
     """All arrays in the result should be finite."""
     result = run_tpv(nip_stack, N_grid=40, n_points=30,
@@ -77,6 +81,7 @@ def test_tpv_all_finite(nip_stack):
     assert np.isfinite(result.delta_V0)
 
 
+@pytest.mark.slow
 def test_tpv_time_monotonic(nip_stack):
     """Time array should be monotonically increasing."""
     result = run_tpv(nip_stack, N_grid=40, n_points=30,
@@ -84,6 +89,7 @@ def test_tpv_time_monotonic(nip_stack):
     assert np.all(np.diff(result.t) > 0)
 
 
+@pytest.mark.slow
 def test_tpv_result_frozen(nip_stack):
     """TPVResult should be immutable."""
     result = run_tpv(nip_stack, N_grid=40, n_points=30,
@@ -92,6 +98,7 @@ def test_tpv_result_frozen(nip_stack):
         result.V_oc = 0.5
 
 
+@pytest.mark.slow
 def test_tpv_progress_callback(nip_stack):
     """Progress callback should be called during TPV."""
     calls = []

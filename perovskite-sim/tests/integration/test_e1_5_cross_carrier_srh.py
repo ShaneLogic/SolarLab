@@ -90,6 +90,7 @@ def voc_by_delta_ec_cross_carrier():
     return out
 
 
+@pytest.mark.slow
 def test_cross_carrier_cliff_direction(voc_by_delta_ec_cross_carrier):
     """V_oc at deep cliff (-0.5 V) drops ≥ 100 mV below flat-band (0.0 V)."""
     voc = voc_by_delta_ec_cross_carrier
@@ -99,6 +100,7 @@ def test_cross_carrier_cliff_direction(voc_by_delta_ec_cross_carrier):
     )
 
 
+@pytest.mark.slow
 def test_cross_carrier_sweep_range_at_least_200mV(voc_by_delta_ec_cross_carrier):
     """SCAPS V_oc range across ΔE_C ∈ [-0.5, +0.3] is ~420 mV; require ≥ 200."""
     voc = voc_by_delta_ec_cross_carrier
@@ -106,6 +108,7 @@ def test_cross_carrier_sweep_range_at_least_200mV(voc_by_delta_ec_cross_carrier)
     assert rng >= 0.20, f"V_oc range {rng*1000:.0f} mV below 200 mV threshold"
 
 
+@pytest.mark.slow
 def test_cross_carrier_preserves_baseline_voc():
     """At the scaps_mirror baseline chi values (chi_ETL=4.10, ~−0.16 V
     pre-existing cliff) with calibrated SRV=0.01 m/s and E_t=0.6 eV, V_oc

@@ -10,6 +10,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 PRESET = "configs/nip_MAPbI3_tmm.yaml"
 
 
+@pytest.mark.slow
 def test_jv_sweep_2d_returns_finite_result():
     stack = load_device_from_yaml(PRESET)
     result = run_jv_sweep_2d(
@@ -38,6 +39,7 @@ def test_jv_sweep_2d_returns_finite_result():
     assert np.isfinite(m.PCE)
 
 
+@pytest.mark.slow
 def test_jv_sweep_2d_has_nontrivial_photocurrent():
     """Illuminated J(V=0) magnitude should be substantial (>10 A/m²) on a real
     perovskite preset. Sign convention is solver-dependent; we only check

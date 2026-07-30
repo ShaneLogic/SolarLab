@@ -152,6 +152,7 @@ def test_jsc_gap_to_scaps_is_optical_not_electrical(cfg, scaps_base):
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cfg", _CONFIGS)
 def test_simulated_jsc_respects_its_own_photon_budget(cfg):
     """Closes the argument at the other end: the current the solver actually

@@ -188,6 +188,7 @@ def test_progress_callback_invoked(tmm_stack):
 # Physics cross-check: integrated EQE J_sc ≈ full-spectrum J_sc at V=0.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_integrated_jsc_matches_full_tmm():
     """∫ q·EQE·Φ_AM15G dλ must reproduce the full TMM J_sc to within ~25 %.
 

@@ -58,6 +58,7 @@ def short_sweep(nip_stack):
     )
 
 
+@pytest.mark.slow
 def test_result_is_populated_dataclass(short_sweep):
     r = short_sweep
     assert isinstance(r, SunsVocResult)
@@ -128,6 +129,7 @@ def test_pseudo_ff_physical(short_sweep):
 # Physics consistency: Suns-Voc slope gives the diode ideality.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_voc_vs_ln_suns_gives_physical_ideality(nip_stack):
     """Slope of V_oc vs ln(suns) = n_eff · V_T. Must land in [1.0, 2.5].
 
@@ -155,6 +157,7 @@ def test_voc_vs_ln_suns_gives_physical_ideality(nip_stack):
     )
 
 
+@pytest.mark.slow
 def test_pseudo_jv_anchors_at_one_sun_voc(nip_stack):
     """At X=1, pseudo-JV anchors at (V_oc_1sun, 0).
 
@@ -181,6 +184,7 @@ def test_pseudo_jv_anchors_at_one_sun_voc(nip_stack):
     assert r.J_pseudo_V[idx_high] > r.V_oc[idx1]
 
 
+@pytest.mark.slow
 def test_progress_callback_invoked(nip_stack):
     """Progress callback fires exactly once per suns level."""
     events: list[tuple[str, int, int, str]] = []

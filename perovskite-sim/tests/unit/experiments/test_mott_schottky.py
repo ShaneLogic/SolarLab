@@ -150,6 +150,7 @@ def csi_cv_result(csi_stack):
     )
 
 
+@pytest.mark.slow
 def test_cv_returns_populated_dataclass(csi_cv_result):
     r = csi_cv_result
     assert isinstance(r, MottSchottkyResult)
@@ -161,6 +162,7 @@ def test_cv_returns_populated_dataclass(csi_cv_result):
     np.testing.assert_allclose(r.one_over_C2, 1.0 / (r.C * r.C), rtol=1e-12)
 
 
+@pytest.mark.slow
 def test_cv_pipeline_returns_finite_fit(csi_cv_result):
     """run_mott_schottky -> MottSchottkyResult must yield finite fit values.
 
@@ -187,6 +189,7 @@ def test_cv_pipeline_returns_finite_fit(csi_cv_result):
     assert r.V[0] - 1e-9 <= r.V_fit_lo <= r.V_fit_hi <= r.V[-1] + 1e-9
 
 
+@pytest.mark.slow
 def test_rejects_sparse_v_range(csi_stack):
     """Need at least 3 V points for a meaningful fit."""
     with pytest.raises(ValueError, match="at least 3"):
@@ -195,6 +198,7 @@ def test_rejects_sparse_v_range(csi_stack):
         )
 
 
+@pytest.mark.slow
 def test_rejects_nonpositive_frequency(csi_stack):
     with pytest.raises(ValueError, match="frequency"):
         run_mott_schottky(

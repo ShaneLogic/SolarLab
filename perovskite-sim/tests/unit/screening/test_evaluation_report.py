@@ -54,6 +54,7 @@ def _patch_fast_production_experiments(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(report_module, "compute_eqe", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("fast skip")))
 
 
+@pytest.mark.slow
 def test_material_evaluation_report_pack_writes_expected_artifacts(tmp_path: Path) -> None:
     records_path = _write_records(tmp_path)
     screening_dir = tmp_path / "screening"
@@ -116,6 +117,7 @@ def test_material_evaluation_report_pack_writes_expected_artifacts(tmp_path: Pat
     assert metrics["figure_quality"]["jv_curve"]["quality_status"] == "workflow_smoke"
 
 
+@pytest.mark.slow
 def test_diagnostic_report_marks_missing_eqe_as_diagnostic_only(tmp_path: Path) -> None:
     records_path = _write_records(tmp_path)
     screening_dir = tmp_path / "screening"
