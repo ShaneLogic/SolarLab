@@ -224,13 +224,14 @@ def run_suns_voc(
         Total drift-diffusion grid nodes across the electrical layers.
     t_settle : float, default 1e-1
         Settling time [s] for each suns level's illuminated steady-state
-        solve. 100 ms covers the slow ionic dynamics on typical
-        perovskite presets (D_ion ≈ 1e-17 m²/s, 400 nm absorber →
-        τ_ion ≈ 16 ms; settling for ~5τ_ion damps the ionic transient
-        that would otherwise leak into the V=0 J_sc reading and corrupt
-        the pseudo-FF computation downstream. Faster ionic presets can
-        use a smaller t_settle to save runtime; very slow ionic presets
-        (D_ion ≪ 1e-17) may need t_settle bumped further.
+        solve. 100 ms is the validated short-time protocol for the shipped
+        gates, not a full ion-equilibration time. For D_ion ≈ 1e-17 m²/s and
+        a 400 nm absorber, L²/D is about 1.6e4 s; screened and blocking-cell
+        charging scales are shorter but still history-dependent. The matched
+        dark-current subtraction removes the residual common-mode drift from
+        the pseudo-FF. Studies of ionic hysteresis or equilibrium must choose
+        an explicit pre-bias and dwell protocol instead of relying on this
+        default.
     rtol, atol : float
         Scipy solver tolerances forwarded to ``run_transient`` and
         ``_find_voc``.
