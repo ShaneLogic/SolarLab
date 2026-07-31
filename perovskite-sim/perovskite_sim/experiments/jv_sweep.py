@@ -921,6 +921,28 @@ def _grid_node_count(stack: DeviceStack, N_grid: int) -> int:
     return 1 + sum(_layer_node_counts(stack, N_grid))
 
 
+def build_electrical_grid(stack: DeviceStack, N_grid: int) -> np.ndarray:
+    """Return the electrical grid POSITIONS run_jv_sweep will integrate on.
+
+    Companion to :func:`_grid_node_count`, which single-sources the node COUNT.
+    Sizing alone was not enough: ``compute_tandem_generation`` used the count to
+    pre-size a generation profile and then sampled it on a UNIFORM grid, while
+    ``run_jv_sweep`` integrated that profile on this tanh-clustered one.  The
+    shapes agreed and the positions did not, so every value landed at the wrong
+    depth — measured at 105 nm of mismatch on a 500 nm sub-cell.  A profile is a
+    spatial density, so any caller that builds one for this solver needs the
+    positions, not just how many of them there are.
+
+    Substrate layers are excluded for the same reason ``run_jv_sweep`` excludes
+    them: they are optical-only and have no drift-diffusion counterpart.
+    """
+    elec = electrical_layers(stack)
+    return multilayer_grid([
+        Layer(lyr.thickness, n)
+        for lyr, n in zip(elec, _layer_node_counts(stack, N_grid))
+    ])
+
+
 def _default_V_max(stack: DeviceStack) -> float:
     """Default upper voltage for a J-V sweep when the caller passes V_max=None.
 
@@ -1086,11 +1108,7 @@ def run_jv_sweep(
     # grid nodes inside them would desync MaterialArrays masks with the
     # solver state vector. TMM/optics paths still see the full stack.
     elec = electrical_layers(stack)
-    layers_grid = [
-        Layer(l.thickness, n)
-        for l, n in zip(elec, _layer_node_counts(stack, N_grid))
-    ]
-    x = multilayer_grid(layers_grid)
+    x = build_electrical_grid(stack, N_grid)
     N = _grid_node_count(stack, N_grid)
     assert N == len(x), "grid node count mismatch — _grid_node_count is out of sync"
     L = sum(l.thickness for l in elec)

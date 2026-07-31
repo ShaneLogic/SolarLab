@@ -41,14 +41,20 @@ def test_compute_tandem_generation_happy_path(monkeypatch):
     wavelengths_m = wavelengths_nm * 1e-9
     spectral_flux = np.full_like(wavelengths_m, 1e21)
 
+    # Pass the grids the sub-cell solves will actually integrate on, exactly as
+    # run_tandem_jv does. Node COUNTS are not enough: G is a spatial density.
+    from perovskite_sim.experiments.jv_sweep import build_electrical_grid
+    x_top = build_electrical_grid(top_cell, 30)
+    x_bot = build_electrical_grid(bottom_cell, 30)
+
     gen = compute_tandem_generation(
         cfg, wavelengths_m, spectral_flux, wavelengths_nm,
-        N_top=30, N_bot=30,
+        x_top=x_top, x_bot=x_bot,
     )
 
     assert isinstance(gen, TandemGeneration)
-    assert gen.G_top.shape == (30,)
-    assert gen.G_bot.shape == (30,)
+    assert gen.G_top.shape == (len(x_top),)
+    assert gen.G_bot.shape == (len(x_bot),)
     assert np.all(gen.G_top >= 0)
     assert np.all(gen.G_bot >= 0)
     assert 0.0 <= gen.parasitic_absorption <= 1.0
@@ -84,17 +90,22 @@ def test_compute_tandem_generation_empty_junction_stack(monkeypatch):
     wavelengths_m = wavelengths_nm * 1e-9
     spectral_flux = np.full_like(wavelengths_m, 1e21)
 
+    from perovskite_sim.experiments.jv_sweep import build_electrical_grid
+    x_top = build_electrical_grid(top_cell, 25)
+    x_bot = build_electrical_grid(bottom_cell, 25)
+
     gen = compute_tandem_generation(
         cfg, wavelengths_m, spectral_flux, wavelengths_nm,
-        N_top=25, N_bot=25,
+        x_top=x_top, x_bot=x_bot,
     )
 
-    assert gen.G_top.shape == (25,)
-    assert gen.G_bot.shape == (25,)
+    n_top, n_bot = len(x_top), len(x_bot)
+    assert gen.G_top.shape == (n_top,)
+    assert gen.G_bot.shape == (n_bot,)
     # Empty junction → parasitic_absorption should be ~0 (only numerical noise)
     assert gen.parasitic_absorption < 1e-6
-    assert gen.top_layer_slice == slice(0, 25)
-    assert gen.bottom_layer_slice == slice(25, 50)
+    assert gen.top_layer_slice == slice(0, n_top)
+    assert gen.bottom_layer_slice == slice(n_top, n_top + n_bot)
 
 
 def test_partition_assigns_layer_ranges_correctly():

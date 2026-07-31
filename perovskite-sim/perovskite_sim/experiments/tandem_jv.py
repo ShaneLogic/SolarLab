@@ -24,6 +24,7 @@ from perovskite_sim.experiments.jv_sweep import (
     JVResult,
     ProgressCallback,
     _grid_node_count,
+    build_electrical_grid,
     compute_metrics,
     run_jv_sweep,
 )
@@ -174,19 +175,24 @@ def run_tandem_jv(
     """
     from perovskite_sim.physics.tandem_optics import compute_tandem_generation
 
-    # Step 1: Determine electrical grid node counts for each sub-cell.
-    # run_jv_sweep validates fixed_generation.shape == (N,) where N is the
-    # electrical node count — not N_grid itself. _grid_node_count is the
-    # single source of truth shared with run_jv_sweep for this formula.
-    N_top = _grid_node_count(cfg.top_cell, N_grid)
-    N_bot = _grid_node_count(cfg.bottom_cell, N_grid)
+    # Step 1: Build each sub-cell's electrical grid.
+    # run_jv_sweep validates fixed_generation.shape == (N,), and matching that
+    # shape used to be all this did. But a generation profile is a spatial
+    # DENSITY -- index i is meaningless without the position of node i -- so
+    # the optics needs the POSITIONS the sub-cell solve will integrate on.
+    # Passing only counts let the optics choose its own (uniform) spacing while
+    # the solver used the tanh-clustered grid, putting every G value at the
+    # wrong depth (see tandem_optics.compute_tandem_generation for the measured
+    # mismatch). build_electrical_grid is the shared source of truth.
+    x_top = build_electrical_grid(cfg.top_cell, N_grid)
+    x_bot = build_electrical_grid(cfg.bottom_cell, N_grid)
 
     # Step 2: One combined-TMM generation solve over the full tandem stack.
     if progress is not None:
         progress("optics", 0, 1, "combined-TMM generation solve")
     gen = compute_tandem_generation(
         cfg, wavelengths_m, spectral_flux, wavelengths_nm,
-        N_top=N_top, N_bot=N_bot,
+        x_top=x_top, x_bot=x_bot,
     )
     if progress is not None:
         progress("optics", 1, 1, "optics complete")
