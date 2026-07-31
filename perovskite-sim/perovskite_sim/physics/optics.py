@@ -445,6 +445,62 @@ def _layer_absorbed_fraction(
     return decay_part + beat_part
 
 
+# Physical bound on the cumulative absorptance. C is the normalised
+# Poynting-flux drop, so C <= 1 exactly; the slack only absorbs float64
+# round-off in the layer-by-layer accumulation.
+_C_MAX_SLACK = 1e-6
+
+
+def _assert_absorptance_bounded(
+    C: np.ndarray,
+    layers: Sequence[TMMLayer],
+    wavelengths: np.ndarray,
+) -> None:
+    """Fail loudly when the cumulative absorptance exceeds unity.
+
+    ``C`` is a fraction of the incident flux, so ``C > 1`` means the stack
+    absorbed more light than reached it. ``_layer_absorbed_fraction``
+    documents the mechanism and measures it: past ``alpha*d ~ 70`` the
+    front-referenced backward amplitude is round-off noise amplified by
+    ``e^{+alpha*d}``, and its own table records the layer absorptance going
+    unphysical from ``alpha*d = 80`` on. But the only guard there is an
+    ``isfinite`` check, which cannot fire until the value overflows float64
+    at ``alpha*d ~ 300`` — so between the two there is a wide window in
+    which ``build_material_arrays`` accepts a generation profile larger
+    than the incident photon flux: finite, unflagged, and wrong by orders
+    of magnitude. Measured: raising the PCBM ETL of pin_MAPbI3_tmm from
+    200 nm to 800 nm yields a photon budget of 136 mA/cm^2, 3.6x the whole
+    incident 300-1000 nm flux, with no exception and no warning.
+
+    The docstring of ``tmm_cumulative_absorptance`` already promises this
+    bound; this is what makes the promise true.
+    """
+    if C.size == 0:
+        return
+    C_max = float(np.max(C))
+    if np.isfinite(C_max) and C_max <= 1.0 + _C_MAX_SLACK:
+        return
+    worst, au_max = -1, 0.0
+    for j, lyr in enumerate(layers):
+        au = float(
+            np.max(4.0 * np.pi * np.asarray(lyr.k) / np.asarray(wavelengths))
+            * lyr.d
+        )
+        if au > au_max:
+            worst, au_max = j, au
+    where = (
+        f"layer {worst} (d={layers[worst].d:.3e} m, max alpha*d={au_max:.1f})"
+        if worst >= 0 else "the stack"
+    )
+    raise ValueError(
+        f"TMM cumulative absorptance reached {C_max:.4g}, above the physical "
+        f"bound of 1 — the stack cannot absorb more than the incident flux. "
+        f"Thickest optical depth is {where}; the transfer matrix loses the "
+        "backward amplitude to round-off past alpha*d ~ 70. Split the layer, "
+        "thin it, or mark it incoherent."
+    )
+
+
 def tmm_cumulative_absorptance(
     layers: Sequence[TMMLayer],
     wavelengths: np.ndarray,
@@ -530,6 +586,7 @@ def tmm_cumulative_absorptance(
             )
             scale = (1.0 - R_front) * T_bulk                        # (n_wl,)
             C[sub_mask, :] = C_slab_full[None, :] + C_sub * scale[None, :]
+        _assert_absorptance_bounded(C, layers, wavelengths)
         return C
 
     amplitudes = _layer_field_amplitudes(
@@ -556,6 +613,7 @@ def tmm_cumulative_absorptance(
         C[mask, :] = offsets[j, :][None, :] + _layer_absorbed_fraction(
             layers[j], wavelengths, u_local, E_plus, E_minus, n_ambient,
         )
+    _assert_absorptance_bounded(C, layers, wavelengths)
     return C
 
 

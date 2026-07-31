@@ -244,11 +244,13 @@ def compute_eqe(
     N_grid : int, default 60
         Total drift-diffusion grid nodes across electrical layers.
     t_settle : float, default 1e-1
-        Illuminated-SS settling time [s] per wavelength. 100 ms covers
-        the slow ionic dynamics on typical perovskite presets
-        (D_ion ≈ 1e-17 m²/s, 400 nm absorber → τ_ion ≈ 16 ms; settling
-        for ~5τ_ion damps the ionic transient that would otherwise leak
-        into the V=0 terminal current and inflate EQE.
+        Illuminated-SS settling time [s] per wavelength. 100 ms is the
+        validated short-time protocol for the shipped gates, not full ionic
+        equilibrium. For D_ion ≈ 1e-17 m²/s and a 400 nm absorber, L²/D is
+        about 1.6e4 s; the relevant screened/charging response also depends on
+        boundary conditions and pre-bias history. The matched dark-current
+        subtraction removes the residual common-mode drift. Ion-equilibrated
+        studies must provide an explicit preconditioning protocol.
     rtol, atol : float
         scipy solver tolerances forwarded to ``run_transient``.
     progress : ProgressCallback | None

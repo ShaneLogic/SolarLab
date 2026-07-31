@@ -162,3 +162,107 @@ def test_linear_fit_rejects_single_point():
     assert slope == 0.0
     assert intercept == 1.0
     assert r2 == 0.0
+
+
+# ---------------------------------------------------------------------------
+# voc_bracketed handling (2026-07 audit)
+#
+# compute_metrics zeroes V_oc / FF / PCE when the sweep contains no
+# zero-current crossing. run_voc_t read metrics.V_oc unconditionally, so one
+# such point put a 0 V sample into the Arrhenius fit. That does not shift the
+# answer, it INVERTS it: E_A is this experiment's only scientific output.
+# ---------------------------------------------------------------------------
+
+class _FakeSweep:
+    """Minimal stand-in for JVResult -- run_voc_t only reads V_fwd / J_fwd."""
+
+    def __init__(self):
+        self.V_fwd = np.linspace(0.0, 1.2, 5)
+        self.J_fwd = np.linspace(200.0, -50.0, 5)
+
+
+class _FakeMetrics:
+    def __init__(self, V_oc, bracketed):
+        self.V_oc = V_oc
+        self.J_sc = 220.0
+        self.FF = 0.78
+        self.PCE = 0.20
+        self.voc_bracketed = bracketed
+
+
+def _patch_sweep(monkeypatch, unbracketed_at=()):
+    """Synthetic V_oc(T) with a known true slope of -2.20 mV/K at 1.10 V/300 K."""
+    from perovskite_sim.experiments import voc_t as mod
+
+    state = {"i": 0}
+    T_all = np.linspace(250.0, 350.0, 6)
+
+    def fake_run_jv_sweep(stack, **kwargs):
+        return _FakeSweep()
+
+    def fake_compute_metrics(V, J, **kwargs):
+        k = state["i"]
+        state["i"] += 1
+        V_true = 1.10 + (-2.20e-3) * (T_all[k] - 300.0)
+        if k in unbracketed_at:
+            # exactly what compute_metrics returns when nothing brackets
+            return _FakeMetrics(0.0, False)
+        return _FakeMetrics(V_true, True)
+
+    monkeypatch.setattr(mod, "run_jv_sweep", fake_run_jv_sweep)
+    monkeypatch.setattr(mod, "compute_metrics", fake_compute_metrics)
+    return T_all
+
+
+def test_clean_sweep_recovers_the_true_slope(nip_stack, monkeypatch):
+    _patch_sweep(monkeypatch)
+    r = run_voc_t(nip_stack, T_min=250.0, T_max=350.0, n_points=6)
+    assert r.slope == pytest.approx(-2.20e-3, rel=1e-6)
+    assert np.all(r.voc_bracketed_arr)
+    assert np.all(np.isfinite(r.V_oc_arr))
+
+
+def test_unbracketed_point_is_excluded_and_slope_stays_negative(
+    nip_stack, monkeypatch
+):
+    _patch_sweep(monkeypatch, unbracketed_at=(0,))
+    with pytest.warns(RuntimeWarning, match="did not bracket"):
+        r = run_voc_t(nip_stack, T_min=250.0, T_max=350.0, n_points=6)
+
+    # The surviving points still recover the true physics exactly.
+    assert r.slope == pytest.approx(-2.20e-3, rel=1e-6)
+    # dV_oc/dT < 0 is required for a non-degenerate semiconductor.
+    assert r.slope < 0.0
+    # The bad sample is reported as NaN, never as a physical 0 V.
+    assert np.isnan(r.V_oc_arr[0])
+    assert r.V_oc_arr[0] != 0.0
+    assert not r.voc_bracketed_arr[0]
+    assert np.all(r.voc_bracketed_arr[1:])
+
+
+def test_the_sentinel_would_have_inverted_the_slope(nip_stack, monkeypatch):
+    """Pins that the exclusion is load-bearing, not cosmetic.
+
+    Fitting the SAME data with the 0 V sentinel left in -- the pre-fix
+    behaviour -- reverses the sign of dV_oc/dT, reporting V_oc rising with
+    temperature.
+    """
+    T_all = np.linspace(250.0, 350.0, 6)
+    V_true = 1.10 + (-2.20e-3) * (T_all - 300.0)
+
+    slope_clean, _, _ = _linear_fit(T_all, V_true)
+    V_with_sentinel = V_true.copy()
+    V_with_sentinel[0] = 0.0                     # what compute_metrics returns
+    slope_poisoned, _, _ = _linear_fit(T_all, V_with_sentinel)
+
+    assert slope_clean < 0.0
+    assert slope_poisoned > 0.0                  # physically impossible
+    # and the excluded-point fit agrees with the clean one
+    slope_excluded, _, _ = _linear_fit(T_all[1:], V_true[1:])
+    assert slope_excluded == pytest.approx(slope_clean, rel=1e-9)
+
+
+def test_raises_when_fewer_than_two_temperatures_bracket(nip_stack, monkeypatch):
+    _patch_sweep(monkeypatch, unbracketed_at=(0, 1, 2, 3, 4))
+    with pytest.raises(ValueError, match="at least 2 temperatures"):
+        run_voc_t(nip_stack, T_min=250.0, T_max=350.0, n_points=6)

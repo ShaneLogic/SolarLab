@@ -21,7 +21,12 @@ from dataclasses import dataclass
 import numpy as np
 
 from perovskite_sim._compat.numpy_compat import trapezoid
-from perovskite_sim.physics.optics import TMMLayer, tmm_absorption_profile
+from perovskite_sim.physics.generation import dual_cell_faces, dual_cell_widths
+from perovskite_sim.physics.optics import (
+    TMMLayer,
+    tmm_absorbed_photon_flux_per_cell,
+    tmm_absorption_profile,
+)
 from perovskite_sim.models.tandem_config import TandemConfig, JunctionLayer
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.data import load_nk
@@ -58,6 +63,16 @@ def partition_absorption(
     bottom_slice: slice,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Split combined-stack absorption into per-sub-cell generation profiles.
+
+    .. deprecated::
+        UNUSED as of the tandem grid fix, and kept only so its two unit tests
+        still document the old behaviour.  Do not wire it back in.  It
+        point-samples ``A(x, lambda)`` and states its conservation identity in
+        terms of ``np.trapezoid(G, x)`` -- and ``physics/generation.py`` is
+        explicit that ``G`` is a CELL-AVERAGED quantity which must never be
+        integrated with trapezoid.  ``compute_tandem_generation`` now uses
+        ``_generation_on_grid``, which differences the closed-form cumulative
+        absorptance across dual-cell faces and is photon-exact on any mesh.
 
     Integrates A(x, λ) * Φ(λ) over wavelength to get G(x), then extracts
     the top-cell, junction, and bottom-cell sub-arrays.
@@ -117,6 +132,42 @@ def partition_absorption(
     # is computed as the residual (full - top - bot) to make photon conservation
     # exact under disjoint-trapezoid quadrature at shared grid boundaries.
     return G_top, G_bot, min(1.0, max(0.0, parasitic))
+
+
+def _generation_on_grid(
+    combined: list[TMMLayer],
+    wavelengths: np.ndarray,
+    spectral_flux: np.ndarray,
+    boundaries: np.ndarray,
+    x_local: np.ndarray,
+    offset: float,
+) -> np.ndarray:
+    """Cell-exact generation [m^-3 s^-1] on one sub-cell's electrical grid.
+
+    Mirrors ``solver/mol.py:_compute_tmm_generation``: every dual cell receives
+    its OWN exactly-absorbed photon count from the closed-form cumulative
+    absorptance, divided by the very weight ``carrier_continuity_rhs``
+    multiplies back in.  ``sum(G * dx_cell)`` therefore telescopes to the
+    photons absorbed between the sub-cell's outer faces on ANY mesh — the
+    conservation is structural, not a refinement limit.
+
+    ``x_local`` is measured from the sub-cell's own front face; ``offset``
+    places it inside the combined tandem stack.
+    """
+    faces = dual_cell_faces(x_local) + offset
+    absorbed = tmm_absorbed_photon_flux_per_cell(
+        combined, wavelengths, spectral_flux, faces, boundaries,
+        n_ambient=1.0, n_substrate=1.0,
+    )
+    G = absorbed / dual_cell_widths(x_local)
+    if not np.all(np.isfinite(G)):
+        raise ValueError(
+            "tandem generation is not finite on this sub-cell grid "
+            f"(offset {offset:.3e} m, {len(x_local)} nodes). The previous "
+            "implementation silently replaced non-finite entries with zero, "
+            "which hid the condition rather than reporting it."
+        )
+    return G
 
 
 def _tmm_layer_from_stack_layer(layer, wavelengths_nm: np.ndarray) -> TMMLayer:
@@ -187,22 +238,55 @@ def compute_tandem_generation(
     wavelengths: np.ndarray,
     spectral_flux: np.ndarray,
     wavelengths_nm: np.ndarray,
-    N_top: int,
-    N_bot: int,
+    x_top: np.ndarray,
+    x_bot: np.ndarray,
 ) -> TandemGeneration:
-    """Run combined-TMM and partition absorption into per-sub-cell profiles.
+    """Run combined-TMM and build per-sub-cell generation on the SOLVER's grid.
 
     Constructs one TMM stack covering top_cell + junction_stack + bottom_cell,
-    calls tmm_absorption_profile once, then delegates to partition_absorption
-    to split the result.
+    then evaluates each sub-cell's generation with the cell-exact quadrature on
+    the grid that sub-cell's drift-diffusion solve will actually integrate on.
+
+    Why the grids are arguments and not node counts
+    -----------------------------------------------
+    ``G`` is a spatial DENSITY: index ``i`` is meaningless without the position
+    of node ``i``.  This function used to take ``N_top`` / ``N_bot`` and sample
+    on ``np.linspace(0, top_end, N_top, endpoint=False)`` — a UNIFORM grid —
+    while its only consumer, ``run_jv_sweep(fixed_generation=...)``, integrates
+    on the TANH-CLUSTERED multilayer grid.  The shape contract was enforced
+    (``tandem_jv.py`` derives the counts from ``_grid_node_count``); the
+    POSITION contract was not, so every value landed at the wrong depth.
+
+    Measured on ``tandem_lin2019`` at ``N_grid=60``: the node-position mismatch
+    peaked at 105 nm on the 500 nm top cell (21 % of its thickness) and 409 nm
+    on the 1300 nm bottom cell (31 %), and because ``G(x)`` is steepest exactly
+    where the two grids disagree most, the sub-cells received **+36.8 %** and
+    **+18.2 %** more photons than the optics had computed as absorbed.
+
+    Taking the grids removes the failure mode instead of documenting it: there
+    is no longer a second grid that could disagree.
+
+    Photon conservation
+    -------------------
+    Generation is built the way ``solver/mol.py:_compute_tmm_generation`` does
+    it — each dual cell gets its OWN exactly-absorbed photon count from the
+    closed-form cumulative absorptance, divided by the very weight the RHS
+    multiplies back in.  ``sum(G * dx_cell)`` then telescopes to the photons
+    absorbed between the sub-cell's outer faces on ANY mesh, so conservation is
+    structural rather than asymptotic.  The previous route point-sampled
+    ``A(x, lambda)`` and integrated with ``trapezoid``, which
+    ``physics/generation.py`` explicitly forbids for a cell-averaged quantity.
 
     Args:
         cfg: tandem device configuration
         wavelengths: wavelength array in METRES, shape (n_wl,) — passed to TMM
         spectral_flux: photon flux [m^-2 s^-1 m^-1], shape (n_wl,)
         wavelengths_nm: same wavelengths in NANOMETRES — used by load_nk
-        N_top: number of spatial grid points in the top sub-cell
-        N_bot: number of spatial grid points in the bottom sub-cell
+        x_top: the top sub-cell's ELECTRICAL grid [m], measured from its own
+            front face (i.e. starting at 0.0), exactly as built by
+            ``run_jv_sweep``
+        x_bot: the bottom sub-cell's ELECTRICAL grid [m], likewise from its own
+            front face; it is offset internally by the top + junction thickness
 
     Returns:
         TandemGeneration with G_top, G_bot, parasitic_absorption and slice info.
@@ -238,50 +322,42 @@ def compute_tandem_generation(
     # x grid must not enter the back reflector — it is electrically absent.
     bot_end = float(boundaries[n_top + n_junc + n_bot])
 
-    # --- Spatial grid: top / junction interior / bottom ---
-    # endpoint=False on x_top (and x_junc) gives each segment ownership of its
-    # left boundary while the next segment owns its own left boundary.  This
-    # eliminates duplicate grid points at every interface with no special-casing.
-    if n_junc == 0:
-        # No junction layers: grid is just top + bottom. Use endpoint=False
-        # on the top segment so the boundary point belongs only to the bottom.
-        x_top = np.linspace(0.0, top_end, N_top, endpoint=False)
-        x_bot = np.linspace(top_end, bot_end, N_bot)
-        x = np.concatenate([x_top, x_bot])
-        n_junc_pts = 0
+    # --- Per-sub-cell generation, on the grid each solve actually uses ---
+    # The top sub-cell occupies [0, top_end] of the combined stack; the bottom
+    # occupies [junc_end, junc_end + its own thickness].  The back reflector is
+    # optically present but electrically absent, so it never carries nodes.
+    x_top = np.asarray(x_top, dtype=float)
+    x_bot = np.asarray(x_bot, dtype=float)
+
+    G_top = _generation_on_grid(
+        combined, wavelengths, spectral_flux, boundaries, x_top, 0.0,
+    )
+    G_bot = _generation_on_grid(
+        combined, wavelengths, spectral_flux, boundaries, x_bot, junc_end,
+    )
+
+    # --- Parasitic absorption: exact, not a trapezoid residual ---
+    # One differencing of the closed-form cumulative absorptance across the
+    # three section boundaries gives the photons absorbed in each section
+    # directly, so the junction share needs no residual construction.
+    total_incident = float(trapezoid(spectral_flux, wavelengths))
+    if total_incident > 0.0:
+        section_faces = np.array([0.0, top_end, junc_end, bot_end], dtype=float)
+        per_section = tmm_absorbed_photon_flux_per_cell(
+            combined, wavelengths, spectral_flux, section_faces, boundaries,
+            n_ambient=1.0, n_substrate=1.0,
+        )
+        parasitic = float(per_section[1]) / total_incident
     else:
-        x_top = np.linspace(0.0, top_end, N_top, endpoint=False)
-        n_junc_pts_full = max(3, n_junc * 3)
-        x_junc = np.linspace(top_end, junc_end, n_junc_pts_full, endpoint=False)
-        x_bot = np.linspace(junc_end, bot_end, N_bot)
-        x = np.concatenate([x_top, x_junc, x_bot])
-        n_junc_pts = n_junc_pts_full
+        parasitic = 0.0
 
-    # --- Combined TMM absorption ---
-    A = tmm_absorption_profile(
-        combined, wavelengths, x, boundaries,
-        n_ambient=1.0, n_substrate=1.0,
-    )
-    # At short wavelengths the top absorber is optically thick (α·d >> 1);
-    # the cumulative transfer matrix becomes ill-conditioned deep in the
-    # stack and produces NaN/Inf field amplitudes. Physically those points
-    # receive zero light, so we replace non-finite entries with 0.
-    A = np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
-
-    # --- Slice assignments ---
-    top_slice = slice(0, N_top)
-    junction_slice = slice(N_top, N_top + n_junc_pts)
-    bottom_slice = slice(N_top + n_junc_pts, N_top + n_junc_pts + N_bot)
-
-    G_top, G_bot, parasitic = partition_absorption(
-        A, x, wavelengths, spectral_flux,
-        top_slice, junction_slice, bottom_slice,
-    )
+    top_slice = slice(0, len(x_top))
+    bottom_slice = slice(len(x_top), len(x_top) + len(x_bot))
 
     return TandemGeneration(
         G_top=G_top,
         G_bot=G_bot,
-        parasitic_absorption=parasitic,
+        parasitic_absorption=min(1.0, max(0.0, parasitic)),
         top_layer_slice=top_slice,
         bottom_layer_slice=bottom_slice,
     )
