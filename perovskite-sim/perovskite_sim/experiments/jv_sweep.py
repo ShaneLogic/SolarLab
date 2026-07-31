@@ -637,11 +637,12 @@ _JV_RADAU_MAX_NFEV = 100_000
 # Wrong-branch detector for the forward power quadrant (see
 # _integrate_step's docstring for why step control alone cannot fix this).
 #
-# The bound is physical, not fitted: under illumination at V > 0 the
-# terminal current is J(V) = J_sc - J_dark(V) with J_dark >= 0 for forward
-# bias, so J can never RISE above its own short-circuit value. A step that
-# reports otherwise has landed on the carrier-injection branch of the
-# implicit system.
+# For run_jv_sweep's built-in short-circuit initialization, the expected
+# forward power-quadrant response is J(V) = J_sc - J_dark(V), with J_dark >= 0.
+# This is a protocol guard, not a universal theorem for arbitrary precharged
+# transient states (this API does not accept one): stored ionic/capacitive
+# energy can add terminal current. A step far above the reference on the
+# controlled protocol has landed on the carrier-injection branch.
 #
 # The margin absorbs the one legitimate way J(V) can exceed J(0) on this
 # code path — a fast scan over a mobile-ion stack, where the ionic
@@ -658,6 +659,79 @@ _J_BRANCH_EXCESS = 0.05
 # failure (2/4/8 legs and BDF all give 161.986 vs the single-leg 509.796),
 # so the ladder is about robustness on unmeasured configs, not tuning.
 _J_BRANCH_RETRY_LEGS = (2, 4, 8)
+
+# A rejected single-leg step is not recovered merely because one retry falls
+# below the current ceiling: the same wrong-branch defect can undershoot as
+# well as overshoot.  Require two successive subdivisions to agree before a
+# retry is allowed to replace the original state.  One percent is deliberately
+# much wider than the measured 4-vs-8-leg agreement (<= 0.2 %) and narrower
+# than the smallest measured wrong landing (3.3 % at V=0).
+_J_BRANCH_REFINEMENT_RTOL = 0.01
+
+# V=0 has no universal lower current bound, so an under-read cannot be found
+# by a one-sided protocol ceiling.  Probe the same interval with four legs;
+# only when that materially disagrees with the original do we pay for an
+# eight-leg confirmation and replace the state.
+_J_ZERO_BIAS_PROBE_LEGS = 4
+_J_ZERO_BIAS_CONFIRM_LEGS = 8
+
+
+def _currents_agree(J_a: float, J_b: float) -> bool:
+    """Return whether two independently integrated currents are consistent."""
+    if not (np.isfinite(J_a) and np.isfinite(J_b)):
+        return False
+    scale = max(abs(float(J_a)), abs(float(J_b)), 1.0)
+    return abs(float(J_a) - float(J_b)) <= _J_BRANCH_REFINEMENT_RTOL * scale
+
+
+def _states_agree(
+    y_a: np.ndarray,
+    y_b: np.ndarray,
+    N: int,
+    N_iface_state: int = 0,
+) -> bool:
+    """Compare each physical state block on its own density scale."""
+    if y_a.shape != y_b.shape:
+        return False
+    a = StateVec.unpack(y_a, N, N_iface_state)
+    b = StateVec.unpack(y_b, N, N_iface_state)
+    for block_a, block_b in (
+        (a.n, b.n),
+        (a.p, b.p),
+        (a.P, b.P),
+        (a.P_neg, b.P_neg),
+        (a.iface_state, b.iface_state),
+    ):
+        if block_a is None or block_b is None:
+            if block_a is not None or block_b is not None:
+                return False
+            continue
+        if not (np.all(np.isfinite(block_a)) and np.all(np.isfinite(block_b))):
+            return False
+        scale = max(
+            float(np.max(np.abs(block_a), initial=0.0)),
+            float(np.max(np.abs(block_b), initial=0.0)),
+            1.0,
+        )
+        gap = float(np.max(np.abs(block_a - block_b), initial=0.0))
+        if gap > _J_BRANCH_REFINEMENT_RTOL * scale:
+            return False
+    return True
+
+
+def _refinements_agree(
+    y_a: np.ndarray,
+    J_a: float,
+    y_b: np.ndarray,
+    J_b: float,
+    N: int,
+    N_iface_state: int = 0,
+) -> bool:
+    """Require both the reported current and the state that drives later steps."""
+    return (
+        _currents_agree(J_a, J_b)
+        and _states_agree(y_a, y_b, N, N_iface_state)
+    )
 
 
 def _bake_radiative_reabsorption_step(
@@ -762,14 +836,15 @@ def _integrate_step(
     wrong branch. Same lesson as the E9.3 clamp-shape variants; do not
     re-attempt a divisor fix.
 
-    What does work is re-integrating **only the offending step** with
-    forced subdivision, which is what ``n_legs`` is for: the caller detects
-    a wrong-branch landing on a physical bound and re-runs that one step as
-    ``n_legs`` chained sub-intervals. Measured at the failing step, every
-    recovery agrees to the digit — 2, 4 and 8 legs and a BDF single leg all
-    return J = 161.986 against the single-leg 509.796, and 161.986 is also
-    what four independent mesh/sampling refinements converge to. Because
-    the retry only fires on a violation, healthy sweeps are bit-identical.
+    What does work is local subdivision, which is what ``n_legs`` is for.
+    The caller uses it either to probe a V=0 step (where a one-sided bound
+    cannot detect an under-read) or to recover a positive-bias protocol
+    violation. A candidate replaces the original only after two successive
+    refinements agree in both terminal current and internal state. Measured
+    at the positive-bias failure, 2, 4 and 8 legs and a BDF single leg all
+    return J = 161.986 against the single-leg 509.796; at V=0, 4/8 legs close
+    both the under-read and over-read counterexamples. A healthy V=0 probe is
+    discarded, preserving the original state/current exactly.
 
     If the implicit solver fails to converge on the full step, subdivide
     the interval (halving up to max_bisect levels) and chain sub-steps.
@@ -787,8 +862,7 @@ def _integrate_step(
     """
     dt = t_hi - t_lo
     if n_legs > 1 and dt > 0.0:
-        # Forced subdivision: the caller rejected the single-leg result on a
-        # physical bound (see _integrate_step_on_physical_branch). Chain
+        # Forced subdivision for a local convergence probe/recovery. Chain
         # `n_legs` equal sub-intervals, each with its own max_step cap.
         edges = np.linspace(t_lo, t_hi, n_legs + 1)
         y_k = y
@@ -1187,44 +1261,140 @@ def run_jv_sweep(
         y = y_init.copy()
         V_prev = float(V_arr[0])
         J_ref = J_sc_ref
+
+        def _candidate(
+            y_entry: np.ndarray,
+            V_k: float,
+            t_lo: float,
+            t_hi: float,
+            n_legs: int,
+        ) -> tuple[np.ndarray, float]:
+            y_candidate = _integrate_step(
+                x, y_entry, stack, mat, V_k, t_lo, t_hi, rtol, atol,
+                illuminated=illuminated, n_legs=n_legs,
+            )
+            J_candidate = _compute_current(
+                x, y_candidate, stack, V_k, y_prev=y_entry, dt=dt,
+                mat=mat, V_app_prev=V_prev,
+            )
+            return y_candidate, J_candidate
+
         for k, V_k in enumerate(V_arr):
             y_prev = y.copy()
             t_lo = t_points[k]
             t_hi = t_lo + dt
-            y = _integrate_step(x, y, stack, mat, V_k, t_lo, t_hi, rtol, atol,
-                               illuminated=illuminated)
-            J_k = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt,
-                                    mat=mat, V_app_prev=V_prev)
+            y, J_k = _candidate(y_prev, float(V_k), t_lo, t_hi, 1)
+
+            # The first/last short-circuit sample has no trustworthy lower
+            # current bound.  A wrong Radau branch can therefore under-read it
+            # without tripping the one-sided J_sc ceiling below.  Probe the
+            # exact same physical interval with four legs.  Healthy steps keep
+            # the original state and current bit-for-bit; only a material
+            # disagreement pays for an eight-leg confirmation and replacement.
+            if illuminated and float(V_k) == 0.0:
+                try:
+                    y_probe, J_probe = _candidate(
+                        y_prev, float(V_k), t_lo, t_hi,
+                        _J_ZERO_BIAS_PROBE_LEGS,
+                    )
+                except RuntimeError as exc:
+                    warnings.warn(
+                        f"J-V sweep: {_J_ZERO_BIAS_PROBE_LEGS}-leg V=0 "
+                        f"subdivision probe failed ({exc}). Keeping the "
+                        "successful single-leg value; treat this point as "
+                        "unconfirmed.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    if not _refinements_agree(
+                        y, J_k, y_probe, J_probe, N, mat.N_iface_state,
+                    ):
+                        try:
+                            y_confirm, J_confirm = _candidate(
+                                y_prev, float(V_k), t_lo, t_hi,
+                                _J_ZERO_BIAS_CONFIRM_LEGS,
+                            )
+                        except RuntimeError as exc:
+                            warnings.warn(
+                                f"J-V sweep: {_J_ZERO_BIAS_CONFIRM_LEGS}-leg "
+                                f"V=0 subdivision confirmation failed ({exc}). "
+                                "Keeping the successful single-leg value; "
+                                "treat this point as unconverged.",
+                                RuntimeWarning,
+                                stacklevel=2,
+                            )
+                        else:
+                            if _refinements_agree(
+                                y_probe, J_probe, y_confirm, J_confirm,
+                                N, mat.N_iface_state,
+                            ):
+                                y, J_k = y_confirm, J_confirm
+                            else:
+                                warnings.warn(
+                                    f"J-V sweep: terminal current at V=0 "
+                                    f"failed local subdivision convergence: "
+                                    f"single/{_J_ZERO_BIAS_PROBE_LEGS}/"
+                                    f"{_J_ZERO_BIAS_CONFIRM_LEGS}-leg values "
+                                    f"are {J_k:.3f}/{J_probe:.3f}/"
+                                    f"{J_confirm:.3f} A/m^2. Keeping the "
+                                    "single-leg value; treat this point as "
+                                    "unconverged.",
+                                    RuntimeWarning,
+                                    stacklevel=2,
+                                )
 
             # Wrong-branch rejection. Only fires in the illuminated forward
-            # power quadrant, where J(V) <= J_sc is a hard physical bound;
-            # healthy steps never enter this block, so results elsewhere are
-            # bit-identical.
-            if (illuminated and J_ref is not None and J_ref > 0.0
-                    and float(V_k) > 0.0
-                    and J_k > J_ref * (1.0 + _J_BRANCH_EXCESS)):
+            # power quadrant after the built-in V=0 initialization. Healthy
+            # steps never enter this block, so results elsewhere are
+            # bit-identical. See _J_BRANCH_EXCESS for the protocol boundary.
+            #
+            # The V=0 refinement above makes J_ref numerically self-consistent
+            # before it becomes this ceiling.  Do not replace it with a photon
+            # budget: this routine reports transient total current, including
+            # displacement/ionic contributions, which stored energy can drive
+            # above the instantaneous optical generation.
+            _ceiling = (
+                J_ref * (1.0 + _J_BRANCH_EXCESS)
+                if J_ref is not None and J_ref > 0.0 else None
+            )
+            if (illuminated and _ceiling is not None
+                    and float(V_k) > 0.0 and J_k > _ceiling):
+                previous_retry: tuple[np.ndarray, float] | None = None
+                failed_legs: list[int] = []
                 for n_legs in _J_BRANCH_RETRY_LEGS:
-                    y_retry = _integrate_step(
-                        x, y_prev, stack, mat, V_k, t_lo, t_hi, rtol, atol,
-                        illuminated=illuminated, n_legs=n_legs,
-                    )
-                    J_retry = _compute_current(
-                        x, y_retry, stack, V_k, y_prev=y_prev, dt=dt,
-                        mat=mat, V_app_prev=V_prev,
-                    )
-                    if J_retry <= J_ref * (1.0 + _J_BRANCH_EXCESS):
+                    try:
+                        y_retry, J_retry = _candidate(
+                            y_prev, float(V_k), t_lo, t_hi, n_legs,
+                        )
+                    except RuntimeError:
+                        failed_legs.append(n_legs)
+                        previous_retry = None
+                        continue
+                    if (previous_retry is not None
+                            and previous_retry[1] <= _ceiling
+                            and J_retry <= _ceiling
+                            and _refinements_agree(
+                                previous_retry[0], previous_retry[1],
+                                y_retry, J_retry, N, mat.N_iface_state,
+                            )):
                         y, J_k = y_retry, J_retry
                         break
+                    previous_retry = (y_retry, J_retry)
                 else:
                     # Never silently keep a value known to break the bound.
+                    failure_note = (
+                        f" Failed leg counts: {failed_legs}."
+                        if failed_legs else ""
+                    )
                     warnings.warn(
                         f"J-V sweep: terminal current at V={float(V_k):.4f} V "
-                        f"is {J_k:.3f} A/m^2, above the physical ceiling "
-                        f"J_sc*(1+{_J_BRANCH_EXCESS:g}) = "
-                        f"{J_ref * (1.0 + _J_BRANCH_EXCESS):.3f}; forced "
+                        f"is {J_k:.3f} A/m^2, above the protocol current ceiling "
+                        f"J_sc*(1+{_J_BRANCH_EXCESS:g}) = {_ceiling:.3f}; "
+                        f"forced "
                         f"subdivision into {_J_BRANCH_RETRY_LEGS} legs did not "
-                        "recover the physical branch. Treat this point as "
-                        "unconverged.",
+                        "produce two converged values within that ceiling. "
+                        f"Treat this point as unconverged.{failure_note}",
                         RuntimeWarning,
                         stacklevel=2,
                     )
