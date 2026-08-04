@@ -13,20 +13,57 @@ Key physical invariants being checked:
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from perovskite_sim.constants import V_T
 from perovskite_sim.experiments.suns_voc import (
     SunsVocResult,
+    _solve_illuminated_ss_with_mat,
     run_suns_voc,
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.solver import illuminated_ss as illuminated_ss_mod
+from perovskite_sim.solver.illuminated_ss import IlluminatedSteadyStateError
 
 
 @pytest.fixture(scope="module")
 def nip_stack():
     return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+
+
+def test_material_wrapper_propagates_illuminated_settle_failure(monkeypatch):
+    """The Suns-Voc cache wrapper must retain the shared fail-closed contract."""
+    x = np.array([0.0, 1.0])
+    y_dark = np.arange(6, dtype=float)
+    mat = object()
+    received = {}
+
+    monkeypatch.setattr(
+        illuminated_ss_mod,
+        "solve_equilibrium",
+        lambda *_args, **_kwargs: y_dark,
+    )
+
+    def failed_transient(*_args, **kwargs):
+        received["mat"] = kwargs.get("mat")
+        return SimpleNamespace(
+            success=False,
+            message="synthetic Suns-Voc settle failure",
+            y=y_dark[:, None],
+        )
+
+    monkeypatch.setattr(illuminated_ss_mod, "run_transient", failed_transient)
+
+    with pytest.raises(
+        IlluminatedSteadyStateError,
+        match="synthetic Suns-Voc settle failure",
+    ):
+        _solve_illuminated_ss_with_mat(x, object(), mat, V_app=0.42)
+
+    assert received["mat"] is mat
 
 
 # ---------------------------------------------------------------------------

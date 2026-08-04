@@ -1,6 +1,9 @@
 # Lin et al., Nature Energy 4, 864-873 (2019)
 # https://www.nature.com/articles/s41560-019-0466-3
-# Monolithic all-perovskite 2T tandem, 24.8% PCE on 0.049 cm^2.
+# Monolithic all-perovskite 2T tandem. The benchmark tuple below is the
+# reported 0.073 cm^2 reverse-scan champion (1.965 V, 15.6 mA/cm^2, 81.0% FF,
+# 24.8% PCE). The paper separately reports a certified 24.8% result at a
+# 0.049 cm^2 aperture; do not combine that area with this target tuple.
 #
 # Sub-cell YAMLs are loaded relative to this file's directory.
 # Junction stack is the recombination layer between top and bottom sub-cells.
@@ -39,5 +42,5 @@ benchmark:
   target_pce: 24.8
   target_jsc_ma_cm2: 15.6
   target_voc_v: 1.965
-  target_ff: 0.79
+  target_ff: 0.81
   tolerance_pct: 10.0

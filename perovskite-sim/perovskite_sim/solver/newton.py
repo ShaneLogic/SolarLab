@@ -25,7 +25,7 @@ from perovskite_sim.solver.mol import (
     _compute_iface_state_dark_eq,
     build_material_arrays,
 )
-from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.models.device import DeviceStack
 
 
 def solve_equilibrium(
@@ -35,23 +35,16 @@ def solve_equilibrium(
     """
     Return a quasi-neutral dark initial condition with fixed ionic background.
     """
-    N = len(x)
     mat = build_material_arrays(x, stack)
     P_ion0 = mat.P_ion0
     N_A = mat.N_A
     N_D = mat.N_D
 
-    # ── per-node ion profile and intrinsic density ───────────────────────────
-    ni_arr = np.ones(N)
-    offset = 0.0
-    for layer in electrical_layers(stack):
-        lo = offset - 1e-15
-        hi = offset + layer.thickness + 1e-15
-        mask = (x >= lo) & (x <= hi)
-        ni_arr[mask] = layer.params.ni
-        offset += layer.thickness
-
-    ni_sq = ni_arr ** 2
+    # Reuse the solver's temperature- and grading-aware intrinsic density.
+    # Reconstructing it from the raw YAML scalar here made the initial seed
+    # inconsistent with the very first RHS evaluation away from ungraded
+    # 300 K operation.
+    ni_sq = mat.ni_sq
 
     # ── quasi-neutral carrier densities ─────────────────────────────────────
     # Solve:  n - p = net,  n * p = ni²
@@ -74,8 +67,10 @@ def solve_equilibrium(
     p = np.clip(p, 1.0, 1e36)
 
     # Enforce Dirichlet contact values (ohmic contacts)
-    n[0] = mat.n_L;  n[-1] = mat.n_R
-    p[0] = mat.p_L;  p[-1] = mat.p_R
+    n[0] = mat.n_L
+    n[-1] = mat.n_R
+    p[0] = mat.p_L
+    p[-1] = mat.p_R
 
     # Phase E3 — pack interface-plane state block when active.
     iface_state = (

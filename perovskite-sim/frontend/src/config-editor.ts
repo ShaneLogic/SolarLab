@@ -410,7 +410,7 @@ function renderScapsPhysics(config: DeviceConfig): string {
         <summary><h5>SCAPS-validation physics</h5></summary>
         ${help}
         <div class="param-grid">
-          ${cb('dev-dos', 'DOS band potentials', !!d.dos_band_potentials, 'V_T·ln(DOS) quasi-Fermi step (YAML dos_band_potentials)')}
+          ${cb('dev-dos', 'DOS band potentials', d.dos_band_potentials ?? true, 'V_T·ln(DOS) quasi-Fermi step (YAML dos_band_potentials)')}
           ${cb('dev-flatband', 'Flat-band contacts', !!d.flat_band_contacts, 'SCAPS finite-S metal contacts (YAML flat_band_contacts)')}
           ${cb('dev-iface-closure', 'Interface-plane closure', !!d.interface_plane_closure, 'QSS plane-density interface SRH (YAML interface_plane_closure)')}
           ${cb('dev-iface-proj', 'Interface-plane projection', !!d.interface_plane_projection, 'phi-projected interface densities (YAML interface_plane_projection)')}
@@ -688,15 +688,28 @@ export function readDeviceEditor(
   const interface_defects: Array<InterfaceDefectFields | null> = []
   for (let i = 0; i < layers.length - 1; i++) {
     const existing = original.device.interface_defects?.[i] ?? null
-    const parsed: InterfaceDefectFields = {
+    const coreFields: InterfaceDefectFields = {
       sigma_n_cm2: parseNumOrNull(`idef-${i}-sigma-n`, existing?.sigma_n_cm2 ?? null) ?? null,
       sigma_p_cm2: parseNumOrNull(`idef-${i}-sigma-p`, existing?.sigma_p_cm2 ?? null) ?? null,
       N_t_cm2: parseNumOrNull(`idef-${i}-N-t`, existing?.N_t_cm2 ?? null) ?? null,
       v_th_cm_s: parseNumOrNull(`idef-${i}-v-th`, existing?.v_th_cm_s ?? null) ?? null,
       E_t_eV_below_cb: parseNumOrNull(`idef-${i}-E-t`, existing?.E_t_eV_below_cb ?? null) ?? null,
     }
-    const allNull = Object.values(parsed).every(v => v == null)
-    interface_defects.push(allNull ? null : parsed)
+    const allNull = Object.values(coreFields).every(v => v == null)
+    if (allNull) {
+      interface_defects.push(null)
+      continue
+    }
+    const parsed: InterfaceDefectFields = {
+      ...coreFields,
+      ...(existing?.calibration_factor !== undefined
+        ? { calibration_factor: existing.calibration_factor }
+        : {}),
+      ...(existing?.iface_state_calibration_factor !== undefined
+        ? { iface_state_calibration_factor: existing.iface_state_calibration_factor }
+        : {}),
+    }
+    interface_defects.push(parsed)
   }
   const anyDefectPopulated = interface_defects.some(d => d != null)
   const interfaceDefectsField = anyDefectPopulated
@@ -706,12 +719,19 @@ export function readDeviceEditor(
       : {})
   // SCAPS-validation physics flags. Read only when the FULL-tier panel is
   // rendered; otherwise parseCheckbox / parseNumOrNull fall back to the
-  // original value so a non-FULL round-trip preserves them verbatim. Each
-  // flag is spread in only when truthy / non-zero so non-SCAPS configs keep
-  // a clean device payload (no spurious ``false`` / ``0`` fields).
+  // original value so a non-FULL round-trip preserves them verbatim. Most
+  // flags are spread in only when truthy / non-zero so non-SCAPS configs
+  // keep a clean payload. DOS band potentials is different: its backend
+  // default is ON, so an unchecked box must serialize an explicit ``false``.
   const scapsPhysicsField: Record<string, boolean | number> = {}
-  if (parseCheckbox('dev-dos', !!original.device.dos_band_potentials))
+  const dosBandPotentials = parseCheckbox(
+    'dev-dos', original.device.dos_band_potentials ?? true,
+  )
+  if (!dosBandPotentials) {
+    scapsPhysicsField.dos_band_potentials = false
+  } else if (original.device.dos_band_potentials !== undefined) {
     scapsPhysicsField.dos_band_potentials = true
+  }
   if (parseCheckbox('dev-flatband', !!original.device.flat_band_contacts))
     scapsPhysicsField.flat_band_contacts = true
   if (parseCheckbox('dev-iface-closure', !!original.device.interface_plane_closure))
@@ -731,6 +751,22 @@ export function readDeviceEditor(
   const rawMode = parseText('dev-mode', original.device.mode ?? 'full')
   const mode: SimulationModeName = isModeName(rawMode) ? rawMode : 'full'
   const T = parseNum('dev-T', original.device.T ?? 300)
+  const hiddenPhysicsKeys = [
+    'te_physical_norm',
+    'ion_steric_diffusion_only',
+    'ion_steric_shared_site',
+    'autoloop_generated_lever',
+    'flat_band_metal_contacts',
+    'contact_phi_B_eV',
+    'interface_two_sided',
+    'interface_shared_occupancy',
+    'interface_plane_generation',
+  ] as const
+  const hiddenPhysicsField: Record<string, boolean | number> = {}
+  for (const key of hiddenPhysicsKeys) {
+    const value = original.device[key]
+    if (value !== undefined) hiddenPhysicsField[key] = value
+  }
   return {
     device: {
       V_bi: parseNum('dev-Vbi', original.device.V_bi),
@@ -752,6 +788,7 @@ export function readDeviceEditor(
       // for presets that pre-date E1.5 or for non-FULL tier round-trips
       // where the panel is hidden).
       ...interfaceDefectsField,
+      ...hiddenPhysicsField,
       ...scapsPhysicsField,
     },
     layers,

@@ -1,13 +1,16 @@
+import dataclasses
+
 import numpy as np
-import pytest
 from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
+from perovskite_sim.experiments.jv_sweep import build_electrical_grid
+from perovskite_sim.solver.mol import build_material_arrays
 
 
 def test_equilibrium_convergence():
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-    layers_grid = [Layer(l.thickness, 50) for l in stack.layers]
+    layers_grid = [Layer(layer.thickness, 50) for layer in stack.layers]
     x = multilayer_grid(layers_grid)
     y_eq = solve_equilibrium(x, stack)
     assert y_eq is not None
@@ -17,7 +20,7 @@ def test_equilibrium_convergence():
 def test_equilibrium_carriers_physical():
     """Carrier densities must stay positive and finite."""
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-    layers_grid = [Layer(l.thickness, 50) for l in stack.layers]
+    layers_grid = [Layer(layer.thickness, 50) for layer in stack.layers]
     x = multilayer_grid(layers_grid)
     N = len(x)
     y_eq = solve_equilibrium(x, stack)
@@ -44,7 +47,7 @@ def test_equilibrium_residual_small():
     from perovskite_sim.solver.mol import assemble_rhs, build_material_arrays
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     n_nodes = 50
-    layers_grid = [Layer(l.thickness, n_nodes) for l in stack.layers]
+    layers_grid = [Layer(layer.thickness, n_nodes) for layer in stack.layers]
     x = multilayer_grid(layers_grid)
     y_eq = solve_equilibrium(x, stack)
     mat = build_material_arrays(x, stack)
@@ -74,7 +77,7 @@ def test_equilibrium_residual_small():
 def test_contact_boundaries_use_contact_layer_intrinsic_density():
     """Minority carrier densities at contacts should reflect the contact layer ni."""
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-    layers_grid = [Layer(l.thickness, 20) for l in stack.layers]
+    layers_grid = [Layer(layer.thickness, 20) for layer in stack.layers]
     x = multilayer_grid(layers_grid)
     N = len(x)
     y_eq = solve_equilibrium(x, stack)
@@ -84,3 +87,45 @@ def test_contact_boundaries_use_contact_layer_intrinsic_density():
     # vanishingly small rather than using the absorber ni.
     assert n[0] < 1e-10
     assert p[-1] < 1e-10
+
+
+def test_equilibrium_seed_uses_temperature_and_grading_aware_ni_squared():
+    """The quasi-neutral seed and the first RHS must share one ni(x, T)."""
+    stack = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    layers = list(stack.layers)
+    absorber_index = next(
+        index for index, layer in enumerate(layers) if layer.role == "absorber"
+    )
+    absorber = layers[absorber_index]
+    layers[absorber_index] = dataclasses.replace(
+        absorber,
+        params=dataclasses.replace(absorber.params, N_A=0.0, N_D=0.0),
+    )
+    stack = dataclasses.replace(
+        stack,
+        layers=tuple(layers),
+        T=340.0,
+        mode="full",
+    )
+    x = build_electrical_grid(stack, 60)
+    mat = build_material_arrays(x, stack)
+    y_eq = solve_equilibrium(x, stack)
+    N = len(x)
+    n, p = y_eq[:N], y_eq[N:2 * N]
+
+    absorber = stack.layers[absorber_index]
+    absorber_start = sum(
+        layer.thickness for layer in stack.layers[:absorber_index]
+        if layer.role != "substrate"
+    )
+    interior = (
+        (x > absorber_start + 0.05 * absorber.thickness)
+        & (x < absorber_start + 0.95 * absorber.thickness)
+    )
+    assert np.count_nonzero(interior) > 5
+    np.testing.assert_allclose(
+        n[interior] * p[interior],
+        mat.ni_sq[interior],
+        rtol=1e-12,
+        atol=0.0,
+    )

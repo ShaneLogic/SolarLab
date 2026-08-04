@@ -252,6 +252,38 @@ describe('readDeviceEditor round-trip', () => {
     expect(out.device.interface_defects).toEqual([null, null])
   })
 
+  it('clearing a calibrated defect yields null rather than metadata-only defect', () => {
+    const calibrated = {
+      ...pvkEtlDefect(),
+      calibration_factor: 1.0e-4,
+      iface_state_calibration_factor: 2.5e-4,
+    }
+    const cfg = threeLayerConfig({
+      interface_defects: [null, calibrated],
+    })
+    renderDeviceEditor(container, cfg, 'full')
+    for (const f of ['sigma-n', 'sigma-p', 'N-t', 'v-th', 'E-t']) {
+      const el = document.getElementById(`idef-1-${f}`) as HTMLInputElement
+      el.value = ''
+    }
+
+    const out = readDeviceEditor(cfg)
+    expect(out.device.interface_defects).toEqual([null, null])
+  })
+
+  it('preserves calibration metadata while core defect fields remain populated', () => {
+    const calibrated = {
+      ...pvkEtlDefect(),
+      calibration_factor: 1.0e-4,
+      iface_state_calibration_factor: 2.5e-4,
+    }
+    const cfg = threeLayerConfig({ interface_defects: [null, calibrated] })
+    renderDeviceEditor(container, cfg, 'full')
+
+    const out = readDeviceEditor(cfg)
+    expect(out.device.interface_defects?.[1]).toEqual(calibrated)
+  })
+
   it('round-trip preserves a fully-populated slot byte-for-byte', () => {
     const cfg = threeLayerConfig({
       interface_defects: [pvkEtlDefect(), pvkEtlDefect()],

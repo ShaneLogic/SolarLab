@@ -86,6 +86,25 @@ def test_rejects_wrong_device_type(tmp_path):
         load_tandem_from_yaml(str(cfg_path))
 
 
+@pytest.mark.parametrize("schema_version", [None, 0, 2, "1"])
+def test_rejects_missing_or_unsupported_schema_version(tmp_path, schema_version):
+    top, bot = _write_minimal_cells(tmp_path)
+    cfg = {
+        "device_type": "tandem_2T_monolithic",
+        "tandem": {
+            "top_cell": str(top),
+            "bottom_cell": str(bot),
+            "junction": {"model": "ideal_ohmic"},
+        },
+    }
+    if schema_version is not None:
+        cfg["schema_version"] = schema_version
+    cfg_path = tmp_path / "tandem.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(ValueError, match="schema_version=1"):
+        load_tandem_from_yaml(str(cfg_path))
+
+
 def test_rejects_unsupported_light_direction(tmp_path):
     top, bot = _write_minimal_cells(tmp_path)
     cfg_path = tmp_path / "tandem.yaml"

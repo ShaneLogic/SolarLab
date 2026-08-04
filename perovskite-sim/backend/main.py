@@ -36,7 +36,9 @@ from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
 from perovskite_sim.experiments import mott_schottky as ms_exp
 from perovskite_sim.experiments.steady_state import run_jv_sweep_ss
+from perovskite_sim.discretization.grid import GridResolutionError
 from perovskite_sim.models.config_loader import (
+    electrical_grid_from_config_dict,
     interfaces_from_device_dict,
     load_device_from_yaml,
     material_params_from_dict,
@@ -159,6 +161,9 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
                 role=str(layer_cfg["role"]),
             )
         )
+    grid_interval_weights, grid_alphas = electrical_grid_from_config_dict(
+        cfg, layers
+    )
     # Legacy ``interfaces`` schema: list of (v_n, v_p) m/s SRV pairs aligned
     # with the heterointerfaces. Phase E1.5 / E1.8 SCAPS-style schema:
     # ``interface_defects`` list of per-slot ``{sigma_n_cm2, sigma_p_cm2,
@@ -204,6 +209,8 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         layers=tuple(layers),
         V_bi=float(dev.get("V_bi", 1.1)),
         Phi=float(dev.get("Phi", 2.5e21)),
+        grid_interval_weights=grid_interval_weights,
+        grid_alphas=grid_alphas,
         interfaces=interfaces,
         interface_defects=interface_defects,
         T=float(dev.get("T", 300.0)),
@@ -217,12 +224,21 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         interface_plane_projection=_flag(dev.get("interface_plane_projection")),
         dos_band_potentials=_flag(dev.get("dos_band_potentials", True)),
         te_physical_norm=_flag(dev.get("te_physical_norm")),
-        ion_steric_diffusion_only=_flag(dev.get("ion_steric_diffusion_only")),
+        ion_steric_diffusion_only=_flag(
+            dev.get("ion_steric_diffusion_only", True)
+        ),
         ion_steric_shared_site=_flag(dev.get("ion_steric_shared_site", True)),
         flat_band_contacts=_flag(dev.get("flat_band_contacts")),
         flat_band_metal_contacts=_flag(dev.get("flat_band_metal_contacts")),
         contact_phi_B_eV=float(dev.get("contact_phi_B_eV", 0.0)),
+        interface_two_sided=_flag(dev.get("interface_two_sided")),
+        interface_shared_occupancy=_flag(
+            dev.get("interface_shared_occupancy")
+        ),
         interface_plane_closure=_flag(dev.get("interface_plane_closure")),
+        interface_plane_generation=_flag(
+            dev.get("interface_plane_generation")
+        ),
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
         band_grading=_flag(dev.get("band_grading")),
         interface_tunneling=_flag(dev.get("interface_tunneling")),
@@ -259,11 +275,11 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
     Layer params come straight from ``dataclasses.asdict(MaterialParams)`` — flat
     standard fields, including the Nc300/Nv300 the SCAPS loader computes — so the
     round-trip is exact for every field ``stack_from_dict`` reads. Interface
-    recombination is emitted as the resolved (v_n, v_p) SRV pairs; the original
-    SCAPS sigma/N_t/E_t granularity collapses to the SRV the solver actually uses
-    (the InterfaceDefect trap level used by the SS interface-state path is not
-    reconstructed — a documented limitation of editing a SCAPS preset in the
-    standard UI)."""
+    recombination is emitted as both resolved (v_n, v_p) SRV pairs and an
+    equivalent standard-schema defect block. The original sigma/v_th split is
+    not identifiable after loading, so the serializer chooses v_th=1e7 cm/s
+    and derives sigma to preserve SRV exactly; N_t, trap depth, and both
+    calibration factors retain their original solver semantics."""
     layers = []
     for ls in stack.layers:
         # Drop None-valued fields: stack_from_dict treats several optional
@@ -275,17 +291,43 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         d["role"] = ls.role
         d["thickness"] = ls.thickness
         layers.append(d)
+    interface_defects = []
+    for pair, defect in zip(stack.interfaces, stack.interface_defects):
+        if defect is None:
+            interface_defects.append(None)
+            continue
+        N_t_cm2 = defect.N_t_cm2 if defect.N_t_cm2 > 0.0 else 1.0
+        v_th_cm_s = 1.0e7
+        interface_defects.append({
+            "sigma_n_cm2": pair[0] / (v_th_cm_s * N_t_cm2 * 1.0e-2),
+            "sigma_p_cm2": pair[1] / (v_th_cm_s * N_t_cm2 * 1.0e-2),
+            "N_t_cm2": N_t_cm2,
+            "v_th_cm_s": v_th_cm_s,
+            "E_t_eV_below_cb": defect.E_t_eV,
+            "calibration_factor": defect.calibration_factor,
+            "iface_state_calibration_factor": (
+                defect.iface_state_calibration_factor
+            ),
+        })
     device = {
         "mode": str(stack.mode),
         "V_bi": stack.V_bi,
         "Phi": stack.Phi,
         "T": stack.T,
         "interfaces": [list(p) for p in stack.interfaces],
+        "interface_defects": interface_defects,
         "dos_band_potentials": stack.dos_band_potentials,
+        "te_physical_norm": stack.te_physical_norm,
+        "ion_steric_diffusion_only": stack.ion_steric_diffusion_only,
+        "ion_steric_shared_site": stack.ion_steric_shared_site,
+        "autoloop_generated_lever": stack.autoloop_generated_lever,
         "flat_band_contacts": stack.flat_band_contacts,
         "flat_band_metal_contacts": stack.flat_band_metal_contacts,
         "contact_phi_B_eV": stack.contact_phi_B_eV,
+        "interface_two_sided": stack.interface_two_sided,
+        "interface_shared_occupancy": stack.interface_shared_occupancy,
         "interface_plane_closure": stack.interface_plane_closure,
+        "interface_plane_generation": stack.interface_plane_generation,
         "interface_plane_projection": stack.interface_plane_projection,
         "het_recomb_despike": stack.het_recomb_despike,
         "band_grading": stack.band_grading,
@@ -296,7 +338,33 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         "S_n_right": stack.S_n_right,
         "S_p_right": stack.S_p_right,
     }
-    return {"device": device, "layers": layers}
+    config = {"device": device, "layers": layers}
+    if stack.grid_interval_weights or stack.grid_alphas:
+        electrical = tuple(
+            layer for layer in stack.layers if layer.role != "substrate"
+        )
+        if (
+            len(stack.grid_interval_weights) != len(electrical)
+            or len(stack.grid_alphas) != len(electrical)
+        ):
+            raise ValueError(
+                "DeviceStack electrical-grid tuples must align with its "
+                "electrical layers"
+            )
+        config["electrical_grid"] = {
+            "interval_weights": {
+                layer.name: weight
+                for layer, weight in zip(electrical, stack.grid_interval_weights)
+            },
+            "alphas": {
+                layer.name: alpha
+                for layer, alpha in zip(electrical, stack.grid_alphas)
+            },
+        }
+        # Apply the same strict contract used on input before exposing a config
+        # that the frontend may later submit through stack_from_dict.
+        electrical_grid_from_config_dict(config, stack.layers)
+    return config
 
 
 def _config_dict_from_path(path: str) -> dict:
@@ -390,12 +458,11 @@ def list_configs():
         # needs non-zero band offsets between neighbouring layers (chi/Eg),
         # TMM needs `optical_material` on a layer, PR needs TMM to be active,
         # dual-ion and trap-profile and T-scaling each need their own opt-in
-        # config keys. 'full' is gated on *every* electrical layer having
-        # chi > 0 AND Eg > 0 — FULL tier derives the built-in potential from
-        # Fermi-level matching across the heterostack, so a single missing
-        # band alignment collapses compute_V_bi() and the diode fails to
-        # turn on at V=0 (Stage 1a diagnosis, commit c93d854). Tandem
-        # presets are single-cell-only for now and only advertise legacy/fast.
+        # config keys. 'full' is advertised when the preset explicitly selects
+        # it (needed by full-only field-mobility/Robin demos), or when every
+        # electrical layer has positive band alignment. Both standard
+        # ``chi/Eg`` and SCAPS ``chi_eV/E_g_eV`` spellings are recognized.
+        # Tandem presets are single-cell-only for now and advertise legacy/fast.
         legacy_tiers = ["legacy", "fast"]
         try:
             with open(path) as fh:
@@ -406,12 +473,21 @@ def list_configs():
         if device_type != "single":
             return device_type, legacy_tiers
         layers = data.get("layers") or []
-        electrical = [l for l in layers if l.get("role") != "substrate"]
-        if electrical and all(
-            float(l.get("chi", 0.0) or 0.0) > 0.0
-            and float(l.get("Eg", 0.0) or 0.0) > 0.0
-            for l in electrical
-        ):
+        electrical = [
+            layer for layer in layers if layer.get("role") != "substrate"
+        ]
+        device = data.get("device") or {}
+        explicit_full = str(device.get("mode", "")).lower() == "full"
+
+        def _positive(layer: dict, *keys: str) -> bool:
+            return any(float(layer.get(key, 0.0) or 0.0) > 0.0 for key in keys)
+
+        has_band_alignment = electrical and all(
+            _positive(layer, "chi", "chi_eV")
+            and _positive(layer, "Eg", "E_g_eV")
+            for layer in electrical
+        )
+        if explicit_full or has_band_alignment:
             return device_type, [*legacy_tiers, "full"]
         return device_type, legacy_tiers
 
@@ -642,6 +718,8 @@ def run_jv(req: JVRequest):
         return {"status": "ok", "result": to_serializable(result)}
     except HTTPException:
         raise
+    except GridResolutionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         print("[JV API Exception]", e)
         traceback.print_exc()
@@ -1053,7 +1131,7 @@ def start_job(req: JobRequest):
             result = ms_exp.run_mott_schottky(
                 stack,
                 V_range=V_range,
-                frequency=float(p.get("frequency", 1e5)),
+                frequency=float(p.get("frequency", 1e6)),
                 delta_V=float(p.get("delta_V", 0.01)),
                 N_grid=int(p.get("N_grid", 40)),
                 n_cycles=int(p.get("n_cycles", 5)),

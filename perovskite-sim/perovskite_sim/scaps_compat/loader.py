@@ -133,6 +133,7 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
         V_bi=float(dev["V_bi"]),
         Phi=float(dev["Phi"]),
         mode=str(dev["mode"]),
+        T=float(dev.get("T", 300.0)),
         interfaces=interfaces,
         interface_defects=interface_defects,
         interface_plane_projection=(
@@ -141,6 +142,18 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
         ),
         dos_band_potentials=(
             str(dev.get("dos_band_potentials", True)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        te_physical_norm=(
+            str(dev.get("te_physical_norm", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        ion_steric_diffusion_only=(
+            str(dev.get("ion_steric_diffusion_only", True)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        ion_steric_shared_site=(
+            str(dev.get("ion_steric_shared_site", True)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
         autoloop_generated_lever=(
@@ -168,7 +181,20 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
             str(dev.get("interface_plane_closure", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
+        interface_plane_generation=(
+            str(dev.get("interface_plane_generation", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
+        band_grading=(
+            str(dev.get("band_grading", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        interface_tunneling=(
+            str(dev.get("interface_tunneling", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        tunnel_mass_eff=float(dev.get("tunnel_mass_eff", 0.2)),
         S_n_left=_opt_S(dev.get("S_n_left")),
         S_p_left=_opt_S(dev.get("S_p_left")),
         S_n_right=_opt_S(dev.get("S_n_right")),

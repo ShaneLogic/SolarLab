@@ -83,6 +83,16 @@ describe('SCAPS-validation physics panel structure', () => {
     expect((document.getElementById('dev-flatband') as HTMLInputElement).checked).toBe(false)
     expect((document.getElementById('dev-despike') as HTMLInputElement).value).toBe('0.53')
   })
+
+  it('renders an absent DOS flag as enabled to match the backend default', () => {
+    renderDeviceEditor(container, cfg(), 'full')
+    expect((document.getElementById('dev-dos') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('renders an explicit DOS false opt-out as disabled', () => {
+    renderDeviceEditor(container, cfg({ dos_band_potentials: false }), 'full')
+    expect((document.getElementById('dev-dos') as HTMLInputElement).checked).toBe(false)
+  })
 })
 
 describe('SCAPS-validation physics round-trip', () => {
@@ -102,12 +112,20 @@ describe('SCAPS-validation physics round-trip', () => {
     expect('interface_plane_closure' in out.device).toBe(false)
   })
 
-  it('unchecking a flag drops it from the payload', () => {
+  it('unchecking DOS serializes an explicit false opt-out', () => {
     const c = cfg({ dos_band_potentials: true })
     renderDeviceEditor(container, c, 'full')
     ;(document.getElementById('dev-dos') as HTMLInputElement).checked = false
     const out = readDeviceEditor(c)
-    expect('dos_band_potentials' in out.device).toBe(false)
+    expect(out.device.dos_band_potentials).toBe(false)
+  })
+
+  it('disabling default-on DOS from an absent field serializes false', () => {
+    const c = cfg()
+    renderDeviceEditor(container, c, 'full')
+    ;(document.getElementById('dev-dos') as HTMLInputElement).checked = false
+    const out = readDeviceEditor(c)
+    expect(out.device.dos_band_potentials).toBe(false)
   })
 
   it('clean payload for a non-SCAPS config (no spurious false / 0)', () => {
@@ -125,5 +143,28 @@ describe('SCAPS-validation physics round-trip', () => {
     const out = readDeviceEditor(c)
     expect(out.device.dos_band_potentials).toBe(true)
     expect(out.device.het_recomb_despike).toBe(0.53)
+  })
+
+  it('preserves hidden physics flags including explicit false opt-outs', () => {
+    const c = cfg({
+      te_physical_norm: true,
+      ion_steric_diffusion_only: false,
+      ion_steric_shared_site: false,
+      flat_band_metal_contacts: true,
+      contact_phi_B_eV: 0.42,
+      interface_two_sided: true,
+      interface_shared_occupancy: true,
+      interface_plane_generation: true,
+    })
+    renderDeviceEditor(container, c, 'full')
+    const out = readDeviceEditor(c)
+    expect(out.device.te_physical_norm).toBe(true)
+    expect(out.device.ion_steric_diffusion_only).toBe(false)
+    expect(out.device.ion_steric_shared_site).toBe(false)
+    expect(out.device.flat_band_metal_contacts).toBe(true)
+    expect(out.device.contact_phi_B_eV).toBe(0.42)
+    expect(out.device.interface_two_sided).toBe(true)
+    expect(out.device.interface_shared_occupancy).toBe(true)
+    expect(out.device.interface_plane_generation).toBe(true)
   })
 })

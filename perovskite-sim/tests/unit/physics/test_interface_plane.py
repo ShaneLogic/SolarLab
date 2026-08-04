@@ -26,6 +26,7 @@ all fluxes ZERO (state already in equilibrium, no net TE current).
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -109,6 +110,21 @@ def test_wrapper_zero_flux_at_dark_equilibrium():
     # Reference scale: any non-trivial flux would be O(v_th * density).
     # If primitive is wired correctly, this is float-noise level.
     assert max_abs < 1.0e-3, f"max |flux| at dark eq = {max_abs} > 1e-3"
+
+
+def test_wrapper_zero_flux_at_dark_equilibrium_for_n_left_stack():
+    """A negative signed V_bi changes orientation, not barrier magnitude."""
+    from perovskite_sim.physics.interface_plane import compute_interface_te_fluxes
+    _, mat = _scaps_mirror_mat()
+    mat_n_left = replace(
+        mat,
+        V_bi_eff=-abs(mat.V_bi_eff),
+        junction_polarity=-1.0,
+        V_bi_bc=-abs(mat.V_bi_bc),
+    )
+    iface_eq = _compute_iface_state_dark_eq(mat_n_left)
+    f = compute_interface_te_fluxes(mat_n_left, iface_eq, V_app=0.0)
+    assert float(np.max(np.abs(f))) < 1.0e-3
 
 
 def test_wrapper_nonzero_flux_when_state_off_equilibrium():

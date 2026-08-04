@@ -93,6 +93,22 @@ MAPbI3:
     effectively zero beyond ~820 nm.
     5 nm uniform grid, 300-1000 nm, 141 rows.
 
+NiOx:
+  file: NiOx.csv
+  source: repository-parameterized-fit
+  reference: >-
+    Repository history commit b3235885ca67befb7540fb19f01b7102d0a12378;
+    no raw external ellipsometry dataset or fit script is stored in this repository
+  wavelength_range_nm: [300, 1100]
+  notes: >-
+    The repository history identifies this CSV as a parameterized fit that
+    replaced a constant n=2.2, k=0 fallback. It records n(550 nm)=2.35, a
+    modeled absorption edge near 3.5 eV, and weak visible absorption, but does
+    not preserve raw measurements or a reproducible fitting pipeline. Commit
+    538ddab99ea93a0ceee539bf230e89bf0d2723c9 later extended the 1000 nm edge
+    to 1100 nm by holding n=2.17 and k=0.004 constant. Treat these values as a
+    repository model input, not as an externally traceable measured dataset.
+
 PCBM:
   source: synthetic-Lorentz
   reference: "Two-oscillator Lorentz model; parameters inspired by Ren et al. 2015"

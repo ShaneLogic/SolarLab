@@ -1,5 +1,11 @@
 # Quantitative Benchmark Analysis
 
+> **Historical snapshot, superseded 2026-08-01.** This document records the
+> pre-band-offset model and must not be used as the current validation status.
+> The authoritative config, schema, resource-hash, benchmark, and limitation
+> registry is `reproducibility/config_benchmark_matrix.yaml`; executable P1 gap
+> contracts are in `reproducibility/p1_gaps.yaml`.
+
 ## Reference Papers
 
 1. **Courtier et al. (2019)** — "How transport layer properties affect perovskite solar cell performance", *Energy Environ. Sci.*, DOI: 10.1039/C8EE01576G (IonMonger)

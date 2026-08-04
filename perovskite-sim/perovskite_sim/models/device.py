@@ -290,9 +290,18 @@ class DeviceStack:
     # paint onto the (Ny, Nx) τ field. 1D solver paths and lateral-uniform 2D
     # paths ignore this field, so back-compat is bit-identical when empty.
     microstructure: Microstructure = field(default_factory=Microstructure)
+    # Optional electrical-grid protocol, aligned with electrical_layers(self).
+    # Appended after all historical fields to preserve positional-constructor
+    # compatibility. Empty tuples retain the legacy grid exactly.
+    grid_interval_weights: tuple[float, ...] = ()
+    grid_alphas: tuple[float, ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))
+        object.__setattr__(
+            self, "grid_interval_weights", tuple(self.grid_interval_weights)
+        )
+        object.__setattr__(self, "grid_alphas", tuple(self.grid_alphas))
 
     @property
     def total_thickness(self) -> float:

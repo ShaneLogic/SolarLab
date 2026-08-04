@@ -19,8 +19,8 @@ For each suns level X we:
    TMM-cached profiles and Beer-Lambert). Scaling the generation profile
    is equivalent to scaling the spectrum uniformly — the appropriate
    "suns" operation for this experiment.
-2. Settle the device to illuminated steady-state at V_app = 0 with the
-   scaled material cache.
+2. Apply the declared finite-time illuminated preconditioning interval at
+   V_app = 0 with the scaled material cache.
 3. Bisect to V_oc via the same ``_find_voc`` helper TPV uses (20-pt
    coarse scan to ~1 mV), warm-started from the previous suns level's
    V_oc so the bracket tightens monotonically as we walk up the curve.
@@ -59,15 +59,10 @@ from perovskite_sim.physics.generation import beer_lambert_generation
 from perovskite_sim.solver.mol import (
     MaterialArrays,
     build_material_arrays,
-    run_transient,
 )
-from perovskite_sim.solver.newton import solve_equilibrium
+from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.experiments.jv_sweep import (
-    _compute_current,
-    _compute_current_ss,
     _compute_current_ss_with_spread,
-    _integrate_step,
-    _grid_node_count,
 )
 from perovskite_sim.experiments.tpv import _find_voc
 
@@ -151,21 +146,20 @@ def _solve_illuminated_ss_with_mat(
     rtol: float = 1e-4,
     atol: float = 1e-6,
 ) -> np.ndarray:
-    """Illuminated steady state at V_app using a caller-supplied mat cache.
+    """Finite-time illuminated preconditioning with a supplied mat cache.
 
-    Mirrors ``solver.illuminated_ss.solve_illuminated_ss`` but threads a
-    pre-built MaterialArrays through so we can modulate G_optical per
-    suns level without rebuilding the whole cache each time.
+    Threads a pre-built MaterialArrays through the shared fail-closed solver
+    so suns-level generation can be modulated without rebuilding the cache.
     """
-    y_dark = solve_equilibrium(x, stack)
-    sol = run_transient(
-        x, y_dark, (0.0, t_settle), np.array([t_settle]),
-        stack, illuminated=True, V_app=V_app,
-        rtol=rtol, atol=atol, mat=mat,
+    return solve_illuminated_ss(
+        x,
+        stack,
+        V_app=V_app,
+        t_settle=t_settle,
+        rtol=rtol,
+        atol=atol,
+        mat=mat,
     )
-    if not sol.success:
-        return y_dark
-    return sol.y[:, -1]
 
 
 def _compute_pseudo_ff(
@@ -223,9 +217,9 @@ def run_suns_voc(
     N_grid : int, default 60
         Total drift-diffusion grid nodes across the electrical layers.
     t_settle : float, default 1e-1
-        Settling time [s] for each suns level's illuminated steady-state
-        solve. 100 ms is the validated short-time protocol for the shipped
-        gates, not a full ion-equilibration time. For D_ion ≈ 1e-17 m²/s and
+        Light-preconditioning time [s] for each suns level. 100 ms is the
+        validated short-time protocol for the shipped gates, not a residual-
+        certified electronic or ionic steady state. For D_ion ≈ 1e-17 m²/s and
         a 400 nm absorber, L²/D is about 1.6e4 s; screened and blocking-cell
         charging scales are shorter but still history-dependent. The matched
         dark-current subtraction removes the residual common-mode drift from
@@ -282,7 +276,7 @@ def run_suns_voc(
     for k, suns in enumerate(suns_sorted):
         mat_k = dataclasses.replace(mat_baseline, G_optical=G_unit * suns)
 
-        # Illuminated steady-state at V=0 → gives J_sc(suns) directly.
+        # Finite-time illuminated state at V=0 gives the protocol J_sc(suns).
         y_ss = _solve_illuminated_ss_with_mat(
             x, stack, mat_k, V_app=0.0,
             t_settle=t_settle, rtol=rtol, atol=atol,

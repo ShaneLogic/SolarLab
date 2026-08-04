@@ -888,7 +888,7 @@ def test_twod_radiative_reabsorption_robin_field_mobility_coexistence_smoke():
     layers_compat = [Layer(L.thickness, Ny_per_layer) for L in elec]
     x_1d = multilayer_grid(layers_compat)
 
-    # Bootstrap from 1D illuminated steady-state at V=0.
+    # Bootstrap from the 1D finite-time light-conditioned state at V=0.
     y_1d = solve_illuminated_ss(x_1d, stack, V_app=0.0, t_settle=1e-3)
     sv = StateVec.unpack(y_1d, len(x_1d))
 

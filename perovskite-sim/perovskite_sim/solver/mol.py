@@ -232,10 +232,14 @@ class MaterialArrays:
     poisson_factor: PoissonFactor | None = None
     # Effective built-in potential computed from band offsets (or manual V_bi fallback)
     V_bi_eff: float = 1.1
-    # Built-in potential actually applied in the Poisson Dirichlet BC
-    # (phi_right = V_bi_bc - V_app). Equals stack.V_bi by default (IonMonger
-    # convention); under flat_band_contacts it is the flat-band
-    # work-function difference compute_V_bi() (SCAPS convention).
+    # Contact orientation inferred from the signed work-function difference.
+    # +1 is p-left/n-right; -1 is n-left/p-right. External V_app is always a
+    # positive forward-bias magnitude and is mapped through this polarity.
+    junction_polarity: float = 1.0
+    # Signed built-in potential applied in the Poisson Dirichlet BC. The YAML
+    # stack.V_bi remains a positive magnitude on the default contact path; its
+    # sign comes from junction_polarity. Flat-band contacts use the signed
+    # work-function difference directly.
     V_bi_bc: float = 1.1
     # Per-node Richardson constants for thermionic emission capping
     A_star_n: np.ndarray | None = None
@@ -415,6 +419,15 @@ class MaterialArrays:
             d["het_recomb_despike"] = self.het_recomb_despike
             d["het_recomb_nodes"] = self.het_recomb_nodes
         return d
+
+
+def poisson_right_boundary(mat: MaterialArrays, V_app: float) -> float:
+    """Return the right Poisson boundary for a positive forward bias.
+
+    ``V_bi_bc`` is signed in the electrical coordinate. Positive external
+    forward bias must reduce its magnitude for both p-left and n-left stacks.
+    """
+    return float(mat.V_bi_bc - mat.junction_polarity * float(V_app))
 
 
 def _compute_tmm_generation(
@@ -616,7 +629,7 @@ def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
     if n_iface == 0:
         return np.zeros(0, dtype=float)
     V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
-    V_total = float(mat.V_bi_eff)
+    V_total = abs(float(mat.V_bi_eff))
     EXP_CAP = 30.0
     out = np.zeros(4 * n_iface, dtype=float)
     for k in range(n_iface):
@@ -1455,8 +1468,15 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
     first = elec_layers[0].params
     last = elec_layers[-1].params
-    n_L, p_L = _equilibrium_np(first.N_D, first.N_A, first.ni)
-    n_R, p_R = _equilibrium_np(last.N_D, last.N_A, last.ni)
+    # Use the actual endpoint intrinsic density carried by the material
+    # arrays. Unlike the scalar MaterialParams.ni, these values include
+    # temperature scaling and an outer layer's band-gap grading. This keeps
+    # each contact reservoir on the same local mass-action law as the adjacent
+    # continuity node.
+    ni_sq_L = float(ni_sq[0])
+    ni_sq_R = float(ni_sq[-1])
+    n_L, p_L = _equilibrium_np(first.N_D, first.N_A, np.sqrt(ni_sq_L))
+    n_R, p_R = _equilibrium_np(last.N_D, last.N_A, np.sqrt(ni_sq_R))
 
     # Flat-band metal-contact reservoir floor (2026-07) — see DeviceStack.
     # flat_band_metal_contacts. The contact carrier reservoir is the LARGER of
@@ -1468,7 +1488,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     if getattr(stack, "flat_band_metal_contacts", False) and sim_mode.name != "legacy":
         _gate = math.exp(-float(getattr(stack, "contact_phi_B_eV", 0.0)) / V_T_dev)
 
-        def _floor_contact(pm, n_c: float, p_c: float) -> tuple[float, float]:
+        def _floor_contact(
+            pm,
+            n_c: float,
+            p_c: float,
+            ni_sq_contact: float,
+        ) -> tuple[float, float]:
             # Floor the MAJORITY-carrier reservoir at the metal work-function
             # density N_C/N_V·exp(-phi_B/V_T). The doping sign picks the carrier,
             # so nip (n-type right / p-type left) and pin (the reverse) are both
@@ -1478,16 +1503,16 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                 if pm.Nc300:
                     wf = float(pm.Nc300) * _gate
                     if wf > n_c:
-                        return wf, float(pm.ni) ** 2 / wf
+                        return wf, ni_sq_contact / wf
             else:                                    # p-type contact -> holes
                 if pm.Nv300:
                     wf = float(pm.Nv300) * _gate
                     if wf > p_c:
-                        return float(pm.ni) ** 2 / wf, wf
+                        return ni_sq_contact / wf, wf
             return n_c, p_c
 
-        n_R, p_R = _floor_contact(last, n_R, p_R)
-        n_L, p_L = _floor_contact(first, n_L, p_L)
+        n_R, p_R = _floor_contact(last, n_R, p_R, ni_sq_R)
+        n_L, p_L = _floor_contact(first, n_L, p_L, ni_sq_L)
 
     # LAPACK LU of the Poisson tridiagonal — constant across the experiment,
     # so we pay the factor cost exactly once and each RHS call becomes a
@@ -1495,6 +1520,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     poisson_factor = factor_poisson(x, eps_r)
 
     V_bi_eff = stack.compute_V_bi()
+    junction_polarity = -1.0 if V_bi_eff < 0.0 else 1.0
+    V_bi_bc = (
+        V_bi_eff
+        if _flat_band
+        else junction_polarity * abs(float(stack.V_bi))
+    )
 
     # TMM optical generation: computed when any layer has optical data and
     # the active mode enables TMM. Legacy/fast fall back to Beer-Lambert.
@@ -1678,6 +1709,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         p_R=p_R,
         poisson_factor=poisson_factor,
         V_bi_eff=V_bi_eff,
+        junction_polarity=junction_polarity,
         A_star_n=A_star_n_node,
         A_star_p=A_star_p_node,
         N_C_node=(N_C_node_arr if _te_phys else None),
@@ -1709,7 +1741,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         S_n_R=_s_contact(stack.S_n_right) if _has_selective_contacts else None,
         S_p_R=_s_contact(stack.S_p_right) if _has_selective_contacts else None,
         has_selective_contacts=_has_selective_contacts,
-        V_bi_bc=(stack.compute_V_bi() if _flat_band else stack.V_bi),
+        V_bi_bc=V_bi_bc,
         absorber_masks=tuple(absorber_masks_list) if _has_radiative_reabsorption else (),
         absorber_p_esc=tuple(absorber_p_esc_list) if _has_radiative_reabsorption else (),
         absorber_thicknesses=tuple(absorber_thicknesses_list) if _has_radiative_reabsorption else (),
@@ -2072,8 +2104,8 @@ def assemble_rhs(
     # residual at a held electrostatic potential, decoupling the dense
     # phi-mediated Jacobian tail). phi_frozen is None on every default path,
     # so this is bit-identical when unused.
-    # phi_right = V_bi - V_app: forward bias (V_app > 0) reduces the
-    # built-in field; V_app = 0 → short circuit, V_app ≈ V_oc → open circuit.
+    # Positive V_app is forward bias for either contact orientation. The
+    # polarity mapping makes it reduce the signed built-in field magnitude.
     if phi_frozen is not None:
         phi = phi_frozen
     else:
@@ -2099,7 +2131,7 @@ def assemble_rhs(
                 rho[_ix] += mat.iface_state_charge * _dQ[_k] / mat.dx_cell[_ix]
         phi = solve_poisson_prefactored(
             mat.poisson_factor, rho, phi_left=0.0,
-            phi_right=mat.V_bi_bc - V_app,
+            phi_right=poisson_right_boundary(mat, V_app),
         )
 
     # Generation: TMM-computed profile if available, else Beer-Lambert fallback.
@@ -2530,7 +2562,7 @@ def split_step(
             )
             phi = solve_poisson_prefactored(
                 mat.poisson_factor, rho,
-                phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
+                phi_left=0.0, phi_right=poisson_right_boundary(mat, V_app),
             )
             _shared_ss = (mat.ion_steric_diffusion_only
                           and mat.ion_steric_shared_site)
@@ -2566,7 +2598,7 @@ def split_step(
             )
             phi = solve_poisson_prefactored(
                 mat.poisson_factor, rho,
-                phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
+                phi_left=0.0, phi_right=poisson_right_boundary(mat, V_app),
             )
             return ion_continuity_rhs(
                 x, phi, P_nn, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,

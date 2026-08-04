@@ -1,9 +1,82 @@
 from __future__ import annotations
-from typing import Optional
+from collections.abc import Mapping, Sequence
+import math
+from typing import Any, Optional
+
 import yaml
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.twod.microstructure import load_microstructure_from_yaml_block
+
+
+def electrical_grid_from_config_dict(
+    cfg: Mapping[str, Any],
+    layers: Sequence[LayerSpec],
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Parse the optional top-level executable ``electrical_grid`` block.
+
+    Both maps are keyed by electrical-layer name and must cover those layers
+    exactly; substrate names are neither required nor accepted. Returning
+    ordered tuples keeps :class:`DeviceStack` independent of YAML map order.
+    An absent block returns empty tuples, preserving the legacy grid path.
+    """
+    if "electrical_grid" not in cfg:
+        return (), ()
+
+    block = cfg["electrical_grid"]
+    if not isinstance(block, Mapping):
+        raise ValueError("electrical_grid must be a mapping")
+    required_keys = {"interval_weights", "alphas"}
+    actual_block_keys = set(block)
+    if actual_block_keys != required_keys:
+        missing = sorted(required_keys - actual_block_keys)
+        extra = sorted(repr(key) for key in actual_block_keys - required_keys)
+        raise ValueError(
+            "electrical_grid must contain exactly interval_weights and alphas; "
+            f"missing={missing}, extra={extra}"
+        )
+
+    electrical = tuple(layer for layer in layers if layer.role != "substrate")
+    layer_names = tuple(layer.name for layer in electrical)
+    if len(set(layer_names)) != len(layer_names):
+        raise ValueError(
+            "electrical_grid requires unique names for all electrical layers"
+        )
+    expected_names = set(layer_names)
+
+    def _positive_map(key: str) -> tuple[float, ...]:
+        raw = block[key]
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"electrical_grid.{key} must be a mapping")
+        actual_names = set(raw)
+        if actual_names != expected_names:
+            missing = sorted(expected_names - actual_names)
+            extra = sorted(repr(name) for name in actual_names - expected_names)
+            raise ValueError(
+                f"electrical_grid.{key} must cover exactly the electrical "
+                f"layers; missing={missing}, extra={extra}"
+            )
+        values: list[float] = []
+        for name in layer_names:
+            value = raw[name]
+            if isinstance(value, bool):
+                raise ValueError(
+                    f"electrical_grid.{key}[{name!r}] must be finite and positive"
+                )
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"electrical_grid.{key}[{name!r}] must be finite and positive"
+                ) from exc
+            if not math.isfinite(number) or number <= 0.0:
+                raise ValueError(
+                    f"electrical_grid.{key}[{name!r}] must be finite and positive"
+                )
+            values.append(number)
+        return tuple(values)
+
+    return _positive_map("interval_weights"), _positive_map("alphas")
 
 
 def interfaces_from_device_dict(
@@ -67,6 +140,10 @@ def interfaces_from_device_dict(
         defect_list.append(InterfaceDefect(
             E_t_eV=float(block["E_t_eV_below_cb"]),
             calibration_factor=float(block.get("calibration_factor", 1.0)),
+            iface_state_calibration_factor=float(
+                block.get("iface_state_calibration_factor", 1.0)
+            ),
+            N_t_cm2=N_t,
         ))
     return (
         tuple(iface_list),
@@ -197,6 +274,9 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             params=p,
             role=layer_cfg["role"],
         ))
+    grid_interval_weights, grid_alphas = electrical_grid_from_config_dict(
+        cfg, layers
+    )
     # Interface recombination: legacy [v_n, v_p] SRV pairs and/or SCAPS-style
     # defect blocks. Shared with the backend inline-device path so the two
     # cannot drift.
@@ -229,6 +309,8 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         layers=layers,
         V_bi=_f(dev.get("V_bi", 1.1)),
         Phi=_f(dev.get("Phi", 2.5e21)),
+        grid_interval_weights=grid_interval_weights,
+        grid_alphas=grid_alphas,
         interfaces=interfaces,
         interface_defects=interface_defects,
         T=_f(dev.get("T", 300.0)),
@@ -246,7 +328,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             in ("true", "1", "yes", "on")
         ),
         ion_steric_diffusion_only=(
-            str(dev.get("ion_steric_diffusion_only", False)).strip().lower()
+            str(dev.get("ion_steric_diffusion_only", True)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
         ion_steric_shared_site=(
@@ -266,6 +348,14 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             in ("true", "1", "yes", "on")
         ),
         contact_phi_B_eV=_f(dev.get("contact_phi_B_eV", 0.0)),
+        interface_two_sided=(
+            str(dev.get("interface_two_sided", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        interface_shared_occupancy=(
+            str(dev.get("interface_shared_occupancy", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
         interface_plane_closure=(
             str(dev.get("interface_plane_closure", False)).strip().lower()
             in ("true", "1", "yes", "on")

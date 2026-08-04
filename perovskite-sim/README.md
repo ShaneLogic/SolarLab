@@ -18,6 +18,7 @@ perovskite-sim/
 ├── frontend/         Vite + TypeScript + Plotly single-page UI
 ├── configs/          Shipped YAML device presets
 ├── tests/            pytest suite (unit / integration / regression)
+├── reproducibility/  Frozen baselines, schemas, hashes, benchmarks, P1 gaps
 └── notebooks/        Exploratory benchmarks
 ```
 
@@ -35,10 +36,16 @@ cd frontend && npm install     # frontend dependencies
 ## Tests
 
 ```bash
-pytest                                                  # default unit + integration (~15 s)
-pytest -m slow                                          # physics regression (~30 s, BLAS pinned)
+pytest                                                  # default unit + integration (~2-3 min)
+pytest -m validation -W error::RuntimeWarning           # literature-informed lanes
+pytest -m slow -W error::RuntimeWarning                 # heavy physics suite; can exceed 1 h
+python scripts/verify_reproducibility.py --json          # P0 + config/schema/resource matrix
 pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 ```
+
+Evidence labels matter: a passing `load_only` or internal regression is not an
+external validation. See [reproducibility/README.md](reproducibility/README.md)
+for the authoritative status and limitations of every shipped config.
 
 <br>
 
@@ -56,8 +63,8 @@ pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 
 | Script | Topic |
 |:-------|:------|
-| `04_ionmonger_benchmark.py` | IonMonger cross-validation |
-| `05_comprehensive_benchmark.py` | Full physics sweep |
+| `04_ionmonger_benchmark.py` | Exploratory IonMonger paper-informed diagnostic |
+| `05_comprehensive_benchmark.py` | Exploratory multi-physics diagnostic |
 | `06_e2e_notebook_vs_api.py` | Notebook vs API parity check |
 
 - **Autoloop guardian** (`python perovskite-sim/scripts/autoloop_run.py --once`) — runs the
@@ -549,7 +556,7 @@ from perovskite_sim.experiments.mott_schottky import run_mott_schottky
 r = run_mott_schottky(
     stack,
     V_range=np.linspace(-0.3, 0.4, 8),
-    frequency=1e5,       # 100 kHz — above ionic relaxation, below RC roll-off
+    frequency=1e6,       # 1 MHz default; certify a frequency plateau for claims
 )
 # r.V, r.C, r.one_over_C2       — dark C-V sweep [F/m² and m⁴/F²]
 # r.V_bi_fit                    — built-in voltage from 1/C² V-intercept
@@ -560,7 +567,8 @@ r = run_mott_schottky(
 
 A thin wrapper over `run_impedance` that drives a single AC excitation
 at `frequency` at each DC bias and reads capacitance off as
-$C = |\text{Im}(1/Z)| / \omega$. Runs dark
+$C = \text{Im}(1/Z) / \omega$. A non-positive susceptance is rejected
+instead of being hidden by an absolute value. Runs dark
 (`illuminated=False`) so photogenerated carriers do not screen the
 depletion capacitance. The linear-fit helper finds the widest
 contiguous $(V, 1/C^2)$ window whose RMS residual is within 10 % of its
@@ -568,5 +576,8 @@ ordinate span — rejects the low-bias fully-depleted tail and the
 high-bias injection tail without a hand-tuned cutoff. On a clean
 Mott-Schottky curve the synthetic-data regression tests pin recovery
 of $V_{\text{bi}}$ to $<0.01$ V and $N$ to $<0.02$ decades.
+Flat or positive-slope $1/C^2$ data return an unidentifiable fit rather
+than a finite but physically meaningless parameter pair. A physical claim
+also requires grid, frequency, amplitude, and cycle convergence.
 
 *Source:* `perovskite_sim/experiments/mott_schottky.py`

@@ -6,20 +6,23 @@
 # Interface SRV: high on minority-carrier side of each heterojunction.
 
 simulation_hints:
-  # ZnO(200nm)/CdS(50nm)/CIGS(2um) has a large chi discontinuity (4.4 vs
-  # 4.2) at the ZnO/CdS junction that activates the TE flux cap. With
-  # N_grid < 80 the 2 um absorber is too coarsely resolved and the
-  # coupled Poisson/continuity solver fails to converge around V~0.37V
-  # (bisection stalls). Raising N_grid to 120+ relieves this at the
-  # cost of a slower sweep.
+  # N_grid=120 is the finest rung of the registered 40/80/120 convergence
+  # ladder. Use a 25 mV outer voltage step: the coarser 50 mV protocol can
+  # enter an expensive reverse-step conditioning failure near V=0.95 V even
+  # though the finer protocol certifies in less wall time.
   min_N_grid: 120
   notes: >-
-    ZnO/CdS/CIGS heterostructure. Requires N_grid >= 120 to avoid
-    non-convergence of the coupled solver near mid-bias. Default
-    Radau tolerances work but each sweep takes several minutes.
+    ZnO/CdS/CIGS heterostructure. The registered numerical protocol uses
+    N_grid=40/80/120, V_max=1.05 V, and 43 points (25 mV spacing). Material
+    density-of-states and intrinsic-density provenance remain incomplete, so
+    this preset is an internal numerical/qualitative baseline, not an external
+    quantitative CIGS validation.
 
 device:
-  V_bi: 1.0
+  # Positive magnitude for the default contact BC. It is synchronized to
+  # abs(compute_V_bi()) for the material endpoints below; the solver restores
+  # the negative coordinate sign for this n-left/p-right stack.
+  V_bi: 1.0546666460693208
   Phi: 2.5e21   # AM1.5G above-bandgap flux for Eg~1.15 eV
   interfaces:
     - [1.0e-1, 1.0e5]   # ZnO/CdS: holes minority in ZnO side → v_p high

@@ -1,0 +1,62 @@
+schema_version: 1
+schemas:
+  standard-device-v1:
+    detector: standard_si_layers
+    loader: perovskite_sim.models.config_loader.load_device_from_yaml
+    units: SI
+    required_top_keys: [device, layers]
+    required_device_keys: []
+    required_layer_keys:
+      - name
+      - role
+      - thickness
+      - eps_r
+      - mu_n
+      - mu_p
+      - D_ion
+      - P_lim
+      - P0
+      - ni
+      - tau_n
+      - tau_p
+      - n1
+      - p1
+      - B_rad
+      - C_n
+      - C_p
+      - alpha
+      - N_A
+      - N_D
+    unknown_key_policy: loader-permissive
+  scaps-device-v1:
+    detector: scaps_cgs_layers
+    loader: perovskite_sim.scaps_compat.loader.load_scaps_yaml
+    units: SCAPS-compatible cm/eV input converted to SI
+    required_top_keys: [device, layers]
+    required_device_keys: [V_bi, Phi, mode]
+    required_layer_keys:
+      - name
+      - role
+      - thickness_nm
+      - E_g_eV
+      - chi_eV
+      - eps_r
+      - mu_n_cm2
+      - mu_p_cm2
+      - N_C_cm3
+      - N_V_cm3
+      - N_D_cm3
+      - N_A_cm3
+      - v_th_cm_s
+    unknown_key_policy: strict-for-defect-records
+  tandem-v1:
+    detector: tandem_2T_monolithic
+    loader: perovskite_sim.models.tandem_config.load_tandem_from_yaml
+    units: mixed-explicit
+    required_top_keys:
+      - schema_version
+      - device_type
+      - tandem
+    required_device_keys: []
+    required_layer_keys: []
+    unknown_key_policy: loader-permissive

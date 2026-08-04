@@ -11,6 +11,7 @@ import pytest
 
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, LayerSpec, electrical_layers
+from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.solver.mol import build_material_arrays
 
@@ -117,3 +118,15 @@ def test_back_to_front_direction_flips_profile():
     # forward rises front→back; reverse falls
     assert m_fwd.Eg[idx][0] < m_fwd.Eg[idx][-1]
     assert m_rev.Eg[idx][0] > m_rev.Eg[idx][-1]
+
+
+def test_graded_outer_contact_reservoir_uses_endpoint_intrinsic_density():
+    """The contact and adjacent node must share the same mass-action law."""
+    stack = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    x = multilayer_grid([
+        Layer(layer.thickness, 10) for layer in electrical_layers(stack)
+    ])
+    mat = build_material_arrays(x, stack)
+
+    assert mat.ni_sq[-1] < stack.layers[-1].params.ni ** 2
+    assert mat.n_R * mat.p_R == pytest.approx(mat.ni_sq[-1], rel=1.0e-12)

@@ -1,6 +1,13 @@
+import dataclasses
+
 import numpy as np
 import pytest
-from perovskite_sim.experiments.jv_sweep import JVResult, compute_metrics
+from perovskite_sim.experiments.jv_sweep import (
+    JVMetrics,
+    JVPointStatus,
+    JVResult,
+    compute_metrics,
+)
 
 
 def test_compute_metrics_mpp():
@@ -94,6 +101,126 @@ def test_compute_metrics_default_behaviour_bit_identical():
     assert m.voc_bracketed is True
 
 
+def test_compute_metrics_rejects_invalid_boolean_mask():
+    V = np.array([0.0, 0.5, 1.0])
+    J = np.array([200.0, 100.0, -10.0])
+    with pytest.raises(ValueError, match=r"invalid indices: \[1\]"):
+        compute_metrics(V, J, validity=np.array([True, False, True]))
+
+
+def test_compute_metrics_rejects_invalid_point_status():
+    V = np.array([0.0, 0.5, 1.0])
+    J = np.array([200.0, 100.0, -10.0])
+    statuses = tuple(
+        JVPointStatus(
+            branch="test",
+            index=i,
+            voltage=float(voltage),
+            valid=i != 2,
+            upstream_valid=i != 2,
+        )
+        for i, voltage in enumerate(V)
+    )
+    with pytest.raises(ValueError, match=r"invalid indices: \[2\]"):
+        compute_metrics(V, J, validity=statuses)
+
+
+@pytest.mark.parametrize(
+    ("V", "J"),
+    (
+        (np.array([0.0, np.nan, 1.0]), np.array([200.0, 100.0, -10.0])),
+        (np.array([0.0, 0.5, 1.0]), np.array([200.0, np.inf, -10.0])),
+    ),
+)
+def test_compute_metrics_rejects_non_finite_samples(V, J):
+    with pytest.raises(ValueError, match="non-finite indices"):
+        compute_metrics(V, J)
+
+
+def test_jv_result_manual_constructor_keeps_status_fields_optional():
+    V = np.array([0.0, 1.0])
+    J = np.array([100.0, -10.0])
+    metrics = JVMetrics(V_oc=0.9, J_sc=100.0, FF=0.8, PCE=0.07)
+    result = JVResult(
+        V_fwd=V,
+        J_fwd=J,
+        V_rev=V[::-1],
+        J_rev=J[::-1],
+        metrics_fwd=metrics,
+        metrics_rev=metrics,
+        hysteresis_index=0.0,
+    )
+    assert result.status_fwd is None
+    assert result.status_rev is None
+    assert result.certified is False
+
+
+def test_jv_result_certified_requires_complete_aligned_certificates():
+    V_fwd = np.array([0.0, 1.0])
+    J_fwd = np.array([100.0, -10.0])
+    V_rev = V_fwd[::-1]
+    J_rev = J_fwd[::-1]
+    metrics = JVMetrics(V_oc=0.9, J_sc=100.0, FF=0.8, PCE=0.07)
+    status_fwd = tuple(
+        JVPointStatus(
+            branch="jv_forward", index=i, voltage=float(voltage),
+        )
+        for i, voltage in enumerate(V_fwd)
+    )
+    status_rev = tuple(
+        JVPointStatus(
+            branch="jv_reverse", index=i, voltage=float(voltage),
+        )
+        for i, voltage in enumerate(V_rev)
+    )
+    result = JVResult(
+        V_fwd=V_fwd,
+        J_fwd=J_fwd,
+        V_rev=V_rev,
+        J_rev=J_rev,
+        metrics_fwd=metrics,
+        metrics_rev=metrics,
+        hysteresis_index=0.0,
+        status_fwd=status_fwd,
+        status_rev=status_rev,
+    )
+
+    assert result.certified is True
+    assert dataclasses.replace(result, status_fwd=status_fwd[:1]).certified is False
+    bad_index = dataclasses.replace(status_fwd[1], index=7)
+    assert dataclasses.replace(
+        result, status_fwd=(status_fwd[0], bad_index),
+    ).certified is False
+    bad_voltage = dataclasses.replace(status_rev[0], voltage=0.5)
+    assert dataclasses.replace(
+        result, status_rev=(bad_voltage, status_rev[1]),
+    ).certified is False
+    assert dataclasses.replace(
+        result, J_rev=np.array([np.nan, 100.0]),
+    ).certified is False
+
+
+def test_jv_point_status_is_immutable():
+    status = JVPointStatus(branch="fwd", index=0, voltage=0.0)
+    with pytest.raises(AttributeError):
+        status.valid = False
+
+
+def test_compute_metrics_rejects_mixed_validity_types():
+    V = np.array([0.0, 1.0])
+    J = np.array([100.0, -10.0])
+    status = JVPointStatus(branch="test", index=1, voltage=1.0)
+    with pytest.raises(TypeError, match="cannot mix"):
+        compute_metrics(V, J, validity=[True, status])
+
+
+def test_compute_metrics_rejects_non_boolean_validity_values():
+    V = np.array([0.0, 1.0])
+    J = np.array([100.0, -10.0])
+    with pytest.raises(TypeError, match="must be boolean"):
+        compute_metrics(V, J, validity=[1, 0])
+
+
 def test_jv_sweep_rejects_small_n_grid():
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
     from perovskite_sim.models.config_loader import load_device_from_yaml
@@ -152,7 +279,6 @@ def _make_stack_and_N(n_grid: int = 60):
 def test_fixed_generation_override_is_honored():
     """Zero generation profile should drive J_sc to ~0."""
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
-    from perovskite_sim.models.config_loader import load_device_from_yaml
 
     N_grid = 60
     stack, N = _make_stack_and_N(N_grid)
@@ -172,3 +298,37 @@ def test_fixed_generation_wrong_shape_raises():
     with pytest.raises(ValueError, match="fixed_generation"):
         run_jv_sweep(stack, N_grid=60, n_points=20,
                      fixed_generation=np.zeros(30))
+
+
+def test_fixed_generation_initialiser_uses_shared_fail_closed_solver(monkeypatch):
+    """The tandem generation path must not retain a private dark fallback."""
+    from perovskite_sim.experiments import jv_sweep as jv_module
+    from perovskite_sim.solver.illuminated_ss import IlluminatedSteadyStateError
+
+    stack, N = _make_stack_and_N(6)
+    seen = {}
+
+    def fail_with_mat(x, _stack, **kwargs):
+        seen["shape"] = x.shape
+        seen["mat"] = kwargs.get("mat")
+        raise IlluminatedSteadyStateError(
+            V_app=kwargs["V_app"],
+            t_settle=1e-3,
+            solver_message="synthetic fixed-generation failure",
+        )
+
+    monkeypatch.setattr(jv_module, "solve_illuminated_ss", fail_with_mat)
+    with pytest.raises(
+        IlluminatedSteadyStateError,
+        match="synthetic fixed-generation failure",
+    ):
+        jv_module.run_jv_sweep(
+            stack,
+            N_grid=6,
+            n_points=3,
+            V_max=0.2,
+            fixed_generation=np.zeros(N),
+        )
+
+    assert seen["shape"] == (N,)
+    assert seen["mat"] is not None

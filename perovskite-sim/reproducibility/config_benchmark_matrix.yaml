@@ -1,0 +1,853 @@
+schema_version: 1
+p0_baseline: p0-certified-2026-08-01
+schema_registry: reproducibility/schema_registry.yaml
+reference_environment:
+  os: Darwin 25.6.0 arm64
+  python: 3.13.5
+  numpy: 2.1.3
+  scipy: 1.15.3
+  blas_threads: 1
+
+resources:
+  - path: perovskite_sim/data/am15g.csv
+    sha256: efa3f5ef4e71fbbd981e2741c296ee461b2421f50fa4819ba64a6cb026fae6a8
+  - path: perovskite_sim/data/layer_templates.yaml
+    sha256: 6a3dc2be4af2f2967230d17c7b39ff2be87bd3eec225eaa669520149189c3e5d
+  - path: perovskite_sim/data/nk/manifest.yaml
+    sha256: b442027f40477181058ea25079cfb640251fa9aeea89bc87b106dbca037ac1ea
+  - path: perovskite_sim/data/nk/Ag.csv
+    sha256: 4df8c2b7ca90d24be74477bc9e8a27ef83c2e7d42e2885465cdd87c70abbd3f3
+  - path: perovskite_sim/data/nk/Au.csv
+    sha256: f573ae5583ec88e572b97bac5bf4f4629e17ad2d52c5ed7d8afc815d952ee7f1
+  - path: perovskite_sim/data/nk/C60.csv
+    sha256: 60f7accc2cb26faac8d041861d1c4be5a15c244480c0e6d920acc980d938a68d
+  - path: perovskite_sim/data/nk/FA_Cs_1p77.csv
+    sha256: 0ee7387604904b252319a8e538bac101af3dad2b5c8a05b50fa2bda883578013
+  - path: perovskite_sim/data/nk/FTO.csv
+    sha256: 481cc65eb23e22cebe924324cbe9f4553a09c53a8f3429d1600fad1c7bd6e1e9
+  - path: perovskite_sim/data/nk/ITO.csv
+    sha256: d75e26ff9979d7db96b45035a3540914a1fb9ca3cf2cde3c3edaead70c3cef2e
+  - path: perovskite_sim/data/nk/MAPbI3.csv
+    sha256: 3e5e2b19c5563ba8132ab949270831c0aaa660be38aa26070c364a7414b9f6c7
+  - path: perovskite_sim/data/nk/NiOx.csv
+    sha256: b01357aca6a8eee41b2e22c87ec8ab5be4eca67254becf76af92d268ece8be81
+  - path: perovskite_sim/data/nk/PCBM.csv
+    sha256: b03a78c4b97e2f8472266f4d3b5e7c9e1f23526531edd68b9dc80f95cd91ba56
+  - path: perovskite_sim/data/nk/PEDOT_PSS.csv
+    sha256: 0ccca48126dd4d27053e6c154f398c32873d0b935c40a3cda5672979cd578eb3
+  - path: perovskite_sim/data/nk/SnO2.csv
+    sha256: f3ba07ff715ceca647099c67eb478bad1281e0cb20d9118591f9b566938bafa2
+  - path: perovskite_sim/data/nk/SnPb_1p22.csv
+    sha256: 29ab6df37a81e4425cbcaba4ea11df94e2117a0228ebd3a39fe38a9ca7d2799f
+  - path: perovskite_sim/data/nk/TiO2.csv
+    sha256: d0773f2042cff4819d432fd07fbc560f2f894afa51fe2dc42f54aa4db24b2de6
+  - path: perovskite_sim/data/nk/glass.csv
+    sha256: 767eeb506dab6f90722a61178649b5c59eb767a915a759db8d30b9160b8d452d
+  - path: perovskite_sim/data/nk/spiro_OMeTAD.csv
+    sha256: 45d4eff61f7be07371ce089b7d665bd670bf4e05e2c2950baab8592a9adccd31
+
+benchmarks:
+  loader-contract:
+    kind: schema
+    status: pass
+    claim_level: structural
+    command: pytest -q tests/reproducibility/test_matrix.py
+    tests: [tests/reproducibility/test_matrix.py]
+    node_ids:
+      - tests/reproducibility/test_matrix.py::test_matrix_covers_and_loads_every_shipped_config
+    configs:
+      - configs/cSi_homojunction.yaml
+      - configs/cigs_baseline.yaml
+      - configs/cigs_graded_notch.yaml
+      - configs/driftfusion_benchmark.yaml
+      - configs/driftfusion_benchmark_tmm.yaml
+      - configs/driftfusion_calado2016_repro.yaml
+      - configs/field_mobility_demo.yaml
+      - configs/ionmonger_benchmark.yaml
+      - configs/ionmonger_benchmark_tmm.yaml
+      - configs/ionmonger_courtier2019_repro.yaml
+      - configs/nip_MAPbI3.yaml
+      - configs/nip_MAPbI3_tmm.yaml
+      - configs/nip_SnPb_1p22.yaml
+      - configs/nip_wideGap_FACs_1p77.yaml
+      - configs/pin_MAPbI3.yaml
+      - configs/pin_MAPbI3_tmm.yaml
+      - configs/radiative_limit.yaml
+      - configs/scaps_mirror.yaml
+      - configs/scaps_mirror_v2.yaml
+      - configs/scaps_mirror_v2_robin_moderate.yaml
+      - configs/scaps_mirror_v2_robin_strong.yaml
+      - configs/selective_contacts_demo.yaml
+      - configs/solarscale_nip_band_aligned.yaml
+      - configs/solarscale_nip_band_aligned_iface.yaml
+      - configs/tandem_lin2019.yaml
+      - configs/twod/bcx_combined_demo.yaml
+      - configs/twod/nip_MAPbI3_singleGB.yaml
+      - configs/twod/nip_MAPbI3_uniform.yaml
+  courtier2019-ionmonger:
+    kind: external
+    status: pass
+    claim_level: calibrated_reproduction
+    evidence_tier: calibration_only
+    source_url: https://doi.org/10.1039/C8EE01576G
+    source_solver:
+      repository_url: https://github.com/PerovskiteSCModelling/IonMonger
+      exact_version_frozen: false
+      limitation: the exact publication-era commit and MATLAB output are not stored locally
+    command: >-
+      pytest -q -m validation
+      tests/validation/test_paper_configurations.py::test_ionmonger_repro_matches_paper_metrics
+    tests: [tests/validation/test_paper_configurations.py]
+    node_ids:
+      - tests/validation/test_paper_configurations.py::test_ionmonger_repro_matches_paper_metrics
+    configs: [configs/ionmonger_courtier2019_repro.yaml]
+    protocol:
+      local:
+        N_grid: 60
+        n_points: 20
+        v_rate_V_s: 5.0
+        V_max_V: 1.5
+        preconditioning: solver dark-equilibrium initial state
+      source:
+        representative_v_rate_V_s: 0.075
+        preconditioning: 1.2 V for 40 s
+        provenance: Courtier 2019 representative J-V protocol
+    calibration:
+      parameters: {device.V_bi: 0.98}
+      targets: [Voc_V]
+    non_calibration_checks: [Jsc_A_m2, FF, absorbed_photon_budget]
+    observed_reverse:
+      Voc_V: 1.073879325
+      Jsc_A_m2: 222.778140
+      FF: 0.753781846
+      PCE_percent: 18.033239
+    regression_tolerance:
+      Voc_V: 0.005
+      Jsc_A_m2: 1.0
+      FF: 0.01
+      PCE_percent: 0.5
+    limitations:
+      - V_bi=0.98 V is calibrated against the reported Voc
+      - the automated scan rate is about 67 times the representative 0.075 V/s paper protocol
+      - the paper preconditioning protocol is not reproduced
+      - no digitized source curve or extraction uncertainty is stored in the repository
+  ionmonger-physical-regression:
+    kind: internal
+    status: pass
+    claim_level: paper-informed-physical-regression
+    command: >-
+      pytest -q -m validation tests/validation/test_paper_configurations.py
+      -k 'ionmonger and not repro'
+    tests: [tests/validation/test_paper_configurations.py]
+    node_ids:
+      - tests/validation/test_paper_configurations.py::test_ionmonger_voc_in_band_offset_range
+      - tests/validation/test_paper_configurations.py::test_ionmonger_jsc_matches_paper
+      - tests/validation/test_paper_configurations.py::test_ionmonger_ff_in_paper_range
+      - tests/validation/test_paper_configurations.py::test_ionmonger_paper_comparison_quantifies_known_voc_offset
+      - tests/validation/test_paper_configurations.py::test_ionmonger_legacy_full_voc_agree_within_tolerance
+      - tests/validation/test_paper_configurations.py::test_ionmonger_jsc_near_beer_lambert_limit
+      - tests/validation/test_paper_configurations.py::test_ionmonger_tmm_bounded_shift_from_bl
+      - tests/validation/test_paper_configurations.py::test_ionmonger_tmm_jsc_physically_bounded
+    configs:
+      - configs/ionmonger_benchmark.yaml
+      - configs/ionmonger_benchmark_tmm.yaml
+    observed_reverse:
+      Voc_V: 1.185118271
+      Jsc_A_m2: 222.885105
+      FF: 0.770458459
+      PCE_percent: 20.351291
+    limitations:
+      - the FULL preset has a documented Voc offset from Courtier 2019
+      - paper values define broad envelopes rather than a digitized curve fit
+      - the certified forward crossing is 1.192193501 V; reverse Voc depends on the high-bias state history
+  calado2016-driftfusion:
+    kind: external
+    status: pass
+    claim_level: calibrated_reproduction
+    evidence_tier: calibration_only
+    source_url: https://doi.org/10.1038/ncomms13831
+    source_solver:
+      repository_url: https://github.com/barnesgroupICL/Driftfusion
+      archived_release: https://doi.org/10.5281/zenodo.3670155
+      archived_release_version: v1.0.0
+      exact_version_frozen: false
+      limitation: the 2020 release is not the exact 2016 publication artifact
+    command: >-
+      pytest -q -m validation
+      tests/validation/test_paper_configurations.py::test_driftfusion_repro_matches_paper_metrics
+    tests: [tests/validation/test_paper_configurations.py]
+    node_ids:
+      - tests/validation/test_paper_configurations.py::test_driftfusion_repro_matches_paper_metrics
+    configs: [configs/driftfusion_calado2016_repro.yaml]
+    protocol:
+      local:
+        N_grid: 60
+        n_points: 20
+        v_rate_V_s: 5.0
+        V_max_V: 1.5
+        preconditioning: solver dark-equilibrium initial state
+      source:
+        representative_v_rate_V_s: 0.04
+        provenance: Calado 2016 measured and simulated J-V protocol
+    calibration:
+      parameters: {device.V_bi: 1.42}
+      targets: [Voc_V]
+    non_calibration_checks: [Jsc_A_m2, FF, absorbed_photon_budget]
+    observed_reverse:
+      Voc_V: 1.028533819
+      Jsc_A_m2: 222.853672
+      FF: 0.749050055
+      PCE_percent: 17.169166
+    regression_tolerance:
+      Voc_V: 0.005
+      Jsc_A_m2: 1.0
+      FF: 0.01
+      PCE_percent: 0.5
+    limitations:
+      - V_bi=1.42 V is calibrated against the reported Voc
+      - the automated scan rate is 125 times the approximately 0.04 V/s paper protocol
+      - no digitized source curve or extraction uncertainty is stored in the repository
+  driftfusion-physical-regression:
+    kind: internal
+    status: pass
+    claim_level: paper-informed-physical-regression
+    command: >-
+      pytest -q -m validation tests/validation/test_paper_configurations.py
+      -k 'driftfusion and not repro'
+    tests: [tests/validation/test_paper_configurations.py]
+    node_ids:
+      - tests/validation/test_paper_configurations.py::test_driftfusion_voc_in_expected_range
+      - tests/validation/test_paper_configurations.py::test_driftfusion_paper_comparison_quantifies_low_voc_offset
+      - tests/validation/test_paper_configurations.py::test_driftfusion_jsc_matches_beer_lambert
+      - tests/validation/test_paper_configurations.py::test_driftfusion_ff_in_expected_range
+      - tests/validation/test_paper_configurations.py::test_driftfusion_illumination_slope_physical
+      - tests/validation/test_paper_configurations.py::test_driftfusion_hysteresis_increases_with_scan_rate
+    configs: [configs/driftfusion_benchmark.yaml]
+    observed_reverse:
+      Voc_V: 0.662930538
+      Jsc_A_m2: 220.917890
+      FF: 0.761666727
+      PCE_percent: 11.154854
+    limitations:
+      - hysteresis and illumination trends are internal qualitative guards
+      - no digitized Calado transient curve is stored in the repository
+  lin2019-tandem:
+    kind: external
+    status: partial
+    claim_level: partial_external_comparison
+    source_url: https://doi.org/10.1038/s41560-019-0466-3
+    command: pytest -q -m 'slow or not slow' tests/integration/test_tandem_lin2019.py
+    tests: [tests/integration/test_tandem_lin2019.py]
+    node_ids:
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_absorber_thicknesses_follow_paper
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_voc_and_ff_within_tolerance
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_pce_within_tolerance
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_jsc_within_tolerance
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_subcells_respect_their_photon_budgets
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_subcell_currents_match_within_two_percent
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_observations_match_reproducibility_registry
+    configs:
+      - configs/nip_SnPb_1p22.yaml
+      - configs/nip_wideGap_FACs_1p77.yaml
+      - configs/tandem_lin2019.yaml
+    protocol:
+      local:
+        optics: combined TMM
+        wavelength_range_nm: [300, 1100]
+        wavelength_points: 220
+        N_grid: 40
+        n_points: 25
+      source:
+        champion_device_area_cm2: 0.073
+        certified_aperture_area_cm2: 0.049
+        provenance: >-
+          Lin 2019 Table 2 reverse-scan champion tuple is reported for the
+          0.073 cm2 device; 0.049 cm2 is the separately certified aperture.
+    observed:
+      Voc_V: 2.038337
+      Jsc_A_m2: 144.563788
+      FF: 0.814590
+      PCE_percent: 24.0035
+      top_photon_budget_A_m2: 159.337
+      bottom_photon_budget_A_m2: 168.659
+      top_subcell_Jsc_A_m2: 144.564
+      bottom_subcell_Jsc_A_m2: 168.222
+      subcell_current_mismatch_percent: 15.13
+    regression_tolerance:
+      Voc_V: 0.005
+      Jsc_A_m2: 0.5
+      FF: 0.005
+      PCE_percent: 0.1
+      top_photon_budget_A_m2: 0.5
+      bottom_photon_budget_A_m2: 0.5
+      top_subcell_Jsc_A_m2: 0.5
+      bottom_subcell_Jsc_A_m2: 0.5
+      subcell_current_mismatch_percent: 0.2
+    limitations:
+      - wide-gap and SnPb optical constants are rigid-shift placeholders
+      - the simulated layer stack is not yet a faithful transcription of the paper stack
+      - all four tandem metrics pass a broad 10 percent paper window
+      - the sub-cell currents remain 15.13 percent apart versus the 2 percent acceptance gate
+      - unequal collection efficiencies mean the mismatch is not attributable to optics alone
+  ionmonger-mesh:
+    kind: numerical
+    status: partial
+    claim_level: finite-time-protocol-grid-convergence
+    command: pytest -q -m slow tests/regression/test_mesh_convergence.py
+    tests: [tests/regression/test_mesh_convergence.py]
+    node_ids:
+      - tests/regression/test_mesh_convergence.py::test_guard_interface_formulation_is_pinned
+      - tests/regression/test_mesh_convergence.py::test_guard_interface_cells_actually_refine
+      - tests/regression/test_mesh_convergence.py::test_guard_no_silent_dark_fallback
+      - tests/regression/test_mesh_convergence.py::test_guard_voc_is_bracketed
+      - tests/regression/test_mesh_convergence.py::test_guard_no_flat_band_spike_at_any_mesh_level
+      - tests/regression/test_mesh_convergence.py::test_short_circuit_current_converges
+      - tests/regression/test_mesh_convergence.py::test_power_quadrant_current_converges
+      - tests/regression/test_mesh_convergence.py::test_interface_recombination_current_converges
+      - tests/regression/test_mesh_convergence.py::test_voc_converges
+      - tests/regression/test_mesh_convergence.py::test_jsc_converges
+      - tests/regression/test_mesh_convergence.py::test_ff_converges
+      - tests/regression/test_mesh_convergence.py::test_generation_integral_converges
+      - tests/regression/test_mesh_convergence.py::test_generation_integral_respects_photon_flux_ceiling
+    configs: [configs/ionmonger_benchmark.yaml]
+    limitations:
+      - fixed-bias states use a 1 ms illuminated preconditioner, not residual steady state
+      - conduction-current spread is diagnostic and is not a steady-state certificate
+  ionmonger-residual-ss-mesh:
+    kind: numerical
+    status: pass
+    claim_level: residual-certified-short-circuit-current-grid-convergence
+    command: pytest -q -m slow tests/regression/test_p1_steady_state_mesh_convergence.py
+    tests: [tests/regression/test_p1_steady_state_mesh_convergence.py]
+    node_ids:
+      - tests/regression/test_p1_steady_state_mesh_convergence.py::test_actual_interval_ladder_and_residual_certificates
+      - tests/regression/test_p1_steady_state_mesh_convergence.py::test_certified_short_circuit_current_contracts
+      - tests/regression/test_p1_steady_state_mesh_convergence.py::test_prolonged_fine_grid_current_changes_contract
+      - tests/regression/test_p1_steady_state_mesh_convergence.py::test_observations_match_reproducibility_registry
+    configs: [configs/ionmonger_benchmark.yaml]
+    observed_short_circuit:
+      - intervals: 12
+        residual_per_s: 0.00202651322938
+        continuity_bound_A_m2: 0.000227278250122
+        current_A_m2: 216.180645154669
+        current_spread_A_m2: 0.00242027340391
+      - intervals: 24
+        residual_per_s: 0.0214496133696
+        continuity_bound_A_m2: 0.00240562485444
+        current_A_m2: 220.594546333324
+        current_spread_A_m2: 0.00259612583847
+      - intervals: 48
+        residual_per_s: 0.295561020412
+        continuity_bound_A_m2: 0.0331478798364
+        current_A_m2: 221.956341941292
+        current_spread_A_m2: 0.00257154927257
+      - intervals: 72
+        residual_per_s: 0.0453226566184
+        continuity_bound_A_m2: 0.00508304309974
+        current_A_m2: 222.172533707550
+        current_spread_A_m2: 0.00256003810875
+      - intervals: 96
+        residual_per_s: 0.251430973507
+        continuity_bound_A_m2: 0.0281985781572
+        current_A_m2: 222.230784183868
+        current_spread_A_m2: 0.00256089907717
+    observed_fine_grid_change:
+      change_48_to_72_A_m2: 0.216191766258
+      change_72_to_96_A_m2: 0.058250476318
+      contraction: 0.26944
+      finest_relative_change_percent: 0.0262
+    regression_tolerance:
+      residual_per_s: 0.05
+      continuity_bound_A_m2: 0.01
+      current_A_m2: 0.05
+      current_spread_A_m2: 0.001
+      fine_change_A_m2: 0.01
+      contraction: 0.02
+      finest_relative_change_percent: 0.01
+    limitations:
+      - this certifies the carrier steady state at V=0 with the ion profile frozen
+      - 72/96 use a certified 48-interval state prolongation and relative-log coordinates
+      - no spatial-profile convergence norm for n, p, or electrostatic potential is claimed
+      - no full ionic-equilibrium or voltage-dependent J-V convergence claim is made
+  tmm-jsc-regression:
+    kind: internal
+    status: pass
+    claim_level: pinned-regression
+    command: pytest -q -m slow tests/regression/test_tmm_baseline.py
+    tests: [tests/regression/test_tmm_baseline.py]
+    node_ids:
+      - tests/regression/test_tmm_baseline.py::test_nip_tmm_baseline_jsc
+      - tests/regression/test_tmm_baseline.py::test_pin_tmm_baseline_jsc
+    configs:
+      - configs/nip_MAPbI3_tmm.yaml
+      - configs/pin_MAPbI3_tmm.yaml
+    limitations:
+      - fixtures explicitly use the historical whole-flux steric-ion protocol
+      - this isolates the optical TMM pin and does not certify shipped-default ionic transport
+  twod-uniform-parity:
+    kind: internal
+    status: pass
+    claim_level: dimensional-parity
+    command: >-
+      pytest -q -m slow
+      tests/regression/test_twod_validation.py::test_twod_uniform_matches_1d_within_tolerance
+    tests: [tests/regression/test_twod_validation.py]
+    node_ids:
+      - tests/regression/test_twod_validation.py::test_twod_uniform_matches_1d_within_tolerance
+    configs: [configs/twod/nip_MAPbI3_uniform.yaml]
+  twod-radiative-reabsorption:
+    kind: internal
+    status: pass
+    claim_level: qualitative-trend
+    command: >-
+      pytest -q -m slow
+      tests/regression/test_twod_validation.py::test_twod_radiative_reabsorption_voc_boost_in_literature_window
+    tests: [tests/regression/test_twod_validation.py]
+    node_ids:
+      - tests/regression/test_twod_validation.py::test_twod_radiative_reabsorption_voc_boost_in_literature_window
+    configs: [configs/radiative_limit.yaml]
+  scaps-cbo-trend:
+    kind: internal
+    status: pass
+    claim_level: qualitative-trend
+    command: pytest -q -m slow tests/integration/test_scaps_mirror_cbo_trend.py
+    tests: [tests/integration/test_scaps_mirror_cbo_trend.py]
+    node_ids:
+      - tests/integration/test_scaps_mirror_cbo_trend.py::test_cbo_voc_drops_at_cliff
+      - tests/integration/test_scaps_mirror_cbo_trend.py::test_cbo_voc_range_at_least_200mV
+      - tests/integration/test_scaps_mirror_cbo_trend.py::test_cbo_voc_holds_at_spike
+    configs: [configs/scaps_mirror.yaml]
+  cigs-internal-validation:
+    kind: internal
+    status: pass
+    claim_level: numerical-grid-and-qualitative-grading
+    command: pytest -q -m 'slow or not slow' tests/regression/test_grading_cigs_notch.py
+    tests: [tests/regression/test_grading_cigs_notch.py]
+    node_ids:
+      - tests/regression/test_grading_cigs_notch.py::test_dynamic_cigs_grading_matches_the_shipped_config
+      - tests/regression/test_grading_cigs_notch.py::test_cigs_n_left_voltage_conventions_are_explicit
+      - tests/regression/test_grading_cigs_notch.py::test_cigs_ungraded_thickness_continuation_certifies
+      - tests/regression/test_grading_cigs_notch.py::test_cigs_back_grading_raises_voc_without_jsc_collapse
+      - tests/regression/test_grading_cigs_notch.py::test_cigs_back_grading_certifies_at_production_grid
+      - tests/regression/test_grading_cigs_notch.py::test_cigs_ungraded_production_grid_ladder_is_physical
+      - tests/regression/test_grading_cigs_notch.py::test_cigs_ungraded_production_grid_metrics_converge
+      - tests/regression/test_grading_cigs_notch.py::test_cigs_observations_match_reproducibility_registry
+    configs:
+      - configs/cigs_baseline.yaml
+      - configs/cigs_graded_notch.yaml
+    protocol:
+      N_grid_nominal: [40, 80, 120]
+      actual_ungraded_intervals: [39, 78, 120]
+      actual_graded_intervals_at_N_grid_120: 160
+      n_points: 43
+      V_max_V: 1.05
+      voltage_spacing_V: 0.025
+      v_rate_V_s: 0.1
+      blas_threads: 1
+    observed_ungraded_forward:
+      - N_grid: 40
+        intervals: 39
+        Voc_V: 0.954965375281
+        Jsc_A_m2: 397.615483456
+        FF: 0.837117937595
+        PCE_percent: 31.7861231187
+      - N_grid: 80
+        intervals: 78
+        Voc_V: 0.955110677361
+        Jsc_A_m2: 397.365258465
+        FF: 0.836823558796
+        PCE_percent: 31.7597805239
+      - N_grid: 120
+        intervals: 120
+        Voc_V: 0.955140536776
+        Jsc_A_m2: 397.353071277
+        FF: 0.836702364795
+        PCE_percent: 31.7551996684
+    observed_production_grading:
+      ungraded_robin:
+        intervals: 120
+        Voc_V: 0.956142307528
+        Jsc_A_m2: 397.440103718
+        FF: 0.837446926522
+        PCE_percent: 31.8237618554
+      graded_robin:
+        intervals: 160
+        Voc_V: 1.00860478869
+        Jsc_A_m2: 398.483691012
+        FF: 0.837963797590
+        PCE_percent: 33.6788174214
+    regression_tolerance:
+      Voc_V: 0.000005
+      Jsc_A_m2: 0.01
+      FF: 0.00005
+      PCE_percent: 0.01
+    limitations:
+      - this is internal numerical and qualitative-trend validation, not an external CIGS benchmark
+      - the contact-potential magnitudes are synchronized to compute_V_bi from the current material parameters, not independent work-function measurements
+      - Nc300 and Nv300 are absent and the SI provenance of ni, n1, and p1 is unresolved
+      - the Beer-Lambert alpha and photon flux are uniform proxies and do not grade with composition
+      - the roughly 31.8 to 33.7 percent PCE values are highly idealized and must not be compared directly with experiment
+  csi-grid-envelope-gap:
+    kind: gap
+    status: closed
+    claim_level: grid-envelope-characterization
+    command: >-
+      pytest -q tests/regression/test_csi_grid_envelope.py
+      tests/integration/backend/test_user_configs_api.py::test_csi_underresolved_grid_returns_actionable_client_error
+    tests:
+      - tests/regression/test_csi_grid_envelope.py
+      - tests/integration/backend/test_user_configs_api.py
+    node_ids:
+      - tests/regression/test_csi_grid_envelope.py::test_default_jv_grid_is_outside_csi_declared_envelope
+      - tests/regression/test_csi_grid_envelope.py::test_underresolved_transient_and_ss_jv_fail_before_integration
+      - tests/regression/test_csi_grid_envelope.py::test_underresolved_overrides_are_explicit_and_reach_both_drivers
+      - tests/regression/test_csi_grid_envelope.py::test_declared_csi_minimum_meets_debye_guard_and_has_finite_seed
+      - tests/regression/test_csi_grid_envelope.py::test_thin_film_smoke_mesh_is_not_misrepresented_as_globally_certified
+      - tests/integration/backend/test_user_configs_api.py::test_csi_underresolved_grid_returns_actionable_client_error
+    configs: [configs/cSi_homojunction.yaml]
+    limitations:
+      - the Debye guard is necessary but does not certify depletion-region resolution
+      - closure applies only to executable grid allocation, loader parity, and pre-integration guarding
+      - physical steady-state evidence is tracked separately by csi-qf-internal-validation
+  csi-qf-internal-validation:
+    kind: numerical
+    status: pass
+    claim_level: residual-certified-qf-terminal-jv-grid-convergence
+    command: >-
+      pytest -q -m slow
+      tests/regression/test_csi_quasi_fermi_convergence.py
+    tests: [tests/regression/test_csi_quasi_fermi_convergence.py]
+    node_ids:
+      - tests/regression/test_csi_quasi_fermi_convergence.py::test_csi_config_and_registered_voltage_protocol
+      - tests/regression/test_csi_quasi_fermi_convergence.py::test_every_csi_jv_point_has_independent_physics_certificate
+      - tests/regression/test_csi_quasi_fermi_convergence.py::test_csi_jv_curves_are_physical_and_bracket_open_circuit
+      - tests/regression/test_csi_quasi_fermi_convergence.py::test_csi_voltage_sampling_resolves_maximum_power
+      - tests/regression/test_csi_quasi_fermi_convergence.py::test_csi_full_jv_curve_and_metrics_converge
+      - tests/regression/test_csi_quasi_fermi_convergence.py::test_csi_jv_observations_match_reproducibility_registry
+    configs: [configs/cSi_homojunction.yaml]
+    protocol:
+      solver: opt-in quasi-Fermi-potential steady state
+      warm_start: >-
+        each N_grid starts cold at 0 V with the complete illumination ramp;
+        later voltages map only the preceding certified absolute QF potentials
+        and solve directly at one sun
+      illumination_continuation:
+        - 0.0
+        - 1.0e-14
+        - 1.0e-12
+        - 1.0e-10
+        - 1.0e-8
+        - 1.0e-6
+        - 1.0e-5
+        - 1.0e-4
+        - 1.0e-3
+        - 1.0e-2
+        - 1.0e-1
+        - 1.0
+      N_grid: [200, 300, 400]
+      grid_interval_weights: {n_emitter: 1.0, p_base: 4.0}
+      grid_alphas: {n_emitter: 2.0, p_base: 3.0}
+      voltage_grid_V:
+        - 0.000000
+        - 0.025000
+        - 0.050000
+        - 0.075000
+        - 0.100000
+        - 0.125000
+        - 0.150000
+        - 0.175000
+        - 0.200000
+        - 0.225000
+        - 0.250000
+        - 0.275000
+        - 0.300000
+        - 0.325000
+        - 0.350000
+        - 0.375000
+        - 0.400000
+        - 0.425000
+        - 0.450000
+        - 0.475000
+        - 0.480000
+        - 0.485000
+        - 0.490000
+        - 0.495000
+        - 0.500000
+        - 0.505000
+        - 0.510000
+        - 0.515000
+        - 0.520000
+        - 0.525000
+        - 0.530000
+        - 0.550000
+        - 0.575000
+        - 0.585000
+        - 0.590000
+        - 0.592000
+        - 0.592250
+        - 0.592500
+        - 0.592750
+        - 0.593000
+        - 0.595000
+        - 0.600000
+      voltage_grid_canonical_sha256: 680ea45bac694c21a3be6ae3bf195bb69e436eebabe06dfe72cff97ea9752d13
+      base_voltage_step_V: 0.025
+      mpp_refinement: {start_V: 0.480, stop_V: 0.530, step_V: 0.005}
+      nested_mpp_check_step_V: 0.010
+      certificates:
+        normalized_cell_residual: 1.0e-10
+        continuity_bound_A_m2: 1.0e-4
+        all_face_current_spread_A_m2: 1.0e-4
+        normalized_poisson_residual: 1.0e-8
+    observed:
+      grids:
+        - N_grid: 200
+          layer_intervals: [40, 160]
+          Jsc_A_m2: 356.970188362382
+          Voc_V: 0.592163472704436
+          sign_change_Voc_V: 0.592163472704436
+          sign_bracket_V: [0.592000, 0.592250]
+          FF: 0.824721940835148
+          PCE_percent: 17.4333605318994
+          nested_10mV_PCE_percent: 17.4272114330258
+          max_continuity_bound_A_m2: 5.41222661287546e-8
+          max_all_face_current_spread_A_m2: 3.58953684553853e-8
+          max_normalized_poisson_residual: 2.41528442701492e-11
+        - N_grid: 300
+          layer_intervals: [60, 240]
+          Jsc_A_m2: 356.888188515021
+          Voc_V: 0.592500000000000
+          sign_change_Voc_V: 0.592518199015055
+          sign_bracket_V: [0.592500, 0.592750]
+          FF: 0.824894121797697
+          PCE_percent: 17.4429019040704
+          nested_10mV_PCE_percent: 17.4343617239613
+          max_continuity_bound_A_m2: 9.39861794154563e-9
+          max_all_face_current_spread_A_m2: 2.63195687466578e-9
+          max_normalized_poisson_residual: 1.14738942108883e-11
+        - N_grid: 400
+          layer_intervals: [80, 320]
+          Jsc_A_m2: 356.842861528302
+          Voc_V: 0.592683579101202
+          sign_change_Voc_V: 0.592683579101202
+          sign_bracket_V: [0.592500, 0.592750]
+          FF: 0.824938377504146
+          PCE_percent: 17.4470263242664
+          nested_10mV_PCE_percent: 17.4373833115630
+          max_continuity_bound_A_m2: 1.66726672172219e-8
+          max_all_face_current_spread_A_m2: 4.18622647657685e-9
+          max_normalized_poisson_residual: 6.48374144448101e-12
+      adjacent_curve_changes:
+        - N_grid: [200, 300]
+          max_abs_current_A_m2: 6.48172047461399
+          rms_current_A_m2: 2.34329791208499
+        - N_grid: [300, 400]
+          max_abs_current_A_m2: 2.99954434397439
+          rms_current_A_m2: 1.08330547129740
+      finest_changes:
+        Jsc_relative: 0.000127022259951
+        Voc_absolute_V: 0.000183579101202
+        FF_relative: 5.36472876710e-5
+        PCE_relative: 0.000236396742880
+        max_curve_current_relative_to_Jsc: 0.00840578491924
+        curve_change_contraction: 0.462769777827
+        max_nested_mpp_PCE_relative: 0.000552702364522
+    regression_tolerance:
+      Jsc_A_m2: 0.02
+      Voc_V: 0.00005
+      sign_change_Voc_V: 0.00005
+      FF: 0.00005
+      PCE_percent: 0.005
+      diagnostic_A_m2: 1.0e-6
+    limitations:
+      - the QF solver is opt-in and supports only an audited local homojunction physics subset
+      - this certificate does not establish convergence of the default transient or algebraic J-V drivers
+      - this is an internal numerical validation, not an external c-Si device comparison
+      - Beer-Lambert absorption, ideal ohmic contacts, and the simplified interface SRV limit experimental interpretation
+  scaps-low-doping-etl-boundary:
+    kind: internal
+    status: pass
+    claim_level: calibrated-boundary-condition-regression
+    command: pytest -q -m slow tests/unit/experiments/test_steady_state.py -k low_doping_etl
+    tests: [tests/unit/experiments/test_steady_state.py]
+    node_ids:
+      - tests/unit/experiments/test_steady_state.py::test_low_doping_etl_metal_reservoir_brackets_physical_voc
+      - tests/unit/experiments/test_steady_state.py::test_low_doping_etl_without_metal_reservoir_is_explicit_no_crossing
+    configs: [configs/scaps_mirror_v2.yaml]
+    limitations:
+      - the metal-reservoir contact barrier is a calibrated model parameter
+      - the 60 mV SCAPS comparison window is not an independent holdout validation
+
+configs:
+  - path: configs/cSi_homojunction.yaml
+    sha256: 6fff6a615f6521dd5d178272362b19ec2fb883b5523787b9e238bf86c139b8c6
+    semantic_sha256: bd78c5657031c06d84dcd7457f1685d7b9af93f4938f06fd4b0d13793cb2e64f
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, csi-grid-envelope-gap, csi-qf-internal-validation]
+  - path: configs/cigs_baseline.yaml
+    sha256: 46dabc8418b7060a2124206793f3b6f07a01f35826b6b537591c64dbd2abe4af
+    semantic_sha256: bdde999ebbeae9ec96f815ea3e2195a094653b26916235b178da611cc4b4d2fd
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, cigs-internal-validation]
+  - path: configs/cigs_graded_notch.yaml
+    sha256: d622f92e21face4e9a9e1780300566e1cda8c77d0e5e10171882f6cb8d7a5185
+    semantic_sha256: 0fa1c657b61daa10a80e610219f2a235b10b33e048691516ed38a04d67c93582
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, cigs-internal-validation]
+  - path: configs/driftfusion_benchmark.yaml
+    sha256: 3e4cea0244bcb71072194d24ff5a31e50eb780d8d93dc8bc2343a8032de3fbf7
+    semantic_sha256: 3def7117f3a49f1a7b99b6a1f49f646a1d57c193143320ce1c06fdfbdf5ba38c
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, driftfusion-physical-regression]
+  - path: configs/driftfusion_benchmark_tmm.yaml
+    sha256: bf0a186c772f5aadff9cfc1c4471534945e9849f42bea75f8097859f4c7350ce
+    semantic_sha256: 2f15646716953357b501486e520370b3893283ae744757a920f2156837daead5
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/driftfusion_calado2016_repro.yaml
+    sha256: 536dc33d42e214072bbeb14256582682ed0efd8ffaa39b1a3ee716217923c7dd
+    semantic_sha256: f7c98acec0f0e5e0f64a2ab168676fd5c5a34b37baba762b1c710d18adc76ddd
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, calado2016-driftfusion]
+  - path: configs/field_mobility_demo.yaml
+    sha256: 7ca86a8d5d35c50d0892de55e2375eaf8e9d0966477cd378ace6cae1a5e88edd
+    semantic_sha256: ce3ed006c48c5b85d01112f3985cda330c3d4a09d12bdcd945b9f1d7a0cc4afe
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/ionmonger_benchmark.yaml
+    sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    semantic_sha256: a7e07b83a752dc2836231c7a3605ae32791ac18c19cde2a176d8d6e9c2d4438d
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - ionmonger-physical-regression
+      - ionmonger-mesh
+      - ionmonger-residual-ss-mesh
+  - path: configs/ionmonger_benchmark_tmm.yaml
+    sha256: 09728fba308a206b3bdcd0874fdfc1775ac125dcfa42d10f70e9db8887c46fea
+    semantic_sha256: 27e852381c1f7586fdb05bd73f587b6e9f64e4be2de95f649825dcabe4d78822
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, ionmonger-physical-regression]
+  - path: configs/ionmonger_courtier2019_repro.yaml
+    sha256: ea88b2d05bca4f617b001092630b3de6e55293b6707c7083c7ee25efa3a5242f
+    semantic_sha256: 4e00e5ac181118bb173ef8f679ae30ee2ed02cd72159811667c3a1eb7afdc82f
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, courtier2019-ionmonger]
+  - path: configs/nip_MAPbI3.yaml
+    sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
+    semantic_sha256: 92d27b4b9d47ca66725318ba9115a5dfa99448485044dd02015f9318dfcd7dce
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/nip_MAPbI3_tmm.yaml
+    sha256: 4624f6923ffc10fbd401ce37702250f72b558d3e4ecdbd5d8e766ab84e21b1b2
+    semantic_sha256: 5ea55c1257834ab7f7dd10a867c2b78aea03ee2691936281b227ee833e59571a
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, tmm-jsc-regression]
+  - path: configs/nip_SnPb_1p22.yaml
+    sha256: 9dc266a25398b451d2984c6c04d5e312d6d1c95121d617d564fc2503c5b2b4a4
+    semantic_sha256: 18a3d418fa535f7627c5a8fda611a3b9be375bc057ff89e6b1f86784d042fba6
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, lin2019-tandem]
+  - path: configs/nip_wideGap_FACs_1p77.yaml
+    sha256: 30cb0a45d28de39236fb7845a8125bc61f9eb1b903c761cd85d2fc47c0f9ceb2
+    semantic_sha256: 13a2e28b51a169371329460a7bfe5b447d6797a8882462aa56b555e6f615cacb
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, lin2019-tandem]
+  - path: configs/pin_MAPbI3.yaml
+    sha256: 3881eda9e5d7d4c71e1215e11b01f113a4764b1c74b4932e4c7932f69eb3d605
+    semantic_sha256: 68c401d5c956e278a5823d65136028e46082b54bbca662adb092b0bafcf68e51
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/pin_MAPbI3_tmm.yaml
+    sha256: 984b5f8bb9858994a1100de70896fc4a9474b43ef1857d633beb14f75a9a22df
+    semantic_sha256: f8deb3537112aa80dcfdad8559ed93c3ac049aae9e3ffbe602ab8b0fdeb0302f
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, tmm-jsc-regression]
+  - path: configs/radiative_limit.yaml
+    sha256: 8d529e4321fb1bb3c32d1d516946aa768f641982d4ab6e12059c46fa5e1fb8c9
+    semantic_sha256: 8895f94d65240a44caf0db78839a3f21802d54f73148214fc9bd69e0901d42ed
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, twod-radiative-reabsorption]
+  - path: configs/scaps_mirror.yaml
+    sha256: 7ad4968d9c8249b76ca4e649d41c39e26727f6818cb81a15fe75f6b74b11b881
+    semantic_sha256: bbda4b58f4844ce6e1e4bcf99e44ee873603ad1c5d5f7ad939faacc5973b7713
+    schema: scaps-device-v1
+    status: partial
+    benchmarks: [loader-contract, scaps-cbo-trend]
+  - path: configs/scaps_mirror_v2.yaml
+    sha256: 5500c9485f6a9518430511019546933277cdc3274fd3a005182394f39d2fcf67
+    semantic_sha256: 813580bccbe13cdf78d203910b0c4eb31583bfdf779c8b7703f94ba823755071
+    schema: scaps-device-v1
+    status: partial
+    benchmarks: [loader-contract, scaps-low-doping-etl-boundary]
+  - path: configs/scaps_mirror_v2_robin_moderate.yaml
+    sha256: 2d0d25a59802cac9c85f2b4a84ee49f9b42100fe0f87cb00f647462b475a0f95
+    semantic_sha256: 8ee02c3a6099628d35d854b2a09fa5ca72f828c5d15132d9947dcf5d51f3d8f9
+    schema: scaps-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/scaps_mirror_v2_robin_strong.yaml
+    sha256: 2b35b8e0a8efdc1e3432dc55b00f03b6f6bcf53d43e699502ef3c903152057ee
+    semantic_sha256: 8cda10e0c9dfded05c280089afced25baabea2332168f15ad955644949c95921
+    schema: scaps-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/selective_contacts_demo.yaml
+    sha256: 731b5a77435484ff638183e83e77a7479da4c7b16aadfe79f15ae966764f682d
+    semantic_sha256: 90a46d11bd7c5da2947227bcb3d79ee34a17f255fdd90be11b09c13dedd82a0b
+    schema: standard-device-v1
+    status: demo
+    benchmarks: [loader-contract]
+  - path: configs/solarscale_nip_band_aligned.yaml
+    sha256: 8b0d9cadfb1d198cf32ea647c95ed25fa38928d8b2f5770bcf49902114402088
+    semantic_sha256: 498a4753dfbfd6b213a517eb095ea139401c0cdf8fda2ec2abf5e5d0d45bb65f
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/solarscale_nip_band_aligned_iface.yaml
+    sha256: 538fed52f0d40123ecc1b8a4c1391616f9f35a93637157f3374e90fc8f43c344
+    semantic_sha256: 9c2bf332f1ae352693b44a2c829e803b3d14be2636ddbbba6597871d417ced1c
+    schema: standard-device-v1
+    status: demo
+    benchmarks: [loader-contract]
+  - path: configs/tandem_lin2019.yaml
+    sha256: 3d64cf1532c4f35d11d264c0c888ae5def353c454de441cc42a33bc7e91af629
+    semantic_sha256: 637bcd7b806d2dc8c5a39e6eb4420d001a06e69d4f15eead8c53bd14cf379854
+    schema: tandem-v1
+    status: partial
+    benchmarks: [loader-contract, lin2019-tandem]
+  - path: configs/twod/bcx_combined_demo.yaml
+    sha256: 99be980f03ac242965554563287ccfd385a71bbbd429bf36fba0be76757ed940
+    semantic_sha256: f06713037915c1100cd3269587f448d37c21929911d062343a3bf629d5ebc162
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/twod/nip_MAPbI3_singleGB.yaml
+    sha256: fcc945605af5b7e3968b7cf43ef44d1ef08f57600b08a297c8d085a39f3ce7a4
+    semantic_sha256: 7a593a9281e03466f3e6084dff9e9064aca80966be7d855958bb237379f1b826
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/twod/nip_MAPbI3_uniform.yaml
+    sha256: 6a7e0022575e680e3b4348774eb604c3273930b7a0fe210994e6532cd6d59dcb
+    semantic_sha256: 92d27b4b9d47ca66725318ba9115a5dfa99448485044dd02015f9318dfcd7dce
+    schema: standard-device-v1
+    status: certified
+    benchmarks: [loader-contract, twod-uniform-parity]

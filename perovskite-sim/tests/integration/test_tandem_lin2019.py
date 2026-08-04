@@ -4,16 +4,19 @@ Runs the full combined-TMM + series-matched J-V pipeline on the Lin 2019
 all-perovskite tandem preset and asserts each figure of merit lies within
 the ±tolerance_pct window declared in the config.
 
-The optics use real Dasgupta-repository n,k data (FA-Cs-Pb-BrI 40 % Br for
-the 1.77 eV top, MA-FA-Cs-Pb-Sn-I 50 % Sn for the 1.22 eV bottom), an
-Ag back reflector for the second-pass IR, a manual V_bi = 1.42 V on the
-wide-gap top sub-cell to match Lin's per-junction V_oc ~ 1.18 V, and
-absorber thicknesses tuned for current matching.
+The absorber optical constants are rigid-shift placeholders derived from a
+MAPbI3 dataset, and the simulated layer sequence is not yet a faithful
+transcription of the Lin device.  The preset also uses a manual V_bi = 1.42 V
+on the wide-gap top sub-cell.  This is therefore a partial external comparison,
+not a predictive reproduction of the paper device.
 
-STATUS (2026-07, after the tandem generation-grid fix)
+STATUS (2026-08, paper-thickness provenance restored)
 -----------------------------------------------------
-V_oc and FF still land inside the ±10 % window; J_sc and PCE no longer do,
-and that is a RECOVERY rather than a regression.
+Lin 2019 reports approximately 300 nm / 800 nm wide-/narrow-gap absorbers;
+the preset had instead used fitted 200 nm / 1000 nm values.  Restoring the
+reported thicknesses raises the top-cell photon budget enough that all four
+tandem metrics again lie inside the declared ±10 % paper window without
+violating either sub-cell's absorbed-photon budget.
 
 The optics used to sample G on a uniform grid and hand it to a solver
 integrating on the tanh-clustered one — matching shapes, mismatched positions
@@ -24,40 +27,45 @@ budget**, which is thermodynamically impossible.  The old agreement with Lin
 2019 was propped up by that surplus, exactly as the 1D generation fix
 (7807985) turned out to have been.
 
-Post-fix figures, N_grid=40 / n_points=25::
+Current figures, N_grid=40 / n_points=25::
 
-                  before     after    target
-    V_oc  [V]     2.0662    2.0530    1.9650   ok  (+4.5 %)
-    FF            0.7605    0.8161    0.7900   ok  (+3.3 %)
-    J_sc  [A/m²] 147.384   127.179   156.000   GAP (-18.5 %)
-    PCE   [%]     23.160    21.309    24.800   GAP (-14.1 %)
-    top J_sc     176.315   127.179            <- was 124 % of its budget
-    bot J_sc     147.384   183.124
+    V_oc  [V]       2.03834   target 1.9650   ok (+3.7 %)
+    FF              0.81459   target 0.8100   ok (+0.6 %)
+    J_sc  [A/m²]   144.564    target 156.000  ok (-7.3 %)
+    PCE   [%]       24.0035    target 24.800   ok (-3.2 %)
+    top J_sc        144.564    budget 159.337 (90.7 % collection)
+    bottom J_sc     168.222    budget 168.659 (99.7 % collection)
 
-Collection efficiencies are now physical (top 89.5 %, bottom 99.7 %); the
-bottom's pre-fix 70.1 % was an artifact of generation deposited at the wrong
-depth, which is also why its J_sc ROSE while its total generation fell.  The
-current-limiting sub-cell moved from bottom to top, i.e. the pre-fix tandem
-was series-matched at the wrong operating point.
+Collection efficiencies remain physical.  The remaining mismatch is now
+stated directly: top and bottom short-circuit currents differ by about 15.1 %,
+well outside the 2 % current-match acceptance threshold.  That failure has its
+own strict xfail below; it is no longer conflated with J_sc or PCE.
 
-The residual J_sc gap has two identified components, neither closed here:
-  1. the incoherent branch drops the multi-pass geometric series (measured up
-     to 3.9 % with a metal back contact — and this preset ships an Ag back
-     reflector specifically for the second-pass IR);
-  2. the absorber thicknesses in the preset were tuned for current matching
-     AGAINST the mis-positioned generation, so they no longer current-match
-     now that G lands at the right depth.
-Closing either is a separate change; widening the tolerance is not, because it
-would re-manufacture the agreement this fix removed.
+The remaining current-match gap is input/model provenance, not a licence to
+tune transport numerics until the target is met.  The paper stack is
+glass/ITO/PTAA/WBG/C60/ALD-SnO2/Au/PEDOT:PSS/NBG/C60/BCP/Cu, while several of
+those materials are absent or represented by optical and electrical proxies
+here and both absorber n,k files are rigid shifts.  The unequal collection
+efficiencies also mean the 15.1 % mismatch cannot be assigned to optics alone.
+Those inputs must be replaced and both sub-cell transport certificates checked
+before adjusting thickness away from the paper values.  Widening a tolerance
+would only conceal the mismatch.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
+import yaml
 
+from perovskite_sim.constants import Q
 from perovskite_sim.data import load_am15g
+from perovskite_sim.experiments.jv_sweep import build_electrical_grid
 from perovskite_sim.experiments.tandem_jv import run_tandem_jv
 from perovskite_sim.models.tandem_config import load_tandem_from_yaml
+from perovskite_sim.physics.generation import dual_cell_widths
+from perovskite_sim.physics.tandem_optics import compute_tandem_generation
 
 
 @pytest.fixture(scope="module")
@@ -82,14 +90,54 @@ def lin2019():
     return cfg, result
 
 
+def test_lin2019_absorber_thicknesses_follow_paper():
+    """Keep the paper-reported ~300/800 nm thickness provenance executable."""
+    cfg = load_tandem_from_yaml("configs/tandem_lin2019.yaml")
+    top_abs = next(layer for layer in cfg.top_cell.layers if layer.role == "absorber")
+    bot_abs = next(layer for layer in cfg.bottom_cell.layers if layer.role == "absorber")
+    assert top_abs.thickness == pytest.approx(300e-9)
+    assert bot_abs.thickness == pytest.approx(800e-9)
+
+
+def _lin_observables(cfg, result):
+    wavelengths_nm = np.linspace(300.0, 1100.0, 220)
+    _, spectral_flux = load_am15g(wavelengths_nm)
+    x_top = build_electrical_grid(cfg.top_cell, 40)
+    x_bot = build_electrical_grid(cfg.bottom_cell, 40)
+    generation = compute_tandem_generation(
+        cfg,
+        wavelengths_nm * 1e-9,
+        spectral_flux,
+        wavelengths_nm,
+        x_top=x_top,
+        x_bot=x_bot,
+    )
+    top_budget = Q * float(
+        np.sum(np.asarray(generation.G_top) * dual_cell_widths(x_top))
+    )
+    bottom_budget = Q * float(
+        np.sum(np.asarray(generation.G_bot) * dual_cell_widths(x_bot))
+    )
+    top_jsc = abs(result.top_result.metrics_fwd.J_sc)
+    bottom_jsc = abs(result.bot_result.metrics_fwd.J_sc)
+    mismatch = abs(top_jsc - bottom_jsc) / (0.5 * (top_jsc + bottom_jsc))
+    metrics = result.metrics
+    return {
+        "Voc_V": metrics.V_oc,
+        "Jsc_A_m2": abs(metrics.J_sc),
+        "FF": metrics.FF,
+        "PCE_percent": 100.0 * metrics.PCE,
+        "top_photon_budget_A_m2": top_budget,
+        "bottom_photon_budget_A_m2": bottom_budget,
+        "top_subcell_Jsc_A_m2": top_jsc,
+        "bottom_subcell_Jsc_A_m2": bottom_jsc,
+        "subcell_current_mismatch_percent": 100.0 * mismatch,
+    }
+
+
 @pytest.mark.slow
 def test_lin2019_voc_and_ff_within_tolerance(lin2019):
-    """The two figures of merit that survived the generation-grid fix.
-
-    Kept as a live gate rather than folded into the xfail below: V_oc and FF
-    still agree with Lin 2019 to +4.5 % and +3.3 %, and xfailing the whole
-    benchmark would retire two working guards along with the two broken ones.
-    """
+    """V_oc and FF remain independent live paper-window gates."""
     cfg, result = lin2019
     m = result.metrics
     tol = float(cfg.benchmark["tolerance_pct"]) / 100.0
@@ -103,41 +151,49 @@ def test_lin2019_voc_and_ff_within_tolerance(lin2019):
     )
 
 
-@pytest.mark.slow
-@pytest.mark.xfail(
+_LIN_CURRENT_MATCH_GAP = pytest.mark.xfail(
     strict=True,
     reason=(
-        "KNOWN OPTICS GAP, opened by the tandem generation-grid fix and left "
-        "open deliberately. Pre-fix agreement was manufactured: the top "
-        "sub-cell collected 176.315 A/m^2 against 142.033 A/m^2 of absorbed "
-        "photons (124% of its own budget). With generation now landing at the "
-        "correct depth, J_sc reads 127.179 vs target 156.000 (-18.5%) and PCE "
-        "21.309% vs 24.800% (-14.1%). Two identified causes, neither closed: "
-        "(1) the incoherent branch drops the multi-pass geometric series, "
-        "measured up to 3.9% with a metal back contact and this preset ships "
-        "an Ag back reflector; (2) the preset's absorber thicknesses were "
-        "tuned for current matching against the mis-positioned generation. "
-        "strict=True on purpose: when either is fixed this XPASSes and fails, "
-        "forcing this marker to be revisited rather than silently outliving "
-        "the gap. Do NOT widen tolerance_pct to make it pass -- that "
-        "re-manufactures the agreement the fix removed."
+        "KNOWN CURRENT-MATCH GAP. Restoring Lin 2019's approximately 300/800 nm "
+        "absorber thicknesses puts Voc, Jsc, FF, and PCE inside their declared "
+        "paper windows and preserves both photon budgets, but the top/bottom "
+        "short-circuit currents remain 144.564/168.222 A/m^2 (about 15.1% "
+        "apart vs the 2% acceptance threshold). The remaining stack and n,k "
+        "proxies need traceable optical and electrical inputs before re-tuning. "
+        "strict=True makes a future physical current match fail as XPASS until "
+        "the evidence label is deliberately reviewed."
     ),
 )
-def test_lin2019_jsc_and_pce_within_tolerance(lin2019):
-    """Blocked on the residual optics gap -- see the module docstring."""
+
+
+def _lin_gap_targets(cfg):
+    tol = float(cfg.benchmark["tolerance_pct"]) / 100.0
+    # PCE in cfg.benchmark is in %, while compute_metrics returns a fraction.
+    target_pce = float(cfg.benchmark["target_pce"]) / 100.0
+    target_jsc = float(cfg.benchmark["target_jsc_ma_cm2"]) * 10.0
+    return tol, target_pce, target_jsc
+
+
+@pytest.mark.slow
+def test_lin2019_pce_within_tolerance(lin2019):
+    """PCE is a live gate after restoring paper-reported thicknesses."""
     cfg, result = lin2019
     m = result.metrics
-    tol = float(cfg.benchmark["tolerance_pct"]) / 100.0
-
-    # PCE in cfg.benchmark is in % (Lin 2019 reports 24.8). compute_metrics
-    # returns it as a dimensionless fraction (P_mpp / 1000 W/m²), so divide.
-    target_pce = float(cfg.benchmark["target_pce"]) / 100.0
-    target_jsc = float(cfg.benchmark["target_jsc_ma_cm2"]) * 10.0  # mA/cm² -> A/m²
+    tol, target_pce, _ = _lin_gap_targets(cfg)
 
     assert m.PCE == pytest.approx(target_pce, rel=tol), (
         f"PCE {m.PCE * 100:.2f}% outside ±{tol * 100:.0f}% of target "
         f"{target_pce * 100:.2f}%"
     )
+
+
+@pytest.mark.slow
+def test_lin2019_jsc_within_tolerance(lin2019):
+    """J_sc is a live gate after restoring paper-reported thicknesses."""
+    cfg, result = lin2019
+    m = result.metrics
+    tol, _, target_jsc = _lin_gap_targets(cfg)
+
     assert abs(m.J_sc) == pytest.approx(target_jsc, rel=tol), (
         f"|J_sc| {abs(m.J_sc):.2f} A/m² outside tolerance of {target_jsc:.2f}"
     )
@@ -153,30 +209,64 @@ def test_lin2019_subcells_respect_their_photon_budgets(lin2019):
     a solver artifact -- the same external-anchor argument as
     tests/regression/test_physical_bounds.py.
     """
-    from perovskite_sim.constants import Q
-    from perovskite_sim.experiments.jv_sweep import build_electrical_grid
-    from perovskite_sim.physics.generation import dual_cell_widths
-    from perovskite_sim.physics.tandem_optics import compute_tandem_generation
-
     cfg, result = lin2019
-    wavelengths_nm = np.linspace(300.0, 1100.0, 220)
-    _, spectral_flux = load_am15g(wavelengths_nm)
-    x_top = build_electrical_grid(cfg.top_cell, 40)
-    x_bot = build_electrical_grid(cfg.bottom_cell, 40)
-    gen = compute_tandem_generation(
-        cfg, wavelengths_nm * 1e-9, spectral_flux, wavelengths_nm,
-        x_top=x_top, x_bot=x_bot,
-    )
+    observed = _lin_observables(cfg, result)
 
-    for label, G, x, sub in (
-        ("top", gen.G_top, x_top, result.top_result),
-        ("bottom", gen.G_bot, x_bot, result.bot_result),
+    target_jsc = float(cfg.benchmark["target_jsc_ma_cm2"]) * 10.0
+    for label, budget, j_sc in (
+        (
+            "top",
+            observed["top_photon_budget_A_m2"],
+            observed["top_subcell_Jsc_A_m2"],
+        ),
+        (
+            "bottom",
+            observed["bottom_photon_budget_A_m2"],
+            observed["bottom_subcell_Jsc_A_m2"],
+        ),
     ):
-        budget = Q * float(np.sum(np.asarray(G) * dual_cell_widths(x)))
-        j_sc = abs(sub.metrics_fwd.J_sc)
+        assert budget >= target_jsc, (
+            f"{label} absorbed-photon budget {budget:.3f} A/m² cannot support "
+            f"the paper target {target_jsc:.3f} A/m²"
+        )
         assert j_sc <= budget, (
             f"{label} sub-cell collected {j_sc:.3f} A/m² against an absorbed-"
             f"photon budget of {budget:.3f} A/m² ({100.0 * j_sc / budget:.1f} % "
             "of it). A sub-cell cannot collect more carriers than photons "
             "absorbed to make them."
         )
+
+
+@pytest.mark.slow
+def test_lin2019_observations_match_reproducibility_registry(lin2019):
+    """Keep exact local observations live without promoting external evidence."""
+    cfg, result = lin2019
+    matrix = yaml.safe_load(
+        Path("reproducibility/config_benchmark_matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    contract = matrix["benchmarks"]["lin2019-tandem"]
+    observed = contract["observed"]
+    tolerance = contract["regression_tolerance"]
+    actual = _lin_observables(cfg, result)
+
+    assert set(actual) == set(observed) == set(tolerance)
+    for metric, expected in observed.items():
+        assert actual[metric] == pytest.approx(
+            expected, abs=float(tolerance[metric])
+        ), metric
+
+
+@pytest.mark.slow
+@_LIN_CURRENT_MATCH_GAP
+def test_lin2019_subcell_currents_match_within_two_percent(lin2019):
+    """Keep the remaining series-current mismatch isolated and quantitative."""
+    _, result = lin2019
+    top_jsc = abs(result.top_result.metrics_fwd.J_sc)
+    bot_jsc = abs(result.bot_result.metrics_fwd.J_sc)
+    mismatch = abs(top_jsc - bot_jsc) / (0.5 * (top_jsc + bot_jsc))
+    assert mismatch <= 0.02, (
+        f"sub-cell J_sc mismatch is {100.0 * mismatch:.2f}%: "
+        f"top={top_jsc:.3f}, bottom={bot_jsc:.3f} A/m²"
+    )

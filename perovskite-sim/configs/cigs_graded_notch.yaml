@@ -19,12 +19,16 @@
 simulation_hints:
   min_N_grid: 120
   notes: >-
-    Ga-rich back-graded CIGS demo (continuous bandgap grading). Requires
-    N_grid >= 120 for the 2 um absorber; the graded absorber additionally
-    refines its own mesh via grading_N_mult. Each sweep takes minutes.
+    Ga-rich back-graded CIGS demo (continuous bandgap grading). The contact
+    boundary magnitude is synchronized to the graded back endpoint so the BSF
+    comparison does not hold incompatible contact work functions fixed. Use
+    V_max=1.05 V with 43 points; material/optical provenance remains too
+    incomplete for an external quantitative CIGS claim.
 
 device:
-  V_bi: 1.0
+  # abs(compute_V_bi()) for the graded material endpoints. The solver applies
+  # the negative coordinate sign for the n-left/p-right orientation.
+  V_bi: 1.1546666460693205
   Phi: 2.5e21
   band_grading: true          # master switch for continuous bandgap grading
   S_n_right: 1.0e3            # finite back-contact electron SRV (Mo side)

@@ -11,7 +11,7 @@ nodes on each side via a thermionic-emission (TE) flux:
 
 where ``density_bulk_projected`` is the equilibrium bulk density on the
 appropriate side, Boltzmann-projected to the interface plane via the
-local band-bending V_1 or V_2 partition of (V_bi - V_app).
+local band-bending V_1 or V_2 partition of (|V_bi| - V_app).
 
 Sign convention: positive flux means carriers flow INTO the interface-
 plane state (state density grows). The Sprint 6 Day 8-10 work then
@@ -77,7 +77,7 @@ def compute_interface_te_fluxes(
     Bulk-projected densities use cached equilibrium values plus the
     V_app-dependent band-bending partition:
 
-      V_total = V_bi_eff - V_app  (clamped to >= 0)
+      V_total = |V_bi_eff| - V_app  (clamped to >= 0)
       V_2     = partition_left[k] * V_total       # PVK (light) side
       V_1     = (1 - partition_left[k]) * V_total # ETL (heavy) side
 
@@ -97,7 +97,7 @@ def compute_interface_te_fluxes(
     V_T_local = V_T if V_T is not None else (
         mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
     )
-    V_total = max(0.0, float(mat.V_bi_eff) - float(V_app))
+    V_total = max(0.0, abs(float(mat.V_bi_eff)) - float(V_app))
     out = np.zeros(4 * n_iface, dtype=float)
     for k in range(n_iface):
         partition_left = float(mat.interface_V_partition_2[k])
@@ -523,7 +523,7 @@ def compute_interface_te_fluxes_live(
             # plain live projection used node potentials only (no
             # bending). V_1 depletes ETL-side electrons / accumulates
             # holes; V_2 the mirror on the PVK side.
-            V_tot = max(0.0, float(mat.V_bi_eff) - float(V_app))
+            V_tot = max(0.0, abs(float(mat.V_bi_eff)) - float(V_app))
             part = float(mat.interface_V_partition_2[k])
             v2 = max(-_EXP_CAP, min(_EXP_CAP, part * V_tot / V_T_local))
             v1 = max(-_EXP_CAP, min(_EXP_CAP,

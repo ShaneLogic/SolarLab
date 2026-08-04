@@ -1,10 +1,26 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
+
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
-from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
+from perovskite_sim.solver import illuminated_ss
+from perovskite_sim.solver.illuminated_ss import (
+    IlluminatedSteadyStateError,
+    solve_illuminated_ss,
+)
 from perovskite_sim.solver.newton import solve_equilibrium
-from perovskite_sim.solver.mol import StateVec
+
+
+def _fake_mat(N=2, *, dual=False, limit=1.0e30):
+    return SimpleNamespace(
+        has_dual_ions=dual,
+        N_iface_state=0,
+        P_lim_node=np.full(N, limit),
+        P_lim_neg_node=np.full(N, limit) if dual else None,
+        ion_steric_shared_site=True,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -13,6 +29,175 @@ def grid_and_stack():
     layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     return x, stack
+
+
+def test_transient_failure_raises_with_solver_message(monkeypatch):
+    """A failed light settle must never be reported as the dark state."""
+    x = np.array([0.0, 1.0])
+    y_dark = np.arange(6, dtype=float)
+    monkeypatch.setattr(
+        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=False,
+            message="synthetic Radau failure",
+            y=y_dark[:, None],
+        ),
+    )
+
+    with pytest.raises(
+        IlluminatedSteadyStateError, match="synthetic Radau failure",
+    ) as exc_info:
+        solve_illuminated_ss(
+            x, object(), V_app=0.73, t_settle=2e-3, mat=_fake_mat(),
+        )
+
+    assert exc_info.value.V_app == pytest.approx(0.73)
+    assert exc_info.value.t_settle == pytest.approx(2e-3)
+    assert exc_info.value.solver_message == "synthetic Radau failure"
+
+
+def test_transient_failure_without_message_still_raises(monkeypatch):
+    """Failure objects without an optional message remain fail-closed."""
+    x = np.array([0.0, 1.0])
+    y_dark = np.arange(6, dtype=float)
+    monkeypatch.setattr(
+        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=False,
+            y=y_dark[:, None],
+        ),
+    )
+
+    with pytest.raises(IlluminatedSteadyStateError, match="settling failed"):
+        solve_illuminated_ss(x, object(), mat=_fake_mat())
+
+
+def test_transient_numeric_exception_is_normalised(monkeypatch):
+    x = np.array([0.0, 1.0])
+    y_dark = np.arange(6, dtype=float)
+    monkeypatch.setattr(
+        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("synthetic scipy Jacobian failure")
+        ),
+    )
+
+    with pytest.raises(
+        IlluminatedSteadyStateError, match="synthetic scipy Jacobian failure",
+    ) as exc_info:
+        solve_illuminated_ss(x, object(), mat=_fake_mat())
+
+    assert exc_info.value.reason_code == "solver_exception"
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+@pytest.mark.parametrize(
+    "bad_states",
+    (
+        np.empty((6, 0)),
+        np.full((6, 1), np.nan),
+        np.zeros((5, 1)),
+    ),
+)
+def test_success_without_finite_terminal_state_raises(monkeypatch, bad_states):
+    """A malformed successful result is not a certified illuminated state."""
+    x = np.array([0.0, 1.0])
+    y_dark = np.arange(6, dtype=float)
+    monkeypatch.setattr(
+        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=True,
+            message="synthetic success",
+            y=bad_states,
+        ),
+    )
+
+    with pytest.raises(
+        IlluminatedSteadyStateError, match="no finite terminal state",
+    ):
+        solve_illuminated_ss(x, object(), mat=_fake_mat())
+
+
+def test_success_with_negative_density_is_rejected(monkeypatch):
+    x = np.array([0.0, 1.0])
+    y_dark = np.arange(6, dtype=float)
+    bad = y_dark.copy()
+    bad[0] = -1.0
+    monkeypatch.setattr(
+        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(success=True, y=bad[:, None]),
+    )
+
+    with pytest.raises(
+        IlluminatedSteadyStateError, match="negative density",
+    ) as exc_info:
+        solve_illuminated_ss(x, object(), mat=_fake_mat())
+
+    assert exc_info.value.reason_code == "unphysical_terminal_state"
+
+
+def test_success_with_ion_site_overfill_is_rejected(monkeypatch):
+    x = np.array([0.0, 1.0])
+    y_dark = np.ones(6, dtype=float)
+    bad = y_dark.copy()
+    bad[4:] = 6.0
+    monkeypatch.setattr(
+        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(success=True, y=bad[:, None]),
+    )
+
+    with pytest.raises(
+        IlluminatedSteadyStateError, match="site-occupancy limit",
+    ) as exc_info:
+        solve_illuminated_ss(x, object(), mat=_fake_mat(limit=5.0))
+
+    assert exc_info.value.reason_code == "unphysical_terminal_state"
+
+
+def test_dual_ion_state_shape_is_supported(monkeypatch):
+    x = np.array([0.0, 1.0])
+    y_dark = np.ones(8, dtype=float)
+    terminal = y_dark * 2.0
+    monkeypatch.setattr(
+        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=True, y=terminal[:, None],
+        ),
+    )
+
+    result = solve_illuminated_ss(
+        x, object(), mat=_fake_mat(dual=True, limit=10.0),
+    )
+
+    np.testing.assert_array_equal(result, terminal)
 
 
 def test_shape(grid_and_stack):
@@ -37,8 +222,6 @@ def test_absorber_np_product_larger_under_illumination(grid_and_stack):
     N = len(x)
     offset = stack.layers[0].thickness
     abs_mask = (x > offset) & (x < offset + stack.layers[1].thickness)
-    absorber = next(l for l in stack.layers if l.role == "absorber")
-    ni_sq = absorber.params.ni_sq
     y_dark = solve_equilibrium(x, stack)
     y_light = solve_illuminated_ss(x, stack, V_app=0.0)
     n_dark, p_dark = y_dark[:N][abs_mask], y_dark[N:2*N][abs_mask]

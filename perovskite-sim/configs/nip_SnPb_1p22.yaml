@@ -41,7 +41,10 @@ layers:
 
   - name: SnPb_1p22
     role: absorber
-    thickness: 1000e-9          # Lin 2019 SI cites ~1 µm Sn-Pb; thicker improves current match
+    # Lin 2019 reports an approximately 800 nm narrow-gap back absorber.
+    # Keep the paper thickness even though the placeholder optical stack is
+    # not yet current-matched; do not tune this field to hide that gap.
+    thickness: 800e-9
     eps_r: 24.1                 # TODO(benchmark): refine after Lin 2019 SI data is loaded
     mu_n: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded
     mu_p: 2e-4                  # TODO(benchmark): refine after Lin 2019 SI data is loaded

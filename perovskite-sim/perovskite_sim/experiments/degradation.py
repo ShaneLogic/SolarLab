@@ -247,7 +247,7 @@ def run_degradation(
     # take 10–20 s of silence otherwise.
     if progress is not None:
         progress("degradation_transient", 0, max(1, int(t_end * 1000)),
-                 "solving illuminated steady state")
+                 "applying illuminated preconditioning")
 
     # Degradation loop starts from V_bias-equilibrated state so that the very
     # first time chunk does not have to transition SC→V_bias carriers (expensive).

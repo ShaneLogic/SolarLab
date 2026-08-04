@@ -92,6 +92,8 @@ export interface InterfaceDefectFields {
   N_t_cm2: number | null
   v_th_cm_s: number | null
   E_t_eV_below_cb: number | null
+  calibration_factor?: number
+  iface_state_calibration_factor?: number
 }
 
 export interface DeviceConfig {
@@ -130,8 +132,8 @@ export interface DeviceConfig {
     S_n_right?: number | null
     S_p_right?: number | null
     // SCAPS-validation physics flags — device-level, FULL-tier-only.
-    // Mirror load_device_from_yaml / stack_from_dict. Absent → off / 0.0
-    // (legacy default, bit-identical). See perovskite-sim/CLAUDE.md.
+    // Mirror load_device_from_yaml / stack_from_dict. Some defaults are on;
+    // explicit false values must therefore survive an editor round-trip.
     dos_band_potentials?: boolean
     flat_band_contacts?: boolean
     interface_plane_closure?: boolean
@@ -146,6 +148,15 @@ export interface DeviceConfig {
     // mass / m_e (only used when interface_tunneling on). See physics/tunneling.py.
     interface_tunneling?: boolean
     tunnel_mass_eff?: number
+    te_physical_norm?: boolean
+    ion_steric_diffusion_only?: boolean
+    ion_steric_shared_site?: boolean
+    autoloop_generated_lever?: boolean
+    flat_band_metal_contacts?: boolean
+    contact_phi_B_eV?: number
+    interface_two_sided?: boolean
+    interface_shared_occupancy?: boolean
+    interface_plane_generation?: boolean
   }
   layers: LayerConfig[]
 }

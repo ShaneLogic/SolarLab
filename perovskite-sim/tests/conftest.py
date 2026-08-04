@@ -9,9 +9,9 @@ multi-threaded BLAS to pay off -- on a 10-core machine, OpenBLAS/MKL spins up
 every LU call across all cores and the thread-creation + contention overhead
 turns a ~14 s test into a ~3-6 minute test.
 
-Pinning BLAS threads to 1 for the slow suite brings it back to standalone-
-script performance (~14 s per test). Unit tests are unaffected because they
-don't hit dense LU loops of this size.
+Pinning BLAS threads to 1 for the slow and validation suites brings them back
+to standalone-script performance (~14 s per test). Unit tests are unaffected
+because they don't hit dense LU loops of this size.
 
 Why a conftest hook instead of an env var in CI: developers run `pytest
 -m slow` interactively too, and we want it to Just Work. Setting the limit
@@ -29,18 +29,36 @@ looked fine while pytest looked broken.
 
 from __future__ import annotations
 
+import re
+
+
+def _marker_selected_positively(markexpr: str, marker: str) -> bool:
+    """Whether *marker* occurs outside an immediate ``not`` clause.
+
+    Pytest accepts tautologies such as ``slow or not slow`` to override a
+    default ``not slow`` selection. A plain substring check mistakes that
+    expression for a negative-only lane and leaves stiff solver tests with
+    oversubscribed BLAS. Whitespace and ``not(marker)`` are normalized so the
+    common marker-expression spellings share one result.
+    """
+    expression = re.sub(r"\s+", " ", markexpr.lower()).strip()
+    expression = re.sub(r"\bnot\s*\(\s*", "not ", expression)
+    marker_pattern = re.escape(marker.lower())
+    return re.search(rf"(?<!not )\b{marker_pattern}\b", expression) is not None
+
 
 def pytest_configure(config):
-    """Pin BLAS threads to 1 when the slow marker is selected.
+    """Pin BLAS threads to 1 for stiff slow/validation solver lanes.
 
-    Triggered when the user passes `-m slow` (or any markexpr containing
-    ``slow``). Unit/integration runs retain default BLAS threading.
+    Triggered when the user passes ``-m slow`` or ``-m validation`` (including
+    compound expressions). Unit/integration runs retain default BLAS threading.
     """
     markexpr = getattr(config.option, "markexpr", "") or ""
-    # Match `-m slow`, `-m 'slow and X'`, `-m 'slow or Y'` but NOT
-    # `-m 'not slow'` (the default unit-test run set via pyproject addopts).
-    selects_slow = "slow" in markexpr and "not slow" not in markexpr
-    if not selects_slow:
+    # Match `-m slow`, compound positive expressions, and the all-tests
+    # tautology `slow or not slow`, but NOT the default `-m 'not slow'` lane.
+    selects_slow = _marker_selected_positively(markexpr, "slow")
+    selects_validation = _marker_selected_positively(markexpr, "validation")
+    if not (selects_slow or selects_validation):
         return
 
     try:
