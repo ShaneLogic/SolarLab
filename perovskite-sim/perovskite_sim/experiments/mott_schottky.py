@@ -55,8 +55,9 @@ a few percent across the bias range is a red flag.
 Sign convention
 ---------------
 Capacitance is reported as a positive real number [F/m²]. The lock-in
-returns ``Z = δV / δI`` with Im(Y) > 0 for a capacitor; we take the
-magnitude so that downstream fits never have to branch on sign.
+returns ``Z = δV / δI`` with Im(Y) > 0 for a capacitor. A non-positive
+susceptance is rejected because taking its magnitude would disguise an
+inductive or numerically invalid response as a depletion capacitance.
 """
 from __future__ import annotations
 
@@ -233,7 +234,7 @@ def _fit_mott_schottky(
     # where the kT/q term is the majority-carrier tail at the depletion
     # edge (the space charge does not terminate abruptly). Omitting it
     # under-reports V_bi by 25.9 mV at 300 K — 2026-07 review finding F-16.
-    if abs(slope) < 1e-30:
+    if not np.isfinite(slope) or slope >= -1e-30:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
     V_bi_fit = -intercept / slope + K_B * T / Q
     # N_eff = -2 / (q · ε_s · ε_0 · slope). Slope is negative, so N_eff > 0.
@@ -312,11 +313,17 @@ def run_mott_schottky(
             rtol=rtol, atol=atol, illuminated=False,
         )
         Z = complex(r.Z[0])
-        # C = Im(Y) / ω with Y = 1/Z. Take |Im(Y)| so a noisy negative
-        # imaginary part (always indicative of a fit glitch rather than
-        # physics) does not poison the 1/C² plot.
+        # C = Im(Y) / ω with Y = 1/Z. A non-positive susceptance violates
+        # the passive capacitive convention assumed by Mott-Schottky analysis;
+        # reject it instead of taking abs(Im(Y)), which would silently turn an
+        # inductive or numerically invalid response into a plausible C-V curve.
         Y = 1.0 / Z
-        C_arr[k] = abs(Y.imag) / omega
+        if not np.isfinite(Y.real) or not np.isfinite(Y.imag) or Y.imag <= 0.0:
+            raise RuntimeError(
+                "Mott-Schottky requires finite positive capacitive "
+                f"susceptance; got Y={Y!r} at V_dc={V_dc:.6g} V"
+            )
+        C_arr[k] = Y.imag / omega
         if progress is not None:
             progress(
                 "mott_schottky", k + 1, len(V_arr),

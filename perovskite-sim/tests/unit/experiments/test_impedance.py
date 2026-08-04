@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from types import SimpleNamespace
 from perovskite_sim.experiments.impedance import extract_impedance
 
 
@@ -47,6 +48,41 @@ def test_impedance_rejects_small_n_grid():
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="N_grid"):
         run_impedance(stack, np.array([1e3]), N_grid=2)
+
+
+def test_impedance_rejects_underresolved_csi_grid_before_integration():
+    from perovskite_sim.discretization.grid import GridResolutionError
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    with pytest.raises(GridResolutionError, match="under-resolved"):
+        run_impedance(stack, np.array([1e5]), N_grid=30)
+
+
+def test_impedance_rejects_failed_dark_dc_preconditioning(monkeypatch):
+    import perovskite_sim.experiments.impedance as impedance_module
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    monkeypatch.setattr(
+        impedance_module,
+        "run_transient",
+        lambda *args, **kwargs: SimpleNamespace(
+            success=False,
+            message="deliberate DC failure",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="dark DC preconditioning failed"):
+        run_impedance(
+            stack,
+            np.array([1e3]),
+            V_dc=0.1,
+            N_grid=12,
+            illuminated=False,
+        )
 
 
 def test_impedance_rejects_zero_delta_v():

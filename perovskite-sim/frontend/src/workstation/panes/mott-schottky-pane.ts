@@ -18,7 +18,7 @@ export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottky
         ${numField('ms-vlo', 'V<sub>lo</sub> (V)', -0.3, 'any')}
         ${numField('ms-vhi', 'V<sub>hi</sub> (V)', 0.4, 'any')}
         ${numField('ms-npts', 'n<sub>points</sub>', 8, '1')}
-        ${numField('ms-freq', 'f (Hz)', 1e5, 'any')}
+        ${numField('ms-freq', 'f (Hz)', 1e6, 'any')}
         ${numField('ms-dV', '\u03b4V (V)', 0.01, 'any')}
       </div>
       <div class="actions">
@@ -58,7 +58,7 @@ export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottky
       V_lo: vlo,
       V_hi: vhi,
       n_points: Math.max(3, Math.round(readNum('ms-npts', 8))),
-      frequency: readNum('ms-freq', 1e5),
+      frequency: readNum('ms-freq', 1e6),
       delta_V: readNum('ms-dV', 0.01),
     }
     const t0 = performance.now()
@@ -82,9 +82,12 @@ export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottky
             }
             opts.onRunComplete(active.id, run)
             progressBar.done()
+            const fitIdentifiable = Number.isFinite(pure.V_bi_fit) && Number.isFinite(pure.N_eff_fit)
             setStatus(
               'status-ms',
-              `Done \u00b7 V_bi=${pure.V_bi_fit.toFixed(3)} V, N_eff=${pure.N_eff_fit.toExponential(2)} m\u207B\u00b3`,
+              fitIdentifiable
+                ? `Done \u00b7 V_bi=${pure.V_bi_fit.toFixed(3)} V, N_eff=${pure.N_eff_fit.toExponential(2)} m\u207B\u00b3`
+                : 'Done \u00b7 fit not identifiable; inspect the C\u2013V slope',
             )
           },
           onError: (msg) => {
