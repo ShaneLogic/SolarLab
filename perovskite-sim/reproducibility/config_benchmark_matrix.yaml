@@ -15,6 +15,8 @@ resources:
     sha256: 6a3dc2be4af2f2967230d17c7b39ff2be87bd3eec225eaa669520149189c3e5d
   - path: perovskite_sim/data/references/csi_pn_cv_intercept.yaml
     sha256: 14e38316eea8c65e1af81e578198f3c07dbacfb86ef239157840d519bf6320d7
+  - path: perovskite_sim/data/references/csi_vannijen2025_pn_cv.yaml
+    sha256: b4cd86bc232bd9b22a8aee80e564d9c3a19899f93cdb413965e801d3fab7c81c
   - path: perovskite_sim/data/nk/manifest.yaml
     sha256: b442027f40477181058ea25079cfb640251fa9aeea89bc87b106dbca037ac1ea
   - path: perovskite_sim/data/nk/Ag.csv
@@ -59,6 +61,7 @@ benchmarks:
       - tests/reproducibility/test_matrix.py::test_matrix_covers_and_loads_every_shipped_config
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/csi_vannijen2025_pn_cv.yaml
       - configs/cigs_baseline.yaml
       - configs/cigs_graded_notch.yaml
       - configs/driftfusion_benchmark.yaml
@@ -768,8 +771,110 @@ benchmarks:
       - the frequency-domain adapter is restricted to the audited local ion-free QF model and fails closed for unsupported physics
       - this new path does not repair or validate the legacy endpoint-sampled transient impedance algorithm
       - the corrected 0.782 V apparent Mott intercept remains 0.111 V below the configured 0.892896 V contact-potential magnitude
-      - the residual intercept shift is consistent with the published 0.1-0.4 V range for distributed-carrier p-n capacitance, but no pointwise external curve is frozen
+      - this config has no geometry-compatible pointwise external curve; the separate van Nijen config is an explicitly partial geometry-mismatched comparison
       - this is internal numerical validation, not an external c-Si C-V comparison
+  vannijen2025-csi-pn-cv:
+    kind: external
+    status: partial
+    claim_level: partial_external_comparison
+    evidence_tier: independent-numerical-source-with-geometry-mismatch
+    source_url: https://doi.org/10.1016/j.solmat.2024.113383
+    data_url: https://doi.org/10.4121/19445ed8-c8d5-4204-a8c6-adaa7a55ece3.v1
+    reference_resource: perovskite_sim/data/references/csi_vannijen2025_pn_cv.yaml
+    source_solver:
+      name: Synopsys Sentaurus Device
+      exact_version_frozen: false
+      raw_output_content_addressed: true
+      raw_output_vendored: false
+      limitation: the proprietary 2-D Sentaurus input deck is not in the public dataset
+    command: >-
+      OPENBLAS_NUM_THREADS=1 pytest -q -m slow
+      tests/validation/test_csi_vannijen2025_cv.py
+    tests: [tests/validation/test_csi_vannijen2025_cv.py]
+    node_ids:
+      - tests/validation/test_csi_vannijen2025_cv.py::test_vannijen_source_rows_reproduce_frozen_author_extraction
+      - tests/validation/test_csi_vannijen2025_cv.py::test_vannijen_config_maps_published_profile_without_curve_calibration
+      - tests/validation/test_csi_vannijen2025_cv.py::test_vannijen_local_cv_is_residual_certified_and_grid_converged
+      - tests/validation/test_csi_vannijen2025_cv.py::test_vannijen_cv_records_partial_agreement_not_pointwise_parity
+      - tests/validation/test_csi_vannijen2025_cv.py::test_vannijen_observations_match_reproducibility_registry
+    configs: [configs/csi_vannijen2025_pn_cv.yaml]
+    protocol:
+      source:
+        solver: 2-D Sentaurus Device small-signal AC
+        temperature_K: 298.15
+        selected_frequency_Hz: 101996.13
+        biases_V: [0.0, 0.1, 0.2]
+        ac_amplitude: infinitesimal linearized perturbation
+        geometry: 200 um by 500 um device with 50 um contacts
+        extraction: author series-resistance-corrected junction capacitance
+      local:
+        solver: 1-D residual-certified QF frequency-domain linearization
+        N_grid: [400, 600, 800]
+        grid_interval_weights: {p_gaussian_emitter: 1.0, n_base: 1.0}
+        grid_alphas: {p_gaussian_emitter: 1.0, n_base: 3.0}
+        biases_V: [0.0, 0.1, 0.2]
+        frequency_Hz: 101996.13
+        nominal_delta_V: 0.01
+        newton_residual_tolerance: 1.0e-8
+        pointwise_parity_relative_error: 0.1
+        certificates:
+          max_dc_normalized_cell_residual: 1.0e-8
+          max_continuity_bound_A_m2: 1.0e-4
+          max_dc_face_current_spread_A_m2: 1.0e-4
+          max_ac_relative_face_spread: 5.0e-4
+          max_linear_solve_backward_error: 1.0e-10
+          max_finest_grid_curve_change: 5.0e-4
+    calibration:
+      parameters: []
+      targets: []
+    non_calibration_checks:
+      - Gaussian emitter profile and junction depth
+      - source admittance-to-capacitance extraction
+      - local DC and AC physical certificates
+      - local grid convergence
+      - pointwise depletion-window C-V discrepancy
+    observed:
+      source_capacitance_F_m2:
+        - 6.495369340246841e-5
+        - 6.552532616577149e-5
+        - 6.899838119228747e-5
+      local_capacitance_F_m2:
+        "400":
+          - 7.775231887926957e-5
+          - 8.422366483944331e-5
+          - 9.352878855544640e-5
+        "600":
+          - 7.776213237182512e-5
+          - 8.423757235202790e-5
+          - 9.355074893362648e-5
+        "800":
+          - 7.776554653558995e-5
+          - 8.424247491411392e-5
+          - 9.355836147996686e-5
+      pointwise_relative_error_N800:
+        - 0.197245952647162
+        - 0.285647547957109
+        - 0.355950094238221
+      max_pointwise_relative_error: 0.355950094238221
+      rms_pointwise_relative_error: 0.287054557577355
+      adjacent_max_local_curve_changes:
+        - 0.000234742943593866
+        - 0.0000813668198112934
+    regression_tolerance:
+      source_capacitance_F_m2: 1.0e-12
+      local_capacitance_F_m2: 1.0e-6
+      pointwise_relative_error_N800: 1.0e-6
+      max_pointwise_relative_error: 1.0e-6
+      rms_pointwise_relative_error: 1.0e-6
+      adjacent_max_local_curve_changes: 1.0e-4
+    limitations:
+      - source and local curves are independently generated numerical results, not experiment-to-model validation
+      - source geometry is 2-D with partial-width contacts while SolarLab is 1-D and full-area
+      - the public dataset freezes raw output and extraction code but not the proprietary Sentaurus input deck or exact solver version
+      - paper-unspecified Sentaurus transport and recombination settings cannot be made identical to SolarLab's documented c-Si assumptions
+      - SolarLab truncates the Gaussian acceptor tail at 15 um where it is 1e-5 of the donor density
+      - SolarLab exceeds the source capacitance by 19.7 to 35.6 percent in the registered depletion window, so pointwise parity is not claimed
+      - the registered 1e-8 Newton residual gate is looser than the default 1e-10 numerical target but remains four orders below the physical continuity gate
   scaps-low-doping-etl-boundary:
     kind: internal
     status: pass
@@ -795,6 +900,14 @@ configs:
       - csi-grid-envelope-gap
       - csi-qf-internal-validation
       - csi-qf-frequency-domain-cv
+  - path: configs/csi_vannijen2025_pn_cv.yaml
+    sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad
+    semantic_sha256: fa8aa79df971b420a11b9985abd9ff976eec1f7fb88ca66018b0a8106b9d4330
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - vannijen2025-csi-pn-cv
   - path: configs/cigs_baseline.yaml
     sha256: 46dabc8418b7060a2124206793f3b6f07a01f35826b6b537591c64dbd2abe4af
     semantic_sha256: bdde999ebbeae9ec96f815ea3e2195a094653b26916235b178da611cc4b4d2fd

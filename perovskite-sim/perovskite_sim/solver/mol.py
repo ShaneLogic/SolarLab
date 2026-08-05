@@ -18,6 +18,7 @@ from perovskite_sim.physics.poisson import (
     PoissonFactor,
 )
 from perovskite_sim.physics.continuity import carrier_continuity_rhs
+from perovskite_sim.physics.doping import layer_doping_profiles
 from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
 from perovskite_sim.models.device import (
@@ -827,8 +828,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             P_lim_neg_node[mask] = p.P_lim_neg
             P_ion0_neg[mask] = p.P0_neg
 
-        N_A[mask] = p.N_A
-        N_D[mask] = p.N_D
+        N_A[mask], N_D[mask] = layer_doping_profiles(
+            x_local, layer.thickness, p
+        )
         alpha[mask] = p.alpha
 
         # Phase 4b: temperature-shifted bandgap via Varshni, feeding both
@@ -1441,8 +1443,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                 continue
             pl = elec_layers[k].params
             pr = elec_layers[k + 1].params
-            net_l = abs(pl.N_D - pl.N_A)
-            net_r = abs(pr.N_D - pr.N_A)
+            net_l = abs(float(N_D[f] - N_A[f]))
+            net_r = abs(float(N_D[f + 1] - N_A[f + 1]))
             # Depletion sits on the lighter-doped side — its doping + eps set
             # the field-emission characteristic energy E_00.
             if net_l <= net_r:
@@ -1475,8 +1477,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     # continuity node.
     ni_sq_L = float(ni_sq[0])
     ni_sq_R = float(ni_sq[-1])
-    n_L, p_L = _equilibrium_np(first.N_D, first.N_A, np.sqrt(ni_sq_L))
-    n_R, p_R = _equilibrium_np(last.N_D, last.N_A, np.sqrt(ni_sq_R))
+    n_L, p_L = _equilibrium_np(N_D[0], N_A[0], np.sqrt(ni_sq_L))
+    n_R, p_R = _equilibrium_np(N_D[-1], N_A[-1], np.sqrt(ni_sq_R))
 
     # Flat-band metal-contact reservoir floor (2026-07) — see DeviceStack.
     # flat_band_metal_contacts. The contact carrier reservoir is the LARGER of
@@ -1493,13 +1495,15 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             n_c: float,
             p_c: float,
             ni_sq_contact: float,
+            N_D_contact: float,
+            N_A_contact: float,
         ) -> tuple[float, float]:
             # Floor the MAJORITY-carrier reservoir at the metal work-function
             # density N_C/N_V·exp(-phi_B/V_T). The doping sign picks the carrier,
             # so nip (n-type right / p-type left) and pin (the reverse) are both
             # correct. n·p = ni² is preserved; a layer missing its DOS is left
             # untouched (bit-identical).
-            if pm.N_D >= pm.N_A:                     # n-type contact -> electrons
+            if N_D_contact >= N_A_contact:            # n-type contact -> electrons
                 if pm.Nc300:
                     wf = float(pm.Nc300) * _gate
                     if wf > n_c:
@@ -1511,8 +1515,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                         return ni_sq_contact / wf, wf
             return n_c, p_c
 
-        n_R, p_R = _floor_contact(last, n_R, p_R, ni_sq_R)
-        n_L, p_L = _floor_contact(first, n_L, p_L, ni_sq_L)
+        n_R, p_R = _floor_contact(
+            last, n_R, p_R, ni_sq_R, N_D[-1], N_A[-1]
+        )
+        n_L, p_L = _floor_contact(
+            first, n_L, p_L, ni_sq_L, N_D[0], N_A[0]
+        )
 
     # LAPACK LU of the Poisson tridiagonal — constant across the experiment,
     # so we pay the factor cost exactly once and each RHS call becomes a

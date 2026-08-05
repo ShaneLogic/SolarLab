@@ -184,6 +184,7 @@ gaps:
     config: configs/cSi_homojunction.yaml
     reproduction: |-
       OPENBLAS_NUM_THREADS=1 pytest -q -m slow tests/regression/test_csi_frequency_domain_impedance.py
+      OPENBLAS_NUM_THREADS=1 pytest -q -m slow tests/validation/test_csi_vannijen2025_cv.py
       pytest -q tests/unit/experiments/test_impedance.py tests/unit/experiments/test_mott_schottky.py
     current_evidence: >-
       The endpoint-sampled transient branch mixed endpoint conduction current
@@ -205,17 +206,26 @@ gaps:
       equal the terminal capacitance at -0.2 V. The remaining 0.111 V gap
       between the 0.782066 V apparent intercept and the configured 0.892896 V
       contact potential lies within the published 0.1-0.4 V range caused by
-      distributed transition-region carriers. The new certificate is QF-only
-      and is not pointwise external C-V validation or a repair of the legacy
+      distributed transition-region carriers. An independent 2025 Sentaurus
+      dataset is now content-addressed and compared without calibration using
+      its published 200 um p+/n device, Gaussian emitter, 298.15 K temperature,
+      and 101996.13 Hz author extraction. The local N=400/600/800 curves have
+      an 8.14e-5 finest-pair relative change, but exceed the source values by
+      19.7/28.6/35.6 percent at 0/0.1/0.2 V. This is useful partial external
+      evidence, not strict parity: the source is 2-D with 50 um contacts on a
+      500 um device, SolarLab is 1-D/full-area, and the proprietary Sentaurus
+      deck is unavailable. The QF certificate does not repair the legacy
       transient branch.
     next_experiment: >-
-      Freeze or digitize a compatible independent c-Si p-n C-V curve with its
-      area, frequency, AC amplitude, temperature, doping, geometry, edge
-      correction, and extraction provenance, then compare pointwise C(V),
-      slope-derived doping, and apparent intercept without calibrating the
-      SolarLab config to that curve. Extend the frequency-domain state to mobile
-      ions or other general-model features only after each added storage variable
-      and boundary current has its own capability certificate.
+      Resolve the geometry boundary before interpreting the remaining curve
+      error: either reproduce the source's 2-D lateral/contact geometry with a
+      certified small-signal operator, or obtain a complete 1-D/full-area
+      external deck or experiment with compatible area, frequency, amplitude,
+      temperature, doping, edge correction, and extraction metadata. Then
+      compare pointwise C(V), slope-derived doping, and apparent intercept
+      without calibration. Extend the frequency-domain state to mobile ions or
+      other general-model features only after each added storage variable and
+      boundary current has its own capability certificate.
     acceptance:
       - every retained bias has residual-certified dark DC and frequency-domain linear-solve certificates
       - all-face total admittance is continuous and the complex solve has a bounded backward error

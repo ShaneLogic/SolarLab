@@ -15,9 +15,9 @@ it loads or produces a finite J-V curve.
   resource, benchmark command, evidence level, and known limitation.
 - `p1_gaps.yaml` gives each open or closed P1 gap a reproduction command,
   current evidence, next experiment, and acceptance contract.
-- `P1_CHECKPOINT_2026-08-04.md` is the latest human-readable continuation
-  checkpoint; the 2026-08-01 and 2026-08-03 files remain immutable historical
-  notes.
+- `P1_CHECKPOINT_2026-08-05_EXTERNAL_CV.md` is the latest human-readable
+  continuation checkpoint; earlier checkpoint files remain immutable
+  historical notes.
 
 ## Verification
 
@@ -32,7 +32,7 @@ The verifier fails if any of the following drifts:
 
 - reconstruction of the full 40-character P0 base with `git archive`, patch
   dry-run/application, or any frozen reconstructed-file hash;
-- the set or byte-level SHA-256 of the 28 shipped YAML configs;
+- the set or byte-level SHA-256 of the 29 shipped YAML configs;
 - the normalized loader semantic hash of any config;
 - the set or byte-level SHA-256 of the AM1.5G and n,k resources;
 - exact n,k CSV-to-manifest stem coverage;
@@ -100,7 +100,12 @@ electron and hole inventory derivatives reproduce the terminal capacitance,
 and the p-n fit uses the two-edge `2kT/q` correction. The resulting 0.782 V
 apparent intercept is 0.111 V below the configured contact potential, within
 the published 0.1-0.4 V distributed-carrier range. This resolves the internal
-interpretation, not external validation: no compatible pointwise c-Si C-V
-curve is frozen. The configuration therefore stays `partial` and the P1 gap
-stays open. The lane does not certify the general endpoint-sampled transient
-path or unsupported ion, contact, interface, or non-local physics.
+interpretation. A second config now maps van Nijen et al.'s published Gaussian
+p+/n device without fitting and compares against content-addressed 2-D
+Sentaurus admittance data. Its local N=400/600/800 curve is converged, but the
+1-D capacitance is 19.7-35.6 percent higher over 0-0.2 V. Because the source
+has partial-width 2-D contacts and no public input deck, this is
+`partial_external_comparison`, not pointwise parity. Both configurations stay
+`partial` and the P1 gap stays open. The lane does not certify the general
+endpoint-sampled transient path or unsupported ion, contact, interface, or
+non-local physics.

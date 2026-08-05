@@ -18,6 +18,7 @@ import yaml
 
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.tandem_config import load_tandem_from_yaml
 from perovskite_sim.scaps_compat.loader import load_scaps_yaml
 
@@ -63,6 +64,17 @@ def _canonical(value: Any) -> Any:
         ):
             mapping.pop("grid_interval_weights", None)
             mapping.pop("grid_alphas", None)
+        if isinstance(value, MaterialParams) and not (
+            value.N_A_bulk is not None or value.N_D_bulk is not None
+        ):
+            for key in (
+                "N_A_bulk",
+                "N_D_bulk",
+                "doping_profile_shape",
+                "doping_decay_length",
+                "doping_edge",
+            ):
+                mapping.pop(key, None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}

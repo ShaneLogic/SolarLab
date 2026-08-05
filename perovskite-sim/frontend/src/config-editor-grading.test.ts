@@ -87,6 +87,24 @@ describe('grading round-trip', () => {
     expect(out.layers[1].grading_profile).toBe('exponential')
     expect(out.layers[1].grading_char_length).toBe(2e-8)
   })
+
+  it('preserves a YAML-defined spatial doping profile through the editor', () => {
+    const c = cfg({
+      N_A: 1e25,
+      N_D: 1e21,
+      N_A_bulk: 0,
+      doping_profile_shape: 'gaussian',
+      doping_decay_length: 3.295051144911304e-6,
+      doping_edge: 'front',
+    })
+    renderDeviceEditor(container, c, 'full', 1)
+    const layer = readDeviceEditor(c, 1).layers[1]
+    expect(layer.N_A_bulk).toBe(0)
+    expect(layer.N_D_bulk).toBeUndefined()
+    expect(layer.doping_profile_shape).toBe('gaussian')
+    expect(layer.doping_decay_length).toBe(3.295051144911304e-6)
+    expect(layer.doping_edge).toBe('front')
+  })
 })
 
 describe('clean-payload contract (numeric-optional sentinel)', () => {

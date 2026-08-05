@@ -25,13 +25,32 @@ def _matrix():
 
 def test_matrix_covers_and_loads_every_shipped_config():
     report = validate_matrix(ROOT)
-    assert report["configs"] == 28
-    assert report["resources"] == 19
+    assert report["configs"] == 29
+    assert report["resources"] == 20
     assert report["schemas"] == {
-        "standard-device-v1": 23,
+        "standard-device-v1": 24,
         "scaps-device-v1": 4,
         "tandem-v1": 1,
     }
+
+
+def test_standard_schema_registers_spatial_doping_profile_contract():
+    registry = yaml.safe_load(
+        (ROOT / "reproducibility/schema_registry.yaml").read_text()
+    )
+    profile = registry["schemas"]["standard-device-v1"][
+        "optional_layer_groups"
+    ]["spatial_doping_profile"]
+    assert set(profile["activation_keys"]) == {"N_A_bulk", "N_D_bulk"}
+    assert set(profile["companion_keys"]) == {
+        "doping_profile_shape",
+        "doping_decay_length",
+        "doping_edge",
+    }
+    assert profile["supported_shapes"] == ["gaussian"]
+    assert set(profile["supported_edges"]) == {"front", "back"}
+    assert profile["density_units"] == "m-3"
+    assert profile["length_units"] == "m"
 
 
 def test_p0_patch_and_frozen_files_match_manifest():

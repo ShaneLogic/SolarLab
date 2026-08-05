@@ -29,6 +29,13 @@ export interface LayerConfig {
   ni: number
   N_D: number
   N_A: number
+  // Optional continuous dopant profile. N_A/N_D are the selected edge values;
+  // populated bulk asymptotes activate the profile. Absent means uniform.
+  N_A_bulk?: number
+  N_D_bulk?: number
+  doping_profile_shape?: 'gaussian'
+  doping_decay_length?: number
+  doping_edge?: 'front' | 'back'
   D_ion: number
   P_lim: number
   P0: number

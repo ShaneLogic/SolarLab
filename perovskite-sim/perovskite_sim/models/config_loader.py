@@ -6,6 +6,7 @@ from typing import Any, Optional
 import yaml
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
+from perovskite_sim.physics.doping import validate_doping_profile_params
 from perovskite_sim.twod.microstructure import load_microstructure_from_yaml_block
 
 
@@ -205,7 +206,7 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
     DOS, trap profiles, dual-ion, temperature scaling) the loader carried, which
     silently disabled that physics for UI-built devices.
     """
-    return MaterialParams(
+    params = MaterialParams(
         eps_r=_f(layer_cfg["eps_r"]),
         mu_n=_f(layer_cfg["mu_n"]),
         mu_p=_f(layer_cfg["mu_p"]),
@@ -258,7 +259,20 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
         grading_bowing=_f(layer_cfg.get("grading_bowing", 0.0)),
         grading_char_length=float(layer_cfg["grading_char_length"]) if "grading_char_length" in layer_cfg else None,
         grading_N_mult=int(layer_cfg.get("grading_N_mult", 1)),
+        N_A_bulk=float(layer_cfg["N_A_bulk"]) if "N_A_bulk" in layer_cfg else None,
+        N_D_bulk=float(layer_cfg["N_D_bulk"]) if "N_D_bulk" in layer_cfg else None,
+        doping_profile_shape=(
+            str(layer_cfg["doping_profile_shape"])
+            if "doping_profile_shape" in layer_cfg else None
+        ),
+        doping_decay_length=(
+            float(layer_cfg["doping_decay_length"])
+            if "doping_decay_length" in layer_cfg else None
+        ),
+        doping_edge=str(layer_cfg.get("doping_edge", "front")),
     )
+    validate_doping_profile_params(params)
+    return params
 
 
 def load_device_from_yaml(path: str) -> DeviceStack:

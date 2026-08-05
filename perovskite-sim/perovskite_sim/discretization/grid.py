@@ -8,6 +8,7 @@ import numpy as np
 
 from perovskite_sim.constants import EPS_0, K_B, Q
 from perovskite_sim.models.mode import resolve_mode
+from perovskite_sim.physics.doping import doping_at_position
 from perovskite_sim.physics.grading import (
     band_gap_profile,
     grade_ni_sq,
@@ -167,8 +168,12 @@ def _layer_debye_length(
     # At mass-action equilibrium n + p = hypot(N_D - N_A, 2 n_i).  Using the
     # mobile-carrier sum handles intrinsic and compensated layers without the
     # cancellation in max(N_D-N_A, n_i).
+    position = 0.0 if endpoint == "front" else float(layer.thickness)
+    local_N_A, local_N_D = doping_at_position(
+        params, position, float(layer.thickness)
+    )
     screening_density = float(np.hypot(
-        params.N_D - params.N_A,
+        local_N_D - local_N_A,
         2.0 * intrinsic_density,
     ))
     if (

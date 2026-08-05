@@ -110,6 +110,15 @@ class MaterialParams:
     grading_bowing: float = 0.0      # alloy bowing b in Eg(y) law [eV]
     grading_char_length: float | None = None  # notch length L for exponential y(x) [m]
     grading_N_mult: int = 1          # per-layer mesh refinement factor (1 = unchanged)
+    # Optional spatial dopant profile. N_A/N_D are the density at the selected
+    # edge; a populated N_A_bulk or N_D_bulk activates a Gaussian decay toward
+    # that deep-layer asymptote. All fields are inert when both bulk values are
+    # None, preserving uniform-doping configs exactly.
+    N_A_bulk: float | None = None
+    N_D_bulk: float | None = None
+    doping_profile_shape: str | None = None  # currently "gaussian"
+    doping_decay_length: float | None = None  # Gaussian 1/e distance [m]
+    doping_edge: str = "front"              # "front" | "back"
 
     @property
     def D_n(self) -> float:

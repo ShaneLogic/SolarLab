@@ -1,0 +1,141 @@
+schema_version: 1
+topic: dark-csi-pn-small-signal-admittance
+evidence_scope: partial_external_comparison
+
+article:
+  citation: >-
+    D. A. van Nijen et al., The nature of silicon PN junction impedance at
+    high frequency, Solar Energy Materials and Solar Cells 282 (2025) 113383.
+  doi: https://doi.org/10.1016/j.solmat.2024.113383
+  arxiv: https://arxiv.org/abs/2409.06749
+
+dataset:
+  title: Data underlying the publication - The nature of silicon PN junction impedance at high frequency
+  repository: 4TU.ResearchData
+  version_doi: https://doi.org/10.4121/19445ed8-c8d5-4204-a8c6-adaa7a55ece3.v1
+  landing_page: https://data.4tu.nl/datasets/19445ed8-c8d5-4204-a8c6-adaa7a55ece3
+  archive_name: Data and code.zip
+  license: CC-BY-4.0
+  published_md5: 44fbe7b6d50b4c8b3d6d2e8b5ecc4c94
+  verified_archive_sha256: 478826a79faad46d705344e34e19a6e18bca1c7b3b8989a5d105baa874d0c67b
+
+source_model:
+  solver: Synopsys Sentaurus Device
+  dimension: 2-D
+  illumination: dark
+  temperature_K: 298.15
+  device_thickness_m: 2.0e-4
+  device_width_m: 5.0e-4
+  contact_width_m: 5.0e-5
+  bulk_donor_density_m3: 1.0e+21
+  emitter_peak_acceptor_density_m3: 1.0e+25
+  emitter_profile: Gaussian from the front surface
+  emitter_fraction_at_half_junction_depth: 0.1
+  emitter_half_junction_depth_m: 5.0e-6
+  junction_depth_m: 1.0e-5
+  srh_lifetime_s: 1.0e-2
+  contact_model: ideal contacts with finite lateral width
+
+source_protocol:
+  bias_V: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+  frequency_range_Hz: [1.0e-5, 1.0e+9]
+  selected_frequency_Hz: 101996.13
+  ac_amplitude: infinitesimal linearized Sentaurus perturbation
+  raw_columns: [frequency_Hz, conductance_S_cm2, susceptance_S_cm2]
+
+extraction:
+  author_code_semantics:
+    - Restrict the raw frequency series to 1.0e-5 through 1.0e9 Hz.
+    - Compute Z = 1 / (G + i*B) in ohm*cm2.
+    - Compute Rs = min(real(Z)) - 0.001 ohm*cm2 independently at each bias.
+    - Compute Cj = imag(1 / (Z - Rs)) / (2*pi*f) in F/cm2.
+    - Multiply Cj by 1.0e4 to obtain F/m2.
+  calibration_parameters: []
+  benchmark_bias_window_V: [0.0, 0.2]
+  benchmark_window_reason: >-
+    The article identifies 0.0-0.2 V as the depletion-dominated interval;
+    higher forward bias contains strong diffusion and geometry-dependent
+    transport contributions that are outside the local 1-D comparison claim.
+
+selected_rows:
+  - bias_V: 0.0
+    source_file: PN_000mV.csv
+    source_file_sha256: 61fa6e7f9ed5beb2badda17389089f883349f137988870801115fef1adcf6414
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 3.8718839e-6
+    susceptance_S_cm2: 4.1626226e-3
+    series_resistance_ohm_cm2: 0.21635145991162832
+    capacitance_F_m2: 6.495369340246841e-5
+    used_for_benchmark: true
+  - bias_V: 0.1
+    source_file: PN_100mV.csv
+    source_file_sha256: 47f68a9315ccdc9dacbe47229c70370305d5afd5a37fc84a957034d20c726d91
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 3.9925785e-6
+    susceptance_S_cm2: 4.1992561e-3
+    series_resistance_ohm_cm2: 0.21633457300243383
+    capacitance_F_m2: 6.552532616577149e-5
+    used_for_benchmark: true
+  - bias_V: 0.2
+    source_file: PN_200mV.csv
+    source_file_sha256: f118b372a2923767311a5a42053615911243eb287b0bf7101e34cb451402f728
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 6.9729465e-6
+    susceptance_S_cm2: 4.4218250e-3
+    series_resistance_ohm_cm2: 0.2164176002650331
+    capacitance_F_m2: 6.899838119228747e-5
+    used_for_benchmark: true
+  - bias_V: 0.3
+    source_file: PN_300mV.csv
+    source_file_sha256: c04b8158d1340a827799cefb7a2102454d48db2f30a8de6cfe97a00b7da5ffb8
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 1.3433777e-4
+    susceptance_S_cm2: 5.5552269e-3
+    series_resistance_ohm_cm2: 0.2168291834427328
+    capacitance_F_m2: 8.668878393836764e-5
+    used_for_benchmark: false
+  - bias_V: 0.4
+    source_file: PN_400mV.csv
+    source_file_sha256: db91763fe7dda4a658462ed98234337f091582edb41ea4a75cff32a940a751b3
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 6.285159e-3
+    susceptance_S_cm2: 1.5153942e-2
+    series_resistance_ohm_cm2: 0.2177262334813204
+    capacitance_F_m2: 2.3710829477351246e-4
+    used_for_benchmark: false
+  - bias_V: 0.5
+    source_file: PN_500mV.csv
+    source_file_sha256: dfc485e93de551876786439704e455b4cbb82dd5dc888567789741a2155046eb
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 0.30132995
+    susceptance_S_cm2: 0.29890271
+    series_resistance_ohm_cm2: 0.2145075876787421
+    capacitance_F_m2: 5.306040526300128e-3
+    used_for_benchmark: false
+  - bias_V: 0.6
+    source_file: PN_600mV.csv
+    source_file_sha256: db04c6456f9895e44dc81114148ec11bf62d0e8a92f30bebd7b392c2fe6c6d8d
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 4.4387382
+    susceptance_S_cm2: 1.1754833
+    series_resistance_ohm_cm2: 0.1510956114909705
+    capacitance_F_m2: 0.13101508582152919
+    used_for_benchmark: false
+  - bias_V: 0.7
+    source_file: PN_700mV.csv
+    source_file_sha256: c8210809e8dd60c89b6bf625b0270d7914fe45f088fbaf6e326f32224fcbe0f3
+    frequency_Hz: 101996.13
+    conductance_S_cm2: 15.559938
+    susceptance_S_cm2: 1.1841187
+    series_resistance_ohm_cm2: 0.05464356134803734
+    capacitance_F_m2: 0.694321565160988
+    used_for_benchmark: false
+
+limitations:
+  - The source data are independent numerical TCAD results, not measurements.
+  - The source is 2-D with partial-width contacts; SolarLab's benchmark is 1-D.
+  - The exact proprietary Sentaurus input deck is not included in the dataset.
+  - Paper-unspecified Sentaurus physics settings cannot be matched exactly.
+  - SolarLab truncates the negligible Gaussian tail at 15 um to form its mesh subdomains.
+  - The source uses infinitesimal AC linearization, while SolarLab records a 10 mV nominal reporting amplitude for its linear operator.
+  - No pointwise uncertainty or experimental error bars are available.

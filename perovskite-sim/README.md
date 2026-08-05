@@ -113,6 +113,7 @@ to produce current.
 | `ionmonger_benchmark` | Courtier 2019 reference | Yes | Beer-Lambert |
 | `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert |
 | `cSi_homojunction` | n+ / p Si wafer | No | Beer-Lambert |
+| `csi_vannijen2025_pn_cv` | Gaussian p+ / n Si C-V cross-check | No | Dark only |
 | `tandem_lin2019` | Wide-gap / narrow-gap tandem | Yes | TMM |
 | `twod/nip_MAPbI3_uniform` | 2D lateral-uniform MAPbI3 | Frozen in 2D | Beer-Lambert |
 | `twod/nip_MAPbI3_singleGB` | 2D MAPbI3 with one vertical grain boundary | Frozen in 2D | Beer-Lambert |

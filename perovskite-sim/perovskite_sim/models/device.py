@@ -348,13 +348,13 @@ class DeviceStack:
         if all_zero:
             return self.V_bi
 
-        # When the outer layers are graded, the contacts sit at their face
-        # endpoints: the left contact at the front (= the scalar params,
-        # unchanged) and the right contact at the back endpoints. Non-graded
-        # stacks return the identical params object → identical float.
+        # Contacts use their actual layer-face band and doping parameters. The
+        # left contact is the first layer's front face and the right contact is
+        # the last layer's back face. Uniform, ungraded stacks return the
+        # identical params objects and therefore the identical float.
         band_grading = getattr(self, "band_grading", False)
-        left = _edge_params(elec[0].params, "front", band_grading)
-        right = _edge_params(elec[-1].params, "back", band_grading)
+        left = _edge_params(elec[0], "front", band_grading)
+        right = _edge_params(elec[-1], "back", band_grading)
 
         e_f_left = _fermi_level(left)
         e_f_right = _fermi_level(right)
@@ -443,23 +443,34 @@ def electrical_interface_defects(
     return tuple(out)
 
 
-def _edge_params(p: "MaterialParams", side: str, band_grading: bool) -> "MaterialParams":
+def _edge_params(layer: "LayerSpec", side: str, band_grading: bool) -> "MaterialParams":
     """Contact-face MaterialParams for ``compute_V_bi``.
 
-    For an ungraded layer (or ``band_grading`` off) returns ``p`` unchanged so
-    the Fermi level — and hence V_bi — is bit-identical. For a graded layer's
-    BACK contact, returns a ``replace``-d copy whose chi/Eg/ni are the back
-    endpoints (ni scaled by the same front-anchored DOS law as the solver:
-    ni_back = ni·exp(-(Eg_back - Eg_front)/2V_T)). The front side never changes.
+    Uniform, ungraded layers return ``p`` unchanged so legacy stacks are
+    bit-identical. A graded back contact sees Eg_back/chi_back and the same
+    mid-gap intrinsic-density law used by ``grade_ni_sq``. A spatially doped
+    contact sees the profile value at that physical face.
     """
     import dataclasses
     from perovskite_sim.physics.grading import has_grading_params
-    if not band_grading or p is None or side != "back" or not has_grading_params(p):
+    from perovskite_sim.physics.doping import doping_at_position
+
+    p = layer.params
+    if p is None:
         return p
-    Eg_back = p.Eg_back if p.Eg_back is not None else p.Eg
-    chi_back = p.chi_back if p.chi_back is not None else p.chi
-    ni_back = p.ni * math.exp(-(Eg_back - p.Eg) / (2.0 * V_T))
-    return dataclasses.replace(p, chi=chi_back, Eg=Eg_back, ni=ni_back)
+    updates = {}
+    if band_grading and side == "back" and has_grading_params(p):
+        Eg_back = p.Eg_back if p.Eg_back is not None else p.Eg
+        chi_back = p.chi_back if p.chi_back is not None else p.chi
+        ni_back = p.ni * math.exp(-(Eg_back - p.Eg) / (2.0 * V_T))
+        updates.update(chi=chi_back, Eg=Eg_back, ni=ni_back)
+    position = 0.0 if side == "front" else float(layer.thickness)
+    N_A_edge, N_D_edge = doping_at_position(
+        p, position, float(layer.thickness)
+    )
+    if N_A_edge != p.N_A or N_D_edge != p.N_D:
+        updates.update(N_A=N_A_edge, N_D=N_D_edge)
+    return dataclasses.replace(p, **updates) if updates else p
 
 
 def _fermi_level(p: MaterialParams) -> float:
