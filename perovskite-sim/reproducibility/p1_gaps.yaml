@@ -182,45 +182,45 @@ gaps:
     status: open
     classification: cv-grid-and-small-signal-convergence
     config: configs/cSi_homojunction.yaml
-    reproduction: >-
-      pytest -q tests/unit/experiments/test_impedance.py
-      tests/unit/experiments/test_mott_schottky.py
+    reproduction: |-
+      OPENBLAS_NUM_THREADS=1 pytest -q -m slow tests/regression/test_csi_frequency_domain_impedance.py
+      pytest -q tests/unit/experiments/test_impedance.py tests/unit/experiments/test_mott_schottky.py
     current_evidence: >-
-      The former N_grid=30 C-V smoke placed a 289 nm first base cell next to
-      a roughly 0.29-0.37 um depletion width. Its capacitance of about
-      5.7e-7 F/m2 was the 180 um wafer geometric capacitance, and the 1/C2
-      span was only 1.66 percent. The fit correctly returns NaN under the
-      5 percent identifiability guard. Impedance now uses the executable
-      weighted grid, rejects this mesh before integration, and fails closed
-      on DC-preconditioning or capacitive-sign errors. Analytic C-V wrapper
-      tests recover the configured Mott-Schottky parameters. A production-grid
-      N=200 probe at -0.2 V and 100 kHz still returned 5.723e-7 F/m2 after
-      618.7 seconds, near the whole-wafer geometric capacitance rather than the
-      abrupt-junction depletion scale. Grid plumbing was therefore necessary
-      but did not resolve the physical-response defect. Certified dark QF
-      states at -0.205/-0.200/-0.195 V give a carrier-inventory differential
-      capacitance of 2.886e-4 F/m2, consistent with the analytic depletion
-      scale. A 1 mV step transfers 2.887e-7 C/m2, but the existing 250 ns
-      staircase interval samples conduction current only at its endpoint,
-      after the ns-scale pulse has decayed from hundreds of A/m2 to about
-      1.2e-5 A/m2. The interval-average displacement term then leaves the
-      whole-wafer geometric capacitance. The root cause is mismatched temporal
-      averaging, not V_bi polarity, the static junction model, or the lock-in.
+      The endpoint-sampled transient branch mixed endpoint conduction current
+      with interval-average displacement and returned the 5.72e-7 F/m2
+      whole-wafer geometric capacitance. The new explicit QF frequency-domain
+      operator linearizes storage, rate, conduction current, and displacement
+      about a residual-certified dark state and solves the equilibrated complex
+      system with iterative refinement. At N=200, -0.2 V, and 100 kHz it gives
+      2.886247e-4 F/m2, within 4.8 percent of the abrupt-depletion estimate and
+      over 400 times the geometric value. On N=200/300/400, the maximum 100 kHz
+      C(V) changes contract from 1.2407 to 0.4123 percent. The fitted 100 kHz
+      intercepts are 0.771663/0.755249/0.756214 V and effective dopings are
+      9.4928e21/9.4660e21/9.5537e21 m-3; the finest-pair changes are below
+      1 mV and 1 percent. The N=400 curve is flat from 10 kHz to 1 MHz to
+      4.82e-5 relative, all-face admittance spread stays below 4.58e-6, and
+      nominal amplitude plus state/voltage derivative-step checks pass. The
+      remaining physical discrepancy is that the converged 0.756 V Mott
+      intercept is about 0.137 V below the configured 0.892896 V contact
+      potential. The new certificate is QF-only and is not external C-V
+      validation or a repair of the legacy transient branch.
     next_experiment: >-
-      Replace endpoint conduction-current sampling with a charge-conservative
-      interval integral using the same temporal average as displacement, or
-      implement the preferred frequency-domain linearized small-signal solve
-      about a residual-certified DC state. First require one -0.2 V, 100 kHz
-      point to recover the roughly 2.8e-4 F/m2 depletion scale and close a
-      step-charge balance. Then establish a bounded runtime protocol and
-      converge C(V), V_bi, and N_eff on N=200/300/400 over frequency, delta_V,
-      settling cycles, and extraction cycles.
+      Resolve the 0.137 V intercept discrepancy before widening the model:
+      compare the AC capacitance against bias derivatives of electrode charge
+      and depletion charge, audit the finite n+/p homojunction equilibrium
+      potential partition, contact reservoirs, and thermal-voltage correction,
+      then freeze an independent c-Si C-V reference with its area, frequency,
+      temperature, and doping provenance. Extend the frequency-domain state to
+      mobile ions and other general-model features only after each additional
+      storage variable and boundary current has its own capability certificate.
     acceptance:
-      - every retained bias has successful dark DC and AC transient certificates
+      - every retained bias has residual-certified dark DC and frequency-domain linear-solve certificates
+      - all-face total admittance is continuous and the complex solve has a bounded backward error
       - Im(1/Z) is positive and the selected 1/C2 window has a negative identifiable slope
       - the C-V curve and extracted V_bi and N_eff converge on N=200/300/400
-      - frequency, delta_V, settling-cycle, and extraction-cycle plateaus are demonstrated
+      - frequency, nominal delta_V, and state/voltage derivative-step plateaus are demonstrated for the frequency-domain path
       - capacitance and depletion-width scales agree with the analytic junction model
+      - the fitted intercept is reconciled with the configured contact potential and an external c-Si C-V reference
   - id: external-solver-curve-crosscheck
     status: open
     classification: external-validation-and-provenance

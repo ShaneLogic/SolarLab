@@ -664,6 +664,93 @@ benchmarks:
       - this certificate does not establish convergence of the default transient or algebraic J-V drivers
       - this is an internal numerical validation, not an external c-Si device comparison
       - Beer-Lambert absorption, ideal ohmic contacts, and the simplified interface SRV limit experimental interpretation
+  csi-qf-frequency-domain-cv:
+    kind: numerical
+    status: pass
+    claim_level: residual-certified-qf-small-signal-cv-grid-convergence
+    command: >-
+      OPENBLAS_NUM_THREADS=1 pytest -q -m slow
+      tests/regression/test_csi_frequency_domain_impedance.py
+    tests: [tests/regression/test_csi_frequency_domain_impedance.py]
+    node_ids:
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_recovers_depletion_not_geometric_capacitance
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_has_capacitance_plateau_and_current_certificate
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_is_stable_to_steps_and_nominal_amplitude
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_depletion_cv_curve_converges_on_registered_grid_ladder
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_depletion_cv_has_frequency_and_all_face_plateaus
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_observations_match_registry
+    configs: [configs/cSi_homojunction.yaml]
+    protocol:
+      solver: opt-in QF frequency-domain linearization about a certified dark DC state
+      N_grid: [200, 300, 400]
+      grid_interval_weights: {n_emitter: 1.0, p_base: 4.0}
+      grid_alphas: {n_emitter: 2.0, p_base: 3.0}
+      biases_V: [-0.3, -0.2, -0.1, 0.0, 0.1, 0.2]
+      frequencies_Hz: [1.0e4, 1.0e5, 1.0e6]
+      nominal_delta_V: 0.01
+      state_difference_step: 1.0e-5
+      voltage_difference_step_V: 1.0e-5
+      certificates:
+        max_relative_all_face_admittance_spread: 5.0e-4
+        max_linear_solve_backward_error: 1.0e-10
+        max_frequency_capacitance_change: 1.0e-3
+        max_finest_grid_capacitance_change: 5.0e-3
+        max_finest_mott_intercept_change_V: 2.0e-3
+        max_finest_effective_doping_change: 1.0e-2
+    observed:
+      grids:
+        - N_grid: 200
+          capacitance_100k_F_m2:
+            - 0.000274726491440768
+            - 0.000288624745329369
+            - 0.000304846123800362
+            - 0.000324527085290347
+            - 0.000349098668255790
+            - 0.000380798512357247
+          mott_intercept_100k_V: 0.771663474306539
+          effective_doping_100k_m3: 9.49280500136980e+21
+        - N_grid: 300
+          capacitance_100k_F_m2:
+            - 0.000276373700515714
+            - 0.000290707316032776
+            - 0.000307622901215925
+            - 0.000327999964567817
+            - 0.000353212955314808
+            - 0.000385582502417237
+          mott_intercept_100k_V: 0.755248968800467
+          effective_doping_100k_m3: 9.46604140288772e+21
+        - N_grid: 400
+          capacitance_100k_F_m2:
+            - 0.000277495953617242
+            - 0.000291910777428012
+            - 0.000308890470136823
+            - 0.000329315110445970
+            - 0.000354563980640025
+            - 0.000386974029432062
+          mott_intercept_100k_V: 0.756213810627685
+          effective_doping_100k_m3: 9.55366131395795e+21
+      adjacent_max_capacitance_changes:
+        - 0.0124071762333590
+        - 0.00412270285406913
+      finest_max_frequency_change: 4.81757492936887e-5
+      finest_mott_intercepts_V:
+        - 0.756208589190647
+        - 0.756213810627685
+        - 0.756265026373239
+      finest_effective_doping_m3:
+        - 9.55360946485520e+21
+        - 9.55366131395795e+21
+        - 9.55384545830395e+21
+    regression_tolerance:
+      capacitance_relative: 1.0e-6
+      mott_intercept_V: 1.0e-5
+      effective_doping_relative: 1.0e-5
+      convergence_metric_relative: 1.0e-4
+    limitations:
+      - the frequency-domain adapter is restricted to the audited local ion-free QF model and fails closed for unsupported physics
+      - this new path does not repair or validate the legacy endpoint-sampled transient impedance algorithm
+      - the converged 0.756 V Mott intercept remains below the configured 0.892896 V contact-potential magnitude
+      - this is internal numerical validation, not an external c-Si C-V comparison
   scaps-low-doping-etl-boundary:
     kind: internal
     status: pass
@@ -684,7 +771,11 @@ configs:
     semantic_sha256: bd78c5657031c06d84dcd7457f1685d7b9af93f4938f06fd4b0d13793cb2e64f
     schema: standard-device-v1
     status: partial
-    benchmarks: [loader-contract, csi-grid-envelope-gap, csi-qf-internal-validation]
+    benchmarks:
+      - loader-contract
+      - csi-grid-envelope-gap
+      - csi-qf-internal-validation
+      - csi-qf-frequency-domain-cv
   - path: configs/cigs_baseline.yaml
     sha256: 46dabc8418b7060a2124206793f3b6f07a01f35826b6b537591c64dbd2abe4af
     semantic_sha256: bdde999ebbeae9ec96f815ea3e2195a094653b26916235b178da611cc4b4d2fd

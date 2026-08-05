@@ -15,8 +15,9 @@ it loads or produces a finite J-V curve.
   resource, benchmark command, evidence level, and known limitation.
 - `p1_gaps.yaml` gives each open or closed P1 gap a reproduction command,
   current evidence, next experiment, and acceptance contract.
-- `P1_CHECKPOINT_2026-08-03.md` is the latest human-readable continuation
-  checkpoint; the older 2026-08-01 file remains an immutable historical note.
+- `P1_CHECKPOINT_2026-08-04.md` is the latest human-readable continuation
+  checkpoint; the 2026-08-01 and 2026-08-03 files remain immutable historical
+  notes.
 
 ## Verification
 
@@ -90,3 +91,12 @@ orientation, a 39/78/120-interval ungraded grid ladder, and a production
 numerical and qualitative claims only; the matrix deliberately keeps both
 CIGS configs `partial` because material, contact, optical, and external-curve
 provenance are incomplete.
+
+The c-Si frequency-domain C-V lane is also explicit and opt-in. It linearizes
+the audited local QF model about residual-certified dark states, uses an
+equilibrated complex solve with iterative refinement, and certifies the
+N=200/300/400, 10 kHz/100 kHz/1 MHz depletion-bias matrix. It does not certify
+the general endpoint-sampled transient impedance path or any unsupported ion,
+contact, interface, or non-local physics. The converged Mott intercept remains
+physically unresolved relative to the configured contact potential, so the
+configuration stays `partial` and the P1 C-V gap stays open.

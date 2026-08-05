@@ -162,16 +162,19 @@ def _select_ms_window(
     V: np.ndarray,
     y: np.ndarray,
     min_points: int = 4,
-    max_resid_ratio: float = 0.1,
-) -> tuple[int, int]:
+    max_resid_ratio: float = 0.01,
+) -> tuple[int, int] | None:
     """Pick the widest contiguous window that is linear in (V, y=1/C²).
 
     Strategy: try every contiguous window of size >= ``min_points`` (in
     increasing length order), fit a line, accept if the RMS residual is
-    below ``max_resid_ratio`` times the window's span in y. Return the
-    longest window that qualifies. Falls back to the full input if no
-    window passes — callers get the best available linear regression
-    and should inspect the fit residual themselves.
+    below ``max_resid_ratio`` times the window's span in y. The 1% default
+    rejects a smooth injection tail that can still look visually plausible
+    while shifting the extrapolated voltage intercept by more than 0.1 V.
+    Return the
+    longest window that qualifies. Returns ``None`` when no window passes;
+    parameter extraction must not manufacture a finite result from a curve
+    that has no identifiable linear depletion regime.
 
     The adaptive tolerance handles both the low-bias tail (1/C² curves
     up when the junction is fully depleted) and the high-bias tail
@@ -180,9 +183,9 @@ def _select_ms_window(
     """
     n = len(V)
     if n < min_points:
-        return 0, n - 1
+        return None
 
-    best_lo, best_hi = 0, n - 1
+    best: tuple[int, int] | None = None
     best_len = 0
     for lo in range(0, n - min_points + 1):
         for hi in range(lo + min_points - 1, n):
@@ -197,8 +200,8 @@ def _select_ms_window(
             rms = float(np.sqrt(np.mean(resid * resid)))
             if rms <= max_resid_ratio * y_span and (hi - lo + 1) > best_len:
                 best_len = hi - lo + 1
-                best_lo, best_hi = lo, hi
-    return best_lo, best_hi
+                best = (lo, hi)
+    return best
 
 
 def _fit_mott_schottky(
@@ -212,7 +215,10 @@ def _fit_mott_schottky(
     (flat line, or fewer than 3 points after window selection).
     """
     y = 1.0 / (C * C)
-    lo, hi = _select_ms_window(V, y)
+    window = _select_ms_window(V, y)
+    if window is None:
+        return float("nan"), float("nan"), float(V[0]), float(V[-1])
+    lo, hi = window
     V_fit = V[lo : hi + 1]
     y_fit = y[lo : hi + 1]
     if V_fit.size < 3:
@@ -258,6 +264,7 @@ def run_mott_schottky(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
+    impedance_method: str = "transient",
 ) -> MottSchottkyResult:
     """Dark C-V sweep + Mott-Schottky fit.
 
@@ -284,6 +291,10 @@ def run_mott_schottky(
     progress : ProgressCallback | None
         Called as ``progress("mott_schottky", k, total, msg)`` after
         each bias completes.
+    impedance_method : {"transient", "quasi_fermi_frequency"}
+        Impedance engine forwarded explicitly to ``run_impedance``. The QF
+        frequency-domain path is restricted to its certified local model
+        envelope and fails closed elsewhere.
 
     Returns
     -------
@@ -311,6 +322,7 @@ def run_mott_schottky(
             V_dc=float(V_dc), delta_V=delta_V,
             N_grid=N_grid, n_cycles=n_cycles, n_extract=n_extract,
             rtol=rtol, atol=atol, illuminated=False,
+            method=impedance_method,
         )
         Z = complex(r.Z[0])
         # C = Im(Y) / ω with Y = 1/Z. A non-positive susceptance violates

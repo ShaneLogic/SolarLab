@@ -12,9 +12,9 @@ Two layers of coverage:
    depletion width, so its nearly geometric C(V) cannot support a physical
    Mott-Schottky fit.
 
-The real c-Si Mott-Schottky claim requires a separate N=200/300/400 mesh,
-frequency, amplitude, and cycle-convergence protocol. A cheap finite-only
-smoke would not provide that evidence.
+The real c-Si claim is covered separately by the QF frequency-domain
+N=200/300/400 grid/frequency/derivative-step protocol. The general transient
+path still requires its own amplitude/cycle certificate.
 """
 from __future__ import annotations
 
@@ -109,6 +109,30 @@ def test_fit_rejects_non_linear_tail():
     )
 
 
+def test_window_excludes_smooth_forward_injection_tail():
+    """A mildly curved tail must not bias an otherwise linear intercept."""
+    V = np.linspace(-0.3, 0.4, 8)
+    V_bi = 0.9
+    N = 1.0e22
+    eps_r = 11.7
+    C = _synthetic_cv(V, V_bi, N, eps_r)
+    # Smooth forward-injection contamination: only the last point is changed,
+    # but a 10%-of-span RMS gate accepted the full window and shifted V_bi.
+    C[-1] *= 1.12
+
+    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(
+        V,
+        C,
+        eps_r,
+        T_TEST,
+    )
+
+    assert V_lo == pytest.approx(V[0])
+    assert V_hi <= V[-2]
+    assert V_bi_fit == pytest.approx(V_bi, abs=0.01)
+    assert np.log10(N_fit) == pytest.approx(np.log10(N), abs=0.02)
+
+
 def test_resolve_eps_r_picks_absorber_layer():
     """With an explicit 'absorber' role, that layer's ε_r must win."""
     stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
@@ -140,6 +164,25 @@ def test_fit_returns_nan_for_non_depletion_slope():
 
     assert np.isnan(V_bi_fit)
     assert np.isnan(N_fit)
+
+
+def test_fit_returns_nan_when_no_linear_window_is_identifiable():
+    V = np.array([-0.3, -0.2, -0.1, 0.0])
+    one_over_c2 = np.array([10.0, 9.0, 8.0, 1.0]) * 1.0e7
+    C = 1.0 / np.sqrt(one_over_c2)
+
+    assert _select_ms_window(V, one_over_c2) is None
+    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(
+        V,
+        C,
+        eps_r=11.7,
+        T=T_TEST,
+    )
+
+    assert np.isnan(V_bi_fit)
+    assert np.isnan(N_fit)
+    assert V_lo == pytest.approx(V[0])
+    assert V_hi == pytest.approx(V[-1])
 
 
 def test_cv_rejects_noncapacitive_admittance(monkeypatch):
@@ -180,8 +223,10 @@ def test_cv_wrapper_recovers_analytic_capacitive_impedance(
     V_bi_true = 0.9
     N_true = 1.0e22
     C_expected = _synthetic_cv(V, V_bi_true, N_true, 11.7)
+    methods = []
 
     def analytic_impedance(*args, V_dc, **kwargs):
+        methods.append(kwargs["method"])
         C_value = float(_synthetic_cv(V_dc, V_bi_true, N_true, 11.7))
         return ImpedanceResult(
             frequencies=np.array([frequency]),
@@ -189,7 +234,12 @@ def test_cv_wrapper_recovers_analytic_capacitive_impedance(
         )
 
     monkeypatch.setattr(ms_module, "run_impedance", analytic_impedance)
-    r = run_mott_schottky(csi_stack, V_range=V, frequency=frequency)
+    r = run_mott_schottky(
+        csi_stack,
+        V_range=V,
+        frequency=frequency,
+        impedance_method="quasi_fermi_frequency",
+    )
 
     assert isinstance(r, MottSchottkyResult)
     assert r.V.shape == r.C.shape == r.one_over_C2.shape
@@ -201,6 +251,7 @@ def test_cv_wrapper_recovers_analytic_capacitive_impedance(
     assert np.log10(r.N_eff_fit) == pytest.approx(np.log10(N_true), abs=0.02)
     assert r.V_fit_lo <= r.V_fit_hi
     assert r.V[0] - 1e-9 <= r.V_fit_lo <= r.V_fit_hi <= r.V[-1] + 1e-9
+    assert methods == ["quasi_fermi_frequency"] * V.size
 
 
 def test_csi_cv_rejects_underresolved_grid(csi_stack):

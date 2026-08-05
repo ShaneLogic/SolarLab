@@ -93,6 +93,42 @@ def test_impedance_rejects_zero_delta_v():
         run_impedance(stack, np.array([1e3]), delta_V=0.0)
 
 
+def test_qf_frequency_impedance_enforces_strict_small_signal_amplitude():
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    with pytest.raises(ValueError, match="below the 20 mV"):
+        run_impedance(
+            stack,
+            np.array([1.0e5]),
+            V_dc=-0.2,
+            delta_V=0.02,
+            N_grid=200,
+            illuminated=False,
+            method="quasi_fermi_frequency",
+        )
+
+
+def test_qf_frequency_impedance_rejects_mobile_ion_model():
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.experiments.quasi_fermi_steady_state import (
+        QuasiFermiSteadyStateError,
+    )
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    with pytest.raises(QuasiFermiSteadyStateError, match="mobile ions"):
+        run_impedance(
+            stack,
+            np.array([1.0e5]),
+            V_dc=0.0,
+            N_grid=12,
+            illuminated=False,
+            method="quasi_fermi_frequency",
+        )
+
+
 def test_impedance_rejects_nonpositive_frequency():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml

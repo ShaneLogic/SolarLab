@@ -67,7 +67,11 @@ class QuasiFermiSteadyStateError(RuntimeError):
 
 @dataclass(frozen=True)
 class QuasiFermiSteadyStateResult:
-    """Certified state and cancellation-safe current diagnostics."""
+    """Certified state and cancellation-safe current/QF diagnostics.
+
+    The optional reference/increment arrays preserve QF differences that can
+    be smaller than the resolution of the corresponding absolute potential.
+    """
 
     y: np.ndarray
     phi: np.ndarray
@@ -88,7 +92,13 @@ class QuasiFermiSteadyStateResult:
     illumination_steps: tuple[float, ...]
     newton_iterations: int
     residual_evaluations: int
+    V_app: float = 0.0
+    illuminated: bool = True
     certified: bool = True
+    electron_quasi_fermi_reference_V: np.ndarray | None = None
+    hole_quasi_fermi_reference_V: np.ndarray | None = None
+    electron_quasi_fermi_increment_V: np.ndarray | None = None
+    hole_quasi_fermi_increment_V: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -392,8 +402,13 @@ class _QuasiFermiSystem:
         self,
         dqfn: np.ndarray,
         dqfp: np.ndarray,
+        *,
+        V_app: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
         phi = self.phi0.copy()
+        voltage = self.V_app if V_app is None else float(V_app)
+        phi[0] = 0.0
+        phi[-1] = poisson_right_boundary(self.mat, voltage)
         factor = self.mat.poisson_factor
         for _ in range(self.poisson_max_iterations):
             dphi = phi - self.phi0
@@ -468,11 +483,29 @@ class _QuasiFermiSystem:
             float(np.max(np.abs(raw))),
         )
 
-    def evaluate(self, z: np.ndarray, illumination_fraction: float) -> _Evaluation:
+    def _evaluate_increments(
+        self,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        illumination_fraction: float,
+        *,
+        V_app: float | None = None,
+    ) -> _Evaluation:
         self.evaluation_count += 1
-        dqfn = self.thermal_voltage * z[: self.node_count]
-        dqfp = self.thermal_voltage * z[self.node_count :]
-        phi, n, p, poisson_scaled, poisson_raw = self._solve_poisson(dqfn, dqfp)
+        dqfn_arr = np.asarray(dqfn, dtype=float)
+        dqfp_arr = np.asarray(dqfp, dtype=float)
+        if dqfn_arr.shape != (self.node_count,) or dqfp_arr.shape != (
+            self.node_count,
+        ):
+            raise ValueError(
+                "quasi-Fermi increment arrays must match the electrical grid"
+            )
+        voltage = self.V_app if V_app is None else float(V_app)
+        phi, n, p, poisson_scaled, poisson_raw = self._solve_poisson(
+            dqfn_arr,
+            dqfp_arr,
+            V_app=voltage,
+        )
 
         y = self.base.copy()
         y[: self.node_count] = n
@@ -484,7 +517,7 @@ class _QuasiFermiSystem:
             self.stack,
             self.source_mat,
             illuminated=False,
-            V_app=self.V_app,
+            V_app=voltage,
             phi_frozen=phi,
         )[: 2 * self.node_count]
         source += float(illumination_fraction) * self.generation
@@ -493,8 +526,15 @@ class _QuasiFermiSystem:
         psi_p = phi + self.mat.chi + self.mat.Eg
         xi_n = np.diff(psi_n) / self.thermal_voltage
         xi_p = np.diff(psi_p) / self.thermal_voltage
-        delta_n = (np.diff(self.qfn0) + np.diff(dqfn)) / self.thermal_voltage
-        delta_p = -(np.diff(self.qfp0) + np.diff(dqfp)) / self.thermal_voltage
+        # Keep the reference and increment differences separate. Near the DC
+        # root, forming an absolute QF potential and subtracting it again loses
+        # Newton-scale increments at highly doped contacts.
+        delta_n = (
+            np.diff(self.qfn0) + np.diff(dqfn_arr)
+        ) / self.thermal_voltage
+        delta_p = -(
+            np.diff(self.qfp0) + np.diff(dqfp_arr)
+        ) / self.thermal_voltage
         current_n = Q * self.mat.D_n_face / self.dx * self._stable_difference(
             bernoulli(xi_n) * n[1:],
             bernoulli(-xi_n) * n[:-1],
@@ -516,7 +556,7 @@ class _QuasiFermiSystem:
             Q * rate_n * self.mat.dx_cell / self.current_scale,
             Q * rate_p * self.mat.dx_cell / self.current_scale,
         ]
-        residual[self.pin] = z[self.pin]
+        residual[self.pin] = 0.0
         return _Evaluation(
             residual=residual,
             y=y,
@@ -528,6 +568,61 @@ class _QuasiFermiSystem:
             poisson_residual=poisson_scaled,
             poisson_residual_C_m2=poisson_raw,
         )
+
+    def evaluate_quasi_fermi(
+        self,
+        qfn: np.ndarray,
+        qfp: np.ndarray,
+        illumination_fraction: float,
+        *,
+        V_app: float | None = None,
+    ) -> _Evaluation:
+        """Evaluate stable rates/currents at absolute quasi-Fermi potentials.
+
+        This compatibility interface is suitable when the requested QF
+        differences are resolvable in the absolute representation. Sensitive
+        small-signal paths should use ``evaluate_quasi_fermi_increments``.
+        """
+        qfn_arr = np.asarray(qfn, dtype=float)
+        qfp_arr = np.asarray(qfp, dtype=float)
+        if qfn_arr.shape != (self.node_count,) or qfp_arr.shape != (
+            self.node_count,
+        ):
+            raise ValueError("quasi-Fermi arrays must match the electrical grid")
+        return self._evaluate_increments(
+            qfn_arr - self.qfn0,
+            qfp_arr - self.qfp0,
+            illumination_fraction,
+            V_app=V_app,
+        )
+
+    def evaluate_quasi_fermi_increments(
+        self,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        illumination_fraction: float,
+        *,
+        V_app: float | None = None,
+    ) -> _Evaluation:
+        """Evaluate QF increments without collapsing them into absolute values."""
+        return self._evaluate_increments(
+            dqfn,
+            dqfp,
+            illumination_fraction,
+            V_app=V_app,
+        )
+
+    def evaluate(self, z: np.ndarray, illumination_fraction: float) -> _Evaluation:
+        z_arr = np.asarray(z, dtype=float)
+        physical = self._evaluate_increments(
+            self.thermal_voltage * z_arr[: self.node_count],
+            self.thermal_voltage * z_arr[self.node_count :],
+            illumination_fraction,
+            V_app=self.V_app,
+        )
+        residual = physical.residual.copy()
+        residual[self.pin] = z_arr[self.pin]
+        return replace(physical, residual=residual)
 
 
 def _solve_newton_stage(
@@ -658,10 +753,52 @@ def solve_quasi_fermi_steady_state(
             )
         if not np.all(np.isfinite(qfn)) or not np.all(np.isfinite(qfp)):
             raise ValueError("initial_state quasi-Fermi arrays must be finite")
-        z = np.r_[
-            (qfn - system.qfn0) / system.thermal_voltage,
-            (qfp - system.qfp0) / system.thermal_voltage,
-        ]
+        initial_qfn_reference = initial_state.electron_quasi_fermi_reference_V
+        initial_qfp_reference = initial_state.hole_quasi_fermi_reference_V
+        initial_dqfn = initial_state.electron_quasi_fermi_increment_V
+        initial_dqfp = initial_state.hole_quasi_fermi_increment_V
+        split_qf = (
+            initial_qfn_reference,
+            initial_qfp_reference,
+            initial_dqfn,
+            initial_dqfp,
+        )
+        split_qf_present = tuple(value is not None for value in split_qf)
+        if any(split_qf_present) and not all(split_qf_present):
+            raise ValueError(
+                "initial_state must provide all QF reference/increment arrays "
+                "or none of them"
+            )
+        if all(split_qf_present):
+            qfn_reference_arr = np.asarray(initial_qfn_reference, dtype=float)
+            qfp_reference_arr = np.asarray(initial_qfp_reference, dtype=float)
+            dqfn_arr = np.asarray(initial_dqfn, dtype=float)
+            dqfp_arr = np.asarray(initial_dqfp, dtype=float)
+            compensated = (
+                qfn_reference_arr,
+                qfp_reference_arr,
+                dqfn_arr,
+                dqfp_arr,
+            )
+            if any(
+                value.shape != grid.shape or not np.all(np.isfinite(value))
+                for value in compensated
+            ):
+                raise ValueError(
+                    "initial_state QF reference/increment arrays must be finite "
+                    "and match the target grid"
+                )
+            z = np.r_[
+                (qfn_reference_arr - system.qfn0 + dqfn_arr)
+                / system.thermal_voltage,
+                (qfp_reference_arr - system.qfp0 + dqfp_arr)
+                / system.thermal_voltage,
+            ]
+        else:
+            z = np.r_[
+                (qfn - system.qfn0) / system.thermal_voltage,
+                (qfp - system.qfp0) / system.thermal_voltage,
+            ]
         z[system.pin] = 0.0
     total_iterations = 0
     for fraction in stages:
@@ -728,6 +865,7 @@ def solve_quasi_fermi_steady_state(
         total_faces,
         final.rate_n,
         final.rate_p,
+        z,
     )
     if any(not np.all(np.isfinite(value)) for value in arrays):
         failures.append("result contains non-finite state or current values")
@@ -759,6 +897,12 @@ def solve_quasi_fermi_steady_state(
         illumination_steps=stages,
         newton_iterations=total_iterations,
         residual_evaluations=system.evaluation_count,
+        V_app=float(V_app),
+        illuminated=bool(illuminated),
+        electron_quasi_fermi_reference_V=system.qfn0.copy(),
+        hole_quasi_fermi_reference_V=system.qfp0.copy(),
+        electron_quasi_fermi_increment_V=dqfn.copy(),
+        hole_quasi_fermi_increment_V=dqfp.copy(),
     )
 
 

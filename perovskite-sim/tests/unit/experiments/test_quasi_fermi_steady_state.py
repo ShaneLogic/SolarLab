@@ -70,6 +70,24 @@ def test_uniform_dark_equilibrium_is_certified():
     assert result.poisson_residual < 1.0e-10
     assert np.all(np.isfinite(result.y))
     assert np.all(np.isfinite(result.phi))
+    assert result.electron_quasi_fermi_reference_V is not None
+    assert result.hole_quasi_fermi_reference_V is not None
+    assert result.electron_quasi_fermi_increment_V is not None
+    assert result.hole_quasi_fermi_increment_V is not None
+    np.testing.assert_allclose(
+        result.electron_quasi_fermi_potential_V,
+        result.electron_quasi_fermi_reference_V
+        + result.electron_quasi_fermi_increment_V,
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        result.hole_quasi_fermi_potential_V,
+        result.hole_quasi_fermi_reference_V
+        + result.hole_quasi_fermi_increment_V,
+        rtol=0.0,
+        atol=0.0,
+    )
 
     node_count = len(x)
     mat = build_material_arrays(x, stack)
@@ -170,6 +188,26 @@ def test_uncertified_warm_start_is_rejected():
             V_app=0.01,
             illuminated=False,
             initial_state=replace(result, certified=False),
+        )
+
+
+def test_partial_split_qf_warm_start_is_rejected():
+    stack = _uniform_stack()
+    x = multilayer_grid([Layer(stack.layers[0].thickness, 12)])
+    result = solve_quasi_fermi_steady_state(
+        x,
+        stack,
+        V_app=0.0,
+        illuminated=False,
+    )
+    incomplete = replace(result, electron_quasi_fermi_increment_V=None)
+    with pytest.raises(ValueError, match="all QF reference/increment arrays"):
+        solve_quasi_fermi_steady_state(
+            x,
+            stack,
+            V_app=0.01,
+            illuminated=False,
+            initial_state=incomplete,
         )
 
 

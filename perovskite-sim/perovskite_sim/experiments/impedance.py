@@ -146,6 +146,7 @@ def run_impedance(
     illuminated: bool = True,
     progress: ProgressCallback | None = None,
     allow_underresolved_grid: bool = False,
+    method: str = "transient",
 ) -> ImpedanceResult:
     """Run small-signal impedance at each frequency.
 
@@ -168,6 +169,11 @@ def run_impedance(
         Diagnostic-only escape hatch for an electrical mesh that fails the
         thick-layer Debye-resolution guard. Such a run is not physically
         certifiable.
+    method : {"transient", "quasi_fermi_frequency"}
+        ``transient`` retains the general ion-aware time-domain lock-in.
+        ``quasi_fermi_frequency`` uses a residual-certified local QF DC state
+        and a frequency-domain linearization; unsupported physics fails before
+        operator assembly.
     """
     if len(frequencies) == 0:
         raise ValueError("frequencies must be non-empty")
@@ -179,6 +185,11 @@ def run_impedance(
         raise ValueError(f"delta_V must be positive, got {delta_V}")
     if n_cycles < 1:
         raise ValueError(f"n_cycles must be >= 1, got {n_cycles}")
+    if method not in {"transient", "quasi_fermi_frequency"}:
+        raise ValueError(
+            "method must be 'transient' or 'quasi_fermi_frequency', got "
+            f"{method!r}"
+        )
     n_extract = min(max(n_extract, 1), n_cycles)
 
     # Use the same executable electrical-grid contract as J-V and steady-state
@@ -198,6 +209,23 @@ def run_impedance(
     # Build the material cache once — reused across every frequency and
     # every RHS call inside each frequency's transient.
     mat = build_material_arrays(x, stack)
+    if method == "quasi_fermi_frequency":
+        from perovskite_sim.experiments.quasi_fermi_impedance import (
+            run_quasi_fermi_impedance,
+        )
+
+        result = run_quasi_fermi_impedance(
+            x,
+            stack,
+            np.asarray(frequencies, dtype=float),
+            V_dc=V_dc,
+            delta_V=delta_V,
+            illuminated=illuminated,
+            mat=mat,
+            progress=progress,
+        )
+        return ImpedanceResult(frequencies=result.frequencies, Z=result.Z)
+
     # Pre-condition: DC steady state at V_dc. Illuminated path uses the
     # dark→light solver; dark path starts from equilibrium and (if
     # V_dc ≠ 0) drives to V_dc via a short dark transient so the AC

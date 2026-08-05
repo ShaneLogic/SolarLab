@@ -557,6 +557,7 @@ r = run_mott_schottky(
     stack,
     V_range=np.linspace(-0.3, 0.4, 8),
     frequency=1e6,       # 1 MHz default; certify a frequency plateau for claims
+    # impedance_method="quasi_fermi_frequency",  # audited local ion-free QF only
 )
 # r.V, r.C, r.one_over_C2       — dark C-V sweep [F/m² and m⁴/F²]
 # r.V_bi_fit                    — built-in voltage from 1/C² V-intercept
@@ -571,13 +572,26 @@ $C = \text{Im}(1/Z) / \omega$. A non-positive susceptance is rejected
 instead of being hidden by an absolute value. Runs dark
 (`illuminated=False`) so photogenerated carriers do not screen the
 depletion capacitance. The linear-fit helper finds the widest
-contiguous $(V, 1/C^2)$ window whose RMS residual is within 10 % of its
+contiguous $(V, 1/C^2)$ window whose RMS residual is within 1 % of its
 ordinate span — rejects the low-bias fully-depleted tail and the
 high-bias injection tail without a hand-tuned cutoff. On a clean
 Mott-Schottky curve the synthetic-data regression tests pin recovery
 of $V_{\text{bi}}$ to $<0.01$ V and $N$ to $<0.02$ decades.
 Flat or positive-slope $1/C^2$ data return an unidentifiable fit rather
-than a finite but physically meaningless parameter pair. A physical claim
-also requires grid, frequency, amplitude, and cycle convergence.
+than a finite but physically meaningless parameter pair. A transient-path
+physical claim also requires grid, frequency, amplitude, and cycle
+convergence; a frequency-domain claim instead requires its registered
+linearization-step and all-face current certificates.
+
+The default `impedance_method="transient"` retains the general time-domain
+model. The explicit `quasi_fermi_frequency` method instead linearizes about a
+residual-certified dark QF state and requires a nominal perturbation strictly
+below 20 mV. It currently supports only the audited local ion-free QF subset;
+mobile ions, selective contacts, thermionic interfaces, and non-local photon
+recycling fail closed. Its c-Si N=200/300/400 regression recovers the depletion
+capacitance scale and frequency/grid plateaus, but the fitted 0.756 V intercept
+remains below the configured 0.893 V contact-potential magnitude. It is an
+internal numerical certificate, not an external C-V validation or a repair of
+the legacy endpoint-sampled transient path.
 
 *Source:* `perovskite_sim/experiments/mott_schottky.py`
