@@ -45,13 +45,13 @@ T_TEST = 300.0
 def _synthetic_cv(V, V_bi, N, eps_r, T=T_TEST):
     """Build a synthetic C(V) from the Mott-Schottky formula.
 
-    ``C(V) = sqrt(q·ε·ε_0·N / (2·(V_bi − V − kT/q)))``. The ``kT/q``
-    majority-carrier tail term is the one ``_fit_mott_schottky`` inverts
-    (review F-16), so the round-trip recovers ``V_bi`` exactly. Only
-    valid for ``V < V_bi − kT/q``.
+    ``C(V) = sqrt(q·ε·ε_0·N / (2·(V_bi − V − 2kT/q)))``. The p-n-junction
+    diffuse-edge term is the one ``_fit_mott_schottky`` inverts, so the
+    depletion-approximation round-trip recovers ``V_bi`` exactly. Only valid
+    for ``V < V_bi − 2kT/q``.
     """
     return np.sqrt(
-        Q * eps_r * EPS_0 * N / (2.0 * (V_bi - V - K_B * T / Q))
+        Q * eps_r * EPS_0 * N / (2.0 * (V_bi - V - 2.0 * K_B * T / Q))
     )
 
 

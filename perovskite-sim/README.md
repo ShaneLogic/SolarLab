@@ -560,7 +560,7 @@ r = run_mott_schottky(
     # impedance_method="quasi_fermi_frequency",  # audited local ion-free QF only
 )
 # r.V, r.C, r.one_over_C2       — dark C-V sweep [F/m² and m⁴/F²]
-# r.V_bi_fit                    — built-in voltage from 1/C² V-intercept
+# r.V_bi_fit                    — apparent built-in voltage from 1/C² fit
 # r.N_eff_fit                   — ionised-dopant density from slope [m⁻³]
 # r.V_fit_lo, r.V_fit_hi        — auto-selected linear window
 # r.eps_r_used                  — ε_r taken from the 'absorber'-role layer
@@ -575,8 +575,12 @@ depletion capacitance. The linear-fit helper finds the widest
 contiguous $(V, 1/C^2)$ window whose RMS residual is within 1 % of its
 ordinate span — rejects the low-bias fully-depleted tail and the
 high-bias injection tail without a hand-tuned cutoff. On a clean
-Mott-Schottky curve the synthetic-data regression tests pin recovery
-of $V_{\text{bi}}$ to $<0.01$ V and $N$ to $<0.02$ decades.
+Mott-Schottky curve the p-n-junction fit adds the two-edge thermal correction
+$2k_BT/q$ to the bare V-axis intercept. Synthetic-data regression tests pin
+recovery of $V_{\text{bi}}^{\text{app}}$ to $<0.01$ V and $N$ to $<0.02$
+decades. The API field remains `V_bi_fit` for compatibility, but the result is
+an apparent depletion-model parameter, not an independent measurement of the
+contact-potential barrier.
 Flat or positive-slope $1/C^2$ data return an unidentifiable fit rather
 than a finite but physically meaningless parameter pair. A transient-path
 physical claim also requires grid, frequency, amplitude, and cycle
@@ -589,9 +593,12 @@ residual-certified dark QF state and requires a nominal perturbation strictly
 below 20 mV. It currently supports only the audited local ion-free QF subset;
 mobile ions, selective contacts, thermionic interfaces, and non-local photon
 recycling fail closed. Its c-Si N=200/300/400 regression recovers the depletion
-capacitance scale and frequency/grid plateaus, but the fitted 0.756 V intercept
-remains below the configured 0.893 V contact-potential magnitude. It is an
-internal numerical certificate, not an external C-V validation or a repair of
-the legacy endpoint-sampled transient path.
+capacitance scale, frequency/grid plateaus, and the independent DC electron and
+hole inventory derivatives. The corrected finest-grid fit gives
+$V_{\text{bi}}^{\text{app}}=0.782$ V, `N_eff=9.554e21 m^-3`, and a 0.111 V gap
+to the configured 0.893 V contact-potential magnitude. That gap is consistent
+with the published distributed-carrier p-n intercept range, but no compatible
+pointwise external curve is frozen. This is an internal numerical certificate,
+not external C-V validation or a repair of the legacy endpoint-sampled path.
 
 *Source:* `perovskite_sim/experiments/mott_schottky.py`

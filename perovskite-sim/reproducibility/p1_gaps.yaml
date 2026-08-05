@@ -180,7 +180,7 @@ gaps:
       - finest-pair Jsc, Voc, FF, PCE, and pointwise current changes meet declared limits
   - id: csi-mott-schottky-convergence
     status: open
-    classification: cv-grid-and-small-signal-convergence
+    classification: cv-internal-closure-and-external-reference
     config: configs/cSi_homojunction.yaml
     reproduction: |-
       OPENBLAS_NUM_THREADS=1 pytest -q -m slow tests/regression/test_csi_frequency_domain_impedance.py
@@ -195,24 +195,27 @@ gaps:
       2.886247e-4 F/m2, within 4.8 percent of the abrupt-depletion estimate and
       over 400 times the geometric value. On N=200/300/400, the maximum 100 kHz
       C(V) changes contract from 1.2407 to 0.4123 percent. The fitted 100 kHz
-      intercepts are 0.771663/0.755249/0.756214 V and effective dopings are
+      apparent intercepts after the p-n 2kT/q correction are
+      0.797515/0.781101/0.782066 V and effective dopings are
       9.4928e21/9.4660e21/9.5537e21 m-3; the finest-pair changes are below
       1 mV and 1 percent. The N=400 curve is flat from 10 kHz to 1 MHz to
       4.82e-5 relative, all-face admittance spread stays below 4.58e-6, and
-      nominal amplitude plus state/voltage derivative-step checks pass. The
-      remaining physical discrepancy is that the converged 0.756 V Mott
-      intercept is about 0.137 V below the configured 0.892896 V contact
-      potential. The new certificate is QF-only and is not external C-V
-      validation or a repair of the legacy transient branch.
+      nominal amplitude plus state/voltage derivative-step checks pass.
+      Independent DC derivatives of the electron and hole inventories both
+      equal the terminal capacitance at -0.2 V. The remaining 0.111 V gap
+      between the 0.782066 V apparent intercept and the configured 0.892896 V
+      contact potential lies within the published 0.1-0.4 V range caused by
+      distributed transition-region carriers. The new certificate is QF-only
+      and is not pointwise external C-V validation or a repair of the legacy
+      transient branch.
     next_experiment: >-
-      Resolve the 0.137 V intercept discrepancy before widening the model:
-      compare the AC capacitance against bias derivatives of electrode charge
-      and depletion charge, audit the finite n+/p homojunction equilibrium
-      potential partition, contact reservoirs, and thermal-voltage correction,
-      then freeze an independent c-Si C-V reference with its area, frequency,
-      temperature, and doping provenance. Extend the frequency-domain state to
-      mobile ions and other general-model features only after each additional
-      storage variable and boundary current has its own capability certificate.
+      Freeze or digitize a compatible independent c-Si p-n C-V curve with its
+      area, frequency, AC amplitude, temperature, doping, geometry, edge
+      correction, and extraction provenance, then compare pointwise C(V),
+      slope-derived doping, and apparent intercept without calibrating the
+      SolarLab config to that curve. Extend the frequency-domain state to mobile
+      ions or other general-model features only after each added storage variable
+      and boundary current has its own capability certificate.
     acceptance:
       - every retained bias has residual-certified dark DC and frequency-domain linear-solve certificates
       - all-face total admittance is continuous and the complex solve has a bounded backward error
@@ -220,7 +223,9 @@ gaps:
       - the C-V curve and extracted V_bi and N_eff converge on N=200/300/400
       - frequency, nominal delta_V, and state/voltage derivative-step plateaus are demonstrated for the frequency-domain path
       - capacitance and depletion-width scales agree with the analytic junction model
-      - the fitted intercept is reconciled with the configured contact potential and an external c-Si C-V reference
+      - independent DC electron and hole inventory derivatives reproduce the terminal capacitance
+      - the apparent intercept gap is reconciled with p-n distributed-carrier theory
+      - a compatible external c-Si C-V curve passes pointwise comparison without calibration
   - id: external-solver-curve-crosscheck
     status: open
     classification: external-validation-and-provenance

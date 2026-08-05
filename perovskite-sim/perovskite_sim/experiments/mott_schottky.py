@@ -6,16 +6,17 @@ In the dark at reverse/zero bias a p-n junction is a parallel-plate
 capacitor whose "plate separation" is the depletion width. For a
 one-sided junction (N_heavy >> N_light) the capacitance per area is
 
-    C(V) = sqrt(q · ε_s · ε_0 · N_eff / (2 (V_bi − V − kT/q)))
+    C(V) = sqrt(q · ε_s · ε_0 · N_eff / (2 (V_bi − V − 2kT/q)))
 
 where N_eff is the lighter-doped side's net ionised density and the
-``kT/q`` term is the majority-carrier tail at the depletion edge (the
-space charge does not terminate abruptly). Plotting ``1/C²`` against V
+``2kT/q`` term accounts for the thermally diffuse edges on both sides of
+the p-n transition region. Plotting ``1/C²`` against V
 gives a straight line with slope ``−2 / (q·ε_s·ε_0·N_eff)`` and V-axis
-intercept at ``V_bi − kT/q``, so the reported built-in voltage adds
-``kT/q`` back (25.9 mV at 300 K). Fitting that line is the standard way
-experimentalists extract both the built-in voltage and the doping
-density from a C-V measurement — the so-called Mott-Schottky plot.
+intercept at ``V_bi − 2kT/q`` in the depletion approximation, so the
+reported apparent built-in voltage adds ``2kT/q`` back. Exact p-n-junction
+capacitance includes distributed mobile carriers; its linear intercept can
+remain below the contact-potential barrier and must not be treated as an
+independent measurement of that barrier.
 
 This experiment is a thin wrapper over ``run_impedance``: at each DC
 bias a single AC excitation at ``frequency`` is driven and the
@@ -89,12 +90,13 @@ class MottSchottkyResult:
     one_over_C2 : np.ndarray
         1/C² values [m⁴/F²] — the Mott-Schottky ordinate.
     V_bi_fit : float
-        Built-in voltage extracted from the V-axis intercept of the
+        Apparent built-in voltage extracted from the V-axis intercept of the
         linear fit of ``1/C² = a·V + b`` over the fit window:
-        ``V_bi_fit = -b/a + kT/q``. The ``kT/q`` term is the majority-
-        carrier tail correction — the bare intercept ``-b/a`` corresponds
-        to ``V_bi - kT/q`` (25.9 mV at 300 K). NaN if the fit failed
-        (e.g. fewer than 3 linear points).
+        ``V_bi_fit = -b/a + 2kT/q``. This is the apparent built-in voltage
+        under the one-sided depletion approximation. Exact transition-region
+        capacitance includes distributed mobile carriers, so this value need
+        not equal the independently configured contact-potential barrier. NaN
+        if the fit failed (e.g. fewer than 3 linear points).
     N_eff_fit : float
         Ionised dopant density on the lighter-doped side of the
         junction [m⁻³], from ``N = -2/(q·ε_s·ε_0·a)``. The fit slope
@@ -209,10 +211,10 @@ def _fit_mott_schottky(
 ) -> tuple[float, float, float, float]:
     """Linear fit of 1/C² vs V → (V_bi_fit, N_eff_fit, V_lo, V_hi).
 
-    The V-intercept of the line gives V_bi (after the ``kT/q`` majority-
-    carrier tail correction, see below); the slope gives N_eff via the
-    Mott-Schottky relation. NaNs are returned if the fit is degenerate
-    (flat line, or fewer than 3 points after window selection).
+    The V-intercept gives an apparent V_bi after the p-n-junction ``2kT/q``
+    diffuse-edge correction; the slope gives N_eff via the Mott-Schottky
+    relation. NaNs are returned if the fit is degenerate (flat line, or fewer
+    than 3 points after window selection).
     """
     y = 1.0 / (C * C)
     window = _select_ms_window(V, y)
@@ -233,16 +235,14 @@ def _fit_mott_schottky(
     y_mid = float(np.median(np.abs(y_fit)))
     if y_mid > 0 and y_span / y_mid < 0.05:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
-    # For 1/C² = a·V + b with a < 0, the V-axis intercept -b/a equals
-    # V_bi - kT/q, not V_bi: the depletion-approximation capacitance for a
-    # one-sided abrupt junction is
-    #     1/C² = 2·(V_bi - V - kT/q) / (q·ε_s·ε_0·N),
-    # where the kT/q term is the majority-carrier tail at the depletion
-    # edge (the space charge does not terminate abruptly). Omitting it
-    # under-reports V_bi by 25.9 mV at 300 K — 2026-07 review finding F-16.
+    # For a p-n junction, both thermally diffuse depletion edges contribute:
+    #     1/C² = 2·(V_bi - V - 2kT/q) / (q·ε_s·ε_0·N).
+    # This differs from the one-edge kT/q correction often used for a
+    # metal-semiconductor Schottky contact. Even after the 2kT/q correction,
+    # exact distributed-carrier capacitance need not recover the true barrier.
     if not np.isfinite(slope) or slope >= -1e-30:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
-    V_bi_fit = -intercept / slope + K_B * T / Q
+    V_bi_fit = -intercept / slope + 2.0 * K_B * T / Q
     # N_eff = -2 / (q · ε_s · ε_0 · slope). Slope is negative, so N_eff > 0.
     N_eff_fit = -2.0 / (Q * eps_r * EPS_0 * slope)
     return (

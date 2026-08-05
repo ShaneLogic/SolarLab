@@ -2,8 +2,9 @@
 
 At each DC bias a single 1 MHz AC excitation probes the junction capacitance
 C = Im(Y)/ω (experiments/mott_schottky.run_mott_schottky over run_impedance).
-For a heavily-doped base 1/C² vs V is a line whose intercept gives V_bi and
-slope gives the doping (Mott-Schottky). For an INTRINSIC fully-depleted absorber
+For a heavily-doped base 1/C² vs V is a line whose corrected intercept gives
+the apparent V_bi and whose slope gives the doping (Mott-Schottky). For an
+INTRINSIC fully-depleted absorber
 (the perovskite case) C ≈ the geometric series capacitance C_geo = (Σ d_i/ε_i)^-1
 and 1/C² is flat — V_bi is not extractable, which the figure states honestly and
 cross-checks against C_geo. Publication layout (Arial, 300 dpi).
@@ -72,11 +73,12 @@ aM.set_title("Mott–Schottky", fontsize=12, pad=10)
 aM.text(0.03, 0.95, "(b)", transform=aM.transAxes, fontsize=13, fontweight="bold", va="top")
 
 if fittable:
-    Vline = np.linspace(ms.V_fit_lo, ms.V_bi_fit, 50)
     a = np.polyfit(ms.V[(ms.V >= ms.V_fit_lo) & (ms.V <= ms.V_fit_hi)],
                    ms.one_over_C2[(ms.V >= ms.V_fit_lo) & (ms.V <= ms.V_fit_hi)], 1)
+    v_axis_intercept = -a[1] / a[0]
+    Vline = np.linspace(ms.V_fit_lo, v_axis_intercept, 50)
     aM.plot(Vline, np.polyval(a, Vline), "--", color="#c0392b", lw=1.4)
-    verdict = (f"$V_{{bi}}$ = {ms.V_bi_fit:.2f} V\n"
+    verdict = (f"$V_{{bi}}^{{app}}$ = {ms.V_bi_fit:.2f} V\n"
                f"$N_{{eff}}$ = {ms.N_eff_fit:.2e} m$^{{-3}}$")
 else:
     verdict = (f"1/$C^2$ span = {span*100:.1f}%  (< 5%)\n"
@@ -91,4 +93,4 @@ fig.suptitle("SolarLab capacitance–voltage — scaps_mirror_v2 (SCAPS-1D partn
 fig.tight_layout(rect=(0, 0, 1, 0.96))
 out = Path("cv_mott_schottky.png")
 fig.savefig(out, dpi=300, bbox_inches="tight")
-print(f"wrote {out.resolve()}  C_geo={C_geo*toNF:.2f} nF/cm2  span={span*100:.2f}%  V_bi_fit={ms.V_bi_fit}")
+print(f"wrote {out.resolve()}  C_geo={C_geo*toNF:.2f} nF/cm2  span={span*100:.2f}%  V_bi_app={ms.V_bi_fit}")

@@ -104,12 +104,12 @@ describe('renderMottSchottky — toolbar + style mode', () => {
     expect(shapes[0].fillcolor).toBe('rgba(99, 102, 241, 0.10)')
   })
 
-  it('engineering annotation: V_bi / N_eff / f at upper-LEFT with separators', () => {
+  it('engineering annotation: V_bi,app / N_eff / f at upper-LEFT with separators', () => {
     renderMottSchottky(el, makeResult())
     const ann = _lastNewPlotLayout()!.annotations as Array<Record<string, any>>
     expect(ann).toHaveLength(1)
     const text = ann[0].text
-    expect(text).toContain('V<sub>bi</sub>')
+    expect(text).toContain('V<sub>bi,app</sub>')
     expect(text).toContain('0.945 V')
     expect(text).toContain('N<sub>eff</sub>')
     expect(text).toContain('8.30e+22')
@@ -183,11 +183,11 @@ describe('renderMottSchottky — publication style mode', () => {
     expect(ann[0].font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
-  it('publication annotation text: V_bi / N_eff / f stacked with <br>', () => {
+  it('publication annotation text: V_bi,app / N_eff / f stacked with <br>', () => {
     renderMottSchottky(el, makeResult())
     _toggleStyle(el, 'publication')
     const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
-    expect(text).toContain('V<sub>bi</sub>')
+    expect(text).toContain('V<sub>bi,app</sub>')
     expect(text).toContain('0.945 V')
     expect(text).toContain('N<sub>eff</sub>')
     expect(text).toContain('8.30e+22')

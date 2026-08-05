@@ -259,7 +259,7 @@ export interface MottSchottkyResult {
   V: number[]
   C: number[]
   one_over_C2: number[]
-  V_bi_fit: number
+  V_bi_fit: number  // apparent p-n depletion-model value; API name retained
   N_eff_fit: number
   V_fit_lo: number
   V_fit_hi: number

@@ -95,8 +95,12 @@ provenance are incomplete.
 The c-Si frequency-domain C-V lane is also explicit and opt-in. It linearizes
 the audited local QF model about residual-certified dark states, uses an
 equilibrated complex solve with iterative refinement, and certifies the
-N=200/300/400, 10 kHz/100 kHz/1 MHz depletion-bias matrix. It does not certify
-the general endpoint-sampled transient impedance path or any unsupported ion,
-contact, interface, or non-local physics. The converged Mott intercept remains
-physically unresolved relative to the configured contact potential, so the
-configuration stays `partial` and the P1 C-V gap stays open.
+N=200/300/400, 10 kHz/100 kHz/1 MHz depletion-bias matrix. Independent DC
+electron and hole inventory derivatives reproduce the terminal capacitance,
+and the p-n fit uses the two-edge `2kT/q` correction. The resulting 0.782 V
+apparent intercept is 0.111 V below the configured contact potential, within
+the published 0.1-0.4 V distributed-carrier range. This resolves the internal
+interpretation, not external validation: no compatible pointwise c-Si C-V
+curve is frozen. The configuration therefore stays `partial` and the P1 gap
+stays open. The lane does not certify the general endpoint-sampled transient
+path or unsupported ion, contact, interface, or non-local physics.

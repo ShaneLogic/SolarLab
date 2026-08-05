@@ -2460,18 +2460,20 @@ $$
 Then:
 
 $$
-V_\mathrm{bi}^\mathrm{app}=-\frac{b}{a}+\frac{k_BT}{q},
+V_\mathrm{bi}^\mathrm{app}=-\frac{b}{a}+\frac{2k_BT}{q},
 \qquad
 N_\mathrm{eff}^\mathrm{app}
 =
 -\frac{2}{q\varepsilon_r\varepsilon_0 a}.
 $$
 
-The $k_BT/q$ term is the majority-carrier tail at the depletion edge:
-the one-sided abrupt-junction capacitance is
-$1/C^2 = 2(V_\mathrm{bi}-V-k_BT/q)/(q\varepsilon_s\varepsilon_0 N)$, so
+The $2k_BT/q$ term accounts for the thermally diffuse transition-region
+edges on both sides of a p--n junction. In the one-sided abrupt-junction
+approximation,
+$1/C^2 = 2(V_\mathrm{bi}-V-2k_BT/q)/(q\varepsilon_s\varepsilon_0 N)$, so
 the bare $V$-axis intercept $-b/a$ corresponds to
-$V_\mathrm{bi}-k_BT/q$, i.e. 25.9 mV low at 300 K. A depletion
+$V_\mathrm{bi}-2k_BT/q$. The one-edge $k_BT/q$ correction applies to the
+Schottky form and must not be substituted here. A depletion
 capacitance has $a<0$, which makes $N_\mathrm{eff}^\mathrm{app}$
 positive; the fit does not determine the doping *type*, which must be
 read off the stack and reported separately from $|N|$.
@@ -2486,6 +2488,15 @@ so for thin fully depleted absorbers the analysis can over-interpret
 non-depletion response. Report the fit frequency, bias window, and phase
 alongside the fitted values, and do not report the slopes automatically as
 physical dopant densities.
+
+Chang's exact p--n capacitance analysis shows that capacitance integrates the
+differential mobile-carrier inventory throughout the transition region. Its
+linear $1/C^2$ intercept can therefore remain below the independently known
+contact-potential barrier after the $2k_BT/q$ correction. Hufschmidt et al.
+report a typical barrier-minus-intercept difference of 0.1--0.4 V for silicon
+p--n junctions. Treat the intercept as $V_\mathrm{bi}^\mathrm{app}$ unless a
+compatible external curve and barrier measurement establish the stronger
+interpretation.
 
 ## Transient Photovoltage
 
@@ -3166,6 +3177,11 @@ and validation are also supplied.
 24. M. Burgelman and J. Marlein, "Analysis of graded band gap solar cells
     with SCAPS," *Proceedings of the 23rd European Photovoltaic Solar Energy
     Conference*, 2151--2155 (2008).
+25. Y. F. Chang, "The capacitance of p-n junctions," *Solid-State
+    Electronics* **10**, 281--287 (1967).
+    doi:10.1016/0038-1101(67)90014-7.
+26. M. Hufschmidt et al., "The influence of edge effects on the determination
+    of the doping profile of silicon pad diodes," arXiv:1605.00778v1 (2016).
 
 # Appendix A: Manual Source Trail
 

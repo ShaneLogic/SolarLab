@@ -1,0 +1,56 @@
+schema_version: 1
+topic: crystalline-silicon-pn-junction-capacitance-and-intercept
+evidence_scope: interpretation-and-published-fit-provenance
+
+theory_reference:
+  citation: >-
+    Y. F. Chang, The capacitance of p-n junctions, Solid-State Electronics
+    10 (1967) 281-287.
+  doi: https://doi.org/10.1016/0038-1101(67)90014-7
+  claims:
+    - rigorous differential capacitance is the integral of the differential electron or hole concentration
+    - distributed transition-region carriers make the 1/C2 intercept an inaccurate barrier-height estimator
+
+experimental_reference:
+  citation: >-
+    M. Hufschmidt et al., The influence of edge effects on the determination
+    of the doping profile of silicon pad diodes, arXiv:1605.00778v1 (2016).
+  arxiv_url: https://arxiv.org/abs/1605.00778v1
+  source_archive_url: https://arxiv.org/src/1605.00778v1
+  source_archive_sha256: 9a663c632f4f36f38f8e70bfa6b9f67172b294d9fe3b3b842947eb26ac1cd985
+  device:
+    material: float-zone crystalline silicon
+    junction: p-plus-n
+    manufacturer: Hamamatsu
+    active_thickness_um: 196
+    active_thickness_uncertainty_um: 5
+    small_pad_side_um: 2003
+    large_pad_side_um: 4896
+    junction_depth_um: 2
+  measurement:
+    temperature_C: 20
+    reverse_bias_range_V: [0.0, 160.0]
+    reverse_bias_step_V: 0.5
+    frequency_range_Hz: [100.0, 2.0e+6]
+    reported_curve_frequency_Hz: 1.0e+4
+    ac_amplitude_range_V: [0.05, 0.5]
+    reported_curve_ac_amplitude_V: 0.5
+    note: capacitance agreed within 1 percent from 200 Hz to 200 kHz
+  edge_corrected_planar_fit:
+    reverse_bias_window_V: [5.0, 75.0]
+    normalized_capacitance_at_120V_pF_cm2: 51.99
+    effective_thickness_um: 203
+    full_depletion_voltage_V: 89.1
+    doping_from_full_depletion_cm3: 2.93e+12
+    doping_from_1_over_C2_slope_cm3: 2.86e+12
+    v_axis_intercept_magnitude_V: 0.236
+    maximum_relative_curve_residual: 0.003
+  interpretation:
+    pn_depletion_thermal_correction: 2kT_over_q
+    reported_barrier_minus_intercept_range_V: [0.1, 0.4]
+    warning: the published fit supports doping extraction and intercept interpretation, not a precise barrier-height measurement
+
+limitations:
+  - the publication does not provide pointwise planar C-V arrays in machine-readable form
+  - the external device doping and reverse-bias range differ from configs/cSi_homojunction.yaml
+  - this resource supports interpretation and provenance, not curve-level external validation

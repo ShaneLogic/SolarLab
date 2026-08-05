@@ -13,6 +13,8 @@ resources:
     sha256: efa3f5ef4e71fbbd981e2741c296ee461b2421f50fa4819ba64a6cb026fae6a8
   - path: perovskite_sim/data/layer_templates.yaml
     sha256: 6a3dc2be4af2f2967230d17c7b39ff2be87bd3eec225eaa669520149189c3e5d
+  - path: perovskite_sim/data/references/csi_pn_cv_intercept.yaml
+    sha256: 14e38316eea8c65e1af81e578198f3c07dbacfb86ef239157840d519bf6320d7
   - path: perovskite_sim/data/nk/manifest.yaml
     sha256: b442027f40477181058ea25079cfb640251fa9aeea89bc87b106dbca037ac1ea
   - path: perovskite_sim/data/nk/Ag.csv
@@ -667,7 +669,12 @@ benchmarks:
   csi-qf-frequency-domain-cv:
     kind: numerical
     status: pass
-    claim_level: residual-certified-qf-small-signal-cv-grid-convergence
+    claim_level: residual-certified-qf-small-signal-cv-and-charge-identity
+    evidence_tier: internal-numerical-plus-published-interpretation
+    source_urls:
+      - https://doi.org/10.1016/0038-1101(67)90014-7
+      - https://arxiv.org/abs/1605.00778v1
+    reference_resource: perovskite_sim/data/references/csi_pn_cv_intercept.yaml
     command: >-
       OPENBLAS_NUM_THREADS=1 pytest -q -m slow
       tests/regression/test_csi_frequency_domain_impedance.py
@@ -675,8 +682,10 @@ benchmarks:
     node_ids:
       - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_recovers_depletion_not_geometric_capacitance
       - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_has_capacitance_plateau_and_current_certificate
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_matches_independent_dc_carrier_inventory
       - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_is_stable_to_steps_and_nominal_amplitude
       - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_depletion_cv_curve_converges_on_registered_grid_ladder
+      - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_apparent_intercept_shift_matches_published_pn_range
       - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_depletion_cv_has_frequency_and_all_face_plateaus
       - tests/regression/test_csi_frequency_domain_impedance.py::test_csi_frequency_domain_observations_match_registry
     configs: [configs/cSi_homojunction.yaml]
@@ -690,6 +699,7 @@ benchmarks:
       nominal_delta_V: 0.01
       state_difference_step: 1.0e-5
       voltage_difference_step_V: 1.0e-5
+      independent_dc_inventory_difference_step_V: 1.0e-4
       certificates:
         max_relative_all_face_admittance_spread: 5.0e-4
         max_linear_solve_backward_error: 1.0e-10
@@ -697,6 +707,7 @@ benchmarks:
         max_finest_grid_capacitance_change: 5.0e-3
         max_finest_mott_intercept_change_V: 2.0e-3
         max_finest_effective_doping_change: 1.0e-2
+        max_storage_identity_relative_error: 5.0e-6
     observed:
       grids:
         - N_grid: 200
@@ -707,7 +718,7 @@ benchmarks:
             - 0.000324527085290347
             - 0.000349098668255790
             - 0.000380798512357247
-          mott_intercept_100k_V: 0.771663474306539
+          mott_intercept_100k_V: 0.797515474092975
           effective_doping_100k_m3: 9.49280500136980e+21
         - N_grid: 300
           capacitance_100k_F_m2:
@@ -717,7 +728,7 @@ benchmarks:
             - 0.000327999964567817
             - 0.000353212955314808
             - 0.000385582502417237
-          mott_intercept_100k_V: 0.755248968800467
+          mott_intercept_100k_V: 0.781100968586903
           effective_doping_100k_m3: 9.46604140288772e+21
         - N_grid: 400
           capacitance_100k_F_m2:
@@ -727,29 +738,37 @@ benchmarks:
             - 0.000329315110445970
             - 0.000354563980640025
             - 0.000386974029432062
-          mott_intercept_100k_V: 0.756213810627685
+          mott_intercept_100k_V: 0.782065810414121
           effective_doping_100k_m3: 9.55366131395795e+21
       adjacent_max_capacitance_changes:
         - 0.0124071762333590
         - 0.00412270285406913
       finest_max_frequency_change: 4.81757492936887e-5
       finest_mott_intercepts_V:
-        - 0.756208589190647
-        - 0.756213810627685
-        - 0.756265026373239
+        - 0.782060588977083
+        - 0.782065810414121
+        - 0.782117026159675
       finest_effective_doping_m3:
         - 9.55360946485520e+21
         - 9.55366131395795e+21
         - 9.55384545830395e+21
+      charge_identity_200:
+        V_dc_V: -0.2
+        frequency_Hz: 1.0e+5
+        electron_inventory_capacitance_F_m2: 0.0002886247542200275
+        hole_inventory_capacitance_F_m2: 0.0002886247548487356
+      apparent_intercept_gap_V: 0.110830629570881
     regression_tolerance:
       capacitance_relative: 1.0e-6
       mott_intercept_V: 1.0e-5
       effective_doping_relative: 1.0e-5
       convergence_metric_relative: 1.0e-4
+      charge_identity_relative: 2.0e-5
     limitations:
       - the frequency-domain adapter is restricted to the audited local ion-free QF model and fails closed for unsupported physics
       - this new path does not repair or validate the legacy endpoint-sampled transient impedance algorithm
-      - the converged 0.756 V Mott intercept remains below the configured 0.892896 V contact-potential magnitude
+      - the corrected 0.782 V apparent Mott intercept remains 0.111 V below the configured 0.892896 V contact-potential magnitude
+      - the residual intercept shift is consistent with the published 0.1-0.4 V range for distributed-carrier p-n capacitance, but no pointwise external curve is frozen
       - this is internal numerical validation, not an external c-Si C-V comparison
   scaps-low-doping-etl-boundary:
     kind: internal

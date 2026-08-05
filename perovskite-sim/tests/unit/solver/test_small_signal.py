@@ -37,6 +37,15 @@ def test_frequency_domain_solver_recovers_series_rc_impedance():
     expected = resistance + 1.0 / (1j * 2.0 * np.pi * frequencies * capacitance)
     np.testing.assert_allclose(result.impedance, expected, rtol=2.0e-9)
     np.testing.assert_allclose(result.admittance, 1.0 / expected, rtol=2.0e-9)
+    expected_storage = 1.0 / (
+        1.0 + 1j * 2.0 * np.pi * frequencies * resistance * capacitance
+    )
+    np.testing.assert_allclose(
+        result.state_response[:, 0], expected_storage, rtol=2.0e-9
+    )
+    np.testing.assert_allclose(
+        result.storage_response[:, 0], expected_storage, rtol=2.0e-9
+    )
     assert np.all(result.impedance.imag < 0.0)
     np.testing.assert_allclose(result.max_relative_face_spread, 0.0, atol=1.0e-15)
     assert np.all((0.0 < result.reciprocal_condition))
@@ -65,6 +74,7 @@ def test_frequency_domain_solver_includes_direct_displacement_response():
 
     expected_admittance = 1j * 2.0 * np.pi * frequencies * capacitance
     np.testing.assert_allclose(result.admittance, expected_admittance, rtol=1.0e-12)
+    np.testing.assert_allclose(result.storage_response, 0.0, atol=1.0e-15)
     assert np.all(result.impedance.imag < 0.0)
     assert np.all(result.reciprocal_condition > 0.0)
     assert np.max(result.backward_error) < 1.0e-12

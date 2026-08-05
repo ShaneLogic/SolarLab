@@ -51,6 +51,8 @@ class FrequencyDomainResult:
     impedance: np.ndarray
     admittance: np.ndarray
     admittance_faces: np.ndarray
+    state_response: np.ndarray
+    storage_response: np.ndarray
     max_relative_face_spread: np.ndarray
     reciprocal_condition: np.ndarray
     backward_error: np.ndarray
@@ -230,6 +232,8 @@ def solve_frequency_domain(
     rate_voltage_scaled = rate_voltage / row_scale
 
     admittance_faces = np.empty((omega_hz.size, face_count), dtype=complex)
+    state_response = np.empty((omega_hz.size, state_size), dtype=complex)
+    storage_response = np.empty_like(state_response)
     reciprocal_condition = np.empty(omega_hz.size, dtype=float)
     backward_error = np.empty(omega_hz.size, dtype=float)
     for index, frequency in enumerate(omega_hz):
@@ -282,6 +286,8 @@ def solve_frequency_domain(
             )
         reciprocal_condition[index] = rcond
         backward_error[index] = berr
+        state_response[index] = response
+        storage_response[index] = mass @ response + storage_voltage
         conduction = current_jacobian @ response + current_voltage
         displacement = (
             displacement_jacobian @ response + displacement_voltage
@@ -303,6 +309,8 @@ def solve_frequency_domain(
         impedance=impedance,
         admittance=admittance,
         admittance_faces=admittance_faces,
+        state_response=state_response,
+        storage_response=storage_response,
         max_relative_face_spread=spread,
         reciprocal_condition=reciprocal_condition,
         backward_error=backward_error,

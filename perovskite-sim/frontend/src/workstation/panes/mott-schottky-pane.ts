@@ -26,7 +26,7 @@ export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottky
         <span class="status" id="status-ms"></span>
       </div>
       <div id="progress-ms"></div>
-      <div class="pane-hint">Dark C\u2013V sweep at fixed <em>f</em> followed by a linear fit of 1/C\u00b2 vs V. V-intercept gives <em>V<sub>bi</sub></em>, slope yields the effective doping <em>N<sub>eff</sub></em>.</div>
+      <div class="pane-hint">Dark C\u2013V sweep at fixed <em>f</em> followed by a linear fit of 1/C\u00b2 vs V. The p\u2013n-corrected intercept gives apparent <em>V<sub>bi,app</sub></em>; slope yields effective doping <em>N<sub>eff</sub></em>.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(
@@ -86,7 +86,7 @@ export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottky
             setStatus(
               'status-ms',
               fitIdentifiable
-                ? `Done \u00b7 V_bi=${pure.V_bi_fit.toFixed(3)} V, N_eff=${pure.N_eff_fit.toExponential(2)} m\u207B\u00b3`
+                ? `Done \u00b7 V_bi,app=${pure.V_bi_fit.toFixed(3)} V, N_eff=${pure.N_eff_fit.toExponential(2)} m\u207B\u00b3`
                 : 'Done \u00b7 fit not identifiable; inspect the C\u2013V slope',
             )
           },

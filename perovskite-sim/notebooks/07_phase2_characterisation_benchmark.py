@@ -17,8 +17,8 @@ Experiments covered
                       J_sc. Expect 0 <= EQE <= 1 (small TMM slack) and
                       visible-peak EQE > red-tail EQE.
   4. Mott-Schottky  — dark C-V sweep at 100 kHz, linear fit of 1/C^2 vs
-                      V. Expect finite V_bi_fit, N_eff_fit, fit window
-                      bounded by the swept range.
+                      V. Expect finite apparent V_bi_fit, N_eff_fit, and a
+                      fit window bounded by the swept range.
 
 Usage
 -----
@@ -167,21 +167,22 @@ check("Phi_incident positive and finite",
 # ───────────────────────────────────────────────────────────────────────────
 # 4. Mott–Schottky on cSi_homojunction
 # ───────────────────────────────────────────────────────────────────────────
-banner("[4] MOTT-SCHOTTKY — 1/C^2 fit gives V_bi and N_eff")
+banner("[4] MOTT-SCHOTTKY — 1/C^2 fit gives V_bi,app and N_eff")
 
 stack_ms = load_device_from_yaml(
     os.path.join(CONFIGS_DIR, "cSi_homojunction.yaml")
 )
-V_range = np.linspace(-0.3, 0.4, 8)
+V_range = np.linspace(-0.3, 0.2, 6)
 t0 = time.time()
 ms = run_mott_schottky(stack_ms, V_range=V_range, frequency=1.0e5,
-                       delta_V=0.01, N_grid=40)
+                       delta_V=0.01, N_grid=200,
+                       impedance_method="quasi_fermi_frequency")
 dt = time.time() - t0
 
 print(f"Simulation time     : {dt:.1f} s")
 print(f"Bias range          : [{ms.V[0]:.2f}, {ms.V[-1]:.2f}] V at f = {ms.frequency:.1e} Hz")
 print(f"Fit window          : [{ms.V_fit_lo:.3f}, {ms.V_fit_hi:.3f}] V")
-print(f"V_bi (fit)          : {ms.V_bi_fit:.3f} V")
+print(f"V_bi,app (fit)      : {ms.V_bi_fit:.3f} V")
 print(f"N_eff (fit)         : {ms.N_eff_fit:.3e} m^-3")
 print(f"eps_r used          : {ms.eps_r_used:.2f}")
 

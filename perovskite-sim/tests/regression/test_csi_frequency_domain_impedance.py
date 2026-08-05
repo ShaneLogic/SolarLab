@@ -19,6 +19,9 @@ from perovskite_sim.experiments.mott_schottky import _fit_mott_schottky
 from perovskite_sim.experiments.quasi_fermi_impedance import (
     run_quasi_fermi_impedance,
 )
+from perovskite_sim.experiments.quasi_fermi_steady_state import (
+    solve_quasi_fermi_steady_state,
+)
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.solver.mol import build_material_arrays
 
@@ -32,6 +35,12 @@ BENCHMARK = MATRIX["benchmarks"]["csi-qf-frequency-domain-cv"]
 PROTOCOL = BENCHMARK["protocol"]
 OBSERVED = BENCHMARK["observed"]
 TOLERANCE = BENCHMARK["regression_tolerance"]
+REFERENCE = yaml.safe_load(
+    (
+        ROOT
+        / "perovskite_sim/data/references/csi_pn_cv_intercept.yaml"
+    ).read_text()
+)
 FREQUENCIES_HZ = np.asarray(PROTOCOL["frequencies_Hz"], dtype=float)
 DEPLETION_BIASES_V = np.asarray(PROTOCOL["biases_V"], dtype=float)
 GRID_LADDER = tuple(PROTOCOL["N_grid"])
@@ -98,6 +107,63 @@ def test_csi_frequency_domain_has_capacitance_plateau_and_current_certificate(
     assert np.all(response.reciprocal_condition > 0.0)
     assert np.max(response.backward_error) < 1.0e-10
     assert 0.0 <= admittance[1].real / admittance[1].imag < 1.0e-3
+    electron_storage = response.electron_storage_response_F_m2
+    hole_storage = response.hole_storage_response_F_m2
+    np.testing.assert_allclose(electron_storage.real, capacitance, rtol=5.0e-6)
+    np.testing.assert_allclose(hole_storage.real, capacitance, rtol=5.0e-6)
+    assert np.max(np.abs(electron_storage.imag) / capacitance) < 5.0e-3
+    assert np.max(np.abs(hole_storage.imag) / capacitance) < 5.0e-3
+
+
+def test_csi_frequency_domain_matches_independent_dc_carrier_inventory(
+    csi_frequency_response,
+):
+    stack, x, mat, response = csi_frequency_response
+    voltage_step = 1.0e-4
+    states = tuple(
+        solve_quasi_fermi_steady_state(
+            x,
+            stack,
+            V_app=-0.2 + offset,
+            illuminated=False,
+            mat=mat,
+        )
+        for offset in (-voltage_step, voltage_step)
+    )
+    minus, plus = states
+    node_count = x.size
+    denominator = 2.0 * voltage_step
+    electron_derivative = (
+        plus.y[:node_count] - minus.y[:node_count]
+    ) / denominator
+    hole_derivative = (
+        plus.y[node_count : 2 * node_count]
+        - minus.y[node_count : 2 * node_count]
+    ) / denominator
+    electron_capacitance = Q * float(
+        np.sum(electron_derivative * mat.dx_cell)
+    )
+    hole_capacitance = Q * float(np.sum(hole_derivative * mat.dx_cell))
+    frequency_capacitance = float(_capacitance(response)[1])
+
+    assert electron_capacitance == pytest.approx(
+        frequency_capacitance, rel=2.0e-5
+    )
+    assert hole_capacitance == pytest.approx(
+        frequency_capacitance, rel=2.0e-5
+    )
+    assert electron_capacitance == pytest.approx(
+        BENCHMARK["observed"]["charge_identity_200"][
+            "electron_inventory_capacitance_F_m2"
+        ],
+        rel=TOLERANCE["charge_identity_relative"],
+    )
+    assert hole_capacitance == pytest.approx(
+        BENCHMARK["observed"]["charge_identity_200"][
+            "hole_inventory_capacitance_F_m2"
+        ],
+        rel=TOLERANCE["charge_identity_relative"],
+    )
 
 
 def test_csi_frequency_domain_is_stable_to_steps_and_nominal_amplitude(
@@ -208,10 +274,25 @@ def test_csi_depletion_cv_curve_converges_on_registered_grid_ladder(
     assert abs(fine_fit[0] - middle_fit[0]) < 2.0e-3
     assert abs(fine_fit[1] - middle_fit[1]) / fine_fit[1] < 1.0e-2
     assert fine_fit[1] == pytest.approx(1.0e22, rel=0.1)
-    # The internally converged 0.756 V intercept remains below the configured
-    # 0.893 V contact potential. Keep that discrepancy visible until the
-    # finite-junction/contact interpretation is independently resolved.
-    assert 0.7 < fine_fit[0] < 0.8
+    # This is an apparent depletion-model intercept, not an independent
+    # measurement of the 0.893 V contact-potential barrier.
+    assert 0.75 < fine_fit[0] < 0.85
+
+
+def test_csi_apparent_intercept_shift_matches_published_pn_range(csi_cv_ladder):
+    stack, rows = csi_cv_ladder
+    apparent_vbi = float(rows[-1][4][1][0])
+    contact_barrier = abs(float(stack.compute_V_bi()))
+    shift = contact_barrier - apparent_vbi
+    published = REFERENCE["experimental_reference"]["interpretation"]
+    lower, upper = published["reported_barrier_minus_intercept_range_V"]
+
+    assert published["pn_depletion_thermal_correction"] == "2kT_over_q"
+    assert lower <= shift <= upper
+    assert shift == pytest.approx(
+        BENCHMARK["observed"]["apparent_intercept_gap_V"],
+        abs=TOLERANCE["mott_intercept_V"],
+    )
 
 
 def test_csi_depletion_cv_has_frequency_and_all_face_plateaus(csi_cv_ladder):

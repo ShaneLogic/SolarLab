@@ -12,7 +12,7 @@ from typing import Callable
 
 import numpy as np
 
-from perovskite_sim.constants import EPS_0
+from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.experiments.quasi_fermi_steady_state import (
     QuasiFermiSteadyStateError,
     QuasiFermiSteadyStateResult,
@@ -44,7 +44,13 @@ ProgressCallback = Callable[[str, int, int, str], None]
 
 @dataclass(frozen=True)
 class QuasiFermiImpedanceResult:
-    """Frequency response plus the DC and all-face physical certificates."""
+    """Frequency response plus DC, storage, and all-face certificates.
+
+    The electron/hole storage responses are the complex small-signal
+    quantities ``q * integral(delta n or delta p) dx / delta V``. They use
+    positive carrier counts rather than signed charge, so both are positive
+    real capacitances in the quasi-static reverse-bias limit.
+    """
 
     frequencies: np.ndarray
     Z: np.ndarray
@@ -53,6 +59,8 @@ class QuasiFermiImpedanceResult:
     max_relative_face_spread: np.ndarray
     reciprocal_condition: np.ndarray
     backward_error: np.ndarray
+    electron_storage_response_F_m2: np.ndarray
+    hole_storage_response_F_m2: np.ndarray
     dc_state: QuasiFermiSteadyStateResult
 
 
@@ -291,6 +299,13 @@ def run_quasi_fermi_impedance(
             f"componentwise backward error {worst:.6g} exceeds "
             f"{max_backward_error:.6g}"
         )
+    interior_weights = np.asarray(material.dx_cell[1:-1], dtype=float)
+    electron_storage = Q * (
+        response.storage_response[:, :interior_count] @ interior_weights
+    )
+    hole_storage = Q * (
+        response.storage_response[:, interior_count:] @ interior_weights
+    )
     return QuasiFermiImpedanceResult(
         frequencies=response.frequencies,
         Z=response.impedance,
@@ -299,6 +314,8 @@ def run_quasi_fermi_impedance(
         max_relative_face_spread=response.max_relative_face_spread,
         reciprocal_condition=response.reciprocal_condition,
         backward_error=response.backward_error,
+        electron_storage_response_F_m2=electron_storage,
+        hole_storage_response_F_m2=hole_storage,
         dc_state=operating_point,
     )
 

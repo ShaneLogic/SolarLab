@@ -229,6 +229,11 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
             path.relative_to(root).as_posix()
             for path in (root / "perovskite_sim/data/nk").glob("*.csv")
         },
+        *{
+            path.relative_to(root).as_posix()
+            for pattern in ("*.yaml", "*.yml")
+            for path in (root / "perovskite_sim/data/references").rglob(pattern)
+        },
     }
     declared_resources = [str(item.get("path")) for item in resource_entries]
     if len(declared_resources) != len(set(declared_resources)):
