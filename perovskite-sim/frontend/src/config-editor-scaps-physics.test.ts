@@ -155,6 +155,7 @@ describe('SCAPS-validation physics round-trip', () => {
       interface_two_sided: true,
       interface_shared_occupancy: true,
       interface_plane_generation: true,
+      jv_solver_policy: 'cancellation_safe_qf_required',
     })
     renderDeviceEditor(container, c, 'full')
     const out = readDeviceEditor(c)
@@ -166,5 +167,21 @@ describe('SCAPS-validation physics round-trip', () => {
     expect(out.device.interface_two_sided).toBe(true)
     expect(out.device.interface_shared_occupancy).toBe(true)
     expect(out.device.interface_plane_generation).toBe(true)
+    expect(out.device.jv_solver_policy).toBe('cancellation_safe_qf_required')
+  })
+
+  it('preserves top-level electrical-grid and simulation-hint contracts', () => {
+    const c: DeviceConfig = {
+      ...cfg({ jv_solver_policy: 'cancellation_safe_qf_required' }),
+      simulation_hints: { min_N_grid: 200, notes: 'certified c-Si grid' },
+      electrical_grid: {
+        interval_weights: { n_emitter: 1, p_base: 4 },
+        alphas: { n_emitter: 2, p_base: 3 },
+      },
+    }
+    renderDeviceEditor(container, c, 'full')
+    const out = readDeviceEditor(c)
+    expect(out.simulation_hints).toEqual(c.simulation_hints)
+    expect(out.electrical_grid).toEqual(c.electrical_grid)
   })
 })

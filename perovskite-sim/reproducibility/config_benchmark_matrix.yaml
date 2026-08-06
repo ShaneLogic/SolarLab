@@ -18,13 +18,15 @@ resources:
   - path: perovskite_sim/data/references/csi_vannijen2025_pn_cv.yaml
     sha256: b4cd86bc232bd9b22a8aee80e564d9c3a19899f93cdb413965e801d3fab7c81c
   - path: perovskite_sim/data/nk/manifest.yaml
-    sha256: b442027f40477181058ea25079cfb640251fa9aeea89bc87b106dbca037ac1ea
+    sha256: 9fa638d24385a4602a8752a26a9affd55c9083e9680024902a7bd430f5c76ea1
   - path: perovskite_sim/data/nk/Ag.csv
     sha256: 4df8c2b7ca90d24be74477bc9e8a27ef83c2e7d42e2885465cdd87c70abbd3f3
   - path: perovskite_sim/data/nk/Au.csv
     sha256: f573ae5583ec88e572b97bac5bf4f4629e17ad2d52c5ed7d8afc815d952ee7f1
   - path: perovskite_sim/data/nk/C60.csv
     sha256: 60f7accc2cb26faac8d041861d1c4be5a15c244480c0e6d920acc980d938a68d
+  - path: perovskite_sim/data/nk/Cu.csv
+    sha256: 09fd0124c6d015d975a5eca1e9973b8416f02194e54df2cae63a322fbb013824
   - path: perovskite_sim/data/nk/FA_Cs_1p77.csv
     sha256: 0ee7387604904b252319a8e538bac101af3dad2b5c8a05b50fa2bda883578013
   - path: perovskite_sim/data/nk/FTO.csv
@@ -241,10 +243,13 @@ benchmarks:
     status: partial
     claim_level: partial_external_comparison
     source_url: https://doi.org/10.1038/s41560-019-0466-3
+    supplementary_url: https://static-content.springer.com/esm/art%3A10.1038%2Fs41560-019-0466-3/MediaObjects/41560_2019_466_MOESM1_ESM.pdf
     command: pytest -q -m 'slow or not slow' tests/integration/test_tandem_lin2019.py
     tests: [tests/integration/test_tandem_lin2019.py]
     node_ids:
       - tests/integration/test_tandem_lin2019.py::test_lin2019_absorber_thicknesses_follow_paper
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_source_stack_and_reported_thicknesses
+      - tests/integration/test_tandem_lin2019.py::test_lin2019_cu_optics_cover_protocol_from_native_source
       - tests/integration/test_tandem_lin2019.py::test_lin2019_voc_and_ff_within_tolerance
       - tests/integration/test_tandem_lin2019.py::test_lin2019_pce_within_tolerance
       - tests/integration/test_tandem_lin2019.py::test_lin2019_jsc_within_tolerance
@@ -268,16 +273,21 @@ benchmarks:
         provenance: >-
           Lin 2019 Table 2 reverse-scan champion tuple is reported for the
           0.073 cm2 device; 0.049 cm2 is the separately certified aperture.
+        supplementary_evidence: >-
+          Supplementary Table 3 reports Jsc=14.2-15.6 mA/cm2 across 26 tandem
+          devices and the 15.6 mA/cm2 champion central value. Supplementary
+          Figure 22 independently reports 15.77/15.90 mA/cm2 reverse/forward
+          certified scans for a distinct small-area sample.
     observed:
-      Voc_V: 2.038337
-      Jsc_A_m2: 144.563788
-      FF: 0.814590
-      PCE_percent: 24.0035
-      top_photon_budget_A_m2: 159.337
-      bottom_photon_budget_A_m2: 168.659
-      top_subcell_Jsc_A_m2: 144.564
-      bottom_subcell_Jsc_A_m2: 168.222
-      subcell_current_mismatch_percent: 15.13
+      Voc_V: 2.015846286901602
+      Jsc_A_m2: 145.74744780860283
+      FF: 0.7705290211429362
+      PCE_percent: 22.638485641430208
+      top_photon_budget_A_m2: 152.71911970548558
+      bottom_photon_budget_A_m2: 152.76325835909432
+      top_subcell_Jsc_A_m2: 145.74744780860283
+      bottom_subcell_Jsc_A_m2: 146.49032957761924
+      subcell_current_mismatch_percent: 0.5084091287996708
     regression_tolerance:
       Voc_V: 0.005
       Jsc_A_m2: 0.5
@@ -290,10 +300,11 @@ benchmarks:
       subcell_current_mismatch_percent: 0.2
     limitations:
       - wide-gap and SnPb optical constants are rigid-shift placeholders
-      - the simulated layer stack is not yet a faithful transcription of the paper stack
+      - the source layer sequence and reported thicknesses are transcribed, while unreported ITO/PTAA/PEDOT thicknesses remain explicit assumptions
+      - PTAA and BCP optical data and several electrical parameters remain explicit proxies
       - all four tandem metrics pass a broad 10 percent paper window
-      - the sub-cell currents remain 15.13 percent apart versus the 2 percent acceptance gate
-      - unequal collection efficiencies mean the mismatch is not attributable to optics alone
+      - both photon budgets pass and the sub-cell currents match within 0.508 percent
+      - the proxy-optics budgets remain about 2.1 percent below the champion 15.6 mA/cm2 central value, so exact champion parity is not claimed
   ionmonger-mesh:
     kind: numerical
     status: partial
@@ -514,6 +525,50 @@ benchmarks:
       - the Debye guard is necessary but does not certify depletion-region resolution
       - closure applies only to executable grid allocation, loader parity, and pre-integration guarding
       - physical steady-state evidence is tracked separately by csi-qf-internal-validation
+  csi-jv-driver-capability-boundary:
+    kind: numerical
+    status: pass
+    claim_level: explicit-production-driver-capability-boundary
+    command: >-
+      pytest -q -m 'slow or not slow'
+      tests/unit/experiments/test_jv_driver_capability.py
+      tests/unit/backend/test_solver_dispatch.py
+      tests/regression/test_csi_generic_state_cancellation.py
+    tests:
+      - tests/unit/experiments/test_jv_driver_capability.py
+      - tests/unit/backend/test_solver_dispatch.py
+      - tests/regression/test_csi_generic_state_cancellation.py
+    node_ids:
+      - tests/unit/experiments/test_jv_driver_capability.py::test_shipped_csi_config_enforces_grid_then_qf_driver_capability
+      - tests/unit/experiments/test_jv_driver_capability.py::test_qf_required_policy_rejects_general_drivers_before_solve
+      - tests/unit/experiments/test_jv_driver_capability.py::test_unvalidated_driver_override_is_explicit_and_diagnostic_only
+      - tests/unit/backend/test_solver_dispatch.py::test_stack_from_dict_plumbs_jv_solver_policy
+      - tests/unit/backend/test_solver_dispatch.py::test_dispatch_quasi_fermi_returns_certificate_bearing_jvresult
+      - tests/unit/backend/test_solver_dispatch.py::test_dispatch_quasi_fermi_rejects_dark_jv
+      - tests/unit/backend/test_solver_dispatch.py::test_jv_api_returns_422_for_policy_rejected_driver
+      - tests/regression/test_csi_generic_state_cancellation.py::test_certified_qf_state_exposes_density_sg_cancellation_boundary
+    configs: [configs/cSi_homojunction.yaml]
+    protocol:
+      production_driver: quasi_fermi
+      general_driver_override: explicit_diagnostic_only
+      routing: explicit_no_silent_substitution
+      rejection_status: HTTP_422
+    observed:
+      N_grid: 200
+      V_app_V: 0.0
+      illumination: one_sun
+      qf_max_normalized_cell_residual: 5.822024703712662e-13
+      qf_electron_continuity_bound_A_m2: 5.802618467417451e-10
+      qf_hole_continuity_bound_A_m2: 3.5128574702171873e-09
+      qf_face_current_spread_A_m2: 3.4140157367801294e-10
+      generic_density_sg_max_peak_scaled_residual: 33.081875833442986
+      generic_density_sg_electron_continuity_bound_A_m2: 3.1847756389691453
+      generic_density_sg_hole_continuity_bound_A_m2: 0.0007097273912835721
+    limitations:
+      - fail-closed routing does not repair the transient or algebraic driver root cause
+      - the same certified QF state produces an O(1) density-SG continuity defect after its split QF increments are collapsed
+      - the QF solver remains limited to its audited local homojunction physics subset
+      - this is a software capability contract, not an external c-Si validation
   csi-qf-internal-validation:
     kind: numerical
     status: pass
@@ -891,13 +946,14 @@ benchmarks:
 
 configs:
   - path: configs/cSi_homojunction.yaml
-    sha256: 6fff6a615f6521dd5d178272362b19ec2fb883b5523787b9e238bf86c139b8c6
-    semantic_sha256: bd78c5657031c06d84dcd7457f1685d7b9af93f4938f06fd4b0d13793cb2e64f
+    sha256: c179e087a6623c7d19dfc7f6a3af056e6fcd5a0382e2e2b0e1e26dc08d883c99
+    semantic_sha256: 33eb87b792f84b0c75a8b7f03804f99e3b5beb222963a4ba5a7d5f323b49c61b
     schema: standard-device-v1
     status: partial
     benchmarks:
       - loader-contract
       - csi-grid-envelope-gap
+      - csi-jv-driver-capability-boundary
       - csi-qf-internal-validation
       - csi-qf-frequency-domain-cv
   - path: configs/csi_vannijen2025_pn_cv.yaml
@@ -979,14 +1035,14 @@ configs:
     status: partial
     benchmarks: [loader-contract, tmm-jsc-regression]
   - path: configs/nip_SnPb_1p22.yaml
-    sha256: 9dc266a25398b451d2984c6c04d5e312d6d1c95121d617d564fc2503c5b2b4a4
-    semantic_sha256: 18a3d418fa535f7627c5a8fda611a3b9be375bc057ff89e6b1f86784d042fba6
+    sha256: 2b5271f1c0f943074ea8de647e0e57c1d456e43f785e6123eb73d616c3e11c1d
+    semantic_sha256: a89144913a27f5be6ee7f3324635083826a42bd615beb4ba357bf136a5bb8735
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, lin2019-tandem]
   - path: configs/nip_wideGap_FACs_1p77.yaml
-    sha256: 30cb0a45d28de39236fb7845a8125bc61f9eb1b903c761cd85d2fc47c0f9ceb2
-    semantic_sha256: 13a2e28b51a169371329460a7bfe5b447d6797a8882462aa56b555e6f615cacb
+    sha256: 063c10f521a9943bd63728687ca383b2693ae437071aaedbeb98cdbe26e96147
+    semantic_sha256: 33ad11f46832f2e7d905cae548df4f8e7c1d6de7f5239a628b52fabff6b83075
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, lin2019-tandem]
@@ -1051,8 +1107,8 @@ configs:
     status: demo
     benchmarks: [loader-contract]
   - path: configs/tandem_lin2019.yaml
-    sha256: 3d64cf1532c4f35d11d264c0c888ae5def353c454de441cc42a33bc7e91af629
-    semantic_sha256: 637bcd7b806d2dc8c5a39e6eb4420d001a06e69d4f15eead8c53bd14cf379854
+    sha256: 2eb26eb1902d0b9fbaf6e1b019dc79a163d2989adb13654c90ef508b4fdaded0
+    semantic_sha256: 80912db53c3c7129a6adb5e7454e08e4a15c8fc0ea787e662cea3fc4036d5c49
     schema: tandem-v1
     status: partial
     benchmarks: [loader-contract, lin2019-tandem]

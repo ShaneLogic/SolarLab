@@ -104,6 +104,14 @@ export interface InterfaceDefectFields {
 }
 
 export interface DeviceConfig {
+  simulation_hints?: {
+    min_N_grid?: number
+    notes?: string
+  }
+  electrical_grid?: {
+    interval_weights?: Record<string, number>
+    alphas?: Record<string, number>
+  }
   device: {
     V_bi: number
     Phi: number
@@ -164,6 +172,7 @@ export interface DeviceConfig {
     interface_two_sided?: boolean
     interface_shared_occupancy?: boolean
     interface_plane_generation?: boolean
+    jv_solver_policy?: 'general' | 'cancellation_safe_qf_required'
   }
   layers: LayerConfig[]
 }

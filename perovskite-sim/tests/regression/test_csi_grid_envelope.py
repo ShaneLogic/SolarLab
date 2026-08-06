@@ -101,25 +101,29 @@ def test_underresolved_overrides_are_explicit_and_reach_both_drivers(monkeypatch
         raise IntegrationReached
 
     monkeypatch.setattr(jv_module, "solve_illuminated_ss", stop_at_integration)
-    with pytest.raises(IntegrationReached):
-        run_jv_sweep(
-            stack,
-            N_grid=100,
-            n_points=2,
-            V_max=0.1,
-            allow_underresolved_grid=True,
-            v_max_max_attempts=2,
-        )
+    with pytest.warns(jv_module.JVCertificationWarning, match="diagnostic"):
+        with pytest.raises(IntegrationReached):
+            run_jv_sweep(
+                stack,
+                N_grid=100,
+                n_points=2,
+                V_max=0.1,
+                allow_underresolved_grid=True,
+                allow_unvalidated_driver=True,
+                v_max_max_attempts=2,
+            )
 
     monkeypatch.setattr(ss_module, "solve_steady_state", stop_at_integration)
-    with pytest.raises(IntegrationReached):
-        run_jv_sweep_ss(
-            stack,
-            N_grid=100,
-            n_points=2,
-            V_max=0.1,
-            allow_underresolved_grid=True,
-        )
+    with pytest.warns(jv_module.JVCertificationWarning, match="diagnostic"):
+        with pytest.raises(IntegrationReached):
+            run_jv_sweep_ss(
+                stack,
+                N_grid=100,
+                n_points=2,
+                V_max=0.1,
+                allow_underresolved_grid=True,
+                allow_unvalidated_driver=True,
+            )
 
 
 def test_declared_csi_minimum_meets_debye_guard_and_has_finite_seed():

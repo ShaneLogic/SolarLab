@@ -32,6 +32,10 @@ device:
   # Positive magnitude synchronized to abs(compute_V_bi()); the solver restores
   # the n-left junction polarity at the Poisson boundary.
   V_bi: 0.8928964399850017
+  # This high-conductivity wafer stack is production-certified only in the
+  # cancellation-safe quasi-Fermi formulation. General J-V drivers require an
+  # explicit diagnostic override and do not carry the QF convergence claim.
+  jv_solver_policy: cancellation_safe_qf_required
   Phi: 2.7e21   # AM1.5G above Eg=1.12 eV
   interfaces:
     - [1.0e2, 1.0e2]   # n+/p junction: low SRV (bulk-limited Si)

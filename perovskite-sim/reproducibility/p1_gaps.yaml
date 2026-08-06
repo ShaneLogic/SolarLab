@@ -1,4 +1,23 @@
 schema_version: 1
+phase: P1
+phase_status: closed_with_p2_deferrals
+closure_date: 2026-08-07
+closure_policy: >-
+  P1 has no untriaged open item. A closed item satisfies its P1 acceptance
+  contract; a deferred_to_p2 item remains an explicit scientific limitation
+  with its original acceptance gates intact and must not be presented as
+  validated, fixed, or publication-ready.
+closure_summary:
+  closed:
+    - cigs-2um-graded-notch
+    - scaps-low-doping-etl
+    - lin2019-tandem-jsc-pce
+    - ionmonger-residual-ss-96
+    - csi-qf-jv-grid-convergence
+  deferred_to_p2:
+    - csi-transient-jv-grid-envelope
+    - csi-mott-schottky-convergence
+    - external-solver-curve-crosscheck
 gaps:
   - id: cigs-2um-graded-notch
     status: closed
@@ -64,27 +83,38 @@ gaps:
       - Voc is below the absorber thermodynamic ceiling
       - disabling the metal reservoir reproduces an explicit no-crossing diagnosis
   - id: lin2019-tandem-jsc-pce
-    status: open
+    status: closed
     classification: optics-and-current-matching
     config: configs/tandem_lin2019.yaml
     reproduction: >-
       pytest -q -m 'slow or not slow'
       tests/integration/test_tandem_lin2019.py
     current_evidence: >-
-      Restoring the paper-reported 300/800 nm absorber thicknesses gives
-      Voc=2.038337 V, Jsc=144.563788 A/m2, FF=0.814590, and PCE=24.0035
-      percent, all inside the declared 10 percent paper window. The top and
-      bottom photon budgets are 159.337/168.659 A/m2 and are respected, but
-      sub-cell Jsc values 144.564/168.222 A/m2 remain 15.13 percent apart.
-    next_experiment: >-
-      Replace proxy layers and rigid-shift absorber n,k files with a
-      provenance-preserved transcription of the paper's glass/ITO/PTAA/WBG/
-      C60/ALD-SnO2/Au/PEDOT:PSS/NBG/C60/BCP/Cu stack. Keep the 300/800 nm
-      source thicknesses fixed while testing current matching under hard
-      photon-budget constraints and separate transport/current-continuity
-      certificates for both sub-cells.
+      The source sequence glass/ITO/PTAA/WBG/C60/ALD-SnO2/Au/PEDOT:PSS/NBG/
+      C60/BCP/Cu and all paper-reported thicknesses are executable. With the
+      fixed 300/800 nm absorbers, the live solve gives Voc=2.015846 V,
+      Jsc=145.747448 A/m2, FF=0.770529, and PCE=22.6385 percent, all inside the
+      declared 10 percent paper window. The top/bottom photon budgets are
+      152.719/152.763 A/m2 and are respected; sub-cell Jsc values are
+      145.747/146.490 A/m2, only 0.508 percent apart.
+    resolution: >-
+      Restore the source layer sequence without fitting either absorber
+      thickness, account for optical-only substrate-prefix coordinates in the
+      combined TMM, use native Johnson-Christy Cu data for the 100 nm back
+      contact, and retain explicit surrogates only where no traceable local
+      table is available. Remove the strict xfail because every pre-declared
+      acceptance gate now passes rather than widening a tolerance.
+    remaining_limitation: >-
+      Closure is a partial external comparison, not a parameter-predictive
+      reproduction. Both absorber n,k tables are rigid MAPbI3 shifts; PTAA and
+      BCP optical data, unreported ITO/PTAA/PEDOT thicknesses, contact energetics,
+      and several transport parameters remain explicit modelling assumptions.
+      The 152.719/152.763 A/m2 proxy-optics budgets support the declared 10
+      percent comparison window and the paper's 14.2-15.6 mA/cm2 batch range,
+      but remain about 2.1 percent below the 15.6 mA/cm2 champion central value.
     acceptance:
       - both sub-cells collect no more than their absorbed-photon budgets
+      - each absorbed-photon budget supports the lower edge of the declared paper window
       - top and bottom short-circuit currents match within 2 percent
       - Voc, Jsc, FF, and PCE all lie inside the declared 10 percent paper window
       - the strict xfail is removed rather than widened
@@ -155,11 +185,13 @@ gaps:
       - finest-pair Jsc, Voc, FF, and PCE meet their declared convergence limits
       - nested 10 mV and 5 mV maximum-power sampling changes PCE by less than 0.1 percent
   - id: csi-transient-jv-grid-envelope
-    status: open
+    status: deferred_to_p2
     classification: default-driver-numerical-runtime-envelope
     config: configs/cSi_homojunction.yaml
     reproduction: >-
-      pytest -q tests/regression/test_csi_grid_envelope.py
+      pytest -q -m 'slow or not slow'
+      tests/regression/test_csi_grid_envelope.py
+      tests/regression/test_csi_generic_state_cancellation.py
       tests/integration/backend/test_user_configs_api.py::test_csi_underresolved_grid_returns_actionable_client_error
     current_evidence: >-
       The executable 1:4 emitter/base grid removes the old equal-layer
@@ -167,19 +199,50 @@ gaps:
       backend returns an actionable 422. N_grid=200 is the minimum admissible
       request. The separate opt-in QF J-V certificate demonstrates convergence
       of that restricted formulation only; no N=200/300/400 voltage-domain
-      certificate exists for the default transient or algebraic driver.
+      certificate exists for the default transient or algebraic driver. At
+      N=200 on a 25-point 0-0.6 V protocol, transient sweeps completed at both
+      5 V/s and 1 V/s but did not approach a common physical branch: forward
+      PCE changed from 17.316 to 17.803 percent, reverse PCE changed from 19.120
+      to 15.131 percent, and the 1 V/s hysteresis index was -0.1766. The
+      algebraic V=0 solve is also uncertified: its best normalized Newton
+      residual was 61.2 and the transient fallback residual was 65.7 against a
+      guard of 1. These are capability-boundary evidence, not converged device
+      results. The shipped stack now declares
+      cancellation_safe_qf_required: transient, algebraic J-V, and algebraic
+      Voc entry points fail closed after the grid guard and before solving;
+      their explicit override emits a diagnostic-only certification warning.
+      Backend and frontend expose quasi_fermi as a named solver without silent
+      substitution, the direct API maps policy rejection to HTTP 422, and the
+      editor preserves the certified electrical-grid allocation and minimum.
+      The numerical root cause is now isolated on the same N=200, V=0 one-sun
+      physical state: split QF evaluation has normalized residual 5.82e-13,
+      electron/hole continuity bounds 5.80e-10/3.51e-9 A/m2, and all-face
+      spread 3.41e-10 A/m2. Collapsing that exact state to absolute n,p and
+      recomputing the ordinary density-SG RHS gives residual 33.08 and
+      electron/hole bounds 3.18/7.10e-4 A/m2. The failure is therefore loss of
+      resolvable QF increments in the state/current representation, not an
+      uncertified seed or an insufficient transient settling time.
     next_experiment: >-
-      Run the registered 42-point voltage protocol through the default driver
-      on N=200/300/400 only after establishing a bounded high-conductivity
-      runtime envelope. Require the same terminal-current, continuity, Voc,
-      FF, PCE, and curve-level gates; do not use the QF result as a substitute.
+      Preserve QF reference and increment information in a dynamic mass-matrix
+      or mathematically equivalent compensated face-current representation,
+      including every storage variable and boundary current supported by the
+      general model. Then run the registered 42-point N=200/300/400 protocol
+      with the same terminal-current, continuity, Voc, FF, PCE, and curve-level
+      gates. Do not remove the capability policy until the upgraded general
+      drivers independently satisfy every acceptance gate.
+    deferral_reason: >-
+      P1 isolated the cancellation root cause and made every unsupported
+      production entry point fail closed. Repair requires a general nonlinear
+      dynamic mass-matrix or equivalent compensated state covering all storage,
+      interface, contact, and boundary-current features; that is a new solver
+      capability, not a bounded correction to the certified P1 baseline.
     acceptance:
       - under-resolved default-driver requests fail before integration unless explicitly overridden
       - every retained transient or algebraic voltage point has its own convergence certificate
       - N=200/300/400 default-driver curves all bracket Voc and obey the photon budget
       - finest-pair Jsc, Voc, FF, PCE, and pointwise current changes meet declared limits
   - id: csi-mott-schottky-convergence
-    status: open
+    status: deferred_to_p2
     classification: cv-internal-closure-and-external-reference
     config: configs/cSi_homojunction.yaml
     reproduction: |-
@@ -226,6 +289,13 @@ gaps:
       without calibration. Extend the frequency-domain state to mobile ions or
       other general-model features only after each added storage variable and
       boundary current has its own capability certificate.
+    deferral_reason: >-
+      P1 closed the internal QF frequency-domain convergence and charge-
+      identity problem, then completed an independent no-calibration comparison.
+      Strict parity cannot be decided from a 1-D/full-area model against a 2-D
+      partial-contact source whose proprietary Sentaurus deck is unavailable.
+      A compatible external geometry or public full deck is an external P2
+      dependency rather than a remaining internal numerical ambiguity.
     acceptance:
       - every retained bias has residual-certified dark DC and frequency-domain linear-solve certificates
       - all-face total admittance is continuous and the complex solve has a bounded backward error
@@ -237,7 +307,7 @@ gaps:
       - the apparent intercept gap is reconciled with p-n distributed-carrier theory
       - a compatible external c-Si C-V curve passes pointwise comparison without calibration
   - id: external-solver-curve-crosscheck
-    status: open
+    status: deferred_to_p2
     classification: external-validation-and-provenance
     configs:
       - configs/ionmonger_courtier2019_repro.yaml
@@ -256,6 +326,13 @@ gaps:
       revisions, execute their documented preconditioning and scan protocols,
       and store voltage/current arrays with units, hashes, and extraction or
       solver tolerances before comparing SolarLab on a common voltage grid.
+    deferral_reason: >-
+      The exact publication-era IonMonger and Driftfusion revisions, input
+      decks, preconditioning histories, and immutable voltage/current arrays
+      are not present in the repository or supplied by the publications.
+      P1 therefore preserves the calibrated presets as partial evidence and
+      defers strict independent curve parity until those external artifacts can
+      be obtained and content-addressed.
     acceptance:
       - exact external solver revisions and input files are content-addressed
       - source preconditioning and scan-rate protocols are reproduced

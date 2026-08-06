@@ -295,6 +295,11 @@ class DeviceStack:
     # compatibility. Empty tuples retain the legacy grid exactly.
     grid_interval_weights: tuple[float, ...] = ()
     grid_alphas: tuple[float, ...] = ()
+    # Production J-V driver capability required by this stack. ``general``
+    # permits the transient and algebraic drivers. The QF-required policy is
+    # reserved for cancellation-sensitive stacks whose physical regression
+    # has only been certified in quasi-Fermi variables.
+    jv_solver_policy: str = "general"
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))
@@ -302,6 +307,15 @@ class DeviceStack:
             self, "grid_interval_weights", tuple(self.grid_interval_weights)
         )
         object.__setattr__(self, "grid_alphas", tuple(self.grid_alphas))
+        if self.jv_solver_policy not in (
+            "general",
+            "cancellation_safe_qf_required",
+        ):
+            raise ValueError(
+                "jv_solver_policy must be 'general' or "
+                "'cancellation_safe_qf_required', got "
+                f"{self.jv_solver_policy!r}"
+            )
 
     @property
     def total_thickness(self) -> float:

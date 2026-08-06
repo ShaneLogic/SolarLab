@@ -36,7 +36,13 @@ from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
 from perovskite_sim.experiments import mott_schottky as ms_exp
 from perovskite_sim.experiments.steady_state import run_jv_sweep_ss
-from perovskite_sim.discretization.grid import GridResolutionError
+from perovskite_sim.experiments.quasi_fermi_steady_state import (
+    solve_quasi_fermi_jv_sweep,
+)
+from perovskite_sim.discretization.grid import (
+    GridResolutionError,
+    require_thick_layer_interface_resolution,
+)
 from perovskite_sim.models.config_loader import (
     electrical_grid_from_config_dict,
     interfaces_from_device_dict,
@@ -211,6 +217,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         Phi=float(dev.get("Phi", 2.5e21)),
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,
+        jv_solver_policy=str(dev.get("jv_solver_policy", "general")),
         interfaces=interfaces,
         interface_defects=interface_defects,
         T=float(dev.get("T", 300.0)),
@@ -333,6 +340,7 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         "band_grading": stack.band_grading,
         "interface_tunneling": stack.interface_tunneling,
         "tunnel_mass_eff": stack.tunnel_mass_eff,
+        "jv_solver_policy": stack.jv_solver_policy,
         "S_n_left": stack.S_n_left,
         "S_p_left": stack.S_p_left,
         "S_n_right": stack.S_n_right,
@@ -657,7 +665,8 @@ class JVRequest(BaseModel):
     v_rate: float = 1.0
     V_max: Optional[float] = None
     # "transient" (default) = legacy Radau forward/reverse sweep;
-    # "steady_state" = ion-free Newton driver (run_jv_sweep_ss).
+    # "steady_state" = ion-free Newton driver (run_jv_sweep_ss);
+    # "quasi_fermi" = cancellation-safe, certificate-bearing QF driver.
     solver: str = "transient"
     iface_states: bool = False  # SS driver only: interface-plane carrier states
 
@@ -677,11 +686,10 @@ def _run_jv_dispatch(
     """Route a J-V sweep to the requested solver.
 
     ``solver="transient"`` (default) runs the legacy Radau forward/reverse
-    sweep — unchanged behaviour. ``solver="steady_state"`` runs the ion-free
-    steady-state Newton driver; its single zero-scan-rate curve has no
-    hysteresis by construction, so it is wrapped in a ``JVResult`` with
-    forward == reverse and ``hysteresis_index = 0.0`` — same response shape
-    the frontend already consumes.
+    sweep. ``solver="steady_state"`` and ``solver="quasi_fermi"`` produce one
+    zero-scan-rate curve, so they are wrapped with forward == reverse and zero
+    hysteresis. Stack policy is enforced inside each driver; no implicit
+    solver substitution is permitted.
     """
     if solver == "steady_state":
         ss = run_jv_sweep_ss(
@@ -697,6 +705,74 @@ def _run_jv_dispatch(
             V_fwd=ss.V, J_fwd=ss.J, V_rev=ss.V, J_rev=ss.J,
             metrics_fwd=ss.metrics, metrics_rev=ss.metrics,
             hysteresis_index=0.0,
+        )
+    if solver == "quasi_fermi":
+        if not illuminated:
+            raise ValueError(
+                "solver='quasi_fermi' currently certifies illuminated J-V "
+                "only; use the transient solver for dark J-V"
+            )
+        x = jv_sweep.build_electrical_grid(stack, N_grid)
+        require_thick_layer_interface_resolution(
+            x,
+            stack,
+            N_grid=N_grid,
+            allow_underresolved_grid=False,
+        )
+        jv_sweep.require_jv_driver_capability(
+            stack,
+            requested_driver="quasi_fermi",
+        )
+        qf = solve_quasi_fermi_jv_sweep(
+            x,
+            stack,
+            np.linspace(
+                0.0,
+                V_max if V_max is not None else 1.25,
+                n_points,
+            ),
+            stop_after_voc=True,
+        )
+
+        def _statuses(branch: str):
+            return tuple(
+                jv_sweep.JVPointStatus(
+                    branch=branch,
+                    index=index,
+                    voltage=float(point.V_app),
+                    valid=bool(point.certified),
+                    attempted_currents=(float(point.current_A_m2),),
+                    reason_code="certified_qf",
+                    message="cancellation-safe quasi-Fermi certificate",
+                    candidate_current=float(point.current_A_m2),
+                    solver="quasi_fermi",
+                    max_normalized_residual=float(
+                        point.max_normalized_cell_residual
+                    ),
+                    electron_continuity_bound_A_m2=float(
+                        point.electron_continuity_bound_A_m2
+                    ),
+                    hole_continuity_bound_A_m2=float(
+                        point.hole_continuity_bound_A_m2
+                    ),
+                    face_current_spread_A_m2=float(
+                        point.face_current_spread_A_m2
+                    ),
+                    poisson_residual=float(point.poisson_residual),
+                )
+                for index, point in enumerate(qf.points)
+            )
+
+        return jv_sweep.JVResult(
+            V_fwd=qf.voltages_V,
+            J_fwd=qf.currents_A_m2,
+            V_rev=qf.voltages_V,
+            J_rev=qf.currents_A_m2,
+            metrics_fwd=qf.metrics,
+            metrics_rev=qf.metrics,
+            hysteresis_index=0.0,
+            status_fwd=_statuses("jv_forward"),
+            status_rev=_statuses("jv_reverse"),
         )
     if solver != "transient":
         raise ValueError(f"unknown solver {solver!r}")
@@ -718,7 +794,7 @@ def run_jv(req: JVRequest):
         return {"status": "ok", "result": to_serializable(result)}
     except HTTPException:
         raise
-    except GridResolutionError as e:
+    except (GridResolutionError, jv_sweep.JVDriverCapabilityError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         print("[JV API Exception]", e)

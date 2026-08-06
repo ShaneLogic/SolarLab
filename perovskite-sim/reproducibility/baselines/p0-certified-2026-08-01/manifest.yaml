@@ -14,6 +14,17 @@ patch:
   size_bytes: 107773
   reverse_apply_check: passed
 
+target_blob_snapshots:
+  - object_id: 4a08dc840230df0a5a3af4f2b76cf63bd53cc781
+    path: reproducibility/baselines/p0-certified-2026-08-01/target_blobs/4a08dc840230df0a5a3af4f2b76cf63bd53cc781.blob
+    sha256: 86743fca2eeddb7761cd89f0191f0df845bc951a0b7084d825945d5804142a2e
+  - object_id: 88cda463b0010597bae7a77a90c7e97afea25c52
+    path: reproducibility/baselines/p0-certified-2026-08-01/target_blobs/88cda463b0010597bae7a77a90c7e97afea25c52.blob
+    sha256: a7e92cd04b61abb8e56049bf83b46cf5c365332207e66671c04e5e7125fbe262
+  - object_id: ba24cdba780402b6a092d3500dc24b22cfb78ffd
+    path: reproducibility/baselines/p0-certified-2026-08-01/target_blobs/ba24cdba780402b6a092d3500dc24b22cfb78ffd.blob
+    sha256: 594f420a732403f79cd50e3f0b2e7d61d1ccc587ead85c6db009567e6fbd42c2
+
 environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5

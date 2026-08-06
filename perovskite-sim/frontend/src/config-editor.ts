@@ -761,13 +761,20 @@ export function readDeviceEditor(
     'interface_two_sided',
     'interface_shared_occupancy',
     'interface_plane_generation',
+    'jv_solver_policy',
   ] as const
-  const hiddenPhysicsField: Record<string, boolean | number> = {}
+  const hiddenPhysicsField: Record<string, boolean | number | string> = {}
   for (const key of hiddenPhysicsKeys) {
     const value = original.device[key]
     if (value !== undefined) hiddenPhysicsField[key] = value
   }
   return {
+    ...(original.simulation_hints === undefined
+      ? {}
+      : { simulation_hints: original.simulation_hints }),
+    ...(original.electrical_grid === undefined
+      ? {}
+      : { electrical_grid: original.electrical_grid }),
     device: {
       V_bi: parseNum('dev-Vbi', original.device.V_bi),
       Phi: parseNum('dev-Phi', original.device.Phi),

@@ -325,6 +325,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         Phi=_f(dev.get("Phi", 2.5e21)),
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,
+        jv_solver_policy=str(dev.get("jv_solver_policy", "general")),
         interfaces=interfaces,
         interface_defects=interface_defects,
         T=_f(dev.get("T", 300.0)),

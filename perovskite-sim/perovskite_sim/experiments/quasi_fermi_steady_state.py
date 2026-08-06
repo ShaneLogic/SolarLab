@@ -922,13 +922,16 @@ def solve_quasi_fermi_jv_sweep(
     continuity_tolerance_A_m2: float = 1.0e-4,
     current_spread_tolerance_A_m2: float = 1.0e-4,
     poisson_residual_tolerance: float = 1.0e-8,
+    stop_after_voc: bool = False,
 ) -> QuasiFermiJVSweepResult:
     """Solve a strictly increasing illuminated J-V grid by QF continuation.
 
     The first voltage uses the full illumination continuation. Each later
     voltage maps the preceding certified QF potentials onto its own contact
     boundary problem and solves directly at one sun. No point is retained if
-    its local physical certificate fails.
+    its local physical certificate fails. With ``stop_after_voc=True``, the
+    sweep stops immediately after the first certified current sign change;
+    the retained 0-to-Voc arc still determines all J-V figures of merit.
     """
     voltages = np.asarray(voltages_V, dtype=float)
     if (
@@ -970,17 +973,24 @@ def solve_quasi_fermi_jv_sweep(
         )
         points.append(point)
         previous = point
+        if (
+            stop_after_voc
+            and len(points) >= 2
+            and points[-2].current_A_m2 > 0.0 >= point.current_A_m2
+        ):
+            break
 
+    retained_voltages = voltages[: len(points)]
     currents = np.asarray([point.current_A_m2 for point in points], dtype=float)
     metrics = compute_metrics(
-        voltages,
+        retained_voltages,
         currents,
         P_in=P_in_W_m2,
         V_oc_max=thermodynamic_voc_ceiling(stack),
         validity=[point.certified for point in points],
     )
     return QuasiFermiJVSweepResult(
-        voltages_V=voltages.copy(),
+        voltages_V=retained_voltages.copy(),
         currents_A_m2=currents,
         points=tuple(points),
         metrics=metrics,

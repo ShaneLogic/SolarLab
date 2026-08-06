@@ -77,6 +77,7 @@ from perovskite_sim.experiments.jv_sweep import (
     _compute_current_ss,
     build_electrical_grid,
     compute_metrics,
+    require_jv_driver_capability,
 )
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.constants import Q
@@ -911,6 +912,7 @@ def run_jv_sweep_ss(
     iface_states: bool = False,
     stop_after_voc: bool = False,
     allow_underresolved_grid: bool = False,
+    allow_unvalidated_driver: bool = False,
     progress=None,
 ) -> JVSweepSSResult:
     """Steady-state J-V: voltage continuation with warm starts.
@@ -925,6 +927,10 @@ def run_jv_sweep_ss(
     fallback grinds for minutes — so when only the figures of merit are
     needed, set this True to keep the sweep fast and robust for any
     ``V_max``. All four metrics are fully determined by the 0->V_oc arc.
+
+    ``allow_unvalidated_driver`` is diagnostic-only. It permits this
+    algebraic driver on a stack whose production policy requires the
+    cancellation-safe quasi-Fermi formulation; it does not certify output.
     """
     x = _grid_for(stack, N_grid)
     require_thick_layer_interface_resolution(
@@ -932,6 +938,11 @@ def run_jv_sweep_ss(
         stack,
         N_grid=N_grid,
         allow_underresolved_grid=allow_underresolved_grid,
+    )
+    require_jv_driver_capability(
+        stack,
+        requested_driver="steady_state",
+        allow_unvalidated_driver=allow_unvalidated_driver,
     )
     mat = dataclasses.replace(
         build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
@@ -984,6 +995,7 @@ def solve_voc_ss(
     tol_v: float = 2.0e-4,
     iface_states: bool = False,
     allow_underresolved_grid: bool = False,
+    allow_unvalidated_driver: bool = False,
 ) -> float:
     """Direct V_oc: bisection on the steady-state J(V) zero crossing.
 
@@ -997,6 +1009,11 @@ def solve_voc_ss(
         stack,
         N_grid=N_grid,
         allow_underresolved_grid=allow_underresolved_grid,
+    )
+    require_jv_driver_capability(
+        stack,
+        requested_driver="steady_state_voc",
+        allow_unvalidated_driver=allow_unvalidated_driver,
     )
     mat = dataclasses.replace(
         build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)

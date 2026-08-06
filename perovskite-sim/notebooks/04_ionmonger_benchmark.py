@@ -5,8 +5,9 @@ Reference: "How transport layer properties affect perovskite solar cell
 performance: insights from a coupled charge transport/ion migration model"
 Energy Environ. Sci., 2019, DOI: 10.1039/C8EE01576G
 
-This script validates the physics engine against published IonMonger results
-and theoretical limits for a MAPbI3 perovskite solar cell.
+This is an exploratory paper-informed diagnostic, not a certification lane.
+The machine-readable evidence levels and current commands live in
+``reproducibility/config_benchmark_matrix.yaml``.
 """
 import sys, os, time
 import numpy as np
@@ -17,8 +18,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep, compute_metrics
 from perovskite_sim.experiments.impedance import run_impedance
 from perovskite_sim.solver.mol import (
-    StateVec, _build_layerwise_arrays, _equilibrium_bc,
-    _charge_density, assemble_rhs
+    StateVec, _charge_density, assemble_rhs, build_material_arrays,
 )
 from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
@@ -88,10 +88,13 @@ N = len(x)
 
 y_eq = solve_equilibrium(x, stack)
 sv = StateVec.unpack(y_eq, N)
+mat = build_material_arrays(x, stack)
 
 # Check charge neutrality
-eps_r, _, _, P_ion0, N_A, N_D, _, _, _ = _build_layerwise_arrays(x, stack)
-rho = _charge_density(sv.p, sv.n, sv.P, P_ion0, N_A, N_D)
+rho = _charge_density(
+    sv.p, sv.n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+    P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
+)
 max_rho = np.max(np.abs(rho))
 print(f"Max |rho| at equilibrium: {max_rho:.3e} C/m3")
 
@@ -103,7 +106,7 @@ ratio = np_product / ni_sq
 print(f"Absorber n*p / ni^2: min={ratio.min():.4f}, max={ratio.max():.4f} (should be ~1)")
 
 # Check boundary conditions
-n_L, p_L, n_R, p_R = _equilibrium_bc(stack, x)
+n_L, p_L, n_R, p_R = mat.n_L, mat.p_L, mat.n_R, mat.p_R
 print(f"Left contact (HTL):  n={n_L:.3e}, p={p_L:.3e} (N_A={stack.layers[0].params.N_A:.1e})")
 print(f"Right contact (ETL): n={n_R:.3e}, p={p_R:.3e} (N_D={stack.layers[2].params.N_D:.1e})")
 
@@ -113,7 +116,7 @@ print(f"Right contact (ETL): n={n_R:.3e}, p={p_R:.3e} (N_D={stack.layers[2].para
 print("\n[4] BUILT-IN POTENTIAL CHECK")
 print("-" * 40)
 
-phi_eq = solve_poisson(x, eps_r, rho, phi_left=0.0, phi_right=stack.V_bi)
+phi_eq = solve_poisson(x, mat.eps_r, rho, phi_left=0.0, phi_right=stack.V_bi)
 print(f"phi(0) = {phi_eq[0]:.4f} V, phi(L) = {phi_eq[-1]:.4f} V")
 print(f"Built-in voltage: {phi_eq[-1] - phi_eq[0]:.4f} V (config: {stack.V_bi} V)")
 
@@ -145,9 +148,9 @@ print(f"Max G in absorber: {np.max(G[absorber_mask]):.3e} m-3 s-1")
 print(f"Collection efficiency if J_sc = J_gen: {J_gen/J_sc_max*100:.1f}%")
 
 # ──────────────────────────────────────────────────────────
-# 6. J-V SWEEP: Slow scan (quasi-static)
+# 6. J-V SWEEP: accelerated diagnostic scan
 # ──────────────────────────────────────────────────────────
-print("\n[6] J-V SWEEP (v_rate = 0.04 V/s, IonMonger reference scan rate)")
+print("\n[6] J-V SWEEP (v_rate = 1.0 V/s; paper reference is about 0.04 V/s)")
 print("-" * 40)
 
 t0 = time.time()

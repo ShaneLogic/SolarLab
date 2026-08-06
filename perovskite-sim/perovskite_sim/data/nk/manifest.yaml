@@ -44,6 +44,19 @@ C60:
     in-loop; parametric fit is the approved fallback.
     5 nm uniform grid, 300-1000 nm, 141 rows.
 
+Cu:
+  source: "refractiveindex.info / Johnson & Christy 1972"
+  reference: "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370 (1972)"
+  wavelength_range_nm: [187.9, 1937.0]
+  notes: >
+    Native room-temperature tabulated n,k for copper from the public-domain
+    refractiveindex.info Johnson dataset
+    (database/data/main/Cu/nk/Johnson.yml). Values are retained on the source
+    wavelength grid rather than resampled; load_nk performs the runtime linear
+    interpolation. The full 187.9-1937 nm source table is frozen so the
+    complete 300-1100 nm Lin tandem protocol is interpolated, never clamped,
+    without substituting Ag or Au for the reported 100 nm Cu contact.
+
 FTO:
   source: synthetic-Drude-Lorentz
   reference: "Drude-Lorentz parametric model; parameters calibrated to FTO films reported in Filipic et al. 2015, Opt. Express 23, A263 and Bhachu et al. 2016"

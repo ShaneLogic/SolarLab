@@ -26,7 +26,7 @@ def _matrix():
 def test_matrix_covers_and_loads_every_shipped_config():
     report = validate_matrix(ROOT)
     assert report["configs"] == 29
-    assert report["resources"] == 20
+    assert report["resources"] == 21
     assert report["schemas"] == {
         "standard-device-v1": 24,
         "scaps-device-v1": 4,
@@ -197,9 +197,27 @@ def test_every_p1_gap_has_a_reproduction_and_acceptance_contract():
     assert gaps["cigs-2um-graded-notch"]["resolution"]
     assert gaps["csi-qf-jv-grid-convergence"]["status"] == "closed"
     assert gaps["csi-qf-jv-grid-convergence"]["resolution"]
-    assert gaps["csi-mott-schottky-convergence"]["status"] == "open"
-    assert gaps["csi-mott-schottky-convergence"]["next_experiment"]
+    assert gaps["lin2019-tandem-jsc-pce"]["status"] == "closed"
+    assert gaps["lin2019-tandem-jsc-pce"]["resolution"]
+    assert data["phase"] == "P1"
+    assert data["phase_status"] == "closed_with_p2_deferrals"
+    assert set(data["closure_summary"]["closed"]) == {
+        gap_id for gap_id, gap in gaps.items() if gap["status"] == "closed"
+    }
+    assert set(data["closure_summary"]["deferred_to_p2"]) == {
+        gap_id for gap_id, gap in gaps.items()
+        if gap["status"] == "deferred_to_p2"
+    }
+    assert set(data["closure_summary"]["deferred_to_p2"]) == {
+        "csi-transient-jv-grid-envelope",
+        "csi-mott-schottky-convergence",
+        "external-solver-curve-crosscheck",
+    }
+    assert not {gap_id for gap_id, gap in gaps.items() if gap["status"] == "open"}
     for gap in gaps.values():
-        assert gap["status"] in {"open", "closed"}
+        assert gap["status"] in {"closed", "deferred_to_p2"}
         assert gap["reproduction"]
         assert len(gap["acceptance"]) >= 3
+        if gap["status"] == "deferred_to_p2":
+            assert gap["next_experiment"]
+            assert gap["deferral_reason"]

@@ -88,6 +88,12 @@ class JVPointStatus:
     reason_code: str = "certified"
     message: str = ""
     candidate_current: float | None = None
+    solver: str = "transient"
+    max_normalized_residual: float | None = None
+    electron_continuity_bound_A_m2: float | None = None
+    hole_continuity_bound_A_m2: float | None = None
+    face_current_spread_A_m2: float | None = None
+    poisson_residual: float | None = None
 
 
 class JVCertificationError(RuntimeError):
@@ -99,6 +105,47 @@ class JVCertificationError(RuntimeError):
             f"J-V {status.branch} point {status.index} at "
             f"V={status.voltage:.6g} V is uncertified "
             f"({status.reason_code}): {status.message}"
+        )
+
+
+class JVDriverCapabilityError(RuntimeError):
+    """Raised when a stack requires a different certified J-V driver."""
+
+    def __init__(self, *, policy: str, requested_driver: str):
+        self.policy = policy
+        self.requested_driver = requested_driver
+        super().__init__(
+            f"J-V driver {requested_driver!r} is not production-certified "
+            f"for stack policy {policy!r}; select solver='quasi_fermi'. "
+            "For numerical diagnosis only, pass "
+            "allow_unvalidated_driver=True explicitly."
+        )
+
+
+def require_jv_driver_capability(
+    stack: DeviceStack,
+    *,
+    requested_driver: str,
+    allow_unvalidated_driver: bool = False,
+) -> None:
+    """Fail closed when the stack's certified J-V variable set is required."""
+
+    requires_qf = (
+        stack.jv_solver_policy == "cancellation_safe_qf_required"
+        and requested_driver != "quasi_fermi"
+    )
+    if requires_qf and not allow_unvalidated_driver:
+        raise JVDriverCapabilityError(
+            policy=stack.jv_solver_policy,
+            requested_driver=requested_driver,
+        )
+    if requires_qf:
+        warnings.warn(
+            f"J-V driver {requested_driver!r} is running under the explicit "
+            "allow_unvalidated_driver override; output is diagnostic and is "
+            "not a production-certified physical J-V curve.",
+            JVCertificationWarning,
+            stacklevel=2,
         )
 
 
@@ -1392,6 +1439,7 @@ def run_jv_sweep(
     v_max_max_attempts: int = 1,
     certification_mode: Literal["strict", "diagnostic"] = "strict",
     allow_underresolved_grid: bool = False,
+    allow_unvalidated_driver: bool = False,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
@@ -1456,6 +1504,11 @@ def run_jv_sweep(
       under-resolved wafer-scale grid before material construction or time
       integration. True permits execution but does not certify mesh or J-V
       convergence and must not be used for physical results.
+
+    allow_unvalidated_driver : explicit diagnostic-only override for a stack
+      whose production policy requires the cancellation-safe quasi-Fermi
+      driver. This never certifies the transient result and never switches
+      solvers implicitly.
     """
     if certification_mode not in ("strict", "diagnostic"):
         raise ValueError(
@@ -1503,6 +1556,7 @@ def run_jv_sweep(
                 v_max_max_attempts=1,  # disable recursion on inner call
                 certification_mode=certification_mode,
                 allow_underresolved_grid=allow_underresolved_grid,
+                allow_unvalidated_driver=allow_unvalidated_driver,
             )
             if (
                 last_result.status_fwd is not None
@@ -1548,6 +1602,11 @@ def run_jv_sweep(
         stack,
         N_grid=N_grid,
         allow_underresolved_grid=allow_underresolved_grid,
+    )
+    require_jv_driver_capability(
+        stack,
+        requested_driver="transient",
+        allow_unvalidated_driver=allow_unvalidated_driver,
     )
     N = _grid_node_count(stack, N_grid)
     assert N == len(x), "grid node count mismatch — _grid_node_count is out of sync"

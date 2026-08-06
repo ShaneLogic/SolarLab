@@ -8,9 +8,8 @@ import json
 import math
 from pathlib import Path
 import re
+import shlex
 import subprocess
-import sys
-import tarfile
 import tempfile
 from typing import Any
 
@@ -64,6 +63,8 @@ def _canonical(value: Any) -> Any:
         ):
             mapping.pop("grid_interval_weights", None)
             mapping.pop("grid_alphas", None)
+        if isinstance(value, DeviceStack) and value.jv_solver_policy == "general":
+            mapping.pop("jv_solver_policy", None)
         if isinstance(value, MaterialParams) and not (
             value.N_A_bulk is not None or value.N_D_bulk is not None
         ):
@@ -630,6 +631,153 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def _git_blob_oid(data: bytes) -> str:
+    header = f"blob {len(data)}\0".encode("ascii")
+    return hashlib.sha1(header + data).hexdigest()  # noqa: S324 - Git uses SHA-1
+
+
+def _patch_blob_ids(patch_path: Path) -> dict[str, tuple[str, str]]:
+    """Return full old/new blob IDs keyed by the patch's Git path."""
+    result: dict[str, tuple[str, str]] = {}
+    current_path: str | None = None
+    for line in patch_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("diff --git "):
+            fields = shlex.split(line)
+            current_path = None
+            if (
+                len(fields) == 4
+                and fields[2].startswith("a/")
+                and fields[3].startswith("b/")
+                and fields[2][2:] == fields[3][2:]
+            ):
+                current_path = fields[3][2:]
+            continue
+        if current_path is None or not line.startswith("index "):
+            continue
+        match = re.fullmatch(
+            r"index ([0-9a-f]{40})\.\.([0-9a-f]{40})(?: [0-7]{6})?",
+            line,
+        )
+        if match is not None:
+            result[current_path] = (match.group(1), match.group(2))
+        current_path = None
+    return result
+
+
+def _git_common_dir(git_root: Path) -> Path:
+    value = subprocess.run(
+        ["git", "-C", str(git_root), "rev-parse", "--git-common-dir"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    ).stdout.strip()
+    common_dir = Path(value)
+    if not common_dir.is_absolute():
+        common_dir = (git_root / common_dir).resolve()
+    return common_dir
+
+
+def _dataless_loose_object(common_dir: Path, object_id: str) -> Path | None:
+    path = common_dir / "objects" / object_id[:2] / object_id[2:]
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    if stat.st_size > 0 and stat.st_blocks == 0:
+        return path
+    return None
+
+
+def _read_local_git_blob(
+    git_root: Path,
+    common_dir: Path,
+    object_id: str,
+    blob_snapshots: dict[str, Path] | None = None,
+) -> bytes:
+    placeholder = _dataless_loose_object(common_dir, object_id)
+    if placeholder is not None:
+        snapshot_path = (blob_snapshots or {}).get(object_id)
+        if snapshot_path is not None:
+            data = snapshot_path.read_bytes()
+            if _git_blob_oid(data) != object_id:
+                raise ReproducibilityError(
+                    f"baseline target snapshot blob mismatch for {object_id}"
+                )
+            return data
+        raise ReproducibilityError(
+            "Git object is a dataless OneDrive placeholder: "
+            f"{placeholder}. Hydrate the repository including hidden .git "
+            "files (Always Keep on This Device), or clone it outside "
+            "OneDrive; do not delete the object."
+        )
+    data = subprocess.run(
+        ["git", "-C", str(git_root), "cat-file", "blob", object_id],
+        check=True,
+        capture_output=True,
+        timeout=15,
+    ).stdout
+    if _git_blob_oid(data) != object_id:
+        raise ReproducibilityError(f"Git blob hash mismatch for {object_id}")
+    return data
+
+
+def _recover_base_blob_from_patch_target(
+    *,
+    git_root: Path,
+    common_dir: Path,
+    reconstructed_root: Path,
+    destination: Path,
+    git_path: str,
+    base_object_id: str,
+    patch_path: Path,
+    patch_blob_ids: dict[str, tuple[str, str]],
+    blob_snapshots: dict[str, Path],
+) -> bool:
+    """Recover one unavailable base blob by reversing its pinned patch hunk."""
+    blob_ids = patch_blob_ids.get(git_path)
+    if blob_ids is None or blob_ids[0] != base_object_id:
+        raise ReproducibilityError(
+            f"patch does not bind {git_path} to base blob {base_object_id}"
+        )
+    target_object_id = blob_ids[1]
+    used_target_snapshot = (
+        _dataless_loose_object(common_dir, target_object_id) is not None
+        and target_object_id in blob_snapshots
+    )
+    target_data = _read_local_git_blob(
+        git_root,
+        common_dir,
+        target_object_id,
+        blob_snapshots,
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(target_data)
+
+    include = f"--include={git_path}"
+    subprocess.run(
+        ["git", "apply", "--reverse", "--check", include, str(patch_path)],
+        cwd=reconstructed_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "apply", "--reverse", include, str(patch_path)],
+        cwd=reconstructed_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    recovered_data = destination.read_bytes()
+    recovered_object_id = _git_blob_oid(recovered_data)
+    if recovered_object_id != base_object_id:
+        raise ReproducibilityError(
+            f"reverse-recovered base blob mismatch for {git_path}: "
+            f"expected {base_object_id}, got {recovered_object_id}"
+        )
+    return used_target_snapshot
+
+
 def verify_baseline(
     baseline_id: str, root: Path | None = None, *, check_worktree: bool = False,
 ) -> dict[str, Any]:
@@ -660,7 +808,41 @@ def verify_baseline(
     if not re.fullmatch(r"[0-9a-f]{40}", base_commit):
         errors.append("base_commit must be a full 40-character lowercase Git hash")
 
+    blob_snapshots: dict[str, Path] = {}
+    snapshot_entries = manifest.get("target_blob_snapshots") or []
+    if not isinstance(snapshot_entries, list):
+        errors.append("target_blob_snapshots must be a list")
+        snapshot_entries = []
+    baseline_root = directory.resolve()
+    for entry in snapshot_entries:
+        if not isinstance(entry, dict):
+            errors.append("target_blob_snapshots entries must be mappings")
+            continue
+        object_id = str(entry.get("object_id", ""))
+        if not re.fullmatch(r"[0-9a-f]{40}", object_id):
+            errors.append(f"invalid target snapshot object ID {object_id!r}")
+            continue
+        if object_id in blob_snapshots:
+            errors.append(f"duplicate target snapshot object ID {object_id}")
+            continue
+        snapshot_path = (root / str(entry.get("path", ""))).resolve()
+        if not snapshot_path.is_relative_to(baseline_root):
+            errors.append(f"target snapshot escapes baseline directory: {snapshot_path}")
+            continue
+        if not snapshot_path.is_file():
+            errors.append(f"missing target snapshot {snapshot_path}")
+            continue
+        if sha256_file(snapshot_path) != entry.get("sha256"):
+            errors.append(f"target snapshot SHA-256 drift for {object_id}")
+            continue
+        if _git_blob_oid(snapshot_path.read_bytes()) != object_id:
+            errors.append(f"target snapshot Git blob mismatch for {object_id}")
+            continue
+        blob_snapshots[object_id] = snapshot_path
+
     checked_files = 0
+    reverse_recovered_files = 0
+    target_snapshot_files = 0
     if not errors:
         try:
             git_root_result = subprocess.run(
@@ -681,31 +863,8 @@ def verify_baseline(
                 errors.append("base_commit does not resolve to the declared commit")
             else:
                 with tempfile.TemporaryDirectory(prefix=f"{baseline_id}-") as temp_name:
-                    temp = Path(temp_name)
-                    archive_path = temp / "base.tar"
-                    reconstructed_root = temp / "tree"
+                    reconstructed_root = Path(temp_name) / "tree"
                     reconstructed_root.mkdir()
-                    subprocess.run(
-                        [
-                            "git", "-C", str(git_root), "archive", "--format=tar",
-                            f"--output={archive_path}", base_commit,
-                        ],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    )
-                    with tarfile.open(archive_path, "r") as archive:
-                        archive_root = reconstructed_root.resolve()
-                        for member in archive.getmembers():
-                            destination = (archive_root / member.name).resolve()
-                            if not destination.is_relative_to(archive_root):
-                                raise ReproducibilityError(
-                                    f"unsafe path in Git archive: {member.name}"
-                                )
-                        extraction_options = (
-                            {"filter": "data"} if sys.version_info >= (3, 12) else {}
-                        )
-                        archive.extractall(reconstructed_root, **extraction_options)
                     numstat_result = subprocess.run(
                         ["git", "apply", "--numstat", str(patch_path)],
                         cwd=reconstructed_root,
@@ -728,6 +887,49 @@ def verify_baseline(
                             f"patch_only={sorted(patch_files - declared_patch_files)}, "
                             f"manifest_only={sorted(declared_patch_files - patch_files)}"
                         )
+                    archive_root = reconstructed_root.resolve()
+                    common_dir = _git_common_dir(git_root)
+                    patch_blob_ids = _patch_blob_ids(patch_path)
+                    for git_path in sorted(declared_patch_files):
+                        destination = (archive_root / git_path).resolve()
+                        if not destination.is_relative_to(archive_root):
+                            raise ReproducibilityError(
+                                f"unsafe path in baseline manifest: {git_path}"
+                            )
+                        object_name = f"{base_commit}:{git_path}"
+                        object_result = subprocess.run(
+                            [
+                                "git", "-C", str(git_root), "rev-parse",
+                                "--verify", object_name,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=15,
+                        )
+                        if object_result.returncode != 0:
+                            # A patch may legitimately introduce a new file.  In that
+                            # case git apply creates it below; a missing modified file
+                            # is still rejected by the apply --check step.
+                            continue
+                        object_id = object_result.stdout.strip()
+                        if _dataless_loose_object(common_dir, object_id) is not None:
+                            used_target_snapshot = _recover_base_blob_from_patch_target(
+                                git_root=git_root,
+                                common_dir=common_dir,
+                                reconstructed_root=reconstructed_root,
+                                destination=destination,
+                                git_path=git_path,
+                                base_object_id=object_id,
+                                patch_path=patch_path,
+                                patch_blob_ids=patch_blob_ids,
+                                blob_snapshots=blob_snapshots,
+                            )
+                            reverse_recovered_files += 1
+                            target_snapshot_files += int(used_target_snapshot)
+                            continue
+                        blob = _read_local_git_blob(git_root, common_dir, object_id)
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_bytes(blob)
                     subprocess.run(
                         ["git", "apply", "--check", str(patch_path)],
                         cwd=reconstructed_root,
@@ -755,10 +957,18 @@ def verify_baseline(
             OSError,
             ValueError,
             subprocess.CalledProcessError,
-            tarfile.TarError,
+            subprocess.TimeoutExpired,
             ReproducibilityError,
         ) as exc:
             detail = getattr(exc, "stderr", "") or str(exc)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                detail = (
+                    f"Git did not hydrate {exc.cmd!r} within {exc.timeout} s. "
+                    "If this repository is under OneDrive, select Always Keep "
+                    "on This Device for the entire repository including hidden "
+                    ".git files, or clone it outside OneDrive. Do not delete "
+                    "placeholder objects."
+                )
             errors.append(f"baseline reconstruction failed: {detail.strip()}")
 
     worktree_checked_files = 0
@@ -777,5 +987,7 @@ def verify_baseline(
         "checked_files": checked_files,
         "worktree_checked_files": worktree_checked_files,
         "reconstruction_verified": checked_files == len(frozen_files),
+        "reverse_recovered_files": reverse_recovered_files,
+        "target_snapshot_files": target_snapshot_files,
         "git_tag_created": bool(manifest.get("git_tag_created")),
     }

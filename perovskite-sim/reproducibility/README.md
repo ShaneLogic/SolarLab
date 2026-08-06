@@ -13,11 +13,10 @@ it loads or produces a finite J-V curve.
   unit convention.
 - `config_benchmark_matrix.yaml` covers every shipped config, runtime optical
   resource, benchmark command, evidence level, and known limitation.
-- `p1_gaps.yaml` gives each open or closed P1 gap a reproduction command,
-  current evidence, next experiment, and acceptance contract.
-- `P1_CHECKPOINT_2026-08-05_EXTERNAL_CV.md` is the latest human-readable
-  continuation checkpoint; earlier checkpoint files remain immutable
-  historical notes.
+- `p1_gaps.yaml` gives each closed or explicitly P2-deferred P1 item a
+  reproduction command, current evidence, and unchanged acceptance contract.
+- `P1_CLOSURE_2026-08-07.md` is the P1 phase closeout. Earlier checkpoint
+  files remain immutable historical notes.
 
 ## Verification
 
@@ -30,8 +29,13 @@ pytest -q tests/reproducibility/test_matrix.py
 
 The verifier fails if any of the following drifts:
 
-- reconstruction of the full 40-character P0 base with `git archive`, patch
-  dry-run/application, or any frozen reconstructed-file hash;
+- reconstruction of the full 40-character P0 base, patch dry-run/application,
+  or any frozen reconstructed-file hash. If a loose base blob is a OneDrive
+  placeholder, the verifier may reverse-recover it only from the patch-pinned
+  target blob, and requires the recovered Git SHA-1 to equal the base commit's
+  exact blob ID before applying the patch forward. A target that is also a
+  placeholder may use an explicitly declared, SHA-256-pinned baseline snapshot,
+  whose bytes must still match the patch's full target Git blob ID;
 - the set or byte-level SHA-256 of the 29 shipped YAML configs;
 - the normalized loader semantic hash of any config;
 - the set or byte-level SHA-256 of the AM1.5G and n,k resources;
@@ -52,8 +56,11 @@ independent validation certificate.
 
 The Lin 2019 partial comparison likewise pins its reported local observables
 with narrow regression tolerances in addition to the broader paper windows.
-Those pins prevent a stale registry; they do not upgrade proxy optical or
-electrical inputs into an external validation dataset.
+Its source stack, reported thicknesses, physical photon budgets, and 0.508
+percent sub-cell current match now pass. The proxy-optics budgets remain about
+2.1 percent below the champion central Jsc, and absorber/contact inputs remain
+partial. Those pins prevent a stale registry; they do not upgrade proxy optical
+or electrical inputs into an external validation dataset.
 
 ## Evidence Levels
 
@@ -106,6 +113,6 @@ Sentaurus admittance data. Its local N=400/600/800 curve is converged, but the
 1-D capacitance is 19.7-35.6 percent higher over 0-0.2 V. Because the source
 has partial-width 2-D contacts and no public input deck, this is
 `partial_external_comparison`, not pointwise parity. Both configurations stay
-`partial` and the P1 gap stays open. The lane does not certify the general
-endpoint-sampled transient path or unsupported ion, contact, interface, or
-non-local physics.
+`partial`; exact external C-V parity is explicitly deferred to P2. The lane
+does not certify the general endpoint-sampled transient path or unsupported
+ion, contact, interface, or non-local physics.
