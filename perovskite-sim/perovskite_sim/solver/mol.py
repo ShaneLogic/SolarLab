@@ -210,6 +210,31 @@ class MaterialArrays:
     # 0.0 = off (bit-identical); -1.0 = acceptor-like (charge -q*N_t*f),
     # +1.0 = donor-like. Set by the SS driver.
     iface_state_charge: float = 0.0
+    # Correct hole-density step implied by E_v = -chi-Eg and the SG
+    # zero-flux ratio: p_R/p_L = exp(-(dchi+dEg)/V_T). The historical state
+    # prototype used dchi-dEg; retain it outside the opt-in physical boundary.
+    iface_state_physical_offsets: bool = False
+    # Locally eliminate the four interface-plane densities inside each RHS
+    # evaluation. This is the production form of exclusive transport: it
+    # keeps full thermal velocities out of the global Newton state vector.
+    iface_qss_exclusive_transport: bool = False
+    iface_qss_cross_transmission: float = 1.0
+    iface_qss_transport_model: str = "fermi_richardson"
+    # QF outer Newton may evaluate finite-difference trial states outside the
+    # accurately eliminated local basin. Return the best finite inner state
+    # there and enforce the strict local certificate only at the final root.
+    iface_qss_allow_inexact_inner: bool = False
+    # Opt-in Stage 4 two-sided control-volume topology. The aligned arrays map
+    # each physical interface to strict left/right bulk nodes and the one face
+    # replaced by the statically condensed trace element. Empty/False keeps the
+    # historical deduplicated-node QSS path bit-identical.
+    iface_qss_two_sided_trace: bool = False
+    iface_qss_interface_faces: tuple[int, ...] = ()
+    iface_qss_left_nodes: tuple[int, ...] = ()
+    iface_qss_right_nodes: tuple[int, ...] = ()
+    iface_qss_interface_positions_m: tuple[float, ...] = ()
+    iface_qss_left_distances_m: tuple[float, ...] = ()
+    iface_qss_right_distances_m: tuple[float, ...] = ()
     # Heterointerface bulk-recombination de-spike fraction (SCAPS-emulation,
     # default 0.0 = off). See DeviceStack.het_recomb_despike.
     het_recomb_despike: float = 0.0
@@ -245,6 +270,9 @@ class MaterialArrays:
     # Per-node Richardson constants for thermionic emission capping
     A_star_n: np.ndarray | None = None
     A_star_p: np.ndarray | None = None
+    # Per-node SCAPS thermal velocity [m/s], scaled as T**0.5 when the active
+    # simulation tier enables temperature scaling.
+    v_th_physical: np.ndarray | None = None
     # Physical TE normalization (2026-07, review F02). When
     # ``te_physical_norm`` is True, the TE cap divides the flux by the
     # band-edge DOS at each capped face (N_C for electrons, N_V for holes),
@@ -254,6 +282,13 @@ class MaterialArrays:
     # non-DOS configs are bit-identical even with the flag on.
     N_C_node: np.ndarray | None = None
     N_V_node: np.ndarray | None = None
+    # Temperature-scaled physical band-edge DOS. These caches are always
+    # published when the layer declares Nc300/Nv300, independently of the
+    # legacy TE-cap normalization gate above. The opt-in quasi-Fermi abrupt-
+    # interface boundary needs each side's own DOS to construct reciprocal
+    # thermionic supplies; NaN marks a layer that did not declare the value.
+    N_C_physical: np.ndarray | None = None
+    N_V_physical: np.ndarray | None = None
     te_physical_norm: bool = False
     # Physical diffusion-only steric ion flux (review F05). When True, the
     # ion continuity RHS folds the crowding potential into the SG drift
@@ -416,6 +451,12 @@ class MaterialArrays:
                 d["te_physical_norm"] = True
                 d["N_C_node"] = self.N_C_node
                 d["N_V_node"] = self.N_V_node
+        if self.iface_qss_exclusive_transport:
+            d["exclusive_interface_faces"] = list(
+                self.iface_qss_interface_faces
+                if self.iface_qss_two_sided_trace
+                else (int(node) - 1 for node in self.interface_nodes)
+            )
         if self.het_recomb_despike > 0.0 and self.het_recomb_nodes:
             d["het_recomb_despike"] = self.het_recomb_despike
             d["het_recomb_nodes"] = self.het_recomb_nodes
@@ -652,7 +693,11 @@ def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
         if mat.interface_chi_step and len(mat.interface_chi_step) > k:
             dE_c = float(mat.interface_chi_step[k])
             dE_g = float(mat.interface_Eg_step[k])
-            dE_v = dE_c - dE_g
+            dE_v = (
+                -(dE_c + dE_g)
+                if mat.iface_state_physical_offsets
+                else dE_c - dE_g
+            )
             ec_norm = max(-EXP_CAP, min(EXP_CAP, dE_c / V_T_local))
             ev_norm = max(-EXP_CAP, min(EXP_CAP, dE_v / V_T_local))
             n_2s = n_1s * math.exp(-ec_norm)
@@ -744,6 +789,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     C_p = np.empty(N)
     A_star_n_node = np.empty(N)
     A_star_p_node = np.empty(N)
+    v_th_node = np.empty(N)
     # Band-edge DOS per node for the physical TE normalization (review F02).
     # NaN where a layer lacks Nc300/Nv300 → those faces keep the legacy TE
     # form (bit-identical), so non-DOS configs are unaffected by the flag.
@@ -945,6 +991,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             _a_p = richardson_from_dos(float(p.Nv300), T_dev)
         A_star_n_node[mask] = _a_n
         A_star_p_node[mask] = _a_p
+        v_th_scale = (
+            (T_dev / T_REF) ** 0.5
+            if sim_mode.use_temperature_scaling and T_dev != T_REF
+            else 1.0
+        )
+        v_th_node[mask] = float(p.v_th) * v_th_scale
 
         # Field-dependent mobility parameters (Phase 3.2). Copied verbatim
         # from the layer so per-node arrays can average to face values.
@@ -1720,8 +1772,11 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         junction_polarity=junction_polarity,
         A_star_n=A_star_n_node,
         A_star_p=A_star_p_node,
+        v_th_physical=v_th_node,
         N_C_node=(N_C_node_arr if _te_phys else None),
         N_V_node=(N_V_node_arr if _te_phys else None),
+        N_C_physical=N_C_node_arr,
+        N_V_physical=N_V_node_arr,
         te_physical_norm=_te_phys,
         ion_steric_diffusion_only=_ion_steric_diff,
         ion_steric_shared_site=bool(getattr(stack, "ion_steric_shared_site", True)),
@@ -2077,6 +2132,7 @@ def assemble_rhs(
     illuminated: bool = True,
     V_app: float = 0.0,
     phi_frozen: np.ndarray | None = None,
+    interface_qss_result=None,
 ) -> np.ndarray:
     """Method of Lines RHS: dy/dt = f(t, y).
 
@@ -2264,8 +2320,71 @@ def assemble_rhs(
     # Phase E3 path replaces this with TE flux + SRH on state vec; see
     # below near the iface_state RHS block. Legacy E1.5 cross-carrier
     # SRH applies only when N_iface_state == 0.
-    if mat.N_iface_state == 0:
+    if mat.N_iface_state == 0 and not mat.iface_qss_exclusive_transport:
         _apply_interface_recombination(dn, dp, n, p, stack, mat, phi)
+    elif mat.N_iface_state == 0 and mat.iface_qss_exclusive_transport:
+        interface_qss = interface_qss_result
+        if interface_qss is None:
+            if mat.iface_qss_two_sided_trace:
+                from perovskite_sim.physics.two_sided_interface import (
+                    solve_material_two_sided_interfaces_qss,
+                )
+
+                interface_qss = solve_material_two_sided_interfaces_qss(
+                    mat,
+                    stack,
+                    n,
+                    p,
+                    phi,
+                    cross_transmission=mat.iface_qss_cross_transmission,
+                    interface_transport_model=mat.iface_qss_transport_model,
+                    fail_on_residual=not mat.iface_qss_allow_inexact_inner,
+                )
+            else:
+                from perovskite_sim.physics.interface_plane import (
+                    solve_interface_states_live_qss,
+                )
+
+                interface_qss = solve_interface_states_live_qss(
+                    mat,
+                    stack,
+                    n,
+                    p,
+                    phi,
+                    V_app=V_app,
+                    v_th_eff=mat.iface_state_v_th,
+                    cross_transmission=mat.iface_qss_cross_transmission,
+                    interface_transport_model=mat.iface_qss_transport_model,
+                    fail_on_residual=not mat.iface_qss_allow_inexact_inner,
+                )
+        interface_count = (
+            len(mat.iface_qss_left_nodes)
+            if mat.iface_qss_two_sided_trace
+            else len(mat.interface_nodes)
+        )
+        for k in range(interface_count):
+            base = 4 * k
+            if mat.iface_qss_two_sided_trace:
+                eval_left = int(mat.iface_qss_left_nodes[k])
+                eval_right = int(mat.iface_qss_right_nodes[k])
+            else:
+                interface_node = int(mat.interface_nodes[k])
+                # The physical QSS boundary replaces face ``idx-1`` and
+                # therefore couples its actual endpoints.
+                eval_right = interface_node
+                eval_left = interface_node - 1
+            # side 1 is the right material, side 2 the left material.
+            # Divide each surface flux by the control-volume width of the
+            # node that actually receives it. Interface-clustered grids can
+            # make those widths differ by orders of magnitude from the shared
+            # interface node, so using one ``dx_iface`` here breaks integrated
+            # charge conservation even when the local plane balance closes.
+            dx_right = float(mat.dx_cell[eval_right])
+            dx_left = float(mat.dx_cell[eval_left])
+            dn[eval_right] -= interface_qss.bulk_flux_m2_s[base + 0] / dx_right
+            dp[eval_right] -= interface_qss.bulk_flux_m2_s[base + 1] / dx_right
+            dn[eval_left] -= interface_qss.bulk_flux_m2_s[base + 2] / dx_left
+            dp[eval_left] -= interface_qss.bulk_flux_m2_s[base + 3] / dx_left
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.

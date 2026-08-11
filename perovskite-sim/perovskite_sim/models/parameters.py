@@ -29,6 +29,10 @@ class MaterialParams:
     Eg: float = 0.0    # band gap [eV]
     A_star_n: float = 1.2017e6   # Richardson constant for electrons [A/(m²·K²)]
     A_star_p: float = 1.2017e6   # Richardson constant for holes [A/(m²·K²)]
+    # SCAPS layer thermal velocity at 300 K [m/s].  This is distinct from
+    # ``A_star``: SCAPS' heterointerface thermionic boundary uses the smaller
+    # declared thermal velocity of the two adjacent layers.
+    v_th: float = 1.0e5
     # Negative ion species (e.g. V_MA-, halide interstitial)
     D_ion_neg: float = 0.0     # diffusion coefficient [m²/s] (0 = single species)
     P0_neg: float = 0.0        # equilibrium density [m⁻³]

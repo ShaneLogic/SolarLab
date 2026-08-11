@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import perovskite_sim.physics.continuity as continuity
 from perovskite_sim.physics.continuity import carrier_continuity_rhs
 from perovskite_sim.physics.generation import (
     beer_lambert_generation,
@@ -77,3 +78,54 @@ def test_beer_lambert_integrates_to_photocurrent():
             f"generation exceeds the incident photon flux on a {n_nodes}-node "
             f"mesh: {total:.6e} > Phi = {Phi:.6e}"
         )
+
+
+def test_exclusive_interface_face_removes_only_the_declared_sg_bypass(monkeypatch):
+    x = np.linspace(0.0, 4.0e-9, 5)
+    state = np.full(5, NI)
+    params = dict(
+        D_n=np.ones(4),
+        D_p=np.ones(4),
+        V_T=0.025852,
+        ni_sq=NI**2,
+        tau_n=1.0e30,
+        tau_p=1.0e30,
+        n1=NI,
+        p1=NI,
+        B_rad=0.0,
+        C_n=0.0,
+        C_p=0.0,
+    )
+    monkeypatch.setattr(
+        continuity,
+        "sg_fluxes_n",
+        lambda *args: np.array([1.0, 2.0, 3.0, 4.0]),
+    )
+    monkeypatch.setattr(
+        continuity,
+        "sg_fluxes_p",
+        lambda *args: np.array([5.0, 6.0, 7.0, 8.0]),
+    )
+    baseline_n, baseline_p = carrier_continuity_rhs(
+        x,
+        np.zeros(5),
+        state,
+        state,
+        np.zeros(5),
+        params,
+    )
+    exclusive_n, exclusive_p = carrier_continuity_rhs(
+        x,
+        np.zeros(5),
+        state,
+        state,
+        np.zeros(5),
+        {**params, "exclusive_interface_faces": (1,)},
+    )
+
+    np.testing.assert_array_equal(exclusive_n[[0, 3, 4]], baseline_n[[0, 3, 4]])
+    np.testing.assert_array_equal(exclusive_p[[0, 3, 4]], baseline_p[[0, 3, 4]])
+    assert exclusive_n[1] != baseline_n[1]
+    assert exclusive_n[2] != baseline_n[2]
+    assert exclusive_p[1] != baseline_p[1]
+    assert exclusive_p[2] != baseline_p[2]

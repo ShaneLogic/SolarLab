@@ -76,6 +76,12 @@ def _canonical(value: Any) -> Any:
                 "doping_edge",
             ):
                 mapping.pop(key, None)
+        # Layer thermal velocity was added for an opt-in SCAPS interface
+        # boundary. Its historical 1e5 m/s default is behaviorally inert for
+        # every pre-existing solver and must not churn frozen config hashes;
+        # any non-default value remains part of the semantic payload.
+        if isinstance(value, MaterialParams) and value.v_th == 1.0e5:
+            mapping.pop("v_th", None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}

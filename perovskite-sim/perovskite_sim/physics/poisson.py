@@ -52,14 +52,61 @@ def factor_poisson(x: np.ndarray, eps_r: np.ndarray) -> PoissonFactor:
     """
     if dgttrf is None:
         raise RuntimeError("scipy.linalg.lapack.dgttrf is unavailable")
-    N = len(x)
     h = np.diff(x)
     eps_face = 2.0 * eps_r[:-1] * eps_r[1:] / (eps_r[:-1] + eps_r[1:])
     C = EPS_0 * eps_face / h                      # (N-1,)
     h_cell = 0.5 * (h[:-1] + h[1:])               # (N-2,)
 
+    return factor_poisson_from_finite_volume(C, h_cell)
+
+
+def factor_poisson_from_finite_volume(
+    face_capacitance_C_V_m2: np.ndarray,
+    interior_cell_widths_m: np.ndarray,
+) -> PoissonFactor:
+    """Factor a finite-volume Poisson operator from explicit geometry.
+
+    This is the opt-in entry point for interfaces that are not located at a
+    face midpoint. ``face_capacitance_C_V_m2`` contains the exact series
+    capacitance of every face and ``interior_cell_widths_m`` the charge-control
+    volume of nodes ``1..N-2``. The legacy ``factor_poisson`` path delegates to
+    this function with its existing harmonic-face arrays.
+    """
+    C = np.asarray(face_capacitance_C_V_m2, dtype=float)
+    h_cell = np.asarray(interior_cell_widths_m, dtype=float)
+    if (
+        C.ndim != 1
+        or C.size < 2
+        or not np.all(np.isfinite(C))
+        or np.any(C <= 0.0)
+    ):
+        raise ValueError("face capacitances must be a finite positive vector")
+    N = C.size + 1
+    if (
+        h_cell.shape != (N - 2,)
+        or not np.all(np.isfinite(h_cell))
+        or np.any(h_cell <= 0.0)
+    ):
+        raise ValueError(
+            "interior cell widths must be finite, positive, and match faces"
+        )
+
     dia = -(C[:-1] + C[1:])                       # (N-2,)  main diagonal
     off = C[1:-1].copy()                          # (N-3,)  sub- and super-diagonals
+
+    # SciPy's dgttrf wrapper cannot infer n for n < 3. Embed those tiny
+    # operators in a decoupled 3x3 block; solve_poisson_prefactored pads and
+    # later discards the two dummy equations. Device grids normally use many
+    # more nodes, so the production path remains byte-for-byte unchanged.
+    physical_interior = dia.size
+    if physical_interior < 3:
+        padded_dia = -np.ones(3, dtype=float)
+        padded_dia[:physical_interior] = dia
+        padded_off = np.zeros(2, dtype=float)
+        if physical_interior == 2:
+            padded_off[0] = off[0]
+        dia = padded_dia
+        off = padded_off
 
     # LAPACK dgttrf expects three vectors (sub, main, super) and returns the
     # factored (dl, d, du, du2, ipiv) for use by dgttrs.
@@ -70,7 +117,7 @@ def factor_poisson(x: np.ndarray, eps_r: np.ndarray) -> PoissonFactor:
     if info != 0:
         raise RuntimeError(f"dgttrf failed with info={info}")
     return PoissonFactor(
-        C=C, h_cell=h_cell,
+        C=C.copy(), h_cell=h_cell.copy(),
         dl=dl, d=d, du=du, du2=du2, ipiv=ipiv, N=N,
     )
 
@@ -96,7 +143,12 @@ def solve_poisson_prefactored(
     rhs[-1] -= C[-1] * phi_right
 
     # dgttrs takes a 2-D RHS; reshape to column, solve, flatten.
-    b = rhs.reshape(-1, 1)
+    factor_size = fac.d.size
+    if factor_size == rhs.size:
+        b = rhs.reshape(-1, 1)
+    else:
+        b = np.zeros((factor_size, 1), dtype=float)
+        b[: rhs.size, 0] = rhs
     phi_int, info = dgttrs(fac.dl, fac.d, fac.du, fac.du2, fac.ipiv, b)
     if info != 0:
         raise RuntimeError(f"dgttrs failed with info={info}")
@@ -104,7 +156,7 @@ def solve_poisson_prefactored(
     phi = np.empty(N)
     phi[0]    = phi_left
     phi[-1]   = phi_right
-    phi[1:-1] = phi_int[:, 0]
+    phi[1:-1] = phi_int[: N - 2, 0]
     return phi
 
 

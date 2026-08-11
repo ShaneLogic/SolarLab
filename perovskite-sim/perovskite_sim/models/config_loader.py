@@ -228,6 +228,7 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
         Eg=_f(layer_cfg.get("Eg", 0.0)),
         A_star_n=_f(layer_cfg.get("A_star_n", 1.2017e6)),
         A_star_p=_f(layer_cfg.get("A_star_p", 1.2017e6)),
+        v_th=_f(layer_cfg.get("v_th", 1.0e5)),
         D_ion_neg=_f(layer_cfg.get("D_ion_neg", 0.0)),
         P0_neg=_f(layer_cfg.get("P0_neg", 0.0)),
         P_lim_neg=_f(layer_cfg.get("P_lim_neg", 1e30)),

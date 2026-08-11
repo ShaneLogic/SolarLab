@@ -1,0 +1,15 @@
+{
+  "schema": "solarlab.scaps_cbo_parameter_manifest",
+  "schema_version": "1.0",
+  "instructions": "Populate every empty section from the exact hashed SCAPS deck before import.",
+  "layers": [],
+  "contacts": {},
+  "interfaces": [],
+  "illumination": {},
+  "numerics": {},
+  "cbo_scan": {
+    "delta_ec_convention": "chi_absorber - chi_etl",
+    "swept_parameter": "etl_electron_affinity",
+    "boundary_policy": "fixed_contacts"
+  }
+}

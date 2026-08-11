@@ -319,14 +319,17 @@ def compute_metrics(
     P_in: float = 1000.0,
     V_oc_max: float | None = None,
     validity: Sequence[bool] | Sequence[JVPointStatus] | np.ndarray | None = None,
+    mpp_interpolation: Literal["sampled", "local_quadratic"] = "sampled",
 ) -> JVMetrics:
     """Compute V_oc, J_sc, FF, PCE from a J-V array (J in A/m²).
 
-    Reports the metrics directly from the simulated J(V) samples — it does
-    NOT clamp or smooth. The caller is responsible for providing a properly
-    converged, physically monotone curve (use a fine V grid and a quasi-static
-    sweep). P_mpp is the maximum of V·J over the operating quadrant
-    0 ≤ V ≤ V_oc.
+    By default, reports metrics directly from the simulated J(V) samples and
+    does not smooth. With ``mpp_interpolation='local_quadratic'``, only the
+    three certified power samples surrounding the discrete maximum are fitted;
+    a concave vertex inside that local voltage bracket may replace the sampled
+    maximum. Boundary maxima, non-concave fits, and out-of-bracket vertices
+    fall back to the sampled value. The caller remains responsible for voltage
+    refinement and convergence checks.
 
     Sign convention. The 1D solver follows the IonMonger / DriftFusion
     convention where J(V=0) > 0 (the photocurrent flows out of the device
@@ -413,6 +416,10 @@ def compute_metrics(
     """
     V = np.asarray(V, dtype=float)
     J = np.asarray(J, dtype=float)
+    if mpp_interpolation not in ("sampled", "local_quadratic"):
+        raise ValueError(
+            "mpp_interpolation must be 'sampled' or 'local_quadratic'"
+        )
     if V.ndim != 1 or J.ndim != 1 or V.shape != J.shape:
         raise ValueError(
             f"V and J must be one-dimensional arrays of equal shape, got "
@@ -487,7 +494,38 @@ def compute_metrics(
         )
 
     mask = (V_s >= 0.0) & (V_s <= V_oc)
-    P_mpp = float(np.max(V_s[mask] * J_s[mask])) if mask.any() else 0.0
+    operating_voltage = V_s[mask]
+    operating_power = operating_voltage * J_s[mask]
+    if operating_power.size:
+        maximum_index = int(np.argmax(operating_power))
+        P_mpp = float(operating_power[maximum_index])
+        if (
+            mpp_interpolation == "local_quadratic"
+            and 0 < maximum_index < operating_power.size - 1
+        ):
+            local_voltage = operating_voltage[
+                maximum_index - 1 : maximum_index + 2
+            ]
+            local_power = operating_power[
+                maximum_index - 1 : maximum_index + 2
+            ]
+            centered_voltage = local_voltage - local_voltage[1]
+            coefficients = np.polynomial.polynomial.polyfit(
+                centered_voltage,
+                local_power,
+                2,
+            )
+            curvature = float(coefficients[2])
+            if np.isfinite(curvature) and curvature < 0.0:
+                vertex = -float(coefficients[1]) / (2.0 * curvature)
+                if centered_voltage[0] <= vertex <= centered_voltage[-1]:
+                    vertex_power = float(
+                        np.polynomial.polynomial.polyval(vertex, coefficients)
+                    )
+                    if np.isfinite(vertex_power) and vertex_power >= P_mpp:
+                        P_mpp = vertex_power
+    else:
+        P_mpp = 0.0
     FF = P_mpp / (V_oc * J_sc) if (V_oc * J_sc) > 0 else 0.0
     # PCE is defined against the incident optical power density P_in
     # [W/m^2]. The default 1000 W/m^2 is the AM1.5G 1-sun convention;

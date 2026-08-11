@@ -402,6 +402,7 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
         N_D=cm3_to_m3(float(row["N_D_cm3"])),
         chi=chi,
         Eg=Eg,
+        v_th=v_th,
         # Effective DOS [m⁻³] — consumed by the dos_band_potentials flag
         # (V_T·ln(N_C)/ln(N_V) heterojunction transport terms).
         Nc300=N_C,

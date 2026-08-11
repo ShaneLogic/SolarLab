@@ -263,10 +263,20 @@ def test_dispatch_quasi_fermi_returns_certificate_bearing_jvresult(monkeypatch):
 
     points = (point(0.0, 200.0), point(0.5, 100.0), point(0.6, -1.0))
 
-    def fake_qf(x, stack, voltages, *, stop_after_voc):
+    def fake_qf(
+        x,
+        stack,
+        voltages,
+        *,
+        interface_boundary,
+        interface_transport_model,
+        stop_after_voc,
+    ):
         captured.update(
             node_count=len(x),
             voltages=np.asarray(voltages),
+            interface_boundary=interface_boundary,
+            interface_transport_model=interface_transport_model,
             stop_after_voc=stop_after_voc,
         )
         return SimpleNamespace(
@@ -285,11 +295,15 @@ def test_dispatch_quasi_fermi_returns_certificate_bearing_jvresult(monkeypatch):
         V_max=0.7,
         illuminated=True,
         solver="quasi_fermi",
+        interface_boundary=True,
+        interface_transport_model="scaps_thermionic",
     )
 
     assert captured["node_count"] > 0
     assert captured["voltages"] == pytest.approx(np.linspace(0.0, 0.7, 8))
     assert captured["stop_after_voc"] is True
+    assert captured["interface_boundary"] is True
+    assert captured["interface_transport_model"] == "scaps_thermionic"
     assert result.certified
     assert result.hysteresis_index == 0.0
     assert result.metrics_fwd == result.metrics_rev == "MET"
@@ -308,6 +322,34 @@ def test_dispatch_quasi_fermi_rejects_dark_jv():
             V_max=0.7,
             illuminated=False,
             solver="quasi_fermi",
+        )
+
+
+def test_dispatch_rejects_interface_boundary_on_other_solvers():
+    with pytest.raises(ValueError, match="requires solver='quasi_fermi'"):
+        bm._run_jv_dispatch(
+            stack=None,
+            N_grid=10,
+            n_points=8,
+            v_rate=1.0,
+            V_max=0.7,
+            illuminated=True,
+            solver="steady_state",
+            interface_boundary=True,
+        )
+
+
+def test_dispatch_rejects_inactive_nondefault_interface_model():
+    with pytest.raises(ValueError, match="requires interface_boundary=true"):
+        bm._run_jv_dispatch(
+            stack=None,
+            N_grid=10,
+            n_points=8,
+            v_rate=1.0,
+            V_max=0.7,
+            illuminated=True,
+            solver="quasi_fermi",
+            interface_transport_model="scaps_thermionic",
         )
 
 

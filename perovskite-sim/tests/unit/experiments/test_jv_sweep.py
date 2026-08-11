@@ -101,6 +101,31 @@ def test_compute_metrics_default_behaviour_bit_identical():
     assert m.voc_bracketed is True
 
 
+def test_compute_metrics_local_quadratic_recovers_bracketed_mpp_vertex():
+    voltage = np.linspace(0.0, 1.0, 6)
+    current = 1.0 - voltage
+
+    sampled = compute_metrics(voltage, current)
+    interpolated = compute_metrics(
+        voltage,
+        current,
+        mpp_interpolation="local_quadratic",
+    )
+
+    assert sampled.FF == pytest.approx(0.24)
+    assert interpolated.FF == pytest.approx(0.25)
+    assert interpolated.PCE == pytest.approx(2.5e-4)
+
+
+def test_compute_metrics_rejects_unknown_mpp_interpolation():
+    with pytest.raises(ValueError, match="mpp_interpolation"):
+        compute_metrics(
+            np.array([0.0, 1.0]),
+            np.array([1.0, -1.0]),
+            mpp_interpolation="cubic",
+        )
+
+
 def test_compute_metrics_rejects_invalid_boolean_mask():
     V = np.array([0.0, 0.5, 1.0])
     J = np.array([200.0, 100.0, -10.0])

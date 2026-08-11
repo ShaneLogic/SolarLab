@@ -669,6 +669,9 @@ class JVRequest(BaseModel):
     # "quasi_fermi" = cancellation-safe, certificate-bearing QF driver.
     solver: str = "transient"
     iface_states: bool = False  # SS driver only: interface-plane carrier states
+    # QF only: reciprocal physical interface plane.
+    interface_boundary: bool = False
+    interface_transport_model: str = "fermi_richardson"
 
 
 def _run_jv_dispatch(
@@ -681,6 +684,8 @@ def _run_jv_dispatch(
     illuminated: bool,
     solver: str = "transient",
     iface_states: bool = False,
+    interface_boundary: bool = False,
+    interface_transport_model: str = "fermi_richardson",
     progress=None,
 ):
     """Route a J-V sweep to the requested solver.
@@ -691,6 +696,17 @@ def _run_jv_dispatch(
     hysteresis. Stack policy is enforced inside each driver; no implicit
     solver substitution is permitted.
     """
+    if interface_boundary and solver != "quasi_fermi":
+        raise ValueError(
+            "interface_boundary requires solver='quasi_fermi'"
+        )
+    if (
+        not interface_boundary
+        and interface_transport_model != "fermi_richardson"
+    ):
+        raise ValueError(
+            "interface_transport_model requires interface_boundary=true"
+        )
     if solver == "steady_state":
         ss = run_jv_sweep_ss(
             stack,
@@ -731,6 +747,8 @@ def _run_jv_dispatch(
                 V_max if V_max is not None else 1.25,
                 n_points,
             ),
+            interface_boundary=interface_boundary,
+            interface_transport_model=interface_transport_model,
             stop_after_voc=True,
         )
 
@@ -790,6 +808,8 @@ def run_jv(req: JVRequest):
             stack, N_grid=req.N_grid, n_points=req.n_points, v_rate=req.v_rate,
             V_max=req.V_max, illuminated=True, solver=req.solver,
             iface_states=req.iface_states,
+            interface_boundary=req.interface_boundary,
+            interface_transport_model=req.interface_transport_model,
         )
         return {"status": "ok", "result": to_serializable(result)}
     except HTTPException:
@@ -971,6 +991,10 @@ def start_job(req: JobRequest):
                 illuminated=illuminated,
                 solver=str(p.get("solver", "transient")),
                 iface_states=bool(p.get("iface_states", False)),
+                interface_boundary=bool(p.get("interface_boundary", False)),
+                interface_transport_model=str(
+                    p.get("interface_transport_model", "fermi_richardson")
+                ),
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

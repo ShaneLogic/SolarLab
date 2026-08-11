@@ -162,3 +162,29 @@ def test_qf_stop_after_voc_retains_the_certified_bracket(monkeypatch):
     assert sweep.currents_A_m2 == pytest.approx([2.0, 1.0, -1.0])
     assert len(sweep.points) == 3
     assert sweep.metrics.voc_bracketed
+
+
+def test_qf_stop_after_voc_advances_to_next_nested_coarse_point(monkeypatch):
+    stack = _stack()
+    x = multilayer_grid([Layer(stack.layers[0].thickness, 4)])
+    currents = iter((2.0, 1.0, 0.5, -0.25, -1.0, -2.0))
+
+    def _fake_point(_x, _stack, *, V_app, **_kwargs):
+        return SimpleNamespace(
+            V_app=V_app,
+            current_A_m2=next(currents),
+            certified=True,
+        )
+
+    monkeypatch.setattr(qf, "solve_quasi_fermi_steady_state", _fake_point)
+    sweep = qf.solve_quasi_fermi_jv_sweep(
+        x,
+        stack,
+        np.array([0.0, 0.05, 0.1, 0.15, 0.2, 0.25]),
+        stop_after_voc=True,
+        voc_stop_grid_V=np.array([0.0, 0.1, 0.2]),
+    )
+
+    assert sweep.voltages_V == pytest.approx([0.0, 0.05, 0.1, 0.15, 0.2])
+    assert sweep.currents_A_m2 == pytest.approx([2.0, 1.0, 0.5, -0.25, -1.0])
+    assert sweep.metrics.voc_bracketed
