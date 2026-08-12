@@ -28,7 +28,7 @@ For each wavelength we:
    machinery the main simulation trusts.
 2. Scale by the chosen probe flux: G(x) = A(x) · Φ_inc [m⁻³ s⁻¹].
 3. Build a MaterialArrays bundle with G_optical = G, settle the device
-   to illuminated steady-state at V_app = 0, and read J_sc from
+   with the declared finite-time illuminated protocol at V_app = 0, and read J_sc from
    ``_compute_current``.
 
 Beer-Lambert–only stacks raise a ``ValueError`` — EQE is a

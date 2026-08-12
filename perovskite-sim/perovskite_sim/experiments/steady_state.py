@@ -44,9 +44,12 @@ within 2 mV.
 
 KNOWN LIMIT (documented engine boundary, not a convergence bug): two
 deep-tail regimes fail honestly and a Gummel fallback does NOT help.
-(a) Near-insulating contacts (e.g. Nd_ETL = 1e10): J(V) finds no zero
-crossing below 1.6 V — a physics absence, not a solver miss (the
-transient agrees). (b) Deep CBO (delta E_C <= -0.2): the collapsed-
+(a) With the metal-reservoir contact model explicitly disabled,
+near-insulating contacts (e.g. Nd_ETL = 1e10) find no J(V) zero crossing
+below 1.6 V; the shipped ``flat_band_metal_contacts`` model instead
+brackets a sub-bandgap V_oc, so these are distinct boundary-condition
+branches rather than competing solver outcomes. (b) Deep CBO
+(delta E_C <= -0.2): the collapsed-
 junction SS root is pathological for ANY algebraic Newton. Measured at
 delta E_C = -1.0, V = 0.3 (peak-relative residual, tol 1e-6): coupled
 Newton best 4.2e4 (raises cleanly in 0.6 s), decoupled Gummel 1e9,
@@ -68,13 +71,15 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
-from perovskite_sim.discretization.grid import multilayer_grid, Layer
+from perovskite_sim.discretization.grid import require_thick_layer_interface_resolution
 from perovskite_sim.experiments.jv_sweep import (
     JVMetrics,
     _compute_current_ss,
+    build_electrical_grid,
     compute_metrics,
+    require_jv_driver_capability,
 )
-from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.constants import Q
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.mol import (
@@ -83,6 +88,7 @@ from perovskite_sim.solver.mol import (
     _compute_iface_state_dark_eq,
     assemble_rhs,
     build_material_arrays,
+    poisson_right_boundary,
     run_transient,
 )
 from perovskite_sim.solver.newton import solve_equilibrium
@@ -162,6 +168,23 @@ _FD_EPS = 1.0e-7         # relative FD perturbation in ln-space
 class SteadyStateError(RuntimeError):
     """Newton failed to converge — no silent fallback by design."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str | None = None,
+        voltage: float | None = None,
+        best_residual: float | None = None,
+        continuity_current_bound: float | None = None,
+        attempts: int | None = None,
+    ):
+        self.stage = stage
+        self.voltage = voltage
+        self.best_residual = best_residual
+        self.continuity_current_bound = continuity_current_bound
+        self.attempts = attempts
+        super().__init__(message)
+
 
 @dataclass(frozen=True)
 class SteadyStateResult:
@@ -170,6 +193,7 @@ class SteadyStateResult:
     residual: float        # max |F_scaled| [1/s]
     step_inf: float        # max |proposed Newton update| (ln-density)
     iterations: int
+    continuity_current_bound: float = np.nan  # q*residual*n_ref*width [A/m^2]
 
 
 @dataclass(frozen=True)
@@ -222,8 +246,6 @@ def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
     implied terminal-current error bound is q*tol*n_ref*d ~ 1e-8 A/m^2 at
     tol = 1e-6 on a 100 nm device — far below any observable.
     """
-    N = len(x)
-
     def F(z):
         dens = np.exp(z)
         y = y_template.copy()
@@ -233,6 +255,53 @@ def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
                             phi_frozen=phi_frozen)
         f = dydt[unk_idx] / n_ref      # peak-density-relative rate [1/s]
         f[pin] = z[pin] - z_pin[pin]   # identity rows
+        return f
+
+    return F
+
+
+def _relative_log_residual_fn(
+    x,
+    stack,
+    mat,
+    y_template,
+    V_app,
+    illuminated,
+    pin,
+    z_pin,
+    n_ref,
+    unk_idx,
+    density_scale,
+    phi_frozen=None,
+):
+    """Residual in centred log-density coordinates.
+
+    The ordinary coordinate is ``z = ln(density)``.  At contact densities near
+    ``1e24 m^-3``, ``z`` is about 55 and one float64 ULP in ``z`` can be larger
+    than the Newton correction required on a highly refined boundary layer.
+    Here ``u = ln(density / density_scale)`` stays near zero and reconstructs
+    the density as ``density_scale * exp(u)`` without first adding two log
+    values.  The physical residual and its scaling are otherwise identical to
+    :func:`_residual_fn`.
+    """
+    density_scale = np.asarray(density_scale, dtype=float)
+
+    def F(z):
+        dens = density_scale * np.exp(z)
+        y = y_template.copy()
+        y[unk_idx] = dens
+        dydt = assemble_rhs(
+            0.0,
+            y,
+            x,
+            stack,
+            mat,
+            illuminated=illuminated,
+            V_app=V_app,
+            phi_frozen=phi_frozen,
+        )
+        f = dydt[unk_idx] / n_ref
+        f[pin] = z[pin] - z_pin[pin]
         return f
 
     return F
@@ -249,9 +318,11 @@ def solve_steady_state(
     tol: float = 1.0e-6,
     tol_step: float = 1.0e-8,
     tol_accept: float = 0.5,
+    max_continuity_current_error: float = 0.1,
     max_newton: int = 60,
     assist_times: tuple[float, ...] = (1e-4, 1e-3, 1e-2),
     iface_states: bool = False,
+    relative_log_variables: bool = False,
 ) -> SteadyStateResult:
     """Solve the carrier steady state at ``V_app`` with frozen ions.
 
@@ -262,31 +333,49 @@ def solve_steady_state(
 
     ``tol`` is a max carrier rate relative to the device's PEAK density
     [1/s] — see ``_residual_fn`` for the scaling rationale (cancellation
-    noise lives at ~1e-10 on this scale; tol = 1e-6 bounds the
-    terminal-current error near 1e-8 A/m^2). ``tol_step`` is a backup
-    update criterion (max |proposed Newton step| in ln-density) — the
-    standard Gummel/SCAPS convergence-on-update test. ``tol_accept`` is
-    the stall acceptance bound: the TE-cap kinks at heterointerface nodes
-    can make the FD Newton direction locally non-descent at an
-    already-physically-converged state; a stall with residual below
-    ``tol_accept`` is accepted as converged. The default 0.5 bounds the
-    implied terminal-current error near 8e-3 A/m^2 (~30 ppm of J_sc) while
-    rejecting the V* chattering-attractor state (residual ~14) by 30x —
-    both margins physical, not tuned. With the smoothed TE cap
+    noise lives at ~1e-10 on this scale; on a representative 100 nm device,
+    tol = 1e-6 corresponds to a current-continuity bound near 1e-8 A/m^2).
+    ``tol_step`` detects a stalled update (max |proposed Newton step| in
+    ln-density); it certifies convergence only when the best residual is also
+    below the effective stall bound described next.
+    ``tol_accept`` is the legacy rate-space stall bound: the TE-cap kinks at
+    heterointerface nodes can make the FD Newton direction locally
+    non-descent at an already-physically-converged state; a stall with
+    residual below the effective bound may be accepted as converged.
+    ``max_continuity_current_error`` additionally caps both ordinary and stall
+    acceptance using the conservative per-carrier continuity estimate
+    ``q * residual * n_ref * device_width``. The default 0.1 A/m²
+    (10 uA/cm²) makes the certificate comparable across thin perovskites and
+    thick, highly doped silicon instead of assigning both the same rate-space
+    residual. With the smoothed TE cap
     (``_TE_SOFTNESS``) the V*~0.858 wall stalls at residual 0.103: the
     smoothing reproduces the cap-removal improvement exactly (15x) and
     this acceptance bound then clears the wall.
 
-    A stall ABOVE ``tol_accept`` (typically at the diode knee, where the
+    A stall above the effective stall bound (typically at the diode knee,
+    where the
     TE cap binds AT the steady state, making F non-differentiable at its
     own zero — Newton cannot finish there, but F's VALUE at the fixed
     point is still zero) triggers transient assists: escalating Radau
     bursts (``assist_times``, with the mandatory near-flat-band
     ``max_step`` cap) at the same voltage settle the state until the
-    residual drops under ``tol_accept`` and the stall-accept path
+    residual drops under both configured bounds and the stall-accept path
     certifies it. Still-unconverged after all bursts raises.
+
+    ``relative_log_variables`` uses the mathematically equivalent coordinate
+    ``u = ln(density / density_seed)``.  It is intended for fine-grid
+    prolongation, where an absolute ``ln(density)`` coordinate can hit its
+    float64 resolution floor in a highly doped contact boundary layer.  It
+    changes neither the equations nor any residual/current acceptance bound;
+    the default remains the historical absolute-log path.
     """
     N = len(x)
+    if (not np.isfinite(max_continuity_current_error)
+            or max_continuity_current_error <= 0.0):
+        raise ValueError(
+            "max_continuity_current_error must be finite and positive, got "
+            f"{max_continuity_current_error}"
+        )
     if mat is None:
         mat = dataclasses.replace(
             build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
@@ -317,21 +406,68 @@ def solve_steady_state(
     n_unk = len(unk_idx)
     pin = np.zeros(n_unk, dtype=bool)
     pin[: 2 * N] = _pin_mask(mat, N)
-    z_pin = np.zeros(n_unk)
-    z_pin[0], z_pin[N - 1] = np.log(mat.n_L), np.log(mat.n_R)
-    z_pin[N], z_pin[2 * N - 1] = np.log(mat.p_L), np.log(mat.p_R)
-
-    z = np.log(np.maximum(y0[unk_idx], _DENSITY_FLOOR))
+    density_scale = None
+    if relative_log_variables:
+        density_scale = np.maximum(y0[unk_idx], _DENSITY_FLOOR)
+        z = np.zeros(n_unk)
+        z_pin = np.zeros(n_unk)
+        z_pin[0] = np.log(mat.n_L / density_scale[0])
+        z_pin[N - 1] = np.log(mat.n_R / density_scale[N - 1])
+        z_pin[N] = np.log(mat.p_L / density_scale[N])
+        z_pin[2 * N - 1] = np.log(
+            mat.p_R / density_scale[2 * N - 1]
+        )
+    else:
+        z_pin = np.zeros(n_unk)
+        z_pin[0], z_pin[N - 1] = np.log(mat.n_L), np.log(mat.n_R)
+        z_pin[N], z_pin[2 * N - 1] = np.log(mat.p_L), np.log(mat.p_R)
+        z = np.log(np.maximum(y0[unk_idx], _DENSITY_FLOOR))
     z[pin] = z_pin[pin]
     n_ref = float(np.max(y0[: 2 * N]))
-    F = _residual_fn(x, stack, mat, y0, V_app, illuminated, pin, z_pin,
-                     n_ref, unk_idx)
+    device_width = float(x[-1] - x[0])
+    continuity_current_scale = Q * n_ref * device_width
+    if not np.isfinite(continuity_current_scale) or continuity_current_scale <= 0.0:
+        raise SteadyStateError(
+            "cannot construct a finite continuity-current convergence scale"
+        )
+    current_limited_tol = (
+        max_continuity_current_error / continuity_current_scale
+    )
+    tol_effective = min(tol, current_limited_tol)
+    tol_accept_effective = min(tol_accept, current_limited_tol)
+    if density_scale is None:
+        F = _residual_fn(
+            x, stack, mat, y0, V_app, illuminated, pin, z_pin, n_ref, unk_idx,
+        )
+
+        def _densities(z_value):
+            return np.exp(z_value)
+    else:
+        F = _relative_log_residual_fn(
+            x,
+            stack,
+            mat,
+            y0,
+            V_app,
+            illuminated,
+            pin,
+            z_pin,
+            n_ref,
+            unk_idx,
+            density_scale,
+        )
+
+        def _densities(z_value):
+            return density_scale * np.exp(z_value)
 
     def _done(z_fin, res_fin, step_inf, it):
         y = y0.copy()
-        y[unk_idx] = np.exp(z_fin)
+        y[unk_idx] = _densities(z_fin)
         return SteadyStateResult(y=y, converged=True, residual=res_fin,
-                                 step_inf=step_inf, iterations=it)
+                                 step_inf=step_inf, iterations=it,
+                                 continuity_current_bound=(
+                                     continuity_current_scale * res_fin
+                                 ))
 
     last_msg = ""
     max_assists = len(assist_times)
@@ -356,7 +492,7 @@ def solve_steady_state(
         lu = None          # cached LU factor of the current Jacobian; None => rebuild
         jac_fresh = False  # True when this iter's step came from a fresh factor
         for it in range(1, max_newton + 1):
-            if res < tol:
+            if res < tol_effective:
                 return _done(z, res, 0.0, it - 1)
             if lu is None or not _SS_JAC_REUSE:
                 # dense FD Jacobian in ln-space (rebuilt only when needed)
@@ -396,9 +532,16 @@ def solve_steady_state(
                 jac_fresh = False
             step_inf = float(np.max(np.abs(step)))
             if step_inf < tol_step:
-                # residual at the cancellation-noise floor and the state
-                # has stopped moving — converged on the update criterion
-                return _done(z, res, step_inf, it)
+                # A small update can mean either convergence or a
+                # singular/ill-conditioned Newton direction.  Certify the
+                # former only under the same physical residual bound used
+                # by the kink-stall and iteration-limit paths.
+                if res_best < tol_accept_effective:
+                    return _done(z_best, res_best, step_inf, it)
+                last_msg = (f"Newton step stalled at V={V_app:.4f} "
+                            f"(iter {it}, best residual {res_best:.3e})")
+                stalled = True
+                break
             step = np.clip(step, -_LN_STEP_CAP, _LN_STEP_CAP)
             # backtracking line search on ||F||_2 (the max-norm is
             # non-smooth under the TE caps; convergence stays max-norm)
@@ -429,7 +572,7 @@ def solve_steady_state(
                     # fresh-Jacobian stall semantics)
                     lu = None
                     continue
-                if res_best < tol_accept:
+                if res_best < tol_accept_effective:
                     # kink-stall at a physically-converged state — accept
                     # the BEST iterate seen, not the last
                     return _done(z_best, res_best, step_inf, it)
@@ -438,18 +581,19 @@ def solve_steady_state(
                 stalled = True
                 break
         else:
-            if res_best < tol_accept:
+            if res_best < tol_accept_effective:
                 return _done(z_best, res_best, 0.0, max_newton)
             last_msg = (f"no convergence at V={V_app:.4f} after "
                         f"{max_newton} iterations (best residual "
-                        f"{res_best:.3e}, tol {tol:.1e})")
+                        f"{res_best:.3e}, effective tol "
+                        f"{tol_effective:.1e})")
         if attempt < max_assists:
             # transient assist: Radau traverses the TE-cap kink natively;
             # escalating burst lengths cover knee-injection relaxation,
             # max_step capped per the near-flat-band Radau gotcha
             t_a = assist_times[attempt]
             y_cur = y0.copy()
-            y_cur[unk_idx] = np.exp(z_best)  # assist from the best iterate
+            y_cur[unk_idx] = _densities(z_best)  # assist from the best iterate
             sol = run_transient(
                 x, y_cur, (0.0, t_a), np.array([t_a]), stack,
                 illuminated=illuminated, V_app=V_app, mat=mat,
@@ -460,10 +604,22 @@ def solve_steady_state(
             y_rel = y0.copy()
             y_rel[unk_idx] = sol.y[unk_idx, -1]
             y_rel = _qfl_poisson_relax(x, mat, y_rel, V_app)
-            z = np.log(np.maximum(y_rel[unk_idx], _DENSITY_FLOOR))
+            if density_scale is None:
+                z = np.log(np.maximum(y_rel[unk_idx], _DENSITY_FLOOR))
+            else:
+                z = np.log(
+                    np.maximum(y_rel[unk_idx], _DENSITY_FLOOR) / density_scale
+                )
             z[pin] = z_pin[pin]
         del stalled
-    raise SteadyStateError(last_msg + " (transient assists exhausted)")
+    raise SteadyStateError(
+        last_msg + " (transient assists exhausted)",
+        stage="transient_assists_exhausted",
+        voltage=float(V_app),
+        best_residual=float(res_best),
+        continuity_current_bound=float(continuity_current_scale * res_best),
+        attempts=max_assists,
+    )
 
 def _qfl_poisson_relax(x, mat, y, V_app, *, tol_phi=1e-10, max_iter=60):
     """Gummel phi-step: nonlinear Poisson at frozen quasi-Fermi levels.
@@ -492,7 +648,9 @@ def _qfl_poisson_relax(x, mat, y, V_app, *, tol_phi=1e-10, max_iter=60):
     V_T = mat.V_T_device
     rho0 = _charge_density(p, n, P, mat.P_ion0, mat.N_A, mat.N_D,
                            P_neg=P_neg, P_neg0=P_neg0)
-    phi_k = solve_poisson_prefactored(fac, rho0, 0.0, mat.V_bi_bc - V_app)
+    phi_k = solve_poisson_prefactored(
+        fac, rho0, 0.0, poisson_right_boundary(mat, V_app)
+    )
     rho_static = rho0 + Q * (n - p)          # phi-independent part
     C, h_cell = fac.C, fac.h_cell
 
@@ -571,9 +729,7 @@ def _transient_point_fallback(x, stack, mat, V_app, y_seed, *,
 
 
 def _grid_for(stack: DeviceStack, N_grid: int) -> np.ndarray:
-    elec = electrical_layers(stack)
-    return multilayer_grid(
-        [Layer(thickness=L.thickness, N=N_grid // len(elec)) for L in elec])
+    return build_electrical_grid(stack, N_grid)
 
 
 # ---------------------------------------------------------------------------
@@ -607,7 +763,8 @@ def _phi_from_y(x, mat, y, V_app):
         P_neg0=(mat.P_ion0_neg if dual else None),
     )
     return solve_poisson_prefactored(
-        mat.poisson_factor, rho, 0.0, mat.V_bi_bc - V_app)
+        mat.poisson_factor, rho, 0.0, poisson_right_boundary(mat, V_app)
+    )
 
 
 def _damped_newton(F, z0, n_unk, *, max_it, tol, tol_step=1e-9):
@@ -739,7 +896,10 @@ def _gummel_point(x, stack, mat, V_app, y_seed, *, illuminated=True,
     y_out[unk_idx] = np.exp(z_fin)
     y_out = _qfl_poisson_relax(x, mat, y_out, V_app)
     return SteadyStateResult(y=y_out, converged=True, residual=res_fin,
-                             step_inf=0.0, iterations=_it + 1)
+                             step_inf=0.0, iterations=_it + 1,
+                             continuity_current_bound=(
+                                 Q * res_fin * n_ref * float(x[-1] - x[0])
+                             ))
 
 
 def run_jv_sweep_ss(
@@ -751,6 +911,8 @@ def run_jv_sweep_ss(
     illuminated: bool = True,
     iface_states: bool = False,
     stop_after_voc: bool = False,
+    allow_underresolved_grid: bool = False,
+    allow_unvalidated_driver: bool = False,
     progress=None,
 ) -> JVSweepSSResult:
     """Steady-state J-V: voltage continuation with warm starts.
@@ -765,8 +927,23 @@ def run_jv_sweep_ss(
     fallback grinds for minutes — so when only the figures of merit are
     needed, set this True to keep the sweep fast and robust for any
     ``V_max``. All four metrics are fully determined by the 0->V_oc arc.
+
+    ``allow_unvalidated_driver`` is diagnostic-only. It permits this
+    algebraic driver on a stack whose production policy requires the
+    cancellation-safe quasi-Fermi formulation; it does not certify output.
     """
     x = _grid_for(stack, N_grid)
+    require_thick_layer_interface_resolution(
+        x,
+        stack,
+        N_grid=N_grid,
+        allow_underresolved_grid=allow_underresolved_grid,
+    )
+    require_jv_driver_capability(
+        stack,
+        requested_driver="steady_state",
+        allow_unvalidated_driver=allow_unvalidated_driver,
+    )
     mat = dataclasses.replace(
         build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
     if iface_states:
@@ -817,6 +994,8 @@ def solve_voc_ss(
     V_hi: float = 1.6,
     tol_v: float = 2.0e-4,
     iface_states: bool = False,
+    allow_underresolved_grid: bool = False,
+    allow_unvalidated_driver: bool = False,
 ) -> float:
     """Direct V_oc: bisection on the steady-state J(V) zero crossing.
 
@@ -825,6 +1004,17 @@ def solve_voc_ss(
     ``V_hi``.
     """
     x = _grid_for(stack, N_grid)
+    require_thick_layer_interface_resolution(
+        x,
+        stack,
+        N_grid=N_grid,
+        allow_underresolved_grid=allow_underresolved_grid,
+    )
+    require_jv_driver_capability(
+        stack,
+        requested_driver="steady_state_voc",
+        allow_unvalidated_driver=allow_unvalidated_driver,
+    )
     mat = dataclasses.replace(
         build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
     if iface_states:

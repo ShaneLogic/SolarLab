@@ -52,6 +52,12 @@ def load_tandem_from_yaml(path: str) -> TandemConfig:
     if not isinstance(cfg, dict):
         raise ValueError(f"{path}: YAML is empty or not a mapping")
 
+    if cfg.get("schema_version") != 1:
+        raise ValueError(
+            f"{path}: expected schema_version=1, got "
+            f"{cfg.get('schema_version')!r}"
+        )
+
     if cfg.get("device_type") != "tandem_2T_monolithic":
         raise ValueError(
             f"{path}: expected device_type=tandem_2T_monolithic, got "

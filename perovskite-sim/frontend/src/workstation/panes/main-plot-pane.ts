@@ -2095,8 +2095,8 @@ export function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void
         yaxis: publicationAxis({ title: '1/C<sup>2</sup> (m\u2074\u00b7F\u207B\u00b2)' }),
         shapes: _pubShapes,
         // Mott-Schottky 1/C\u00b2 typically slopes upper-LEFT (deep reverse
-        // bias, large 1/C\u00b2) to lower-RIGHT (toward V_bi where 1/C\u00b2 \u2192 0).
-        // Upper-RIGHT quadrant is the empty home for the V_bi / N_eff /
+        // bias, large 1/C\u00b2) to lower-RIGHT (toward the V-axis intercept).
+        // Upper-RIGHT quadrant is the empty home for the V_bi,app / N_eff /
         // frequency readout.
         annotations: [
           {
@@ -2104,7 +2104,7 @@ export function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void
             xanchor: 'right' as const, yanchor: 'top' as const,
             showarrow: false,
             text:
-              `V<sub>bi</sub> = ${r.V_bi_fit.toFixed(3)} V<br>` +
+              `V<sub>bi,app</sub> = ${r.V_bi_fit.toFixed(3)} V<br>` +
               `N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3<br>` +
               `f = ${r.frequency.toExponential(1)} Hz`,
             align: 'right' as const,
@@ -2136,7 +2136,7 @@ export function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void
           {
             x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
             xanchor: 'left', yanchor: 'top', showarrow: false,
-            text: `V<sub>bi</sub> = ${r.V_bi_fit.toFixed(3)} V &nbsp; N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3 &nbsp; f = ${r.frequency.toExponential(1)} Hz`,
+            text: `V<sub>bi,app</sub> = ${r.V_bi_fit.toFixed(3)} V &nbsp; N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3 &nbsp; f = ${r.frequency.toExponential(1)} Hz`,
             font: { size: 12 },
           },
         ],

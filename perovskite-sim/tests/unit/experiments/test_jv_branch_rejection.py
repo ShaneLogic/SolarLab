@@ -10,8 +10,9 @@ claimed that "removes the spikes" -- but every recovery path in that function
 (bisection, the BDF fallback) is gated on ``sol.success == False``, and a
 wrong-branch step **succeeds**.  Nothing fired.
 
-Measured on ``ionmonger_benchmark`` at the shipped benchmark grid
-(``N_grid=40, n_points=20``), whose V = 1.10526 sample sits essentially
+Measured on the historical steric-off ``ionmonger_benchmark`` path at the
+benchmark grid (``N_grid=40, n_points=20``), whose V = 1.10526 sample sits
+essentially
 exactly on ``V_bi`` = 1.1::
 
     [14] V=1.03158  J=  204.124
@@ -38,9 +39,14 @@ THE FIX
 Require local subdivision convergence.  V=0 has no lower current bound, so a
 4-leg probe detects both under- and over-reads and an independent 8-leg result
 must confirm both current and state before replacement.  At positive bias the
-protocol ceiling still triggers the 2/4/8 ladder, but two successive results
-must agree; merely falling below the ceiling is not enough.  Probe failures
-warn and preserve the successful single-leg result.
+protocol ceiling and each positive-to-nonpositive transition trigger the
+2/4/8 ladder, but two successive results must agree; merely falling below the
+ceiling is not enough.  Certifying the transition is necessary because that
+point determines V_oc and a wrong low-current landing is invisible to the
+one-sided ceiling. Any required probe/recovery failure raises by default.
+Explicit diagnostic mode records the rejected value in a point certificate,
+exposes NaN in the J-V curve, and invalidates the entire downstream warm-start
+state chain.
 
 BLAS PINNING IS LOAD-BEARING HERE
 --------------------------------
@@ -63,6 +69,10 @@ it is deterministic in either lane.  It is NOT marked ``slow``: the whole
 lesson is that this bug class hid behind that marker.
 """
 from __future__ import annotations
+
+import dataclasses
+import warnings
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -95,7 +105,13 @@ def _pin_blas():
 
 @pytest.fixture(scope="module")
 def gate_stack():
-    return load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    # Preserve the exact historical fault trigger. The shipped loader now
+    # consistently follows DeviceStack's steric-diffusion-only default=True,
+    # which removes this raw branch landing before the generic rejector fires.
+    return dataclasses.replace(
+        load_device_from_yaml("configs/ionmonger_benchmark.yaml"),
+        ion_steric_diffusion_only=False,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -111,7 +127,14 @@ def zero_bias_result(gate_stack):
     )
 
 
-def _run_fake_sweep(monkeypatch, gate_stack, make_state):
+def _run_fake_sweep(
+    monkeypatch,
+    gate_stack,
+    make_state,
+    *,
+    certification_mode="strict",
+    compute_current=None,
+):
     """Exercise branch mechanics without depending on a BLAS branch landing."""
     calls = []
 
@@ -130,10 +153,13 @@ def _run_fake_sweep(monkeypatch, gate_stack, make_state):
     monkeypatch.setattr(JV, "solve_illuminated_ss", fake_illuminated_ss)
     monkeypatch.setattr(JV, "_integrate_step", fake_integrate)
     monkeypatch.setattr(
-        JV, "_compute_current", lambda _x, y, *_a, **_kw: float(y[0]),
+        JV,
+        "_compute_current",
+        compute_current or (lambda _x, y, *_a, **_kw: float(y[0])),
     )
     result = run_jv_sweep(
         gate_stack, N_grid=6, n_points=3, V_max=0.2, v_rate=1.0,
+        certification_mode=certification_mode,
     )
     return result, calls
 
@@ -161,9 +187,10 @@ def test_forward_current_never_exceeds_jsc(gate_result):
     J_sc = float(J[0])
     fwd = V > 0.0
     worst = float(np.max(J[fwd]))
-    assert worst <= J_sc * (1.0 + JV._J_BRANCH_EXCESS), (
+    ceiling = JV._branch_current_ceiling(J_sc)
+    assert worst <= ceiling, (
         f"forward J peaks at {worst:.3f} A/m^2 against J_sc = {J_sc:.3f} "
-        f"(ceiling {J_sc * (1.0 + JV._J_BRANCH_EXCESS):.3f}) -- a step landed "
+        f"(ceiling {ceiling:.3f}) -- a step landed "
         "on the carrier-injection branch"
     )
 
@@ -197,6 +224,17 @@ def test_hysteresis_index_is_bounded(gate_result):
     assert abs(gate_result.hysteresis_index) < 0.05, (
         f"|HI| = {abs(gate_result.hysteresis_index):.4f}"
     )
+
+
+def test_valid_sweep_exposes_complete_immutable_certificates(gate_result):
+    assert gate_result.status_fwd is not None
+    assert gate_result.status_rev is not None
+    assert len(gate_result.status_fwd) == len(gate_result.V_fwd)
+    assert len(gate_result.status_rev) == len(gate_result.V_rev)
+    assert all(status.valid for status in gate_result.status_fwd)
+    assert all(status.valid for status in gate_result.status_rev)
+    assert gate_result.status_fwd[0].refinement_required is True
+    assert gate_result.status_fwd[0].refinement_converged is True
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +274,17 @@ def test_guard_actually_fires_on_the_gate_config(gate_stack, monkeypatch):
     assert r.metrics_fwd.FF > 1.0
 
 
+def test_shipped_steric_default_avoids_the_historical_spike(monkeypatch):
+    """The production default is stable even with the generic guard disabled."""
+    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    assert stack.ion_steric_diffusion_only is True
+    monkeypatch.setattr(JV, "_J_BRANCH_EXCESS", np.inf)
+    result = run_jv_sweep(stack, **_GATE)
+    index = int(np.argmin(np.abs(result.V_fwd - _SPIKE_V)))
+    assert float(result.J_fwd[index]) == pytest.approx(_CONVERGED_J, abs=5.0)
+    assert 0.0 < result.metrics_fwd.FF <= 1.0
+
+
 def test_zero_bias_underread_recovers_on_the_converged_branch(
     zero_bias_result,
 ):
@@ -259,16 +308,17 @@ def test_zero_bias_confirmation_replaces_current_and_forwarded_state(
 
     r, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
     assert float(r.J_fwd[0]) == pytest.approx(223.0, abs=0.1)
+    assert r.status_fwd[0].candidate_current == pytest.approx(467.55)
     first_positive = next(c for c in calls if c[0] > 0.0 and c[1] == 1)
     assert first_positive[2][1] == pytest.approx(0.08)
 
 
 @pytest.mark.parametrize(
-    ("failed_leg", "message"),
-    ((4, "subdivision probe failed"), (8, "subdivision confirmation failed")),
+    ("failed_leg", "reason_code"),
+    ((4, "zero_bias_probe_failed"), (8, "zero_bias_confirmation_failed")),
 )
-def test_zero_bias_probe_failure_keeps_successful_single_leg(
-    gate_stack, monkeypatch, failed_leg, message,
+def test_zero_bias_refinement_failure_fails_closed_by_default(
+    gate_stack, monkeypatch, failed_leg, reason_code,
 ):
     def make_state(V, legs, y, _N):
         if V == 0.0 and legs == failed_leg:
@@ -276,14 +326,55 @@ def test_zero_bias_probe_failure_keeps_successful_single_leg(
         current = 10.0 if legs == 1 else 20.0
         return _fake_state(y, current, marker=legs * 0.01, ion=1.0)
 
-    with pytest.warns(RuntimeWarning, match=message):
-        r, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
-    assert float(r.J_fwd[0]) == 10.0
-    first_positive = next(c for c in calls if c[0] > 0.0 and c[1] == 1)
-    assert first_positive[2][1] == pytest.approx(0.01)
+    with pytest.raises(JV.JVCertificationError) as caught:
+        _run_fake_sweep(monkeypatch, gate_stack, make_state)
+    status = caught.value.status
+    assert status.reason_code == reason_code
+    assert status.valid is False
+    assert status.refinement_converged is False
+    assert status.failed_legs == (failed_leg,)
+    assert len(status.attempted_currents) == len(status.attempted_legs)
+    assert status.candidate_current == 10.0
 
 
-def test_zero_bias_matching_current_but_divergent_state_is_not_accepted(
+def test_zero_bias_probe_failure_diagnostic_marks_entire_chain_invalid(
+    gate_stack, monkeypatch,
+):
+    def make_state(V, legs, y, _N):
+        if V == 0.0 and legs == 4:
+            raise RuntimeError("synthetic probe failure")
+        return _fake_state(y, 10.0 if legs == 1 else 20.0, ion=1.0)
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("error", RuntimeWarning)
+        warnings.simplefilter("always", JV.JVCertificationWarning)
+        result, _ = _run_fake_sweep(
+            monkeypatch,
+            gate_stack,
+            make_state,
+            certification_mode="diagnostic",
+        )
+
+    assert any(
+        issubclass(item.category, JV.JVCertificationWarning)
+        and "zero_bias_probe_failed" in str(item.message)
+        for item in caught_warnings
+    )
+
+    assert result.status_fwd is not None
+    assert result.status_rev is not None
+    assert result.status_fwd[0].reason_code == "zero_bias_probe_failed"
+    assert all(not status.valid for status in result.status_fwd)
+    assert all(not status.valid for status in result.status_rev)
+    assert result.status_fwd[1].reason_code == "upstream_state_uncertified"
+    assert np.all(np.isnan(result.J_fwd))
+    assert np.all(np.isnan(result.J_rev))
+    assert np.isnan(result.metrics_fwd.V_oc)
+    assert np.isnan(result.metrics_rev.PCE)
+    assert np.isnan(result.hysteresis_index)
+
+
+def test_zero_bias_confirmation_disagreement_fails_closed(
     gate_stack, monkeypatch,
 ):
     def make_state(V, legs, y, _N):
@@ -293,9 +384,13 @@ def test_zero_bias_matching_current_but_divergent_state_is_not_accepted(
         current = 10.0 if legs == 1 else 20.0
         return _fake_state(y, current, marker=legs * 0.01, ion=ion)
 
-    with pytest.warns(RuntimeWarning, match="failed local subdivision convergence"):
-        r, _ = _run_fake_sweep(monkeypatch, gate_stack, make_state)
-    assert float(r.J_fwd[0]) == 10.0
+    with pytest.raises(JV.JVCertificationError) as caught:
+        _run_fake_sweep(monkeypatch, gate_stack, make_state)
+    status = caught.value.status
+    assert status.reason_code == "zero_bias_refinement_disagreed"
+    assert status.attempted_legs == (1, 4, 8)
+    assert status.attempted_currents == (10.0, 20.0, 20.0)
+    assert status.candidate_current == 10.0
 
 
 def test_positive_retry_rejects_first_below_ceiling_and_forwards_confirmed_state(
@@ -328,6 +423,123 @@ def test_positive_retry_skips_a_failed_leg_when_later_pair_converges(
     r, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
     assert float(r.J_fwd[1]) == 100.0
     assert any(V > 0.0 and legs == 8 for V, legs, *_ in calls)
+
+
+def test_positive_retry_keeps_success_across_failed_intermediate_leg(
+    gate_stack, monkeypatch,
+):
+    """A failed 4-leg solve must not discard agreeing 2/8-leg states."""
+    def make_state(V, legs, y, _N):
+        if V == 0.0:
+            return _fake_state(y, 100.0, marker=1.0, ion=1.0)
+        if legs == 4:
+            raise RuntimeError("synthetic 4-leg failure")
+        current = 200.0 if legs == 1 else 100.0
+        return _fake_state(y, current, marker=legs * 0.01, ion=1.0)
+
+    result, _ = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+
+    status = result.status_fwd[1]
+    assert status.valid
+    assert status.reason_code == "positive_bias_refinement_recovered"
+    assert status.attempted_legs == (1, 2, 4, 8)
+    assert status.attempted_currents == (200.0, 100.0, None, 100.0)
+    assert status.failed_legs == (4,)
+    assert status.accepted_legs == 8
+    assert result.J_fwd[1] == 100.0
+
+
+def test_zero_crossing_requires_local_convergence_and_recovers_low_branch(
+    gate_stack, monkeypatch,
+):
+    """A wrong negative landing is invisible to the one-sided J_sc ceiling."""
+    def make_state(V, legs, y, _N):
+        if V == 0.0:
+            return _fake_state(y, 100.0, marker=1.0, ion=1.0)
+        if V == pytest.approx(0.1):
+            current = -300.0 if legs == 1 else 80.0
+            return _fake_state(y, current, marker=legs * 0.01, ion=1.0)
+        return _fake_state(y, 50.0, marker=99.0, ion=1.0)
+
+    result, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+
+    status = result.status_fwd[1]
+    assert status.reason_code == "zero_crossing_refinement_recovered"
+    assert status.candidate_current == -300.0
+    assert status.attempted_legs == (1, 2, 4)
+    assert status.attempted_currents == (-300.0, 80.0, 80.0)
+    assert result.J_fwd[1] == 80.0
+    second_positive = [c for c in calls if c[0] > 0.0 and c[1] == 1][1]
+    assert second_positive[2][1] == pytest.approx(0.04)
+
+
+def test_reverse_precharged_current_is_not_compared_with_forward_jsc(
+    gate_stack, monkeypatch,
+):
+    """A reverse transient is outside the forward ceiling's protocol premise."""
+    single_calls = 0
+
+    def make_state(V, legs, y, _N):
+        nonlocal single_calls
+        if legs == 1:
+            index = single_calls
+            single_calls += 1
+            currents = (100.0, 80.0, 50.0, 50.0, 120.0, 130.0)
+            return _fake_state(y, currents[index], ion=1.0)
+        # V=0 refinement: forward probe sees 100, reverse probe sees 130.
+        return _fake_state(y, 100.0 if single_calls <= 3 else 130.0, ion=1.0)
+
+    result, _ = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+
+    assert result.certified
+    assert result.J_fwd[0] == 100.0
+    assert result.J_rev[1] == 120.0
+    assert result.J_rev[-1] == 130.0
+
+
+def test_reverse_precharged_excess_does_not_trigger_forward_refinement(
+    gate_stack, monkeypatch,
+):
+    """Stored-energy reverse current must not be relabelled a forward defect."""
+    single_calls = 0
+
+    def make_state(V, legs, y, _N):
+        nonlocal single_calls
+        if legs == 1:
+            index = single_calls
+            single_calls += 1
+            currents = (
+                100.0, 80.0, 50.0,       # forward
+                50.0, 160.0, 130.0,      # reverse discovery pass
+            )
+            return _fake_state(y, currents[index], ion=1.0)
+        if V == 0.0:
+            return _fake_state(y, 100.0 if single_calls <= 3 else 130.0, ion=1.0)
+        return _fake_state(y, 120.0, ion=1.0)
+
+    result, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+
+    assert result.certified
+    assert result.J_rev[1] == 160.0
+    assert result.status_rev[1].reason_code == "certified"
+    assert result.status_rev[1].attempted_legs == (1,)
+    assert sum(V == pytest.approx(0.2) and legs == 1 for V, legs, *_ in calls) == 2
+
+
+def test_near_zero_forward_jsc_uses_absolute_current_resolution(
+    gate_stack, monkeypatch,
+):
+    """A relative ceiling must not amplify near-zero current round-off."""
+    def make_state(V, legs, y, _N):
+        current = 1e-6 if V == 0.0 else 5e-3
+        return _fake_state(y, current, ion=1.0)
+
+    result, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+
+    assert result.certified
+    assert result.J_fwd[1] == pytest.approx(5e-3)
+    assert result.status_fwd[1].attempted_legs == (1,)
+    assert not any(V > 0.0 and legs > 1 for V, legs, *_ in calls)
 
 
 def test_tighter_max_step_is_not_a_fix(gate_stack):
@@ -363,20 +575,181 @@ def test_tighter_max_step_is_not_a_fix(gate_stack):
     )
 
 
-def test_unrecoverable_violation_warns_and_does_not_hide_the_value(
+def test_unrecoverable_positive_violation_fails_closed(
     gate_stack, monkeypatch,
 ):
-    """If the retry ladder cannot satisfy the bound, warn -- never silently
-    keep a number known to be unphysical, and never silently substitute one.
+    """If the retry ladder cannot satisfy the bound, reject the whole result.
 
     Forced by making the ceiling unsatisfiable (any positive current violates
     it), so every retry fails by construction.
     """
-    monkeypatch.setattr(JV, "_J_BRANCH_EXCESS", -0.999999)
+    monkeypatch.setattr(JV, "_branch_current_ceiling", lambda _J_sc: -np.inf)
     monkeypatch.setattr(JV, "_J_BRANCH_RETRY_LEGS", (2,))
-    with pytest.warns(RuntimeWarning, match="above the protocol current ceiling"):
-        r = run_jv_sweep(gate_stack, N_grid=30, n_points=6, v_rate=5.0)
-    assert np.all(np.isfinite(r.J_fwd))
+    with pytest.raises(JV.JVCertificationError) as caught:
+        run_jv_sweep(gate_stack, N_grid=30, n_points=6, v_rate=5.0)
+    status = caught.value.status
+    assert status.reason_code == "positive_bias_refinement_exhausted"
+    assert status.voltage > 0.0
+    assert status.refinement_required is True
+    assert status.refinement_converged is False
+    assert status.attempted_legs == (1, 2)
+    assert len(status.attempted_currents) == 2
+
+
+def test_positive_recovery_exhaustion_diagnostic_never_exposes_raw_j(
+    gate_stack, monkeypatch,
+):
+    monkeypatch.setattr(JV, "_J_BRANCH_RETRY_LEGS", (2, 4))
+
+    def make_state(V, legs, y, _N):
+        if V == 0.0:
+            return _fake_state(y, 100.0, marker=legs * 0.01, ion=1.0)
+        current = {1: 200.0, 2: 180.0, 4: 160.0}[legs]
+        return _fake_state(y, current, marker=legs * 0.01, ion=1.0)
+
+    with pytest.warns(
+        JV.JVCertificationWarning,
+        match="positive_bias_refinement_exhausted",
+    ):
+        result, _ = _run_fake_sweep(
+            monkeypatch,
+            gate_stack,
+            make_state,
+            certification_mode="diagnostic",
+        )
+    failed = result.status_fwd[1]
+    assert failed.reason_code == "positive_bias_refinement_exhausted"
+    assert failed.attempted_currents == (200.0, 180.0, 160.0)
+    assert failed.candidate_current == 200.0
+    assert np.isnan(result.J_fwd[1])
+    assert np.isnan(result.J_fwd[2])
+    assert np.isnan(result.metrics_fwd.J_sc)
+
+
+def test_nonfinite_candidate_fails_closed_with_structured_status(
+    gate_stack, monkeypatch,
+):
+    def make_state(_V, _legs, y, _N):
+        return _fake_state(y, np.nan, ion=1.0)
+
+    with pytest.raises(JV.JVCertificationError) as caught:
+        _run_fake_sweep(monkeypatch, gate_stack, make_state)
+
+    status = caught.value.status
+    assert status.reason_code == "nonfinite_candidate"
+    assert status.valid is False
+    assert np.isnan(status.candidate_current)
+
+
+@pytest.mark.parametrize("failure_kind", ["value_error", "runtime_warning"])
+def test_integrate_step_recovers_numeric_solver_exception_by_bisection(
+    gate_stack, monkeypatch, failure_kind,
+):
+    """SciPy numeric exceptions must enter the existing recovery ladder."""
+    x = np.array([0.0, 1.0])
+    y0 = np.zeros(6)
+    mat = SimpleNamespace(has_radiative_reabsorption=False)
+    calls = []
+
+    def fake_transient(_x, y, t_span, _t_eval, _stack, **kwargs):
+        calls.append((t_span, kwargs["method"]))
+        if t_span == (0.0, 1.0):
+            if failure_kind == "value_error":
+                raise ValueError("synthetic non-finite Jacobian")
+            warnings.warn("synthetic overflow", RuntimeWarning)
+        return SimpleNamespace(success=True, y=(np.asarray(y) + 1.0)[:, None])
+
+    monkeypatch.setattr(JV, "run_transient", fake_transient)
+    out = JV._integrate_step(
+        x, y0, gate_stack, mat, 0.4, 0.0, 1.0, 1e-4, 1e-6,
+        max_bisect=1,
+    )
+
+    np.testing.assert_array_equal(out, y0 + 2.0)
+    assert calls == [
+        ((0.0, 1.0), "Radau"),
+        ((0.0, 0.5), "Radau"),
+        ((0.5, 1.0), "Radau"),
+    ]
+
+
+def test_initial_integration_exhaustion_is_structured(
+    gate_stack, monkeypatch,
+):
+    """A failed first candidate must not leak a bare solver exception."""
+    monkeypatch.setattr(
+        JV,
+        "solve_illuminated_ss",
+        lambda x, *_args, **_kwargs: np.zeros(3 * len(x), dtype=float),
+    )
+    monkeypatch.setattr(
+        JV,
+        "_integrate_step",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic recovery exhaustion")
+        ),
+    )
+
+    with pytest.raises(JV.JVCertificationError) as caught:
+        run_jv_sweep(
+            gate_stack, N_grid=6, n_points=3, V_max=0.2, v_rate=1.0,
+        )
+
+    status = caught.value.status
+    assert status.reason_code == "integration_failed"
+    assert status.attempted_legs == (1,)
+    assert status.attempted_currents == (None,)
+    assert status.failed_legs == (1,)
+    assert status.accepted_legs == 0
+    assert status.candidate_current is None
+
+
+def test_terminal_current_failure_is_structured_in_strict_mode(
+    gate_stack, monkeypatch,
+):
+    def make_state(_V, _legs, y, _N):
+        return _fake_state(y, 10.0, ion=1.0)
+
+    def fail_current(*_args, **_kwargs):
+        raise ValueError("synthetic terminal-current failure")
+
+    with pytest.raises(JV.JVCertificationError) as caught:
+        _run_fake_sweep(
+            monkeypatch, gate_stack, make_state, compute_current=fail_current,
+        )
+
+    status = caught.value.status
+    assert status.reason_code == "current_extraction_failed"
+    assert "synthetic terminal-current failure" in status.message
+    assert status.candidate_current is None
+
+
+def test_terminal_current_failure_diagnostic_returns_nan_chain(
+    gate_stack, monkeypatch,
+):
+    def make_state(_V, _legs, y, _N):
+        return _fake_state(y, 10.0, ion=1.0)
+
+    def fail_current(*_args, **_kwargs):
+        raise ValueError("synthetic terminal-current failure")
+
+    with pytest.warns(
+        JV.JVCertificationWarning, match="current_extraction_failed",
+    ):
+        result, calls = _run_fake_sweep(
+            monkeypatch,
+            gate_stack,
+            make_state,
+            certification_mode="diagnostic",
+            compute_current=fail_current,
+        )
+
+    assert result.status_fwd[0].reason_code == "current_extraction_failed"
+    assert np.all(np.isnan(result.J_fwd))
+    assert np.all(np.isnan(result.J_rev))
+    assert np.isnan(result.metrics_fwd.PCE)
+    np.testing.assert_array_equal(calls[1][2], calls[0][3])
+    assert calls[1][2][0] == 10.0
 
 
 def test_n_legs_chaining_is_equivalent_to_manual_subdivision(gate_stack):

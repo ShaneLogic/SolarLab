@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from types import SimpleNamespace
 from perovskite_sim.experiments.impedance import extract_impedance
 
 
@@ -49,12 +50,83 @@ def test_impedance_rejects_small_n_grid():
         run_impedance(stack, np.array([1e3]), N_grid=2)
 
 
+def test_impedance_rejects_underresolved_csi_grid_before_integration():
+    from perovskite_sim.discretization.grid import GridResolutionError
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    with pytest.raises(GridResolutionError, match="under-resolved"):
+        run_impedance(stack, np.array([1e5]), N_grid=30)
+
+
+def test_impedance_rejects_failed_dark_dc_preconditioning(monkeypatch):
+    import perovskite_sim.experiments.impedance as impedance_module
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    monkeypatch.setattr(
+        impedance_module,
+        "run_transient",
+        lambda *args, **kwargs: SimpleNamespace(
+            success=False,
+            message="deliberate DC failure",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="dark DC preconditioning failed"):
+        run_impedance(
+            stack,
+            np.array([1e3]),
+            V_dc=0.1,
+            N_grid=12,
+            illuminated=False,
+        )
+
+
 def test_impedance_rejects_zero_delta_v():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
     stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="delta_V"):
         run_impedance(stack, np.array([1e3]), delta_V=0.0)
+
+
+def test_qf_frequency_impedance_enforces_strict_small_signal_amplitude():
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    with pytest.raises(ValueError, match="below the 20 mV"):
+        run_impedance(
+            stack,
+            np.array([1.0e5]),
+            V_dc=-0.2,
+            delta_V=0.02,
+            N_grid=200,
+            illuminated=False,
+            method="quasi_fermi_frequency",
+        )
+
+
+def test_qf_frequency_impedance_rejects_mobile_ion_model():
+    from perovskite_sim.experiments.impedance import run_impedance
+    from perovskite_sim.experiments.quasi_fermi_steady_state import (
+        QuasiFermiSteadyStateError,
+    )
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    with pytest.raises(QuasiFermiSteadyStateError, match="mobile ions"):
+        run_impedance(
+            stack,
+            np.array([1.0e5]),
+            V_dc=0.0,
+            N_grid=12,
+            illuminated=False,
+            method="quasi_fermi_frequency",
+        )
 
 
 def test_impedance_rejects_nonpositive_frequency():

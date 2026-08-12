@@ -1,15 +1,37 @@
-import type { DeviceConfig, InterfaceDefectFields, LayerConfig, LayerRole, SimulationModeName } from './types'
+import type {
+  BuiltInPotentialMode,
+  DeviceConfig,
+  InterfaceDefectFields,
+  LayerConfig,
+  LayerRole,
+  SimulationModeName,
+} from './types'
 import { isLayerRole } from './types'
 import { isFieldVisible } from './workstation/tier-gating'
 
 const MODE_OPTIONS: ReadonlyArray<{ value: SimulationModeName; label: string }> = [
   { value: 'full', label: 'Full (all physics upgrades)' },
-  { value: 'fast', label: 'Fast (Beer–Lambert, no TE)' },
+  { value: 'fast', label: 'Fast (build-once physics)' },
   { value: 'legacy', label: 'Legacy (IonMonger-compatible)' },
+]
+
+const BUILT_IN_POTENTIAL_OPTIONS: ReadonlyArray<{
+  value: BuiltInPotentialMode
+  label: string
+}> = [
+  { value: 'semiconductor_work_function', label: 'Semiconductor work functions' },
+  { value: 'metal_work_function', label: 'Explicit metal work functions' },
+  { value: 'legacy_manual', label: 'Legacy manual override' },
 ]
 
 function isModeName(v: unknown): v is SimulationModeName {
   return v === 'full' || v === 'fast' || v === 'legacy'
+}
+
+function isBuiltInPotentialMode(v: unknown): v is BuiltInPotentialMode {
+  return v === 'legacy_manual'
+    || v === 'semiconductor_work_function'
+    || v === 'metal_work_function'
 }
 
 // Discriminator for per-layer field rendering. Most parameters are numeric;
@@ -57,6 +79,16 @@ const LAYER_GROUPS: ParamGroup[] = [
       { key: 'mu_n', label: '<i>μ</i><sub>n</sub>', kind: 'numeric', unit: 'm²/(V·s)' },
       { key: 'mu_p', label: '<i>μ</i><sub>p</sub>', kind: 'numeric', unit: 'm²/(V·s)' },
       { key: 'ni', label: '<i>n</i><sub>i</sub>', kind: 'numeric', unit: 'm⁻³' },
+      {
+        key: 'Nc300', label: '<i>N</i><sub>C,300</sub>', kind: 'numeric-optional', unit: 'm⁻³',
+        placeholder: 'required for semiconductor ΔW',
+        tooltip: 'Effective conduction-band density of states at 300 K.',
+      },
+      {
+        key: 'Nv300', label: '<i>N</i><sub>V,300</sub>', kind: 'numeric-optional', unit: 'm⁻³',
+        placeholder: 'required for semiconductor ΔW',
+        tooltip: 'Effective valence-band density of states at 300 K.',
+      },
       { key: 'N_D', label: '<i>N</i><sub>D</sub>', kind: 'numeric', unit: 'm⁻³' },
       { key: 'N_A', label: '<i>N</i><sub>A</sub>', kind: 'numeric', unit: 'm⁻³' },
     ],
@@ -410,7 +442,7 @@ function renderScapsPhysics(config: DeviceConfig): string {
         <summary><h5>SCAPS-validation physics</h5></summary>
         ${help}
         <div class="param-grid">
-          ${cb('dev-dos', 'DOS band potentials', !!d.dos_band_potentials, 'V_T·ln(DOS) quasi-Fermi step (YAML dos_band_potentials)')}
+          ${cb('dev-dos', 'DOS band potentials', d.dos_band_potentials ?? true, 'V_T·ln(DOS) quasi-Fermi step (YAML dos_band_potentials)')}
           ${cb('dev-flatband', 'Flat-band contacts', !!d.flat_band_contacts, 'SCAPS finite-S metal contacts (YAML flat_band_contacts)')}
           ${cb('dev-iface-closure', 'Interface-plane closure', !!d.interface_plane_closure, 'QSS plane-density interface SRH (YAML interface_plane_closure)')}
           ${cb('dev-iface-proj', 'Interface-plane projection', !!d.interface_plane_projection, 'phi-projected interface densities (YAML interface_plane_projection)')}
@@ -488,6 +520,26 @@ function renderModeOptions(current: SimulationModeName): string {
     .join('')
 }
 
+function inferredBuiltInPotentialMode(config: DeviceConfig): BuiltInPotentialMode {
+  const explicit = config.device.built_in_potential_mode
+  if (isBuiltInPotentialMode(explicit)) return explicit
+  // Mirror the backend parser exactly. Any old manual key denotes an
+  // un-migrated compatibility payload, including the historical case where
+  // flat_band_contacts implicitly selected the band-derived Poisson value.
+  // A genuinely new payload with no manual key starts on the fail-closed
+  // semiconductor-work-function path.
+  if (config.device.V_bi !== undefined || config.device.V_bi_override !== undefined) {
+    return 'legacy_manual'
+  }
+  return 'semiconductor_work_function'
+}
+
+function renderBuiltInPotentialOptions(current: BuiltInPotentialMode): string {
+  return BUILT_IN_POTENTIAL_OPTIONS
+    .map(o => `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`)
+    .join('')
+}
+
 export function renderDeviceEditor(
   container: HTMLElement,
   config: DeviceConfig,
@@ -499,6 +551,8 @@ export function renderDeviceEditor(
     ? renderLayer(config.layers[selectedLayerIdx!], selectedLayerIdx!, tier, true)
     : config.layers.map((layer, idx) => renderLayer(layer, idx, tier)).join('')
   const currentMode: SimulationModeName = isModeName(config.device.mode) ? config.device.mode : 'full'
+  const builtInPotentialMode = inferredBuiltInPotentialMode(config)
+  const manualVbi = config.device.V_bi_override ?? config.device.V_bi ?? 1.1
   const currentT = config.device.T ?? 300
   const showT = !tier || isFieldVisible('T', tier)
   const tField = showT ? `
@@ -514,9 +568,21 @@ export function renderDeviceEditor(
             <span class="param-label"><span class="sym">Mode</span></span>
             <select class="num-input" id="dev-mode">${renderModeOptions(currentMode)}</select>
           </label>${tField}
-          <label class="param">
-            <span class="param-label"><span class="sym"><i>V</i><sub>bi</sub></span><span class="unit">V</span></span>
-            ${numAttr('dev-Vbi', config.device.V_bi)}
+          <label class="param" title="Select the physical source of the Poisson built-in potential">
+            <span class="param-label"><span class="sym">Built-in potential</span></span>
+            <select class="num-input" id="dev-vbi-mode">${renderBuiltInPotentialOptions(builtInPotentialMode)}</select>
+          </label>
+          <label class="param" data-vbi-mode="legacy_manual">
+            <span class="param-label"><span class="sym"><i>V</i><sub>bi</sub> override</span><span class="unit">V</span></span>
+            ${numAttr('dev-Vbi', manualVbi, { title: 'Compatibility-only positive magnitude' })}
+          </label>
+          <label class="param" data-vbi-mode="metal_work_function">
+            <span class="param-label"><span class="sym"><i>W</i><sub>left</sub></span><span class="unit">eV</span></span>
+            ${numAttr('dev-W-left', config.device.work_function_left_eV, { title: 'Left metal work function below vacuum' })}
+          </label>
+          <label class="param" data-vbi-mode="metal_work_function">
+            <span class="param-label"><span class="sym"><i>W</i><sub>right</sub></span><span class="unit">eV</span></span>
+            ${numAttr('dev-W-right', config.device.work_function_right_eV, { title: 'Right metal work function below vacuum' })}
           </label>
           <label class="param">
             <span class="param-label"><span class="sym"><i>Φ</i></span><span class="unit">m⁻²·s⁻¹</span></span>
@@ -550,6 +616,15 @@ export function renderDeviceEditor(
       ${interfacesHtml}
       <div class="layer-list">${layerHtml}</div>
     </div>`
+  const potentialSelect = container.querySelector<HTMLSelectElement>('#dev-vbi-mode')
+  const syncPotentialFields = (): void => {
+    const selected = potentialSelect?.value
+    container.querySelectorAll<HTMLElement>('[data-vbi-mode]').forEach(field => {
+      field.hidden = field.dataset.vbiMode !== selected
+    })
+  }
+  potentialSelect?.addEventListener('change', syncPotentialFields)
+  syncPotentialFields()
 }
 
 function parseNum(id: string, fallback: number): number {
@@ -688,15 +763,28 @@ export function readDeviceEditor(
   const interface_defects: Array<InterfaceDefectFields | null> = []
   for (let i = 0; i < layers.length - 1; i++) {
     const existing = original.device.interface_defects?.[i] ?? null
-    const parsed: InterfaceDefectFields = {
+    const coreFields: InterfaceDefectFields = {
       sigma_n_cm2: parseNumOrNull(`idef-${i}-sigma-n`, existing?.sigma_n_cm2 ?? null) ?? null,
       sigma_p_cm2: parseNumOrNull(`idef-${i}-sigma-p`, existing?.sigma_p_cm2 ?? null) ?? null,
       N_t_cm2: parseNumOrNull(`idef-${i}-N-t`, existing?.N_t_cm2 ?? null) ?? null,
       v_th_cm_s: parseNumOrNull(`idef-${i}-v-th`, existing?.v_th_cm_s ?? null) ?? null,
       E_t_eV_below_cb: parseNumOrNull(`idef-${i}-E-t`, existing?.E_t_eV_below_cb ?? null) ?? null,
     }
-    const allNull = Object.values(parsed).every(v => v == null)
-    interface_defects.push(allNull ? null : parsed)
+    const allNull = Object.values(coreFields).every(v => v == null)
+    if (allNull) {
+      interface_defects.push(null)
+      continue
+    }
+    const parsed: InterfaceDefectFields = {
+      ...coreFields,
+      ...(existing?.calibration_factor !== undefined
+        ? { calibration_factor: existing.calibration_factor }
+        : {}),
+      ...(existing?.iface_state_calibration_factor !== undefined
+        ? { iface_state_calibration_factor: existing.iface_state_calibration_factor }
+        : {}),
+    }
+    interface_defects.push(parsed)
   }
   const anyDefectPopulated = interface_defects.some(d => d != null)
   const interfaceDefectsField = anyDefectPopulated
@@ -706,12 +794,19 @@ export function readDeviceEditor(
       : {})
   // SCAPS-validation physics flags. Read only when the FULL-tier panel is
   // rendered; otherwise parseCheckbox / parseNumOrNull fall back to the
-  // original value so a non-FULL round-trip preserves them verbatim. Each
-  // flag is spread in only when truthy / non-zero so non-SCAPS configs keep
-  // a clean device payload (no spurious ``false`` / ``0`` fields).
+  // original value so a non-FULL round-trip preserves them verbatim. Most
+  // flags are spread in only when truthy / non-zero so non-SCAPS configs
+  // keep a clean payload. DOS band potentials is different: its backend
+  // default is ON, so an unchecked box must serialize an explicit ``false``.
   const scapsPhysicsField: Record<string, boolean | number> = {}
-  if (parseCheckbox('dev-dos', !!original.device.dos_band_potentials))
+  const dosBandPotentials = parseCheckbox(
+    'dev-dos', original.device.dos_band_potentials ?? true,
+  )
+  if (!dosBandPotentials) {
+    scapsPhysicsField.dos_band_potentials = false
+  } else if (original.device.dos_band_potentials !== undefined) {
     scapsPhysicsField.dos_band_potentials = true
+  }
   if (parseCheckbox('dev-flatband', !!original.device.flat_band_contacts))
     scapsPhysicsField.flat_band_contacts = true
   if (parseCheckbox('dev-iface-closure', !!original.device.interface_plane_closure))
@@ -730,10 +825,68 @@ export function readDeviceEditor(
   }
   const rawMode = parseText('dev-mode', original.device.mode ?? 'full')
   const mode: SimulationModeName = isModeName(rawMode) ? rawMode : 'full'
+  const rawPotentialMode = parseText(
+    'dev-vbi-mode', inferredBuiltInPotentialMode(original),
+  )
+  const potentialMode: BuiltInPotentialMode = isBuiltInPotentialMode(rawPotentialMode)
+    ? rawPotentialMode
+    : inferredBuiltInPotentialMode(original)
+  const builtInPotentialField: Partial<DeviceConfig['device']> = {}
+  if (potentialMode === 'legacy_manual') {
+    const value = parseNum(
+      'dev-Vbi', original.device.V_bi_override ?? original.device.V_bi ?? 1.1,
+    )
+    if (
+      original.device.built_in_potential_mode === undefined
+      && original.device.V_bi_override === undefined
+      && original.device.V_bi !== undefined
+    ) {
+      // Preserve old benchmark payloads until they are deliberately migrated.
+      builtInPotentialField.V_bi = value
+    } else {
+      builtInPotentialField.built_in_potential_mode = 'legacy_manual'
+      builtInPotentialField.V_bi_override = value
+    }
+  } else if (potentialMode === 'semiconductor_work_function') {
+    builtInPotentialField.built_in_potential_mode = potentialMode
+  } else {
+    builtInPotentialField.built_in_potential_mode = potentialMode
+    const left = parseNumOrNull(
+      'dev-W-left', original.device.work_function_left_eV ?? null,
+    )
+    const right = parseNumOrNull(
+      'dev-W-right', original.device.work_function_right_eV ?? null,
+    )
+    if (typeof left === 'number') builtInPotentialField.work_function_left_eV = left
+    if (typeof right === 'number') builtInPotentialField.work_function_right_eV = right
+  }
   const T = parseNum('dev-T', original.device.T ?? 300)
+  const hiddenPhysicsKeys = [
+    'te_physical_norm',
+    'ion_steric_diffusion_only',
+    'ion_steric_shared_site',
+    'autoloop_generated_lever',
+    'flat_band_metal_contacts',
+    'contact_phi_B_eV',
+    'interface_two_sided',
+    'interface_shared_occupancy',
+    'interface_plane_generation',
+    'jv_solver_policy',
+  ] as const
+  const hiddenPhysicsField: Record<string, boolean | number | string> = {}
+  for (const key of hiddenPhysicsKeys) {
+    const value = original.device[key]
+    if (value !== undefined) hiddenPhysicsField[key] = value
+  }
   return {
+    ...(original.simulation_hints === undefined
+      ? {}
+      : { simulation_hints: original.simulation_hints }),
+    ...(original.electrical_grid === undefined
+      ? {}
+      : { electrical_grid: original.electrical_grid }),
     device: {
-      V_bi: parseNum('dev-Vbi', original.device.V_bi),
+      ...builtInPotentialField,
       Phi: parseNum('dev-Phi', original.device.Phi),
       interfaces,
       T,
@@ -752,6 +905,7 @@ export function readDeviceEditor(
       // for presets that pre-date E1.5 or for non-FULL tier round-trips
       // where the panel is hidden).
       ...interfaceDefectsField,
+      ...hiddenPhysicsField,
       ...scapsPhysicsField,
     },
     layers,

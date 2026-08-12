@@ -44,6 +44,19 @@ C60:
     in-loop; parametric fit is the approved fallback.
     5 nm uniform grid, 300-1000 nm, 141 rows.
 
+Cu:
+  source: "refractiveindex.info / Johnson & Christy 1972"
+  reference: "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370 (1972)"
+  wavelength_range_nm: [187.9, 1937.0]
+  notes: >
+    Native room-temperature tabulated n,k for copper from the public-domain
+    refractiveindex.info Johnson dataset
+    (database/data/main/Cu/nk/Johnson.yml). Values are retained on the source
+    wavelength grid rather than resampled; load_nk performs the runtime linear
+    interpolation. The full 187.9-1937 nm source table is frozen so the
+    complete 300-1100 nm Lin tandem protocol is interpolated, never clamped,
+    without substituting Ag or Au for the reported 100 nm Cu contact.
+
 FTO:
   source: synthetic-Drude-Lorentz
   reference: "Drude-Lorentz parametric model; parameters calibrated to FTO films reported in Filipic et al. 2015, Opt. Express 23, A263 and Bhachu et al. 2016"
@@ -92,6 +105,22 @@ MAPbI3:
     in absorption below the ~1.6 eV bandgap. k rounded to 4 decimals ->
     effectively zero beyond ~820 nm.
     5 nm uniform grid, 300-1000 nm, 141 rows.
+
+NiOx:
+  file: NiOx.csv
+  source: repository-parameterized-fit
+  reference: >-
+    Repository history commit b3235885ca67befb7540fb19f01b7102d0a12378;
+    no raw external ellipsometry dataset or fit script is stored in this repository
+  wavelength_range_nm: [300, 1100]
+  notes: >-
+    The repository history identifies this CSV as a parameterized fit that
+    replaced a constant n=2.2, k=0 fallback. It records n(550 nm)=2.35, a
+    modeled absorption edge near 3.5 eV, and weak visible absorption, but does
+    not preserve raw measurements or a reproducible fitting pipeline. Commit
+    538ddab99ea93a0ceee539bf230e89bf0d2723c9 later extended the 1000 nm edge
+    to 1100 nm by holding n=2.17 and k=0.004 constant. Treat these values as a
+    repository model input, not as an externally traceable measured dataset.
 
 PCBM:
   source: synthetic-Lorentz

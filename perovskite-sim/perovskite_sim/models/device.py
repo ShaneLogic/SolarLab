@@ -7,6 +7,13 @@ from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.twod.microstructure import Microstructure
 
 
+BUILT_IN_POTENTIAL_MODES = (
+    "legacy_manual",
+    "semiconductor_work_function",
+    "metal_work_function",
+)
+
+
 @dataclass(frozen=True)
 class LayerSpec:
     name: str
@@ -62,7 +69,20 @@ class InterfaceDefect:
 class DeviceStack:
     layers: tuple[LayerSpec, ...]
     phi_left: float = 0.0   # V
-    V_bi: float = 1.1       # built-in voltage [V]
+    # Legacy/manual built-in-potential magnitude [V]. New physical configs
+    # should select an explicit ``built_in_potential_mode`` and omit this from
+    # their YAML. The field remains for benchmark compatibility and existing
+    # programmatic callers.
+    V_bi: float = 1.1
+    # None preserves the pre-mode compatibility rule: a normal contact uses
+    # the manual V_bi magnitude, while flat_band_contacts uses the historical
+    # endpoint-Fermi estimate. Explicit modes decouple the Poisson-potential
+    # source from the carrier contact kinetics.
+    built_in_potential_mode: str | None = None
+    # Positive work functions referenced below vacuum [eV]. Both are required
+    # by ``metal_work_function``; their difference is numerically volts.
+    work_function_left_eV: float | None = None
+    work_function_right_eV: float | None = None
     Phi: float = 2.5e21     # photon flux [m⁻² s⁻¹] (AM1.5G)
     # Interface recombination: (v_n, v_p) per internal interface [m/s].
     # interfaces[0] = interface between layers[0] and layers[1], etc.
@@ -158,17 +178,13 @@ class DeviceStack:
     # MaterialArrays. Default False = the generated module is never imported →
     # bit-identical. The autoloop writes the lever body; a human merges the branch.
     autoloop_generated_lever: bool = False
-    # SCAPS-style flat-band contacts (2026-06). When True, both contacts are
-    # treated as flat-band metals with finite surface-recombination kinetics
-    # (the SCAPS contact model): the Phase-3.3 Robin path is activated on all
-    # four carrier/side channels (S = 1e5 m/s, the SCAPS 1e7 cm/s default,
-    # unless explicit ``S_*`` fields are set) referenced to the existing
-    # doping-derived boundary equilibria, and the Poisson BC uses the
-    # flat-band work-function difference ``compute_V_bi()`` instead of the
-    # frozen ``V_bi`` field (via ``MaterialArrays.V_bi_bc``). Keeps the
-    # contact well-posed when a contact layer is weakly doped — the regime
-    # where the default ideal-ohmic pin degenerates. Default False =
-    # IonMonger-convention pins, bit-identical.
+    # SCAPS-style finite-rate carrier contacts (2026-06). When True, the
+    # Phase-3.3 Robin path is activated on all four carrier/side channels
+    # (S = 1e5 m/s, the SCAPS 1e7 cm/s default, unless explicit ``S_*`` fields
+    # are set) relative to the existing doping-derived equilibria. The Poisson
+    # potential source is independent when ``built_in_potential_mode`` is
+    # explicit. With that mode omitted, the historical implication
+    # flat_band_contacts -> compute_V_bi() is retained for compatibility.
     flat_band_contacts: bool = False
     # Flat-band METAL contact reservoir (2026-07). When True (LEGACY forces
     # off), the contact carrier reservoir is set by the metal work function
@@ -290,9 +306,66 @@ class DeviceStack:
     # paint onto the (Ny, Nx) τ field. 1D solver paths and lateral-uniform 2D
     # paths ignore this field, so back-compat is bit-identical when empty.
     microstructure: Microstructure = field(default_factory=Microstructure)
+    # Optional electrical-grid protocol, aligned with electrical_layers(self).
+    # Appended after all historical fields to preserve positional-constructor
+    # compatibility. Empty tuples retain the legacy grid exactly.
+    grid_interval_weights: tuple[float, ...] = ()
+    grid_alphas: tuple[float, ...] = ()
+    # Production J-V driver capability required by this stack. ``general``
+    # permits the transient and algebraic drivers. The QF-required policy is
+    # reserved for cancellation-sensitive stacks whose physical regression
+    # has only been certified in quasi-Fermi variables.
+    jv_solver_policy: str = "general"
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))
+        object.__setattr__(
+            self, "grid_interval_weights", tuple(self.grid_interval_weights)
+        )
+        object.__setattr__(self, "grid_alphas", tuple(self.grid_alphas))
+        if self.jv_solver_policy not in (
+            "general",
+            "cancellation_safe_qf_required",
+        ):
+            raise ValueError(
+                "jv_solver_policy must be 'general' or "
+                "'cancellation_safe_qf_required', got "
+                f"{self.jv_solver_policy!r}"
+            )
+        mode = self.built_in_potential_mode
+        if mode is not None and mode not in BUILT_IN_POTENTIAL_MODES:
+            raise ValueError(
+                "built_in_potential_mode must be one of "
+                f"{BUILT_IN_POTENTIAL_MODES}, got {mode!r}"
+            )
+        if not math.isfinite(float(self.V_bi)):
+            raise ValueError("V_bi must be finite")
+        if mode == "legacy_manual" and float(self.V_bi) < 0.0:
+            raise ValueError(
+                "legacy_manual V_bi is a non-negative magnitude; contact "
+                "orientation is derived separately"
+            )
+        work_functions = (
+            self.work_function_left_eV,
+            self.work_function_right_eV,
+        )
+        if mode == "metal_work_function":
+            if any(value is None for value in work_functions):
+                raise ValueError(
+                    "metal_work_function requires work_function_left_eV and "
+                    "work_function_right_eV"
+                )
+            for name, value in zip(
+                ("work_function_left_eV", "work_function_right_eV"),
+                work_functions,
+            ):
+                if not math.isfinite(float(value)) or float(value) <= 0.0:
+                    raise ValueError(f"{name} must be finite and positive")
+        elif any(value is not None for value in work_functions):
+            raise ValueError(
+                "contact work functions are only valid with "
+                "built_in_potential_mode='metal_work_function'"
+            )
 
     @property
     def total_thickness(self) -> float:
@@ -300,7 +373,97 @@ class DeviceStack:
 
     @property
     def phi_right(self) -> float:
-        return self.phi_left + self.V_bi
+        return self.phi_left + self.poisson_built_in_potential()
+
+    def resolved_built_in_potential_mode(self) -> str:
+        """Return the active public mode, including legacy flag inference."""
+        if self.built_in_potential_mode is not None:
+            return self.built_in_potential_mode
+        if self.flat_band_contacts:
+            return "semiconductor_work_function"
+        return "legacy_manual"
+
+    def compute_semiconductor_V_bi(self) -> float:
+        """Return the signed endpoint-semiconductor work-function difference.
+
+        Unlike the historical :meth:`compute_V_bi`, this physical path is
+        fail-closed: both electrical contact layers must provide positive
+        ``chi``, ``Eg``, ``Nc300`` and ``Nv300``. The Maxwell-Boltzmann work
+        function is evaluated at the temperature used by the active physics
+        tier and includes the configured Varshni shift and contact-face
+        grading/doping profile.
+        """
+        from perovskite_sim.models.mode import resolve_mode
+
+        elec = electrical_layers(self)
+        if not elec:
+            raise ValueError(
+                "semiconductor_work_function requires electrical layers"
+            )
+        sim_mode = resolve_mode(self.mode)
+        temperature = float(self.T) if sim_mode.use_temperature_scaling else 300.0
+        if not math.isfinite(temperature) or temperature <= 0.0:
+            raise ValueError("device temperature must be finite and positive")
+        use_grading = bool(self.band_grading) and sim_mode.name != "legacy"
+        left = _edge_params(elec[0], "front", use_grading)
+        right = _edge_params(elec[-1], "back", use_grading)
+        W_left = _semiconductor_work_function(
+            left,
+            temperature,
+            sim_mode.use_temperature_scaling,
+        )
+        W_right = _semiconductor_work_function(
+            right,
+            temperature,
+            sim_mode.use_temperature_scaling,
+        )
+        return W_left - W_right
+
+    def compute_metal_V_bi(self) -> float:
+        """Return signed ``W_left - W_right`` from explicit metal contacts."""
+        if (
+            self.work_function_left_eV is None
+            or self.work_function_right_eV is None
+        ):
+            raise ValueError(
+                "metal_work_function requires both contact work functions"
+            )
+        return float(self.work_function_left_eV - self.work_function_right_eV)
+
+    def poisson_built_in_potential(self) -> float:
+        """Resolve the signed built-in potential used by the Poisson BC.
+
+        ``built_in_potential_mode=None`` is the compatibility sentinel. It
+        preserves the historical coupling where ``flat_band_contacts`` selects
+        ``compute_V_bi()`` and the ordinary contact path uses the configured
+        magnitude with orientation inferred from the endpoint Fermi levels.
+        Explicit modes are independent of the carrier-contact model.
+        """
+        mode = self.built_in_potential_mode
+        if mode is None:
+            if self.flat_band_contacts:
+                return self.compute_V_bi()
+            orientation = -1.0 if self.compute_V_bi() < 0.0 else 1.0
+            return orientation * abs(float(self.V_bi))
+        if mode == "legacy_manual":
+            orientation = -1.0 if self.compute_V_bi() < 0.0 else 1.0
+            return orientation * abs(float(self.V_bi))
+        if mode == "semiconductor_work_function":
+            return self.compute_semiconductor_V_bi()
+        if mode == "metal_work_function":
+            return self.compute_metal_V_bi()
+        raise AssertionError(f"unvalidated built-in-potential mode {mode!r}")
+
+    def operating_built_in_potential(self) -> float:
+        """Return the signed potential used by physical operating defaults.
+
+        Compatibility stacks retain the historical band-derived ``V_bi_eff``
+        even when their Poisson boundary uses a manual magnitude. An explicit
+        mode instead uses its selected contact potential consistently.
+        """
+        if self.built_in_potential_mode is None:
+            return self.compute_V_bi()
+        return self.poisson_built_in_potential()
 
     def compute_V_bi(self) -> float:
         """Derive the built-in potential from the Fermi-level difference
@@ -339,13 +502,13 @@ class DeviceStack:
         if all_zero:
             return self.V_bi
 
-        # When the outer layers are graded, the contacts sit at their face
-        # endpoints: the left contact at the front (= the scalar params,
-        # unchanged) and the right contact at the back endpoints. Non-graded
-        # stacks return the identical params object → identical float.
+        # Contacts use their actual layer-face band and doping parameters. The
+        # left contact is the first layer's front face and the right contact is
+        # the last layer's back face. Uniform, ungraded stacks return the
+        # identical params objects and therefore the identical float.
         band_grading = getattr(self, "band_grading", False)
-        left = _edge_params(elec[0].params, "front", band_grading)
-        right = _edge_params(elec[-1].params, "back", band_grading)
+        left = _edge_params(elec[0], "front", band_grading)
+        right = _edge_params(elec[-1], "back", band_grading)
 
         e_f_left = _fermi_level(left)
         e_f_right = _fermi_level(right)
@@ -434,23 +597,34 @@ def electrical_interface_defects(
     return tuple(out)
 
 
-def _edge_params(p: "MaterialParams", side: str, band_grading: bool) -> "MaterialParams":
+def _edge_params(layer: "LayerSpec", side: str, band_grading: bool) -> "MaterialParams":
     """Contact-face MaterialParams for ``compute_V_bi``.
 
-    For an ungraded layer (or ``band_grading`` off) returns ``p`` unchanged so
-    the Fermi level — and hence V_bi — is bit-identical. For a graded layer's
-    BACK contact, returns a ``replace``-d copy whose chi/Eg/ni are the back
-    endpoints (ni scaled by the same front-anchored DOS law as the solver:
-    ni_back = ni·exp(-(Eg_back - Eg_front)/2V_T)). The front side never changes.
+    Uniform, ungraded layers return ``p`` unchanged so legacy stacks are
+    bit-identical. A graded back contact sees Eg_back/chi_back and the same
+    mid-gap intrinsic-density law used by ``grade_ni_sq``. A spatially doped
+    contact sees the profile value at that physical face.
     """
     import dataclasses
     from perovskite_sim.physics.grading import has_grading_params
-    if not band_grading or p is None or side != "back" or not has_grading_params(p):
+    from perovskite_sim.physics.doping import doping_at_position
+
+    p = layer.params
+    if p is None:
         return p
-    Eg_back = p.Eg_back if p.Eg_back is not None else p.Eg
-    chi_back = p.chi_back if p.chi_back is not None else p.chi
-    ni_back = p.ni * math.exp(-(Eg_back - p.Eg) / (2.0 * V_T))
-    return dataclasses.replace(p, chi=chi_back, Eg=Eg_back, ni=ni_back)
+    updates = {}
+    if band_grading and side == "back" and has_grading_params(p):
+        Eg_back = p.Eg_back if p.Eg_back is not None else p.Eg
+        chi_back = p.chi_back if p.chi_back is not None else p.chi
+        ni_back = p.ni * math.exp(-(Eg_back - p.Eg) / (2.0 * V_T))
+        updates.update(chi=chi_back, Eg=Eg_back, ni=ni_back)
+    position = 0.0 if side == "front" else float(layer.thickness)
+    N_A_edge, N_D_edge = doping_at_position(
+        p, position, float(layer.thickness)
+    )
+    if N_A_edge != p.N_A or N_D_edge != p.N_D:
+        updates.update(N_A=N_A_edge, N_D=N_D_edge)
+    return dataclasses.replace(p, **updates) if updates else p
 
 
 def _fermi_level(p: MaterialParams) -> float:
@@ -483,3 +657,68 @@ def _fermi_level(p: MaterialParams) -> float:
     else:
         # intrinsic
         return e_i
+
+
+def _semiconductor_work_function(
+    p: MaterialParams,
+    temperature: float,
+    use_temperature_scaling: bool,
+) -> float:
+    """Maxwell-Boltzmann semiconductor work function below vacuum [eV]."""
+    from perovskite_sim.physics.temperature import eg_at_T, thermal_voltage
+
+    if p is None:
+        raise ValueError(
+            "semiconductor_work_function requires material parameters on both "
+            "electrical contact layers"
+        )
+    required = {
+        "chi": p.chi,
+        "Eg": p.Eg,
+        "Nc300": p.Nc300,
+        "Nv300": p.Nv300,
+    }
+    invalid = [
+        name
+        for name, value in required.items()
+        if value is None or not math.isfinite(float(value)) or float(value) <= 0.0
+    ]
+    if invalid:
+        raise ValueError(
+            "semiconductor_work_function requires positive contact-layer "
+            f"{', '.join(invalid)}"
+        )
+    if not all(
+        math.isfinite(float(value)) and float(value) >= 0.0
+        for value in (p.N_A, p.N_D)
+    ):
+        raise ValueError(
+            "semiconductor_work_function requires finite, non-negative contact "
+            "doping densities"
+        )
+
+    T = float(temperature)
+    V_T_contact = thermal_voltage(T)
+    Eg = (
+        eg_at_T(p.Eg, T, p.varshni_alpha, p.varshni_beta)
+        if use_temperature_scaling
+        else float(p.Eg)
+    )
+    dos_scale = (T / 300.0) ** 1.5 if use_temperature_scaling else 1.0
+    Nc = float(p.Nc300) * dos_scale
+    Nv = float(p.Nv300) * dos_scale
+    net_doping = float(p.N_D - p.N_A)
+
+    if net_doping == 0.0:
+        band_distance = 0.5 * Eg + 0.5 * V_T_contact * math.log(Nc / Nv)
+        return float(p.chi + band_distance)
+
+    log_ni = 0.5 * (math.log(Nc) + math.log(Nv)) - Eg / (2.0 * V_T_contact)
+    ni = math.exp(log_ni) if log_ni > -745.0 else 0.0
+    half_net = 0.5 * net_doping
+    disc = math.hypot(half_net, ni)
+    if net_doping > 0.0:
+        n_majority = half_net + disc
+        return float(p.chi + V_T_contact * math.log(Nc / n_majority))
+    p_majority = -half_net + disc
+    return float(p.chi + Eg - V_T_contact * math.log(Nv / p_majority))

@@ -5,19 +5,16 @@ Two layers of coverage:
 1. Pure-math unit tests on synthetic Mott-Schottky data (no solver) —
    these tightly bound the V_bi and N_eff the fitter must recover when
    given a curve that is guaranteed-linear in 1/C² vs V by construction.
-2. An integration smoke test that runs the dark C-V on
-   cSi_homojunction and verifies the pipeline wires together — that is,
-   a populated MottSchottkyResult with finite C, 1/C², V_bi_fit, and
-   N_eff_fit is produced end-to-end.
+2. A wrapper test that supplies an analytic capacitive impedance and checks
+   the complete Z -> Y -> C(V) -> fit -> MottSchottkyResult path.
+3. A real c-Si guard test proving that the old N_grid=30 protocol is rejected
+   before integration. Its first p-base cell is comparable to the entire
+   depletion width, so its nearly geometric C(V) cannot support a physical
+   Mott-Schottky fit.
 
-No numerical bound is placed on the integration-path V_bi_fit / N_eff
-because simulated junctions in this repo are fully or nearly-fully
-depleted at zero/reverse bias (the cSi preset's 180 µm base is deep
-enough to exceed the classical depletion width at low doping), so
-enforcing a textbook MS ballpark there would measure the preset, not
-the fitter. Numerical fit fidelity is covered by the synthetic tests
-above; the integration test here exists to ensure the run_impedance ->
-C(V) -> fit pipeline survives refactors.
+The real c-Si claim is covered separately by the QF frequency-domain
+N=200/300/400 grid/frequency/derivative-step protocol. The general transient
+path still requires its own amplitude/cycle certificate.
 """
 from __future__ import annotations
 
@@ -25,6 +22,8 @@ import numpy as np
 import pytest
 
 from perovskite_sim.constants import K_B, Q
+from perovskite_sim.discretization.grid import GridResolutionError
+from perovskite_sim.experiments.impedance import ImpedanceResult
 from perovskite_sim.experiments.mott_schottky import (
     EPS_0,
     MottSchottkyResult,
@@ -46,13 +45,13 @@ T_TEST = 300.0
 def _synthetic_cv(V, V_bi, N, eps_r, T=T_TEST):
     """Build a synthetic C(V) from the Mott-Schottky formula.
 
-    ``C(V) = sqrt(q·ε·ε_0·N / (2·(V_bi − V − kT/q)))``. The ``kT/q``
-    majority-carrier tail term is the one ``_fit_mott_schottky`` inverts
-    (review F-16), so the round-trip recovers ``V_bi`` exactly. Only
-    valid for ``V < V_bi − kT/q``.
+    ``C(V) = sqrt(q·ε·ε_0·N / (2·(V_bi − V − 2kT/q)))``. The p-n-junction
+    diffuse-edge term is the one ``_fit_mott_schottky`` inverts, so the
+    depletion-approximation round-trip recovers ``V_bi`` exactly. Only valid
+    for ``V < V_bi − 2kT/q``.
     """
     return np.sqrt(
-        Q * eps_r * EPS_0 * N / (2.0 * (V_bi - V - K_B * T / Q))
+        Q * eps_r * EPS_0 * N / (2.0 * (V_bi - V - 2.0 * K_B * T / Q))
     )
 
 
@@ -110,6 +109,30 @@ def test_fit_rejects_non_linear_tail():
     )
 
 
+def test_window_excludes_smooth_forward_injection_tail():
+    """A mildly curved tail must not bias an otherwise linear intercept."""
+    V = np.linspace(-0.3, 0.4, 8)
+    V_bi = 0.9
+    N = 1.0e22
+    eps_r = 11.7
+    C = _synthetic_cv(V, V_bi, N, eps_r)
+    # Smooth forward-injection contamination: only the last point is changed,
+    # but a 10%-of-span RMS gate accepted the full window and shifted V_bi.
+    C[-1] *= 1.12
+
+    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(
+        V,
+        C,
+        eps_r,
+        T_TEST,
+    )
+
+    assert V_lo == pytest.approx(V[0])
+    assert V_hi <= V[-2]
+    assert V_bi_fit == pytest.approx(V_bi, abs=0.01)
+    assert np.log10(N_fit) == pytest.approx(np.log10(N), abs=0.02)
+
+
 def test_resolve_eps_r_picks_absorber_layer():
     """With an explicit 'absorber' role, that layer's ε_r must win."""
     stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
@@ -129,8 +152,58 @@ def test_fit_returns_nan_on_flat_curve():
     # sanity checks.
 
 
+def test_fit_returns_nan_for_non_depletion_slope():
+    """A positive 1/C² slope is outside this diode depletion convention."""
+    V = np.linspace(-0.2, 0.2, 8)
+    one_over_c2 = 2.0e12 + 5.0e11 * V
+    C = 1.0 / np.sqrt(one_over_c2)
+
+    V_bi_fit, N_fit, *_ = _fit_mott_schottky(
+        V, C, eps_r=11.7, T=T_TEST
+    )
+
+    assert np.isnan(V_bi_fit)
+    assert np.isnan(N_fit)
+
+
+def test_fit_returns_nan_when_no_linear_window_is_identifiable():
+    V = np.array([-0.3, -0.2, -0.1, 0.0])
+    one_over_c2 = np.array([10.0, 9.0, 8.0, 1.0]) * 1.0e7
+    C = 1.0 / np.sqrt(one_over_c2)
+
+    assert _select_ms_window(V, one_over_c2) is None
+    V_bi_fit, N_fit, V_lo, V_hi = _fit_mott_schottky(
+        V,
+        C,
+        eps_r=11.7,
+        T=T_TEST,
+    )
+
+    assert np.isnan(V_bi_fit)
+    assert np.isnan(N_fit)
+    assert V_lo == pytest.approx(V[0])
+    assert V_hi == pytest.approx(V[-1])
+
+
+def test_cv_rejects_noncapacitive_admittance(monkeypatch):
+    """Do not turn inductive/numerically invalid Im(Y) into C with abs()."""
+    import perovskite_sim.experiments.mott_schottky as ms_module
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    monkeypatch.setattr(
+        ms_module,
+        "run_impedance",
+        lambda *args, **kwargs: type(
+            "Result", (), {"Z": np.array([1.0j])}
+        )(),
+    )
+
+    with pytest.raises(RuntimeError, match="positive capacitive susceptance"):
+        run_mott_schottky(stack, V_range=[-0.1, 0.0, 0.1])
+
+
 # ---------------------------------------------------------------------------
-# Integration: dark C-V on cSi_homojunction.
+# Wrapper contract and real-grid rejection.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
@@ -138,58 +211,61 @@ def csi_stack():
     return load_device_from_yaml("configs/cSi_homojunction.yaml")
 
 
-@pytest.fixture(scope="module")
-def csi_cv_result(csi_stack):
-    """3-point reverse-bias C-V — cheapest run that still admits a fit."""
-    return run_mott_schottky(
+def test_cv_wrapper_recovers_analytic_capacitive_impedance(
+    monkeypatch, csi_stack
+):
+    """The public wrapper preserves a physical C-V curve and its fit."""
+    import perovskite_sim.experiments.mott_schottky as ms_module
+
+    V = np.linspace(-0.3, 0.4, 8)
+    frequency = 1.0e6
+    omega = 2.0 * np.pi * frequency
+    V_bi_true = 0.9
+    N_true = 1.0e22
+    C_expected = _synthetic_cv(V, V_bi_true, N_true, 11.7)
+    methods = []
+
+    def analytic_impedance(*args, V_dc, **kwargs):
+        methods.append(kwargs["method"])
+        C_value = float(_synthetic_cv(V_dc, V_bi_true, N_true, 11.7))
+        return ImpedanceResult(
+            frequencies=np.array([frequency]),
+            Z=np.array([1.0 / (1j * omega * C_value)]),
+        )
+
+    monkeypatch.setattr(ms_module, "run_impedance", analytic_impedance)
+    r = run_mott_schottky(
         csi_stack,
-        V_range=np.linspace(-0.2, 0.2, 4),
-        frequency=1e5,
-        N_grid=30,
-        n_cycles=3, n_extract=1,
+        V_range=V,
+        frequency=frequency,
+        impedance_method="quasi_fermi_frequency",
     )
 
-
-@pytest.mark.slow
-def test_cv_returns_populated_dataclass(csi_cv_result):
-    r = csi_cv_result
     assert isinstance(r, MottSchottkyResult)
     assert r.V.shape == r.C.shape == r.one_over_C2.shape
-    assert np.all(r.C > 0.0), f"non-positive capacitance detected: {r.C}"
+    np.testing.assert_allclose(r.C, C_expected, rtol=1e-12)
     assert np.all(np.isfinite(r.one_over_C2))
-    assert r.frequency == pytest.approx(1e5)
-    # 1/C² should be consistent with C
+    assert r.frequency == pytest.approx(frequency)
     np.testing.assert_allclose(r.one_over_C2, 1.0 / (r.C * r.C), rtol=1e-12)
-
-
-@pytest.mark.slow
-def test_cv_pipeline_returns_finite_fit(csi_cv_result):
-    """run_mott_schottky -> MottSchottkyResult must yield finite fit values.
-
-    A full end-to-end smoke: run_impedance on each bias, build C(V),
-    then feed that into the linear-fit helper. We do *not* bound V_bi
-    or N_eff numerically here — the cSi preset's 180 µm lightly-doped
-    (N_A = 1e22 m⁻³, ε_r = 11.7) p-base is near-fully depleted at low
-    reverse bias, so the simulated C(V) deviates from the textbook
-    1/sqrt(V_bi − V) form. The fitter's numerical accuracy is pinned
-    down by the synthetic-data tests above; this test guards the
-    pipeline wiring (signature, shapes, dataclass fields populated
-    with finite numbers) against silent breakage.
-    """
-    r = csi_cv_result
-    assert np.isfinite(r.V_bi_fit), (
-        f"V_bi_fit={r.V_bi_fit!r} non-finite — pipeline produced a "
-        "degenerate C(V) or the fit blew up"
-    )
-    assert np.isfinite(r.N_eff_fit), (
-        f"N_eff_fit={r.N_eff_fit!r} non-finite"
-    )
-    # Fit window must be a real sub-range of the input sweep.
+    assert r.V_bi_fit == pytest.approx(V_bi_true, abs=0.01)
+    assert np.log10(r.N_eff_fit) == pytest.approx(np.log10(N_true), abs=0.02)
     assert r.V_fit_lo <= r.V_fit_hi
     assert r.V[0] - 1e-9 <= r.V_fit_lo <= r.V_fit_hi <= r.V[-1] + 1e-9
+    assert methods == ["quasi_fermi_frequency"] * V.size
 
 
-@pytest.mark.slow
+def test_csi_cv_rejects_underresolved_grid(csi_stack):
+    with pytest.raises(GridResolutionError, match="under-resolved"):
+        run_mott_schottky(
+            csi_stack,
+            V_range=[-0.2, 0.0, 0.2],
+            frequency=1.0e5,
+            N_grid=30,
+            n_cycles=3,
+            n_extract=1,
+        )
+
+
 def test_rejects_sparse_v_range(csi_stack):
     """Need at least 3 V points for a meaningful fit."""
     with pytest.raises(ValueError, match="at least 3"):
@@ -198,7 +274,6 @@ def test_rejects_sparse_v_range(csi_stack):
         )
 
 
-@pytest.mark.slow
 def test_rejects_nonpositive_frequency(csi_stack):
     with pytest.raises(ValueError, match="frequency"):
         run_mott_schottky(

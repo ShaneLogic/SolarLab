@@ -18,6 +18,7 @@ from perovskite_sim.physics.poisson import (
     PoissonFactor,
 )
 from perovskite_sim.physics.continuity import carrier_continuity_rhs
+from perovskite_sim.physics.doping import layer_doping_profiles
 from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
 from perovskite_sim.models.device import (
@@ -209,6 +210,31 @@ class MaterialArrays:
     # 0.0 = off (bit-identical); -1.0 = acceptor-like (charge -q*N_t*f),
     # +1.0 = donor-like. Set by the SS driver.
     iface_state_charge: float = 0.0
+    # Correct hole-density step implied by E_v = -chi-Eg and the SG
+    # zero-flux ratio: p_R/p_L = exp(-(dchi+dEg)/V_T). The historical state
+    # prototype used dchi-dEg; retain it outside the opt-in physical boundary.
+    iface_state_physical_offsets: bool = False
+    # Locally eliminate the four interface-plane densities inside each RHS
+    # evaluation. This is the production form of exclusive transport: it
+    # keeps full thermal velocities out of the global Newton state vector.
+    iface_qss_exclusive_transport: bool = False
+    iface_qss_cross_transmission: float = 1.0
+    iface_qss_transport_model: str = "fermi_richardson"
+    # QF outer Newton may evaluate finite-difference trial states outside the
+    # accurately eliminated local basin. Return the best finite inner state
+    # there and enforce the strict local certificate only at the final root.
+    iface_qss_allow_inexact_inner: bool = False
+    # Opt-in Stage 4 two-sided control-volume topology. The aligned arrays map
+    # each physical interface to strict left/right bulk nodes and the one face
+    # replaced by the statically condensed trace element. Empty/False keeps the
+    # historical deduplicated-node QSS path bit-identical.
+    iface_qss_two_sided_trace: bool = False
+    iface_qss_interface_faces: tuple[int, ...] = ()
+    iface_qss_left_nodes: tuple[int, ...] = ()
+    iface_qss_right_nodes: tuple[int, ...] = ()
+    iface_qss_interface_positions_m: tuple[float, ...] = ()
+    iface_qss_left_distances_m: tuple[float, ...] = ()
+    iface_qss_right_distances_m: tuple[float, ...] = ()
     # Heterointerface bulk-recombination de-spike fraction (SCAPS-emulation,
     # default 0.0 = off). See DeviceStack.het_recomb_despike.
     het_recomb_despike: float = 0.0
@@ -232,14 +258,21 @@ class MaterialArrays:
     poisson_factor: PoissonFactor | None = None
     # Effective built-in potential computed from band offsets (or manual V_bi fallback)
     V_bi_eff: float = 1.1
-    # Built-in potential actually applied in the Poisson Dirichlet BC
-    # (phi_right = V_bi_bc - V_app). Equals stack.V_bi by default (IonMonger
-    # convention); under flat_band_contacts it is the flat-band
-    # work-function difference compute_V_bi() (SCAPS convention).
+    # Contact orientation inferred from the signed work-function difference.
+    # +1 is p-left/n-right; -1 is n-left/p-right. External V_app is always a
+    # positive forward-bias magnitude and is mapped through this polarity.
+    junction_polarity: float = 1.0
+    # Signed built-in potential applied in the Poisson Dirichlet BC. The YAML
+    # stack.V_bi remains a positive magnitude on the default contact path; its
+    # sign comes from junction_polarity. Flat-band contacts use the signed
+    # work-function difference directly.
     V_bi_bc: float = 1.1
     # Per-node Richardson constants for thermionic emission capping
     A_star_n: np.ndarray | None = None
     A_star_p: np.ndarray | None = None
+    # Per-node SCAPS thermal velocity [m/s], scaled as T**0.5 when the active
+    # simulation tier enables temperature scaling.
+    v_th_physical: np.ndarray | None = None
     # Physical TE normalization (2026-07, review F02). When
     # ``te_physical_norm`` is True, the TE cap divides the flux by the
     # band-edge DOS at each capped face (N_C for electrons, N_V for holes),
@@ -249,6 +282,13 @@ class MaterialArrays:
     # non-DOS configs are bit-identical even with the flag on.
     N_C_node: np.ndarray | None = None
     N_V_node: np.ndarray | None = None
+    # Temperature-scaled physical band-edge DOS. These caches are always
+    # published when the layer declares Nc300/Nv300, independently of the
+    # legacy TE-cap normalization gate above. The opt-in quasi-Fermi abrupt-
+    # interface boundary needs each side's own DOS to construct reciprocal
+    # thermionic supplies; NaN marks a layer that did not declare the value.
+    N_C_physical: np.ndarray | None = None
+    N_V_physical: np.ndarray | None = None
     te_physical_norm: bool = False
     # Physical diffusion-only steric ion flux (review F05). When True, the
     # ion continuity RHS folds the crowding potential into the SG drift
@@ -411,10 +451,25 @@ class MaterialArrays:
                 d["te_physical_norm"] = True
                 d["N_C_node"] = self.N_C_node
                 d["N_V_node"] = self.N_V_node
+        if self.iface_qss_exclusive_transport:
+            d["exclusive_interface_faces"] = list(
+                self.iface_qss_interface_faces
+                if self.iface_qss_two_sided_trace
+                else (int(node) - 1 for node in self.interface_nodes)
+            )
         if self.het_recomb_despike > 0.0 and self.het_recomb_nodes:
             d["het_recomb_despike"] = self.het_recomb_despike
             d["het_recomb_nodes"] = self.het_recomb_nodes
         return d
+
+
+def poisson_right_boundary(mat: MaterialArrays, V_app: float) -> float:
+    """Return the right Poisson boundary for a positive forward bias.
+
+    ``V_bi_bc`` is signed in the electrical coordinate. Positive external
+    forward bias must reduce its magnitude for both p-left and n-left stacks.
+    """
+    return float(mat.V_bi_bc - mat.junction_polarity * float(V_app))
 
 
 def _compute_tmm_generation(
@@ -616,7 +671,7 @@ def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
     if n_iface == 0:
         return np.zeros(0, dtype=float)
     V_T_local = mat.V_T_device if hasattr(mat, "V_T_device") else _V_T_300
-    V_total = float(mat.V_bi_eff)
+    V_total = abs(float(mat.V_bi_eff))
     EXP_CAP = 30.0
     out = np.zeros(4 * n_iface, dtype=float)
     for k in range(n_iface):
@@ -638,7 +693,11 @@ def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
         if mat.interface_chi_step and len(mat.interface_chi_step) > k:
             dE_c = float(mat.interface_chi_step[k])
             dE_g = float(mat.interface_Eg_step[k])
-            dE_v = dE_c - dE_g
+            dE_v = (
+                -(dE_c + dE_g)
+                if mat.iface_state_physical_offsets
+                else dE_c - dE_g
+            )
             ec_norm = max(-EXP_CAP, min(EXP_CAP, dE_c / V_T_local))
             ev_norm = max(-EXP_CAP, min(EXP_CAP, dE_v / V_T_local))
             n_2s = n_1s * math.exp(-ec_norm)
@@ -730,6 +789,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     C_p = np.empty(N)
     A_star_n_node = np.empty(N)
     A_star_p_node = np.empty(N)
+    v_th_node = np.empty(N)
     # Band-edge DOS per node for the physical TE normalization (review F02).
     # NaN where a layer lacks Nc300/Nv300 → those faces keep the legacy TE
     # form (bit-identical), so non-DOS configs are unaffected by the flag.
@@ -814,8 +874,9 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             P_lim_neg_node[mask] = p.P_lim_neg
             P_ion0_neg[mask] = p.P0_neg
 
-        N_A[mask] = p.N_A
-        N_D[mask] = p.N_D
+        N_A[mask], N_D[mask] = layer_doping_profiles(
+            x_local, layer.thickness, p
+        )
         alpha[mask] = p.alpha
 
         # Phase 4b: temperature-shifted bandgap via Varshni, feeding both
@@ -930,6 +991,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
             _a_p = richardson_from_dos(float(p.Nv300), T_dev)
         A_star_n_node[mask] = _a_n
         A_star_p_node[mask] = _a_p
+        v_th_scale = (
+            (T_dev / T_REF) ** 0.5
+            if sim_mode.use_temperature_scaling and T_dev != T_REF
+            else 1.0
+        )
+        v_th_node[mask] = float(p.v_th) * v_th_scale
 
         # Field-dependent mobility parameters (Phase 3.2). Copied verbatim
         # from the layer so per-node arrays can average to face values.
@@ -1140,13 +1207,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         )
     )
 
-    # SCAPS-style flat-band contacts (2026-06). Device-level opt-in that
-    # activates the Robin path on ALL FOUR carrier/side channels regardless
-    # of tier (the SCAPS contact model is finite-S, default 1e7 cm/s), with
-    # the existing doping-derived boundary equilibria as the flat-band
-    # references, and routes the flat-band work-function difference
-    # compute_V_bi() into the Poisson BC via V_bi_bc below. Default False =
-    # ideal-ohmic pins + frozen stack.V_bi, bit-identical.
+    # SCAPS-style carrier contact kinetics (2026-06). This activates the Robin
+    # path on all four carrier/side channels regardless of tier (finite-S,
+    # default 1e7 cm/s), with the existing doping-derived equilibria as the
+    # references. The Poisson-potential source is now selected independently
+    # by built_in_potential_mode. A pre-mode stack still retains the historical
+    # implication flat_band_contacts -> compute_V_bi for compatibility.
     _flat_band = bool(getattr(stack, "flat_band_contacts", False))
     if _flat_band:
         _has_selective_contacts = True
@@ -1428,8 +1494,8 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
                 continue
             pl = elec_layers[k].params
             pr = elec_layers[k + 1].params
-            net_l = abs(pl.N_D - pl.N_A)
-            net_r = abs(pr.N_D - pr.N_A)
+            net_l = abs(float(N_D[f] - N_A[f]))
+            net_r = abs(float(N_D[f + 1] - N_A[f + 1]))
             # Depletion sits on the lighter-doped side — its doping + eps set
             # the field-emission characteristic energy E_00.
             if net_l <= net_r:
@@ -1455,8 +1521,15 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
 
     first = elec_layers[0].params
     last = elec_layers[-1].params
-    n_L, p_L = _equilibrium_np(first.N_D, first.N_A, first.ni)
-    n_R, p_R = _equilibrium_np(last.N_D, last.N_A, last.ni)
+    # Use the actual endpoint intrinsic density carried by the material
+    # arrays. Unlike the scalar MaterialParams.ni, these values include
+    # temperature scaling and an outer layer's band-gap grading. This keeps
+    # each contact reservoir on the same local mass-action law as the adjacent
+    # continuity node.
+    ni_sq_L = float(ni_sq[0])
+    ni_sq_R = float(ni_sq[-1])
+    n_L, p_L = _equilibrium_np(N_D[0], N_A[0], np.sqrt(ni_sq_L))
+    n_R, p_R = _equilibrium_np(N_D[-1], N_A[-1], np.sqrt(ni_sq_R))
 
     # Flat-band metal-contact reservoir floor (2026-07) — see DeviceStack.
     # flat_band_metal_contacts. The contact carrier reservoir is the LARGER of
@@ -1468,33 +1541,51 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     if getattr(stack, "flat_band_metal_contacts", False) and sim_mode.name != "legacy":
         _gate = math.exp(-float(getattr(stack, "contact_phi_B_eV", 0.0)) / V_T_dev)
 
-        def _floor_contact(pm, n_c: float, p_c: float) -> tuple[float, float]:
+        def _floor_contact(
+            pm,
+            n_c: float,
+            p_c: float,
+            ni_sq_contact: float,
+            N_D_contact: float,
+            N_A_contact: float,
+        ) -> tuple[float, float]:
             # Floor the MAJORITY-carrier reservoir at the metal work-function
             # density N_C/N_V·exp(-phi_B/V_T). The doping sign picks the carrier,
             # so nip (n-type right / p-type left) and pin (the reverse) are both
             # correct. n·p = ni² is preserved; a layer missing its DOS is left
             # untouched (bit-identical).
-            if pm.N_D >= pm.N_A:                     # n-type contact -> electrons
+            if N_D_contact >= N_A_contact:            # n-type contact -> electrons
                 if pm.Nc300:
                     wf = float(pm.Nc300) * _gate
                     if wf > n_c:
-                        return wf, float(pm.ni) ** 2 / wf
+                        return wf, ni_sq_contact / wf
             else:                                    # p-type contact -> holes
                 if pm.Nv300:
                     wf = float(pm.Nv300) * _gate
                     if wf > p_c:
-                        return float(pm.ni) ** 2 / wf, wf
+                        return ni_sq_contact / wf, wf
             return n_c, p_c
 
-        n_R, p_R = _floor_contact(last, n_R, p_R)
-        n_L, p_L = _floor_contact(first, n_L, p_L)
+        n_R, p_R = _floor_contact(
+            last, n_R, p_R, ni_sq_R, N_D[-1], N_A[-1]
+        )
+        n_L, p_L = _floor_contact(
+            first, n_L, p_L, ni_sq_L, N_D[0], N_A[0]
+        )
 
     # LAPACK LU of the Poisson tridiagonal — constant across the experiment,
     # so we pay the factor cost exactly once and each RHS call becomes a
     # single dgttrs back-substitution.
     poisson_factor = factor_poisson(x, eps_r)
 
-    V_bi_eff = stack.compute_V_bi()
+    # The operating value feeds physical defaults/interface partitions; the
+    # Poisson value follows the explicitly selected contact-potential source.
+    # They differ only for pre-mode compatibility stacks, preserving the
+    # historical IonMonger convention. Carrier Robin/Dirichlet kinetics are
+    # controlled independently by ``_flat_band`` and the S_* fields above.
+    V_bi_eff = stack.operating_built_in_potential()
+    V_bi_bc = stack.poisson_built_in_potential()
+    junction_polarity = -1.0 if V_bi_bc < 0.0 else 1.0
 
     # TMM optical generation: computed when any layer has optical data and
     # the active mode enables TMM. Legacy/fast fall back to Beer-Lambert.
@@ -1678,10 +1769,14 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         p_R=p_R,
         poisson_factor=poisson_factor,
         V_bi_eff=V_bi_eff,
+        junction_polarity=junction_polarity,
         A_star_n=A_star_n_node,
         A_star_p=A_star_p_node,
+        v_th_physical=v_th_node,
         N_C_node=(N_C_node_arr if _te_phys else None),
         N_V_node=(N_V_node_arr if _te_phys else None),
+        N_C_physical=N_C_node_arr,
+        N_V_physical=N_V_node_arr,
         te_physical_norm=_te_phys,
         ion_steric_diffusion_only=_ion_steric_diff,
         ion_steric_shared_site=bool(getattr(stack, "ion_steric_shared_site", True)),
@@ -1709,7 +1804,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         S_n_R=_s_contact(stack.S_n_right) if _has_selective_contacts else None,
         S_p_R=_s_contact(stack.S_p_right) if _has_selective_contacts else None,
         has_selective_contacts=_has_selective_contacts,
-        V_bi_bc=(stack.compute_V_bi() if _flat_band else stack.V_bi),
+        V_bi_bc=V_bi_bc,
         absorber_masks=tuple(absorber_masks_list) if _has_radiative_reabsorption else (),
         absorber_p_esc=tuple(absorber_p_esc_list) if _has_radiative_reabsorption else (),
         absorber_thicknesses=tuple(absorber_thicknesses_list) if _has_radiative_reabsorption else (),
@@ -2037,6 +2132,7 @@ def assemble_rhs(
     illuminated: bool = True,
     V_app: float = 0.0,
     phi_frozen: np.ndarray | None = None,
+    interface_qss_result=None,
 ) -> np.ndarray:
     """Method of Lines RHS: dy/dt = f(t, y).
 
@@ -2072,8 +2168,8 @@ def assemble_rhs(
     # residual at a held electrostatic potential, decoupling the dense
     # phi-mediated Jacobian tail). phi_frozen is None on every default path,
     # so this is bit-identical when unused.
-    # phi_right = V_bi - V_app: forward bias (V_app > 0) reduces the
-    # built-in field; V_app = 0 → short circuit, V_app ≈ V_oc → open circuit.
+    # Positive V_app is forward bias for either contact orientation. The
+    # polarity mapping makes it reduce the signed built-in field magnitude.
     if phi_frozen is not None:
         phi = phi_frozen
     else:
@@ -2099,7 +2195,7 @@ def assemble_rhs(
                 rho[_ix] += mat.iface_state_charge * _dQ[_k] / mat.dx_cell[_ix]
         phi = solve_poisson_prefactored(
             mat.poisson_factor, rho, phi_left=0.0,
-            phi_right=mat.V_bi_bc - V_app,
+            phi_right=poisson_right_boundary(mat, V_app),
         )
 
     # Generation: TMM-computed profile if available, else Beer-Lambert fallback.
@@ -2224,8 +2320,71 @@ def assemble_rhs(
     # Phase E3 path replaces this with TE flux + SRH on state vec; see
     # below near the iface_state RHS block. Legacy E1.5 cross-carrier
     # SRH applies only when N_iface_state == 0.
-    if mat.N_iface_state == 0:
+    if mat.N_iface_state == 0 and not mat.iface_qss_exclusive_transport:
         _apply_interface_recombination(dn, dp, n, p, stack, mat, phi)
+    elif mat.N_iface_state == 0 and mat.iface_qss_exclusive_transport:
+        interface_qss = interface_qss_result
+        if interface_qss is None:
+            if mat.iface_qss_two_sided_trace:
+                from perovskite_sim.physics.two_sided_interface import (
+                    solve_material_two_sided_interfaces_qss,
+                )
+
+                interface_qss = solve_material_two_sided_interfaces_qss(
+                    mat,
+                    stack,
+                    n,
+                    p,
+                    phi,
+                    cross_transmission=mat.iface_qss_cross_transmission,
+                    interface_transport_model=mat.iface_qss_transport_model,
+                    fail_on_residual=not mat.iface_qss_allow_inexact_inner,
+                )
+            else:
+                from perovskite_sim.physics.interface_plane import (
+                    solve_interface_states_live_qss,
+                )
+
+                interface_qss = solve_interface_states_live_qss(
+                    mat,
+                    stack,
+                    n,
+                    p,
+                    phi,
+                    V_app=V_app,
+                    v_th_eff=mat.iface_state_v_th,
+                    cross_transmission=mat.iface_qss_cross_transmission,
+                    interface_transport_model=mat.iface_qss_transport_model,
+                    fail_on_residual=not mat.iface_qss_allow_inexact_inner,
+                )
+        interface_count = (
+            len(mat.iface_qss_left_nodes)
+            if mat.iface_qss_two_sided_trace
+            else len(mat.interface_nodes)
+        )
+        for k in range(interface_count):
+            base = 4 * k
+            if mat.iface_qss_two_sided_trace:
+                eval_left = int(mat.iface_qss_left_nodes[k])
+                eval_right = int(mat.iface_qss_right_nodes[k])
+            else:
+                interface_node = int(mat.interface_nodes[k])
+                # The physical QSS boundary replaces face ``idx-1`` and
+                # therefore couples its actual endpoints.
+                eval_right = interface_node
+                eval_left = interface_node - 1
+            # side 1 is the right material, side 2 the left material.
+            # Divide each surface flux by the control-volume width of the
+            # node that actually receives it. Interface-clustered grids can
+            # make those widths differ by orders of magnitude from the shared
+            # interface node, so using one ``dx_iface`` here breaks integrated
+            # charge conservation even when the local plane balance closes.
+            dx_right = float(mat.dx_cell[eval_right])
+            dx_left = float(mat.dx_cell[eval_left])
+            dn[eval_right] -= interface_qss.bulk_flux_m2_s[base + 0] / dx_right
+            dp[eval_right] -= interface_qss.bulk_flux_m2_s[base + 1] / dx_right
+            dn[eval_left] -= interface_qss.bulk_flux_m2_s[base + 2] / dx_left
+            dp[eval_left] -= interface_qss.bulk_flux_m2_s[base + 3] / dx_left
 
     # Ion continuity using per-face transport coefficients so ions remain
     # confined to ion-conducting layers.
@@ -2530,7 +2689,7 @@ def split_step(
             )
             phi = solve_poisson_prefactored(
                 mat.poisson_factor, rho,
-                phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
+                phi_left=0.0, phi_right=poisson_right_boundary(mat, V_app),
             )
             _shared_ss = (mat.ion_steric_diffusion_only
                           and mat.ion_steric_shared_site)
@@ -2566,7 +2725,7 @@ def split_step(
             )
             phi = solve_poisson_prefactored(
                 mat.poisson_factor, rho,
-                phi_left=0.0, phi_right=mat.V_bi_bc - V_app,
+                phi_left=0.0, phi_right=poisson_right_boundary(mat, V_app),
             )
             return ion_continuity_rhs(
                 x, phi, P_nn, mat.D_ion_face, mat.V_T_device, mat.P_lim_face,

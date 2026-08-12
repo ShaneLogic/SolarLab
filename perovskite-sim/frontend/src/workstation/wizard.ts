@@ -28,10 +28,10 @@ const TIER_CARDS: Array<{
 }> = [
   { tier: 'legacy', title: 'Legacy', subtitle: 'IonMonger-compatible',
     bullets: ['Beer–Lambert optics', 'Single ion species', 'Uniform τ', 'T = 300 K'] },
-  { tier: 'fast', title: 'Fast', subtitle: 'Same physics, fast path (today)',
-    bullets: ['Beer–Lambert', 'Single ion species', 'Uniform τ', 'T = 300 K'] },
-  { tier: 'full', title: 'Full', subtitle: 'All Phase 1–4 upgrades',
-    bullets: ['TMM optics', 'Band-offset TE', 'Dual-species ions', 'Trap profile · T-scaling'] },
+  { tier: 'fast', title: 'Fast', subtitle: 'Build-once physics upgrades',
+    bullets: ['TMM optics', 'Thermionic emission', 'Dual-species ions', 'Trap profile · T-scaling'] },
+  { tier: 'full', title: 'Full', subtitle: 'All configured upgrades',
+    bullets: ['Fast-tier physics', 'Radiative reabsorption', 'Field-dependent mobility', 'Robin contacts'] },
 ]
 
 function pickInitialTier(compat: ReadonlyArray<SimulationModeName>): SimulationModeName {

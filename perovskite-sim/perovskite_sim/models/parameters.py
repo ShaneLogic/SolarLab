@@ -29,6 +29,10 @@ class MaterialParams:
     Eg: float = 0.0    # band gap [eV]
     A_star_n: float = 1.2017e6   # Richardson constant for electrons [A/(m²·K²)]
     A_star_p: float = 1.2017e6   # Richardson constant for holes [A/(m²·K²)]
+    # SCAPS layer thermal velocity at 300 K [m/s].  This is distinct from
+    # ``A_star``: SCAPS' heterointerface thermionic boundary uses the smaller
+    # declared thermal velocity of the two adjacent layers.
+    v_th: float = 1.0e5
     # Negative ion species (e.g. V_MA-, halide interstitial)
     D_ion_neg: float = 0.0     # diffusion coefficient [m²/s] (0 = single species)
     P0_neg: float = 0.0        # equilibrium density [m⁻³]
@@ -110,6 +114,15 @@ class MaterialParams:
     grading_bowing: float = 0.0      # alloy bowing b in Eg(y) law [eV]
     grading_char_length: float | None = None  # notch length L for exponential y(x) [m]
     grading_N_mult: int = 1          # per-layer mesh refinement factor (1 = unchanged)
+    # Optional spatial dopant profile. N_A/N_D are the density at the selected
+    # edge; a populated N_A_bulk or N_D_bulk activates a Gaussian decay toward
+    # that deep-layer asymptote. All fields are inert when both bulk values are
+    # None, preserving uniform-doping configs exactly.
+    N_A_bulk: float | None = None
+    N_D_bulk: float | None = None
+    doping_profile_shape: str | None = None  # currently "gaussian"
+    doping_decay_length: float | None = None  # Gaussian 1/e distance [m]
+    doping_edge: str = "front"              # "front" | "back"
 
     @property
     def D_n(self) -> float:

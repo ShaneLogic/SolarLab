@@ -1,46 +1,22 @@
 {
-  "baseline_val": 62.622912803976114,
-  "gap_id": "trend:Nd_ETL:V_oc",
+  "baseline_val": 28.665329643398195,
+  "gap_id": "absolute:base:J_sc",
   "probes": [
     {
-      "baseline_val": 62.622912803976114,
-      "delta": -21.528819173530586,
+      "baseline_val": 28.665329643398195,
+      "delta": 0.0,
       "kind": "flag",
-      "name": "SOLARLAB_IFACE_PROJ",
+      "name": "SOLARLAB_DOS_BAND",
       "note": "",
       "ok": true,
       "variant": {
-        "flag": "SOLARLAB_IFACE_PROJ"
+        "flag": "SOLARLAB_DOS_BAND"
       },
-      "variant_val": 41.09409363044553
+      "variant_val": 28.665329643398195
     },
     {
-      "baseline_val": 62.622912803976114,
-      "delta": NaN,
-      "kind": "flag",
-      "name": "SOLARLAB_IFACE_PLANE",
-      "note": "RuntimeError: probe worker timed out after 240.0s (env={'SOLARLAB_IFACE_PLANE': '1'}, jv={}) \u2014 flag likely destabilises solver convergence",
-      "ok": false,
-      "variant": {
-        "flag": "SOLARLAB_IFACE_PLANE"
-      },
-      "variant_val": NaN
-    },
-    {
-      "baseline_val": 62.622912803976114,
-      "delta": NaN,
-      "kind": "flag",
-      "name": "SOLARLAB_INTERFACE_PLANE_STATE",
-      "note": "RuntimeError: probe worker timed out after 240.0s (env={'SOLARLAB_INTERFACE_PLANE_STATE': '1'}, jv={}) \u2014 flag likely destabilises solver convergence",
-      "ok": false,
-      "variant": {
-        "flag": "SOLARLAB_INTERFACE_PLANE_STATE"
-      },
-      "variant_val": NaN
-    },
-    {
-      "baseline_val": 62.622912803976114,
-      "delta": 19.53381983947758,
+      "baseline_val": 28.665329643398195,
+      "delta": -1.0468568234500708e-09,
       "kind": "grid",
       "name": "grid_n80",
       "note": "",
@@ -48,11 +24,11 @@
       "variant": {
         "n_points": 80
       },
-      "variant_val": 82.1567326434537
+      "variant_val": 28.665329642351338
     },
     {
       "baseline_val": 0.0,
-      "delta": 0.011068702193388957,
+      "delta": 0.01892282816450837,
       "kind": "limiting",
       "name": "dark_jsc",
       "note": "dark J_sc; expect ~0",
@@ -60,7 +36,7 @@
       "variant": {
         "illuminated": false
       },
-      "variant_val": 0.011068702193388957
+      "variant_val": 0.01892282816450837
     }
   ],
   "skipped": []

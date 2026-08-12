@@ -22,10 +22,12 @@ import dataclasses
 import numpy as np
 import pytest
 
+import perovskite_sim.experiments.steady_state as steady_state_mod
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.experiments.jv_sweep import (
     _compute_current_ss,
     run_jv_sweep,
+    thermodynamic_voc_ceiling,
 )
 from perovskite_sim.experiments.steady_state import (
     SteadyStateError,
@@ -124,22 +126,8 @@ def test_stop_after_voc_default_off_reaches_vmax():
     assert ss.V[-1] == pytest.approx(1.25, abs=1e-9)
 
 
-@pytest.mark.slow
-@pytest.mark.xfail(
-    reason="PREMISE FALSIFIED (2026-06-12): with the Gummel phi-step in "
-    "place the voltage walk COMPLETES (points converge/certify) and J(V) "
-    "genuinely finds no zero below 1.6 V — the SS driver AGREES with the "
-    "transient flat-band result (honest no-crossing; the model's crossing "
-    "sits ~1.29 V, above the detailed-balance ceiling). Two independent "
-    "drivers agreeing means the remaining low-doping gap to SCAPS "
-    "(V_oc 1.10 there) is MODEL-level (near-insulating contact physics / "
-    "BCs), not solve-method — the premise that a direct steady-state "
-    "solve recovers SCAPS's low-doping V_oc is falsified by building "
-    "exactly that. scaps_engine-tier physics scope.",
-    strict=False)
-def test_low_doping_etl_converges():
-    """The payoff regime: Nd_ETL = 1e10 cm^-3 — the transient solver cannot
-    settle this near-insulating contact layer; the direct solve must."""
+def _low_doping_etl_stack(*, metal_reservoir: bool):
+    """Build the same low-doping device with an explicit contact model."""
     from perovskite_sim.sweeps.device_parameter_sweep import (
         SweepPoint,
         apply_sweep_point,
@@ -148,16 +136,35 @@ def test_low_doping_etl_converges():
         load_scaps_yaml(_V2),
         SweepPoint("p", "nd", "1e10", {"etl_doping_cm3": 1e10}),
     )
-    # Isolate the SS-driver claim from the new work-function reservoir floor
-    # (scaps_mirror_v2 now ships flat_band_metal_contacts=True): this xfail is
-    # about whether a direct steady-state SOLVE alone recovers SCAPS's
-    # low-doping V_oc, a different mechanism from the contact-reservoir floor.
-    stack = _frozen_ion(dataclasses.replace(
+    return _frozen_ion(dataclasses.replace(
         base, dos_band_potentials=True, flat_band_contacts=True,
-        flat_band_metal_contacts=False))
+        flat_band_metal_contacts=metal_reservoir))
+
+
+@pytest.mark.slow
+def test_low_doping_etl_metal_reservoir_brackets_physical_voc():
+    """The shipped metal-reservoir BC closes the old no-crossing branch.
+
+    The SCAPS value is a calibrated comparison, not a holdout prediction: the
+    contact barrier in this preset is itself a model parameter.  This gate
+    therefore checks finite/bracketed/sub-bandgap behaviour and retains the
+    measured 60 mV comparison window without promoting it to external proof.
+    """
+    stack = _low_doping_etl_stack(metal_reservoir=True)
     voc = solve_voc_ss(stack, N_grid=30)
     assert np.isfinite(voc)
-    assert 0.5 < voc < 1.30
+    ceiling = thermodynamic_voc_ceiling(stack)
+    assert ceiling is not None
+    assert 0.5 < voc < ceiling
+    assert voc == pytest.approx(1.100196, abs=0.060)
+
+
+@pytest.mark.slow
+def test_low_doping_etl_without_metal_reservoir_is_explicit_no_crossing():
+    """The legacy contact choice remains a diagnosed model branch, not xfail."""
+    stack = _low_doping_etl_stack(metal_reservoir=False)
+    with pytest.raises(SteadyStateError, match="does not cross zero"):
+        solve_voc_ss(stack, N_grid=30)
 
 
 def test_nonconvergence_raises():
@@ -167,6 +174,136 @@ def test_nonconvergence_raises():
         solve_steady_state(x, stack, V_app=0.0, illuminated=True,
                            max_newton=1, tol=1e-30, tol_step=0.0,
                            tol_accept=0.0, assist_times=())
+
+
+def _small_step_fault_case(
+    monkeypatch, residual, *, density=1.0e20, device_width=None,
+):
+    """Inject a well-conditioned residual whose Newton step is tiny."""
+    stack = _stack()
+    x = _grid(stack)
+    mat = build_material_arrays(x, stack)
+    N = len(x)
+    n_blocks = 4 if mat.has_dual_ions else 3
+    y0 = np.full(n_blocks * N, density)
+    if device_width is not None:
+        x = x * (device_width / x[-1])
+
+    def fake_residual_fn(
+        _x, _stack, _mat, y_template, _V_app, _illuminated,
+        pin, z_pin, _n_ref, unk_idx, _phi_frozen=None,
+    ):
+        anchor = np.log(np.maximum(
+            y_template[unk_idx], steady_state_mod._DENSITY_FLOOR))
+        anchor[pin] = z_pin[pin]
+        slope = 1.0e12
+
+        def fake_residual(z):
+            return np.full(z.shape, residual) + slope * (z - anchor)
+
+        return fake_residual
+
+    monkeypatch.setattr(steady_state_mod, "_residual_fn", fake_residual_fn)
+    monkeypatch.setattr(
+        steady_state_mod, "_qfl_poisson_relax",
+        lambda _x, _mat, y, _V_app: y,
+    )
+    return stack, x, mat, y0
+
+
+def test_tiny_newton_step_with_high_residual_raises(monkeypatch):
+    """A tiny update is stagnation, not proof that F(y) is near zero."""
+    stack, x, mat, y0 = _small_step_fault_case(monkeypatch, residual=1.0)
+
+    with pytest.raises(SteadyStateError, match="Newton step stalled"):
+        solve_steady_state(
+            x, stack, V_app=0.0, mat=mat, y0=y0,
+            max_newton=1, tol=1.0e-6, tol_step=1.0e-8,
+            tol_accept=0.5, assist_times=(),
+        )
+
+
+def test_tiny_newton_step_keeps_stall_acceptance_semantics(monkeypatch):
+    """The established kink/stall residual allowance remains available."""
+    stack, x, mat, y0 = _small_step_fault_case(monkeypatch, residual=0.1)
+
+    result = solve_steady_state(
+        x, stack, V_app=0.0, mat=mat, y0=y0,
+        max_newton=1, tol=1.0e-6, tol_step=1.0e-8,
+        tol_accept=0.5, assist_times=(),
+    )
+
+    assert result.converged
+    assert result.residual == pytest.approx(0.1)
+    assert result.step_inf < 1.0e-8
+    assert result.continuity_current_bound < 0.1
+
+
+def test_stall_acceptance_is_current_scaled_for_thick_high_density_device(
+    monkeypatch,
+):
+    """The same rate residual cannot certify thin PVK and thick c-Si alike."""
+    stack, x, mat, y0 = _small_step_fault_case(
+        monkeypatch,
+        residual=0.1,
+        density=1.0e25,
+        device_width=180.0e-6,
+    )
+
+    with pytest.raises(SteadyStateError, match="Newton step stalled"):
+        solve_steady_state(
+            x, stack, V_app=0.0, mat=mat, y0=y0,
+            max_newton=1, tol=1.0e-6, tol_step=1.0e-8,
+            tol_accept=0.5, max_continuity_current_error=0.1,
+            assist_times=(),
+        )
+
+
+@pytest.mark.parametrize("bound", [0.0, np.nan, np.inf, -np.inf])
+def test_continuity_current_error_bound_must_be_finite_and_positive(bound):
+    stack = _stack()
+    x = _grid(stack)
+    with pytest.raises(ValueError, match="must be finite and positive"):
+        solve_steady_state(
+            x, stack, V_app=0.0, max_continuity_current_error=bound,
+        )
+
+
+def test_relative_log_residual_resolves_contact_scale_correction(monkeypatch):
+    """Centred logs retain a correction lost by absolute ``ln(n)``."""
+    density_scale = 1.0e24
+    density_correction = 1.0e9
+    target_density = density_scale + density_correction
+    assert np.log(target_density) == np.log(density_scale)
+
+    y_template = np.array([density_scale, 1.0, 1.0])
+
+    def fake_assemble_rhs(_t, y, *_args, **_kwargs):
+        residual = np.zeros_like(y)
+        residual[0] = y[0] - target_density
+        return residual
+
+    monkeypatch.setattr(
+        steady_state_mod, "assemble_rhs", fake_assemble_rhs,
+    )
+    residual = steady_state_mod._relative_log_residual_fn(
+        np.array([0.0, 1.0]),
+        object(),
+        object(),
+        y_template,
+        0.0,
+        True,
+        np.array([False]),
+        np.zeros(1),
+        1.0,
+        np.array([0]),
+        np.array([density_scale]),
+    )
+    u_correction = np.log1p(density_correction / density_scale)
+
+    assert abs(residual(np.array([u_correction]))[0]) < 0.2 * abs(
+        residual(np.zeros(1))[0]
+    )
 
 
 # ----------------------- Gummel phi-step primitive --------------------------

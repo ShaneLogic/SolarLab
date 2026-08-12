@@ -1,4 +1,6 @@
 """Tests for current decomposition (compute_current_components)."""
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -99,3 +101,22 @@ def test_all_finite(setup):
     assert np.all(np.isfinite(cc.J_ion))
     assert np.all(np.isfinite(cc.J_disp))
     assert np.all(np.isfinite(cc.J_total))
+
+
+def test_terminal_current_sign_follows_junction_polarity(setup):
+    """Reversing contact order reverses every reported current component."""
+    stack, x, mat, y_ss = setup
+    cc_p_left = compute_current_components(
+        x, y_ss, stack, V_app=0.0, mat=mat,
+    )
+    cc_n_left = compute_current_components(
+        x, y_ss, stack, V_app=0.0,
+        mat=replace(mat, junction_polarity=-1.0),
+    )
+    for field in ("J_n", "J_p", "J_ion", "J_disp", "J_total"):
+        np.testing.assert_allclose(
+            getattr(cc_n_left, field),
+            -getattr(cc_p_left, field),
+            rtol=0.0,
+            atol=0.0,
+        )

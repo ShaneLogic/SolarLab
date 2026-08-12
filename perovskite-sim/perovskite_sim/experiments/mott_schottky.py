@@ -6,16 +6,17 @@ In the dark at reverse/zero bias a p-n junction is a parallel-plate
 capacitor whose "plate separation" is the depletion width. For a
 one-sided junction (N_heavy >> N_light) the capacitance per area is
 
-    C(V) = sqrt(q · ε_s · ε_0 · N_eff / (2 (V_bi − V − kT/q)))
+    C(V) = sqrt(q · ε_s · ε_0 · N_eff / (2 (V_bi − V − 2kT/q)))
 
 where N_eff is the lighter-doped side's net ionised density and the
-``kT/q`` term is the majority-carrier tail at the depletion edge (the
-space charge does not terminate abruptly). Plotting ``1/C²`` against V
+``2kT/q`` term accounts for the thermally diffuse edges on both sides of
+the p-n transition region. Plotting ``1/C²`` against V
 gives a straight line with slope ``−2 / (q·ε_s·ε_0·N_eff)`` and V-axis
-intercept at ``V_bi − kT/q``, so the reported built-in voltage adds
-``kT/q`` back (25.9 mV at 300 K). Fitting that line is the standard way
-experimentalists extract both the built-in voltage and the doping
-density from a C-V measurement — the so-called Mott-Schottky plot.
+intercept at ``V_bi − 2kT/q`` in the depletion approximation, so the
+reported apparent built-in voltage adds ``2kT/q`` back. Exact p-n-junction
+capacitance includes distributed mobile carriers; its linear intercept can
+remain below the contact-potential barrier and must not be treated as an
+independent measurement of that barrier.
 
 This experiment is a thin wrapper over ``run_impedance``: at each DC
 bias a single AC excitation at ``frequency`` is driven and the
@@ -55,8 +56,9 @@ a few percent across the bias range is a red flag.
 Sign convention
 ---------------
 Capacitance is reported as a positive real number [F/m²]. The lock-in
-returns ``Z = δV / δI`` with Im(Y) > 0 for a capacitor; we take the
-magnitude so that downstream fits never have to branch on sign.
+returns ``Z = δV / δI`` with Im(Y) > 0 for a capacitor. A non-positive
+susceptance is rejected because taking its magnitude would disguise an
+inductive or numerically invalid response as a depletion capacitance.
 """
 from __future__ import annotations
 
@@ -88,12 +90,13 @@ class MottSchottkyResult:
     one_over_C2 : np.ndarray
         1/C² values [m⁴/F²] — the Mott-Schottky ordinate.
     V_bi_fit : float
-        Built-in voltage extracted from the V-axis intercept of the
+        Apparent built-in voltage extracted from the V-axis intercept of the
         linear fit of ``1/C² = a·V + b`` over the fit window:
-        ``V_bi_fit = -b/a + kT/q``. The ``kT/q`` term is the majority-
-        carrier tail correction — the bare intercept ``-b/a`` corresponds
-        to ``V_bi - kT/q`` (25.9 mV at 300 K). NaN if the fit failed
-        (e.g. fewer than 3 linear points).
+        ``V_bi_fit = -b/a + 2kT/q``. This is the apparent built-in voltage
+        under the one-sided depletion approximation. Exact transition-region
+        capacitance includes distributed mobile carriers, so this value need
+        not equal the independently configured contact-potential barrier. NaN
+        if the fit failed (e.g. fewer than 3 linear points).
     N_eff_fit : float
         Ionised dopant density on the lighter-doped side of the
         junction [m⁻³], from ``N = -2/(q·ε_s·ε_0·a)``. The fit slope
@@ -161,16 +164,19 @@ def _select_ms_window(
     V: np.ndarray,
     y: np.ndarray,
     min_points: int = 4,
-    max_resid_ratio: float = 0.1,
-) -> tuple[int, int]:
+    max_resid_ratio: float = 0.01,
+) -> tuple[int, int] | None:
     """Pick the widest contiguous window that is linear in (V, y=1/C²).
 
     Strategy: try every contiguous window of size >= ``min_points`` (in
     increasing length order), fit a line, accept if the RMS residual is
-    below ``max_resid_ratio`` times the window's span in y. Return the
-    longest window that qualifies. Falls back to the full input if no
-    window passes — callers get the best available linear regression
-    and should inspect the fit residual themselves.
+    below ``max_resid_ratio`` times the window's span in y. The 1% default
+    rejects a smooth injection tail that can still look visually plausible
+    while shifting the extrapolated voltage intercept by more than 0.1 V.
+    Return the
+    longest window that qualifies. Returns ``None`` when no window passes;
+    parameter extraction must not manufacture a finite result from a curve
+    that has no identifiable linear depletion regime.
 
     The adaptive tolerance handles both the low-bias tail (1/C² curves
     up when the junction is fully depleted) and the high-bias tail
@@ -179,9 +185,9 @@ def _select_ms_window(
     """
     n = len(V)
     if n < min_points:
-        return 0, n - 1
+        return None
 
-    best_lo, best_hi = 0, n - 1
+    best: tuple[int, int] | None = None
     best_len = 0
     for lo in range(0, n - min_points + 1):
         for hi in range(lo + min_points - 1, n):
@@ -196,8 +202,8 @@ def _select_ms_window(
             rms = float(np.sqrt(np.mean(resid * resid)))
             if rms <= max_resid_ratio * y_span and (hi - lo + 1) > best_len:
                 best_len = hi - lo + 1
-                best_lo, best_hi = lo, hi
-    return best_lo, best_hi
+                best = (lo, hi)
+    return best
 
 
 def _fit_mott_schottky(
@@ -205,13 +211,16 @@ def _fit_mott_schottky(
 ) -> tuple[float, float, float, float]:
     """Linear fit of 1/C² vs V → (V_bi_fit, N_eff_fit, V_lo, V_hi).
 
-    The V-intercept of the line gives V_bi (after the ``kT/q`` majority-
-    carrier tail correction, see below); the slope gives N_eff via the
-    Mott-Schottky relation. NaNs are returned if the fit is degenerate
-    (flat line, or fewer than 3 points after window selection).
+    The V-intercept gives an apparent V_bi after the p-n-junction ``2kT/q``
+    diffuse-edge correction; the slope gives N_eff via the Mott-Schottky
+    relation. NaNs are returned if the fit is degenerate (flat line, or fewer
+    than 3 points after window selection).
     """
     y = 1.0 / (C * C)
-    lo, hi = _select_ms_window(V, y)
+    window = _select_ms_window(V, y)
+    if window is None:
+        return float("nan"), float("nan"), float(V[0]), float(V[-1])
+    lo, hi = window
     V_fit = V[lo : hi + 1]
     y_fit = y[lo : hi + 1]
     if V_fit.size < 3:
@@ -226,16 +235,14 @@ def _fit_mott_schottky(
     y_mid = float(np.median(np.abs(y_fit)))
     if y_mid > 0 and y_span / y_mid < 0.05:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
-    # For 1/C² = a·V + b with a < 0, the V-axis intercept -b/a equals
-    # V_bi - kT/q, not V_bi: the depletion-approximation capacitance for a
-    # one-sided abrupt junction is
-    #     1/C² = 2·(V_bi - V - kT/q) / (q·ε_s·ε_0·N),
-    # where the kT/q term is the majority-carrier tail at the depletion
-    # edge (the space charge does not terminate abruptly). Omitting it
-    # under-reports V_bi by 25.9 mV at 300 K — 2026-07 review finding F-16.
-    if abs(slope) < 1e-30:
+    # For a p-n junction, both thermally diffuse depletion edges contribute:
+    #     1/C² = 2·(V_bi - V - 2kT/q) / (q·ε_s·ε_0·N).
+    # This differs from the one-edge kT/q correction often used for a
+    # metal-semiconductor Schottky contact. Even after the 2kT/q correction,
+    # exact distributed-carrier capacitance need not recover the true barrier.
+    if not np.isfinite(slope) or slope >= -1e-30:
         return float("nan"), float("nan"), float(V_fit[0]), float(V_fit[-1])
-    V_bi_fit = -intercept / slope + K_B * T / Q
+    V_bi_fit = -intercept / slope + 2.0 * K_B * T / Q
     # N_eff = -2 / (q · ε_s · ε_0 · slope). Slope is negative, so N_eff > 0.
     N_eff_fit = -2.0 / (Q * eps_r * EPS_0 * slope)
     return (
@@ -257,6 +264,7 @@ def run_mott_schottky(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
+    impedance_method: str = "transient",
 ) -> MottSchottkyResult:
     """Dark C-V sweep + Mott-Schottky fit.
 
@@ -283,6 +291,10 @@ def run_mott_schottky(
     progress : ProgressCallback | None
         Called as ``progress("mott_schottky", k, total, msg)`` after
         each bias completes.
+    impedance_method : {"transient", "quasi_fermi_frequency"}
+        Impedance engine forwarded explicitly to ``run_impedance``. The QF
+        frequency-domain path is restricted to its certified local model
+        envelope and fails closed elsewhere.
 
     Returns
     -------
@@ -310,13 +322,20 @@ def run_mott_schottky(
             V_dc=float(V_dc), delta_V=delta_V,
             N_grid=N_grid, n_cycles=n_cycles, n_extract=n_extract,
             rtol=rtol, atol=atol, illuminated=False,
+            method=impedance_method,
         )
         Z = complex(r.Z[0])
-        # C = Im(Y) / ω with Y = 1/Z. Take |Im(Y)| so a noisy negative
-        # imaginary part (always indicative of a fit glitch rather than
-        # physics) does not poison the 1/C² plot.
+        # C = Im(Y) / ω with Y = 1/Z. A non-positive susceptance violates
+        # the passive capacitive convention assumed by Mott-Schottky analysis;
+        # reject it instead of taking abs(Im(Y)), which would silently turn an
+        # inductive or numerically invalid response into a plausible C-V curve.
         Y = 1.0 / Z
-        C_arr[k] = abs(Y.imag) / omega
+        if not np.isfinite(Y.real) or not np.isfinite(Y.imag) or Y.imag <= 0.0:
+            raise RuntimeError(
+                "Mott-Schottky requires finite positive capacitive "
+                f"susceptance; got Y={Y!r} at V_dc={V_dc:.6g} V"
+            )
+        C_arr[k] = Y.imag / omega
         if progress is not None:
             progress(
                 "mott_schottky", k + 1, len(V_arr),

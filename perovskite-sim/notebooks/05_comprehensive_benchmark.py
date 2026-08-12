@@ -1,12 +1,15 @@
 """
-Comprehensive Quantitative Benchmark
-=====================================
-Validates the perovskite-sim physics engine against:
+Comprehensive Paper-Informed Diagnostic
+=======================================
+This exploratory script checks:
 1. Analytical limits (Beer-Lambert, Shockley-Queisser, detailed balance)
 2. Driftfusion benchmark (Calado et al. 2016, Nature Commun.)
 3. Parameter sensitivity analysis (tau, mu, D_ion, Phi, ni)
 4. Scan-rate dependent hysteresis physics
 5. Ion migration dynamics
+
+It is not a certification lane. Current evidence levels and reproducible
+commands live in ``reproducibility/config_benchmark_matrix.yaml``.
 """
 import sys, os, time
 import numpy as np
@@ -19,8 +22,7 @@ from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep, compute_metrics
 from perovskite_sim.experiments.impedance import run_impedance
 from perovskite_sim.solver.mol import (
-    StateVec, _build_layerwise_arrays, _equilibrium_bc,
-    _charge_density
+    StateVec, _charge_density, build_material_arrays,
 )
 from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
@@ -91,6 +93,7 @@ check("Numerical generation matches theory (<1%)", err_gen < 1,
 print("\n--- 1b. Equilibrium Mass Action Law ---")
 y_eq = solve_equilibrium(x, stack)
 sv = StateVec.unpack(y_eq, N)
+mat = build_material_arrays(x, stack)
 absorber_mask = (x > stack.layers[0].thickness) & \
                 (x < stack.layers[0].thickness + stack.layers[1].thickness)
 np_product = sv.n[absorber_mask] * sv.p[absorber_mask]
@@ -102,8 +105,10 @@ check("Mass action n*p = ni^2 in absorber", ratio.min() > 0.99 and ratio.max() <
 
 # 1c. Charge neutrality at equilibrium
 print("\n--- 1c. Charge Neutrality at Equilibrium ---")
-eps_r, _, _, P0, N_A_arr, N_D_arr, _, _, _ = _build_layerwise_arrays(x, stack)
-rho_eq = _charge_density(sv.p, sv.n, sv.P, P0, N_A_arr, N_D_arr)
+rho_eq = _charge_density(
+    sv.p, sv.n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+    P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
+)
 max_rho = np.max(np.abs(rho_eq))
 print(f"Max |rho| at equilibrium: {max_rho:.3e} C/m3")
 check("Charge neutrality at equilibrium", max_rho < 1e-10,
@@ -111,13 +116,13 @@ check("Charge neutrality at equilibrium", max_rho < 1e-10,
 
 # 1d. Built-in potential Poisson check
 print("\n--- 1d. Built-in Potential ---")
-phi_eq = solve_poisson(x, eps_r, rho_eq, phi_left=0.0, phi_right=stack.V_bi)
+phi_eq = solve_poisson(x, mat.eps_r, rho_eq, phi_left=0.0, phi_right=stack.V_bi)
 check("Poisson BCs match V_bi", abs(phi_eq[-1] - stack.V_bi) < 1e-10,
       f"phi(L) = {phi_eq[-1]:.6f} V vs V_bi = {stack.V_bi}")
 
 # 1e. Contact ohmic BCs
 print("\n--- 1e. Ohmic Contact Boundary Conditions ---")
-n_L, p_L, n_R, p_R = _equilibrium_bc(stack, x)
+n_L, p_L, n_R, p_R = mat.n_L, mat.p_L, mat.n_R, mat.p_R
 N_A_htl = stack.layers[0].params.N_A
 N_D_etl = stack.layers[2].params.N_D
 check("HTL contact: p = N_A", abs(p_L - N_A_htl)/N_A_htl < 1e-6,

@@ -12,5 +12,33 @@
     "status": "attempted",
     "sweep": "Nd_ETL",
     "sweep_point": NaN
+  },
+  {
+    "found_cycle": 0,
+    "gap_mag": 28.665329643398195,
+    "id": "absolute:base:J_sc",
+    "kind": "absolute",
+    "last_attempt_cycle": 0,
+    "mechanism": null,
+    "metric": "J_sc",
+    "reference_val": 0.0,
+    "solarlab_val": -28.665329643398195,
+    "status": "attempted",
+    "sweep": "base",
+    "sweep_point": 0.0
+  },
+  {
+    "found_cycle": 0,
+    "gap_mag": 0.02808975490495841,
+    "id": "absolute:base:PCE",
+    "kind": "absolute",
+    "last_attempt_cycle": 0,
+    "mechanism": null,
+    "metric": "PCE",
+    "reference_val": 0.0,
+    "solarlab_val": -0.02808975490495841,
+    "status": "attempted",
+    "sweep": "base",
+    "sweep_point": 0.0
   }
 ]

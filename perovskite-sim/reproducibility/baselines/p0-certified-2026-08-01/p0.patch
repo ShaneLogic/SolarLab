@@ -1,0 +1,2541 @@
+diff --git a/perovskite-sim/perovskite_sim/experiments/band_diagram.py b/perovskite-sim/perovskite_sim/experiments/band_diagram.py
+index 32a402096f590977909834541c738d4e95ad052b..5edd1e4d2db1eb89076368d64081604c5618c7f2 100644
+--- a/perovskite-sim/perovskite_sim/experiments/band_diagram.py
++++ b/perovskite-sim/perovskite_sim/experiments/band_diagram.py
+@@ -81,7 +81,8 @@ def compute_band_diagram(
+ ) -> BandDiagram:
+     """Return the settled-state band diagram at ``V_app``.
+ 
+-    ``illuminated`` selects the illuminated steady state (``solve_illuminated_ss``)
++    ``illuminated`` selects the finite-time light-conditioned state
++    (``solve_illuminated_ss``)
+     or the dark state. At ``V_app == 0`` with ``illuminated=False`` this is the
+     zero-current equilibrium (E_F flat). ``settle_t`` is the illuminated settling
+     time; the default 1e-2 s settles the carriers to quasi-steady (ions ~frozen,
+diff --git a/perovskite-sim/perovskite_sim/experiments/degradation.py b/perovskite-sim/perovskite_sim/experiments/degradation.py
+index 640e4df53d4e2f08abf1c5626c0c51a54b3d7e22..b86d537483166f4046a713fc5eccdb5515d39e17 100644
+--- a/perovskite-sim/perovskite_sim/experiments/degradation.py
++++ b/perovskite-sim/perovskite_sim/experiments/degradation.py
+@@ -247,7 +247,7 @@ def run_degradation(
+     # take 10–20 s of silence otherwise.
+     if progress is not None:
+         progress("degradation_transient", 0, max(1, int(t_end * 1000)),
+-                 "solving illuminated steady state")
++                 "applying illuminated preconditioning")
+ 
+     # Degradation loop starts from V_bias-equilibrated state so that the very
+     # first time chunk does not have to transition SC→V_bias carriers (expensive).
+diff --git a/perovskite-sim/perovskite_sim/experiments/eqe.py b/perovskite-sim/perovskite_sim/experiments/eqe.py
+index b11668f12fe7d1ece62b9223560e4cae0a813eb6..b8213cbce4517ebef16fedc8169eda0ac91e64ff 100644
+--- a/perovskite-sim/perovskite_sim/experiments/eqe.py
++++ b/perovskite-sim/perovskite_sim/experiments/eqe.py
+@@ -28,7 +28,7 @@ For each wavelength we:
+    machinery the main simulation trusts.
+ 2. Scale by the chosen probe flux: G(x) = A(x) · Φ_inc [m⁻³ s⁻¹].
+ 3. Build a MaterialArrays bundle with G_optical = G, settle the device
+-   to illuminated steady-state at V_app = 0, and read J_sc from
++   with the declared finite-time illuminated protocol at V_app = 0, and read J_sc from
+    ``_compute_current``.
+ 
+ Beer-Lambert–only stacks raise a ``ValueError`` — EQE is a
+diff --git a/perovskite-sim/perovskite_sim/experiments/jv_sweep.py b/perovskite-sim/perovskite_sim/experiments/jv_sweep.py
+index 4826b4fe10a4346d3554a963725ee93735a09d55..67a3acaa9da1c041a1e2e78b280003942db6464b 100644
+--- a/perovskite-sim/perovskite_sim/experiments/jv_sweep.py
++++ b/perovskite-sim/perovskite_sim/experiments/jv_sweep.py
+@@ -2,7 +2,7 @@ from __future__ import annotations
+ import dataclasses
+ import warnings
+ from dataclasses import dataclass
+-from typing import Callable, Optional
++from typing import Callable, Literal, Sequence
+ import numpy as np
+ 
+ from perovskite_sim._compat.numpy_compat import trapezoid
+@@ -57,6 +57,65 @@ class JVCurrentDecomp:
+     J_total: np.ndarray
+ 
+ 
++@dataclass(frozen=True)
++class JVPointStatus:
++    """Numerical certificate for one voltage point in a J-V branch.
++
++    The valid flag certifies both the local solve and the complete warm-start
++    state chain leading to this point. A locally successful point is therefore
++    still invalid when upstream_valid is false: its initial state came from an
++    uncertified predecessor and cannot silently restart a trusted branch.
++    candidate_current preserves the rejected diagnostic value; JVResult stores
++    NaN in the corresponding J array instead.
++    """
++
++    branch: str
++    index: int
++    voltage: float
++    valid: bool = True
++    upstream_valid: bool = True
++    refinement_required: bool = False
++    refinement_converged: bool | None = None
++    attempted_legs: tuple[int, ...] = (1,)
++    attempted_currents: tuple[float | None, ...] = (None,)
++    failed_legs: tuple[int, ...] = ()
++    accepted_legs: int = 1
++    reason_code: str = "certified"
++    message: str = ""
++    candidate_current: float | None = None
++
++
++class JVCertificationError(RuntimeError):
++    """Raised when strict J-V execution cannot certify a voltage point."""
++
++    def __init__(self, status: JVPointStatus):
++        self.status = status
++        super().__init__(
++            f"J-V {status.branch} point {status.index} at "
++            f"V={status.voltage:.6g} V is uncertified "
++            f"({status.reason_code}): {status.message}"
++        )
++
++
++class JVCertificationWarning(UserWarning):
++    """Diagnostic-mode notice that is distinct from solver numeric warnings."""
++
++
++class _JVCandidateFailure(RuntimeError):
++    """Internal bridge from numeric failures to a point certificate."""
++
++    def __init__(
++        self,
++        reason_code: str,
++        message: str,
++        *,
++        state: np.ndarray | None = None,
++    ):
++        self.reason_code = reason_code
++        self.state = None if state is None else np.asarray(state).copy()
++        super().__init__(message)
++
++
+ @dataclass(frozen=True)
+ class JVResult:
+     V_fwd: np.ndarray
+@@ -70,6 +129,50 @@ class JVResult:
+     snapshots_rev: tuple[SpatialSnapshot, ...] | None = None
+     decomp_fwd: JVCurrentDecomp | None = None
+     decomp_rev: JVCurrentDecomp | None = None
++    status_fwd: tuple[JVPointStatus, ...] | None = None
++    status_rev: tuple[JVPointStatus, ...] | None = None
++
++    @property
++    def certified(self) -> bool:
++        """Whether both branches carry complete, valid point certificates."""
++        def _branch_is_complete(
++            V: np.ndarray,
++            J: np.ndarray,
++            statuses: tuple[JVPointStatus, ...] | None,
++            branch: str,
++        ) -> bool:
++            try:
++                V_arr = np.asarray(V, dtype=float)
++                J_arr = np.asarray(J, dtype=float)
++            except (TypeError, ValueError):
++                return False
++            if (
++                statuses is None
++                or V_arr.ndim != 1
++                or J_arr.ndim != 1
++                or V_arr.shape != J_arr.shape
++                or len(statuses) != len(V_arr)
++                or len(statuses) == 0
++                or not np.all(np.isfinite(V_arr))
++                or not np.all(np.isfinite(J_arr))
++            ):
++                return False
++            return all(
++                isinstance(status, JVPointStatus)
++                and status.valid
++                and status.upstream_valid
++                and status.branch == branch
++                and status.index == index
++                and np.isfinite(status.voltage)
++                and float(status.voltage) == float(V_arr[index])
++                for index, status in enumerate(statuses)
++            )
++
++        return _branch_is_complete(
++            self.V_fwd, self.J_fwd, self.status_fwd, "jv_forward",
++        ) and _branch_is_complete(
++            self.V_rev, self.J_rev, self.status_rev, "jv_reverse",
++        )
+ 
+ 
+ # --- V_oc extraction: terminal-current resolution floor --------------------
+@@ -163,6 +266,7 @@ def compute_metrics(
+     assume_jsc_positive: bool = True,
+     P_in: float = 1000.0,
+     V_oc_max: float | None = None,
++    validity: Sequence[bool] | Sequence[JVPointStatus] | np.ndarray | None = None,
+ ) -> JVMetrics:
+     """Compute V_oc, J_sc, FF, PCE from a J-V array (J in A/m²).
+ 
+@@ -233,6 +337,12 @@ def compute_metrics(
+     disables the check, which is what a stack with no declared band gaps
+     must do.
+ 
++    validity may be either a boolean mask or the per-point JVPointStatus
++    sequence returned by run_jv_sweep. Metrics are undefined for a partially
++    certified curve, so any false status raises ValueError instead of dropping,
++    interpolating across, or otherwise hiding that point. Non-finite V/J
++    samples are always rejected.
++
+     Bracketing flag
+     ---------------
+     ``voc_bracketed`` means exactly one thing: **an open-circuit point was
+@@ -251,6 +361,47 @@ def compute_metrics(
+     """
+     V = np.asarray(V, dtype=float)
+     J = np.asarray(J, dtype=float)
++    if V.ndim != 1 or J.ndim != 1 or V.shape != J.shape:
++        raise ValueError(
++            f"V and J must be one-dimensional arrays of equal shape, got "
++            f"{V.shape} and {J.shape}"
++        )
++    if validity is not None:
++        validity_items = tuple(validity)
++        if len(validity_items) != len(V):
++            raise ValueError(
++                f"validity length {len(validity_items)} != J-V length {len(V)}"
++            )
++        status_items = tuple(
++            isinstance(item, JVPointStatus) for item in validity_items
++        )
++        if any(status_items):
++            if not all(status_items):
++                raise TypeError("validity cannot mix JVPointStatus and boolean values")
++            valid_mask = np.array(
++                [item.valid for item in validity_items], dtype=bool,
++            )
++        else:
++            if not all(isinstance(item, (bool, np.bool_)) for item in validity_items):
++                raise TypeError("validity values must be boolean or JVPointStatus")
++            valid_mask = np.asarray(validity_items, dtype=bool)
++        if valid_mask.shape != V.shape:
++            raise ValueError(
++                f"validity must have shape {V.shape}, got {valid_mask.shape}"
++            )
++        invalid = np.flatnonzero(~valid_mask)
++        if invalid.size:
++            raise ValueError(
++                "J-V metrics require every point to be certified; invalid "
++                f"indices: {invalid.tolist()}"
++            )
++    finite = np.isfinite(V) & np.isfinite(J)
++    if not np.all(finite):
++        invalid = np.flatnonzero(~finite)
++        raise ValueError(
++            "J-V metrics require finite voltage and current samples; "
++            f"non-finite indices: {invalid.tolist()}"
++        )
+     if not assume_jsc_positive:
+         J = -J
+     order = np.argsort(V)
+@@ -301,17 +452,34 @@ def hysteresis_index(
+     V_rev: np.ndarray, J_rev: np.ndarray,
+     *,
+     V_oc_max: float | None = None,
++    validity_fwd: Sequence[bool] | Sequence[JVPointStatus] | np.ndarray | None = None,
++    validity_rev: Sequence[bool] | Sequence[JVPointStatus] | np.ndarray | None = None,
+ ) -> float:
+     """Forward/reverse PCE asymmetry. ``V_oc_max`` is forwarded to
+     :func:`compute_metrics` on both branches (see its docstring); ``None``
+     keeps the pre-existing no-ceiling behaviour."""
+-    m_fwd = compute_metrics(V_fwd, J_fwd, V_oc_max=V_oc_max)
+-    m_rev = compute_metrics(V_rev, J_rev, V_oc_max=V_oc_max)
++    m_fwd = compute_metrics(
++        V_fwd, J_fwd, V_oc_max=V_oc_max, validity=validity_fwd,
++    )
++    m_rev = compute_metrics(
++        V_rev, J_rev, V_oc_max=V_oc_max, validity=validity_rev,
++    )
+     if m_rev.PCE == 0:
+         return 0.0
+     return (m_rev.PCE - m_fwd.PCE) / m_rev.PCE
+ 
+ 
++def _unavailable_metrics() -> JVMetrics:
++    """Return an unmistakable sentinel for an uncertified J-V branch."""
++    return JVMetrics(
++        V_oc=np.nan,
++        J_sc=np.nan,
++        FF=np.nan,
++        PCE=np.nan,
++        voc_bracketed=False,
++    )
++
++
+ def _state_fields(
+     x: np.ndarray,
+     y_state: np.ndarray,
+@@ -668,6 +836,15 @@ _J_BRANCH_RETRY_LEGS = (2, 4, 8)
+ # than the smallest measured wrong landing (3.3 % at V=0).
+ _J_BRANCH_REFINEMENT_RTOL = 0.01
+ 
++# Absolute current resolution paired with the relative branch ceiling above.
++# A purely relative test degenerates when an optical override has J_sc near
++# zero: round-off-scale positive currents then exceed 1.05*J_sc despite being
++# numerically indistinguishable from zero. The same 1 A/m^2 scale floor is
++# used by _currents_agree, so 1 % of that scale gives 0.01 A/m^2 = 1 uA/cm^2.
++# This remains more than three orders below the smallest measured wrong-branch
++# excess on the calibrated one-sun gate.
++_J_BRANCH_CURRENT_ATOL = 0.01
++
+ # V=0 has no universal lower current bound, so an under-read cannot be found
+ # by a one-sided protocol ceiling.  Probe the same interval with four legs;
+ # only when that materially disagrees with the original do we pay for an
+@@ -675,6 +852,28 @@ _J_BRANCH_REFINEMENT_RTOL = 0.01
+ _J_ZERO_BIAS_PROBE_LEGS = 4
+ _J_ZERO_BIAS_CONFIRM_LEGS = 8
+ 
++# Numeric failures that can arise from scipy integration or terminal-current
++# reconstruction. Programming errors remain loud instead of being mislabeled
++# as solver failures.
++_JV_NUMERIC_FAILURES = (
++    RuntimeError,
++    ValueError,
++    FloatingPointError,
++    OverflowError,
++    RuntimeWarning,
++    np.linalg.LinAlgError,
++)
++
++
++def _branch_current_ceiling(J_sc: float) -> float:
++    """Return the forward-branch trigger with relative and absolute margin."""
++    J_ref = float(J_sc)
++    margin = max(
++        _J_BRANCH_EXCESS * abs(J_ref),
++        _J_BRANCH_CURRENT_ATOL,
++    )
++    return J_ref + margin
++
+ 
+ def _currents_agree(J_a: float, J_b: float) -> bool:
+     """Return whether two independently integrated currents are consistent."""
+@@ -872,25 +1071,48 @@ def _integrate_step(
+                 rtol, atol, max_bisect, illuminated,
+             )
+         return y_k
+-    sol = run_transient(
+-        x, y, (t_lo, t_hi), np.array([t_hi]),
+-        stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
+-        max_step=dt / 20.0 if dt > 0.0 else np.inf,
+-        mat=mat,
+-        max_nfev=_JV_RADAU_MAX_NFEV,
+-    )
+-    if sol.success:
++
++    last_failure: str | None = None
++
++    def _solver_attempt(
++        mat_attempt: MaterialArrays,
++        *,
++        method: str = "Radau",
++    ):
++        """Return a solver result, or None for a recoverable numeric failure."""
++        nonlocal last_failure
++        try:
++            # Overflow/invalid warnings inside scipy's Jacobian construction
++            # mean this attempt is numerically unusable even when the global
++            # warning policy would otherwise only print them. Normalize them
++            # with the explicit solver exceptions so bisection/BDF can recover.
++            with warnings.catch_warnings():
++                warnings.simplefilter("error", RuntimeWarning)
++                sol_attempt = run_transient(
++                    x, y, (t_lo, t_hi), np.array([t_hi]),
++                    stack, illuminated=illuminated, V_app=V_app,
++                    rtol=rtol, atol=atol,
++                    max_step=dt / 20.0 if dt > 0.0 else np.inf,
++                    mat=mat_attempt,
++                    max_nfev=_JV_RADAU_MAX_NFEV,
++                    method=method,
++                )
++        except _JV_NUMERIC_FAILURES as exc:
++            last_failure = f"{type(exc).__name__}: {exc}"
++            return None
++        if not sol_attempt.success:
++            last_failure = str(
++                getattr(sol_attempt, "message", "solver returned success=False")
++            )
++        return sol_attempt
++
++    sol = _solver_attempt(mat)
++    if sol is not None and sol.success:
+         return sol.y[:, -1]
+     if mat.has_radiative_reabsorption:
+         mat_step = _bake_radiative_reabsorption_step(y, x, mat, illuminated)
+-        sol = run_transient(
+-            x, y, (t_lo, t_hi), np.array([t_hi]),
+-            stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
+-            max_step=dt / 20.0 if dt > 0.0 else np.inf,
+-            mat=mat_step,
+-            max_nfev=_JV_RADAU_MAX_NFEV,
+-        )
+-        if sol.success:
++        sol = _solver_attempt(mat_step)
++        if sol is not None and sol.success:
+             return sol.y[:, -1]
+     if max_bisect == 0:
+         # Last-chance BDF fallback. When Radau bisection is exhausted on
+@@ -898,19 +1120,13 @@ def _integrate_step(
+         # order BDF) sometimes converges where Radau cannot. Cost is one
+         # extra solve attempt per pathological step; healthy steps never
+         # reach this branch.
+-        sol_bdf = run_transient(
+-            x, y, (t_lo, t_hi), np.array([t_hi]),
+-            stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
+-            max_step=(t_hi - t_lo) / 20.0 if t_hi > t_lo else np.inf,
+-            mat=mat,
+-            max_nfev=_JV_RADAU_MAX_NFEV,
+-            method="BDF",
+-        )
+-        if sol_bdf.success:
++        sol_bdf = _solver_attempt(mat, method="BDF")
++        if sol_bdf is not None and sol_bdf.success:
+             return sol_bdf.y[:, -1]
++        detail = f"; last failure: {last_failure}" if last_failure else ""
+         raise RuntimeError(
+             f"JV sweep: coupled solver failed to converge on [{t_lo:.3e},{t_hi:.3e}] "
+-            f"at V_app={V_app:.4f} V after bisection"
++            f"at V_app={V_app:.4f} V after bisection{detail}"
+         )
+     t_mid = 0.5 * (t_lo + t_hi)
+     y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol,
+@@ -1060,6 +1276,7 @@ def run_jv_sweep(
+     save_snapshots: bool = False,
+     decompose_currents: bool = False,
+     v_max_max_attempts: int = 1,
++    certification_mode: Literal["strict", "diagnostic"] = "strict",
+ ) -> JVResult:
+     """Run forward and reverse J-V sweeps.
+ 
+@@ -1103,14 +1320,27 @@ def run_jv_sweep(
+       Must be a 1-D array of shape (N,) where N is the number of electrical-grid
+       nodes (determined by N_grid and the number of electrical layers). When
+       provided, this profile is used verbatim in place of Beer-Lambert or TMM
+-      optics for both the initial illuminated steady-state and every subsequent
+-      solver call. When None (default), the existing single-junction optics path
+-      is used unchanged.
++      optics for both the initial finite-time illuminated preconditioning and
++      every subsequent solver call. When None (default), the existing
++      single-junction optics path is used unchanged.
+ 
+     illuminated : when False, run a dark J-V (G=0 everywhere). The initial
+-      state is dark equilibrium instead of illuminated steady-state. Cannot
++      state is dark equilibrium instead of a light-conditioned state. Cannot
+       be combined with fixed_generation.
++
++    certification_mode : "strict" (default) raises
++      JVCertificationError as soon as a voltage point fails its required
++      local-refinement certificate. "diagnostic" keeps running from the
++      rejected candidate state for debugging, but stores NaN at the failed
++      point and every downstream point in that warm-start chain, records
++      immutable per-point statuses, and returns unavailable NaN metrics.
++      Diagnostic output must not be used as a physical J-V curve.
+     """
++    if certification_mode not in ("strict", "diagnostic"):
++        raise ValueError(
++            "certification_mode must be 'strict' or 'diagnostic', got "
++            f"{certification_mode!r}"
++        )
+     if v_max_max_attempts < 1:
+         raise ValueError(
+             f"v_max_max_attempts must be >= 1, got {v_max_max_attempts}"
+@@ -1150,7 +1380,15 @@ def run_jv_sweep(
+                 illuminated=illuminated, save_snapshots=save_snapshots,
+                 decompose_currents=decompose_currents,
+                 v_max_max_attempts=1,  # disable recursion on inner call
++                certification_mode=certification_mode,
+             )
++            if (
++                last_result.status_fwd is not None
++                and not all(status.valid for status in last_result.status_fwd)
++            ):
++                # A wider voltage window cannot repair an uncertified
++                # warm-start chain. Diagnostic mode returns it immediately.
++                return last_result
+             if last_result.metrics_fwd.voc_bracketed:
+                 return last_result
+             attempts_used += 1
+@@ -1218,35 +1456,37 @@ def run_jv_sweep(
+ 
+     # Start from the appropriate equilibrium state:
+     # - Dark mode: use dark equilibrium directly (no illumination settle)
+-    # - Fixed generation: inline the illuminated-SS logic with overridden mat
+-    # - Default: use the standard illuminated steady-state solver
++    # - Fixed generation: precondition with the overridden material cache
++    # - Default: preserve the independently built preconditioning cache; this
++    #   is load-bearing for the calibrated stiff-branch regression protocol
+     if not illuminated:
+         y_eq = solve_equilibrium(x, stack)
+     elif fixed_generation is not None:
+-        from perovskite_sim.solver.mol import run_transient as _run_transient
+-        _t_settle = 1e-3
+-        y_dark = solve_equilibrium(x, stack)
+-        sol = _run_transient(
+-            x, y_dark, (0.0, _t_settle), np.array([_t_settle]),
+-            stack, illuminated=True, V_app=0.0, rtol=rtol, atol=atol,
+-            mat=mat,
++        y_eq = solve_illuminated_ss(
++            x, stack, V_app=0.0, rtol=rtol, atol=atol, mat=mat,
+         )
+-        y_eq = sol.y[:, -1] if sol.success else y_dark
+     else:
+         y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
+ 
+-    def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str,
+-               J_sc_ref: float | None = None):
++    def _sweep(
++        V_start: float,
++        V_end: float,
++        y_init: np.ndarray,
++        stage: str,
++        initial_state_certified: bool = True,
++    ):
+         """Sweep from V_start to V_end, starting from carrier state y_init.
+ 
+-        Returns (V_arr, J_arr, y_final, snapshots, decomp) so sweeps can be
+-        chained. snapshots and decomp are populated only when the corresponding
+-        flags (save_snapshots, decompose_currents) are True.
++        Returns (V_arr, J_arr, y_final, snapshots, decomp, statuses) so sweeps
++        can be chained. snapshots and decomp are populated only when the
++        corresponding flags (save_snapshots, decompose_currents) are True.
+ 
+-        ``J_sc_ref`` is the short-circuit current used by the wrong-branch
+-        detector (``_J_BRANCH_EXCESS``). The forward sweep starts at V=0 and
+-        therefore learns it from its own first point; the reverse sweep ends
+-        there, so ``run_jv_sweep`` hands it the forward value.
++        The wrong-branch detector applies only to ``jv_forward``. That branch
++        starts from the built-in short-circuit initialization and therefore
++        satisfies the detector's J(V) <= J_sc protocol premise. The reverse
++        branch starts from a high-bias, precharged transient state; stored
++        electronic, ionic, or displacement energy makes the same ceiling
++        physically invalid there.
+         """
+         V_arr = np.linspace(V_start, V_end, n_points)
+         dt = abs(V_end - V_start) / (v_rate * (n_points - 1))
+@@ -1258,9 +1498,11 @@ def run_jv_sweep(
+         d_Jion: list[float] = []
+         d_Jdisp: list[float] = []
+         d_Jtot: list[float] = []
++        statuses: list[JVPointStatus] = []
+         y = y_init.copy()
+         V_prev = float(V_arr[0])
+-        J_ref = J_sc_ref
++        J_ref: float | None = None
++        chain_certified = initial_state_certified
+ 
+         def _candidate(
+             y_entry: np.ndarray,
+@@ -1269,79 +1511,145 @@ def run_jv_sweep(
+             t_hi: float,
+             n_legs: int,
+         ) -> tuple[np.ndarray, float]:
+-            y_candidate = _integrate_step(
+-                x, y_entry, stack, mat, V_k, t_lo, t_hi, rtol, atol,
+-                illuminated=illuminated, n_legs=n_legs,
+-            )
+-            J_candidate = _compute_current(
+-                x, y_candidate, stack, V_k, y_prev=y_entry, dt=dt,
+-                mat=mat, V_app_prev=V_prev,
+-            )
++            try:
++                y_candidate = _integrate_step(
++                    x, y_entry, stack, mat, V_k, t_lo, t_hi, rtol, atol,
++                    illuminated=illuminated, n_legs=n_legs,
++                )
++            except _JV_NUMERIC_FAILURES as exc:
++                raise _JVCandidateFailure(
++                    "integration_failed",
++                    f"integration failed at V={V_k:.6g} V with "
++                    f"{n_legs} leg(s): {type(exc).__name__}: {exc}",
++                ) from exc
++            try:
++                with warnings.catch_warnings():
++                    warnings.simplefilter("error", RuntimeWarning)
++                    J_candidate = _compute_current(
++                        x, y_candidate, stack, V_k, y_prev=y_entry, dt=dt,
++                        mat=mat, V_app_prev=V_prev,
++                    )
++            except _JV_NUMERIC_FAILURES as exc:
++                raise _JVCandidateFailure(
++                    "current_extraction_failed",
++                    f"terminal-current extraction failed at V={V_k:.6g} V "
++                    f"with {n_legs} leg(s): {type(exc).__name__}: {exc}",
++                    state=y_candidate,
++                ) from exc
+             return y_candidate, J_candidate
+ 
+         for k, V_k in enumerate(V_arr):
+             y_prev = y.copy()
+             t_lo = t_points[k]
+             t_hi = t_lo + dt
+-            y, J_k = _candidate(y_prev, float(V_k), t_lo, t_hi, 1)
++            candidate_error: _JVCandidateFailure | None = None
++            try:
++                y, J_k = _candidate(y_prev, float(V_k), t_lo, t_hi, 1)
++            except _JVCandidateFailure as exc:
++                candidate_error = exc
++                y = y_prev if exc.state is None else exc.state.copy()
++                J_k = np.nan
++
++            initial_candidate_current = (
++                None if candidate_error is not None else float(J_k)
++            )
++
++            upstream_valid = chain_certified
++            local_valid = candidate_error is None
++            refinement_required = False
++            refinement_converged: bool | None = (
++                False if candidate_error is not None else None
++            )
++            attempted_legs = [1]
++            attempted_currents: list[float | None] = [
++                None if candidate_error is not None else float(J_k)
++            ]
++            failed_legs: list[int] = [1] if candidate_error is not None else []
++            accepted_legs = 0 if candidate_error is not None else 1
++            reason_code = (
++                candidate_error.reason_code
++                if candidate_error is not None else "certified"
++            )
++            message = (
++                f"single-leg candidate failed: {candidate_error}"
++                if candidate_error is not None else ""
++            )
++            if (candidate_error is None
++                    and (not np.isfinite(J_k) or not np.all(np.isfinite(y)))):
++                local_valid = False
++                reason_code = "nonfinite_candidate"
++                message = (
++                    "the integrator returned a non-finite state or terminal "
++                    "current"
++                )
+ 
+             # The first/last short-circuit sample has no trustworthy lower
+-            # current bound.  A wrong Radau branch can therefore under-read it
+-            # without tripping the one-sided J_sc ceiling below.  Probe the
+-            # exact same physical interval with four legs.  Healthy steps keep
+-            # the original state and current bit-for-bit; only a material
+-            # disagreement pays for an eight-leg confirmation and replacement.
+-            if illuminated and float(V_k) == 0.0:
++            # current bound. A wrong Radau branch can under-read it, so the
++            # four-leg probe is a required certificate, not an advisory
++            # warning. A disagreement additionally requires the independent
++            # eight-leg result to agree with the probe.
++            if local_valid and illuminated and float(V_k) == 0.0:
++                refinement_required = True
++                attempted_legs.append(_J_ZERO_BIAS_PROBE_LEGS)
+                 try:
+                     y_probe, J_probe = _candidate(
+                         y_prev, float(V_k), t_lo, t_hi,
+                         _J_ZERO_BIAS_PROBE_LEGS,
+                     )
+                 except RuntimeError as exc:
+-                    warnings.warn(
+-                        f"J-V sweep: {_J_ZERO_BIAS_PROBE_LEGS}-leg V=0 "
+-                        f"subdivision probe failed ({exc}). Keeping the "
+-                        "successful single-leg value; treat this point as "
+-                        "unconfirmed.",
+-                        RuntimeWarning,
+-                        stacklevel=2,
++                    attempted_currents.append(None)
++                    failed_legs.append(_J_ZERO_BIAS_PROBE_LEGS)
++                    local_valid = False
++                    refinement_converged = False
++                    reason_code = "zero_bias_probe_failed"
++                    message = (
++                        f"{_J_ZERO_BIAS_PROBE_LEGS}-leg V=0 subdivision "
++                        f"probe failed: {exc}"
+                     )
+                 else:
+-                    if not _refinements_agree(
++                    attempted_currents.append(float(J_probe))
++                    if _refinements_agree(
+                         y, J_k, y_probe, J_probe, N, mat.N_iface_state,
+                     ):
++                        refinement_converged = True
++                        reason_code = "zero_bias_refinement_agreed"
++                    else:
++                        attempted_legs.append(_J_ZERO_BIAS_CONFIRM_LEGS)
+                         try:
+                             y_confirm, J_confirm = _candidate(
+                                 y_prev, float(V_k), t_lo, t_hi,
+                                 _J_ZERO_BIAS_CONFIRM_LEGS,
+                             )
+                         except RuntimeError as exc:
+-                            warnings.warn(
+-                                f"J-V sweep: {_J_ZERO_BIAS_CONFIRM_LEGS}-leg "
+-                                f"V=0 subdivision confirmation failed ({exc}). "
+-                                "Keeping the successful single-leg value; "
+-                                "treat this point as unconverged.",
+-                                RuntimeWarning,
+-                                stacklevel=2,
++                            attempted_currents.append(None)
++                            failed_legs.append(_J_ZERO_BIAS_CONFIRM_LEGS)
++                            local_valid = False
++                            refinement_converged = False
++                            reason_code = "zero_bias_confirmation_failed"
++                            message = (
++                                f"{_J_ZERO_BIAS_CONFIRM_LEGS}-leg V=0 "
++                                f"subdivision confirmation failed: {exc}"
+                             )
+                         else:
++                            attempted_currents.append(float(J_confirm))
+                             if _refinements_agree(
+                                 y_probe, J_probe, y_confirm, J_confirm,
+                                 N, mat.N_iface_state,
+                             ):
+                                 y, J_k = y_confirm, J_confirm
++                                accepted_legs = _J_ZERO_BIAS_CONFIRM_LEGS
++                                refinement_converged = True
++                                reason_code = "zero_bias_refinement_recovered"
+                             else:
+-                                warnings.warn(
+-                                    f"J-V sweep: terminal current at V=0 "
+-                                    f"failed local subdivision convergence: "
++                                local_valid = False
++                                refinement_converged = False
++                                reason_code = "zero_bias_refinement_disagreed"
++                                message = (
++                                    "V=0 local subdivision did not converge: "
+                                     f"single/{_J_ZERO_BIAS_PROBE_LEGS}/"
+-                                    f"{_J_ZERO_BIAS_CONFIRM_LEGS}-leg values "
+-                                    f"are {J_k:.3f}/{J_probe:.3f}/"
+-                                    f"{J_confirm:.3f} A/m^2. Keeping the "
+-                                    "single-leg value; treat this point as "
+-                                    "unconverged.",
+-                                    RuntimeWarning,
+-                                    stacklevel=2,
++                                    f"{_J_ZERO_BIAS_CONFIRM_LEGS}-leg currents "
++                                    f"were {J_k:.6g}/{J_probe:.6g}/"
++                                    f"{J_confirm:.6g} A/m^2"
+                                 )
+ 
+             # Wrong-branch rejection. Only fires in the illuminated forward
+@@ -1355,22 +1663,27 @@ def run_jv_sweep(
+             # displacement/ionic contributions, which stored energy can drive
+             # above the instantaneous optical generation.
+             _ceiling = (
+-                J_ref * (1.0 + _J_BRANCH_EXCESS)
+-                if J_ref is not None and J_ref > 0.0 else None
++                _branch_current_ceiling(J_ref)
++                if stage == "jv_forward" and J_ref is not None and J_ref > 0.0
++                else None
+             )
+-            if (illuminated and _ceiling is not None
++            if (local_valid and illuminated and _ceiling is not None
+                     and float(V_k) > 0.0 and J_k > _ceiling):
++                refinement_required = True
++                refinement_converged = False
+                 previous_retry: tuple[np.ndarray, float] | None = None
+-                failed_legs: list[int] = []
+                 for n_legs in _J_BRANCH_RETRY_LEGS:
++                    attempted_legs.append(n_legs)
+                     try:
+                         y_retry, J_retry = _candidate(
+                             y_prev, float(V_k), t_lo, t_hi, n_legs,
+                         )
+                     except RuntimeError:
++                        attempted_currents.append(None)
+                         failed_legs.append(n_legs)
+                         previous_retry = None
+                         continue
++                    attempted_currents.append(float(J_retry))
+                     if (previous_retry is not None
+                             and previous_retry[1] <= _ceiling
+                             and J_retry <= _ceiling
+@@ -1379,31 +1692,66 @@ def run_jv_sweep(
+                                 y_retry, J_retry, N, mat.N_iface_state,
+                             )):
+                         y, J_k = y_retry, J_retry
++                        accepted_legs = n_legs
++                        refinement_converged = True
++                        reason_code = "positive_bias_refinement_recovered"
+                         break
+                     previous_retry = (y_retry, J_retry)
+                 else:
+-                    # Never silently keep a value known to break the bound.
+                     failure_note = (
+                         f" Failed leg counts: {failed_legs}."
+                         if failed_legs else ""
+                     )
+-                    warnings.warn(
+-                        f"J-V sweep: terminal current at V={float(V_k):.4f} V "
+-                        f"is {J_k:.3f} A/m^2, above the protocol current ceiling "
+-                        f"J_sc*(1+{_J_BRANCH_EXCESS:g}) = {_ceiling:.3f}; "
+-                        f"forced "
+-                        f"subdivision into {_J_BRANCH_RETRY_LEGS} legs did not "
+-                        "produce two converged values within that ceiling. "
+-                        f"Treat this point as unconverged.{failure_note}",
+-                        RuntimeWarning,
+-                        stacklevel=2,
++                    local_valid = False
++                    reason_code = "positive_bias_refinement_exhausted"
++                    message = (
++                        f"terminal current {J_k:.6g} A/m^2 exceeded the "
++                        "protocol current ceiling "
++                        f"J_sc + max({_J_BRANCH_EXCESS:g}*|J_sc|, "
++                        f"{_J_BRANCH_CURRENT_ATOL:g} A/m^2) = {_ceiling:.3f}; "
++                        f"refinements {_J_BRANCH_RETRY_LEGS} did not produce "
++                        f"two converged values within it.{failure_note}"
+                     )
+-            J_arr[k] = J_k
+-            if J_ref is None and float(V_k) == 0.0:
++
++            if local_valid and not upstream_valid:
++                reason_code = "upstream_state_uncertified"
++                message = (
++                    "the local step completed, but its warm-start state chain "
++                    "contains an uncertified predecessor"
++                )
++            point_status = JVPointStatus(
++                branch=stage,
++                index=k,
++                voltage=float(V_k),
++                valid=bool(local_valid and upstream_valid),
++                upstream_valid=bool(upstream_valid),
++                refinement_required=refinement_required,
++                refinement_converged=refinement_converged,
++                attempted_legs=tuple(attempted_legs),
++                attempted_currents=tuple(attempted_currents),
++                failed_legs=tuple(failed_legs),
++                accepted_legs=accepted_legs,
++                reason_code=reason_code,
++                message=message,
++                candidate_current=initial_candidate_current,
++            )
++            if not point_status.valid and certification_mode == "strict":
++                raise JVCertificationError(point_status)
++            if not local_valid:
++                warnings.warn(
++                    f"{JVCertificationError(point_status)}; diagnostic mode "
++                    "will return NaN for this point and its downstream chain.",
++                    JVCertificationWarning,
++                    stacklevel=2,
++                )
++            statuses.append(point_status)
++            chain_certified = point_status.valid
++            J_arr[k] = J_k if point_status.valid else np.nan
++            if J_ref is None and float(V_k) == 0.0 and point_status.valid:
+                 J_ref = J_k
+             if save_snapshots:
+                 snaps.append(extract_spatial_snapshot(x, y, stack, float(V_k), mat=mat))
+-            if decompose_currents:
++            if decompose_currents and point_status.valid:
+                 cc = compute_current_components(
+                     x, y, stack, float(V_k),
+                     y_prev=y_prev, dt=dt, mat=mat, V_app_prev=V_prev,
+@@ -1413,6 +1761,12 @@ def run_jv_sweep(
+                 d_Jion.append(float(cc.J_ion[0]))
+                 d_Jdisp.append(float(cc.J_disp[0]))
+                 d_Jtot.append(float(cc.J_total[0]))
++            elif decompose_currents:
++                d_Jn.append(np.nan)
++                d_Jp.append(np.nan)
++                d_Jion.append(np.nan)
++                d_Jdisp.append(np.nan)
++                d_Jtot.append(np.nan)
+             V_prev = float(V_k)
+             if progress is not None:
+                 progress(stage, k + 1, n_points, "")
+@@ -1423,29 +1777,54 @@ def run_jv_sweep(
+                 J_ion=np.array(d_Jion), J_disp=np.array(d_Jdisp),
+                 J_total=np.array(d_Jtot),
+             )
+-        return V_arr, J_arr, y, snaps, decomp
++        return V_arr, J_arr, y, snaps, decomp, tuple(statuses)
+ 
+     V_upper = _default_V_max(stack) if V_max is None else V_max
+     # Forward sweep: dark equilibrium → short circuit → open circuit
+-    V_fwd, J_fwd, y_oc, snaps_fwd, decomp_fwd = _sweep(0.0, V_upper, y_eq, "jv_forward")
+-    # Reverse sweep: continue from light-soaked OC state → short circuit
+-    # The reverse sweep reaches V=0 only at its LAST point, so it cannot learn
+-    # J_sc from itself in time to police its own forward-bias points — hand it
+-    # the forward sweep's value (same device, same illumination).
+-    J_sc_fwd = float(J_fwd[0]) if len(J_fwd) else None
+-    V_rev, J_rev, _, snaps_rev, decomp_rev = _sweep(
+-        V_upper, 0.0, y_oc, "jv_reverse", J_sc_ref=J_sc_fwd,
++    (
++        V_fwd, J_fwd, y_oc, snaps_fwd, decomp_fwd, status_fwd,
++    ) = _sweep(0.0, V_upper, y_eq, "jv_forward")
++    # Reverse sweep: continue from the high-bias, light-soaked state to short
++    # circuit. It retains the mandatory V=0 subdivision certificate, but does
++    # not use the forward-only J_sc ceiling: a precharged transient can release
++    # stored electronic, ionic, or displacement energy above its terminal J_sc.
++    reverse_seed_certified = all(status.valid for status in status_fwd)
++    (
++        V_rev, J_rev, _, snaps_rev, decomp_rev, status_rev,
++    ) = _sweep(
++        V_upper, 0.0, y_oc, "jv_reverse",
++        initial_state_certified=reverse_seed_certified,
+     )
+-
+     # Refuse a V_oc above min(Eg)/q over the electrical layers — impossible
+     # regardless of what the numerics produced past flat band. None when the
+     # stack declares no band gaps (legacy chi=Eg=0 presets), which disables
+     # the check rather than rejecting everything.
+     V_oc_ceiling = thermodynamic_voc_ceiling(stack)
+-    m_fwd = compute_metrics(V_fwd, J_fwd, V_oc_max=V_oc_ceiling)
+-    m_rev = compute_metrics(V_rev[::-1], J_rev[::-1], V_oc_max=V_oc_ceiling)
+-    HI = hysteresis_index(V_fwd, J_fwd, V_rev[::-1], J_rev[::-1],
+-                          V_oc_max=V_oc_ceiling)
++    fwd_certified = all(status.valid for status in status_fwd)
++    rev_certified = all(status.valid for status in status_rev)
++    m_fwd = (
++        compute_metrics(
++            V_fwd, J_fwd, V_oc_max=V_oc_ceiling, validity=status_fwd,
++        )
++        if fwd_certified else _unavailable_metrics()
++    )
++    status_rev_ordered = status_rev[::-1]
++    m_rev = (
++        compute_metrics(
++            V_rev[::-1], J_rev[::-1], V_oc_max=V_oc_ceiling,
++            validity=status_rev_ordered,
++        )
++        if rev_certified else _unavailable_metrics()
++    )
++    HI = (
++        hysteresis_index(
++            V_fwd, J_fwd, V_rev[::-1], J_rev[::-1],
++            V_oc_max=V_oc_ceiling,
++            validity_fwd=status_fwd,
++            validity_rev=status_rev_ordered,
++        )
++        if fwd_certified and rev_certified else np.nan
++    )
+ 
+     return JVResult(
+         V_fwd=V_fwd, J_fwd=J_fwd, V_rev=V_rev, J_rev=J_rev,
+@@ -1454,4 +1833,6 @@ def run_jv_sweep(
+         snapshots_rev=tuple(snaps_rev) if save_snapshots else None,
+         decomp_fwd=decomp_fwd,
+         decomp_rev=decomp_rev,
++        status_fwd=status_fwd,
++        status_rev=status_rev,
+     )
+diff --git a/perovskite-sim/perovskite_sim/experiments/steady_state.py b/perovskite-sim/perovskite_sim/experiments/steady_state.py
+index 7ec00624c46308bf37910d08b43c4cafa8902569..c7645c6eefdbe153ab7c1f32f8ff3d54b6601de9 100644
+--- a/perovskite-sim/perovskite_sim/experiments/steady_state.py
++++ b/perovskite-sim/perovskite_sim/experiments/steady_state.py
+@@ -170,6 +170,7 @@ class SteadyStateResult:
+     residual: float        # max |F_scaled| [1/s]
+     step_inf: float        # max |proposed Newton update| (ln-density)
+     iterations: int
++    continuity_current_bound: float = np.nan  # q*residual*n_ref*width [A/m^2]
+ 
+ 
+ @dataclass(frozen=True)
+@@ -249,6 +250,7 @@ def solve_steady_state(
+     tol: float = 1.0e-6,
+     tol_step: float = 1.0e-8,
+     tol_accept: float = 0.5,
++    max_continuity_current_error: float = 0.1,
+     max_newton: int = 60,
+     assist_times: tuple[float, ...] = (1e-4, 1e-3, 1e-2),
+     iface_states: bool = False,
+@@ -262,31 +264,42 @@ def solve_steady_state(
+ 
+     ``tol`` is a max carrier rate relative to the device's PEAK density
+     [1/s] — see ``_residual_fn`` for the scaling rationale (cancellation
+-    noise lives at ~1e-10 on this scale; tol = 1e-6 bounds the
+-    terminal-current error near 1e-8 A/m^2). ``tol_step`` is a backup
+-    update criterion (max |proposed Newton step| in ln-density) — the
+-    standard Gummel/SCAPS convergence-on-update test. ``tol_accept`` is
+-    the stall acceptance bound: the TE-cap kinks at heterointerface nodes
+-    can make the FD Newton direction locally non-descent at an
+-    already-physically-converged state; a stall with residual below
+-    ``tol_accept`` is accepted as converged. The default 0.5 bounds the
+-    implied terminal-current error near 8e-3 A/m^2 (~30 ppm of J_sc) while
+-    rejecting the V* chattering-attractor state (residual ~14) by 30x —
+-    both margins physical, not tuned. With the smoothed TE cap
++    noise lives at ~1e-10 on this scale; on a representative 100 nm device,
++    tol = 1e-6 corresponds to a current-continuity bound near 1e-8 A/m^2).
++    ``tol_step`` detects a stalled update (max |proposed Newton step| in
++    ln-density); it certifies convergence only when the best residual is also
++    below the effective stall bound described next.
++    ``tol_accept`` is the legacy rate-space stall bound: the TE-cap kinks at
++    heterointerface nodes can make the FD Newton direction locally
++    non-descent at an already-physically-converged state; a stall with
++    residual below the effective bound may be accepted as converged.
++    ``max_continuity_current_error`` additionally caps both ordinary and stall
++    acceptance using the conservative per-carrier continuity estimate
++    ``q * residual * n_ref * device_width``. The default 0.1 A/m²
++    (10 uA/cm²) makes the certificate comparable across thin perovskites and
++    thick, highly doped silicon instead of assigning both the same rate-space
++    residual. With the smoothed TE cap
+     (``_TE_SOFTNESS``) the V*~0.858 wall stalls at residual 0.103: the
+     smoothing reproduces the cap-removal improvement exactly (15x) and
+     this acceptance bound then clears the wall.
+ 
+-    A stall ABOVE ``tol_accept`` (typically at the diode knee, where the
++    A stall above the effective stall bound (typically at the diode knee,
++    where the
+     TE cap binds AT the steady state, making F non-differentiable at its
+     own zero — Newton cannot finish there, but F's VALUE at the fixed
+     point is still zero) triggers transient assists: escalating Radau
+     bursts (``assist_times``, with the mandatory near-flat-band
+     ``max_step`` cap) at the same voltage settle the state until the
+-    residual drops under ``tol_accept`` and the stall-accept path
++    residual drops under both configured bounds and the stall-accept path
+     certifies it. Still-unconverged after all bursts raises.
+     """
+     N = len(x)
++    if (not np.isfinite(max_continuity_current_error)
++            or max_continuity_current_error <= 0.0):
++        raise ValueError(
++            "max_continuity_current_error must be finite and positive, got "
++            f"{max_continuity_current_error}"
++        )
+     if mat is None:
+         mat = dataclasses.replace(
+             build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
+@@ -324,6 +337,17 @@ def solve_steady_state(
+     z = np.log(np.maximum(y0[unk_idx], _DENSITY_FLOOR))
+     z[pin] = z_pin[pin]
+     n_ref = float(np.max(y0[: 2 * N]))
++    device_width = float(x[-1] - x[0])
++    continuity_current_scale = Q * n_ref * device_width
++    if not np.isfinite(continuity_current_scale) or continuity_current_scale <= 0.0:
++        raise SteadyStateError(
++            "cannot construct a finite continuity-current convergence scale"
++        )
++    current_limited_tol = (
++        max_continuity_current_error / continuity_current_scale
++    )
++    tol_effective = min(tol, current_limited_tol)
++    tol_accept_effective = min(tol_accept, current_limited_tol)
+     F = _residual_fn(x, stack, mat, y0, V_app, illuminated, pin, z_pin,
+                      n_ref, unk_idx)
+ 
+@@ -331,7 +355,10 @@ def solve_steady_state(
+         y = y0.copy()
+         y[unk_idx] = np.exp(z_fin)
+         return SteadyStateResult(y=y, converged=True, residual=res_fin,
+-                                 step_inf=step_inf, iterations=it)
++                                 step_inf=step_inf, iterations=it,
++                                 continuity_current_bound=(
++                                     continuity_current_scale * res_fin
++                                 ))
+ 
+     last_msg = ""
+     max_assists = len(assist_times)
+@@ -356,7 +383,7 @@ def solve_steady_state(
+         lu = None          # cached LU factor of the current Jacobian; None => rebuild
+         jac_fresh = False  # True when this iter's step came from a fresh factor
+         for it in range(1, max_newton + 1):
+-            if res < tol:
++            if res < tol_effective:
+                 return _done(z, res, 0.0, it - 1)
+             if lu is None or not _SS_JAC_REUSE:
+                 # dense FD Jacobian in ln-space (rebuilt only when needed)
+@@ -396,9 +423,16 @@ def solve_steady_state(
+                 jac_fresh = False
+             step_inf = float(np.max(np.abs(step)))
+             if step_inf < tol_step:
+-                # residual at the cancellation-noise floor and the state
+-                # has stopped moving — converged on the update criterion
+-                return _done(z, res, step_inf, it)
++                # A small update can mean either convergence or a
++                # singular/ill-conditioned Newton direction.  Certify the
++                # former only under the same physical residual bound used
++                # by the kink-stall and iteration-limit paths.
++                if res_best < tol_accept_effective:
++                    return _done(z_best, res_best, step_inf, it)
++                last_msg = (f"Newton step stalled at V={V_app:.4f} "
++                            f"(iter {it}, best residual {res_best:.3e})")
++                stalled = True
++                break
+             step = np.clip(step, -_LN_STEP_CAP, _LN_STEP_CAP)
+             # backtracking line search on ||F||_2 (the max-norm is
+             # non-smooth under the TE caps; convergence stays max-norm)
+@@ -429,7 +463,7 @@ def solve_steady_state(
+                     # fresh-Jacobian stall semantics)
+                     lu = None
+                     continue
+-                if res_best < tol_accept:
++                if res_best < tol_accept_effective:
+                     # kink-stall at a physically-converged state — accept
+                     # the BEST iterate seen, not the last
+                     return _done(z_best, res_best, step_inf, it)
+@@ -438,11 +472,12 @@ def solve_steady_state(
+                 stalled = True
+                 break
+         else:
+-            if res_best < tol_accept:
++            if res_best < tol_accept_effective:
+                 return _done(z_best, res_best, 0.0, max_newton)
+             last_msg = (f"no convergence at V={V_app:.4f} after "
+                         f"{max_newton} iterations (best residual "
+-                        f"{res_best:.3e}, tol {tol:.1e})")
++                        f"{res_best:.3e}, effective tol "
++                        f"{tol_effective:.1e})")
+         if attempt < max_assists:
+             # transient assist: Radau traverses the TE-cap kink natively;
+             # escalating burst lengths cover knee-injection relaxation,
+@@ -739,7 +774,10 @@ def _gummel_point(x, stack, mat, V_app, y_seed, *, illuminated=True,
+     y_out[unk_idx] = np.exp(z_fin)
+     y_out = _qfl_poisson_relax(x, mat, y_out, V_app)
+     return SteadyStateResult(y=y_out, converged=True, residual=res_fin,
+-                             step_inf=0.0, iterations=_it + 1)
++                             step_inf=0.0, iterations=_it + 1,
++                             continuity_current_bound=(
++                                 Q * res_fin * n_ref * float(x[-1] - x[0])
++                             ))
+ 
+ 
+ def run_jv_sweep_ss(
+diff --git a/perovskite-sim/perovskite_sim/experiments/suns_voc.py b/perovskite-sim/perovskite_sim/experiments/suns_voc.py
+index c2017fe35be49c2089fd3d6b5823bb52e2071e19..7a9d50c3feff5cdc7d5c8fec3229435388fc118a 100644
+--- a/perovskite-sim/perovskite_sim/experiments/suns_voc.py
++++ b/perovskite-sim/perovskite_sim/experiments/suns_voc.py
+@@ -19,8 +19,8 @@ For each suns level X we:
+    TMM-cached profiles and Beer-Lambert). Scaling the generation profile
+    is equivalent to scaling the spectrum uniformly — the appropriate
+    "suns" operation for this experiment.
+-2. Settle the device to illuminated steady-state at V_app = 0 with the
+-   scaled material cache.
++2. Apply the declared finite-time illuminated preconditioning interval at
++   V_app = 0 with the scaled material cache.
+ 3. Bisect to V_oc via the same ``_find_voc`` helper TPV uses (20-pt
+    coarse scan to ~1 mV), warm-started from the previous suns level's
+    V_oc so the bracket tightens monotonically as we walk up the curve.
+@@ -59,15 +59,10 @@ from perovskite_sim.physics.generation import beer_lambert_generation
+ from perovskite_sim.solver.mol import (
+     MaterialArrays,
+     build_material_arrays,
+-    run_transient,
+ )
+-from perovskite_sim.solver.newton import solve_equilibrium
++from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
+ from perovskite_sim.experiments.jv_sweep import (
+-    _compute_current,
+-    _compute_current_ss,
+     _compute_current_ss_with_spread,
+-    _integrate_step,
+-    _grid_node_count,
+ )
+ from perovskite_sim.experiments.tpv import _find_voc
+ 
+@@ -151,21 +146,20 @@ def _solve_illuminated_ss_with_mat(
+     rtol: float = 1e-4,
+     atol: float = 1e-6,
+ ) -> np.ndarray:
+-    """Illuminated steady state at V_app using a caller-supplied mat cache.
++    """Finite-time illuminated preconditioning with a supplied mat cache.
+ 
+-    Mirrors ``solver.illuminated_ss.solve_illuminated_ss`` but threads a
+-    pre-built MaterialArrays through so we can modulate G_optical per
+-    suns level without rebuilding the whole cache each time.
++    Threads a pre-built MaterialArrays through the shared fail-closed solver
++    so suns-level generation can be modulated without rebuilding the cache.
+     """
+-    y_dark = solve_equilibrium(x, stack)
+-    sol = run_transient(
+-        x, y_dark, (0.0, t_settle), np.array([t_settle]),
+-        stack, illuminated=True, V_app=V_app,
+-        rtol=rtol, atol=atol, mat=mat,
++    return solve_illuminated_ss(
++        x,
++        stack,
++        V_app=V_app,
++        t_settle=t_settle,
++        rtol=rtol,
++        atol=atol,
++        mat=mat,
+     )
+-    if not sol.success:
+-        return y_dark
+-    return sol.y[:, -1]
+ 
+ 
+ def _compute_pseudo_ff(
+@@ -223,9 +217,9 @@ def run_suns_voc(
+     N_grid : int, default 60
+         Total drift-diffusion grid nodes across the electrical layers.
+     t_settle : float, default 1e-1
+-        Settling time [s] for each suns level's illuminated steady-state
+-        solve. 100 ms is the validated short-time protocol for the shipped
+-        gates, not a full ion-equilibration time. For D_ion ≈ 1e-17 m²/s and
++        Light-preconditioning time [s] for each suns level. 100 ms is the
++        validated short-time protocol for the shipped gates, not a residual-
++        certified electronic or ionic steady state. For D_ion ≈ 1e-17 m²/s and
+         a 400 nm absorber, L²/D is about 1.6e4 s; screened and blocking-cell
+         charging scales are shorter but still history-dependent. The matched
+         dark-current subtraction removes the residual common-mode drift from
+@@ -282,7 +276,7 @@ def run_suns_voc(
+     for k, suns in enumerate(suns_sorted):
+         mat_k = dataclasses.replace(mat_baseline, G_optical=G_unit * suns)
+ 
+-        # Illuminated steady-state at V=0 → gives J_sc(suns) directly.
++        # Finite-time illuminated state at V=0 gives the protocol J_sc(suns).
+         y_ss = _solve_illuminated_ss_with_mat(
+             x, stack, mat_k, V_app=0.0,
+             t_settle=t_settle, rtol=rtol, atol=atol,
+diff --git a/perovskite-sim/perovskite_sim/solver/illuminated_ss.py b/perovskite-sim/perovskite_sim/solver/illuminated_ss.py
+index 8ac1893f0f5ea0b7a65ae40cc8bdf4294bd3f534..f074a32fed952c959e437fc09284b41207a0a2e2 100644
+--- a/perovskite-sim/perovskite_sim/solver/illuminated_ss.py
++++ b/perovskite-sim/perovskite_sim/solver/illuminated_ss.py
+@@ -1,17 +1,14 @@
+-"""Illuminated steady-state initialiser.
++"""Fixed-duration illuminated preconditioner (legacy ``*_ss`` API name).
+ 
+-Provides an initial carrier distribution that has equilibrated under
+-illumination at a given applied voltage, while keeping the ion profile
+-close to its initial uniform distribution.
++The helper integrates the full MOL system for ``t_settle`` seconds from dark
++equilibrium.  Its result is a protocol-defined light-conditioned initial
++state, useful for avoiding a dark-to-light startup artefact in J-V, impedance,
++and degradation experiments.  Solver success certifies completion of that
++finite-time integration, not convergence to a mathematical steady state.
+ 
+-Strategy: integrate the full MOL system for t_settle seconds starting
+-from dark equilibrium.  Carrier dynamics equilibrate on a sub-microsecond
+-timescale, so t_settle = 1e-3 s is more than sufficient.  Ion migration
+-is negligible over this interval (D_ion * t_settle ≈ 0.3 nm displacement).
+-
+-This pre-conditioned state eliminates the dark → light transient artefact
+-that otherwise contaminates J-V sweeps, impedance spectra, and degradation
+-curves when they start from the dark equilibrium.
++Callers that require a residual-certified carrier steady state must use
++``experiments.steady_state.solve_steady_state``.  Ionic equilibrium is a
++separate, typically much longer, pre-bias/dwell protocol.
+ """
+ from __future__ import annotations
+ 
+@@ -19,7 +16,51 @@ import numpy as np
+ 
+ from perovskite_sim.models.device import DeviceStack
+ from perovskite_sim.solver.newton import solve_equilibrium
+-from perovskite_sim.solver.mol import run_transient
++from perovskite_sim.solver.mol import (
++    MaterialArrays,
++    StateVec,
++    build_material_arrays,
++    run_transient,
++)
++
++
++_NUMERIC_SOLVER_FAILURES = (
++    RuntimeError,
++    ValueError,
++    FloatingPointError,
++    OverflowError,
++    RuntimeWarning,
++    np.linalg.LinAlgError,
++)
++
++
++class IlluminatedSteadyStateError(RuntimeError):
++    """The legacy-named illuminated preconditioning protocol failed."""
++
++    def __init__(
++        self,
++        *,
++        V_app: float,
++        t_settle: float,
++        solver_message: object | None = None,
++        reason_code: str = "solver_failed",
++    ) -> None:
++        self.V_app = float(V_app)
++        self.t_settle = float(t_settle)
++        self.reason_code = reason_code
++        self.solver_message = (
++            str(solver_message) if solver_message not in (None, "") else None
++        )
++        detail = (
++            f" Solver message: {self.solver_message}"
++            if self.solver_message is not None
++            else ""
++        )
++        super().__init__(
++            "Illuminated preconditioning/settling failed at "
++            f"V_app={self.V_app:.6g} V after {self.t_settle:.6g} s."
++            f"{detail}"
++        )
+ 
+ 
+ def solve_illuminated_ss(
+@@ -29,13 +70,13 @@ def solve_illuminated_ss(
+     t_settle: float = 1e-3,
+     rtol: float = 1e-4,
+     atol: float = 1e-6,
++    mat: MaterialArrays | None = None,
+ ) -> np.ndarray:
+-    """Return illuminated steady-state carrier distribution at V_app.
++    """Return the state after a finite illuminated preconditioning interval.
+ 
+     Integrates the MOL system for t_settle seconds under illumination,
+-    starting from dark equilibrium.  The ion profile remains essentially
+-    unchanged (displacement << grid spacing), while carriers reach their
+-    light-soaked quasi-steady state.
++    starting from dark equilibrium.  ``t_settle`` defines the physical
++    protocol; this helper does not infer or certify a steady-state residual.
+ 
+     Parameters
+     ----------
+@@ -44,19 +85,129 @@ def solve_illuminated_ss(
+     V_app    : applied voltage [V] (0 = short circuit)
+     t_settle : settling time [s]; default 1e-3 s
+     rtol, atol : ODE solver tolerances
++    mat : optional pre-built material cache forwarded to the MOL solver
+ 
+     Returns
+     -------
+-    y : packed state vector [n, p, P] of shape (3N,).
+-        Falls back to dark equilibrium if the transient solve fails.
++    y : packed density state. Shape is ``3N`` for one ion species, ``4N``
++        for two, plus ``4K`` when K interface-plane state blocks are active.
++
++    Raises
++    ------
++    IlluminatedSteadyStateError
++        If the transient solve fails or returns a malformed/nonphysical
++        terminal density state. Dark equilibrium is never substituted.
++
++    Notes
++    -----
++    The function name is retained for API compatibility. A successful return
++    is a certified finite-time preconditioned state, not by itself proof of a
++    true electronic or ionic steady state.
+     """
++    if t_settle <= 0.0:
++        raise ValueError(f"t_settle must be positive, got {t_settle}")
++    mat_eff = build_material_arrays(x, stack) if mat is None else mat
+     y_dark = solve_equilibrium(x, stack)
+-    sol = run_transient(
+-        x, y_dark,
+-        (0.0, t_settle), np.array([t_settle]),
+-        stack, illuminated=True, V_app=V_app,
+-        rtol=rtol, atol=atol,
+-    )
++    try:
++        sol = run_transient(
++            x, y_dark,
++            (0.0, t_settle), np.array([t_settle]),
++            stack, illuminated=True, V_app=V_app,
++            rtol=rtol, atol=atol, mat=mat_eff,
++        )
++    except _NUMERIC_SOLVER_FAILURES as exc:
++        raise IlluminatedSteadyStateError(
++            V_app=V_app,
++            t_settle=t_settle,
++            solver_message=f"{type(exc).__name__}: {exc}",
++            reason_code="solver_exception",
++        ) from exc
+     if not sol.success:
+-        return y_dark
+-    return sol.y[:, -1]
++        raise IlluminatedSteadyStateError(
++            V_app=V_app,
++            t_settle=t_settle,
++            solver_message=getattr(sol, "message", None),
++            reason_code="solver_failed",
++        )
++    try:
++        states = np.asarray(sol.y, dtype=float)
++    except (TypeError, ValueError) as exc:
++        raise IlluminatedSteadyStateError(
++            V_app=V_app,
++            t_settle=t_settle,
++            solver_message=f"malformed solver state: {type(exc).__name__}: {exc}",
++            reason_code="invalid_terminal_state",
++        ) from exc
++    if (
++        states.ndim != 2
++        or states.shape[0] != y_dark.size
++        or states.shape[1] == 0
++        or not np.all(np.isfinite(states[:, -1]))
++    ):
++        raise IlluminatedSteadyStateError(
++            V_app=V_app,
++            t_settle=t_settle,
++            solver_message=(
++                "solver reported success but returned no finite terminal state"
++            ),
++            reason_code="invalid_terminal_state",
++        )
++    terminal = states[:, -1]
++    density_atol = max(float(atol), 0.0)
++    if np.any(terminal < -density_atol):
++        raise IlluminatedSteadyStateError(
++            V_app=V_app,
++            t_settle=t_settle,
++            solver_message=(
++                "solver returned a negative density beyond its absolute "
++                f"tolerance ({density_atol:.3g} m^-3)"
++            ),
++            reason_code="unphysical_terminal_state",
++        )
++    # Radau can land infinitesimally below zero in nominally empty transport
++    # layers. Values within its declared absolute tolerance represent numeric
++    # zero. Retain the solver state: even a sub-atol projection can perturb the
++    # basin selected by the following stiff warm-started transient.
++
++    N = len(x)
++    expected_size = (
++        (4 if mat_eff.has_dual_ions else 3) * N
++        + 4 * mat_eff.N_iface_state
++    )
++    if terminal.size != expected_size:
++        raise IlluminatedSteadyStateError(
++            V_app=V_app,
++            t_settle=t_settle,
++            solver_message=(
++                f"terminal state size {terminal.size} != model size {expected_size}"
++            ),
++            reason_code="invalid_terminal_state",
++        )
++    sv = StateVec.unpack(terminal, N, mat_eff.N_iface_state)
++
++    def _exceeds(values: np.ndarray, limits: np.ndarray) -> bool:
++        limits_arr = np.asarray(limits, dtype=float)
++        finite_limit = np.isfinite(limits_arr)
++        allowance = 1.0e-8 * np.maximum(np.abs(limits_arr), 1.0)
++        return bool(np.any(finite_limit & (values > limits_arr + allowance)))
++
++    if mat_eff.has_dual_ions and sv.P_neg is not None:
++        if mat_eff.ion_steric_shared_site:
++            ion_invalid = _exceeds(
++                sv.P + sv.P_neg,
++                np.minimum(mat_eff.P_lim_node, mat_eff.P_lim_neg_node),
++            )
++        else:
++            ion_invalid = _exceeds(sv.P, mat_eff.P_lim_node) or _exceeds(
++                sv.P_neg, mat_eff.P_lim_neg_node,
++            )
++    else:
++        ion_invalid = _exceeds(sv.P, mat_eff.P_lim_node)
++    if ion_invalid:
++        raise IlluminatedSteadyStateError(
++            V_app=V_app,
++            t_settle=t_settle,
++            solver_message="mobile-ion density exceeded its site-occupancy limit",
++            reason_code="unphysical_terminal_state",
++        )
++    return terminal
+diff --git a/perovskite-sim/tests/conftest.py b/perovskite-sim/tests/conftest.py
+index a759dc76fa980118aa32ca10cf8c12e7865e14c1..ed458914fb4d1084ea27f3c65e129f92d0cd74b2 100644
+--- a/perovskite-sim/tests/conftest.py
++++ b/perovskite-sim/tests/conftest.py
+@@ -9,9 +9,9 @@ multi-threaded BLAS to pay off -- on a 10-core machine, OpenBLAS/MKL spins up
+ every LU call across all cores and the thread-creation + contention overhead
+ turns a ~14 s test into a ~3-6 minute test.
+ 
+-Pinning BLAS threads to 1 for the slow suite brings it back to standalone-
+-script performance (~14 s per test). Unit tests are unaffected because they
+-don't hit dense LU loops of this size.
++Pinning BLAS threads to 1 for the slow and validation suites brings them back
++to standalone-script performance (~14 s per test). Unit tests are unaffected
++because they don't hit dense LU loops of this size.
+ 
+ Why a conftest hook instead of an env var in CI: developers run `pytest
+ -m slow` interactively too, and we want it to Just Work. Setting the limit
+@@ -31,16 +31,19 @@ from __future__ import annotations
+ 
+ 
+ def pytest_configure(config):
+-    """Pin BLAS threads to 1 when the slow marker is selected.
++    """Pin BLAS threads to 1 for stiff slow/validation solver lanes.
+ 
+-    Triggered when the user passes `-m slow` (or any markexpr containing
+-    ``slow``). Unit/integration runs retain default BLAS threading.
++    Triggered when the user passes ``-m slow`` or ``-m validation`` (including
++    compound expressions). Unit/integration runs retain default BLAS threading.
+     """
+     markexpr = getattr(config.option, "markexpr", "") or ""
+     # Match `-m slow`, `-m 'slow and X'`, `-m 'slow or Y'` but NOT
+     # `-m 'not slow'` (the default unit-test run set via pyproject addopts).
+     selects_slow = "slow" in markexpr and "not slow" not in markexpr
+-    if not selects_slow:
++    selects_validation = (
++        "validation" in markexpr and "not validation" not in markexpr
++    )
++    if not (selects_slow or selects_validation):
+         return
+ 
+     try:
+diff --git a/perovskite-sim/tests/regression/test_mesh_convergence.py b/perovskite-sim/tests/regression/test_mesh_convergence.py
+index 8d82fc7e92ea6a0d41b0ca72b27cbf0c0e7b602b..d8ed62bff2dfc94ea458819290ad85c6889fe069 100644
+--- a/perovskite-sim/tests/regression/test_mesh_convergence.py
++++ b/perovskite-sim/tests/regression/test_mesh_convergence.py
+@@ -384,12 +384,12 @@ def test_guard_interface_cells_actually_refine(fixed_bias_ladder):
+ 
+ 
+ def test_guard_no_silent_dark_fallback(fixed_bias_ladder, stack):
+-    """``solve_illuminated_ss`` returns DARK equilibrium without raising.
++    """Guard the physical signature of the historical dark-fallback defect.
+ 
+-    ``illuminated_ss.py:58-60`` — ``if not sol.success: return y_dark``.  Dark
+-    J ~ 0, so a settle failure would be read as a perfectly converged number.
+-    Guard: the short-circuit current must exceed half the incident photon
+-    current, and the power-quadrant current must be positive.
++    The solver now raises when illuminated settling fails.  This independent
++    result-level guard remains useful: the short-circuit current must exceed
++    half the incident photon current, and the power-quadrant current must be
++    positive.
+     """
+     q_phi = Q * stack.Phi
+     for N_grid, J0, J09 in zip(LADDER, fixed_bias_ladder["J0"], fixed_bias_ladder["J09"]):
+diff --git a/perovskite-sim/tests/regression/test_twod_validation.py b/perovskite-sim/tests/regression/test_twod_validation.py
+index 583eaf7c43f3bb579765c6e69ff53debade88383..8e1e53c4cadae03c1300c1a2bd33233366509a98 100644
+--- a/perovskite-sim/tests/regression/test_twod_validation.py
++++ b/perovskite-sim/tests/regression/test_twod_validation.py
+@@ -888,7 +888,7 @@ def test_twod_radiative_reabsorption_robin_field_mobility_coexistence_smoke():
+     layers_compat = [Layer(L.thickness, Ny_per_layer) for L in elec]
+     x_1d = multilayer_grid(layers_compat)
+ 
+-    # Bootstrap from 1D illuminated steady-state at V=0.
++    # Bootstrap from the 1D finite-time light-conditioned state at V=0.
+     y_1d = solve_illuminated_ss(x_1d, stack, V_app=0.0, t_settle=1e-3)
+     sv = StateVec.unpack(y_1d, len(x_1d))
+ 
+diff --git a/perovskite-sim/tests/unit/experiments/test_jv_branch_rejection.py b/perovskite-sim/tests/unit/experiments/test_jv_branch_rejection.py
+index aa9dd25d475cbeae6373d3983c45e2098f054f3e..4a08dc840230df0a5a3af4f2b76cf63bd53cc781 100644
+--- a/perovskite-sim/tests/unit/experiments/test_jv_branch_rejection.py
++++ b/perovskite-sim/tests/unit/experiments/test_jv_branch_rejection.py
+@@ -39,8 +39,10 @@ Require local subdivision convergence.  V=0 has no lower current bound, so a
+ 4-leg probe detects both under- and over-reads and an independent 8-leg result
+ must confirm both current and state before replacement.  At positive bias the
+ protocol ceiling still triggers the 2/4/8 ladder, but two successive results
+-must agree; merely falling below the ceiling is not enough.  Probe failures
+-warn and preserve the successful single-leg result.
++must agree; merely falling below the ceiling is not enough. Any required
++probe/recovery failure raises by default. Explicit diagnostic mode records
++the rejected value in a point certificate, exposes NaN in the J-V curve, and
++invalidates the entire downstream warm-start state chain.
+ 
+ BLAS PINNING IS LOAD-BEARING HERE
+ --------------------------------
+@@ -64,6 +66,9 @@ lesson is that this bug class hid behind that marker.
+ """
+ from __future__ import annotations
+ 
++import warnings
++from types import SimpleNamespace
++
+ import numpy as np
+ import pytest
+ 
+@@ -111,7 +116,14 @@ def zero_bias_result(gate_stack):
+     )
+ 
+ 
+-def _run_fake_sweep(monkeypatch, gate_stack, make_state):
++def _run_fake_sweep(
++    monkeypatch,
++    gate_stack,
++    make_state,
++    *,
++    certification_mode="strict",
++    compute_current=None,
++):
+     """Exercise branch mechanics without depending on a BLAS branch landing."""
+     calls = []
+ 
+@@ -130,10 +142,13 @@ def _run_fake_sweep(monkeypatch, gate_stack, make_state):
+     monkeypatch.setattr(JV, "solve_illuminated_ss", fake_illuminated_ss)
+     monkeypatch.setattr(JV, "_integrate_step", fake_integrate)
+     monkeypatch.setattr(
+-        JV, "_compute_current", lambda _x, y, *_a, **_kw: float(y[0]),
++        JV,
++        "_compute_current",
++        compute_current or (lambda _x, y, *_a, **_kw: float(y[0])),
+     )
+     result = run_jv_sweep(
+         gate_stack, N_grid=6, n_points=3, V_max=0.2, v_rate=1.0,
++        certification_mode=certification_mode,
+     )
+     return result, calls
+ 
+@@ -161,9 +176,10 @@ def test_forward_current_never_exceeds_jsc(gate_result):
+     J_sc = float(J[0])
+     fwd = V > 0.0
+     worst = float(np.max(J[fwd]))
+-    assert worst <= J_sc * (1.0 + JV._J_BRANCH_EXCESS), (
++    ceiling = JV._branch_current_ceiling(J_sc)
++    assert worst <= ceiling, (
+         f"forward J peaks at {worst:.3f} A/m^2 against J_sc = {J_sc:.3f} "
+-        f"(ceiling {J_sc * (1.0 + JV._J_BRANCH_EXCESS):.3f}) -- a step landed "
++        f"(ceiling {ceiling:.3f}) -- a step landed "
+         "on the carrier-injection branch"
+     )
+ 
+@@ -199,6 +215,17 @@ def test_hysteresis_index_is_bounded(gate_result):
+     )
+ 
+ 
++def test_valid_sweep_exposes_complete_immutable_certificates(gate_result):
++    assert gate_result.status_fwd is not None
++    assert gate_result.status_rev is not None
++    assert len(gate_result.status_fwd) == len(gate_result.V_fwd)
++    assert len(gate_result.status_rev) == len(gate_result.V_rev)
++    assert all(status.valid for status in gate_result.status_fwd)
++    assert all(status.valid for status in gate_result.status_rev)
++    assert gate_result.status_fwd[0].refinement_required is True
++    assert gate_result.status_fwd[0].refinement_converged is True
++
++
+ # ---------------------------------------------------------------------------
+ # the guard's mechanics
+ # ---------------------------------------------------------------------------
+@@ -259,16 +286,17 @@ def test_zero_bias_confirmation_replaces_current_and_forwarded_state(
+ 
+     r, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+     assert float(r.J_fwd[0]) == pytest.approx(223.0, abs=0.1)
++    assert r.status_fwd[0].candidate_current == pytest.approx(467.55)
+     first_positive = next(c for c in calls if c[0] > 0.0 and c[1] == 1)
+     assert first_positive[2][1] == pytest.approx(0.08)
+ 
+ 
+ @pytest.mark.parametrize(
+-    ("failed_leg", "message"),
+-    ((4, "subdivision probe failed"), (8, "subdivision confirmation failed")),
++    ("failed_leg", "reason_code"),
++    ((4, "zero_bias_probe_failed"), (8, "zero_bias_confirmation_failed")),
+ )
+-def test_zero_bias_probe_failure_keeps_successful_single_leg(
+-    gate_stack, monkeypatch, failed_leg, message,
++def test_zero_bias_refinement_failure_fails_closed_by_default(
++    gate_stack, monkeypatch, failed_leg, reason_code,
+ ):
+     def make_state(V, legs, y, _N):
+         if V == 0.0 and legs == failed_leg:
+@@ -276,14 +304,55 @@ def test_zero_bias_probe_failure_keeps_successful_single_leg(
+         current = 10.0 if legs == 1 else 20.0
+         return _fake_state(y, current, marker=legs * 0.01, ion=1.0)
+ 
+-    with pytest.warns(RuntimeWarning, match=message):
+-        r, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+-    assert float(r.J_fwd[0]) == 10.0
+-    first_positive = next(c for c in calls if c[0] > 0.0 and c[1] == 1)
+-    assert first_positive[2][1] == pytest.approx(0.01)
++    with pytest.raises(JV.JVCertificationError) as caught:
++        _run_fake_sweep(monkeypatch, gate_stack, make_state)
++    status = caught.value.status
++    assert status.reason_code == reason_code
++    assert status.valid is False
++    assert status.refinement_converged is False
++    assert status.failed_legs == (failed_leg,)
++    assert len(status.attempted_currents) == len(status.attempted_legs)
++    assert status.candidate_current == 10.0
++
++
++def test_zero_bias_probe_failure_diagnostic_marks_entire_chain_invalid(
++    gate_stack, monkeypatch,
++):
++    def make_state(V, legs, y, _N):
++        if V == 0.0 and legs == 4:
++            raise RuntimeError("synthetic probe failure")
++        return _fake_state(y, 10.0 if legs == 1 else 20.0, ion=1.0)
++
++    with warnings.catch_warnings(record=True) as caught_warnings:
++        warnings.simplefilter("error", RuntimeWarning)
++        warnings.simplefilter("always", JV.JVCertificationWarning)
++        result, _ = _run_fake_sweep(
++            monkeypatch,
++            gate_stack,
++            make_state,
++            certification_mode="diagnostic",
++        )
++
++    assert any(
++        issubclass(item.category, JV.JVCertificationWarning)
++        and "zero_bias_probe_failed" in str(item.message)
++        for item in caught_warnings
++    )
++
++    assert result.status_fwd is not None
++    assert result.status_rev is not None
++    assert result.status_fwd[0].reason_code == "zero_bias_probe_failed"
++    assert all(not status.valid for status in result.status_fwd)
++    assert all(not status.valid for status in result.status_rev)
++    assert result.status_fwd[1].reason_code == "upstream_state_uncertified"
++    assert np.all(np.isnan(result.J_fwd))
++    assert np.all(np.isnan(result.J_rev))
++    assert np.isnan(result.metrics_fwd.V_oc)
++    assert np.isnan(result.metrics_rev.PCE)
++    assert np.isnan(result.hysteresis_index)
+ 
+ 
+-def test_zero_bias_matching_current_but_divergent_state_is_not_accepted(
++def test_zero_bias_confirmation_disagreement_fails_closed(
+     gate_stack, monkeypatch,
+ ):
+     def make_state(V, legs, y, _N):
+@@ -293,9 +362,13 @@ def test_zero_bias_matching_current_but_divergent_state_is_not_accepted(
+         current = 10.0 if legs == 1 else 20.0
+         return _fake_state(y, current, marker=legs * 0.01, ion=ion)
+ 
+-    with pytest.warns(RuntimeWarning, match="failed local subdivision convergence"):
+-        r, _ = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+-    assert float(r.J_fwd[0]) == 10.0
++    with pytest.raises(JV.JVCertificationError) as caught:
++        _run_fake_sweep(monkeypatch, gate_stack, make_state)
++    status = caught.value.status
++    assert status.reason_code == "zero_bias_refinement_disagreed"
++    assert status.attempted_legs == (1, 4, 8)
++    assert status.attempted_currents == (10.0, 20.0, 20.0)
++    assert status.candidate_current == 10.0
+ 
+ 
+ def test_positive_retry_rejects_first_below_ceiling_and_forwards_confirmed_state(
+@@ -330,6 +403,75 @@ def test_positive_retry_skips_a_failed_leg_when_later_pair_converges(
+     assert any(V > 0.0 and legs == 8 for V, legs, *_ in calls)
+ 
+ 
++def test_reverse_precharged_current_is_not_compared_with_forward_jsc(
++    gate_stack, monkeypatch,
++):
++    """A reverse transient is outside the forward ceiling's protocol premise."""
++    single_calls = 0
++
++    def make_state(V, legs, y, _N):
++        nonlocal single_calls
++        if legs == 1:
++            index = single_calls
++            single_calls += 1
++            currents = (100.0, 80.0, 50.0, 50.0, 120.0, 130.0)
++            return _fake_state(y, currents[index], ion=1.0)
++        # V=0 refinement: forward probe sees 100, reverse probe sees 130.
++        return _fake_state(y, 100.0 if single_calls <= 3 else 130.0, ion=1.0)
++
++    result, _ = _run_fake_sweep(monkeypatch, gate_stack, make_state)
++
++    assert result.certified
++    assert result.J_fwd[0] == 100.0
++    assert result.J_rev[1] == 120.0
++    assert result.J_rev[-1] == 130.0
++
++
++def test_reverse_precharged_excess_does_not_trigger_forward_refinement(
++    gate_stack, monkeypatch,
++):
++    """Stored-energy reverse current must not be relabelled a forward defect."""
++    single_calls = 0
++
++    def make_state(V, legs, y, _N):
++        nonlocal single_calls
++        if legs == 1:
++            index = single_calls
++            single_calls += 1
++            currents = (
++                100.0, 80.0, 50.0,       # forward
++                50.0, 160.0, 130.0,      # reverse discovery pass
++            )
++            return _fake_state(y, currents[index], ion=1.0)
++        if V == 0.0:
++            return _fake_state(y, 100.0 if single_calls <= 3 else 130.0, ion=1.0)
++        return _fake_state(y, 120.0, ion=1.0)
++
++    result, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
++
++    assert result.certified
++    assert result.J_rev[1] == 160.0
++    assert result.status_rev[1].reason_code == "certified"
++    assert result.status_rev[1].attempted_legs == (1,)
++    assert sum(V == pytest.approx(0.2) and legs == 1 for V, legs, *_ in calls) == 2
++
++
++def test_near_zero_forward_jsc_uses_absolute_current_resolution(
++    gate_stack, monkeypatch,
++):
++    """A relative ceiling must not amplify near-zero current round-off."""
++    def make_state(V, legs, y, _N):
++        current = 1e-6 if V == 0.0 else 5e-3
++        return _fake_state(y, current, ion=1.0)
++
++    result, calls = _run_fake_sweep(monkeypatch, gate_stack, make_state)
++
++    assert result.certified
++    assert result.J_fwd[1] == pytest.approx(5e-3)
++    assert result.status_fwd[1].attempted_legs == (1,)
++    assert not any(V > 0.0 and legs > 1 for V, legs, *_ in calls)
++
++
+ def test_tighter_max_step_is_not_a_fix(gate_stack):
+     """Pin the measured non-monotonicity so the divisor fix is not retried.
+ 
+@@ -363,20 +505,181 @@ def test_tighter_max_step_is_not_a_fix(gate_stack):
+     )
+ 
+ 
+-def test_unrecoverable_violation_warns_and_does_not_hide_the_value(
++def test_unrecoverable_positive_violation_fails_closed(
+     gate_stack, monkeypatch,
+ ):
+-    """If the retry ladder cannot satisfy the bound, warn -- never silently
+-    keep a number known to be unphysical, and never silently substitute one.
++    """If the retry ladder cannot satisfy the bound, reject the whole result.
+ 
+     Forced by making the ceiling unsatisfiable (any positive current violates
+     it), so every retry fails by construction.
+     """
+-    monkeypatch.setattr(JV, "_J_BRANCH_EXCESS", -0.999999)
++    monkeypatch.setattr(JV, "_branch_current_ceiling", lambda _J_sc: -np.inf)
+     monkeypatch.setattr(JV, "_J_BRANCH_RETRY_LEGS", (2,))
+-    with pytest.warns(RuntimeWarning, match="above the protocol current ceiling"):
+-        r = run_jv_sweep(gate_stack, N_grid=30, n_points=6, v_rate=5.0)
+-    assert np.all(np.isfinite(r.J_fwd))
++    with pytest.raises(JV.JVCertificationError) as caught:
++        run_jv_sweep(gate_stack, N_grid=30, n_points=6, v_rate=5.0)
++    status = caught.value.status
++    assert status.reason_code == "positive_bias_refinement_exhausted"
++    assert status.voltage > 0.0
++    assert status.refinement_required is True
++    assert status.refinement_converged is False
++    assert status.attempted_legs == (1, 2)
++    assert len(status.attempted_currents) == 2
++
++
++def test_positive_recovery_exhaustion_diagnostic_never_exposes_raw_j(
++    gate_stack, monkeypatch,
++):
++    monkeypatch.setattr(JV, "_J_BRANCH_RETRY_LEGS", (2, 4))
++
++    def make_state(V, legs, y, _N):
++        if V == 0.0:
++            return _fake_state(y, 100.0, marker=legs * 0.01, ion=1.0)
++        current = {1: 200.0, 2: 180.0, 4: 160.0}[legs]
++        return _fake_state(y, current, marker=legs * 0.01, ion=1.0)
++
++    with pytest.warns(
++        JV.JVCertificationWarning,
++        match="positive_bias_refinement_exhausted",
++    ):
++        result, _ = _run_fake_sweep(
++            monkeypatch,
++            gate_stack,
++            make_state,
++            certification_mode="diagnostic",
++        )
++    failed = result.status_fwd[1]
++    assert failed.reason_code == "positive_bias_refinement_exhausted"
++    assert failed.attempted_currents == (200.0, 180.0, 160.0)
++    assert failed.candidate_current == 200.0
++    assert np.isnan(result.J_fwd[1])
++    assert np.isnan(result.J_fwd[2])
++    assert np.isnan(result.metrics_fwd.J_sc)
++
++
++def test_nonfinite_candidate_fails_closed_with_structured_status(
++    gate_stack, monkeypatch,
++):
++    def make_state(_V, _legs, y, _N):
++        return _fake_state(y, np.nan, ion=1.0)
++
++    with pytest.raises(JV.JVCertificationError) as caught:
++        _run_fake_sweep(monkeypatch, gate_stack, make_state)
++
++    status = caught.value.status
++    assert status.reason_code == "nonfinite_candidate"
++    assert status.valid is False
++    assert np.isnan(status.candidate_current)
++
++
++@pytest.mark.parametrize("failure_kind", ["value_error", "runtime_warning"])
++def test_integrate_step_recovers_numeric_solver_exception_by_bisection(
++    gate_stack, monkeypatch, failure_kind,
++):
++    """SciPy numeric exceptions must enter the existing recovery ladder."""
++    x = np.array([0.0, 1.0])
++    y0 = np.zeros(6)
++    mat = SimpleNamespace(has_radiative_reabsorption=False)
++    calls = []
++
++    def fake_transient(_x, y, t_span, _t_eval, _stack, **kwargs):
++        calls.append((t_span, kwargs["method"]))
++        if t_span == (0.0, 1.0):
++            if failure_kind == "value_error":
++                raise ValueError("synthetic non-finite Jacobian")
++            warnings.warn("synthetic overflow", RuntimeWarning)
++        return SimpleNamespace(success=True, y=(np.asarray(y) + 1.0)[:, None])
++
++    monkeypatch.setattr(JV, "run_transient", fake_transient)
++    out = JV._integrate_step(
++        x, y0, gate_stack, mat, 0.4, 0.0, 1.0, 1e-4, 1e-6,
++        max_bisect=1,
++    )
++
++    np.testing.assert_array_equal(out, y0 + 2.0)
++    assert calls == [
++        ((0.0, 1.0), "Radau"),
++        ((0.0, 0.5), "Radau"),
++        ((0.5, 1.0), "Radau"),
++    ]
++
++
++def test_initial_integration_exhaustion_is_structured(
++    gate_stack, monkeypatch,
++):
++    """A failed first candidate must not leak a bare solver exception."""
++    monkeypatch.setattr(
++        JV,
++        "solve_illuminated_ss",
++        lambda x, *_args, **_kwargs: np.zeros(3 * len(x), dtype=float),
++    )
++    monkeypatch.setattr(
++        JV,
++        "_integrate_step",
++        lambda *_args, **_kwargs: (_ for _ in ()).throw(
++            RuntimeError("synthetic recovery exhaustion")
++        ),
++    )
++
++    with pytest.raises(JV.JVCertificationError) as caught:
++        run_jv_sweep(
++            gate_stack, N_grid=6, n_points=3, V_max=0.2, v_rate=1.0,
++        )
++
++    status = caught.value.status
++    assert status.reason_code == "integration_failed"
++    assert status.attempted_legs == (1,)
++    assert status.attempted_currents == (None,)
++    assert status.failed_legs == (1,)
++    assert status.accepted_legs == 0
++    assert status.candidate_current is None
++
++
++def test_terminal_current_failure_is_structured_in_strict_mode(
++    gate_stack, monkeypatch,
++):
++    def make_state(_V, _legs, y, _N):
++        return _fake_state(y, 10.0, ion=1.0)
++
++    def fail_current(*_args, **_kwargs):
++        raise ValueError("synthetic terminal-current failure")
++
++    with pytest.raises(JV.JVCertificationError) as caught:
++        _run_fake_sweep(
++            monkeypatch, gate_stack, make_state, compute_current=fail_current,
++        )
++
++    status = caught.value.status
++    assert status.reason_code == "current_extraction_failed"
++    assert "synthetic terminal-current failure" in status.message
++    assert status.candidate_current is None
++
++
++def test_terminal_current_failure_diagnostic_returns_nan_chain(
++    gate_stack, monkeypatch,
++):
++    def make_state(_V, _legs, y, _N):
++        return _fake_state(y, 10.0, ion=1.0)
++
++    def fail_current(*_args, **_kwargs):
++        raise ValueError("synthetic terminal-current failure")
++
++    with pytest.warns(
++        JV.JVCertificationWarning, match="current_extraction_failed",
++    ):
++        result, calls = _run_fake_sweep(
++            monkeypatch,
++            gate_stack,
++            make_state,
++            certification_mode="diagnostic",
++            compute_current=fail_current,
++        )
++
++    assert result.status_fwd[0].reason_code == "current_extraction_failed"
++    assert np.all(np.isnan(result.J_fwd))
++    assert np.all(np.isnan(result.J_rev))
++    assert np.isnan(result.metrics_fwd.PCE)
++    np.testing.assert_array_equal(calls[1][2], calls[0][3])
++    assert calls[1][2][0] == 10.0
+ 
+ 
+ def test_n_legs_chaining_is_equivalent_to_manual_subdivision(gate_stack):
+diff --git a/perovskite-sim/tests/unit/experiments/test_jv_sweep.py b/perovskite-sim/tests/unit/experiments/test_jv_sweep.py
+index 3eb9add1853b694b32844279b391f74812613b89..1fcf17d74857ac6285244b71db69d220cbe4eb93 100644
+--- a/perovskite-sim/tests/unit/experiments/test_jv_sweep.py
++++ b/perovskite-sim/tests/unit/experiments/test_jv_sweep.py
+@@ -1,6 +1,13 @@
++import dataclasses
++
+ import numpy as np
+ import pytest
+-from perovskite_sim.experiments.jv_sweep import JVResult, compute_metrics
++from perovskite_sim.experiments.jv_sweep import (
++    JVMetrics,
++    JVPointStatus,
++    JVResult,
++    compute_metrics,
++)
+ 
+ 
+ def test_compute_metrics_mpp():
+@@ -94,6 +101,126 @@ def test_compute_metrics_default_behaviour_bit_identical():
+     assert m.voc_bracketed is True
+ 
+ 
++def test_compute_metrics_rejects_invalid_boolean_mask():
++    V = np.array([0.0, 0.5, 1.0])
++    J = np.array([200.0, 100.0, -10.0])
++    with pytest.raises(ValueError, match=r"invalid indices: \[1\]"):
++        compute_metrics(V, J, validity=np.array([True, False, True]))
++
++
++def test_compute_metrics_rejects_invalid_point_status():
++    V = np.array([0.0, 0.5, 1.0])
++    J = np.array([200.0, 100.0, -10.0])
++    statuses = tuple(
++        JVPointStatus(
++            branch="test",
++            index=i,
++            voltage=float(voltage),
++            valid=i != 2,
++            upstream_valid=i != 2,
++        )
++        for i, voltage in enumerate(V)
++    )
++    with pytest.raises(ValueError, match=r"invalid indices: \[2\]"):
++        compute_metrics(V, J, validity=statuses)
++
++
++@pytest.mark.parametrize(
++    ("V", "J"),
++    (
++        (np.array([0.0, np.nan, 1.0]), np.array([200.0, 100.0, -10.0])),
++        (np.array([0.0, 0.5, 1.0]), np.array([200.0, np.inf, -10.0])),
++    ),
++)
++def test_compute_metrics_rejects_non_finite_samples(V, J):
++    with pytest.raises(ValueError, match="non-finite indices"):
++        compute_metrics(V, J)
++
++
++def test_jv_result_manual_constructor_keeps_status_fields_optional():
++    V = np.array([0.0, 1.0])
++    J = np.array([100.0, -10.0])
++    metrics = JVMetrics(V_oc=0.9, J_sc=100.0, FF=0.8, PCE=0.07)
++    result = JVResult(
++        V_fwd=V,
++        J_fwd=J,
++        V_rev=V[::-1],
++        J_rev=J[::-1],
++        metrics_fwd=metrics,
++        metrics_rev=metrics,
++        hysteresis_index=0.0,
++    )
++    assert result.status_fwd is None
++    assert result.status_rev is None
++    assert result.certified is False
++
++
++def test_jv_result_certified_requires_complete_aligned_certificates():
++    V_fwd = np.array([0.0, 1.0])
++    J_fwd = np.array([100.0, -10.0])
++    V_rev = V_fwd[::-1]
++    J_rev = J_fwd[::-1]
++    metrics = JVMetrics(V_oc=0.9, J_sc=100.0, FF=0.8, PCE=0.07)
++    status_fwd = tuple(
++        JVPointStatus(
++            branch="jv_forward", index=i, voltage=float(voltage),
++        )
++        for i, voltage in enumerate(V_fwd)
++    )
++    status_rev = tuple(
++        JVPointStatus(
++            branch="jv_reverse", index=i, voltage=float(voltage),
++        )
++        for i, voltage in enumerate(V_rev)
++    )
++    result = JVResult(
++        V_fwd=V_fwd,
++        J_fwd=J_fwd,
++        V_rev=V_rev,
++        J_rev=J_rev,
++        metrics_fwd=metrics,
++        metrics_rev=metrics,
++        hysteresis_index=0.0,
++        status_fwd=status_fwd,
++        status_rev=status_rev,
++    )
++
++    assert result.certified is True
++    assert dataclasses.replace(result, status_fwd=status_fwd[:1]).certified is False
++    bad_index = dataclasses.replace(status_fwd[1], index=7)
++    assert dataclasses.replace(
++        result, status_fwd=(status_fwd[0], bad_index),
++    ).certified is False
++    bad_voltage = dataclasses.replace(status_rev[0], voltage=0.5)
++    assert dataclasses.replace(
++        result, status_rev=(bad_voltage, status_rev[1]),
++    ).certified is False
++    assert dataclasses.replace(
++        result, J_rev=np.array([np.nan, 100.0]),
++    ).certified is False
++
++
++def test_jv_point_status_is_immutable():
++    status = JVPointStatus(branch="fwd", index=0, voltage=0.0)
++    with pytest.raises(AttributeError):
++        status.valid = False
++
++
++def test_compute_metrics_rejects_mixed_validity_types():
++    V = np.array([0.0, 1.0])
++    J = np.array([100.0, -10.0])
++    status = JVPointStatus(branch="test", index=1, voltage=1.0)
++    with pytest.raises(TypeError, match="cannot mix"):
++        compute_metrics(V, J, validity=[True, status])
++
++
++def test_compute_metrics_rejects_non_boolean_validity_values():
++    V = np.array([0.0, 1.0])
++    J = np.array([100.0, -10.0])
++    with pytest.raises(TypeError, match="must be boolean"):
++        compute_metrics(V, J, validity=[1, 0])
++
++
+ def test_jv_sweep_rejects_small_n_grid():
+     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
+     from perovskite_sim.models.config_loader import load_device_from_yaml
+@@ -152,7 +279,6 @@ def _make_stack_and_N(n_grid: int = 60):
+ def test_fixed_generation_override_is_honored():
+     """Zero generation profile should drive J_sc to ~0."""
+     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
+-    from perovskite_sim.models.config_loader import load_device_from_yaml
+ 
+     N_grid = 60
+     stack, N = _make_stack_and_N(N_grid)
+@@ -172,3 +298,37 @@ def test_fixed_generation_wrong_shape_raises():
+     with pytest.raises(ValueError, match="fixed_generation"):
+         run_jv_sweep(stack, N_grid=60, n_points=20,
+                      fixed_generation=np.zeros(30))
++
++
++def test_fixed_generation_initialiser_uses_shared_fail_closed_solver(monkeypatch):
++    """The tandem generation path must not retain a private dark fallback."""
++    from perovskite_sim.experiments import jv_sweep as jv_module
++    from perovskite_sim.solver.illuminated_ss import IlluminatedSteadyStateError
++
++    stack, N = _make_stack_and_N(6)
++    seen = {}
++
++    def fail_with_mat(x, _stack, **kwargs):
++        seen["shape"] = x.shape
++        seen["mat"] = kwargs.get("mat")
++        raise IlluminatedSteadyStateError(
++            V_app=kwargs["V_app"],
++            t_settle=1e-3,
++            solver_message="synthetic fixed-generation failure",
++        )
++
++    monkeypatch.setattr(jv_module, "solve_illuminated_ss", fail_with_mat)
++    with pytest.raises(
++        IlluminatedSteadyStateError,
++        match="synthetic fixed-generation failure",
++    ):
++        jv_module.run_jv_sweep(
++            stack,
++            N_grid=6,
++            n_points=3,
++            V_max=0.2,
++            fixed_generation=np.zeros(N),
++        )
++
++    assert seen["shape"] == (N,)
++    assert seen["mat"] is not None
+diff --git a/perovskite-sim/tests/unit/experiments/test_steady_state.py b/perovskite-sim/tests/unit/experiments/test_steady_state.py
+index 2c0a337c1816a8c8d7cdb73c85de431a90e6baa0..88cda463b0010597bae7a77a90c7e97afea25c52 100644
+--- a/perovskite-sim/tests/unit/experiments/test_steady_state.py
++++ b/perovskite-sim/tests/unit/experiments/test_steady_state.py
+@@ -22,6 +22,7 @@ import dataclasses
+ import numpy as np
+ import pytest
+ 
++import perovskite_sim.experiments.steady_state as steady_state_mod
+ from perovskite_sim.discretization.grid import multilayer_grid, Layer
+ from perovskite_sim.experiments.jv_sweep import (
+     _compute_current_ss,
+@@ -169,6 +170,99 @@ def test_nonconvergence_raises():
+                            tol_accept=0.0, assist_times=())
+ 
+ 
++def _small_step_fault_case(
++    monkeypatch, residual, *, density=1.0e20, device_width=None,
++):
++    """Inject a well-conditioned residual whose Newton step is tiny."""
++    stack = _stack()
++    x = _grid(stack)
++    mat = build_material_arrays(x, stack)
++    N = len(x)
++    n_blocks = 4 if mat.has_dual_ions else 3
++    y0 = np.full(n_blocks * N, density)
++    if device_width is not None:
++        x = x * (device_width / x[-1])
++
++    def fake_residual_fn(
++        _x, _stack, _mat, y_template, _V_app, _illuminated,
++        pin, z_pin, _n_ref, unk_idx, _phi_frozen=None,
++    ):
++        anchor = np.log(np.maximum(
++            y_template[unk_idx], steady_state_mod._DENSITY_FLOOR))
++        anchor[pin] = z_pin[pin]
++        slope = 1.0e12
++
++        def fake_residual(z):
++            return np.full(z.shape, residual) + slope * (z - anchor)
++
++        return fake_residual
++
++    monkeypatch.setattr(steady_state_mod, "_residual_fn", fake_residual_fn)
++    monkeypatch.setattr(
++        steady_state_mod, "_qfl_poisson_relax",
++        lambda _x, _mat, y, _V_app: y,
++    )
++    return stack, x, mat, y0
++
++
++def test_tiny_newton_step_with_high_residual_raises(monkeypatch):
++    """A tiny update is stagnation, not proof that F(y) is near zero."""
++    stack, x, mat, y0 = _small_step_fault_case(monkeypatch, residual=1.0)
++
++    with pytest.raises(SteadyStateError, match="Newton step stalled"):
++        solve_steady_state(
++            x, stack, V_app=0.0, mat=mat, y0=y0,
++            max_newton=1, tol=1.0e-6, tol_step=1.0e-8,
++            tol_accept=0.5, assist_times=(),
++        )
++
++
++def test_tiny_newton_step_keeps_stall_acceptance_semantics(monkeypatch):
++    """The established kink/stall residual allowance remains available."""
++    stack, x, mat, y0 = _small_step_fault_case(monkeypatch, residual=0.1)
++
++    result = solve_steady_state(
++        x, stack, V_app=0.0, mat=mat, y0=y0,
++        max_newton=1, tol=1.0e-6, tol_step=1.0e-8,
++        tol_accept=0.5, assist_times=(),
++    )
++
++    assert result.converged
++    assert result.residual == pytest.approx(0.1)
++    assert result.step_inf < 1.0e-8
++    assert result.continuity_current_bound < 0.1
++
++
++def test_stall_acceptance_is_current_scaled_for_thick_high_density_device(
++    monkeypatch,
++):
++    """The same rate residual cannot certify thin PVK and thick c-Si alike."""
++    stack, x, mat, y0 = _small_step_fault_case(
++        monkeypatch,
++        residual=0.1,
++        density=1.0e25,
++        device_width=180.0e-6,
++    )
++
++    with pytest.raises(SteadyStateError, match="Newton step stalled"):
++        solve_steady_state(
++            x, stack, V_app=0.0, mat=mat, y0=y0,
++            max_newton=1, tol=1.0e-6, tol_step=1.0e-8,
++            tol_accept=0.5, max_continuity_current_error=0.1,
++            assist_times=(),
++        )
++
++
++@pytest.mark.parametrize("bound", [0.0, np.nan, np.inf, -np.inf])
++def test_continuity_current_error_bound_must_be_finite_and_positive(bound):
++    stack = _stack()
++    x = _grid(stack)
++    with pytest.raises(ValueError, match="must be finite and positive"):
++        solve_steady_state(
++            x, stack, V_app=0.0, max_continuity_current_error=bound,
++        )
++
++
+ # ----------------------- Gummel phi-step primitive --------------------------
+ 
+ def test_qfl_relax_identity_at_converged_state():
+diff --git a/perovskite-sim/tests/unit/experiments/test_suns_voc.py b/perovskite-sim/tests/unit/experiments/test_suns_voc.py
+index a18cb39a1fbc805cf0ba92dfed9a3e318cdf9f80..ba24cdba780402b6a092d3500dc24b22cfb78ffd 100644
+--- a/perovskite-sim/tests/unit/experiments/test_suns_voc.py
++++ b/perovskite-sim/tests/unit/experiments/test_suns_voc.py
+@@ -13,15 +13,20 @@ Key physical invariants being checked:
+ """
+ from __future__ import annotations
+ 
++from types import SimpleNamespace
++
+ import numpy as np
+ import pytest
+ 
+ from perovskite_sim.constants import V_T
+ from perovskite_sim.experiments.suns_voc import (
+     SunsVocResult,
++    _solve_illuminated_ss_with_mat,
+     run_suns_voc,
+ )
+ from perovskite_sim.models.config_loader import load_device_from_yaml
++from perovskite_sim.solver import illuminated_ss as illuminated_ss_mod
++from perovskite_sim.solver.illuminated_ss import IlluminatedSteadyStateError
+ 
+ 
+ @pytest.fixture(scope="module")
+@@ -29,6 +34,38 @@ def nip_stack():
+     return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+ 
+ 
++def test_material_wrapper_propagates_illuminated_settle_failure(monkeypatch):
++    """The Suns-Voc cache wrapper must retain the shared fail-closed contract."""
++    x = np.array([0.0, 1.0])
++    y_dark = np.arange(6, dtype=float)
++    mat = object()
++    received = {}
++
++    monkeypatch.setattr(
++        illuminated_ss_mod,
++        "solve_equilibrium",
++        lambda *_args, **_kwargs: y_dark,
++    )
++
++    def failed_transient(*_args, **kwargs):
++        received["mat"] = kwargs.get("mat")
++        return SimpleNamespace(
++            success=False,
++            message="synthetic Suns-Voc settle failure",
++            y=y_dark[:, None],
++        )
++
++    monkeypatch.setattr(illuminated_ss_mod, "run_transient", failed_transient)
++
++    with pytest.raises(
++        IlluminatedSteadyStateError,
++        match="synthetic Suns-Voc settle failure",
++    ):
++        _solve_illuminated_ss_with_mat(x, object(), mat, V_app=0.42)
++
++    assert received["mat"] is mat
++
++
+ # ---------------------------------------------------------------------------
+ # Argument validation.
+ # ---------------------------------------------------------------------------
+diff --git a/perovskite-sim/tests/unit/solver/test_illuminated_ss.py b/perovskite-sim/tests/unit/solver/test_illuminated_ss.py
+index 4e4fa2aa7acc44c709800a5e7bbe6b07e5c2a387..9bfd5727410c85a0e72861f13613203048af9220 100644
+--- a/perovskite-sim/tests/unit/solver/test_illuminated_ss.py
++++ b/perovskite-sim/tests/unit/solver/test_illuminated_ss.py
+@@ -1,10 +1,26 @@
++from types import SimpleNamespace
++
+ import numpy as np
+ import pytest
++
+ from perovskite_sim.models.config_loader import load_device_from_yaml
+ from perovskite_sim.discretization.grid import multilayer_grid, Layer
+-from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
++from perovskite_sim.solver import illuminated_ss
++from perovskite_sim.solver.illuminated_ss import (
++    IlluminatedSteadyStateError,
++    solve_illuminated_ss,
++)
+ from perovskite_sim.solver.newton import solve_equilibrium
+-from perovskite_sim.solver.mol import StateVec
++
++
++def _fake_mat(N=2, *, dual=False, limit=1.0e30):
++    return SimpleNamespace(
++        has_dual_ions=dual,
++        N_iface_state=0,
++        P_lim_node=np.full(N, limit),
++        P_lim_neg_node=np.full(N, limit) if dual else None,
++        ion_steric_shared_site=True,
++    )
+ 
+ 
+ @pytest.fixture(scope="module")
+@@ -15,6 +31,175 @@ def grid_and_stack():
+     return x, stack
+ 
+ 
++def test_transient_failure_raises_with_solver_message(monkeypatch):
++    """A failed light settle must never be reported as the dark state."""
++    x = np.array([0.0, 1.0])
++    y_dark = np.arange(6, dtype=float)
++    monkeypatch.setattr(
++        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
++    )
++    monkeypatch.setattr(
++        illuminated_ss,
++        "run_transient",
++        lambda *_args, **_kwargs: SimpleNamespace(
++            success=False,
++            message="synthetic Radau failure",
++            y=y_dark[:, None],
++        ),
++    )
++
++    with pytest.raises(
++        IlluminatedSteadyStateError, match="synthetic Radau failure",
++    ) as exc_info:
++        solve_illuminated_ss(
++            x, object(), V_app=0.73, t_settle=2e-3, mat=_fake_mat(),
++        )
++
++    assert exc_info.value.V_app == pytest.approx(0.73)
++    assert exc_info.value.t_settle == pytest.approx(2e-3)
++    assert exc_info.value.solver_message == "synthetic Radau failure"
++
++
++def test_transient_failure_without_message_still_raises(monkeypatch):
++    """Failure objects without an optional message remain fail-closed."""
++    x = np.array([0.0, 1.0])
++    y_dark = np.arange(6, dtype=float)
++    monkeypatch.setattr(
++        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
++    )
++    monkeypatch.setattr(
++        illuminated_ss,
++        "run_transient",
++        lambda *_args, **_kwargs: SimpleNamespace(
++            success=False,
++            y=y_dark[:, None],
++        ),
++    )
++
++    with pytest.raises(IlluminatedSteadyStateError, match="settling failed"):
++        solve_illuminated_ss(x, object(), mat=_fake_mat())
++
++
++def test_transient_numeric_exception_is_normalised(monkeypatch):
++    x = np.array([0.0, 1.0])
++    y_dark = np.arange(6, dtype=float)
++    monkeypatch.setattr(
++        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
++    )
++    monkeypatch.setattr(
++        illuminated_ss,
++        "run_transient",
++        lambda *_args, **_kwargs: (_ for _ in ()).throw(
++            ValueError("synthetic scipy Jacobian failure")
++        ),
++    )
++
++    with pytest.raises(
++        IlluminatedSteadyStateError, match="synthetic scipy Jacobian failure",
++    ) as exc_info:
++        solve_illuminated_ss(x, object(), mat=_fake_mat())
++
++    assert exc_info.value.reason_code == "solver_exception"
++    assert isinstance(exc_info.value.__cause__, ValueError)
++
++
++@pytest.mark.parametrize(
++    "bad_states",
++    (
++        np.empty((6, 0)),
++        np.full((6, 1), np.nan),
++        np.zeros((5, 1)),
++    ),
++)
++def test_success_without_finite_terminal_state_raises(monkeypatch, bad_states):
++    """A malformed successful result is not a certified illuminated state."""
++    x = np.array([0.0, 1.0])
++    y_dark = np.arange(6, dtype=float)
++    monkeypatch.setattr(
++        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
++    )
++    monkeypatch.setattr(
++        illuminated_ss,
++        "run_transient",
++        lambda *_args, **_kwargs: SimpleNamespace(
++            success=True,
++            message="synthetic success",
++            y=bad_states,
++        ),
++    )
++
++    with pytest.raises(
++        IlluminatedSteadyStateError, match="no finite terminal state",
++    ):
++        solve_illuminated_ss(x, object(), mat=_fake_mat())
++
++
++def test_success_with_negative_density_is_rejected(monkeypatch):
++    x = np.array([0.0, 1.0])
++    y_dark = np.arange(6, dtype=float)
++    bad = y_dark.copy()
++    bad[0] = -1.0
++    monkeypatch.setattr(
++        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
++    )
++    monkeypatch.setattr(
++        illuminated_ss,
++        "run_transient",
++        lambda *_args, **_kwargs: SimpleNamespace(success=True, y=bad[:, None]),
++    )
++
++    with pytest.raises(
++        IlluminatedSteadyStateError, match="negative density",
++    ) as exc_info:
++        solve_illuminated_ss(x, object(), mat=_fake_mat())
++
++    assert exc_info.value.reason_code == "unphysical_terminal_state"
++
++
++def test_success_with_ion_site_overfill_is_rejected(monkeypatch):
++    x = np.array([0.0, 1.0])
++    y_dark = np.ones(6, dtype=float)
++    bad = y_dark.copy()
++    bad[4:] = 6.0
++    monkeypatch.setattr(
++        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
++    )
++    monkeypatch.setattr(
++        illuminated_ss,
++        "run_transient",
++        lambda *_args, **_kwargs: SimpleNamespace(success=True, y=bad[:, None]),
++    )
++
++    with pytest.raises(
++        IlluminatedSteadyStateError, match="site-occupancy limit",
++    ) as exc_info:
++        solve_illuminated_ss(x, object(), mat=_fake_mat(limit=5.0))
++
++    assert exc_info.value.reason_code == "unphysical_terminal_state"
++
++
++def test_dual_ion_state_shape_is_supported(monkeypatch):
++    x = np.array([0.0, 1.0])
++    y_dark = np.ones(8, dtype=float)
++    terminal = y_dark * 2.0
++    monkeypatch.setattr(
++        illuminated_ss, "solve_equilibrium", lambda *_args, **_kwargs: y_dark,
++    )
++    monkeypatch.setattr(
++        illuminated_ss,
++        "run_transient",
++        lambda *_args, **_kwargs: SimpleNamespace(
++            success=True, y=terminal[:, None],
++        ),
++    )
++
++    result = solve_illuminated_ss(
++        x, object(), mat=_fake_mat(dual=True, limit=10.0),
++    )
++
++    np.testing.assert_array_equal(result, terminal)
++
++
+ def test_shape(grid_and_stack):
+     x, stack = grid_and_stack
+     y = solve_illuminated_ss(x, stack, V_app=0.0)
+@@ -37,8 +222,6 @@ def test_absorber_np_product_larger_under_illumination(grid_and_stack):
+     N = len(x)
+     offset = stack.layers[0].thickness
+     abs_mask = (x > offset) & (x < offset + stack.layers[1].thickness)
+-    absorber = next(l for l in stack.layers if l.role == "absorber")
+-    ni_sq = absorber.params.ni_sq
+     y_dark = solve_equilibrium(x, stack)
+     y_light = solve_illuminated_ss(x, stack, V_app=0.0)
+     n_dark, p_dark = y_dark[:N][abs_mask], y_dark[N:2*N][abs_mask]

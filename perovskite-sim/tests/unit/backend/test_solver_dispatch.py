@@ -13,6 +13,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 import backend.main as bm
 
@@ -65,6 +66,21 @@ def test_stack_from_dict_plumbs_physics_flags():
     assert s.flat_band_contacts is True
     assert s.interface_plane_closure is True
     assert s.interface_plane_projection is True
+
+
+def test_stack_from_dict_plumbs_jv_solver_policy():
+    cfg = _min_cfg()
+    cfg["device"]["jv_solver_policy"] = "cancellation_safe_qf_required"
+    stack = bm.stack_from_dict(cfg)
+    assert stack.jv_solver_policy == "cancellation_safe_qf_required"
+    assert (
+        bm._stack_to_config_dict(stack)["device"]["jv_solver_policy"]
+        == "cancellation_safe_qf_required"
+    )
+
+
+def test_stack_from_dict_defaults_to_general_jv_solver_policy():
+    assert bm.stack_from_dict(_min_cfg()).jv_solver_policy == "general"
 
 
 def test_stack_from_dict_carries_all_material_params():
@@ -230,9 +246,131 @@ def test_dispatch_default_calls_transient(monkeypatch):
     assert out == "TRANSIENT_RESULT" and called["hit"]
 
 
-def test_dispatch_unknown_solver_raises():
-    import pytest
+def test_dispatch_quasi_fermi_returns_certificate_bearing_jvresult(monkeypatch):
+    captured = {}
 
+    def point(voltage, current):
+        return SimpleNamespace(
+            V_app=voltage,
+            current_A_m2=current,
+            certified=True,
+            max_normalized_cell_residual=1.0e-12,
+            electron_continuity_bound_A_m2=2.0e-8,
+            hole_continuity_bound_A_m2=3.0e-8,
+            face_current_spread_A_m2=4.0e-8,
+            poisson_residual=5.0e-12,
+        )
+
+    points = (point(0.0, 200.0), point(0.5, 100.0), point(0.6, -1.0))
+
+    def fake_qf(
+        x,
+        stack,
+        voltages,
+        *,
+        interface_boundary,
+        interface_transport_model,
+        stop_after_voc,
+    ):
+        captured.update(
+            node_count=len(x),
+            voltages=np.asarray(voltages),
+            interface_boundary=interface_boundary,
+            interface_transport_model=interface_transport_model,
+            stop_after_voc=stop_after_voc,
+        )
+        return SimpleNamespace(
+            voltages_V=np.array([p.V_app for p in points]),
+            currents_A_m2=np.array([p.current_A_m2 for p in points]),
+            points=points,
+            metrics="MET",
+        )
+
+    monkeypatch.setattr(bm, "solve_quasi_fermi_jv_sweep", fake_qf)
+    result = bm._run_jv_dispatch(
+        stack=bm.stack_from_dict(_min_cfg()),
+        N_grid=10,
+        n_points=8,
+        v_rate=1.0,
+        V_max=0.7,
+        illuminated=True,
+        solver="quasi_fermi",
+        interface_boundary=True,
+        interface_transport_model="scaps_thermionic",
+    )
+
+    assert captured["node_count"] > 0
+    assert captured["voltages"] == pytest.approx(np.linspace(0.0, 0.7, 8))
+    assert captured["stop_after_voc"] is True
+    assert captured["interface_boundary"] is True
+    assert captured["interface_transport_model"] == "scaps_thermionic"
+    assert result.certified
+    assert result.hysteresis_index == 0.0
+    assert result.metrics_fwd == result.metrics_rev == "MET"
+    assert all(s.solver == "quasi_fermi" for s in result.status_fwd)
+    assert result.status_fwd[-1].face_current_spread_A_m2 == 4.0e-8
+    assert result.status_fwd[-1].poisson_residual == 5.0e-12
+
+
+def test_dispatch_quasi_fermi_rejects_dark_jv():
+    with pytest.raises(ValueError, match="illuminated J-V only"):
+        bm._run_jv_dispatch(
+            stack=None,
+            N_grid=10,
+            n_points=8,
+            v_rate=1.0,
+            V_max=0.7,
+            illuminated=False,
+            solver="quasi_fermi",
+        )
+
+
+def test_dispatch_rejects_interface_boundary_on_other_solvers():
+    with pytest.raises(ValueError, match="requires solver='quasi_fermi'"):
+        bm._run_jv_dispatch(
+            stack=None,
+            N_grid=10,
+            n_points=8,
+            v_rate=1.0,
+            V_max=0.7,
+            illuminated=True,
+            solver="steady_state",
+            interface_boundary=True,
+        )
+
+
+def test_dispatch_rejects_inactive_nondefault_interface_model():
+    with pytest.raises(ValueError, match="requires interface_boundary=true"):
+        bm._run_jv_dispatch(
+            stack=None,
+            N_grid=10,
+            n_points=8,
+            v_rate=1.0,
+            V_max=0.7,
+            illuminated=True,
+            solver="quasi_fermi",
+            interface_transport_model="scaps_thermionic",
+        )
+
+
+def test_jv_api_returns_422_for_policy_rejected_driver():
+    cfg = _min_cfg()
+    cfg["device"]["jv_solver_policy"] = "cancellation_safe_qf_required"
+    request = bm.JVRequest(
+        device=cfg,
+        N_grid=10,
+        n_points=2,
+        V_max=0.1,
+        solver="transient",
+    )
+
+    with pytest.raises(bm.HTTPException) as exc_info:
+        bm.run_jv(request)
+    assert exc_info.value.status_code == 422
+    assert "solver='quasi_fermi'" in str(exc_info.value.detail)
+
+
+def test_dispatch_unknown_solver_raises():
     with pytest.raises(ValueError):
         bm._run_jv_dispatch(
             stack=None, N_grid=10, n_points=5, v_rate=1.0, V_max=None,

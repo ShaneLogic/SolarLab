@@ -92,6 +92,83 @@ export function validate(config: DeviceConfig): ValidationReport {
     }
   }
 
+  // 6. Built-in-potential source contract. Mirror the backend's compatibility
+  // inference so malformed physical configs fail before a job is submitted.
+  const explicitPotentialMode = config.device.built_in_potential_mode
+  const potentialMode = explicitPotentialMode
+    ?? (config.device.V_bi !== undefined || config.device.V_bi_override !== undefined
+      ? 'legacy_manual'
+      : 'semiconductor_work_function')
+  const hasLegacyInput = config.device.V_bi !== undefined
+    || config.device.V_bi_override !== undefined
+
+  if (
+    (potentialMode === 'semiconductor_work_function'
+      || potentialMode === 'metal_work_function')
+    && hasLegacyInput
+  ) {
+    errors.push({
+      layerIdx: null,
+      field: 'built_in_potential_mode',
+      message: 'Physical work-function mode cannot include V_bi or V_bi_override',
+    })
+  }
+
+  if (potentialMode === 'metal_work_function') {
+    for (const [field, value] of [
+      ['work_function_left_eV', config.device.work_function_left_eV],
+      ['work_function_right_eV', config.device.work_function_right_eV],
+    ] as const) {
+      if (!(typeof value === 'number' && Number.isFinite(value) && value > 0)) {
+        errors.push({
+          layerIdx: null,
+          field,
+          message: `${field} must be finite and positive in metal-work-function mode`,
+        })
+      }
+    }
+  } else if (potentialMode === 'semiconductor_work_function') {
+    const electrical = layers
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.role !== 'substrate')
+    const contacts = electrical.length > 0
+      ? [electrical[0], electrical[electrical.length - 1]]
+      : []
+    for (const { item, index } of contacts.filter(
+      (contact, contactIndex, all) => all.findIndex(c => c.index === contact.index) === contactIndex,
+    )) {
+      for (const field of ['chi', 'Eg', 'Nc300', 'Nv300'] as const) {
+        const value = item[field]
+        if (!(typeof value === 'number' && Number.isFinite(value) && value > 0)) {
+          errors.push({
+            layerIdx: index,
+            field,
+            message: `${field} must be finite and positive at a semiconductor contact`,
+          })
+        }
+      }
+      for (const field of ['N_A', 'N_D'] as const) {
+        const value = item[field]
+        if (!(Number.isFinite(value) && value >= 0)) {
+          errors.push({
+            layerIdx: index,
+            field,
+            message: `${field} must be finite and non-negative at a semiconductor contact`,
+          })
+        }
+      }
+    }
+  } else if (explicitPotentialMode === 'legacy_manual') {
+    const value = config.device.V_bi_override ?? config.device.V_bi
+    if (!(typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
+      errors.push({
+        layerIdx: null,
+        field: 'V_bi_override',
+        message: 'Legacy manual mode requires a finite, non-negative V_bi_override',
+      })
+    }
+  }
+
   // Warnings
   const tmmCount = layers.filter(
     l => l.optical_material != null && l.optical_material !== '',

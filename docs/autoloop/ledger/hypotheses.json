@@ -11,5 +11,31 @@
     "predicted_delta": -21.528819173530586,
     "verdict": "confirmed",
     "verifier_votes": 1
+  },
+  {
+    "cause": "uncertain",
+    "cycle": 0,
+    "evidence_against": [
+      "grid 1.05e-09, best-flag 0, dark 0.0189 all below dominance"
+    ],
+    "evidence_for": [],
+    "gap_id": "absolute:base:J_sc",
+    "mechanism": "no single ablation lever identified",
+    "predicted_delta": 0.0,
+    "verdict": "uncertain",
+    "verifier_votes": 0
+  },
+  {
+    "cause": "uncertain",
+    "cycle": 0,
+    "evidence_against": [
+      "grid 0.0036, best-flag 0, dark 0.0189 all below dominance"
+    ],
+    "evidence_for": [],
+    "gap_id": "absolute:base:PCE",
+    "mechanism": "no single ablation lever identified",
+    "predicted_delta": 0.0,
+    "verdict": "uncertain",
+    "verifier_votes": 0
   }
 ]

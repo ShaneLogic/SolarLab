@@ -1,0 +1,13 @@
+{
+  "cause": "uncertain",
+  "cycle": 0,
+  "evidence_against": [
+    "grid 0.0036, best-flag 0, dark 0.0189 all below dominance"
+  ],
+  "evidence_for": [],
+  "gap_id": "absolute:base:PCE",
+  "mechanism": "no single ablation lever identified",
+  "predicted_delta": 0.0,
+  "verdict": "uncertain",
+  "verifier_votes": 0
+}

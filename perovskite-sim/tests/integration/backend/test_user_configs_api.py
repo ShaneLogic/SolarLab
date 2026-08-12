@@ -1,5 +1,9 @@
 """Integration tests for Phase 2b backend endpoints."""
+from pathlib import Path
+import shutil
+
 from fastapi.testclient import TestClient
+import pytest
 
 from backend.main import app
 
@@ -73,6 +77,20 @@ class TestConfigsTierCompat:
         )
         assert tiers == ["legacy", "fast"]
 
+    def test_explicit_full_and_scaps_presets_advertise_full(self) -> None:
+        entries = self._entries()
+        for name in (
+            "field_mobility_demo.yaml",
+            "bcx_combined_demo.yaml",
+            "scaps_mirror_v2.yaml",
+            "scaps_mirror_v2_robin_moderate.yaml",
+            "scaps_mirror_v2_robin_strong.yaml",
+        ):
+            assert "full" in entries[name]["tier_compat"], (
+                f"{name}: full-only shipped physics is hidden by "
+                f"tier_compat={entries[name]['tier_compat']}"
+            )
+
     def test_every_entry_has_tier_compat_list(self) -> None:
         entries = self._entries()
         for name, entry in entries.items():
@@ -85,10 +103,6 @@ class TestConfigsTierCompat:
                     f"{name}: unknown tier {t!r} in tier_compat"
                 )
 
-
-import pytest
-import shutil
-from pathlib import Path
 
 CONFIGS_DIR = Path(__file__).resolve().parents[3] / "configs"
 USER_DIR = CONFIGS_DIR / "user"
@@ -167,3 +181,19 @@ class TestPostUserConfig:
     def test_missing_name_returns_400(self, clean_user_dir) -> None:
         r = client.post("/api/configs/user", json={"config": {}})
         assert r.status_code in (400, 422)
+
+
+def test_csi_underresolved_grid_returns_actionable_client_error() -> None:
+    r = client.post(
+        "/api/jv",
+        json={
+            "config_path": "cSi_homojunction.yaml",
+            "N_grid": 80,
+            "n_points": 2,
+            "V_max": 0.1,
+        },
+    )
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "under-resolved electrical grid" in detail
+    assert "Increase N_grid" in detail

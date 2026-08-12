@@ -1,10 +1,7 @@
 import numpy as np
 import pytest
 
-from perovskite_sim.physics.tandem_optics import (
-    TandemGeneration,
-    partition_absorption,
-)
+from perovskite_sim.physics.tandem_optics import partition_absorption
 
 
 def test_compute_tandem_generation_happy_path(monkeypatch):
@@ -106,6 +103,105 @@ def test_compute_tandem_generation_empty_junction_stack(monkeypatch):
     assert gen.parasitic_absorption < 1e-6
     assert gen.top_layer_slice == slice(0, n_top)
     assert gen.bottom_layer_slice == slice(n_top, n_top + n_bot)
+
+
+def test_tandem_generation_offsets_electrical_grids_after_substrate_prefixes(
+    monkeypatch,
+):
+    """Combined-TMM coordinates must not map carrier grids into substrates."""
+    import perovskite_sim.physics.tandem_optics as tandem_optics_mod
+    from perovskite_sim.experiments.jv_sweep import build_electrical_grid
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    from perovskite_sim.models.device import DeviceStack, LayerSpec
+    from perovskite_sim.models.tandem_config import TandemConfig
+    from perovskite_sim.physics.generation import dual_cell_faces
+    from perovskite_sim.physics.tandem_optics import compute_tandem_generation
+
+    reference = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    top_substrate = LayerSpec(
+        "top_glass", 2.0e-6, reference.layers[0].params, "substrate"
+    )
+    bot_substrate = LayerSpec(
+        "bottom_optical_prefix",
+        3.0e-6,
+        reference.layers[0].params,
+        "substrate",
+    )
+    top_cell = DeviceStack(
+        layers=(top_substrate, *reference.layers),
+        V_bi=reference.V_bi,
+    )
+    bottom_cell = DeviceStack(
+        layers=(bot_substrate, *reference.layers),
+        V_bi=reference.V_bi,
+    )
+    cfg = TandemConfig(
+        top_cell=top_cell,
+        bottom_cell=bottom_cell,
+        junction_stack=(),
+        junction_model="ideal_ohmic",
+        light_direction="top_first",
+        benchmark=None,
+    )
+
+    def fake_load_nk(material, wavelengths_nm):
+        return (
+            wavelengths_nm,
+            np.full_like(wavelengths_nm, 2.0, dtype=float),
+            np.full_like(wavelengths_nm, 0.05, dtype=float),
+        )
+
+    queried_faces = []
+
+    def record_absorbed(
+        layers,
+        wavelengths,
+        spectral_flux,
+        faces,
+        layer_boundaries,
+        n_ambient=1.0,
+        n_substrate=1.0,
+    ):
+        queried_faces.append(np.asarray(faces, dtype=float).copy())
+        return np.ones(len(faces) - 1, dtype=float)
+
+    monkeypatch.setattr(tandem_optics_mod, "load_nk", fake_load_nk)
+    monkeypatch.setattr(
+        tandem_optics_mod,
+        "tmm_absorbed_photon_flux_per_cell",
+        record_absorbed,
+    )
+
+    x_top = build_electrical_grid(top_cell, 30)
+    x_bot = build_electrical_grid(bottom_cell, 30)
+    wavelengths_nm = np.linspace(400.0, 800.0, 9)
+    wavelengths_m = wavelengths_nm * 1.0e-9
+    spectral_flux = np.full_like(wavelengths_m, 1.0e21)
+    compute_tandem_generation(
+        cfg,
+        wavelengths_m,
+        spectral_flux,
+        wavelengths_nm,
+        x_top=x_top,
+        x_bot=x_bot,
+    )
+
+    top_faces, bot_faces, whole_stack_faces = queried_faces
+    top_offset = top_substrate.thickness
+    top_full_thickness = sum(layer.thickness for layer in top_cell.layers)
+    bot_offset = top_full_thickness + bot_substrate.thickness
+
+    assert top_faces == pytest.approx(dual_cell_faces(x_top) + top_offset)
+    assert bot_faces == pytest.approx(dual_cell_faces(x_bot) + bot_offset)
+    assert top_faces[0] == pytest.approx(top_substrate.thickness)
+    assert bot_faces[0] == pytest.approx(bot_offset)
+    assert whole_stack_faces == pytest.approx(
+        [
+            0.0,
+            top_full_thickness
+            + sum(layer.thickness for layer in bottom_cell.layers),
+        ]
+    )
 
 
 def test_partition_assigns_layer_ranges_correctly():

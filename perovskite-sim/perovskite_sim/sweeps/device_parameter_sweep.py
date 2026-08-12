@@ -336,7 +336,7 @@ def apply_sweep_point(
             target=str(updates.get("interface_defect_target", "pvk/etl")),
         )
 
-    if sync_vbi:
+    if sync_vbi and updated.built_in_potential_mode is None:
         updated = dataclasses.replace(updated, V_bi=updated.compute_V_bi())
     return updated
 
@@ -462,6 +462,8 @@ def describe_stack(stack: DeviceStack) -> dict[str, Any]:
     out: dict[str, Any] = {
         "configured_V_bi": stack.V_bi,
         "computed_V_bi": stack.compute_V_bi(),
+        "built_in_potential_mode": stack.resolved_built_in_potential_mode(),
+        "operating_V_bi": stack.operating_built_in_potential(),
         "interfaces_m_s": [list(pair) for pair in stack.interfaces],
     }
     if absorber is not None:

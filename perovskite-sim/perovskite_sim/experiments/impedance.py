@@ -5,12 +5,18 @@ import numpy as np
 
 ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
-from perovskite_sim.models.device import DeviceStack, electrical_layers
-from perovskite_sim.discretization.grid import multilayer_grid, Layer
+from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.discretization.grid import (
+    require_thick_layer_interface_resolution,
+)
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import run_transient, build_material_arrays
 from perovskite_sim.solver.newton import solve_equilibrium
-from perovskite_sim.experiments.jv_sweep import _compute_current, _total_current_faces
+from perovskite_sim.experiments.jv_sweep import (
+    _compute_current,
+    _total_current_faces,
+    build_electrical_grid,
+)
 
 
 @dataclass(frozen=True)
@@ -139,6 +145,8 @@ def run_impedance(
     atol: float = 1e-6,
     illuminated: bool = True,
     progress: ProgressCallback | None = None,
+    allow_underresolved_grid: bool = False,
+    method: str = "transient",
 ) -> ImpedanceResult:
     """Run small-signal impedance at each frequency.
 
@@ -157,6 +165,15 @@ def run_impedance(
         in the dark (G = 0 everywhere) — required for Mott-Schottky C-V
         analysis, where photogenerated carriers would mask the depletion
         capacitance.
+    allow_underresolved_grid : bool, default False
+        Diagnostic-only escape hatch for an electrical mesh that fails the
+        thick-layer Debye-resolution guard. Such a run is not physically
+        certifiable.
+    method : {"transient", "quasi_fermi_frequency"}
+        ``transient`` retains the general ion-aware time-domain lock-in.
+        ``quasi_fermi_frequency`` uses a residual-certified local QF DC state
+        and a frequency-domain linearization; unsupported physics fails before
+        operator assembly.
     """
     if len(frequencies) == 0:
         raise ValueError("frequencies must be non-empty")
@@ -168,17 +185,47 @@ def run_impedance(
         raise ValueError(f"delta_V must be positive, got {delta_V}")
     if n_cycles < 1:
         raise ValueError(f"n_cycles must be >= 1, got {n_cycles}")
+    if method not in {"transient", "quasi_fermi_frequency"}:
+        raise ValueError(
+            "method must be 'transient' or 'quasi_fermi_frequency', got "
+            f"{method!r}"
+        )
     n_extract = min(max(n_extract, 1), n_cycles)
 
-    # Grid construction uses electrical layers only; substrate is optical-only.
-    elec = electrical_layers(stack)
-    layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
-    x = multilayer_grid(layers_grid)
+    # Use the same executable electrical-grid contract as J-V and steady-state
+    # experiments, including configured interval weights and per-layer
+    # clustering. A different impedance mesh would make C-V results
+    # incomparable with the rest of the solver and can collapse a resolved
+    # depletion region into the geometric-capacitance limit.
+    x = build_electrical_grid(stack, N_grid)
+    require_thick_layer_interface_resolution(
+        x,
+        stack,
+        N_grid=N_grid,
+        allow_underresolved_grid=allow_underresolved_grid,
+    )
     dx_faces = np.diff(x)
     L_total = float(x[-1] - x[0])
     # Build the material cache once — reused across every frequency and
     # every RHS call inside each frequency's transient.
     mat = build_material_arrays(x, stack)
+    if method == "quasi_fermi_frequency":
+        from perovskite_sim.experiments.quasi_fermi_impedance import (
+            run_quasi_fermi_impedance,
+        )
+
+        result = run_quasi_fermi_impedance(
+            x,
+            stack,
+            np.asarray(frequencies, dtype=float),
+            V_dc=V_dc,
+            delta_V=delta_V,
+            illuminated=illuminated,
+            mat=mat,
+            progress=progress,
+        )
+        return ImpedanceResult(frequencies=result.frequencies, Z=result.Z)
+
     # Pre-condition: DC steady state at V_dc. Illuminated path uses the
     # dark→light solver; dark path starts from equilibrium and (if
     # V_dc ≠ 0) drives to V_dc via a short dark transient so the AC
@@ -196,7 +243,13 @@ def run_impedance(
                 stack, illuminated=False, V_app=V_dc,
                 rtol=rtol, atol=atol, mat=mat,
             )
-            y_dc = sol_dc.y[:, -1] if sol_dc.success else y_eq
+            if not sol_dc.success:
+                detail = getattr(sol_dc, "message", "no solver diagnostic")
+                raise RuntimeError(
+                    "dark DC preconditioning failed before impedance "
+                    f"integration at V_dc={V_dc:.6g} V: {detail}"
+                )
+            y_dc = sol_dc.y[:, -1]
 
     Z_arr = np.zeros(len(frequencies), dtype=complex)
     pts_per_cycle = 40  # integer pts per cycle ⇒ last cycle spans an exact period

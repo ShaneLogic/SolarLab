@@ -260,6 +260,20 @@ def carrier_continuity_rhs(
                 )
                 J_p[f_idx] = _cap(float(J_p[f_idx]), float(J_te_p))
 
+    # Opt-in algebraic interface-plane path. The four plane densities carry
+    # the bulk-to-plane supply, cross-interface exchange, and surface SRH in
+    # assemble_rhs. Leaving this continuous-material SG face active creates a
+    # parallel bypass around that boundary and delays the CBO response. Zero
+    # only the declared faces; terminal and intra-layer SG transport remain.
+    exclusive_faces = params.get("exclusive_interface_faces")
+    if exclusive_faces:
+        J_n = J_n.copy()
+        J_p = J_p.copy()
+        for face in exclusive_faces:
+            if 0 <= int(face) < len(J_n):
+                J_n[int(face)] = 0.0
+                J_p[int(face)] = 0.0
+
     # Heterointerface bulk-recombination de-spike (SCAPS-emulation, off by
     # default). The band offset produces a Boltzmann carrier spike at the
     # junction node that double-counts against the interface SRH channel;

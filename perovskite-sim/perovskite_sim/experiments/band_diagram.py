@@ -81,7 +81,8 @@ def compute_band_diagram(
 ) -> BandDiagram:
     """Return the settled-state band diagram at ``V_app``.
 
-    ``illuminated`` selects the illuminated steady state (``solve_illuminated_ss``)
+    ``illuminated`` selects the finite-time light-conditioned state
+    (``solve_illuminated_ss``)
     or the dark state. At ``V_app == 0`` with ``illuminated=False`` this is the
     zero-current equilibrium (E_F flat). ``settle_t`` is the illuminated settling
     time; the default 1e-2 s settles the carriers to quasi-steady (ions ~frozen,

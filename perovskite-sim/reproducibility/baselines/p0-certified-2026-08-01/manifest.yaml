@@ -1,0 +1,117 @@
+schema_version: 1
+baseline_id: p0-certified-2026-08-01
+created_at: 2026-08-01
+base_commit: c23e5b9beb3c356250ea32dcb09c78dc45ba28ec
+base_branch: audit/physics-fixes-2607
+freeze_kind: reconstructable_patch
+intended_git_tag: p0-certified-2026-08-01
+git_tag_created: false
+git_tag_blocker: repository index and refs are read-only in the managed session
+
+patch:
+  path: reproducibility/baselines/p0-certified-2026-08-01/p0.patch
+  sha256: 58166a458047984bf85ead3cc5c5b5e29b2c6dc22aa851682a8ca81ef314d82a
+  size_bytes: 107773
+  reverse_apply_check: passed
+
+target_blob_snapshots:
+  - object_id: 4a08dc840230df0a5a3af4f2b76cf63bd53cc781
+    path: reproducibility/baselines/p0-certified-2026-08-01/target_blobs/4a08dc840230df0a5a3af4f2b76cf63bd53cc781.blob
+    sha256: 86743fca2eeddb7761cd89f0191f0df845bc951a0b7084d825945d5804142a2e
+  - object_id: 88cda463b0010597bae7a77a90c7e97afea25c52
+    path: reproducibility/baselines/p0-certified-2026-08-01/target_blobs/88cda463b0010597bae7a77a90c7e97afea25c52.blob
+    sha256: a7e92cd04b61abb8e56049bf83b46cf5c365332207e66671c04e5e7125fbe262
+  - object_id: ba24cdba780402b6a092d3500dc24b22cfb78ffd
+    path: reproducibility/baselines/p0-certified-2026-08-01/target_blobs/ba24cdba780402b6a092d3500dc24b22cfb78ffd.blob
+    sha256: 594f420a732403f79cd50e3f0b2e7d61d1ccc587ead85c6db009567e6fbd42c2
+
+environment:
+  os: Darwin 25.6.0 arm64
+  python: 3.13.5
+  numpy: 2.1.3
+  scipy: 1.15.3
+  pyyaml: 6.0.2
+  pytest: 8.3.4
+  blas_threads: 1
+
+verification:
+  - lane: default
+    command: pytest -q
+    result: 1400 passed, 2 skipped, 221 deselected
+    duration: 139.88 s
+    exact_final_worktree: true
+  - lane: p0-focused
+    command: >-
+      pytest -q -m 'not slow' -W error::RuntimeWarning
+      tests/unit/experiments/test_jv_branch_rejection.py
+      tests/unit/experiments/test_jv_sweep.py
+      tests/unit/experiments/test_steady_state.py
+      tests/unit/experiments/test_suns_voc.py
+      tests/unit/solver/test_illuminated_ss.py
+    result: 82 passed, 10 deselected
+    exact_final_worktree: true
+  - lane: validation
+    command: pytest -q -m validation -W error::RuntimeWarning
+    result: 22 passed, 1598 deselected
+    exact_final_worktree: false
+    note: >-
+      Run on the same P0 functional baseline before the two final localized
+      diagnostic-state and non-finite-bound guards; both guards are covered by
+      the exact-final default and focused lanes.
+  - lane: slow
+    command: pytest -q -m slow -W error::RuntimeWarning
+    result: 192 passed, 4 skipped, 3 xfailed, 1421 deselected
+    duration: 5140.72 s
+    exact_final_worktree: false
+    note: Same qualification as the validation lane.
+  - lane: static
+    command: python -m compileall -q perovskite_sim && git diff --check
+    result: passed
+    exact_final_worktree: true
+
+known_xfails:
+  - id: cigs-2um-graded-notch
+    test: tests/regression/test_grading_cigs_notch.py::test_cigs_back_grading_raises_voc_without_jsc_collapse
+    classification: solver-envelope
+  - id: scaps-low-doping-etl
+    test: tests/unit/experiments/test_steady_state.py::test_low_doping_etl_converges
+    classification: model-boundary-condition
+  - id: lin2019-tandem-jsc-pce
+    test: tests/integration/test_tandem_lin2019.py::test_lin2019_jsc_and_pce_within_tolerance
+    classification: optics-and-current-matching
+
+scope_exclusions:
+  - docs/autoloop/ledger/**
+  - outputs/**
+
+files:
+  - path: perovskite_sim/experiments/band_diagram.py
+    sha256: 6c413f63586280e9fd768944e525169f54ab07301efdcc60a2b01cafde8aa2e3
+  - path: perovskite_sim/experiments/degradation.py
+    sha256: 27834e989c0055b39260f093b5a7957b622c4be7fd2c182af933dd7b67c700e8
+  - path: perovskite_sim/experiments/eqe.py
+    sha256: a286012081ad105a7b2fda97a8e89eb31bcab609826a74281ebfb12970f9aef7
+  - path: perovskite_sim/experiments/jv_sweep.py
+    sha256: 58e4728094206d47efacaa0557e8b4f8e78cf0e9d3412aae8ebf25a4c8e24751
+  - path: perovskite_sim/experiments/steady_state.py
+    sha256: d59ef98eea09bd85dd383cef0a3821ab55d8925f6ca4ba3e63cdb83bfad5ff84
+  - path: perovskite_sim/experiments/suns_voc.py
+    sha256: ff439f0823a219fce979f3386095ebff902344314cc1539e313bc344394fa2be
+  - path: perovskite_sim/solver/illuminated_ss.py
+    sha256: b4e5649f8a70ffd29d042dc15d340d4125636ffbdfea5c2358e9159f9b259aae
+  - path: tests/conftest.py
+    sha256: 6a72050f96ba7f01fff832e99829b8b06cd65c70c9276ce5e94f6461f5e0ba92
+  - path: tests/regression/test_mesh_convergence.py
+    sha256: 030d7b0a33624b3daf6cf801df4bedc2b400d006c9ebc727c21b969b94ad25d6
+  - path: tests/regression/test_twod_validation.py
+    sha256: 992255718ec530b54a84e1f119e63bf915f2d60e3770b237da8a9d3a659f6e62
+  - path: tests/unit/experiments/test_jv_branch_rejection.py
+    sha256: 86743fca2eeddb7761cd89f0191f0df845bc951a0b7084d825945d5804142a2e
+  - path: tests/unit/experiments/test_jv_sweep.py
+    sha256: aad5eee0685fd519ac45778a303b1d4af758937b93ed715f7b990150cfbe835b
+  - path: tests/unit/experiments/test_steady_state.py
+    sha256: a7e92cd04b61abb8e56049bf83b46cf5c365332207e66671c04e5e7125fbe262
+  - path: tests/unit/experiments/test_suns_voc.py
+    sha256: 594f420a732403f79cd50e3f0b2e7d61d1ccc587ead85c6db009567e6fbd42c2
+  - path: tests/unit/solver/test_illuminated_ss.py
+    sha256: 4ceaa45d8021ea06cadd6b18e41797dc3e9c1e638bbd874a0cf8e3e3142c60d0

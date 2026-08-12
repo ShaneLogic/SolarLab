@@ -56,34 +56,39 @@ export function algorithmHTML(): string {
       </ul>
 
       <h4>Physics tiers &mdash; Full vs Fast vs Legacy</h4>
-      <p>The <b>Mode</b> selector in the device panel gates every physics upgrade below. <b>Full</b> is the default and enables everything the configuration supplies; <b>Legacy</b> disables the upgrades to reproduce the IonMonger-compatible baseline for benchmarking; <b>Fast</b> presently aliases Legacy and reserves the API for future optimisations (e.g. pre-integrated TMM &rarr; effective <i>α</i>).</p>
+      <p>The <b>Mode</b> selector gates optional transport and optical upgrades; it does not choose the source of the contact potential. <b>Full</b> is the default and enables every feature supplied by the configuration. <b>Fast</b> keeps the build-once upgrades &mdash; thermionic emission, TMM optics, dual ions, spatial trap profiles, temperature scaling and photon recycling &mdash; while omitting the three features that must be recomputed inside every right-hand-side evaluation. <b>Legacy</b> disables the upgrades to reproduce the IonMonger-compatible benchmark baseline.</p>
 
       <table class="param-table mode-table">
         <thead>
           <tr><th>Feature</th><th>Legacy</th><th>Fast</th><th>Full</th></tr>
         </thead>
         <tbody>
-          <tr><td>Contact BCs from band offsets</td><td>Doping only</td><td>Band-offset</td><td>Band-offset</td></tr>
-          <tr><td>Thermionic-emission flux cap at heterointerfaces</td><td>&mdash;</td><td>&mdash;</td><td>&#10003;</td></tr>
-          <tr><td>Optical generation</td><td>Beer&ndash;Lambert</td><td>Beer&ndash;Lambert</td><td>Transfer-matrix (TMM)</td></tr>
-          <tr><td>Mobile ions</td><td>Single species</td><td>Single species</td><td>Dual species (if configured)</td></tr>
-          <tr><td>SRH trap density <i>N</i><sub>t</sub>(<i>x</i>)</td><td>Uniform <i>τ</i></td><td>Uniform <i>τ</i></td><td>Position-dependent</td></tr>
-          <tr><td>Temperature scaling (<i>V</i><sub>T</sub>, <i>μ</i>, <i>n</i><sub>i</sub>, <i>D</i><sub>ion</sub>)</td><td>Fixed 300 K</td><td>Fixed 300 K</td><td>Uses device <i>T</i></td></tr>
+          <tr><td>Contact-potential source</td><td>Configured source</td><td>Configured source</td><td>Configured source</td></tr>
+          <tr><td>Thermionic-emission flux cap at heterointerfaces</td><td>&mdash;</td><td>&#10003;</td><td>&#10003;</td></tr>
+          <tr><td>Optical generation</td><td>Beer&ndash;Lambert</td><td>TMM (if configured)</td><td>TMM (if configured)</td></tr>
+          <tr><td>Mobile ions</td><td>Single species</td><td>Dual species (if configured)</td><td>Dual species (if configured)</td></tr>
+          <tr><td>SRH trap density <i>N</i><sub>t</sub>(<i>x</i>)</td><td>Uniform <i>τ</i></td><td>Position-dependent</td><td>Position-dependent</td></tr>
+          <tr><td>Temperature scaling (<i>V</i><sub>T</sub>, <i>μ</i>, <i>n</i><sub>i</sub>, <i>D</i><sub>ion</sub>)</td><td>Fixed 300 K</td><td>Uses device <i>T</i></td><td>Uses device <i>T</i></td></tr>
+          <tr><td>Photon recycling</td><td>&mdash;</td><td>&#10003;</td><td>&#10003;</td></tr>
+          <tr><td>Self-consistent radiative reabsorption</td><td>&mdash;</td><td>&mdash;</td><td>&#10003;</td></tr>
+          <tr><td>Field-dependent mobility</td><td>&mdash;</td><td>&mdash;</td><td>&#10003;</td></tr>
+          <tr><td>Explicit <i>S</i><sub>n,p</sub> Robin contacts</td><td>&mdash;</td><td>&mdash;</td><td>&#10003;</td></tr>
         </tbody>
       </table>
 
-      <h4>1. Band-offset contacts &amp; thermionic emission (Full only)</h4>
-      <p>Each layer carries an electron affinity <i>χ</i> and band gap <i>E</i><sub>g</sub>. The built-in potential is derived from the Fermi-level difference across the stack:</p>
+      <h4>1. Contact potential, band offsets &amp; thermionic emission</h4>
+      <p>The Poisson contact potential is selected independently of the carrier-exchange boundary. It is the signed work-function difference:</p>
       <pre class="eqn">
-<i>V</i><sub>bi, eff</sub>  =  <i>E</i><sub>F, left</sub> &minus; <i>E</i><sub>F, right</sub></pre>
-      <p>The Poisson Dirichlet BC <i>φ</i>(<i>L</i>) = <i>V</i><sub>bi</sub> &minus; <i>V</i><sub>app</sub> keeps the manual <code>stack.V_bi</code> field to match IonMonger's degenerate-doping convention; <i>V</i><sub>bi,&nbsp;eff</sub> is instead fed into the default J&ndash;V sweep upper voltage <code>max(<i>V</i><sub>bi,&nbsp;eff</sub>&times;1.3, 1.4&nbsp;V)</code>, so forward sweeps on heterostacks whose <i>V</i><sub>OC</sub> exceeds <code>stack.V_bi</code> still cross <i>J</i> = 0.</p>
+<i>V</i><sub>bi</sub>  =  <i>W</i><sub>left</sub> &minus; <i>W</i><sub>right</sub></pre>
+      <p>Semiconductor mode calculates each <i>W</i> from <i>χ</i>, <i>E</i><sub>g</sub>, <i>N</i><sub>C,V</sub>, doping and the active temperature. Metal mode uses the two electrode work functions directly. The signed boundary <i>φ</i>(<i>L</i>) = <i>V</i><sub>bi</sub> &minus; sgn(<i>V</i><sub>bi</sub>)<i>V</i><sub>app</sub> makes positive forward bias reduce the field for either stack orientation. The manual value remains only on the legacy compatibility path.</p>
+      <p>Finite-rate Robin contacts and their four surface velocities control carrier exchange without changing that contact potential. At internal heterointerfaces, each layer's electron affinity <i>χ</i> and gap <i>E</i><sub>g</sub> set the band offsets.</p>
       <p>At internal heterointerfaces where |Δ<i>E</i><sub>c</sub>| or |Δ<i>E</i><sub>v</sub>| exceeds 0.05 eV, the Scharfetter&ndash;Gummel flux is capped to the Richardson&ndash;Dushman thermionic-emission limit:</p>
       <pre class="eqn">
 <i>J</i><sub>TE</sub>  =  <i>A</i><sup>&lowast;</sup> <i>T</i><sup>2</sup> &middot; exp(&minus; <i>q</i> Δ<i>E</i> / <i>k</i><sub>B</sub><i>T</i>)</pre>
       <p>This prevents SG from overestimating injection when the band discontinuity is resolved in a single cell.</p>
 
-      <h4>2. Transfer-matrix optical generation (Full only)</h4>
-      <p>Instead of the scalar <i>G</i>(<i>x</i>) = <i>α</i> Φ exp(&minus;<i>α</i><i>x</i>) law, Full mode solves the coherent thin-film transfer-matrix problem at 200 wavelengths against the AM1.5G spectrum:</p>
+      <h4>2. Transfer-matrix optical generation (Fast / Full)</h4>
+      <p>Instead of the scalar <i>G</i>(<i>x</i>) = <i>α</i> Φ exp(&minus;<i>α</i><i>x</i>) law, Fast and Full modes solve the coherent thin-film transfer-matrix problem at 200 wavelengths against the AM1.5G spectrum:</p>
       <pre class="eqn">
 <i>a</i>(<i>x</i>, <i>&lambda;</i>)  =  (4<i>&pi;</i> <i>n</i>(<i>&lambda;</i>) <i>k</i>(<i>&lambda;</i>)) / (<i>&lambda;</i> <i>n</i><sub>ambient</sub>) &middot; |<i>E</i>(<i>x</i>, <i>&lambda;</i>)|<sup>2</sup>
 
@@ -102,13 +107,13 @@ export function algorithmHTML(): string {
       </ol>
       <p>Incoherent layers (e.g. millimetre-thick glass substrates) bypass steps 1&ndash;4 and apply Fresnel reflection plus bulk Beer&ndash;Lambert directly, avoiding unphysical sub-nanometer interference fringes from the matrix product.</p>
 
-      <h4>3. Dual-species ion migration (Full only)</h4>
-      <p>Perovskites support both positive vacancies (e.g. <i>V</i><sub>I</sub><sup>+</sup>) and negative mobile species (interstitials or methylammonium vacancies). Full mode integrates a second continuity equation with sign-reversed drift:</p>
+      <h4>3. Dual-species ion migration (Fast / Full)</h4>
+      <p>Perovskites support both positive vacancies (e.g. <i>V</i><sub>I</sub><sup>+</sup>) and negative mobile species (interstitials or methylammonium vacancies). Fast and Full modes integrate a second continuity equation with sign-reversed drift:</p>
       <pre class="eqn">
 <i>F</i><sub>ion, &minus;</sub>  =  &minus; <i>D</i><sub>ion, &minus;</sub> [ &part;<i>P</i><sub>&minus;</sub>/&part;<i>x</i>  &minus;  (<i>q</i> / <i>k</i><sub>B</sub><i>T</i>) <i>P</i><sub>&minus;</sub> (1 &minus; <i>P</i><sub>&minus;</sub>/<i>P</i><sub>lim, &minus;</sub>) &part;<i>&phi;</i>/&part;<i>x</i> ]</pre>
       <p>The state vector grows from 3<i>N</i> = (<i>n</i>, <i>p</i>, <i>P</i><sub>+</sub>) to 4<i>N</i> = (<i>n</i>, <i>p</i>, <i>P</i><sub>+</sub>, <i>P</i><sub>&minus;</sub>) automatically whenever <i>D</i><sub>ion,&minus;</sub> &gt; 0 in the YAML.</p>
 
-      <h4>4. Position-dependent traps &amp; temperature scaling (Full only)</h4>
+      <h4>4. Position-dependent traps &amp; temperature scaling (Fast / Full)</h4>
       <p>When a layer sets <code>trap_N_t_interface</code>, <code>trap_N_t_bulk</code>, and <code>trap_decay_length</code>, the SRH lifetime decays exponentially from both layer boundaries:</p>
       <pre class="eqn">
 <i>N</i><sub>t</sub>(<i>x</i>)  =  <i>N</i><sub>t, bulk</sub>  +  (<i>N</i><sub>t, iface</sub> &minus; <i>N</i><sub>t, bulk</sub>) &middot; [ <i>e</i><sup>&minus;<i>d</i><sub>L</sub>/<i>L</i><sub>d</sub></sup>  +  <i>e</i><sup>&minus;<i>d</i><sub>R</sub>/<i>L</i><sub>d</sub></sup> ]

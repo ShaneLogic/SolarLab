@@ -25,10 +25,9 @@ from perovskite_sim.physics.generation import dual_cell_faces, dual_cell_widths
 from perovskite_sim.physics.optics import (
     TMMLayer,
     tmm_absorbed_photon_flux_per_cell,
-    tmm_absorption_profile,
 )
 from perovskite_sim.models.tandem_config import TandemConfig, JunctionLayer
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.data import load_nk
 
 
@@ -41,8 +40,9 @@ class TandemGeneration:
                shape (N_top,)
         G_bot: generation profile for the bottom sub-cell [m^-3 s^-1],
                shape (N_bot,)
-        parasitic_absorption: fraction of incident photon flux absorbed
-                              in the junction / recombination layers
+        parasitic_absorption: fraction of incident photon flux absorbed in
+                              optical-only layers (substrate prefix, junction /
+                              recombination stack, and back reflector)
         top_layer_slice: slice into the combined x-grid that spans G_top
         bottom_layer_slice: slice into the combined x-grid that spans G_bot
     """
@@ -233,6 +233,27 @@ def _build_tmm_layers_from_stack(
     return [_tmm_layer_from_stack_layer(layer, wavelengths_nm) for layer in stack.layers]
 
 
+def _substrate_prefix_thickness(stack: DeviceStack) -> float:
+    """Return the optical-only prefix preceding a sub-cell's electrical grid.
+
+    ``build_electrical_grid`` deliberately drops ``role: substrate`` layers,
+    so its local coordinate starts at the first carrier-transport layer.  The
+    combined tandem TMM still contains the full stack and therefore needs this
+    offset before querying generation on that electrical grid.
+
+    Calling :func:`electrical_layers` also enforces the shared device contract
+    that substrate layers form a contiguous prefix; a mid-stack substrate
+    cannot be mapped unambiguously onto the electrical coordinates.
+    """
+    electrical_layers(stack)
+    thickness = 0.0
+    for layer in stack.layers:
+        if layer.role != "substrate":
+            break
+        thickness += float(layer.thickness)
+    return thickness
+
+
 def compute_tandem_generation(
     cfg: TandemConfig,
     wavelengths: np.ndarray,
@@ -310,44 +331,66 @@ def compute_tandem_generation(
     combined = top_tmm + junc_tmm + bot_tmm + back_tmm
     n_top = len(top_tmm)
     n_junc = len(junc_tmm)
-    n_bot = len(bot_tmm)
 
     # --- Build cumulative layer boundaries ---
     thicknesses = np.array([L.d for L in combined])
     boundaries = np.concatenate(([0.0], np.cumsum(thicknesses)))
     total_thickness = float(boundaries[-1])
 
-    top_end = float(boundaries[n_top])
     junc_end = float(boundaries[n_top + n_junc])
-    # x grid must not enter the back reflector — it is electrically absent.
-    bot_end = float(boundaries[n_top + n_junc + n_bot])
 
     # --- Per-sub-cell generation, on the grid each solve actually uses ---
-    # The top sub-cell occupies [0, top_end] of the combined stack; the bottom
-    # occupies [junc_end, junc_end + its own thickness].  The back reflector is
-    # optically present but electrically absent, so it never carries nodes.
+    # The electrical grids start after any optical-only substrate prefix.
+    # Without these offsets a glass/ITO-prefixed top cell would receive the
+    # generation sampled inside glass/ITO rather than inside its transport
+    # layers.  The back reflector is optically present but electrically absent,
+    # so it never carries nodes.
     x_top = np.asarray(x_top, dtype=float)
     x_bot = np.asarray(x_bot, dtype=float)
+    top_electrical_start = _substrate_prefix_thickness(cfg.top_cell)
+    bot_electrical_start = (
+        junc_end + _substrate_prefix_thickness(cfg.bottom_cell)
+    )
 
     G_top = _generation_on_grid(
-        combined, wavelengths, spectral_flux, boundaries, x_top, 0.0,
+        combined,
+        wavelengths,
+        spectral_flux,
+        boundaries,
+        x_top,
+        top_electrical_start,
     )
     G_bot = _generation_on_grid(
-        combined, wavelengths, spectral_flux, boundaries, x_bot, junc_end,
+        combined,
+        wavelengths,
+        spectral_flux,
+        boundaries,
+        x_bot,
+        bot_electrical_start,
     )
 
     # --- Parasitic absorption: exact, not a trapezoid residual ---
-    # One differencing of the closed-form cumulative absorptance across the
-    # three section boundaries gives the photons absorbed in each section
-    # directly, so the junction share needs no residual construction.
+    # The generated-carrier budgets cover only the two electrical grids.
+    # Everything absorbed elsewhere in the finite optical stack is parasitic:
+    # substrate prefixes, the recombination stack, and the back reflector.
+    # Each term comes from the same cumulative TMM primitive, so the partition
+    # is photon-exact and does not depend on the electrical mesh.
     total_incident = float(trapezoid(spectral_flux, wavelengths))
     if total_incident > 0.0:
-        section_faces = np.array([0.0, top_end, junc_end, bot_end], dtype=float)
-        per_section = tmm_absorbed_photon_flux_per_cell(
-            combined, wavelengths, spectral_flux, section_faces, boundaries,
-            n_ambient=1.0, n_substrate=1.0,
+        all_absorbed = float(
+            tmm_absorbed_photon_flux_per_cell(
+                combined,
+                wavelengths,
+                spectral_flux,
+                np.array([0.0, total_thickness], dtype=float),
+                boundaries,
+                n_ambient=1.0,
+                n_substrate=1.0,
+            )[0]
         )
-        parasitic = float(per_section[1]) / total_incident
+        top_absorbed = float(np.sum(G_top * dual_cell_widths(x_top)))
+        bot_absorbed = float(np.sum(G_bot * dual_cell_widths(x_bot)))
+        parasitic = (all_absorbed - top_absorbed - bot_absorbed) / total_incident
     else:
         parasitic = 0.0
 

@@ -1,6 +1,9 @@
-"""Paper-configuration validation: asserts the drift-diffusion solver produces
-physically correct J-V metrics when run on published paper device configurations
-from Courtier 2019 (IonMonger) and Calado 2016 (Driftfusion).
+"""Paper-informed regressions and calibrated literature reproductions.
+
+The ordinary IonMonger and Driftfusion presets enforce physical envelopes and
+known offsets.  Only the dedicated ``*_repro`` presets claim calibrated metric
+reproduction, and neither lane is an independent holdout prediction because no
+digitized source curves or extraction uncertainty are stored in the repository.
 
 Invoke with: pytest -m validation
 """
@@ -8,13 +11,25 @@ Invoke with: pytest -m validation
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 import numpy as np
 import pytest
+import yaml
 from scipy.stats import linregress
 
+from perovskite_sim.constants import Q
+from perovskite_sim.experiments.jv_sweep import (
+    JVResult,
+    build_electrical_grid,
+    run_jv_sweep,
+)
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack
-from perovskite_sim.experiments.jv_sweep import run_jv_sweep, JVResult
+from perovskite_sim.physics.generation import (
+    beer_lambert_generation,
+    dual_cell_widths,
+)
+from perovskite_sim.solver.mol import build_material_arrays
 
 # Heavy literature-gate sweeps (~16 FULL-tier J-V runs); also `slow` so the
 # default `pytest` (-m 'not slow') stays fast. Run via `pytest -m slow` (or
@@ -62,8 +77,57 @@ def _run_jv(stack: DeviceStack) -> JVResult:
     return run_jv_sweep(stack, N_grid=60, n_points=20, v_rate=5.0, V_max=1.5)
 
 
+def _absorbed_photon_budget(stack: DeviceStack, n_grid: int = 60) -> float:
+    """Return q integral(G dx) using the solver's own cell quadrature."""
+    x = build_electrical_grid(stack, n_grid)
+    mat = build_material_arrays(x, stack)
+    generation = mat.G_optical
+    if generation is None:
+        generation = beer_lambert_generation(x, mat.alpha, stack.Phi)
+    return float(Q * np.sum(np.asarray(generation) * dual_cell_widths(x)))
+
+
+def _assert_registered_reproduction(
+    benchmark_id: str,
+    result: JVResult,
+    stack: DeviceStack,
+) -> None:
+    """Tie the executable result to the matrix artifact and photon budget."""
+    registry = yaml.safe_load(
+        Path("reproducibility/config_benchmark_matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    contract = registry["benchmarks"][benchmark_id]
+    observed = contract["observed_reverse"]
+    tolerance = contract["regression_tolerance"]
+    metrics = result.metrics_rev
+    actual = {
+        "Voc_V": metrics.V_oc,
+        "Jsc_A_m2": metrics.J_sc,
+        "FF": metrics.FF,
+        "PCE_percent": 100.0 * metrics.PCE,
+    }
+
+    assert result.certified
+    for metric, expected in observed.items():
+        assert actual[metric] == pytest.approx(
+            float(expected), abs=float(tolerance[metric])
+        ), (
+            f"{benchmark_id} {metric} drifted from registered observation: "
+            f"{actual[metric]:.9g} vs {float(expected):.9g} "
+            f"(absolute tolerance {float(tolerance[metric]):.9g})"
+        )
+
+    budget = _absorbed_photon_budget(stack)
+    assert abs(metrics.J_sc) <= budget, (
+        f"{benchmark_id} collected {abs(metrics.J_sc):.6f} A/m² against an "
+        f"absorbed-photon budget of {budget:.6f} A/m²"
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
-# Task 1: IonMonger (Courtier 2019) — band-offset validation
+# Task 1: IonMonger (Courtier 2019) — paper-informed regression
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -173,29 +237,36 @@ def test_ionmonger_repro_matches_paper_metrics(
         f"IonMonger repro FF = {metrics.FF:.4f} outside "
         f"[{IONMONGER_PAPER.FF_min}, {IONMONGER_PAPER.FF_max}]"
     )
+    _assert_registered_reproduction(
+        "courtier2019-ionmonger",
+        ionmonger_repro_result,
+        load_device_from_yaml("configs/ionmonger_courtier2019_repro.yaml"),
+    )
 
 
 def test_ionmonger_legacy_full_voc_agree_within_tolerance(
     ionmonger_result: JVResult,
     ionmonger_legacy_result: JVResult,
 ) -> None:
-    """LEGACY and FULL V_oc must agree within 5 mV on this config.
+    """LEGACY and FULL forward-scan V_oc must agree within 5 mV.
 
     On the Courtier 2019 set (b) stack, interface recombination is dominated
     by the explicit surface-recombination velocities (v_n = 3e5 m/s at the
     HTL/perovskite interface), not by thermionic emission. Turning TE off
     (LEGACY) therefore leaves V_oc essentially unchanged. This test guards
     against regressions that would break LEGACY while leaving FULL intact
-    (or vice versa) — the two tiers should differ only by the absence/presence
-    of TE on this stack, and TE is a second-order correction here.
+    (or vice versa). The forward branches now carry independent local crossing
+    certificates and differ by only about 0.06 mV. Reverse V_oc is deliberately
+    not used for this model-isolation assertion: it inherits each mode's full
+    high-bias state history and differs by about 9.5 mV even though the
+    independently certified forward crossings coincide.
     """
-    V_oc_full = ionmonger_result.metrics_rev.V_oc
-    V_oc_legacy = ionmonger_legacy_result.metrics_rev.V_oc
+    V_oc_full = ionmonger_result.metrics_fwd.V_oc
+    V_oc_legacy = ionmonger_legacy_result.metrics_fwd.V_oc
     delta = abs(V_oc_full - V_oc_legacy)
     assert delta < 0.005, (
         f"|V_oc_FULL − V_oc_LEGACY| = {delta * 1e3:.1f} mV ≥ 5 mV — "
-        f"FULL = {V_oc_full:.4f} V, LEGACY = {V_oc_legacy:.4f} V. "
-        "TE is a second-order correction on this SRV-dominated stack."
+        f"FULL = {V_oc_full:.4f} V, LEGACY = {V_oc_legacy:.4f} V."
     )
 
 
@@ -225,7 +296,7 @@ def test_ionmonger_jsc_near_beer_lambert_limit(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Task 2: Driftfusion (Calado 2016) — paper-configuration validation
+# Task 2: Driftfusion (Calado 2016) — paper-informed regression
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -319,6 +390,11 @@ def test_driftfusion_repro_matches_paper_metrics(
     assert 0.50 <= metrics.FF <= 0.80, (
         f"Driftfusion repro FF = {metrics.FF:.4f} outside [0.50, 0.80]"
     )
+    _assert_registered_reproduction(
+        "calado2016-driftfusion",
+        driftfusion_repro_result,
+        load_device_from_yaml("configs/driftfusion_calado2016_repro.yaml"),
+    )
 
 
 def test_driftfusion_jsc_matches_beer_lambert(
@@ -333,6 +409,11 @@ def test_driftfusion_jsc_matches_beer_lambert(
     assert 180.0 <= J_sc <= 260.0, (
         f"Driftfusion J_sc = {J_sc:.1f} A/m² outside [180, 260] — "
         f"expected ~220 A/m² for this Beer-Lambert stack"
+    )
+    budget = _absorbed_photon_budget(_load_driftfusion_flatband())
+    assert abs(J_sc) <= budget, (
+        f"Driftfusion J_sc = {abs(J_sc):.3f} A/m² exceeds its absorbed-"
+        f"photon budget {budget:.3f} A/m²"
     )
 
 

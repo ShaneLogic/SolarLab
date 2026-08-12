@@ -2,7 +2,7 @@ from __future__ import annotations
 import dataclasses
 import warnings
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Literal, Sequence
 import numpy as np
 
 from perovskite_sim._compat.numpy_compat import trapezoid
@@ -10,7 +10,11 @@ from perovskite_sim._compat.numpy_compat import trapezoid
 ProgressCallback = Callable[[str, int, int, str], None]
 """Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.discretization.fe_operators import bernoulli
-from perovskite_sim.discretization.grid import multilayer_grid, Layer
+from perovskite_sim.discretization.grid import (
+    Layer,
+    multilayer_grid,
+    require_thick_layer_interface_resolution,
+)
 from perovskite_sim.physics.ion_migration import ion_face_flux
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
@@ -20,6 +24,7 @@ from perovskite_sim.solver.mol import (
     MaterialArrays, build_material_arrays,
     _charge_density,
     _harmonic_face_average,
+    poisson_right_boundary,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.grading import has_grading_params
@@ -58,6 +63,112 @@ class JVCurrentDecomp:
 
 
 @dataclass(frozen=True)
+class JVPointStatus:
+    """Numerical certificate for one voltage point in a J-V branch.
+
+    The valid flag certifies both the local solve and the complete warm-start
+    state chain leading to this point. A locally successful point is therefore
+    still invalid when upstream_valid is false: its initial state came from an
+    uncertified predecessor and cannot silently restart a trusted branch.
+    candidate_current preserves the rejected diagnostic value; JVResult stores
+    NaN in the corresponding J array instead.
+    """
+
+    branch: str
+    index: int
+    voltage: float
+    valid: bool = True
+    upstream_valid: bool = True
+    refinement_required: bool = False
+    refinement_converged: bool | None = None
+    attempted_legs: tuple[int, ...] = (1,)
+    attempted_currents: tuple[float | None, ...] = (None,)
+    failed_legs: tuple[int, ...] = ()
+    accepted_legs: int = 1
+    reason_code: str = "certified"
+    message: str = ""
+    candidate_current: float | None = None
+    solver: str = "transient"
+    max_normalized_residual: float | None = None
+    electron_continuity_bound_A_m2: float | None = None
+    hole_continuity_bound_A_m2: float | None = None
+    face_current_spread_A_m2: float | None = None
+    poisson_residual: float | None = None
+
+
+class JVCertificationError(RuntimeError):
+    """Raised when strict J-V execution cannot certify a voltage point."""
+
+    def __init__(self, status: JVPointStatus):
+        self.status = status
+        super().__init__(
+            f"J-V {status.branch} point {status.index} at "
+            f"V={status.voltage:.6g} V is uncertified "
+            f"({status.reason_code}): {status.message}"
+        )
+
+
+class JVDriverCapabilityError(RuntimeError):
+    """Raised when a stack requires a different certified J-V driver."""
+
+    def __init__(self, *, policy: str, requested_driver: str):
+        self.policy = policy
+        self.requested_driver = requested_driver
+        super().__init__(
+            f"J-V driver {requested_driver!r} is not production-certified "
+            f"for stack policy {policy!r}; select solver='quasi_fermi'. "
+            "For numerical diagnosis only, pass "
+            "allow_unvalidated_driver=True explicitly."
+        )
+
+
+def require_jv_driver_capability(
+    stack: DeviceStack,
+    *,
+    requested_driver: str,
+    allow_unvalidated_driver: bool = False,
+) -> None:
+    """Fail closed when the stack's certified J-V variable set is required."""
+
+    requires_qf = (
+        stack.jv_solver_policy == "cancellation_safe_qf_required"
+        and requested_driver != "quasi_fermi"
+    )
+    if requires_qf and not allow_unvalidated_driver:
+        raise JVDriverCapabilityError(
+            policy=stack.jv_solver_policy,
+            requested_driver=requested_driver,
+        )
+    if requires_qf:
+        warnings.warn(
+            f"J-V driver {requested_driver!r} is running under the explicit "
+            "allow_unvalidated_driver override; output is diagnostic and is "
+            "not a production-certified physical J-V curve.",
+            JVCertificationWarning,
+            stacklevel=2,
+        )
+
+
+class JVCertificationWarning(UserWarning):
+    """Diagnostic-mode notice that is distinct from solver numeric warnings."""
+
+
+class _JVCandidateFailure(RuntimeError):
+    """Internal bridge from numeric failures to a point certificate."""
+
+    def __init__(
+        self,
+        reason_code: str,
+        message: str,
+        *,
+        state: np.ndarray | None = None,
+    ):
+        self.reason_code = reason_code
+        self.state = None if state is None else np.asarray(state).copy()
+        super().__init__(message)
+
+
+@dataclass(frozen=True)
 class JVResult:
     V_fwd: np.ndarray
     J_fwd: np.ndarray
@@ -70,6 +181,50 @@ class JVResult:
     snapshots_rev: tuple[SpatialSnapshot, ...] | None = None
     decomp_fwd: JVCurrentDecomp | None = None
     decomp_rev: JVCurrentDecomp | None = None
+    status_fwd: tuple[JVPointStatus, ...] | None = None
+    status_rev: tuple[JVPointStatus, ...] | None = None
+
+    @property
+    def certified(self) -> bool:
+        """Whether both branches carry complete, valid point certificates."""
+        def _branch_is_complete(
+            V: np.ndarray,
+            J: np.ndarray,
+            statuses: tuple[JVPointStatus, ...] | None,
+            branch: str,
+        ) -> bool:
+            try:
+                V_arr = np.asarray(V, dtype=float)
+                J_arr = np.asarray(J, dtype=float)
+            except (TypeError, ValueError):
+                return False
+            if (
+                statuses is None
+                or V_arr.ndim != 1
+                or J_arr.ndim != 1
+                or V_arr.shape != J_arr.shape
+                or len(statuses) != len(V_arr)
+                or len(statuses) == 0
+                or not np.all(np.isfinite(V_arr))
+                or not np.all(np.isfinite(J_arr))
+            ):
+                return False
+            return all(
+                isinstance(status, JVPointStatus)
+                and status.valid
+                and status.upstream_valid
+                and status.branch == branch
+                and status.index == index
+                and np.isfinite(status.voltage)
+                and float(status.voltage) == float(V_arr[index])
+                for index, status in enumerate(statuses)
+            )
+
+        return _branch_is_complete(
+            self.V_fwd, self.J_fwd, self.status_fwd, "jv_forward",
+        ) and _branch_is_complete(
+            self.V_rev, self.J_rev, self.status_rev, "jv_reverse",
+        )
 
 
 # --- V_oc extraction: terminal-current resolution floor --------------------
@@ -163,14 +318,18 @@ def compute_metrics(
     assume_jsc_positive: bool = True,
     P_in: float = 1000.0,
     V_oc_max: float | None = None,
+    validity: Sequence[bool] | Sequence[JVPointStatus] | np.ndarray | None = None,
+    mpp_interpolation: Literal["sampled", "local_quadratic"] = "sampled",
 ) -> JVMetrics:
     """Compute V_oc, J_sc, FF, PCE from a J-V array (J in A/m²).
 
-    Reports the metrics directly from the simulated J(V) samples — it does
-    NOT clamp or smooth. The caller is responsible for providing a properly
-    converged, physically monotone curve (use a fine V grid and a quasi-static
-    sweep). P_mpp is the maximum of V·J over the operating quadrant
-    0 ≤ V ≤ V_oc.
+    By default, reports metrics directly from the simulated J(V) samples and
+    does not smooth. With ``mpp_interpolation='local_quadratic'``, only the
+    three certified power samples surrounding the discrete maximum are fitted;
+    a concave vertex inside that local voltage bracket may replace the sampled
+    maximum. Boundary maxima, non-concave fits, and out-of-bracket vertices
+    fall back to the sampled value. The caller remains responsible for voltage
+    refinement and convergence checks.
 
     Sign convention. The 1D solver follows the IonMonger / DriftFusion
     convention where J(V=0) > 0 (the photocurrent flows out of the device
@@ -233,6 +392,12 @@ def compute_metrics(
     disables the check, which is what a stack with no declared band gaps
     must do.
 
+    validity may be either a boolean mask or the per-point JVPointStatus
+    sequence returned by run_jv_sweep. Metrics are undefined for a partially
+    certified curve, so any false status raises ValueError instead of dropping,
+    interpolating across, or otherwise hiding that point. Non-finite V/J
+    samples are always rejected.
+
     Bracketing flag
     ---------------
     ``voc_bracketed`` means exactly one thing: **an open-circuit point was
@@ -251,6 +416,51 @@ def compute_metrics(
     """
     V = np.asarray(V, dtype=float)
     J = np.asarray(J, dtype=float)
+    if mpp_interpolation not in ("sampled", "local_quadratic"):
+        raise ValueError(
+            "mpp_interpolation must be 'sampled' or 'local_quadratic'"
+        )
+    if V.ndim != 1 or J.ndim != 1 or V.shape != J.shape:
+        raise ValueError(
+            f"V and J must be one-dimensional arrays of equal shape, got "
+            f"{V.shape} and {J.shape}"
+        )
+    if validity is not None:
+        validity_items = tuple(validity)
+        if len(validity_items) != len(V):
+            raise ValueError(
+                f"validity length {len(validity_items)} != J-V length {len(V)}"
+            )
+        status_items = tuple(
+            isinstance(item, JVPointStatus) for item in validity_items
+        )
+        if any(status_items):
+            if not all(status_items):
+                raise TypeError("validity cannot mix JVPointStatus and boolean values")
+            valid_mask = np.array(
+                [item.valid for item in validity_items], dtype=bool,
+            )
+        else:
+            if not all(isinstance(item, (bool, np.bool_)) for item in validity_items):
+                raise TypeError("validity values must be boolean or JVPointStatus")
+            valid_mask = np.asarray(validity_items, dtype=bool)
+        if valid_mask.shape != V.shape:
+            raise ValueError(
+                f"validity must have shape {V.shape}, got {valid_mask.shape}"
+            )
+        invalid = np.flatnonzero(~valid_mask)
+        if invalid.size:
+            raise ValueError(
+                "J-V metrics require every point to be certified; invalid "
+                f"indices: {invalid.tolist()}"
+            )
+    finite = np.isfinite(V) & np.isfinite(J)
+    if not np.all(finite):
+        invalid = np.flatnonzero(~finite)
+        raise ValueError(
+            "J-V metrics require finite voltage and current samples; "
+            f"non-finite indices: {invalid.tolist()}"
+        )
     if not assume_jsc_positive:
         J = -J
     order = np.argsort(V)
@@ -284,7 +494,38 @@ def compute_metrics(
         )
 
     mask = (V_s >= 0.0) & (V_s <= V_oc)
-    P_mpp = float(np.max(V_s[mask] * J_s[mask])) if mask.any() else 0.0
+    operating_voltage = V_s[mask]
+    operating_power = operating_voltage * J_s[mask]
+    if operating_power.size:
+        maximum_index = int(np.argmax(operating_power))
+        P_mpp = float(operating_power[maximum_index])
+        if (
+            mpp_interpolation == "local_quadratic"
+            and 0 < maximum_index < operating_power.size - 1
+        ):
+            local_voltage = operating_voltage[
+                maximum_index - 1 : maximum_index + 2
+            ]
+            local_power = operating_power[
+                maximum_index - 1 : maximum_index + 2
+            ]
+            centered_voltage = local_voltage - local_voltage[1]
+            coefficients = np.polynomial.polynomial.polyfit(
+                centered_voltage,
+                local_power,
+                2,
+            )
+            curvature = float(coefficients[2])
+            if np.isfinite(curvature) and curvature < 0.0:
+                vertex = -float(coefficients[1]) / (2.0 * curvature)
+                if centered_voltage[0] <= vertex <= centered_voltage[-1]:
+                    vertex_power = float(
+                        np.polynomial.polynomial.polyval(vertex, coefficients)
+                    )
+                    if np.isfinite(vertex_power) and vertex_power >= P_mpp:
+                        P_mpp = vertex_power
+    else:
+        P_mpp = 0.0
     FF = P_mpp / (V_oc * J_sc) if (V_oc * J_sc) > 0 else 0.0
     # PCE is defined against the incident optical power density P_in
     # [W/m^2]. The default 1000 W/m^2 is the AM1.5G 1-sun convention;
@@ -301,15 +542,32 @@ def hysteresis_index(
     V_rev: np.ndarray, J_rev: np.ndarray,
     *,
     V_oc_max: float | None = None,
+    validity_fwd: Sequence[bool] | Sequence[JVPointStatus] | np.ndarray | None = None,
+    validity_rev: Sequence[bool] | Sequence[JVPointStatus] | np.ndarray | None = None,
 ) -> float:
     """Forward/reverse PCE asymmetry. ``V_oc_max`` is forwarded to
     :func:`compute_metrics` on both branches (see its docstring); ``None``
     keeps the pre-existing no-ceiling behaviour."""
-    m_fwd = compute_metrics(V_fwd, J_fwd, V_oc_max=V_oc_max)
-    m_rev = compute_metrics(V_rev, J_rev, V_oc_max=V_oc_max)
+    m_fwd = compute_metrics(
+        V_fwd, J_fwd, V_oc_max=V_oc_max, validity=validity_fwd,
+    )
+    m_rev = compute_metrics(
+        V_rev, J_rev, V_oc_max=V_oc_max, validity=validity_rev,
+    )
     if m_rev.PCE == 0:
         return 0.0
     return (m_rev.PCE - m_fwd.PCE) / m_rev.PCE
+
+
+def _unavailable_metrics() -> JVMetrics:
+    """Return an unmistakable sentinel for an uncertified J-V branch."""
+    return JVMetrics(
+        V_oc=np.nan,
+        J_sc=np.nan,
+        FF=np.nan,
+        PCE=np.nan,
+        voc_bracketed=False,
+    )
 
 
 def _state_fields(
@@ -347,7 +605,8 @@ def _state_fields(
         P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
     )
     phi = solve_poisson_prefactored(
-        mat.poisson_factor, rho, phi_left=0.0, phi_right=mat.V_bi_bc - V_bc,
+        mat.poisson_factor, rho, phi_left=0.0,
+        phi_right=poisson_right_boundary(mat, V_bc),
     )
     return n, p, phi, sv
 
@@ -483,8 +742,13 @@ def compute_current_components(
         J_disp = EPS_0 * eps_face * (E_now - E_prev) / dt
 
     J_total = J_n + J_p + J_ion + J_disp
+    polarity = float(mat.junction_polarity)
     return CurrentComponents(
-        J_n=-J_n, J_p=-J_p, J_ion=-J_ion, J_disp=-J_disp, J_total=-J_total,
+        J_n=-polarity * J_n,
+        J_p=-polarity * J_p,
+        J_ion=-polarity * J_ion,
+        J_disp=-polarity * J_disp,
+        J_total=-polarity * J_total,
     )
 
 
@@ -662,11 +926,22 @@ _J_BRANCH_RETRY_LEGS = (2, 4, 8)
 
 # A rejected single-leg step is not recovered merely because one retry falls
 # below the current ceiling: the same wrong-branch defect can undershoot as
-# well as overshoot.  Require two successive subdivisions to agree before a
-# retry is allowed to replace the original state.  One percent is deliberately
+# well as overshoot. Require two successful subdivisions to agree before a
+# retry is allowed to replace the original state. An intermediate numeric
+# failure does not erase the preceding successful result when a finer retry
+# later completes. One percent is deliberately
 # much wider than the measured 4-vs-8-leg agreement (<= 0.2 %) and narrower
 # than the smallest measured wrong landing (3.3 % at V=0).
 _J_BRANCH_REFINEMENT_RTOL = 0.01
+
+# Absolute current resolution paired with the relative branch ceiling above.
+# A purely relative test degenerates when an optical override has J_sc near
+# zero: round-off-scale positive currents then exceed 1.05*J_sc despite being
+# numerically indistinguishable from zero. The same 1 A/m^2 scale floor is
+# used by _currents_agree, so 1 % of that scale gives 0.01 A/m^2 = 1 uA/cm^2.
+# This remains more than three orders below the smallest measured wrong-branch
+# excess on the calibrated one-sun gate.
+_J_BRANCH_CURRENT_ATOL = 0.01
 
 # V=0 has no universal lower current bound, so an under-read cannot be found
 # by a one-sided protocol ceiling.  Probe the same interval with four legs;
@@ -674,6 +949,28 @@ _J_BRANCH_REFINEMENT_RTOL = 0.01
 # eight-leg confirmation and replace the state.
 _J_ZERO_BIAS_PROBE_LEGS = 4
 _J_ZERO_BIAS_CONFIRM_LEGS = 8
+
+# Numeric failures that can arise from scipy integration or terminal-current
+# reconstruction. Programming errors remain loud instead of being mislabeled
+# as solver failures.
+_JV_NUMERIC_FAILURES = (
+    RuntimeError,
+    ValueError,
+    FloatingPointError,
+    OverflowError,
+    RuntimeWarning,
+    np.linalg.LinAlgError,
+)
+
+
+def _branch_current_ceiling(J_sc: float) -> float:
+    """Return the forward-branch trigger with relative and absolute margin."""
+    J_ref = float(J_sc)
+    margin = max(
+        _J_BRANCH_EXCESS * abs(J_ref),
+        _J_BRANCH_CURRENT_ATOL,
+    )
+    return J_ref + margin
 
 
 def _currents_agree(J_a: float, J_b: float) -> bool:
@@ -872,25 +1169,48 @@ def _integrate_step(
                 rtol, atol, max_bisect, illuminated,
             )
         return y_k
-    sol = run_transient(
-        x, y, (t_lo, t_hi), np.array([t_hi]),
-        stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
-        max_step=dt / 20.0 if dt > 0.0 else np.inf,
-        mat=mat,
-        max_nfev=_JV_RADAU_MAX_NFEV,
-    )
-    if sol.success:
+
+    last_failure: str | None = None
+
+    def _solver_attempt(
+        mat_attempt: MaterialArrays,
+        *,
+        method: str = "Radau",
+    ):
+        """Return a solver result, or None for a recoverable numeric failure."""
+        nonlocal last_failure
+        try:
+            # Overflow/invalid warnings inside scipy's Jacobian construction
+            # mean this attempt is numerically unusable even when the global
+            # warning policy would otherwise only print them. Normalize them
+            # with the explicit solver exceptions so bisection/BDF can recover.
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", RuntimeWarning)
+                sol_attempt = run_transient(
+                    x, y, (t_lo, t_hi), np.array([t_hi]),
+                    stack, illuminated=illuminated, V_app=V_app,
+                    rtol=rtol, atol=atol,
+                    max_step=dt / 20.0 if dt > 0.0 else np.inf,
+                    mat=mat_attempt,
+                    max_nfev=_JV_RADAU_MAX_NFEV,
+                    method=method,
+                )
+        except _JV_NUMERIC_FAILURES as exc:
+            last_failure = f"{type(exc).__name__}: {exc}"
+            return None
+        if not sol_attempt.success:
+            last_failure = str(
+                getattr(sol_attempt, "message", "solver returned success=False")
+            )
+        return sol_attempt
+
+    sol = _solver_attempt(mat)
+    if sol is not None and sol.success:
         return sol.y[:, -1]
     if mat.has_radiative_reabsorption:
         mat_step = _bake_radiative_reabsorption_step(y, x, mat, illuminated)
-        sol = run_transient(
-            x, y, (t_lo, t_hi), np.array([t_hi]),
-            stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
-            max_step=dt / 20.0 if dt > 0.0 else np.inf,
-            mat=mat_step,
-            max_nfev=_JV_RADAU_MAX_NFEV,
-        )
-        if sol.success:
+        sol = _solver_attempt(mat_step)
+        if sol is not None and sol.success:
             return sol.y[:, -1]
     if max_bisect == 0:
         # Last-chance BDF fallback. When Radau bisection is exhausted on
@@ -898,19 +1218,13 @@ def _integrate_step(
         # order BDF) sometimes converges where Radau cannot. Cost is one
         # extra solve attempt per pathological step; healthy steps never
         # reach this branch.
-        sol_bdf = run_transient(
-            x, y, (t_lo, t_hi), np.array([t_hi]),
-            stack, illuminated=illuminated, V_app=V_app, rtol=rtol, atol=atol,
-            max_step=(t_hi - t_lo) / 20.0 if t_hi > t_lo else np.inf,
-            mat=mat,
-            max_nfev=_JV_RADAU_MAX_NFEV,
-            method="BDF",
-        )
-        if sol_bdf.success:
+        sol_bdf = _solver_attempt(mat, method="BDF")
+        if sol_bdf is not None and sol_bdf.success:
             return sol_bdf.y[:, -1]
+        detail = f"; last failure: {last_failure}" if last_failure else ""
         raise RuntimeError(
             f"JV sweep: coupled solver failed to converge on [{t_lo:.3e},{t_hi:.3e}] "
-            f"at V_app={V_app:.4f} V after bisection"
+            f"at V_app={V_app:.4f} V after bisection{detail}"
         )
     t_mid = 0.5 * (t_lo + t_hi)
     y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol,
@@ -959,16 +1273,115 @@ def quasi_static_sweep(
     return np.asarray(voltages, dtype=float), J_arr
 
 
+def _custom_grid_parameters(
+    stack: DeviceStack,
+    elec: Sequence,
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Validate a programmatically constructed custom electrical-grid spec."""
+    weights = tuple(getattr(stack, "grid_interval_weights", ()) or ())
+    alphas = tuple(getattr(stack, "grid_alphas", ()) or ())
+    if not weights and not alphas:
+        return (), ()
+    if not weights or not alphas:
+        raise ValueError(
+            "custom electrical grid requires both grid_interval_weights and "
+            "grid_alphas"
+        )
+    if len(weights) != len(elec) or len(alphas) != len(elec):
+        raise ValueError(
+            "custom electrical-grid tuples must contain one value per "
+            "electrical layer"
+        )
+    for label, values in (
+        ("grid_interval_weights", weights),
+        ("grid_alphas", alphas),
+    ):
+        try:
+            numeric = np.asarray(values, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{label} values must be finite and positive"
+            ) from exc
+        if not np.all(np.isfinite(numeric)) or np.any(numeric <= 0.0):
+            raise ValueError(f"{label} values must be finite and positive")
+    return tuple(float(value) for value in weights), tuple(
+        float(value) for value in alphas
+    )
+
+
+def _largest_remainder_interval_counts(
+    N_grid: int,
+    weights: Sequence[float],
+) -> list[int]:
+    """Allocate exactly ``N_grid`` intervals with deterministic tie-breaking."""
+    total = int(N_grid)
+    if total != N_grid:
+        raise ValueError(f"N_grid must be an integer, got {N_grid}")
+    n_layers = len(weights)
+    if total < n_layers:
+        raise ValueError(
+            f"custom electrical grid needs at least {n_layers} intervals, "
+            f"got N_grid={N_grid}"
+        )
+
+    weight_array = np.asarray(weights, dtype=float)
+    # Normalize first so a set of individually finite, very large weights
+    # cannot overflow its sum and silently collapse every quota to zero.
+    scaled_weights = weight_array / float(np.max(weight_array))
+    quotas = total * scaled_weights / float(np.sum(scaled_weights))
+    counts = np.floor(quotas).astype(int)
+    shortfall = total - int(np.sum(counts))
+    order = sorted(
+        range(n_layers),
+        key=lambda index: (-(quotas[index] - counts[index]), index),
+    )
+    for index in order[:shortfall]:
+        counts[index] += 1
+
+    # Positive weights can still receive zero intervals when N_grid is small
+    # or highly skewed. Repair those slots by taking one interval from the
+    # most over-allocated donor; electrical-layer order resolves exact ties.
+    for recipient in np.flatnonzero(counts == 0):
+        donors = [index for index in range(n_layers) if counts[index] > 1]
+        if not donors:  # N_grid >= n_layers makes this unreachable.
+            raise RuntimeError("cannot satisfy one-interval-per-layer constraint")
+        donor = max(
+            donors,
+            key=lambda index: (
+                counts[index] - quotas[index], counts[index], -index,
+            ),
+        )
+        counts[donor] -= 1
+        counts[recipient] = 1
+
+    assert int(np.sum(counts)) == total
+    assert np.all(counts >= 1)
+    return counts.tolist()
+
+
 def _layer_node_counts(stack: DeviceStack, N_grid: int) -> list[int]:
     """Per-electrical-layer interval count for the multilayer grid.
 
-    Base is ``n_per = N_grid // n_elec`` per layer. A graded layer (when
-    ``band_grading`` is on and it declares back endpoints) is refined by its
-    ``grading_N_mult`` so a steep notch's band step is resolved over enough
-    cells instead of landing on a single over-injecting face. With no graded
-    layer every multiplier is 1, recovering the legacy sizing exactly.
+    With a configured ``grid_interval_weights`` tuple, deterministic largest
+    remainder allocation returns exactly ``N_grid`` total intervals and at
+    least one per electrical layer. Without it, the historical
+    ``n_per = N_grid // n_elec`` path is retained exactly, including optional
+    ``grading_N_mult`` refinement of graded layers.
     """
     elec = electrical_layers(stack)
+    weights, _ = _custom_grid_parameters(stack, elec)
+    if weights:
+        if bool(getattr(stack, "band_grading", False)) and any(
+            layer.params is not None
+            and int(getattr(layer.params, "grading_N_mult", 1)) > 1
+            for layer in elec
+        ):
+            raise ValueError(
+                "custom electrical-grid interval weights cannot be combined "
+                "with band_grading and grading_N_mult > 1"
+            )
+        return _largest_remainder_interval_counts(N_grid, weights)
+
     n_per = N_grid // len(elec)
     band_grading = bool(getattr(stack, "band_grading", False))
     counts: list[int] = []
@@ -991,6 +1404,7 @@ def _grid_node_count(stack: DeviceStack, N_grid: int) -> int:
     deduplicates shared boundary points, so the total node count is one more
     than the sum of per-layer intervals. With no graded layer this reduces to
     ``1 + n_elec * (N_grid // n_elec)`` — byte-identical to the legacy formula.
+    A custom weighted grid instead has exactly ``N_grid + 1`` nodes.
     """
     return 1 + sum(_layer_node_counts(stack, N_grid))
 
@@ -1011,10 +1425,11 @@ def build_electrical_grid(stack: DeviceStack, N_grid: int) -> np.ndarray:
     them: they are optical-only and have no drift-diffusion counterpart.
     """
     elec = electrical_layers(stack)
+    _, alphas = _custom_grid_parameters(stack, elec)
     return multilayer_grid([
         Layer(lyr.thickness, n)
         for lyr, n in zip(elec, _layer_node_counts(stack, N_grid))
-    ])
+    ], alpha=alphas if alphas else 3.0)
 
 
 def _default_V_max(stack: DeviceStack) -> float:
@@ -1022,9 +1437,11 @@ def _default_V_max(stack: DeviceStack) -> float:
 
     Rationale
     ---------
-    V_oc on heterostacks is bounded above by the band-offset-aware built-in
-    potential V_bi_eff (``stack.compute_V_bi()``), which can exceed the manual
-    ``stack.V_bi`` field configured in legacy YAMLs. If we opened the sweep
+    V_oc on heterostacks is bounded above by the active operating built-in
+    potential. Explicit contact-potential modes use their selected work-function
+    difference; compatibility stacks retain the historical band-derived
+    ``compute_V_bi()`` value, which can exceed the manual ``stack.V_bi`` field.
+    If we opened the sweep
     only to the manual V_bi, forward sweeps on high-V_oc stacks (MAPbI3 etc.)
     would never cross J = 0 and ``compute_metrics`` would return V_oc = V_max.
 
@@ -1033,16 +1450,19 @@ def _default_V_max(stack: DeviceStack) -> float:
 
     The 1.3 headroom captures the minority-quasi-Fermi-level rise beyond V_bi
     under strong illumination; the 1.4 V floor is a backstop for legacy configs
-    where chi/Eg are not set (so compute_V_bi falls back to the manual V_bi,
+    where chi/Eg are not set (so the compatibility estimate falls back to V_bi,
     which for a MAPbI3-like stack can be ~1.05 V — 1.3× that is only 1.37 V,
     uncomfortably close to the observed 1.05-1.15 V V_oc range).
 
     This is the single source of truth for the default V_max and is unit-tested
     directly so the formula can be audited without running a full sweep.
     """
-    # compute_V_bi is the SIGNED phi(right)-phi(left) (negative for
-    # n-contact-left devices); the sweep range needs its magnitude.
-    V_bi_eff = abs(stack.compute_V_bi())
+    # The operating value is signed (negative for n-contact-left devices); the
+    # sweep range needs its magnitude.
+    resolve_operating = getattr(
+        stack, "operating_built_in_potential", stack.compute_V_bi
+    )
+    V_bi_eff = abs(resolve_operating())
     return max(V_bi_eff * 1.3, 1.4)
 
 
@@ -1060,6 +1480,9 @@ def run_jv_sweep(
     save_snapshots: bool = False,
     decompose_currents: bool = False,
     v_max_max_attempts: int = 1,
+    certification_mode: Literal["strict", "diagnostic"] = "strict",
+    allow_underresolved_grid: bool = False,
+    allow_unvalidated_driver: bool = False,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
@@ -1103,14 +1526,38 @@ def run_jv_sweep(
       Must be a 1-D array of shape (N,) where N is the number of electrical-grid
       nodes (determined by N_grid and the number of electrical layers). When
       provided, this profile is used verbatim in place of Beer-Lambert or TMM
-      optics for both the initial illuminated steady-state and every subsequent
-      solver call. When None (default), the existing single-junction optics path
-      is used unchanged.
+      optics for both the initial finite-time illuminated preconditioning and
+      every subsequent solver call. When None (default), the existing
+      single-junction optics path is used unchanged.
 
     illuminated : when False, run a dark J-V (G=0 everywhere). The initial
-      state is dark equilibrium instead of illuminated steady-state. Cannot
+      state is dark equilibrium instead of a light-conditioned state. Cannot
       be combined with fixed_generation.
+
+    certification_mode : "strict" (default) raises
+      JVCertificationError as soon as a voltage point fails its required
+      local-refinement certificate. "diagnostic" keeps running from the
+      rejected candidate state for debugging, but stores NaN at the failed
+      point and every downstream point in that warm-start chain, records
+      immutable per-point statuses, and returns unavailable NaN metrics.
+      Diagnostic output must not be used as a physical J-V curve.
+
+    allow_underresolved_grid : explicit diagnostic-only override for the
+      thick-layer Debye-resolution guard. The default False rejects a known
+      under-resolved wafer-scale grid before material construction or time
+      integration. True permits execution but does not certify mesh or J-V
+      convergence and must not be used for physical results.
+
+    allow_unvalidated_driver : explicit diagnostic-only override for a stack
+      whose production policy requires the cancellation-safe quasi-Fermi
+      driver. This never certifies the transient result and never switches
+      solvers implicitly.
     """
+    if certification_mode not in ("strict", "diagnostic"):
+        raise ValueError(
+            "certification_mode must be 'strict' or 'diagnostic', got "
+            f"{certification_mode!r}"
+        )
     if v_max_max_attempts < 1:
         raise ValueError(
             f"v_max_max_attempts must be >= 1, got {v_max_max_attempts}"
@@ -1127,7 +1574,7 @@ def run_jv_sweep(
         V_max_initial = (
             V_max
             if V_max is not None
-            else max(abs(stack.compute_V_bi()) * 1.3, 1.4)
+            else max(abs(stack.operating_built_in_potential()) * 1.3, 1.4)
         )
         V_max_cap = V_max_initial + 2.0
         V_max_attempt = V_max_initial
@@ -1150,7 +1597,17 @@ def run_jv_sweep(
                 illuminated=illuminated, save_snapshots=save_snapshots,
                 decompose_currents=decompose_currents,
                 v_max_max_attempts=1,  # disable recursion on inner call
+                certification_mode=certification_mode,
+                allow_underresolved_grid=allow_underresolved_grid,
+                allow_unvalidated_driver=allow_unvalidated_driver,
             )
+            if (
+                last_result.status_fwd is not None
+                and not all(status.valid for status in last_result.status_fwd)
+            ):
+                # A wider voltage window cannot repair an uncertified
+                # warm-start chain. Diagnostic mode returns it immediately.
+                return last_result
             if last_result.metrics_fwd.voc_bracketed:
                 return last_result
             attempts_used += 1
@@ -1183,6 +1640,17 @@ def run_jv_sweep(
     # solver state vector. TMM/optics paths still see the full stack.
     elec = electrical_layers(stack)
     x = build_electrical_grid(stack, N_grid)
+    require_thick_layer_interface_resolution(
+        x,
+        stack,
+        N_grid=N_grid,
+        allow_underresolved_grid=allow_underresolved_grid,
+    )
+    require_jv_driver_capability(
+        stack,
+        requested_driver="transient",
+        allow_unvalidated_driver=allow_unvalidated_driver,
+    )
     N = _grid_node_count(stack, N_grid)
     assert N == len(x), "grid node count mismatch — _grid_node_count is out of sync"
     L = sum(l.thickness for l in elec)
@@ -1218,35 +1686,37 @@ def run_jv_sweep(
 
     # Start from the appropriate equilibrium state:
     # - Dark mode: use dark equilibrium directly (no illumination settle)
-    # - Fixed generation: inline the illuminated-SS logic with overridden mat
-    # - Default: use the standard illuminated steady-state solver
+    # - Fixed generation: precondition with the overridden material cache
+    # - Default: preserve the independently built preconditioning cache; this
+    #   is load-bearing for the calibrated stiff-branch regression protocol
     if not illuminated:
         y_eq = solve_equilibrium(x, stack)
     elif fixed_generation is not None:
-        from perovskite_sim.solver.mol import run_transient as _run_transient
-        _t_settle = 1e-3
-        y_dark = solve_equilibrium(x, stack)
-        sol = _run_transient(
-            x, y_dark, (0.0, _t_settle), np.array([_t_settle]),
-            stack, illuminated=True, V_app=0.0, rtol=rtol, atol=atol,
-            mat=mat,
+        y_eq = solve_illuminated_ss(
+            x, stack, V_app=0.0, rtol=rtol, atol=atol, mat=mat,
         )
-        y_eq = sol.y[:, -1] if sol.success else y_dark
     else:
         y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
 
-    def _sweep(V_start: float, V_end: float, y_init: np.ndarray, stage: str,
-               J_sc_ref: float | None = None):
+    def _sweep(
+        V_start: float,
+        V_end: float,
+        y_init: np.ndarray,
+        stage: str,
+        initial_state_certified: bool = True,
+    ):
         """Sweep from V_start to V_end, starting from carrier state y_init.
 
-        Returns (V_arr, J_arr, y_final, snapshots, decomp) so sweeps can be
-        chained. snapshots and decomp are populated only when the corresponding
-        flags (save_snapshots, decompose_currents) are True.
+        Returns (V_arr, J_arr, y_final, snapshots, decomp, statuses) so sweeps
+        can be chained. snapshots and decomp are populated only when the
+        corresponding flags (save_snapshots, decompose_currents) are True.
 
-        ``J_sc_ref`` is the short-circuit current used by the wrong-branch
-        detector (``_J_BRANCH_EXCESS``). The forward sweep starts at V=0 and
-        therefore learns it from its own first point; the reverse sweep ends
-        there, so ``run_jv_sweep`` hands it the forward value.
+        The wrong-branch detector applies only to ``jv_forward``. That branch
+        starts from the built-in short-circuit initialization and therefore
+        satisfies the detector's J(V) <= J_sc protocol premise. The reverse
+        branch starts from a high-bias, precharged transient state; stored
+        electronic, ionic, or displacement energy makes the same ceiling
+        physically invalid there.
         """
         V_arr = np.linspace(V_start, V_end, n_points)
         dt = abs(V_end - V_start) / (v_rate * (n_points - 1))
@@ -1258,9 +1728,11 @@ def run_jv_sweep(
         d_Jion: list[float] = []
         d_Jdisp: list[float] = []
         d_Jtot: list[float] = []
+        statuses: list[JVPointStatus] = []
         y = y_init.copy()
         V_prev = float(V_arr[0])
-        J_ref = J_sc_ref
+        J_ref: float | None = None
+        chain_certified = initial_state_certified
 
         def _candidate(
             y_entry: np.ndarray,
@@ -1269,85 +1741,156 @@ def run_jv_sweep(
             t_hi: float,
             n_legs: int,
         ) -> tuple[np.ndarray, float]:
-            y_candidate = _integrate_step(
-                x, y_entry, stack, mat, V_k, t_lo, t_hi, rtol, atol,
-                illuminated=illuminated, n_legs=n_legs,
-            )
-            J_candidate = _compute_current(
-                x, y_candidate, stack, V_k, y_prev=y_entry, dt=dt,
-                mat=mat, V_app_prev=V_prev,
-            )
+            try:
+                y_candidate = _integrate_step(
+                    x, y_entry, stack, mat, V_k, t_lo, t_hi, rtol, atol,
+                    illuminated=illuminated, n_legs=n_legs,
+                )
+            except _JV_NUMERIC_FAILURES as exc:
+                raise _JVCandidateFailure(
+                    "integration_failed",
+                    f"integration failed at V={V_k:.6g} V with "
+                    f"{n_legs} leg(s): {type(exc).__name__}: {exc}",
+                ) from exc
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", RuntimeWarning)
+                    J_candidate = _compute_current(
+                        x, y_candidate, stack, V_k, y_prev=y_entry, dt=dt,
+                        mat=mat, V_app_prev=V_prev,
+                    )
+            except _JV_NUMERIC_FAILURES as exc:
+                raise _JVCandidateFailure(
+                    "current_extraction_failed",
+                    f"terminal-current extraction failed at V={V_k:.6g} V "
+                    f"with {n_legs} leg(s): {type(exc).__name__}: {exc}",
+                    state=y_candidate,
+                ) from exc
             return y_candidate, J_candidate
 
         for k, V_k in enumerate(V_arr):
             y_prev = y.copy()
             t_lo = t_points[k]
             t_hi = t_lo + dt
-            y, J_k = _candidate(y_prev, float(V_k), t_lo, t_hi, 1)
+            candidate_error: _JVCandidateFailure | None = None
+            try:
+                y, J_k = _candidate(y_prev, float(V_k), t_lo, t_hi, 1)
+            except _JVCandidateFailure as exc:
+                candidate_error = exc
+                y = y_prev if exc.state is None else exc.state.copy()
+                J_k = np.nan
+
+            initial_candidate_current = (
+                None if candidate_error is not None else float(J_k)
+            )
+
+            upstream_valid = chain_certified
+            local_valid = candidate_error is None
+            refinement_required = False
+            refinement_converged: bool | None = (
+                False if candidate_error is not None else None
+            )
+            attempted_legs = [1]
+            attempted_currents: list[float | None] = [
+                None if candidate_error is not None else float(J_k)
+            ]
+            failed_legs: list[int] = [1] if candidate_error is not None else []
+            accepted_legs = 0 if candidate_error is not None else 1
+            reason_code = (
+                candidate_error.reason_code
+                if candidate_error is not None else "certified"
+            )
+            message = (
+                f"single-leg candidate failed: {candidate_error}"
+                if candidate_error is not None else ""
+            )
+
+            if (candidate_error is None
+                    and (not np.isfinite(J_k) or not np.all(np.isfinite(y)))):
+                local_valid = False
+                reason_code = "nonfinite_candidate"
+                message = (
+                    "the integrator returned a non-finite state or terminal "
+                    "current"
+                )
 
             # The first/last short-circuit sample has no trustworthy lower
-            # current bound.  A wrong Radau branch can therefore under-read it
-            # without tripping the one-sided J_sc ceiling below.  Probe the
-            # exact same physical interval with four legs.  Healthy steps keep
-            # the original state and current bit-for-bit; only a material
-            # disagreement pays for an eight-leg confirmation and replacement.
-            if illuminated and float(V_k) == 0.0:
+            # current bound. A wrong Radau branch can under-read it, so the
+            # four-leg probe is a required certificate, not an advisory
+            # warning. A disagreement additionally requires the independent
+            # eight-leg result to agree with the probe.
+            if local_valid and illuminated and float(V_k) == 0.0:
+                refinement_required = True
+                attempted_legs.append(_J_ZERO_BIAS_PROBE_LEGS)
                 try:
                     y_probe, J_probe = _candidate(
                         y_prev, float(V_k), t_lo, t_hi,
                         _J_ZERO_BIAS_PROBE_LEGS,
                     )
                 except RuntimeError as exc:
-                    warnings.warn(
-                        f"J-V sweep: {_J_ZERO_BIAS_PROBE_LEGS}-leg V=0 "
-                        f"subdivision probe failed ({exc}). Keeping the "
-                        "successful single-leg value; treat this point as "
-                        "unconfirmed.",
-                        RuntimeWarning,
-                        stacklevel=2,
+                    attempted_currents.append(None)
+                    failed_legs.append(_J_ZERO_BIAS_PROBE_LEGS)
+                    local_valid = False
+                    refinement_converged = False
+                    reason_code = "zero_bias_probe_failed"
+                    message = (
+                        f"{_J_ZERO_BIAS_PROBE_LEGS}-leg V=0 subdivision "
+                        f"probe failed: {exc}"
                     )
                 else:
-                    if not _refinements_agree(
+                    attempted_currents.append(float(J_probe))
+                    if _refinements_agree(
                         y, J_k, y_probe, J_probe, N, mat.N_iface_state,
                     ):
+                        refinement_converged = True
+                        reason_code = "zero_bias_refinement_agreed"
+                    else:
+                        attempted_legs.append(_J_ZERO_BIAS_CONFIRM_LEGS)
                         try:
                             y_confirm, J_confirm = _candidate(
                                 y_prev, float(V_k), t_lo, t_hi,
                                 _J_ZERO_BIAS_CONFIRM_LEGS,
                             )
                         except RuntimeError as exc:
-                            warnings.warn(
-                                f"J-V sweep: {_J_ZERO_BIAS_CONFIRM_LEGS}-leg "
-                                f"V=0 subdivision confirmation failed ({exc}). "
-                                "Keeping the successful single-leg value; "
-                                "treat this point as unconverged.",
-                                RuntimeWarning,
-                                stacklevel=2,
+                            attempted_currents.append(None)
+                            failed_legs.append(_J_ZERO_BIAS_CONFIRM_LEGS)
+                            local_valid = False
+                            refinement_converged = False
+                            reason_code = "zero_bias_confirmation_failed"
+                            message = (
+                                f"{_J_ZERO_BIAS_CONFIRM_LEGS}-leg V=0 "
+                                f"subdivision confirmation failed: {exc}"
                             )
                         else:
+                            attempted_currents.append(float(J_confirm))
                             if _refinements_agree(
                                 y_probe, J_probe, y_confirm, J_confirm,
                                 N, mat.N_iface_state,
                             ):
                                 y, J_k = y_confirm, J_confirm
+                                accepted_legs = _J_ZERO_BIAS_CONFIRM_LEGS
+                                refinement_converged = True
+                                reason_code = "zero_bias_refinement_recovered"
                             else:
-                                warnings.warn(
-                                    f"J-V sweep: terminal current at V=0 "
-                                    f"failed local subdivision convergence: "
+                                local_valid = False
+                                refinement_converged = False
+                                reason_code = "zero_bias_refinement_disagreed"
+                                message = (
+                                    "V=0 local subdivision did not converge: "
                                     f"single/{_J_ZERO_BIAS_PROBE_LEGS}/"
-                                    f"{_J_ZERO_BIAS_CONFIRM_LEGS}-leg values "
-                                    f"are {J_k:.3f}/{J_probe:.3f}/"
-                                    f"{J_confirm:.3f} A/m^2. Keeping the "
-                                    "single-leg value; treat this point as "
-                                    "unconverged.",
-                                    RuntimeWarning,
-                                    stacklevel=2,
+                                    f"{_J_ZERO_BIAS_CONFIRM_LEGS}-leg currents "
+                                    f"were {J_k:.6g}/{J_probe:.6g}/"
+                                    f"{J_confirm:.6g} A/m^2"
                                 )
 
             # Wrong-branch rejection. Only fires in the illuminated forward
-            # power quadrant after the built-in V=0 initialization. Healthy
-            # steps never enter this block, so results elsewhere are
-            # bit-identical. See _J_BRANCH_EXCESS for the protocol boundary.
+            # power quadrant after the built-in V=0 initialization. A current
+            # above the J_sc ceiling is unphysical for this protocol. Each
+            # positive-to-nonpositive transition is also certified by
+            # local subdivision because it determines V_oc and can otherwise
+            # hide a wrong low-current landing that the one-sided ceiling
+            # cannot see. Healthy non-crossing steps remain bit-identical. See
+            # _J_BRANCH_EXCESS for the protocol boundary.
             #
             # The V=0 refinement above makes J_ref numerically self-consistent
             # before it becomes this ceiling.  Do not replace it with a photon
@@ -1355,22 +1898,36 @@ def run_jv_sweep(
             # displacement/ionic contributions, which stored energy can drive
             # above the instantaneous optical generation.
             _ceiling = (
-                J_ref * (1.0 + _J_BRANCH_EXCESS)
-                if J_ref is not None and J_ref > 0.0 else None
+                _branch_current_ceiling(J_ref)
+                if stage == "jv_forward" and J_ref is not None and J_ref > 0.0
+                else None
             )
-            if (illuminated and _ceiling is not None
-                    and float(V_k) > 0.0 and J_k > _ceiling):
+            _ceiling_violation = bool(
+                _ceiling is not None and float(V_k) > 0.0 and J_k > _ceiling
+            )
+            _zero_crossing = bool(
+                stage == "jv_forward"
+                and _ceiling is not None
+                and k > 0
+                and J_arr[k - 1] > 0.0
+                and J_k <= 0.0
+            )
+            if (local_valid and illuminated and _ceiling is not None
+                    and (_ceiling_violation or _zero_crossing)):
+                refinement_required = True
+                refinement_converged = False
                 previous_retry: tuple[np.ndarray, float] | None = None
-                failed_legs: list[int] = []
                 for n_legs in _J_BRANCH_RETRY_LEGS:
+                    attempted_legs.append(n_legs)
                     try:
                         y_retry, J_retry = _candidate(
                             y_prev, float(V_k), t_lo, t_hi, n_legs,
                         )
                     except RuntimeError:
+                        attempted_currents.append(None)
                         failed_legs.append(n_legs)
-                        previous_retry = None
                         continue
+                    attempted_currents.append(float(J_retry))
                     if (previous_retry is not None
                             and previous_retry[1] <= _ceiling
                             and J_retry <= _ceiling
@@ -1379,31 +1936,82 @@ def run_jv_sweep(
                                 y_retry, J_retry, N, mat.N_iface_state,
                             )):
                         y, J_k = y_retry, J_retry
+                        accepted_legs = n_legs
+                        refinement_converged = True
+                        reason_code = (
+                            "zero_crossing_refinement_recovered"
+                            if _zero_crossing and not _ceiling_violation
+                            else "positive_bias_refinement_recovered"
+                        )
                         break
                     previous_retry = (y_retry, J_retry)
                 else:
-                    # Never silently keep a value known to break the bound.
                     failure_note = (
                         f" Failed leg counts: {failed_legs}."
                         if failed_legs else ""
                     )
-                    warnings.warn(
-                        f"J-V sweep: terminal current at V={float(V_k):.4f} V "
-                        f"is {J_k:.3f} A/m^2, above the protocol current ceiling "
-                        f"J_sc*(1+{_J_BRANCH_EXCESS:g}) = {_ceiling:.3f}; "
-                        f"forced "
-                        f"subdivision into {_J_BRANCH_RETRY_LEGS} legs did not "
-                        "produce two converged values within that ceiling. "
-                        f"Treat this point as unconverged.{failure_note}",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
-            J_arr[k] = J_k
-            if J_ref is None and float(V_k) == 0.0:
+                    local_valid = False
+                    if _zero_crossing and not _ceiling_violation:
+                        reason_code = "zero_crossing_refinement_exhausted"
+                        message = (
+                            f"terminal current changed sign from "
+                            f"{J_arr[k - 1]:.6g} to {J_k:.6g} A/m^2; "
+                            f"refinements {_J_BRANCH_RETRY_LEGS} did not "
+                            "produce two converged values within the forward "
+                            f"protocol ceiling {_ceiling:.3f} A/m^2."
+                            f"{failure_note}"
+                        )
+                    else:
+                        reason_code = "positive_bias_refinement_exhausted"
+                        message = (
+                            f"terminal current {J_k:.6g} A/m^2 exceeded the "
+                            "protocol current ceiling "
+                            f"J_sc + max({_J_BRANCH_EXCESS:g}*|J_sc|, "
+                            f"{_J_BRANCH_CURRENT_ATOL:g} A/m^2) = "
+                            f"{_ceiling:.3f}; refinements "
+                            f"{_J_BRANCH_RETRY_LEGS} did not produce two "
+                            f"converged values within it.{failure_note}"
+                        )
+
+            if local_valid and not upstream_valid:
+                reason_code = "upstream_state_uncertified"
+                message = (
+                    "the local step completed, but its warm-start state chain "
+                    "contains an uncertified predecessor"
+                )
+            point_status = JVPointStatus(
+                branch=stage,
+                index=k,
+                voltage=float(V_k),
+                valid=bool(local_valid and upstream_valid),
+                upstream_valid=bool(upstream_valid),
+                refinement_required=refinement_required,
+                refinement_converged=refinement_converged,
+                attempted_legs=tuple(attempted_legs),
+                attempted_currents=tuple(attempted_currents),
+                failed_legs=tuple(failed_legs),
+                accepted_legs=accepted_legs,
+                reason_code=reason_code,
+                message=message,
+                candidate_current=initial_candidate_current,
+            )
+            if not point_status.valid and certification_mode == "strict":
+                raise JVCertificationError(point_status)
+            if not local_valid:
+                warnings.warn(
+                    f"{JVCertificationError(point_status)}; diagnostic mode "
+                    "will return NaN for this point and its downstream chain.",
+                    JVCertificationWarning,
+                    stacklevel=2,
+                )
+            statuses.append(point_status)
+            chain_certified = point_status.valid
+            J_arr[k] = J_k if point_status.valid else np.nan
+            if J_ref is None and float(V_k) == 0.0 and point_status.valid:
                 J_ref = J_k
             if save_snapshots:
                 snaps.append(extract_spatial_snapshot(x, y, stack, float(V_k), mat=mat))
-            if decompose_currents:
+            if decompose_currents and point_status.valid:
                 cc = compute_current_components(
                     x, y, stack, float(V_k),
                     y_prev=y_prev, dt=dt, mat=mat, V_app_prev=V_prev,
@@ -1413,6 +2021,12 @@ def run_jv_sweep(
                 d_Jion.append(float(cc.J_ion[0]))
                 d_Jdisp.append(float(cc.J_disp[0]))
                 d_Jtot.append(float(cc.J_total[0]))
+            elif decompose_currents:
+                d_Jn.append(np.nan)
+                d_Jp.append(np.nan)
+                d_Jion.append(np.nan)
+                d_Jdisp.append(np.nan)
+                d_Jtot.append(np.nan)
             V_prev = float(V_k)
             if progress is not None:
                 progress(stage, k + 1, n_points, "")
@@ -1423,29 +2037,54 @@ def run_jv_sweep(
                 J_ion=np.array(d_Jion), J_disp=np.array(d_Jdisp),
                 J_total=np.array(d_Jtot),
             )
-        return V_arr, J_arr, y, snaps, decomp
+        return V_arr, J_arr, y, snaps, decomp, tuple(statuses)
 
     V_upper = _default_V_max(stack) if V_max is None else V_max
     # Forward sweep: dark equilibrium → short circuit → open circuit
-    V_fwd, J_fwd, y_oc, snaps_fwd, decomp_fwd = _sweep(0.0, V_upper, y_eq, "jv_forward")
-    # Reverse sweep: continue from light-soaked OC state → short circuit
-    # The reverse sweep reaches V=0 only at its LAST point, so it cannot learn
-    # J_sc from itself in time to police its own forward-bias points — hand it
-    # the forward sweep's value (same device, same illumination).
-    J_sc_fwd = float(J_fwd[0]) if len(J_fwd) else None
-    V_rev, J_rev, _, snaps_rev, decomp_rev = _sweep(
-        V_upper, 0.0, y_oc, "jv_reverse", J_sc_ref=J_sc_fwd,
+    (
+        V_fwd, J_fwd, y_oc, snaps_fwd, decomp_fwd, status_fwd,
+    ) = _sweep(0.0, V_upper, y_eq, "jv_forward")
+    # Reverse sweep: continue from the high-bias, light-soaked state to short
+    # circuit. It retains the mandatory V=0 subdivision certificate, but does
+    # not use the forward-only J_sc ceiling: a precharged transient can release
+    # stored electronic, ionic, or displacement energy above its terminal J_sc.
+    reverse_seed_certified = all(status.valid for status in status_fwd)
+    (
+        V_rev, J_rev, _, snaps_rev, decomp_rev, status_rev,
+    ) = _sweep(
+        V_upper, 0.0, y_oc, "jv_reverse",
+        initial_state_certified=reverse_seed_certified,
     )
-
     # Refuse a V_oc above min(Eg)/q over the electrical layers — impossible
     # regardless of what the numerics produced past flat band. None when the
     # stack declares no band gaps (legacy chi=Eg=0 presets), which disables
     # the check rather than rejecting everything.
     V_oc_ceiling = thermodynamic_voc_ceiling(stack)
-    m_fwd = compute_metrics(V_fwd, J_fwd, V_oc_max=V_oc_ceiling)
-    m_rev = compute_metrics(V_rev[::-1], J_rev[::-1], V_oc_max=V_oc_ceiling)
-    HI = hysteresis_index(V_fwd, J_fwd, V_rev[::-1], J_rev[::-1],
-                          V_oc_max=V_oc_ceiling)
+    fwd_certified = all(status.valid for status in status_fwd)
+    rev_certified = all(status.valid for status in status_rev)
+    m_fwd = (
+        compute_metrics(
+            V_fwd, J_fwd, V_oc_max=V_oc_ceiling, validity=status_fwd,
+        )
+        if fwd_certified else _unavailable_metrics()
+    )
+    status_rev_ordered = status_rev[::-1]
+    m_rev = (
+        compute_metrics(
+            V_rev[::-1], J_rev[::-1], V_oc_max=V_oc_ceiling,
+            validity=status_rev_ordered,
+        )
+        if rev_certified else _unavailable_metrics()
+    )
+    HI = (
+        hysteresis_index(
+            V_fwd, J_fwd, V_rev[::-1], J_rev[::-1],
+            V_oc_max=V_oc_ceiling,
+            validity_fwd=status_fwd,
+            validity_rev=status_rev_ordered,
+        )
+        if fwd_certified and rev_certified else np.nan
+    )
 
     return JVResult(
         V_fwd=V_fwd, J_fwd=J_fwd, V_rev=V_rev, J_rev=J_rev,
@@ -1454,4 +2093,6 @@ def run_jv_sweep(
         snapshots_rev=tuple(snaps_rev) if save_snapshots else None,
         decomp_fwd=decomp_fwd,
         decomp_rev=decomp_rev,
+        status_fwd=status_fwd,
+        status_rev=status_rev,
     )

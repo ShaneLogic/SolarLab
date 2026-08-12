@@ -3,19 +3,39 @@
 # Reference: Sze & Ng, "Physics of Semiconductor Devices", 3rd ed.
 
 simulation_hints:
-  # 180 um wafer demands dense grid: at N_grid=30 (default) the base is
-  # sampled at ~12 um spacing while the local Debye length is ~100 nm,
-  # yielding unphysical J-V spikes (J_sc in the MA/m^2 range). Minimum
-  # for physical results at default tolerances is ~200 per stack.
+  # The 180 um wafer is far outside the generic thin-film mesh envelope.
+  # With the executable 1:4 allocation below, N_grid=100 places the first
+  # p-base cell at ~72.2 nm, about 1.77 times the 40.9 nm carrier Debye
+  # length, and is rejected before integration.
+  # N_grid=200 is the declared production minimum and passes the necessary
+  # interface-cell guard; that guard alone is not a default-driver J-V
+  # mesh-convergence certificate.
   min_N_grid: 200
   notes: >-
-    180 um c-Si wafer. Requires N_grid >= 200 at default Radau
-    tolerances to resolve the junction depletion layer without
-    catastrophic discretisation error. Full J-V sweeps take several
-    minutes; for iteration prefer equilibrium-level tests.
+    N_grid is the total electrical interval budget. The 1:4 emitter/base
+    weights produce 40/160, 60/240, and 80/320 intervals on the 200/300/400
+    ladder; alpha=2 in the 300 nm emitter avoids sub-angstrom cells while
+    alpha=3 resolves the 180 um base interface. N_grid >= 200 passes the
+    carrier-Debye interface guard. The opt-in QF regression certifies the
+    complete registered J-V curve, Jsc, Voc, FF, and PCE on N=200/300/400.
+    This does not certify the default transient or algebraic J-V drivers.
+
+electrical_grid:
+  interval_weights:
+    n_emitter: 1.0
+    p_base: 4.0
+  alphas:
+    n_emitter: 2.0
+    p_base: 3.0
 
 device:
-  V_bi: 0.9
+  # Positive magnitude synchronized to abs(compute_V_bi()); the solver restores
+  # the n-left junction polarity at the Poisson boundary.
+  V_bi: 0.8928964399850017
+  # This high-conductivity wafer stack is production-certified only in the
+  # cancellation-safe quasi-Fermi formulation. General J-V drivers require an
+  # explicit diagnostic override and do not carry the QF convergence claim.
+  jv_solver_policy: cancellation_safe_qf_required
   Phi: 2.7e21   # AM1.5G above Eg=1.12 eV
   interfaces:
     - [1.0e2, 1.0e2]   # n+/p junction: low SRV (bulk-limited Si)

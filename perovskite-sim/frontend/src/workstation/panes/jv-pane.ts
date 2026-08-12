@@ -25,8 +25,24 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         ${numField('jvp-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
         ${checkField('jvp-decomp', 'Decompose current (J<sub>n</sub> / J<sub>p</sub> / J<sub>ion</sub> / J<sub>disp</sub>)', false)}
         ${checkField('jvp-spatial', 'Save spatial profiles (φ, E, n, p, P)', false)}
-        ${checkField('jvp-ss', 'Steady-state solver (ion-free Newton)', false)}
+        <label class="form-group">
+          <span>J&ndash;V solver</span>
+          <select id="jvp-solver" title="Select the numerical variables and continuation driver">
+            <option value="transient">Transient (Radau)</option>
+            <option value="steady_state">Algebraic steady state</option>
+            <option value="quasi_fermi">Quasi-Fermi (cancellation-safe)</option>
+          </select>
+        </label>
         ${checkField('jvp-iface', 'Interface-plane states (steady-state only)', false)}
+        ${checkField('jvp-interface-boundary', 'Physical interface response (quasi-Fermi only)', false)}
+        <label class="form-group">
+          <span>Interface transport</span>
+          <select id="jvp-interface-transport">
+            <option value="fermi_richardson">Fermi-Richardson</option>
+            <option value="scaps_thermionic">SCAPS thermionic</option>
+            <option value="scaps_thermal_velocity">SCAPS thermal velocity</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jvp">Run J–V Sweep</button>
@@ -41,18 +57,32 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   )
   const btn = container.querySelector<HTMLButtonElement>('#btn-jvp')!
 
-  // Interface-plane states only take effect in the steady-state Newton driver
-  // (the transient sweep ignores the iface_states param — it is env-gated on a
-  // separate path). Gate the checkbox on the SS toggle so the no-op combo
-  // (iface ticked, transient) is impossible: disable + clear it when SS is off.
-  const ssBox = container.querySelector<HTMLInputElement>('#jvp-ss')!
+  // The legacy state channel and the reciprocal physical boundary belong to
+  // different drivers. Gate both controls so no-op combinations cannot be
+  // submitted.
+  const solverSelect = container.querySelector<HTMLSelectElement>('#jvp-solver')!
   const ifaceBox = container.querySelector<HTMLInputElement>('#jvp-iface')!
+  const interfaceBoundaryBox = container.querySelector<HTMLInputElement>(
+    '#jvp-interface-boundary',
+  )!
+  const interfaceTransportSelect = container.querySelector<HTMLSelectElement>(
+    '#jvp-interface-transport',
+  )!
   const syncIfaceEnabled = (): void => {
-    ifaceBox.disabled = !ssBox.checked
-    if (!ssBox.checked) ifaceBox.checked = false
+    ifaceBox.disabled = solverSelect.value !== 'steady_state'
+    if (ifaceBox.disabled) ifaceBox.checked = false
+    interfaceBoundaryBox.disabled = solverSelect.value !== 'quasi_fermi'
+    if (interfaceBoundaryBox.disabled) interfaceBoundaryBox.checked = false
+    interfaceTransportSelect.disabled = (
+      interfaceBoundaryBox.disabled || !interfaceBoundaryBox.checked
+    )
+    if (interfaceTransportSelect.disabled) {
+      interfaceTransportSelect.value = 'fermi_richardson'
+    }
   }
-  ssBox.addEventListener('change', syncIfaceEnabled)
-  syncIfaceEnabled()  // initial: SS off → iface disabled
+  solverSelect.addEventListener('change', syncIfaceEnabled)
+  interfaceBoundaryBox.addEventListener('change', syncIfaceEnabled)
+  syncIfaceEnabled()
 
   btn.addEventListener('click', () => {
     const active = opts.getActiveDevice()
@@ -79,18 +109,50 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     }
     const kind: ExperimentKind = wantDecomp ? 'current_decomp' : wantSpatial ? 'spatial' : 'jv'
 
-    // Steady-state solver only applies to the plain J–V kind; the decompose /
-    // spatial kinds always run the transient sweep (they return the per-RHS
-    // decomposition / snapshots the SS Newton driver does not produce).
-    const useSS = readCheck('jvp-ss', false)
+    // Alternative solvers only apply to the plain J-V kind; decomposition and
+    // spatial snapshots require the transient driver's per-RHS state.
+    const selectedSolver = solverSelect.value
+    const qfRequired = (
+      active.config.device.jv_solver_policy === 'cancellation_safe_qf_required'
+    )
+    if (qfRequired && (kind !== 'jv' || selectedSolver !== 'quasi_fermi')) {
+      const message = 'This stack requires the Quasi-Fermi J-V solver; decomposition and spatial-profile sweeps are not certified.'
+      progressBar.error(message)
+      setStatus('status-jvp', `Error: ${message}`, true)
+      btn.disabled = false
+      return
+    }
+    const requestedGrid = Math.max(3, Math.round(readNum('jvp-N', 60)))
+    const minimumGrid = active.config.simulation_hints?.min_N_grid
+    if (minimumGrid !== undefined && requestedGrid < minimumGrid) {
+      const message = `This stack requires N_grid >= ${minimumGrid}; increase the grid before running.`
+      progressBar.error(message)
+      setStatus('status-jvp', `Error: ${message}`, true)
+      btn.disabled = false
+      return
+    }
     const params = {
-      N_grid: Math.max(3, Math.round(readNum('jvp-N', 60))),
+      N_grid: requestedGrid,
       n_points: Math.max(2, Math.round(readNum('jvp-np', 30))),
       v_rate: readNum('jvp-rate', 1.0),
       V_max: readNum('jvp-vmax', 1.4),
       illuminated: true,
-      solver: useSS ? 'steady_state' : 'transient',
-      iface_states: readCheck('jvp-iface', false),
+      solver: kind === 'jv' ? selectedSolver : 'transient',
+      iface_states: (
+        kind === 'jv'
+        && selectedSolver === 'steady_state'
+        && readCheck('jvp-iface', false)
+      ),
+      interface_boundary: (
+        kind === 'jv'
+        && selectedSolver === 'quasi_fermi'
+        && readCheck('jvp-interface-boundary', false)
+      ),
+      interface_transport_model: (
+        kind === 'jv'
+        && selectedSolver === 'quasi_fermi'
+        && readCheck('jvp-interface-boundary', false)
+      ) ? interfaceTransportSelect.value : 'fermi_richardson',
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

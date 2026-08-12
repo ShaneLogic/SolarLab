@@ -28,8 +28,19 @@ Baselines:
     refractive-index profile shifts the resonance out of the peak —
     its baseline (211.02) was unaffected and still passes unchanged.
 
+Protocol boundary:
+  - These pins were established with the YAML loader's historical
+    whole-flux steric-ion default.  The package default is now the physical
+    diffusion-only form, but changing ionic transport is not a TMM change.
+    The fixtures therefore set the historical flag explicitly instead of
+    allowing an unrelated loader default to silently redefine an optical
+    regression.  Default-physics behaviour is covered by the J-V and physical
+    bounds suites.
+
 Run with: pytest -m slow tests/regression/test_tmm_baseline.py
 """
+import dataclasses
+
 import pytest
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
@@ -49,12 +60,14 @@ TOLERANCE = 5.0
 @pytest.fixture(scope="module")
 def nip_tmm_result():
     stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = dataclasses.replace(stack, ion_steric_diffusion_only=False)
     return run_jv_sweep(stack, n_points=21)
 
 
 @pytest.fixture(scope="module")
 def pin_tmm_result():
     stack = load_device_from_yaml("configs/pin_MAPbI3_tmm.yaml")
+    stack = dataclasses.replace(stack, ion_steric_diffusion_only=False)
     return run_jv_sweep(stack, n_points=21)
 
 

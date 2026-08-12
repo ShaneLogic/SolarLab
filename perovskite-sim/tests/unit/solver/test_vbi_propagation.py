@@ -13,13 +13,12 @@ chi = Eg = 0 (where V_bi_eff falls back to ``stack.V_bi`` by construction of
 
 Scope note — Poisson BC
 -----------------------
-This test intentionally does NOT assert that the Poisson Dirichlet BC uses
-``V_bi_eff``. Per ``perovskite-sim/CLAUDE.md`` ("Band-offset contact BCs"), the
-Poisson BC keeps ``stack.V_bi`` to match IonMonger's convention of V_bi as a
-free parameter representing the degenerate-doping limit; substituting V_bi_eff
-there requires a separate validation pass and is deferred beyond Phase 1. Do
-not tighten this test to require the substitution without first updating the
-CLAUDE.md note and the IonMonger benchmark targets.
+The default Poisson BC still uses the configured ``stack.V_bi`` magnitude to
+match IonMonger's convention of V_bi as a free parameter representing the
+degenerate-doping limit. Its coordinate sign, however, is inferred from the
+signed contact work-function difference ``V_bi_eff``. Positive ``V_app`` is a
+forward-bias magnitude for either contact order and must reduce the absolute
+built-in drop. Flat-band contacts continue to use ``V_bi_eff`` directly.
 """
 from __future__ import annotations
 
@@ -29,7 +28,10 @@ import pytest
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.solver.mol import build_material_arrays
+from perovskite_sim.solver.mol import (
+    build_material_arrays,
+    poisson_right_boundary,
+)
 
 
 def _build_grid_and_mat(config_path: str):
@@ -77,3 +79,23 @@ def test_material_arrays_vbi_eff_falls_back_on_legacy_config():
         f"V_bi_eff legacy fallback broken: mat.V_bi_eff={mat.V_bi_eff:.6f}, "
         f"stack.V_bi={stack.V_bi:.6f}"
     )
+
+
+def test_p_left_forward_bias_reduces_positive_poisson_drop():
+    """Existing p-left/n-right stacks retain the original boundary mapping."""
+    stack, mat = _build_grid_and_mat("configs/ionmonger_benchmark.yaml")
+    assert mat.V_bi_eff > 0.0
+    assert mat.junction_polarity == 1.0
+    assert mat.V_bi_bc == pytest.approx(abs(stack.V_bi))
+    assert poisson_right_boundary(mat, 0.0) == pytest.approx(abs(stack.V_bi))
+    assert poisson_right_boundary(mat, 0.4) == pytest.approx(abs(stack.V_bi) - 0.4)
+
+
+def test_n_left_forward_bias_reduces_negative_poisson_drop():
+    """CIGS n-left/p-right order uses the signed coordinate convention."""
+    stack, mat = _build_grid_and_mat("configs/cigs_baseline.yaml")
+    assert mat.V_bi_eff < 0.0
+    assert mat.junction_polarity == -1.0
+    assert mat.V_bi_bc == pytest.approx(-abs(stack.V_bi))
+    assert poisson_right_boundary(mat, 0.0) == pytest.approx(-abs(stack.V_bi))
+    assert poisson_right_boundary(mat, 0.4) == pytest.approx(-abs(stack.V_bi) + 0.4)

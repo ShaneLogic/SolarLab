@@ -18,11 +18,11 @@ export function tutorialHTML(): string {
       <h4>2. Pick a physics tier</h4>
       <p>The <b>Mode</b> dropdown in the Device group selects which physics upgrades are active (see the <b>Algorithm</b> tab for the equations):</p>
       <ul>
-        <li><b>Full</b> (default) — all Phase 1–4 upgrades: band-offset <i>V</i><sub>bi,eff</sub> + Richardson–Dushman thermionic emission at heterointerfaces, transfer-matrix optics when <code>optical_material</code> is set, dual-species ion migration when <i>D</i><sub>ion,−</sub> is provided, position-dependent trap profile, and temperature scaling of <i>V</i><sub>T</sub>, <i>μ</i>(<i>T</i>), <i>n</i><sub>i</sub>(<i>T</i>), <i>D</i><sub>ion</sub>(<i>T</i>).</li>
-        <li><b>Fast</b> — Beer–Lambert optics, no thermionic emission cap. Use this for quick parameter sweeps where coherent optics are not needed.</li>
+        <li><b>Full</b> (default) — every configured upgrade, including self-consistent radiative reabsorption, field-dependent mobility, and explicit finite-rate Robin contacts.</li>
+        <li><b>Fast</b> — thermionic emission, TMM optics, dual-species ions, position-dependent traps, temperature scaling and photon recycling remain active; only the three per-RHS upgrades reserved for Full are omitted.</li>
         <li><b>Legacy</b> — IonMonger-compatible ceiling: <i>T</i> pinned to 300 K, no TE, Beer–Lambert, single ion species, uniform bulk <i>τ</i>. Use this to reproduce the <code>ionmonger_benchmark</code> reference numbers exactly.</li>
       </ul>
-      <p>The <i>T</i> field next to Mode sets the device temperature (K). It only affects the solution when Mode = <b>Full</b>; Fast and Legacy clamp to 300 K internally.</p>
+      <p>The <i>T</i> field next to Mode sets the device temperature (K) in <b>Fast</b> and <b>Full</b>. Legacy clamps the model to 300 K.</p>
 
       <h4>3. Run an experiment</h4>
       <ul>
@@ -46,17 +46,17 @@ export function tutorialHTML(): string {
         <li><b>Dark J&ndash;V fit</b> &mdash; <code>run_dark_jv(stack, V_max, n_points)</code> runs a G=0 forward sweep and extracts diode ideality <i>n</i> and saturation current <i>J</i><sub>0</sub> from the log|<i>J</i>| vs <i>V</i> slope. Auto-selects the exponential-regime window (rejects sub-turn-on leakage and high-<i>V</i> series-resistance roll-off).</li>
         <li><b>Suns&ndash;V<sub>oc</sub></b> &mdash; <code>run_suns_voc(stack, suns_levels)</code> sweeps light intensity, bisects for <i>V</i><sub>oc</sub>(<i>X</i>) at each level, and builds a Sinton pseudo-JV curve immune to series resistance. Reports <b>pseudo-FF</b> and the <i>V</i><sub>oc</sub>-vs-ln(<i>X</i>) slope used as a recombination-ideality proxy.</li>
         <li><b>EQE / IPCE</b> &mdash; <code>compute_eqe(stack, wavelengths_nm)</code> runs a monochromatic TMM + drift&ndash;diffusion at each wavelength and returns EQE(&lambda;). Integrating against AM1.5G gives <i>J</i><sub>sc</sub>; cross-checked against the full-spectrum sweep to within ~25 %. Requires a TMM-enabled preset (<code>optical_material</code> on the absorber), e.g. <code>nip_MAPbI3_tmm</code>.</li>
-        <li><b>Mott&ndash;Schottky C&ndash;V</b> &mdash; <code>run_mott_schottky(stack, V_range, frequency)</code> runs a dark C&ndash;V sweep (<code>illuminated=False</code> on the impedance path) and fits 1/<i>C</i><sup>2</sup> vs <i>V</i> to extract the built-in voltage <i>V</i><sub>bi</sub> (intercept) and the net ionised density <i>N</i><sub>eff</sub> (slope). Includes an adaptive window selector that rejects the fully-depleted and injection tails.</li>
+        <li><b>Mott&ndash;Schottky C&ndash;V</b> &mdash; <code>run_mott_schottky(stack, V_range, frequency)</code> runs a dark C&ndash;V sweep (<code>illuminated=False</code> on the impedance path) and fits 1/<i>C</i><sup>2</sup> vs <i>V</i> to extract the apparent built-in voltage <i>V</i><sub>bi,app</sub> (intercept with the p&ndash;n thermal correction) and the net ionised density <i>N</i><sub>eff</sub> (slope). Includes an adaptive window selector that rejects the fully-depleted and injection tails.</li>
       </ul>
       <p>See the <code>README.md</code> under <em>Phase 2 Characterisation Experiments</em> for signatures and the physics of each fit.</p>
 
       <h4>Optical generation: TMM vs Beer&ndash;Lambert</h4>
       <p>Generation of electron&ndash;hole pairs <i>G</i>(<i>x</i>) is the source term that drives the drift&ndash;diffusion equations. The simulator supports two optical models:</p>
       <ul>
-        <li><b>Beer&ndash;Lambert</b> (default on Legacy and Fast tiers): <i>G</i>(<i>x</i>) = <i>α</i> Φ e<sup>&minus;<i>αx</i></sup>. Simple and fast, but ignores reflection at layer interfaces and wavelength dependence. Typically overestimates <i>J</i><sub>SC</sub> by 5&ndash;15 %.</li>
-        <li><b>Transfer-matrix method</b> (Full tier, active whenever <code>optical_material</code> is set on layers): solves Maxwell's equations across the coherent layer stack at each wavelength of the AM1.5G spectrum and integrates. Captures interference fringes, front-surface reflection, and wavelength-dependent absorption.</li>
+        <li><b>Beer&ndash;Lambert</b> (Legacy, or the fallback when no optical material is configured): <i>G</i>(<i>x</i>) = <i>α</i> Φ e<sup>&minus;<i>αx</i></sup>. Simple and fast, but ignores reflection at layer interfaces and wavelength dependence. Typically overestimates <i>J</i><sub>SC</sub> by 5&ndash;15 %.</li>
+        <li><b>Transfer-matrix method</b> (Fast / Full, active whenever <code>optical_material</code> is set on layers): solves Maxwell's equations across the coherent layer stack at each wavelength of the AM1.5G spectrum and integrates. Captures interference fringes, front-surface reflection, and wavelength-dependent absorption.</li>
       </ul>
-      <p>To activate TMM, switch to <b>Full</b> tier and pick a preset whose name ends in <code>_tmm</code>, or set the <code>optical_material</code> field on every optical layer of your custom device.</p>
+      <p>To activate TMM, use the <b>Fast</b> or <b>Full</b> tier and pick a preset whose name ends in <code>_tmm</code>, or set the <code>optical_material</code> field on every optical layer of your custom device.</p>
 
       <h4>Custom Stacks</h4>
       <p>
@@ -91,8 +91,8 @@ export function tutorialHTML(): string {
         <li>The J&ndash;V sweep's <i>V</i><sub>max</sub> field is the upper voltage of the forward leg; if your stack's <i>V</i><sub>OC</sub> exceeds it the curve never crosses <i>J</i> = 0 and the reported <i>V</i><sub>OC</sub> will be clipped to <i>V</i><sub>max</sub>. The default 1.4&nbsp;V covers MAPbI<sub>3</sub>-like stacks; the Python API picks <code>max(<i>V</i><sub>bi,&nbsp;eff</sub>&times;1.3, 1.4&nbsp;V)</code> automatically when called with <code>V_max=None</code>.</li>
         <li>For non-perovskite materials set <i>D</i><sub>ion</sub> = 0 in every layer — the ion equations stay well-posed but integrate nothing.</li>
         <li>Tighten the tolerances <i>r</i><sub>tol</sub> / <i>a</i><sub>tol</sub> only if the curve shows unphysical kinks. The solver's Radau step cap already guards against the near-singular-Jacobian failure mode at flat-band.</li>
-        <li>To reproduce IonMonger numbers exactly, switch Mode to <b>Legacy</b>. <i>V</i><sub>OC</sub> on Full is typically ≈ 0.1 V higher than Legacy because the thermionic emission cap reshapes collection at the HTL/absorber interface.</li>
-        <li>Temperature coefficients (d<i>V</i><sub>OC</sub>/d<i>T</i> &lt; 0) only show up on <b>Full</b> — Fast and Legacy ignore the <i>T</i> field.</li>
+        <li>To reproduce IonMonger numbers exactly, switch Mode to <b>Legacy</b>. <i>V</i><sub>OC</sub> on Fast or Full is typically ≈ 0.1 V higher than Legacy because the thermionic emission cap reshapes collection at the HTL/absorber interface.</li>
+        <li>Temperature coefficients (d<i>V</i><sub>OC</sub>/d<i>T</i> &lt; 0) appear in <b>Fast</b> and <b>Full</b>; Legacy ignores the <i>T</i> field.</li>
       </ul>
     </div>
   </div>`

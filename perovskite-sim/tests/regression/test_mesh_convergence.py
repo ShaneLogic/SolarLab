@@ -1,4 +1,4 @@
-"""Mesh-convergence regression: refine the grid, watch the metrics converge.
+"""Finite-time protocol grid refinement: refine the grid, watch metrics contract.
 
 Review item §7 #6 — "when the mesh near the interfaces is refined, V_oc / J_sc /
 FF and the interface recombination current must converge."  Nothing in the suite
@@ -6,43 +6,47 @@ checked this before; the closest thing was ``_compute_current_ss_with_spread``'s
 docstring, which explicitly punts the question ("use mesh convergence of the
 extracted metrics for the convergence question it cannot answer").
 
+This file does not certify a residual steady state.  Its fixed-bias leg uses
+``solve_illuminated_ss``, a 1 ms finite-time illuminated endpoint, and its J-V
+leg uses a fixed 5 V/s scan.  Residual-certified frozen-ion steady-state grid
+tests live in ``test_p1_steady_state_mesh_convergence.py``.
+
 What is asserted
 ----------------
-Let ``m(N_grid)`` be an observable on the grid ``multilayer_grid`` builds with
-``N_grid // n_elec`` tanh-clustered intervals per electrical layer.  Along the
-refinement ladder ``N_grid = 30 -> 60 -> 120`` (31 / 61 / 121 nodes) every
-observable must be **Cauchy and contracting**::
+Let ``m(N)`` be an observable on the grid ``multilayer_grid`` builds.  Along
+the exact actual-interval ladder ``N = 24 -> 48 -> 96`` every observable must
+be **Cauchy and contracting for this fixed transient protocol**::
 
-    |m(120) - m(60)|  <  |m(60) - m(30)|
+    |m(96) - m(48)|  <  |m(48) - m(24)|
 
 and the Richardson geometric-tail estimate of the residual discretisation error
 at the finest level::
 
-    rho = |D32| / |D21|          (contraction factor per N_grid doubling)
+    rho = |D32| / |D21|          (contraction per interval-count doubling)
     E   = |D32| * rho / (1 - rho)
 
 must sit under the accuracy bar at which this repository states physics results.
-**No absolute value of any metric is asserted** — the tests are about the
-*sequence*, not the number.
+These are protocol-convergence checks, not evidence that the endpoint is a
+physical steady state.
 
 Tolerances (every one traced to a source outside this measurement)
 ------------------------------------------------------------------
 * **5 mV on V_oc** — CLAUDE.md's own statement of the precision at which this
   repo reports V_oc ("SS J-V matches the frozen-ion transient within 5 mV V_oc /
   1% J_sc").  Cross-check: 5 mV ~ (kT/q)/5 with kT/q = 25.852 mV, a fifth of the
-  thermal voltage that sets the diode's exponential scale.  *Measured 0.30 mV.*
+  thermal voltage that sets the diode's exponential scale.
 * **1% on J_sc / terminal current** — same CLAUDE.md sentence.  It is 2.4x
   tighter than the shipped TMM J_sc pin (+/-5 A/m2 on ~215, see
-  ``test_tmm_baseline.py``).  *Measured 0.44%.*
+  ``test_tmm_baseline.py``).
 * **0.5% on FF** — propagated, not chosen.  FF = P_mpp/(V_oc*J_sc); with V_oc to
   5 mV on ~1.2 V (0.42%) and J_sc to 1%, the natural bar on a ratio built from
   them is ~1%.  0.5% is the tighter half, taken because FF is a shape factor and
-  is empirically far less mesh-sensitive than either factor.  *Measured 0.036%.*
+  is empirically far less mesh-sensitive than either factor.
 * **0.1% of J_sc on the interface-recombination current** — one full order
   inside the 1% J_sc bar, so a residual mesh error in this loss channel provably
   cannot move the terminal current by a reportable amount.  Expressed against
   J_sc rather than against J_iface itself because J_iface is small (0.75-5.05
-  A/m2) and a relative bar on it would be arbitrary.  *Measured 0.011-0.014%.*
+  A/m2) and a relative bar on it would be arbitrary.
 * **0.5% of J_sc on the spike guard** — derived from the FF bar: an isolated
   upward jump dJ at the sample nearest MPP raises P_mpp by ~dJ*V_mpp, hence
   dFF/FF ~ dJ/J_sc, so setting the spike bound equal to the FF tolerance
@@ -50,12 +54,10 @@ Tolerances (every one traced to a source outside this measurement)
   tighter than the shipped guard in ``test_jv_regression.py`` (5% of J_sc).
 * **factor 2.0 on interface-cell refinement** — not a tolerance; a property of
   the tanh map, whose edge spacing scales asymptotically as 1/N from above.
-  *Measured 2.81 then 2.35 per doubling.*
 
-Why the Richardson residual instead of the raw last difference: for rho ~ 0.26
-the last difference *overstates* the remaining error by ~2.8x, and the raw
-finest-pair J_sc change (1.23%) would spuriously breach the 1% bar while the
-actual residual (0.435%) does not.
+Why the Richardson residual instead of the raw last difference: on a contracting
+geometric sequence it estimates the remaining tail rather than treating the
+last observed difference as the full error.
 
 Why ``n_points = 81`` (a PROTOCOL parameter derived a priori, not a tolerance)
 -----------------------------------------------------------------------------
@@ -66,8 +68,8 @@ m*V_T ~ 30 mV that is 5.1 mV at n_points = 41 and 1.28 mV at n_points = 81.
 The mesh signal being measured is 0.8-2.9 mV, so 41 points is
 *extraction-dominated* and 81 is not.
 
-This matters, and it is the honest caveat on this whole file.  At the natural
-n_points = 41 (dV = 35 mV) the same ladder gives::
+This matters, and it is the honest caveat on this whole file.  A historical
+diagnostic on the former grid ladder at n_points = 41 (dV = 35 mV) gave::
 
     V_oc = 1.200253, 1.195410, 1.201021 V   (D = -4.84, +5.61 mV; rho = 1.16)
     FF   = 0.795473, 0.798500, 0.794541     (D = +3.03e-3, -3.96e-3; rho = 1.31)
@@ -75,9 +77,9 @@ n_points = 41 (dV = 35 mV) the same ladder gives::
 — differences GROW and the sign flips, i.e. a "successive differences shrink"
 assertion FAILS outright there.  Diagnosed, not assumed: at *fixed* mesh, moving
 41 -> 81 points shifts V_oc by +1.49 mV (N=31) and +3.44 mV (N=61), i.e. by more
-than the 60->120 mesh signal itself, and the closed-form interpolation bias
+than the middle-to-fine mesh signal itself, and the interpolation bias
 predicts exactly that magnitude.  Two readings are defensible and both are
-recorded here: (a) the mesh converges, and the test must sample V finely enough
+recorded here: (a) this protocol contracts, and the test must sample V finely enough
 to see it; (b) the shipped V_oc/FF extraction is not mesh-convergent at the
 default sampling density — a real limitation of the reported metrics.
 
@@ -134,14 +136,12 @@ pytestmark = pytest.mark.slow
 
 CONFIG = "configs/ionmonger_benchmark.yaml"
 
-#: Refinement ladder in ``N_grid`` (intervals across the whole electrical stack;
-#: ``N_grid // 3`` per layer here, exact for all three rungs).  N_grid = 15 is
-#: deliberately NOT the coarsest rung: it is demonstrably pre-asymptotic
-#: (J_iface(V=0) goes 0.6976 -> 0.9068 -> 0.7827, non-monotone with a sign flip
-#: in the first difference).  Widening the ladder downward will make the
-#: interface-current test fail for a legitimate reason — being outside the
-#: asymptotic range — rather than for a defect.
-# Ladder re-chosen 2026-07-28 (was 30/60/120). N_grid >~ 115 on this config
+#: Refinement ladder in actual intervals across the electrical stack.
+#: ``N_grid // 3`` is exact for all three rungs.  Coarser grids are excluded
+#: because prior probes placed the interface-current observable outside its
+#: asymptotic range.
+# Ladder re-chosen 2026-08-01 so requested and actual intervals are identical.
+# N_grid >~ 115 on this config
 # is an UNSTABLE illuminated-settle regime: measured at 1 BLAS thread on an
 # idle box, seconds to solve at V=0,
 #
@@ -152,9 +152,9 @@ CONFIG = "configs/ionmonger_benchmark.yaml"
 # i.e. each generation formula hangs at a DIFFERENT rung and is fine at the
 # other -- a knife edge, not a property of either. The original 120 top rung
 # hung the whole slow lane for four hours. Every rung below is fast for both
-# formulas, so 25/50/100 keeps the exact doubling the convergence-order
-# assertions need while staying inside the stable region.
-LADDER = (25, 50, 100)
+# formulas. 24/48/96 provides exact doubling while staying inside the observed
+# stable finite-time regime.
+LADDER = (24, 48, 96)
 
 #: Second fixed bias: inside the power quadrant (V_mpp ~ 1.015 V) but below
 #: V_bi = 1.1 V, so the solve stays out of the documented near-flat-band stiff
@@ -230,7 +230,7 @@ def _report(name: str, vals: tuple[float, float, float], unit: str = "") -> str:
 
 
 def _assert_contracting(name: str, vals: tuple[float, float, float], unit: str = "") -> None:
-    """|m(120) - m(60)| < |m(60) - m(30)| — the Cauchy/contraction invariant."""
+    """Require the finest change to shrink under one exact grid doubling."""
     d21, d32 = _diffs(vals)
     assert abs(d32) < abs(d21), (
         f"{name} does NOT contract under mesh refinement — successive "
@@ -264,7 +264,7 @@ def _grid(stack, N_grid: int) -> np.ndarray:
 
 @pytest.fixture(scope="module")
 def fixed_bias_ladder(stack):
-    """Leg A — fixed-bias steady states at V = 0 and V = 0.9 on each rung.
+    """Leg A — 1 ms fixed-bias endpoints at V = 0 and V = 0.9.
 
     Cheap (~4 s total).  Carries the mesh diagnostics, the terminal current at
     two biases, and the interface-recombination current reconstructed by calling
@@ -303,15 +303,12 @@ def fixed_bias_ladder(stack):
 
 @pytest.fixture(scope="module")
 def sweep_ladder(stack):
-    """Leg B — a full quasi-static forward/reverse J-V on each rung (~3 min).
+    """Leg B — a fixed-rate forward/reverse transient J-V on each rung (~3 min).
 
     ``run_jv_sweep`` rather than the cheaper public ``quasi_static_sweep``: the
     two are mathematically the same loop fed the same y_eq/mat/voltages and
-    agree to 8-10 significant figures at N_grid = 30 and 120, but at N_grid = 60
-    the ~1e-10 state difference is enough to flip whether the near-flat-band
-    Radau spike fires, and ``quasi_static_sweep`` then reports FF = 0.8272
-    instead of 0.7961 (+3.9%).  Identical mathematics, 3.9% different FF — so
-    the guarded path is used.
+    can diverge after tiny state perturbations near the documented flat-band
+    stiffness boundary, so the guarded production path is used here.
     """
     results = []
     for N_grid in LADDER:
@@ -384,12 +381,12 @@ def test_guard_interface_cells_actually_refine(fixed_bias_ladder):
 
 
 def test_guard_no_silent_dark_fallback(fixed_bias_ladder, stack):
-    """``solve_illuminated_ss`` returns DARK equilibrium without raising.
+    """Guard the physical signature of the historical dark-fallback defect.
 
-    ``illuminated_ss.py:58-60`` — ``if not sol.success: return y_dark``.  Dark
-    J ~ 0, so a settle failure would be read as a perfectly converged number.
-    Guard: the short-circuit current must exceed half the incident photon
-    current, and the power-quadrant current must be positive.
+    The solver now raises when illuminated settling fails.  This independent
+    result-level guard remains useful: the short-circuit current must exceed
+    half the incident photon current, and the power-quadrant current must be
+    positive.
     """
     q_phi = Q * stack.Phi
     for N_grid, J0, J09 in zip(LADDER, fixed_bias_ladder["J0"], fixed_bias_ladder["J09"]):
@@ -445,14 +442,12 @@ def test_guard_no_flat_band_spike_at_any_mesh_level(sweep_ladder):
 
 
 def test_short_circuit_current_converges(fixed_bias_ladder):
-    """J(V=0) — definitionally J_sc, with no interpolation/extraction step.
+    """Finite-time terminal J(V=0), with no interpolation/extraction step.
 
     The interior-face current spread from ``_compute_current_ss_with_spread``
     is REPORTED, never asserted — its own docstring says to report and not
     gate on it, and this test follows that.  It is printed because it is an
-    unexplained observation worth a separate look: the spread GROWS with
-    refinement on this preset even while the median current contracts
-    cleanly at rho = 0.26.
+    separate diagnostic because it is not a residual steady-state certificate.
     """
     vals = fixed_bias_ladder["J0"]
     line = _report("J(V=0)", vals, "A/m2")
@@ -489,7 +484,7 @@ def test_interface_recombination_current_converges(fixed_bias_ladder, stack):
     """The quantity review §7 #6 names explicitly, at both biases.
 
     Measured by calling the solver's own ``_apply_interface_recombination``
-    sink on the converged state and integrating the resulting node sink over
+    sink on the finite-time endpoint and integrating the resulting node sink over
     the dual cells — so this measures whatever interface formulation is
     actually active (pinned by the formulation guard above), not a
     re-implementation that can drift.

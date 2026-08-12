@@ -16,6 +16,14 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
         ${numField('jv-np', 'V sample points', 30, '1')}
         ${numField('jv-rate', 'Scan rate (V/s)', 1.0, 'any')}
         ${numField('jv-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
+        <label class="form-group">
+          <span>J&ndash;V solver</span>
+          <select id="jv-solver" title="Select the numerical variables and continuation driver">
+            <option value="transient">Transient (Radau)</option>
+            <option value="steady_state">Algebraic steady state</option>
+            <option value="quasi_fermi">Quasi-Fermi (cancellation-safe)</option>
+          </select>
+        </label>
         ${checkField('jv-dark', 'Dark J–V (no illumination)', false)}
       </div>
       <p>
@@ -43,6 +51,14 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
   const progressBar: ProgressBarHandle = createProgressBar(progressEl)
 
   const btn = root.querySelector<HTMLButtonElement>('#btn-jv')!
+  const solverSelect = root.querySelector<HTMLSelectElement>('#jv-solver')!
+  const darkBox = root.querySelector<HTMLInputElement>('#jv-dark')!
+  const syncDarkEnabled = (): void => {
+    darkBox.disabled = solverSelect.value === 'quasi_fermi'
+    if (darkBox.disabled) darkBox.checked = false
+  }
+  solverSelect.addEventListener('change', syncDarkEnabled)
+  syncDarkEnabled()
   btn.addEventListener('click', async () => {
     btn.disabled = true
     progressBar.reset()
@@ -51,12 +67,26 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
     try {
       const device = devicePanel.getConfig()
       const isDark = readCheck('jv-dark', false)
+      if (
+        device.device.jv_solver_policy === 'cancellation_safe_qf_required'
+        && solverSelect.value !== 'quasi_fermi'
+      ) {
+        throw new Error('This stack requires the Quasi-Fermi J-V solver.')
+      }
+      const requestedGrid = Math.max(3, Math.round(readNum('jv-N', 60)))
+      const minimumGrid = device.simulation_hints?.min_N_grid
+      if (minimumGrid !== undefined && requestedGrid < minimumGrid) {
+        throw new Error(
+          `This stack requires N_grid >= ${minimumGrid}; increase the grid before running.`,
+        )
+      }
       const params = {
-        N_grid: Math.max(3, Math.round(readNum('jv-N', 60))),
+        N_grid: requestedGrid,
         n_points: Math.max(2, Math.round(readNum('jv-np', 30))),
         v_rate: readNum('jv-rate', 1.0),
         V_max: readNum('jv-vmax', 1.4),
         illuminated: !isDark,
+        solver: solverSelect.value,
       }
       const jobId = await startJob('jv', device, params)
       setStatus('status-jv', 'Running J–V sweep…')

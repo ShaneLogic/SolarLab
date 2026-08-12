@@ -237,7 +237,11 @@ def run_degradation(
     N = len(x)
     # V_oc can exceed V_bi when heterojunction band offsets are present, so
     # sweep beyond V_bi; the caller may override. Default gives ~30 % headroom.
-    v_upper = metric_V_max if metric_V_max is not None else max(abs(stack.compute_V_bi()) * 1.3, 1.4)
+    v_upper = (
+        metric_V_max
+        if metric_V_max is not None
+        else max(abs(stack.operating_built_in_potential()) * 1.3, 1.4)
+    )
     metric_voltages = np.linspace(0.0, v_upper, metric_n_points)
     absorber_layer, absorber_mask = _absorber_region(x, stack)
     P0_abs = absorber_layer.params.P0
@@ -247,7 +251,7 @@ def run_degradation(
     # take 10–20 s of silence otherwise.
     if progress is not None:
         progress("degradation_transient", 0, max(1, int(t_end * 1000)),
-                 "solving illuminated steady state")
+                 "applying illuminated preconditioning")
 
     # Degradation loop starts from V_bias-equilibrated state so that the very
     # first time chunk does not have to transition SC→V_bias carriers (expensive).

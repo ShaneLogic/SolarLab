@@ -57,7 +57,11 @@ class TestParser:
         ifaces, defects = interfaces_from_device_dict(dev, n_layers=4)
         assert ifaces[1] == pytest.approx((V_N_EXPECTED, V_P_EXPECTED))
         assert ifaces[0] == (0.0, 0.0) and ifaces[2] == (0.0, 0.0)
-        assert defects[1] == InterfaceDefect(E_t_eV=0.8, calibration_factor=1.0)
+        assert defects[1] == InterfaceDefect(
+            E_t_eV=0.8,
+            calibration_factor=1.0,
+            N_t_cm2=1.0e12,
+        )
         assert defects[0] is None and defects[2] is None
 
     def test_defect_takes_precedence_over_legacy_pair(self):

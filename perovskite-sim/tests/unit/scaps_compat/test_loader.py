@@ -82,6 +82,38 @@ def test_load_scaps_yaml_returns_devicestack(tmp_path):
     assert isinstance(stack, DeviceStack)
 
 
+def test_load_scaps_yaml_preserves_optional_device_temperature(tmp_path):
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    body = _MINIMAL_SCAPS_YAML.replace("  mode: fast", "  mode: fast\n  T: 325.0")
+    path = tmp_path / "temperature.yaml"
+    path.write_text(body)
+
+    assert load_scaps_yaml(path).T == 325.0
+
+
+def test_load_scaps_yaml_preserves_electrical_grid_protocol(tmp_path):
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    grid = """
+electrical_grid:
+  interval_weights:
+    HTL_test: 1
+    PVK_test: 2
+    ETL_test: 1
+  alphas:
+    HTL_test: 4
+    PVK_test: 5
+    ETL_test: 4
+"""
+    path = tmp_path / "grid.yaml"
+    path.write_text(_MINIMAL_SCAPS_YAML + grid)
+
+    stack = load_scaps_yaml(path)
+    assert stack.grid_interval_weights == (1.0, 2.0, 1.0)
+    assert stack.grid_alphas == (4.0, 5.0, 4.0)
+
+
 def test_load_scaps_yaml_assigns_three_electrical_layers_in_order(tmp_path):
     from perovskite_sim.models.device import electrical_layers
     from perovskite_sim.scaps_compat import load_scaps_yaml

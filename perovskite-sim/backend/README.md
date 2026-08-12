@@ -70,6 +70,7 @@ Supported `kind` values include:
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/jv` | Blocking J–V sweep |
+| `POST` | `/api/tandem` | Blocking 2T tandem J–V run |
 | `POST` | `/api/impedance` | Blocking impedance sweep |
 | `POST` | `/api/degradation` | Blocking degradation run |
 
