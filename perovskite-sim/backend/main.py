@@ -44,6 +44,7 @@ from perovskite_sim.discretization.grid import (
     require_thick_layer_interface_resolution,
 )
 from perovskite_sim.models.config_loader import (
+    built_in_potential_fields_from_device_dict,
     electrical_grid_from_config_dict,
     interfaces_from_device_dict,
     load_device_from_yaml,
@@ -213,7 +214,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
     right_cfg = contacts_cfg.get("right", {}) or {}
     return DeviceStack(
         layers=tuple(layers),
-        V_bi=float(dev.get("V_bi", 1.1)),
+        **built_in_potential_fields_from_device_dict(dev),
         Phi=float(dev.get("Phi", 2.5e21)),
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,
@@ -318,7 +319,6 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         })
     device = {
         "mode": str(stack.mode),
-        "V_bi": stack.V_bi,
         "Phi": stack.Phi,
         "T": stack.T,
         "interfaces": [list(p) for p in stack.interfaces],
@@ -346,6 +346,17 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         "S_n_right": stack.S_n_right,
         "S_p_right": stack.S_p_right,
     }
+    if stack.built_in_potential_mode is None:
+        # Preserve the shape and exact semantics of shipped compatibility
+        # presets when they round-trip through the frontend.
+        device["V_bi"] = stack.V_bi
+    else:
+        device["built_in_potential_mode"] = stack.built_in_potential_mode
+        if stack.built_in_potential_mode == "legacy_manual":
+            device["V_bi_override"] = stack.V_bi
+        elif stack.built_in_potential_mode == "metal_work_function":
+            device["work_function_left_eV"] = stack.work_function_left_eV
+            device["work_function_right_eV"] = stack.work_function_right_eV
     config = {"device": device, "layers": layers}
     if stack.grid_interval_weights or stack.grid_alphas:
         electrical = tuple(

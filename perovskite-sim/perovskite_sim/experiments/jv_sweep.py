@@ -1437,9 +1437,11 @@ def _default_V_max(stack: DeviceStack) -> float:
 
     Rationale
     ---------
-    V_oc on heterostacks is bounded above by the band-offset-aware built-in
-    potential V_bi_eff (``stack.compute_V_bi()``), which can exceed the manual
-    ``stack.V_bi`` field configured in legacy YAMLs. If we opened the sweep
+    V_oc on heterostacks is bounded above by the active operating built-in
+    potential. Explicit contact-potential modes use their selected work-function
+    difference; compatibility stacks retain the historical band-derived
+    ``compute_V_bi()`` value, which can exceed the manual ``stack.V_bi`` field.
+    If we opened the sweep
     only to the manual V_bi, forward sweeps on high-V_oc stacks (MAPbI3 etc.)
     would never cross J = 0 and ``compute_metrics`` would return V_oc = V_max.
 
@@ -1448,16 +1450,19 @@ def _default_V_max(stack: DeviceStack) -> float:
 
     The 1.3 headroom captures the minority-quasi-Fermi-level rise beyond V_bi
     under strong illumination; the 1.4 V floor is a backstop for legacy configs
-    where chi/Eg are not set (so compute_V_bi falls back to the manual V_bi,
+    where chi/Eg are not set (so the compatibility estimate falls back to V_bi,
     which for a MAPbI3-like stack can be ~1.05 V — 1.3× that is only 1.37 V,
     uncomfortably close to the observed 1.05-1.15 V V_oc range).
 
     This is the single source of truth for the default V_max and is unit-tested
     directly so the formula can be audited without running a full sweep.
     """
-    # compute_V_bi is the SIGNED phi(right)-phi(left) (negative for
-    # n-contact-left devices); the sweep range needs its magnitude.
-    V_bi_eff = abs(stack.compute_V_bi())
+    # The operating value is signed (negative for n-contact-left devices); the
+    # sweep range needs its magnitude.
+    resolve_operating = getattr(
+        stack, "operating_built_in_potential", stack.compute_V_bi
+    )
+    V_bi_eff = abs(resolve_operating())
     return max(V_bi_eff * 1.3, 1.4)
 
 
@@ -1569,7 +1574,7 @@ def run_jv_sweep(
         V_max_initial = (
             V_max
             if V_max is not None
-            else max(abs(stack.compute_V_bi()) * 1.3, 1.4)
+            else max(abs(stack.operating_built_in_potential()) * 1.3, 1.4)
         )
         V_max_cap = V_max_initial + 2.0
         V_max_attempt = V_max_initial

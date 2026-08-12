@@ -34,6 +34,15 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
           </select>
         </label>
         ${checkField('jvp-iface', 'Interface-plane states (steady-state only)', false)}
+        ${checkField('jvp-interface-boundary', 'Physical interface response (quasi-Fermi only)', false)}
+        <label class="form-group">
+          <span>Interface transport</span>
+          <select id="jvp-interface-transport">
+            <option value="fermi_richardson">Fermi-Richardson</option>
+            <option value="scaps_thermionic">SCAPS thermionic</option>
+            <option value="scaps_thermal_velocity">SCAPS thermal velocity</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jvp">Run J–V Sweep</button>
@@ -48,16 +57,31 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   )
   const btn = container.querySelector<HTMLButtonElement>('#btn-jvp')!
 
-  // Interface-plane states only take effect in the algebraic steady-state
-  // driver. Gate the checkbox on the selected solver so no-op combinations
-  // cannot be submitted.
+  // The legacy state channel and the reciprocal physical boundary belong to
+  // different drivers. Gate both controls so no-op combinations cannot be
+  // submitted.
   const solverSelect = container.querySelector<HTMLSelectElement>('#jvp-solver')!
   const ifaceBox = container.querySelector<HTMLInputElement>('#jvp-iface')!
+  const interfaceBoundaryBox = container.querySelector<HTMLInputElement>(
+    '#jvp-interface-boundary',
+  )!
+  const interfaceTransportSelect = container.querySelector<HTMLSelectElement>(
+    '#jvp-interface-transport',
+  )!
   const syncIfaceEnabled = (): void => {
     ifaceBox.disabled = solverSelect.value !== 'steady_state'
     if (ifaceBox.disabled) ifaceBox.checked = false
+    interfaceBoundaryBox.disabled = solverSelect.value !== 'quasi_fermi'
+    if (interfaceBoundaryBox.disabled) interfaceBoundaryBox.checked = false
+    interfaceTransportSelect.disabled = (
+      interfaceBoundaryBox.disabled || !interfaceBoundaryBox.checked
+    )
+    if (interfaceTransportSelect.disabled) {
+      interfaceTransportSelect.value = 'fermi_richardson'
+    }
   }
   solverSelect.addEventListener('change', syncIfaceEnabled)
+  interfaceBoundaryBox.addEventListener('change', syncIfaceEnabled)
   syncIfaceEnabled()
 
   btn.addEventListener('click', () => {
@@ -114,7 +138,21 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
       V_max: readNum('jvp-vmax', 1.4),
       illuminated: true,
       solver: kind === 'jv' ? selectedSolver : 'transient',
-      iface_states: readCheck('jvp-iface', false),
+      iface_states: (
+        kind === 'jv'
+        && selectedSolver === 'steady_state'
+        && readCheck('jvp-iface', false)
+      ),
+      interface_boundary: (
+        kind === 'jv'
+        && selectedSolver === 'quasi_fermi'
+        && readCheck('jvp-interface-boundary', false)
+      ),
+      interface_transport_model: (
+        kind === 'jv'
+        && selectedSolver === 'quasi_fermi'
+        && readCheck('jvp-interface-boundary', false)
+      ) ? interfaceTransportSelect.value : 'fermi_richardson',
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

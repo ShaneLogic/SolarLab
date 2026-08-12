@@ -27,6 +27,8 @@ export interface LayerConfig {
   mu_n: number
   mu_p: number
   ni: number
+  Nc300?: number
+  Nv300?: number
   N_D: number
   N_A: number
   // Optional continuous dopant profile. N_A/N_D are the selected edge values;
@@ -76,6 +78,10 @@ export interface LayerConfig {
 }
 
 export type SimulationModeName = 'legacy' | 'fast' | 'full'
+export type BuiltInPotentialMode =
+  | 'legacy_manual'
+  | 'semiconductor_work_function'
+  | 'metal_work_function'
 
 /**
  * Phase E1.8 — SCAPS-style heterojunction interface defect fields. Mirrors
@@ -113,7 +119,13 @@ export interface DeviceConfig {
     alphas?: Record<string, number>
   }
   device: {
-    V_bi: number
+    /** Deprecated compatibility input used by shipped benchmark presets. */
+    V_bi?: number
+    /** Explicit manual magnitude, valid only in legacy_manual mode. */
+    V_bi_override?: number
+    built_in_potential_mode?: BuiltInPotentialMode
+    work_function_left_eV?: number
+    work_function_right_eV?: number
     Phi: number
     interfaces?: Array<[number, number]>
     /**

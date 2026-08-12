@@ -11,15 +11,15 @@ export function parametersHTML(): string {
         <tbody>
           <tr>
             <td>Mode</td><td>Physics tier</td><td>—</td>
-            <td><b>Full</b> enables every Phase 1–4 upgrade; <b>Fast</b> drops TMM optics and the thermionic-emission cap; <b>Legacy</b> is IonMonger-compatible (<i>T</i> pinned to 300 K, single ion, uniform <i>τ</i>, Beer–Lambert, no TE). See the Algorithm tab for the per-flag gating table.</td>
+            <td><b>Full</b> enables every configured upgrade; <b>Fast</b> retains thermionic emission, TMM, dual ions, spatial traps, temperature scaling and photon recycling, but omits the three per-RHS upgrades; <b>Legacy</b> is IonMonger-compatible (<i>T</i> pinned to 300 K, single ion, uniform <i>τ</i>, Beer–Lambert, no TE). See the Algorithm tab for the per-flag gating table.</td>
           </tr>
           <tr>
             <td><i>T</i></td><td>Device temperature</td><td>K</td>
-            <td>Lattice temperature. In <b>Full</b> mode it sets <i>V</i><sub>T</sub> = <i>k</i><sub>B</sub><i>T</i>/<i>q</i> and rescales <i>μ</i>(<i>T</i>) ∝ <i>T</i><sup>−3/2</sup>, <i>n</i><sub>i</sub>(<i>T</i>) (Boltzmann + DOS), and <i>D</i><sub>ion</sub>(<i>T</i>) (Arrhenius). Ignored in Fast/Legacy (clamped to 300 K).</td>
+            <td>Lattice temperature. In <b>Fast</b> and <b>Full</b> modes it sets <i>V</i><sub>T</sub> = <i>k</i><sub>B</sub><i>T</i>/<i>q</i> and rescales <i>μ</i>(<i>T</i>) ∝ <i>T</i><sup>−3/2</sup>, <i>n</i><sub>i</sub>(<i>T</i>) (Boltzmann + DOS), and <i>D</i><sub>ion</sub>(<i>T</i>) (Arrhenius). Legacy mode is clamped to 300 K.</td>
           </tr>
           <tr>
             <td><i>V</i><sub>bi</sub></td><td>Built-in voltage</td><td>V</td>
-            <td>Manual built-in potential used as the Poisson Dirichlet boundary. In <b>Full</b> mode, a separate <i>V</i><sub>bi,eff</sub> is also derived from the heterostructure via <i>χ</i>/<i>E</i><sub>g</sub>/doping and used to set the voltage-sweep range. See Algorithm tab.</td>
+            <td>Signed contact-potential difference <i>W</i><sub>left</sub> &minus; <i>W</i><sub>right</sub>. New configurations derive it from the two semiconductor contacts or provide the two metal work functions explicitly. A manual magnitude is retained only for legacy benchmark compatibility. See Algorithm tab.</td>
           </tr>
           <tr>
             <td><i>Φ</i></td><td>Photon flux</td><td>m⁻²·s⁻¹</td>
@@ -39,8 +39,8 @@ export function parametersHTML(): string {
           <tr><td><code>role</code></td><td>Layer role</td><td>—</td><td>One of <code>substrate</code>, <code>front_contact</code>, <code>ETL</code>, <code>absorber</code>, <code>HTL</code>, <code>back_contact</code>. Substrate layers are filtered out of the electrical drift-diffusion grid (they participate only in the TMM optical stack). Every stack must contain exactly one absorber.</td></tr>
           <tr><td>Thickness</td><td>Layer thickness</td><td>m</td><td>Physical extent of the layer along the 1D coordinate <i>x</i>.</td></tr>
           <tr><td><i>ε</i><sub>r</sub></td><td>Relative permittivity</td><td>—</td><td>Static dielectric constant entering Poisson's equation. Harmonic-mean averaged at heterointerfaces.</td></tr>
-          <tr><td><i>χ</i></td><td>Electron affinity</td><td>eV</td><td>Energy from vacuum level to conduction-band minimum. Together with <i>E</i><sub>g</sub> it sets the band alignment (CBO / VBO) between layers and — in <b>Full</b> mode — the thermionic-emission cap at heterointerfaces where |Δ<i>E</i><sub>c</sub>| or |Δ<i>E</i><sub>v</sub>| &gt; 0.05 eV.</td></tr>
-          <tr><td><i>E</i><sub>g</sub></td><td>Band gap</td><td>eV</td><td>Energy difference between conduction- and valence-band edges. Drives the thermal <i>n</i><sub>i</sub>, the radiative recombination rate, and (with <i>χ</i>) the built-in <i>V</i><sub>bi,eff</sub>.</td></tr>
+          <tr><td><i>χ</i></td><td>Electron affinity</td><td>eV</td><td>Energy from vacuum level to conduction-band minimum. Together with <i>E</i><sub>g</sub> it sets the band alignment (CBO / VBO) between layers and — in <b>Fast</b> and <b>Full</b> modes — the thermionic-emission cap at heterointerfaces where |Δ<i>E</i><sub>c</sub>| or |Δ<i>E</i><sub>v</sub>| &gt; 0.05 eV.</td></tr>
+          <tr><td><i>E</i><sub>g</sub></td><td>Band gap</td><td>eV</td><td>Energy difference between conduction- and valence-band edges. Drives the thermal <i>n</i><sub>i</sub>, the radiative recombination rate, and, together with <i>χ</i>, the semiconductor work function used by the derived built-in potential.</td></tr>
         </tbody>
       </table>
 
@@ -48,8 +48,9 @@ export function parametersHTML(): string {
       <table class="param-table">
         <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td><i>μ</i><sub>n</sub>, <i>μ</i><sub>p</sub></td><td>Carrier mobilities</td><td>m²·V⁻¹·s⁻¹</td><td>Electron / hole mobilities at the reference temperature (300 K). Diffusion coefficients follow from the Einstein relation <i>D</i> = <i>μ</i> <i>k</i><sub>B</sub><i>T</i>/<i>q</i>. In <b>Full</b> mode they are rescaled as <i>μ</i>(<i>T</i>) = <i>μ</i><sub>300</sub>·(<i>T</i>/300)<sup>−3/2</sup>.</td></tr>
-          <tr><td><i>n</i><sub>i</sub></td><td>Intrinsic carrier density</td><td>m⁻³</td><td>Thermal equilibrium density for an undoped layer, <i>n</i><sub>i</sub><sup>2</sup> = <i>N</i><sub>C</sub> <i>N</i><sub>V</sub> e<sup>−<i>E</i><sub>g</sub>/<i>k</i><sub>B</sub><i>T</i></sup>. Sets mass-action law <i>np</i> = <i>n</i><sub>i</sub><sup>2</sup> at equilibrium. Rescaled with <i>T</i> in Full mode using either the identity form (no <i>N</i><sub>C,V</sub>) or the explicit DOS form when available.</td></tr>
+          <tr><td><i>μ</i><sub>n</sub>, <i>μ</i><sub>p</sub></td><td>Carrier mobilities</td><td>m²·V⁻¹·s⁻¹</td><td>Electron / hole mobilities at the reference temperature (300 K). Diffusion coefficients follow from the Einstein relation <i>D</i> = <i>μ</i> <i>k</i><sub>B</sub><i>T</i>/<i>q</i>. In <b>Fast</b> and <b>Full</b> modes they are rescaled as <i>μ</i>(<i>T</i>) = <i>μ</i><sub>300</sub>·(<i>T</i>/300)<sup>−3/2</sup>.</td></tr>
+          <tr><td><i>n</i><sub>i</sub></td><td>Intrinsic carrier density</td><td>m⁻³</td><td>Thermal equilibrium density for an undoped layer, <i>n</i><sub>i</sub><sup>2</sup> = <i>N</i><sub>C</sub> <i>N</i><sub>V</sub> e<sup>−<i>E</i><sub>g</sub>/<i>k</i><sub>B</sub><i>T</i></sup>. Sets mass-action law <i>np</i> = <i>n</i><sub>i</sub><sup>2</sup> at equilibrium. Rescaled with <i>T</i> in Fast and Full modes using either the identity form (no <i>N</i><sub>C,V</sub>) or the explicit DOS form when available.</td></tr>
+          <tr><td><i>N</i><sub>C,300</sub>, <i>N</i><sub>V,300</sub></td><td>Effective band DOS</td><td>m⁻³</td><td>Conduction- and valence-band densities of states at 300 K. Both are required on the two outer electrical layers when the built-in potential is derived from semiconductor work functions.</td></tr>
           <tr><td><i>N</i><sub>D</sub>, <i>N</i><sub>A</sub></td><td>Donor / acceptor doping</td><td>m⁻³</td><td>Ionised dopant densities (assumed fully ionised). Enter the Poisson space-charge term directly.</td></tr>
         </tbody>
       </table>
@@ -58,7 +59,7 @@ export function parametersHTML(): string {
       <table class="param-table">
         <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td><i>τ</i><sub>n</sub>, <i>τ</i><sub>p</sub></td><td>SRH lifetimes (bulk)</td><td>s</td><td>Shockley–Read–Hall minority-carrier lifetimes used as the bulk value. In <b>Full</b> mode the absorber trap density becomes position-dependent, <i>N</i><sub>t</sub>(<i>x</i>) = <i>N</i><sub>t,bulk</sub> + (<i>N</i><sub>t,iface</sub> − <i>N</i><sub>t,bulk</sub>)·[e<sup>−<i>d</i><sub>L</sub>/<i>L</i><sub>d</sub></sup> + e<sup>−<i>d</i><sub>R</sub>/<i>L</i><sub>d</sub></sup>], and <i>τ</i>(<i>x</i>) is inverse-scaled to N<sub>t</sub>(<i>x</i>). Legacy/Fast keep <i>τ</i> uniform.</td></tr>
+          <tr><td><i>τ</i><sub>n</sub>, <i>τ</i><sub>p</sub></td><td>SRH lifetimes (bulk)</td><td>s</td><td>Shockley–Read–Hall minority-carrier lifetimes used as the bulk value. In <b>Fast</b> and <b>Full</b> modes the absorber trap density becomes position-dependent, <i>N</i><sub>t</sub>(<i>x</i>) = <i>N</i><sub>t,bulk</sub> + (<i>N</i><sub>t,iface</sub> − <i>N</i><sub>t,bulk</sub>)·[e<sup>−<i>d</i><sub>L</sub>/<i>L</i><sub>d</sub></sup> + e<sup>−<i>d</i><sub>R</sub>/<i>L</i><sub>d</sub></sup>], and <i>τ</i>(<i>x</i>) is inverse-scaled to N<sub>t</sub>(<i>x</i>). Legacy mode keeps <i>τ</i> uniform.</td></tr>
           <tr><td><i>n</i><sub>1</sub>, <i>p</i><sub>1</sub></td><td>SRH trap references</td><td>m⁻³</td><td>Occupancy reference densities for the SRH denominator. Set to <i>n</i><sub>i</sub> for mid-gap traps.</td></tr>
           <tr><td><i>B</i><sub>rad</sub></td><td>Radiative coefficient</td><td>m³·s⁻¹</td><td>Bimolecular radiative rate: <i>R</i><sub>rad</sub> = <i>B</i><sub>rad</sub> (<i>np</i> − <i>n</i><sub>i</sub><sup>2</sup>). Non-zero mainly in direct-gap materials like GaAs or MAPbI<sub>3</sub>.</td></tr>
           <tr><td><i>C</i><sub>n</sub>, <i>C</i><sub>p</sub></td><td>Auger coefficients</td><td>m⁶·s⁻¹</td><td>Three-particle recombination, dominant at high injection or heavy doping. Key for c-Si emitters.</td></tr>
@@ -69,12 +70,12 @@ export function parametersHTML(): string {
       <table class="param-table">
         <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td><i>D</i><sub>ion</sub></td><td>Ion diffusion coefficient (cations / +)</td><td>m²·s⁻¹</td><td>Mobility of the positive mobile ionic species (iodide vacancy in perovskites). Set to 0 in inorganic layers. Rescaled with temperature as <i>D</i><sub>ion</sub>(<i>T</i>) = <i>D</i><sub>ion,300</sub>·exp[−<i>E</i><sub>a</sub>/<i>k</i><sub>B</sub>·(1/<i>T</i> − 1/300)] in Full mode.</td></tr>
-          <tr><td><i>D</i><sub>ion,−</sub></td><td>Ion diffusion coefficient (anions / −)</td><td>m²·s⁻¹</td><td>Optional second mobile species with reversed drift direction. Only active in <b>Full</b> mode when set per layer; Fast and Legacy skip the dual-ion flux entirely.</td></tr>
+          <tr><td><i>D</i><sub>ion</sub></td><td>Ion diffusion coefficient (cations / +)</td><td>m²·s⁻¹</td><td>Mobility of the positive mobile ionic species (iodide vacancy in perovskites). Set to 0 in inorganic layers. Rescaled with temperature as <i>D</i><sub>ion</sub>(<i>T</i>) = <i>D</i><sub>ion,300</sub>·exp[−<i>E</i><sub>a</sub>/<i>k</i><sub>B</sub>·(1/<i>T</i> − 1/300)] in Fast and Full modes.</td></tr>
+          <tr><td><i>D</i><sub>ion,−</sub></td><td>Ion diffusion coefficient (anions / −)</td><td>m²·s⁻¹</td><td>Optional second mobile species with reversed drift direction. Active in <b>Fast</b> and <b>Full</b> modes when set per layer; Legacy mode skips the dual-ion flux.</td></tr>
           <tr><td><i>P</i><sub>lim</sub></td><td>Site density</td><td>m⁻³</td><td>Maximum ion vacancy density — saturates the Blakemore flux via the steric factor (1 − <i>P</i>/<i>P</i><sub>lim</sub>).</td></tr>
           <tr><td><i>P</i><sub>0</sub></td><td>Background ion density</td><td>m⁻³</td><td>Reference ion density used in the Poisson charge term (<i>P</i> − <i>P</i><sub>0</sub>); ensures charge neutrality at rest.</td></tr>
-          <tr><td><i>α</i></td><td>Optical absorption</td><td>m⁻¹</td><td>Beer–Lambert coefficient. Set to 0 in non-absorbing window / buffer layers. Only used when no layer defines <code>optical_material</code> (TMM off) or when Mode is Fast/Legacy.</td></tr>
-          <tr><td><code>optical_material</code></td><td>TMM n,k key</td><td>string | null</td><td>Identifier matching a CSV in <code>perovskite_sim/data/nk/</code>. When set (and Mode = <b>Full</b>), the layer participates in the TMM stack and the solver replaces Beer&ndash;Lambert with the Pettersson/Burkhard transfer-matrix method against AM1.5G. When <code>null</code>, the layer is invisible to TMM and the absorber falls back to Beer&ndash;Lambert. Available keys: <code>MAPbI3</code>, <code>TiO2</code>, <code>spiro_OMeTAD</code>, <code>FTO</code>, <code>ITO</code>, <code>SnO2</code>, <code>C60</code>, <code>PCBM</code>, <code>PEDOT_PSS</code>, <code>Ag</code>, <code>Au</code>, <code>glass</code>. <code>n_optical</code> provides a constant-<i>n</i> fallback when no CSV is available.</td></tr>
+          <tr><td><i>α</i></td><td>Optical absorption</td><td>m⁻¹</td><td>Beer–Lambert coefficient. Set to 0 in non-absorbing window / buffer layers. Used when no layer defines <code>optical_material</code> (TMM off) or when Mode is Legacy.</td></tr>
+          <tr><td><code>optical_material</code></td><td>TMM n,k key</td><td>string | null</td><td>Identifier matching a CSV in <code>perovskite_sim/data/nk/</code>. When set in <b>Fast</b> or <b>Full</b> mode, the layer participates in the TMM stack and the solver replaces Beer&ndash;Lambert with the Pettersson/Burkhard transfer-matrix method against AM1.5G. When <code>null</code>, the layer is invisible to TMM and the absorber falls back to Beer&ndash;Lambert. Available keys: <code>MAPbI3</code>, <code>TiO2</code>, <code>spiro_OMeTAD</code>, <code>FTO</code>, <code>ITO</code>, <code>SnO2</code>, <code>C60</code>, <code>PCBM</code>, <code>PEDOT_PSS</code>, <code>Ag</code>, <code>Au</code>, <code>glass</code>. <code>n_optical</code> provides a constant-<i>n</i> fallback when no CSV is available.</td></tr>
           <tr><td><code>incoherent</code></td><td>Incoherent-layer flag</td><td>bool</td><td>Marks a layer as optically incoherent (e.g. a glass substrate &gt; 100 &micro;m). The layer uses bulk Beer&ndash;Lambert locally to avoid spurious sub-nanometer interference fringes from the matrix product. Must be the first layer in the stack. Default: <code>false</code>.</td></tr>
           <tr><td><code>role: substrate</code></td><td>Optical-only role</td><td>role value</td><td>Marks a layer as optical-only: it is included in the TMM stack but excluded from the drift-diffusion grid and boundary conditions. A substrate layer must be the first layer, must set <code>incoherent: true</code>, and must set an <code>optical_material</code>.</td></tr>
         </tbody>
@@ -85,14 +86,18 @@ export function parametersHTML(): string {
       <table class="param-table mode-table">
         <thead><tr><th>Upgrade</th><th>Legacy</th><th>Fast</th><th>Full</th></tr></thead>
         <tbody>
-          <tr><td>Band-offset contact BCs (<i>V</i><sub>bi,eff</sub>)</td><td>—</td><td>—</td><td>✓</td></tr>
-          <tr><td>Thermionic-emission flux cap (Richardson–Dushman)</td><td>—</td><td>—</td><td>✓</td></tr>
-          <tr><td>Transfer-matrix optics (coherent n,k)</td><td>—</td><td>—</td><td>✓</td></tr>
-          <tr><td>Dual-species ion migration</td><td>—</td><td>—</td><td>✓</td></tr>
-          <tr><td>Position-dependent trap profile</td><td>—</td><td>—</td><td>✓</td></tr>
-          <tr><td>Temperature scaling (<i>V</i><sub>T</sub>, <i>μ</i>, <i>n</i><sub>i</sub>, <i>D</i><sub>ion</sub>)</td><td>—</td><td>—</td><td>✓</td></tr>
-          <tr><td>Beer–Lambert generation</td><td>✓</td><td>✓</td><td>fallback</td></tr>
-          <tr><td>Single-species ion flux</td><td>✓</td><td>✓</td><td>fallback</td></tr>
+          <tr><td>Contact-potential source</td><td>configured</td><td>configured</td><td>configured</td></tr>
+          <tr><td>Thermionic-emission flux cap (Richardson–Dushman)</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Transfer-matrix optics (coherent n,k)</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Dual-species ion migration</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Position-dependent trap profile</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Temperature scaling (<i>V</i><sub>T</sub>, <i>μ</i>, <i>n</i><sub>i</sub>, <i>D</i><sub>ion</sub>)</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Photon recycling</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Self-consistent radiative reabsorption</td><td>—</td><td>—</td><td>✓</td></tr>
+          <tr><td>Field-dependent mobility</td><td>—</td><td>—</td><td>✓</td></tr>
+          <tr><td>Explicit <i>S</i><sub>n,p</sub> Robin contacts</td><td>—</td><td>—</td><td>✓</td></tr>
+          <tr><td>Beer–Lambert generation</td><td>✓</td><td>fallback</td><td>fallback</td></tr>
+          <tr><td>Single-species ion flux</td><td>✓</td><td>fallback</td><td>fallback</td></tr>
         </tbody>
       </table>
 

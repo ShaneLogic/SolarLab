@@ -62,6 +62,7 @@ class InterfaceCBOScanError(RuntimeError):
 FIXED_CONTACTS = "fixed_contacts"
 RECOMPUTED_BUILT_IN = "recomputed_built_in"
 CBO_BOUNDARY_POLICIES = (FIXED_CONTACTS, RECOMPUTED_BUILT_IN)
+ADAPTIVE_JV_METRICS = ("FF", "PCE")
 
 
 def validate_cbo_boundary_policy(policy: str) -> str:
@@ -73,6 +74,22 @@ def validate_cbo_boundary_policy(policy: str) -> str:
             f"got {policy!r}"
         )
     return normalized
+
+
+def validate_adaptive_jv_metrics(
+    metrics: tuple[str, ...] | list[str],
+) -> tuple[str, ...]:
+    """Return unique full-JV onset metrics in the declared refinement order."""
+    normalized = tuple(str(metric).strip().upper() for metric in metrics)
+    unsupported = tuple(
+        metric for metric in normalized if metric not in ADAPTIVE_JV_METRICS
+    )
+    if unsupported:
+        raise ValueError(
+            "adaptive_jv_metrics must contain only "
+            f"{ADAPTIVE_JV_METRICS}; got {unsupported}"
+        )
+    return tuple(dict.fromkeys(normalized))
 
 
 @dataclass(frozen=True)
@@ -114,6 +131,18 @@ class CBOJVMetricsGridSample:
 
 
 @dataclass(frozen=True)
+class CBOVoltageGridConvergencePolicy:
+    """Numerical acceptance limits used for point-local voltage refinement."""
+
+    minimum_voltage_grids: int = 3
+    maximum_voc_change_V: float = 2.0e-3
+    maximum_ff_change: float = 1.0e-3
+    maximum_pce_change: float = 5.0e-4
+    maximum_successive_change_ratio: float = 0.8
+    contraction_noise_floor_fraction: float = 0.1
+
+
+@dataclass(frozen=True)
 class CBOScanPoint:
     """A requested CBO point with a certified short-circuit state and optional J-V."""
 
@@ -121,6 +150,10 @@ class CBOScanPoint:
     short_circuit_state: QuasiFermiSteadyStateResult
     jv: QuasiFermiJVSweepResult | None
     voltage_grid_metrics: tuple[CBOJVMetricsGridSample, ...] = ()
+    requested: bool = True
+    refinement_metrics: tuple[str, ...] = ()
+    voltage_grid_refined: bool = False
+    initial_voltage_grid_reasons: tuple[str, ...] = ()
 
     @property
     def metrics(self) -> JVMetrics | None:
@@ -157,6 +190,21 @@ class CBOScanTermination:
 
 
 @dataclass(frozen=True)
+class CBOMetricRefinementStep:
+    """One auditable bisection step for a full-JV metric onset."""
+
+    metric: str
+    lower_before_eV: float
+    upper_before_eV: float
+    sampled_delta_ec_eV: float
+    sampled_value: float
+    threshold_value: float
+    retained_side: str
+    reused_short_circuit_state: bool
+    reused_full_jv: bool
+
+
+@dataclass(frozen=True)
 class InterfaceCBOScanResult:
     """Certified CBO results, onset brackets, and any validity endpoints."""
 
@@ -188,7 +236,11 @@ class InterfaceCBOScanResult:
     heterojunction_recombination_despike: float
     qf_coordinate_system: str
     voltage_grids_V: tuple[np.ndarray, ...]
+    voltage_refinement_grids_V: tuple[np.ndarray, ...]
+    voltage_grid_convergence_policy: CBOVoltageGridConvergencePolicy
     mpp_interpolation: str
+    adaptive_jv_metrics: tuple[str, ...]
+    metric_refinement_trace: tuple[CBOMetricRefinementStep, ...]
 
     @property
     def sync_vbi(self) -> bool:
@@ -197,9 +249,22 @@ class InterfaceCBOScanResult:
 
     @property
     def complete(self) -> bool:
+        requested_points = tuple(point for point in self.points if point.requested)
         return bool(
             not self.terminations
-            and len(self.points) == len(self.requested_delta_ec_eV)
+            and len(requested_points) == len(self.requested_delta_ec_eV)
+            and all(
+                any(
+                    math.isclose(
+                        point.delta_ec_eV,
+                        float(target),
+                        rel_tol=0.0,
+                        abs_tol=1.0e-12,
+                    )
+                    for point in requested_points
+                )
+                for target in self.requested_delta_ec_eV
+            )
         )
 
     @property
@@ -263,6 +328,8 @@ class CBOVoltageGridPointCertificate:
     minimum_voltage_step_V: float | None
     nodal_predictor_fallback_attempts: int
     nodal_predictor_fallback_failures: int
+    voltage_grid_refined: bool
+    initial_voltage_grid_reasons: tuple[str, ...]
     certified: bool
     reasons: tuple[str, ...]
 
@@ -275,12 +342,15 @@ class CBOVoltageGridConvergenceCertificate:
     mpp_interpolation: str
     voltage_point_counts: tuple[int, ...]
     voltage_interval_counts: tuple[int, ...]
+    voltage_refinement_point_counts: tuple[int, ...]
+    voltage_refinement_interval_counts: tuple[int, ...]
     minimum_voltage_grids: int
     maximum_voc_change_V: float
     maximum_ff_change: float
     maximum_pce_change: float
     maximum_successive_change_ratio: float
     contraction_noise_floor_fraction: float
+    refined_delta_ec_eV: tuple[float, ...]
     points: tuple[CBOVoltageGridPointCertificate, ...]
     certified: bool
     reasons: tuple[str, ...]
@@ -394,6 +464,9 @@ def certify_cbo_grid_convergence(
     The conservative cross-grid result is therefore the union envelope of all
     certified intervals, not a midpoint extrapolation.
     """
+    allowed_metrics = ("Jsc", *ADAPTIVE_JV_METRICS)
+    if metric not in allowed_metrics:
+        raise ValueError(f"metric must be one of {allowed_metrics}")
     scans = tuple(results)
     if minimum_grids < 2:
         raise ValueError("minimum_grids must be at least two")
@@ -461,6 +534,18 @@ def certify_cbo_grid_convergence(
                     rel_tol=0.0,
                     abs_tol=1.0e-12,
                 )
+                or not math.isclose(
+                    scan.minimum_delta_step_eV,
+                    reference.minimum_delta_step_eV,
+                    rel_tol=0.0,
+                    abs_tol=0.0,
+                )
+                or not math.isclose(
+                    scan.maximum_delta_step_eV,
+                    reference.maximum_delta_step_eV,
+                    rel_tol=0.0,
+                    abs_tol=0.0,
+                )
                 or scan.grid_interval_weights
                 != reference.grid_interval_weights
                 or scan.grid_alphas != reference.grid_alphas
@@ -469,6 +554,46 @@ def certify_cbo_grid_convergence(
             ):
                 reasons.append("grid scans do not share one physical protocol")
                 break
+
+        if metric in ADAPTIVE_JV_METRICS:
+            for scan in ordered:
+                same_voltage_grids = (
+                    len(scan.voltage_grids_V) == len(reference.voltage_grids_V)
+                    and all(
+                        np.array_equal(left, right)
+                        for left, right in zip(
+                            scan.voltage_grids_V,
+                            reference.voltage_grids_V,
+                        )
+                    )
+                )
+                same_voltage_refinement_grids = (
+                    len(scan.voltage_refinement_grids_V)
+                    == len(reference.voltage_refinement_grids_V)
+                    and all(
+                        np.array_equal(left, right)
+                        for left, right in zip(
+                            scan.voltage_refinement_grids_V,
+                            reference.voltage_refinement_grids_V,
+                        )
+                    )
+                )
+                if (
+                    not scan.calculate_jv_metrics
+                    or metric not in scan.adaptive_jv_metrics
+                    or scan.mpp_interpolation != reference.mpp_interpolation
+                    or scan.minimum_voltage_step_V
+                    != reference.minimum_voltage_step_V
+                    or not same_voltage_grids
+                    or not same_voltage_refinement_grids
+                    or scan.voltage_grid_convergence_policy
+                    != reference.voltage_grid_convergence_policy
+                ):
+                    reasons.append(
+                        f"grid scans do not share one adaptive {metric} "
+                        "full-JV protocol"
+                    )
+                    break
 
     critical: list[tuple[float, float]] = []
     reference_values: list[float] = []
@@ -642,6 +767,207 @@ def _successive_change_ratios(
     return tuple(ratios)
 
 
+def _validate_voltage_grid_convergence_policy(
+    policy: CBOVoltageGridConvergencePolicy,
+) -> CBOVoltageGridConvergencePolicy:
+    if (
+        isinstance(policy.minimum_voltage_grids, (bool, np.bool_))
+        or not isinstance(policy.minimum_voltage_grids, (int, np.integer))
+        or int(policy.minimum_voltage_grids) < 3
+    ):
+        raise ValueError("minimum_voltage_grids must be at least three")
+    for name in (
+        "maximum_voc_change_V",
+        "maximum_ff_change",
+        "maximum_pce_change",
+        "maximum_successive_change_ratio",
+        "contraction_noise_floor_fraction",
+    ):
+        value = getattr(policy, name)
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be finite and positive")
+    if policy.maximum_successive_change_ratio >= 1.0:
+        raise ValueError(
+            "maximum_successive_change_ratio must be smaller than 1"
+        )
+    if policy.contraction_noise_floor_fraction >= 1.0:
+        raise ValueError(
+            "contraction_noise_floor_fraction must be smaller than 1"
+        )
+    return CBOVoltageGridConvergencePolicy(
+        minimum_voltage_grids=int(policy.minimum_voltage_grids),
+        maximum_voc_change_V=float(policy.maximum_voc_change_V),
+        maximum_ff_change=float(policy.maximum_ff_change),
+        maximum_pce_change=float(policy.maximum_pce_change),
+        maximum_successive_change_ratio=float(
+            policy.maximum_successive_change_ratio
+        ),
+        contraction_noise_floor_fraction=float(
+            policy.contraction_noise_floor_fraction
+        ),
+    )
+
+
+def _validate_voltage_refinement_grids(
+    base_grids: tuple[np.ndarray, ...],
+    refinement_grids: tuple[np.ndarray, ...],
+    *,
+    minimum_voltage_grids: int,
+) -> None:
+    """Require one declared shift of an exactly nested convergence ladder."""
+    if not refinement_grids:
+        return
+    if (
+        len(base_grids) != minimum_voltage_grids
+        or len(refinement_grids) != minimum_voltage_grids
+    ):
+        raise ValueError(
+            "point-local voltage refinement requires both ladders to contain "
+            f"exactly {minimum_voltage_grids} grids"
+        )
+    if not all(
+        np.array_equal(left, right)
+        for left, right in zip(base_grids[1:], refinement_grids[:-1])
+    ):
+        raise ValueError(
+            "voltage refinement ladder must reuse the two finest base grids "
+            "as its two coarsest grids"
+        )
+    _nested_voltage_grids((*base_grids, refinement_grids[-1]))
+
+
+def _certify_cbo_voltage_grid_point(
+    point: CBOScanPoint,
+    *,
+    expected_point_count_ladders: tuple[tuple[int, ...], ...],
+    policy: CBOVoltageGridConvergencePolicy,
+) -> CBOVoltageGridPointCertificate:
+    point_reasons: list[str] = []
+    samples = point.voltage_grid_metrics
+    sample_counts = tuple(sample.voltage_point_count for sample in samples)
+    retained_sample_counts = tuple(
+        (
+            sample.voltage_point_count
+            if sample.retained_voltage_point_count is None
+            else sample.retained_voltage_point_count
+        )
+        for sample in samples
+    )
+    if sample_counts not in expected_point_count_ladders:
+        point_reasons.append(
+            "metric samples do not match a declared voltage-grid ladder"
+        )
+    if point.voltage_grid_refined:
+        if len(expected_point_count_ladders) < 2:
+            point_reasons.append(
+                "point reports voltage refinement without a declared ladder"
+            )
+        elif sample_counts != expected_point_count_ladders[-1]:
+            point_reasons.append(
+                "refined point does not use the declared refinement ladder"
+            )
+    elif expected_point_count_ladders and (
+        sample_counts != expected_point_count_ladders[0]
+    ):
+        point_reasons.append(
+            "unrefined point does not use the declared base ladder"
+        )
+    if not samples or not all(sample.certified for sample in samples):
+        point_reasons.append(
+            "one or more voltage-grid metric samples are uncertified"
+        )
+
+    voc_values = tuple(float(sample.metrics.V_oc) for sample in samples)
+    ff_values = tuple(float(sample.metrics.FF) for sample in samples)
+    pce_values = tuple(float(sample.metrics.PCE) for sample in samples)
+    if not all(
+        np.isfinite(value)
+        for values in (voc_values, ff_values, pce_values)
+        for value in values
+    ):
+        point_reasons.append("one or more J-V metrics are not finite")
+
+    voc_changes = _successive_absolute_changes(voc_values)
+    ff_changes = _successive_absolute_changes(ff_values)
+    pce_changes = _successive_absolute_changes(pce_values)
+    voc_ratios = _successive_change_ratios(voc_changes)
+    ff_ratios = _successive_change_ratios(ff_changes)
+    pce_ratios = _successive_change_ratios(pce_changes)
+    final_voc = voc_changes[-1] if voc_changes else None
+    final_ff = ff_changes[-1] if ff_changes else None
+    final_pce = pce_changes[-1] if pce_changes else None
+
+    for metric, final, limit in (
+        ("Voc", final_voc, policy.maximum_voc_change_V),
+        ("FF", final_ff, policy.maximum_ff_change),
+        ("PCE", final_pce, policy.maximum_pce_change),
+    ):
+        if final is None:
+            point_reasons.append(f"{metric} has no refinement difference")
+        elif final > limit:
+            point_reasons.append(
+                f"final {metric} change {final:.6g} exceeds {limit:.6g}"
+            )
+    for metric, ratios, changes, limit in (
+        ("Voc", voc_ratios, voc_changes, policy.maximum_voc_change_V),
+        ("FF", ff_ratios, ff_changes, policy.maximum_ff_change),
+        ("PCE", pce_ratios, pce_changes, policy.maximum_pce_change),
+    ):
+        material_ratios = tuple(
+            ratio
+            for ratio, current_change in zip(ratios, changes[1:])
+            if current_change
+            > policy.contraction_noise_floor_fraction * limit
+        )
+        if any(
+            ratio > policy.maximum_successive_change_ratio
+            for ratio in material_ratios
+        ):
+            point_reasons.append(
+                f"successive {metric} changes do not contract below ratio "
+                f"{policy.maximum_successive_change_ratio:.6g}; observed "
+                + ", ".join(f"{ratio:.6g}" for ratio in material_ratios)
+            )
+
+    return CBOVoltageGridPointCertificate(
+        delta_ec_eV=float(point.delta_ec_eV),
+        voltage_point_counts=sample_counts,
+        retained_voltage_point_counts=retained_sample_counts,
+        voc_values_V=voc_values,
+        ff_values=ff_values,
+        pce_values=pce_values,
+        successive_voc_changes_V=voc_changes,
+        successive_ff_changes=ff_changes,
+        successive_pce_changes=pce_changes,
+        successive_voc_change_ratios=voc_ratios,
+        successive_ff_change_ratios=ff_ratios,
+        successive_pce_change_ratios=pce_ratios,
+        final_voc_change_V=final_voc,
+        final_ff_change=final_ff,
+        final_pce_change=final_pce,
+        continuation_bridge_count=int(
+            getattr(point.jv, "continuation_bridge_count", 0)
+        ),
+        minimum_voltage_step_V=getattr(
+            point.jv,
+            "minimum_voltage_step_V",
+            None,
+        ),
+        nodal_predictor_fallback_attempts=int(
+            getattr(point.jv, "nodal_predictor_fallback_attempts", 0)
+        ),
+        nodal_predictor_fallback_failures=int(
+            getattr(point.jv, "nodal_predictor_fallback_failures", 0)
+        ),
+        voltage_grid_refined=bool(point.voltage_grid_refined),
+        initial_voltage_grid_reasons=tuple(
+            point.initial_voltage_grid_reasons
+        ),
+        certified=not point_reasons,
+        reasons=tuple(dict.fromkeys(point_reasons)),
+    )
+
+
 def certify_cbo_voltage_grid_convergence(
     result: InterfaceCBOScanResult,
     *,
@@ -659,28 +985,20 @@ def certify_cbo_voltage_grid_convergence(
     certified branch. This isolates voltage-sampling error without repeating
     the nonlinear solve at voltage points shared by all grids.
     """
-    if minimum_voltage_grids < 3:
-        raise ValueError("minimum_voltage_grids must be at least three")
-    for name, value in (
-        ("maximum_voc_change_V", maximum_voc_change_V),
-        ("maximum_ff_change", maximum_ff_change),
-        ("maximum_pce_change", maximum_pce_change),
-        ("maximum_successive_change_ratio", maximum_successive_change_ratio),
-        (
-            "contraction_noise_floor_fraction",
-            contraction_noise_floor_fraction,
-        ),
-    ):
-        if not np.isfinite(value) or value <= 0.0:
-            raise ValueError(f"{name} must be finite and positive")
-    if maximum_successive_change_ratio >= 1.0:
-        raise ValueError(
-            "maximum_successive_change_ratio must be smaller than 1"
+    policy = _validate_voltage_grid_convergence_policy(
+        CBOVoltageGridConvergencePolicy(
+            minimum_voltage_grids=minimum_voltage_grids,
+            maximum_voc_change_V=maximum_voc_change_V,
+            maximum_ff_change=maximum_ff_change,
+            maximum_pce_change=maximum_pce_change,
+            maximum_successive_change_ratio=(
+                maximum_successive_change_ratio
+            ),
+            contraction_noise_floor_fraction=(
+                contraction_noise_floor_fraction
+            ),
         )
-    if contraction_noise_floor_fraction >= 1.0:
-        raise ValueError(
-            "contraction_noise_floor_fraction must be smaller than 1"
-        )
+    )
 
     reasons: list[str] = []
     try:
@@ -688,11 +1006,29 @@ def certify_cbo_voltage_grid_convergence(
     except ValueError as exc:
         grids = ()
         reasons.append(str(exc))
+    try:
+        refinement_grids = (
+            _nested_voltage_grids(result.voltage_refinement_grids_V)
+            if result.voltage_refinement_grids_V
+            else ()
+        )
+        _validate_voltage_refinement_grids(
+            grids,
+            refinement_grids,
+            minimum_voltage_grids=policy.minimum_voltage_grids,
+        )
+    except ValueError as exc:
+        refinement_grids = ()
+        reasons.append(str(exc))
     point_counts = tuple(len(grid) for grid in grids)
     interval_counts = tuple(count - 1 for count in point_counts)
-    if len(grids) < minimum_voltage_grids:
+    refinement_point_counts = tuple(len(grid) for grid in refinement_grids)
+    refinement_interval_counts = tuple(
+        count - 1 for count in refinement_point_counts
+    )
+    if len(grids) < policy.minimum_voltage_grids:
         reasons.append(
-            f"requires at least {minimum_voltage_grids} voltage grids; "
+            f"requires at least {policy.minimum_voltage_grids} voltage grids; "
             f"received {len(grids)}"
         )
     if not result.calculate_jv_metrics:
@@ -702,114 +1038,17 @@ def certify_cbo_voltage_grid_convergence(
     if not result.certified:
         reasons.append("scan lacks a numerical point certificate")
 
+    expected_ladders = tuple(
+        ladder
+        for ladder in (point_counts, refinement_point_counts)
+        if ladder
+    )
     point_certificates: list[CBOVoltageGridPointCertificate] = []
     for point in result.points:
-        point_reasons: list[str] = []
-        samples = point.voltage_grid_metrics
-        sample_counts = tuple(sample.voltage_point_count for sample in samples)
-        retained_sample_counts = tuple(
-            (
-                sample.voltage_point_count
-                if sample.retained_voltage_point_count is None
-                else sample.retained_voltage_point_count
-            )
-            for sample in samples
-        )
-        if sample_counts != point_counts:
-            point_reasons.append(
-                "metric samples do not match the declared voltage-grid ladder"
-            )
-        if not samples or not all(sample.certified for sample in samples):
-            point_reasons.append(
-                "one or more voltage-grid metric samples are uncertified"
-            )
-
-        voc_values = tuple(float(sample.metrics.V_oc) for sample in samples)
-        ff_values = tuple(float(sample.metrics.FF) for sample in samples)
-        pce_values = tuple(float(sample.metrics.PCE) for sample in samples)
-        if not all(
-            np.isfinite(value)
-            for values in (voc_values, ff_values, pce_values)
-            for value in values
-        ):
-            point_reasons.append("one or more J-V metrics are not finite")
-
-        voc_changes = _successive_absolute_changes(voc_values)
-        ff_changes = _successive_absolute_changes(ff_values)
-        pce_changes = _successive_absolute_changes(pce_values)
-        voc_ratios = _successive_change_ratios(voc_changes)
-        ff_ratios = _successive_change_ratios(ff_changes)
-        pce_ratios = _successive_change_ratios(pce_changes)
-        final_voc = voc_changes[-1] if voc_changes else None
-        final_ff = ff_changes[-1] if ff_changes else None
-        final_pce = pce_changes[-1] if pce_changes else None
-
-        for metric, final, limit in (
-            ("Voc", final_voc, maximum_voc_change_V),
-            ("FF", final_ff, maximum_ff_change),
-            ("PCE", final_pce, maximum_pce_change),
-        ):
-            if final is None:
-                point_reasons.append(f"{metric} has no refinement difference")
-            elif final > limit:
-                point_reasons.append(
-                    f"final {metric} change {final:.6g} exceeds {limit:.6g}"
-                )
-        for metric, ratios, changes, limit in (
-            ("Voc", voc_ratios, voc_changes, maximum_voc_change_V),
-            ("FF", ff_ratios, ff_changes, maximum_ff_change),
-            ("PCE", pce_ratios, pce_changes, maximum_pce_change),
-        ):
-            material_ratios = tuple(
-                ratio
-                for ratio, current_change in zip(ratios, changes[1:])
-                if current_change
-                > contraction_noise_floor_fraction * limit
-            )
-            if any(
-                ratio > maximum_successive_change_ratio
-                for ratio in material_ratios
-            ):
-                point_reasons.append(
-                    f"successive {metric} changes do not contract below ratio "
-                    f"{maximum_successive_change_ratio:.6g}; observed "
-                    + ", ".join(
-                        f"{ratio:.6g}" for ratio in material_ratios
-                    )
-                )
-
-        point_certificate = CBOVoltageGridPointCertificate(
-            delta_ec_eV=float(point.delta_ec_eV),
-            voltage_point_counts=sample_counts,
-            retained_voltage_point_counts=retained_sample_counts,
-            voc_values_V=voc_values,
-            ff_values=ff_values,
-            pce_values=pce_values,
-            successive_voc_changes_V=voc_changes,
-            successive_ff_changes=ff_changes,
-            successive_pce_changes=pce_changes,
-            successive_voc_change_ratios=voc_ratios,
-            successive_ff_change_ratios=ff_ratios,
-            successive_pce_change_ratios=pce_ratios,
-            final_voc_change_V=final_voc,
-            final_ff_change=final_ff,
-            final_pce_change=final_pce,
-            continuation_bridge_count=int(
-                getattr(point.jv, "continuation_bridge_count", 0)
-            ),
-            minimum_voltage_step_V=getattr(
-                point.jv,
-                "minimum_voltage_step_V",
-                None,
-            ),
-            nodal_predictor_fallback_attempts=int(
-                getattr(point.jv, "nodal_predictor_fallback_attempts", 0)
-            ),
-            nodal_predictor_fallback_failures=int(
-                getattr(point.jv, "nodal_predictor_fallback_failures", 0)
-            ),
-            certified=not point_reasons,
-            reasons=tuple(dict.fromkeys(point_reasons)),
+        point_certificate = _certify_cbo_voltage_grid_point(
+            point,
+            expected_point_count_ladders=expected_ladders,
+            policy=policy,
         )
         point_certificates.append(point_certificate)
         if not point_certificate.certified:
@@ -824,19 +1063,30 @@ def certify_cbo_voltage_grid_convergence(
         and all(point.certified for point in point_certificates)
     )
     return CBOVoltageGridConvergenceCertificate(
-        sampling_method="nested_subsampling_of_finest_certified_jv",
+        sampling_method=(
+            "point_local_nested_refinement"
+            if refinement_grids
+            else "nested_subsampling_of_finest_certified_jv"
+        ),
         mpp_interpolation=result.mpp_interpolation,
         voltage_point_counts=point_counts,
         voltage_interval_counts=interval_counts,
-        minimum_voltage_grids=int(minimum_voltage_grids),
-        maximum_voc_change_V=float(maximum_voc_change_V),
-        maximum_ff_change=float(maximum_ff_change),
-        maximum_pce_change=float(maximum_pce_change),
-        maximum_successive_change_ratio=float(
-            maximum_successive_change_ratio
+        voltage_refinement_point_counts=refinement_point_counts,
+        voltage_refinement_interval_counts=refinement_interval_counts,
+        minimum_voltage_grids=policy.minimum_voltage_grids,
+        maximum_voc_change_V=policy.maximum_voc_change_V,
+        maximum_ff_change=policy.maximum_ff_change,
+        maximum_pce_change=policy.maximum_pce_change,
+        maximum_successive_change_ratio=(
+            policy.maximum_successive_change_ratio
         ),
-        contraction_noise_floor_fraction=float(
-            contraction_noise_floor_fraction
+        contraction_noise_floor_fraction=(
+            policy.contraction_noise_floor_fraction
+        ),
+        refined_delta_ec_eV=tuple(
+            point.delta_ec_eV
+            for point in point_certificates
+            if point.voltage_grid_refined
         ),
         points=tuple(point_certificates),
         certified=bool(complete_points and not reasons),
@@ -1471,6 +1721,12 @@ def solve_interface_cbo_scan(
     *,
     voltages_V: np.ndarray | None = None,
     voltage_grids_V: tuple[np.ndarray, ...] | list[np.ndarray] | None = None,
+    voltage_refinement_grids_V: (
+        tuple[np.ndarray, ...] | list[np.ndarray] | None
+    ) = None,
+    voltage_grid_convergence_policy: (
+        CBOVoltageGridConvergencePolicy | None
+    ) = None,
     N_grid: int = 30,
     reference_delta_ec_eV: float = 0.0,
     relative_drop_fraction: float = 0.01,
@@ -1484,6 +1740,7 @@ def solve_interface_cbo_scan(
     interface_topology: str = DEDUPLICATED_QSS,
     boundary_policy: str = FIXED_CONTACTS,
     calculate_jv_metrics: bool = True,
+    adaptive_jv_metrics: tuple[str, ...] | list[str] = (),
     reference_initial_state: QuasiFermiSteadyStateResult | None = None,
     reference_initial_state_grid: np.ndarray | None = None,
     progress: Callable[[str, int, int, str], None] | None = None,
@@ -1494,13 +1751,18 @@ def solve_interface_cbo_scan(
     is solved first; two independent continuations then walk outward so a
     difficult point on one side cannot contaminate the other branch. Temporary
     bridge points are included in ``short_circuit_trace`` and sharpen the Jsc
-    onset bracket, but full J-V metrics are calculated only at requested CBOs.
-    Set ``calculate_jv_metrics=False`` for a faster certified Jsc/grid study;
-    the FF and PCE intervals are then returned unresolved.
+    onset bracket. Full J-V metrics are normally calculated only at requested
+    CBOs. ``adaptive_jv_metrics`` opt-in refines the selected FF/PCE onset
+    brackets with certified full-JV midpoint solves and records every bisection
+    step. Set ``calculate_jv_metrics=False`` for a faster certified Jsc/grid
+    study; the FF and PCE intervals are then returned unresolved.
 
     ``voltage_grids_V`` enables a coarse-to-fine nested voltage ladder. The
     complete finest J-V branch is solved once and the coarser metrics are
-    extracted from strict subsets of its certified voltage points. Supplying
+    extracted from strict subsets of its certified voltage points. An optional
+    ``voltage_refinement_grids_V`` must shift that ladder by one nested level.
+    It is solved only for a point whose base ladder fails the declared voltage
+    policy, before that point can guide adaptive FF/PCE refinement. Supplying
     both ``voltages_V`` and ``voltage_grids_V`` is rejected as ambiguous.
 
     ``boundary_policy='fixed_contacts'`` holds the configured electrostatic
@@ -1608,9 +1870,24 @@ def solve_interface_cbo_scan(
             "set stack.het_recomb_despike=0.0 for this physical protocol"
         )
     resolved_boundary_policy = validate_cbo_boundary_policy(boundary_policy)
+    resolved_adaptive_jv_metrics = validate_adaptive_jv_metrics(
+        adaptive_jv_metrics
+    )
+    resolved_voltage_policy = _validate_voltage_grid_convergence_policy(
+        voltage_grid_convergence_policy
+        or CBOVoltageGridConvergencePolicy()
+    )
+    if resolved_adaptive_jv_metrics and not calculate_jv_metrics:
+        raise ValueError(
+            "adaptive_jv_metrics requires calculate_jv_metrics=True"
+        )
     if voltages_V is not None and voltage_grids_V is not None:
         raise ValueError(
             "use either voltages_V or voltage_grids_V, not both"
+        )
+    if voltage_refinement_grids_V is not None and voltage_grids_V is None:
+        raise ValueError(
+            "voltage_refinement_grids_V requires voltage_grids_V"
         )
     if voltage_grids_V is not None and not calculate_jv_metrics:
         raise ValueError(
@@ -1626,9 +1903,22 @@ def solve_interface_cbo_scan(
         resolved_voltage_grids = (
             validated_single_grid if calculate_jv_metrics else ()
         )
+        resolved_voltage_refinement_grids: tuple[np.ndarray, ...] = ()
         voltages = validated_single_grid[-1]
     else:
         resolved_voltage_grids = _nested_voltage_grids(voltage_grids_V)
+        resolved_voltage_refinement_grids = (
+            _nested_voltage_grids(voltage_refinement_grids_V)
+            if voltage_refinement_grids_V is not None
+            else ()
+        )
+        _validate_voltage_refinement_grids(
+            resolved_voltage_grids,
+            resolved_voltage_refinement_grids,
+            minimum_voltage_grids=(
+                resolved_voltage_policy.minimum_voltage_grids
+            ),
+        )
         voltages = resolved_voltage_grids[-1]
 
     grid_points = int(N_grid)
@@ -1639,6 +1929,7 @@ def solve_interface_cbo_scan(
     short_circuit_trace: list[CBOShortCircuitSample] = []
     short_states_by_delta: dict[float, QuasiFermiSteadyStateResult] = {}
     points_by_delta: dict[float, CBOScanPoint] = {}
+    metric_refinement_trace: list[CBOMetricRefinementStep] = []
     terminations: list[CBOScanTermination] = []
     bridge_count = 0
     reference_grid_warm_starts = 0
@@ -1695,26 +1986,26 @@ def solve_interface_cbo_scan(
         short_states_by_delta[target_delta] = state
         return state
 
-    def solve_full_point(
+    def solve_full_point_on_grids(
         target_delta: float,
         short_circuit_state: QuasiFermiSteadyStateResult,
+        active_voltage_grids: tuple[np.ndarray, ...],
+        *,
+        requested_point: bool,
+        refinement_metrics: tuple[str, ...] = (),
+        voltage_grid_refined: bool = False,
+        initial_voltage_grid_reasons: tuple[str, ...] = (),
     ) -> CBOScanPoint:
-        if not calculate_jv_metrics:
-            return CBOScanPoint(
-                delta_ec_eV=target_delta,
-                short_circuit_state=short_circuit_state,
-                jv=None,
-                voltage_grid_metrics=(),
-            )
         stack = _stack_at_cbo(
             baseline_stack,
             target_delta,
             boundary_policy=resolved_boundary_policy,
         )
+        active_voltages = active_voltage_grids[-1]
         jv = solve_quasi_fermi_jv_sweep(
             grid,
             stack,
-            voltages,
+            active_voltages,
             interface_boundary=True,
             interface_topology=topology,
             interface_transmission=interface_transmission,
@@ -1722,8 +2013,8 @@ def solve_interface_cbo_scan(
             initial_short_circuit_state=short_circuit_state,
             stop_after_voc=True,
             voc_stop_grid_V=(
-                resolved_voltage_grids[0]
-                if len(resolved_voltage_grids) > 1
+                active_voltage_grids[0]
+                if len(active_voltage_grids) > 1
                 else None
             ),
             minimum_voltage_step_V=minimum_voltage_step_V,
@@ -1733,8 +2024,8 @@ def solve_interface_cbo_scan(
             raise InterfaceCBOScanError(
                 f"CBO {target_delta:+.6g} eV did not bracket a certified Voc"
             )
-        if len(resolved_voltage_grids) == 1:
-            only_grid = resolved_voltage_grids[0]
+        if len(active_voltage_grids) == 1:
+            only_grid = active_voltage_grids[0]
             metric_samples = [
                 CBOJVMetricsGridSample(
                     voltage_point_count=len(only_grid),
@@ -1746,7 +2037,7 @@ def solve_interface_cbo_scan(
             ]
         else:
             metric_samples = []
-        for voltage_grid in resolved_voltage_grids[:-1]:
+        for voltage_grid in active_voltage_grids[:-1]:
             retained_grid = voltage_grid[
                 voltage_grid <= jv.voltages_V[-1] + 1.0e-12
             ]
@@ -1789,8 +2080,8 @@ def solve_interface_cbo_scan(
                     f"metrics on the {len(voltage_grid)}-point voltage grid"
                 )
             metric_samples.append(sample)
-        if len(resolved_voltage_grids) > 1:
-            finest_grid = resolved_voltage_grids[-1]
+        if len(active_voltage_grids) > 1:
+            finest_grid = active_voltage_grids[-1]
             metric_samples.append(
                 CBOJVMetricsGridSample(
                     voltage_point_count=len(finest_grid),
@@ -1805,7 +2096,75 @@ def solve_interface_cbo_scan(
             short_circuit_state=short_circuit_state,
             jv=jv,
             voltage_grid_metrics=tuple(metric_samples),
+            requested=requested_point,
+            refinement_metrics=refinement_metrics,
+            voltage_grid_refined=voltage_grid_refined,
+            initial_voltage_grid_reasons=initial_voltage_grid_reasons,
         )
+
+    def solve_full_point(
+        target_delta: float,
+        short_circuit_state: QuasiFermiSteadyStateResult,
+        *,
+        requested_point: bool,
+        refinement_metrics: tuple[str, ...] = (),
+    ) -> CBOScanPoint:
+        if not calculate_jv_metrics:
+            return CBOScanPoint(
+                delta_ec_eV=target_delta,
+                short_circuit_state=short_circuit_state,
+                jv=None,
+                voltage_grid_metrics=(),
+                requested=requested_point,
+                refinement_metrics=refinement_metrics,
+            )
+        base_point = solve_full_point_on_grids(
+            target_delta,
+            short_circuit_state,
+            resolved_voltage_grids,
+            requested_point=requested_point,
+            refinement_metrics=refinement_metrics,
+        )
+        if not resolved_voltage_refinement_grids:
+            return base_point
+
+        base_counts = tuple(len(item) for item in resolved_voltage_grids)
+        base_certificate = _certify_cbo_voltage_grid_point(
+            base_point,
+            expected_point_count_ladders=(base_counts,),
+            policy=resolved_voltage_policy,
+        )
+        if base_certificate.certified:
+            return base_point
+
+        notify(
+            "voltage_refinement",
+            len(target_values),
+            f"Refining voltage grid at CBO {target_delta:+.6g} eV",
+        )
+        refined_point = solve_full_point_on_grids(
+            target_delta,
+            short_circuit_state,
+            resolved_voltage_refinement_grids,
+            requested_point=requested_point,
+            refinement_metrics=refinement_metrics,
+            voltage_grid_refined=True,
+            initial_voltage_grid_reasons=base_certificate.reasons,
+        )
+        refinement_counts = tuple(
+            len(item) for item in resolved_voltage_refinement_grids
+        )
+        refined_certificate = _certify_cbo_voltage_grid_point(
+            refined_point,
+            expected_point_count_ladders=(base_counts, refinement_counts),
+            policy=resolved_voltage_policy,
+        )
+        if not refined_certificate.certified:
+            raise InterfaceCBOScanError(
+                f"CBO {target_delta:+.6g} eV failed point-local voltage-grid "
+                "refinement: " + "; ".join(refined_certificate.reasons)
+            )
+        return refined_point
 
     def advance(
         left_delta: float,
@@ -1992,7 +2351,11 @@ def solve_interface_cbo_scan(
                     _error_chain(error) for error in recovery_errors
                 )
             ) from recovery_errors[-1]
-    reference_point = solve_full_point(reference, reference_state)
+    reference_point = solve_full_point(
+        reference,
+        reference_state,
+        requested_point=True,
+    )
     points_by_delta[reference] = reference_point
 
     branches = (
@@ -2016,7 +2379,11 @@ def solve_interface_cbo_scan(
                     target_delta,
                     requested_point=True,
                 )
-                target_point = solve_full_point(target_delta, target_state)
+                target_point = solve_full_point(
+                    target_delta,
+                    target_state,
+                    requested_point=True,
+                )
             except _ValidityLimit as limit:
                 terminations.append(
                     CBOScanTermination(
@@ -2086,6 +2453,140 @@ def solve_interface_cbo_scan(
             else:
                 lower = midpoint
                 lower_state = midpoint_state
+
+    def matching_delta(mapping: dict[float, object], target: float) -> float | None:
+        return next(
+            (
+                delta
+                for delta in mapping
+                if math.isclose(
+                    delta,
+                    target,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+            ),
+            None,
+        )
+
+    def metric_samples(metric: str) -> list[tuple[float, float]]:
+        return [
+            (point.delta_ec_eV, float(getattr(point.metrics, metric)))
+            for point in points_by_delta.values()
+            if point.metrics is not None
+        ]
+
+    for metric in resolved_adaptive_jv_metrics:
+        provisional = _critical_interval(
+            metric_samples(metric),
+            metric=metric,
+            reference_delta_ec_eV=reference,
+            relative_drop_fraction=relative_drop_fraction,
+        )
+        if (
+            not provisional.resolved
+            or provisional.lower_delta_ec_eV is None
+            or provisional.upper_delta_ec_eV is None
+            or provisional.threshold_value is None
+        ):
+            continue
+
+        lower = provisional.lower_delta_ec_eV
+        upper = provisional.upper_delta_ec_eV
+        while upper - lower > minimum_delta_step_eV * (1.0 + 1.0e-12):
+            lower_before = lower
+            upper_before = upper
+            midpoint = 0.5 * (lower + upper)
+
+            point_key = matching_delta(points_by_delta, midpoint)
+            reused_full_jv = point_key is not None
+            state_key = matching_delta(short_states_by_delta, midpoint)
+            reused_short_circuit_state = state_key is not None
+
+            if state_key is None:
+                lower_state_key = matching_delta(short_states_by_delta, lower)
+                if lower_state_key is None:
+                    raise InterfaceCBOScanError(
+                        f"adaptive {metric} refinement lost its certified "
+                        f"lower state at CBO {lower:+.9g} eV"
+                    )
+                try:
+                    midpoint_state = advance(
+                        lower,
+                        short_states_by_delta[lower_state_key],
+                        midpoint,
+                        requested_point=False,
+                    )
+                except _ValidityLimit as limit:
+                    raise InterfaceCBOScanError(
+                        f"adaptive {metric} refinement reached the statistics "
+                        "validity boundary inside its certified onset bracket: "
+                        f"{_error_chain(limit.cause)}"
+                    ) from limit
+            else:
+                midpoint_state = short_states_by_delta[state_key]
+
+            if point_key is None:
+                notify(
+                    "metric_refinement",
+                    completed_requested,
+                    f"Refining {metric} at CBO {midpoint:+.6g} eV",
+                )
+                try:
+                    midpoint_point = solve_full_point(
+                        midpoint,
+                        midpoint_state,
+                        requested_point=False,
+                        refinement_metrics=(metric,),
+                    )
+                except InterfaceCBOScanError:
+                    raise
+                except (
+                    QuasiFermiSteadyStateError,
+                    RuntimeError,
+                    ValueError,
+                ) as exc:
+                    raise InterfaceCBOScanError(
+                        f"adaptive {metric} full J-V failed at CBO "
+                        f"{midpoint:+.9g} eV: {_error_chain(exc)}"
+                    ) from exc
+                points_by_delta[midpoint] = midpoint_point
+            else:
+                midpoint_point = points_by_delta[point_key]
+                refinement_metrics = tuple(
+                    dict.fromkeys((*midpoint_point.refinement_metrics, metric))
+                )
+                if refinement_metrics != midpoint_point.refinement_metrics:
+                    midpoint_point = replace(
+                        midpoint_point,
+                        refinement_metrics=refinement_metrics,
+                    )
+                    points_by_delta[point_key] = midpoint_point
+
+            if midpoint_point.metrics is None:
+                raise InterfaceCBOScanError(
+                    f"adaptive {metric} refinement produced no full-JV metrics"
+                )
+            sampled_value = float(getattr(midpoint_point.metrics, metric))
+            if sampled_value <= provisional.threshold_value:
+                upper = midpoint
+                retained_side = "upper"
+            else:
+                lower = midpoint
+                retained_side = "lower"
+            metric_refinement_trace.append(
+                CBOMetricRefinementStep(
+                    metric=metric,
+                    lower_before_eV=lower_before,
+                    upper_before_eV=upper_before,
+                    sampled_delta_ec_eV=midpoint,
+                    sampled_value=sampled_value,
+                    threshold_value=provisional.threshold_value,
+                    retained_side=retained_side,
+                    reused_short_circuit_state=reused_short_circuit_state,
+                    reused_full_jv=reused_full_jv,
+                )
+            )
 
     points = tuple(points_by_delta[delta] for delta in sorted(points_by_delta))
     trace = tuple(
@@ -2174,11 +2675,19 @@ def solve_interface_cbo_scan(
         voltage_grids_V=tuple(
             voltage_grid.copy() for voltage_grid in resolved_voltage_grids
         ),
+        voltage_refinement_grids_V=tuple(
+            voltage_grid.copy()
+            for voltage_grid in resolved_voltage_refinement_grids
+        ),
+        voltage_grid_convergence_policy=resolved_voltage_policy,
         mpp_interpolation=mpp_interpolation,
+        adaptive_jv_metrics=resolved_adaptive_jv_metrics,
+        metric_refinement_trace=tuple(metric_refinement_trace),
     )
 
 
 __all__ = [
+    "ADAPTIVE_JV_METRICS",
     "CBO_BOUNDARY_POLICIES",
     "CBOCriticalInterval",
     "CBOExternalMetricCertificate",
@@ -2186,7 +2695,9 @@ __all__ = [
     "CBOExternalValidation",
     "CBOGridConvergenceCertificate",
     "CBOJVMetricsGridSample",
+    "CBOMetricRefinementStep",
     "CBOStatisticsValidityCertificate",
+    "CBOVoltageGridConvergencePolicy",
     "CBOVoltageGridConvergenceCertificate",
     "CBOVoltageGridPointCertificate",
     "CBOScanPoint",
@@ -2201,5 +2712,6 @@ __all__ = [
     "certify_cbo_voltage_grid_convergence",
     "compare_cbo_scan_to_scaps_reference",
     "solve_interface_cbo_scan",
+    "validate_adaptive_jv_metrics",
     "validate_cbo_boundary_policy",
 ]

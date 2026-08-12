@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import fields, replace
+
 import pytest
 import yaml
 
@@ -11,6 +13,7 @@ from perovskite_sim.reproducibility import (
     validate_matrix,
     verify_baseline,
 )
+from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.scaps_compat.loader import load_scaps_yaml
 
 
@@ -32,6 +35,77 @@ def test_matrix_covers_and_loads_every_shipped_config():
         "scaps-device-v1": 4,
         "tandem-v1": 1,
     }
+
+
+def test_default_thermal_velocity_preserves_frozen_semantics():
+    baseline = MaterialParams(
+        eps_r=10.0,
+        mu_n=1.0e-4,
+        mu_p=1.0e-4,
+        D_ion=0.0,
+        P_lim=1.0e30,
+        P0=0.0,
+        ni=1.0e16,
+        tau_n=1.0e-6,
+        tau_p=1.0e-6,
+        n1=1.0e16,
+        p1=1.0e16,
+        B_rad=0.0,
+        C_n=0.0,
+        C_p=0.0,
+        alpha=0.0,
+        N_A=0.0,
+        N_D=0.0,
+    )
+    historical_optional_fields = {
+        "N_A_bulk",
+        "N_D_bulk",
+        "doping_profile_shape",
+        "doping_decay_length",
+        "doping_edge",
+        "v_th",
+    }
+    historical_payload = {
+        field.name: getattr(baseline, field.name)
+        for field in fields(baseline)
+        if field.name not in historical_optional_fields
+    }
+
+    assert semantic_sha256(baseline) == semantic_sha256(historical_payload)
+    assert semantic_sha256(replace(baseline, v_th=2.0e5)) != (
+        semantic_sha256(baseline)
+    )
+
+
+def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
+    compatibility = load_device_from_yaml(
+        str(ROOT / "configs/ionmonger_benchmark.yaml")
+    )
+    historical_payload = {
+        field.name: getattr(compatibility, field.name)
+        for field in fields(compatibility)
+        if field.name not in {
+            "built_in_potential_mode",
+            "work_function_left_eV",
+            "work_function_right_eV",
+            "grid_interval_weights",
+            "grid_alphas",
+            "jv_solver_policy",
+        }
+    }
+
+    assert semantic_sha256(compatibility) == semantic_sha256(historical_payload)
+
+    physical = replace(
+        compatibility,
+        built_in_potential_mode="metal_work_function",
+        work_function_left_eV=5.2,
+        work_function_right_eV=4.1,
+    )
+    assert semantic_sha256(physical) != semantic_sha256(compatibility)
+    assert semantic_sha256(replace(physical, V_bi=9.9)) == semantic_sha256(
+        physical
+    )
 
 
 def test_standard_schema_registers_spatial_doping_profile_contract():

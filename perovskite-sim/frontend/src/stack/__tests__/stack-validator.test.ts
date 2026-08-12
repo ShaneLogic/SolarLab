@@ -157,4 +157,54 @@ describe('validate', () => {
     // Empty stack still hard-errors on the absorber rule.
     expect(r.errors.some(e => e.message.includes('absorber'))).toBe(true)
   })
+
+  it('requires both explicit metal work functions', () => {
+    const c = cfg([
+      layer({ name: 'H', role: 'HTL' }),
+      layer({ name: 'A', role: 'absorber' }),
+      layer({ name: 'E', role: 'ETL' }),
+    ])
+    c.device = {
+      Phi: 1,
+      mode: 'full',
+      built_in_potential_mode: 'metal_work_function',
+      work_function_left_eV: 5.2,
+    }
+
+    const fields = validate(c).errors.map(error => error.field)
+    expect(fields).toContain('work_function_right_eV')
+  })
+
+  it('accepts a complete semiconductor-work-function contact pair', () => {
+    const contactFields = { chi: 4, Eg: 2, Nc300: 1e25, Nv300: 1e25 }
+    const c = cfg([
+      layer({ name: 'H', role: 'HTL', N_A: 1e23, ...contactFields }),
+      layer({ name: 'A', role: 'absorber' }),
+      layer({ name: 'E', role: 'ETL', N_D: 1e23, ...contactFields }),
+    ])
+    c.device = {
+      Phi: 1,
+      mode: 'full',
+      built_in_potential_mode: 'semiconductor_work_function',
+    }
+
+    expect(validate(c).errors).toEqual([])
+  })
+
+  it('reports missing DOS at a semiconductor contact', () => {
+    const c = cfg([
+      layer({ name: 'H', role: 'HTL', chi: 4, Eg: 2 }),
+      layer({ name: 'A', role: 'absorber' }),
+      layer({ name: 'E', role: 'ETL', chi: 4, Eg: 2 }),
+    ])
+    c.device = {
+      Phi: 1,
+      mode: 'full',
+      built_in_potential_mode: 'semiconductor_work_function',
+    }
+
+    const fields = validate(c).errors.map(error => error.field)
+    expect(fields).toContain('Nc300')
+    expect(fields).toContain('Nv300')
+  })
 })

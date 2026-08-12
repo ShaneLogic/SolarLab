@@ -77,7 +77,8 @@ class MaterialArrays2D:
     p_eq_left: np.ndarray         # (Nx,)  top contact (y=0, HTL); value = mat1d.p_L
     n_eq_right: np.ndarray        # (Nx,)  bottom contact (y=Ny-1, ETL); value = mat1d.n_R
     p_eq_right: np.ndarray        # (Nx,)  bottom contact (y=Ny-1, ETL); value = mat1d.p_R
-    V_bi: float
+    V_bi: float                     # signed Poisson built-in potential
+    junction_polarity: float        # maps positive V_app to forward bias
     V_T: float
     poisson_factor: Poisson2DFactor
     layer_role_per_y: tuple[str, ...]
@@ -258,12 +259,12 @@ def build_material_arrays_2d(
 
     poisson_factor = build_poisson_2d_factor(grid, eps_r, lateral_bc=lateral_bc)
 
-    # V_bi: must use stack.V_bi (the manual value the 1D Poisson BC uses) — not
-    # V_bi_eff (the band-offset-derived value). The CLAUDE.md guidance pins this:
-    # substituting V_bi_eff into the Poisson boundary breaks parity with the 1D
-    # solver because IonMonger / 1D treats V_bi as a free parameter rather than
-    # as the Fermi-level difference of the contacts.
-    V_bi = float(stack.V_bi)
+    # Reuse the already-resolved 1D contact electrostatics so 1D and 2D cannot
+    # silently disagree about manual, semiconductor-work-function, or explicit
+    # metal-work-function modes. Existing compatibility presets retain their
+    # original value through mat1d.V_bi_bc.
+    V_bi = float(mat1d.V_bi_bc)
+    junction_polarity = float(mat1d.junction_polarity)
 
     # Selective contacts: mirror the 1D mol.py:516–524 gating exactly. The
     # tier flag is a ceiling — when sim_mode.use_selective_contacts is False
@@ -437,7 +438,7 @@ def build_material_arrays_2d(
         n1=n1, p1=p1, B_rad=B_rad, C_n=C_n_2d, C_p=C_p_2d,
         n_eq_left=n_eq_left, p_eq_left=p_eq_left,
         n_eq_right=n_eq_right, p_eq_right=p_eq_right,
-        V_bi=V_bi, V_T=V_T,
+        V_bi=V_bi, junction_polarity=junction_polarity, V_T=V_T,
         poisson_factor=poisson_factor,
         layer_role_per_y=layer_role_per_y,
         has_selective_contacts=_has_sc,
@@ -632,7 +633,7 @@ def assemble_rhs_2d(
 
     Stage A scope:
       - Poisson via cached splu factor; Dirichlet at y=0 (phi=0) and
-        y=Ly (phi = V_bi - V_app)
+        y=Ly (phi = V_bi - junction_polarity*V_app)
       - SG drift-diffusion fluxes on horizontal and vertical edges via
         continuity_rhs_2d (which calls sg_fluxes_2d_{n,p})
       - SRH recombination via total_recombination; B_rad=C_n=C_p=n1=p1=0
@@ -661,7 +662,7 @@ def assemble_rhs_2d(
     phi = solve_poisson_2d(
         mat.poisson_factor, rho,
         phi_bottom=0.0,
-        phi_top=mat.V_bi - V_app,
+        phi_top=mat.V_bi - mat.junction_polarity * V_app,
     )
 
     # --- Recombination -----------------------------------------------------
@@ -892,7 +893,7 @@ def extract_snapshot_2d(
     phi = solve_poisson_2d(
         mat.poisson_factor, rho,
         phi_bottom=0.0,
-        phi_top=mat.V_bi - V_app,
+        phi_top=mat.V_bi - mat.junction_polarity * V_app,
     )
 
     phi_n = phi + mat.chi

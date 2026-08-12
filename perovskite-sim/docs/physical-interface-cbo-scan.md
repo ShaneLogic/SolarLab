@@ -123,12 +123,29 @@ A top-level certified=true requires every enabled gate to pass:
    audit. The normalized response, critical-interval distance, and independent
    SCAPS bracket width must then pass their declared tolerances.
 
-The schema 1.5 JSON distinguishes numerical_certified for the finest
+The schema 1.7 JSON distinguishes numerical_certified for the finest
 individual solve from the top-level combined result. A failed finer grid
 writes grid_failure and all completed grid_runs, then exits with status 1.
 The voltage certificate records requested and retained point counts, metric
 changes, contraction ratios, MPP extraction mode, and any voltage-continuation
 bridge count.
+
+`--adaptive-full-jv-metrics FF PCE` is the Stage 4.4 opt-in. It requires both
+an electrical grid ladder and a nested voltage-grid ladder, runs full J-V on
+every spatial grid, and bisects each selected 1% metric-loss bracket down to
+`--minimum-delta-step`. Midpoint short-circuit states and full-JV curves are
+cached across metrics. Schema 1.7 records requested versus adaptive CBO points,
+the full metric-refinement trace, per-metric spatial certificates, and one
+voltage certificate per spatial grid. A failed voltage certificate stops the
+grid ladder immediately and writes a fail-closed partial JSON.
+
+`--voltage-refinement-grid-ladder` adds one point-local fallback without
+weakening those gates. Both ladders must contain exactly three grids and have
+the form `[a,b,c]` then `[b,c,d]`. Every CBO point first solves `[a,b,c]`; only
+a failed point is re-solved on `[b,c,d]`. The fallback result must pass before
+its metric can guide an adaptive FF/PCE bisection. JSON records the selected
+ladder, the original reasons, and every refined CBO. A failed fallback aborts
+the current spatial grid rather than continuing with an uncertified metric.
 
 The model/transmission sensitivity runner is deliberately weaker. Its schema
 1.2 can mark a run single_grid_screen_passed, but it always leaves certified
@@ -210,6 +227,33 @@ python scripts/run_interface_cbo_scan.py \
   --voltage-contraction-noise-floor-fraction 0.1
 ~~~
 
+Run the Stage 4.4 adaptive FF/PCE gate on the registered asymptotic voltage
+ladder:
+
+~~~bash
+python scripts/run_interface_cbo_scan.py \
+  --config configs/scaps_mirror_v2.yaml \
+  --out outputs/interface-cbo/scan-two-sided-fd-adaptive-full-jv-grid-40-50-60-voltage-adaptive.json \
+  --delta-min 0 --delta-max 0.4 --delta-step 0.4 \
+  --grid-ladder 40 50 60 \
+  --voltage-grid-ladder 113 225 449 --V-max 1.4 \
+  --voltage-refinement-grid-ladder 225 449 897 \
+  --adaptive-full-jv-metrics FF PCE \
+  --mpp-interpolation local_quadratic \
+  --interface-topology two_sided_trace \
+  --interface-transport-model fermi_dirac_richardson \
+  --disable-legacy-heterojunction-despike \
+  --boundary-policy fixed_contacts \
+  --minimum-delta-step 0.0005 --maximum-delta-step 0.05 \
+  --maximum-grid-envelope-eV 0.01 \
+  --maximum-successive-shift-ratio 0.9 \
+  --maximum-voc-change-mV 2 \
+  --maximum-ff-change 0.001 \
+  --maximum-pce-change 0.0005 \
+  --maximum-voltage-successive-change-ratio 0.8 \
+  --voltage-contraction-noise-floor-fraction 0.1
+~~~
+
 ## Current two-sided evidence (2026-08-11)
 
 For `two_sided_trace`, `fermi_dirac_richardson`, fixed contacts, transmission
@@ -274,6 +318,64 @@ certify an FF or PCE critical CBO: with only those two full-JV CBO samples, both
 reported 1% intervals are still [0, 0.4] eV. Adaptive full-JV CBO refinement is
 required before quoting an FF/PCE onset. No independent SCAPS file was supplied
 to this run, so the external-validation status is also unchanged.
+
+### Stage 4.4 development status
+
+The first real-solver adaptive probe used N_grid=20, CBO refinement to 50 meV,
+and nested 29/57/113-point voltage grids. Every requested and adaptive CBO point
+completed with certified nonlinear states, and both FF/PCE onset brackets were
+resolved to the requested 50 meV development width. The combined voltage-grid
+certificate nevertheless failed at delta_Ec=0.15 and 0.20 eV. Those interior
+points were absent from the Stage 4.3 endpoint-only gate.
+
+This is a voltage-sampling discovery, not an interface-physics failure and not
+a certified Stage 4.4 result. A follow-up delta_Ec=0 diagnostic showed why
+simple densification to 57/113/225 was still insufficient: its final FF change
+was inside the 0.001 absolute limit, but the preceding change had an accidental
+cancellation and produced a non-contracting 4.28 ratio. The 113/225/449 tail
+passed without relaxing any gate: final dVoc=0.107 mV, dFF=6.93e-5, and
+dPCE=4.96e-6, with contraction ratios 0.161, 0.088, and 0.086. The formal
+command above uses that registered asymptotic ladder. Per-grid fail-fast
+prevents N50/N60 from running if the first spatial grid still fails its voltage
+certificate at an adaptive CBO point.
+
+The complete N_grid=20 development axis was then rerun with 113/225/449,
+adaptive FF/PCE refinement to 50 meV, and the unchanged certificate limits.
+Every requested and adaptive CBO point passed its nonlinear and nested-voltage
+certificates; the registered slow physical-path test completed in 17m55s. This
+closes the Stage 4.4 execution-path gate, but the 50 meV CBO sampling and single
+spatial grid are deliberately too coarse for a critical-CBO claim. The
+N_grid=40/50/60 command above remains the spatial certification gate.
+
+After point-local refinement was implemented, a real-solver N_grid=20 test used
+57/113/225 followed by 113/225/449 and required at least one fallback point.
+It passed the complete mixed-ladder certificate in 18m46s. This deliberately
+coarse base ladder triggers several N20 fallbacks, so the test is retained for
+physical execution-path coverage rather than as a performance recommendation.
+
+The first formal N_grid=40 run then exposed one remaining pre-asymptotic point.
+All 20 requested/adaptive CBO points and their full J-V branches solved, but
+delta_Ec=0.11875 eV failed the 113/225/449 voltage certificate. Its final
+dFF=1.15e-4 was already below the 0.001 absolute limit; however, the preceding
+dFF was only 1.03e-5 because of sampling cancellation, so the change ratio was
+11.20 instead of contracting below 0.8. Fail-fast correctly stopped N50/N60.
+
+An independent N_grid=40 single-point rerun at delta_Ec=0.11875 eV used the
+shifted 225/449/897 ladder without changing any tolerance. The 449-point FF
+agreed with the formal run to better than 2e-9. From 449 to 897 points,
+dVoc=0.0479 mV, dFF=4.82e-5, and dPCE=8.00e-7; the corresponding contraction
+ratios were 0.437, 0.420, and 0.285. The point therefore passes on the finest
+three registered grids. The formal command now declares 113/225/449 followed
+by the point-local 225/449/897 fallback. It does not discard a failed coarse
+layer after observing the result or relax a gate; only the failed CBO point is
+re-solved, and its refined metric is accepted before it can guide bisection.
+
+A trial that placed every CBO point directly on 225/449/897 was stopped after
+timing the N_grid=40 reference branch at about 14 minutes. Applying that cost
+to all adaptive points and all three spatial grids would be uniform
+over-refinement, not stronger evidence. The point-local protocol preserves the
+same finest-three-grid certificate at the failed point while keeping already
+certified points on their registered base ladder.
 
 ## Historical deduplicated evidence (2026-08-11)
 

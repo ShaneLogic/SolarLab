@@ -8,6 +8,7 @@ import pytest
 
 from perovskite_sim.experiments.cbo_scan import (
     RECOMPUTED_BUILT_IN,
+    certify_cbo_voltage_grid_convergence,
     solve_interface_cbo_scan,
 )
 from perovskite_sim.scaps_compat import load_scaps_yaml
@@ -59,6 +60,30 @@ def two_sided_fd_n30_scan():
         interface_topology="two_sided_trace",
         minimum_delta_step_eV=5.0e-4,
         maximum_delta_step_eV=5.0e-2,
+    )
+
+
+@pytest.fixture(scope="module")
+def two_sided_fd_adaptive_full_jv_n20_scan():
+    stack = load_scaps_yaml("configs/scaps_mirror_v2.yaml")
+    stack = replace(stack, het_recomb_despike=0.0)
+    return solve_interface_cbo_scan(
+        stack,
+        np.array([0.0, 0.4]),
+        voltage_grids_V=tuple(
+            np.linspace(0.0, 1.4, count) for count in (57, 113, 225)
+        ),
+        voltage_refinement_grids_V=tuple(
+            np.linspace(0.0, 1.4, count) for count in (113, 225, 449)
+        ),
+        N_grid=20,
+        boundary_policy="fixed_contacts",
+        interface_transport_model="fermi_dirac_richardson",
+        interface_topology="two_sided_trace",
+        minimum_delta_step_eV=5.0e-2,
+        maximum_delta_step_eV=5.0e-2,
+        mpp_interpolation="local_quadratic",
+        adaptive_jv_metrics=("FF", "PCE"),
     )
 
 
@@ -146,3 +171,36 @@ def test_two_sided_fd_topology_closes_full_device_cbo_scan(
         sample.interface_local_residual
         for sample in result.short_circuit_trace
     ) < 1.0e-7
+
+
+@pytest.mark.slow
+def test_two_sided_fd_adaptive_full_jv_covers_physical_solver_path(
+    two_sided_fd_adaptive_full_jv_n20_scan,
+):
+    result = two_sided_fd_adaptive_full_jv_n20_scan
+    intervals = {item.metric: item for item in result.critical_intervals}
+
+    assert result.complete
+    assert result.certified
+    assert result.adaptive_jv_metrics == ("FF", "PCE")
+    assert len(result.points) > len(result.requested_delta_ec_eV)
+    assert all(
+        len(point.voltage_grid_metrics) == 3
+        and all(sample.certified for sample in point.voltage_grid_metrics)
+        for point in result.points
+    )
+    assert any(point.voltage_grid_refined for point in result.points)
+    assert {
+        tuple(sample.voltage_point_count for sample in point.voltage_grid_metrics)
+        for point in result.points
+    } <= {(57, 113, 225), (113, 225, 449)}
+    for metric in result.adaptive_jv_metrics:
+        interval = intervals[metric]
+        assert interval.resolved
+        assert (
+            interval.upper_delta_ec_eV - interval.lower_delta_ec_eV
+            <= 5.0e-2 * (1.0 + 1.0e-12)
+        )
+    certificate = certify_cbo_voltage_grid_convergence(result)
+    assert certificate.certified
+    assert certificate.refined_delta_ec_eV

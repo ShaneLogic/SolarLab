@@ -6,7 +6,10 @@ the SCAPS GUI inputs side-by-side. The loader converts every field to the
 SolarLab SI convention and returns a frozen ``DeviceStack`` that the
 existing solver consumes without any code-path change.
 
-Required device keys:    ``V_bi``, ``Phi``, ``mode``, ``layers``.
+Required device keys:    ``Phi``, ``mode``, ``layers``. Existing partner
+                         files may retain ``V_bi`` as a legacy compatibility
+                         input; new physical files select an explicit
+                         built-in-potential mode.
 Required layer keys:     ``name``, ``role``, ``thickness_nm``, ``E_g_eV``,
                          ``chi_eV``, ``eps_r``, ``mu_n_cm2``, ``mu_p_cm2``,
                          ``N_C_cm3``, ``N_V_cm3``, ``N_D_cm3``, ``N_A_cm3``,
@@ -62,6 +65,10 @@ from typing import Any, Mapping
 import yaml
 
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
+from perovskite_sim.models.config_loader import (
+    built_in_potential_fields_from_device_dict,
+    electrical_grid_from_config_dict,
+)
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.scaps_compat.defects import srh_lifetime
 from perovskite_sim.scaps_compat.materials import ni_from_dos
@@ -73,7 +80,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import (
 
 
 _REQUIRED_TOP_KEYS = ("device", "layers")
-_REQUIRED_DEVICE_KEYS = ("V_bi", "Phi", "mode")
+_REQUIRED_DEVICE_KEYS = ("Phi", "mode")
 _REQUIRED_LAYER_KEYS = (
     "name", "role", "thickness_nm", "E_g_eV", "chi_eV", "eps_r",
     "mu_n_cm2", "mu_p_cm2", "N_C_cm3", "N_V_cm3", "N_D_cm3", "N_A_cm3",
@@ -119,6 +126,10 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
         raise ValueError("scaps yaml must define at least one layer")
 
     layers = tuple(_layer_from_scaps_row(row) for row in cfg["layers"])
+    grid_interval_weights, grid_alphas = electrical_grid_from_config_dict(
+        cfg,
+        layers,
+    )
     interfaces, interface_defects = _parse_interfaces_block(
         cfg.get("interfaces") or [], layers,
     )
@@ -130,12 +141,14 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
     # Positive finite → Robin surface recombination velocity m/s.
     return DeviceStack(
         layers=layers,
-        V_bi=float(dev["V_bi"]),
+        **built_in_potential_fields_from_device_dict(dev),
         Phi=float(dev["Phi"]),
         mode=str(dev["mode"]),
         T=float(dev.get("T", 300.0)),
         interfaces=interfaces,
         interface_defects=interface_defects,
+        grid_interval_weights=grid_interval_weights,
+        grid_alphas=grid_alphas,
         interface_plane_projection=(
             str(dev.get("interface_plane_projection", False)).strip().lower()
             in ("true", "1", "yes", "on")

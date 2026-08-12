@@ -183,6 +183,80 @@ def _f(v) -> float:
     return float(v)
 
 
+def built_in_potential_fields_from_device_dict(
+    dev: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Parse the explicit built-in-potential source contract.
+
+    Existing YAML files with ``V_bi`` and no mode retain the historical
+    compatibility behaviour. New files that omit both manual keys default to
+    the fail-closed ``semiconductor_work_function`` path. ``V_bi_override`` is
+    the preferred spelling for an explicitly selected legacy/manual mode;
+    ``V_bi`` remains a deprecated input alias for shipped benchmarks.
+    """
+    has_vbi = "V_bi" in dev
+    has_override = "V_bi_override" in dev
+    if has_vbi and has_override:
+        legacy_value = _f(dev["V_bi"])
+        override_value = _f(dev["V_bi_override"])
+        if legacy_value != override_value:
+            raise ValueError(
+                "device.V_bi and device.V_bi_override disagree; declare only "
+                "V_bi_override for legacy_manual mode"
+            )
+    manual_value = _f(
+        dev["V_bi_override"]
+        if has_override
+        else dev["V_bi"]
+        if has_vbi
+        else 1.1
+    )
+
+    raw_mode = dev.get("built_in_potential_mode")
+    if raw_mode is None:
+        # Existing files retain their original boundary contract. A new file
+        # with no manual field starts on the physical, fail-closed path.
+        if has_override:
+            mode = "legacy_manual"
+        elif has_vbi:
+            mode = None
+        else:
+            mode = "semiconductor_work_function"
+    else:
+        mode = str(raw_mode)
+
+    if mode == "legacy_manual" and not (has_vbi or has_override):
+        raise ValueError(
+            "legacy_manual requires device.V_bi_override (device.V_bi is the "
+            "deprecated compatibility alias)"
+        )
+    if mode in {"semiconductor_work_function", "metal_work_function"} and has_vbi:
+        raise ValueError(
+            "device.V_bi is a legacy compatibility input and cannot be combined "
+            f"with built_in_potential_mode={mode!r}"
+        )
+    if mode != "legacy_manual" and has_override:
+        raise ValueError(
+            "device.V_bi_override is only valid with "
+            "built_in_potential_mode='legacy_manual'"
+        )
+
+    return {
+        "V_bi": manual_value,
+        "built_in_potential_mode": mode,
+        "work_function_left_eV": (
+            _f(dev["work_function_left_eV"])
+            if "work_function_left_eV" in dev
+            else None
+        ),
+        "work_function_right_eV": (
+            _f(dev["work_function_right_eV"])
+            if "work_function_right_eV" in dev
+            else None
+        ),
+    }
+
+
 def _parse_bool(v) -> bool:
     """Parse a YAML value as bool, tolerating quoted strings like "false".
 
@@ -322,7 +396,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
 
     return DeviceStack(
         layers=layers,
-        V_bi=_f(dev.get("V_bi", 1.1)),
+        **built_in_potential_fields_from_device_dict(dev),
         Phi=_f(dev.get("Phi", 2.5e21)),
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,

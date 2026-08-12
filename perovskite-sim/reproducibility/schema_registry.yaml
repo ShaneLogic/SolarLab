@@ -44,7 +44,15 @@ schemas:
     loader: perovskite_sim.scaps_compat.loader.load_scaps_yaml
     units: SCAPS-compatible cm/eV input converted to SI
     required_top_keys: [device, layers]
-    required_device_keys: [V_bi, Phi, mode]
+    required_device_keys: [Phi, mode]
+    optional_device_groups:
+      built_in_potential:
+        selector: built_in_potential_mode
+        supported_modes:
+          - semiconductor_work_function
+          - metal_work_function
+          - legacy_manual
+        compatibility_key: V_bi
     required_layer_keys:
       - name
       - role

@@ -65,6 +65,22 @@ def _canonical(value: Any) -> Any:
             mapping.pop("grid_alphas", None)
         if isinstance(value, DeviceStack) and value.jv_solver_policy == "general":
             mapping.pop("jv_solver_policy", None)
+        if isinstance(value, DeviceStack):
+            potential_mode = value.built_in_potential_mode
+            if potential_mode is None:
+                # These fields did not exist when the shipped compatibility
+                # presets were frozen. All three are inert on that path, so
+                # their dataclass defaults must not churn historical hashes.
+                mapping.pop("built_in_potential_mode", None)
+                mapping.pop("work_function_left_eV", None)
+                mapping.pop("work_function_right_eV", None)
+            elif potential_mode in {
+                "semiconductor_work_function",
+                "metal_work_function",
+            }:
+                # Physical modes resolve the Poisson value without V_bi; the
+                # dataclass field is only a constructor compatibility fallback.
+                mapping.pop("V_bi", None)
         if isinstance(value, MaterialParams) and not (
             value.N_A_bulk is not None or value.N_D_bulk is not None
         ):

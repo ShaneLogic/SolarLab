@@ -256,7 +256,7 @@ def run_suns_voc(
 
     V_oc_arr = np.zeros_like(suns_sorted)
     J_sc_arr = np.zeros_like(suns_sorted)
-    V_guess = abs(stack.compute_V_bi())  # initial bracket upper bound (magnitude)
+    V_guess = abs(stack.operating_built_in_potential())
 
     # Dark baseline at V=0: subtract to isolate the photo-current from
     # any ionic-drift / contact-leakage current that flows even without

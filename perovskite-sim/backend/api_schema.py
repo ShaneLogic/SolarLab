@@ -2,8 +2,16 @@ from pydantic import BaseModel, Field
 from typing import List, Literal, Dict
 
 class DeviceIn(BaseModel):
-    V_bi: float
     Phi: float
+    V_bi: float | None = None
+    V_bi_override: float | None = None
+    built_in_potential_mode: Literal[
+        'legacy_manual',
+        'semiconductor_work_function',
+        'metal_work_function',
+    ] | None = None
+    work_function_left_eV: float | None = None
+    work_function_right_eV: float | None = None
 
 class LayerIn(BaseModel):
     name: str

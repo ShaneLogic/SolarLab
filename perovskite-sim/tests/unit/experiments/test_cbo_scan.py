@@ -101,6 +101,236 @@ def test_scan_inserts_bridge_points_and_bounds_metric_onsets(monkeypatch):
     assert intervals["PCE"].resolved
 
 
+def test_adaptive_full_jv_refines_ff_and_pce_without_duplicate_solves(
+    monkeypatch,
+):
+    def fake_short(grid, stack, *, initial_state=None, **kwargs):
+        delta = float(stack)
+        if initial_state is not None and abs(delta - initial_state.delta) > 0.11:
+            raise QuasiFermiSteadyStateError("outside continuation basin")
+        return _state(delta, 100.0 if delta < 0.3 else 85.0)
+
+    _install_fake_scan(monkeypatch, fake_short)
+    original_jv = cbo.solve_quasi_fermi_jv_sweep
+    jv_calls = []
+
+    def counted_jv(grid, stack, voltages, **kwargs):
+        jv_calls.append(float(stack))
+        return original_jv(grid, stack, voltages, **kwargs)
+
+    monkeypatch.setattr(cbo, "solve_quasi_fermi_jv_sweep", counted_jv)
+    result = cbo.solve_interface_cbo_scan(
+        object(),
+        np.array([0.0, 0.4]),
+        voltages_V=np.array([0.0, 1.0]),
+        minimum_delta_step_eV=2.5e-2,
+        adaptive_jv_metrics=("FF", "PCE"),
+    )
+
+    intervals = {interval.metric: interval for interval in result.critical_intervals}
+    assert result.complete
+    assert result.certified
+    assert result.adaptive_jv_metrics == ("FF", "PCE")
+    assert len(result.points) > len(result.requested_delta_ec_eV)
+    assert sum(point.requested for point in result.points) == 2
+    assert len(jv_calls) == len(result.points)
+    assert len(set(jv_calls)) == len(jv_calls)
+    for metric in result.adaptive_jv_metrics:
+        interval = intervals[metric]
+        assert interval.resolved
+        assert (
+            interval.upper_delta_ec_eV - interval.lower_delta_ec_eV
+            <= 2.5e-2 * (1.0 + 1.0e-12)
+        )
+    assert result.metric_refinement_trace
+    assert all(
+        step.metric in result.adaptive_jv_metrics
+        for step in result.metric_refinement_trace
+    )
+
+    ladder = tuple(
+        dataclasses.replace(
+            result,
+            N_grid=requested,
+            grid_node_count=interval_count + 1,
+            grid_interval_count=interval_count,
+        )
+        for requested, interval_count in ((12, 10), (24, 20), (48, 40))
+    )
+    assert cbo.certify_cbo_grid_convergence(
+        ladder,
+        metric="FF",
+        maximum_envelope_width_eV=3.0e-2,
+    ).certified
+    assert cbo.certify_cbo_grid_convergence(
+        ladder,
+        metric="PCE",
+        maximum_envelope_width_eV=3.0e-2,
+    ).certified
+
+
+def test_point_local_voltage_refinement_retries_only_failed_cbo(
+    monkeypatch,
+):
+    def fake_short(grid, stack, *, initial_state=None, **kwargs):
+        return _state(float(stack), 100.0)
+
+    _install_fake_scan(monkeypatch, fake_short)
+    jv_calls = []
+
+    def ff_value(delta, count):
+        if delta < 0.1:
+            return {3: 0.80000, 5: 0.80001, 9: 0.80020, 17: 0.80025}[count]
+        return {3: 0.80000, 5: 0.80020, 9: 0.80025}[count]
+
+    def metrics(delta, count):
+        return JVMetrics(
+            V_oc=1.0,
+            J_sc=100.0,
+            FF=ff_value(delta, count),
+            PCE=0.2,
+        )
+
+    def fake_jv(grid, stack, voltages, **kwargs):
+        delta = float(stack)
+        voltage_array = np.asarray(voltages, dtype=float)
+        jv_calls.append((delta, len(voltage_array)))
+        return SimpleNamespace(
+            certified=True,
+            metrics_certified=True,
+            voltages_V=voltage_array,
+            currents_A_m2=np.full(len(voltage_array), delta),
+            points=tuple(
+                SimpleNamespace(certified=True) for _ in voltage_array
+            ),
+            metrics=metrics(delta, len(voltage_array)),
+        )
+
+    def fake_metrics(voltages, currents, **kwargs):
+        return metrics(float(currents[0]), len(voltages))
+
+    monkeypatch.setattr(cbo, "solve_quasi_fermi_jv_sweep", fake_jv)
+    monkeypatch.setattr(cbo, "compute_metrics", fake_metrics)
+    monkeypatch.setattr(cbo, "thermodynamic_voc_ceiling", lambda stack: 2.0)
+    base_grids = tuple(
+        np.linspace(0.0, 1.0, count) for count in (3, 5, 9)
+    )
+    refinement_grids = tuple(
+        np.linspace(0.0, 1.0, count) for count in (5, 9, 17)
+    )
+
+    result = cbo.solve_interface_cbo_scan(
+        object(),
+        np.array([0.0, 0.4]),
+        voltage_grids_V=base_grids,
+        voltage_refinement_grids_V=refinement_grids,
+    )
+
+    points = {point.delta_ec_eV: point for point in result.points}
+    assert jv_calls == [(0.0, 9), (0.0, 17), (0.4, 9)]
+    assert points[0.0].voltage_grid_refined
+    assert not points[0.4].voltage_grid_refined
+    assert points[0.0].metrics.FF == pytest.approx(0.80025)
+    assert "do not contract" in " ".join(
+        points[0.0].initial_voltage_grid_reasons
+    )
+
+    certificate = cbo.certify_cbo_voltage_grid_convergence(result)
+    assert certificate.certified
+    assert certificate.voltage_point_counts == (3, 5, 9)
+    assert certificate.voltage_refinement_point_counts == (5, 9, 17)
+    assert certificate.refined_delta_ec_eV == (0.0,)
+    point_certificates = {
+        point.delta_ec_eV: point for point in certificate.points
+    }
+    assert point_certificates[0.0].voltage_grid_refined
+    assert point_certificates[0.0].initial_voltage_grid_reasons
+
+
+def test_voltage_refinement_requires_one_exact_nested_ladder_shift(
+    monkeypatch,
+):
+    def fake_short(grid, stack, *, initial_state=None, **kwargs):
+        return _state(float(stack), 100.0)
+
+    _install_fake_scan(monkeypatch, fake_short)
+
+    with pytest.raises(ValueError, match="reuse the two finest"):
+        cbo.solve_interface_cbo_scan(
+            object(),
+            np.array([0.0]),
+            voltage_grids_V=tuple(
+                np.linspace(0.0, 1.0, count) for count in (3, 5, 9)
+            ),
+            voltage_refinement_grids_V=tuple(
+                np.linspace(0.0, 1.0, count) for count in (3, 9, 17)
+            ),
+        )
+
+
+def test_point_local_voltage_refinement_fails_closed_after_fallback(
+    monkeypatch,
+):
+    def fake_short(grid, stack, *, initial_state=None, **kwargs):
+        return _state(float(stack), 100.0)
+
+    _install_fake_scan(monkeypatch, fake_short)
+    original_jv = cbo.solve_quasi_fermi_jv_sweep
+    jv_counts = []
+
+    def counted_jv(grid, stack, voltages, **kwargs):
+        jv_counts.append(len(voltages))
+        return original_jv(grid, stack, voltages, **kwargs)
+
+    monkeypatch.setattr(cbo, "solve_quasi_fermi_jv_sweep", counted_jv)
+    monkeypatch.setattr(cbo, "thermodynamic_voc_ceiling", lambda stack: 2.0)
+    monkeypatch.setattr(
+        cbo,
+        "_certify_cbo_voltage_grid_point",
+        lambda *args, **kwargs: SimpleNamespace(
+            certified=False,
+            reasons=("still divergent",),
+        ),
+    )
+
+    with pytest.raises(cbo.InterfaceCBOScanError, match="still divergent"):
+        cbo.solve_interface_cbo_scan(
+            object(),
+            np.array([0.0]),
+            voltage_grids_V=tuple(
+                np.linspace(0.0, 1.0, count) for count in (3, 5, 9)
+            ),
+            voltage_refinement_grids_V=tuple(
+                np.linspace(0.0, 1.0, count) for count in (5, 9, 17)
+            ),
+        )
+
+    assert jv_counts == [9, 17]
+
+
+def test_adaptive_full_jv_requires_metrics_and_rejects_unknown_names(
+    monkeypatch,
+):
+    def fake_short(grid, stack, *, initial_state, **kwargs):
+        return _state(float(stack), 100.0)
+
+    _install_fake_scan(monkeypatch, fake_short)
+
+    with pytest.raises(ValueError, match="calculate_jv_metrics=True"):
+        cbo.solve_interface_cbo_scan(
+            object(),
+            np.array([0.0]),
+            calculate_jv_metrics=False,
+            adaptive_jv_metrics=("FF",),
+        )
+    with pytest.raises(ValueError, match="must contain only"):
+        cbo.solve_interface_cbo_scan(
+            object(),
+            np.array([0.0]),
+            adaptive_jv_metrics=("Voc",),
+        )
+
+
 def test_scan_returns_a_bracket_at_the_bulk_statistics_limit(monkeypatch):
     def fake_short(grid, stack, *, initial_state, **kwargs):
         delta = float(stack)

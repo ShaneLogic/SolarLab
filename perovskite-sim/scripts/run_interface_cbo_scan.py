@@ -10,7 +10,9 @@ from pathlib import Path
 import numpy as np
 
 from perovskite_sim.experiments.cbo_scan import (
+    ADAPTIVE_JV_METRICS,
     CBO_BOUNDARY_POLICIES,
+    CBOVoltageGridConvergencePolicy,
     FIXED_CONTACTS,
     InterfaceCBOScanError,
     certify_cbo_grid_convergence,
@@ -59,7 +61,7 @@ def _build_scan_grid(stack, N_grid: int, interface_topology: str) -> np.ndarray:
 def _summary(result) -> dict:
     return {
         "schema": "solarlab.interface_cbo_scan",
-        "schema_version": "1.5",
+        "schema_version": "1.7",
         "complete": result.complete,
         "certified": result.certified,
         "settings": {
@@ -87,10 +89,24 @@ def _summary(result) -> dict:
             "voltage_grid_interval_counts": [
                 len(grid) - 1 for grid in result.voltage_grids_V
             ],
+            "voltage_refinement_grid_point_counts": [
+                len(grid) for grid in result.voltage_refinement_grids_V
+            ],
+            "voltage_refinement_grid_interval_counts": [
+                len(grid) - 1
+                for grid in result.voltage_refinement_grids_V
+            ],
+            "voltage_grid_convergence_policy": dataclasses.asdict(
+                result.voltage_grid_convergence_policy
+            ),
             "voltage_sampling_method": (
-                "nested_subsampling_of_finest_certified_jv"
-                if len(result.voltage_grids_V) > 1
-                else "single_voltage_grid"
+                "point_local_nested_refinement"
+                if result.voltage_refinement_grids_V
+                else (
+                    "nested_subsampling_of_finest_certified_jv"
+                    if len(result.voltage_grids_V) > 1
+                    else "single_voltage_grid"
+                )
             ),
             "mpp_interpolation": result.mpp_interpolation,
             "calculate_jv_metrics": result.calculate_jv_metrics,
@@ -107,10 +123,17 @@ def _summary(result) -> dict:
             "minimum_delta_step_eV": result.minimum_delta_step_eV,
             "maximum_delta_step_eV": result.maximum_delta_step_eV,
             "minimum_voltage_step_V": result.minimum_voltage_step_V,
+            "adaptive_full_jv_metrics": list(result.adaptive_jv_metrics),
         },
         "points": [
             {
                 "delta_ec_eV": point.delta_ec_eV,
+                "requested": point.requested,
+                "refinement_metrics": list(point.refinement_metrics),
+                "voltage_grid_refined": point.voltage_grid_refined,
+                "initial_voltage_grid_reasons": list(
+                    point.initial_voltage_grid_reasons
+                ),
                 "certified": point.certified,
                 "metrics": (
                     None
@@ -194,6 +217,9 @@ def _summary(result) -> dict:
         "critical_intervals": [
             dataclasses.asdict(interval) for interval in result.critical_intervals
         ],
+        "metric_refinement_trace": [
+            dataclasses.asdict(step) for step in result.metric_refinement_trace
+        ],
         "terminations": [
             dataclasses.asdict(termination) for termination in result.terminations
         ],
@@ -246,6 +272,25 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "at least three nested voltage point counts, for example "
             "29 57 113; only the finest complete J-V branch is solved"
+        ),
+    )
+    parser.add_argument(
+        "--voltage-refinement-grid-ladder",
+        type=int,
+        nargs="+",
+        help=(
+            "point-local fallback ladder; it must reuse the two finest base "
+            "grids and add one finer nested grid, for example 225 449 897"
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-full-jv-metrics",
+        nargs="+",
+        choices=ADAPTIVE_JV_METRICS,
+        default=(),
+        help=(
+            "adaptively refine selected FF/PCE CBO onsets on every spatial "
+            "grid; requires both grid ladders"
         ),
     )
     parser.add_argument("--V-max", type=float, default=1.4)
@@ -378,6 +423,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    adaptive_full_jv_metrics = tuple(args.adaptive_full_jv_metrics)
     if (
         args.interface_topology == TWO_SIDED_TRACE
         and args.interface_transport_model != FERMI_DIRAC_RICHARDSON
@@ -460,6 +506,13 @@ def main(argv: list[str] | None = None) -> int:
     if not np.isfinite(args.V_max) or args.V_max <= 0.0:
         raise ValueError("V-max must be finite and positive")
     voltage_point_counts = tuple(args.voltage_grid_ladder or ())
+    voltage_refinement_point_counts = tuple(
+        args.voltage_refinement_grid_ladder or ()
+    )
+    if voltage_refinement_point_counts and not voltage_point_counts:
+        raise ValueError(
+            "voltage-refinement-grid-ladder requires voltage-grid-ladder"
+        )
     if voltage_point_counts:
         if args.short_circuit_only:
             raise ValueError(
@@ -500,8 +553,115 @@ def main(argv: list[str] | None = None) -> int:
         voltages = np.linspace(0.0, args.V_max, args.n_voltages)
         voltage_grids = None
 
+    if voltage_refinement_point_counts:
+        if args.short_circuit_only:
+            raise ValueError(
+                "voltage-refinement-grid-ladder is incompatible with "
+                "short-circuit-only"
+            )
+        if len(voltage_refinement_point_counts) < 3:
+            raise ValueError(
+                "voltage-refinement-grid-ladder requires at least three "
+                "point counts"
+            )
+        if any(count < 2 for count in voltage_refinement_point_counts):
+            raise ValueError(
+                "voltage refinement grid point counts must be at least two"
+            )
+        if any(
+            right <= left
+            for left, right in zip(
+                voltage_refinement_point_counts[:-1],
+                voltage_refinement_point_counts[1:],
+            )
+        ):
+            raise ValueError(
+                "voltage-refinement-grid-ladder must have unique increasing "
+                "point counts"
+            )
+        if any(
+            (right - 1) % (left - 1) != 0
+            for left, right in zip(
+                voltage_refinement_point_counts[:-1],
+                voltage_refinement_point_counts[1:],
+            )
+        ):
+            raise ValueError(
+                "uniform voltage-refinement-grid-ladder intervals must be "
+                "exactly nested"
+            )
+        if (
+            len(voltage_point_counts) != 3
+            or len(voltage_refinement_point_counts) != 3
+            or voltage_refinement_point_counts[:-1]
+            != voltage_point_counts[1:]
+        ):
+            raise ValueError(
+                "point-local voltage refinement requires base [a,b,c] and "
+                "fallback [b,c,d] ladders"
+            )
+        voltage_refinement_grids = tuple(
+            np.linspace(0.0, args.V_max, count)
+            for count in voltage_refinement_point_counts
+        )
+    else:
+        voltage_refinement_grids = None
+
+    voltage_grid_convergence_policy = CBOVoltageGridConvergencePolicy(
+        maximum_voc_change_V=args.maximum_voc_change_mV * 1.0e-3,
+        maximum_ff_change=args.maximum_ff_change,
+        maximum_pce_change=args.maximum_pce_change,
+        maximum_successive_change_ratio=(
+            args.maximum_voltage_successive_change_ratio
+        ),
+        contraction_noise_floor_fraction=(
+            args.voltage_contraction_noise_floor_fraction
+        ),
+    )
+
     requested_grids = tuple(sorted(args.grid_ladder or (args.N_grid,)))
+    if adaptive_full_jv_metrics:
+        if args.short_circuit_only:
+            raise ValueError(
+                "adaptive-full-jv-metrics is incompatible with "
+                "short-circuit-only"
+            )
+        if voltage_grids is None:
+            raise ValueError(
+                "adaptive-full-jv-metrics requires --voltage-grid-ladder"
+            )
+        if (
+            args.grid_ladder is None
+            or len(requested_grids) < 3
+            or len(set(requested_grids)) != len(requested_grids)
+        ):
+            raise ValueError(
+                "adaptive-full-jv-metrics requires at least three unique "
+                "--grid-ladder values"
+            )
     results = []
+    voltage_certificates_by_result = {}
+
+    def voltage_certificate_for(result):
+        key = id(result)
+        certificate = voltage_certificates_by_result.get(key)
+        if certificate is None:
+            certificate = certify_cbo_voltage_grid_convergence(
+                result,
+                maximum_voc_change_V=(
+                    args.maximum_voc_change_mV * 1.0e-3
+                ),
+                maximum_ff_change=args.maximum_ff_change,
+                maximum_pce_change=args.maximum_pce_change,
+                maximum_successive_change_ratio=(
+                    args.maximum_voltage_successive_change_ratio
+                ),
+                contraction_noise_floor_fraction=(
+                    args.voltage_contraction_noise_floor_fraction
+                ),
+            )
+            voltage_certificates_by_result[key] = certificate
+        return certificate
 
     def build_payload(failure: dict | None = None):
         if results:
@@ -513,7 +673,7 @@ def main(argv: list[str] | None = None) -> int:
             finest = None
             payload = {
                 "schema": "solarlab.interface_cbo_scan",
-                "schema_version": "1.5",
+                "schema_version": "1.7",
                 "complete": False,
                 "certified": False,
                 "settings": {
@@ -530,8 +690,17 @@ def main(argv: list[str] | None = None) -> int:
                     "voltage_grid_point_counts": list(
                         voltage_point_counts
                     ),
+                    "voltage_refinement_grid_point_counts": list(
+                        voltage_refinement_point_counts
+                    ),
+                    "voltage_grid_convergence_policy": dataclasses.asdict(
+                        voltage_grid_convergence_policy
+                    ),
                     "minimum_voltage_step_V": args.minimum_voltage_step,
                     "mpp_interpolation": args.mpp_interpolation,
+                    "adaptive_full_jv_metrics": list(
+                        adaptive_full_jv_metrics
+                    ),
                 },
             }
             acceptance = False
@@ -543,10 +712,19 @@ def main(argv: list[str] | None = None) -> int:
         payload["settings"]["requested_voltage_grid_point_counts"] = list(
             voltage_point_counts
         )
+        payload["settings"][
+            "requested_voltage_refinement_grid_point_counts"
+        ] = list(voltage_refinement_point_counts)
+        payload["settings"]["voltage_grid_convergence_policy"] = (
+            dataclasses.asdict(voltage_grid_convergence_policy)
+        )
         payload["settings"]["minimum_voltage_step_V"] = (
             args.minimum_voltage_step
         )
         payload["settings"]["mpp_interpolation"] = args.mpp_interpolation
+        payload["settings"]["adaptive_full_jv_metrics"] = list(
+            adaptive_full_jv_metrics
+        )
         payload["settings"]["input_heterojunction_recombination_despike"] = (
             input_het_recomb_despike
         )
@@ -583,38 +761,69 @@ def main(argv: list[str] | None = None) -> int:
         acceptance = acceptance and statistics_certified
 
         if args.grid_ladder and results:
-            grid_certificate = certify_cbo_grid_convergence(
-                results,
-                maximum_envelope_width_eV=args.maximum_grid_envelope_eV,
-                maximum_successive_shift_ratio=(
-                    args.maximum_successive_shift_ratio
-                ),
-            )
-            payload["grid_convergence"] = dataclasses.asdict(
-                grid_certificate
-            )
-            payload["grid_runs"] = [_summary(item) for item in results]
-            acceptance = acceptance and grid_certificate.certified
-        if not args.short_circuit_only:
-            if voltage_grids is not None and finest is not None:
-                voltage_certificate = certify_cbo_voltage_grid_convergence(
-                    finest,
-                    maximum_voc_change_V=(
-                        args.maximum_voc_change_mV * 1.0e-3
+            grid_metrics = ("Jsc", *adaptive_full_jv_metrics)
+            grid_certificates = {
+                metric: certify_cbo_grid_convergence(
+                    results,
+                    metric=metric,
+                    maximum_envelope_width_eV=(
+                        args.maximum_grid_envelope_eV
                     ),
-                    maximum_ff_change=args.maximum_ff_change,
-                    maximum_pce_change=args.maximum_pce_change,
-                    maximum_successive_change_ratio=(
-                        args.maximum_voltage_successive_change_ratio
-                    ),
-                    contraction_noise_floor_fraction=(
-                        args.voltage_contraction_noise_floor_fraction
+                    maximum_successive_shift_ratio=(
+                        args.maximum_successive_shift_ratio
                     ),
                 )
+                for metric in grid_metrics
+            }
+            payload["grid_convergence"] = dataclasses.asdict(
+                grid_certificates["Jsc"]
+            )
+            grid_metrics_certified = all(
+                certificate.certified
+                for certificate in grid_certificates.values()
+            )
+            payload["metric_grid_convergence"] = {
+                "certificates": {
+                    metric: dataclasses.asdict(certificate)
+                    for metric, certificate in grid_certificates.items()
+                },
+                "certified": grid_metrics_certified,
+            }
+            payload["grid_runs"] = [_summary(item) for item in results]
+            acceptance = acceptance and grid_metrics_certified
+        if not args.short_circuit_only:
+            if voltage_grids is not None and finest is not None:
+                voltage_results = (
+                    tuple(results)
+                    if adaptive_full_jv_metrics
+                    else (finest,)
+                )
+                voltage_certificates = tuple(
+                    voltage_certificate_for(item)
+                    for item in voltage_results
+                )
+                voltage_certificate = voltage_certificates[-1]
                 payload["voltage_grid_convergence"] = dataclasses.asdict(
                     voltage_certificate
                 )
-                acceptance = acceptance and voltage_certificate.certified
+                spatial_voltage_certified = all(
+                    certificate.certified
+                    for certificate in voltage_certificates
+                )
+                payload["spatial_voltage_grid_convergence"] = {
+                    "certificates": [
+                        {
+                            "grid_interval_count": item.grid_interval_count,
+                            "certificate": dataclasses.asdict(certificate),
+                        }
+                        for item, certificate in zip(
+                            voltage_results,
+                            voltage_certificates,
+                        )
+                    ],
+                    "certified": spatial_voltage_certified,
+                }
+                acceptance = acceptance and spatial_voltage_certified
             else:
                 payload["voltage_grid_convergence"] = {
                     "sampling_method": "single_voltage_grid",
@@ -622,6 +831,13 @@ def main(argv: list[str] | None = None) -> int:
                     "reasons": [
                         "full J-V metrics require --voltage-grid-ladder "
                         "for top-level certification"
+                    ],
+                }
+                payload["spatial_voltage_grid_convergence"] = {
+                    "certificates": [],
+                    "certified": False,
+                    "reasons": [
+                        "full J-V metrics require --voltage-grid-ladder"
                     ],
                 }
                 acceptance = False
@@ -650,6 +866,8 @@ def main(argv: list[str] | None = None) -> int:
         calculate_full_jv = bool(
             not args.short_circuit_only
             and (
+                adaptive_full_jv_metrics
+                or
                 voltage_grids is None
                 or requested_grid == requested_grids[-1]
             )
@@ -730,6 +948,14 @@ def main(argv: list[str] | None = None) -> int:
                 voltage_grids_V=(
                     voltage_grids if calculate_full_jv else None
                 ),
+                voltage_refinement_grids_V=(
+                    voltage_refinement_grids
+                    if calculate_full_jv
+                    else None
+                ),
+                voltage_grid_convergence_policy=(
+                    voltage_grid_convergence_policy
+                ),
                 N_grid=requested_grid,
                 relative_drop_fraction=args.relative_drop,
                 minimum_delta_step_eV=args.minimum_delta_step,
@@ -741,6 +967,9 @@ def main(argv: list[str] | None = None) -> int:
                 interface_topology=args.interface_topology,
                 boundary_policy=args.boundary_policy,
                 calculate_jv_metrics=calculate_full_jv,
+                adaptive_jv_metrics=(
+                    adaptive_full_jv_metrics if calculate_full_jv else ()
+                ),
                 reference_initial_state=reference_initial_state,
                 reference_initial_state_grid=reference_initial_state_grid,
                 progress=progress,
@@ -761,6 +990,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"partial JSON: {args.out}")
             return 1
         results.append(result)
+        if adaptive_full_jv_metrics and voltage_grids is not None:
+            voltage_certificate = voltage_certificate_for(result)
+            if not voltage_certificate.certified:
+                failure = {
+                    "requested_grid": requested_grid,
+                    "error_type": "CBOVoltageGridConvergenceError",
+                    "message": "; ".join(voltage_certificate.reasons),
+                }
+                payload, _, _ = build_payload(failure)
+                args.out.parent.mkdir(parents=True, exist_ok=True)
+                args.out.write_text(
+                    json.dumps(payload, indent=2),
+                    encoding="utf-8",
+                )
+                print(
+                    f"voltage-grid failure at N={requested_grid}: "
+                    f"{failure['message']}"
+                )
+                print(f"partial JSON: {args.out}")
+                return 1
         reference_point = next(
             point
             for point in result.points

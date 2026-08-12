@@ -1207,13 +1207,12 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         )
     )
 
-    # SCAPS-style flat-band contacts (2026-06). Device-level opt-in that
-    # activates the Robin path on ALL FOUR carrier/side channels regardless
-    # of tier (the SCAPS contact model is finite-S, default 1e7 cm/s), with
-    # the existing doping-derived boundary equilibria as the flat-band
-    # references, and routes the flat-band work-function difference
-    # compute_V_bi() into the Poisson BC via V_bi_bc below. Default False =
-    # ideal-ohmic pins + frozen stack.V_bi, bit-identical.
+    # SCAPS-style carrier contact kinetics (2026-06). This activates the Robin
+    # path on all four carrier/side channels regardless of tier (finite-S,
+    # default 1e7 cm/s), with the existing doping-derived equilibria as the
+    # references. The Poisson-potential source is now selected independently
+    # by built_in_potential_mode. A pre-mode stack still retains the historical
+    # implication flat_band_contacts -> compute_V_bi for compatibility.
     _flat_band = bool(getattr(stack, "flat_band_contacts", False))
     if _flat_band:
         _has_selective_contacts = True
@@ -1579,13 +1578,14 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     # single dgttrs back-substitution.
     poisson_factor = factor_poisson(x, eps_r)
 
-    V_bi_eff = stack.compute_V_bi()
-    junction_polarity = -1.0 if V_bi_eff < 0.0 else 1.0
-    V_bi_bc = (
-        V_bi_eff
-        if _flat_band
-        else junction_polarity * abs(float(stack.V_bi))
-    )
+    # The operating value feeds physical defaults/interface partitions; the
+    # Poisson value follows the explicitly selected contact-potential source.
+    # They differ only for pre-mode compatibility stacks, preserving the
+    # historical IonMonger convention. Carrier Robin/Dirichlet kinetics are
+    # controlled independently by ``_flat_band`` and the S_* fields above.
+    V_bi_eff = stack.operating_built_in_potential()
+    V_bi_bc = stack.poisson_built_in_potential()
+    junction_polarity = -1.0 if V_bi_bc < 0.0 else 1.0
 
     # TMM optical generation: computed when any layer has optical data and
     # the active mode enables TMM. Legacy/fast fall back to Beer-Lambert.
