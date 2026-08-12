@@ -2,7 +2,9 @@
 
 ## Open gaps
 
+- `absolute:base:J_sc` [attempted] J_sc@base gap=28.67 (SL -28.67 vs ref 0)
 - `trend:Nd_ETL:V_oc` [attempted] V_oc@Nd_ETL gap=0.3262 (SL 37.38 vs ref 70)
+- `absolute:base:PCE` [attempted] PCE@base gap=0.02809 (SL -0.02809 vs ref 0)
 
 ## Refuted approaches (never retry)
 

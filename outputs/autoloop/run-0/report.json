@@ -4,15 +4,15 @@
   "gate_passed": true,
   "l0_pass": true,
   "l1_pass": true,
-  "overall": 0.8771926530800123,
+  "overall": 1.0,
   "provenance": {
     "config_hash": "5500c9485f6a9518430511019546933277cdc3274fd3a005182394f39d2fcf67",
     "flags": {},
-    "git_dirty": true,
-    "git_sha": "53ac65324299de802805c2d83dd6b9b8ae61e95f",
+    "git_dirty": false,
+    "git_sha": "4633700f9f3391277ce97edc75388eb62489da0d",
     "run_id": "run-0",
     "seed": 0,
-    "timestamp": "2026-07-25T19:00:06Z"
+    "timestamp": "2026-08-11T19:00:05Z"
   },
   "verdicts": [
     {
@@ -28,7 +28,7 @@
     {
       "name": "G3_scorecard",
       "passed": true,
-      "reason": "no baseline; overall=0.877"
+      "reason": "no baseline; overall=1.000"
     }
   ]
 }

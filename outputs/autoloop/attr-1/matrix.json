@@ -1,9 +1,9 @@
 {
-  "baseline_val": 28.665329643398195,
-  "gap_id": "absolute:base:J_sc",
+  "baseline_val": 0.02808975490495841,
+  "gap_id": "absolute:base:PCE",
   "probes": [
     {
-      "baseline_val": 28.665329643398195,
+      "baseline_val": 0.02808975490495841,
       "delta": 0.0,
       "kind": "flag",
       "name": "SOLARLAB_DOS_BAND",
@@ -12,11 +12,11 @@
       "variant": {
         "flag": "SOLARLAB_DOS_BAND"
       },
-      "variant_val": 28.665329643398195
+      "variant_val": 0.02808975490495841
     },
     {
-      "baseline_val": 28.665329643398195,
-      "delta": -1.0468568234500708e-09,
+      "baseline_val": 0.02808975490495841,
+      "delta": -0.003602754921793072,
       "kind": "grid",
       "name": "grid_n80",
       "note": "",
@@ -24,7 +24,7 @@
       "variant": {
         "n_points": 80
       },
-      "variant_val": 28.665329642351338
+      "variant_val": 0.024486999983165336
     },
     {
       "baseline_val": 0.0,
