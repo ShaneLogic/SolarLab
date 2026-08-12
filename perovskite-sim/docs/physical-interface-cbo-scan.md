@@ -377,6 +377,42 @@ over-refinement, not stronger evidence. The point-local protocol preserves the
 same finest-three-grid certificate at the failed point while keeping already
 certified points on their registered base ladder.
 
+The registered Stage 4.4 command completed on 2026-08-12. All three requested
+N_grid=40/50/60 runs completed; after layer-boundary allocation their actual
+total interval counts were 37/46/58. Every adaptive full-JV point passed either
+the base 113/225/449 voltage ladder or the predeclared point-local
+225/449/897 fallback. The resulting 1% critical intervals are:
+
+| Requested grid | Actual intervals | Jsc interval (eV) | FF interval (eV) | PCE interval (eV) |
+| ---: | ---: | ---: | ---: | ---: |
+| 40 | 37 | 0.3890625-0.389453125 | 0.119921875-0.1203125 | 0.01015625-0.010546875 |
+| 50 | 46 | 0.384765625-0.38515625 | 0.119921875-0.1203125 | 0.01015625-0.010546875 |
+| 60 | 58 | 0.382421875-0.3828125 | 0.119921875-0.1203125 | 0.01015625-0.010546875 |
+
+All three metric-specific spatial certificates pass. The Jsc union envelope is
+0.382421875-0.389453125 eV (7.03125 meV below the 10 meV limit); its midpoint
+shifts contract from 4.296875 to 2.34375 meV, giving a 0.54545 ratio below the
+0.9 limit. FF and PCE have identical intervals on all three grids, each with a
+0.390625 meV envelope and zero observed midpoint shift. Their reference-value
+relative spreads are 4.96e-6 and 3.65e-4, respectively; the Jsc reference
+spread is 3.12e-4. All are below the registered 0.01 limit.
+
+Each spatial grid required the fallback only at delta_Ec=0.11875 eV. The base
+FF change ratios were 11.20, 7.65, and 6.50 for actual interval counts
+37/46/58. On 225/449/897 they contracted to 0.420, 0.439, and 0.450. The final
+449-to-897 changes remained small across the same ladder: dVoc=0.0479-0.0498
+mV, dFF=4.83e-5-5.01e-5, and dPCE=8.09e-7-8.30e-7. This is the expected
+fail-closed recovery: the uncertified coarse-ladder metric never guides the CBO
+bisection, while points that already pass are not uniformly over-refined.
+
+The artifact is
+`outputs/interface-cbo/scan-two-sided-fd-adaptive-full-jv-grid-40-50-60-voltage-adaptive.json`
+(schema 1.7). It reports `complete=true`, `numerical_certified=true`, and
+`certified=true` for the declared internal acceptance contract. No independent
+SCAPS dataset or provenance record was supplied (`external_validation` is
+absent), so this result is an internally grid-converged model threshold, not an
+external SCAPS validation or a universally predictive physical CBO value.
+
 ## Historical deduplicated evidence (2026-08-11)
 
 For fermi_richardson, fixed contacts, weights (1,2,1), alphas (3,3.25,3), and
