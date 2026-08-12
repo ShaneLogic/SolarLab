@@ -116,3 +116,19 @@ has partial-width 2-D contacts and no public input deck, this is
 `partial`; exact external C-V parity is explicitly deferred to P2. The lane
 does not certify the general endpoint-sampled transient path or unsupported
 ion, contact, interface, or non-local physics.
+
+## Post-P1 Physical-Interface CBO Campaign
+
+The 2026-08-10 N=40/50/60 physical-QF-interface scan is separate from the
+frozen `p1-closure-2026-08-07` tag. Its one-percent-$J_{\mathrm{sc}}$ critical
+intervals have a 7.031 meV union against a 10 meV internal limit, and its local
+QSS/current diagnostics pass. The normalized SCAPS-shape error is 0.4744
+against a 0.05 external gate. The result therefore records
+`numerical_certified=true` but top-level `certified=false`.
+
+The source JSON currently lives at
+`outputs/interface-cbo/scan-fermi-edge-qf-grid-40-50-60.json`, inside the
+ignored local-output tree. The README-facing rendered artifact is
+[`cbo_interface_validation.png`](../../docs/manual/figures/cbo_interface_validation.png).
+A clean clone cannot regenerate that panel until the exact machine-readable
+result is restored; a different scan is not an acceptable substitute.

@@ -30,10 +30,11 @@ Perovskite · CIGS · c-Si
 | 5 | [Running the Application](#running-the-application) | Backend + frontend startup |
 | 6 | [Physical Principles & Equations](#physical-principles--equations) | Governing PDEs and physics |
 | 7 | [Numerical Method](#numerical-method) | Solver architecture |
-| 8 | [Using the Web UI](#using-the-web-ui) | UI walkthrough |
-| 9 | [Shipped Device Presets](#shipped-device-presets) | Available YAML configs |
-| 10 | [Testing](#testing) | Test suite overview |
-| 11 | [References](#references) | Key literature |
+| 8 | [Validation & Model Scope](#validation--model-scope) | What current evidence does and does not certify |
+| 9 | [Using the Web UI](#using-the-web-ui) | UI walkthrough |
+| 10 | [Shipped Device Presets](#shipped-device-presets) | Available YAML configs |
+| 11 | [Testing](#testing) | Test suite overview |
+| 12 | [References](#references) | Key literature |
 
 <br>
 
@@ -58,6 +59,12 @@ It reproduces the main thin-film characterisation experiments from a single devi
 
 The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema. A separate **2T monolithic tandem** driver performs a combined TMM over top + junction + bottom, runs independent sub-cell J-V sweeps, and series-matches at a common current grid.
 
+The current technical reference is the **[SolarLab Technical and User Manual (2026-08-11)](docs/manual/SolarLabManual260811.pdf)**. It records the solver-specific variable sets, validation gates, and limitations that do not fit in this overview.
+
+<p align="center">
+  <img src="docs/manual/figures/architecture_flow.png" alt="SolarLab architecture and data flow" width="900">
+</p>
+
 <br>
 
 ---
@@ -70,21 +77,22 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 |:-:|:-----------|:--------|
 | 🧮 | **Drift-diffusion core** | Scharfetter-Gummel finite-element fluxes on a tanh-clustered multilayer grid; Method-of-Lines with Radau implicit time integration |
 | ⚡ | **Poisson solve** | Pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs` (cached once per run) — ~40× faster than naive assembly |
-| 🔬 | **Mobile ions** | Steric Blakemore flux with excluded-volume correction; dual-ion support (mobile cation + anion vacancies) |
-| 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface $(v_n, v_p)$ surface recombination; auto-computed $V_\text{bi}$ from Fermi-level difference |
+| 🔬 | **Mobile ions** | Finite-site modified-PNP flux with shared-site dual-ion support; legacy whole-flux regularization retained only for frozen comparisons |
+| 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface transport/recombination; signed contact potential from semiconductor work functions, explicit metals, or a legacy benchmark override |
 
 ### Physics upgrades (Phase 2–4)
 
 | | Capability | Details |
 |:-:|:-----------|:--------|
 | 🌈 | **Transfer-matrix optics** | Coherent TMM for position-resolved $G(x)$ with the Poynting-vector correction so $R+T+A=1$; AM1.5G-weighted per-wavelength absorption |
-| 🔥 | **Thermionic emission** | Richardson-Dushman flux cap at heterointerfaces with band offsets $> 0.05$ eV — prevents SG over-current across sharp discontinuities |
+| 🔥 | **Interface transport** | Default SG face with an optional thermionic cap; supported ion-free QF runs can instead use an exclusive zero-thickness interface boundary with reciprocal transport and shared interface-SRH occupancy |
 | 💡 | **Photon recycling** | Yablonovitch single-pass escape probability $P_\text{esc} = \min(1, 1/(4 n^2 \alpha d))$ scales $B_\text{rad}$ per absorber (Phase 3.1) |
 | 🔁 | **Self-consistent reabsorption** | Per-RHS radiative reabsorption feeds the trapped emission fraction back into $G(x)$ on absorber nodes (Phase 3.1b, FULL only) |
 | 🌀 | **Field-dependent mobility** | Caughey-Thomas velocity saturation + Poole-Frenkel hopping applied per RHS from the Poisson face field (Phase 3.2, FULL only) |
 | 🚪 | **Selective / Schottky contacts** | Robin-type flux $J = \pm q S (n - n_\text{eq})$ at outer contacts; $S \to \infty$ is ohmic, $S = 0$ is blocking (Phase 3.3, FULL only) |
 | 🎯 | **Position-dependent traps** | Exponential or Gaussian defect profiles concentrated at transport-layer interfaces; $\tau(x) = \tau_\text{bulk} \cdot N_{t,\text{bulk}} / N_t(x)$ (Phase 4a) |
 | 🌡️ | **Temperature scaling** | Varshni bandgap shift referenced to 300 K and power-law $B_\text{rad}(T) \propto (T/300)^\gamma$; self-consistent with $n_i(T)$ (Phase 4b) |
+| 🧭 | **Explicit solver drivers** | Transient, direct steady-state, cancellation-safe quasi-Fermi, QF frequency-domain, and 2D drivers keep distinct variable sets and fail closed on unsupported physics |
 
 ### Tiered fidelity modes
 
@@ -92,7 +100,9 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 |:-----|:------------|:---------|
 | **LEGACY** | No TE, no TMM, uniform traps, $T = 300$ K — classic IonMonger reproduction | Regression parity against published benchmarks |
 | **FAST** | All build-once upgrades on (TE, TMM, dual ions, trap profile, $T$-scaling, photon recycling); per-RHS hooks off | Default for J-V / impedance / degradation sweeps |
-| **FULL** | Everything on, including per-RHS radiative reabsorption, $\mu(E)$, and Robin contacts | Highest-fidelity single runs; tandem sub-cells |
+| **FULL** | Widest configured hook set, including per-RHS radiative reabsorption, $\mu(E)$, and Robin contacts | Runs that require those hooks; accuracy still depends on driver support and validation |
+
+The tier is a feature ceiling, not an accuracy grade. The selected experiment driver still determines the unknowns, supported physics, and required certification checks.
 
 ### Experiments
 
@@ -133,23 +143,46 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 
 ```
 SolarLab/
-├── perovskite-sim/                 Main simulator + backend + frontend
+├── .claude/skills/                 Domain-reference skills; not simulator runtime code
+├── .dockerignore                   Docker build-context exclusions
+├── .githooks/                      Repository hook scripts
+├── .gitignore                      Repository ignore rules
+├── docs/                           Cross-tree manuals, validation reports, plans, figures
+│   ├── manual/                     Manual source, dated PDFs, and generated figures
+│   ├── reference/                  Canonical SCAPS comparison reports
+│   ├── figures/                    Stored comparison plots
+│   ├── autoloop/                   Research-loop ledger
+│   ├── plans/                      Cross-tree implementation plans
+│   └── superpowers/                Historical specs, plans, and references
+├── outputs/                        Tracked example and comparison outputs
+├── perovskite-sim/                 Main simulator package
 │   ├── perovskite_sim/             Python simulation library
-│   │   ├── discretization/         Grid + Scharfetter–Gummel operators
-│   │   ├── physics/                Poisson, continuity, recombination, ions, optics
-│   │   ├── models/                 Frozen dataclasses: DeviceStack, MaterialParams
-│   │   ├── solver/                 1D Method-of-Lines assembler, Newton equilibrium
-│   │   ├── twod/                   2D grid, Poisson, fluxes, microstructure, J-V drivers
-│   │   ├── experiments/            1D J-V, EQE, impedance, degradation, TPV, tandem
-│   │   └── data/nk/                Complex refractive-index n,k data for TMM
-│   ├── backend/                    FastAPI HTTP wrapper (SSE job streaming)
-│   ├── frontend/                   Vite + TypeScript + Plotly single-page UI
-│   ├── configs/                    Shipped YAML presets, including configs/twod/
-│   ├── tests/                      pytest suite (unit / integration / regression)
-│   └── notebooks/                  Exploratory benchmarks
-├── perovskite-sim-phase2b/         Git worktree for feat/tandem-cell
-├── docs/                           Research notes, plans, specs
-└── README.md                       (this file)
+│   │   ├── models/                 Device schema and configuration loading
+│   │   ├── physics/                Poisson, transport, recombination, ions, optics
+│   │   ├── discretization/         Grid and Scharfetter-Gummel operators
+│   │   ├── solver/                 Transient and nonlinear solver infrastructure
+│   │   ├── experiments/            1D, QF, spectral, transient, and tandem drivers
+│   │   ├── twod/                   Experimental 2D solver and experiments
+│   │   ├── scaps_compat/           SCAPS import and compatibility boundary
+│   │   ├── screening/              Screening workflows
+│   │   ├── sweeps/                 Parameter-sweep helpers
+│   │   ├── validation/             Grid-convergence utilities
+│   │   └── data/                   Spectra, optical constants, and references
+│   ├── backend/                    FastAPI service and SSE job dispatch
+│   ├── frontend/                   Vite + TypeScript + Plotly workstation
+│   ├── configs/                    Shipped 1D, tandem, and 2D YAML presets
+│   ├── reproducibility/            Evidence registry and frozen P0/P1 records
+│   ├── docs/                       Package-specific technical documentation
+│   ├── scripts/                    CLI, validation, plotting, and import tools
+│   ├── tests/                      Unit, integration, regression, and validation tests
+│   ├── notebooks/                  Exploratory benchmarks
+│   └── pyproject.toml              Python package and test configuration
+├── scripts/                        Repository-level support scripts
+├── docker-compose.yml              Backend/frontend development stack
+├── DFTSimulatorPV.pptx             Project presentation artifact
+├── CLAUDE.md                       Repository guidance
+├── skills-lock.json                Skill dependency lock
+└── README.md                       This file
 ```
 
 <br>
@@ -196,8 +229,10 @@ npm install
 
 ```bash
 # From perovskite-sim/
-pytest                                    # full unit + integration suite (~15 s)
-pytest -m slow                            # slow physics regression (~30 s, BLAS pinned)
+pytest                                                  # default unit + integration (~2-3 min)
+pytest -m validation -W error::RuntimeWarning           # literature-informed lanes
+pytest -m slow -W error::RuntimeWarning                 # heavy physics suite; can exceed 1 h
+python scripts/verify_reproducibility.py --json         # registry and frozen-baseline checks
 ```
 
 <br>
@@ -235,7 +270,9 @@ cd perovskite-sim/frontend
 npm run dev
 ```
 
-Open **<http://127.0.0.1:5173>** in your browser. The UI will connect directly to `http://127.0.0.1:8000` (the backend URL is hardcoded — CORS is already open, so this works under both `npm run dev` and `npm run preview`).
+Open **<http://127.0.0.1:5173>** in your browser. The frontend defaults to
+`http://127.0.0.1:8000` and can be pointed at another backend with
+`VITE_API_BASE`. CORS is enabled for the local development and preview flows.
 
 ### Run a simulation from Python (no UI)
 
@@ -262,19 +299,11 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 ### Physical Model Overview
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/device_structure.png?v=4" alt="Device Structure" width="700">
+  <img src="docs/manual/figures/device_contact_boundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
 </p>
 
 <p align="center">
-  <img src="perovskite-sim/docs/images/band_diagram.png?v=3" alt="Energy Band Diagram" width="700">
-</p>
-
-<p align="center">
-  <img src="perovskite-sim/docs/images/transport_equations.png?v=4" alt="Transport Processes and Boundary Conditions" width="700">
-</p>
-
-<p align="center">
-  <img src="perovskite-sim/docs/images/solver_pipeline.png?v=4" alt="Solver Pipeline" width="700">
+  <img src="docs/manual/figures/band_interface_convention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
 </p>
 
 ### Governing Equations
@@ -345,15 +374,23 @@ Interface recombination is applied at heterointerfaces via the per-interface sur
 
 <br>
 
-### 4. Mobile-Ion Migration (Blakemore-Limited)
+### 4. Mobile-Ion Migration (Finite-Site Modified PNP)
 
-For perovskite cells, a single mobile ionic species (typically iodide vacancy $V_{\mathrm{I}}^{+}$) is tracked with a **steric Blakemore flux** that enforces an excluded-volume site-density limit $N_{\max}$:
+For perovskite cells, the default finite-site modified Poisson-Nernst-Planck
+model applies lattice-gas crowding to chemical diffusion without multiplying
+the electrostatic drift. For one positive species,
 
 $$
-J_P = -qD_{\text{ion}}\Bigl[\frac{\partial P}{\partial x} + \frac{P}{V_t}\frac{\partial \varphi}{\partial x}\Bigr]\cdot\left(1 - \frac{P}{N_{\max}}\right)
+F_P=-D_{\text{ion}}\left[
+\frac{1}{1-P/P_{\text{lim}}}\frac{\partial P}{\partial x}
++\frac{P}{V_t}\frac{\partial \varphi}{\partial x}
+\right].
 $$
 
-The $(1 - P/N_{\max})$ factor prevents the ion density from diverging when the quasi-Fermi level of the ions approaches the site energy. Non-perovskite stacks (CIGS, c-Si) set $D_{\text{ion}}=0$ so this term drops out cleanly.
+Dual mobile species share the occupancy
+$\theta=(P_+ + P_-)/P_{\text{lim}}$ by default. The `legacy` tier retains the
+superseded whole-flux steric multiplier for frozen benchmark compatibility.
+Non-perovskite stacks set $D_{\text{ion}}=0$ so ionic dynamics drop out.
 
 <br>
 
@@ -382,19 +419,28 @@ integrated over the AM1.5G spectrum. The $n/n_{\text{amb}}$ prefactor is the Poy
 
 ### 6. Thermionic Emission at Heterointerfaces
 
-When the conduction-band offset $|\Delta E_c|$ or valence-band offset $|\Delta E_v|$ across an interface exceeds $0.05$ eV, the Scharfetter–Gummel flux is capped to the Richardson–Dushman thermionic-emission current
+The default density-variable discretization keeps one bidirectional
+Scharfetter-Gummel face and may apply an empirical density-weighted thermionic
+cap when a band offset exceeds 0.05 eV. The dimensionally normalized
+Richardson-Dushman form is available through `te_physical_norm`, but remains
+opt-in while strongly binding interface cases are still being conditioned:
 
 $$
 J_{\text{TE},n} = A^*_n T^2 \exp\left(-\frac{\Delta E_c}{k_B T}\right)\bigl[\exp(qV/k_B T) - 1\bigr],
 $$
 
-where $A^*$ is the effective Richardson constant (defaults to the free-electron value $1.2017\times 10^{6}\,\text{A/m}^2\text{K}^2$, tunable per layer). Without this cap, SG overestimates current across sharp band discontinuities resolved in a single grid spacing.
+For the supported ion-free local model, `solver="quasi_fermi"` with
+`interface_boundary=true` instead removes the ordinary SG face and solves
+reciprocal thermionic transport and shared-occupancy interface SRH on an
+exclusive zero-thickness boundary. Unsupported physics fails before Newton
+starts. The current CBO campaign certifies its numerical grid contraction, not
+external SCAPS agreement; see [Validation & Model Scope](#validation--model-scope).
 
 <br>
 
 ### 7. Boundary Conditions at the Contacts
 
-By default, each metal contact is treated as ohmic: the boundary carrier densities are fixed to the thermal-equilibrium values computed from the outermost layers and the boundary-node time derivatives are pinned. In FULL mode, any configured selective-contact coefficient replaces that side/carrier pin with a Robin-type flux:
+By default, each outer carrier contact is treated as ohmic: the boundary carrier densities are fixed to the thermal-equilibrium values computed from the outermost layers and the boundary-node time derivatives are pinned. In FULL mode, any configured selective-contact coefficient replaces that side/carrier pin with a Robin-type flux:
 
 $$
 J_{c,s} = \sigma_{c,s}\,qS_{c,s}(u_c - u_{c,\mathrm{eq}}),
@@ -417,6 +463,18 @@ device:
 
 Missing or `null` means the default ohmic Dirichlet pin remains active for that carrier/side. A finite value activates the Robin flux; `S = 0` is blocking, while large `S` approaches the ohmic limit. The same coefficients are mapped onto the top and bottom boundaries of the 2D solver.
 
+The Poisson contact potential is configured independently through
+`built_in_potential_mode`: new devices can derive the signed value from endpoint
+semiconductor work functions or from two explicit metal work functions, while
+`legacy_manual` preserves a published benchmark magnitude. Positive applied
+bias reduces the built-in field for either contact orientation:
+
+$$
+\varphi(0)=0,\qquad
+\varphi(L)=V_{\text{bi}}^{\text{bc}}-sV_{\text{app}},
+\qquad s=\operatorname{sign}(V_{\text{bi}}^{\text{bc}}).
+$$
+
 Ions are blocked at both contacts ($J_P = 0$), enforcing ionic-species conservation.
 
 <br>
@@ -435,16 +493,59 @@ The 2D solver is an experimental extension for lateral microstructure effects, n
 
 | Ingredient | Choice |
 |:-----------|:-------|
-| **Method** | Method of Lines: spatial FE discretization -> stiff ODE in time |
+| **Driver topology** | Explicit transient, direct steady-state, quasi-Fermi DC, QF frequency-domain, and 2D paths |
 | **1D grid** | Tanh-clustered multilayer grid (refined near interfaces and contacts) |
 | **2D grid** | Tensor-product lateral/vertical mesh for Stage A/B microstructure studies |
 | **Spatial** | Scharfetter-Gummel finite elements for drift-diffusion; harmonic-mean faces for Poisson |
-| **Time** | `scipy.integrate.solve_ivp` with the **Radau** IIA 5th-order implicit method |
+| **Transient** | Method of Lines with `scipy.integrate.solve_ivp` and the Radau IIA 5th-order implicit method |
+| **Steady state** | Direct density-log Newton or cancellation-safe quasi-Fermi Newton, selected explicitly |
 | **Poisson** | LAPACK `dgttrf`/`dgttrs` tridiagonal LU, pre-factored once per run |
-| **Current** | Computed directly from the converged SG fluxes (consistent with continuity) |
+| **Certification** | Driver-specific residual, cell-current, all-face admittance, or lateral/vertical diagnostics |
 | **Safety cap** | `max_step` capped on every `run_transient` sub-interval to prevent Radau from accepting a giant step near flat-band |
 
 All physical data is held in **immutable frozen dataclasses** (`MaterialParams`, `LayerSpec`, `DeviceStack`, `SolverConfig`). In-place mutation is forbidden — updates use `dataclasses.replace(...)`.
+
+<p align="center">
+  <img src="docs/manual/figures/solver_topology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
+</p>
+
+<br>
+
+---
+
+## Validation & Model Scope
+
+SolarLab keeps repository capability, internal numerical acceptance, and
+external physical agreement as separate claims. The machine-readable registry
+and reproduction commands live under
+[`perovskite-sim/reproducibility/`](perovskite-sim/reproducibility/README.md);
+the full interpretation is in the
+[2026-08-11 manual](docs/manual/SolarLabManual260811.pdf).
+
+<p align="center">
+  <img src="docs/manual/figures/csi_qf_convergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
+</p>
+
+The c-Si panels are internal numerical evidence for the restricted local QF
+model. They do not certify the general transient driver or fit an external
+c-Si device.
+
+<p align="center">
+  <img src="docs/manual/figures/cbo_interface_validation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
+</p>
+
+The physical-interface CBO scan passes its registered N=40/50/60 numerical
+grid envelope, but the normalized SCAPS-shape error is 0.4744 against a 0.05
+gate. Its result is `numerical_certified=true` and top-level
+`certified=false`.
+
+<p align="center">
+  <img src="docs/manual/figures/twod_scope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
+</p>
+
+The registered 1D/2D comparison uses matched vertical grids, periodic lateral
+boundaries, frozen ions, and an interface-free preset. Mobile-ion dynamics and
+the 1D interface-SRH/physical-QF machinery are outside that parity claim.
 
 <br>
 
@@ -560,7 +661,7 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 
 ## Shipped Device Presets
 
-Presets live in `perovskite-sim/configs/`, with 2D examples under `perovskite-sim/configs/twod/`. Drop a new `.yaml` file in either location and it is auto-discovered by `GET /api/configs`.
+Presets live in `perovskite-sim/configs/`, with 2D examples under `perovskite-sim/configs/twod/`. Drop a new `.yaml` file in either location and it is auto-discovered by `GET /api/configs`. The table below lists representative presets; the reproducibility registry inventories every shipped YAML.
 
 | Preset | Material System | Ions | Optics | Notes |
 |:-------|:----------------|:----:|:------:|:------|
@@ -571,7 +672,8 @@ Presets live in `perovskite-sim/configs/`, with 2D examples under `perovskite-si
 | `ionmonger_benchmark` | Courtier 2019 | Yes | Beer-Lambert | IonMonger cross-check |
 | `driftfusion_benchmark` | Driftfusion params | Yes | Beer-Lambert | Driftfusion cross-check |
 | `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert | $D_{\text{ion}}=0$ everywhere |
-| `cSi_homojunction` | n+ / p c-Si | No | Beer-Lambert | Homojunction wafer cell |
+| `cSi_homojunction` | n+ / p c-Si | No | Beer-Lambert | Requires the cancellation-safe QF driver for production J-V |
+| `csi_vannijen2025_pn_cv` | Gaussian p+ / n c-Si | No | Dark only | Partial external C-V comparison; not pointwise parity |
 | `twod/nip_MAPbI3_uniform` | MAPbI3 2D lateral-uniform | Frozen in 2D | Beer-Lambert | 2D parity / baseline preset |
 | `twod/nip_MAPbI3_singleGB` | MAPbI3 2D single grain boundary | Frozen in 2D | Beer-Lambert | Microstructure V<sub>oc</sub>-loss preset |
 | `twod/bcx_combined_demo` | MAPbI3 2D combined hooks | Frozen in 2D | Beer-Lambert | Demo for Robin contacts + field mobility + microstructure |
@@ -584,10 +686,11 @@ Presets live in `perovskite-sim/configs/`, with 2D examples under `perovskite-si
 
 ```bash
 # From perovskite-sim/
-pytest                                                  # unit + integration, ~15 s
-pytest -m slow                                          # physics regression, ~30 s
-pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage report
-pytest tests/unit/experiments/test_jv_sweep.py          # a single file
+pytest                                                  # default unit + integration (~2-3 min)
+pytest -m validation -W error::RuntimeWarning           # literature-informed lanes
+pytest -m slow -W error::RuntimeWarning                 # heavy physics suite; can exceed 1 h
+python scripts/verify_reproducibility.py --json         # registry and frozen baselines
+pytest --cov=perovskite_sim --cov-report=term-missing   # optional coverage report
 ```
 
 | Suite | Scope |

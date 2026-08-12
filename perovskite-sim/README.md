@@ -5,7 +5,9 @@ frontend that make up the SolarLab simulator.
 
 > **Start here:** the [root README](../README.md) covers installation,
 > physics, equations, UI walkthrough, and shipped presets. This file is
-> a short orientation to the `perovskite-sim/` subtree.
+> a package-level orientation to the `perovskite-sim/` subtree. The
+> [2026-08-11 technical manual](../docs/manual/SolarLabManual260811.pdf)
+> is the detailed solver, model-scope, and validation reference.
 
 <br>
 
@@ -13,14 +15,28 @@ frontend that make up the SolarLab simulator.
 
 ```
 perovskite-sim/
-├── perovskite_sim/   Python simulation library (drift-diffusion + ions + TMM)
-├── backend/          FastAPI HTTP wrapper
-├── frontend/         Vite + TypeScript + Plotly single-page UI
-├── configs/          Shipped YAML device presets
-├── tests/            pytest suite (unit / integration / regression)
+├── .superpowers/     Historical local design/brainstorm records
+├── perovskite_sim/   Python library: models, physics, solvers, experiments, 2D
+├── backend/          FastAPI HTTP wrapper and SSE job dispatch
+├── frontend/         Vite + TypeScript + Plotly workstation
+├── configs/          Shipped 1D, tandem, and 2D YAML device presets
 ├── reproducibility/  Frozen baselines, schemas, hashes, benchmarks, P1 gaps
-└── notebooks/        Exploratory benchmarks
+├── docs/             Package-specific model, benchmark, and implementation docs
+├── scripts/          CLI, validation, plotting, import, and probe tools
+├── tests/            Unit, integration, regression, and validation suites
+├── notebooks/        Exploratory benchmarks
+├── band_diagram.png  Retained root-level sample plot
+├── charge_distribution.png  Retained root-level sample plot
+├── Dockerfile.backend  Backend container definition
+├── pyproject.toml    Package metadata and pytest configuration
+├── .gitignore        Package-local generated-output rules
+├── CLAUDE.md         Package development and validation guidance
+└── README.md         This file
 ```
+
+Local runs may create an ignored `outputs/` directory. A result is not part of
+the remote repository or reproducibility registry merely because it exists
+there.
 
 <br>
 
@@ -88,20 +104,22 @@ generates electron-hole pairs, and the built-in electric field separates them
 to produce current.
 
 <p align="center">
-  <img src="docs/images/device_structure.png?v=4" alt="Device Structure" width="700">
+  <img src="../docs/manual/figures/device_contact_boundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
 </p>
 
 <p align="center">
-  <img src="docs/images/band_diagram.png?v=3" alt="Energy Band Diagram" width="700">
+  <img src="../docs/manual/figures/band_interface_convention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
 </p>
 
 <p align="center">
-  <img src="docs/images/transport_equations.png?v=4" alt="Transport Processes" width="700">
+  <img src="../docs/manual/figures/solver_topology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
 </p>
 
-<p align="center">
-  <img src="docs/images/solver_pipeline.png?v=4" alt="Solver Pipeline" width="700">
-</p>
+No single driver contains every optional model. `transient`,
+`steady_state`, `quasi_fermi`, `quasi_fermi_frequency`, and `2D` use different
+unknowns and certification checks. The experiment selects the driver
+explicitly; unsupported combinations fail before the numerical solve. Likewise,
+`legacy`, `fast`, and `full` are feature ceilings rather than accuracy grades.
 
 ### Supported Device Architectures
 
@@ -232,9 +250,20 @@ Implemented by padding the internal flux array with zeros at each end
 before computing the finite-difference divergence. The same zero-flux
 condition applies to both positive and negative ion species.
 
-A **steric saturation limit** prevents unphysical ion pile-up:
+A finite-site modified-PNP chemical potential supplies the default crowding
+term. For one positive species,
 
-$$\text{steric} = \frac{1}{\max(1 - P_{\text{avg}}/P_{\text{lim}},\; 10^{-6})}$$
+$$
+F_P=-D_{\text{ion}}\left[
+\frac{1}{1-P/P_{\text{lim}}}\frac{\partial P}{\partial x}
++\frac{P}{V_t}\frac{\partial\varphi}{\partial x}
+\right].
+$$
+
+The dual-ion default uses shared occupancy
+$\theta=(P_+ + P_-)/P_{\text{lim}}$. The `legacy` tier retains the former
+whole-flux multiplier for frozen benchmark compatibility. `P_lim` enters the
+chemical potential; it is not a numerical projection of every trial state.
 
 *Source:* `perovskite_sim/physics/ion_migration.py`
 
@@ -262,12 +291,18 @@ during 2D J-V runs.
 
 #### Thermionic Emission at Heterointerfaces
 
-At internal interfaces where the conduction-band offset $|\Delta E_c|$ or
-valence-band offset $|\Delta E_v|$ exceeds 0.05 eV, the Scharfetter-Gummel
-carrier flux is capped to the **Richardson-Dushman thermionic emission
-limit**. This prevents the SG scheme from overestimating current across
-sharp band discontinuities (a known single-grid-spacing artefact).
-Interface faces where TE activates are pre-computed in `MaterialArrays`.
+The default density-variable path retains one bidirectional
+Scharfetter-Gummel face and may apply the empirical thermionic cap above a
+0.05 eV band offset. The dimensionally normalized
+`te_physical_norm` form remains opt-in.
+
+The supported ion-free QF path can instead use
+`interface_boundary=true`. It removes the ordinary SG face and solves
+reciprocal thermionic transport plus shared-occupancy interface SRH on an
+exclusive zero-thickness boundary. Unsupported physics stops before Newton.
+The registered CBO grid envelope passes, but external SCAPS shape agreement
+does not; this is a development model rather than an externally certified CBO
+threshold.
 
 *Source:* `perovskite_sim/physics/continuity.py`, `perovskite_sim/discretization/fe_operators.py`
 
@@ -284,10 +319,11 @@ local dual-grid cell width.
 
 ### Initial Conditions
 
-#### Dark Equilibrium (Default)
+#### Quasi-Neutral Dark Seed (Default)
 
-The default initial state is a **quasi-neutral dark equilibrium** with a
-neutral ionic background. At every grid node:
+`solve_equilibrium` constructs a **quasi-neutral carrier seed** with a neutral
+ionic background. It is an initializer, not by itself a residual-certified
+ion-relaxed equilibrium. At every grid node:
 
 $$n \cdot p = n_i^2(\text{layer}) \quad\text{(mass-action law)}$$
 
@@ -298,14 +334,14 @@ background** — it does not appear as net space charge in the initial
 carrier balance. This avoids the enormous artificial carrier imbalance
 that arises when $P_0$ is treated as net positive charge.
 
-The ion profile is initialised to the uniform per-layer value `P_ion0`.
+The ion profile is initialised to the uniform per-layer value `P0`.
 Contact nodes are overwritten with the ohmic-contact equilibrium densities.
 
 *Source:* `perovskite_sim/solver/newton.py`
 
 <br>
 
-#### Illuminated Steady-State (Light-Soaked)
+#### Illuminated Carrier Preconditioning
 
 For experiments that begin under illumination (J-V sweep, impedance,
 degradation), the initial state is obtained by **integrating the full MOL
@@ -317,10 +353,12 @@ y_dark  = solve_equilibrium(x, stack)
 y_light = run_transient(x, y_dark, [0, t_settle], illuminated=True, V_app)
 ```
 
-Carrier dynamics equilibrate on a sub-microsecond timescale, so 1 ms is
-more than sufficient. Ion displacement over this interval is negligible
-($D_{\text{ion}} \cdot t_{\text{settle}} \approx 0.3$ nm). If the transient solve fails, the solver
-falls back to the dark equilibrium.
+The default 1 ms integration is a carrier-preconditioning protocol, not a claim
+of full ion-relaxed equilibrium. Carrier densities typically settle much
+faster than the ionic profile, so ions remain nearly frozen over this interval.
+Longer light soaking defines a different device history and can change a
+history-dependent J-V result. If the transient solve fails, the solver falls
+back to the dark seed.
 
 *Source:* `perovskite_sim/solver/illuminated_ss.py`
 
@@ -328,23 +366,28 @@ falls back to the dark equilibrium.
 
 ### Built-in Potential
 
-The simulator carries two related built-in potentials:
+`built_in_potential_mode` selects the signed contact potential used by the
+Poisson boundary:
 
-- **`stack.V_bi`** — manual field read verbatim from the YAML, used as the
-  Poisson Dirichlet boundary condition $\varphi(L) = V_{\text{bi}} - V_{\text{app}}$.
-  Kept as a free parameter to match IonMonger's degenerate-doping
-  convention; changing this field shifts the Poisson BC directly.
-- **`stack.compute_V_bi()` / `MaterialArrays.V_bi_eff`** — derived from the
-  Fermi-level difference across the electrical layers (accounting for
-  $\chi$, $E_g$, doping, and $n_i$). Cached on `MaterialArrays` as
-  `V_bi_eff` and used for (a) the default upper voltage of `run_jv_sweep`
-  (see below), (b) future band-diagram rendering. When all electrical
-  layers have `chi = Eg = 0` (homojunction / legacy configs),
-  `compute_V_bi()` falls back to `stack.V_bi`.
+| Mode | Source | Intended use |
+|:-----|:-------|:-------------|
+| `semiconductor_work_function` | Endpoint semiconductor work functions from $\chi$, $E_g$, DOS, doping, grading, and temperature | New physical stacks whose outer layers represent the contact reservoirs |
+| `metal_work_function` | Explicit `work_function_left_eV - work_function_right_eV` | Devices with known electrode work functions |
+| `legacy_manual` | Non-negative `V_bi_override` magnitude with orientation inferred separately | Frozen published benchmarks; `V_bi` remains a deprecated compatibility alias |
 
-Note that `V_bi_eff` is **not** substituted into the Poisson BC — doing so
-would change the IonMonger benchmark targets and requires a separate
-validation pass.
+The fail-closed semiconductor mode requires complete positive band/DOS inputs.
+Carrier contact kinetics remain independent: Dirichlet pins or finite-rate
+Robin `S_*` values do not select the Poisson voltage. With
+$s=\operatorname{sign}(V_{\text{bi}}^{\text{bc}})$, positive forward bias is
+mapped as
+
+$$
+\varphi(0)=0,\qquad
+\varphi(L)=V_{\text{bi}}^{\text{bc}}-sV_{\text{app}}.
+$$
+
+Pre-mode YAML files retain their historical compatibility behavior. New files
+that omit both manual keys resolve to `semiconductor_work_function`.
 
 <br>
 
@@ -354,16 +397,13 @@ validation pass.
 
 $$V_{\text{upper}} = \max\bigl(V_{\text{bi,eff}} \cdot 1.3,\; 1.4\ \text{V}\bigr)$$
 
-when `V_max` is left at its default. The 1.3× headroom captures the
-minority-quasi-Fermi-level rise beyond $V_{\text{bi,eff}}$ under strong
-illumination; the 1.4 V floor is a backstop for stacks whose band-offset
-$V_{\text{bi,eff}}$ is below ~1.08 V (e.g. the IonMonger SiO₂/MAPbI₃/TiO₂
-benchmark, where $V_{\text{bi,eff}} \approx 0.86$ V). Without this
-adaptive default, heterostacks whose $V_{\text{oc}}$ exceeds the manual
-`stack.V_bi` would silently clip before J = 0 and `compute_metrics` would
-return $V_{\text{oc}} = V_{\text{max}}$. The formula lives in the private
-helper `_default_V_max` and is unit-tested in
-`tests/unit/experiments/test_jv_vmax.py`.
+where $V_{\text{bi,eff}}$ is the magnitude returned by
+`stack.operating_built_in_potential()`. Explicit modes use their selected
+work-function source consistently; pre-mode compatibility stacks retain the
+historical band-derived operating value. The 1.3× headroom and 1.4 V floor
+avoid silently clipping a high-$V_{\text{oc}}$ stack before $J=0$.
+`compute_metrics` still exposes `voc_bracketed=false` when the sampled window
+does not resolve open circuit.
 
 *Source:* `perovskite_sim/experiments/jv_sweep.py::_default_V_max`
 
@@ -396,7 +436,7 @@ V/J data are unchanged between the two modes.
 
 | Variable | Contact BCs | Type | Source |
 |:---------|:------------|:-----|:-------|
-| $\varphi$ | $\varphi(0) = 0$, $\varphi(L) = V_{\text{bi}} - V_{\text{app}}$ | Dirichlet | `physics/poisson.py` |
+| $\varphi$ | $\varphi(0)=0$, $\varphi(L)=V_{\text{bi}}^{\text{bc}}-sV_{\text{app}}$ | Signed Dirichlet | `models/device.py`, `solver/mol.py` |
 | $n$ | default $n(0) = n_L$, $n(L) = n_R$; optional FULL-mode Robin flux for configured sides | Dirichlet or Robin | `solver/mol.py`, `physics/contacts.py` |
 | $p$ | default $p(0) = p_L$, $p(L) = p_R$; optional FULL-mode Robin flux for configured sides | Dirichlet or Robin | `solver/mol.py`, `physics/contacts.py` |
 | $P$ (ions) | $F(0) = F(L) = 0$ | Neumann | `physics/ion_migration.py` |
@@ -603,3 +643,34 @@ pointwise external curve is frozen. This is an internal numerical certificate,
 not external C-V validation or a repair of the legacy endpoint-sampled path.
 
 *Source:* `perovskite_sim/experiments/mott_schottky.py`
+
+<br>
+
+## Validation and Model Scope
+
+The current evidence is intentionally split by claim. See the
+[reproducibility registry](reproducibility/README.md) for commands and the
+[2026-08-11 manual](../docs/manual/SolarLabManual260811.pdf) for the full
+traceability matrix.
+
+<p align="center">
+  <img src="../docs/manual/figures/csi_qf_convergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
+</p>
+
+This is internal convergence evidence for the restricted local QF driver, not
+external c-Si device validation and not a transient-driver certificate.
+
+<p align="center">
+  <img src="../docs/manual/figures/cbo_interface_validation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
+</p>
+
+The physical-interface CBO campaign passes the registered numerical grid gate
+but fails the declared SCAPS-shape gate (`certified=false`).
+
+<p align="center">
+  <img src="../docs/manual/figures/twod_scope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
+</p>
+
+The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
+Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
+of that comparison.

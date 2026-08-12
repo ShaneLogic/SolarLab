@@ -14,7 +14,7 @@ and `perovskite-sim/CLAUDE.md`.
 docs/
 ├── reference/     SolarLab vs SCAPS-1D validation deliverables
 │                  (see "Reference reports" below)
-├── manual/        SolarLab technical user manual (md + tex + pdf, figures, slides)
+├── manual/        SolarLab technical manual source, dated PDFs, figure generator
 ├── figures/       ScapsSolarlabCompare/ — SCAPS sweep overlays (2026-07-02 run).
 │                  The report figure sets were dropped 2026-07-28: the reports
 │                  ship as PDFs with their figures already embedded
@@ -26,6 +26,31 @@ docs/
 
 > **Naming:** SCAPS-1D is treated as a **reference** simulator (a validation
 > baseline), never a "partner." Put new SCAPS-comparison docs under `reference/`.
+
+## Current manual
+
+| Artifact | Role |
+|------|------|
+| [`manual/SolarLabManual260811.pdf`](manual/SolarLabManual260811.pdf) | Current 88-page published edition, dated 2026-08-11 |
+| [`manual/solarlabPubManual.md`](manual/solarlabPubManual.md) | Single editable source of truth |
+| [`manual/generate_manual_figures.py`](manual/generate_manual_figures.py) | Generates matched PDF/PNG figure pairs and fails closed on changed evidence |
+| [`manual/README.md`](manual/README.md) | Exact build, evidence-input, and publication workflow |
+
+The current manual figure set is:
+
+| Figure | README use and claim boundary |
+|------|------|
+| `architecture_flow` | Architecture overview; replaces the earlier manual flow PNG |
+| `device_contact_boundary` | Electrical coordinate and potential sources; replaces the old README `device_structure` view |
+| `band_interface_convention` | Band bending and interface closures; replaces the old `band_diagram` + `transport_equations` pair |
+| `solver_topology` | Driver-specific variables and checks; replaces the old `solver_pipeline` view |
+| `csi_qf_convergence` | Restricted-QF internal numerical evidence, not an external c-Si fit |
+| `cbo_interface_validation` | Internal grid pass plus failed external SCAPS-shape gate |
+| `twod_scope` | Registered 1D/2D parity domain and excluded interface/ion physics |
+
+Each name has a vector `.pdf` for the manual and a web-renderable `.png` for
+GitHub. The existing `perovskite-sim/docs/images/ui_layout.png` has no 260811
+manual replacement and remains the current README UI diagram.
 
 ## Reference reports (current, canonical)
 
@@ -55,6 +80,7 @@ back; the per-figure generators they call need `551615d`).
 
 | File | What |
 |------|------|
+| `manual/PauwelsVanhoutte1978.pdf` | Interface-state reference paper used by the manual |
 | `manual/SCAPSManual2016.pdf` | SCAPS-1D reference manual (input) |
 | `docker-development.md` | Docker dev environment notes |
 
