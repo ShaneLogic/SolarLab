@@ -27,8 +27,8 @@ cd perovskite-sim
 
 # Python
 pip install -e ".[dev]"
-pytest                                 # unit + integration, excludes -m slow
-pytest -m slow                         # slow regression (TMM baselines, ~27 s, BLAS auto-pinned)
+pytest                                 # unit + integration, excludes -m slow (~2 min)
+pytest -m slow                         # slow regression (258 tests, ~2 h, BLAS auto-pinned)
 pytest path/to/test.py::test_name      # single test
 
 # Backend (run from SolarLab root so --app-dir resolves)
