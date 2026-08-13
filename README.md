@@ -15,6 +15,12 @@ Perovskite · CIGS · c-Si
 [![Vite](https://img.shields.io/badge/frontend-Vite%20%2B%20TypeScript-646CFF.svg)](https://vitejs.dev)
 [![License](https://img.shields.io/badge/license-research-lightgrey.svg)](#)
 
+<br>
+
+Xuanyan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&#42;</sup> · Tongyi Zhang<sup>&#42;</sup>
+
+*The Hong Kong University of Science and Technology (Guangzhou)*
+
 </div>
 
 <br>
@@ -743,6 +749,20 @@ and records open gaps to the ledger.
 ---
 
 <div align="center">
+
+**Authors**
+
+Xuanyan Chen · [xchen565@connect.hkust-gz.edu.cn](mailto:xchen565@connect.hkust-gz.edu.cn)<br>
+Longhan Zhang · [lzhang619@connect.hkust-gz.edu.cn](mailto:lzhang619@connect.hkust-gz.edu.cn)<br>
+Zecheng Gan<sup>&#42;</sup> · [zechenggan@hkust-gz.edu.cn](mailto:zechenggan@hkust-gz.edu.cn)<br>
+Chang Yan<sup>&#42;</sup> · [changyan@hkust-gz.edu.cn](mailto:changyan@hkust-gz.edu.cn)<br>
+Tongyi Zhang<sup>&#42;</sup> · [mezhangt@hkust-gz.edu.cn](mailto:mezhangt@hkust-gz.edu.cn)
+
+<sup>&#42;</sup> Corresponding authors
+
+*The Hong Kong University of Science and Technology (Guangzhou)*
+
+<br>
 
 Made with 🧪 and ☕ at **HKUST Guangzhou · SolarLab**
 
