@@ -93,6 +93,113 @@ lanes:
       - This lane certifies the registered local scan protocol, not the Courtier publication protocol.
       - Positive-ion inventory is available in snapshots; dual-ion inventory requires a future snapshot schema extension.
 
+  ionmonger-ion-aware-dc-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/ionmonger_benchmark.yaml
+    config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    executor: perovskite_sim.validation.refinement_executors:run_ion_aware_dc_operating_point
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [30, 60, 90]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      dc_current_density_A_m2: {comparison: relative_linf, limit: 0.005, units: A m-2}
+      maximum_site_occupancy_fraction: {comparison: relative_linf, limit: 0.01, units: "1"}
+      positive_ion_centroid_fraction: {comparison: absolute_linf, limit: 0.002, units: "1"}
+    quality_gates:
+      candidate_diagnostics_pass: {operator: eq, limit: 1.0, units: "1"}
+      contact_not_inconsistent: {operator: eq, limit: 1.0, units: "1"}
+      diagnostics_complete: {operator: eq, limit: 1.0, units: "1"}
+      max_carrier_area_rate_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_dc_face_current_spread_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_ion_area_rate_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      max_ion_inventory_relative_drift: {operator: le, limit: 1.0e-10, units: "1"}
+      max_ionic_face_current_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      nonfinite_rhs_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      nonfinite_trial_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      required_consecutive_passes_met: {operator: eq, limit: 1.0, units: "1"}
+      site_occupancy_admissible: {operator: eq, limit: 1.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_dc_V: 0.9
+      illuminated: true
+      settle_end_times_s: [1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 32.0, 64.0, 128.0]
+      required_consecutive_passes: 2
+      max_carrier_area_rate_A_m2: 0.1
+      max_ion_area_rate_A_m2: 1.0e-6
+      max_ionic_face_current_A_m2: 1.0e-6
+      max_dc_face_current_spread_A_m2: 0.1
+      max_ion_inventory_relative_drift: 1.0e-10
+      max_nfev_per_attempt: 20000
+      rtol: 1.0e-4
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - This lane certifies an internal fixed-bias mobile-ion numerical DC state, not the finite-rate J-V history or an external IonMonger curve.
+      - The source deck lacks endpoint effective-DOS data, so contact thermodynamics remains compatible_unverified and the combined physical certificate is false.
+      - Dynamic interface-state blocks remain excluded until their electrostatic charge closure is independently certified.
+
+  ionmonger-ion-aware-dc-resolved-v2:
+    claim_level: internal-numerical-candidate
+    config: configs/ionmonger_benchmark.yaml
+    config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    executor: perovskite_sim.validation.refinement_executors:run_ion_aware_dc_operating_point
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [60, 90, 120]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      dc_current_density_A_m2: {comparison: relative_linf, limit: 0.005, units: A m-2}
+      maximum_site_occupancy_fraction: {comparison: relative_linf, limit: 0.01, units: "1"}
+      positive_ion_centroid_fraction: {comparison: absolute_linf, limit: 0.002, units: "1"}
+    quality_gates:
+      candidate_diagnostics_pass: {operator: eq, limit: 1.0, units: "1"}
+      contact_not_inconsistent: {operator: eq, limit: 1.0, units: "1"}
+      diagnostics_complete: {operator: eq, limit: 1.0, units: "1"}
+      max_carrier_area_rate_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_dc_face_current_spread_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_ion_area_rate_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      max_ion_inventory_relative_drift: {operator: le, limit: 1.0e-10, units: "1"}
+      max_ionic_face_current_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      nonfinite_rhs_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      nonfinite_trial_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      required_consecutive_passes_met: {operator: eq, limit: 1.0, units: "1"}
+      site_occupancy_admissible: {operator: eq, limit: 1.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_dc_V: 0.9
+      illuminated: true
+      settle_end_times_s: [1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 32.0, 64.0, 128.0]
+      required_consecutive_passes: 2
+      max_carrier_area_rate_A_m2: 0.1
+      max_ion_area_rate_A_m2: 1.0e-6
+      max_ionic_face_current_A_m2: 1.0e-6
+      max_dc_face_current_spread_A_m2: 0.1
+      max_ion_inventory_relative_drift: 1.0e-10
+      max_nfev_per_attempt: 20000
+      rtol: 1.0e-4
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - This resolved lane starts at N60 and does not erase the N30/N60/N90 v1 partial certificate or its 1.55 percent pointwise occupancy-grid discrepancy.
+      - This lane certifies an internal fixed-bias mobile-ion numerical DC state, not the finite-rate J-V history or an external IonMonger curve.
+      - The source deck lacks endpoint effective-DOS data, so contact thermodynamics remains compatible_unverified and the combined physical certificate is false.
+      - Dynamic interface-state blocks remain excluded until their electrostatic charge closure is independently certified.
+
   csi-qf-frequency-domain:
     claim_level: internal-numerical-candidate
     config: configs/cSi_homojunction.yaml

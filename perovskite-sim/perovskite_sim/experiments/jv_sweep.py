@@ -33,7 +33,7 @@ from perovskite_sim.solver.mol import (
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.grading import has_grading_params
-from perovskite_sim.models.current import CurrentComponents
+from perovskite_sim.models.current import CurrentComponents, IonicCurrentComponents
 from perovskite_sim.models.spatial import SpatialSnapshot
 from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.experiments.protocol import (
@@ -621,7 +621,7 @@ def _state_fields(
     matches what the solver saw.
     """
     N = len(x)
-    sv = StateVec.unpack(y_state, N)
+    sv = StateVec.unpack(y_state, N, N_iface_state=mat.N_iface_state)
     n = sv.n.copy()
     p = sv.p.copy()
     if not mat.has_selective_contacts:
@@ -728,47 +728,7 @@ def compute_current_components(
     J_n = Q * D_n_face_eff / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
     J_p = Q * D_p_face_eff / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
 
-    # Ion current: Q * F_ion at each face (positive species)
-    D_ion_face = np.broadcast_to(
-        np.asarray(mat.D_ion_face, dtype=float), dx.shape,
-    )
-    P_lim_face = np.broadcast_to(
-        np.asarray(mat.P_lim_face, dtype=float), dx.shape,
-    )
-    # Delegate to the SAME face-flux helper the RHS integrates (2026-07
-    # review): this block used to carry its own hard-coded copy of the
-    # legacy whole-flux steric form and never consulted
-    # ``ion_steric_diffusion_only``, so with that flag on the reported
-    # terminal current was not the current the device carried.
-    _shared = (
-        mat.ion_steric_diffusion_only and mat.ion_steric_shared_site
-        and mat.has_dual_ions and sv.P_neg is not None
-    )
-    F_ion = ion_face_flux(
-        phi, sv.P, dx, D_ion_face, V_T_dev, P_lim_face,
-        steric_diffusion_only=mat.ion_steric_diffusion_only,
-        P_lim_node=mat.P_lim_node,
-        P_other_node=(sv.P_neg if _shared else None),
-        drift_sign=+1.0,
-    )
-    J_ion = Q * F_ion
-
-    # Negative ion species contribution (reversed drift)
-    if mat.has_dual_ions and sv.P_neg is not None:
-        D_neg_face = np.broadcast_to(
-            np.asarray(mat.D_ion_neg_face, dtype=float), dx.shape,
-        )
-        P_lim_neg_face = np.broadcast_to(
-            np.asarray(mat.P_lim_neg_face, dtype=float), dx.shape,
-        )
-        F_neg = ion_face_flux(
-            phi, sv.P_neg, dx, D_neg_face, V_T_dev, P_lim_neg_face,
-            steric_diffusion_only=mat.ion_steric_diffusion_only,
-            P_lim_node=mat.P_lim_neg_node,
-            P_other_node=(sv.P if _shared else None),
-            drift_sign=-1.0,
-        )
-        J_ion = J_ion - Q * F_neg  # negative charge: subtract
+    ionic = _ionic_current_components_from_fields(x, phi, sv, mat)
 
     # Displacement current
     J_disp = np.zeros_like(J_n)
@@ -780,15 +740,96 @@ def compute_current_components(
         E_now = -(phi[1:] - phi[:-1]) / dx
         J_disp = EPS_0 * eps_face * (E_now - E_prev) / dt
 
-    J_total = J_n + J_p + J_ion + J_disp
     polarity = float(mat.junction_polarity)
+    J_ion = -polarity * ionic.J_total
     return CurrentComponents(
         J_n=-polarity * J_n,
         J_p=-polarity * J_p,
-        J_ion=-polarity * J_ion,
+        J_ion=ionic.J_total,
         J_disp=-polarity * J_disp,
-        J_total=-polarity * J_total,
+        J_total=-polarity * (J_n + J_p + J_ion + J_disp),
     )
+
+
+def _ionic_current_components_from_fields(
+    x: np.ndarray,
+    phi: np.ndarray,
+    state: StateVec,
+    mat: MaterialArrays,
+) -> IonicCurrentComponents:
+    """Evaluate each ionic charge-current channel from an unpacked state."""
+    dx = np.diff(x)
+    D_ion_face = np.broadcast_to(
+        np.asarray(mat.D_ion_face, dtype=float), dx.shape,
+    )
+    P_lim_face = np.broadcast_to(
+        np.asarray(mat.P_lim_face, dtype=float), dx.shape,
+    )
+    shared = (
+        mat.ion_steric_diffusion_only
+        and mat.ion_steric_shared_site
+        and mat.has_dual_ions
+        and state.P_neg is not None
+    )
+    positive_flux = ion_face_flux(
+        phi,
+        state.P,
+        dx,
+        D_ion_face,
+        mat.V_T_device,
+        P_lim_face,
+        steric_diffusion_only=mat.ion_steric_diffusion_only,
+        P_lim_node=mat.P_lim_node,
+        P_other_node=(state.P_neg if shared else None),
+        drift_sign=+1.0,
+    )
+    positive = Q * positive_flux
+    negative = None
+    if mat.has_dual_ions and state.P_neg is not None:
+        negative_flux = ion_face_flux(
+            phi,
+            state.P_neg,
+            dx,
+            np.broadcast_to(np.asarray(mat.D_ion_neg_face, dtype=float), dx.shape),
+            mat.V_T_device,
+            np.broadcast_to(np.asarray(mat.P_lim_neg_face, dtype=float), dx.shape),
+            steric_diffusion_only=mat.ion_steric_diffusion_only,
+            P_lim_node=mat.P_lim_neg_node,
+            P_other_node=(state.P if shared else None),
+            drift_sign=-1.0,
+        )
+        negative = -Q * negative_flux
+
+    polarity = float(mat.junction_polarity)
+    positive_solar = -polarity * positive
+    negative_solar = None if negative is None else -polarity * negative
+    total = positive if negative is None else positive + negative
+    return IonicCurrentComponents(
+        J_positive=positive_solar,
+        J_negative=negative_solar,
+        J_total=-polarity * total,
+    )
+
+
+def compute_ionic_current_components(
+    x: np.ndarray,
+    y: np.ndarray,
+    stack: DeviceStack,
+    V_app: float,
+    *,
+    mat: MaterialArrays | None = None,
+) -> IonicCurrentComponents:
+    """Return positive, negative, and net ionic current at every face.
+
+    This uses the same :func:`ion_face_flux` implementation as the transient
+    RHS, including the selected steric model.  The per-species channels are
+    needed for DC certification because their net electrical current can
+    cancel in a dual-ion model even when neither species is stationary.
+    """
+    if mat is None:
+        mat = build_material_arrays(x, stack)
+    _, _, phi, state = _state_fields(x, y, stack, V_app, mat)
+    return _ionic_current_components_from_fields(x, phi, state, mat)
 
 
 def _total_current_faces(

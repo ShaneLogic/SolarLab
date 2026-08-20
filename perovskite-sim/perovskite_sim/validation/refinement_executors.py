@@ -7,6 +7,7 @@ metrics; certification remains owned by :mod:`numerical_certificate`.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,10 @@ from perovskite_sim.experiments.jv_sweep import (
     run_jv_sweep,
 )
 from perovskite_sim.experiments.impedance import build_impedance_experiment_protocol
+from perovskite_sim.experiments.ion_aware_dc import (
+    build_ion_aware_dc_protocol,
+    solve_ion_aware_dc,
+)
 from perovskite_sim.experiments.mott_schottky import _fit_mott_schottky
 from perovskite_sim.experiments.quasi_fermi_impedance import (
     run_quasi_fermi_impedance,
@@ -535,6 +540,219 @@ def _numeric_array_option(
     if values.ndim != 1 or values.size == 0 or not np.all(np.isfinite(values)):
         raise ValueError(f"lane option {name!r} must be a finite 1-D array")
     return values
+
+
+def run_ion_aware_dc_operating_point(
+    lane: LaneDefinition,
+    point: MatrixPoint,
+    project_root: Path,
+) -> CellMeasurement:
+    """Certify one fixed-bias mobile-ion DC state and its refinement outputs."""
+    options = lane.options
+    stack = _load_stack(lane, project_root)
+    grid = build_electrical_grid(stack, point.grid)
+    material = build_material_arrays(grid, stack)
+    voltage = _option(options, "V_dc_V", float, 0.9)
+    illuminated = _option(options, "illuminated", bool, True)
+    rtol = _option(options, "rtol", float, 1.0e-4)
+    end_times = tuple(
+        float(value)
+        for value in _numeric_array_option(
+            options,
+            "settle_end_times_s",
+            (1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 32.0, 64.0, 128.0),
+        )
+    )
+    required_passes = _option(options, "required_consecutive_passes", int, 2)
+    max_carrier_rate = _option(
+        options, "max_carrier_area_rate_A_m2", float, 1.0e-1
+    )
+    max_ion_rate = _option(options, "max_ion_area_rate_A_m2", float, 1.0e-6)
+    max_ion_current = _option(
+        options, "max_ionic_face_current_A_m2", float, 1.0e-6
+    )
+    max_current_spread = _option(
+        options, "max_dc_face_current_spread_A_m2", float, 1.0e-1
+    )
+    max_inventory_drift = _option(
+        options, "max_ion_inventory_relative_drift", float, 1.0e-10
+    )
+    max_nfev = _option(options, "max_nfev_per_attempt", int, 20_000)
+    base_policy = ComponentwiseAtol(
+        carrier_fraction=_option(
+            options, "carrier_atol_fraction", float, 1.0e-12
+        ),
+        ion_fraction=_option(options, "ion_atol_fraction", float, 1.0e-12),
+        interface_fraction=_option(
+            options, "interface_atol_fraction", float, 1.0e-12
+        ),
+        minimum_atol=_option(options, "minimum_atol", float, 1.0e-6),
+    )
+    protocol = build_ion_aware_dc_protocol(
+        stack,
+        V_dc=voltage,
+        illuminated=illuminated,
+        settle_end_times_s=end_times,
+        required_consecutive_passes=required_passes,
+        max_carrier_area_rate_A_m2=max_carrier_rate,
+        max_ion_area_rate_A_m2=max_ion_rate,
+        max_ionic_face_current_A_m2=max_ion_current,
+        max_dc_face_current_spread_A_m2=max_current_spread,
+        max_ion_inventory_relative_drift=max_inventory_drift,
+    )
+    numerical_protocol = {
+        "dc_protocol": protocol.to_dict(),
+        "numerical_controls": {
+            "atol_policy": {
+                "carrier_fraction": base_policy.carrier_fraction,
+                "interface_fraction": base_policy.interface_fraction,
+                "ion_fraction": base_policy.ion_fraction,
+                "minimum_atol": base_policy.minimum_atol,
+                "refinement_factor_source": "matrix.tolerance_factor",
+            },
+            "grid_source": "matrix.grid",
+            "max_nfev_per_attempt": max_nfev,
+            "method_ladder": ["Radau", "BDF"],
+            "rtol": rtol,
+        },
+        "schema_version": "ion-aware-dc-execution-protocol-v1",
+    }
+    result = solve_ion_aware_dc(
+        grid,
+        stack,
+        protocol,
+        mat=material,
+        rtol=rtol,
+        atol=base_policy.refined(point.tolerance_factor),
+        method_ladder=("Radau", "BDF"),
+        max_nfev_per_attempt=max_nfev,
+        require_numerical_certificate=False,
+        require_contact_certificate=False,
+    )
+    certificate = result.state_certificate
+    reports = tuple(step.numerical_diagnostics for step in result.steps)
+    attempts = tuple(
+        attempt for step in result.steps for attempt in step.attempts
+    )
+    attempt_reports = tuple(
+        attempt.numerical_diagnostics
+        for attempt in attempts
+        if attempt.numerical_diagnostics is not None
+    )
+    candidate_steps = result.steps[-required_passes:]
+    diagnostics_complete = bool(
+        reports
+        and len(attempt_reports) == len(attempts)
+        and all(
+            report.solver_success is True
+            and report.final_minimum_density_m3 is not None
+            and report.minimum_bulk_srh_denominator_s_m3 is not None
+            for report in reports
+        )
+    )
+    terminal_densities_positive = all(
+        value is None or value > protocol.terminal_density_floor_m3
+        for value in (
+            certificate.minimum_electron_density_m3,
+            certificate.minimum_hole_density_m3,
+            certificate.minimum_positive_ion_density_m3,
+            certificate.minimum_negative_ion_density_m3,
+        )
+    )
+    contact = certificate.contact_thermodynamics
+    bulk_srh_denominators = tuple(
+        report.minimum_bulk_srh_denominator_s_m3
+        for report in reports
+        if report.minimum_bulk_srh_denominator_s_m3 is not None
+    )
+    minimum_bulk_srh = (
+        min(bulk_srh_denominators) if bulk_srh_denominators else None
+    )
+    negative_trials = sum(
+        report.negative_trial_evaluations for report in attempt_reports
+    )
+    return CellMeasurement.from_mapping(
+        {
+            "observables": {
+                "dc_current_density_A_m2": certificate.dc_current_density_A_m2,
+                "maximum_site_occupancy_fraction": (
+                    certificate.maximum_site_occupancy_fraction
+                ),
+                "positive_ion_centroid_fraction": (
+                    certificate.positive_ion_inventory.terminal_centroid_fraction
+                ),
+            },
+            "quality": {
+                "candidate_diagnostics_pass": float(
+                    len(candidate_steps) == required_passes
+                    and all(step.diagnostics_passed for step in candidate_steps)
+                ),
+                "contact_not_inconsistent": float(contact.status != "inconsistent"),
+                "diagnostics_complete": float(diagnostics_complete),
+                "max_carrier_area_rate_A_m2": (
+                    certificate.carrier_area_rate_A_m2
+                ),
+                "max_dc_face_current_spread_A_m2": (
+                    certificate.dc_face_current_spread_A_m2
+                ),
+                "max_ion_area_rate_A_m2": certificate.ion_area_rate_A_m2,
+                "max_ion_inventory_relative_drift": (
+                    certificate.max_ion_inventory_relative_drift
+                ),
+                "max_ionic_face_current_A_m2": (
+                    certificate.max_ionic_face_current_A_m2
+                ),
+                "nonfinite_rhs_evaluations": float(
+                    sum(
+                        report.nonfinite_rhs_evaluations
+                        for report in attempt_reports
+                    )
+                ),
+                "nonfinite_trial_evaluations": float(
+                    sum(
+                        report.nonfinite_trial_evaluations
+                        for report in attempt_reports
+                    )
+                ),
+                "required_consecutive_passes_met": float(
+                    result.numerically_certified
+                ),
+                "site_occupancy_admissible": float(
+                    certificate.maximum_site_occupancy_fraction <= 1.0 + 1.0e-8
+                ),
+                "terminal_densities_positive": float(
+                    terminal_densities_positive
+                ),
+            },
+            "units": {
+                "dc_current_density_A_m2": "A m-2",
+                "max_carrier_area_rate_A_m2": "A m-2",
+                "max_dc_face_current_spread_A_m2": "A m-2",
+                "max_ion_area_rate_A_m2": "A m-2",
+                "max_ionic_face_current_A_m2": "A m-2",
+            },
+            "metadata": {
+                **_protocol_metadata(numerical_protocol),
+                "actual_intervals": len(grid) - 1,
+                "contact_thermodynamics": dataclasses.asdict(contact),
+                "accepted_methods": [step.accepted_method for step in result.steps],
+                "failed_attempt_count": sum(not attempt.success for attempt in attempts),
+                "minimum_bulk_srh_denominator_s_m3": minimum_bulk_srh,
+                "negative_trial_evaluations": negative_trials,
+                "nfev_reported_sum": sum(
+                    step.nfev for step in result.steps if step.nfev is not None
+                ),
+                "numerically_certified": result.numerically_certified,
+                "thermodynamically_certified": (
+                    result.thermodynamically_certified
+                ),
+                "total_settle_time_s": result.total_settle_time_s,
+                "used_settle_end_times_s": [
+                    step.target_time_s for step in result.steps
+                ],
+            },
+        }
+    )
 
 
 def run_csi_qf_frequency_domain(

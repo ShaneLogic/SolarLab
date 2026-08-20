@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+import sys
 
-from perovskite_sim.reproducibility import validate_matrix, verify_baseline
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from perovskite_sim.reproducibility import validate_matrix, verify_baseline  # noqa: E402
 
 
 def main() -> int:

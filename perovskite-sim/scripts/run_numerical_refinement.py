@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run or resume one pre-registered Phase-1 numerical refinement lane."""
+"""Run or resume one pre-registered numerical refinement lane."""
 
 from __future__ import annotations
 
@@ -8,11 +8,14 @@ import json
 from pathlib import Path
 import sys
 
-from perovskite_sim.validation.numerical_certificate import (
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from perovskite_sim.validation.numerical_certificate import (  # noqa: E402
     NumericalCertificateError,
     load_refinement_registry,
 )
-from perovskite_sim.validation.refinement_runner import (
+from perovskite_sim.validation.refinement_runner import (  # noqa: E402
     DEFAULT_OUTPUT_ROOT,
     RefinementRunnerError,
     load_executor,
@@ -21,7 +24,6 @@ from perovskite_sim.validation.refinement_runner import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = ROOT / "reproducibility/numerical_refinement_registry.yaml"
 
 

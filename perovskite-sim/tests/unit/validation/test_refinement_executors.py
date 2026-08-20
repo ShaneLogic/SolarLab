@@ -14,6 +14,7 @@ from perovskite_sim.experiments.jv_sweep import (
     JVPointStatus,
 )
 from perovskite_sim.discretization.grid import GridResolutionError
+from perovskite_sim.physics.contacts import ContactThermodynamicCertificate
 from perovskite_sim.solver.numerical_diagnostics import (
     NumericalDiagnosticsMonitor,
     StateLayout,
@@ -279,6 +280,101 @@ def test_mobile_ion_executor_fails_quality_when_diagnostics_are_missing(
     quality = _metric_dict(measurement, quality=True)
     assert quality["diagnostics_complete"].values == (0.0,)
     assert quality["terminal_densities_positive"].values == (0.0,)
+
+
+def test_ion_aware_dc_executor_smoke(monkeypatch):
+    lane = _lane(
+        options={
+            "V_dc_V": 0.9,
+            "settle_end_times_s": [1.0, 2.0],
+            "required_consecutive_passes": 2,
+        }
+    )
+    stack = SimpleNamespace(T=300.0)
+    monkeypatch.setattr(executors, "_load_stack", lambda *_args: stack)
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_args: np.linspace(0.0, 1.0, 5),
+    )
+    monkeypatch.setattr(executors, "build_material_arrays", lambda *_args: object())
+    contact = ContactThermodynamicCertificate(
+        status="compatible_unverified",
+        built_in_potential_mode="legacy_manual",
+        tolerance_eV=0.005,
+        fermi_level_span_eV=None,
+        potential_mismatch_V=0.0,
+        metal_work_function_mismatch_eV=None,
+        contact_quasi_fermi_levels_eV=(),
+        message="endpoint DOS unavailable",
+    )
+    report = _accepted_numerical_diagnostics().report
+    certificate = SimpleNamespace(
+        dc_current_density_A_m2=200.0,
+        maximum_site_occupancy_fraction=0.01,
+        positive_ion_inventory=SimpleNamespace(
+            terminal_centroid_fraction=0.6,
+        ),
+        minimum_electron_density_m3=1.0,
+        minimum_hole_density_m3=2.0,
+        minimum_positive_ion_density_m3=3.0,
+        minimum_negative_ion_density_m3=None,
+        contact_thermodynamics=contact,
+        carrier_area_rate_A_m2=1.0e-4,
+        dc_face_current_spread_A_m2=2.0e-4,
+        ion_area_rate_A_m2=3.0e-8,
+        max_ion_inventory_relative_drift=4.0e-13,
+        max_ionic_face_current_A_m2=5.0e-9,
+    )
+    captured = {}
+
+    def fake_solve(_grid, _stack, protocol, **kwargs):
+        captured["protocol"] = protocol
+        captured.update(kwargs)
+        attempt = SimpleNamespace(
+            success=True,
+            numerical_diagnostics=report,
+        )
+        steps = tuple(
+            SimpleNamespace(
+                numerical_diagnostics=report,
+                diagnostics_passed=True,
+                target_time_s=target,
+                accepted_method="Radau",
+                attempts=(attempt,),
+                nfev=10,
+            )
+            for target in (1.0, 2.0)
+        )
+        return SimpleNamespace(
+            state_certificate=certificate,
+            steps=steps,
+            numerically_certified=True,
+            thermodynamically_certified=False,
+            total_settle_time_s=2.0,
+        )
+
+    monkeypatch.setattr(executors, "solve_ion_aware_dc", fake_solve)
+
+    measurement = executors.run_ion_aware_dc_operating_point(
+        lane, MatrixPoint(4, 0.1), Path(".")
+    )
+
+    _assert_protocol(measurement)
+    _assert_registry_contract(measurement, "ionmonger-ion-aware-dc-v1")
+    assert isinstance(captured["atol"], ComponentwiseAtol)
+    assert captured["atol"].refinement_factor == pytest.approx(0.1)
+    assert captured["require_numerical_certificate"] is False
+    assert captured["method_ladder"] == ("Radau", "BDF")
+    assert _metric_dict(measurement)["dc_current_density_A_m2"].values == (
+        200.0,
+    )
+    quality = _metric_dict(measurement, quality=True)
+    assert quality["required_consecutive_passes_met"].values == (1.0,)
+    assert quality["contact_not_inconsistent"].values == (1.0,)
+    metadata = json.loads(measurement.metadata_json)
+    assert metadata["thermodynamically_certified"] is False
+    assert metadata["total_settle_time_s"] == pytest.approx(2.0)
 
 
 def test_csi_qf_frequency_executor_smoke(monkeypatch):

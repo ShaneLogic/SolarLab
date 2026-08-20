@@ -17,6 +17,17 @@ from perovskite_sim.experiments.protocol import (
     VocSearchProtocol,
     resolve_experiment_protocol,
 )
+from perovskite_sim.experiments.ion_aware_dc import (
+    IonAwareDCCapabilityError,
+    IonAwareDCCertificationError,
+    IonAwareDCProtocol,
+    IonAwareDCResult,
+    IonAwareDCSolverError,
+    assess_ion_aware_dc_state,
+    build_ion_aware_dc_protocol,
+    ion_aware_dc_state_sha256,
+    solve_ion_aware_dc,
+)
 
 __all__ = [
     "ACExcitation",
@@ -25,13 +36,22 @@ __all__ = [
     "ExperimentProtocolError",
     "IlluminationStep",
     "ImplicitProtocolError",
+    "IonAwareDCCapabilityError",
+    "IonAwareDCCertificationError",
+    "IonAwareDCProtocol",
+    "IonAwareDCResult",
+    "IonAwareDCSolverError",
     "ProtocolMismatchError",
     "ProtocolMode",
     "SamplingProtocol",
     "ScanProtocol",
     "VocSearchProtocol",
+    "assess_ion_aware_dc_state",
+    "build_ion_aware_dc_protocol",
+    "ion_aware_dc_state_sha256",
     "TandemJVResult",
     "run_tandem_jv",
     "series_match_jv",
+    "solve_ion_aware_dc",
     "resolve_experiment_protocol",
 ]

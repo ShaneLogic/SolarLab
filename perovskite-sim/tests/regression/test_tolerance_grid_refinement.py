@@ -92,7 +92,7 @@ def _certificate(lane: LaneDefinition, cells: list[CellResult]):
     )
 
 
-def test_preregistered_phase1_lanes_and_thresholds_are_immutable():
+def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     registry = load_refinement_registry(
         ROOT / "reproducibility/numerical_refinement_registry.yaml",
         project_root=ROOT,
@@ -103,6 +103,8 @@ def test_preregistered_phase1_lanes_and_thresholds_are_immutable():
     assert {lane.lane_id for lane in registry.lanes} == {
         "scaps-mirror-frozen-ion-ss",
         "ionmonger-mobile-ion-transient",
+        "ionmonger-ion-aware-dc-v1",
+        "ionmonger-ion-aware-dc-resolved-v2",
         "csi-qf-frequency-domain",
         "csi-qf-frequency-domain-resolved-v2",
         "twod-uniform-limit",
@@ -116,6 +118,15 @@ def test_preregistered_phase1_lanes_and_thresholds_are_immutable():
     assert all(lane.options["require_protocol"] for lane in registry.lanes)
     assert all(load_executor(lane.executor) for lane in registry.lanes)
     assert registry.lane("twod-uniform-limit").grid_values == (1, 2, 4)
+    ion_dc = registry.lane("ionmonger-ion-aware-dc-v1")
+    ion_dc_resolved = registry.lane("ionmonger-ion-aware-dc-resolved-v2")
+    assert ion_dc.grid_values == (30, 60, 90)
+    assert ion_dc.tolerance_factors == (1.0, 0.1, 0.01)
+    assert ion_dc_resolved.grid_values == (60, 90, 120)
+    assert ion_dc_resolved.tolerance_factors == ion_dc.tolerance_factors
+    assert ion_dc_resolved.observables == ion_dc.observables
+    assert ion_dc_resolved.quality_gates == ion_dc.quality_gates
+    assert ion_dc_resolved.options == ion_dc.options
     csi_minimum = registry.lane("csi-qf-frequency-domain")
     csi_resolved = registry.lane("csi-qf-frequency-domain-resolved-v2")
     assert csi_minimum.grid_values == (100, 200, 300)

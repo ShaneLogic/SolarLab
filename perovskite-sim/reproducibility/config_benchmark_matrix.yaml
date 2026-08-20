@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: a4fdbac8413cec80c7e5c941b1243b28f32e93fcd804fa5a551d9c0d9dbba108
+  sha256: 44ca0258906dc24e9253ca1ca733ab85969ce2e6dda4755e462769e1891cee9f
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -102,7 +102,7 @@ benchmarks:
     command: pytest -q tests/regression/test_tolerance_grid_refinement.py
     tests: [tests/regression/test_tolerance_grid_refinement.py]
     node_ids:
-      - tests/regression/test_tolerance_grid_refinement.py::test_preregistered_phase1_lanes_and_thresholds_are_immutable
+      - tests/regression/test_tolerance_grid_refinement.py::test_preregistered_numerical_lanes_and_thresholds_are_immutable
       - tests/regression/test_tolerance_grid_refinement.py::test_certificate_distinguishes_certified_partial_and_failed
       - tests/regression/test_tolerance_grid_refinement.py::test_refinement_runner_resumes_content_addressed_cells_without_overwrite
       - tests/regression/test_tolerance_grid_refinement.py::test_failed_cell_can_be_retried_without_deleting_prior_artifact
