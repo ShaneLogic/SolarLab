@@ -117,6 +117,38 @@ has partial-width 2-D contacts and no public input deck, this is
 does not certify the general endpoint-sampled transient path or unsupported
 ion, contact, interface, or non-local physics.
 
+## Post-P1 Ion-Aware DC Certification
+
+Phase 2 step 1 adds a dedicated fixed-bias mobile-ion DC preparation and
+certificate. The historical 1 ms impedance preconditioner remains a
+compatibility path and is not relabeled: at N30 and 0.9 V its ion area
+residual is `9.656e-4 A/m2`, maximum ionic face current is
+`4.827e-4 A/m2`, and terminal hole positivity fails.
+
+The new lane advances the declared endpoint ladder and requires two
+consecutive states to pass full-MOL carrier/ion area residuals, separate
+positive/negative ionic face currents, all-face DC current spread,
+dual-cell-weighted inventory drift, terminal positivity and site occupancy.
+Every solver attempt retains numerical diagnostics; the physical protocol and
+outer numerical controls have separate canonical hashes.
+
+| Lane | Status | Run ID | Certificate SHA-256 |
+|---|---|---|---|
+| `ionmonger-ion-aware-dc-v1` (N30/60/90) | `partial` | `314c4b8cdaecb31b64180a204cf0bdc541f2779fa07d5b32d4c4dc59d90665f1` | `13716fd0ce4d2a588819f450c25061706489ffa736bedb654556d7c876eecfec` |
+| `ionmonger-ion-aware-dc-resolved-v2` (N60/90/120) | `certified` | `ba1e7b8dbcb0b16695d03c4626555bc98458ca851fc4aad9611425f55663fe1f` | `fcc84e55b8e6138e9b52c4abb49260f623e747a08b9b2a64af215c63b8ea51e9` |
+
+The v1 matrix is complete; only the N60-to-N90 maximum-site-occupancy
+relative difference fails (`0.0154895 > 0.01`). The resolved-v2 lane keeps the
+same contract and passes all grid, tolerance and per-cell quality gates; its
+N90-to-N120 occupancy difference is `0.0070462`.
+
+This is internal numerical DC evidence, not an external IonMonger match. The
+source deck lacks endpoint effective-DOS data, so contact thermodynamics is
+`compatible_unverified` and the combined physical certificate remains false.
+Dynamic interface-state charge is excluded. See
+[ion-aware-dc-certification.md](../docs/ion-aware-dc-certification.md) for the
+full contract, values and next-step boundary.
+
 ## Post-P1 Physical-Interface CBO Campaign
 
 The 2026-08-10 N=40/50/60 physical-QF-interface scan is separate from the

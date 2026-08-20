@@ -71,6 +71,9 @@ parked physics are tracked in the
 The corresponding Phase 1 implementation status, immutable certificate IDs,
 failed/partial lanes, and evidence boundaries are recorded in the
 [Phase 1 implementation and evidence report](docs/phase-1-implementation-and-evidence.md).
+The first post-P1 impedance prerequisite, a residual- and conservation-certified
+mobile-ion DC state, is documented in
+[1D ion-aware DC certification closure](docs/ion-aware-dc-certification.md).
 
 Evidence labels matter: a passing `load_only` or internal regression is not an
 external validation. See [reproducibility/README.md](reproducibility/README.md)

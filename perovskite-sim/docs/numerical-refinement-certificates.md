@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。该 registry 预注册路线图要求的五条 `grid x tolerance` lane，并为 c-Si 增加一条 versioned resolved companion lane；阈值、配置内容哈希、adapter 和矩阵在求解前固定。修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。该 registry 预注册 Phase 1 路线图要求的五条 `grid x tolerance` lane，为 c-Si 增加一条 versioned resolved companion lane，并在 Phase 2 step 1 增加原始及 resolved 两条 ion-aware DC lane；阈值、配置内容哈希、adapter 和矩阵在求解前固定。修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -27,6 +27,8 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 |---|---|---|---|
 | `scaps-mirror-frozen-ion-ss` | N30/60/90 | residual factor 1/0.1/0.01 | Voc、Jsc、FF、PCE、归一化 J-V |
 | `ionmonger-mobile-ion-transient` | N30/60/90 | componentwise atol factor 1/0.1/0.01 | reverse Voc、hysteresis、terminal-current trace、正离子库存 |
+| `ionmonger-ion-aware-dc-v1` | N30/60/90 | componentwise atol factor 1/0.1/0.01 | DC 电流、最大 site occupancy、正离子 centroid |
+| `ionmonger-ion-aware-dc-resolved-v2` | N60/90/120 | componentwise atol factor 1/0.1/0.01 | resolved DC 电流、最大 site occupancy、正离子 centroid |
 | `csi-qf-frequency-domain` | N100/200/300 | FD step 1/0.5/0.25 | C-V、Mott-Schottky intercept/effective doping |
 | `csi-qf-frequency-domain-resolved-v2` | N200/300/400 | FD step 1/0.5/0.25 | resolved C-V、Mott-Schottky intercept/effective doping |
 | `twod-uniform-limit` | x/y multiplier 1/2/4 | componentwise atol factor 1/0.1/0.01 | 2D-to-1D J-V envelope、Voc、Jsc |
@@ -45,6 +47,12 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 - `protocol_hash`：canonical document 的 SHA-256。
 
 mobile-ion J-V 使用真实 `ExperimentProtocol`；c-Si 将每个 DC bias 的 QF impedance protocol 明确组成 bundle；frozen/interface steady ladder 使用不虚构 scan rate 的 numerical protocol；2D bundle 分列实际执行的 1D forward/reverse protocol、被比较的 forward branch 和 2D ascending finite-time protocol。2D 的 1D `v_rate` 显式设为 `V_step / settle_time`，使两条路径的每点 dwell 相同。
+
+ion-aware DC 使用专用 frozen physical protocol，记录固定偏压、有效温度、
+明暗历史、初态来源/可选初态 SHA-256、blocking ion 边界、ordered endpoint
+ladder、连续通过次数和全部物理门槛。其外层 numerical execution protocol
+另行记录 grid/tolerance 来源、componentwise `atol`、`rtol`、`max_nfev`
+及 `Radau -> BDF` 方法阶梯。
 
 manifest 保存去重后的完整 protocol document 和 hash。certificate 只有在所有完成 cell 的 protocol 内容自校验通过且 hash 跨 grid/tolerance 一致时才记录 `protocol_sha256`。protocol provenance 不替代 config、source、environment、grid 或 tolerance provenance。
 
@@ -83,6 +91,8 @@ python scripts/run_numerical_refinement.py --list-lanes
 ```bash
 python scripts/run_numerical_refinement.py scaps-mirror-frozen-ion-ss --dry-run
 python scripts/run_numerical_refinement.py ionmonger-mobile-ion-transient --dry-run
+python scripts/run_numerical_refinement.py ionmonger-ion-aware-dc-v1 --dry-run
+python scripts/run_numerical_refinement.py ionmonger-ion-aware-dc-resolved-v2 --dry-run
 python scripts/run_numerical_refinement.py csi-qf-frequency-domain --dry-run
 python scripts/run_numerical_refinement.py csi-qf-frequency-domain-resolved-v2 --dry-run
 python scripts/run_numerical_refinement.py twod-uniform-limit --dry-run
@@ -94,6 +104,8 @@ python scripts/run_numerical_refinement.py interface-recombination-charge-off --
 ```bash
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py scaps-mirror-frozen-ion-ss
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py ionmonger-mobile-ion-transient
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py ionmonger-ion-aware-dc-v1 --allow-noncertified-exit-zero
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py ionmonger-ion-aware-dc-resolved-v2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py csi-qf-frequency-domain
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py csi-qf-frequency-domain-resolved-v2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py twod-uniform-limit
@@ -112,10 +124,12 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-完整 Phase 1.1 minimum-roadmap 矩阵是 5 条 lane、每条 9 个 cell，共 45 个 cell；resolved c-Si companion 使当前 registry 合计 54 个 cell。其内部工作量至少包括：
+完整 Phase 1.1 minimum-roadmap 矩阵是 5 条 lane、每条 9 个 cell，共 45 个 cell；resolved c-Si companion 使 Phase 1 registry 合计 54 个 cell。两条 post-P1 ion-aware DC lane 再增加 18 个 cell，因此当前 registry 共 72 个 cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
+- ion-aware DC：18 次 fixed-bias endpoint ladder；每段保留独立 DC state
+  certificate，Radau 失败时再走 BDF，原始及 resolved 网格证据分别保留；
 - c-Si minimum-roadmap lane：54 个 bias/FD-step operating-point calls，共 162 个 frequency points；resolved-v2 companion 另有同等工作量；
 - 2D：117 个 2D finite-time voltage settles，外加 9 个 matched 1D forward/reverse sweeps 和 2D seed；
 - interface charge-off：225 个 residual-certified steady voltage points，并计算 interface-state RHS/flux residual。

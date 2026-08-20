@@ -10,17 +10,22 @@
 4. 最后才研究界面陷阱电荷、DAE 和更完整的材料本构。
 
 本文同时是实施计划和 2026-08-14 工作树的 first-slice 状态快照，并由
-2026-08-20 的 Phase 1 闭环审计更新。当前 Phase 1 聚焦 Python 回归为
-`359 passed, 17 deselected`；仓库默认 Python 套件为 `1973 passed,
-2 skipped, 263 deselected`，其中默认 pytest 配置排除 `slow` 标记。前端
+2026-08-20 的 Phase 1 闭环审计和 Phase 2 step 1 DC checkpoint 更新。
+Phase 1 聚焦 Python 回归为 `359 passed, 17 deselected`；DC checkpoint
+后的仓库默认 Python 套件为 `1999 passed, 2 skipped, 263 deselected`，
+其中默认 pytest 配置排除 `slow` 标记。前端
 29 个测试文件为 `399 passed`，`tsc --noEmit` 与 Vite production build
 通过；Python `compileall`、聚焦 Ruff 与 `git diff --check` 通过。先前
 OneDrive dataless Git object 已仅做对象水合，未改源码或 manifest，P0
 复现节点及最终全套均通过。这些结果把四个 P1 工作包的实现提升为
 `INTERNAL_TESTED`；只有冻结 certificate 明确通过的 lane 才是
 `INTERNAL_CERTIFIED`。当前 c-Si resolved-v2 与三条 regularization ladder
-通过内部认证，IonMonger 为 `partial`，SCAPS/interface/2D lane 为
-`failed`，因此 Phase 2 的全局入口门仍未清除，更不构成外部或实验验证。
+通过内部认证，有限速率 IonMonger J-V 仍为 `partial`，SCAPS/interface/2D
+lane 为 `failed`。2026-08-20 新增的 Phase 2 step 1 DC lane 中，原始
+N30/60/90 矩阵因 occupancy 网格差为 `partial`，versioned N60/90/120
+resolved-v2 为 `INTERNAL_CERTIFIED`。这只清除了 ion-aware impedance 的
+DC 数值前置条件；接触仍为 `compatible_unverified`，频域离子线性化尚未
+实现，因此 Phase 2 仍未整体退出，更不构成外部或实验验证。
 
 ### 0.1 本轮边界
 
@@ -384,7 +389,13 @@ residual-certified ion/electron/hole DC state
 
 ### 3.2 实现步骤
 
-1. 使用 Phase 1 protocol 生成并认证 DC state；有限时间 settle 只有在独立残差、离子面电流和全器件 current spread 过门后才可晋级。
+1. **`INTERNAL_CERTIFIED` (2026-08-20)**：使用显式 canonical protocol
+   生成并认证 DC state；有限时间 settle 只有在独立载流子/离子残差、
+   逐物种离子面电流、全器件 current spread、离散库存、正性和 occupancy
+   门槛连续两次通过后才晋级。N30/60/90 v1 保留 occupancy 网格失败，
+   N60/90/120 resolved-v2 在原门槛下通过。接触证书仍独立为
+   `compatible_unverified`。详见
+   [ion-aware-dc-certification.md](../ion-aware-dc-certification.md)。
 2. 明确 mass/storage block：电子、空穴、正/负离子分别进入 `M`，Poisson 继续消去时必须包含其全局导数。
 3. 先以 central finite difference 建立 reference Jacobian；再实现 analytic/structured blocks并逐列对比。
 4. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
