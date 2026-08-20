@@ -157,6 +157,34 @@ def test_pf_handles_huge_field_without_overflow():
     assert np.isfinite(mu)
 
 
+def test_pf_zero_regularization_width_is_bit_identical():
+    mu0 = np.full(7, 1.0e-7)
+    E = np.array([-1.0e6, -10.0, -1.0, 0.0, 1.0, 10.0, 1.0e6])
+    gamma = np.full_like(E, 3.0e-4)
+    historical = poole_frenkel(mu0, E, gamma)
+    explicit_zero = poole_frenkel(
+        mu0,
+        E,
+        gamma,
+        field_regularization_width_V_m=0.0,
+    )
+    np.testing.assert_array_equal(explicit_zero, historical)
+
+
+def test_pf_regularization_is_exact_outside_declared_field_band():
+    mu0 = np.full(4, 1.0e-7)
+    E = np.array([-2.0e3, -1.0e3, 1.0e3, 2.0e3])
+    gamma = np.full_like(E, 3.0e-4)
+    exact = poole_frenkel(mu0, E, gamma)
+    regularized = poole_frenkel(
+        mu0,
+        E,
+        gamma,
+        field_regularization_width_V_m=1.0e3,
+    )
+    np.testing.assert_array_equal(regularized, exact)
+
+
 # ─── Composition: apply_field_mobility ─────────────────────────────────
 
 

@@ -67,6 +67,7 @@ from __future__ import annotations
 import dataclasses
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
@@ -81,6 +82,7 @@ from perovskite_sim.experiments.jv_sweep import (
 )
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.constants import Q
+from perovskite_sim.physics.regularization import RHSRegularization
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.mol import (
     MaterialArrays,
@@ -194,6 +196,20 @@ class SteadyStateResult:
     step_inf: float        # max |proposed Newton update| (ln-density)
     iterations: int
     continuity_current_bound: float = np.nan  # q*residual*n_ref*width [A/m^2]
+    acceptance: Literal[
+        "residual_converged",
+        "current_bounded_stall",
+        "not_reported",
+    ] = "not_reported"
+    rhs_regularization: RHSRegularization | None = None
+    nfev: int | None = None
+    njev: int | None = None
+    nlu: int | None = None
+
+    @property
+    def residual_converged(self) -> bool:
+        """Whether the strict nonlinear residual gate was satisfied."""
+        return self.acceptance == "residual_converged"
 
 
 @dataclass(frozen=True)
@@ -201,6 +217,17 @@ class JVSweepSSResult:
     V: np.ndarray
     J: np.ndarray          # A/m^2, active-cell convention (J > 0 at V = 0)
     metrics: JVMetrics
+    point_acceptance: tuple[
+        Literal[
+            "residual_converged",
+            "current_bounded_stall",
+            "transient_assisted",
+        ],
+        ...,
+    ] = ()
+    point_residual: np.ndarray | None = None
+    point_continuity_current_bound: np.ndarray | None = None
+    rhs_regularization: RHSRegularization | None = None
 
 
 def _pin_mask(mat: MaterialArrays, N: int) -> np.ndarray:
@@ -226,7 +253,8 @@ def _pin_mask(mat: MaterialArrays, N: int) -> np.ndarray:
 
 
 def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
-                 pin, z_pin, n_ref, unk_idx, phi_frozen=None):
+                 pin, z_pin, n_ref, unk_idx, phi_frozen=None,
+                 regularization: RHSRegularization | None = None):
     """Return F(z) over the 2N log-density unknowns.
 
     The full state vector is rebuilt from the template each call — only
@@ -250,9 +278,14 @@ def _residual_fn(x, stack, mat, y_template, V_app, illuminated,
         dens = np.exp(z)
         y = y_template.copy()
         y[unk_idx] = dens
-        dydt = assemble_rhs(0.0, y, x, stack, mat,
-                            illuminated=illuminated, V_app=V_app,
-                            phi_frozen=phi_frozen)
+        rhs_kwargs = dict(
+            illuminated=illuminated,
+            V_app=V_app,
+            phi_frozen=phi_frozen,
+        )
+        if regularization is not None:
+            rhs_kwargs["regularization"] = regularization
+        dydt = assemble_rhs(0.0, y, x, stack, mat, **rhs_kwargs)
         f = dydt[unk_idx] / n_ref      # peak-density-relative rate [1/s]
         f[pin] = z[pin] - z_pin[pin]   # identity rows
         return f
@@ -273,6 +306,7 @@ def _relative_log_residual_fn(
     unk_idx,
     density_scale,
     phi_frozen=None,
+    regularization: RHSRegularization | None = None,
 ):
     """Residual in centred log-density coordinates.
 
@@ -290,16 +324,14 @@ def _relative_log_residual_fn(
         dens = density_scale * np.exp(z)
         y = y_template.copy()
         y[unk_idx] = dens
-        dydt = assemble_rhs(
-            0.0,
-            y,
-            x,
-            stack,
-            mat,
+        rhs_kwargs = dict(
             illuminated=illuminated,
             V_app=V_app,
             phi_frozen=phi_frozen,
         )
+        if regularization is not None:
+            rhs_kwargs["regularization"] = regularization
+        dydt = assemble_rhs(0.0, y, x, stack, mat, **rhs_kwargs)
         f = dydt[unk_idx] / n_ref
         f[pin] = z[pin] - z_pin[pin]
         return f
@@ -323,6 +355,7 @@ def solve_steady_state(
     assist_times: tuple[float, ...] = (1e-4, 1e-3, 1e-2),
     iface_states: bool = False,
     relative_log_variables: bool = False,
+    rhs_regularization: RHSRegularization | None = None,
 ) -> SteadyStateResult:
     """Solve the carrier steady state at ``V_app`` with frozen ions.
 
@@ -378,7 +411,13 @@ def solve_steady_state(
         )
     if mat is None:
         mat = dataclasses.replace(
-            build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
+            build_material_arrays(x, stack),
+            te_softness=(
+                _TE_SOFTNESS
+                if rhs_regularization is None
+                else rhs_regularization.te_cap_relative_width
+            ),
+        )
         if iface_states:
             mat = _enable_iface_states(mat)
     if y0 is None:
@@ -387,9 +426,16 @@ def solve_steady_state(
         # heterojunction nodes. The transient only seeds; the Newton
         # solve below owns convergence and raises on failure.
         y0 = _ensure_iface_block(solve_equilibrium(x, stack), mat)
+        transient_kwargs = dict(
+            illuminated=illuminated,
+            V_app=V_app,
+            mat=mat,
+        )
+        if rhs_regularization is not None:
+            transient_kwargs["regularization"] = rhs_regularization
         sol = run_transient(
             x, y0, (0.0, 1e-4), np.array([1e-4]), stack,
-            illuminated=illuminated, V_app=V_app, mat=mat,
+            **transient_kwargs,
         )
         if sol.success:
             y0 = sol.y[:, -1]
@@ -436,14 +482,38 @@ def solve_steady_state(
     tol_effective = min(tol, current_limited_tol)
     tol_accept_effective = min(tol_accept, current_limited_tol)
     if density_scale is None:
-        F = _residual_fn(
-            x, stack, mat, y0, V_app, illuminated, pin, z_pin, n_ref, unk_idx,
-        )
+        if rhs_regularization is None:
+            F = _residual_fn(
+                x,
+                stack,
+                mat,
+                y0,
+                V_app,
+                illuminated,
+                pin,
+                z_pin,
+                n_ref,
+                unk_idx,
+            )
+        else:
+            F = _residual_fn(
+                x,
+                stack,
+                mat,
+                y0,
+                V_app,
+                illuminated,
+                pin,
+                z_pin,
+                n_ref,
+                unk_idx,
+                regularization=rhs_regularization,
+            )
 
         def _densities(z_value):
             return np.exp(z_value)
     else:
-        F = _relative_log_residual_fn(
+        residual_args = (
             x,
             stack,
             mat,
@@ -456,18 +526,36 @@ def solve_steady_state(
             unk_idx,
             density_scale,
         )
+        if rhs_regularization is None:
+            F = _relative_log_residual_fn(*residual_args)
+        else:
+            F = _relative_log_residual_fn(
+                *residual_args,
+                regularization=rhs_regularization,
+            )
 
         def _densities(z_value):
             return density_scale * np.exp(z_value)
 
-    def _done(z_fin, res_fin, step_inf, it):
+    raw_residual = F
+    evaluation_counts = {"nfev": 0, "njev": 0, "nlu": 0}
+
+    def F(z_value):
+        evaluation_counts["nfev"] += 1
+        return raw_residual(z_value)
+
+    def _done(z_fin, res_fin, step_inf, it, *, acceptance):
         y = y0.copy()
         y[unk_idx] = _densities(z_fin)
         return SteadyStateResult(y=y, converged=True, residual=res_fin,
                                  step_inf=step_inf, iterations=it,
                                  continuity_current_bound=(
                                      continuity_current_scale * res_fin
-                                 ))
+                                 ), acceptance=acceptance,
+                                 rhs_regularization=rhs_regularization,
+                                 nfev=evaluation_counts["nfev"],
+                                 njev=evaluation_counts["njev"],
+                                 nlu=evaluation_counts["nlu"])
 
     last_msg = ""
     max_assists = len(assist_times)
@@ -493,8 +581,12 @@ def solve_steady_state(
         jac_fresh = False  # True when this iter's step came from a fresh factor
         for it in range(1, max_newton + 1):
             if res < tol_effective:
-                return _done(z, res, 0.0, it - 1)
+                return _done(
+                    z, res, 0.0, it - 1,
+                    acceptance="residual_converged",
+                )
             if lu is None or not _SS_JAC_REUSE:
+                evaluation_counts["njev"] += 1
                 # dense FD Jacobian in ln-space (rebuilt only when needed)
                 J = np.empty((n_unk, n_unk))
                 for j in range(n_unk):
@@ -505,6 +597,7 @@ def solve_steady_state(
                 try:
                     step = np.linalg.solve(J, -f)
                     lu = lu_factor(J)   # cache for subsequent chord steps
+                    evaluation_counts["nlu"] += 1
                 except np.linalg.LinAlgError:
                     # ridge (Levenberg) fallback: a fully-floored carrier
                     # column can zero out at extreme dopings
@@ -537,7 +630,10 @@ def solve_steady_state(
                 # former only under the same physical residual bound used
                 # by the kink-stall and iteration-limit paths.
                 if res_best < tol_accept_effective:
-                    return _done(z_best, res_best, step_inf, it)
+                    return _done(
+                        z_best, res_best, step_inf, it,
+                        acceptance="current_bounded_stall",
+                    )
                 last_msg = (f"Newton step stalled at V={V_app:.4f} "
                             f"(iter {it}, best residual {res_best:.3e})")
                 stalled = True
@@ -575,14 +671,20 @@ def solve_steady_state(
                 if res_best < tol_accept_effective:
                     # kink-stall at a physically-converged state — accept
                     # the BEST iterate seen, not the last
-                    return _done(z_best, res_best, step_inf, it)
+                    return _done(
+                        z_best, res_best, step_inf, it,
+                        acceptance="current_bounded_stall",
+                    )
                 last_msg = (f"line search stalled at V={V_app:.4f} "
                             f"(iter {it}, best residual {res_best:.3e})")
                 stalled = True
                 break
         else:
             if res_best < tol_accept_effective:
-                return _done(z_best, res_best, 0.0, max_newton)
+                return _done(
+                    z_best, res_best, 0.0, max_newton,
+                    acceptance="current_bounded_stall",
+                )
             last_msg = (f"no convergence at V={V_app:.4f} after "
                         f"{max_newton} iterations (best residual "
                         f"{res_best:.3e}, effective tol "
@@ -594,10 +696,17 @@ def solve_steady_state(
             t_a = assist_times[attempt]
             y_cur = y0.copy()
             y_cur[unk_idx] = _densities(z_best)  # assist from the best iterate
+            transient_kwargs = dict(
+                illuminated=illuminated,
+                V_app=V_app,
+                mat=mat,
+                max_step=t_a / 8.0,
+            )
+            if rhs_regularization is not None:
+                transient_kwargs["regularization"] = rhs_regularization
             sol = run_transient(
                 x, y_cur, (0.0, t_a), np.array([t_a]), stack,
-                illuminated=illuminated, V_app=V_app, mat=mat,
-                max_step=t_a / 8.0,
+                **transient_kwargs,
             )
             if not sol.success:
                 break
@@ -690,7 +799,8 @@ def _qfl_poisson_relax(x, mat, y, V_app, *, tol_phi=1e-10, max_iter=60):
 def _transient_point_fallback(x, stack, mat, V_app, y_seed, *,
                               illuminated=True,
                               t_settles=(6.4e-3, 2.5e-2, 1.0e-1),
-                              res_guard=1.0):
+                              res_guard=1.0,
+                              rhs_regularization: RHSRegularization | None = None):
     """Compute one steady-state point by transient settling (certified).
 
     Used where Newton cannot finish: near V* the interface-switch region
@@ -706,20 +816,33 @@ def _transient_point_fallback(x, stack, mat, V_app, y_seed, *,
     res = float("inf")
     # escalate: near V_oc the slowest carrier mode needs 10-100 ms
     for t_settle in t_settles:
+        transient_kwargs = dict(
+            illuminated=illuminated,
+            V_app=V_app,
+            mat=mat,
+            max_step=t_settle / 8.0,
+        )
+        if rhs_regularization is not None:
+            transient_kwargs["regularization"] = rhs_regularization
         sol = run_transient(
             x, y, (0.0, t_settle), np.array([t_settle]), stack,
-            illuminated=illuminated, V_app=V_app, mat=mat,
-            max_step=t_settle / 8.0,
+            **transient_kwargs,
         )
         if not sol.success:
             raise SteadyStateError(
                 f"transient point-fallback failed at V={V_app:.4f}")
         y = _qfl_poisson_relax(x, mat, sol.y[:, -1], V_app)
-        dydt = assemble_rhs(0.0, y, x, stack, mat,
-                            illuminated=illuminated, V_app=V_app)
+        rhs_kwargs = dict(illuminated=illuminated, V_app=V_app)
+        if rhs_regularization is not None:
+            rhs_kwargs["regularization"] = rhs_regularization
+        dydt = assemble_rhs(0.0, y, x, stack, mat, **rhs_kwargs)
         n_ref = float(np.max(y[: 2 * N]))
         f = np.abs(dydt[: 2 * N]) / n_ref
-        f[[0, N - 1, N, 2 * N - 1]] = 0.0
+        # Dirichlet carrier reservoirs are algebraic pins, so their ODE rows
+        # are excluded. Robin/selective-contact boundary densities remain true
+        # dynamic unknowns and their residuals must pass the same guard as the
+        # interior; clearing all four rows would certify a boundary mismatch.
+        f[_pin_mask(mat, N)] = 0.0
         res = float(np.max(f))
         if res <= res_guard:
             return y, res
@@ -899,6 +1022,10 @@ def _gummel_point(x, stack, mat, V_app, y_seed, *, illuminated=True,
                              step_inf=0.0, iterations=_it + 1,
                              continuity_current_bound=(
                                  Q * res_fin * n_ref * float(x[-1] - x[0])
+                             ), acceptance=(
+                                 "residual_converged"
+                                 if res_fin < tol
+                                 else "not_reported"
                              ))
 
 
@@ -914,6 +1041,7 @@ def run_jv_sweep_ss(
     allow_underresolved_grid: bool = False,
     allow_unvalidated_driver: bool = False,
     progress=None,
+    rhs_regularization: RHSRegularization | None = None,
 ) -> JVSweepSSResult:
     """Steady-state J-V: voltage continuation with warm starts.
 
@@ -945,33 +1073,57 @@ def run_jv_sweep_ss(
         allow_unvalidated_driver=allow_unvalidated_driver,
     )
     mat = dataclasses.replace(
-        build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
+        build_material_arrays(x, stack),
+        te_softness=(
+            _TE_SOFTNESS
+            if rhs_regularization is None
+            else rhs_regularization.te_cap_relative_width
+        ),
+    )
     if iface_states:
         mat = _enable_iface_states(mat)
     V_targets = list(np.linspace(0.0, V_max, n_points))
     V_out, J_out = [], []
+    acceptance_out: list[str] = []
+    residual_out: list[float] = []
+    current_bound_out: list[float] = []
     y_prev = None
     V_prev = 0.0
     i = 0
     while i < len(V_targets):
         V = V_targets[i]
         try:
-            res = solve_steady_state(
-                x, stack, V, illuminated=illuminated, mat=mat, y0=y_prev)
+            solve_kwargs = dict(
+                illuminated=illuminated,
+                mat=mat,
+                y0=y_prev,
+            )
+            if rhs_regularization is not None:
+                solve_kwargs["rhs_regularization"] = rhs_regularization
+            res = solve_steady_state(x, stack, V, **solve_kwargs)
             y_new = res.y
+            point_acceptance = res.acceptance
+            point_residual = res.residual
+            point_current_bound = res.continuity_current_bound
         except SteadyStateError:
             if V - V_prev > 0.011:
                 V_targets.insert(i, 0.5 * (V_prev + V))   # bisect the step
                 continue
             # Newton cannot finish in the interface-switch region —
             # certified transient settle computes the point instead
-            y_new, _ = _transient_point_fallback(
+            y_new, point_residual = _transient_point_fallback(
                 x, stack, mat, V, y_prev if y_prev is not None
-                else solve_equilibrium(x, stack), illuminated=illuminated)
+                else solve_equilibrium(x, stack), illuminated=illuminated,
+                rhs_regularization=rhs_regularization)
+            point_acceptance = "transient_assisted"
+            point_current_bound = np.nan
         y_prev = y_new
         V_prev = V
         V_out.append(V)
         J_out.append(_compute_current_ss(x, y_new, stack, V, mat=mat))
+        acceptance_out.append(point_acceptance)
+        residual_out.append(float(point_residual))
+        current_bound_out.append(float(point_current_bound))
         if progress is not None:
             progress("jv_ss", len(V_out), len(V_targets), f"V={V:.3f}")
         if (stop_after_voc and len(J_out) >= 2
@@ -982,8 +1134,17 @@ def run_jv_sweep_ss(
             break
         i += 1
     V_arr, J_arr = np.asarray(V_out), np.asarray(J_out)
-    return JVSweepSSResult(V=V_arr, J=J_arr,
-                           metrics=compute_metrics(V_arr, J_arr))
+    return JVSweepSSResult(
+        V=V_arr,
+        J=J_arr,
+        metrics=compute_metrics(V_arr, J_arr),
+        point_acceptance=tuple(acceptance_out),
+        point_residual=np.asarray(residual_out, dtype=float),
+        point_continuity_current_bound=np.asarray(
+            current_bound_out, dtype=float,
+        ),
+        rhs_regularization=rhs_regularization,
+    )
 
 
 def solve_voc_ss(
@@ -996,6 +1157,7 @@ def solve_voc_ss(
     iface_states: bool = False,
     allow_underresolved_grid: bool = False,
     allow_unvalidated_driver: bool = False,
+    rhs_regularization: RHSRegularization | None = None,
 ) -> float:
     """Direct V_oc: bisection on the steady-state J(V) zero crossing.
 
@@ -1016,7 +1178,13 @@ def solve_voc_ss(
         allow_unvalidated_driver=allow_unvalidated_driver,
     )
     mat = dataclasses.replace(
-        build_material_arrays(x, stack), te_softness=_TE_SOFTNESS)
+        build_material_arrays(x, stack),
+        te_softness=(
+            _TE_SOFTNESS
+            if rhs_regularization is None
+            else rhs_regularization.te_cap_relative_width
+        ),
+    )
     if iface_states:
         mat = _enable_iface_states(mat)
 
@@ -1024,14 +1192,17 @@ def solve_voc_ss(
 
     def J_at(V, y_seed):
         try:
-            res = solve_steady_state(x, stack, V, illuminated=True,
-                                     mat=mat, y0=y_seed)
+            solve_kwargs = dict(illuminated=True, mat=mat, y0=y_seed)
+            if rhs_regularization is not None:
+                solve_kwargs["rhs_regularization"] = rhs_regularization
+            res = solve_steady_state(x, stack, V, **solve_kwargs)
             y = res.y
         except SteadyStateError:
             y, _ = _transient_point_fallback(
                 x, stack, mat, V,
                 y_seed if y_seed is not None
-                else solve_equilibrium(x, stack))
+                else solve_equilibrium(x, stack),
+                rhs_regularization=rhs_regularization)
         y_cache[V] = y
         return _compute_current_ss(x, y, stack, V, mat=mat)
 

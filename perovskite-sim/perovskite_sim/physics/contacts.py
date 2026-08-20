@@ -54,9 +54,239 @@ only ``n_eq`` changes.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
+
 import numpy as np
 
 from perovskite_sim.constants import Q
+
+if TYPE_CHECKING:
+    from perovskite_sim.models.device import DeviceStack
+    from perovskite_sim.solver.mol import MaterialArrays
+
+
+CONTACT_THERMODYNAMIC_TOLERANCE_EV = 5.0e-3
+
+
+@dataclass(frozen=True)
+class ContactThermodynamicCertificate:
+    """Internal compatibility evidence for Poisson and carrier reservoirs."""
+
+    status: Literal[
+        "certified",
+        "inconsistent",
+        "compatible_unverified",
+        "not_assessable",
+    ]
+    built_in_potential_mode: str
+    tolerance_eV: float
+    fermi_level_span_eV: float | None
+    potential_mismatch_V: float | None
+    metal_work_function_mismatch_eV: float | None
+    contact_quasi_fermi_levels_eV: tuple[float, ...]
+    message: str
+
+    @property
+    def certified(self) -> bool:
+        return self.status == "certified"
+
+
+class ContactThermodynamicError(ValueError):
+    """The selected Poisson/contact-reservoir pair lacks a certificate."""
+
+
+def assess_contact_thermodynamics(
+    stack: "DeviceStack",
+    mat: "MaterialArrays",
+    *,
+    tolerance_eV: float = CONTACT_THERMODYNAMIC_TOLERANCE_EV,
+) -> ContactThermodynamicCertificate:
+    """Assess whether all four Maxwell-Boltzmann contact QFLs agree.
+
+    A zero-bias equilibrium requires the electron and hole reservoir on both
+    contacts to share one Fermi level. This check uses the exact densities and
+    Poisson drop consumed by the solver. When endpoint DOS data are absent, a
+    mismatch against the repository's band-derived contact potential can
+    still disprove compatibility, but equality is labelled unverified rather
+    than promoted to a thermodynamic certificate.
+    """
+    if not np.isfinite(tolerance_eV) or tolerance_eV <= 0.0:
+        raise ValueError("tolerance_eV must be finite and positive")
+    if tolerance_eV > CONTACT_THERMODYNAMIC_TOLERANCE_EV:
+        raise ValueError(
+            "tolerance_eV cannot exceed the fixed internal certificate gate "
+            f"of {CONTACT_THERMODYNAMIC_TOLERANCE_EV:g} eV"
+        )
+
+    mode = stack.resolved_built_in_potential_mode()
+    potential_mismatch: float | None
+    try:
+        potential_mismatch = float(
+            mat.V_bi_bc - stack.compute_semiconductor_V_bi()
+        )
+        if not np.isfinite(potential_mismatch):
+            potential_mismatch = None
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        potential_mismatch = None
+
+    levels: list[float] = []
+    semiconductor_work_functions: list[float] = []
+    nc_values = getattr(mat, "N_C_physical", None)
+    nv_values = getattr(mat, "N_V_physical", None)
+    chi_values = getattr(mat, "chi_phys", None)
+    eg_values = getattr(mat, "Eg_phys", None)
+    if all(value is not None for value in (
+        nc_values, nv_values, chi_values, eg_values,
+    )):
+        nc = np.asarray(nc_values, dtype=float)
+        nv = np.asarray(nv_values, dtype=float)
+        chi = np.asarray(chi_values, dtype=float)
+        eg = np.asarray(eg_values, dtype=float)
+        reservoirs = (
+            (0, 0.0, float(mat.n_L), float(mat.p_L)),
+            (-1, float(mat.V_bi_bc), float(mat.n_R), float(mat.p_R)),
+        )
+        for index, phi, density_n, density_p in reservoirs:
+            values = (nc[index], nv[index], chi[index], eg[index])
+            if (
+                all(np.isfinite(value) for value in values)
+                and nc[index] > 0.0
+                and nv[index] > 0.0
+                and density_n > 0.0
+                and density_p > 0.0
+            ):
+                conduction_edge = -phi - chi[index]
+                valence_edge = conduction_edge - eg[index]
+                levels.extend((
+                    float(
+                        conduction_edge
+                        + mat.V_T_device * np.log(density_n / nc[index])
+                    ),
+                    float(
+                        valence_edge
+                        - mat.V_T_device * np.log(density_p / nv[index])
+                    ),
+                ))
+                semiconductor_work_functions.extend((
+                    float(
+                        chi[index]
+                        - mat.V_T_device * np.log(density_n / nc[index])
+                    ),
+                    float(
+                        chi[index] + eg[index]
+                        + mat.V_T_device * np.log(density_p / nv[index])
+                    ),
+                ))
+
+    if len(levels) == 4:
+        span = float(max(levels) - min(levels))
+        metal_mismatch: float | None = None
+        if mode == "metal_work_function":
+            metal_work_functions = (
+                float(stack.work_function_left_eV),
+                float(stack.work_function_left_eV),
+                float(stack.work_function_right_eV),
+                float(stack.work_function_right_eV),
+            )
+            metal_mismatch = float(np.max(np.abs(
+                np.asarray(metal_work_functions)
+                - np.asarray(semiconductor_work_functions)
+            )))
+        qfl_compatible = span <= tolerance_eV
+        metal_compatible = (
+            metal_mismatch is None or metal_mismatch <= tolerance_eV
+        )
+        status = (
+            "certified"
+            if qfl_compatible and metal_compatible
+            else "inconsistent"
+        )
+        if status == "certified":
+            message = (
+                "carrier reservoirs, Poisson drop, and any explicit metal "
+                "work functions agree within the fixed internal "
+                f"{tolerance_eV:g} eV gate"
+            )
+        elif not qfl_compatible:
+            message = (
+                "Poisson contact potential and carrier reservoirs impose a "
+                f"{span:.6g} eV equilibrium quasi-Fermi-level span"
+            )
+        else:
+            message = (
+                "explicit metal work functions differ from the modeled "
+                "semiconductor reservoirs by as much as "
+                f"{metal_mismatch:.6g} eV"
+            )
+        return ContactThermodynamicCertificate(
+            status=status,
+            built_in_potential_mode=mode,
+            tolerance_eV=float(tolerance_eV),
+            fermi_level_span_eV=span,
+            potential_mismatch_V=potential_mismatch,
+            metal_work_function_mismatch_eV=metal_mismatch,
+            contact_quasi_fermi_levels_eV=tuple(levels),
+            message=message,
+        )
+
+    if potential_mismatch is not None and abs(potential_mismatch) > tolerance_eV:
+        status = "inconsistent"
+        message = (
+            "endpoint DOS data are incomplete, but the imposed Poisson drop "
+            "already differs from the band-derived contact potential by "
+            f"{abs(potential_mismatch):.6g} V"
+        )
+    else:
+        from perovskite_sim.models.device import electrical_layers
+
+        layers = electrical_layers(stack)
+        has_band_reference = any(
+            layer.params is not None
+            and (layer.params.chi != 0.0 or layer.params.Eg != 0.0)
+            for layer in layers
+        )
+        if has_band_reference:
+            status = "compatible_unverified"
+            message = (
+                "the imposed and band-derived contact potentials agree, but "
+                "endpoint effective-DOS data are missing, so the four contact "
+                "quasi-Fermi levels cannot be certified"
+            )
+        else:
+            status = "not_assessable"
+            message = (
+                "the stack lacks endpoint band/DOS data required for a "
+                "thermodynamic contact assessment"
+            )
+    return ContactThermodynamicCertificate(
+        status=status,
+        built_in_potential_mode=mode,
+        tolerance_eV=float(tolerance_eV),
+        fermi_level_span_eV=None,
+        potential_mismatch_V=potential_mismatch,
+        metal_work_function_mismatch_eV=None,
+        contact_quasi_fermi_levels_eV=(),
+        message=message,
+    )
+
+
+def require_contact_thermodynamic_certificate(
+    stack: "DeviceStack",
+    mat: "MaterialArrays",
+    *,
+    tolerance_eV: float = CONTACT_THERMODYNAMIC_TOLERANCE_EV,
+) -> ContactThermodynamicCertificate:
+    """Return a contact certificate or fail closed for research workflows."""
+    certificate = assess_contact_thermodynamics(
+        stack, mat, tolerance_eV=tolerance_eV,
+    )
+    if not certificate.certified:
+        raise ContactThermodynamicError(
+            f"contact thermodynamic status={certificate.status}: "
+            f"{certificate.message}"
+        )
+    return certificate
 
 
 def selective_contact_flux(
@@ -206,6 +436,11 @@ def schottky_equilibrium_p(N_v: float, phi_B: float, V_T: float) -> float:
 
 
 __all__ = [
+    "CONTACT_THERMODYNAMIC_TOLERANCE_EV",
+    "ContactThermodynamicCertificate",
+    "ContactThermodynamicError",
+    "assess_contact_thermodynamics",
+    "require_contact_thermodynamic_certificate",
     "selective_contact_flux",
     "apply_selective_contacts",
     "schottky_equilibrium_n",

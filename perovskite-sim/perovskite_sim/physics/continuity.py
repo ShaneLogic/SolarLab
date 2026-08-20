@@ -121,7 +121,9 @@ def carrier_continuity_rhs(
     :func:`perovskite_sim.physics.contacts.selective_contact_flux` so that
     ``S → ∞`` recovers the ohmic limit and ``S = 0`` the blocking limit.
     """
-    D_n = params["D_n"]; D_p = params["D_p"]; V_T = params["V_T"]
+    D_n = params["D_n"]
+    D_p = params["D_p"]
+    V_T = params["V_T"]
     dx = np.diff(x)                                # (N-1,)
 
     # Band-corrected potentials for heterojunctions:
@@ -165,9 +167,14 @@ def carrier_continuity_rhs(
             if not (np.isfinite(a) and np.isfinite(b) and a > 0.0 and b > 0.0):
                 return None
             return float(np.sqrt(a * b))
-        # Smooth magnitude-min blend (steady-state driver only; see
-        # MaterialArrays.te_softness). 0.0 = exact hard cap below.
+        # The steady-state driver historically uses a logistic magnitude
+        # blend at te_softness=0.02. Explicit Phase-1 regularization selects
+        # the compact-support mode; keeping the modes distinct preserves the
+        # legacy default while making a width-to-zero ladder interpretable.
         te_soft = params.get("te_softness", 0.0)
+        te_regularization_mode = params.get(
+            "te_regularization_mode", "legacy_logistic"
+        )
 
         def _cap(J_sg, J_te):
             """Limit the MAGNITUDE of the SG flux; never change its direction.
@@ -198,20 +205,33 @@ def carrier_continuity_rhs(
             """
             a_sg, a_te = abs(J_sg), abs(J_te)
             if te_soft <= 0.0:
-                mag = a_te if a_sg > a_te else a_sg
+                return float(np.copysign(min(a_sg, a_te), J_sg))
+            if te_regularization_mode == "compact_support":
+                from perovskite_sim.physics.regularization import (
+                    direction_preserving_magnitude_min,
+                )
+
+                return direction_preserving_magnitude_min(
+                    J_sg,
+                    J_te,
+                    relative_width=te_soft,
+                )
+            if te_regularization_mode != "legacy_logistic":
+                raise ValueError(
+                    "te_regularization_mode must be 'legacy_logistic' or "
+                    "'compact_support'"
+                )
+            t_arg = (a_sg - a_te) / (
+                te_soft * (a_sg + a_te) + 1e-300
+            )
+            if t_arg > 40.0:
+                weight = 1.0
+            elif t_arg < -40.0:
+                weight = 0.0
             else:
-                t_arg = (a_sg - a_te) / (te_soft * (a_sg + a_te) + 1e-300)
-                if t_arg > 40.0:
-                    w = 1.0
-                elif t_arg < -40.0:
-                    w = 0.0
-                else:
-                    w = 1.0 / (1.0 + np.exp(-t_arg))
-                # Blend MAGNITUDES for the same reason; a blend toward J_te
-                # can otherwise drag the flux through zero and out the far
-                # side when the two disagree in sign.
-                mag = w * a_te + (1.0 - w) * a_sg
-            return float(np.copysign(mag, J_sg))
+                weight = 1.0 / (1.0 + np.exp(-t_arg))
+            magnitude = weight * a_te + (1.0 - weight) * a_sg
+            return float(np.copysign(magnitude, J_sg))
         # Band edges for the THERMIONIC barrier. These are the physical ones
         # when the caller supplies them: with ``dos_band_potentials`` active,
         # ``chi``/``Eg`` above are transport potentials carrying

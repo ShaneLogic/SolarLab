@@ -1,0 +1,692 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from perovskite_sim.experiments.jv_sweep import (
+    JVAcceptedSolveDiagnostics,
+    JVMetrics,
+    JVPointStatus,
+)
+from perovskite_sim.discretization.grid import GridResolutionError
+from perovskite_sim.solver.numerical_diagnostics import (
+    NumericalDiagnosticsMonitor,
+    StateLayout,
+)
+from perovskite_sim.solver.mol import StateVec
+from perovskite_sim.solver.tolerances import ComponentwiseAtol
+from perovskite_sim.validation import refinement_executors as executors
+from perovskite_sim.validation.numerical_certificate import (
+    LaneDefinition,
+    MatrixPoint,
+    ObservableGate,
+    content_sha256,
+    load_refinement_registry,
+)
+
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _lane(*, options=None, grid_values=(4, 7)):
+    return LaneDefinition(
+        lane_id="adapter-smoke",
+        claim_level="internal-numerical-candidate",
+        config_path="device.yaml",
+        config_sha256="0" * 64,
+        grid_parameter="N_grid",
+        grid_values=grid_values,
+        tolerance_parameter="factor",
+        tolerance_factors=(1.0, 0.1),
+        observables=(ObservableGate("response", "absolute_linf", 1.0),),
+        quality_gates=(),
+        options_json=json.dumps(options or {}),
+    )
+
+
+def _metric_dict(measurement, *, quality=False):
+    values = measurement.quality if quality else measurement.observables
+    return {item.name: item for item in values}
+
+
+def _assert_protocol(measurement):
+    metadata = json.loads(measurement.metadata_json)
+    assert metadata["protocol"]["schema_version"] == metadata["protocol_schema"]
+    assert content_sha256(metadata["protocol"]) == metadata["protocol_hash"]
+
+
+def _assert_registry_contract(measurement, lane_id):
+    registry = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    )
+    lane = registry.lane(lane_id)
+    observables = _metric_dict(measurement)
+    quality = _metric_dict(measurement, quality=True)
+    assert set(observables) == {gate.metric for gate in lane.observables}
+    assert set(quality) == {gate.metric for gate in lane.quality_gates}
+    assert all(
+        observables[gate.metric].units == gate.units for gate in lane.observables
+    )
+    assert all(quality[gate.metric].units == gate.units for gate in lane.quality_gates)
+
+
+def _accepted_numerical_diagnostics(*, nonfinite_rhs: bool = False):
+    state = np.array([2.0, 3.0, 4.0, 5.0, 6.0, 0.0])
+    monitor = NumericalDiagnosticsMonitor(
+        StateLayout(2, positive_ion_active=(True, False))
+    )
+    monitor.observe_trial_state(state)
+    monitor.observe_srh_denominator("bulk", np.array([7.0]))
+    monitor.observe_srh_denominator("interface", np.array([8.0]))
+    rhs = np.zeros_like(state)
+    if nonfinite_rhs:
+        rhs[0] = np.nan
+    monitor.observe_rhs(rhs)
+    report = monitor.finalize(state, solver_success=True)
+    return JVAcceptedSolveDiagnostics(report=report, nfev=9, njev=2, nlu=2)
+
+
+def test_frozen_ion_steady_executor_smoke(monkeypatch):
+    lane = _lane(
+        options={"V_max_V": 1.0, "voltage_points": 3},
+        grid_values=(10, 20),
+    )
+    calls = []
+    monkeypatch.setattr(executors, "_load_stack", lambda *_: object())
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_: np.linspace(0.0, 1.0, 11),
+    )
+
+    def solve(_x, _stack, voltage, **kwargs):
+        calls.append((voltage, kwargs["tol"], kwargs["tol_step"]))
+        return SimpleNamespace(
+            y=np.ones(33),
+            residual=1.0e-8,
+            continuity_current_bound=1.0e-8,
+            acceptance="residual_converged",
+            iterations=2,
+        )
+
+    monkeypatch.setattr(executors, "solve_steady_state", solve)
+    monkeypatch.setattr(
+        executors,
+        "_compute_current_ss_with_spread",
+        lambda _x, _y, _stack, voltage, **_kwargs: (1.0 - 2.0 * voltage, 1e-8),
+    )
+
+    measurement = executors.run_frozen_ion_steady_jv(
+        lane,
+        MatrixPoint(10, 0.1),
+        Path("."),
+    )
+    _assert_protocol(measurement)
+    _assert_registry_contract(measurement, "scaps-mirror-frozen-ion-ss")
+    assert [item[0] for item in calls] == [0.0, 0.5, 1.0]
+    assert all(item[1] == pytest.approx(1.0e-7) for item in calls)
+    assert all(item[2] == pytest.approx(1.0e-9) for item in calls)
+    assert _metric_dict(measurement)["voc_V"].values[0] == pytest.approx(0.5)
+    assert _metric_dict(measurement, quality=True)[
+        "all_points_residual_converged"
+    ].values == (1.0,)
+    protocol = json.loads(measurement.metadata_json)["protocol"]
+    assert protocol["settle"]["max_continuity_current_error_A_m2"] == pytest.approx(
+        0.1
+    )
+    assert "max_current_spread_A_m2" not in protocol["settle"]
+
+
+def test_mobile_ion_transient_executor_smoke(monkeypatch):
+    lane = _lane(options={"V_max_V": 1.0, "voltage_points": 3})
+    monkeypatch.setattr(
+        executors,
+        "_load_stack",
+        lambda *_: SimpleNamespace(T=300.0),
+    )
+    captured = {}
+
+    def run_jv(_stack, **kwargs):
+        captured.update(kwargs)
+        snapshots = tuple(
+            SimpleNamespace(
+                P=np.array([1.0, 1.0]),
+                x=np.array([0.0, 1.0]),
+            )
+            for _ in range(6)
+        )
+        metrics = JVMetrics(0.5, 1.0, 0.5, 0.025)
+        statuses = tuple(
+            JVPointStatus(
+                branch="jv_forward" if index < 3 else "jv_reverse",
+                index=index % 3,
+                voltage=float(index % 3) / 2.0,
+                numerical_diagnostics=(_accepted_numerical_diagnostics(),),
+                nfev=9,
+                njev=2,
+                nlu=2,
+            )
+            for index in range(6)
+        )
+        return SimpleNamespace(
+            V_fwd=np.array([0.0, 0.5, 1.0]),
+            J_fwd=np.array([1.0, 0.0, -1.0]),
+            V_rev=np.array([1.0, 0.5, 0.0]),
+            J_rev=np.array([-1.0, 0.0, 1.0]),
+            metrics_rev=metrics,
+            hysteresis_index=0.0,
+            snapshots_fwd=snapshots[:3],
+            snapshots_rev=snapshots[3:],
+            status_fwd=statuses[:3],
+            status_rev=statuses[3:],
+            initial_numerical_diagnostics=SimpleNamespace(
+                numerical_diagnostics=(
+                    _accepted_numerical_diagnostics().report
+                )
+            ),
+            certified=True,
+        )
+
+    monkeypatch.setattr(executors, "run_jv_sweep", run_jv)
+    measurement = executors.run_mobile_ion_transient_jv(
+        lane,
+        MatrixPoint(4, 0.1),
+        Path("."),
+    )
+    _assert_protocol(measurement)
+    _assert_registry_contract(measurement, "ionmonger-mobile-ion-transient")
+
+    assert isinstance(captured["atol"], ComponentwiseAtol)
+    assert captured["atol"].refinement_factor == pytest.approx(0.1)
+    assert captured["protocol_mode"] == "research_strict"
+    assert captured["collect_numerical_diagnostics"] is True
+    assert _metric_dict(measurement)["voc_reverse_V"].values == (0.5,)
+    assert _metric_dict(measurement, quality=True)[
+        "max_positive_ion_inventory_relative_drift"
+    ].values == (0.0,)
+    quality = _metric_dict(measurement, quality=True)
+    assert quality["diagnostics_complete"].values == (1.0,)
+    assert quality["terminal_densities_positive"].values == (1.0,)
+    assert quality["nonfinite_rhs_evaluations"].values == (0.0,)
+    assert quality["zero_floor_diagnostics_pass"].values == (1.0,)
+    metadata = json.loads(measurement.metadata_json)
+    assert metadata["accepted_solver_segment_count"] == 6
+    assert metadata["negative_trial_evaluations"] == 0
+    assert metadata["minimum_bulk_srh_denominator_s_m3"] == 7.0
+    assert metadata["minimum_interface_srh_denominator_s_m4"] == 8.0
+
+
+def test_mobile_ion_executor_fails_quality_when_diagnostics_are_missing(
+    monkeypatch,
+):
+    lane = _lane(options={"V_max_V": 1.0, "voltage_points": 2})
+    monkeypatch.setattr(
+        executors,
+        "_load_stack",
+        lambda *_: SimpleNamespace(T=300.0),
+    )
+    snapshots = tuple(
+        SimpleNamespace(P=np.ones(2), x=np.array([0.0, 1.0]))
+        for _ in range(4)
+    )
+    metrics = JVMetrics(0.5, 1.0, 0.5, 0.025)
+    incomplete_statuses = tuple(
+        JVPointStatus(
+            branch="jv_forward" if index < 2 else "jv_reverse",
+            index=index % 2,
+            voltage=float(index % 2),
+            numerical_diagnostics=(
+                (_accepted_numerical_diagnostics(),) if index != 3 else ()
+            ),
+        )
+        for index in range(4)
+    )
+    monkeypatch.setattr(
+        executors,
+        "run_jv_sweep",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            V_fwd=np.array([0.0, 1.0]),
+            J_fwd=np.array([1.0, -1.0]),
+            V_rev=np.array([1.0, 0.0]),
+            J_rev=np.array([-1.0, 1.0]),
+            metrics_rev=metrics,
+            hysteresis_index=0.0,
+            snapshots_fwd=snapshots[:2],
+            snapshots_rev=snapshots[2:],
+            status_fwd=incomplete_statuses[:2],
+            status_rev=incomplete_statuses[2:],
+            initial_numerical_diagnostics=SimpleNamespace(
+                numerical_diagnostics=(
+                    _accepted_numerical_diagnostics().report
+                )
+            ),
+            certified=True,
+        ),
+    )
+
+    measurement = executors.run_mobile_ion_transient_jv(
+        lane,
+        MatrixPoint(4, 0.1),
+        Path("."),
+    )
+
+    quality = _metric_dict(measurement, quality=True)
+    assert quality["diagnostics_complete"].values == (0.0,)
+    assert quality["terminal_densities_positive"].values == (0.0,)
+
+
+def test_csi_qf_frequency_executor_smoke(monkeypatch):
+    lane = _lane(
+        options={
+            "biases_V": [-0.2, -0.1, 0.0],
+            "frequencies_Hz": [1.0e4, 1.0e5, 1.0e6],
+        }
+    )
+    monkeypatch.setattr(
+        executors,
+        "_load_stack",
+        lambda *_: SimpleNamespace(T=300.0),
+    )
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_: np.linspace(0.0, 1.0, 5),
+    )
+    guard_calls = []
+    monkeypatch.setattr(
+        executors,
+        "require_thick_layer_interface_resolution",
+        lambda grid, stack, *, N_grid: guard_calls.append(
+            (grid.copy(), stack, N_grid)
+        ),
+    )
+    monkeypatch.setattr(executors, "build_material_arrays", lambda *_: object())
+    calls = []
+
+    def impedance(_grid, _stack, frequencies, *, V_dc, **kwargs):
+        calls.append((V_dc, kwargs["state_step"], kwargs["voltage_step"]))
+        capacitance = 2.0e-4 + (V_dc + 0.2) * 1.0e-4
+        admittance = 1j * 2.0 * np.pi * frequencies * capacitance
+        return SimpleNamespace(
+            Z=1.0 / admittance,
+            max_relative_face_spread=np.full(3, 1.0e-6),
+            backward_error=np.full(3, 1.0e-12),
+            reciprocal_condition=np.full(3, 0.1),
+            dc_state=SimpleNamespace(
+                certified=True,
+                max_normalized_cell_residual=1.0e-12,
+            ),
+        )
+
+    monkeypatch.setattr(executors, "run_quasi_fermi_impedance", impedance)
+    monkeypatch.setattr(
+        executors,
+        "_fit_mott_schottky",
+        lambda *_args, **_kwargs: (0.8, 1.0e22, -0.2, 0.0),
+    )
+    measurement = executors.run_csi_qf_frequency_domain(
+        lane,
+        MatrixPoint(4, 0.1),
+        Path("."),
+    )
+    _assert_protocol(measurement)
+    _assert_registry_contract(measurement, "csi-qf-frequency-domain")
+
+    assert len(calls) == 3
+    assert len(guard_calls) == 1
+    assert guard_calls[0][2] == 4
+    assert all(call[1] == pytest.approx(1.0e-6) for call in calls)
+    assert all(call[2] == pytest.approx(1.0e-6) for call in calls)
+    assert _metric_dict(measurement)["mott_intercept_V"].values == (0.8,)
+    assert _metric_dict(measurement, quality=True)["dc_residual_certified"].values == (
+        1.0,
+    )
+
+
+@pytest.mark.parametrize(
+    "capacitance",
+    (0.0, -2.0e-4, np.nan),
+    ids=("zero", "negative", "nonfinite"),
+)
+def test_csi_qf_frequency_executor_rejects_invalid_capacitance(
+    monkeypatch,
+    capacitance,
+):
+    lane = _lane(
+        options={
+            "biases_V": [-0.2, -0.1, 0.0],
+            "frequencies_Hz": [1.0e4, 1.0e5, 1.0e6],
+        }
+    )
+    monkeypatch.setattr(
+        executors,
+        "_load_stack",
+        lambda *_: SimpleNamespace(T=300.0),
+    )
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_: np.linspace(0.0, 1.0, 5),
+    )
+    monkeypatch.setattr(
+        executors,
+        "require_thick_layer_interface_resolution",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(executors, "build_material_arrays", lambda *_: object())
+
+    def impedance(_grid, _stack, frequencies, **_kwargs):
+        admittance = 1j * 2.0 * np.pi * frequencies * capacitance
+        impedance_values = (
+            np.full(frequencies.shape, 1.0e300 + 0.0j)
+            if capacitance == 0.0
+            else 1.0 / admittance
+        )
+        return SimpleNamespace(
+            Z=impedance_values,
+            max_relative_face_spread=np.full(3, 1.0e-6),
+            backward_error=np.full(3, 1.0e-12),
+            reciprocal_condition=np.full(3, 0.1),
+            dc_state=SimpleNamespace(
+                certified=True,
+                max_normalized_cell_residual=1.0e-12,
+            ),
+        )
+
+    monkeypatch.setattr(executors, "run_quasi_fermi_impedance", impedance)
+    monkeypatch.setattr(
+        executors,
+        "_fit_mott_schottky",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invalid capacitance reached Mott-Schottky fitting"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="capacitance must be finite and positive"):
+        executors.run_csi_qf_frequency_domain(
+            lane,
+            MatrixPoint(4, 0.1),
+            Path("."),
+        )
+
+
+def test_csi_minimum_roadmap_lane_fails_at_the_registered_grid_guard():
+    registry = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    )
+    lane = registry.lane("csi-qf-frequency-domain")
+
+    with pytest.raises(GridResolutionError, match="under-resolved electrical grid"):
+        executors.run_csi_qf_frequency_domain(
+            lane,
+            MatrixPoint(100, 1.0),
+            ROOT,
+        )
+
+
+@dataclass
+class _FakeGrid:
+    x: np.ndarray
+    y: np.ndarray
+
+    @property
+    def Nx(self):
+        return len(self.x)
+
+    @property
+    def Ny(self):
+        return len(self.y)
+
+
+def test_twod_uniform_executor_smoke(monkeypatch):
+    lane = _lane(
+        options={
+            "base_lateral_intervals": 4,
+            "base_vertical_intervals_per_layer": 5,
+            "V_max_V": 1.0,
+            "V_step_V": 0.5,
+            "settle_time_s": 1.0e-6,
+        },
+        grid_values=(1, 2),
+    )
+    fake_layers = [SimpleNamespace(thickness=1.0) for _ in range(3)]
+    monkeypatch.setattr(
+        executors,
+        "_load_stack",
+        lambda *_: SimpleNamespace(T=300.0),
+    )
+    monkeypatch.setattr(executors, "_freeze_ions", lambda stack: stack)
+    monkeypatch.setattr(executors, "electrical_layers", lambda _stack: fake_layers)
+    metrics = JVMetrics(0.5, 1.0, 0.5, 0.025)
+    captured = {}
+
+    def run_jv(*_args, **kwargs):
+        captured["jv"] = kwargs
+        snapshots = tuple(
+            SimpleNamespace(
+                x=np.linspace(0.0, 1.0, 3),
+                n=np.ones(3),
+                p=np.ones(3),
+                P=np.ones(3),
+                V_app=voltage,
+            )
+            for voltage in (0.0, 0.5, 1.0)
+        )
+        return SimpleNamespace(
+            V_fwd=np.array([0.0, 0.5, 1.0]),
+            # Deliberately includes a large non-conduction contribution.  The
+            # uniform-limit adapter must compare Jn + Jp from snapshots instead.
+            J_fwd=np.array([101.0, 100.0, 99.0]),
+            metrics_fwd=metrics,
+            snapshots_fwd=snapshots,
+            certified=True,
+        )
+
+    monkeypatch.setattr(executors, "run_jv_sweep", run_jv)
+    monkeypatch.setattr(executors, "build_material_arrays", lambda *_: object())
+
+    def current_components(_x, _state, _stack, voltage, **_kwargs):
+        half = 0.5 * (1.0 - 2.0 * voltage)
+        return SimpleNamespace(
+            J_n=np.full(2, half),
+            J_p=np.full(2, half),
+        )
+
+    monkeypatch.setattr(
+        executors,
+        "compute_current_components",
+        current_components,
+        raising=False,
+    )
+    grid = _FakeGrid(np.linspace(0.0, 1.0, 3), np.linspace(0.0, 1.0, 4))
+
+    def build_grid(layers, **kwargs):
+        captured["layers"] = layers
+        captured["grid"] = kwargs
+        return grid
+
+    monkeypatch.setattr(executors, "build_grid_2d", build_grid)
+    monkeypatch.setattr(
+        executors,
+        "solve_illuminated_ss",
+        lambda *_args, **_kwargs: StateVec.pack(np.ones(4), np.ones(4), np.ones(4)),
+    )
+    material = SimpleNamespace(has_radiative_reabsorption_2d=False)
+    monkeypatch.setattr(
+        executors,
+        "build_material_arrays_2d",
+        lambda *_args, **_kwargs: material,
+    )
+    monkeypatch.setattr(
+        executors,
+        "_settle_2d_with_tolerance",
+        lambda state, *_args, **_kwargs: state,
+    )
+
+    def snapshot(_state, _material, *, V_app):
+        return SimpleNamespace(
+            V=V_app,
+            n=np.ones((4, 3)),
+            p=np.ones((4, 3)),
+            Jy_n=np.full((3, 3), 0.5),
+            Jy_p=np.full((3, 3), 0.5),
+        )
+
+    monkeypatch.setattr(executors, "extract_snapshot_2d", snapshot)
+    monkeypatch.setattr(
+        executors,
+        "compute_terminal_current_2d",
+        lambda snap: -(1.0 - 2.0 * snap.V),
+    )
+    monkeypatch.setattr(executors, "_poisson_relative_residual", lambda *_: 1e-12)
+
+    measurement = executors.run_twod_uniform_limit(
+        lane,
+        MatrixPoint(2, 0.1),
+        Path("."),
+    )
+    _assert_protocol(measurement)
+    _assert_registry_contract(measurement, "twod-uniform-limit")
+    assert captured["jv"]["N_grid"] == 31
+    assert captured["jv"]["v_rate"] == pytest.approx(5.0e5)
+    assert captured["jv"]["save_snapshots"] is True
+    assert captured["grid"]["Nx"] == 8
+    assert {layer.N for layer in captured["layers"]} == {10}
+    assert _metric_dict(measurement)["voc_2d_V"].values == (0.5,)
+    assert _metric_dict(measurement)["jv_2d_to_1d_normalized_difference"].values == (
+        0.0,
+        0.0,
+        0.0,
+    )
+    assert _metric_dict(measurement, quality=True)[
+        "frozen_ion_scope_declared"
+    ].values == (1.0,)
+    assert _metric_dict(measurement, quality=True)[
+        "max_abs_2d_to_1d_normalized_difference"
+    ].values == (0.0,)
+    protocol = json.loads(measurement.metadata_json)["protocol"]
+    assert protocol["current_composition"] == {
+        "compared": "electron_plus_hole_conduction",
+        "excluded": ["ionic", "displacement"],
+        "one_d_source": "saved_forward_snapshots_contact_face",
+        "two_d_source": "terminal_contact_carrier_flux",
+    }
+
+
+def test_twod_absolute_parity_preserves_a_stable_offset():
+    difference, max_abs = executors._normalized_current_parity(
+        np.array([1.2, 0.2, -0.8]),
+        np.array([1.0, 0.0, -1.0]),
+        scale=1.0,
+    )
+    lane = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    ).lane("twod-uniform-limit")
+    parity_gate = next(
+        gate
+        for gate in lane.quality_gates
+        if gate.metric == "max_abs_2d_to_1d_normalized_difference"
+    )
+
+    assert difference == pytest.approx(np.full(3, 0.2))
+    assert max_abs == pytest.approx(0.2)
+    assert parity_gate.operator == "le"
+    assert parity_gate.limit == pytest.approx(0.005)
+    assert max_abs > parity_gate.limit
+
+
+def test_twod_lateral_uniformity_includes_hole_variation():
+    snapshot = SimpleNamespace(
+        n=np.ones((2, 3)),
+        p=np.array([[1.0, 2.0, 1.0], [4.0, 8.0, 4.0]]),
+    )
+
+    assert executors._max_lateral_carrier_variation_relative(snapshot) == pytest.approx(
+        1.0
+    )
+
+
+def test_interface_charge_off_executor_smoke(monkeypatch):
+    lane = _lane(options={"V_max_V": 1.0, "voltage_points": 3})
+    monkeypatch.setattr(executors, "_load_stack", lambda *_: object())
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_: np.linspace(0.0, 1.0, 3),
+    )
+    base_material = SimpleNamespace(te_softness=0.0)
+    monkeypatch.setattr(executors, "build_material_arrays", lambda *_: base_material)
+    monkeypatch.setattr(
+        executors,
+        "replace",
+        lambda value, **kwargs: SimpleNamespace(**(vars(value) | kwargs)),
+    )
+    material = SimpleNamespace(
+        N_iface_state=1,
+        iface_state_charge=0.0,
+        iface_state_shared_occ=True,
+        interface_nodes=(1,),
+        dx_cell=np.ones(3),
+        te_softness=0.02,
+    )
+    monkeypatch.setattr(executors, "_enable_iface_states", lambda _mat: material)
+    state = StateVec.pack(
+        np.ones(3),
+        np.ones(3),
+        np.ones(3),
+        iface_state=np.ones(4),
+    )
+
+    def solve(_grid, _stack, voltage, **_kwargs):
+        return SimpleNamespace(
+            y=state,
+            residual=1.0e-8,
+            acceptance="residual_converged",
+        )
+
+    monkeypatch.setattr(executors, "solve_steady_state", solve)
+    monkeypatch.setattr(
+        executors,
+        "_compute_current_ss_with_spread",
+        lambda _x, _y, _stack, voltage, **_kwargs: (1.0 - 2.0 * voltage, 1e-8),
+    )
+    monkeypatch.setattr(
+        executors, "assemble_rhs", lambda *_args, **_kwargs: np.zeros(13)
+    )
+    monkeypatch.setattr(
+        executors,
+        "compute_interface_srh_shared_on_state",
+        lambda *_args, **_kwargs: -np.ones(4) * 1.0e10,
+    )
+
+    measurement = executors.run_interface_recombination_charge_off(
+        lane,
+        MatrixPoint(4, 0.1),
+        Path("."),
+    )
+    _assert_protocol(measurement)
+    _assert_registry_contract(
+        measurement,
+        "interface-recombination-charge-off",
+    )
+    assert _metric_dict(measurement)["voc_V"].values == (0.5,)
+    assert _metric_dict(measurement)["interface_flux_A_m2"].shape == (3,)
+    assert _metric_dict(measurement, quality=True)[
+        "trap_electrostatic_charge_enabled"
+    ].values == (0.0,)
+    assert _metric_dict(measurement, quality=True)[
+        "max_interface_flux_residual_A_m2"
+    ].values == (0.0,)
+    protocol = json.loads(measurement.metadata_json)["protocol"]
+    assert protocol["settle"]["max_continuity_current_error_A_m2"] == pytest.approx(
+        0.1
+    )
+    assert "max_current_spread_A_m2" not in protocol["settle"]

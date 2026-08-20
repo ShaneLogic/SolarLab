@@ -109,6 +109,8 @@ def poole_frenkel(
     mu0: np.ndarray,
     E_abs: np.ndarray,
     gamma_pf: np.ndarray,
+    *,
+    field_regularization_width_V_m: float = 0.0,
 ) -> np.ndarray:
     """Poole-Frenkel field-enhanced mobility.
 
@@ -121,6 +123,9 @@ def poole_frenkel(
     gamma_pf
         PF prefactor [(V/m)^-0.5]. ``γ_PF = 0`` returns ``mu0``
         unchanged.
+    field_regularization_width_V_m
+        Opt-in compact transition width around ``E = 0`` [V/m]. Zero keeps
+        the historical ``sqrt(abs(E))`` expression exactly.
 
     Returns
     -------
@@ -133,7 +138,12 @@ def poole_frenkel(
     # exp(γ · √|E|) grows fast for large E; cap the argument to prevent
     # overflow. exp(80) ≈ 5.5e34 is comfortably inside float64 range; any
     # larger field-enhancement factor is almost certainly a config error.
-    arg = gamma_pf * np.sqrt(E_abs)
+    from perovskite_sim.physics.regularization import compact_sqrt_abs
+
+    arg = gamma_pf * compact_sqrt_abs(
+        E_abs,
+        field_regularization_width_V_m,
+    )
     arg = np.clip(arg, -80.0, 80.0)
     return mu0 * np.exp(arg)
 
@@ -144,6 +154,8 @@ def apply_field_mobility(
     v_sat: np.ndarray,
     beta: np.ndarray,
     gamma_pf: np.ndarray,
+    *,
+    pf_field_regularization_width_V_m: float = 0.0,
 ) -> np.ndarray:
     """Compose Poole-Frenkel and Caughey-Thomas: PF first, then CT.
 
@@ -152,7 +164,12 @@ def apply_field_mobility(
 
     Parameters mirror :func:`caughey_thomas` and :func:`poole_frenkel`.
     """
-    mu_pf = poole_frenkel(mu0, E_abs, gamma_pf)
+    mu_pf = poole_frenkel(
+        mu0,
+        E_abs,
+        gamma_pf,
+        field_regularization_width_V_m=pf_field_regularization_width_V_m,
+    )
     return caughey_thomas(mu_pf, E_abs, v_sat, beta)
 
 

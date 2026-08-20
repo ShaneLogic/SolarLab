@@ -24,12 +24,9 @@ Contract pinned:
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pytest
 
-from perovskite_sim.constants import V_T
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.models.device import electrical_layers
 from perovskite_sim.scaps_compat import load_scaps_yaml
@@ -109,6 +106,45 @@ def test_srh_on_state_finite_under_dark_eq():
     iface_eq = _compute_iface_state_dark_eq(mat)
     sinks = compute_interface_srh_on_state(iface_eq, stack, mat)
     assert np.all(np.isfinite(sinks))
+
+
+def test_srh_density_regularization_is_exact_outside_declared_band():
+    from perovskite_sim.physics.interface_plane import (
+        compute_interface_srh_on_state,
+    )
+
+    stack, mat = _scaps_mirror()
+    state = _compute_iface_state_dark_eq(mat) * 10.0
+    width = float(np.min(state)) * 0.5
+    historical = compute_interface_srh_on_state(state, stack, mat)
+    regularized = compute_interface_srh_on_state(
+        state,
+        stack,
+        mat,
+        density_regularization_width_m3=width,
+    )
+    np.testing.assert_array_equal(regularized, historical)
+
+
+def test_shared_srh_density_regularization_is_exact_outside_declared_band():
+    from dataclasses import replace
+
+    from perovskite_sim.physics.interface_plane import (
+        compute_interface_srh_shared_on_state,
+    )
+
+    stack, mat = _scaps_mirror()
+    mat = replace(mat, iface_state_shared_occ=True)
+    state = _compute_iface_state_dark_eq(mat) * 10.0
+    width = float(np.min(state)) * 0.5
+    historical = compute_interface_srh_shared_on_state(state, stack, mat)
+    regularized = compute_interface_srh_shared_on_state(
+        state,
+        stack,
+        mat,
+        density_regularization_width_m3=width,
+    )
+    np.testing.assert_array_equal(regularized, historical)
 
 
 def test_srh_on_state_block_layout():

@@ -1,0 +1,636 @@
+"""Fast contract tests for the Phase-1 tolerance-by-grid infrastructure."""
+
+from __future__ import annotations
+
+from dataclasses import FrozenInstanceError
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+
+import numpy as np
+import pytest
+import yaml
+
+from perovskite_sim.validation.numerical_certificate import (
+    CERTIFICATE_SCHEMA,
+    REGISTRY_SCHEMA,
+    CellResult,
+    LaneDefinition,
+    MatrixPoint,
+    MetricValue,
+    NumericalCertificate,
+    NumericalCertificateError,
+    ObservableGate,
+    QualityGate,
+    canonical_json_bytes,
+    content_sha256,
+    evaluate_numerical_certificate,
+    load_refinement_registry,
+)
+from perovskite_sim.validation.refinement_runner import (
+    RefinementRunnerError,
+    load_executor,
+    plan_refinement,
+    runtime_environment,
+    run_refinement,
+    source_provenance,
+)
+
+
+pytestmark = pytest.mark.regression
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _lane(
+    config_path: Path,
+    *,
+    limit: float = 0.2,
+    options: dict | None = None,
+) -> LaneDefinition:
+    return LaneDefinition(
+        lane_id="test-lane",
+        claim_level="internal-numerical-candidate",
+        config_path=config_path.name,
+        config_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        grid_parameter="N_grid",
+        grid_values=(10, 20),
+        tolerance_parameter="atol_factor",
+        tolerance_factors=(1.0, 0.1),
+        observables=(
+            ObservableGate(
+                metric="response",
+                comparison="absolute_linf",
+                limit=limit,
+            ),
+        ),
+        quality_gates=(QualityGate("finite", "eq", 1.0),),
+        options_json=json.dumps(options or {}),
+        limitations=("synthetic contract test only",),
+    )
+
+
+def _completed(point: MatrixPoint, response: float, *, finite: float = 1.0):
+    return CellResult(
+        point=point,
+        status="completed",
+        observables=(MetricValue.from_value("response", response),),
+        quality=(MetricValue.from_value("finite", finite),),
+    )
+
+
+def _certificate(lane: LaneDefinition, cells: list[CellResult]):
+    return evaluate_numerical_certificate(
+        lane,
+        cells,
+        run_id="0" * 64,
+        source_commit="unknown",
+        source_fingerprint_sha256="1" * 64,
+        environment={"python": "test"},
+        manifest_sha256="2" * 64,
+        cell_artifact_sha256=[str(index) * 64 for index in range(3, 3 + len(cells))],
+    )
+
+
+def test_preregistered_phase1_lanes_and_thresholds_are_immutable():
+    registry = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    )
+
+    assert registry.schema_version == REGISTRY_SCHEMA
+    assert registry.certificate_schema == CERTIFICATE_SCHEMA
+    assert {lane.lane_id for lane in registry.lanes} == {
+        "scaps-mirror-frozen-ion-ss",
+        "ionmonger-mobile-ion-transient",
+        "csi-qf-frequency-domain",
+        "csi-qf-frequency-domain-resolved-v2",
+        "twod-uniform-limit",
+        "interface-recombination-charge-off",
+    }
+    assert all(len(lane.matrix_points) == 9 for lane in registry.lanes)
+    assert all(lane.definition_sha256 for lane in registry.lanes)
+    assert all(lane.observables for lane in registry.lanes)
+    assert all(lane.quality_gates for lane in registry.lanes)
+    assert all(lane.executor is not None for lane in registry.lanes)
+    assert all(lane.options["require_protocol"] for lane in registry.lanes)
+    assert all(load_executor(lane.executor) for lane in registry.lanes)
+    assert registry.lane("twod-uniform-limit").grid_values == (1, 2, 4)
+    csi_minimum = registry.lane("csi-qf-frequency-domain")
+    csi_resolved = registry.lane("csi-qf-frequency-domain-resolved-v2")
+    assert csi_minimum.grid_values == (100, 200, 300)
+    assert csi_resolved.grid_values == (
+        200,
+        300,
+        400,
+    )
+    assert csi_resolved.tolerance_factors == csi_minimum.tolerance_factors
+    assert csi_resolved.observables == csi_minimum.observables
+    assert csi_resolved.quality_gates == csi_minimum.quality_gates
+    assert csi_resolved.options == csi_minimum.options
+    with pytest.raises(FrozenInstanceError):
+        registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
+
+
+def test_certificate_distinguishes_certified_partial_and_failed(tmp_path):
+    config = tmp_path / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config)
+    points = lane.matrix_points
+    passing = [
+        _completed(points[0], 1.00),
+        _completed(points[1], 1.05),
+        _completed(points[2], 1.10),
+        _completed(points[3], 1.12),
+    ]
+    certified = _certificate(lane, passing)
+    assert certified.status == "certified"
+    assert certified.unconverged_dimensions == ()
+    assert len(certified.checks) == 6
+    assert NumericalCertificate.from_dict(certified.to_dict()) == certified
+
+    nonconverged = [*passing[:-1], _completed(points[-1], 1.50)]
+    partial = _certificate(lane, nonconverged)
+    assert partial.status == "partial"
+    assert set(partial.unconverged_dimensions) == {
+        "grid:response",
+        "tolerance:response",
+    }
+
+    failed = _certificate(lane, passing[:-1])
+    assert failed.status == "failed"
+    assert failed.missing_cells == (points[-1].key,)
+    assert failed.unconverged_dimensions == (f"matrix:{points[-1].key}",)
+
+    wrong_shape = [*passing[:-1], _completed(points[-1], [1.12, 1.13])]
+    malformed = _certificate(lane, wrong_shape)
+    assert malformed.status == "failed"
+    assert set(malformed.unconverged_dimensions) == {
+        "grid:response:shape",
+        "observable:response:shape_across_matrix",
+        "tolerance:response:shape",
+    }
+
+
+def test_refinement_runner_resumes_content_addressed_cells_without_overwrite(
+    tmp_path,
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    config = project / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config, limit=2.0)
+    calls: list[str] = []
+
+    def executor(_lane, point, _root):
+        calls.append(point.key)
+        return {
+            "observables": {"response": point.grid / 10.0},
+            "quality": {"finite": 1.0},
+            "metadata": {"point": point.key},
+        }
+
+    first = run_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:resume-v1",
+        max_cells=2,
+    )
+    assert first.executed_cells == 2
+    assert first.certificate.status == "failed"
+    assert len(first.certificate.missing_cells) == 2
+
+    resumed = run_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:resume-v1",
+    )
+    assert resumed.run_directory == first.run_directory
+    assert resumed.executed_cells == 2
+    assert resumed.reused_cells == 2
+    assert resumed.certificate.status == "certified"
+    assert len(calls) == 4
+    assert len(tuple((resumed.run_directory / "cells").glob("*.json"))) == 4
+
+    repeated = run_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:resume-v1",
+    )
+    assert repeated.executed_cells == 0
+    assert repeated.reused_cells == 4
+    assert repeated.certificate.certificate_sha256 == (
+        resumed.certificate.certificate_sha256
+    )
+    assert repeated.certificate_path.read_text(encoding="ascii") == (
+        resumed.certificate_path.read_text(encoding="ascii")
+    )
+    assert len(calls) == 4
+
+
+def test_failed_cell_can_be_retried_without_deleting_prior_artifact(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    config = project / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config, limit=2.0)
+    should_fail = {lane.matrix_points[1].key}
+
+    def executor(_lane, point, _root):
+        if point.key in should_fail:
+            raise RuntimeError("injected failure")
+        return {
+            "observables": {"response": point.grid / 10.0},
+            "quality": {"finite": 1.0},
+        }
+
+    first = run_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:retry-v1",
+    )
+    assert first.certificate.status == "failed"
+    assert first.certificate.failed_cells == (lane.matrix_points[1].key,)
+    assert len(tuple((first.run_directory / "cells").glob("*.json"))) == 4
+
+    should_fail.clear()
+    retried = run_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:retry-v1",
+        retry_failed=True,
+    )
+    assert retried.executed_cells == 1
+    assert retried.reused_cells == 3
+    assert retried.certificate.status == "certified"
+    assert len(tuple((retried.run_directory / "cells").glob("*.json"))) == 5
+
+
+def test_refinement_runner_rejects_historical_reference_output_root(tmp_path):
+    project = tmp_path / "project"
+    protected = project / "perovskite_sim/data/references"
+    protected.mkdir(parents=True)
+    config = project / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config)
+    calls = 0
+
+    def executor(_lane, point, _root):
+        nonlocal calls
+        calls += 1
+        return {
+            "observables": {"response": point.grid},
+            "quality": {"finite": 1.0},
+        }
+
+    with pytest.raises(RefinementRunnerError, match="historical reference"):
+        run_refinement(
+            lane,
+            executor,
+            project_root=project,
+            output_root=protected / "attempted-overwrite",
+            executor_id="tests.synthetic:protected-v1",
+        )
+    assert calls == 0
+
+
+def test_protocol_hash_is_manifested_and_inconsistency_fails_closed(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    config = project / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config, limit=2.0, options={"require_protocol": True})
+
+    def executor(_lane, point, _root):
+        protocol = {
+            "schema_version": "synthetic-protocol-v1",
+            "voltage_V": [0.0, float(point.grid)],
+        }
+        return {
+            "observables": {"response": point.grid / 10.0},
+            "quality": {"finite": 1.0},
+            "metadata": {
+                "protocol": protocol,
+                "protocol_hash": content_sha256(protocol),
+                "protocol_schema": protocol["schema_version"],
+            },
+        }
+
+    outcome = run_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:protocol-v1",
+    )
+    assert outcome.certificate.status == "failed"
+    assert outcome.certificate.protocol_sha256 is None
+    assert "protocol:inconsistent_across_matrix" in (
+        outcome.certificate.unconverged_dimensions
+    )
+    manifest = json.loads(outcome.manifest_path.read_text(encoding="ascii"))
+    assert len(manifest["protocols"]) == 2
+
+
+def test_plan_refinement_is_read_only(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    config = project / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config)
+    destination = tmp_path / "not-created"
+
+    def executor(_lane, point, _root):
+        return {
+            "observables": {"response": point.grid},
+            "quality": {"finite": 1.0},
+        }
+
+    plan = plan_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=destination,
+        executor_id="tests.synthetic:dry-run-v1",
+    )
+    assert plan.to_dict()["matrix_cells"] == 4
+    assert not destination.exists()
+
+
+def _git(project: Path, *arguments: str) -> None:
+    subprocess.run(
+        ["git", *arguments],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_source_fingerprint_includes_staged_only_changes(tmp_path):
+    repository = tmp_path / "repository"
+    project = repository / "perovskite-sim"
+    source = project / "perovskite_sim/solver.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "tests@example.invalid")
+    _git(repository, "config", "user.name", "SolarLab tests")
+    _git(repository, "add", "perovskite-sim/perovskite_sim/solver.py")
+    _git(repository, "commit", "-m", "baseline")
+
+    clean = source_provenance(project)
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repository, "add", "perovskite-sim/perovskite_sim/solver.py")
+    staged = source_provenance(project)
+
+    assert staged["fingerprint_sha256"] != clean["fingerprint_sha256"]
+    assert staged["source_changes"] == [
+        {
+            "path": "perovskite_sim/solver.py",
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        }
+    ]
+
+    source.unlink()
+    _git(repository, "add", "--update")
+    deleted = source_provenance(project)
+    assert deleted["fingerprint_sha256"] != staged["fingerprint_sha256"]
+    assert deleted["source_changes"] == [
+        {"path": "perovskite_sim/solver.py", "sha256": "deleted"}
+    ]
+
+
+def test_behavior_environment_changes_run_identity(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    config = project / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config)
+
+    def executor(_lane, point, _root):
+        return {
+            "observables": {"response": point.grid},
+            "quality": {"finite": 1.0},
+        }
+
+    monkeypatch.delenv("SOLARLAB_BAND_GRADING", raising=False)
+    baseline = plan_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:environment-v1",
+    )
+    monkeypatch.setenv("SOLARLAB_BAND_GRADING", "1")
+    enabled = plan_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:environment-v1",
+    )
+
+    expected_behavior_variables = {
+        "PEROVSKITE_RHS_FINITE_CHECK",
+        "SOLARLAB_AUTOLOOP_GEN",
+        "SOLARLAB_BAND_GRADING",
+        "SOLARLAB_DOS_BAND",
+        "SOLARLAB_IFACE_ALLOW_GEN",
+        "SOLARLAB_IFACE_PLANE",
+        "SOLARLAB_IFACE_PLANE_GEN",
+        "SOLARLAB_IFACE_PROJ",
+        "SOLARLAB_IFACE_QSS",
+        "SOLARLAB_IFACE_SHARED_OCC",
+        "SOLARLAB_IFACE_TUNNEL",
+        "SOLARLAB_IFACE_TWOSIDED",
+        "SOLARLAB_INTERFACE_PLANE_STATE",
+        "SOLARLAB_ION_STERIC_DIFF",
+        "SOLARLAB_QSS_VTH",
+        "SOLARLAB_SS_GUMMEL",
+        "SOLARLAB_SS_JAC_REUSE",
+        "SOLARLAB_TE_PHYSICAL",
+    }
+    assert expected_behavior_variables == set(
+        runtime_environment()["behavior_variables"]
+    )
+    assert baseline.environment["behavior_variables"]["SOLARLAB_BAND_GRADING"] == (
+        "unset"
+    )
+    assert enabled.environment["behavior_variables"]["SOLARLAB_BAND_GRADING"] == "1"
+    assert enabled.run_id != baseline.run_id
+
+
+def test_every_completed_cell_must_match_registered_observable_contract(tmp_path):
+    config = tmp_path / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config)
+    points = lane.matrix_points
+    passing = [_completed(point, 1.0) for point in points]
+
+    unregistered = CellResult(
+        point=points[0],
+        status="completed",
+        observables=(MetricValue.from_value("unregistered", 1.0),),
+        quality=(MetricValue.from_value("finite", 1.0),),
+    )
+    missing = _certificate(lane, [unregistered, *passing[1:]])
+    assert missing.status == "failed"
+    assert f"observable:response:missing@{points[0].key}" in (
+        missing.unconverged_dimensions
+    )
+    assert f"observable:unregistered:unexpected@{points[0].key}" in (
+        missing.unconverged_dimensions
+    )
+
+    wrong_units = CellResult(
+        point=points[0],
+        status="completed",
+        observables=(MetricValue.from_value("response", 1.0, units="V"),),
+        quality=(MetricValue.from_value("finite", 1.0),),
+    )
+    unit_failure = _certificate(lane, [wrong_units, *passing[1:]])
+    assert unit_failure.status == "failed"
+    assert f"observable:response:units@{points[0].key}" in (
+        unit_failure.unconverged_dimensions
+    )
+
+    wrong_shape = CellResult(
+        point=points[0],
+        status="completed",
+        observables=(MetricValue.from_value("response", [1.0, 1.0]),),
+        quality=(MetricValue.from_value("finite", 1.0),),
+    )
+    shape_failure = _certificate(lane, [wrong_shape, *passing[1:]])
+    assert shape_failure.status == "failed"
+    assert "observable:response:shape_across_matrix" in (
+        shape_failure.unconverged_dimensions
+    )
+
+
+@pytest.mark.parametrize(
+    "artifact_hashes",
+    [[], ["3" * 64] * 4],
+    ids=["missing", "duplicate"],
+)
+def test_certificate_rejects_incomplete_artifact_hash_evidence(
+    tmp_path,
+    artifact_hashes,
+):
+    config = tmp_path / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config)
+    cells = [_completed(point, 1.0) for point in lane.matrix_points]
+
+    with pytest.raises(NumericalCertificateError, match="artifact"):
+        evaluate_numerical_certificate(
+            lane,
+            cells,
+            run_id="0" * 64,
+            source_commit="unknown",
+            source_fingerprint_sha256="1" * 64,
+            environment={"python": "test"},
+            manifest_sha256="2" * 64,
+            cell_artifact_sha256=artifact_hashes,
+        )
+
+
+def test_certificate_and_registry_reject_unknown_or_malformed_fields(tmp_path):
+    config = tmp_path / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config)
+    certified = _certificate(
+        lane,
+        [_completed(point, 1.0) for point in lane.matrix_points],
+    )
+
+    extra_certificate_field = certified.to_dict()
+    extra_certificate_field["unhashed_annotation"] = {"claim": "external"}
+    with pytest.raises(NumericalCertificateError, match="unknown keys"):
+        NumericalCertificate.from_dict(extra_certificate_field)
+
+    extra_check_field = certified.to_dict()
+    extra_check_field["checks"][0]["unhashed_annotation"] = True
+    with pytest.raises(NumericalCertificateError, match="unknown keys"):
+        NumericalCertificate.from_dict(extra_check_field)
+
+    registry_raw = yaml.safe_load(
+        (ROOT / "reproducibility/numerical_refinement_registry.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    registry_raw["unexpected"] = True
+    registry_path = tmp_path / "unknown-registry.yaml"
+    registry_path.write_text(yaml.safe_dump(registry_raw), encoding="utf-8")
+    with pytest.raises(NumericalCertificateError, match="unknown keys"):
+        load_refinement_registry(registry_path, verify_config_hashes=False)
+
+    malformed_raw = yaml.safe_load(
+        (ROOT / "reproducibility/numerical_refinement_registry.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    malformed_raw["lanes"]["scaps-mirror-frozen-ion-ss"]["observables"][
+        "voc_V"
+    ] = "not-a-mapping"
+    malformed_path = tmp_path / "malformed-registry.yaml"
+    malformed_path.write_text(yaml.safe_dump(malformed_raw), encoding="utf-8")
+    with pytest.raises(NumericalCertificateError, match="must be a mapping"):
+        load_refinement_registry(malformed_path, verify_config_hashes=False)
+
+
+def test_complex_metric_values_fail_closed():
+    with pytest.raises(NumericalCertificateError, match="real-valued"):
+        MetricValue.from_value("response", np.array([1.0 + 2.0j]))
+
+
+def test_resume_rejects_content_addressed_manifest_with_changed_identity(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    config = project / "device.yaml"
+    config.write_text("device: test\n", encoding="utf-8")
+    lane = _lane(config, limit=2.0)
+
+    def executor(_lane, point, _root):
+        return {
+            "observables": {"response": point.grid / 10.0},
+            "quality": {"finite": 1.0},
+        }
+
+    first = run_refinement(
+        lane,
+        executor,
+        project_root=project,
+        output_root=tmp_path / "results",
+        executor_id="tests.synthetic:manifest-identity-v1",
+        max_cells=1,
+    )
+    manifest = json.loads(first.manifest_path.read_text(encoding="ascii"))
+    manifest["environment"]["python"] = "forged-runtime"
+    manifest_bytes = canonical_json_bytes(manifest)
+    manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    forged_path = first.run_directory / "manifests" / f"{manifest_sha}.json"
+    forged_path.write_bytes(manifest_bytes)
+    state_path = first.run_directory / "state.json"
+    state = json.loads(state_path.read_text(encoding="ascii"))
+    state["latest_manifest_sha256"] = manifest_sha
+    state_path.write_bytes(canonical_json_bytes(state))
+
+    with pytest.raises(RefinementRunnerError, match="identity"):
+        run_refinement(
+            lane,
+            executor,
+            project_root=project,
+            output_root=tmp_path / "results",
+            executor_id="tests.synthetic:manifest-identity-v1",
+        )

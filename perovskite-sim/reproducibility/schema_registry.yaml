@@ -79,3 +79,79 @@ schemas:
     required_device_keys: []
     required_layer_keys: []
     unknown_key_policy: loader-permissive
+  numerical-refinement-registry-v1:
+    detector: schema_version_equals_numerical-refinement-registry-v1
+    loader: perovskite_sim.validation.numerical_certificate.load_refinement_registry
+    units: per-metric-explicit
+    required_top_keys: [schema_version, certificate_schema, policy, lanes]
+    required_device_keys: []
+    required_layer_keys: []
+    invariants:
+      - every config is repository-relative and content-addressed by SHA-256
+      - grid values are strictly increasing positive integers
+      - tolerance factors are strictly decreasing positive values
+      - observable and quality thresholds are declared before execution
+      - changing a threshold requires a new lane ID
+    unknown_key_policy: strict
+  numerical-refinement-manifest-v1:
+    detector: schema_version_equals_numerical-refinement-manifest-v1
+    loader: perovskite_sim.validation.refinement_runner._read_json
+    units: per-metric-explicit
+    required_top_keys:
+      - schema_version
+      - run_id
+      - lane_id
+      - lane_definition_sha256
+      - executor
+      - executor_source_sha256
+      - source
+      - environment
+      - expected_cells
+      - artifacts
+      - protocols
+      - pending_cells
+      - failed_cells
+      - status
+    required_device_keys: []
+    required_layer_keys: []
+    status_values: [running, complete, complete_with_failures]
+    invariants:
+      - every completed cell artifact path equals cells/<content_sha256>.json
+      - canonical protocol documents and hashes are stored without threshold tuning
+      - pending, failed, and complete state is recomputed during resume
+    unknown_key_policy: strict
+  numerical-certificate-v1:
+    detector: schema_version_equals_numerical-certificate-v1
+    loader: perovskite_sim.validation.numerical_certificate.NumericalCertificate.from_dict
+    units: per-metric-explicit
+    required_top_keys:
+      - schema_version
+      - certificate_sha256
+      - run_id
+      - lane_id
+      - lane_definition_sha256
+      - config_path
+      - config_sha256
+      - source_commit
+      - source_fingerprint_sha256
+      - environment
+      - manifest_sha256
+      - protocol_sha256
+      - status
+      - expected_cells
+      - completed_cells
+      - failed_cells
+      - missing_cells
+      - unconverged_dimensions
+      - checks
+      - cell_artifact_sha256
+      - limitations
+    required_device_keys: []
+    required_layer_keys: []
+    status_values: [certified, partial, failed]
+    invariants:
+      - failed means one or more required cells or fields are missing or failed
+      - partial means the matrix completed but at least one pre-registered gate failed
+      - certified means both terminal grid and tolerance pairs and every quality gate passed
+      - certificate content is immutable and references an immutable manifest snapshot
+    unknown_key_policy: strict

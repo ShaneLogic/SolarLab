@@ -11,6 +11,10 @@ from perovskite_sim.solver.illuminated_ss import (
     solve_illuminated_ss,
 )
 from perovskite_sim.solver.newton import solve_equilibrium
+from perovskite_sim.solver.numerical_diagnostics import (
+    NumericalDiagnosticsMonitor,
+    StateLayout,
+)
 
 
 def _fake_mat(N=2, *, dual=False, limit=1.0e30):
@@ -198,6 +202,45 @@ def test_dual_ion_state_shape_is_supported(monkeypatch):
     )
 
     np.testing.assert_array_equal(result, terminal)
+
+
+def test_opt_in_return_includes_immutable_numerical_diagnostics(monkeypatch):
+    x = np.array([0.0, 1.0])
+    terminal = np.ones(6, dtype=float)
+    monitor = NumericalDiagnosticsMonitor(
+        StateLayout(2, positive_ion_active=(True, True))
+    )
+    monitor.observe_trial_state(terminal)
+    monitor.observe_srh_denominator("bulk", np.array([2.0]))
+    report = monitor.finalize(terminal, solver_success=True)
+    monkeypatch.setattr(
+        illuminated_ss,
+        "solve_equilibrium",
+        lambda *_args, **_kwargs: terminal,
+    )
+    monkeypatch.setattr(
+        illuminated_ss,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=True,
+            y=terminal[:, None],
+            numerical_diagnostics=report,
+            nfev=11,
+            njev=3,
+            nlu=4,
+        ),
+    )
+
+    state, diagnostics = solve_illuminated_ss(
+        x,
+        object(),
+        mat=_fake_mat(),
+        return_diagnostics=True,
+    )
+
+    np.testing.assert_array_equal(state, terminal)
+    assert diagnostics.numerical_diagnostics is report
+    assert (diagnostics.nfev, diagnostics.njev, diagnostics.nlu) == (11, 3, 4)
 
 
 def test_shape(grid_and_stack):

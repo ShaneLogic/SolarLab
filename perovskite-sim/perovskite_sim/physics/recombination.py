@@ -1,5 +1,61 @@
 from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import numpy as np
+
+
+SRHDenominatorObserver = Callable[[str, np.ndarray], None]
+_SRH_DENOMINATOR_OBSERVER: ContextVar[SRHDenominatorObserver | None] = (
+    ContextVar("srh_denominator_observer", default=None)
+)
+
+
+@contextmanager
+def _observe_srh_denominators(
+    observer: SRHDenominatorObserver,
+) -> Iterator[None]:
+    """Route production SRH denominators to one per-solve observer."""
+
+    token = _SRH_DENOMINATOR_OBSERVER.set(observer)
+    try:
+        yield
+    finally:
+        _SRH_DENOMINATOR_OBSERVER.reset(token)
+
+
+def _record_srh_denominator(kind: str, denominator: np.ndarray) -> None:
+    observer = _SRH_DENOMINATOR_OBSERVER.get()
+    if observer is not None:
+        observer(kind, np.asarray(denominator))
+
+
+def bulk_srh_denominator(
+    n: np.ndarray,
+    p: np.ndarray,
+    tau_n: float,
+    tau_p: float,
+    n1: float,
+    p1: float,
+) -> np.ndarray:
+    """Bulk SRH denominator [s m^-3], without altering invalid inputs."""
+
+    return tau_p * (n + n1) + tau_n * (p + p1)
+
+
+def interface_srh_denominator(
+    n: float,
+    p: float,
+    n1: float,
+    p1: float,
+    v_n: float,
+    v_p: float,
+) -> float:
+    """Surface SRH denominator [s m^-4] for positive capture velocities."""
+
+    return (n + n1) / v_p + (p + p1) / v_n
 
 
 def srh_recombination(
@@ -7,7 +63,9 @@ def srh_recombination(
     tau_n: float, tau_p: float, n1: float, p1: float,
 ) -> np.ndarray:
     """Shockley-Read-Hall recombination rate [m⁻³ s⁻¹]."""
-    return (n * p - ni_sq) / (tau_p * (n + n1) + tau_n * (p + p1))
+    denominator = bulk_srh_denominator(n, p, tau_n, tau_p, n1, p1)
+    _record_srh_denominator("bulk", denominator)
+    return (n * p - ni_sq) / denominator
 
 
 def radiative_recombination(
@@ -45,7 +103,9 @@ def interface_recombination(
         # Guarding both (not just the both-zero case) also prevents a
         # ZeroDivisionError for configs with one-sided passivation.
         return 0.0
-    return (n * p - ni_sq) / ((n + n1) / v_p + (p + p1) / v_n)
+    denominator = interface_srh_denominator(n, p, n1, p1, v_n, v_p)
+    _record_srh_denominator("interface", np.asarray(denominator))
+    return (n * p - ni_sq) / denominator
 
 
 def total_recombination(

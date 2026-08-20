@@ -108,6 +108,8 @@ def test_result_is_populated_dataclass(short_sweep):
     assert np.all(np.diff(r.suns) > 0), "suns should be sorted ascending"
     assert np.all(np.isfinite(r.V_oc))
     assert np.all(np.isfinite(r.J_sc))
+    assert r.protocol is not None
+    assert r.protocol.implicit_legacy_protocol
 
 
 def test_voc_monotone_in_suns(short_sweep):

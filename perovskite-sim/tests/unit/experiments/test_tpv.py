@@ -50,6 +50,8 @@ def test_tpv_runs(nip_stack):
     assert isinstance(result, TPVResult)
     assert len(result.t) == len(result.V)
     assert len(result.t) == len(result.J)
+    assert result.protocol is not None
+    assert result.protocol.implicit_legacy_protocol
 
 
 @pytest.mark.slow

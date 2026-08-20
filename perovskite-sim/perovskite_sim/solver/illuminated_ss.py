@@ -12,6 +12,7 @@ separate, typically much longer, pre-bias/dwell protocol.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import numpy as np
 
 from perovskite_sim.models.device import DeviceStack
@@ -22,6 +23,15 @@ from perovskite_sim.solver.mol import (
     build_material_arrays,
     run_transient,
 )
+from perovskite_sim.solver.tolerances import (
+    AbsoluteTolerance,
+    ComponentwiseAtol,
+    build_componentwise_atol_1d,
+)
+from perovskite_sim.solver.numerical_diagnostics import (
+    NumericalDiagnosticsReport,
+)
+from perovskite_sim.physics.regularization import RHSRegularization
 
 
 _NUMERIC_SOLVER_FAILURES = (
@@ -63,15 +73,35 @@ class IlluminatedSteadyStateError(RuntimeError):
         )
 
 
+@dataclass(frozen=True)
+class IlluminatedPreconditionerDiagnostics:
+    """Numerical evidence for the finite-time illuminated preconditioner."""
+
+    numerical_diagnostics: NumericalDiagnosticsReport
+    nfev: int | None = None
+    njev: int | None = None
+    nlu: int | None = None
+
+
+def _optional_solver_count(result, name: str) -> int | None:
+    value = getattr(result, name, None)
+    if isinstance(value, (int, np.integer)) and not isinstance(value, bool):
+        normalized = int(value)
+        return normalized if normalized >= 0 else None
+    return None
+
+
 def solve_illuminated_ss(
     x: np.ndarray,
     stack: DeviceStack,
     V_app: float = 0.0,
     t_settle: float = 1e-3,
     rtol: float = 1e-4,
-    atol: float = 1e-6,
+    atol: AbsoluteTolerance = 1e-6,
     mat: MaterialArrays | None = None,
-) -> np.ndarray:
+    regularization: RHSRegularization | None = None,
+    return_diagnostics: bool = False,
+) -> np.ndarray | tuple[np.ndarray, IlluminatedPreconditionerDiagnostics]:
     """Return the state after a finite illuminated preconditioning interval.
 
     Integrates the MOL system for t_settle seconds under illumination,
@@ -114,6 +144,7 @@ def solve_illuminated_ss(
             (0.0, t_settle), np.array([t_settle]),
             stack, illuminated=True, V_app=V_app,
             rtol=rtol, atol=atol, mat=mat_eff,
+            regularization=regularization,
         )
     except _NUMERIC_SOLVER_FAILURES as exc:
         raise IlluminatedSteadyStateError(
@@ -153,14 +184,35 @@ def solve_illuminated_ss(
             reason_code="invalid_terminal_state",
         )
     terminal = states[:, -1]
-    density_atol = max(float(atol), 0.0)
+    if isinstance(atol, ComponentwiseAtol):
+        density_atol = build_componentwise_atol_1d(
+            atol,
+            y0=y_dark,
+            ni_sq=mat_eff.ni_sq,
+            N_A=mat_eff.N_A,
+            N_D=mat_eff.N_D,
+            P_ion0=mat_eff.P_ion0,
+            has_dual_ions=mat_eff.has_dual_ions,
+            P_ion0_neg=mat_eff.P_ion0_neg,
+            n_interface_states=mat_eff.N_iface_state,
+        )
+        tolerance_description = (
+            "componentwise absolute tolerance "
+            f"(min={np.min(density_atol):.3g}, "
+            f"max={np.max(density_atol):.3g} m^-3)"
+        )
+    else:
+        density_atol = max(float(atol), 0.0)
+        tolerance_description = (
+            f"absolute tolerance ({density_atol:.3g} m^-3)"
+        )
     if np.any(terminal < -density_atol):
         raise IlluminatedSteadyStateError(
             V_app=V_app,
             t_settle=t_settle,
             solver_message=(
-                "solver returned a negative density beyond its absolute "
-                f"tolerance ({density_atol:.3g} m^-3)"
+                "solver returned a negative density beyond its "
+                f"{tolerance_description}"
             ),
             reason_code="unphysical_terminal_state",
         )
@@ -210,4 +262,19 @@ def solve_illuminated_ss(
             solver_message="mobile-ion density exceeded its site-occupancy limit",
             reason_code="unphysical_terminal_state",
         )
-    return terminal
+    if not return_diagnostics:
+        return terminal
+    report = getattr(sol, "numerical_diagnostics", None)
+    if not isinstance(report, NumericalDiagnosticsReport):
+        raise IlluminatedSteadyStateError(
+            V_app=V_app,
+            t_settle=t_settle,
+            solver_message="solver omitted numerical diagnostics",
+            reason_code="missing_numerical_diagnostics",
+        )
+    return terminal, IlluminatedPreconditionerDiagnostics(
+        numerical_diagnostics=report,
+        nfev=_optional_solver_count(sol, "nfev"),
+        njev=_optional_solver_count(sol, "njev"),
+        nlu=_optional_solver_count(sol, "nlu"),
+    )

@@ -1,14 +1,12 @@
 from __future__ import annotations
 import dataclasses
+import hashlib
 import warnings
 from dataclasses import dataclass
 from typing import Callable, Literal, Sequence
 import numpy as np
 
 from perovskite_sim._compat.numpy_compat import trapezoid
-
-ProgressCallback = Callable[[str, int, int, str], None]
-"""Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.discretization.grid import (
     Layer,
@@ -16,8 +14,15 @@ from perovskite_sim.discretization.grid import (
     require_thick_layer_interface_resolution,
 )
 from perovskite_sim.physics.ion_migration import ion_face_flux
+from perovskite_sim.physics.regularization import RHSRegularization
+from perovskite_sim.solver.numerical_diagnostics import (
+    NumericalDiagnosticsReport,
+)
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
-from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
+from perovskite_sim.solver.illuminated_ss import (
+    IlluminatedPreconditionerDiagnostics,
+    solve_illuminated_ss,
+)
 from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.solver.mol import (
     StateVec, run_transient,
@@ -31,6 +36,20 @@ from perovskite_sim.physics.grading import has_grading_params
 from perovskite_sim.models.current import CurrentComponents
 from perovskite_sim.models.spatial import SpatialSnapshot
 from perovskite_sim.constants import EPS_0, Q
+from perovskite_sim.experiments.protocol import (
+    DCSettleCriterion,
+    ExperimentProtocol,
+    IlluminationStep,
+    ProtocolMismatchError,
+    ProtocolMode,
+    SamplingProtocol,
+    ScanProtocol,
+    resolve_experiment_protocol,
+)
+
+
+# Callback signature: stage, current, total, message.
+ProgressCallback = Callable[[str, int, int, str], None]
 
 
 @dataclass(frozen=True)
@@ -60,6 +79,16 @@ class JVCurrentDecomp:
     J_ion: np.ndarray
     J_disp: np.ndarray
     J_total: np.ndarray
+
+
+@dataclass(frozen=True)
+class JVAcceptedSolveDiagnostics:
+    """One solver segment on the accepted integration path."""
+
+    report: NumericalDiagnosticsReport
+    nfev: int | None = None
+    njev: int | None = None
+    nlu: int | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +123,10 @@ class JVPointStatus:
     hole_continuity_bound_A_m2: float | None = None
     face_current_spread_A_m2: float | None = None
     poisson_residual: float | None = None
+    numerical_diagnostics: tuple[JVAcceptedSolveDiagnostics, ...] = ()
+    nfev: int | None = None
+    njev: int | None = None
+    nlu: int | None = None
 
 
 class JVCertificationError(RuntimeError):
@@ -183,6 +216,9 @@ class JVResult:
     decomp_rev: JVCurrentDecomp | None = None
     status_fwd: tuple[JVPointStatus, ...] | None = None
     status_rev: tuple[JVPointStatus, ...] | None = None
+    initial_numerical_diagnostics: IlluminatedPreconditionerDiagnostics | None = None
+    protocol: ExperimentProtocol | None = None
+    rhs_regularization: RHSRegularization | None = None
 
     @property
     def certified(self) -> bool:
@@ -589,8 +625,10 @@ def _state_fields(
     n = sv.n.copy()
     p = sv.p.copy()
     if not mat.has_selective_contacts:
-        n[0] = mat.n_L; n[-1] = mat.n_R
-        p[0] = mat.p_L; p[-1] = mat.p_R
+        n[0] = mat.n_L
+        n[-1] = mat.n_R
+        p[0] = mat.p_L
+        p[-1] = mat.p_R
     else:
         if mat.S_n_L is None:
             n[0] = mat.n_L
@@ -667,8 +705,10 @@ def compute_current_components(
     phi_p = phi + mat.chi + mat.Eg
     xi_n = (phi_n[1:] - phi_n[:-1]) / V_T_dev
     xi_p = (phi_p[1:] - phi_p[:-1]) / V_T_dev
-    B_pos_n = bernoulli(xi_n); B_neg_n = bernoulli(-xi_n)
-    B_pos_p = bernoulli(xi_p); B_neg_p = bernoulli(-xi_p)
+    B_pos_n = bernoulli(xi_n)
+    B_neg_n = bernoulli(-xi_n)
+    B_pos_p = bernoulli(xi_p)
+    B_neg_p = bernoulli(-xi_p)
     if mat.has_field_mobility:
         from perovskite_sim.physics.field_mobility import apply_field_mobility
         E_face = -(phi[1:] - phi[:-1]) / dx
@@ -689,7 +729,6 @@ def compute_current_components(
     J_p = Q * D_p_face_eff / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
 
     # Ion current: Q * F_ion at each face (positive species)
-    xi_ion = (phi[1:] - phi[:-1]) / V_T_dev
     D_ion_face = np.broadcast_to(
         np.asarray(mat.D_ion_face, dtype=float), dx.shape,
     )
@@ -1110,6 +1149,8 @@ def _integrate_step(
     max_bisect: int = 10,
     illuminated: bool = True,
     n_legs: int = 1,
+    regularization: RHSRegularization | None = None,
+    _accepted_diagnostics: list[JVAcceptedSolveDiagnostics] | None = None,
 ) -> np.ndarray:
     """Advance the coupled MOL state from t_lo to t_hi at fixed V_app.
 
@@ -1158,6 +1199,29 @@ def _integrate_step(
     fully self-consistent semantics; only the pathological steps fall back.
     """
     dt = t_hi - t_lo
+    accepted_here: list[JVAcceptedSolveDiagnostics] = []
+
+    def _commit(
+        state: np.ndarray,
+        record=None,
+    ) -> np.ndarray:
+        if record is not None and _accepted_diagnostics is not None:
+            report = getattr(record, "numerical_diagnostics", None)
+            if not isinstance(report, NumericalDiagnosticsReport):
+                raise RuntimeError(
+                    "accepted transient segment omitted numerical diagnostics"
+                )
+            accepted_here.append(
+                JVAcceptedSolveDiagnostics(
+                    report=report,
+                    nfev=_optional_solver_count(record, "nfev"),
+                    njev=_optional_solver_count(record, "njev"),
+                    nlu=_optional_solver_count(record, "nlu"),
+                )
+            )
+        if _accepted_diagnostics is not None:
+            _accepted_diagnostics.extend(accepted_here)
+        return state
     if n_legs > 1 and dt > 0.0:
         # Forced subdivision for a local convergence probe/recovery. Chain
         # `n_legs` equal sub-intervals, each with its own max_step cap.
@@ -1167,8 +1231,14 @@ def _integrate_step(
             y_k = _integrate_step(
                 x, y_k, stack, mat, V_app, float(t_a), float(t_b),
                 rtol, atol, max_bisect, illuminated,
+                regularization=regularization,
+                _accepted_diagnostics=(
+                    accepted_here
+                    if _accepted_diagnostics is not None
+                    else None
+                ),
             )
-        return y_k
+        return _commit(y_k)
 
     last_failure: str | None = None
 
@@ -1186,14 +1256,25 @@ def _integrate_step(
             # with the explicit solver exceptions so bisection/BDF can recover.
             with warnings.catch_warnings():
                 warnings.simplefilter("error", RuntimeWarning)
-                sol_attempt = run_transient(
-                    x, y, (t_lo, t_hi), np.array([t_hi]),
-                    stack, illuminated=illuminated, V_app=V_app,
-                    rtol=rtol, atol=atol,
+                solver_kwargs = dict(
+                    illuminated=illuminated,
+                    V_app=V_app,
+                    rtol=rtol,
+                    atol=atol,
                     max_step=dt / 20.0 if dt > 0.0 else np.inf,
                     mat=mat_attempt,
                     max_nfev=_JV_RADAU_MAX_NFEV,
                     method=method,
+                )
+                if regularization is not None:
+                    solver_kwargs["regularization"] = regularization
+                sol_attempt = run_transient(
+                    x,
+                    y,
+                    (t_lo, t_hi),
+                    np.array([t_hi]),
+                    stack,
+                    **solver_kwargs,
                 )
         except _JV_NUMERIC_FAILURES as exc:
             last_failure = f"{type(exc).__name__}: {exc}"
@@ -1206,12 +1287,12 @@ def _integrate_step(
 
     sol = _solver_attempt(mat)
     if sol is not None and sol.success:
-        return sol.y[:, -1]
+        return _commit(sol.y[:, -1], sol)
     if mat.has_radiative_reabsorption:
         mat_step = _bake_radiative_reabsorption_step(y, x, mat, illuminated)
         sol = _solver_attempt(mat_step)
         if sol is not None and sol.success:
-            return sol.y[:, -1]
+            return _commit(sol.y[:, -1], sol)
     if max_bisect == 0:
         # Last-chance BDF fallback. When Radau bisection is exhausted on
         # a near-flat-band / deep-injection state, scipy's BDF (variable-
@@ -1220,7 +1301,7 @@ def _integrate_step(
         # reach this branch.
         sol_bdf = _solver_attempt(mat, method="BDF")
         if sol_bdf is not None and sol_bdf.success:
-            return sol_bdf.y[:, -1]
+            return _commit(sol_bdf.y[:, -1], sol_bdf)
         detail = f"; last failure: {last_failure}" if last_failure else ""
         raise RuntimeError(
             f"JV sweep: coupled solver failed to converge on [{t_lo:.3e},{t_hi:.3e}] "
@@ -1228,9 +1309,43 @@ def _integrate_step(
         )
     t_mid = 0.5 * (t_lo + t_hi)
     y_mid = _integrate_step(x, y, stack, mat, V_app, t_lo, t_mid, rtol, atol,
-                             max_bisect - 1, illuminated)
-    return _integrate_step(x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol,
-                            max_bisect - 1, illuminated)
+                             max_bisect - 1, illuminated,
+                             regularization=regularization,
+                             _accepted_diagnostics=(
+                                 accepted_here
+                                 if _accepted_diagnostics is not None
+                                 else None
+                             ))
+    y_final = _integrate_step(
+        x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol,
+        max_bisect - 1, illuminated,
+        regularization=regularization,
+        _accepted_diagnostics=(
+            accepted_here if _accepted_diagnostics is not None else None
+        ),
+    )
+    return _commit(y_final)
+
+
+def _optional_solver_count(result, name: str) -> int | None:
+    value = getattr(result, name, None)
+    if isinstance(value, (int, np.integer)) and not isinstance(value, bool):
+        normalized = int(value)
+        return normalized if normalized >= 0 else None
+    return None
+
+
+def _sum_accepted_solver_count(
+    diagnostics: tuple[JVAcceptedSolveDiagnostics, ...],
+    name: str,
+) -> int | None:
+    values = [
+        value
+        for item in diagnostics
+        for value in (getattr(item, name),)
+        if value is not None
+    ]
+    return sum(values) if values else None
 
 
 def quasi_static_sweep(
@@ -1242,6 +1357,7 @@ def quasi_static_sweep(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     mat: MaterialArrays | None = None,
+    regularization: RHSRegularization | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Quasi-static illuminated J-V from an existing state, carrying state forward.
 
@@ -1265,7 +1381,23 @@ def quasi_static_sweep(
     for k in range(n):
         V_k = float(voltages[k])
         y_prev = y.copy()
-        y = _integrate_step(x, y, stack, mat, V_k, t, t + dt, rtol, atol)
+        if regularization is None:
+            y = _integrate_step(
+                x, y, stack, mat, V_k, t, t + dt, rtol, atol,
+            )
+        else:
+            y = _integrate_step(
+                x,
+                y,
+                stack,
+                mat,
+                V_k,
+                t,
+                t + dt,
+                rtol,
+                atol,
+                regularization=regularization,
+            )
         J_arr[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev, dt=dt,
                                      mat=mat, V_app_prev=V_prev)
         V_prev = V_k
@@ -1385,10 +1517,14 @@ def _layer_node_counts(stack: DeviceStack, N_grid: int) -> list[int]:
     n_per = N_grid // len(elec)
     band_grading = bool(getattr(stack, "band_grading", False))
     counts: list[int] = []
-    for l in elec:
+    for layer in elec:
         mult = 1
-        if band_grading and l.params is not None and has_grading_params(l.params):
-            mult = max(1, int(getattr(l.params, "grading_N_mult", 1)))
+        if (
+            band_grading
+            and layer.params is not None
+            and has_grading_params(layer.params)
+        ):
+            mult = max(1, int(getattr(layer.params, "grading_N_mult", 1)))
         counts.append(n_per * mult)
     return counts
 
@@ -1466,6 +1602,100 @@ def _default_V_max(stack: DeviceStack) -> float:
     return max(V_bi_eff * 1.3, 1.4)
 
 
+def _fixed_generation_reference(generation: np.ndarray | None) -> str:
+    if generation is None:
+        return "stack_baseline_generation"
+    values = np.ascontiguousarray(np.asarray(generation, dtype="<f8"))
+    if np.any(~np.isfinite(values)):
+        raise ValueError("fixed_generation must contain only finite values")
+    digest = hashlib.sha256()
+    digest.update(str(values.shape).encode("ascii"))
+    digest.update(values.tobytes())
+    return f"sha256:{digest.hexdigest()}"
+
+
+def build_jv_experiment_protocol(
+    stack: DeviceStack,
+    *,
+    v_rate: float = 0.1,
+    n_points: int = 50,
+    V_max: float | None = None,
+    illuminated: bool = True,
+    fixed_generation: np.ndarray | None = None,
+    implicit_legacy_protocol: bool = False,
+) -> ExperimentProtocol:
+    """Describe the exact built-in forward/reverse J-V history."""
+
+    if n_points < 2:
+        raise ValueError(f"n_points must be >= 2, got {n_points}")
+    if not np.isfinite(v_rate) or v_rate <= 0.0:
+        raise ValueError(f"v_rate must be finite and positive, got {v_rate}")
+    V_upper = _default_V_max(stack) if V_max is None else float(V_max)
+    if not np.isfinite(V_upper):
+        raise ValueError("V_max must be finite")
+    forward = np.linspace(0.0, V_upper, n_points)
+    reverse = np.linspace(V_upper, 0.0, n_points)
+    dwell = abs(V_upper) / (v_rate * (n_points - 1))
+    if illuminated:
+        initial_state = "finite_time_illuminated_preconditioned"
+        pre_bias = 0.0
+        soak = 1.0e-3
+        source = _fixed_generation_reference(fixed_generation)
+        history = (
+            IlluminationStep(
+                phase="short_circuit_preconditioning",
+                condition="baseline",
+                duration_s=soak,
+                intensity_suns=1.0,
+                source_reference=source,
+            ),
+            IlluminationStep(
+                phase="forward_reverse_scan",
+                condition="baseline",
+                duration_s=2.0 * n_points * dwell,
+                intensity_suns=1.0,
+                source_reference=source,
+            ),
+        )
+        settle = DCSettleCriterion(kind="finite_time", duration_s=soak)
+    else:
+        initial_state = "dark_equilibrium"
+        pre_bias = None
+        soak = 0.0
+        history = (
+            IlluminationStep(
+                phase="forward_reverse_scan",
+                condition="dark",
+                duration_s=2.0 * n_points * dwell,
+            ),
+        )
+        settle = DCSettleCriterion(kind="not_applicable")
+    return ExperimentProtocol(
+        experiment="jv_hysteresis",
+        initial_state_source=initial_state,
+        pre_bias_V=pre_bias,
+        soak_duration_s=soak,
+        dwell_duration_s=dwell,
+        illumination_history=history,
+        temperature_K=float(stack.T),
+        scan=ScanProtocol(
+            axis="voltage_V",
+            direction="ascending_then_descending",
+            start=0.0,
+            stop=V_upper,
+            rate_V_s=float(v_rate),
+        ),
+        ac_excitation=None,
+        dc_settle=settle,
+        sampling=SamplingProtocol(
+            axis="voltage_V",
+            mode="linear",
+            values=tuple(np.concatenate((forward, reverse))),
+        ),
+        implicit_legacy_protocol=implicit_legacy_protocol,
+    )
+
+
 def run_jv_sweep(
     stack: DeviceStack,
     N_grid: int = 100,
@@ -1483,6 +1713,10 @@ def run_jv_sweep(
     certification_mode: Literal["strict", "diagnostic"] = "strict",
     allow_underresolved_grid: bool = False,
     allow_unvalidated_driver: bool = False,
+    experiment_protocol: ExperimentProtocol | None = None,
+    protocol_mode: ProtocolMode = "compatibility",
+    rhs_regularization: RHSRegularization | None = None,
+    collect_numerical_diagnostics: bool = False,
 ) -> JVResult:
     """Run forward and reverse J-V sweeps.
 
@@ -1558,6 +1792,11 @@ def run_jv_sweep(
             "certification_mode must be 'strict' or 'diagnostic', got "
             f"{certification_mode!r}"
         )
+    if protocol_mode not in ("compatibility", "research_strict"):
+        raise ValueError(
+            "protocol_mode must be 'compatibility' or 'research_strict', got "
+            f"{protocol_mode!r}"
+        )
     if v_max_max_attempts < 1:
         raise ValueError(
             f"v_max_max_attempts must be >= 1, got {v_max_max_attempts}"
@@ -1566,6 +1805,23 @@ def run_jv_sweep(
         # Checked before the ladder below, which divides by ``n_points - 1``.
         raise ValueError(f"n_points must be >= 2, got {n_points}")
     if v_max_max_attempts > 1:
+        if experiment_protocol is not None or protocol_mode == "research_strict":
+            expected = build_jv_experiment_protocol(
+                stack,
+                v_rate=v_rate,
+                n_points=n_points,
+                V_max=V_max,
+                illuminated=illuminated,
+                fixed_generation=fixed_generation,
+                implicit_legacy_protocol=True,
+            )
+            resolve_experiment_protocol(
+                experiment_protocol, expected, mode=protocol_mode,
+            )
+            raise ProtocolMismatchError(
+                "an explicit research protocol requires a fixed J-V voltage "
+                "window; v_max_max_attempts must be 1"
+            )
         # Adaptive V_max bump: run the legacy single-attempt path first;
         # if it brackets V_oc successfully, return that result unchanged
         # (so attempts > 1 with successful first try is bit-identical to
@@ -1600,6 +1856,8 @@ def run_jv_sweep(
                 certification_mode=certification_mode,
                 allow_underresolved_grid=allow_underresolved_grid,
                 allow_unvalidated_driver=allow_unvalidated_driver,
+                rhs_regularization=rhs_regularization,
+                collect_numerical_diagnostics=collect_numerical_diagnostics,
             )
             if (
                 last_result.status_fwd is not None
@@ -1628,6 +1886,19 @@ def run_jv_sweep(
         raise ValueError(f"v_rate must be positive, got {v_rate}")
     if not illuminated and fixed_generation is not None:
         raise ValueError("Cannot combine illuminated=False with fixed_generation")
+    resolved_protocol = resolve_experiment_protocol(
+        experiment_protocol,
+        build_jv_experiment_protocol(
+            stack,
+            v_rate=v_rate,
+            n_points=n_points,
+            V_max=V_max,
+            illuminated=illuminated,
+            fixed_generation=fixed_generation,
+            implicit_legacy_protocol=True,
+        ),
+        mode=protocol_mode,
+    )
     for i, layer in enumerate(stack.layers):
         if layer.thickness <= 0:
             raise ValueError(
@@ -1653,7 +1924,6 @@ def run_jv_sweep(
     )
     N = _grid_node_count(stack, N_grid)
     assert N == len(x), "grid node count mismatch — _grid_node_count is out of sync"
-    L = sum(l.thickness for l in elec)
 
     # Build the material cache once — shared across forward and reverse sweeps
     # and every RHS call inside them. See solver/mol.py:MaterialArrays.
@@ -1689,14 +1959,69 @@ def run_jv_sweep(
     # - Fixed generation: precondition with the overridden material cache
     # - Default: preserve the independently built preconditioning cache; this
     #   is load-bearing for the calibrated stiff-branch regression protocol
+    initial_numerical_diagnostics = None
     if not illuminated:
         y_eq = solve_equilibrium(x, stack)
     elif fixed_generation is not None:
-        y_eq = solve_illuminated_ss(
-            x, stack, V_app=0.0, rtol=rtol, atol=atol, mat=mat,
-        )
+        if rhs_regularization is None:
+            if collect_numerical_diagnostics:
+                y_eq, initial_numerical_diagnostics = solve_illuminated_ss(
+                    x,
+                    stack,
+                    V_app=0.0,
+                    rtol=rtol,
+                    atol=atol,
+                    mat=mat,
+                    return_diagnostics=True,
+                )
+            else:
+                y_eq = solve_illuminated_ss(
+                    x, stack, V_app=0.0, rtol=rtol, atol=atol, mat=mat,
+                )
+        else:
+            initial = solve_illuminated_ss(
+                x,
+                stack,
+                V_app=0.0,
+                rtol=rtol,
+                atol=atol,
+                mat=mat,
+                regularization=rhs_regularization,
+                return_diagnostics=collect_numerical_diagnostics,
+            )
+            if collect_numerical_diagnostics:
+                y_eq, initial_numerical_diagnostics = initial
+            else:
+                y_eq = initial
     else:
-        y_eq = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
+        if rhs_regularization is None:
+            if collect_numerical_diagnostics:
+                y_eq, initial_numerical_diagnostics = solve_illuminated_ss(
+                    x,
+                    stack,
+                    V_app=0.0,
+                    rtol=rtol,
+                    atol=atol,
+                    return_diagnostics=True,
+                )
+            else:
+                y_eq = solve_illuminated_ss(
+                    x, stack, V_app=0.0, rtol=rtol, atol=atol,
+                )
+        else:
+            initial = solve_illuminated_ss(
+                x,
+                stack,
+                V_app=0.0,
+                rtol=rtol,
+                atol=atol,
+                regularization=rhs_regularization,
+                return_diagnostics=collect_numerical_diagnostics,
+            )
+            if collect_numerical_diagnostics:
+                y_eq, initial_numerical_diagnostics = initial
+            else:
+                y_eq = initial
 
     def _sweep(
         V_start: float,
@@ -1740,12 +2065,46 @@ def run_jv_sweep(
             t_lo: float,
             t_hi: float,
             n_legs: int,
-        ) -> tuple[np.ndarray, float]:
+        ) -> tuple[
+            np.ndarray,
+            float,
+            tuple[JVAcceptedSolveDiagnostics, ...],
+        ]:
+            accepted_diagnostics: list[JVAcceptedSolveDiagnostics] | None = (
+                [] if collect_numerical_diagnostics else None
+            )
             try:
-                y_candidate = _integrate_step(
-                    x, y_entry, stack, mat, V_k, t_lo, t_hi, rtol, atol,
-                    illuminated=illuminated, n_legs=n_legs,
-                )
+                if rhs_regularization is None:
+                    y_candidate = _integrate_step(
+                        x,
+                        y_entry,
+                        stack,
+                        mat,
+                        V_k,
+                        t_lo,
+                        t_hi,
+                        rtol,
+                        atol,
+                        illuminated=illuminated,
+                        n_legs=n_legs,
+                        _accepted_diagnostics=accepted_diagnostics,
+                    )
+                else:
+                    y_candidate = _integrate_step(
+                        x,
+                        y_entry,
+                        stack,
+                        mat,
+                        V_k,
+                        t_lo,
+                        t_hi,
+                        rtol,
+                        atol,
+                        illuminated=illuminated,
+                        n_legs=n_legs,
+                        regularization=rhs_regularization,
+                        _accepted_diagnostics=accepted_diagnostics,
+                    )
             except _JV_NUMERIC_FAILURES as exc:
                 raise _JVCandidateFailure(
                     "integration_failed",
@@ -1766,15 +2125,18 @@ def run_jv_sweep(
                     f"with {n_legs} leg(s): {type(exc).__name__}: {exc}",
                     state=y_candidate,
                 ) from exc
-            return y_candidate, J_candidate
+            return y_candidate, J_candidate, tuple(accepted_diagnostics or ())
 
         for k, V_k in enumerate(V_arr):
             y_prev = y.copy()
             t_lo = t_points[k]
             t_hi = t_lo + dt
             candidate_error: _JVCandidateFailure | None = None
+            accepted_diagnostics: tuple[JVAcceptedSolveDiagnostics, ...] = ()
             try:
-                y, J_k = _candidate(y_prev, float(V_k), t_lo, t_hi, 1)
+                y, J_k, accepted_diagnostics = _candidate(
+                    y_prev, float(V_k), t_lo, t_hi, 1,
+                )
             except _JVCandidateFailure as exc:
                 candidate_error = exc
                 y = y_prev if exc.state is None else exc.state.copy()
@@ -1823,7 +2185,7 @@ def run_jv_sweep(
                 refinement_required = True
                 attempted_legs.append(_J_ZERO_BIAS_PROBE_LEGS)
                 try:
-                    y_probe, J_probe = _candidate(
+                    y_probe, J_probe, _probe_diagnostics = _candidate(
                         y_prev, float(V_k), t_lo, t_hi,
                         _J_ZERO_BIAS_PROBE_LEGS,
                     )
@@ -1847,7 +2209,7 @@ def run_jv_sweep(
                     else:
                         attempted_legs.append(_J_ZERO_BIAS_CONFIRM_LEGS)
                         try:
-                            y_confirm, J_confirm = _candidate(
+                            y_confirm, J_confirm, confirm_diagnostics = _candidate(
                                 y_prev, float(V_k), t_lo, t_hi,
                                 _J_ZERO_BIAS_CONFIRM_LEGS,
                             )
@@ -1868,6 +2230,7 @@ def run_jv_sweep(
                                 N, mat.N_iface_state,
                             ):
                                 y, J_k = y_confirm, J_confirm
+                                accepted_diagnostics = confirm_diagnostics
                                 accepted_legs = _J_ZERO_BIAS_CONFIRM_LEGS
                                 refinement_converged = True
                                 reason_code = "zero_bias_refinement_recovered"
@@ -1920,7 +2283,7 @@ def run_jv_sweep(
                 for n_legs in _J_BRANCH_RETRY_LEGS:
                     attempted_legs.append(n_legs)
                     try:
-                        y_retry, J_retry = _candidate(
+                        y_retry, J_retry, retry_diagnostics = _candidate(
                             y_prev, float(V_k), t_lo, t_hi, n_legs,
                         )
                     except RuntimeError:
@@ -1936,6 +2299,7 @@ def run_jv_sweep(
                                 y_retry, J_retry, N, mat.N_iface_state,
                             )):
                         y, J_k = y_retry, J_retry
+                        accepted_diagnostics = retry_diagnostics
                         accepted_legs = n_legs
                         refinement_converged = True
                         reason_code = (
@@ -1979,6 +2343,11 @@ def run_jv_sweep(
                     "the local step completed, but its warm-start state chain "
                     "contains an uncertified predecessor"
                 )
+            diagnostics_for_status = (
+                accepted_diagnostics
+                if local_valid and collect_numerical_diagnostics
+                else ()
+            )
             point_status = JVPointStatus(
                 branch=stage,
                 index=k,
@@ -1994,6 +2363,16 @@ def run_jv_sweep(
                 reason_code=reason_code,
                 message=message,
                 candidate_current=initial_candidate_current,
+                numerical_diagnostics=diagnostics_for_status,
+                nfev=_sum_accepted_solver_count(
+                    diagnostics_for_status, "nfev",
+                ),
+                njev=_sum_accepted_solver_count(
+                    diagnostics_for_status, "njev",
+                ),
+                nlu=_sum_accepted_solver_count(
+                    diagnostics_for_status, "nlu",
+                ),
             )
             if not point_status.valid and certification_mode == "strict":
                 raise JVCertificationError(point_status)
@@ -2095,4 +2474,7 @@ def run_jv_sweep(
         decomp_rev=decomp_rev,
         status_fwd=status_fwd,
         status_rev=status_rev,
+        initial_numerical_diagnostics=initial_numerical_diagnostics,
+        protocol=resolved_protocol,
+        rhs_regularization=rhs_regularization or RHSRegularization(),
     )

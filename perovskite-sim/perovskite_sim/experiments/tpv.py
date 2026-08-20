@@ -37,11 +37,114 @@ from perovskite_sim.solver.mol import (
 from perovskite_sim.experiments.jv_sweep import (
     _compute_current,
     _integrate_step,
-    compute_metrics,
-    _grid_node_count,
+)
+from perovskite_sim.experiments.protocol import (
+    DCSettleCriterion,
+    ExperimentProtocol,
+    IlluminationStep,
+    ProtocolMode,
+    SamplingProtocol,
+    ScanProtocol,
+    VocSearchProtocol,
+    resolve_experiment_protocol,
 )
 
 ProgressCallback = Callable[[str, int, int, str], None]
+
+
+def _tpv_sampling_times(
+    t_pulse: float,
+    t_decay: float,
+    n_points: int,
+) -> np.ndarray:
+    if n_points < 10:
+        raise ValueError(f"n_points must be >= 10, got {n_points}")
+    t_pulse_pts = max(int(n_points * t_pulse / t_decay), 10)
+    t_decay_pts = n_points - t_pulse_pts
+    if t_decay_pts < 0:
+        raise ValueError(
+            "n_points is too small for the requested pulse/decay sampling"
+        )
+    return np.concatenate([
+        np.linspace(0, t_pulse, t_pulse_pts, endpoint=False),
+        np.linspace(t_pulse, t_decay, t_decay_pts + 1),
+    ])
+
+
+def build_tpv_experiment_protocol(
+    stack: DeviceStack,
+    *,
+    delta_G_frac: float = 0.05,
+    t_pulse: float = 1e-6,
+    t_decay: float = 50e-6,
+    n_points: int = 200,
+    voc_search: VocSearchProtocol | None = None,
+    implicit_legacy_protocol: bool = False,
+) -> ExperimentProtocol:
+    """Describe TPV preconditioning, light pulse, decay, and samples."""
+
+    if not np.isfinite(delta_G_frac) or not 0.0 < delta_G_frac < 1.0:
+        raise ValueError(f"delta_G_frac must be finite and in (0, 1), got {delta_G_frac}")
+    if not np.isfinite(t_pulse) or t_pulse <= 0.0:
+        raise ValueError(f"t_pulse must be finite and positive, got {t_pulse}")
+    if not np.isfinite(t_decay) or t_decay <= t_pulse:
+        raise ValueError(f"t_decay must be finite and exceed t_pulse, got {t_decay}")
+    times = _tpv_sampling_times(t_pulse, t_decay, n_points)
+    settle = 1.0e-3
+    search = voc_search or VocSearchProtocol()
+    return ExperimentProtocol(
+        experiment="tpv",
+        initial_state_source="finite_time_illuminated_preconditioned",
+        pre_bias_V=0.0,
+        soak_duration_s=settle,
+        dwell_duration_s=None,
+        illumination_history=(
+            IlluminationStep(
+                phase="short_circuit_preconditioning",
+                condition="baseline",
+                duration_s=settle,
+                intensity_suns=1.0,
+                source_reference="stack_baseline_generation",
+            ),
+            IlluminationStep(
+                phase="adaptive_open_circuit_search",
+                condition="baseline",
+                intensity_suns=1.0,
+                source_reference="stack_baseline_generation",
+            ),
+            IlluminationStep(
+                phase="photovoltage_pulse",
+                condition="pulse",
+                duration_s=float(t_pulse),
+                intensity_suns=1.0,
+                relative_generation_change=float(delta_G_frac),
+                source_reference="stack_baseline_generation",
+            ),
+            IlluminationStep(
+                phase="open_circuit_decay",
+                condition="baseline",
+                duration_s=float(t_decay - t_pulse),
+                intensity_suns=1.0,
+                source_reference="stack_baseline_generation",
+            ),
+        ),
+        temperature_K=float(stack.T),
+        scan=ScanProtocol(
+            axis="time_s",
+            direction="forward_time",
+            start=0.0,
+            stop=float(t_decay),
+        ),
+        ac_excitation=None,
+        dc_settle=DCSettleCriterion(kind="finite_time", duration_s=settle),
+        sampling=SamplingProtocol(
+            axis="time_s",
+            mode="piecewise_linear",
+            values=tuple(times),
+        ),
+        voc_search=search,
+        implicit_legacy_protocol=implicit_legacy_protocol,
+    )
 
 
 def _find_voc(
@@ -52,17 +155,22 @@ def _find_voc(
     V_guess: float,
     rtol: float = 1e-4,
     atol: float = 1e-6,
+    search: VocSearchProtocol | None = None,
 ) -> tuple[float, np.ndarray]:
     """Find V_oc by bisection: the voltage where J(V) = 0 under illumination.
 
     Starts from a coarse bracket [0, V_guess*1.5] and narrows to ~1 mV.
     Returns (V_oc, y_at_voc).
     """
+    protocol = search or VocSearchProtocol()
     # Coarse scan to bracket V_oc
-    n_coarse = 20
-    V_lo, V_hi = 0.0, V_guess * 1.5
+    n_coarse = protocol.coarse_points
+    V_lo = protocol.coarse_start_V
+    V_hi = max(V_guess, protocol.minimum_guess_V) * (
+        protocol.coarse_upper_guess_factor
+    )
     V_scan = np.linspace(V_lo, V_hi, n_coarse)
-    dt_coarse = 1e-4  # short settle per voltage step
+    dt_coarse = protocol.coarse_dwell_s
     y = y_ss.copy()
     J_scan = np.zeros(n_coarse)
     for k, V_k in enumerate(V_scan):
@@ -85,25 +193,27 @@ def _find_voc(
 
     # Bisection refinement to ~1 mV
     y_a = y_ss.copy()
-    for _iter in range(15):
+    for _iter in range(protocol.bisection_max_steps):
         V_mid = 0.5 * (V_a + V_b)
         y_prev = y_a.copy()
-        t_base = _iter * dt_coarse
+        t_base = _iter * protocol.bisection_dwell_s
         y_mid = _integrate_step(x, y_a, stack, mat, V_mid, t_base,
-                                t_base + dt_coarse, rtol, atol)
+                                t_base + protocol.bisection_dwell_s, rtol, atol)
         J_mid = _compute_current(x, y_mid, stack, V_mid, y_prev=y_prev,
-                                  dt=dt_coarse, mat=mat)
+                                  dt=protocol.bisection_dwell_s, mat=mat)
         if J_mid > 0:
             V_a = V_mid
             y_a = y_mid
         else:
             V_b = V_mid
-        if abs(V_b - V_a) < 1e-3:
+        if abs(V_b - V_a) < protocol.bisection_tolerance_V:
             break
 
     V_oc = 0.5 * (V_a + V_b)
     # Settle at V_oc
-    y_oc = _integrate_step(x, y_a, stack, mat, V_oc, 0.0, 1e-4, rtol, atol)
+    y_oc = _integrate_step(
+        x, y_a, stack, mat, V_oc, 0.0, protocol.final_settle_s, rtol, atol
+    )
     return V_oc, y_oc
 
 
@@ -213,6 +323,9 @@ def run_tpv(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
+    experiment_protocol: ExperimentProtocol | None = None,
+    protocol_mode: ProtocolMode = "compatibility",
+    voc_search: VocSearchProtocol | None = None,
 ) -> TPVResult:
     """Run a transient photovoltage experiment.
 
@@ -248,12 +361,27 @@ def run_tpv(
         raise ValueError(f"t_pulse must be positive, got {t_pulse}")
     if t_decay <= t_pulse:
         raise ValueError(f"t_decay must exceed t_pulse, got {t_decay}")
+    resolved_protocol = resolve_experiment_protocol(
+        experiment_protocol,
+        build_tpv_experiment_protocol(
+            stack,
+            delta_G_frac=delta_G_frac,
+            t_pulse=t_pulse,
+            t_decay=t_decay,
+            n_points=n_points,
+            voc_search=voc_search,
+            implicit_legacy_protocol=True,
+        ),
+        mode=protocol_mode,
+    )
 
     import dataclasses
 
     # Build grid (electrical layers only)
     elec = electrical_layers(stack)
-    layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
+    layers_grid = [
+        Layer(layer.thickness, N_grid // len(elec)) for layer in elec
+    ]
     x = multilayer_grid(layers_grid)
 
     # Build material cache — baseline illumination
@@ -278,20 +406,24 @@ def run_tpv(
     # search. The selected operating value is signed and can be negative for
     # n-contact-left devices; take its magnitude so the bracket
     # [0, V_guess*1.5] stays forward-biased instead of scanning into reverse.
-    V_oc, y_oc = _find_voc(x, y_illum, stack, mat_ss,
-                            V_guess=abs(stack.operating_built_in_potential()),
-                            rtol=rtol, atol=atol)
+    search = resolved_protocol.voc_search
+    assert search is not None
+    V_oc, y_oc = _find_voc(
+        x,
+        y_illum,
+        stack,
+        mat_ss,
+        V_guess=abs(stack.operating_built_in_potential()),
+        rtol=rtol,
+        atol=atol,
+        search=search,
+    )
 
     if progress is not None:
         progress("tpv", 0, n_points, f"V_oc={V_oc:.4f} V")
 
     # Step 2: Adaptive time grid — denser during pulse, sparser during decay
-    t_pulse_pts = max(int(n_points * t_pulse / t_decay), 10)
-    t_decay_pts = n_points - t_pulse_pts
-    t_arr = np.concatenate([
-        np.linspace(0, t_pulse, t_pulse_pts, endpoint=False),
-        np.linspace(t_pulse, t_decay, t_decay_pts + 1),
-    ])
+    t_arr = _tpv_sampling_times(t_pulse, t_decay, n_points)
 
     # Step 3: Circuit-mode transient. At every reported time we enforce
     # the open-circuit constraint J_terminal(y, V) = 0 exactly via a
@@ -361,4 +493,5 @@ def run_tpv(
         V_oc=V_oc,
         tau=tau,
         delta_V0=delta_V0,
+        protocol=resolved_protocol,
     )

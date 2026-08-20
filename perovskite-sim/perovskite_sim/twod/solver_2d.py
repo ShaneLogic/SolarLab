@@ -7,6 +7,11 @@ from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.contacts import selective_contact_flux
 from perovskite_sim.physics.recombination import total_recombination
 from perovskite_sim.solver.mol import build_material_arrays as build_material_arrays_1d
+from perovskite_sim.solver.tolerances import (
+    AbsoluteTolerance,
+    ComponentwiseAtol,
+    build_componentwise_atol_2d,
+)
 from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
 from perovskite_sim.twod.field_mobility_2d import (
     arith_mean_face_x, arith_mean_face_y, arith_mean_face_wrap,
@@ -831,7 +836,7 @@ def run_transient_2d(
     t_end: float,
     max_step: float | None = None,
     rtol: float = 1e-6,
-    atol: float = 1e-8,
+    atol: AbsoluteTolerance = 1e-8,
     max_nfev: int | None = None,
 ) -> np.ndarray:
     """Integrate dy/dt = assemble_rhs_2d(...) on [0, t_end] with Radau.
@@ -840,6 +845,10 @@ def run_transient_2d(
     fails to converge, the RHS produces NaN/Inf, or ``max_nfev`` is
     exceeded.
 
+    Passing :class:`~perovskite_sim.solver.tolerances.ComponentwiseAtol`
+    opts into a flattened ``(n, p)`` tolerance vector built from the local
+    neutral carrier references. The default remains the historical scalar.
+
     The ``max_nfev`` cap mirrors the 1D ``run_transient`` pattern: without
     it Radau can spin in its implicit Newton iteration on nearly singular
     Jacobians (e.g. the diode-injection knee at V ≈ 0.21 V on TMM presets
@@ -847,6 +856,19 @@ def run_transient_2d(
     cap converts that hang into a fast ``RuntimeError`` so the caller's
     lagged-fallback path can take over.
     """
+    solver_atol = atol
+    if isinstance(atol, ComponentwiseAtol):
+        solver_atol = build_componentwise_atol_2d(
+            atol,
+            ni=mat.ni,
+            N_A=mat.N_A,
+            N_D=mat.N_D,
+        )
+        if solver_atol.shape != np.asarray(y0).shape:
+            raise ValueError(
+                f"y0 shape {np.asarray(y0).shape} does not match the 2D "
+                f"state layout shape {solver_atol.shape}"
+            )
     counter = [0]
 
     def rhs(t: float, y_state: np.ndarray) -> np.ndarray:
@@ -861,7 +883,7 @@ def run_transient_2d(
         sol = solve_ivp(
             rhs, (0.0, t_end), y0,
             method="Radau",
-            rtol=rtol, atol=atol,
+            rtol=rtol, atol=solver_atol,
             max_step=max_step if max_step is not None else np.inf,
             dense_output=False,
         )
