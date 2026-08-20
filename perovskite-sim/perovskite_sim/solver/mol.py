@@ -324,6 +324,7 @@ class MaterialArrays:
     # TMM-computed generation profile G(x) [m^-3 s^-1]; None = use Beer-Lambert
     G_optical: np.ndarray | None = None
     # Negative ion species arrays (dual-species mode when has_dual_ions is True)
+    D_ion_neg_node: np.ndarray | None = None
     D_ion_neg_face: np.ndarray | None = None
     P_lim_neg_face: np.ndarray | None = None
     P_ion0_neg: np.ndarray | None = None
@@ -1803,6 +1804,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         ion_steric_shared_site=bool(getattr(stack, "ion_steric_shared_site", True)),
         interface_faces=tuple(interface_face_list),
         G_optical=G_optical,
+        D_ion_neg_node=D_ion_neg_node if _has_dual_ions else None,
         D_ion_neg_face=D_ion_neg_face if _has_dual_ions else None,
         P_lim_neg_face=P_lim_neg_face if _has_dual_ions else None,
         P_ion0_neg=P_ion0_neg if _has_dual_ions else None,

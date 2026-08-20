@@ -172,6 +172,9 @@ therefore `compatible_unverified`, every
 certificate remains false. This distinction is intentional.
 
 The result closes only the DC-state prerequisite for ion-aware impedance.
-It does not yet implement the mobile-ion storage matrix, state/voltage
-linearization, frequency-domain solve, frequency coverage assessment or
-transient lock-in cross-check. Those are Phase 2 steps 2 through 6.
+The subsequent opt-in reference engine now implements the mobile-ion storage
+matrix, state/voltage central-finite-difference linearization and decomposed
+frequency-domain solve. It is `INTERNAL_TESTED_REFERENCE`, not a registered
+grid/frequency certificate. Frequency coverage assessment, structured
+Jacobian comparison and transient lock-in remain open. See
+[ion-aware-impedance-reference-engine.md](ion-aware-impedance-reference-engine.md).

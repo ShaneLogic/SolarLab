@@ -74,6 +74,9 @@ failed/partial lanes, and evidence boundaries are recorded in the
 The first post-P1 impedance prerequisite, a residual- and conservation-certified
 mobile-ion DC state, is documented in
 [1D ion-aware DC certification closure](docs/ion-aware-dc-certification.md).
+The opt-in Phase 2 mass/storage and central-finite-difference linearization
+slice is documented in
+[ion-aware impedance reference engine](docs/ion-aware-impedance-reference-engine.md).
 
 Evidence labels matter: a passing `load_only` or internal regression is not an
 external validation. See [reproducibility/README.md](reproducibility/README.md)

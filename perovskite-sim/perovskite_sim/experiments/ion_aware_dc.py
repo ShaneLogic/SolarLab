@@ -379,6 +379,8 @@ class IonAwareDCStep:
 class IonAwareDCResult:
     x: np.ndarray
     y: np.ndarray
+    initial_y: np.ndarray
+    stack: DeviceStack
     protocol: IonAwareDCProtocol
     steps: tuple[IonAwareDCStep, ...]
     state_certificate: IonAwareDCStateCertificate
@@ -899,6 +901,8 @@ def solve_ion_aware_dc(
     result = IonAwareDCResult(
         x=np.asarray(x, dtype=float).copy(),
         y=state.copy(),
+        initial_y=initial_state.copy(),
+        stack=stack,
         protocol=protocol,
         steps=tuple(steps),
         state_certificate=final_certificate,

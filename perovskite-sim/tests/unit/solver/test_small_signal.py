@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from perovskite_sim.solver.small_signal import (
+    SmallSignalCurrentComponent,
     SmallSignalEvaluation,
     SmallSignalLinearizationError,
     solve_frequency_domain,
@@ -95,4 +96,74 @@ def test_frequency_domain_solver_rejects_singular_dynamic_operator():
             np.array([0.0]),
             0.0,
             np.array([1.0e3]),
+        )
+
+
+def test_frequency_domain_solver_exposes_reference_operators_and_components():
+    resistance = 4.0
+    capacitance = 2.0e-3
+    frequency = np.array([10.0])
+
+    def evaluate(state: np.ndarray, voltage: float) -> SmallSignalEvaluation:
+        current = (voltage - state[0]) / resistance
+        electron = 0.25 * current
+        hole = 0.75 * current
+        return SmallSignalEvaluation(
+            storage=np.array([capacitance * state[0]]),
+            rate=np.array([current]),
+            conduction_current_faces=np.array([current, current]),
+            displacement_charge_faces=np.zeros(2),
+            current_components=(
+                SmallSignalCurrentComponent(
+                    "electron", np.array([electron, electron])
+                ),
+                SmallSignalCurrentComponent("hole", np.array([hole, hole])),
+            ),
+        )
+
+    result = solve_frequency_domain(
+        evaluate,
+        np.array([0.0]),
+        0.0,
+        frequency,
+    )
+
+    np.testing.assert_allclose(result.mass_matrix, [[capacitance]], rtol=1.0e-10)
+    np.testing.assert_allclose(
+        result.rate_jacobian, [[-1.0 / resistance]], rtol=1.0e-10
+    )
+    np.testing.assert_allclose(
+        result.rate_voltage_derivative, [1.0 / resistance], rtol=1.0e-10
+    )
+    np.testing.assert_allclose(
+        result.conduction_admittance_faces
+        + result.displacement_admittance_faces,
+        result.admittance_faces,
+    )
+    components = {item.name: item.admittance_faces for item in result.current_components}
+    np.testing.assert_allclose(
+        components["electron"] + components["hole"],
+        result.conduction_admittance_faces,
+    )
+
+
+def test_frequency_domain_solver_rejects_incomplete_current_decomposition():
+    def evaluate(state: np.ndarray, voltage: float) -> SmallSignalEvaluation:
+        del voltage
+        return SmallSignalEvaluation(
+            storage=np.array([state[0]]),
+            rate=np.array([-state[0]]),
+            conduction_current_faces=np.ones(1),
+            displacement_charge_faces=np.zeros(1),
+            current_components=(
+                SmallSignalCurrentComponent("electron", np.array([0.5])),
+            ),
+        )
+
+    with pytest.raises(SmallSignalLinearizationError, match="must sum"):
+        solve_frequency_domain(
+            evaluate,
+            np.array([1.0]),
+            0.0,
+            np.array([1.0]),
         )

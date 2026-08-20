@@ -28,6 +28,16 @@ from perovskite_sim.experiments.ion_aware_dc import (
     ion_aware_dc_state_sha256,
     solve_ion_aware_dc,
 )
+from perovskite_sim.experiments.ion_aware_impedance import (
+    IonAwareImpedanceCapabilityError,
+    IonAwareImpedanceCertificate,
+    IonAwareImpedanceCertificationError,
+    IonAwareImpedanceError,
+    IonAwareImpedanceProtocol,
+    IonAwareImpedanceResult,
+    build_ion_aware_impedance_protocol,
+    run_ion_aware_impedance,
+)
 
 __all__ = [
     "ACExcitation",
@@ -41,6 +51,12 @@ __all__ = [
     "IonAwareDCProtocol",
     "IonAwareDCResult",
     "IonAwareDCSolverError",
+    "IonAwareImpedanceCapabilityError",
+    "IonAwareImpedanceCertificate",
+    "IonAwareImpedanceCertificationError",
+    "IonAwareImpedanceError",
+    "IonAwareImpedanceProtocol",
+    "IonAwareImpedanceResult",
     "ProtocolMismatchError",
     "ProtocolMode",
     "SamplingProtocol",
@@ -48,9 +64,11 @@ __all__ = [
     "VocSearchProtocol",
     "assess_ion_aware_dc_state",
     "build_ion_aware_dc_protocol",
+    "build_ion_aware_impedance_protocol",
     "ion_aware_dc_state_sha256",
     "TandemJVResult",
     "run_tandem_jv",
+    "run_ion_aware_impedance",
     "series_match_jv",
     "solve_ion_aware_dc",
     "resolve_experiment_protocol",
