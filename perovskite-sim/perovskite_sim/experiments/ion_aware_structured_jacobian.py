@@ -1,11 +1,11 @@
-"""Semi-analytic structured Jacobian comparison for ion-aware impedance.
+"""Structured Jacobian comparison for ion-aware impedance.
 
 The full nonlinear reference lane re-solves Poisson at every central-
 difference stencil.  This module independently differentiates the exact
-discrete Poisson solve, then evaluates the remaining transport and reaction
-closures at a frozen potential carrying that implicit sensitivity.  It is a
-comparison scaffold for later fully analytic Scharfetter-Gummel and
-recombination blocks, not yet a replacement production operator.
+discrete Poisson solve and the carrier/ion Scharfetter-Gummel face currents.
+The remaining rate and reaction closures are evaluated by central differences
+at a frozen potential carrying the implicit Poisson sensitivity.  It remains a
+comparison scaffold, not yet a fully analytic production operator.
 """
 
 from __future__ import annotations
@@ -20,6 +20,11 @@ from typing import Any, Literal, Mapping, Self
 import numpy as np
 
 from perovskite_sim.constants import EPS_0, Q
+from perovskite_sim.experiments.ion_aware_analytic_transport import (
+    IonAwareAnalyticTransportLinearization,
+    apply_analytic_transport_linearization,
+    build_ion_aware_analytic_transport_linearization,
+)
 from perovskite_sim.experiments.ion_aware_dc import IonAwareDCResult
 from perovskite_sim.experiments.ion_aware_impedance import (
     IonAwareImpedanceProtocol,
@@ -54,7 +59,7 @@ from perovskite_sim.solver.small_signal import (
 
 
 ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA = (
-    "ion-aware-structured-jacobian-protocol-v1"
+    "ion-aware-structured-jacobian-protocol-v2"
 )
 
 
@@ -122,17 +127,21 @@ class IonAwareStructuredJacobianProtocol:
     max_displacement_voltage_relative_error: float = 1.0e-8
     max_component_jacobian_column_relative_error: float = 1.0e-4
     max_component_voltage_relative_error: float = 5.0e-5
+    max_analytic_transport_jacobian_column_relative_error: float = 5.0e-6
+    max_analytic_transport_voltage_relative_error: float = 5.0e-6
     max_impedance_magnitude_relative_error: float = 1.0e-4
     max_impedance_phase_error_deg: float = 1.0e-3
     poisson_linearization: Literal["exact_discrete_implicit"] = (
         "exact_discrete_implicit"
     )
-    transport_linearization: Literal["central_difference_frozen_phi"] = (
-        "central_difference_frozen_phi"
+    transport_linearization: Literal[
+        "analytic_sg_transport_central_difference_reaction"
+    ] = (
+        "analytic_sg_transport_central_difference_reaction"
     )
     rate_row_scaling: Literal["operating_storage"] = "operating_storage"
     column_grouping: Literal["species_blocks"] = "species_blocks"
-    schema_version: Literal["ion-aware-structured-jacobian-protocol-v1"] = (
+    schema_version: Literal["ion-aware-structured-jacobian-protocol-v2"] = (
         ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA
     )
 
@@ -163,6 +172,8 @@ class IonAwareStructuredJacobianProtocol:
             "max_displacement_voltage_relative_error",
             "max_component_jacobian_column_relative_error",
             "max_component_voltage_relative_error",
+            "max_analytic_transport_jacobian_column_relative_error",
+            "max_analytic_transport_voltage_relative_error",
             "max_impedance_magnitude_relative_error",
             "max_impedance_phase_error_deg",
         ):
@@ -175,7 +186,9 @@ class IonAwareStructuredJacobianProtocol:
             raise ValueError("maximum_state_step cannot exceed 1e-2")
         if self.poisson_linearization != "exact_discrete_implicit":
             raise ValueError("unsupported Poisson linearization")
-        if self.transport_linearization != "central_difference_frozen_phi":
+        if self.transport_linearization != (
+            "analytic_sg_transport_central_difference_reaction"
+        ):
             raise ValueError("unsupported transport linearization")
         if self.rate_row_scaling != "operating_storage":
             raise ValueError("unsupported structured rate row scaling")
@@ -230,7 +243,10 @@ def build_ion_aware_structured_jacobian_protocol(
         raise TypeError("impedance_protocol must be an IonAwareImpedanceProtocol")
     values: dict[str, Any] = {
         "impedance_protocol_sha256": impedance_protocol.protocol_hash,
-        "minimum_state_step": impedance_protocol.state_step,
+        "minimum_state_step": (
+            impedance_protocol.state_step
+            * impedance_protocol.refinement_factors[-1]
+        ),
         "maximum_state_step": 1.0e-3,
         "target_potential_step_V": 1.0e-9,
         "voltage_step": impedance_protocol.voltage_step,
@@ -297,6 +313,9 @@ class IonAwareStructuredJacobianCertificate:
     displacement_jacobian: MatrixColumnComparison
     displacement_voltage_derivative: VectorComparison
     current_components: tuple[CurrentComponentComparison, ...]
+    analytic_transport_conduction_jacobian: MatrixColumnComparison
+    analytic_transport_conduction_voltage_derivative: VectorComparison
+    analytic_transport_components: tuple[CurrentComponentComparison, ...]
     max_impedance_magnitude_relative_error: float
     max_impedance_phase_error_deg: float
     max_structured_face_spread: float
@@ -308,7 +327,9 @@ class IonAwareStructuredJacobianCertificate:
 class IonAwareStructuredJacobianResult:
     reference: IonAwareImpedanceResult
     operator_reference: FrequencyDomainResult
+    frozen_phi_finite_difference: FrequencyDomainResult
     structured: FrequencyDomainResult
+    analytic_transport: IonAwareAnalyticTransportLinearization
     poisson_sensitivity: PoissonImplicitSensitivity
     protocol: IonAwareStructuredJacobianProtocol
     certificate: IonAwareStructuredJacobianCertificate
@@ -642,6 +663,10 @@ def _component_comparisons(
     structured: FrequencyDomainResult,
     protocol: IonAwareStructuredJacobianProtocol,
     column_groups: tuple[slice, ...],
+    *,
+    name_prefix: str = "",
+    jacobian_limit: float | None = None,
+    voltage_limit: float | None = None,
 ) -> tuple[CurrentComponentComparison, ...]:
     expected = {component.name: component for component in reference.current_components}
     actual = {component.name: component for component in structured.current_components}
@@ -653,10 +678,14 @@ def _component_comparisons(
         CurrentComponentComparison(
             name=name,
             jacobian=_matrix_column_comparison(
-                f"{name}_current_jacobian",
+                f"{name_prefix}{name}_current_jacobian",
                 expected[name].current_jacobian,
                 actual[name].current_jacobian,
-                limit=protocol.max_component_jacobian_column_relative_error,
+                limit=(
+                    protocol.max_component_jacobian_column_relative_error
+                    if jacobian_limit is None
+                    else jacobian_limit
+                ),
                 group_normalized_limit=(
                     protocol.max_group_normalized_column_error
                 ),
@@ -666,10 +695,14 @@ def _component_comparisons(
                 ),
             ),
             voltage_derivative=_vector_comparison(
-                f"{name}_current_voltage_derivative",
+                f"{name_prefix}{name}_current_voltage_derivative",
                 expected[name].voltage_derivative,
                 actual[name].voltage_derivative,
-                limit=protocol.max_component_voltage_relative_error,
+                limit=(
+                    protocol.max_component_voltage_relative_error
+                    if voltage_limit is None
+                    else voltage_limit
+                ),
             ),
         )
         for name in expected
@@ -773,7 +806,7 @@ def run_ion_aware_structured_jacobian_comparison(
         layout,
         poisson,
     )
-    structured = solve_frequency_domain(
+    frozen_phi_finite_difference = solve_frequency_domain(
         evaluate,
         coordinate,
         impedance_protocol.V_dc,
@@ -783,6 +816,38 @@ def run_ion_aware_structured_jacobian_comparison(
         face_weights=face_weights,
         progress=progress,
     )
+    try:
+        analytic_transport = build_ion_aware_analytic_transport_linearization(
+            grid,
+            stack,
+            np.asarray(dc_state.y, dtype=float),
+            impedance_protocol.V_dc,
+            material,
+            layout,
+            potential_at_operating_point_V=(
+                poisson.potential_at_operating_point_V
+            ),
+            potential_state_jacobian_V=(
+                poisson.potential_state_jacobian_V
+            ),
+            potential_voltage_derivative=(
+                poisson.potential_voltage_derivative
+            ),
+            state_steps=poisson.state_steps,
+        )
+        structured = apply_analytic_transport_linearization(
+            frozen_phi_finite_difference,
+            analytic_transport,
+            material,
+            layout,
+            V_dc=impedance_protocol.V_dc,
+            face_weights=face_weights,
+            progress=progress,
+        )
+    except ValueError as exc:
+        raise IonAwareStructuredJacobianCapabilityError(
+            f"analytic transport current assembly failed: {exc}"
+        ) from exc
     expected = operator_reference
     column_groups = tuple(
         layout.coordinate_slice(species)
@@ -881,6 +946,44 @@ def run_ion_aware_structured_jacobian_comparison(
         structured_protocol,
         column_groups,
     )
+    analytic_transport_conduction = _matrix_column_comparison(
+        "analytic_transport_conduction_current_jacobian",
+        frozen_phi_finite_difference.conduction_current_jacobian,
+        structured.conduction_current_jacobian,
+        limit=(
+            structured_protocol
+            .max_analytic_transport_jacobian_column_relative_error
+        ),
+        group_normalized_limit=(
+            structured_protocol.max_group_normalized_column_error
+        ),
+        column_groups=column_groups,
+        column_relevance_floor_relative=(
+            structured_protocol.column_relevance_floor_relative
+        ),
+    )
+    analytic_transport_voltage = _vector_comparison(
+        "analytic_transport_conduction_current_voltage_derivative",
+        frozen_phi_finite_difference.conduction_current_voltage_derivative,
+        structured.conduction_current_voltage_derivative,
+        limit=(
+            structured_protocol.max_analytic_transport_voltage_relative_error
+        ),
+    )
+    analytic_transport_components = _component_comparisons(
+        frozen_phi_finite_difference,
+        structured,
+        structured_protocol,
+        column_groups,
+        name_prefix="analytic_transport_",
+        jacobian_limit=(
+            structured_protocol
+            .max_analytic_transport_jacobian_column_relative_error
+        ),
+        voltage_limit=(
+            structured_protocol.max_analytic_transport_voltage_relative_error
+        ),
+    )
     response_reference = reference.reference_linearization
     impedance_scale = np.maximum(
         np.maximum(
@@ -920,6 +1023,8 @@ def run_ion_aware_structured_jacobian_comparison(
         conduction_voltage,
         displacement,
         displacement_voltage,
+        analytic_transport_conduction,
+        analytic_transport_voltage,
     )
     reasons.extend(
         f"{comparison.name}_exceeds_limit"
@@ -931,6 +1036,13 @@ def run_ion_aware_structured_jacobian_comparison(
     ):
         reasons.append("poisson_implicit_backward_error_exceeds_limit")
     for component in components:
+        if not component.jacobian.passed:
+            reasons.append(f"{component.jacobian.name}_exceeds_limit")
+        if not component.voltage_derivative.passed:
+            reasons.append(
+                f"{component.voltage_derivative.name}_exceeds_limit"
+            )
+    for component in analytic_transport_components:
         if not component.jacobian.passed:
             reasons.append(f"{component.jacobian.name}_exceeds_limit")
         if not component.voltage_derivative.passed:
@@ -963,6 +1075,13 @@ def run_ion_aware_structured_jacobian_comparison(
         displacement_jacobian=displacement,
         displacement_voltage_derivative=displacement_voltage,
         current_components=components,
+        analytic_transport_conduction_jacobian=(
+            analytic_transport_conduction
+        ),
+        analytic_transport_conduction_voltage_derivative=(
+            analytic_transport_voltage
+        ),
+        analytic_transport_components=analytic_transport_components,
         max_impedance_magnitude_relative_error=impedance_magnitude_error,
         max_impedance_phase_error_deg=impedance_phase_error,
         max_structured_face_spread=structured_spread,
@@ -972,7 +1091,9 @@ def run_ion_aware_structured_jacobian_comparison(
     result = IonAwareStructuredJacobianResult(
         reference=reference,
         operator_reference=operator_reference,
+        frozen_phi_finite_difference=frozen_phi_finite_difference,
         structured=structured,
+        analytic_transport=analytic_transport,
         poisson_sensitivity=poisson,
         protocol=structured_protocol,
         certificate=certificate,

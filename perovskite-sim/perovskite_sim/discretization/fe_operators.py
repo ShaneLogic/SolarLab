@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -23,6 +24,147 @@ def bernoulli(x: np.ndarray) -> np.ndarray:
     result[huge_pos] = 0.0
     result[large] = x[large] / np.expm1(x[large])
     return result
+
+
+def bernoulli_derivative(x: np.ndarray) -> np.ndarray:
+    """Derivative of :func:`bernoulli`, evaluated without cancellation.
+
+    The direct quotient derivative loses all useful digits near zero and
+    overflows when its exponential terms are squared at large positive
+    arguments.  The small-argument series and the ``exp(-x)`` form below
+    cover those two regimes while retaining the analytic asymptotes
+    ``B'(+inf)=0`` and ``B'(-inf)=-1``.
+    """
+    x = np.asarray(x, dtype=float)
+    result = np.empty_like(x)
+    small = np.abs(x) < 1.0e-4
+    large_positive = x > 50.0
+    regular = ~small & ~large_positive
+
+    xs = x[small]
+    result[small] = (
+        -0.5
+        + xs / 6.0
+        - xs**3 / 180.0
+        + xs**5 / 5040.0
+    )
+
+    xp = x[large_positive]
+    decay = np.exp(-xp)
+    result[large_positive] = (
+        decay * (1.0 - xp - decay) / (1.0 - decay) ** 2
+    )
+
+    xr = x[regular]
+    exp_x = np.exp(xr)
+    denominator = np.expm1(xr)
+    result[regular] = (
+        denominator - xr * exp_x
+    ) / denominator**2
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class ScharfetterGummelFaceJacobian:
+    """Local derivatives of one carrier current on every grid face."""
+
+    flux: np.ndarray
+    density_left_derivative: np.ndarray
+    density_right_derivative: np.ndarray
+    potential_left_derivative: np.ndarray
+    potential_right_derivative: np.ndarray
+
+
+def _validate_sg_jacobian_inputs(
+    phi: np.ndarray,
+    density: np.ndarray,
+    dx: np.ndarray,
+    diffusivity: np.ndarray | float,
+    V_T: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    potential = np.asarray(phi, dtype=float)
+    carrier_density = np.asarray(density, dtype=float)
+    spacing = np.asarray(dx, dtype=float)
+    if (
+        potential.ndim != 1
+        or potential.size < 2
+        or carrier_density.shape != potential.shape
+        or spacing.shape != (potential.size - 1,)
+        or not np.all(np.isfinite(potential))
+        or not np.all(np.isfinite(carrier_density))
+        or not np.all(np.isfinite(spacing))
+        or np.any(spacing <= 0.0)
+        or not np.isfinite(V_T)
+        or V_T <= 0.0
+    ):
+        raise ValueError(
+            "SG Jacobian inputs must be finite, shape matched, and use "
+            "positive spacing and thermal voltage"
+        )
+    diffusion = np.broadcast_to(
+        np.asarray(diffusivity, dtype=float), spacing.shape
+    )
+    if not np.all(np.isfinite(diffusion)) or np.any(diffusion < 0.0):
+        raise ValueError("SG diffusivity must be finite and non-negative")
+    return potential, carrier_density, spacing, diffusion
+
+
+def sg_fluxes_n_jacobian(
+    phi: np.ndarray,
+    n: np.ndarray,
+    dx: np.ndarray,
+    D_n: np.ndarray | float,
+    V_T: float,
+) -> ScharfetterGummelFaceJacobian:
+    """Analytic electron-current derivatives for fixed face diffusivity."""
+    potential, density, spacing, diffusion = _validate_sg_jacobian_inputs(
+        phi, n, dx, D_n, V_T
+    )
+    xi = (potential[1:] - potential[:-1]) / V_T
+    B_pos = bernoulli(xi)
+    B_neg = bernoulli(-xi)
+    dB_pos = bernoulli_derivative(xi)
+    dB_neg = bernoulli_derivative(-xi)
+    prefactor = Q * diffusion / spacing
+    xi_derivative = prefactor * (
+        dB_pos * density[1:] + dB_neg * density[:-1]
+    )
+    return ScharfetterGummelFaceJacobian(
+        flux=sg_fluxes_n(potential, density, spacing, diffusion, V_T),
+        density_left_derivative=-prefactor * B_neg,
+        density_right_derivative=prefactor * B_pos,
+        potential_left_derivative=-xi_derivative / V_T,
+        potential_right_derivative=xi_derivative / V_T,
+    )
+
+
+def sg_fluxes_p_jacobian(
+    phi: np.ndarray,
+    p: np.ndarray,
+    dx: np.ndarray,
+    D_p: np.ndarray | float,
+    V_T: float,
+) -> ScharfetterGummelFaceJacobian:
+    """Analytic hole-current derivatives for fixed face diffusivity."""
+    potential, density, spacing, diffusion = _validate_sg_jacobian_inputs(
+        phi, p, dx, D_p, V_T
+    )
+    xi = (potential[1:] - potential[:-1]) / V_T
+    B_pos = bernoulli(xi)
+    B_neg = bernoulli(-xi)
+    dB_pos = bernoulli_derivative(xi)
+    dB_neg = bernoulli_derivative(-xi)
+    prefactor = Q * diffusion / spacing
+    xi_derivative = prefactor * (
+        dB_pos * density[:-1] + dB_neg * density[1:]
+    )
+    return ScharfetterGummelFaceJacobian(
+        flux=sg_fluxes_p(potential, density, spacing, diffusion, V_T),
+        density_left_derivative=prefactor * B_pos,
+        density_right_derivative=-prefactor * B_neg,
+        potential_left_derivative=-xi_derivative / V_T,
+        potential_right_derivative=xi_derivative / V_T,
+    )
 
 
 def sg_flux_n(

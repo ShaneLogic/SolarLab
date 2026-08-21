@@ -1,7 +1,12 @@
 from __future__ import annotations
+from dataclasses import dataclass
+
 import numpy as np
 
-from perovskite_sim.discretization.fe_operators import bernoulli
+from perovskite_sim.discretization.fe_operators import (
+    bernoulli,
+    bernoulli_derivative,
+)
 
 
 def _steric_diffusion_only_flux(P, phi, dx, D_I_face, V_T, P_lim,
@@ -78,6 +83,210 @@ def ion_face_flux(
     xi = drift_sign * (phi[1:] - phi[:-1]) / V_T
     D_eff = D_I_face * steric
     return D_eff / dx * (bernoulli(xi) * P[:-1] - bernoulli(-xi) * P[1:])
+
+
+@dataclass(frozen=True, slots=True)
+class IonFaceFluxJacobian:
+    """Local derivatives of one ionic particle flux on every face."""
+
+    flux: np.ndarray
+    density_left_derivative: np.ndarray
+    density_right_derivative: np.ndarray
+    partner_left_derivative: np.ndarray
+    partner_right_derivative: np.ndarray
+    potential_left_derivative: np.ndarray
+    potential_right_derivative: np.ndarray
+    differentiable_faces: np.ndarray
+
+
+def ion_face_flux_jacobian(
+    phi: np.ndarray,
+    P: np.ndarray,
+    dx: np.ndarray,
+    D_I_face: np.ndarray,
+    V_T: float,
+    P_lim: np.ndarray | float,
+    *,
+    steric_diffusion_only: bool = False,
+    P_lim_node: np.ndarray | float | None = None,
+    P_other_node: np.ndarray | None = None,
+    drift_sign: float = 1.0,
+) -> IonFaceFluxJacobian:
+    """Return exact local derivatives of :func:`ion_face_flux`.
+
+    Derivatives follow the implemented clipped steric law, including the
+    shared-site cross derivatives in diffusion-only mode.  Faces touching a
+    clipping kink are marked non-differentiable so higher-level structured
+    solvers can fail closed instead of assigning an arbitrary tangent.
+    """
+    potential = np.asarray(phi, dtype=float)
+    density = np.asarray(P, dtype=float)
+    spacing = np.asarray(dx, dtype=float)
+    if (
+        potential.ndim != 1
+        or potential.size < 2
+        or density.shape != potential.shape
+        or spacing.shape != (potential.size - 1,)
+        or not np.all(np.isfinite(potential))
+        or not np.all(np.isfinite(density))
+        or not np.all(np.isfinite(spacing))
+        or np.any(spacing <= 0.0)
+        or not np.isfinite(V_T)
+        or V_T <= 0.0
+        or drift_sign not in (-1.0, 1.0)
+    ):
+        raise ValueError(
+            "ion-flux Jacobian inputs must be finite, shape matched, and "
+            "use positive spacing, thermal voltage, and unit charge sign"
+        )
+    diffusion = np.broadcast_to(
+        np.asarray(D_I_face, dtype=float), spacing.shape
+    )
+    if not np.all(np.isfinite(diffusion)) or np.any(diffusion < 0.0):
+        raise ValueError("ionic diffusivity must be finite and non-negative")
+    partner = None
+    if P_other_node is not None:
+        partner = np.asarray(P_other_node, dtype=float)
+        if partner.shape != density.shape or not np.all(np.isfinite(partner)):
+            raise ValueError("partner ion density must be finite and shape matched")
+
+    flux = ion_face_flux(
+        potential,
+        density,
+        spacing,
+        diffusion,
+        V_T,
+        P_lim,
+        steric_diffusion_only=steric_diffusion_only,
+        P_lim_node=P_lim_node,
+        P_other_node=partner,
+        drift_sign=drift_sign,
+    )
+    prefactor = diffusion / spacing
+    zero = np.zeros_like(spacing)
+
+    if steric_diffusion_only:
+        node_limit_source = P_lim_node if P_lim_node is not None else P_lim
+        node_limit = np.broadcast_to(
+            np.asarray(node_limit_source, dtype=float), density.shape
+        )
+        if (
+            not np.all(np.isfinite(node_limit))
+            or np.any(node_limit <= 0.0)
+        ):
+            raise ValueError("node site limits must be finite and positive")
+        total_density = density if partner is None else density + partner
+        occupancy = total_density / node_limit
+        clipped = np.clip(occupancy, 0.0, 0.999999)
+        chemical_potential = -np.log1p(-clipped)
+        xi = (
+            drift_sign * (potential[1:] - potential[:-1]) / V_T
+            + chemical_potential[1:]
+            - chemical_potential[:-1]
+        )
+        interior = (occupancy > 0.0) & (occupancy < 0.999999)
+        chemical_derivative = np.divide(
+            1.0,
+            node_limit * (1.0 - occupancy),
+            out=np.zeros_like(density),
+            where=interior,
+        )
+        node_differentiable = (
+            (occupancy != 0.0) & (occupancy != 0.999999)
+        )
+        differentiable = (
+            (diffusion == 0.0)
+            | (node_differentiable[:-1] & node_differentiable[1:])
+        )
+        B_pos = bernoulli(xi)
+        B_neg = bernoulli(-xi)
+        xi_derivative = (
+            bernoulli_derivative(xi) * density[:-1]
+            + bernoulli_derivative(-xi) * density[1:]
+        )
+        left_mu_derivative = chemical_derivative[:-1]
+        right_mu_derivative = chemical_derivative[1:]
+        density_left = prefactor * (
+            B_pos - xi_derivative * left_mu_derivative
+        )
+        density_right = prefactor * (
+            -B_neg + xi_derivative * right_mu_derivative
+        )
+        if partner is None:
+            partner_left = zero.copy()
+            partner_right = zero.copy()
+        else:
+            partner_left = -prefactor * xi_derivative * left_mu_derivative
+            partner_right = prefactor * xi_derivative * right_mu_derivative
+    else:
+        face_limit = np.broadcast_to(
+            np.asarray(P_lim, dtype=float), spacing.shape
+        )
+        if (
+            not np.all(np.isfinite(face_limit))
+            or np.any(face_limit <= 0.0)
+        ):
+            raise ValueError("face site limits must be finite and positive")
+        average_density = 0.5 * (density[:-1] + density[1:])
+        occupancy = average_density / face_limit
+        clipped = np.clip(occupancy, 0.0, 0.999999)
+        denominator = np.maximum(1.0 - clipped, 1.0e-6)
+        steric = 1.0 / denominator
+        xi = drift_sign * (potential[1:] - potential[:-1]) / V_T
+        B_pos = bernoulli(xi)
+        B_neg = bernoulli(-xi)
+        flux_core = B_pos * density[:-1] - B_neg * density[1:]
+        xi_derivative = (
+            bernoulli_derivative(xi) * density[:-1]
+            + bernoulli_derivative(-xi) * density[1:]
+        )
+        active_clip = (occupancy > 0.0) & (occupancy < 0.999999)
+        active_max = (1.0 - clipped) > 1.0e-6
+        steric_density_derivative = np.divide(
+            0.5,
+            face_limit * denominator**2,
+            out=np.zeros_like(spacing),
+            where=active_clip & active_max,
+        )
+        differentiable = (
+            (diffusion == 0.0)
+            | (
+                (occupancy != 0.0)
+                & (occupancy != 0.999999)
+                & ((1.0 - clipped) != 1.0e-6)
+            )
+        )
+        density_left = prefactor * (
+            steric * B_pos + flux_core * steric_density_derivative
+        )
+        density_right = prefactor * (
+            -steric * B_neg + flux_core * steric_density_derivative
+        )
+        partner_left = zero.copy()
+        partner_right = zero.copy()
+        xi_derivative = steric * xi_derivative
+
+    potential_scale = prefactor * xi_derivative * drift_sign / V_T
+    arrays = (
+        flux,
+        density_left,
+        density_right,
+        partner_left,
+        partner_right,
+        potential_scale,
+    )
+    if any(not np.all(np.isfinite(array)) for array in arrays):
+        raise ValueError("ion-flux Jacobian produced a non-finite derivative")
+    return IonFaceFluxJacobian(
+        flux=np.asarray(flux, dtype=float),
+        density_left_derivative=density_left,
+        density_right_derivative=density_right,
+        partner_left_derivative=partner_left,
+        partner_right_derivative=partner_right,
+        potential_left_derivative=-potential_scale,
+        potential_right_derivative=potential_scale,
+        differentiable_faces=np.asarray(differentiable, dtype=bool),
+    )
 
 
 def ion_flux_steric(
