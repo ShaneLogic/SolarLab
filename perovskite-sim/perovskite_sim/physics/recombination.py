@@ -3,8 +3,18 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 import numpy as np
+
+
+@dataclass(frozen=True, slots=True)
+class RecombinationDerivatives:
+    """A recombination rate and its local carrier-density derivatives."""
+
+    rate: np.ndarray
+    electron_density_derivative: np.ndarray
+    hole_density_derivative: np.ndarray
 
 
 SRHDenominatorObserver = Callable[[str, np.ndarray], None]
@@ -68,11 +78,52 @@ def srh_recombination(
     return (n * p - ni_sq) / denominator
 
 
+def srh_recombination_derivatives(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    tau_n: float,
+    tau_p: float,
+    n1: float,
+    p1: float,
+) -> RecombinationDerivatives:
+    """Return bulk SRH and exact local derivatives with respect to n and p."""
+
+    denominator = bulk_srh_denominator(n, p, tau_n, tau_p, n1, p1)
+    numerator = n * p - ni_sq
+    rate = numerator / denominator
+    return RecombinationDerivatives(
+        rate=np.asarray(rate),
+        electron_density_derivative=np.asarray(
+            (p - rate * tau_p) / denominator
+        ),
+        hole_density_derivative=np.asarray(
+            (n - rate * tau_n) / denominator
+        ),
+    )
+
+
 def radiative_recombination(
     n: np.ndarray, p: np.ndarray, ni_sq: float, B_rad: float,
 ) -> np.ndarray:
     """Bimolecular radiative recombination rate [m⁻³ s⁻¹]."""
     return B_rad * (n * p - ni_sq)
+
+
+def radiative_recombination_derivatives(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    B_rad: float,
+) -> RecombinationDerivatives:
+    """Return radiative recombination and its exact local derivatives."""
+
+    rate = B_rad * (n * p - ni_sq)
+    return RecombinationDerivatives(
+        rate=np.asarray(rate),
+        electron_density_derivative=np.asarray(B_rad * p),
+        hole_density_derivative=np.asarray(B_rad * n),
+    )
 
 
 def auger_recombination(
@@ -81,6 +132,25 @@ def auger_recombination(
 ) -> np.ndarray:
     """Auger recombination rate [m⁻³ s⁻¹]."""
     return (C_n * n + C_p * p) * (n * p - ni_sq)
+
+
+def auger_recombination_derivatives(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    C_n: float,
+    C_p: float,
+) -> RecombinationDerivatives:
+    """Return Auger recombination and its exact local derivatives."""
+
+    numerator = n * p - ni_sq
+    coefficient = C_n * n + C_p * p
+    rate = coefficient * numerator
+    return RecombinationDerivatives(
+        rate=np.asarray(rate),
+        electron_density_derivative=np.asarray(C_n * numerator + coefficient * p),
+        hole_density_derivative=np.asarray(C_p * numerator + coefficient * n),
+    )
 
 
 def interface_recombination(
@@ -118,4 +188,38 @@ def total_recombination(
         srh_recombination(n, p, ni_sq, tau_n, tau_p, n1, p1)
         + radiative_recombination(n, p, ni_sq, B_rad)
         + auger_recombination(n, p, ni_sq, C_n, C_p)
+    )
+
+
+def total_recombination_derivatives(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    tau_n: float,
+    tau_p: float,
+    n1: float,
+    p1: float,
+    B_rad: float,
+    C_n: float,
+    C_p: float,
+) -> RecombinationDerivatives:
+    """Return SRH + radiative + Auger and exact local derivatives."""
+
+    srh = srh_recombination_derivatives(
+        n, p, ni_sq, tau_n, tau_p, n1, p1
+    )
+    radiative = radiative_recombination_derivatives(n, p, ni_sq, B_rad)
+    auger = auger_recombination_derivatives(n, p, ni_sq, C_n, C_p)
+    return RecombinationDerivatives(
+        rate=srh.rate + radiative.rate + auger.rate,
+        electron_density_derivative=(
+            srh.electron_density_derivative
+            + radiative.electron_density_derivative
+            + auger.electron_density_derivative
+        ),
+        hole_density_derivative=(
+            srh.hole_density_derivative
+            + radiative.hole_density_derivative
+            + auger.hole_density_derivative
+        ),
     )
