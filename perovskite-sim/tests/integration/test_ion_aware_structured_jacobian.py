@@ -61,6 +61,11 @@ def test_single_ion_structured_operator_matches_full_poisson_reference():
     assert certificate.rate_jacobian.max_relative_error < 5.0e-6
     assert certificate.conduction_jacobian.max_relative_error < 8.0e-5
     assert certificate.displacement_jacobian.max_relative_error < 5.0e-6
+    assert certificate.analytic_transport_conduction_jacobian.passed
+    assert all(
+        item.jacobian.passed
+        for item in certificate.analytic_transport_components
+    )
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
     assert certificate.max_impedance_phase_error_deg < 1.0e-5
     assert certificate.max_structured_face_spread < (
@@ -94,6 +99,10 @@ def test_dual_ion_structured_operator_covers_both_charge_signs():
     assert "negative_ion" in components
     assert components["positive_ion"].jacobian.passed
     assert components["negative_ion"].jacobian.passed
+    assert all(
+        item.jacobian.passed
+        for item in certificate.analytic_transport_components
+    )
     assert result.reference.coordinate_layout.negative_ion_state_indices
     assert result.structured.current_components[-1].name == "negative_ion"
     assert certificate.rate_jacobian.max_relative_error < 5.0e-6
@@ -114,8 +123,18 @@ def test_n61_adaptive_stencils_resolve_strong_columns_and_bound_weak_ones():
     assert np.max(steps) == result.protocol.maximum_state_step
     assert np.min(steps) < np.median(steps) < np.max(steps)
     assert certificate.rate_jacobian.max_relative_error < 1.0e-6
-    assert certificate.conduction_jacobian.max_relative_error < 1.0e-4
-    assert certificate.displacement_jacobian.max_relative_error < 1.0e-6
+    assert certificate.conduction_jacobian.passed
+    assert not certificate.conduction_jacobian.failed_columns
+    assert certificate.conduction_jacobian.max_group_normalized_error < 1.0e-6
+    assert certificate.analytic_transport_conduction_jacobian.passed
+    assert (
+        certificate.analytic_transport_conduction_jacobian
+        .max_group_normalized_error
+        < 1.0e-6
+    )
+    assert certificate.displacement_jacobian.passed
+    assert not certificate.displacement_jacobian.failed_columns
+    assert certificate.displacement_jacobian.max_group_normalized_error < 1.0e-6
     assert certificate.conduction_jacobian.bounded_weak_columns
     assert all(
         item.jacobian.bounded_weak_columns
@@ -141,4 +160,5 @@ def test_n91_weak_cross_couplings_pass_the_group_normalized_error_gate():
     assert components["hole"].jacobian.absolute_bounded_columns
     assert certificate.conduction_jacobian.max_group_normalized_error < 1.0e-6
     assert components["hole"].jacobian.max_group_normalized_error < 1.0e-6
+    assert certificate.analytic_transport_conduction_jacobian.passed
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6

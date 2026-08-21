@@ -5,6 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+import perovskite_sim.experiments.ion_aware_analytic_transport as analytic_transport
 import perovskite_sim.experiments.ion_aware_structured_jacobian as structured
 from perovskite_sim.experiments.ion_aware_dc import (
     build_ion_aware_dc_protocol,
@@ -76,10 +77,17 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
     assert rebuilt == protocol
     assert rebuilt.protocol_hash == protocol.protocol_hash
     assert rebuilt.impedance_protocol_sha256 == impedance_protocol.protocol_hash
-    assert rebuilt.minimum_state_step == impedance_protocol.state_step
+    assert rebuilt.minimum_state_step == (
+        impedance_protocol.state_step
+        * impedance_protocol.refinement_factors[-1]
+    )
     assert rebuilt.maximum_state_step == 1.0e-3
     assert rebuilt.target_potential_step_V == 1.0e-9
     assert rebuilt.voltage_step == impedance_protocol.voltage_step
+    assert rebuilt.transport_linearization == (
+        "analytic_sg_transport_central_difference_reaction"
+    )
+    assert rebuilt.schema_version.endswith("-v2")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -288,6 +296,19 @@ def test_real_comparison_retains_every_reference_level_and_passes(
     assert certificate.rate_jacobian.passed
     assert certificate.conduction_jacobian.passed
     assert certificate.displacement_jacobian.passed
+    assert certificate.analytic_transport_conduction_jacobian.passed
+    assert (
+        certificate.analytic_transport_conduction_voltage_derivative.passed
+    )
+    assert all(
+        item.jacobian.passed
+        and item.voltage_derivative.passed
+        for item in certificate.analytic_transport_components
+    )
+    assert (
+        certificate.analytic_transport_conduction_jacobian.max_relative_error
+        < 1.0e-6
+    )
     assert certificate.max_poisson_backward_error < (
         _structured_protocol.max_poisson_backward_error
     )
@@ -302,6 +323,98 @@ def test_real_comparison_retains_every_reference_level_and_passes(
     )
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
     assert certificate.max_impedance_phase_error_deg < 1.0e-5
+    assert not np.array_equal(
+        result.structured.rate_jacobian,
+        result.frozen_phi_finite_difference.rate_jacobian,
+    )
+    assert not np.array_equal(
+        result.structured.conduction_current_jacobian,
+        result.frozen_phi_finite_difference.conduction_current_jacobian,
+    )
+
+
+def test_analytic_component_base_currents_match_the_nonlinear_evaluator(
+    comparison_fixture,
+):
+    stack, x, mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    evaluator = structured._structured_evaluator(
+        x,
+        stack,
+        dc_state,
+        impedance_protocol,
+        mat,
+        result.reference.coordinate_layout,
+        result.poisson_sensitivity,
+    )
+    base = evaluator(
+        np.zeros(result.reference.coordinate_layout.size),
+        impedance_protocol.V_dc,
+    )
+    expected = {
+        component.name: component.current_faces
+        for component in base.current_components
+    }
+
+    assert set(expected) == {
+        component.name for component in result.analytic_transport.current_components
+    }
+    for component in result.analytic_transport.current_components:
+        np.testing.assert_allclose(
+            component.current_faces,
+            expected[component.name],
+            rtol=2.0e-14,
+            atol=max(float(np.max(np.abs(expected[component.name]))), 1.0)
+            * 2.0e-14,
+        )
+
+
+def test_analytic_transport_capability_gates_nonanalytic_active_branches(
+    comparison_fixture,
+):
+    stack, x, mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    kwargs = {
+        "potential_at_operating_point_V": (
+            result.poisson_sensitivity.potential_at_operating_point_V
+        ),
+        "potential_state_jacobian_V": (
+            result.poisson_sensitivity.potential_state_jacobian_V
+        ),
+        "potential_voltage_derivative": (
+            result.poisson_sensitivity.potential_voltage_derivative
+        ),
+        "state_steps": result.poisson_sensitivity.state_steps,
+    }
+    with pytest.raises(
+        analytic_transport.IonAwareAnalyticTransportCapabilityError,
+        match="field-dependent mobility",
+    ):
+        analytic_transport.build_ion_aware_analytic_transport_linearization(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(mat, has_field_mobility=True),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    with pytest.raises(
+        analytic_transport.IonAwareAnalyticTransportCapabilityError,
+        match="thermionic cap is active",
+    ):
+        analytic_transport.build_ion_aware_analytic_transport_linearization(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(mat, A_star_n=np.zeros_like(mat.A_star_n)),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
 
 
 def test_mismatched_hash_is_rejected_before_comparison(
