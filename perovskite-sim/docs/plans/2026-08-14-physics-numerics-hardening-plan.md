@@ -396,8 +396,14 @@ residual-certified ion/electron/hole DC state
    N60/90/120 resolved-v2 在原门槛下通过。接触证书仍独立为
    `compatible_unverified`。详见
    [ion-aware-dc-certification.md](../ion-aware-dc-certification.md)。
-2. 明确 mass/storage block：电子、空穴、正/负离子分别进入 `M`，Poisson 继续消去时必须包含其全局导数。
-3. 先以 central finite difference 建立 reference Jacobian；再实现 analytic/structured blocks并逐列对比。
+2. **`INTERNAL_TESTED_REFERENCE` (2026-08-21)**：电子、空穴、正/负离子
+   的真实动态自由度以 log-density increment 进入 `M`；固定接触和结构性
+   零离子节点排除。Poisson 继续全局消去，但每个 state/voltage stencil
+   都重新求解，因此其全局导数进入 `J`、forcing 和 displacement。
+3. **reference 已实现，structured comparison 未完成**：central finite
+   difference 使用 `1/0.5/0.25` 三层步长，保留 `M/J/b` 和逐分量电流；
+   下一步实现 analytic/structured blocks 并逐列对比。详见
+   [ion-aware-impedance-reference-engine.md](../ion-aware-impedance-reference-engine.md)。
 4. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
 5. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
 6. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
