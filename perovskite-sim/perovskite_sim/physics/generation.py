@@ -70,6 +70,29 @@ def dual_cell_widths(x: np.ndarray) -> np.ndarray:
     return w
 
 
+def dual_cell_integral(x: np.ndarray, values: np.ndarray) -> float:
+    """Integrate node values with the weights used by conservation laws.
+
+    This is the discrete invariant paired with the node-centred divergence
+    operators.  In particular, zero-flux ion continuity conserves this sum;
+    a geometric trapezoid rule does not use the same endpoint weights.
+    """
+
+    coordinates = np.asarray(x, dtype=float)
+    samples = np.asarray(values, dtype=float)
+    if coordinates.ndim != 1 or samples.ndim != 1:
+        raise ValueError("x and values must be one-dimensional")
+    if coordinates.shape != samples.shape:
+        raise ValueError("x and values must have identical shapes")
+    if coordinates.size < 2 or not np.all(np.isfinite(coordinates)):
+        raise ValueError("x must contain at least two finite points")
+    if np.any(np.diff(coordinates) <= 0.0):
+        raise ValueError("x must be strictly increasing")
+    if not np.all(np.isfinite(samples)):
+        raise ValueError("values must be finite")
+    return float(np.sum(samples * dual_cell_widths(coordinates)))
+
+
 def dual_cell_faces(x: np.ndarray) -> np.ndarray:
     """The ``N+1`` faces bounding the node-centred dual cells.
 

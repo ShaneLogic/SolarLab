@@ -64,6 +64,68 @@ function makeIS(): ISResult {
     frequencies: [1e2, 1e3, 1e4, 1e5],
     Z_real:      [120,  90,  60,  20],   // Ω·m²
     Z_imag:      [-15, -40, -55, -10],   // Ω·m² (raw, will be sign-flipped)
+    protocol: {
+      method: 'transient_ion_aware',
+      V_dc: 0.9,
+      delta_V: 0.01,
+      illuminated: true,
+      dc_settle_time: 1e-3,
+      n_cycles: 5,
+      n_extract: 2,
+      points_per_cycle: 40,
+    },
+    operating_point: {
+      certified: true,
+      numerically_certified: true,
+      thermodynamically_certified: true,
+      source: 'finite_time_preconditioned',
+      carrier_area_rate_A_m2: 1e-3,
+      ion_area_rate_A_m2: 1e-8,
+      max_ionic_face_current_A_m2: 1e-9,
+      dc_face_current_spread_A_m2: 1e-3,
+      carrier_area_rate_limit_A_m2: 1e-1,
+      ion_area_rate_limit_A_m2: 1e-6,
+      ionic_face_current_limit_A_m2: 1e-6,
+      dc_face_current_spread_limit_A_m2: 1e-1,
+      contact_thermodynamics: {
+        status: 'certified',
+        built_in_potential_mode: 'semiconductor_work_function',
+        tolerance_eV: 5e-3,
+        fermi_level_span_eV: 1e-4,
+        potential_mismatch_V: 1e-4,
+        metal_work_function_mismatch_eV: null,
+        contact_quasi_fermi_levels_eV: [-4.8, -4.8],
+        message: 'certified',
+      },
+      reasons: [],
+    },
+    frequency_window: {
+      f_min_Hz: 1e2,
+      f_max_Hz: 1e5,
+      has_mobile_ions: true,
+      characteristic_frequency_bracketed: true,
+      ionic_branch_covered: true,
+      ionic_timescales: [],
+      warnings: [],
+    },
+    grid_assessment: {
+      certified: true,
+      override_used: false,
+      guarded_cell_count: 6,
+      offender_count: 0,
+      max_guarded_cell_debye_ratio: 0.25,
+      max_cell_debye_ratio_limit: 0.5,
+      warnings: [],
+    },
+    diagnostics: {
+      admittance_S_m2: [{ real: 1e-3, imag: 2e-3 }],
+      admittance_faces_S_m2: [[{ real: 1e-3, imag: 2e-3 }]],
+      max_relative_face_spread: [1e-6],
+      reciprocal_condition: [0.1],
+      backward_error: [1e-12],
+      electron_storage_response_F_m2: [{ real: 1e-5, imag: -1e-6 }],
+      hole_storage_response_F_m2: [{ real: 2e-5, imag: -2e-6 }],
+    },
   }
 }
 
@@ -79,6 +141,72 @@ describe('renderImpedance', () => {
     renderImpedance(el, makeIS())
     expect(el.querySelector('[data-test="impedance-toolbar"]')).not.toBeNull()
     expect(el.querySelector('[data-test="impedance-style-mode"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="impedance-evidence-warning"]')).toBeNull()
+    const summary = el.querySelector<HTMLElement>('[data-test="impedance-evidence-summary"]')
+    expect(summary?.textContent).toContain('characteristic frequency bracketed')
+    expect(summary?.textContent).toContain('ionic branch covered')
+    expect(summary?.textContent).toContain('Grid: certified')
+    expect(summary?.textContent).toContain('guarded cells: 6')
+    expect(summary?.textContent).toContain('offenders: 0')
+  })
+
+  it('classifies a result without all four evidence blocks as legacy unclassified', () => {
+    const legacy = makeIS()
+    delete legacy.grid_assessment
+    renderImpedance(el, legacy)
+    const warning = el.querySelector<HTMLElement>(
+      '[data-test="impedance-evidence-warning"]',
+    )
+    expect(warning?.textContent).toContain('Legacy impedance result')
+    expect(warning?.textContent).toContain('unclassified')
+  })
+
+  it('surfaces DC and frequency-window evidence warnings', () => {
+    const result = makeIS()
+    result.operating_point = {
+      ...result.operating_point!,
+      certified: false,
+      numerically_certified: false,
+      thermodynamically_certified: false,
+      reasons: ['ion_area_rate_exceeds_limit'],
+    }
+    result.frequency_window = {
+      ...result.frequency_window!,
+      characteristic_frequency_bracketed: false,
+      ionic_branch_covered: false,
+      warnings: ['ionic_blocking_charge_frequency_not_bracketed'],
+    }
+
+    renderImpedance(el, result)
+
+    const warning = el.querySelector<HTMLElement>(
+      '[data-test="impedance-evidence-warning"]',
+    )
+    expect(warning).not.toBeNull()
+    expect(warning!.textContent).toContain('ionic_blocking_charge_frequency_not_bracketed')
+    expect(warning!.textContent).toContain('ion_area_rate_exceeds_limit')
+  })
+
+  it('surfaces grid warnings and evidence when the grid is uncertified', () => {
+    const result = makeIS()
+    result.grid_assessment = {
+      ...result.grid_assessment!,
+      certified: false,
+      override_used: true,
+      warnings: ['underresolved_interface_grid_override'],
+    }
+
+    renderImpedance(el, result)
+
+    const warning = el.querySelector<HTMLElement>(
+      '[data-test="impedance-evidence-warning"]',
+    )
+    const summary = el.querySelector<HTMLElement>(
+      '[data-test="impedance-evidence-summary"]',
+    )
+    expect(warning?.textContent).toContain('underresolved_interface_grid_override')
+    expect(summary?.textContent).toContain('Grid: uncertified')
+    expect(summary?.textContent).toContain('override: used')
   })
 
   it('default style is engineering (Arial layout, modebar visible)', () => {

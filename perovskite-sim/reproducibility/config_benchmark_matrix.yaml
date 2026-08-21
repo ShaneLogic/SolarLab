@@ -1,6 +1,10 @@
 schema_version: 1
 p0_baseline: p0-certified-2026-08-01
 schema_registry: reproducibility/schema_registry.yaml
+numerical_refinement_registry:
+  path: reproducibility/numerical_refinement_registry.yaml
+  schema: numerical-refinement-registry-v1
+  sha256: 44ca0258906dc24e9253ca1ca733ab85969ce2e6dda4755e462769e1891cee9f
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -91,6 +95,29 @@ benchmarks:
       - configs/twod/bcx_combined_demo.yaml
       - configs/twod/nip_MAPbI3_singleGB.yaml
       - configs/twod/nip_MAPbI3_uniform.yaml
+  phase1-refinement-contract:
+    kind: schema
+    status: pass
+    claim_level: structural-numerical-contract
+    command: pytest -q tests/regression/test_tolerance_grid_refinement.py
+    tests: [tests/regression/test_tolerance_grid_refinement.py]
+    node_ids:
+      - tests/regression/test_tolerance_grid_refinement.py::test_preregistered_numerical_lanes_and_thresholds_are_immutable
+      - tests/regression/test_tolerance_grid_refinement.py::test_certificate_distinguishes_certified_partial_and_failed
+      - tests/regression/test_tolerance_grid_refinement.py::test_refinement_runner_resumes_content_addressed_cells_without_overwrite
+      - tests/regression/test_tolerance_grid_refinement.py::test_failed_cell_can_be_retried_without_deleting_prior_artifact
+      - tests/regression/test_tolerance_grid_refinement.py::test_refinement_runner_rejects_historical_reference_output_root
+      - tests/regression/test_tolerance_grid_refinement.py::test_protocol_hash_is_manifested_and_inconsistency_fails_closed
+      - tests/regression/test_tolerance_grid_refinement.py::test_plan_refinement_is_read_only
+    configs:
+      - configs/cSi_homojunction.yaml
+      - configs/ionmonger_benchmark.yaml
+      - configs/scaps_mirror.yaml
+      - configs/solarscale_nip_band_aligned_iface.yaml
+      - configs/twod/nip_MAPbI3_uniform.yaml
+    limitations:
+      - this passing benchmark certifies the immutable schema and runner mechanics only
+      - no pre-registered physical lane is promoted until its content-addressed matrix closes
   courtier2019-ionmonger:
     kind: external
     status: pass
@@ -956,6 +983,7 @@ configs:
       - csi-jv-driver-capability-boundary
       - csi-qf-internal-validation
       - csi-qf-frequency-domain-cv
+      - phase1-refinement-contract
   - path: configs/csi_vannijen2025_pn_cv.yaml
     sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad
     semantic_sha256: fa8aa79df971b420a11b9985abd9ff976eec1f7fb88ca66018b0a8106b9d4330
@@ -1010,6 +1038,7 @@ configs:
       - ionmonger-physical-regression
       - ionmonger-mesh
       - ionmonger-residual-ss-mesh
+      - phase1-refinement-contract
   - path: configs/ionmonger_benchmark_tmm.yaml
     sha256: 09728fba308a206b3bdcd0874fdfc1775ac125dcfa42d10f70e9db8887c46fea
     semantic_sha256: 27e852381c1f7586fdb05bd73f587b6e9f64e4be2de95f649825dcabe4d78822
@@ -1069,7 +1098,7 @@ configs:
     semantic_sha256: bbda4b58f4844ce6e1e4bcf99e44ee873603ad1c5d5f7ad939faacc5973b7713
     schema: scaps-device-v1
     status: partial
-    benchmarks: [loader-contract, scaps-cbo-trend]
+    benchmarks: [loader-contract, scaps-cbo-trend, phase1-refinement-contract]
   - path: configs/scaps_mirror_v2.yaml
     sha256: 5500c9485f6a9518430511019546933277cdc3274fd3a005182394f39d2fcf67
     semantic_sha256: 813580bccbe13cdf78d203910b0c4eb31583bfdf779c8b7703f94ba823755071
@@ -1105,7 +1134,7 @@ configs:
     semantic_sha256: 9c2bf332f1ae352693b44a2c829e803b3d14be2636ddbbba6597871d417ced1c
     schema: standard-device-v1
     status: demo
-    benchmarks: [loader-contract]
+    benchmarks: [loader-contract, phase1-refinement-contract]
   - path: configs/tandem_lin2019.yaml
     sha256: 2eb26eb1902d0b9fbaf6e1b019dc79a163d2989adb13654c90ef508b4fdaded0
     semantic_sha256: 80912db53c3c7129a6adb5e7454e08e4a15c8fc0ea787e662cea3fc4036d5c49
@@ -1129,4 +1158,4 @@ configs:
     semantic_sha256: 92d27b4b9d47ca66725318ba9115a5dfa99448485044dd02015f9318dfcd7dce
     schema: standard-device-v1
     status: certified
-    benchmarks: [loader-contract, twod-uniform-parity]
+    benchmarks: [loader-contract, twod-uniform-parity, phase1-refinement-contract]

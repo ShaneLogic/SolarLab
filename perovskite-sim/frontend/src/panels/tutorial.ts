@@ -35,7 +35,7 @@ export function tutorialHTML(): string {
       <h4>4. Read the results</h4>
       <ul>
         <li><b>J–V:</b> compare forward (V: 0&rarr;V<sub>max</sub>) and reverse (V<sub>max</sub>&rarr;0) curves. Non-zero hysteresis index (HI) indicates slow ionic rearrangement. In <b>dark mode</b>, the curve shows the diode injection characteristic (no photocurrent). Use <b>current decomposition</b> to identify which carrier species dominates at each bias.</li>
-        <li><b>Impedance:</b> low-frequency intercept = R<sub>s</sub>+R<sub>rec</sub>; semicircle diameter = recombination resistance; additional low-f arc reveals ionic capacitance.</li>
+        <li><b>Impedance:</b> arcs and intercepts are protocol-dependent observables. Attribute a low-frequency branch to ions only after the DC state, frequency window, perturbation amplitude, cycle history and grid have passed their reported checks.</li>
         <li><b>Degradation:</b> snapshot metrics vs time &mdash; V<sub>oc</sub> decay implies growing non-radiative recombination; FF loss implies transport or interface deterioration.</li>
         <li><b>TPV:</b> the decay time &tau; is the effective carrier lifetime at open circuit. Shorter &tau; indicates faster recombination. Compare across device configurations or degradation states to track recombination evolution.</li>
       </ul>

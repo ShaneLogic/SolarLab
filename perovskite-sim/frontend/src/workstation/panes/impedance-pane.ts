@@ -1,6 +1,12 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
-import { setStatus, numField, readNum } from '../../ui-helpers'
+import {
+  checkField,
+  numField,
+  readCheck,
+  readNum,
+  setStatus,
+} from '../../ui-helpers'
 import type { DeviceConfig, ISResult } from '../../types'
 import type { Run, RunResult } from '../types'
 
@@ -19,6 +25,20 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
         ${numField('imp-nfreq', 'n<sub>freq</sub>', 15, '1')}
         ${numField('imp-fmin', 'f<sub>min</sub> (Hz)', 10, 'any')}
         ${numField('imp-fmax', 'f<sub>max</sub> (Hz)', 1e5, 'any')}
+        ${numField('imp-dv', '&delta;V (mV)', 10, '0.5')}
+        ${numField('imp-cycles', 'Cycles', 5, '1')}
+        ${numField('imp-extract', 'Extract cycles', 2, '1')}
+        ${numField('imp-ppc', 'Points/cycle', 40, '1')}
+        ${numField('imp-dc-settle', 'DC settle (s)', 1e-3, 'any')}
+        <label class="form-group">
+          <span>Engine</span>
+          <select id="imp-method">
+            <option value="transient_ion_aware">Transient, ion-aware</option>
+            <option value="qf_frequency_ion_free">QF frequency, ion-free</option>
+          </select>
+        </label>
+        ${checkField('imp-illuminated', 'Illuminated', true)}
+        ${checkField('imp-strict', 'Require DC certificate', false)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-imp">Run Impedance Sweep</button>
@@ -44,12 +64,30 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
     progressBar.busy()
     setStatus('status-imp', 'Starting job…')
 
+    const nCycles = Math.max(1, Math.round(readNum('imp-cycles', 5)))
+    const selectedMethod = (
+      document.getElementById('imp-method') as HTMLSelectElement | null
+    )?.value
+    const method = selectedMethod === 'qf_frequency_ion_free'
+      ? 'qf_frequency_ion_free' as const
+      : 'transient_ion_aware' as const
     const params = {
       N_grid: Math.max(3, Math.round(readNum('imp-N', 40))),
       V_dc: readNum('imp-Vdc', 0.9),
       n_freq: Math.max(2, Math.round(readNum('imp-nfreq', 15))),
       f_min: readNum('imp-fmin', 10),
       f_max: readNum('imp-fmax', 1e5),
+      delta_V: readNum('imp-dv', 10) * 1e-3,
+      n_cycles: nCycles,
+      n_extract: Math.min(
+        nCycles,
+        Math.max(1, Math.round(readNum('imp-extract', 2))),
+      ),
+      points_per_cycle: Math.max(8, Math.round(readNum('imp-ppc', 40))),
+      dc_settle_time: readNum('imp-dc-settle', 1e-3),
+      illuminated: readCheck('imp-illuminated', true),
+      method,
+      require_operating_point_certificate: readCheck('imp-strict', false),
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

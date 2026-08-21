@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from perovskite_sim.experiments.protocol import ExperimentProtocol
 
 
 @dataclass(frozen=True)
@@ -23,3 +27,4 @@ class TPVResult:
     V_oc: float            # steady-state open-circuit voltage [V]
     tau: float             # fitted mono-exponential decay time [s]
     delta_V0: float        # initial voltage perturbation amplitude [V]
+    protocol: ExperimentProtocol | None = None

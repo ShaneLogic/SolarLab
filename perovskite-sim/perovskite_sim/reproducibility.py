@@ -236,11 +236,46 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
     entries = matrix.get("configs") or []
     resource_entries = matrix.get("resources") or []
     errors: list[str] = []
+    refinement_registry = None
 
     if matrix.get("schema_version") != 1:
         errors.append("matrix: schema_version must equal 1")
     if registry.get("schema_version") != 1:
         errors.append("schema registry: schema_version must equal 1")
+    refinement_entry = matrix.get("numerical_refinement_registry")
+    if not isinstance(refinement_entry, dict):
+        errors.append("matrix: missing numerical_refinement_registry mapping")
+    else:
+        refinement_path = root / str(refinement_entry.get("path", ""))
+        refinement_schema = str(refinement_entry.get("schema", ""))
+        if refinement_schema != "numerical-refinement-registry-v1":
+            errors.append(
+                "matrix numerical_refinement_registry: schema must equal "
+                "numerical-refinement-registry-v1"
+            )
+        if refinement_schema not in schemas:
+            errors.append(
+                "matrix numerical_refinement_registry: schema is not registered"
+            )
+        if not refinement_path.is_file():
+            errors.append("matrix numerical_refinement_registry: file does not exist")
+        elif sha256_file(refinement_path) != refinement_entry.get("sha256"):
+            errors.append("matrix numerical_refinement_registry: SHA-256 drift")
+        else:
+            try:
+                from perovskite_sim.validation.numerical_certificate import (
+                    load_refinement_registry,
+                )
+
+                refinement_registry = load_refinement_registry(
+                    refinement_path,
+                    project_root=root,
+                )
+            except Exception as exc:
+                errors.append(
+                    "matrix numerical_refinement_registry: loader failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
     reference_environment = matrix.get("reference_environment")
     if not isinstance(reference_environment, dict):
         errors.append("matrix: missing reference_environment")
@@ -322,6 +357,25 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
     extra = sorted(set(declared_paths) - actual_paths)
     if missing or extra:
         errors.append(f"matrix config set drift: missing={missing}, extra={extra}")
+    if refinement_registry is not None:
+        lane_configs = {lane.config_path for lane in refinement_registry.lanes}
+        unknown_lane_configs = sorted(lane_configs - set(declared_paths))
+        if unknown_lane_configs:
+            errors.append(
+                "matrix numerical_refinement_registry: undeclared configs "
+                f"{unknown_lane_configs}"
+            )
+        refinement_benchmark = benchmarks.get("phase1-refinement-contract")
+        benchmark_configs = (
+            set(refinement_benchmark.get("configs") or [])
+            if isinstance(refinement_benchmark, dict)
+            else set()
+        )
+        if benchmark_configs != lane_configs:
+            errors.append(
+                "matrix phase1-refinement-contract configs must exactly match "
+                "the numerical refinement registry"
+            )
 
     status_counts: dict[str, int] = {}
     schema_counts: dict[str, int] = {}
@@ -646,6 +700,9 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
     return {
         "configs": len(entries),
         "benchmarks": len(benchmarks),
+        "numerical_refinement_lanes": (
+            0 if refinement_registry is None else len(refinement_registry.lanes)
+        ),
         "resources": len(resource_entries),
         "schemas": schema_counts,
         "statuses": status_counts,

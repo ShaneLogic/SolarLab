@@ -17,11 +17,15 @@ Schottky helpers are tested separately because they only compute
 """
 from __future__ import annotations
 
+import dataclasses
 import numpy as np
 import pytest
 
 from perovskite_sim.physics.contacts import (
+    ContactThermodynamicError,
     apply_selective_contacts,
+    assess_contact_thermodynamics,
+    require_contact_thermodynamic_certificate,
     schottky_equilibrium_n,
     schottky_equilibrium_p,
     selective_contact_flux,
@@ -181,3 +185,136 @@ def test_schottky_equilibrium_p_mirrors_n_helper():
     assert schottky_equilibrium_p(N_v, phi_B, V_T) == pytest.approx(
         schottky_equilibrium_n(N_v, phi_B, V_T)
     )
+
+
+def _scaps_contact_material(stack):
+    from perovskite_sim.experiments.jv_sweep import build_electrical_grid
+    from perovskite_sim.solver.mol import build_material_arrays
+
+    x = build_electrical_grid(stack, 12)
+    return build_material_arrays(x, stack)
+
+
+def test_legacy_manual_contact_reports_measured_qfl_tilt():
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    stack = load_scaps_yaml("configs/scaps_mirror_v2.yaml")
+    certificate = assess_contact_thermodynamics(
+        stack, _scaps_contact_material(stack),
+    )
+
+    assert certificate.status == "inconsistent"
+    assert certificate.fermi_level_span_eV == pytest.approx(
+        0.00602495809313,
+    )
+    assert certificate.built_in_potential_mode == "legacy_manual"
+
+
+def test_semiconductor_work_function_contact_is_internally_certified():
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    stack = dataclasses.replace(
+        load_scaps_yaml("configs/scaps_mirror_v2.yaml"),
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    certificate = require_contact_thermodynamic_certificate(
+        stack, _scaps_contact_material(stack),
+    )
+
+    assert certificate.certified
+    assert certificate.fermi_level_span_eV < 1.0e-12
+
+
+def test_metal_work_function_does_not_hide_reservoir_mismatch():
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    stack = dataclasses.replace(
+        load_scaps_yaml("configs/scaps_mirror_v2.yaml"),
+        built_in_potential_mode="metal_work_function",
+        work_function_left_eV=5.2,
+        work_function_right_eV=4.1,
+    )
+    mat = _scaps_contact_material(stack)
+    certificate = assess_contact_thermodynamics(stack, mat)
+
+    assert certificate.status == "inconsistent"
+    assert certificate.fermi_level_span_eV == pytest.approx(
+        0.19397504190687,
+    )
+    with pytest.raises(ContactThermodynamicError, match="inconsistent"):
+        require_contact_thermodynamic_certificate(stack, mat)
+
+
+def _contact_semiconductor_work_functions(mat):
+    left = float(
+        mat.chi_phys[0]
+        - mat.V_T_device * np.log(mat.n_L / mat.N_C_physical[0])
+    )
+    right = float(
+        mat.chi_phys[-1]
+        - mat.V_T_device * np.log(mat.n_R / mat.N_C_physical[-1])
+    )
+    return left, right
+
+
+def test_metal_work_function_requires_absolute_reservoir_alignment():
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    physical = dataclasses.replace(
+        load_scaps_yaml("configs/scaps_mirror_v2.yaml"),
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    physical_mat = _scaps_contact_material(physical)
+    work_left, work_right = _contact_semiconductor_work_functions(physical_mat)
+
+    matched = dataclasses.replace(
+        physical,
+        built_in_potential_mode="metal_work_function",
+        work_function_left_eV=work_left,
+        work_function_right_eV=work_right,
+    )
+    matched_certificate = require_contact_thermodynamic_certificate(
+        matched, _scaps_contact_material(matched),
+    )
+    assert matched_certificate.metal_work_function_mismatch_eV < 1.0e-12
+
+    shifted = dataclasses.replace(
+        matched,
+        work_function_left_eV=work_left + 1.0,
+        work_function_right_eV=work_right + 1.0,
+    )
+    shifted_certificate = assess_contact_thermodynamics(
+        shifted, _scaps_contact_material(shifted),
+    )
+    assert shifted_certificate.fermi_level_span_eV < 1.0e-12
+    assert shifted_certificate.metal_work_function_mismatch_eV == pytest.approx(1.0)
+    assert shifted_certificate.status == "inconsistent"
+
+
+@pytest.mark.parametrize("temperature", [250.0, 350.0])
+def test_physical_contact_potential_diagnostic_uses_active_temperature(
+    temperature,
+):
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    stack = dataclasses.replace(
+        load_scaps_yaml("configs/scaps_mirror_v2.yaml"),
+        built_in_potential_mode="semiconductor_work_function",
+        T=temperature,
+    )
+    certificate = assess_contact_thermodynamics(
+        stack, _scaps_contact_material(stack),
+    )
+
+    assert certificate.certified
+    assert certificate.potential_mismatch_V == pytest.approx(0.0, abs=1.0e-12)
+
+
+def test_contact_certificate_gate_cannot_be_relaxed_by_the_caller():
+    from perovskite_sim.scaps_compat import load_scaps_yaml
+
+    stack = load_scaps_yaml("configs/scaps_mirror_v2.yaml")
+    with pytest.raises(ValueError, match="cannot exceed"):
+        assess_contact_thermodynamics(
+            stack, _scaps_contact_material(stack), tolerance_eV=0.2,
+        )

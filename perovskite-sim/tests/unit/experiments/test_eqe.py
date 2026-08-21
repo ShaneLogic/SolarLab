@@ -85,6 +85,8 @@ def test_result_is_populated_dataclass(coarse_eqe):
     assert np.all(np.isfinite(r.J_sc_per_lambda))
     # wavelengths must be sorted ascending (we sort internally)
     assert np.all(np.diff(r.wavelengths_nm) > 0)
+    assert r.protocol is not None
+    assert r.protocol.implicit_legacy_protocol
 
 
 def test_eqe_in_unit_range(coarse_eqe):

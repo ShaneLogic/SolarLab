@@ -118,10 +118,10 @@ export function parametersHTML(): string {
       <table class="param-table">
         <thead><tr><th>Symbol</th><th>Name</th><th>Unit</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td><i>N</i><sub>grid</sub></td><td>Spatial nodes</td><td>—</td><td>As above; impedance is usually fine at 40 because the small-signal excitation stays near a fixed operating point.</td></tr>
+          <tr><td><i>N</i><sub>grid</sub></td><td>Spatial nodes</td><td>—</td><td>As above. Small excitation does not prove spatial convergence; use the reported grid evidence and a registered refinement ladder.</td></tr>
           <tr><td><i>V</i><sub>dc</sub></td><td>Bias point</td><td>V</td><td>DC operating voltage around which the AC excitation oscillates. Near <i>V</i><sub>OC</sub> reveals recombination resistance; under bright short-circuit reveals transport.</td></tr>
           <tr><td><i>N</i><sub>f</sub></td><td>Frequency points</td><td>—</td><td>Number of log-spaced frequencies between <i>f</i><sub>min</sub> and <i>f</i><sub>max</sub>.</td></tr>
-          <tr><td><i>f</i><sub>min</sub>, <i>f</i><sub>max</sub></td><td>Frequency range</td><td>Hz</td><td>Lock-in analysis window. Ionic arcs appear below ~10<sup>2</sup> Hz; electronic arcs dominate above ~10<sup>3</sup> Hz.</td></tr>
+          <tr><td><i>f</i><sub>min</sub>, <i>f</i><sub>max</sub></td><td>Frequency range</td><td>Hz</td><td>Lock-in analysis window. Ionic scales are device-dependent; use the returned timescales, bracket status, and sampling-coverage evidence rather than a universal cutoff.</td></tr>
         </tbody>
       </table>
 

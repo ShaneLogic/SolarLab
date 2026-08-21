@@ -11,6 +11,10 @@ import {
 } from '../../plot-theme'
 import { metricCard } from '../../ui-helpers'
 import { smoothEQE } from '../../signal-smooth'
+import {
+  collectImpedanceEvidenceWarnings,
+  summarizeImpedanceEvidence,
+} from '../../impedance-evidence'
 import type {
   JVResult,
   ISResult,
@@ -852,6 +856,26 @@ export function renderImpedance(el: HTMLElement, r: ISResult): void {
     _impToolbar.appendChild(styleSelect)
   }
   el.appendChild(_impToolbar)
+
+  const evidenceSummary = document.createElement('div')
+  evidenceSummary.className = 'impedance-evidence-summary'
+  evidenceSummary.setAttribute('data-test', 'impedance-evidence-summary')
+  for (const line of summarizeImpedanceEvidence(r)) {
+    const item = document.createElement('span')
+    item.textContent = line
+    evidenceSummary.appendChild(item)
+  }
+  el.appendChild(evidenceSummary)
+
+  const evidenceNotes = collectImpedanceEvidenceWarnings(r)
+  if (evidenceNotes.length > 0) {
+    const evidenceBanner = document.createElement('div')
+    evidenceBanner.className = 'jv2d-warning'
+    evidenceBanner.setAttribute('role', 'alert')
+    evidenceBanner.setAttribute('data-test', 'impedance-evidence-warning')
+    evidenceBanner.textContent = evidenceNotes.join(' | ')
+    el.appendChild(evidenceBanner)
+  }
 
   const _impPlotDiv = document.createElement('div')
   _impPlotDiv.className = 'impedance-plot'

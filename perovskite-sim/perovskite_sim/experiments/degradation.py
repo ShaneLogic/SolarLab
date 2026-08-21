@@ -9,6 +9,7 @@ from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import StateVec, run_transient, split_step, build_material_arrays
+from perovskite_sim.solver.tolerances import AbsoluteTolerance, ComponentwiseAtol
 from perovskite_sim.experiments.jv_sweep import (
     _compute_current,
     compute_metrics,
@@ -50,7 +51,7 @@ def _measure_snapshot_metrics(
     voltages: np.ndarray,
     settle_time: float,
     rtol: float,
-    atol: float,
+    atol: AbsoluteTolerance,
 ):
     """Snapshot J-V with the snapshot ion distribution pinned.
 
@@ -77,7 +78,11 @@ def _measure_snapshot_metrics(
     # tolerance controls step size, not distance from true steady state,
     # so we tighten both to keep residual drift below the current scale.
     snap_rtol = min(rtol, 1e-5)
-    snap_atol = min(atol, 1e-8)
+    if isinstance(atol, ComponentwiseAtol):
+        effective_floor = atol.minimum_atol * atol.refinement_factor
+        snap_atol = atol.refined(min(1.0, 1.0e-8 / effective_floor))
+    else:
+        snap_atol = min(atol, 1e-8)
     # Cap Radau's internal step size. Near V_bi the Jacobian is nearly
     # singular and Radau's own error estimator can underreport the local
     # truncation error, letting it accept giant steps that land on the
@@ -184,7 +189,7 @@ def run_degradation(
     metric_V_max: float | None = None,
     metric_settle_time: float = 1e-2,  # per-voltage carrier settling time [s]
     rtol: float = 1e-4,
-    atol: float = 1e-6,
+    atol: AbsoluteTolerance = 1e-6,
     store_ion_profiles: bool = True,
     damage_motion_gain: float = 1.2,
     damage_stress_rate: float = 1e-3,

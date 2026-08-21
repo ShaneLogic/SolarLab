@@ -704,6 +704,8 @@ def compute_interface_srh_on_state(
     iface_state: np.ndarray,
     stack,
     mat,
+    *,
+    density_regularization_width_m3: float = 0.0,
 ) -> np.ndarray:
     """Two-sided Shockley-Read SRH evaluated on interface-plane state.
 
@@ -772,11 +774,15 @@ def compute_interface_srh_on_state(
         p_1s = float(iface_state[base + 1])
         n_2s = float(iface_state[base + 2])
         p_2s = float(iface_state[base + 3])
-        # Clamp negatives (defensive against transient overshoots).
-        n_1s = max(0.0, n_1s)
-        p_1s = max(0.0, p_1s)
-        n_2s = max(0.0, n_2s)
-        p_2s = max(0.0, p_2s)
+        # Zero width retains the historical hard projection. A positive
+        # width is research-only and must remain paired with raw negative-
+        # state diagnostics; it does not certify an invalid trajectory.
+        from perovskite_sim.physics.regularization import compact_positive_part
+
+        n_1s = float(compact_positive_part(n_1s, density_regularization_width_m3))
+        p_1s = float(compact_positive_part(p_1s, density_regularization_width_m3))
+        n_2s = float(compact_positive_part(n_2s, density_regularization_width_m3))
+        p_2s = float(compact_positive_part(p_2s, density_regularization_width_m3))
         # R_s1: ETL-side electron capture paired with PVK-side hole.
         R_s1 = interface_recombination(
             n_1s, p_2s, ni_eff_sq, n1_k, p1_k, v_n, v_p,
@@ -1195,6 +1201,8 @@ def compute_interface_srh_shared_on_state(
     iface_state: np.ndarray,
     stack,
     mat,
+    *,
+    density_regularization_width_m3: float = 0.0,
 ) -> np.ndarray:
     """Shared-occupancy single-trap P-V on the interface-plane STATE
     densities (2026-06, P1 of scaps_mode).
@@ -1235,10 +1243,20 @@ def compute_interface_srh_shared_on_state(
         if v_n == 0.0 and v_p == 0.0:
             continue
         base = 4 * k
-        n_1s = max(float(iface_state[base + 0]), 0.0)
-        p_1s = max(float(iface_state[base + 1]), 0.0)
-        n_2s = max(float(iface_state[base + 2]), 0.0)
-        p_2s = max(float(iface_state[base + 3]), 0.0)
+        from perovskite_sim.physics.regularization import compact_positive_part
+
+        n_1s = float(compact_positive_part(
+            iface_state[base + 0], density_regularization_width_m3,
+        ))
+        p_1s = float(compact_positive_part(
+            iface_state[base + 1], density_regularization_width_m3,
+        ))
+        n_2s = float(compact_positive_part(
+            iface_state[base + 2], density_regularization_width_m3,
+        ))
+        p_2s = float(compact_positive_part(
+            iface_state[base + 3], density_regularization_width_m3,
+        ))
         nS = n_1s + n_2s
         pS = p_1s + p_2s
         if nS <= 0.0 or pS <= 0.0:
@@ -1259,7 +1277,11 @@ def compute_interface_srh_shared_on_state(
         num = nS * pS - refS
         if num <= 0.0:
             continue                       # NOGEN clamp
-        R = num / ((nS + n1S) / v_p + (pS + p1S) / v_n)
+        denominator = (nS + n1S) / v_p + (pS + p1S) / v_n
+        from perovskite_sim.physics.recombination import _record_srh_denominator
+
+        _record_srh_denominator("interface", np.asarray(denominator))
+        R = num / denominator
         out[base + 0] = -R * (n_1s / nS)
         out[base + 1] = -R * (p_1s / pS)
         out[base + 2] = -R * (n_2s / nS)
@@ -1271,6 +1293,8 @@ def compute_interface_srh_occupancy_on_state(
     iface_state: np.ndarray,
     stack,
     mat,
+    *,
+    density_regularization_width_m3: float = 0.0,
 ) -> np.ndarray:
     """Net side-resolved capture from a shared interface-trap occupancy.
 
@@ -1299,10 +1323,20 @@ def compute_interface_srh_occupancy_on_state(
         if v_n == 0.0 and v_p == 0.0:
             continue
         base = 4 * k
-        n_right = max(float(iface_state[base + 0]), 0.0)
-        p_right = max(float(iface_state[base + 1]), 0.0)
-        n_left = max(float(iface_state[base + 2]), 0.0)
-        p_left = max(float(iface_state[base + 3]), 0.0)
+        from perovskite_sim.physics.regularization import compact_positive_part
+
+        n_right = float(compact_positive_part(
+            iface_state[base + 0], density_regularization_width_m3,
+        ))
+        p_right = float(compact_positive_part(
+            iface_state[base + 1], density_regularization_width_m3,
+        ))
+        n_left = float(compact_positive_part(
+            iface_state[base + 2], density_regularization_width_m3,
+        ))
+        p_left = float(compact_positive_part(
+            iface_state[base + 3], density_regularization_width_m3,
+        ))
         if mat.interface_n1_L and mat.interface_n1_R:
             n1_left = max(float(mat.interface_n1_L[k]), 0.0)
             n1_right = max(float(mat.interface_n1_R[k]), 0.0)
@@ -1348,6 +1382,7 @@ def solve_interface_states_live_qss(
     residual_tolerance: float = 1.0e-7,
     max_evaluations: int = 200,
     fail_on_residual: bool = True,
+    density_regularization_width_m3: float = 0.0,
 ) -> InterfaceStateQSSResult:
     """Eliminate the four plane densities at every interface locally.
 
@@ -1462,7 +1497,12 @@ def solve_interface_states_live_qss(
             state = np.exp(np.clip(state_variable, -200.0, 200.0))
         state_flux = te_state_flux(
             state
-        ) + compute_interface_srh_occupancy_on_state(state, stack, mat)
+        ) + compute_interface_srh_occupancy_on_state(
+            state,
+            stack,
+            mat,
+            density_regularization_width_m3=density_regularization_width_m3,
+        )
         return state, state_flux
 
     if bounded_states:
@@ -1549,7 +1589,12 @@ def solve_interface_states_live_qss(
     )
     thermionic_flux = te_state_flux(state)
     cross_flux = thermionic_flux - raw_bulk_flux
-    srh_flux = compute_interface_srh_occupancy_on_state(state, stack, mat)
+    srh_flux = compute_interface_srh_occupancy_on_state(
+        state,
+        stack,
+        mat,
+        density_regularization_width_m3=density_regularization_width_m3,
+    )
     # Project the returned reservoir flux onto the exactly conservative local
     # manifold. ``raw_bulk_flux`` is v_th * (target - state), a subtraction of
     # nearly equal O(1e20--1e24) densities at full thermal velocity. Its tiny

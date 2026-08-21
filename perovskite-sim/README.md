@@ -59,6 +59,22 @@ python scripts/verify_reproducibility.py --json          # P0 + config/schema/re
 pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
 ```
 
+Transient solves retain the historical scalar absolute tolerance by default.
+For the opt-in reference-scaled policy and the required three-level tolerance
+study, see [componentwise-tolerance-policy.md](docs/componentwise-tolerance-policy.md).
+For compact-support Poole-Frenkel, interface-density, and thermionic-cap
+sensitivity ladders, see
+[rhs-regularization-policy.md](docs/rhs-regularization-policy.md).
+The staged implementation, test matrices, promotion gates, and explicitly
+parked physics are tracked in the
+[2026-08-14 physics/numerics hardening roadmap](docs/plans/2026-08-14-physics-numerics-hardening-plan.md).
+The corresponding Phase 1 implementation status, immutable certificate IDs,
+failed/partial lanes, and evidence boundaries are recorded in the
+[Phase 1 implementation and evidence report](docs/phase-1-implementation-and-evidence.md).
+The first post-P1 impedance prerequisite, a residual- and conservation-certified
+mobile-ion DC state, is documented in
+[1D ion-aware DC certification closure](docs/ion-aware-dc-certification.md).
+
 Evidence labels matter: a passing `load_only` or internal regression is not an
 external validation. See [reproducibility/README.md](reproducibility/README.md)
 for the authoritative status and limitations of every shipped config.
@@ -136,6 +152,11 @@ explicitly; unsupported combinations fail before the numerical solve. Likewise,
 | `twod/nip_MAPbI3_uniform` | 2D lateral-uniform MAPbI3 | Frozen in 2D | Beer-Lambert |
 | `twod/nip_MAPbI3_singleGB` | 2D MAPbI3 with one vertical grain boundary | Frozen in 2D | Beer-Lambert |
 | `twod/bcx_combined_demo` | 2D combined Robin / field-mobility / microstructure demo | Frozen in 2D | Beer-Lambert |
+
+Continuous `chi/Eg` grading currently changes electrical transport only.
+Optical `alpha(lambda, x)` and `n,k(lambda, x)` are not composition-graded, so
+CIGS notch studies must not be interpreted as graded-optics Jsc/PCE
+optimization.
 
 <br>
 
@@ -278,7 +299,10 @@ when FULL-mode selective-contact coefficients are configured. The lateral
 direction is periodic, so laterally uniform presets reproduce the 1D J-V
 semantics while microstructure presets can add vertical grain boundaries.
 Positive and negative ions are frozen as static Poisson background fields
-during 2D J-V runs.
+during 2D J-V runs. The 2D continuity path also omits the 1D interface-defect
+and interface-plane recombination channels. Its certified scope is the
+lateral-uniform/frozen-ion limit and prescribed lifetime patterns, not a
+complete 2D perovskite microstructure model.
 
 2D presets live in `configs/twod/`; the backend exposes them through
 `GET /api/configs` and runs them with `kind="jv_2d"` or
@@ -314,6 +338,11 @@ At each heterointerface, surface recombination is parameterised by
 velocities $(v_n, v_p)$ [m/s] carried in `DeviceStack.interfaces`. The
 surface SRH rate is converted to a volumetric rate by dividing by the
 local dual-grid cell width.
+
+These active interface paths are recombination-only. The existing
+`iface_state_charge`/Poisson scaffold is parked: interface occupancy does not
+currently feed a self-consistent sheet charge back into the global Poisson
+solve and must not be cited as supported trap electrostatics.
 
 <br>
 
@@ -357,8 +386,9 @@ The default 1 ms integration is a carrier-preconditioning protocol, not a claim
 of full ion-relaxed equilibrium. Carrier densities typically settle much
 faster than the ionic profile, so ions remain nearly frozen over this interval.
 Longer light soaking defines a different device history and can change a
-history-dependent J-V result. If the transient solve fails, the solver falls
-back to the dark seed.
+history-dependent J-V result. If the transient solve fails or returns an
+invalid terminal density state, the helper raises; it never substitutes the
+dark seed as an illuminated result.
 
 *Source:* `perovskite_sim/solver/illuminated_ss.py`
 
@@ -388,6 +418,21 @@ $$
 
 Pre-mode YAML files retain their historical compatibility behavior. New files
 that omit both manual keys resolve to `semiconductor_work_function`.
+
+`assess_contact_thermodynamics(stack, mat)` evaluates the four endpoint
+Maxwell-Boltzmann quasi-Fermi levels using the exact reservoir densities,
+band/DOS arrays, device temperature, and Poisson drop consumed by the solver.
+The fixed internal gate is 5 meV and callers may tighten but not relax it.
+`metal_work_function` additionally requires each electrode work function to
+match its local semiconductor reservoir in absolute energy; matching only the
+left-right difference is insufficient. Results are labelled `certified`,
+`inconsistent`, `compatible_unverified`, or `not_assessable`. Legacy decks are
+reported rather than silently migrated or rejected; research workflows can use
+`require_contact_thermodynamic_certificate` to fail closed. This is an internal
+boundary-consistency certificate, not validation of a real contact barrier or
+surface kinetics.
+
+*Source:* `perovskite_sim/physics/contacts.py`
 
 <br>
 
@@ -585,6 +630,38 @@ magnitude diagnostic, not a convergence threshold (see
 `perovskite-sim/CLAUDE.md`).
 
 *Source:* `perovskite_sim/experiments/eqe.py`
+
+<br>
+
+### Impedance Protocol and Evidence
+
+`run_impedance` exposes two deliberately separate engines. The
+`transient_ion_aware` path retains mobile ions and lock-in extraction; the
+`qf_frequency_ion_free` path retains the QF solver's DC residual and
+frequency-domain linear-solve diagnostics but rejects mobile ions. Both use a
+strict perturbation bound below 20 mV.
+
+Every result now carries the exact bias/light/cycle protocol, a DC operating
+point report, an electrical-grid assessment, and a frequency-window assessment.
+For an ionic device the assessment reports Debye, blocking-charge, and
+diffusion frequency estimates. It distinguishes merely bracketing a
+characteristic frequency from covering the branch with one-decade margins and
+no sampling gap above 0.5 decades. A single marker frequency or two sparse
+endpoints do not count as branch coverage.
+
+The transient engine applies a continuous sinusoidal boundary voltage in one
+Radau solve per frequency. Edge and midpoint states co-locate centered
+displacement current with midpoint conduction current; `points_per_cycle`
+(default 40) is recorded for time-resolution ladders. Non-finite DC evidence
+and unsupported dynamic interface-state blocks fail before AC extraction.
+The historical 1 ms transient preconditioner remains available, but its
+carrier/ion residuals and contact certificate are reported rather than assumed
+to prove steady state. Set `require_operating_point_certificate=True` to fail
+closed. Candidate residual thresholds still require lane-specific
+grid/tolerance/amplitude/cycle refinement before a result is internally
+certified ionic spectroscopy.
+
+*Source:* `perovskite_sim/experiments/impedance.py`
 
 <br>
 

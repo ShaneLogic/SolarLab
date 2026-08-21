@@ -312,6 +312,8 @@ def test_fixed_generation_override_is_honored():
         stack, N_grid=N_grid, n_points=20, fixed_generation=G_zero,
     )
     assert abs(result.metrics_fwd.J_sc) < 1.0  # A/m²; effectively zero
+    assert result.protocol is not None
+    assert result.protocol.implicit_legacy_protocol
 
 
 def test_fixed_generation_wrong_shape_raises():

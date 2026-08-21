@@ -198,6 +198,15 @@ def test_dispatch_steady_state_maps_to_hysteresis_free_jvresult(monkeypatch):
             V=np.array([0.0, 0.5, 1.0]),
             J=np.array([200.0, 180.0, 0.0]),
             metrics="MET",
+            point_acceptance=(
+                "residual_converged",
+                "current_bounded_stall",
+                "transient_assisted",
+            ),
+            point_residual=np.array([1.0e-9, 2.0e-7, 3.0e-6]),
+            point_continuity_current_bound=np.array([
+                1.0e-8, 2.0e-6, np.nan,
+            ]),
         )
 
     monkeypatch.setattr(bm, "run_jv_sweep_ss", fake_ss)
@@ -212,6 +221,29 @@ def test_dispatch_steady_state_maps_to_hysteresis_free_jvresult(monkeypatch):
     assert res.metrics_fwd == "MET" and res.metrics_rev == "MET"
     assert captured["iface_states"] is True
     assert captured["V_max"] == 1.3
+    assert [status.reason_code for status in res.status_fwd] == [
+        "residual_converged",
+        "current_bounded_stall",
+        "transient_assisted",
+    ]
+    assert [status.branch for status in res.status_rev] == [
+        "jv_reverse",
+        "jv_reverse",
+        "jv_reverse",
+    ]
+    assert res.status_fwd[0].max_normalized_residual == pytest.approx(1.0e-9)
+    assert (
+        res.status_fwd[1].electron_continuity_bound_A_m2
+        == pytest.approx(2.0e-6)
+    )
+    assert (
+        res.status_fwd[1].hole_continuity_bound_A_m2
+        == pytest.approx(2.0e-6)
+    )
+    assert res.status_fwd[0].valid is True
+    assert res.status_fwd[1].valid is True
+    assert res.status_fwd[2].valid is False
+    assert res.certified is False
 
 
 def test_dispatch_steady_state_defaults_v_max_when_none(monkeypatch):
@@ -230,12 +262,86 @@ def test_dispatch_steady_state_defaults_v_max_when_none(monkeypatch):
     assert captured["V_max"] == 1.25  # SS driver default when caller omits
 
 
+def test_dispatch_steady_state_missing_metadata_is_compatible_but_uncertified(
+    monkeypatch,
+):
+    def fake_ss(stack, *, N_grid, n_points, V_max, illuminated,
+                iface_states, progress=None):
+        return SimpleNamespace(
+            V=np.array([0.0, 0.5]),
+            J=np.array([200.0, 100.0]),
+            metrics="MET",
+        )
+
+    monkeypatch.setattr(bm, "run_jv_sweep_ss", fake_ss)
+    result = bm._run_jv_dispatch(
+        stack=None,
+        N_grid=30,
+        n_points=2,
+        v_rate=1.0,
+        V_max=0.5,
+        illuminated=True,
+        solver="steady_state",
+    )
+
+    assert len(result.status_fwd) == len(result.V_fwd)
+    assert all(s.reason_code == "not_reported" for s in result.status_fwd)
+    assert all(not s.valid for s in result.status_fwd)
+    assert result.certified is False
+
+
+def test_dispatch_steady_state_misaligned_metadata_fails_closed(monkeypatch):
+    def fake_ss(stack, *, N_grid, n_points, V_max, illuminated,
+                iface_states, progress=None):
+        return SimpleNamespace(
+            V=np.array([0.0, 0.5]),
+            J=np.array([200.0, 100.0]),
+            metrics="MET",
+            point_acceptance=("residual_converged",),
+            point_residual=np.array([1.0e-9, 2.0e-9]),
+            point_current_bound=np.array([1.0e-8, 2.0e-8]),
+        )
+
+    monkeypatch.setattr(bm, "run_jv_sweep_ss", fake_ss)
+    result = bm._run_jv_dispatch(
+        stack=None,
+        N_grid=30,
+        n_points=2,
+        v_rate=1.0,
+        V_max=0.5,
+        illuminated=True,
+        solver="steady_state",
+    )
+
+    assert [status.reason_code for status in result.status_fwd] == [
+        "residual_converged",
+        "not_reported",
+    ]
+    assert all(not status.valid for status in result.status_fwd)
+    assert all(
+        "incomplete or misaligned" in status.message
+        for status in result.status_fwd
+    )
+
+
 def test_dispatch_default_calls_transient(monkeypatch):
     called = {}
 
-    def fake_transient(stack, *, N_grid, n_points, v_rate, V_max,
-                       illuminated, progress=None):
+    def fake_transient(
+        stack,
+        *,
+        N_grid,
+        n_points,
+        v_rate,
+        V_max,
+        illuminated,
+        experiment_protocol=None,
+        protocol_mode="compatibility",
+        progress=None,
+    ):
         called["hit"] = True
+        called["experiment_protocol"] = experiment_protocol
+        called["protocol_mode"] = protocol_mode
         return "TRANSIENT_RESULT"
 
     monkeypatch.setattr(bm.jv_sweep, "run_jv_sweep", fake_transient)
@@ -244,6 +350,8 @@ def test_dispatch_default_calls_transient(monkeypatch):
         illuminated=True,  # solver omitted → transient
     )
     assert out == "TRANSIENT_RESULT" and called["hit"]
+    assert called["experiment_protocol"] is None
+    assert called["protocol_mode"] == "compatibility"
 
 
 def test_dispatch_quasi_fermi_returns_certificate_bearing_jvresult(monkeypatch):

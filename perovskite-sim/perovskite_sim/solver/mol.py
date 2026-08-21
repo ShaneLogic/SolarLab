@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Callable
 from dataclasses import dataclass
 import math
 import os
@@ -26,7 +27,10 @@ from perovskite_sim.models.device import (
     electrical_interface_defects,
 )
 
-from perovskite_sim.physics.recombination import interface_recombination
+from perovskite_sim.physics.recombination import (
+    _observe_srh_denominators,
+    interface_recombination,
+)
 from perovskite_sim.physics.interface_plane import (
     build_plane_params,
     solve_plane_densities,
@@ -37,6 +41,23 @@ from perovskite_sim.physics.temperature import (
 )
 from perovskite_sim.models.mode import resolve_mode, SimulationMode
 from perovskite_sim.constants import Q, V_T as _V_T_300
+from perovskite_sim.solver.tolerances import (
+    AbsoluteTolerance,
+    ComponentwiseAtol,
+    build_componentwise_atol_1d,
+    build_componentwise_atol_ions,
+)
+from perovskite_sim.solver.numerical_diagnostics import (
+    LogDensityCoordinateTransform,
+    NumericalDiagnosticsMonitor,
+    NumericalDiagnosticsPolicy,
+    SplitStepDiagnosticsMonitor,
+    SplitStepDiagnosticsPolicy,
+    SplitStepDiagnosticsReport,
+    StateCoordinateMode,
+    StateLayout,
+)
+from perovskite_sim.physics.regularization import RHSRegularization
 
 
 @dataclass
@@ -2133,6 +2154,7 @@ def assemble_rhs(
     V_app: float = 0.0,
     phi_frozen: np.ndarray | None = None,
     interface_qss_result=None,
+    regularization: RHSRegularization | None = None,
 ) -> np.ndarray:
     """Method of Lines RHS: dy/dt = f(t, y).
 
@@ -2140,6 +2162,11 @@ def assemble_rhs(
     would allocate ~20 numpy arrays per Radau RHS call and dominated runtime
     of the caching refactor's target experiments.
     """
+    if regularization is not None and not isinstance(
+        regularization, RHSRegularization
+    ):
+        raise TypeError("regularization must be an RHSRegularization or None")
+
     N = len(x)
     sv = StateVec.unpack(y, N, N_iface_state=mat.N_iface_state)
 
@@ -2267,6 +2294,11 @@ def assemble_rhs(
             mat.v_sat_n_face,
             mat.ct_beta_n_face,
             mat.pf_gamma_n_face,
+            pf_field_regularization_width_V_m=(
+                regularization.poole_frenkel_field_width_V_m
+                if regularization is not None
+                else 0.0
+            ),
         )
         mu_p_face_eff = apply_field_mobility(
             mu_p_face_base,
@@ -2274,12 +2306,23 @@ def assemble_rhs(
             mat.v_sat_p_face,
             mat.ct_beta_p_face,
             mat.pf_gamma_p_face,
+            pf_field_regularization_width_V_m=(
+                regularization.poole_frenkel_field_width_V_m
+                if regularization is not None
+                else 0.0
+            ),
         )
         carrier_params = dict(mat.carrier_params)
         carrier_params["D_n"] = mu_n_face_eff * mat.V_T_device
         carrier_params["D_p"] = mu_p_face_eff * mat.V_T_device
     else:
         carrier_params = mat.carrier_params
+
+    if regularization is not None:
+        if carrier_params is mat.carrier_params:
+            carrier_params = dict(carrier_params)
+        carrier_params["te_softness"] = regularization.te_cap_relative_width
+        carrier_params["te_regularization_mode"] = "compact_support"
 
     # Selective / Schottky outer contact Robin BCs (Phase 3.3). Compute one
     # Robin flux per side/carrier that has a finite S. Carriers/sides left
@@ -2356,6 +2399,11 @@ def assemble_rhs(
                     cross_transmission=mat.iface_qss_cross_transmission,
                     interface_transport_model=mat.iface_qss_transport_model,
                     fail_on_residual=not mat.iface_qss_allow_inexact_inner,
+                    density_regularization_width_m3=(
+                        regularization.interface_density_width_m3
+                        if regularization is not None
+                        else 0.0
+                    ),
                 )
         interface_count = (
             len(mat.iface_qss_left_nodes)
@@ -2460,10 +2508,20 @@ def assemble_rhs(
         if mat.iface_state_shared_occ:
             srh_sinks = compute_interface_srh_shared_on_state(
                 sv.iface_state, stack, mat,
+                density_regularization_width_m3=(
+                    regularization.interface_density_width_m3
+                    if regularization is not None
+                    else 0.0
+                ),
             )
         else:
             srh_sinks = compute_interface_srh_on_state(
                 sv.iface_state, stack, mat,
+                density_regularization_width_m3=(
+                    regularization.interface_density_width_m3
+                    if regularization is not None
+                    else 0.0
+                ),
             )
         diface_state = np.zeros_like(sv.iface_state)
         for k in range(mat.N_iface_state):
@@ -2534,13 +2592,16 @@ def run_transient(
     t_eval: np.ndarray,
     stack: DeviceStack,
     illuminated: bool = True,
-    V_app: float = 0.0,
+    V_app: float | Callable[[float], float] = 0.0,
     rtol: float = 1e-4,
-    atol: float = 1e-6,
+    atol: AbsoluteTolerance = 1e-6,
     max_step: float = np.inf,
     mat: MaterialArrays | None = None,
     max_nfev: int | None = None,
     method: str = "Radau",
+    numerical_diagnostics: NumericalDiagnosticsPolicy | None = None,
+    regularization: RHSRegularization | None = None,
+    state_coordinates: StateCoordinateMode = "density",
 ):
     """Integrate MOL system from t_span[0] to t_span[1].
 
@@ -2548,6 +2609,34 @@ def run_transient(
     one-off calls but wasteful when this function is invoked many times
     with the same stack (J-V sweeps, impedance frequency loops). Callers
     that loop should build `mat` once and pass it in.
+
+    ``atol`` may be the historical scalar or an explicit
+    :class:`~perovskite_sim.solver.tolerances.ComponentwiseAtol` policy. The
+    latter builds a state-length vector from local carrier-equilibrium, ion,
+    and optional interface-state reference densities. The default remains the
+    historical scalar path.
+
+    ``V_app`` may be a scalar or a time-dependent callable. The callable path
+    is used by AC experiments so Radau sees the continuous voltage waveform;
+    every callback result is converted to a finite scalar before RHS assembly.
+
+    Numerical-health diagnostics are observational by default and are attached
+    to the returned solver result as ``numerical_diagnostics``. They record
+    trial/final density minima, negative trial evaluations, non-finite RHS
+    evaluations, and the exact bulk/interface SRH denominators used by the
+    production recombination formulas. Pass an explicit
+    :class:`~perovskite_sim.solver.numerical_diagnostics.NumericalDiagnosticsPolicy`
+    in ``research_strict`` mode to fail closed; no policy clips a state or
+    changes the RHS equations.
+
+    ``state_coordinates="research_log_density"`` is a separate opt-in
+    prototype. It integrates each physically active density as
+    ``y_i = s_i * exp(z_i)`` while leaving structurally inactive ion nodes in
+    linear coordinates so their exact zeros remain legal. The RHS, returned
+    ``solution.y`` and numerical diagnostics remain in physical density units.
+    Non-positive active initial densities fail before the solver is called.
+    The default ``"density"`` branch preserves the historical solver state,
+    tolerances and return values.
 
     If `max_nfev` is set, the RHS is wrapped with a call counter and aborts
     once that many evaluations have been performed. On abort the returned
@@ -2560,30 +2649,139 @@ def run_transient(
     """
     if mat is None:
         mat = build_material_arrays(x, stack)
+    if regularization is not None and not isinstance(
+        regularization, RHSRegularization
+    ):
+        raise TypeError("regularization must be an RHSRegularization or None")
+    if state_coordinates not in ("density", "research_log_density"):
+        raise ValueError(
+            "state_coordinates must be 'density' or 'research_log_density'"
+        )
 
-    if max_nfev is None and not _RHS_FINITE_CHECK:
-        def rhs(t, y):
-            return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
+    if callable(V_app):
+        def bias_at(t: float) -> float:
+            value = float(V_app(float(t)))
+            if not np.isfinite(value):
+                raise ValueError("time-dependent V_app returned a non-finite value")
+            return value
+    else:
+        bias_value = float(V_app)
+        if not np.isfinite(bias_value):
+            raise ValueError("V_app must be finite")
 
-        return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
-                         method=method, rtol=rtol, atol=atol,
-                         dense_output=False, max_step=max_step)
+        def bias_at(_t: float) -> float:
+            return bias_value
+
+    solver_atol = atol
+    if isinstance(atol, ComponentwiseAtol):
+        solver_atol = build_componentwise_atol_1d(
+            atol,
+            y0=y0,
+            ni_sq=mat.ni_sq,
+            N_A=mat.N_A,
+            N_D=mat.N_D,
+            P_ion0=mat.P_ion0,
+            has_dual_ions=mat.has_dual_ions,
+            P_ion0_neg=mat.P_ion0_neg,
+            n_interface_states=mat.N_iface_state,
+        )
+
+    positive_ion_active = tuple(
+        bool(value) for value in np.asarray(mat.P_ion0) > 0.0
+    )
+    if mat.has_dual_ions:
+        if mat.P_ion0_neg is None:
+            raise ValueError(
+                "P_ion0_neg is required for dual-ion numerical diagnostics"
+            )
+        negative_ion_active = tuple(
+            bool(value) for value in np.asarray(mat.P_ion0_neg) > 0.0
+        )
+    else:
+        negative_ion_active = ()
+    state_layout = StateLayout(
+        n_nodes=len(x),
+        has_dual_ions=bool(mat.has_dual_ions),
+        n_interface_states=int(mat.N_iface_state),
+        positive_ion_active=positive_ion_active,
+        negative_ion_active=negative_ion_active,
+    )
+    diagnostics_monitor = NumericalDiagnosticsMonitor(
+        state_layout, numerical_diagnostics
+    )
+
+    coordinate_transform = None
+    solver_y0 = y0
+    solver_rtol = rtol
+    if state_coordinates == "research_log_density":
+        coordinate_transform = LogDensityCoordinateTransform(
+            state_layout,
+            y0,
+            solver_atol,
+            rtol,
+        )
+        solver_y0 = coordinate_transform.initial_coordinates()
+        solver_atol = coordinate_transform.coordinate_atol
+        solver_rtol = coordinate_transform.coordinate_rtol
 
     counter = [0]
 
-    def rhs(t, y):
+    def rhs(t, solver_state):
         counter[0] += 1
         if max_nfev is not None and counter[0] > max_nfev:
             raise _NfevExceeded
-        return assemble_rhs(t, y, x, stack, mat, illuminated, V_app)
+        physical_state = (
+            solver_state
+            if coordinate_transform is None
+            else coordinate_transform.to_physical(solver_state)
+        )
+        diagnostics_monitor.observe_trial_state(physical_state)
+        with _observe_srh_denominators(
+            diagnostics_monitor.observe_srh_denominator
+        ):
+            if regularization is None:
+                value = assemble_rhs(
+                    t,
+                    physical_state,
+                    x,
+                    stack,
+                    mat,
+                    illuminated,
+                    bias_at(t),
+                )
+            else:
+                value = assemble_rhs(
+                    t,
+                    physical_state,
+                    x,
+                    stack,
+                    mat,
+                    illuminated,
+                    bias_at(t),
+                    regularization=regularization,
+                )
+        diagnostics_monitor.observe_rhs(value)
+        if coordinate_transform is None:
+            return value
+        return coordinate_transform.rhs_to_coordinates(
+            value, physical_state
+        )
 
     try:
-        return solve_ivp(rhs, t_span, y0, t_eval=t_eval,
-                         method=method, rtol=rtol, atol=atol,
-                         dense_output=False, max_step=max_step)
+        solution = solve_ivp(
+            rhs,
+            t_span,
+            solver_y0,
+            t_eval=t_eval,
+            method=method,
+            rtol=solver_rtol,
+            atol=solver_atol,
+            dense_output=False,
+            max_step=max_step,
+        )
     except _NfevExceeded:
         from types import SimpleNamespace
-        return SimpleNamespace(
+        solution = SimpleNamespace(
             success=False,
             y=np.empty((y0.size, 0)),
             t=np.empty(0),
@@ -2593,7 +2791,8 @@ def run_transient(
         )
     except _RhsNonFinite as e:
         from types import SimpleNamespace
-        return SimpleNamespace(
+        diagnostics_monitor.observe_nonfinite_rhs_exception()
+        solution = SimpleNamespace(
             success=False,
             y=np.empty((y0.size, 0)),
             t=np.empty(0),
@@ -2601,6 +2800,25 @@ def run_transient(
             nfev=counter[0],
             status=-2,
         )
+
+    values = np.asarray(getattr(solution, "y", np.empty((y0.size, 0))))
+    if coordinate_transform is not None:
+        values = coordinate_transform.solution_to_physical(values)
+        solution.y = values
+    terminal_state = (
+        values[:, -1]
+        if values.ndim == 2 and values.shape[1] > 0
+        else None
+    )
+    report = diagnostics_monitor.finalize(
+        terminal_state,
+        solver_success=bool(getattr(solution, "success", False)),
+    )
+    solution.numerical_diagnostics = report
+    solution.rhs_regularization = regularization or RHSRegularization()
+    if coordinate_transform is not None:
+        solution.state_coordinate_report = coordinate_transform.report()
+    return solution
 
 
 def split_step(
@@ -2610,9 +2828,15 @@ def split_step(
     stack: DeviceStack,
     V_app: float = 0.0,
     rtol: float = 1e-4,
-    atol: float = 1e-6,
+    atol: AbsoluteTolerance = 1e-6,
     mat: MaterialArrays | None = None,
-) -> tuple[np.ndarray, bool]:
+    regularization: RHSRegularization | None = None,
+    split_diagnostics: SplitStepDiagnosticsPolicy | None = None,
+    return_diagnostics: bool = False,
+) -> (
+    tuple[np.ndarray, bool]
+    | tuple[np.ndarray, bool, SplitStepDiagnosticsReport]
+):
     """Operator-split step for long-time ion–carrier evolution.
 
     Decouples the ion (slow, seconds) and carrier (fast, nanoseconds)
@@ -2634,6 +2858,17 @@ def split_step(
     stack   : device stack
     V_app   : applied voltage [V]
     rtol, atol : ODE solver tolerances
+    split_diagnostics : optional split-step evidence/fail-closed policy
+        Supplying a policy opts into raw ion trial, raw terminal, projection,
+        and per-species inventory diagnostics. Research-strict mode rejects
+        initial/terminal clipping, non-finite states, failed sub-solves, and
+        inventory drift before a clipped state can be accepted. Negative
+        implicit trial states are counted but rejected only when the policy's
+        explicit ``reject_negative_trial_states`` flag is enabled.
+    return_diagnostics : bool
+        False preserves the historical two-tuple API. True returns a third
+        :class:`SplitStepDiagnosticsReport` element and enables observational
+        diagnostics when no explicit policy was supplied.
 
     Returns
     -------
@@ -2642,6 +2877,15 @@ def split_step(
     If carrier re-equilibration fails, returns the ion-advanced state
     with previous carrier values (partial success, still True).
     """
+    if not isinstance(return_diagnostics, (bool, np.bool_)):
+        raise ValueError("return_diagnostics must be boolean")
+    return_diagnostics = bool(return_diagnostics)
+    if split_diagnostics is not None and not isinstance(
+        split_diagnostics, SplitStepDiagnosticsPolicy
+    ):
+        raise TypeError(
+            "split_diagnostics must be a SplitStepDiagnosticsPolicy or None"
+        )
     if mat is None:
         mat = build_material_arrays(x, stack)
 
@@ -2670,6 +2914,46 @@ def split_step(
     _clip_count = [0]
 
     dual = mat.has_dual_ions and sv.P_neg is not None
+    diagnostics_monitor = None
+    if return_diagnostics or split_diagnostics is not None:
+        diagnostics_monitor = SplitStepDiagnosticsMonitor(
+            x,
+            sv.P,
+            mat.P_lim_node,
+            full_initial_state=y,
+            negative_initial=sv.P_neg if dual else None,
+            negative_limit=mat.P_lim_neg_node if dual else None,
+            policy=split_diagnostics,
+        )
+
+    def _return(
+        state: np.ndarray,
+        success: bool,
+        *,
+        carrier_success: bool | None,
+    ):
+        if diagnostics_monitor is None:
+            return state, success
+        terminal = StateVec.unpack(
+            state, N, N_iface_state=mat.N_iface_state
+        )
+        report = diagnostics_monitor.finalize(
+            terminal.P,
+            terminal.P_neg if dual else None,
+            full_final_state=state,
+            carrier_reequilibration_success=carrier_success,
+        )
+        if return_diagnostics:
+            return state, success, report
+        return state, success
+
+    ion_atol = atol
+    if isinstance(atol, ComponentwiseAtol):
+        ion_atol = build_componentwise_atol_ions(
+            atol,
+            P_ion0=mat.P_ion0,
+            P_ion0_neg=mat.P_ion0_neg if dual else None,
+        )
 
     if dual:
         from perovskite_sim.physics.ion_migration import ion_continuity_rhs_neg
@@ -2679,6 +2963,10 @@ def split_step(
         y_ion0 = np.concatenate([P_pos_init, P_neg_init])
 
         def _ion_rhs(t, y_ion):
+            if diagnostics_monitor is not None:
+                diagnostics_monitor.observe_trial(
+                    y_ion[:N], y_ion[N:]
+                )
             P_pos = np.maximum(y_ion[:N], 0.0)
             P_neg_v = np.maximum(y_ion[N:], 0.0)
             if np.any(y_ion < -1e-30):
@@ -2709,7 +2997,7 @@ def split_step(
 
         sol_ion = solve_ivp(
             _ion_rhs, (0.0, dt), y_ion0, t_eval=[dt],
-            method="Radau", rtol=rtol, atol=atol,
+            method="Radau", rtol=rtol, atol=ion_atol,
         )
     else:
         P_init = np.maximum(sv.P, 0.0)
@@ -2717,6 +3005,8 @@ def split_step(
             _clip_count[0] = 1
 
         def _ion_rhs(t, P):
+            if diagnostics_monitor is not None:
+                diagnostics_monitor.observe_trial(P)
             if np.any(P < -1e-30):
                 _clip_count[0] += 1
             P_nn = np.maximum(P, 0.0)
@@ -2735,7 +3025,7 @@ def split_step(
 
         sol_ion = solve_ivp(
             _ion_rhs, (0.0, dt), P_init, t_eval=[dt],
-            method="Radau", rtol=rtol, atol=atol,
+            method="Radau", rtol=rtol, atol=ion_atol,
         )
 
     if _clip_count[0] > 0:
@@ -2747,16 +3037,37 @@ def split_step(
             stacklevel=2,
         )
     if not sol_ion.success:
-        return y, False
+        if diagnostics_monitor is not None:
+            diagnostics_monitor.observe_raw_terminal(
+                None, solver_success=False
+            )
+        return _return(y, False, carrier_success=None)
 
     if dual:
-        P_new = np.clip(sol_ion.y[:N, -1], 0.0, mat.P_lim_node)
-        P_neg_new = np.clip(sol_ion.y[N:, -1], 0.0, mat.P_lim_neg_node)
+        P_raw = sol_ion.y[:N, -1]
+        P_neg_raw = sol_ion.y[N:, -1]
+        if diagnostics_monitor is not None:
+            diagnostics_monitor.observe_raw_terminal(
+                P_raw, P_neg_raw, solver_success=True
+            )
+        P_new = np.clip(P_raw, 0.0, mat.P_lim_node)
+        P_neg_new = np.clip(P_neg_raw, 0.0, mat.P_lim_neg_node)
+        if diagnostics_monitor is not None:
+            diagnostics_monitor.observe_projected_terminal(
+                P_new, P_neg_new
+            )
         y_ions_advanced = StateVec.pack(
             sv.n, sv.p, P_new, P_neg_new, iface_state=sv.iface_state,
         )
     else:
-        P_new = np.clip(sol_ion.y[:, -1], 0.0, mat.P_lim_node)
+        P_raw = sol_ion.y[:, -1]
+        if diagnostics_monitor is not None:
+            diagnostics_monitor.observe_raw_terminal(
+                P_raw, solver_success=True
+            )
+        P_new = np.clip(P_raw, 0.0, mat.P_lim_node)
+        if diagnostics_monitor is not None:
+            diagnostics_monitor.observe_projected_terminal(P_new)
         P_neg_carry = sv.P_neg  # None in single-species mode
         y_ions_advanced = StateVec.pack(
             sv.n, sv.p, P_new, P_neg_carry, iface_state=sv.iface_state,
@@ -2767,9 +3078,11 @@ def split_step(
     sol_eq = run_transient(
         x, y_ions_advanced, (0.0, t_eq), np.array([t_eq]),
         stack, illuminated=True, V_app=V_app, rtol=rtol, atol=atol,
-        mat=mat,
+        mat=mat, regularization=regularization,
     )
     if not sol_eq.success:
         # Ions advanced; keep previous carrier values (conservative fallback)
-        return y_ions_advanced, True
-    return sol_eq.y[:, -1], True
+        return _return(
+            y_ions_advanced, True, carrier_success=False
+        )
+    return _return(sol_eq.y[:, -1], True, carrier_success=True)

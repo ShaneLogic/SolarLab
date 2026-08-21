@@ -211,10 +211,109 @@ export interface JVResult {
   hysteresis_index: number
 }
 
+export interface ComplexNumber {
+  real: number
+  imag: number
+}
+
+export interface ImpedanceProtocol {
+  method: 'transient_ion_aware' | 'qf_frequency_ion_free'
+  V_dc: number
+  delta_V: number
+  illuminated: boolean
+  dc_settle_time: number | null
+  n_cycles: number | null
+  n_extract: number | null
+  points_per_cycle: number | null
+}
+
+export interface ContactThermodynamicCertificate {
+  status:
+    | 'certified'
+    | 'inconsistent'
+    | 'compatible_unverified'
+    | 'not_assessable'
+  built_in_potential_mode: string
+  tolerance_eV: number
+  fermi_level_span_eV: number | null
+  potential_mismatch_V: number | null
+  metal_work_function_mismatch_eV: number | null
+  contact_quasi_fermi_levels_eV: number[]
+  message: string
+}
+
+export interface OperatingPointCertificate {
+  certified: boolean
+  numerically_certified: boolean
+  thermodynamically_certified: boolean
+  source:
+    | 'finite_time_preconditioned'
+    | 'dark_equilibrium'
+    | 'qf_residual_certified'
+  carrier_area_rate_A_m2: number
+  ion_area_rate_A_m2: number
+  max_ionic_face_current_A_m2: number
+  dc_face_current_spread_A_m2: number
+  carrier_area_rate_limit_A_m2: number | null
+  ion_area_rate_limit_A_m2: number | null
+  ionic_face_current_limit_A_m2: number | null
+  dc_face_current_spread_limit_A_m2: number | null
+  contact_thermodynamics: ContactThermodynamicCertificate
+  reasons: string[]
+}
+
+export interface IonicTimescale {
+  species: 'positive' | 'negative'
+  region_start_m: number
+  region_end_m: number
+  region_length_m: number
+  diffusion_coefficient_m2_s: number
+  equilibrium_density_m3: number
+  debye_length_m: number
+  dielectric_frequency_Hz: number
+  blocking_charge_frequency_Hz: number
+  diffusion_frequency_Hz: number
+}
+
+export interface FrequencyWindowAssessment {
+  f_min_Hz: number
+  f_max_Hz: number
+  has_mobile_ions: boolean
+  characteristic_frequency_bracketed: boolean | null
+  ionic_branch_covered: boolean | null
+  ionic_timescales: IonicTimescale[]
+  warnings: string[]
+}
+
+export interface GridAssessment {
+  certified: boolean
+  override_used: boolean
+  guarded_cell_count: number
+  offender_count: number
+  max_guarded_cell_debye_ratio: number | null
+  max_cell_debye_ratio_limit: number
+  warnings: string[]
+}
+
+export interface ImpedanceDiagnostics {
+  admittance_S_m2: ComplexNumber[] | null
+  admittance_faces_S_m2: ComplexNumber[][] | null
+  max_relative_face_spread: number[] | null
+  reciprocal_condition: number[] | null
+  backward_error: number[] | null
+  electron_storage_response_F_m2: ComplexNumber[] | null
+  hole_storage_response_F_m2: ComplexNumber[] | null
+}
+
 export interface ISResult {
   frequencies: number[]
   Z_real: number[]
   Z_imag: number[]
+  protocol?: ImpedanceProtocol | null
+  operating_point?: OperatingPointCertificate | null
+  frequency_window?: FrequencyWindowAssessment | null
+  grid_assessment?: GridAssessment | null
+  diagnostics?: ImpedanceDiagnostics | null
 }
 
 export interface DegResult {
@@ -382,6 +481,18 @@ export interface ISParams {
   n_freq: number
   f_min: number
   f_max: number
+  delta_V?: number
+  n_cycles?: number
+  n_extract?: number
+  points_per_cycle?: number
+  dc_settle_time?: number
+  illuminated?: boolean
+  method?:
+    | 'transient'
+    | 'transient_ion_aware'
+    | 'quasi_fermi_frequency'
+    | 'qf_frequency_ion_free'
+  require_operating_point_certificate?: boolean
 }
 
 export interface DegParams {

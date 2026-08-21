@@ -18,6 +18,7 @@ Gates:
 from __future__ import annotations
 
 import dataclasses
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -30,6 +31,7 @@ from perovskite_sim.experiments.jv_sweep import (
     thermodynamic_voc_ceiling,
 )
 from perovskite_sim.experiments.steady_state import (
+    SteadyStateResult,
     SteadyStateError,
     run_jv_sweep_ss,
     solve_steady_state,
@@ -64,6 +66,10 @@ def test_dark_equilibrium_converges_with_small_residual():
     x = _grid(stack)
     res = solve_steady_state(x, stack, V_app=0.0, illuminated=False)
     assert res.converged
+    assert res.acceptance in {
+        "residual_converged",
+        "current_bounded_stall",
+    }
     mat = build_material_arrays(x, stack)
     J = _compute_current_ss(x, res.y, stack, 0.0, mat=mat)
     assert abs(J) < 1.0  # A/m^2 — dark short-circuit current ~ 0
@@ -234,9 +240,163 @@ def test_tiny_newton_step_keeps_stall_acceptance_semantics(monkeypatch):
     )
 
     assert result.converged
+    assert not result.residual_converged
+    assert result.acceptance == "current_bounded_stall"
     assert result.residual == pytest.approx(0.1)
     assert result.step_inf < 1.0e-8
     assert result.continuity_current_bound < 0.1
+
+
+def test_initial_residual_gate_reports_strict_convergence(monkeypatch):
+    stack, x, mat, y0 = _small_step_fault_case(
+        monkeypatch, residual=1.0e-8,
+    )
+
+    result = solve_steady_state(
+        x, stack, V_app=0.0, mat=mat, y0=y0,
+        max_newton=1, tol=1.0e-6, tol_step=1.0e-8,
+        tol_accept=0.5, assist_times=(),
+    )
+
+    assert result.converged
+    assert result.residual_converged
+    assert result.acceptance == "residual_converged"
+
+
+def test_unlabelled_result_is_not_promoted_to_strict_convergence():
+    result = SteadyStateResult(
+        y=np.ones(3),
+        converged=True,
+        residual=1.0e-8,
+        step_inf=0.0,
+        iterations=1,
+    )
+
+    assert result.acceptance == "not_reported"
+    assert not result.residual_converged
+
+
+def test_ss_sweep_reports_point_level_acceptance(monkeypatch):
+    stack = _stack()
+
+    def fake_solve(x, stack, V_app, *, y0=None, **_kwargs):
+        if V_app > 0.0:
+            raise SteadyStateError("force transient-assist metadata path")
+        from perovskite_sim.solver.newton import solve_equilibrium
+
+        y = solve_equilibrium(x, stack) if y0 is None else y0
+        return SteadyStateResult(
+            y=y,
+            converged=True,
+            residual=1.0e-8,
+            step_inf=0.0,
+            iterations=0,
+            continuity_current_bound=1.0e-6,
+            acceptance="residual_converged",
+        )
+
+    monkeypatch.setattr(steady_state_mod, "solve_steady_state", fake_solve)
+    monkeypatch.setattr(
+        steady_state_mod,
+        "_transient_point_fallback",
+        lambda _x, _stack, _mat, _V, y_seed, **_kwargs: (y_seed, 0.25),
+    )
+    monkeypatch.setattr(
+        steady_state_mod,
+        "_compute_current_ss",
+        lambda _x, _y, _stack, V, **_kwargs: 1.0 - V,
+    )
+
+    result = run_jv_sweep_ss(
+        stack, N_grid=12, V_max=0.01, n_points=2,
+        allow_underresolved_grid=True,
+    )
+
+    assert result.point_acceptance == (
+        "residual_converged",
+        "transient_assisted",
+    )
+    np.testing.assert_allclose(result.point_residual, [1.0e-8, 0.25])
+    assert np.isfinite(result.point_continuity_current_bound[0])
+    assert np.isnan(result.point_continuity_current_bound[1])
+
+
+def test_transient_fallback_checks_selective_contact_boundary_residuals(
+    monkeypatch,
+):
+    stack = _stack()
+    x = _grid(stack)
+    N = len(x)
+    mat = dataclasses.replace(
+        build_material_arrays(x, stack),
+        has_selective_contacts=True,
+        S_n_L=1.0,
+        S_n_R=1.0,
+        S_p_L=1.0,
+        S_p_R=1.0,
+    )
+    y_seed = np.ones(3 * N)
+
+    monkeypatch.setattr(
+        steady_state_mod,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=True, y=y_seed[:, None],
+        ),
+    )
+    monkeypatch.setattr(
+        steady_state_mod, "_qfl_poisson_relax",
+        lambda _x, _mat, y, _V: y,
+    )
+
+    def boundary_only_rhs(_t, y, *_args, **_kwargs):
+        rate = np.zeros_like(y)
+        scale = 2.0 * float(np.max(y[: 2 * N]))
+        rate[[0, N - 1, N, 2 * N - 1]] = scale
+        return rate
+
+    monkeypatch.setattr(steady_state_mod, "assemble_rhs", boundary_only_rhs)
+
+    with pytest.raises(SteadyStateError, match="uncertified"):
+        steady_state_mod._transient_point_fallback(
+            x, stack, mat, 0.0, y_seed,
+            t_settles=(1.0e-3,), res_guard=1.0,
+        )
+
+
+def test_transient_fallback_excludes_only_dirichlet_boundary_rows(monkeypatch):
+    stack = _stack()
+    x = _grid(stack)
+    N = len(x)
+    mat = dataclasses.replace(
+        build_material_arrays(x, stack), has_selective_contacts=False,
+    )
+    y_seed = np.ones(3 * N)
+
+    monkeypatch.setattr(
+        steady_state_mod,
+        "run_transient",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=True, y=y_seed[:, None],
+        ),
+    )
+    monkeypatch.setattr(
+        steady_state_mod, "_qfl_poisson_relax",
+        lambda _x, _mat, y, _V: y,
+    )
+
+    def boundary_only_rhs(_t, y, *_args, **_kwargs):
+        rate = np.zeros_like(y)
+        rate[[0, N - 1, N, 2 * N - 1]] = 2.0
+        return rate
+
+    monkeypatch.setattr(steady_state_mod, "assemble_rhs", boundary_only_rhs)
+
+    _, residual = steady_state_mod._transient_point_fallback(
+        x, stack, mat, 0.0, y_seed,
+        t_settles=(1.0e-3,), res_guard=1.0,
+    )
+    assert residual == 0.0
 
 
 def test_stall_acceptance_is_current_scaled_for_thick_high_density_device(

@@ -250,6 +250,24 @@ def test_shared_trap_occupancy_conserves_electron_and_hole_capture():
     )
 
 
+def test_shared_occupancy_regularization_preserves_capture_conservation():
+    mat = _physical_mat()
+    state = np.array([-1.0e12, 2.0e17, 3.0e20, 5.0e18])
+    sink = compute_interface_srh_occupancy_on_state(
+        state,
+        _two_layer_stack(interface=(2.0e-2, 3.0e-2)),
+        mat,
+        density_regularization_width_m3=1.0e14,
+    )
+
+    assert np.all(np.isfinite(sink))
+    assert sink[[0, 2]].sum() == pytest.approx(
+        sink[[1, 3]].sum(),
+        rel=1.0e-12,
+        abs=1.0,
+    )
+
+
 def test_local_qss_state_is_bounded_and_constitutively_certified():
     mat = _physical_mat(
         interface_chi_step=(0.0,),

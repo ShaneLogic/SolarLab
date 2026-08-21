@@ -116,7 +116,9 @@ def gate_stack():
 
 @pytest.fixture(scope="module")
 def gate_result(gate_stack):
-    return run_jv_sweep(gate_stack, **_GATE)
+    return run_jv_sweep(
+        gate_stack, **_GATE, collect_numerical_diagnostics=True
+    )
 
 
 @pytest.fixture(scope="module")
@@ -144,8 +146,9 @@ def _run_fake_sweep(
     def fake_integrate(
         x, y, _stack, _mat, V_app, _t_lo, _t_hi, _rtol, _atol,
         max_bisect=10, illuminated=True, n_legs=1,
+        _accepted_diagnostics=None,
     ):
-        del max_bisect, illuminated
+        del max_bisect, illuminated, _accepted_diagnostics
         out = make_state(float(V_app), int(n_legs), y.copy(), len(x))
         calls.append((float(V_app), int(n_legs), y.copy(), out.copy()))
         return out
@@ -235,6 +238,22 @@ def test_valid_sweep_exposes_complete_immutable_certificates(gate_result):
     assert all(status.valid for status in gate_result.status_rev)
     assert gate_result.status_fwd[0].refinement_required is True
     assert gate_result.status_fwd[0].refinement_converged is True
+    all_statuses = (*gate_result.status_fwd, *gate_result.status_rev)
+    assert all(status.numerical_diagnostics for status in all_statuses)
+    assert all(status.nfev is not None and status.nfev > 0 for status in all_statuses)
+    assert all(
+        segment.report.solver_success is True
+        for status in all_statuses
+        for segment in status.numerical_diagnostics
+    )
+
+
+def test_default_sweep_does_not_collect_point_level_numerical_diagnostics(
+    zero_bias_result,
+):
+    statuses = (*zero_bias_result.status_fwd, *zero_bias_result.status_rev)
+    assert all(status.numerical_diagnostics == () for status in statuses)
+    assert all(status.nfev is None for status in statuses)
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +690,56 @@ def test_integrate_step_recovers_numeric_solver_exception_by_bisection(
         ((0.0, 0.5), "Radau"),
         ((0.5, 1.0), "Radau"),
     ]
+
+
+def test_integrate_step_collects_only_accepted_bisection_segments(
+    gate_stack, monkeypatch,
+):
+    from perovskite_sim.solver.numerical_diagnostics import (
+        NumericalDiagnosticsMonitor,
+        StateLayout,
+    )
+
+    x = np.array([0.0, 1.0])
+    y0 = np.ones(6)
+    mat = SimpleNamespace(has_radiative_reabsorption=False)
+    monitor = NumericalDiagnosticsMonitor(StateLayout(2))
+    monitor.observe_trial_state(y0)
+    monitor.observe_srh_denominator("bulk", np.array([2.0]))
+    report = monitor.finalize(y0, solver_success=True)
+
+    def fake_transient(_x, y, t_span, _t_eval, _stack, **_kwargs):
+        if t_span == (0.0, 1.0):
+            raise ValueError("discarded full-step attempt")
+        return SimpleNamespace(
+            success=True,
+            y=(np.asarray(y) + 1.0)[:, None],
+            numerical_diagnostics=report,
+            nfev=3,
+            njev=1,
+            nlu=2,
+        )
+
+    monkeypatch.setattr(JV, "run_transient", fake_transient)
+    accepted = []
+    out = JV._integrate_step(
+        x,
+        y0,
+        gate_stack,
+        mat,
+        0.4,
+        0.0,
+        1.0,
+        1e-4,
+        1e-6,
+        max_bisect=1,
+        _accepted_diagnostics=accepted,
+    )
+
+    np.testing.assert_array_equal(out, y0 + 2.0)
+    assert len(accepted) == 2
+    assert sum(item.nfev or 0 for item in accepted) == 6
+    assert all(item.report is report for item in accepted)
 
 
 def test_initial_integration_exhaustion_is_structured(

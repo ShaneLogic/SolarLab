@@ -3,7 +3,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 # BLAS thread pinning — defensive fix. The Radau solver hits ~300x300 dense LU
 # factors thousands of times per J-V sweep. On a multi-core machine, OpenBLAS
@@ -35,8 +35,17 @@ from perovskite_sim.experiments import dark_jv as dark_jv_exp
 from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
 from perovskite_sim.experiments import mott_schottky as ms_exp
+from perovskite_sim.experiments import tpv as tpv_exp
+from perovskite_sim.experiments.protocol import (
+    ExperimentProtocol,
+    ExperimentProtocolError,
+    ImplicitProtocolError,
+    ProtocolMode,
+    resolve_experiment_protocol,
+)
 from perovskite_sim.experiments.steady_state import run_jv_sweep_ss
 from perovskite_sim.experiments.quasi_fermi_steady_state import (
+    QuasiFermiSteadyStateError,
     solve_quasi_fermi_jv_sweep,
 )
 from perovskite_sim.discretization.grid import (
@@ -427,7 +436,9 @@ def to_serializable(obj):
         return [to_serializable(v) for v in obj]
     elif isinstance(obj, np.ndarray):
         if np.iscomplexobj(obj):
-            return [{"real": float(x.real), "imag": float(x.imag)} for x in obj.flat]
+            # Preserve multidimensional face/frequency diagnostics. Flattening
+            # here used to discard the shape of complex Y_faces arrays.
+            return to_serializable(obj.tolist())
         return obj.tolist()
     elif isinstance(obj, (np.floating, float)):
         return float(obj)
@@ -683,6 +694,156 @@ class JVRequest(BaseModel):
     # QF only: reciprocal physical interface plane.
     interface_boundary: bool = False
     interface_transport_model: str = "fermi_richardson"
+    protocol_mode: ProtocolMode = "compatibility"
+    experiment_protocol: Optional[dict[str, Any]] = None
+
+
+def _parse_experiment_protocol(
+    payload: object | None,
+) -> ExperimentProtocol | None:
+    """Parse an API protocol payload without accepting partial schemas."""
+
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ExperimentProtocolError(
+            "experiment_protocol must be a JSON object"
+        )
+    try:
+        return ExperimentProtocol.from_dict(payload)
+    except ExperimentProtocolError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ExperimentProtocolError(
+            f"invalid experiment_protocol payload: {exc}"
+        ) from exc
+
+
+def _parse_protocol_inputs(
+    payload: object | None,
+    mode: object,
+) -> tuple[ExperimentProtocol | None, ProtocolMode]:
+    """Validate protocol request fields before starting expensive work."""
+
+    if mode not in ("compatibility", "research_strict"):
+        raise ExperimentProtocolError(
+            "protocol_mode must be 'compatibility' or 'research_strict'"
+        )
+    protocol = _parse_experiment_protocol(payload)
+    if mode == "research_strict" and (
+        protocol is None or protocol.implicit_legacy_protocol
+    ):
+        raise ImplicitProtocolError(
+            "research_strict protocol mode requires an explicit experiment "
+            "history with implicit_legacy_protocol=False"
+        )
+    return protocol, mode
+
+
+def _preflight_job_experiment_protocol(
+    kind: str,
+    params: dict[str, Any],
+    stack: DeviceStack,
+    supplied: ExperimentProtocol | None,
+    mode: ProtocolMode,
+) -> None:
+    """Reject protocol/execution mismatches before a worker is submitted."""
+
+    if kind == "jv":
+        solver = str(params.get("solver", "transient"))
+        if solver != "transient":
+            if supplied is not None or mode != "compatibility":
+                raise ExperimentProtocolError(
+                    "experiment protocols are supported only by "
+                    "solver='transient'; "
+                    f"solver={solver!r} has different steady-state semantics"
+                )
+            return
+        raw_illuminated = params.get("illuminated", True)
+        illuminated = (
+            bool(raw_illuminated)
+            if not isinstance(raw_illuminated, str)
+            else raw_illuminated.lower() != "false"
+        )
+        expected = jv_sweep.build_jv_experiment_protocol(
+            stack,
+            n_points=int(params.get("n_points", 30)),
+            v_rate=float(params.get("v_rate", 1.0)),
+            V_max=(
+                float(params["V_max"])
+                if params.get("V_max") is not None
+                else None
+            ),
+            illuminated=illuminated,
+            implicit_legacy_protocol=True,
+        )
+    elif kind == "impedance":
+        raw_illuminated = params.get("illuminated", True)
+        illuminated = (
+            bool(raw_illuminated)
+            if not isinstance(raw_illuminated, str)
+            else raw_illuminated.lower() != "false"
+        )
+        frequencies = np.logspace(
+            np.log10(float(params.get("f_min", 10.0))),
+            np.log10(float(params.get("f_max", 1e5))),
+            int(params.get("n_freq", 15)),
+        )
+        expected = impedance.build_impedance_experiment_protocol(
+            stack,
+            frequencies,
+            V_dc=float(params.get("V_dc", 0.9)),
+            delta_V=float(params.get("delta_V", 0.01)),
+            n_cycles=int(params.get("n_cycles", 5)),
+            n_extract=int(params.get("n_extract", 2)),
+            points_per_cycle=int(params.get("points_per_cycle", 40)),
+            illuminated=illuminated,
+            method=str(params.get("method", "transient_ion_aware")),
+            dc_settle_time=float(params.get("dc_settle_time", 1e-3)),
+            implicit_legacy_protocol=True,
+        )
+    elif kind == "tpv":
+        expected = tpv_exp.build_tpv_experiment_protocol(
+            stack,
+            delta_G_frac=float(params.get("delta_G_frac", 0.05)),
+            t_pulse=float(params.get("t_pulse", 1e-6)),
+            t_decay=float(params.get("t_decay", 50e-6)),
+            n_points=int(params.get("n_points", 200)),
+            implicit_legacy_protocol=True,
+        )
+    elif kind == "suns_voc":
+        raw_suns = params.get("suns_levels")
+        suns_levels = (
+            suns_voc_exp.DEFAULT_SUNS
+            if raw_suns is None
+            else tuple(float(value) for value in raw_suns)
+        )
+        expected = suns_voc_exp.build_suns_voc_experiment_protocol(
+            stack,
+            suns_levels,
+            t_settle=float(params.get("t_settle", 1e-3)),
+            implicit_legacy_protocol=True,
+        )
+    elif kind == "eqe":
+        lambda_min_nm = float(params.get("lambda_min_nm", 300.0))
+        lambda_max_nm = float(params.get("lambda_max_nm", 1000.0))
+        n_lambda = int(params.get("n_lambda", 80))
+        if n_lambda < 2 or lambda_max_nm <= lambda_min_nm:
+            raise ValueError(
+                "EQE sweep needs n_lambda >= 2 and lambda_max > lambda_min"
+            )
+        wavelengths_nm = np.linspace(lambda_min_nm, lambda_max_nm, n_lambda)
+        expected = eqe_exp.build_eqe_experiment_protocol(
+            stack,
+            wavelengths_nm,
+            Phi_incident=float(params.get("Phi_incident", 1e22)),
+            t_settle=float(params.get("t_settle", 1e-1)),
+            implicit_legacy_protocol=True,
+        )
+    else:  # pragma: no cover - guarded by the caller's protocol-kind set
+        raise ValueError(f"unsupported protocol-bearing job kind {kind!r}")
+
+    resolve_experiment_protocol(supplied, expected, mode=mode)
 
 
 def _run_jv_dispatch(
@@ -697,6 +858,8 @@ def _run_jv_dispatch(
     iface_states: bool = False,
     interface_boundary: bool = False,
     interface_transport_model: str = "fermi_richardson",
+    experiment_protocol: ExperimentProtocol | None = None,
+    protocol_mode: ProtocolMode = "compatibility",
     progress=None,
 ):
     """Route a J-V sweep to the requested solver.
@@ -707,6 +870,13 @@ def _run_jv_dispatch(
     hysteresis. Stack policy is enforced inside each driver; no implicit
     solver substitution is permitted.
     """
+    if solver != "transient" and (
+        experiment_protocol is not None or protocol_mode != "compatibility"
+    ):
+        raise ExperimentProtocolError(
+            "experiment protocols are supported only by solver='transient'; "
+            f"solver={solver!r} has different steady-state semantics"
+        )
     if interface_boundary and solver != "quasi_fermi":
         raise ValueError(
             "interface_boundary requires solver='quasi_fermi'"
@@ -728,10 +898,118 @@ def _run_jv_dispatch(
             iface_states=iface_states,
             progress=progress,
         )
+
+        point_acceptance = getattr(ss, "point_acceptance", ())
+        if point_acceptance is None:
+            point_acceptance = ()
+        point_residual = getattr(ss, "point_residual", None)
+        point_current_bound = getattr(
+            ss,
+            "point_continuity_current_bound",
+            getattr(ss, "point_current_bound", None),
+        )
+
+        def _has_point_count(values) -> bool:
+            try:
+                return len(values) == len(ss.V)
+            except TypeError:
+                return False
+
+        metadata_aligned = all(
+            _has_point_count(values)
+            for values in (
+                point_acceptance,
+                point_residual,
+                point_current_bound,
+            )
+        )
+
+        def _point_value(values, index: int) -> float | None:
+            if values is None:
+                return None
+            try:
+                value = float(values[index])
+            except (IndexError, KeyError, TypeError, ValueError):
+                return None
+            return value if np.isfinite(value) else None
+
+        def _steady_state_statuses(branch: str):
+            statuses = []
+            upstream_valid = True
+            for index, (voltage, current) in enumerate(zip(ss.V, ss.J)):
+                try:
+                    acceptance = str(point_acceptance[index])
+                except (IndexError, TypeError):
+                    acceptance = "not_reported"
+                residual = _point_value(point_residual, index)
+                current_bound = _point_value(point_current_bound, index)
+
+                if acceptance == "residual_converged":
+                    evidence_complete = (
+                        metadata_aligned
+                        and residual is not None
+                        and current_bound is not None
+                    )
+                    message = "strict steady-state residual gate satisfied"
+                elif acceptance == "current_bounded_stall":
+                    evidence_complete = (
+                        metadata_aligned
+                        and residual is not None
+                        and current_bound is not None
+                    )
+                    message = (
+                        "steady-state stall accepted under the continuity-"
+                        "current bound"
+                    )
+                elif acceptance == "transient_assisted":
+                    evidence_complete = False
+                    message = (
+                        "transient fallback point; no steady-state Newton "
+                        "certificate"
+                    )
+                elif acceptance == "not_reported":
+                    evidence_complete = False
+                    message = "steady-state point acceptance was not reported"
+                else:
+                    evidence_complete = False
+                    message = (
+                        f"unknown steady-state point acceptance {acceptance!r}"
+                    )
+                if not metadata_aligned:
+                    message += "; point metadata is incomplete or misaligned"
+
+                local_valid = (
+                    acceptance in {
+                        "residual_converged",
+                        "current_bounded_stall",
+                    }
+                    and evidence_complete
+                )
+                valid = upstream_valid and local_valid
+                statuses.append(jv_sweep.JVPointStatus(
+                    branch=branch,
+                    index=index,
+                    voltage=float(voltage),
+                    valid=valid,
+                    upstream_valid=upstream_valid,
+                    attempted_currents=(float(current),),
+                    reason_code=acceptance,
+                    message=message,
+                    candidate_current=float(current),
+                    solver="steady_state",
+                    max_normalized_residual=residual,
+                    electron_continuity_bound_A_m2=current_bound,
+                    hole_continuity_bound_A_m2=current_bound,
+                ))
+                upstream_valid = valid
+            return tuple(statuses)
+
         return jv_sweep.JVResult(
             V_fwd=ss.V, J_fwd=ss.J, V_rev=ss.V, J_rev=ss.J,
             metrics_fwd=ss.metrics, metrics_rev=ss.metrics,
             hysteresis_index=0.0,
+            status_fwd=_steady_state_statuses("jv_forward"),
+            status_rev=_steady_state_statuses("jv_reverse"),
         )
     if solver == "quasi_fermi":
         if not illuminated:
@@ -808,12 +1086,17 @@ def _run_jv_dispatch(
     return jv_sweep.run_jv_sweep(
         stack, N_grid=N_grid, n_points=n_points, v_rate=v_rate,
         V_max=V_max, illuminated=illuminated, progress=progress,
+        experiment_protocol=experiment_protocol, protocol_mode=protocol_mode,
     )
 
 
 @app.post("/api/jv")
 def run_jv(req: JVRequest):
     try:
+        experiment_protocol, protocol_mode = _parse_protocol_inputs(
+            req.experiment_protocol,
+            req.protocol_mode,
+        )
         stack = build_stack(req.config_path, req.device)
         result = _run_jv_dispatch(
             stack, N_grid=req.N_grid, n_points=req.n_points, v_rate=req.v_rate,
@@ -821,11 +1104,17 @@ def run_jv(req: JVRequest):
             iface_states=req.iface_states,
             interface_boundary=req.interface_boundary,
             interface_transport_model=req.interface_transport_model,
+            experiment_protocol=experiment_protocol,
+            protocol_mode=protocol_mode,
         )
         return {"status": "ok", "result": to_serializable(result)}
     except HTTPException:
         raise
-    except (GridResolutionError, jv_sweep.JVDriverCapabilityError) as e:
+    except (
+        ExperimentProtocolError,
+        GridResolutionError,
+        jv_sweep.JVDriverCapabilityError,
+    ) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         print("[JV API Exception]", e)
@@ -924,15 +1213,49 @@ class ISRequest(BaseModel):
     n_freq: int = 15
     f_min: float = 10.0
     f_max: float = 1e5
+    delta_V: float = 0.01
+    n_cycles: int = 5
+    n_extract: int = 2
+    points_per_cycle: int = 40
+    dc_settle_time: float = 1e-3
+    illuminated: bool = True
+    method: Literal[
+        "transient",
+        "transient_ion_aware",
+        "quasi_fermi_frequency",
+        "qf_frequency_ion_free",
+    ] = "transient_ion_aware"
+    require_operating_point_certificate: bool = False
+    protocol_mode: ProtocolMode = "compatibility"
+    experiment_protocol: Optional[dict[str, Any]] = None
 
 
 @app.post("/api/impedance")
 def run_impedance_api(req: ISRequest):
     try:
+        experiment_protocol, protocol_mode = _parse_protocol_inputs(
+            req.experiment_protocol,
+            req.protocol_mode,
+        )
         stack = build_stack(req.config_path, req.device)
         frequencies = np.logspace(np.log10(req.f_min), np.log10(req.f_max), req.n_freq)
         result = impedance.run_impedance(
-            stack, frequencies, V_dc=req.V_dc, N_grid=req.N_grid,
+            stack,
+            frequencies,
+            V_dc=req.V_dc,
+            delta_V=req.delta_V,
+            N_grid=req.N_grid,
+            n_cycles=req.n_cycles,
+            n_extract=req.n_extract,
+            points_per_cycle=req.points_per_cycle,
+            illuminated=req.illuminated,
+            method=req.method,
+            dc_settle_time=req.dc_settle_time,
+            require_operating_point_certificate=(
+                req.require_operating_point_certificate
+            ),
+            experiment_protocol=experiment_protocol,
+            protocol_mode=protocol_mode,
         )
         out = to_serializable(result)
         if "Z" in out:
@@ -943,6 +1266,14 @@ def run_impedance_api(req: ISRequest):
         return {"status": "ok", "result": out}
     except HTTPException:
         raise
+    except (
+        ExperimentProtocolError,
+        GridResolutionError,
+        impedance.ImpedanceCapabilityError,
+        impedance.ImpedanceCertificationError,
+        QuasiFermiSteadyStateError,
+    ) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         print("[Impedance API Exception]", e)
         traceback.print_exc()
@@ -979,6 +1310,17 @@ def start_job(req: JobRequest):
     kind = req.kind
     p = req.params
 
+    experiment_protocol: ExperimentProtocol | None = None
+    protocol_mode: ProtocolMode = "compatibility"
+    if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
+        try:
+            experiment_protocol, protocol_mode = _parse_protocol_inputs(
+                p.get("experiment_protocol"),
+                p.get("protocol_mode", "compatibility"),
+            )
+        except ExperimentProtocolError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     # Tandem is config-only (no single DeviceStack), so it skips build_stack.
     if kind != "tandem":
         try:
@@ -987,6 +1329,18 @@ def start_job(req: JobRequest):
             raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"stack build failed: {e}")
+
+    if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
+        try:
+            _preflight_job_experiment_protocol(
+                kind,
+                p,
+                stack,
+                experiment_protocol,
+                protocol_mode,
+            )
+        except (ExperimentProtocolError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if kind == "jv":
         def _run(reporter: ProgressReporter) -> dict:
@@ -1006,6 +1360,8 @@ def start_job(req: JobRequest):
                 interface_transport_model=str(
                     p.get("interface_transport_model", "fermi_richardson")
                 ),
+                experiment_protocol=experiment_protocol,
+                protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)
@@ -1013,6 +1369,18 @@ def start_job(req: JobRequest):
             return out
     elif kind == "impedance":
         def _run(reporter: ProgressReporter) -> dict:
+            _illum = p.get("illuminated", True)
+            illuminated = (
+                bool(_illum)
+                if not isinstance(_illum, str)
+                else _illum.lower() != "false"
+            )
+            _strict = p.get("require_operating_point_certificate", False)
+            require_certificate = (
+                bool(_strict)
+                if not isinstance(_strict, str)
+                else _strict.lower() == "true"
+            )
             freqs = np.logspace(
                 np.log10(float(p.get("f_min", 10.0))),
                 np.log10(float(p.get("f_max", 1e5))),
@@ -1021,7 +1389,17 @@ def start_job(req: JobRequest):
             result = impedance.run_impedance(
                 stack, frequencies=freqs,
                 V_dc=float(p.get("V_dc", 0.9)),
+                delta_V=float(p.get("delta_V", 0.01)),
                 N_grid=int(p.get("N_grid", 40)),
+                n_cycles=int(p.get("n_cycles", 5)),
+                n_extract=int(p.get("n_extract", 2)),
+                points_per_cycle=int(p.get("points_per_cycle", 40)),
+                illuminated=illuminated,
+                method=str(p.get("method", "transient_ion_aware")),
+                dc_settle_time=float(p.get("dc_settle_time", 1e-3)),
+                require_operating_point_certificate=require_certificate,
+                experiment_protocol=experiment_protocol,
+                protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)
@@ -1125,6 +1503,8 @@ def start_job(req: JobRequest):
                 t_pulse=float(p.get("t_pulse", 1e-6)),
                 t_decay=float(p.get("t_decay", 50e-6)),
                 n_points=int(p.get("n_points", 200)),
+                experiment_protocol=experiment_protocol,
+                protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)
@@ -1155,6 +1535,8 @@ def start_job(req: JobRequest):
                 suns_levels=suns_levels,
                 N_grid=int(p.get("N_grid", 60)),
                 t_settle=float(p.get("t_settle", 1e-3)),
+                experiment_protocol=experiment_protocol,
+                protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)
@@ -1200,6 +1582,8 @@ def start_job(req: JobRequest):
                 Phi_incident=float(p.get("Phi_incident", 1e22)),
                 N_grid=int(p.get("N_grid", 60)),
                 t_settle=float(p.get("t_settle", 1e-1)),
+                experiment_protocol=experiment_protocol,
+                protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

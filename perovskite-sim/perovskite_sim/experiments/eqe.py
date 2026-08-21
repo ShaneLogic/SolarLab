@@ -61,8 +61,6 @@ from perovskite_sim.constants import Q
 from perovskite_sim.data import load_am15g, load_nk
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.experiments.jv_sweep import (
-    _compute_current,
-    _compute_current_ss,
     _compute_current_ss_with_spread,
 )
 from perovskite_sim.experiments.suns_voc import _solve_illuminated_ss_with_mat
@@ -71,6 +69,15 @@ from perovskite_sim.physics.optics import TMMLayer, tmm_absorption_profile
 from perovskite_sim.solver.mol import (
     MaterialArrays,
     build_material_arrays,
+)
+from perovskite_sim.experiments.protocol import (
+    DCSettleCriterion,
+    ExperimentProtocol,
+    IlluminationStep,
+    ProtocolMode,
+    SamplingProtocol,
+    ScanProtocol,
+    resolve_experiment_protocol,
 )
 
 ProgressCallback = Callable[[str, int, int, str], None]
@@ -117,6 +124,67 @@ class EQEResult:
     J_sc_integrated: float
     Phi_incident: float
     J_spread_max: float = 0.0
+    protocol: ExperimentProtocol | None = None
+
+
+def build_eqe_experiment_protocol(
+    stack: DeviceStack,
+    wavelengths_nm: np.ndarray,
+    *,
+    Phi_incident: float = 4e21,
+    t_settle: float = 1e-1,
+    implicit_legacy_protocol: bool = False,
+) -> ExperimentProtocol:
+    """Describe independent dark-reference and monochromatic EQE samples."""
+
+    wavelengths = np.asarray(wavelengths_nm, dtype=float)
+    if wavelengths.ndim != 1 or wavelengths.size == 0:
+        raise ValueError("wavelengths_nm must be a non-empty one-dimensional array")
+    if np.any(~np.isfinite(wavelengths)) or np.any(wavelengths <= 0.0):
+        raise ValueError("wavelengths_nm must be finite and positive")
+    if not np.isfinite(Phi_incident) or Phi_incident <= 0.0:
+        raise ValueError("Phi_incident must be finite and positive")
+    if not np.isfinite(t_settle) or t_settle <= 0.0:
+        raise ValueError("t_settle must be finite and positive")
+    wavelengths = np.sort(wavelengths)
+    return ExperimentProtocol(
+        experiment="eqe",
+        initial_state_source="dark_equilibrium_each_sample",
+        pre_bias_V=0.0,
+        soak_duration_s=float(t_settle),
+        dwell_duration_s=float(t_settle),
+        illumination_history=(
+            IlluminationStep(
+                phase="matched_dark_reference",
+                condition="dark",
+                duration_s=float(t_settle),
+            ),
+            IlluminationStep(
+                phase="monochromatic_probe_samples",
+                condition="monochromatic",
+                duration_s=float(len(wavelengths) * t_settle),
+                photon_flux_m2_s=float(Phi_incident),
+                source_reference="stack_tmm_single_wavelength",
+            ),
+        ),
+        temperature_K=float(stack.T),
+        scan=ScanProtocol(
+            axis="wavelength_nm",
+            direction="ascending",
+            start=float(wavelengths[0]),
+            stop=float(wavelengths[-1]),
+        ),
+        ac_excitation=None,
+        dc_settle=DCSettleCriterion(
+            kind="finite_time", duration_s=float(t_settle)
+        ),
+        sampling=SamplingProtocol(
+            axis="wavelength_nm",
+            mode="declared",
+            values=tuple(wavelengths),
+        ),
+        implicit_legacy_protocol=implicit_legacy_protocol,
+    )
 
 
 def _build_tmm_layers_single_wavelength(
@@ -178,7 +246,7 @@ def _single_wavelength_generation(
     """
     tmm_layers, boundaries = _build_tmm_layers_single_wavelength(stack, lam_m)
     substrate_offset = sum(
-        l.thickness for l in stack.layers if l.role == "substrate"
+        layer.thickness for layer in stack.layers if layer.role == "substrate"
     )
     x_tmm = x + substrate_offset
     wavelengths_m = np.array([lam_m], dtype=float)
@@ -219,6 +287,8 @@ def compute_eqe(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
+    experiment_protocol: ExperimentProtocol | None = None,
+    protocol_mode: ProtocolMode = "compatibility",
 ) -> EQEResult:
     """Compute EQE(λ) and the AM1.5G-integrated J_sc.
 
@@ -277,12 +347,23 @@ def compute_eqe(
         raise ValueError(
             f"Phi_incident must be positive, got {Phi_incident}"
         )
+    resolved_protocol = resolve_experiment_protocol(
+        experiment_protocol,
+        build_eqe_experiment_protocol(
+            stack,
+            wavelengths_nm,
+            Phi_incident=Phi_incident,
+            t_settle=t_settle,
+            implicit_legacy_protocol=True,
+        ),
+        mode=protocol_mode,
+    )
 
     wavelengths_m = wavelengths_nm * 1e-9
 
     elec = electrical_layers(stack)
     n_per = max(N_grid // len(elec), 2)
-    layers_grid = [Layer(l.thickness, n_per) for l in elec]
+    layers_grid = [Layer(layer.thickness, n_per) for layer in elec]
     x = multilayer_grid(layers_grid)
 
     # Baseline MaterialArrays — we'll swap G_optical per wavelength. The
@@ -376,4 +457,5 @@ def compute_eqe(
         J_sc_integrated=J_sc_integrated,
         Phi_incident=float(Phi_incident),
         J_spread_max=float(spread_max),
+        protocol=resolved_protocol,
     )

@@ -3,7 +3,11 @@ import { mountDevicePanel } from '../device-panel'
 import { startJob, streamJobEvents } from '../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../progress'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'
-import { setStatus, numField, readNum } from '../ui-helpers'
+import { checkField, numField, readCheck, readNum, setStatus } from '../ui-helpers'
+import {
+  collectImpedanceEvidenceWarnings,
+  summarizeImpedanceEvidence,
+} from '../impedance-evidence'
 import type { ISResult } from '../types'
 
 export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
@@ -17,6 +21,20 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
         ${numField('is-nf', 'N<sub>f</sub>', 15, '1')}
         ${numField('is-fmin', 'f<sub>min</sub> (Hz)', 10, 'any')}
         ${numField('is-fmax', 'f<sub>max</sub> (Hz)', 1e5, 'any')}
+        ${numField('is-dv', '&delta;V (mV)', 10, '0.5')}
+        ${numField('is-cycles', 'Cycles', 5, '1')}
+        ${numField('is-extract', 'Extract cycles', 2, '1')}
+        ${numField('is-ppc', 'Points/cycle', 40, '1')}
+        ${numField('is-dc-settle', 'DC settle (s)', 1e-3, 'any')}
+        <label class="form-group">
+          <span>Engine</span>
+          <select id="is-method">
+            <option value="transient_ion_aware">Transient, ion-aware</option>
+            <option value="qf_frequency_ion_free">QF frequency, ion-free</option>
+          </select>
+        </label>
+        ${checkField('is-illuminated', 'Illuminated', true)}
+        ${checkField('is-strict', 'Require DC certificate', false)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-is">Run Impedance</button>
@@ -42,12 +60,30 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
     setStatus('status-is', 'Starting job…')
     try {
       const device = devicePanel.getConfig()
+      const nCycles = Math.max(1, Math.round(readNum('is-cycles', 5)))
+      const selectedMethod = (
+        document.getElementById('is-method') as HTMLSelectElement | null
+      )?.value
+      const method = selectedMethod === 'qf_frequency_ion_free'
+        ? 'qf_frequency_ion_free' as const
+        : 'transient_ion_aware' as const
       const params = {
         N_grid: Math.max(3, Math.round(readNum('is-N', 40))),
         V_dc: readNum('is-Vdc', 0.9),
         n_freq: Math.max(2, Math.round(readNum('is-nf', 15))),
         f_min: readNum('is-fmin', 10),
         f_max: readNum('is-fmax', 1e5),
+        delta_V: readNum('is-dv', 10) * 1e-3,
+        n_cycles: nCycles,
+        n_extract: Math.min(
+          nCycles,
+          Math.max(1, Math.round(readNum('is-extract', 2))),
+        ),
+        points_per_cycle: Math.max(8, Math.round(readNum('is-ppc', 40))),
+        dc_settle_time: readNum('is-dc-settle', 1e-3),
+        illuminated: readCheck('is-illuminated', true),
+        method,
+        require_operating_point_certificate: readCheck('is-strict', false),
       }
       const jobId = await startJob('impedance', device, params)
       setStatus('status-is', 'Running impedance spectroscopy…')
@@ -77,6 +113,10 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
 
 function renderISResults(container: HTMLElement, r: ISResult): void {
   container.innerHTML = `
+    <div id="is-evidence-summary" class="impedance-evidence-summary"
+         data-test="impedance-evidence-summary"></div>
+    <div id="is-evidence" class="jv2d-warning" role="alert"
+         data-test="impedance-evidence-warning" hidden></div>
     <div class="results-row">
       <div class="card">
         <h3>Nyquist Plot</h3>
@@ -87,6 +127,20 @@ function renderISResults(container: HTMLElement, r: ISResult): void {
         <div id="plot-bode" class="plot-container"></div>
       </div>
     </div>`
+
+  const summary = container.querySelector<HTMLDivElement>('#is-evidence-summary')!
+  for (const line of summarizeImpedanceEvidence(r)) {
+    const item = document.createElement('span')
+    item.textContent = line
+    summary.appendChild(item)
+  }
+
+  const evidence = container.querySelector<HTMLDivElement>('#is-evidence')!
+  const notices = collectImpedanceEvidenceWarnings(r)
+  if (notices.length > 0) {
+    evidence.textContent = notices.join(' | ')
+    evidence.hidden = false
+  }
 
   const negImag = r.Z_imag.map(z => -z)
   const baseNyq = baseLayout()

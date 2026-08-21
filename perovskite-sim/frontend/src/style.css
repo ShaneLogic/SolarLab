@@ -501,6 +501,19 @@ input[type="number"] {
   font-size: 0.85rem;
   font-weight: 600;
 }
+.impedance-evidence-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 0.25rem 1rem;
+  padding: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.impedance-evidence-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 /* Plot-level toolbar shared across experiment panes. Hosts the
    Engineering/Publication style selector and any plot-specific

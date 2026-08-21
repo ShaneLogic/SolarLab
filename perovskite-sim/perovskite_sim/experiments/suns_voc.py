@@ -65,6 +65,16 @@ from perovskite_sim.experiments.jv_sweep import (
     _compute_current_ss_with_spread,
 )
 from perovskite_sim.experiments.tpv import _find_voc
+from perovskite_sim.experiments.protocol import (
+    DCSettleCriterion,
+    ExperimentProtocol,
+    IlluminationStep,
+    ProtocolMode,
+    SamplingProtocol,
+    ScanProtocol,
+    VocSearchProtocol,
+    resolve_experiment_protocol,
+)
 
 ProgressCallback = Callable[[str, int, int, str], None]
 
@@ -119,6 +129,70 @@ class SunsVocResult:
     J_pseudo_J: np.ndarray
     pseudo_FF: float
     J_spread_max: float = 0.0
+    protocol: ExperimentProtocol | None = None
+
+
+def build_suns_voc_experiment_protocol(
+    stack: DeviceStack,
+    suns_levels: Sequence[float] = DEFAULT_SUNS,
+    *,
+    t_settle: float = 1e-1,
+    voc_search: VocSearchProtocol | None = None,
+    implicit_legacy_protocol: bool = False,
+) -> ExperimentProtocol:
+    """Describe independent finite-time Suns-Voc intensity samples."""
+
+    suns = np.array(sorted(set(float(level) for level in suns_levels)), dtype=float)
+    if suns.size == 0:
+        raise ValueError("suns_levels must be non-empty")
+    if np.any(~np.isfinite(suns)) or np.any(suns <= 0.0):
+        raise ValueError("suns_levels must be finite and positive")
+    if not np.isfinite(t_settle) or t_settle <= 0.0:
+        raise ValueError("t_settle must be finite and positive")
+    search = voc_search or VocSearchProtocol(minimum_guess_V=0.3)
+    return ExperimentProtocol(
+        experiment="suns_voc",
+        initial_state_source="dark_equilibrium_each_sample",
+        pre_bias_V=0.0,
+        soak_duration_s=float(t_settle),
+        dwell_duration_s=float(t_settle),
+        illumination_history=(
+            IlluminationStep(
+                phase="matched_dark_reference",
+                condition="dark",
+                duration_s=float(t_settle),
+            ),
+            IlluminationStep(
+                phase="scaled_short_circuit_samples",
+                condition="scaled",
+                duration_s=float(len(suns) * t_settle),
+                source_reference="stack_baseline_generation",
+            ),
+            IlluminationStep(
+                phase="adaptive_open_circuit_searches",
+                condition="scaled",
+                source_reference="stack_baseline_generation",
+            ),
+        ),
+        temperature_K=float(stack.T),
+        scan=ScanProtocol(
+            axis="suns",
+            direction="ascending",
+            start=float(suns[0]),
+            stop=float(suns[-1]),
+        ),
+        ac_excitation=None,
+        dc_settle=DCSettleCriterion(
+            kind="finite_time", duration_s=float(t_settle)
+        ),
+        sampling=SamplingProtocol(
+            axis="suns",
+            mode="declared",
+            values=tuple(suns),
+        ),
+        voc_search=search,
+        implicit_legacy_protocol=implicit_legacy_protocol,
+    )
 
 
 def _materialise_G_optical(
@@ -205,6 +279,9 @@ def run_suns_voc(
     rtol: float = 1e-4,
     atol: float = 1e-6,
     progress: ProgressCallback | None = None,
+    experiment_protocol: ExperimentProtocol | None = None,
+    protocol_mode: ProtocolMode = "compatibility",
+    voc_search: VocSearchProtocol | None = None,
 ) -> SunsVocResult:
     """Run a Suns–V_oc sweep and build the pseudo J-V curve.
 
@@ -242,11 +319,22 @@ def run_suns_voc(
         raise ValueError("suns_levels must be non-empty")
     if np.any(suns_sorted <= 0.0):
         raise ValueError(f"suns_levels must be positive, got {suns_sorted}")
+    resolved_protocol = resolve_experiment_protocol(
+        experiment_protocol,
+        build_suns_voc_experiment_protocol(
+            stack,
+            suns_sorted,
+            t_settle=t_settle,
+            voc_search=voc_search,
+            implicit_legacy_protocol=True,
+        ),
+        mode=protocol_mode,
+    )
 
     # Build the electrical grid once — same shape for every suns level.
     elec = electrical_layers(stack)
     n_per = max(N_grid // len(elec), 2)
-    layers_grid = [Layer(l.thickness, n_per) for l in elec]
+    layers_grid = [Layer(layer.thickness, n_per) for layer in elec]
     x = multilayer_grid(layers_grid)
 
     # Baseline material cache and materialised G_optical so we can scale.
@@ -257,6 +345,8 @@ def run_suns_voc(
     V_oc_arr = np.zeros_like(suns_sorted)
     J_sc_arr = np.zeros_like(suns_sorted)
     V_guess = abs(stack.operating_built_in_potential())
+    search = resolved_protocol.voc_search
+    assert search is not None
 
     # Dark baseline at V=0: subtract to isolate the photo-current from
     # any ionic-drift / contact-leakage current that flows even without
@@ -293,8 +383,14 @@ def run_suns_voc(
         # _find_voc (scan to V_guess*1.5), so we inflate slightly for
         # the first (lowest-suns) step where V_oc can undershoot V_bi.
         V_oc_k, _y_at_voc = _find_voc(
-            x, y_ss, stack, mat_k, V_guess=max(V_guess, 0.3),
-            rtol=rtol, atol=atol,
+            x,
+            y_ss,
+            stack,
+            mat_k,
+            V_guess=V_guess,
+            rtol=rtol,
+            atol=atol,
+            search=search,
         )
         V_oc_arr[k] = V_oc_k
         # Warm-start: next suns level's V_oc is monotonically higher
@@ -329,4 +425,5 @@ def run_suns_voc(
         J_pseudo_J=J_pseudo,
         pseudo_FF=pff,
         J_spread_max=float(spread_max),
+        protocol=resolved_protocol,
     )

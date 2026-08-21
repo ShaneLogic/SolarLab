@@ -107,7 +107,7 @@ def solve_ivp(
     method: str = "Radau",
     t_eval: Optional[np.ndarray] = None,
     rtol: float = 1e-3,
-    atol: float = 1e-6,
+    atol: float | np.ndarray = 1e-6,
     dense_output: bool = False,
     max_step: float = np.inf,
     **kwargs,

@@ -439,18 +439,18 @@ function renderScapsPhysics(config: DeviceConfig): string {
           </label>`
   return `
       <details class="param-group">
-        <summary><h5>SCAPS-validation physics</h5></summary>
+        <summary><h5>SCAPS comparison controls</h5></summary>
         ${help}
         <div class="param-grid">
           ${cb('dev-dos', 'DOS band potentials', d.dos_band_potentials ?? true, 'V_T·ln(DOS) quasi-Fermi step (YAML dos_band_potentials)')}
           ${cb('dev-flatband', 'Flat-band contacts', !!d.flat_band_contacts, 'SCAPS finite-S metal contacts (YAML flat_band_contacts)')}
-          ${cb('dev-iface-closure', 'Interface-plane closure', !!d.interface_plane_closure, 'QSS plane-density interface SRH (YAML interface_plane_closure)')}
+          ${cb('dev-iface-closure', 'Interface-plane closure', !!d.interface_plane_closure, 'QSS plane-density interface SRH, recombination-only; trap electrostatic charge is parked (YAML interface_plane_closure)')}
           ${cb('dev-iface-proj', 'Interface-plane projection', !!d.interface_plane_projection, 'phi-projected interface densities (YAML interface_plane_projection)')}
-          <label class="param" title="Heterointerface bulk-Auger de-spike fraction (YAML het_recomb_despike). 0 = off; 0.53 = SCAPS-emulation.">
+          <label class="param" title="Calibrated heterointerface bulk-Auger de-spike scaffold (YAML het_recomb_despike). 0 = off; 0.53 = SCAPS comparison lane.">
             <span class="param-label"><span class="sym">de-spike <i>f</i></span></span>
             ${numAttr('dev-despike', d.het_recomb_despike, { placeholder: '0 — off', title: 'het_recomb_despike (0 = off, 0.53 = SCAPS-emulation)' })}
           </label>
-          ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Continuous bandgap grading: layer front (chi/Eg) → back (chi_back/Eg_back) endpoints via the SCAPS material law (YAML band_grading). Set per-layer Eg_back/chi_back in the config YAML.')}
+          ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Electrical chi/Eg grading only; optical alpha and n,k are not composition-graded (YAML band_grading).')}
           ${cb('dev-iface-tunnel', 'Interface tunnelling (TFE)', !!d.interface_tunneling, 'Intra-band thermionic-field-emission through CB/VB spikes — static Padovani-Stratton enhancement of A* at TE-capped faces (YAML interface_tunneling).')}
           <label class="param" title="Tunnelling effective mass relative to the free-electron mass (YAML tunnel_mass_eff). Only used when Interface tunnelling is on.">
             <span class="param-label"><span class="sym"><i>m</i><sub>tun</sub>/<i>m</i><sub>e</sub></span></span>

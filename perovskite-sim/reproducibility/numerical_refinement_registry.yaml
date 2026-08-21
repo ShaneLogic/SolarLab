@@ -1,0 +1,354 @@
+schema_version: numerical-refinement-registry-v1
+certificate_schema: numerical-certificate-v1
+policy:
+  terminal_pairs:
+    grid: last two grids at the finest tolerance
+    tolerance: last two tolerances at the finest grid
+  incomplete_matrix_status: failed
+  complete_nonconverged_status: partial
+  complete_converged_status: certified
+  threshold_change_policy: mint a new lane ID; never tune this record in place
+  result_policy: write content-addressed outputs; never overwrite historical references
+
+lanes:
+  scaps-mirror-frozen-ion-ss:
+    claim_level: internal-numerical-candidate
+    config: configs/scaps_mirror.yaml
+    config_sha256: 7ad4968d9c8249b76ca4e649d41c39e26727f6818cb81a15fe75f6b74b11b881
+    executor: perovskite_sim.validation.refinement_executors:run_frozen_ion_steady_jv
+    executor_version: v2
+    grid:
+      parameter: N_grid
+      values: [30, 60, 90]
+    tolerance:
+      parameter: steady_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      voc_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      jsc_A_m2: {comparison: relative_linf, limit: 0.002, units: A m-2}
+      ff: {comparison: relative_linf, limit: 0.005, units: "1"}
+      pce_percent: {comparison: relative_linf, limit: 0.005, units: "%"}
+      jv_normalized: {comparison: absolute_linf, limit: 0.005, units: "1"}
+    quality_gates:
+      all_points_residual_converged: {operator: eq, limit: 1.0, units: "1"}
+      max_residual_per_s: {operator: le, limit: 0.5, units: s-1}
+      max_continuity_bound_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_current_spread_A_m2: {operator: le, limit: 0.01, units: A m-2}
+      voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: scaps
+      require_protocol: true
+      V_max_V: 1.5
+      voltage_points: 31
+      illuminated: true
+      interface_states: false
+      base_residual_tolerance_per_s: 1.0e-6
+      base_log_step_tolerance: 1.0e-8
+      base_stall_tolerance_per_s: 0.5
+      max_continuity_current_error_A_m2: 0.1
+    limitations:
+      - This lane certifies internal frozen-ion carrier steady states, not SCAPS parity.
+      - The initial transient is a Newton seed and is not itself a steady-state certificate.
+
+  ionmonger-mobile-ion-transient:
+    claim_level: internal-numerical-candidate
+    config: configs/ionmonger_benchmark.yaml
+    config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    executor: perovskite_sim.validation.refinement_executors:run_mobile_ion_transient_jv
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [30, 60, 90]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      voc_reverse_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      hysteresis_index: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      terminal_current_normalized_trace: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      positive_ion_inventory_relative_trace: {comparison: absolute_linf, limit: 1.0e-10, units: "1"}
+    quality_gates:
+      bulk_srh_denominator_positive: {operator: eq, limit: 1.0, units: "1"}
+      diagnostics_complete: {operator: eq, limit: 1.0, units: "1"}
+      interface_srh_denominator_positive: {operator: eq, limit: 1.0, units: "1"}
+      jv_certified: {operator: eq, limit: 1.0, units: "1"}
+      voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
+      max_positive_ion_inventory_relative_drift: {operator: le, limit: 1.0e-10, units: "1"}
+      nonfinite_rhs_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      nonfinite_trial_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+      zero_floor_diagnostics_pass: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_max_V: 1.5
+      voltage_points: 20
+      scan_rate_V_s: 5.0
+      rtol: 1.0e-4
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - This lane certifies the registered local scan protocol, not the Courtier publication protocol.
+      - Positive-ion inventory is available in snapshots; dual-ion inventory requires a future snapshot schema extension.
+
+  ionmonger-ion-aware-dc-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/ionmonger_benchmark.yaml
+    config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    executor: perovskite_sim.validation.refinement_executors:run_ion_aware_dc_operating_point
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [30, 60, 90]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      dc_current_density_A_m2: {comparison: relative_linf, limit: 0.005, units: A m-2}
+      maximum_site_occupancy_fraction: {comparison: relative_linf, limit: 0.01, units: "1"}
+      positive_ion_centroid_fraction: {comparison: absolute_linf, limit: 0.002, units: "1"}
+    quality_gates:
+      candidate_diagnostics_pass: {operator: eq, limit: 1.0, units: "1"}
+      contact_not_inconsistent: {operator: eq, limit: 1.0, units: "1"}
+      diagnostics_complete: {operator: eq, limit: 1.0, units: "1"}
+      max_carrier_area_rate_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_dc_face_current_spread_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_ion_area_rate_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      max_ion_inventory_relative_drift: {operator: le, limit: 1.0e-10, units: "1"}
+      max_ionic_face_current_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      nonfinite_rhs_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      nonfinite_trial_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      required_consecutive_passes_met: {operator: eq, limit: 1.0, units: "1"}
+      site_occupancy_admissible: {operator: eq, limit: 1.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_dc_V: 0.9
+      illuminated: true
+      settle_end_times_s: [1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 32.0, 64.0, 128.0]
+      required_consecutive_passes: 2
+      max_carrier_area_rate_A_m2: 0.1
+      max_ion_area_rate_A_m2: 1.0e-6
+      max_ionic_face_current_A_m2: 1.0e-6
+      max_dc_face_current_spread_A_m2: 0.1
+      max_ion_inventory_relative_drift: 1.0e-10
+      max_nfev_per_attempt: 20000
+      rtol: 1.0e-4
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - This lane certifies an internal fixed-bias mobile-ion numerical DC state, not the finite-rate J-V history or an external IonMonger curve.
+      - The source deck lacks endpoint effective-DOS data, so contact thermodynamics remains compatible_unverified and the combined physical certificate is false.
+      - Dynamic interface-state blocks remain excluded until their electrostatic charge closure is independently certified.
+
+  ionmonger-ion-aware-dc-resolved-v2:
+    claim_level: internal-numerical-candidate
+    config: configs/ionmonger_benchmark.yaml
+    config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    executor: perovskite_sim.validation.refinement_executors:run_ion_aware_dc_operating_point
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [60, 90, 120]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      dc_current_density_A_m2: {comparison: relative_linf, limit: 0.005, units: A m-2}
+      maximum_site_occupancy_fraction: {comparison: relative_linf, limit: 0.01, units: "1"}
+      positive_ion_centroid_fraction: {comparison: absolute_linf, limit: 0.002, units: "1"}
+    quality_gates:
+      candidate_diagnostics_pass: {operator: eq, limit: 1.0, units: "1"}
+      contact_not_inconsistent: {operator: eq, limit: 1.0, units: "1"}
+      diagnostics_complete: {operator: eq, limit: 1.0, units: "1"}
+      max_carrier_area_rate_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_dc_face_current_spread_A_m2: {operator: le, limit: 0.1, units: A m-2}
+      max_ion_area_rate_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      max_ion_inventory_relative_drift: {operator: le, limit: 1.0e-10, units: "1"}
+      max_ionic_face_current_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      nonfinite_rhs_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      nonfinite_trial_evaluations: {operator: eq, limit: 0.0, units: "1"}
+      required_consecutive_passes_met: {operator: eq, limit: 1.0, units: "1"}
+      site_occupancy_admissible: {operator: eq, limit: 1.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_dc_V: 0.9
+      illuminated: true
+      settle_end_times_s: [1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 32.0, 64.0, 128.0]
+      required_consecutive_passes: 2
+      max_carrier_area_rate_A_m2: 0.1
+      max_ion_area_rate_A_m2: 1.0e-6
+      max_ionic_face_current_A_m2: 1.0e-6
+      max_dc_face_current_spread_A_m2: 0.1
+      max_ion_inventory_relative_drift: 1.0e-10
+      max_nfev_per_attempt: 20000
+      rtol: 1.0e-4
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - This resolved lane starts at N60 and does not erase the N30/N60/N90 v1 partial certificate or its 1.55 percent pointwise occupancy-grid discrepancy.
+      - This lane certifies an internal fixed-bias mobile-ion numerical DC state, not the finite-rate J-V history or an external IonMonger curve.
+      - The source deck lacks endpoint effective-DOS data, so contact thermodynamics remains compatible_unverified and the combined physical certificate is false.
+      - Dynamic interface-state blocks remain excluded until their electrostatic charge closure is independently certified.
+
+  csi-qf-frequency-domain:
+    claim_level: internal-numerical-candidate
+    config: configs/cSi_homojunction.yaml
+    config_sha256: c179e087a6623c7d19dfc7f6a3af056e6fcd5a0382e2e2b0e1e26dc08d883c99
+    executor: perovskite_sim.validation.refinement_executors:run_csi_qf_frequency_domain
+    executor_version: v3
+    grid:
+      parameter: N_grid
+      values: [100, 200, 300]
+    tolerance:
+      parameter: finite_difference_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      cv_curve_F_m2: {comparison: relative_linf, limit: 0.005, units: F m-2}
+      mott_intercept_V: {comparison: absolute_linf, limit: 0.002, units: V}
+      effective_doping_m3: {comparison: relative_linf, limit: 0.01, units: m-3}
+    quality_gates:
+      max_relative_face_spread: {operator: le, limit: 5.0e-4, units: "1"}
+      max_backward_error: {operator: le, limit: 1.0e-10, units: "1"}
+      dc_residual_certified: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      biases_V: [-0.3, -0.2, -0.1, 0.0, 0.1, 0.2]
+      frequencies_Hz: [1.0e4, 1.0e5, 1.0e6]
+      nominal_delta_V: 0.01
+      base_state_difference_step: 1.0e-5
+      base_voltage_difference_step_V: 1.0e-5
+      mott_schottky_eps_r: 11.7
+      temperature_K: 300.0
+    limitations:
+      - N_grid=100 intentionally probes below the configured c-Si grid guard and remains fail-closed evidence.
+      - This minimum-roadmap lane is not eligible for promotion when any cell fails; use the separately versioned resolved lane for a positive certificate.
+      - This is an internal QF small-signal lane, not an external C-V comparison.
+
+  csi-qf-frequency-domain-resolved-v2:
+    claim_level: internal-numerical-candidate
+    config: configs/cSi_homojunction.yaml
+    config_sha256: c179e087a6623c7d19dfc7f6a3af056e6fcd5a0382e2e2b0e1e26dc08d883c99
+    executor: perovskite_sim.validation.refinement_executors:run_csi_qf_frequency_domain
+    executor_version: v3
+    grid:
+      parameter: N_grid
+      values: [200, 300, 400]
+    tolerance:
+      parameter: finite_difference_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      cv_curve_F_m2: {comparison: relative_linf, limit: 0.005, units: F m-2}
+      mott_intercept_V: {comparison: absolute_linf, limit: 0.002, units: V}
+      effective_doping_m3: {comparison: relative_linf, limit: 0.01, units: m-3}
+    quality_gates:
+      max_relative_face_spread: {operator: le, limit: 5.0e-4, units: "1"}
+      max_backward_error: {operator: le, limit: 1.0e-10, units: "1"}
+      dc_residual_certified: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      biases_V: [-0.3, -0.2, -0.1, 0.0, 0.1, 0.2]
+      frequencies_Hz: [1.0e4, 1.0e5, 1.0e6]
+      nominal_delta_V: 0.01
+      base_state_difference_step: 1.0e-5
+      base_voltage_difference_step_V: 1.0e-5
+      mott_schottky_eps_r: 11.7
+      temperature_K: 300.0
+    limitations:
+      - This versioned lane starts at the configured c-Si minimum grid and does not erase the N_grid=100 fail-close evidence.
+      - Its certificate is internal QF small-signal convergence, not an external C-V validation or an independent contact-barrier measurement.
+
+  twod-uniform-limit:
+    claim_level: internal-numerical-candidate
+    config: configs/twod/nip_MAPbI3_uniform.yaml
+    config_sha256: 6a7e0022575e680e3b4348774eb604c3273930b7a0fe210994e6532cd6d59dcb
+    executor: perovskite_sim.validation.refinement_executors:run_twod_uniform_limit
+    executor_version: v2
+    grid:
+      parameter: matched_xy_refinement_multiplier
+      values: [1, 2, 4]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      jv_2d_to_1d_normalized_difference: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      voc_2d_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      jsc_2d_A_m2: {comparison: relative_linf, limit: 0.002, units: A m-2}
+    quality_gates:
+      max_abs_2d_to_1d_normalized_difference: {operator: le, limit: 0.005, units: "1"}
+      max_charge_residual_relative: {operator: le, limit: 1.0e-6, units: "1"}
+      max_current_conservation_relative: {operator: le, limit: 5.0e-3, units: "1"}
+      max_lateral_carrier_variation_relative: {operator: le, limit: 1.0e-8, units: "1"}
+      frozen_ion_scope_declared: {operator: eq, limit: 1.0, units: "1"}
+      one_d_jv_certified: {operator: eq, limit: 1.0, units: "1"}
+      voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      lateral_boundary: periodic
+      base_lateral_intervals: 4
+      base_vertical_intervals_per_layer: 5
+      lateral_length_m: 5.0e-7
+      V_max_V: 1.2
+      V_step_V: 0.1
+      settle_time_s: 1.0e-3
+      rtol: 1.0e-6
+      max_nfev: 200000
+      max_bisect: 6
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - The current 2-D model is frozen-ion and has no interface-plane physics.
+      - The uniform-limit comparison uses electron-plus-hole conduction current and excludes ionic and displacement current on both sides.
+      - Passing this lane certifies only the uniform 2-D to 1-D limit.
+
+  interface-recombination-charge-off:
+    claim_level: internal-numerical-candidate
+    config: configs/solarscale_nip_band_aligned_iface.yaml
+    config_sha256: 538fed52f0d40123ecc1b8a4c1391616f9f35a93637157f3374e90fc8f43c344
+    executor: perovskite_sim.validation.refinement_executors:run_interface_recombination_charge_off
+    executor_version: v2
+    grid:
+      parameter: N_grid
+      values: [30, 60, 90]
+    tolerance:
+      parameter: steady_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      interface_flux_A_m2: {comparison: absolute_linf, limit: 0.01, units: A m-2}
+      jv_normalized: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      voc_V: {comparison: absolute_linf, limit: 0.001, units: V}
+    quality_gates:
+      max_interface_flux_residual_A_m2: {operator: le, limit: 0.01, units: A m-2}
+      max_current_spread_A_m2: {operator: le, limit: 0.01, units: A m-2}
+      max_residual_per_s: {operator: le, limit: 0.5, units: s-1}
+      trap_electrostatic_charge_enabled: {operator: eq, limit: 0.0, units: "1"}
+      all_points_residual_converged: {operator: eq, limit: 1.0, units: "1"}
+      voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      interface_states: true
+      illuminated: true
+      V_max_V: 1.2
+      voltage_points: 25
+      base_residual_tolerance_per_s: 1.0e-6
+      base_log_step_tolerance: 1.0e-8
+      base_stall_tolerance_per_s: 0.5
+      max_continuity_current_error_A_m2: 0.1
+    limitations:
+      - Interface electrostatic trap charge remains parked and must stay disabled in this lane.
+      - This lane certifies recombination flux convergence only; it makes no Gauss-jump claim.
