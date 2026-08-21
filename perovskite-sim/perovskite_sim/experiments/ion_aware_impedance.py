@@ -368,6 +368,7 @@ class IonAwareImpedanceResult:
     storage_response_per_V: np.ndarray
     coordinate_layout: IonAwareStateCoordinateLayout
     reference_linearization: FrequencyDomainResult
+    reference_linearizations: tuple[FrequencyDomainResult, ...]
     protocol: IonAwareImpedanceProtocol
     dc_state: IonAwareDCResult
     certificate: IonAwareImpedanceCertificate
@@ -543,6 +544,84 @@ def _perturbation_assessment(
     )
 
 
+def _build_reference_evaluator(
+    grid: np.ndarray,
+    stack: DeviceStack,
+    protocol: IonAwareImpedanceProtocol,
+    material: MaterialArrays,
+    layout: IonAwareStateCoordinateLayout,
+    base_state: np.ndarray,
+):
+    """Return the full-Poisson nonlinear callback used by the FD reference."""
+    physical_indices = np.asarray(layout.state_indices, dtype=int)
+    eps_face = EPS_0 * _harmonic_face_average(material.eps_r)
+    polarity = float(material.junction_polarity)
+
+    def evaluate(coordinate: np.ndarray, voltage: float) -> SmallSignalEvaluation:
+        physical = _physical_state(coordinate, base_state, layout)
+        rate = assemble_rhs(
+            0.0,
+            physical,
+            grid,
+            stack,
+            material,
+            illuminated=protocol.illuminated,
+            V_app=voltage,
+        )
+        current = compute_current_components(
+            grid,
+            physical,
+            stack,
+            voltage,
+            mat=material,
+        )
+        ionic = compute_ionic_current_components(
+            grid,
+            physical,
+            stack,
+            voltage,
+            mat=material,
+        )
+        electron = -np.asarray(current.J_n, dtype=float)
+        hole = -np.asarray(current.J_p, dtype=float)
+        positive_ion = -np.asarray(ionic.J_positive, dtype=float)
+        negative_ion = (
+            None
+            if ionic.J_negative is None
+            else -np.asarray(ionic.J_negative, dtype=float)
+        )
+        components = [
+            SmallSignalCurrentComponent("electron", electron),
+            SmallSignalCurrentComponent("hole", hole),
+            SmallSignalCurrentComponent("positive_ion", positive_ion),
+        ]
+        if negative_ion is not None:
+            components.append(
+                SmallSignalCurrentComponent("negative_ion", negative_ion)
+            )
+        conduction = sum(
+            (component.current_faces for component in components),
+            start=np.zeros_like(electron),
+        )
+        snapshot = extract_spatial_snapshot(
+            grid,
+            physical,
+            stack,
+            voltage,
+            mat=material,
+        )
+        displacement_charge = polarity * eps_face * snapshot.E
+        return SmallSignalEvaluation(
+            storage=physical[physical_indices],
+            rate=np.asarray(rate, dtype=float)[physical_indices],
+            conduction_current_faces=conduction,
+            displacement_charge_faces=displacement_charge,
+            current_components=tuple(components),
+        )
+
+    return evaluate
+
+
 def run_ion_aware_impedance(
     x: np.ndarray,
     stack: DeviceStack,
@@ -641,71 +720,15 @@ def run_ion_aware_impedance(
             "the declared state stencil crosses the ion site-occupancy limit"
         )
 
-    eps_face = EPS_0 * _harmonic_face_average(material.eps_r)
-    polarity = float(material.junction_polarity)
     face_weights = np.diff(grid) / float(grid[-1] - grid[0])
-
-    def evaluate(coordinate: np.ndarray, voltage: float) -> SmallSignalEvaluation:
-        physical = _physical_state(coordinate, base_state, layout)
-        rate = assemble_rhs(
-            0.0,
-            physical,
-            grid,
-            stack,
-            material,
-            illuminated=protocol.illuminated,
-            V_app=voltage,
-        )
-        current = compute_current_components(
-            grid,
-            physical,
-            stack,
-            voltage,
-            mat=material,
-        )
-        ionic = compute_ionic_current_components(
-            grid,
-            physical,
-            stack,
-            voltage,
-            mat=material,
-        )
-        electron = -np.asarray(current.J_n, dtype=float)
-        hole = -np.asarray(current.J_p, dtype=float)
-        positive_ion = -np.asarray(ionic.J_positive, dtype=float)
-        negative_ion = (
-            None
-            if ionic.J_negative is None
-            else -np.asarray(ionic.J_negative, dtype=float)
-        )
-        components = [
-            SmallSignalCurrentComponent("electron", electron),
-            SmallSignalCurrentComponent("hole", hole),
-            SmallSignalCurrentComponent("positive_ion", positive_ion),
-        ]
-        if negative_ion is not None:
-            components.append(
-                SmallSignalCurrentComponent("negative_ion", negative_ion)
-            )
-        conduction = sum(
-            (component.current_faces for component in components),
-            start=np.zeros_like(electron),
-        )
-        snapshot = extract_spatial_snapshot(
-            grid,
-            physical,
-            stack,
-            voltage,
-            mat=material,
-        )
-        displacement_charge = polarity * eps_face * snapshot.E
-        return SmallSignalEvaluation(
-            storage=physical[physical_indices],
-            rate=np.asarray(rate, dtype=float)[physical_indices],
-            conduction_current_faces=conduction,
-            displacement_charge_faces=displacement_charge,
-            current_components=tuple(components),
-        )
+    evaluate = _build_reference_evaluator(
+        grid,
+        stack,
+        protocol,
+        material,
+        layout,
+        base_state,
+    )
 
     levels: list[tuple[float, FrequencyDomainResult]] = []
     coordinate = np.zeros(layout.size, dtype=float)
@@ -882,6 +905,7 @@ def run_ion_aware_impedance(
         storage_response_per_V=final.storage_response,
         coordinate_layout=layout,
         reference_linearization=final,
+        reference_linearizations=tuple(response for _, response in levels),
         protocol=protocol,
         dc_state=dc_state,
         certificate=certificate,

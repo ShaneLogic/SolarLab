@@ -58,6 +58,8 @@ class FrequencyDomainCurrentComponent:
 
     name: str
     admittance_faces: np.ndarray
+    current_jacobian: np.ndarray
+    voltage_derivative: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -460,6 +462,8 @@ def solve_frequency_domain(
             FrequencyDomainCurrentComponent(
                 name=name,
                 admittance_faces=component_admittance_faces[index].copy(),
+                current_jacobian=component_current_jacobian[index].copy(),
+                voltage_derivative=component_current_voltage[index].copy(),
             )
             for index, name in enumerate(component_names)
         ),

@@ -612,6 +612,8 @@ def _state_fields(
     stack: DeviceStack,
     V_bc: float,
     mat: MaterialArrays,
+    *,
+    phi_frozen: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, StateVec]:
     """Unpack state vector, apply BCs, solve Poisson. Returns (n, p, phi, sv).
 
@@ -638,14 +640,19 @@ def _state_fields(
             p[0] = mat.p_L
         if mat.S_p_R is None:
             p[-1] = mat.p_R
-    rho = _charge_density(
-        p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
-        P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
-    )
-    phi = solve_poisson_prefactored(
-        mat.poisson_factor, rho, phi_left=0.0,
-        phi_right=poisson_right_boundary(mat, V_bc),
-    )
+    if phi_frozen is None:
+        rho = _charge_density(
+            p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
+            P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
+        )
+        phi = solve_poisson_prefactored(
+            mat.poisson_factor, rho, phi_left=0.0,
+            phi_right=poisson_right_boundary(mat, V_bc),
+        )
+    else:
+        phi = np.asarray(phi_frozen, dtype=float)
+        if phi.shape != x.shape or not np.all(np.isfinite(phi)):
+            raise ValueError("phi_frozen must be finite and match the spatial grid")
     return n, p, phi, sv
 
 
@@ -655,6 +662,8 @@ def extract_spatial_snapshot(
     stack: DeviceStack,
     V_app: float,
     mat: MaterialArrays | None = None,
+    *,
+    phi_frozen: np.ndarray | None = None,
 ) -> SpatialSnapshot:
     """Extract spatial profiles from a state vector at a given voltage.
 
@@ -662,7 +671,14 @@ def extract_spatial_snapshot(
     """
     if mat is None:
         mat = build_material_arrays(x, stack)
-    n, p, phi, sv = _state_fields(x, y, stack, V_app, mat)
+    n, p, phi, sv = _state_fields(
+        x,
+        y,
+        stack,
+        V_app,
+        mat,
+        phi_frozen=phi_frozen,
+    )
     dx = np.diff(x)
     E = -(phi[1:] - phi[:-1]) / dx
     rho = _charge_density(
@@ -683,6 +699,7 @@ def compute_current_components(
     dt: float | None = None,
     mat: MaterialArrays | None = None,
     V_app_prev: float | None = None,
+    phi_frozen: np.ndarray | None = None,
 ) -> CurrentComponents:
     """Decompose the total current into electron, hole, ion, and displacement.
 
@@ -693,7 +710,14 @@ def compute_current_components(
         mat = build_material_arrays(x, stack)
 
     dx = np.diff(x)
-    n, p, phi, sv = _state_fields(x, y, stack, V_app, mat)
+    n, p, phi, sv = _state_fields(
+        x,
+        y,
+        stack,
+        V_app,
+        mat,
+        phi_frozen=phi_frozen,
+    )
     V_T_dev = mat.V_T_device
 
     # Electron and hole conduction currents (SG fluxes). When the device
@@ -818,6 +842,7 @@ def compute_ionic_current_components(
     V_app: float,
     *,
     mat: MaterialArrays | None = None,
+    phi_frozen: np.ndarray | None = None,
 ) -> IonicCurrentComponents:
     """Return positive, negative, and net ionic current at every face.
 
@@ -828,7 +853,14 @@ def compute_ionic_current_components(
     """
     if mat is None:
         mat = build_material_arrays(x, stack)
-    _, _, phi, state = _state_fields(x, y, stack, V_app, mat)
+    _, _, phi, state = _state_fields(
+        x,
+        y,
+        stack,
+        V_app,
+        mat,
+        phi_frozen=phi_frozen,
+    )
     return _ionic_current_components_from_fields(x, phi, state, mat)
 
 

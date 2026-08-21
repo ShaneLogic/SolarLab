@@ -140,10 +140,21 @@ def test_frequency_domain_solver_exposes_reference_operators_and_components():
         + result.displacement_admittance_faces,
         result.admittance_faces,
     )
-    components = {item.name: item.admittance_faces for item in result.current_components}
+    components = {item.name: item for item in result.current_components}
     np.testing.assert_allclose(
-        components["electron"] + components["hole"],
+        components["electron"].admittance_faces
+        + components["hole"].admittance_faces,
         result.conduction_admittance_faces,
+    )
+    np.testing.assert_allclose(
+        components["electron"].current_jacobian
+        + components["hole"].current_jacobian,
+        result.conduction_current_jacobian,
+    )
+    np.testing.assert_allclose(
+        components["electron"].voltage_derivative
+        + components["hole"].voltage_derivative,
+        result.conduction_current_voltage_derivative,
     )
 
 

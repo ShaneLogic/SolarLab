@@ -135,7 +135,7 @@ A symmetric dual-ion N13 probe also passed, with both ionic current/storage
 blocks active, maximum inventory response `1.07e-13`, all-face spread
 `2.07e-8`, and backward error `2.49e-16`. The focused impedance/DC suite is
 `85 passed, 1 deselected`; the existing c-Si QF slow regression is `8 passed`.
-The repository default suite is `2016 passed, 2 skipped, 263 deselected`.
+The repository default suite is `2028 passed, 2 skipped, 263 deselected`.
 
 The N61 single-ion performance probe used 138 dynamic coordinates and 30
 frequencies from `1e-4` to `1e6 Hz`, with all three finite-difference levels.
@@ -151,8 +151,11 @@ certificate.
 
 ## Remaining Phase 2 work
 
-1. Compare an analytic/structured Jacobian column by column against this
-   reference operator, including Poisson-mediated dense derivatives.
+1. The exact discrete Poisson sensitivity and adaptive per-column structured
+   comparison are now implemented; replace the remaining frozen-potential
+   finite differences with analytic SG transport and recombination blocks.
+   See
+   [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
 2. Add device-timescale frequency-window assessment without changing user
    frequencies.
 3. Register grid, finite-difference and frequency-coverage matrices and mint

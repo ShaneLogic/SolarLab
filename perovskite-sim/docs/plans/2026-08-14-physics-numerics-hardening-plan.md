@@ -400,10 +400,13 @@ residual-certified ion/electron/hole DC state
    的真实动态自由度以 log-density increment 进入 `M`；固定接触和结构性
    零离子节点排除。Poisson 继续全局消去，但每个 state/voltage stencil
    都重新求解，因此其全局导数进入 `J`、forcing 和 displacement。
-3. **reference 已实现，structured comparison 未完成**：central finite
-   difference 使用 `1/0.5/0.25` 三层步长，保留 `M/J/b` 和逐分量电流；
-   下一步实现 analytic/structured blocks 并逐列对比。详见
-   [ion-aware-impedance-reference-engine.md](../ion-aware-impedance-reference-engine.md)。
+3. **`INTERNAL_TESTED_COMPARISON` (2026-08-21)**：reference central finite
+   difference 保留 `1/0.5/0.25` 三层；structured comparison 已实现精确
+   离散 Poisson 隐式灵敏度、解析 mass tangent、物种分块和自适应逐列
+   stencil，并对 `M/J/b`、逐分量电流和阻抗幅相 fail-close。SG 输运与
+   复合项当前仍在 frozen-phi 上做 central difference，尚不是 full
+   analytic Jacobian。详见
+   [ion-aware-structured-jacobian-comparison.md](../ion-aware-structured-jacobian-comparison.md)。
 4. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
 5. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
 6. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。

@@ -38,6 +38,15 @@ from perovskite_sim.experiments.ion_aware_impedance import (
     build_ion_aware_impedance_protocol,
     run_ion_aware_impedance,
 )
+from perovskite_sim.experiments.ion_aware_structured_jacobian import (
+    IonAwareStructuredJacobianCapabilityError,
+    IonAwareStructuredJacobianCertificate,
+    IonAwareStructuredJacobianCertificationError,
+    IonAwareStructuredJacobianProtocol,
+    IonAwareStructuredJacobianResult,
+    build_ion_aware_structured_jacobian_protocol,
+    run_ion_aware_structured_jacobian_comparison,
+)
 
 __all__ = [
     "ACExcitation",
@@ -57,6 +66,11 @@ __all__ = [
     "IonAwareImpedanceError",
     "IonAwareImpedanceProtocol",
     "IonAwareImpedanceResult",
+    "IonAwareStructuredJacobianCapabilityError",
+    "IonAwareStructuredJacobianCertificate",
+    "IonAwareStructuredJacobianCertificationError",
+    "IonAwareStructuredJacobianProtocol",
+    "IonAwareStructuredJacobianResult",
     "ProtocolMismatchError",
     "ProtocolMode",
     "SamplingProtocol",
@@ -65,10 +79,12 @@ __all__ = [
     "assess_ion_aware_dc_state",
     "build_ion_aware_dc_protocol",
     "build_ion_aware_impedance_protocol",
+    "build_ion_aware_structured_jacobian_protocol",
     "ion_aware_dc_state_sha256",
     "TandemJVResult",
     "run_tandem_jv",
     "run_ion_aware_impedance",
+    "run_ion_aware_structured_jacobian_comparison",
     "series_match_jv",
     "solve_ion_aware_dc",
     "resolve_experiment_protocol",
