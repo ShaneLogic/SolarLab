@@ -178,6 +178,38 @@ def interface_recombination(
     return (n * p - ni_sq) / denominator
 
 
+def interface_recombination_derivatives(
+    n: float,
+    p: float,
+    ni_sq: float,
+    n1: float,
+    p1: float,
+    v_n: float,
+    v_p: float,
+) -> RecombinationDerivatives:
+    """Return surface SRH and exact local derivatives with respect to n and p."""
+
+    if v_n <= 0.0 or v_p <= 0.0:
+        zero = np.asarray(0.0)
+        return RecombinationDerivatives(
+            rate=zero,
+            electron_density_derivative=zero,
+            hole_density_derivative=zero,
+        )
+    denominator = interface_srh_denominator(n, p, n1, p1, v_n, v_p)
+    numerator = n * p - ni_sq
+    rate = numerator / denominator
+    return RecombinationDerivatives(
+        rate=np.asarray(rate),
+        electron_density_derivative=np.asarray(
+            (p - rate / v_p) / denominator
+        ),
+        hole_density_derivative=np.asarray(
+            (n - rate / v_n) / denominator
+        ),
+    )
+
+
 def total_recombination(
     n: np.ndarray, p: np.ndarray, ni_sq: float,
     tau_n: float, tau_p: float, n1: float, p1: float,

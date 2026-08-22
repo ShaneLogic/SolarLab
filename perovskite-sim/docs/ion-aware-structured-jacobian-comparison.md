@@ -1,17 +1,18 @@
 # Ion-aware structured Jacobian comparison
 
-Status: `INTERNAL_TESTED_ANALYTIC_BULK_REACTION` as of 2026-08-21. This is a
-validation path for the ion-aware impedance reference engine. Poisson,
-Scharfetter-Gummel transport, and local bulk SRH/radiative/Auger recombination
-are analytic; interface reaction, contact, and unsupported non-smooth or
-nonlocal closures are not. It is not yet a fully analytic production Jacobian,
-a registered numerical certificate, or external validation.
+Status: `INTERNAL_TESTED_ANALYTIC_LOCAL_INTERFACE_REACTION` as of 2026-08-22.
+This is a validation path for the ion-aware impedance reference engine.
+Poisson, Scharfetter-Gummel transport, local bulk SRH/radiative/Auger
+recombination, and defect-free single-node interface SRH are analytic. Contact,
+cross-node/projected interface reaction, and unsupported non-smooth or nonlocal
+closures are not. It is not yet a fully analytic production Jacobian, a
+registered numerical certificate, or external validation.
 
 ## Purpose
 
 `perovskite_sim.experiments.ion_aware_structured_jacobian` tests the global
 chain rule in the eliminated-Poisson formulation before a production sparse
-Jacobian is introduced. Protocol v3 retains four independently constructed
+Jacobian is introduced. Protocol v4 retains five independently constructed
 objects:
 
 1. the existing nonlinear callback, which re-solves Poisson at every finite-
@@ -21,9 +22,11 @@ objects:
 3. a transport-structured operator with exact discrete Poisson sensitivities,
    analytic carrier/ion SG face currents and matching conservative flux-
    divergence rate rows;
-4. the final hybrid operator, which additionally replaces local bulk
-   SRH/radiative/Auger rate derivatives while retaining frozen-potential finite
-   differences only for interface reaction and contact terms.
+4. a bulk-reaction hybrid, which additionally replaces local bulk
+   SRH/radiative/Auger rate derivatives;
+5. the final hybrid operator, which also replaces defect-free single-node
+   interface SRH while retaining frozen-potential finite differences for
+   contact and explicitly unsupported interface closures.
 
 All paths use the same certified DC state, state layout, voltage convention,
 material cache, frequencies, current decomposition, and adaptive per-column
@@ -85,8 +88,8 @@ The ion block covers both implemented steric laws:
 Each face derivative is chained through the exact Poisson sensitivity and the
 per-column log-density scale. The same analytic face-current correction is
 inserted into the corresponding electron, hole, positive-ion, or negative-ion
-continuity divergence. Generation, interface recombination, and contact rows
-remain the independently evaluated finite-difference remainder.
+continuity divergence. Generation, contact rows, and unsupported interface
+closures remain the independently evaluated finite-difference remainder.
 This paired replacement is required: replacing current alone produced a
 measured low-frequency all-face spread of `6.66e-1`; replacing its matching
 conservative divergence reduced it below `4e-7` on N13/N61/N91.
@@ -131,6 +134,46 @@ heterojunction recombination de-spiking introduces a cross-node geometric-mean
 tangent. These branches remain valid in the ordinary solver and finite-
 difference reference; they are only outside this analytic lane.
 
+## Analytic local-interface reaction block
+
+For a defect-free interface whose electron and hole evaluation nodes both
+equal the interface control-volume node, the production surface sink is
+
+```text
+R_s = (n p - ni^2) / D_s
+D_s = (n + n1) / v_p + (p + p1) / v_n
+R_vol = R_s / dx_cell
+```
+
+The exact density derivatives are
+
+```text
+dR_s/dn = (p - R_s / v_p) / D_s
+dR_s/dp = (n - R_s / v_n) / D_s
+```
+
+and the assembled log-coordinate columns are
+`-(dR_s/dn) n h_j / dx_cell` or
+`-(dR_s/dp) p h_j / dx_cell` in both carrier continuity rows. Ion columns and
+the direct voltage derivative are zero. A blocked electron or hole capture
+channel retains the production limit `R_s = 0` with a zero tangent.
+
+Two independent numerical objects are retained. The ordinary double-precision
+central stencil is subtracted from the composite frozen-potential matrix so the
+same nonlinear block is replaced. A separate complex-step matrix validates the
+analytic formula and its topology/volume assembly without the subtraction
+cancellation seen when a large surface rate is differenced at the N91 minimum
+step. The certificate compares the analytic matrix to this complex-step
+reference, while the final global rate and impedance gates still compare
+against the full nonlinear central-difference operator.
+
+This first interface slice fails closed for cross-node defect sampling,
+Boltzmann interface-plane projection, the QSS local root solve, shared
+occupancy, two-sided mirror recombination, dynamic interface-plane states,
+exclusive interface transport, non-aligned interface arrays, invalid dual-cell
+widths, or non-finite/nonphysical local inputs. Those models remain available
+in the ordinary solver; protocol v4 does not certify their tangent.
+
 ## Comparison contract
 
 The mass block uses the exact affine tangent of `y_dc * exp(u)`. The rate rows
@@ -163,6 +206,7 @@ Default gates include:
 | analytic SG transport column error | `5e-6` |
 | analytic SG transport voltage error | `5e-6` |
 | analytic bulk-reaction column error | `5e-6` |
+| analytic local-interface reaction column error | `5e-6` |
 | impedance magnitude error | `1e-4` |
 | impedance phase error | `1e-3 deg` |
 
@@ -183,38 +227,40 @@ single-ion probe uses 138 dynamic coordinates. Its adaptive steps range from
 | Poisson backward error | `4.16e-13` | `2e-12` |
 | storage-scaled rate column error | `1.67e-7` | `5e-5` |
 | analytic bulk-reaction column error | `1.67e-7` | `5e-6` |
+| analytic local-interface reaction error | `5.87e-11` | `5e-6` |
 | conduction self-relative error | `2.70e-4` | dual gate |
 | conduction group-normalized error | `3.37e-8` | `1e-6` |
 | analytic transport self-relative error | `1.90e-4` | dual gate |
 | analytic transport group-normalized error | `3.00e-8` | `1e-6` |
 | displacement group-normalized error | `2.24e-9` | `1e-6` |
-| impedance magnitude error | `9.59e-9` | `1e-4` |
-| impedance phase error | `1.60e-9 deg` | `1e-3 deg` |
-| all-face admittance spread | `2.64e-7` | reference protocol |
+| impedance magnitude error | `1.18e-8` | `1e-4` |
+| impedance phase error | `1.44e-7 deg` | `1e-3 deg` |
+| all-face admittance spread | `2.53e-7` | reference protocol |
 
-The structured comparison itself took `0.76 s` in the recorded single-thread
+The structured comparison itself took `0.39 s` in the recorded single-thread
 N61 probe after the DC state was available. This is validation evidence, not a
 production performance claim; the code still assembles dense matrices and
-retains finite-difference interface/contact reaction work.
+retains finite-difference contact and unsupported-interface reaction work.
 
 An N91 probe also passes the dual column gate. Its Poisson backward error is
 `1.05e-12`; the largest self-relative analytic hole-current discrepancy is
 `1.22e-3`, while its error normalized to the dominant hole block is
 `2.45e-7`. The classification is retained as absolute-bounded weak-column
 evidence rather than reported as false high-relative-accuracy evidence. Its
-analytic bulk-reaction error is `1.67e-7`, impedance magnitude error is
-`5.99e-8`, and all-face spread is `5.02e-7`.
+analytic bulk-reaction error is `1.67e-7`, analytic local-interface error is
+`1.30e-10`, impedance magnitude error is `6.85e-8`, and all-face spread is
+`3.78e-7`.
 
-The focused recombination-formula and N13 structured unit layer is `22 passed`;
+The focused recombination-formula and N13 structured unit layer is `26 passed`;
 the real single-ion, symmetric dual-ion, N61, and N91 integration layer is
 `4 passed`. The expanded DC/impedance/continuity/contact/recombination domain is
-`134 passed, 2 deselected`. The repository default suite is `2054 passed,
+`127 passed, 2 deselected`. The repository default suite is `2058 passed,
 2 skipped, 263 deselected`.
 
 ## Remaining work
 
-1. Implement analytic interface recombination derivatives, including explicit
-   topology and projection capability gates.
+1. Extend interface tangents to cross-node/projected defect topologies only
+   after their clamp and QSS branch semantics have differentiable contracts.
 2. Implement analytic selective-contact and field-mobility derivatives, or
    retain explicit capability gates where a smooth tangent is unavailable.
 3. Replace the remaining frozen-potential reaction differences block by block,
