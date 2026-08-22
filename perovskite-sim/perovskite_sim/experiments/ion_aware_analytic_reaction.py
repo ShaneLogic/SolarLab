@@ -1,7 +1,8 @@
-"""Analytic bulk-recombination block for ion-aware impedance."""
+"""Analytic bulk and local-interface reaction blocks for ion-aware impedance."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -10,9 +11,16 @@ from perovskite_sim.experiments.ion_aware_impedance import (
     IonAwareStateCoordinateLayout,
 )
 from perovskite_sim.experiments.jv_sweep import _state_fields
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import (
+    DeviceStack,
+    electrical_interface_defects,
+    electrical_interfaces,
+)
 from perovskite_sim.physics.recombination import (
     bulk_srh_denominator,
+    interface_recombination,
+    interface_recombination_derivatives,
+    interface_srh_denominator,
     total_recombination,
     total_recombination_derivatives,
 )
@@ -39,6 +47,20 @@ class IonAwareAnalyticBulkReactionLinearization:
     hole_density_derivative_s1: np.ndarray
     rate_jacobian: np.ndarray
     finite_difference_rate_jacobian: np.ndarray
+    rate_voltage_derivative: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class IonAwareAnalyticInterfaceReactionLinearization:
+    """Defect-free, single-node interface SRH rate derivatives."""
+
+    interface_nodes: tuple[int, ...]
+    surface_recombination_rate_m2_s: np.ndarray
+    electron_density_derivative_m_s: np.ndarray
+    hole_density_derivative_m_s: np.ndarray
+    rate_jacobian: np.ndarray
+    finite_difference_rate_jacobian: np.ndarray
+    complex_step_rate_jacobian: np.ndarray
     rate_voltage_derivative: np.ndarray
 
 
@@ -225,16 +247,354 @@ def build_ion_aware_analytic_bulk_reaction_linearization(
     )
 
 
-def apply_analytic_bulk_reaction_linearization(
-    reference: FrequencyDomainResult,
-    analytic: IonAwareAnalyticBulkReactionLinearization,
+def build_ion_aware_analytic_interface_reaction_linearization(
+    x: np.ndarray,
+    stack: DeviceStack,
+    base_state: np.ndarray,
+    V_dc: float,
+    material: MaterialArrays,
     layout: IonAwareStateCoordinateLayout,
     *,
+    potential_at_operating_point_V: np.ndarray,
+    state_steps: np.ndarray,
+) -> IonAwareAnalyticInterfaceReactionLinearization:
+    """Assemble smooth, local interface-SRH tangents in log coordinates."""
+
+    grid = np.asarray(x, dtype=float)
+    state = np.asarray(base_state, dtype=float)
+    potential = np.asarray(potential_at_operating_point_V, dtype=float)
+    steps = np.asarray(state_steps, dtype=float)
+    expected_state_size = (4 if material.has_dual_ions else 3) * grid.size
+    if (
+        grid.ndim != 1
+        or grid.size < 3
+        or np.any(np.diff(grid) <= 0.0)
+        or not np.all(np.isfinite(grid))
+        or layout.n_nodes != grid.size
+        or state.shape != (expected_state_size,)
+        or not np.all(np.isfinite(state))
+        or potential.shape != grid.shape
+        or not np.all(np.isfinite(potential))
+        or steps.shape != (layout.size,)
+        or not np.all(np.isfinite(steps))
+        or np.any(steps <= 0.0)
+        or not np.isfinite(V_dc)
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "analytic interface-reaction inputs must be finite and shape matched"
+        )
+    if material.N_iface_state:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "dynamic interface-plane states have no analytic reaction tangent"
+        )
+    if material.iface_qss_exclusive_transport:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "exclusive interface transport has no analytic reaction tangent"
+        )
+    active_closures = tuple(
+        name
+        for name, active in (
+            ("interface-plane closure", material.iface_plane_closure),
+            ("shared-occupancy interface closure", material.iface_shared_occ),
+            ("interface-plane projection", material.iface_plane_projection),
+            ("two-sided interface closure", material.iface_two_sided),
+        )
+        if active
+    )
+    if active_closures:
+        raise IonAwareAnalyticReactionCapabilityError(
+            f"{active_closures[0]} has no declared analytic tangent"
+        )
+    if os.environ.get("SOLARLAB_IFACE_QSS", "") == "1":
+        raise IonAwareAnalyticReactionCapabilityError(
+            "QSS interface-plane root solve has no declared analytic tangent"
+        )
+
+    interfaces = electrical_interfaces(stack)
+    defects = electrical_interface_defects(stack)
+    nodes = tuple(int(node) for node in material.interface_nodes)
+    count = len(nodes)
+    if len(interfaces) != count or len(defects) != count:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "electrical interface topology and material nodes are not aligned"
+        )
+    if any(defect is not None for defect in defects):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "declared interface defects require an unsupported interface tangent"
+        )
+    if any(node < 0 or node >= grid.size for node in nodes):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "interface node lies outside the electrical grid"
+        )
+    required_arrays = (
+        ("interface_n1", material.interface_n1),
+        ("interface_p1", material.interface_p1),
+    )
+    if any(len(values) != count for _name, values in required_arrays):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "interface SRH parameter arrays are not topology aligned"
+        )
+
+    def optional_values(
+        name: str,
+        values: tuple[float, ...] | tuple[int, ...],
+        defaults: tuple[float, ...] | tuple[int, ...],
+    ) -> tuple[float, ...] | tuple[int, ...]:
+        if not values:
+            return defaults
+        if len(values) != count:
+            raise IonAwareAnalyticReactionCapabilityError(
+                f"{name} is not topology aligned"
+            )
+        return values
+
+    eval_n = tuple(
+        int(value)
+        for value in optional_values(
+            "interface_eval_node_n",
+            material.interface_eval_node_n,
+            nodes,
+        )
+    )
+    eval_p = tuple(
+        int(value)
+        for value in optional_values(
+            "interface_eval_node_p",
+            material.interface_eval_node_p,
+            nodes,
+        )
+    )
+    if eval_n != nodes or eval_p != nodes:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "cross-node interface sampling has no declared analytic tangent"
+        )
+    ni_sq_eff = tuple(
+        float(value)
+        for value in optional_values(
+            "interface_ni_sq_eff",
+            material.interface_ni_sq_eff,
+            tuple(float(material.ni_sq[node]) for node in nodes),
+        )
+    )
+    calibration = tuple(
+        float(value)
+        for value in optional_values(
+            "interface_calibration_factor",
+            material.interface_calibration_factor,
+            (1.0,) * count,
+        )
+    )
+    if (
+        not np.all(np.isfinite(ni_sq_eff))
+        or np.any(np.asarray(ni_sq_eff) < 0.0)
+        or not np.all(np.isfinite(calibration))
+        or np.any(np.asarray(calibration) < 0.0)
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "interface references and calibration factors must be finite and nonnegative"
+        )
+
+    n, p, _phi, _state_vector = _state_fields(
+        grid,
+        state,
+        stack,
+        V_dc,
+        material,
+        phi_frozen=potential,
+    )
+    analytic = np.zeros((layout.size, layout.size), dtype=float)
+    finite_difference = np.zeros_like(analytic)
+    complex_step = np.zeros_like(analytic)
+    voltage_derivative = np.zeros(layout.size, dtype=float)
+    surface_rate = np.zeros(count, dtype=float)
+    electron_derivative = np.zeros(count, dtype=float)
+    hole_derivative = np.zeros(count, dtype=float)
+    coordinate_by_state_index = {
+        state_index: column
+        for column, state_index in enumerate(layout.state_indices)
+    }
+    row_by_state_index = {
+        state_index: row
+        for row, state_index in enumerate(layout.state_indices)
+    }
+
+    for index, (node, velocities) in enumerate(
+        zip(nodes, interfaces, strict=True)
+    ):
+        dx_cell = float(material.dx_cell[node])
+        n_value = float(n[node])
+        p_value = float(p[node])
+        n1 = float(material.interface_n1[index])
+        p1 = float(material.interface_p1[index])
+        v_n = float(velocities[0]) * calibration[index]
+        v_p = float(velocities[1]) * calibration[index]
+        scalars = (dx_cell, n_value, p_value, n1, p1, v_n, v_p)
+        if (
+            not np.all(np.isfinite(scalars))
+            or dx_cell <= 0.0
+            or n_value <= 0.0
+            or p_value <= 0.0
+            or n1 < 0.0
+            or p1 < 0.0
+            or v_n < 0.0
+            or v_p < 0.0
+        ):
+            raise IonAwareAnalyticReactionCapabilityError(
+                "local interface SRH inputs must be finite and physically admissible"
+            )
+        if v_n > 0.0 and v_p > 0.0:
+            denominator = interface_srh_denominator(
+                n_value,
+                p_value,
+                n1,
+                p1,
+                v_n,
+                v_p,
+            )
+            if not np.isfinite(denominator) or denominator <= 0.0:
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "interface SRH denominator must be finite and positive"
+                )
+        derivatives = interface_recombination_derivatives(
+            n_value,
+            p_value,
+            ni_sq_eff[index],
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
+        local_values = (
+            derivatives.rate,
+            derivatives.electron_density_derivative,
+            derivatives.hole_density_derivative,
+        )
+        if any(not np.all(np.isfinite(value)) for value in local_values):
+            raise IonAwareAnalyticReactionCapabilityError(
+                "analytic interface-reaction formula produced a non-finite block"
+            )
+        surface_rate[index] = float(derivatives.rate)
+        electron_derivative[index] = float(
+            derivatives.electron_density_derivative
+        )
+        hole_derivative[index] = float(derivatives.hole_density_derivative)
+        target_rows = tuple(
+            row_by_state_index.get(state_index)
+            for state_index in (node, grid.size + node)
+        )
+        for species, state_index, density, density_derivative in (
+            ("electron", node, n_value, electron_derivative[index]),
+            ("hole", grid.size + node, p_value, hole_derivative[index]),
+        ):
+            column = coordinate_by_state_index.get(state_index)
+            if column is None:
+                continue
+            step = float(steps[column])
+            analytic_recombination = (
+                density_derivative * density * step / dx_cell
+            )
+            n_plus = n_value
+            n_minus = n_value
+            p_plus = p_value
+            p_minus = p_value
+            if species == "electron":
+                n_plus *= float(np.exp(step))
+                n_minus *= float(np.exp(-step))
+            else:
+                p_plus *= float(np.exp(step))
+                p_minus *= float(np.exp(-step))
+            finite_recombination = 0.5 * (
+                interface_recombination(
+                    n_plus,
+                    p_plus,
+                    ni_sq_eff[index],
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
+                - interface_recombination(
+                    n_minus,
+                    p_minus,
+                    ni_sq_eff[index],
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
+            ) / dx_cell
+            complex_epsilon = 1.0e-30
+            if species == "electron":
+                complex_rate = interface_recombination(
+                    n_value + 1j * n_value * complex_epsilon,
+                    p_value,
+                    ni_sq_eff[index],
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
+            else:
+                complex_rate = interface_recombination(
+                    n_value,
+                    p_value + 1j * p_value * complex_epsilon,
+                    ni_sq_eff[index],
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
+            complex_recombination = (
+                float(np.imag(complex_rate))
+                / complex_epsilon
+                * step
+                / dx_cell
+            )
+            for row in target_rows:
+                if row is not None:
+                    analytic[row, column] -= analytic_recombination
+                    finite_difference[row, column] -= finite_recombination
+                    complex_step[row, column] -= complex_recombination
+
+    arrays = (
+        surface_rate,
+        electron_derivative,
+        hole_derivative,
+        analytic,
+        finite_difference,
+        complex_step,
+        voltage_derivative,
+    )
+    if any(not np.all(np.isfinite(value)) for value in arrays):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "analytic interface-reaction assembly produced a non-finite operator"
+        )
+    return IonAwareAnalyticInterfaceReactionLinearization(
+        interface_nodes=nodes,
+        surface_recombination_rate_m2_s=surface_rate,
+        electron_density_derivative_m_s=electron_derivative,
+        hole_density_derivative_m_s=hole_derivative,
+        rate_jacobian=analytic,
+        finite_difference_rate_jacobian=finite_difference,
+        complex_step_rate_jacobian=complex_step,
+        rate_voltage_derivative=voltage_derivative,
+    )
+
+
+def _apply_analytic_reaction_linearization(
+    reference: FrequencyDomainResult,
+    analytic: (
+        IonAwareAnalyticBulkReactionLinearization
+        | IonAwareAnalyticInterfaceReactionLinearization
+    ),
+    layout: IonAwareStateCoordinateLayout,
+    *,
+    block_name: str,
     V_dc: float,
     face_weights: np.ndarray,
     progress: ProgressCallback | None = None,
 ) -> FrequencyDomainResult:
-    """Replace only the bulk-recombination part of a linearized rate block."""
+    """Replace one independently validated reaction contribution."""
 
     state_shape = (layout.size, layout.size)
     weights = np.asarray(face_weights, dtype=float)
@@ -257,7 +617,7 @@ def apply_analytic_bulk_reaction_linearization(
         or any(not np.all(np.isfinite(value)) for value in reaction_arrays)
     ):
         raise IonAwareAnalyticReactionCapabilityError(
-            "bulk-reaction correction inputs must be finite and shape matched"
+            f"{block_name} correction inputs must be finite and shape matched"
         )
     rate_jacobian = (
         reference.rate_jacobian
@@ -314,9 +674,56 @@ def apply_analytic_bulk_reaction_linearization(
     )
 
 
+def apply_analytic_bulk_reaction_linearization(
+    reference: FrequencyDomainResult,
+    analytic: IonAwareAnalyticBulkReactionLinearization,
+    layout: IonAwareStateCoordinateLayout,
+    *,
+    V_dc: float,
+    face_weights: np.ndarray,
+    progress: ProgressCallback | None = None,
+) -> FrequencyDomainResult:
+    """Replace only the bulk-recombination contribution in the rate block."""
+
+    return _apply_analytic_reaction_linearization(
+        reference,
+        analytic,
+        layout,
+        block_name="bulk-reaction",
+        V_dc=V_dc,
+        face_weights=face_weights,
+        progress=progress,
+    )
+
+
+def apply_analytic_interface_reaction_linearization(
+    reference: FrequencyDomainResult,
+    analytic: IonAwareAnalyticInterfaceReactionLinearization,
+    layout: IonAwareStateCoordinateLayout,
+    *,
+    V_dc: float,
+    face_weights: np.ndarray,
+    progress: ProgressCallback | None = None,
+) -> FrequencyDomainResult:
+    """Replace only the certified local interface-SRH rate contribution."""
+
+    return _apply_analytic_reaction_linearization(
+        reference,
+        analytic,
+        layout,
+        block_name="interface-reaction",
+        V_dc=V_dc,
+        face_weights=face_weights,
+        progress=progress,
+    )
+
+
 __all__ = [
     "IonAwareAnalyticBulkReactionLinearization",
+    "IonAwareAnalyticInterfaceReactionLinearization",
     "IonAwareAnalyticReactionCapabilityError",
     "apply_analytic_bulk_reaction_linearization",
+    "apply_analytic_interface_reaction_linearization",
     "build_ion_aware_analytic_bulk_reaction_linearization",
+    "build_ion_aware_analytic_interface_reaction_linearization",
 ]

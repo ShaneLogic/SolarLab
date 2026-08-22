@@ -4,6 +4,8 @@ from perovskite_sim.physics.recombination import (
     auger_recombination,
     auger_recombination_derivatives,
     bulk_srh_denominator,
+    interface_recombination,
+    interface_recombination_derivatives,
     interface_srh_denominator,
     radiative_recombination,
     radiative_recombination_derivatives,
@@ -83,6 +85,54 @@ def test_interface_srh_denominator_keeps_distinct_surface_units():
         v_p=13.0,
     )
     assert denominator == (2.0 + 5.0) / 13.0 + (3.0 + 7.0) / 11.0
+
+
+def test_interface_recombination_derivatives_match_density_complex_step():
+    for n, p, ni_sq in (
+        (2.0e19, 5.0e17, 3.0e28),
+        (2.0e10, 5.0e9, 3.0e28),
+    ):
+        args = (ni_sq, 7.0e13, 9.0e14, 2.0e3, 4.0e2)
+        derivatives = interface_recombination_derivatives(n, p, *args)
+        n_step = n * 1.0e-30
+        p_step = p * 1.0e-30
+        complex_n = np.imag(
+            interface_recombination(n + 1j * n_step, p, *args)
+        ) / n_step
+        complex_p = np.imag(
+            interface_recombination(n, p + 1j * p_step, *args)
+        ) / p_step
+
+        assert derivatives.rate == interface_recombination(n, p, *args)
+        assert np.sign(derivatives.rate) == np.sign(n * p - ni_sq)
+        np.testing.assert_allclose(
+            derivatives.electron_density_derivative,
+            complex_n,
+            rtol=2.0e-13,
+            atol=0.0,
+        )
+        np.testing.assert_allclose(
+            derivatives.hole_density_derivative,
+            complex_p,
+            rtol=2.0e-13,
+            atol=0.0,
+        )
+
+
+def test_interface_recombination_derivatives_preserve_blocked_cycle_limit():
+    for velocities in ((0.0, 2.0e3), (4.0e2, 0.0), (0.0, 0.0)):
+        derivatives = interface_recombination_derivatives(
+            2.0e19,
+            5.0e17,
+            3.0e28,
+            7.0e13,
+            9.0e14,
+            *velocities,
+        )
+
+        assert derivatives.rate == 0.0
+        assert derivatives.electron_density_derivative == 0.0
+        assert derivatives.hole_density_derivative == 0.0
 
 
 def test_component_derivative_rates_match_production_formulas():

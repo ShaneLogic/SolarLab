@@ -404,8 +404,8 @@ residual-certified ion/electron/hole DC state
    finite difference 保留 `1/0.5/0.25` 三层；structured comparison 已实现
    精确离散 Poisson 隐式灵敏度、解析 mass tangent、载流子及单/双离子 SG
    面通量导数和守恒一致的 continuity-divergence 修正，并对 `M/J/b`、逐分量
-   电流和阻抗幅相 fail-close。interface recombination、contact 和
-   field-mobility 导数仍未解析化，因此尚不是 full analytic Jacobian。详见
+   电流和阻抗幅相 fail-close。contact、field-mobility 和复杂 interface
+   closure 导数仍未解析化，因此尚不是 full analytic Jacobian。详见
    [ion-aware-structured-jacobian-comparison.md](../ion-aware-structured-jacobian-comparison.md)。
 4. **`INTERNAL_TESTED_ANALYTIC_BULK_REACTION` (2026-08-21)**：局域 bulk
    SRH、radiative、Auger 生产公式已有精确 `dR/dn`、`dR/dp`，并按每列
@@ -413,9 +413,16 @@ residual-certified ion/electron/hole DC state
    central stencil、完整 rate Jacobian、N13/N61/N91 阻抗幅相共同 fail-close；
    radiative reabsorption 和 heterojunction de-spike 非局域分支尚未解析时
    拒绝进入该 lane。
-5. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-6. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
-7. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+5. **`INTERNAL_TESTED_ANALYTIC_LOCAL_INTERFACE_REACTION` (2026-08-22)**：
+   defect-free、single-node interface SRH 已按表面速率导数与 dual-cell
+   体积换算解析进入 electron/hole continuity 行。普通 central stencil 用于
+   从 composite rate 矩阵剥离该生产块，独立 complex-step 矩阵用于无消减
+   导数认证；N13 single/dual ion、N61、N91 均通过。cross-node defect、
+   projection、QSS root、shared occupancy、two-sided、dynamic interface
+   state 与 exclusive transport 均显式 fail-close。
+6. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+7. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+8. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛
 

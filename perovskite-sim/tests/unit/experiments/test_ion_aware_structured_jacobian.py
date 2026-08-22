@@ -22,6 +22,7 @@ from perovskite_sim.experiments.jv_sweep import (
     extract_spatial_snapshot,
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.models.device import InterfaceDefect
 from perovskite_sim.solver.mol import build_material_arrays
 
 
@@ -87,9 +88,9 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
     assert rebuilt.voltage_step == impedance_protocol.voltage_step
     assert rebuilt.transport_linearization == "analytic_sg_transport"
     assert rebuilt.reaction_linearization == (
-        "analytic_bulk_central_difference_interface_contact"
+        "analytic_bulk_local_interface_central_difference_contact"
     )
-    assert rebuilt.schema_version.endswith("-v3")
+    assert rebuilt.schema_version.endswith("-v4")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -108,6 +109,11 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         replace(protocol, column_relevance_floor_relative=1.01)
     with pytest.raises(ValueError, match="positive"):
         replace(protocol, max_rate_jacobian_column_relative_error=0.0)
+    with pytest.raises(ValueError, match="positive"):
+        replace(
+            protocol,
+            max_analytic_interface_reaction_jacobian_column_relative_error=0.0,
+        )
     with pytest.raises(ValueError, match="unsupported reaction"):
         replace(protocol, reaction_linearization="finite_difference_bulk")
     with pytest.raises(ValueError, match="must not be below"):
@@ -303,6 +309,8 @@ def test_real_comparison_retains_every_reference_level_and_passes(
     assert certificate.analytic_transport_conduction_jacobian.passed
     assert certificate.analytic_bulk_reaction_rate_jacobian.passed
     assert certificate.analytic_bulk_reaction_rate_voltage_derivative.passed
+    assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert certificate.analytic_interface_reaction_rate_voltage_derivative.passed
     assert (
         certificate.analytic_transport_conduction_voltage_derivative.passed
     )
@@ -374,6 +382,58 @@ def test_analytic_bulk_reaction_is_local_and_matches_its_independent_stencil(
                 if state_index in row_by_state_index
             }
             actual_rows = set(np.flatnonzero(reaction.rate_jacobian[:, column]))
+            assert actual_rows <= expected_rows
+            nonzero_carrier_columns += bool(actual_rows)
+    assert nonzero_carrier_columns > 0
+
+
+def test_analytic_interface_reaction_is_local_and_matches_independent_stencil(
+    comparison_fixture,
+):
+    *_prefix, result = comparison_fixture
+    layout = result.reference.coordinate_layout
+    reaction = result.analytic_interface_reaction
+    comparison = result.certificate.analytic_interface_reaction_rate_jacobian
+
+    assert reaction.interface_nodes
+    assert reaction.surface_recombination_rate_m2_s.shape == (
+        len(reaction.interface_nodes),
+    )
+    assert comparison.passed
+    assert comparison.max_group_normalized_error < 1.0e-6
+    for species in ("positive_ion", "negative_ion"):
+        coordinate_slice = layout.coordinate_slice(species)
+        np.testing.assert_array_equal(
+            reaction.rate_jacobian[:, coordinate_slice],
+            0.0,
+        )
+        np.testing.assert_array_equal(
+            reaction.finite_difference_rate_jacobian[:, coordinate_slice],
+            0.0,
+        )
+        np.testing.assert_array_equal(
+            reaction.complex_step_rate_jacobian[:, coordinate_slice],
+            0.0,
+        )
+
+    row_by_state_index = {
+        state_index: row for row, state_index in enumerate(layout.state_indices)
+    }
+    interface_nodes = set(reaction.interface_nodes)
+    nonzero_carrier_columns = 0
+    for species in ("electron", "hole"):
+        columns = np.arange(layout.size)[layout.coordinate_slice(species)]
+        nodes = layout.node_indices(species)
+        for column, node in zip(columns, nodes, strict=True):
+            actual_rows = set(np.flatnonzero(reaction.rate_jacobian[:, column]))
+            if int(node) not in interface_nodes:
+                assert not actual_rows
+                continue
+            expected_rows = {
+                row_by_state_index[state_index]
+                for state_index in (int(node), layout.n_nodes + int(node))
+                if state_index in row_by_state_index
+            }
             assert actual_rows <= expected_rows
             nonzero_carrier_columns += bool(actual_rows)
     assert nonzero_carrier_columns > 0
@@ -523,6 +583,96 @@ def test_analytic_bulk_reaction_gates_unimplemented_nonlocal_branches(
                 tau_n=np.zeros_like(mat.tau_n),
                 tau_p=np.zeros_like(mat.tau_p),
             ),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+
+def test_analytic_interface_reaction_gates_unimplemented_topologies(
+    comparison_fixture,
+    monkeypatch,
+):
+    stack, x, mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    kwargs = {
+        "potential_at_operating_point_V": (
+            result.poisson_sensitivity.potential_at_operating_point_V
+        ),
+        "state_steps": result.poisson_sensitivity.state_steps,
+    }
+    build = (
+        analytic_reaction
+        .build_ion_aware_analytic_interface_reaction_linearization
+    )
+
+    for changed, message in (
+        ({"iface_plane_projection": True}, "interface-plane projection"),
+        ({"iface_shared_occ": True}, "shared-occupancy"),
+        ({"iface_two_sided": True}, "two-sided"),
+        ({"iface_plane_closure": True}, "interface-plane closure"),
+        ({"N_iface_state": 1}, "dynamic interface-plane states"),
+        (
+            {"interface_n1": mat.interface_n1[:-1]},
+            "parameter arrays are not topology aligned",
+        ),
+        (
+            {"interface_n1": (-1.0, *mat.interface_n1[1:])},
+            "physically admissible",
+        ),
+        (
+            {
+                "interface_eval_node_n": (
+                    mat.interface_nodes[0] + 1,
+                    *mat.interface_eval_node_n[1:],
+                )
+            },
+            "cross-node interface sampling",
+        ),
+    ):
+        with pytest.raises(
+            analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+            match=message,
+        ):
+            build(
+                x,
+                stack,
+                dc_state.y,
+                impedance_protocol.V_dc,
+                replace(mat, **changed),
+                result.reference.coordinate_layout,
+                **kwargs,
+            )
+
+    defect_stack = replace(
+        stack,
+        interface_defects=(InterfaceDefect(E_t_eV=0.5),),
+    )
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="declared interface defects",
+    ):
+        build(
+            x,
+            defect_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            mat,
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="QSS interface-plane root solve",
+    ):
+        build(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            mat,
             result.reference.coordinate_layout,
             **kwargs,
         )
