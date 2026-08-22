@@ -14,6 +14,7 @@ from perovskite_sim.experiments.ion_aware_dc import (
 )
 from perovskite_sim.experiments.ion_aware_impedance import (
     _physical_state,
+    _state_coordinate_layout,
     build_ion_aware_impedance_protocol,
 )
 from perovskite_sim.experiments.jv_sweep import (
@@ -88,9 +89,9 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
     assert rebuilt.voltage_step == impedance_protocol.voltage_step
     assert rebuilt.transport_linearization == "analytic_sg_transport"
     assert rebuilt.reaction_linearization == (
-        "analytic_bulk_local_interface_central_difference_contact"
+        "analytic_bulk_local_interface_selective_contact"
     )
-    assert rebuilt.schema_version.endswith("-v4")
+    assert rebuilt.schema_version.endswith("-v5")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -113,6 +114,11 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         replace(
             protocol,
             max_analytic_interface_reaction_jacobian_column_relative_error=0.0,
+        )
+    with pytest.raises(ValueError, match="positive"):
+        replace(
+            protocol,
+            max_analytic_contact_jacobian_column_relative_error=0.0,
         )
     with pytest.raises(ValueError, match="unsupported reaction"):
         replace(protocol, reaction_linearization="finite_difference_bulk")
@@ -311,6 +317,9 @@ def test_real_comparison_retains_every_reference_level_and_passes(
     assert certificate.analytic_bulk_reaction_rate_voltage_derivative.passed
     assert certificate.analytic_interface_reaction_rate_jacobian.passed
     assert certificate.analytic_interface_reaction_rate_voltage_derivative.passed
+    assert certificate.analytic_contact_rate_jacobian.passed
+    assert certificate.analytic_contact_rate_voltage_derivative.passed
+    assert not result.analytic_contact.active_channels
     assert (
         certificate.analytic_transport_conduction_voltage_derivative.passed
     )
@@ -437,6 +446,168 @@ def test_analytic_interface_reaction_is_local_and_matches_independent_stencil(
             assert actual_rows <= expected_rows
             nonzero_carrier_columns += bool(actual_rows)
     assert nonzero_carrier_columns > 0
+
+
+def test_analytic_selective_contact_block_covers_all_four_sign_conventions(
+    comparison_fixture,
+):
+    stack, x, _mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    contact_stack = replace(
+        stack,
+        S_n_left=2.0e-3,
+        S_n_right=3.0e2,
+        S_p_left=4.0e2,
+        S_p_right=5.0e-3,
+    )
+    contact_mat = build_material_arrays(x, contact_stack)
+    layout = _state_coordinate_layout(contact_mat, x.size)
+    state_steps = np.full(layout.size, 1.0e-4)
+    contact = analytic_reaction.build_ion_aware_analytic_contact_linearization(
+        x,
+        contact_stack,
+        dc_state.y,
+        impedance_protocol.V_dc,
+        contact_mat,
+        layout,
+        potential_at_operating_point_V=(
+            result.poisson_sensitivity.potential_at_operating_point_V
+        ),
+        state_steps=state_steps,
+    )
+
+    assert contact.active_channels == (
+        "electron_left",
+        "electron_right",
+        "hole_left",
+        "hole_right",
+    )
+    assert contact.boundary_state_indices == (
+        0,
+        x.size - 1,
+        x.size,
+        2 * x.size - 1,
+    )
+    assert contact.relaxation_rate_s1.shape == (4,)
+    assert contact.rate_at_operating_point_m3_s.shape == (4,)
+    np.testing.assert_array_equal(contact.rate_voltage_derivative, 0.0)
+
+    row_by_state_index = {
+        state_index: row
+        for row, state_index in enumerate(layout.state_indices)
+    }
+    boundary_rows = tuple(
+        row_by_state_index[state_index]
+        for state_index in contact.boundary_state_indices
+    )
+    expected_nonzero = {
+        *boundary_rows,
+    }
+    actual_nonzero = set(np.flatnonzero(contact.rate_jacobian))
+    assert actual_nonzero == {
+        row * layout.size + row for row in expected_nonzero
+    }
+    diagonal = np.diag(contact.rate_jacobian)
+    assert np.all(diagonal[list(expected_nonzero)] < 0.0)
+    expected_diagonal = (
+        -contact.relaxation_rate_s1
+        * np.asarray(dc_state.y)[list(contact.boundary_state_indices)]
+        * state_steps[list(boundary_rows)]
+    )
+    np.testing.assert_allclose(
+        diagonal[list(boundary_rows)],
+        expected_diagonal,
+        rtol=2.0e-15,
+        atol=0.0,
+    )
+    np.testing.assert_array_equal(
+        np.delete(diagonal, sorted(expected_nonzero)),
+        0.0,
+    )
+    finite_diagonal = np.diag(contact.finite_difference_rate_jacobian)
+    np.testing.assert_allclose(
+        finite_diagonal[list(expected_nonzero)]
+        / diagonal[list(expected_nonzero)],
+        np.sinh(1.0e-4) / 1.0e-4,
+        rtol=2.0e-9,
+        atol=2.0e-9,
+    )
+    for species in ("positive_ion", "negative_ion"):
+        coordinate_slice = layout.coordinate_slice(species)
+        np.testing.assert_array_equal(
+            contact.rate_jacobian[:, coordinate_slice],
+            0.0,
+        )
+
+
+def test_analytic_selective_contact_block_handles_partial_zero_and_invalid_inputs(
+    comparison_fixture,
+):
+    stack, x, _mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    partial_stack = replace(
+        stack,
+        S_n_left=0.0,
+        S_n_right=None,
+        S_p_left=None,
+        S_p_right=None,
+    )
+    partial_mat = build_material_arrays(x, partial_stack)
+    layout = _state_coordinate_layout(partial_mat, x.size)
+    kwargs = {
+        "potential_at_operating_point_V": (
+            result.poisson_sensitivity.potential_at_operating_point_V
+        ),
+        "state_steps": np.full(layout.size, 1.0e-4),
+    }
+    contact = analytic_reaction.build_ion_aware_analytic_contact_linearization(
+        x,
+        partial_stack,
+        dc_state.y,
+        impedance_protocol.V_dc,
+        partial_mat,
+        layout,
+        **kwargs,
+    )
+
+    assert contact.active_channels == ("electron_left",)
+    np.testing.assert_array_equal(contact.relaxation_rate_s1, 0.0)
+    np.testing.assert_array_equal(contact.rate_jacobian, 0.0)
+    np.testing.assert_array_equal(contact.finite_difference_rate_jacobian, 0.0)
+
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="physically admissible",
+    ):
+        analytic_reaction.build_ion_aware_analytic_contact_linearization(
+            x,
+            partial_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(partial_mat, S_n_L=-1.0),
+            layout,
+            **kwargs,
+        )
+
+    dirichlet_layout = result.reference.coordinate_layout
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="absent from the state layout",
+    ):
+        analytic_reaction.build_ion_aware_analytic_contact_linearization(
+            x,
+            partial_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            partial_mat,
+            dirichlet_layout,
+            potential_at_operating_point_V=(
+                result.poisson_sensitivity.potential_at_operating_point_V
+            ),
+            state_steps=np.full(dirichlet_layout.size, 1.0e-4),
+        )
 
 
 def test_analytic_component_base_currents_match_the_nonlinear_evaluator(

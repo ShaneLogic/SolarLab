@@ -420,9 +420,14 @@ residual-certified ion/electron/hole DC state
    导数认证；N13 single/dual ion、N61、N91 均通过。cross-node defect、
    projection、QSS root、shared occupancy、two-sided、dynamic interface
    state 与 exclusive transport 均显式 fail-close。
-6. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-7. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
-8. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+6. **`INTERNAL_TESTED_ANALYTIC_SELECTIVE_CONTACT` (2026-08-22)**：四个
+   finite-rate outer-contact Robin 通道已按生产 sign convention 解析进入对应
+   carrier boundary rate 行；独立 central block 直接调用生产 contact flux，
+   并验证 `sinh(h)/h` 截断关系。部分通道、显式 `S=0` 和非法参数均有
+   fail-closed 测试；接触热力学证书仍是独立证据轴。
+7. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+8. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+9. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛
 

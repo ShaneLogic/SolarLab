@@ -1,18 +1,19 @@
 # Ion-aware structured Jacobian comparison
 
-Status: `INTERNAL_TESTED_ANALYTIC_LOCAL_INTERFACE_REACTION` as of 2026-08-22.
+Status: `INTERNAL_TESTED_ANALYTIC_SELECTIVE_CONTACT` as of 2026-08-22.
 This is a validation path for the ion-aware impedance reference engine.
 Poisson, Scharfetter-Gummel transport, local bulk SRH/radiative/Auger
-recombination, and defect-free single-node interface SRH are analytic. Contact,
-cross-node/projected interface reaction, and unsupported non-smooth or nonlocal
-closures are not. It is not yet a fully analytic production Jacobian, a
-registered numerical certificate, or external validation.
+recombination, defect-free single-node interface SRH, and finite-rate outer
+selective contacts are analytic. Cross-node/projected interface reaction and
+unsupported non-smooth or nonlocal closures are not. It is not yet a fully
+analytic production Jacobian, a registered numerical certificate, or external
+validation.
 
 ## Purpose
 
 `perovskite_sim.experiments.ion_aware_structured_jacobian` tests the global
 chain rule in the eliminated-Poisson formulation before a production sparse
-Jacobian is introduced. Protocol v4 retains five independently constructed
+Jacobian is introduced. Protocol v5 retains six independently constructed
 objects:
 
 1. the existing nonlinear callback, which re-solves Poisson at every finite-
@@ -24,9 +25,11 @@ objects:
    divergence rate rows;
 4. a bulk-reaction hybrid, which additionally replaces local bulk
    SRH/radiative/Auger rate derivatives;
-5. the final hybrid operator, which also replaces defect-free single-node
-   interface SRH while retaining frozen-potential finite differences for
-   contact and explicitly unsupported interface closures.
+5. an interface-reaction hybrid, which also replaces defect-free single-node
+   interface SRH;
+6. the final hybrid operator, which replaces finite-rate outer-contact rate
+   rows while retaining frozen-potential finite differences only for explicitly
+   unsupported interface closures.
 
 All paths use the same certified DC state, state layout, voltage convention,
 material cache, frequencies, current decomposition, and adaptive per-column
@@ -88,8 +91,9 @@ The ion block covers both implemented steric laws:
 Each face derivative is chained through the exact Poisson sensitivity and the
 per-column log-density scale. The same analytic face-current correction is
 inserted into the corresponding electron, hole, positive-ion, or negative-ion
-continuity divergence. Generation, contact rows, and unsupported interface
-closures remain the independently evaluated finite-difference remainder.
+continuity divergence. Generation, selective-contact rows, and unsupported
+interface closures remain the independently evaluated finite-difference
+remainder at this stage; the contact block is replaced separately below.
 This paired replacement is required: replacing current alone produced a
 measured low-frequency all-face spread of `6.66e-1`; replacing its matching
 conservative divergence reduced it below `4e-7` on N13/N61/N91.
@@ -172,7 +176,42 @@ Boltzmann interface-plane projection, the QSS local root solve, shared
 occupancy, two-sided mirror recombination, dynamic interface-plane states,
 exclusive interface transport, non-aligned interface arrays, invalid dual-cell
 widths, or non-finite/nonphysical local inputs. Those models remain available
-in the ordinary solver; protocol v4 does not certify their tangent.
+in the ordinary solver; protocol v5 does not certify their tangent.
+
+## Analytic selective-contact block
+
+For every configured finite-rate outer contact, the production Robin currents
+are
+
+```text
+J_n,L = +q S_n,L (n - n_eq)    J_n,R = -q S_n,R (n - n_eq)
+J_p,L = -q S_p,L (p - p_eq)    J_p,R = +q S_p,R (p - p_eq)
+```
+
+Combining these signs with the electron and hole continuity divergences gives
+the same density derivative for all four carrier/side channels,
+
+```text
+d(rate_contact) / d(density) = -S / dx_cell.
+```
+
+The scaled log-coordinate entry is therefore
+`-S * density * h_j / dx_cell` in the matching boundary rate row. Contact
+reservoir densities and surface velocities are cached constants in the
+production model, so ion columns and the direct voltage derivative are exactly
+zero. Dirichlet carrier/side channels have no dynamic coordinate and contribute
+no contact tangent; an explicit `S=0` blocking channel retains a dynamic
+coordinate with an exact zero contact tangent.
+
+The independently constructed central matrix calls the production
+`selective_contact_flux` for both perturbation signs and retains its full
+carrier/side sign chain. Its expected difference from the analytic log tangent
+is the bounded `sinh(h_j)/h_j` truncation factor. Non-finite or negative `S`, a
+non-positive active boundary density/reservoir, invalid control-volume width,
+or an active contact absent from the state layout fails closed. This block does
+not certify heterointerface thermionic caps; those remain under the transport
+capability gate. Contact thermodynamic compatibility is also a separate
+certificate axis.
 
 ## Comparison contract
 
@@ -207,6 +246,7 @@ Default gates include:
 | analytic SG transport voltage error | `5e-6` |
 | analytic bulk-reaction column error | `5e-6` |
 | analytic local-interface reaction column error | `5e-6` |
+| analytic selective-contact column error | `5e-6` |
 | impedance magnitude error | `1e-4` |
 | impedance phase error | `1e-3 deg` |
 
@@ -240,7 +280,7 @@ single-ion probe uses 138 dynamic coordinates. Its adaptive steps range from
 The structured comparison itself took `0.39 s` in the recorded single-thread
 N61 probe after the DC state was available. This is validation evidence, not a
 production performance claim; the code still assembles dense matrices and
-retains finite-difference contact and unsupported-interface reaction work.
+retains finite-difference work for unsupported-interface reactions.
 
 An N91 probe also passes the dual column gate. Its Poisson backward error is
 `1.05e-12`; the largest self-relative analytic hole-current discrepancy is
@@ -251,18 +291,27 @@ analytic bulk-reaction error is `1.67e-7`, analytic local-interface error is
 `1.30e-10`, impedance magnitude error is `6.85e-8`, and all-face spread is
 `3.78e-7`.
 
-The focused recombination-formula and N13 structured unit layer is `26 passed`;
-the real single-ion, symmetric dual-ion, N61, and N91 integration layer is
-`4 passed`. The expanded DC/impedance/continuity/contact/recombination domain is
-`127 passed, 2 deselected`. The repository default suite is `2058 passed,
-2 skipped, 263 deselected`.
+An independently settled N13 IonMonger variant with all four outer Robin
+channels active (`S_n,L=1e-3`, `S_p,L=1e3`, `S_n,R=1e3`, `S_p,R=1e-3 m/s`)
+also passes. Its analytic-contact error is `1.67e-7`, full storage-scaled rate
+error is `2.48e-6`, impedance magnitude error is `2.36e-8`, impedance phase
+error is `1.91e-7 deg`, all-face spread is `2.84e-8`, and linear-system
+backward error is `1.74e-16`. This is a numerical boundary-operator test, not a
+claim that those four demonstration velocities are experimentally calibrated.
+
+The structured unit layer is `16 passed`; the real single-ion, symmetric
+dual-ion, N61, N91, and active-selective-contact integration layer is
+`5 passed`. The explicitly enumerated
+DC/impedance/continuity/contact/recombination domain is `119 passed,
+2 deselected`. The repository default suite is `2061 passed, 2 skipped,
+263 deselected`. These are internal numerical checks, not external validation.
 
 ## Remaining work
 
 1. Extend interface tangents to cross-node/projected defect topologies only
    after their clamp and QSS branch semantics have differentiable contracts.
-2. Implement analytic selective-contact and field-mobility derivatives, or
-   retain explicit capability gates where a smooth tangent is unavailable.
+2. Implement analytic field-mobility derivatives, or retain explicit
+   capability gates where a smooth tangent is unavailable.
 3. Replace the remaining frozen-potential reaction differences block by block,
    preserving these per-column comparisons.
 4. Introduce sparse or matrix-free assembly only after analytic parity passes.

@@ -1,4 +1,4 @@
-"""Analytic bulk and local-interface reaction blocks for ion-aware impedance."""
+"""Analytic local rate blocks for ion-aware impedance."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from perovskite_sim.constants import Q
 from perovskite_sim.experiments.ion_aware_impedance import (
     IonAwareStateCoordinateLayout,
 )
@@ -16,6 +17,7 @@ from perovskite_sim.models.device import (
     electrical_interface_defects,
     electrical_interfaces,
 )
+from perovskite_sim.physics.contacts import selective_contact_flux
 from perovskite_sim.physics.recombination import (
     bulk_srh_denominator,
     interface_recombination,
@@ -61,6 +63,19 @@ class IonAwareAnalyticInterfaceReactionLinearization:
     rate_jacobian: np.ndarray
     finite_difference_rate_jacobian: np.ndarray
     complex_step_rate_jacobian: np.ndarray
+    rate_voltage_derivative: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class IonAwareAnalyticContactLinearization:
+    """Finite-rate outer-contact contributions to carrier rate rows."""
+
+    active_channels: tuple[str, ...]
+    boundary_state_indices: tuple[int, ...]
+    relaxation_rate_s1: np.ndarray
+    rate_at_operating_point_m3_s: np.ndarray
+    rate_jacobian: np.ndarray
+    finite_difference_rate_jacobian: np.ndarray
     rate_voltage_derivative: np.ndarray
 
 
@@ -581,11 +596,230 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     )
 
 
+def build_ion_aware_analytic_contact_linearization(
+    x: np.ndarray,
+    stack: DeviceStack,
+    base_state: np.ndarray,
+    V_dc: float,
+    material: MaterialArrays,
+    layout: IonAwareStateCoordinateLayout,
+    *,
+    potential_at_operating_point_V: np.ndarray,
+    state_steps: np.ndarray,
+) -> IonAwareAnalyticContactLinearization:
+    """Assemble finite-rate outer-contact tangents in scaled log coordinates.
+
+    The cached contact reservoirs and surface velocities are independent of the
+    applied voltage.  For every active carrier/side channel, the production
+    Robin flux is linear in its boundary density.  Its contribution to the
+    corresponding continuity row therefore has the same local derivative on
+    both sides and for both carrier signs: ``-S / dx_cell``.
+
+    The implementation keeps the full sign chain instead of inserting that
+    simplified result directly.  The independent central stencil calls the
+    production :func:`selective_contact_flux`, so a side or carrier sign error
+    cannot be hidden by using the analytic formula twice.
+    """
+
+    grid = np.asarray(x, dtype=float)
+    state = np.asarray(base_state, dtype=float)
+    potential = np.asarray(potential_at_operating_point_V, dtype=float)
+    steps = np.asarray(state_steps, dtype=float)
+    expected_state_size = (4 if material.has_dual_ions else 3) * grid.size
+    if (
+        grid.ndim != 1
+        or grid.size < 3
+        or np.any(np.diff(grid) <= 0.0)
+        or not np.all(np.isfinite(grid))
+        or layout.n_nodes != grid.size
+        or state.shape != (expected_state_size,)
+        or not np.all(np.isfinite(state))
+        or potential.shape != grid.shape
+        or not np.all(np.isfinite(potential))
+        or steps.shape != (layout.size,)
+        or not np.all(np.isfinite(steps))
+        or np.any(steps <= 0.0)
+        or not np.isfinite(V_dc)
+        or material.dx_cell.shape != grid.shape
+        or not np.all(np.isfinite(material.dx_cell))
+        or np.any(material.dx_cell <= 0.0)
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "analytic contact inputs must be finite and shape matched"
+        )
+
+    n, p, _phi, _state_vector = _state_fields(
+        grid,
+        state,
+        stack,
+        V_dc,
+        material,
+        phi_frozen=potential,
+    )
+    analytic = np.zeros((layout.size, layout.size), dtype=float)
+    finite_difference = np.zeros_like(analytic)
+    voltage_derivative = np.zeros(layout.size, dtype=float)
+    coordinate_by_state_index = {
+        state_index: column
+        for column, state_index in enumerate(layout.state_indices)
+    }
+    row_by_state_index = {
+        state_index: row
+        for row, state_index in enumerate(layout.state_indices)
+    }
+
+    channel_specs = (
+        (
+            "electron_left",
+            "n",
+            "left",
+            0,
+            0,
+            material.S_n_L,
+            float(n[0]),
+            float(material.n_L),
+        ),
+        (
+            "electron_right",
+            "n",
+            "right",
+            grid.size - 1,
+            grid.size - 1,
+            material.S_n_R,
+            float(n[-1]),
+            float(material.n_R),
+        ),
+        (
+            "hole_left",
+            "p",
+            "left",
+            0,
+            grid.size,
+            material.S_p_L,
+            float(p[0]),
+            float(material.p_L),
+        ),
+        (
+            "hole_right",
+            "p",
+            "right",
+            grid.size - 1,
+            2 * grid.size - 1,
+            material.S_p_R,
+            float(p[-1]),
+            float(material.p_R),
+        ),
+    )
+    active_channels: list[str] = []
+    boundary_state_indices: list[int] = []
+    relaxation_rates: list[float] = []
+    operating_rates: list[float] = []
+    for (
+        name,
+        carrier,
+        side,
+        node,
+        state_index,
+        surface_velocity,
+        density,
+        density_eq,
+    ) in channel_specs:
+        if not material.has_selective_contacts or surface_velocity is None:
+            continue
+        surface_velocity = float(surface_velocity)
+        scalars = (surface_velocity, density, density_eq)
+        if (
+            not np.all(np.isfinite(scalars))
+            or surface_velocity < 0.0
+            or density <= 0.0
+            or density_eq <= 0.0
+        ):
+            raise IonAwareAnalyticReactionCapabilityError(
+                "selective-contact inputs must be finite and physically admissible"
+            )
+        column = coordinate_by_state_index.get(state_index)
+        row = row_by_state_index.get(state_index)
+        if column is None or row is None:
+            raise IonAwareAnalyticReactionCapabilityError(
+                "active selective-contact boundary is absent from the state layout"
+            )
+        step = float(steps[column])
+        width = float(material.dx_cell[node])
+        flux_sign = {
+            ("n", "left"): 1.0,
+            ("n", "right"): -1.0,
+            ("p", "left"): -1.0,
+            ("p", "right"): 1.0,
+        }[(carrier, side)]
+        continuity_sign = {
+            ("n", "left"): -1.0,
+            ("n", "right"): 1.0,
+            ("p", "left"): 1.0,
+            ("p", "right"): -1.0,
+        }[(carrier, side)]
+        rate_from_flux = continuity_sign / (Q * width)
+        flux_density_derivative = flux_sign * Q * surface_velocity
+        analytic[row, column] = (
+            rate_from_flux * flux_density_derivative * density * step
+        )
+
+        flux = selective_contact_flux(
+            density,
+            density_eq,
+            surface_velocity,
+            carrier=carrier,
+            side=side,
+        )
+        flux_plus = selective_contact_flux(
+            density * float(np.exp(step)),
+            density_eq,
+            surface_velocity,
+            carrier=carrier,
+            side=side,
+        )
+        flux_minus = selective_contact_flux(
+            density * float(np.exp(-step)),
+            density_eq,
+            surface_velocity,
+            carrier=carrier,
+            side=side,
+        )
+        finite_difference[row, column] = 0.5 * rate_from_flux * (
+            float(flux_plus) - float(flux_minus)
+        )
+        active_channels.append(name)
+        boundary_state_indices.append(state_index)
+        relaxation_rates.append(surface_velocity / width)
+        operating_rates.append(rate_from_flux * float(flux))
+
+    arrays = (
+        analytic,
+        finite_difference,
+        voltage_derivative,
+        np.asarray(relaxation_rates, dtype=float),
+        np.asarray(operating_rates, dtype=float),
+    )
+    if any(not np.all(np.isfinite(value)) for value in arrays):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "analytic contact assembly produced a non-finite operator"
+        )
+    return IonAwareAnalyticContactLinearization(
+        active_channels=tuple(active_channels),
+        boundary_state_indices=tuple(boundary_state_indices),
+        relaxation_rate_s1=np.asarray(relaxation_rates, dtype=float),
+        rate_at_operating_point_m3_s=np.asarray(operating_rates, dtype=float),
+        rate_jacobian=analytic,
+        finite_difference_rate_jacobian=finite_difference,
+        rate_voltage_derivative=voltage_derivative,
+    )
+
+
 def _apply_analytic_reaction_linearization(
     reference: FrequencyDomainResult,
     analytic: (
         IonAwareAnalyticBulkReactionLinearization
         | IonAwareAnalyticInterfaceReactionLinearization
+        | IonAwareAnalyticContactLinearization
     ),
     layout: IonAwareStateCoordinateLayout,
     *,
@@ -718,12 +952,37 @@ def apply_analytic_interface_reaction_linearization(
     )
 
 
+def apply_analytic_contact_linearization(
+    reference: FrequencyDomainResult,
+    analytic: IonAwareAnalyticContactLinearization,
+    layout: IonAwareStateCoordinateLayout,
+    *,
+    V_dc: float,
+    face_weights: np.ndarray,
+    progress: ProgressCallback | None = None,
+) -> FrequencyDomainResult:
+    """Replace only the independently validated selective-contact rate block."""
+
+    return _apply_analytic_reaction_linearization(
+        reference,
+        analytic,
+        layout,
+        block_name="selective-contact",
+        V_dc=V_dc,
+        face_weights=face_weights,
+        progress=progress,
+    )
+
+
 __all__ = [
     "IonAwareAnalyticBulkReactionLinearization",
+    "IonAwareAnalyticContactLinearization",
     "IonAwareAnalyticInterfaceReactionLinearization",
     "IonAwareAnalyticReactionCapabilityError",
     "apply_analytic_bulk_reaction_linearization",
+    "apply_analytic_contact_linearization",
     "apply_analytic_interface_reaction_linearization",
     "build_ion_aware_analytic_bulk_reaction_linearization",
+    "build_ion_aware_analytic_contact_linearization",
     "build_ion_aware_analytic_interface_reaction_linearization",
 ]

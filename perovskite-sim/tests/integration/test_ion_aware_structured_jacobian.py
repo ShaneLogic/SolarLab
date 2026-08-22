@@ -64,6 +64,7 @@ def test_single_ion_structured_operator_matches_full_poisson_reference():
     assert certificate.analytic_transport_conduction_jacobian.passed
     assert certificate.analytic_bulk_reaction_rate_jacobian.passed
     assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert certificate.analytic_contact_rate_jacobian.passed
     assert all(
         item.jacobian.passed
         for item in certificate.analytic_transport_components
@@ -107,6 +108,7 @@ def test_dual_ion_structured_operator_covers_both_charge_signs():
     )
     assert certificate.analytic_bulk_reaction_rate_jacobian.passed
     assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert certificate.analytic_contact_rate_jacobian.passed
     assert result.reference.coordinate_layout.negative_ion_state_indices
     assert result.structured.current_components[-1].name == "negative_ion"
     assert certificate.rate_jacobian.max_relative_error < 5.0e-6
@@ -133,6 +135,7 @@ def test_n61_adaptive_stencils_resolve_strong_columns_and_bound_weak_ones():
     assert certificate.analytic_transport_conduction_jacobian.passed
     assert certificate.analytic_bulk_reaction_rate_jacobian.passed
     assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert certificate.analytic_contact_rate_jacobian.passed
     assert (
         certificate.analytic_transport_conduction_jacobian
         .max_group_normalized_error
@@ -169,4 +172,36 @@ def test_n91_weak_cross_couplings_pass_the_group_normalized_error_gate():
     assert certificate.analytic_transport_conduction_jacobian.passed
     assert certificate.analytic_bulk_reaction_rate_jacobian.passed
     assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert certificate.analytic_contact_rate_jacobian.passed
+    assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
+
+
+def test_selective_contact_structured_operator_replaces_all_boundary_rate_blocks():
+    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = replace(
+        base,
+        S_n_left=1.0e-3,
+        S_p_left=1.0e3,
+        S_n_right=1.0e3,
+        S_p_right=1.0e-3,
+    )
+    result = _solve_comparison(stack)
+    certificate = result.certificate
+    contact = result.analytic_contact
+
+    assert certificate.numerically_certified
+    assert contact.active_channels == (
+        "electron_left",
+        "electron_right",
+        "hole_left",
+        "hole_right",
+    )
+    assert certificate.analytic_contact_rate_jacobian.passed
+    assert certificate.analytic_contact_rate_voltage_derivative.passed
+    assert not certificate.analytic_contact_rate_jacobian.failed_columns
+    assert (
+        certificate.analytic_contact_rate_jacobian.max_group_normalized_error
+        < 1.0e-6
+    )
+    assert certificate.rate_jacobian.passed
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
