@@ -77,8 +77,8 @@ mobile-ion DC state, is documented in
 The opt-in Phase 2 mass/storage and central-finite-difference linearization
 slice is documented in
 [ion-aware impedance reference engine](docs/ion-aware-impedance-reference-engine.md).
-The subsequent exact-discrete-Poisson and adaptive per-column operator check
-is documented in
+The subsequent exact-discrete-Poisson, analytic SG transport, analytic bulk
+recombination, and adaptive per-column operator check is documented in
 [ion-aware structured Jacobian comparison](docs/ion-aware-structured-jacobian-comparison.md).
 
 Evidence labels matter: a passing `load_only` or internal regression is not an

@@ -5,6 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+import perovskite_sim.experiments.ion_aware_analytic_reaction as analytic_reaction
 import perovskite_sim.experiments.ion_aware_analytic_transport as analytic_transport
 import perovskite_sim.experiments.ion_aware_structured_jacobian as structured
 from perovskite_sim.experiments.ion_aware_dc import (
@@ -84,10 +85,11 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
     assert rebuilt.maximum_state_step == 1.0e-3
     assert rebuilt.target_potential_step_V == 1.0e-9
     assert rebuilt.voltage_step == impedance_protocol.voltage_step
-    assert rebuilt.transport_linearization == (
-        "analytic_sg_transport_central_difference_reaction"
+    assert rebuilt.transport_linearization == "analytic_sg_transport"
+    assert rebuilt.reaction_linearization == (
+        "analytic_bulk_central_difference_interface_contact"
     )
-    assert rebuilt.schema_version.endswith("-v2")
+    assert rebuilt.schema_version.endswith("-v3")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -106,6 +108,8 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         replace(protocol, column_relevance_floor_relative=1.01)
     with pytest.raises(ValueError, match="positive"):
         replace(protocol, max_rate_jacobian_column_relative_error=0.0)
+    with pytest.raises(ValueError, match="unsupported reaction"):
+        replace(protocol, reaction_linearization="finite_difference_bulk")
     with pytest.raises(ValueError, match="must not be below"):
         replace(
             protocol,
@@ -297,6 +301,8 @@ def test_real_comparison_retains_every_reference_level_and_passes(
     assert certificate.conduction_jacobian.passed
     assert certificate.displacement_jacobian.passed
     assert certificate.analytic_transport_conduction_jacobian.passed
+    assert certificate.analytic_bulk_reaction_rate_jacobian.passed
+    assert certificate.analytic_bulk_reaction_rate_voltage_derivative.passed
     assert (
         certificate.analytic_transport_conduction_voltage_derivative.passed
     )
@@ -331,6 +337,46 @@ def test_real_comparison_retains_every_reference_level_and_passes(
         result.structured.conduction_current_jacobian,
         result.frozen_phi_finite_difference.conduction_current_jacobian,
     )
+
+
+def test_analytic_bulk_reaction_is_local_and_matches_its_independent_stencil(
+    comparison_fixture,
+):
+    *_prefix, result = comparison_fixture
+    layout = result.reference.coordinate_layout
+    reaction = result.analytic_bulk_reaction
+    comparison = result.certificate.analytic_bulk_reaction_rate_jacobian
+
+    assert comparison.passed
+    assert comparison.max_group_normalized_error < 1.0e-6
+    for species in ("positive_ion", "negative_ion"):
+        coordinate_slice = layout.coordinate_slice(species)
+        np.testing.assert_array_equal(
+            reaction.rate_jacobian[:, coordinate_slice],
+            0.0,
+        )
+        np.testing.assert_array_equal(
+            reaction.finite_difference_rate_jacobian[:, coordinate_slice],
+            0.0,
+        )
+
+    row_by_state_index = {
+        state_index: row for row, state_index in enumerate(layout.state_indices)
+    }
+    nonzero_carrier_columns = 0
+    for species in ("electron", "hole"):
+        columns = np.arange(layout.size)[layout.coordinate_slice(species)]
+        nodes = layout.node_indices(species)
+        for column, node in zip(columns, nodes, strict=True):
+            expected_rows = {
+                row_by_state_index[state_index]
+                for state_index in (int(node), layout.n_nodes + int(node))
+                if state_index in row_by_state_index
+            }
+            actual_rows = set(np.flatnonzero(reaction.rate_jacobian[:, column]))
+            assert actual_rows <= expected_rows
+            nonzero_carrier_columns += bool(actual_rows)
+    assert nonzero_carrier_columns > 0
 
 
 def test_analytic_component_base_currents_match_the_nonlinear_evaluator(
@@ -412,6 +458,71 @@ def test_analytic_transport_capability_gates_nonanalytic_active_branches(
             dc_state.y,
             impedance_protocol.V_dc,
             replace(mat, A_star_n=np.zeros_like(mat.A_star_n)),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+
+def test_analytic_bulk_reaction_gates_unimplemented_nonlocal_branches(
+    comparison_fixture,
+):
+    stack, x, mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    kwargs = {
+        "potential_at_operating_point_V": (
+            result.poisson_sensitivity.potential_at_operating_point_V
+        ),
+        "state_steps": result.poisson_sensitivity.state_steps,
+    }
+    build = analytic_reaction.build_ion_aware_analytic_bulk_reaction_linearization
+
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="radiative reabsorption",
+    ):
+        build(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(mat, has_radiative_reabsorption=True),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="recombination de-spike",
+    ):
+        build(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(
+                mat,
+                het_recomb_despike=0.5,
+                het_recomb_nodes=(x.size // 2,),
+            ),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="denominator",
+    ):
+        build(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(
+                mat,
+                tau_n=np.zeros_like(mat.tau_n),
+                tau_p=np.zeros_like(mat.tau_p),
+            ),
             result.reference.coordinate_layout,
             **kwargs,
         )
