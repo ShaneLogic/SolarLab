@@ -79,9 +79,9 @@ slice is documented in
 [ion-aware impedance reference engine](docs/ion-aware-impedance-reference-engine.md).
 The subsequent exact-discrete-Poisson, analytic SG transport, analytic bulk
 recombination, defect-free local and clamp-inactive cross-node/projected
-interface SRH, positive-density shared-occupancy SRH, selective-contact,
-analytic field-mobility, and adaptive per-column operator check is documented
-in
+interface SRH, positive-density shared-occupancy and additive two-sided SRH,
+selective-contact, analytic field-mobility, and adaptive per-column operator
+check is documented in
 [ion-aware structured Jacobian comparison](docs/ion-aware-structured-jacobian-comparison.md).
 
 Evidence labels matter: a passing `load_only` or internal regression is not an

@@ -63,12 +63,18 @@ class IonAwareAnalyticInterfaceReactionLinearization:
     cross_node_interface_indices: tuple[int, ...]
     projected_interface_indices: tuple[int, ...]
     shared_occupancy_interface_indices: tuple[int, ...]
+    two_sided_interface_indices: tuple[int, ...]
     minimum_cross_node_clamp_margin_m2_s: float | None
     minimum_projection_exponent_cap_margin: float | None
     minimum_shared_density_floor_margin_m3: float | None
+    minimum_two_sided_clamp_margin_m2_s: float | None
+    minimum_two_sided_density_floor_margin_m3: float | None
     surface_recombination_rate_m2_s: np.ndarray
     electron_density_derivative_m_s: np.ndarray
     hole_density_derivative_m_s: np.ndarray
+    mirror_surface_recombination_rate_m2_s: np.ndarray
+    mirror_electron_density_derivative_m_s: np.ndarray
+    mirror_hole_density_derivative_m_s: np.ndarray
     rate_jacobian: np.ndarray
     finite_difference_rate_jacobian: np.ndarray
     complex_step_rate_jacobian: np.ndarray
@@ -336,7 +342,6 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         name
         for name, active in (
             ("interface-plane closure", material.iface_plane_closure),
-            ("two-sided interface closure", material.iface_two_sided),
         )
         if active
     )
@@ -350,6 +355,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         )
     projection_active = bool(material.iface_plane_projection)
     shared_occupancy_active = bool(material.iface_shared_occ)
+    two_sided_active = bool(material.iface_two_sided)
     thermal_voltage = float(material.V_T_device)
     if not np.isfinite(thermal_voltage) or thermal_voltage <= 0.0:
         raise IonAwareAnalyticReactionCapabilityError(
@@ -489,6 +495,28 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             raise IonAwareAnalyticReactionCapabilityError(
                 "shared-occupancy interface arrays must be finite and nonnegative"
             )
+    two_sided_arrays = (
+        material.interface_n_L_eq,
+        material.interface_p_R_eq,
+    )
+    if two_sided_active and any(
+        len(values) != count for values in two_sided_arrays
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "two-sided mirror interface arrays are not topology aligned"
+        )
+    if two_sided_active:
+        two_sided_values = np.asarray(
+            [value for values in two_sided_arrays for value in values],
+            dtype=float,
+        )
+        if (
+            not np.all(np.isfinite(two_sided_values))
+            or np.any(two_sided_values < 0.0)
+        ):
+            raise IonAwareAnalyticReactionCapabilityError(
+                "two-sided mirror interface arrays must be finite and nonnegative"
+            )
 
     n, p, _phi, _state_vector = _state_fields(
         grid,
@@ -507,11 +535,17 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     surface_rate = np.zeros(count, dtype=float)
     electron_derivative = np.zeros(count, dtype=float)
     hole_derivative = np.zeros(count, dtype=float)
+    mirror_surface_rate = np.zeros(count, dtype=float)
+    mirror_electron_derivative = np.zeros(count, dtype=float)
+    mirror_hole_derivative = np.zeros(count, dtype=float)
     minimum_cross_node_clamp_margin = np.inf
     projected_indices: list[int] = []
     minimum_projection_cap_margin = np.inf
     shared_occupancy_indices: list[int] = []
     minimum_shared_density_floor_margin = np.inf
+    two_sided_indices: list[int] = []
+    minimum_two_sided_clamp_margin = np.inf
+    minimum_two_sided_density_floor_margin = np.inf
     row_by_state_index = {
         state_index: row
         for row, state_index in enumerate(layout.state_indices)
@@ -950,10 +984,425 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                         complex_voltage_recombination
                     )
 
+        is_two_sided = (
+            two_sided_active and is_cross_node and not is_shared_occupancy
+        )
+        if is_two_sided:
+            mirror_n_value = float(n[hole_node])
+            mirror_p_value = float(p[electron_node])
+            if (
+                not np.isfinite(mirror_n_value)
+                or not np.isfinite(mirror_p_value)
+                or mirror_n_value <= 0.0
+                or mirror_p_value <= 0.0
+            ):
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "two-sided mirror density floors must be inactive"
+                )
+            mirror_ni_reference = float(
+                material.interface_n_L_eq[index]
+                * material.interface_p_R_eq[index]
+            )
+            mirror_projection_log_n = 0.0
+            mirror_projection_log_p = 0.0
+            mirror_projected = projection_active
+            if mirror_projected:
+                mirror_projection_log_n = (
+                    float(potential[node]) - float(potential[hole_node])
+                ) / thermal_voltage
+                mirror_projection_log_p = (
+                    float(potential[electron_node]) - float(potential[node])
+                ) / thermal_voltage
+                projection_margin = _IFACE_PROJ_EXP_CAP - max(
+                    abs(mirror_projection_log_n),
+                    abs(mirror_projection_log_p),
+                )
+                if (
+                    not np.isfinite(projection_margin)
+                    or projection_margin <= 0.0
+                ):
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "two-sided mirror projection exponent cap is active "
+                        "at the operating point"
+                    )
+                minimum_projection_cap_margin = min(
+                    minimum_projection_cap_margin,
+                    projection_margin,
+                )
+
+            mirror_factor_n = float(np.exp(mirror_projection_log_n))
+            mirror_factor_p = float(np.exp(mirror_projection_log_p))
+            mirror_projected_n = mirror_n_value * mirror_factor_n
+            mirror_projected_p = mirror_p_value * mirror_factor_p
+            mirror_projected_ni_sq = (
+                mirror_ni_reference * mirror_factor_n * mirror_factor_p
+            )
+            mirror_scalars = (
+                mirror_projected_n,
+                mirror_projected_p,
+                mirror_projected_ni_sq,
+            )
+            if (
+                not np.all(np.isfinite(mirror_scalars))
+                or mirror_projected_n <= 0.0
+                or mirror_projected_p <= 0.0
+                or mirror_projected_ni_sq < 0.0
+            ):
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "two-sided mirror inputs must be finite and physically admissible"
+                )
+            if v_n > 0.0 and v_p > 0.0:
+                mirror_denominator = interface_srh_denominator(
+                    mirror_projected_n,
+                    mirror_projected_p,
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
+                if (
+                    not np.isfinite(mirror_denominator)
+                    or mirror_denominator <= 0.0
+                ):
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "two-sided mirror SRH denominator must be finite and positive"
+                    )
+            else:
+                mirror_denominator = np.inf
+            mirror_derivatives = interface_recombination_derivatives(
+                mirror_projected_n,
+                mirror_projected_p,
+                mirror_projected_ni_sq,
+                n1,
+                p1,
+                v_n,
+                v_p,
+            )
+            mirror_values = (
+                mirror_derivatives.rate,
+                mirror_derivatives.electron_density_derivative,
+                mirror_derivatives.hole_density_derivative,
+            )
+            if any(
+                not np.all(np.isfinite(value)) for value in mirror_values
+            ):
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "analytic two-sided mirror formula produced a non-finite block"
+                )
+            if float(mirror_derivatives.rate) <= 0.0:
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "two-sided mirror clamp must be inactive at the operating "
+                    "point (raw R_B > 0)"
+                )
+            two_sided_indices.append(index)
+            minimum_two_sided_clamp_margin = min(
+                minimum_two_sided_clamp_margin,
+                float(mirror_derivatives.rate),
+            )
+            minimum_two_sided_density_floor_margin = min(
+                minimum_two_sided_density_floor_margin,
+                mirror_n_value,
+                mirror_p_value,
+            )
+            mirror_surface_rate[index] = float(mirror_derivatives.rate)
+            mirror_electron_derivative[index] = float(
+                mirror_derivatives.electron_density_derivative
+            ) * mirror_factor_n
+            mirror_hole_derivative[index] = float(
+                mirror_derivatives.hole_density_derivative
+            ) * mirror_factor_p
+
+            def mirror_rate(
+                electron_density: complex | float,
+                hole_density: complex | float,
+                electron_log_factor: complex | float,
+                hole_log_factor: complex | float,
+            ) -> complex | float:
+                factor_n = np.exp(electron_log_factor)
+                factor_p = np.exp(hole_log_factor)
+                return interface_recombination(
+                    electron_density * factor_n,
+                    hole_density * factor_p,
+                    mirror_ni_reference * factor_n * factor_p,
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
+
+            for column, state_index in enumerate(layout.state_indices):
+                step = float(steps[column])
+                direct_n_component = (
+                    mirror_n_value if state_index == hole_node else 0.0
+                )
+                direct_p_component = (
+                    mirror_p_value
+                    if state_index == grid.size + electron_node
+                    else 0.0
+                )
+                direct_n_increment = direct_n_component * step
+                direct_p_increment = direct_p_component * step
+                if direct_n_component > 0.0 or direct_p_component > 0.0:
+                    positive_lower_stencils = tuple(
+                        value
+                        for value in (
+                            direct_n_component * float(np.exp(-step)),
+                            direct_p_component * float(np.exp(-step)),
+                        )
+                        if value > 0.0
+                    )
+                    minimum_two_sided_density_floor_margin = min(
+                        minimum_two_sided_density_floor_margin,
+                        *positive_lower_stencils,
+                    )
+                mirror_projection_delta_n = 0.0
+                mirror_projection_delta_p = 0.0
+                if mirror_projected:
+                    potential_increment = potential_jacobian[:, column] * step
+                    mirror_projection_delta_n = (
+                        float(potential_increment[node])
+                        - float(potential_increment[hole_node])
+                    ) / thermal_voltage
+                    mirror_projection_delta_p = (
+                        float(potential_increment[electron_node])
+                        - float(potential_increment[node])
+                    ) / thermal_voltage
+                mirror_reference_log_increment = (
+                    mirror_projection_delta_n + mirror_projection_delta_p
+                )
+                if (
+                    direct_n_increment == 0.0
+                    and direct_p_increment == 0.0
+                    and mirror_projection_delta_n == 0.0
+                    and mirror_projection_delta_p == 0.0
+                ):
+                    continue
+                if mirror_projected:
+                    projection_margin = _IFACE_PROJ_EXP_CAP - max(
+                        abs(
+                            mirror_projection_log_n
+                            + mirror_projection_delta_n
+                        ),
+                        abs(
+                            mirror_projection_log_n
+                            - mirror_projection_delta_n
+                        ),
+                        abs(
+                            mirror_projection_log_p
+                            + mirror_projection_delta_p
+                        ),
+                        abs(
+                            mirror_projection_log_p
+                            - mirror_projection_delta_p
+                        ),
+                    )
+                    if (
+                        not np.isfinite(projection_margin)
+                        or projection_margin <= 0.0
+                    ):
+                        raise IonAwareAnalyticReactionCapabilityError(
+                            "two-sided mirror projection state stencil "
+                            "reaches the exponent cap"
+                        )
+                    minimum_projection_cap_margin = min(
+                        minimum_projection_cap_margin,
+                        projection_margin,
+                    )
+                mirror_projected_n_increment = mirror_factor_n * (
+                    direct_n_increment
+                    + mirror_n_value * mirror_projection_delta_n
+                )
+                mirror_projected_p_increment = mirror_factor_p * (
+                    direct_p_increment
+                    + mirror_p_value * mirror_projection_delta_p
+                )
+                analytic_mirror = (
+                    float(mirror_derivatives.electron_density_derivative)
+                    * mirror_projected_n_increment
+                    + float(mirror_derivatives.hole_density_derivative)
+                    * mirror_projected_p_increment
+                    - mirror_projected_ni_sq
+                    * mirror_reference_log_increment
+                    / mirror_denominator
+                ) / dx_cell
+                mirror_n_plus = mirror_n_value + direct_n_component * float(
+                    np.expm1(step)
+                )
+                mirror_n_minus = mirror_n_value + direct_n_component * float(
+                    np.expm1(-step)
+                )
+                mirror_p_plus = mirror_p_value + direct_p_component * float(
+                    np.expm1(step)
+                )
+                mirror_p_minus = mirror_p_value + direct_p_component * float(
+                    np.expm1(-step)
+                )
+                mirror_rate_plus = mirror_rate(
+                    mirror_n_plus,
+                    mirror_p_plus,
+                    mirror_projection_log_n + mirror_projection_delta_n,
+                    mirror_projection_log_p + mirror_projection_delta_p,
+                )
+                mirror_rate_minus = mirror_rate(
+                    mirror_n_minus,
+                    mirror_p_minus,
+                    mirror_projection_log_n - mirror_projection_delta_n,
+                    mirror_projection_log_p - mirror_projection_delta_p,
+                )
+                mirror_stencil_minimum = min(
+                    float(mirror_rate_plus),
+                    float(mirror_rate_minus),
+                )
+                if (
+                    not np.isfinite(mirror_stencil_minimum)
+                    or mirror_stencil_minimum <= 0.0
+                ):
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "two-sided mirror central stencil crosses the "
+                        "inactive clamp branch"
+                    )
+                minimum_two_sided_clamp_margin = min(
+                    minimum_two_sided_clamp_margin,
+                    mirror_stencil_minimum,
+                )
+                finite_mirror = 0.5 * (
+                    mirror_rate_plus - mirror_rate_minus
+                ) / dx_cell
+                complex_epsilon = 1.0e-30
+                complex_mirror_rate = mirror_rate(
+                    mirror_n_value
+                    + direct_n_component
+                    * np.expm1(1j * step * complex_epsilon),
+                    mirror_p_value
+                    + direct_p_component
+                    * np.expm1(1j * step * complex_epsilon),
+                    mirror_projection_log_n
+                    + 1j * mirror_projection_delta_n * complex_epsilon,
+                    mirror_projection_log_p
+                    + 1j * mirror_projection_delta_p * complex_epsilon,
+                )
+                complex_mirror = (
+                    float(np.imag(complex_mirror_rate))
+                    / complex_epsilon
+                    / dx_cell
+                )
+                for row in target_rows:
+                    if row is not None:
+                        analytic[row, column] -= analytic_mirror
+                        finite_difference[row, column] -= finite_mirror
+                        complex_step[row, column] -= complex_mirror
+
+            if mirror_projected:
+                mirror_projection_voltage_n = (
+                    float(potential_voltage[node])
+                    - float(potential_voltage[hole_node])
+                ) / thermal_voltage
+                mirror_projection_voltage_p = (
+                    float(potential_voltage[electron_node])
+                    - float(potential_voltage[node])
+                ) / thermal_voltage
+                mirror_voltage_step_n = (
+                    mirror_projection_voltage_n * voltage_step
+                )
+                mirror_voltage_step_p = (
+                    mirror_projection_voltage_p * voltage_step
+                )
+                projection_margin = _IFACE_PROJ_EXP_CAP - max(
+                    abs(mirror_projection_log_n + mirror_voltage_step_n),
+                    abs(mirror_projection_log_n - mirror_voltage_step_n),
+                    abs(mirror_projection_log_p + mirror_voltage_step_p),
+                    abs(mirror_projection_log_p - mirror_voltage_step_p),
+                )
+                if (
+                    not np.isfinite(projection_margin)
+                    or projection_margin <= 0.0
+                ):
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "two-sided mirror projection voltage stencil reaches "
+                        "the exponent cap"
+                    )
+                minimum_projection_cap_margin = min(
+                    minimum_projection_cap_margin,
+                    projection_margin,
+                )
+                mirror_voltage_reference = (
+                    mirror_projection_voltage_n
+                    + mirror_projection_voltage_p
+                )
+                analytic_voltage_mirror = (
+                    float(mirror_derivatives.electron_density_derivative)
+                    * mirror_projected_n
+                    * mirror_projection_voltage_n
+                    + float(mirror_derivatives.hole_density_derivative)
+                    * mirror_projected_p
+                    * mirror_projection_voltage_p
+                    - mirror_projected_ni_sq
+                    * mirror_voltage_reference
+                    / mirror_denominator
+                ) / dx_cell
+                mirror_voltage_plus = mirror_rate(
+                    mirror_n_value,
+                    mirror_p_value,
+                    mirror_projection_log_n + mirror_voltage_step_n,
+                    mirror_projection_log_p + mirror_voltage_step_p,
+                )
+                mirror_voltage_minus = mirror_rate(
+                    mirror_n_value,
+                    mirror_p_value,
+                    mirror_projection_log_n - mirror_voltage_step_n,
+                    mirror_projection_log_p - mirror_voltage_step_p,
+                )
+                mirror_voltage_minimum = min(
+                    float(mirror_voltage_plus),
+                    float(mirror_voltage_minus),
+                )
+                if (
+                    not np.isfinite(mirror_voltage_minimum)
+                    or mirror_voltage_minimum <= 0.0
+                ):
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "two-sided mirror voltage stencil crosses the "
+                        "inactive clamp branch"
+                    )
+                minimum_two_sided_clamp_margin = min(
+                    minimum_two_sided_clamp_margin,
+                    mirror_voltage_minimum,
+                )
+                finite_voltage_mirror = (
+                    float(mirror_voltage_plus)
+                    - float(mirror_voltage_minus)
+                ) / (2.0 * voltage_step * dx_cell)
+                complex_epsilon = 1.0e-30
+                complex_voltage_mirror_rate = mirror_rate(
+                    mirror_n_value,
+                    mirror_p_value,
+                    mirror_projection_log_n
+                    + 1j
+                    * mirror_projection_voltage_n
+                    * complex_epsilon,
+                    mirror_projection_log_p
+                    + 1j
+                    * mirror_projection_voltage_p
+                    * complex_epsilon,
+                )
+                complex_voltage_mirror = (
+                    float(np.imag(complex_voltage_mirror_rate))
+                    / complex_epsilon
+                    / dx_cell
+                )
+                for row in target_rows:
+                    if row is not None:
+                        voltage_derivative[row] -= analytic_voltage_mirror
+                        finite_difference_voltage[row] -= finite_voltage_mirror
+                        complex_step_voltage[row] -= complex_voltage_mirror
+
     arrays = (
         surface_rate,
         electron_derivative,
         hole_derivative,
+        mirror_surface_rate,
+        mirror_electron_derivative,
+        mirror_hole_derivative,
         analytic,
         finite_difference,
         complex_step,
@@ -972,6 +1421,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         cross_node_interface_indices=tuple(cross_node_indices),
         projected_interface_indices=tuple(projected_indices),
         shared_occupancy_interface_indices=tuple(shared_occupancy_indices),
+        two_sided_interface_indices=tuple(two_sided_indices),
         minimum_cross_node_clamp_margin_m2_s=(
             float(minimum_cross_node_clamp_margin)
             if cross_node_indices
@@ -987,9 +1437,22 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             if shared_occupancy_indices
             else None
         ),
+        minimum_two_sided_clamp_margin_m2_s=(
+            float(minimum_two_sided_clamp_margin)
+            if two_sided_indices
+            else None
+        ),
+        minimum_two_sided_density_floor_margin_m3=(
+            float(minimum_two_sided_density_floor_margin)
+            if two_sided_indices
+            else None
+        ),
         surface_recombination_rate_m2_s=surface_rate,
         electron_density_derivative_m_s=electron_derivative,
         hole_density_derivative_m_s=hole_derivative,
+        mirror_surface_recombination_rate_m2_s=mirror_surface_rate,
+        mirror_electron_density_derivative_m_s=mirror_electron_derivative,
+        mirror_hole_density_derivative_m_s=mirror_hole_derivative,
         rate_jacobian=analytic,
         finite_difference_rate_jacobian=finite_difference,
         complex_step_rate_jacobian=complex_step,

@@ -454,10 +454,18 @@ residual-certified ion/electron/hole DC state
    floor 与 no-generation clamp 在工作点和全部 stencil 上严格 inactive 时
    才进入；projection 同时启用时遵守生产 shared-first 优先级。真实 N13
    shared defect 的 complex-step、完整 rate/forcing 与阻抗幅相共同通过。
-   QSS、two-sided 与 dynamic states 仍未解析。
-11. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-12. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
-13. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+   additive two-sided mirror 进入下一项独立合同；QSS 与 dynamic states
+   仍未解析。
+11. **`INTERNAL_TESTED_ANALYTIC_TWO_SIDED_INTERFACE_REACTION` (2026-08-23)**：
+   MoL additive mirror pair B 已按真实 `n[idx-1]`、`p[idx+1]` 采样列与
+   `n_L,eq*p_R,eq` reference 解析加入 pair A 的相同 sink 行。pair B 的
+   density floor、独立 `R_B>0` gate、projection state/voltage cap 均
+   fail-close；shared 同时开启时遵守 production shared-first 优先级。真实
+   N13 pair A+B projected defect 的 complex-step、完整 rate/forcing 与阻抗
+   幅相共同通过。该合同不包含 QF `two_sided_trace` 零体积拓扑。
+12. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+13. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+14. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛
 
