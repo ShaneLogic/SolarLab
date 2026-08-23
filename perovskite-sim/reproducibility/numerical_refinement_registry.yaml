@@ -917,3 +917,73 @@ lanes:
       - This lane certifies only the dark, 10 mV, single-layer ohmic, shared-site dual-mobile-ion blocking-boundary research DAE slice derived from the IonMonger absorber.
       - The negative-ion parameters are synthetic protocol inputs, not values claimed by the source IonMonger publication; the result is internal numerical equivalence rather than external solver or device validation.
       - Selective contacts, InterfaceDefect, cross-node interface sampling, algebraic interface states, experiment routes, and backend routes remain excluded.
+
+  algebraic-interface-state-dae-transient-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/interface_charge_research.yaml
+    config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
+    executor: perovskite_sim.validation.dae_interface_refinement:run_algebraic_interface_dae_transient
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values: [4, 8, 16]
+    tolerance:
+      parameter: backward_euler_time_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      structured_dense_terminal_interface_state_relative_difference: {comparison: absolute_linf, limit: 1.0e-10, units: "1"}
+      structured_dense_terminal_log_density_difference: {comparison: absolute_linf, limit: 1.0e-10, units: "1"}
+      structured_dense_terminal_potential_difference_V: {comparison: absolute_linf, limit: 1.0e-12, units: V}
+      terminal_interface_state_relative_error: {comparison: absolute_linf, limit: 0.004, units: "1"}
+      terminal_interface_state_relative_response: {comparison: absolute_linf, limit: 0.05, units: "1"}
+      terminal_log_density_error: {comparison: absolute_linf, limit: 0.004, units: "1"}
+      terminal_potential_error_V: {comparison: absolute_linf, limit: 5.0e-13, units: V}
+    quality_gates:
+      algebraic_interface_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      bulk_srh_denominator_positive: {operator: eq, limit: 1.0, units: "1"}
+      clamp_inactive_slice_verified: {operator: eq, limit: 1.0, units: "1"}
+      consistent_initial_condition_certified: {operator: eq, limit: 1.0, units: "1"}
+      dense_reference_success: {operator: eq, limit: 1.0, units: "1"}
+      max_electron_balance_defect_A_m2: {operator: le, limit: 2.0e-8, units: A m-2}
+      max_hole_balance_defect_A_m2: {operator: le, limit: 2.0e-8, units: A m-2}
+      max_interface_state_balance_A_m2: {operator: le, limit: 2.0e-8, units: A m-2}
+      max_normalized_algebraic_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_normalized_carrier_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_normalized_interface_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_structured_dense_interface_state_relative_difference: {operator: le, limit: 1.0e-10, units: "1"}
+      max_structured_dense_log_density_difference: {operator: le, limit: 1.0e-10, units: "1"}
+      max_structured_dense_potential_difference_V: {operator: le, limit: 1.0e-12, units: V}
+      max_terminal_interface_state_relative_error: {operator: le, limit: 0.005, units: "1"}
+      max_terminal_log_density_error: {operator: le, limit: 0.005, units: "1"}
+      max_terminal_potential_error_V: {operator: le, limit: 1.0e-10, units: V}
+      mol_numerical_health_passed: {operator: eq, limit: 1.0, units: "1"}
+      mol_reference_success: {operator: eq, limit: 1.0, units: "1"}
+      structured_analytic_success: {operator: eq, limit: 1.0, units: "1"}
+      structured_csr_nonzeros_per_node: {operator: le, limit: 20.0, units: "1"}
+      structured_jacobian_condition_finite: {operator: eq, limit: 1.0, units: "1"}
+      structured_rhs_work_fraction: {operator: le, limit: 0.1, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+      terminal_interface_states_bounded: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      applied_voltage_V: 0.01
+      final_time_s: 1.0e-8
+      carrier_reference_time_s: 1.0e-7
+      interface_velocity_m_s: 1.0e5
+      cross_transmission: 1.0
+      base_time_steps: 2
+      reference_grid_intervals_per_layer: 4
+      newton_residual_tolerance: 1.0e-8
+      max_newton_iterations: 24
+      max_line_search_backtracks: 12
+      max_log_density_update: 2.0
+      max_interface_logit_update: 2.0
+      finite_difference_relative_step: 1.0e-6
+      mol_rtol: 1.0e-8
+      mol_atol_m3: 1.0e4
+      mol_max_step_divisor: 20
+    limitations:
+      - This lane certifies only a dark 10 mV two-layer ohmic research slice with one uncharged algebraic interface and four DOS-bounded Fermi-Richardson states.
+      - InterfaceDefect, cross-node carrier sampling, dynamic interface states, interface electrostatic charge, mobile ions, selective contacts, two-sided trace geometry, field mobility, photon recycling, and clamp-active operating points remain excluded.
+      - The eliminated-interface-state MoL comparison and dense-versus-structured agreement are internal numerical evidence, not external solver validation, experimental validation, SCAPS parity, or a general interface-physics certificate.
