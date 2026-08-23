@@ -638,8 +638,8 @@ Phase 4 不是一个大 PR。每个子 lane 必须单独立项、默认关闭、
 首个 checkpoint 已新增 research-only `solver/dae.py`：只覆盖单层 ohmic、无离子、
 无界面的 `(log n, log p, phi)` 半显式残差，分列 differential/algebraic rows，
 提供可重复 consistent initial condition、精确 `dF/d(qdot)` 及 carrier-boundary/
-Poisson `dF/dq`。它没有接入默认 MoL、实验或 backend；下一 checkpoint 必须先完成
-time-discrete no-ion refinement/cost lane，之后才允许扩展 ion/interface topology。
+Poisson `dF/dq`。它没有接入默认 MoL、实验或 backend；后续 checkpoints 先完成
+time-discrete no-ion refinement/cost lane，再决定是否扩展 ion/interface topology。
 
 第二个 checkpoint 新增 physical-density backward-Euler reference：每步分列
 algebraic/differential residual、积分 continuity defect 与 nonlinear-work 证据；
@@ -653,8 +653,18 @@ explicit-Poisson CSR，并以 sparse LU 求解。单线程 N=9/17/33/65 的 one-
 中位耗时由 dense `25.34/46.95/115.94/242.78 ms` 降为 structured
 `3.35/3.93/6.84/9.41 ms`；最细层 25.8x，RHS evaluations 1956→6，
 9→65 节点增长 9.58x→2.81x。墙钟只作 workstation observation；CI 冻结
-trajectory equivalence、CSR linear nnz 和 deterministic work-count。下一步必须注册
-content-addressed P1 matrix，不能凭该本地表扩大到 ions/interface DAE 声明。
+trajectory equivalence、CSR linear nnz 和 deterministic work-count。该 checkpoint
+当时仍要求注册 content-addressed P1 matrix，不能凭本地表扩大到 ions/interface
+DAE 声明。
+
+第四个 checkpoint 已注册 `no-ion-dae-transient-v1`：N=8/16/32 与三层
+backward-Euler factor 构成 9-cell matrix，时间步按 N 平方缩放，并在每格同时
+执行 strict Radau/MoL、dense-central BE 与 structured-analytic BE。source-clean
+commit `985a234` 获得内部 `certified` 证书 `44807d654d...`；terminal time/grid
+log-density-error changes 为 `9.1646e-5 / 3.1817e-6`，全矩阵最大 differential/
+algebraic residual 为 `9.3274e-10 / 1.9789e-16`。这只关闭 first-slice entry gate；
+single-ion、dual-ion 和 algebraic interface-state 必须各自建立新 capability contract
+与 content-addressed 证据，不能继承该证书。
 
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 

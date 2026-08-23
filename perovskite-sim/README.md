@@ -788,7 +788,9 @@ Phase 4.1 now includes a research-only semi-explicit DAE residual for the
 single-layer, ohmic, no-ion/no-interface limit. It retains Poisson potential as
 an algebraic coordinate, constructs a residual-certified consistent initial
 condition, and exposes exact baseline Jacobian blocks with finite-difference
-tests. A separate opt-in structured lane now assembles the smooth first-slice
-tangent as CSR and uses sparse Newton; its registered certificate is still
-pending. Both paths remain disconnected from production transient and backend
-routes; see [the DAE capability boundary](docs/dae-research-backbone.md).
+tests. A separate opt-in structured lane assembles the smooth first-slice
+tangent as CSR and uses sparse Newton. The registered 9-cell
+`no-ion-dae-transient-v1` matrix is internally certified at source commit
+`985a234` (certificate `44807d654d...`), with no failed or missing cells. This
+does not extend the claim to ions, interfaces, selective contacts, experiments,
+or backend routes; see [the DAE capability boundary](docs/dae-research-backbone.md).

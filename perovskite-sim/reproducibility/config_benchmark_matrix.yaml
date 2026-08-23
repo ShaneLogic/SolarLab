@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 77ac3fd87c454a8f3197577b5aa34dbfe2d2a3a52169e896ee016cd450bf1242
+  sha256: 19f17aa47c776147ba8ca4ec746aff9740723aff4eacf493ebb60cc882348330
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -113,6 +113,7 @@ benchmarks:
       - tests/regression/test_tolerance_grid_refinement.py::test_plan_refinement_is_read_only
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/csi_vannijen2025_pn_cv.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
@@ -1055,6 +1056,7 @@ configs:
     benchmarks:
       - loader-contract
       - vannijen2025-csi-pn-cv
+      - phase1-refinement-contract
   - path: configs/cigs_baseline.yaml
     sha256: 46dabc8418b7060a2124206793f3b6f07a01f35826b6b537591c64dbd2abe4af
     semantic_sha256: bdde999ebbeae9ec96f815ea3e2195a094653b26916235b178da611cc4b4d2fd
