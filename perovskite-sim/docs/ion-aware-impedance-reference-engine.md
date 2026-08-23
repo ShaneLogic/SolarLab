@@ -1,6 +1,6 @@
 # Ion-aware impedance reference engine
 
-Status: `INTERNAL_CERTIFIED_GRID_AND_TRANSIENT_CROSSCHECK` as of 2026-08-23.
+Status: `INTERNAL_CERTIFIED_PUBLIC_ROUTE` as of 2026-08-23.
 This is canonical internal numerical evidence with a content-addressed matrix
 and exact-DC transient cross-check; external validation remains separate.
 
@@ -179,26 +179,32 @@ coverage, and contact thermodynamics remain separate axes.
 ```python
 import numpy as np
 
-from perovskite_sim.experiments.ion_aware_impedance import (
-    build_ion_aware_impedance_protocol,
-    run_ion_aware_impedance,
-)
+from perovskite_sim.experiments.impedance import run_impedance
 
-protocol = build_ion_aware_impedance_protocol(
-    certified_dc_state,
-    np.logspace(-3, 3, 25),
-    delta_V=0.01,
-)
-response = run_ion_aware_impedance(
-    certified_dc_state.x,
+response = run_impedance(
     stack,
-    protocol,
-    dc_state=certified_dc_state,
+    np.logspace(-6, 1, 29),
+    V_dc=0.9,
+    N_grid=60,
+    method="ion_aware_frequency_certified",
+    require_frequency_window_certificate=True,
 )
 ```
 
-This API is intentionally opt-in and is not yet routed through the legacy
-`run_impedance` method selector or backend.
+The canonical alias `ion_aware_frequency` resolves to the same method. The
+public Python result and both FastAPI routes preserve the detailed DC protocol,
+frequency protocol, state/protocol hashes, per-frequency certificates, current
+and storage decomposition, frequency-window evidence, and contact status. The
+frontend applies a `60`-grid, 29-point `1e-6--10 Hz` IonMonger-oriented preset
+when the certified route is selected; switching to a transient or ion-free QF
+engine restores the historical high-frequency preset.
+
+The public route always requires the ion-aware numerical certificate. Frequency
+coverage is a separate optional fail-closed gate, while
+`require_operating_point_certificate=True` additionally requires certified
+contact thermodynamics. Therefore the shipped IonMonger deck returns a valid
+numerical spectrum but still has `certified=false` because its contact status is
+`compatible_unverified`.
 
 ## Current evidence
 
@@ -280,8 +286,8 @@ change `0.00194%`. External comparison remains a separate deliverable.
    frozen-potential differences.
    See
    [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
-2. Route the certified method through `run_impedance`, the
-   backend, and frontend diagnostics.
+2. Freeze external IonMonger/Driftfusion comparison artifacts with the same
+   DC history, frequency window, area convention, and raw complex spectra.
 
 External IonMonger/Driftfusion artifacts and experimental spectroscopy remain
 separate validation layers.

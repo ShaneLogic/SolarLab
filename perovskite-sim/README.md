@@ -644,10 +644,12 @@ magnitude diagnostic, not a convergence threshold (see
 
 ### Impedance Protocol and Evidence
 
-`run_impedance` exposes two deliberately separate engines. The
+`run_impedance` exposes three deliberately separate engines. The
 `transient_ion_aware` path retains mobile ions and lock-in extraction; the
 `qf_frequency_ion_free` path retains the QF solver's DC residual and
-frequency-domain linear-solve diagnostics but rejects mobile ions. Both use a
+frequency-domain linear-solve diagnostics but rejects mobile ions; and
+`ion_aware_frequency_certified` starts from a residual-certified mobile-ion DC
+state and returns the reference frequency-domain response. All three use a
 strict perturbation bound below 20 mV.
 
 Every result now carries the exact bias/light/cycle protocol, a DC operating
@@ -659,15 +661,18 @@ and from covering that envelope with one-decade margins and no sampling gap
 above 0.5 decades. A single marker frequency or two sparse endpoints do not
 count as branch coverage; recommendations never rewrite requested points.
 
-The opt-in ion-aware frequency-domain reference additionally emits one
+The certified ion-aware frequency-domain route additionally emits one
 certificate per frequency instead of only sweep-wide extrema. Each point
 retains its all-face spread, linear-solve diagnostics, both finite-difference
 step comparisons, ionic inventory response, current decomposition, and
 carrier/ion storage components. Its canonical grid-ladder protocol hashes the
 exact coordinates and DC state on at least three strictly increasing meshes;
 the finest pair must agree within 2% in impedance magnitude and 1 degree in
-phase at every frequency. This reference/grid API remains separate from the
-legacy method selector until the transient cross-check is complete.
+phase at every frequency. The public result retains the exact DC and frequency
+protocols, their hashes, the DC-state hash, the complete per-frequency evidence,
+and separate numerical, frequency-window, grid, and contact-thermodynamic axes.
+Set `require_frequency_window_certificate=True` to reject an uncovered ionic
+frequency range.
 
 The transient engine applies a continuous sinusoidal boundary voltage in one
 Radau solve per frequency. Edge and midpoint states co-locate centered

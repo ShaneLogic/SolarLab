@@ -48,8 +48,9 @@ def test_impedance_api_forwards_certification_protocol(monkeypatch):
         points_per_cycle=80,
         dc_settle_time=2.0,
         illuminated=False,
-        method="transient_ion_aware",
+        method="ion_aware_frequency_certified",
         require_operating_point_certificate=True,
+        require_frequency_window_certificate=True,
     ))
 
     assert captured == {
@@ -60,9 +61,10 @@ def test_impedance_api_forwards_certification_protocol(monkeypatch):
         "n_extract": 3,
         "points_per_cycle": 80,
         "illuminated": False,
-        "method": "transient_ion_aware",
+        "method": "ion_aware_frequency_certified",
         "dc_settle_time": 2.0,
         "require_operating_point_certificate": True,
+        "require_frequency_window_certificate": True,
         "experiment_protocol": None,
         "protocol_mode": "compatibility",
     }
@@ -161,6 +163,7 @@ def test_impedance_job_forwards_full_protocol(monkeypatch):
             "method": "transient_ion_aware",
             "dc_settle_time": 3.0,
             "require_operating_point_certificate": "true",
+            "require_frequency_window_certificate": "true",
         },
     ))
 
@@ -180,6 +183,7 @@ def test_impedance_job_forwards_full_protocol(monkeypatch):
         "method": "transient_ion_aware",
         "dc_settle_time": 3.0,
         "require_operating_point_certificate": True,
+        "require_frequency_window_certificate": True,
         "experiment_protocol": None,
         "protocol_mode": "compatibility",
     }

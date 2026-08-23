@@ -491,7 +491,19 @@ residual-certified ion/electron/hole DC state
    `10 Hz--100 kHz` 仍明确为 uncovered。线性求解 numerical certificate
    与 frequency-window certificate 分列，后者未过时不能获得 combined
    certification。
-15. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+15. **`INTERNAL_TESTED_EXACT_DC_TRANSIENT_CROSSCHECK` (2026-08-23)**：独立
+   transient lock-in 从同一个已认证 DC state 出发，并绑定同一频域协议、频点、
+   AC 幅值及 `points_per_cycle` ladder。真实 IonMonger N13 的三频点探针在
+   `20/40/80` 下最大幅值差 `0.530%`、相位差 `0.00235 deg`；默认
+   `40/80/160` 两频点探针同样通过。该证据仍只属于内部跨方法认证。
+16. **`INTERNAL_CERTIFIED_PUBLIC_ROUTE` (2026-08-23)**：
+   `ion_aware_frequency_certified` 及 alias `ion_aware_frequency` 已进入
+   `run_impedance`、direct/async FastAPI 和两套前端面板。公共结果保留 exact DC/
+   frequency protocol、state/protocol SHA、逐频数值证书、电流/storage 分解、
+   frequency-window 与 contact 证据；前端选择该引擎时应用 `N=60`、29 点、
+   `1e-6--10 Hz` 预设，并可对频窗 fail-close。真实 N13 公共/API 探针 29/29
+   频点通过；contact
+   `compatible_unverified`，所以 combined physical certificate 正确保持 false。
 
 ### 3.3 测试矩阵与通过门槛
 

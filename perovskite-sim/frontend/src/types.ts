@@ -217,7 +217,10 @@ export interface ComplexNumber {
 }
 
 export interface ImpedanceProtocol {
-  method: 'transient_ion_aware' | 'qf_frequency_ion_free'
+  method:
+    | 'transient_ion_aware'
+    | 'qf_frequency_ion_free'
+    | 'ion_aware_frequency_certified'
   V_dc: number
   delta_V: number
   illuminated: boolean
@@ -250,6 +253,7 @@ export interface OperatingPointCertificate {
     | 'finite_time_preconditioned'
     | 'dark_equilibrium'
     | 'qf_residual_certified'
+    | 'ion_aware_residual_certified'
   carrier_area_rate_A_m2: number
   ion_area_rate_A_m2: number
   max_ionic_face_current_A_m2: number
@@ -325,6 +329,78 @@ export interface ImpedanceDiagnostics {
   backward_error: number[] | null
   electron_storage_response_F_m2: ComplexNumber[] | null
   hole_storage_response_F_m2: ComplexNumber[] | null
+  conduction_admittance_faces_S_m2?: ComplexNumber[][] | null
+  displacement_admittance_faces_S_m2?: ComplexNumber[][] | null
+  electron_admittance_faces_S_m2?: ComplexNumber[][] | null
+  hole_admittance_faces_S_m2?: ComplexNumber[][] | null
+  positive_ion_admittance_faces_S_m2?: ComplexNumber[][] | null
+  negative_ion_admittance_faces_S_m2?: ComplexNumber[][] | null
+  positive_ion_storage_response_F_m2?: ComplexNumber[] | null
+  negative_ion_storage_response_F_m2?: ComplexNumber[] | null
+  net_charge_storage_response_F_m2?: ComplexNumber[] | null
+}
+
+export interface IonAwareFrequencyPerturbationAssessment {
+  frequency_Hz: number
+  coarse_factor: number
+  fine_factor: number
+  impedance_magnitude_relative_change: number
+  impedance_phase_change_deg: number
+  passed: boolean
+}
+
+export interface IonAwarePerturbationStepAssessment {
+  coarse_factor: number
+  fine_factor: number
+  max_impedance_magnitude_relative_change: number
+  max_impedance_phase_change_deg: number
+  passed: boolean
+  frequency_assessments: IonAwareFrequencyPerturbationAssessment[]
+}
+
+export interface IonAwareFrequencyPointCertificate {
+  frequency_Hz: number
+  numerically_certified: boolean
+  max_relative_face_spread: number
+  reciprocal_condition: number
+  backward_error: number
+  positive_ion_inventory_response_relative: number
+  negative_ion_inventory_response_relative: number
+  current_decomposition_relative_error: number
+  electron_storage_response_F_m2: ComplexNumber
+  hole_storage_response_F_m2: ComplexNumber
+  positive_ion_storage_response_F_m2: ComplexNumber
+  negative_ion_storage_response_F_m2: ComplexNumber | null
+  net_charge_storage_response_F_m2: ComplexNumber
+  perturbation_assessments: IonAwareFrequencyPerturbationAssessment[]
+  reasons: string[]
+}
+
+export interface IonAwareImpedanceEvidence {
+  dc_protocol: Record<string, unknown>
+  frequency_protocol: Record<string, unknown>
+  dc_state_certificate: Record<string, unknown>
+  dc_protocol_sha256: string
+  dc_state_sha256: string
+  frequency_protocol_sha256: string
+  dc_total_settle_time_s: number
+  dc_consecutive_certified_steps: number
+  dc_solver_rtol: number
+  dc_solver_atol: number | Record<string, unknown>
+  numerically_certified: boolean
+  thermodynamically_certified: boolean
+  frequency_window_certified: boolean
+  certified: boolean
+  max_relative_face_spread: number
+  max_backward_error: number
+  minimum_reciprocal_condition: number
+  max_mass_diagonal_relative_error: number
+  max_mass_off_diagonal_relative: number
+  max_ion_inventory_response_relative: number
+  max_current_decomposition_relative_error: number
+  perturbation_assessments: IonAwarePerturbationStepAssessment[]
+  frequency_point_certificates: IonAwareFrequencyPointCertificate[]
+  reasons: string[]
 }
 
 export interface ISResult {
@@ -336,6 +412,7 @@ export interface ISResult {
   frequency_window?: FrequencyWindowAssessment | null
   grid_assessment?: GridAssessment | null
   diagnostics?: ImpedanceDiagnostics | null
+  ion_aware_evidence?: IonAwareImpedanceEvidence | null
 }
 
 export interface DegResult {
@@ -514,7 +591,10 @@ export interface ISParams {
     | 'transient_ion_aware'
     | 'quasi_fermi_frequency'
     | 'qf_frequency_ion_free'
+    | 'ion_aware_frequency'
+    | 'ion_aware_frequency_certified'
   require_operating_point_certificate?: boolean
+  require_frequency_window_certificate?: boolean
 }
 
 export interface DegParams {

@@ -34,11 +34,13 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
           <span>Engine</span>
           <select id="imp-method">
             <option value="transient_ion_aware">Transient, ion-aware</option>
+            <option value="ion_aware_frequency_certified">Certified frequency, ion-aware</option>
             <option value="qf_frequency_ion_free">QF frequency, ion-free</option>
           </select>
         </label>
         ${checkField('imp-illuminated', 'Illuminated', true)}
-        ${checkField('imp-strict', 'Require DC certificate', false)}
+        ${checkField('imp-strict', 'Require contact certificate', false)}
+        ${checkField('imp-window-strict', 'Require ionic frequency coverage', true)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-imp">Run Impedance Sweep</button>
@@ -52,6 +54,32 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
     container.querySelector<HTMLDivElement>('#progress-imp')!,
   )
   const btn = container.querySelector<HTMLButtonElement>('#btn-imp')!
+  const methodSelect = container.querySelector<HTMLSelectElement>('#imp-method')!
+  const syncMethodControls = (): void => {
+    const transient = methodSelect.value === 'transient_ion_aware'
+    for (const id of ['imp-cycles', 'imp-extract', 'imp-ppc', 'imp-dc-settle']) {
+      const input = container.querySelector<HTMLInputElement>(`#${id}`)
+      if (input) input.disabled = !transient
+    }
+    const windowStrict = container.querySelector<HTMLInputElement>(
+      '#imp-window-strict',
+    )
+    if (windowStrict) {
+      windowStrict.disabled = methodSelect.value !== 'ion_aware_frequency_certified'
+    }
+  }
+  methodSelect.addEventListener('change', () => {
+    const certified = methodSelect.value === 'ion_aware_frequency_certified'
+    const presets: Record<string, number> = certified
+      ? { 'imp-N': 60, 'imp-nfreq': 29, 'imp-fmin': 1e-6, 'imp-fmax': 10 }
+      : { 'imp-N': 40, 'imp-nfreq': 15, 'imp-fmin': 10, 'imp-fmax': 1e5 }
+    for (const [id, value] of Object.entries(presets)) {
+      const input = container.querySelector<HTMLInputElement>(`#${id}`)
+      if (input) input.value = String(value)
+    }
+    syncMethodControls()
+  })
+  syncMethodControls()
 
   btn.addEventListener('click', () => {
     const active = opts.getActiveDevice()
@@ -70,7 +98,9 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
     )?.value
     const method = selectedMethod === 'qf_frequency_ion_free'
       ? 'qf_frequency_ion_free' as const
-      : 'transient_ion_aware' as const
+      : selectedMethod === 'transient_ion_aware'
+        ? 'transient_ion_aware' as const
+        : 'ion_aware_frequency_certified' as const
     const params = {
       N_grid: Math.max(3, Math.round(readNum('imp-N', 40))),
       V_dc: readNum('imp-Vdc', 0.9),
@@ -88,6 +118,10 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
       illuminated: readCheck('imp-illuminated', true),
       method,
       require_operating_point_certificate: readCheck('imp-strict', false),
+      require_frequency_window_certificate: (
+        method === 'ion_aware_frequency_certified'
+        && readCheck('imp-window-strict', true)
+      ),
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

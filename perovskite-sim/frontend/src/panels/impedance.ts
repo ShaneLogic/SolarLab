@@ -30,11 +30,13 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
           <span>Engine</span>
           <select id="is-method">
             <option value="transient_ion_aware">Transient, ion-aware</option>
+            <option value="ion_aware_frequency_certified">Certified frequency, ion-aware</option>
             <option value="qf_frequency_ion_free">QF frequency, ion-free</option>
           </select>
         </label>
         ${checkField('is-illuminated', 'Illuminated', true)}
-        ${checkField('is-strict', 'Require DC certificate', false)}
+        ${checkField('is-strict', 'Require contact certificate', false)}
+        ${checkField('is-window-strict', 'Require ionic frequency coverage', true)}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-is">Run Impedance</button>
@@ -53,6 +55,31 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
   const progressBar: ProgressBarHandle = createProgressBar(progressEl)
 
   const btn = root.querySelector<HTMLButtonElement>('#btn-is')!
+  const methodSelect = root.querySelector<HTMLSelectElement>('#is-method')!
+  const syncMethodControls = (): void => {
+    const transient = methodSelect.value === 'transient_ion_aware'
+    for (const id of ['is-cycles', 'is-extract', 'is-ppc', 'is-dc-settle']) {
+      const input = root.querySelector<HTMLInputElement>(`#${id}`)
+      if (input) input.disabled = !transient
+    }
+    const windowStrict = root.querySelector<HTMLInputElement>('#is-window-strict')
+    if (windowStrict) {
+      windowStrict.disabled = methodSelect.value !== 'ion_aware_frequency_certified'
+    }
+  }
+  methodSelect.addEventListener('change', () => {
+    const certified = methodSelect.value === 'ion_aware_frequency_certified'
+    const presets: Record<string, number> = certified
+      ? { 'is-N': 60, 'is-nf': 29, 'is-fmin': 1e-6, 'is-fmax': 10 }
+      : { 'is-N': 40, 'is-nf': 15, 'is-fmin': 10, 'is-fmax': 1e5 }
+    for (const [id, value] of Object.entries(presets)) {
+      const input = root.querySelector<HTMLInputElement>(`#${id}`)
+      if (input) input.value = String(value)
+    }
+    syncMethodControls()
+  })
+  syncMethodControls()
+
   btn.addEventListener('click', async () => {
     btn.disabled = true
     progressBar.reset()
@@ -66,7 +93,9 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
       )?.value
       const method = selectedMethod === 'qf_frequency_ion_free'
         ? 'qf_frequency_ion_free' as const
-        : 'transient_ion_aware' as const
+        : selectedMethod === 'transient_ion_aware'
+          ? 'transient_ion_aware' as const
+          : 'ion_aware_frequency_certified' as const
       const params = {
         N_grid: Math.max(3, Math.round(readNum('is-N', 40))),
         V_dc: readNum('is-Vdc', 0.9),
@@ -84,6 +113,10 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
         illuminated: readCheck('is-illuminated', true),
         method,
         require_operating_point_certificate: readCheck('is-strict', false),
+        require_frequency_window_certificate: (
+          method === 'ion_aware_frequency_certified'
+          && readCheck('is-window-strict', true)
+        ),
       }
       const jobId = await startJob('impedance', device, params)
       setStatus('status-is', 'Running impedance spectroscopy…')

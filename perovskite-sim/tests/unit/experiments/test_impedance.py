@@ -334,6 +334,194 @@ def test_public_qf_result_preserves_frequency_domain_diagnostics(monkeypatch):
     assert np.array_equal(result.diagnostics.admittance_faces_S_m2, fake.Y_faces)
 
 
+def test_public_ion_aware_frequency_route_preserves_certification_evidence(
+    monkeypatch,
+):
+    import perovskite_sim.experiments.impedance as impedance_module
+    import perovskite_sim.experiments.ion_aware_dc as dc_module
+    import perovskite_sim.experiments.ion_aware_impedance as ion_module
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    frequencies = np.array([1.0e-3, 1.0])
+    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    contact = SimpleNamespace(status="compatible_unverified", certified=False)
+    dc_certificate = SimpleNamespace(
+        certified=False,
+        numerically_certified=True,
+        thermodynamically_certified=False,
+        carrier_area_rate_A_m2=1.0e-4,
+        ion_area_rate_A_m2=1.0e-8,
+        max_ionic_face_current_A_m2=2.0e-9,
+        dc_face_current_spread_A_m2=3.0e-4,
+        contact_thermodynamics=contact,
+        reasons=("contact_thermodynamics_compatible_unverified",),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_solve(x, _stack, protocol, **kwargs):
+        captured["dc_kwargs"] = kwargs
+        return SimpleNamespace(
+            x=x,
+            protocol=protocol,
+            protocol_hash="a" * 64,
+            state_certificate=dc_certificate,
+            total_settle_time_s=32.0,
+            consecutive_certified_steps=2,
+        )
+
+    frequency_protocol = SimpleNamespace(
+        dc_state_sha256="b" * 64,
+        protocol_hash="c" * 64,
+    )
+
+    def fake_build_frequency(dc_state, values, **kwargs):
+        captured["frequency_values"] = np.asarray(values)
+        captured["frequency_build_kwargs"] = kwargs
+        return frequency_protocol
+
+    face_values = np.ones((2, 3), dtype=complex)
+    reference = SimpleNamespace(
+        max_relative_face_spread=np.array([1.0e-8, 2.0e-8]),
+        reciprocal_condition=np.array([1.0e-3, 2.0e-3]),
+        backward_error=np.array([1.0e-13, 2.0e-13]),
+    )
+    certificate = SimpleNamespace(
+        numerically_certified=True,
+        thermodynamically_certified=False,
+        frequency_window_certified=True,
+        certified=False,
+        max_relative_face_spread=2.0e-8,
+        max_backward_error=2.0e-13,
+        minimum_reciprocal_condition=1.0e-3,
+        max_mass_diagonal_relative_error=2.0e-11,
+        max_mass_off_diagonal_relative=0.0,
+        max_ion_inventory_response_relative=3.0e-13,
+        max_current_decomposition_relative_error=4.0e-15,
+        perturbation_assessments=(SimpleNamespace(passed=True),),
+        frequency_point_certificates=(
+            SimpleNamespace(frequency_Hz=1.0e-3, numerically_certified=True),
+            SimpleNamespace(frequency_Hz=1.0, numerically_certified=True),
+        ),
+        reasons=(),
+    )
+    frequency_window = SimpleNamespace(
+        has_mobile_ions=True,
+        ionic_branch_covered=True,
+        warnings=(),
+    )
+
+    def fake_run_frequency(*args, **kwargs):
+        captured["frequency_run_kwargs"] = kwargs
+        return SimpleNamespace(
+            frequencies=frequencies,
+            Z=np.array([1.0 - 2.0j, 2.0 - 3.0j]),
+            Y=np.array([0.2 + 0.4j, 0.1 + 0.2j]),
+            Y_faces=face_values,
+            reference_linearization=reference,
+            frequency_window=frequency_window,
+            certificate=certificate,
+            electron_storage_response_F_m2=np.array([1.0e-5, 2.0e-5]),
+            hole_storage_response_F_m2=np.array([2.0e-5, 3.0e-5]),
+            conduction_admittance_faces_S_m2=face_values,
+            displacement_admittance_faces_S_m2=2.0 * face_values,
+            electron_admittance_faces_S_m2=3.0 * face_values,
+            hole_admittance_faces_S_m2=4.0 * face_values,
+            positive_ion_admittance_faces_S_m2=5.0 * face_values,
+            negative_ion_admittance_faces_S_m2=None,
+            positive_ion_storage_response_F_m2=np.array([3.0e-5, 4.0e-5]),
+            negative_ion_storage_response_F_m2=None,
+            net_charge_storage_response_F_m2=np.array([4.0e-5, 5.0e-5]),
+        )
+
+    monkeypatch.setattr(dc_module, "solve_ion_aware_dc", fake_solve)
+    monkeypatch.setattr(
+        ion_module,
+        "build_ion_aware_impedance_protocol",
+        fake_build_frequency,
+    )
+    monkeypatch.setattr(
+        ion_module,
+        "run_ion_aware_impedance",
+        fake_run_frequency,
+    )
+    monkeypatch.setattr(
+        impedance_module,
+        "assess_impedance_frequency_window",
+        lambda *_args, **_kwargs: frequency_window,
+    )
+
+    result = impedance_module.run_impedance(
+        stack,
+        frequencies,
+        N_grid=12,
+        method="ion_aware_frequency",
+        require_frequency_window_certificate=True,
+    )
+
+    assert result.protocol.method == "ion_aware_frequency_certified"
+    assert result.protocol.dc_settle_time is None
+    assert result.protocol.n_cycles is None
+    assert result.operating_point.source == "ion_aware_residual_certified"
+    assert result.operating_point.numerically_certified
+    assert not result.operating_point.thermodynamically_certified
+    assert result.ion_aware_evidence.dc_protocol_sha256 == "a" * 64
+    assert result.ion_aware_evidence.dc_state_sha256 == "b" * 64
+    assert result.ion_aware_evidence.frequency_protocol_sha256 == "c" * 64
+    assert result.ion_aware_evidence.numerically_certified
+    assert result.ion_aware_evidence.frequency_window_certified
+    assert not result.ion_aware_evidence.certified
+    assert len(result.ion_aware_evidence.frequency_point_certificates) == 2
+    assert isinstance(
+        captured["dc_kwargs"]["atol"],
+        impedance_module.ComponentwiseAtol,
+    )
+    assert captured["frequency_run_kwargs"][
+        "require_frequency_window_certificate"
+    ] is True
+    np.testing.assert_array_equal(
+        result.diagnostics.positive_ion_admittance_faces_S_m2,
+        5.0 * face_values,
+    )
+
+
+def test_ion_aware_frequency_protocol_records_residual_dc_history():
+    from perovskite_sim.experiments.impedance import (
+        build_impedance_experiment_protocol,
+    )
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    protocol = build_impedance_experiment_protocol(
+        load_device_from_yaml("configs/ionmonger_benchmark.yaml"),
+        np.array([1.0e-3, 1.0]),
+        method="ion_aware_frequency_certified",
+    )
+
+    assert protocol.initial_state_source == "dark_equilibrium"
+    assert protocol.dc_settle.kind == "residual_certified"
+    assert protocol.ac_excitation.cycles is None
+    assert [step.phase for step in protocol.illumination_history] == [
+        "residual_certified_ion_aware_dc",
+        "frequency_domain_ion_aware_linear_response",
+    ]
+
+
+def test_public_ion_aware_frequency_route_rejects_ion_free_device():
+    from perovskite_sim.experiments.impedance import (
+        ImpedanceCapabilityError,
+        run_impedance,
+    )
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    with pytest.raises(ImpedanceCapabilityError, match="mobile-ion"):
+        run_impedance(
+            load_device_from_yaml("configs/cSi_homojunction.yaml"),
+            np.array([1.0e3]),
+            N_grid=200,
+            illuminated=False,
+            method="ion_aware_frequency_certified",
+        )
+
+
 def test_run_impedance_uses_passive_capacitive_sign_convention():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml

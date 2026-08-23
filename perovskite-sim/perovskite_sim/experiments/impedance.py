@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import numpy as np
 
@@ -25,7 +25,7 @@ from perovskite_sim.solver.mol import (
     run_transient,
 )
 from perovskite_sim.solver.newton import solve_equilibrium
-from perovskite_sim.solver.tolerances import AbsoluteTolerance
+from perovskite_sim.solver.tolerances import AbsoluteTolerance, ComponentwiseAtol
 from perovskite_sim.experiments.protocol import (
     ACExcitation,
     DCSettleCriterion,
@@ -56,6 +56,8 @@ _IMPEDANCE_METHOD_ALIASES = {
     "transient_ion_aware": "transient_ion_aware",
     "quasi_fermi_frequency": "qf_frequency_ion_free",
     "qf_frequency_ion_free": "qf_frequency_ion_free",
+    "ion_aware_frequency": "ion_aware_frequency_certified",
+    "ion_aware_frequency_certified": "ion_aware_frequency_certified",
 }
 
 # Backward-compatible public exports; implementation lives in the shared
@@ -72,7 +74,11 @@ assess_impedance_frequency_window = (
 class ImpedanceProtocol:
     """The bias history and excitation that define an impedance result."""
 
-    method: Literal["transient_ion_aware", "qf_frequency_ion_free"]
+    method: Literal[
+        "transient_ion_aware",
+        "qf_frequency_ion_free",
+        "ion_aware_frequency_certified",
+    ]
     V_dc: float
     delta_V: float
     illuminated: bool
@@ -107,6 +113,7 @@ class OperatingPointCertificate:
         "finite_time_preconditioned",
         "dark_equilibrium",
         "qf_residual_certified",
+        "ion_aware_residual_certified",
     ]
     carrier_area_rate_A_m2: float
     ion_area_rate_A_m2: float
@@ -131,6 +138,45 @@ class ImpedanceDiagnostics:
     backward_error: np.ndarray | None = None
     electron_storage_response_F_m2: np.ndarray | None = None
     hole_storage_response_F_m2: np.ndarray | None = None
+    conduction_admittance_faces_S_m2: np.ndarray | None = None
+    displacement_admittance_faces_S_m2: np.ndarray | None = None
+    electron_admittance_faces_S_m2: np.ndarray | None = None
+    hole_admittance_faces_S_m2: np.ndarray | None = None
+    positive_ion_admittance_faces_S_m2: np.ndarray | None = None
+    negative_ion_admittance_faces_S_m2: np.ndarray | None = None
+    positive_ion_storage_response_F_m2: np.ndarray | None = None
+    negative_ion_storage_response_F_m2: np.ndarray | None = None
+    net_charge_storage_response_F_m2: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class IonAwareImpedanceEvidence:
+    """Exact DC identity and graded evidence for the ion-aware engine."""
+
+    dc_protocol: Any
+    frequency_protocol: Any
+    dc_state_certificate: Any
+    dc_protocol_sha256: str
+    dc_state_sha256: str
+    frequency_protocol_sha256: str
+    dc_total_settle_time_s: float
+    dc_consecutive_certified_steps: int
+    dc_solver_rtol: float
+    dc_solver_atol: Any
+    numerically_certified: bool
+    thermodynamically_certified: bool
+    frequency_window_certified: bool
+    certified: bool
+    max_relative_face_spread: float
+    max_backward_error: float
+    minimum_reciprocal_condition: float
+    max_mass_diagonal_relative_error: float
+    max_mass_off_diagonal_relative: float
+    max_ion_inventory_response_relative: float
+    max_current_decomposition_relative_error: float
+    perturbation_assessments: tuple[Any, ...]
+    frequency_point_certificates: tuple[Any, ...]
+    reasons: tuple[str, ...]
 
 
 class ImpedanceCertificationError(RuntimeError):
@@ -150,6 +196,7 @@ class ImpedanceResult:
     frequency_window: FrequencyWindowAssessment | None = None
     grid_assessment: GridAssessment | None = None
     diagnostics: ImpedanceDiagnostics | None = None
+    ion_aware_evidence: IonAwareImpedanceEvidence | None = None
 
 
 def extract_impedance(
@@ -434,6 +481,45 @@ def _qf_operating_point_certificate(
     )
 
 
+def _ion_aware_operating_point_certificate(
+    dc_state: Any,
+) -> OperatingPointCertificate:
+    """Project the dedicated ion-aware DC certificate onto the public schema."""
+
+    state_certificate = dc_state.state_certificate
+    dc_protocol = dc_state.protocol
+    return OperatingPointCertificate(
+        certified=bool(state_certificate.certified),
+        numerically_certified=bool(state_certificate.numerically_certified),
+        thermodynamically_certified=bool(
+            state_certificate.thermodynamically_certified
+        ),
+        source="ion_aware_residual_certified",
+        carrier_area_rate_A_m2=float(
+            state_certificate.carrier_area_rate_A_m2
+        ),
+        ion_area_rate_A_m2=float(state_certificate.ion_area_rate_A_m2),
+        max_ionic_face_current_A_m2=float(
+            state_certificate.max_ionic_face_current_A_m2
+        ),
+        dc_face_current_spread_A_m2=float(
+            state_certificate.dc_face_current_spread_A_m2
+        ),
+        carrier_area_rate_limit_A_m2=float(
+            dc_protocol.max_carrier_area_rate_A_m2
+        ),
+        ion_area_rate_limit_A_m2=float(dc_protocol.max_ion_area_rate_A_m2),
+        ionic_face_current_limit_A_m2=float(
+            dc_protocol.max_ionic_face_current_A_m2
+        ),
+        dc_face_current_spread_limit_A_m2=float(
+            dc_protocol.max_dc_face_current_spread_A_m2
+        ),
+        contact_thermodynamics=state_certificate.contact_thermodynamics,
+        reasons=tuple(state_certificate.reasons),
+    )
+
+
 def build_impedance_experiment_protocol(
     stack: DeviceStack,
     frequencies: np.ndarray,
@@ -528,7 +614,7 @@ def build_impedance_experiment_protocol(
             extraction_cycles=extraction_cycles,
             points_per_cycle=ppc,
         )
-    else:
+    elif canonical_method == "qf_frequency_ion_free":
         initial_state = "qf_dc_candidate"
         soak = None
         condition = "baseline" if illuminated else "dark"
@@ -551,6 +637,39 @@ def build_impedance_experiment_protocol(
             ),
         )
         settle = DCSettleCriterion(kind="residual_certified")
+        ac = ACExcitation(
+            dc_bias_V=float(V_dc),
+            amplitude_V=float(delta_V),
+        )
+    else:
+        initial_state = "dark_equilibrium"
+        soak = None
+        condition = "baseline" if illuminated else "dark"
+        history = (
+            IlluminationStep(
+                phase="residual_certified_ion_aware_dc",
+                condition=condition,
+                intensity_suns=1.0 if illuminated else None,
+                source_reference=(
+                    "stack_baseline_generation" if illuminated else None
+                ),
+            ),
+            IlluminationStep(
+                phase="frequency_domain_ion_aware_linear_response",
+                condition=condition,
+                intensity_suns=1.0 if illuminated else None,
+                source_reference=(
+                    "stack_baseline_generation" if illuminated else None
+                ),
+            ),
+        )
+        settle = DCSettleCriterion(
+            kind="residual_certified",
+            max_carrier_area_rate_A_m2=max_carrier_area_rate_A_m2,
+            max_ion_area_rate_A_m2=max_ion_area_rate_A_m2,
+            max_ionic_face_current_A_m2=max_ionic_face_current_A_m2,
+            max_face_current_spread_A_m2=max_dc_face_spread_A_m2,
+        )
         ac = ACExcitation(
             dc_bias_V=float(V_dc),
             amplitude_V=float(delta_V),
@@ -596,6 +715,7 @@ def run_impedance(
     method: str = "transient",
     dc_settle_time: float = 1e-3,
     require_operating_point_certificate: bool = False,
+    require_frequency_window_certificate: bool = False,
     max_carrier_area_rate_A_m2: float = DEFAULT_MAX_CARRIER_AREA_RATE_A_M2,
     max_ion_area_rate_A_m2: float = DEFAULT_MAX_ION_AREA_RATE_A_M2,
     max_ionic_face_current_A_m2: float = DEFAULT_MAX_ION_AREA_RATE_A_M2,
@@ -603,6 +723,7 @@ def run_impedance(
     points_per_cycle: int = 40,
     experiment_protocol: ExperimentProtocol | None = None,
     protocol_mode: ProtocolMode = "compatibility",
+    ion_aware_dc_atol: AbsoluteTolerance | None = None,
 ) -> ImpedanceResult:
     """Run small-signal impedance at each frequency.
 
@@ -629,9 +750,11 @@ def run_impedance(
         thick-layer Debye-resolution guard. Such a run is not physically
         certifiable.
     method : {"transient", "transient_ion_aware",
-              "quasi_fermi_frequency", "qf_frequency_ion_free"}
-        The aliases resolve to an explicit ion-aware transient protocol or an
-        ion-free residual-certified QF frequency-domain protocol.
+              "quasi_fermi_frequency", "qf_frequency_ion_free",
+              "ion_aware_frequency", "ion_aware_frequency_certified"}
+        The aliases resolve to an explicit ion-aware transient protocol, an
+        ion-free residual-certified QF frequency-domain protocol, or the
+        residual-certified mobile-ion frequency-domain reference engine.
     dc_settle_time : float, default 1e-3
         Finite DC preconditioning interval used by the transient engine. It is
         part of the returned protocol and is not itself a steady-state proof.
@@ -639,6 +762,13 @@ def run_impedance(
         Fail closed unless the DC residual/current and contact-thermodynamic
         gates all pass. The default preserves compatibility while publishing
         the complete certificate in ``ImpedanceResult``.
+    require_frequency_window_certificate : bool, default False
+        For the certified ion-aware frequency engine, fail closed unless the
+        requested samples densely cover its model-derived ionic timescales.
+    ion_aware_dc_atol : float or ComponentwiseAtol, optional
+        Absolute-tolerance policy for the certified ion-aware DC ladder. The
+        componentwise density policy is used when omitted. The legacy
+        transient engine continues to use ``atol`` unchanged.
     """
     if len(frequencies) == 0:
         raise ValueError("frequencies must be non-empty")
@@ -674,8 +804,8 @@ def run_impedance(
     n_extract = int(n_extract)
     if method not in _IMPEDANCE_METHOD_ALIASES:
         raise ValueError(
-            "method must select the transient ion-aware or QF frequency "
-            "ion-free engine, got "
+            "method must select the transient ion-aware, QF frequency "
+            "ion-free, or certified ion-aware frequency engine, got "
             f"{method!r}"
         )
     canonical_method = _IMPEDANCE_METHOD_ALIASES[method]
@@ -769,6 +899,183 @@ def run_impedance(
     frequency_window = assess_impedance_frequency_window(
         x, mat, np.asarray(frequencies, dtype=float),
     )
+    if canonical_method == "ion_aware_frequency_certified":
+        from perovskite_sim.experiments.ion_aware_dc import (
+            IonAwareDCCapabilityError,
+            IonAwareDCCertificationError,
+            IonAwareDCSolverError,
+            build_ion_aware_dc_protocol,
+            solve_ion_aware_dc,
+        )
+        from perovskite_sim.experiments.ion_aware_impedance import (
+            IonAwareImpedanceCapabilityError,
+            IonAwareImpedanceCertificationError,
+            IonAwareImpedanceError,
+            build_ion_aware_impedance_protocol,
+            run_ion_aware_impedance,
+        )
+
+        dc_protocol = build_ion_aware_dc_protocol(
+            stack,
+            V_dc=V_dc,
+            illuminated=illuminated,
+            max_carrier_area_rate_A_m2=max_carrier_area_rate_A_m2,
+            max_ion_area_rate_A_m2=max_ion_area_rate_A_m2,
+            max_ionic_face_current_A_m2=max_ionic_face_current_A_m2,
+            max_dc_face_current_spread_A_m2=max_dc_face_spread_A_m2,
+        )
+        effective_dc_atol = (
+            ComponentwiseAtol()
+            if ion_aware_dc_atol is None
+            else ion_aware_dc_atol
+        )
+        try:
+            dc_state = solve_ion_aware_dc(
+                x,
+                stack,
+                dc_protocol,
+                mat=mat,
+                rtol=rtol,
+                atol=effective_dc_atol,
+                require_numerical_certificate=True,
+                require_contact_certificate=False,
+                progress=progress,
+            )
+        except IonAwareDCCapabilityError as exc:
+            raise ImpedanceCapabilityError(str(exc)) from exc
+        except (IonAwareDCCertificationError, IonAwareDCSolverError) as exc:
+            raise ImpedanceCertificationError(str(exc)) from exc
+
+        operating_point = _ion_aware_operating_point_certificate(dc_state)
+        if require_operating_point_certificate and not operating_point.certified:
+            raise ImpedanceCertificationError(
+                "impedance DC operating point is uncertified: "
+                + ", ".join(operating_point.reasons)
+            )
+
+        frequency_protocol = build_ion_aware_impedance_protocol(
+            dc_state,
+            np.asarray(frequencies, dtype=float),
+            delta_V=delta_V,
+        )
+        try:
+            ion_result = run_ion_aware_impedance(
+                x,
+                stack,
+                frequency_protocol,
+                dc_state=dc_state,
+                mat=mat,
+                require_numerical_certificate=True,
+                require_contact_certificate=False,
+                require_frequency_window_certificate=(
+                    require_frequency_window_certificate
+                ),
+                progress=progress,
+            )
+        except IonAwareImpedanceCapabilityError as exc:
+            raise ImpedanceCapabilityError(str(exc)) from exc
+        except (
+            IonAwareImpedanceCertificationError,
+            IonAwareImpedanceError,
+        ) as exc:
+            raise ImpedanceCertificationError(str(exc)) from exc
+
+        reference = ion_result.reference_linearization
+        certificate = ion_result.certificate
+        return ImpedanceResult(
+            frequencies=ion_result.frequencies,
+            Z=ion_result.Z,
+            protocol=protocol,
+            operating_point=operating_point,
+            frequency_window=ion_result.frequency_window,
+            grid_assessment=grid_assessment,
+            diagnostics=ImpedanceDiagnostics(
+                admittance_S_m2=ion_result.Y,
+                admittance_faces_S_m2=ion_result.Y_faces,
+                max_relative_face_spread=reference.max_relative_face_spread,
+                reciprocal_condition=reference.reciprocal_condition,
+                backward_error=reference.backward_error,
+                electron_storage_response_F_m2=(
+                    ion_result.electron_storage_response_F_m2
+                ),
+                hole_storage_response_F_m2=(
+                    ion_result.hole_storage_response_F_m2
+                ),
+                conduction_admittance_faces_S_m2=(
+                    ion_result.conduction_admittance_faces_S_m2
+                ),
+                displacement_admittance_faces_S_m2=(
+                    ion_result.displacement_admittance_faces_S_m2
+                ),
+                electron_admittance_faces_S_m2=(
+                    ion_result.electron_admittance_faces_S_m2
+                ),
+                hole_admittance_faces_S_m2=(
+                    ion_result.hole_admittance_faces_S_m2
+                ),
+                positive_ion_admittance_faces_S_m2=(
+                    ion_result.positive_ion_admittance_faces_S_m2
+                ),
+                negative_ion_admittance_faces_S_m2=(
+                    ion_result.negative_ion_admittance_faces_S_m2
+                ),
+                positive_ion_storage_response_F_m2=(
+                    ion_result.positive_ion_storage_response_F_m2
+                ),
+                negative_ion_storage_response_F_m2=(
+                    ion_result.negative_ion_storage_response_F_m2
+                ),
+                net_charge_storage_response_F_m2=(
+                    ion_result.net_charge_storage_response_F_m2
+                ),
+            ),
+            ion_aware_evidence=IonAwareImpedanceEvidence(
+                dc_protocol=dc_protocol,
+                frequency_protocol=frequency_protocol,
+                dc_state_certificate=dc_state.state_certificate,
+                dc_protocol_sha256=dc_state.protocol_hash,
+                dc_state_sha256=frequency_protocol.dc_state_sha256,
+                frequency_protocol_sha256=frequency_protocol.protocol_hash,
+                dc_total_settle_time_s=float(dc_state.total_settle_time_s),
+                dc_consecutive_certified_steps=int(
+                    dc_state.consecutive_certified_steps
+                ),
+                dc_solver_rtol=float(rtol),
+                dc_solver_atol=effective_dc_atol,
+                numerically_certified=bool(certificate.numerically_certified),
+                thermodynamically_certified=bool(
+                    certificate.thermodynamically_certified
+                ),
+                frequency_window_certified=bool(
+                    certificate.frequency_window_certified
+                ),
+                certified=bool(certificate.certified),
+                max_relative_face_spread=float(
+                    certificate.max_relative_face_spread
+                ),
+                max_backward_error=float(certificate.max_backward_error),
+                minimum_reciprocal_condition=float(
+                    certificate.minimum_reciprocal_condition
+                ),
+                max_mass_diagonal_relative_error=float(
+                    certificate.max_mass_diagonal_relative_error
+                ),
+                max_mass_off_diagonal_relative=float(
+                    certificate.max_mass_off_diagonal_relative
+                ),
+                max_ion_inventory_response_relative=float(
+                    certificate.max_ion_inventory_response_relative
+                ),
+                max_current_decomposition_relative_error=float(
+                    certificate.max_current_decomposition_relative_error
+                ),
+                perturbation_assessments=certificate.perturbation_assessments,
+                frequency_point_certificates=(
+                    certificate.frequency_point_certificates
+                ),
+                reasons=tuple(certificate.reasons),
+            ),
+        )
     if canonical_method == "qf_frequency_ion_free":
         from perovskite_sim.experiments.quasi_fermi_impedance import (
             run_quasi_fermi_impedance,

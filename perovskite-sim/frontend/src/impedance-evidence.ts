@@ -19,11 +19,15 @@ function hasFrequencyWindowCertificate(result: ISResult): boolean {
 
 export function collectImpedanceEvidenceWarnings(result: ISResult): string[] {
   const warnings: string[] = []
+  const requiresIonAwareEvidence = (
+    result.protocol?.method === 'ion_aware_frequency_certified'
+  )
   const completeEvidence = Boolean(
     result.protocol
       && result.operating_point
       && hasFrequencyWindowCertificate(result)
-      && result.grid_assessment,
+      && result.grid_assessment
+      && (!requiresIonAwareEvidence || result.ion_aware_evidence),
   )
 
   if (!completeEvidence) warnings.push(LEGACY_IMPEDANCE_EVIDENCE_WARNING)
@@ -45,6 +49,29 @@ export function collectImpedanceEvidenceWarnings(result: ISResult): string[] {
         ? gridWarnings
         : ['Interface grid uncertified: no grid warning details were returned.']),
     )
+  }
+
+  const ionAware = result.ion_aware_evidence
+  if (ionAware && !ionAware.numerically_certified) {
+    warnings.push(
+      ionAware.reasons.length > 0
+        ? `Ion-aware linearization uncertified: ${ionAware.reasons.join(', ')}`
+        : 'Ion-aware linearization uncertified: no failure reasons were returned.',
+    )
+  }
+  if (ionAware && !ionAware.frequency_window_certified) {
+    warnings.push('Ion-aware frequency window is not certified.')
+  }
+  if (ionAware) {
+    const failedPoints = ionAware.frequency_point_certificates.filter(
+      point => !point.numerically_certified,
+    )
+    if (failedPoints.length > 0) {
+      warnings.push(
+        `${failedPoints.length} of ${ionAware.frequency_point_certificates.length} `
+        + 'frequency points failed numerical certification.',
+      )
+    }
   }
 
   return [...new Set(warnings.filter(Boolean))]
@@ -76,6 +103,7 @@ export function summarizeImpedanceEvidence(result: ISResult): string[] {
   const operatingPoint = result.operating_point
   const frequencyWindow = result.frequency_window
   const grid = result.grid_assessment
+  const ionAware = result.ion_aware_evidence
 
   const protocolSummary = protocol
     ? `Protocol: ${protocol.method}${
@@ -117,5 +145,22 @@ export function summarizeImpedanceEvidence(result: ISResult): string[] {
     }`
     : 'Grid: unclassified'
 
-  return [protocolSummary, operatingPointSummary, frequencySummary, gridSummary]
+  const ionAwareSummary = ionAware
+    ? `Ion-aware engine: ${ionAware.numerically_certified ? 'numerically certified' : 'uncertified'}; `
+      + `${ionAware.frequency_point_certificates.filter(point => point.numerically_certified).length}`
+      + `/${ionAware.frequency_point_certificates.length} frequency points; `
+      + `FD refinement ${ionAware.perturbation_assessments.every(item => item.passed) ? 'passed' : 'failed'}; `
+      + `max face spread ${compactNumber(ionAware.max_relative_face_spread)}; `
+      + `max inventory response ${compactNumber(ionAware.max_ion_inventory_response_relative)}`
+    : protocol?.method === 'ion_aware_frequency_certified'
+      ? 'Ion-aware engine: unclassified'
+      : null
+
+  return [
+    protocolSummary,
+    operatingPointSummary,
+    frequencySummary,
+    gridSummary,
+    ...(ionAwareSummary ? [ionAwareSummary] : []),
+  ]
 }

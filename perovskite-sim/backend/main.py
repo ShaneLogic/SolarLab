@@ -1224,8 +1224,11 @@ class ISRequest(BaseModel):
         "transient_ion_aware",
         "quasi_fermi_frequency",
         "qf_frequency_ion_free",
+        "ion_aware_frequency",
+        "ion_aware_frequency_certified",
     ] = "transient_ion_aware"
     require_operating_point_certificate: bool = False
+    require_frequency_window_certificate: bool = False
     protocol_mode: ProtocolMode = "compatibility"
     experiment_protocol: Optional[dict[str, Any]] = None
 
@@ -1253,6 +1256,9 @@ def run_impedance_api(req: ISRequest):
             dc_settle_time=req.dc_settle_time,
             require_operating_point_certificate=(
                 req.require_operating_point_certificate
+            ),
+            require_frequency_window_certificate=(
+                req.require_frequency_window_certificate
             ),
             experiment_protocol=experiment_protocol,
             protocol_mode=protocol_mode,
@@ -1381,6 +1387,14 @@ def start_job(req: JobRequest):
                 if not isinstance(_strict, str)
                 else _strict.lower() == "true"
             )
+            _window_strict = p.get(
+                "require_frequency_window_certificate", False
+            )
+            require_frequency_window_certificate = (
+                bool(_window_strict)
+                if not isinstance(_window_strict, str)
+                else _window_strict.lower() == "true"
+            )
             freqs = np.logspace(
                 np.log10(float(p.get("f_min", 10.0))),
                 np.log10(float(p.get("f_max", 1e5))),
@@ -1398,6 +1412,9 @@ def start_job(req: JobRequest):
                 method=str(p.get("method", "transient_ion_aware")),
                 dc_settle_time=float(p.get("dc_settle_time", 1e-3)),
                 require_operating_point_certificate=require_certificate,
+                require_frequency_window_certificate=(
+                    require_frequency_window_certificate
+                ),
                 experiment_protocol=experiment_protocol,
                 protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
