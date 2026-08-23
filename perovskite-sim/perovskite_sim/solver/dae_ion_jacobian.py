@@ -1,4 +1,4 @@
-"""Structured analytic Jacobian for the first research DAE slice."""
+"""Structured analytic state Jacobian for the single-positive-ion DAE."""
 
 from __future__ import annotations
 
@@ -8,174 +8,48 @@ import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
 from perovskite_sim.constants import Q
-from perovskite_sim.discretization.fe_operators import (
-    ScharfetterGummelFaceJacobian,
-    sg_fluxes_n_jacobian,
-    sg_fluxes_p_jacobian,
+from perovskite_sim.discretization.fe_operators import ScharfetterGummelFaceJacobian
+from perovskite_sim.physics.ion_migration import (
+    IonFaceFluxJacobian,
+    ion_face_flux_jacobian,
 )
-from perovskite_sim.physics.field_mobility import linearize_field_mobility
 from perovskite_sim.physics.recombination import (
     bulk_srh_denominator,
     total_recombination_derivatives,
 )
-from perovskite_sim.solver.dae import NoIonNoInterfaceDAE
-
-
-class DAEStructuredJacobianCapabilityError(ValueError):
-    """An active closure has no smooth tangent in the first DAE slice."""
+from perovskite_sim.solver.dae_ions import SinglePositiveIonDAE
+from perovskite_sim.solver.dae_jacobian import (
+    DAEStructuredJacobianCapabilityError,
+    build_carrier_face_jacobians,
+)
 
 
 @dataclass(frozen=True, slots=True)
-class DAEStructuredStateJacobian:
-    """Sparse ``dF/dq`` plus its constitutive capability evidence."""
+class SingleIonDAEStructuredStateJacobian:
+    """Sparse ``dF/dq`` and constitutive evidence for the single-ion slice."""
 
     matrix: csr_matrix
     nonzero_count: int
     field_mobility_active: bool
+    ion_steric_diffusion_only: bool
     minimum_bulk_srh_denominator_s_m3: float
     electron_current_faces_A_m2: np.ndarray
     hole_current_faces_A_m2: np.ndarray
+    positive_ion_particle_flux_faces_m2_s: np.ndarray
 
 
-def _with_field_mobility_tangent(
-    local: ScharfetterGummelFaceJacobian,
-    mobility: np.ndarray,
-    field_derivative: np.ndarray,
-    spacing: np.ndarray,
-) -> ScharfetterGummelFaceJacobian:
-    if (
-        mobility.shape != spacing.shape
-        or field_derivative.shape != spacing.shape
-        or not np.all(np.isfinite(mobility))
-        or not np.all(np.isfinite(field_derivative))
-        or np.any(mobility < 0.0)
-        or np.any((mobility == 0.0) & (field_derivative != 0.0))
-    ):
-        raise DAEStructuredJacobianCapabilityError(
-            "field-mobility tangent is not finite and face matched"
-        )
-    potential_left = np.divide(
-        local.flux * field_derivative,
-        mobility * spacing,
-        out=np.zeros_like(mobility),
-        where=mobility > 0.0,
-    )
-    return ScharfetterGummelFaceJacobian(
-        flux=local.flux,
-        density_left_derivative=local.density_left_derivative,
-        density_right_derivative=local.density_right_derivative,
-        potential_left_derivative=(
-            local.potential_left_derivative + potential_left
-        ),
-        potential_right_derivative=(
-            local.potential_right_derivative - potential_left
-        ),
-    )
-
-
-def build_carrier_face_jacobians(
-    model: NoIonNoInterfaceDAE,
-    n: np.ndarray,
-    p: np.ndarray,
-    phi: np.ndarray,
-) -> tuple[ScharfetterGummelFaceJacobian, ScharfetterGummelFaceJacobian]:
-    material = model.material
-    spacing = np.diff(model.grid_m)
-    if not material.has_field_mobility:
-        return (
-            sg_fluxes_n_jacobian(
-                phi + material.chi,
-                n,
-                spacing,
-                material.D_n_face,
-                material.V_T_device,
-            ),
-            sg_fluxes_p_jacobian(
-                phi + material.chi + material.Eg,
-                p,
-                spacing,
-                material.D_p_face,
-                material.V_T_device,
-            ),
-        )
-
-    parameter_arrays = (
-        material.v_sat_n_face,
-        material.v_sat_p_face,
-        material.ct_beta_n_face,
-        material.ct_beta_p_face,
-        material.pf_gamma_n_face,
-        material.pf_gamma_p_face,
-    )
-    if any(value is None for value in parameter_arrays):
-        raise DAEStructuredJacobianCapabilityError(
-            "field-mobility material arrays are incomplete"
-        )
-    electric_field = -np.diff(phi) / spacing
-    electron = linearize_field_mobility(
-        material.D_n_face / material.V_T_device,
-        electric_field,
-        material.v_sat_n_face,
-        material.ct_beta_n_face,
-        material.pf_gamma_n_face,
-    )
-    hole = linearize_field_mobility(
-        material.D_p_face / material.V_T_device,
-        electric_field,
-        material.v_sat_p_face,
-        material.ct_beta_p_face,
-        material.pf_gamma_p_face,
-    )
-    if not np.all(electron.differentiable) or not np.all(hole.differentiable):
-        faces = tuple(
-            np.flatnonzero(~(electron.differentiable & hole.differentiable)).tolist()
-        )
-        raise DAEStructuredJacobianCapabilityError(
-            "field-mobility operating point is non-differentiable on faces "
-            f"{faces}"
-        )
-    electron_local = sg_fluxes_n_jacobian(
-        phi + material.chi,
-        n,
-        spacing,
-        electron.mobility_m2_V_s * material.V_T_device,
-        material.V_T_device,
-    )
-    hole_local = sg_fluxes_p_jacobian(
-        phi + material.chi + material.Eg,
-        p,
-        spacing,
-        hole.mobility_m2_V_s * material.V_T_device,
-        material.V_T_device,
-    )
-    return (
-        _with_field_mobility_tangent(
-            electron_local,
-            electron.mobility_m2_V_s,
-            electron.field_derivative_m3_V2_s,
-            spacing,
-        ),
-        _with_field_mobility_tangent(
-            hole_local,
-            hole.mobility_m2_V_s,
-            hole.field_derivative_m3_V2_s,
-            spacing,
-        ),
-    )
-
-
-def build_structured_state_jacobian(
-    model: NoIonNoInterfaceDAE,
+def build_single_ion_structured_state_jacobian(
+    model: SinglePositiveIonDAE,
     coordinate: np.ndarray,
     derivative: np.ndarray,
-) -> DAEStructuredStateJacobian:
-    """Assemble the exact smooth ``dF/dq`` for the first DAE topology."""
+) -> SingleIonDAEStructuredStateJacobian:
+    """Assemble the exact smooth ``dF/dq`` for the single-ion topology."""
     layout = model.layout
     count = layout.node_count
     rate = np.asarray(derivative, dtype=float)
     if rate.shape != (layout.size,) or not np.all(np.isfinite(rate)):
-        raise ValueError("DAE derivative must be a finite layout-sized vector")
-    n_raw, p_raw, phi = model.physical_fields(coordinate)
+        raise ValueError("single-ion DAE derivative must be finite and layout-sized")
+    n_raw, p_raw, positive_ion, phi = model.physical_fields(coordinate)
     material = model.material
     if material.has_radiative_reabsorption:
         raise DAEStructuredJacobianCapabilityError(
@@ -187,17 +61,31 @@ def build_structured_state_jacobian(
         )
     if material.interface_faces:
         raise DAEStructuredJacobianCapabilityError(
-            "thermionic interface caps are outside the no-interface DAE slice"
+            "thermionic interface caps are outside the single-ion DAE slice"
         )
 
-    # assemble_rhs pins ohmic boundary reservoirs before transport. Keep their
-    # algebraic log coordinates in F, but do not differentiate carrier rates
-    # with respect to values the production RHS discards.
     n = np.array(n_raw, copy=True)
     p = np.array(p_raw, copy=True)
     n[[0, -1]] = (material.n_L, material.n_R)
     p[[0, -1]] = (material.p_L, material.p_R)
     electron_face, hole_face = build_carrier_face_jacobians(model, n, p, phi)
+    ion_face = ion_face_flux_jacobian(
+        phi,
+        positive_ion,
+        np.diff(model.grid_m),
+        material.D_ion_face,
+        material.V_T_device,
+        material.P_lim_face,
+        steric_diffusion_only=material.ion_steric_diffusion_only,
+        P_lim_node=material.P_lim_node,
+        drift_sign=1.0,
+    )
+    if not np.all(ion_face.differentiable_faces):
+        faces = tuple(np.flatnonzero(~ion_face.differentiable_faces).tolist())
+        raise DAEStructuredJacobianCapabilityError(
+            "positive-ion steric law is non-differentiable on faces "
+            f"{faces}"
+        )
 
     denominator = bulk_srh_denominator(
         n,
@@ -237,6 +125,13 @@ def build_structured_state_jacobian(
             "bulk recombination tangent is not finite and node matched"
         )
 
+    ion_coordinate_derivative = model.positive_ion_coordinate_derivative_m3(
+        coordinate
+    )
+    theta = positive_ion / layout.positive_ion_site_limit_m3
+    ion_coordinate_second_derivative = ion_coordinate_derivative * (
+        1.0 - 2.0 * theta
+    )
     rows: list[int] = []
     columns: list[int] = []
     values: list[float] = []
@@ -245,18 +140,16 @@ def build_structured_state_jacobian(
         number = float(value)
         if not np.isfinite(number):
             raise DAEStructuredJacobianCapabilityError(
-                "structured DAE assembly produced a non-finite entry"
+                "single-ion structured DAE assembly produced a non-finite entry"
             )
         if number != 0.0:
             rows.append(row)
             columns.append(column)
             values.append(number)
 
-    # Four ohmic carrier constraints.
     for index in (0, count - 1, count, 2 * count - 1):
         add(index, index, 1.0)
 
-    # Differential storage and local recombination blocks.
     for node in range(1, count - 1):
         electron_row = node
         hole_row = count + node
@@ -277,17 +170,27 @@ def build_structured_state_jacobian(
             add(row, node, dR_dlogn / scale)
             add(row, count + node, dR_dlogp / scale)
 
-    def distribute_face(
+    ion_offset = 2 * count
+    for node in range(count):
+        add(
+            ion_offset + node,
+            ion_offset + node,
+            ion_coordinate_second_derivative[node]
+            * rate[ion_offset + node]
+            / layout.positive_ion_rate_scale_m3_s[node],
+        )
+
+    potential_offset = 3 * count
+
+    def carrier_face_columns(
         face: int,
         local: ScharfetterGummelFaceJacobian,
         density: np.ndarray,
         density_offset: int,
-        *,
-        electron: bool,
-    ) -> None:
-        face_columns: list[tuple[int, float]] = []
+    ) -> list[tuple[int, float]]:
+        result: list[tuple[int, float]] = []
         if 0 < face < count - 1:
-            face_columns.append(
+            result.append(
                 (
                     density_offset + face,
                     local.density_left_derivative[face] * density[face],
@@ -295,25 +198,36 @@ def build_structured_state_jacobian(
             )
         right_node = face + 1
         if 0 < right_node < count - 1:
-            face_columns.append(
+            result.append(
                 (
                     density_offset + right_node,
                     local.density_right_derivative[face] * density[right_node],
                 )
             )
-        face_columns.extend(
+        result.extend(
             (
                 (
-                    2 * count + face,
+                    potential_offset + face,
                     local.potential_left_derivative[face],
                 ),
                 (
-                    2 * count + right_node,
+                    potential_offset + right_node,
                     local.potential_right_derivative[face],
                 ),
             )
         )
+        return result
 
+    def distribute_carrier_face(
+        face: int,
+        local: ScharfetterGummelFaceJacobian,
+        density: np.ndarray,
+        density_offset: int,
+        *,
+        electron: bool,
+    ) -> None:
+        columns = carrier_face_columns(face, local, density, density_offset)
+        right_node = face + 1
         if 0 < face < count - 1:
             row = face if electron else count + face
             scale = (
@@ -324,7 +238,7 @@ def build_structured_state_jacobian(
             coefficient = (-1.0 if electron else 1.0) / (
                 Q * material.dx_cell[face] * scale
             )
-            for column, tangent in face_columns:
+            for column, tangent in columns:
                 add(row, column, coefficient * tangent)
         if 0 < right_node < count - 1:
             row = right_node if electron else count + right_node
@@ -336,15 +250,54 @@ def build_structured_state_jacobian(
             coefficient = (1.0 if electron else -1.0) / (
                 Q * material.dx_cell[right_node] * scale
             )
-            for column, tangent in face_columns:
+            for column, tangent in columns:
                 add(row, column, coefficient * tangent)
 
     for face in range(count - 1):
-        distribute_face(face, electron_face, n, 0, electron=True)
-        distribute_face(face, hole_face, p, count, electron=False)
+        distribute_carrier_face(face, electron_face, n, 0, electron=True)
+        distribute_carrier_face(face, hole_face, p, count, electron=False)
 
-    # Exact finite-volume Poisson rows.
-    potential_offset = 2 * count
+    def ion_face_columns(
+        face: int,
+        local: IonFaceFluxJacobian,
+    ) -> tuple[tuple[int, float], ...]:
+        right_node = face + 1
+        return (
+            (
+                ion_offset + face,
+                local.density_left_derivative[face]
+                * ion_coordinate_derivative[face],
+            ),
+            (
+                ion_offset + right_node,
+                local.density_right_derivative[face]
+                * ion_coordinate_derivative[right_node],
+            ),
+            (
+                potential_offset + face,
+                local.potential_left_derivative[face],
+            ),
+            (
+                potential_offset + right_node,
+                local.potential_right_derivative[face],
+            ),
+        )
+
+    for face in range(count - 1):
+        right_node = face + 1
+        face_columns = ion_face_columns(face, ion_face)
+        left_coefficient = 1.0 / (
+            material.dx_cell[face]
+            * layout.positive_ion_rate_scale_m3_s[face]
+        )
+        right_coefficient = -1.0 / (
+            material.dx_cell[right_node]
+            * layout.positive_ion_rate_scale_m3_s[right_node]
+        )
+        for column, tangent in face_columns:
+            add(ion_offset + face, column, left_coefficient * tangent)
+            add(ion_offset + right_node, column, right_coefficient * tangent)
+
     add(
         potential_offset,
         potential_offset,
@@ -358,6 +311,11 @@ def build_structured_state_jacobian(
         scale = layout.poisson_scale_C_m2[local]
         add(row, node, -Q * n[node] * widths[local] / scale)
         add(row, count + node, Q * p[node] * widths[local] / scale)
+        add(
+            row,
+            ion_offset + node,
+            Q * ion_coordinate_derivative[node] * widths[local] / scale,
+        )
         add(row, potential_offset + node - 1, capacitance[node - 1] / scale)
         add(
             row,
@@ -375,21 +333,24 @@ def build_structured_state_jacobian(
     matrix.eliminate_zeros()
     if not np.all(np.isfinite(matrix.data)):
         raise DAEStructuredJacobianCapabilityError(
-            "structured DAE matrix contains non-finite entries"
+            "single-ion structured DAE matrix contains non-finite entries"
         )
-    return DAEStructuredStateJacobian(
+    return SingleIonDAEStructuredStateJacobian(
         matrix=matrix,
         nonzero_count=int(matrix.nnz),
         field_mobility_active=bool(material.has_field_mobility),
+        ion_steric_diffusion_only=bool(material.ion_steric_diffusion_only),
         minimum_bulk_srh_denominator_s_m3=float(np.min(denominator)),
         electron_current_faces_A_m2=np.asarray(electron_face.flux, dtype=float),
         hole_current_faces_A_m2=np.asarray(hole_face.flux, dtype=float),
+        positive_ion_particle_flux_faces_m2_s=np.asarray(
+            ion_face.flux,
+            dtype=float,
+        ),
     )
 
 
 __all__ = [
-    "DAEStructuredJacobianCapabilityError",
-    "DAEStructuredStateJacobian",
-    "build_carrier_face_jacobians",
-    "build_structured_state_jacobian",
+    "SingleIonDAEStructuredStateJacobian",
+    "build_single_ion_structured_state_jacobian",
 ]
