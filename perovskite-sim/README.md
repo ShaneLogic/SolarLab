@@ -348,10 +348,15 @@ velocities $(v_n, v_p)$ [m/s] carried in `DeviceStack.interfaces`. The
 surface SRH rate is converted to a volumetric rate by dividing by the
 local dual-grid cell width.
 
-These active interface paths are recombination-only. The existing
-`iface_state_charge`/Poisson scaffold is parked: interface occupancy does not
-currently feed a self-consistent sheet charge back into the global Poisson
-solve and must not be cited as supported trap electrostatics.
+These active interface paths are recombination-only. The explicit
+`interface_charge_closure` schema defaults to `off`; its reserved
+`equilibrium_referenced` research value is recognized but fails closed in all
+production experiment routes. The retired `iface_state_charge` scalar cannot
+feed the shared-node Poisson scaffold. The signed constitutive primitive is
+fixed at `Delta sigma = -q Nt (f-f_eq)` for both donor-like and acceptor-like
+traps, but it is not coupled to the outer Poisson solve and must not be cited as
+supported trap electrostatics. See
+[`docs/interface-charge-closure-policy.md`](docs/interface-charge-closure-policy.md).
 
 <br>
 

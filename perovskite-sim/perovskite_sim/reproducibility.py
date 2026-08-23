@@ -65,6 +65,15 @@ def _canonical(value: Any) -> Any:
             mapping.pop("grid_alphas", None)
         if isinstance(value, DeviceStack) and value.jv_solver_policy == "general":
             mapping.pop("jv_solver_policy", None)
+        if (
+            isinstance(value, DeviceStack)
+            and value.interface_charge_closure == "off"
+            and not value.interface_charge_rebaseline_acknowledged
+        ):
+            # The parked default is behaviorally identical to the P0 stack.
+            # A recognized research intent remains in the semantic payload.
+            mapping.pop("interface_charge_closure", None)
+            mapping.pop("interface_charge_rebaseline_acknowledged", None)
         if isinstance(value, DeviceStack):
             potential_mode = value.built_in_potential_mode
             if potential_mode is None:

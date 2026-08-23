@@ -257,6 +257,35 @@ def built_in_potential_fields_from_device_dict(
     }
 
 
+def interface_charge_fields_from_device_dict(
+    dev: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Parse the explicit, currently parked interface-charge contract."""
+    raw_mode = dev.get("interface_charge_closure", "off")
+    if not isinstance(raw_mode, str):
+        raise ValueError("device.interface_charge_closure must be a string")
+    mode = raw_mode.strip()
+
+    raw_ack = dev.get("interface_charge_rebaseline_acknowledged", False)
+    if isinstance(raw_ack, bool):
+        acknowledged = raw_ack
+    elif isinstance(raw_ack, str):
+        normalized = raw_ack.strip().lower()
+        if normalized not in {"true", "false"}:
+            raise ValueError(
+                "device.interface_charge_rebaseline_acknowledged must be boolean"
+            )
+        acknowledged = normalized == "true"
+    else:
+        raise ValueError(
+            "device.interface_charge_rebaseline_acknowledged must be boolean"
+        )
+    return {
+        "interface_charge_closure": mode,
+        "interface_charge_rebaseline_acknowledged": acknowledged,
+    }
+
+
 def _parse_bool(v) -> bool:
     """Parse a YAML value as bool, tolerating quoted strings like "false".
 
@@ -401,6 +430,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,
         jv_solver_policy=str(dev.get("jv_solver_policy", "general")),
+        **interface_charge_fields_from_device_dict(dev),
         interfaces=interfaces,
         interface_defects=interface_defects,
         T=_f(dev.get("T", 300.0)),

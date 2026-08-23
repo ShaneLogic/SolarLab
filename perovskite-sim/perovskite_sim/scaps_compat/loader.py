@@ -68,6 +68,7 @@ from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.models.config_loader import (
     built_in_potential_fields_from_device_dict,
     electrical_grid_from_config_dict,
+    interface_charge_fields_from_device_dict,
 )
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.scaps_compat.defects import srh_lifetime
@@ -142,6 +143,7 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
     return DeviceStack(
         layers=layers,
         **built_in_potential_fields_from_device_dict(dev),
+        **interface_charge_fields_from_device_dict(dev),
         Phi=float(dev["Phi"]),
         mode=str(dev["mode"]),
         T=float(dev.get("T", 300.0)),

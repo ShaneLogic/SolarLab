@@ -91,6 +91,8 @@ def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
             "grid_interval_weights",
             "grid_alphas",
             "jv_solver_policy",
+            "interface_charge_closure",
+            "interface_charge_rebaseline_acknowledged",
         }
     }
 
@@ -106,6 +108,34 @@ def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
     assert semantic_sha256(replace(physical, V_bi=9.9)) == semantic_sha256(
         physical
     )
+
+
+def test_parked_interface_charge_defaults_preserve_historical_hash():
+    compatibility = load_device_from_yaml(
+        str(ROOT / "configs/ionmonger_benchmark.yaml")
+    )
+    historical_payload = {
+        field.name: getattr(compatibility, field.name)
+        for field in fields(compatibility)
+        if field.name not in {
+            "built_in_potential_mode",
+            "work_function_left_eV",
+            "work_function_right_eV",
+            "grid_interval_weights",
+            "grid_alphas",
+            "jv_solver_policy",
+            "interface_charge_closure",
+            "interface_charge_rebaseline_acknowledged",
+        }
+    }
+    research_intent = replace(
+        compatibility,
+        interface_charge_closure="equilibrium_referenced",
+        interface_charge_rebaseline_acknowledged=True,
+    )
+
+    assert semantic_sha256(compatibility) == semantic_sha256(historical_payload)
+    assert semantic_sha256(research_intent) != semantic_sha256(compatibility)
 
 
 def test_standard_schema_registers_spatial_doping_profile_contract():

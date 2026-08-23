@@ -13,6 +13,22 @@ BUILT_IN_POTENTIAL_MODES = (
     "metal_work_function",
 )
 
+INTERFACE_CHARGE_CLOSURES = (
+    "off",
+    "equilibrium_referenced",
+)
+
+INTERFACE_CHARGE_UNLOCK_REQUIREMENTS = (
+    "a certified contact-consistent dark reference",
+    "a certified interface-recombination charge-off refinement matrix",
+    "a certified two-sided Gauss jump on discontinuous permittivity",
+    "a self-consistent outer-Poisson/interface-state Jacobian",
+)
+
+
+class InterfaceChargeClosureParkedError(ValueError):
+    """A production path attempted to activate the parked charge closure."""
+
 
 @dataclass(frozen=True)
 class LayerSpec:
@@ -316,6 +332,15 @@ class DeviceStack:
     # reserved for cancellation-sensitive stacks whose physical regression
     # has only been certified in quasi-Fermi variables.
     jv_solver_policy: str = "general"
+    # Interface traps remain recombination-only on all production paths.
+    # ``equilibrium_referenced`` is a recognized research intent, not an
+    # enabled solver mode: material assembly rejects it until the Phase-3
+    # entry certificates and self-consistent two-sided Poisson coupling exist.
+    interface_charge_closure: str = "off"
+    # Opening the research lane invalidates the historical SCAPS calibration.
+    # The acknowledgement is required in the config before readiness can even
+    # be assessed; it does not bypass the parked production capability gate.
+    interface_charge_rebaseline_acknowledged: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))
@@ -323,6 +348,33 @@ class DeviceStack:
             self, "grid_interval_weights", tuple(self.grid_interval_weights)
         )
         object.__setattr__(self, "grid_alphas", tuple(self.grid_alphas))
+        if self.interface_charge_closure not in INTERFACE_CHARGE_CLOSURES:
+            raise ValueError(
+                "interface_charge_closure must be one of "
+                f"{INTERFACE_CHARGE_CLOSURES}, got "
+                f"{self.interface_charge_closure!r}"
+            )
+        if not isinstance(self.interface_charge_rebaseline_acknowledged, bool):
+            raise ValueError(
+                "interface_charge_rebaseline_acknowledged must be boolean"
+            )
+        if (
+            self.interface_charge_closure == "equilibrium_referenced"
+            and not self.interface_charge_rebaseline_acknowledged
+        ):
+            raise ValueError(
+                "equilibrium_referenced interface charge requires explicit "
+                "interface_charge_rebaseline_acknowledged=true because the "
+                "historical SCAPS calibration is no longer valid"
+            )
+        if (
+            self.interface_charge_closure == "off"
+            and self.interface_charge_rebaseline_acknowledged
+        ):
+            raise ValueError(
+                "interface_charge_rebaseline_acknowledged is only valid with "
+                "interface_charge_closure='equilibrium_referenced'"
+            )
         if self.jv_solver_policy not in (
             "general",
             "cancellation_safe_qf_required",
@@ -366,6 +418,17 @@ class DeviceStack:
                 "contact work functions are only valid with "
                 "built_in_potential_mode='metal_work_function'"
             )
+
+    def require_interface_charge_off(self, *, consumer: str) -> None:
+        """Fail closed until the Phase-3 electrostatic research lane unlocks."""
+        if self.interface_charge_closure == "off":
+            return
+        requirements = "; ".join(INTERFACE_CHARGE_UNLOCK_REQUIREMENTS)
+        raise InterfaceChargeClosureParkedError(
+            f"{consumer} cannot activate interface_charge_closure="
+            f"{self.interface_charge_closure!r}: interface trap electrostatics "
+            f"is PARKED pending {requirements}"
+        )
 
     @property
     def total_thickness(self) -> float:

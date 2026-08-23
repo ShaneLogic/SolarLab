@@ -55,11 +55,16 @@ from perovskite_sim.discretization.grid import (
 from perovskite_sim.models.config_loader import (
     built_in_potential_fields_from_device_dict,
     electrical_grid_from_config_dict,
+    interface_charge_fields_from_device_dict,
     interfaces_from_device_dict,
     load_device_from_yaml,
     material_params_from_dict,
 )
-from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.models.device import (
+    DeviceStack,
+    InterfaceChargeClosureParkedError,
+    LayerSpec,
+)
 from perovskite_sim.models.mode import resolve_mode
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
@@ -228,6 +233,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,
         jv_solver_policy=str(dev.get("jv_solver_policy", "general")),
+        **interface_charge_fields_from_device_dict(dev),
         interfaces=interfaces,
         interface_defects=interface_defects,
         T=float(dev.get("T", 300.0)),
@@ -350,6 +356,10 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         "interface_tunneling": stack.interface_tunneling,
         "tunnel_mass_eff": stack.tunnel_mass_eff,
         "jv_solver_policy": stack.jv_solver_policy,
+        "interface_charge_closure": stack.interface_charge_closure,
+        "interface_charge_rebaseline_acknowledged": (
+            stack.interface_charge_rebaseline_acknowledged
+        ),
         "S_n_left": stack.S_n_left,
         "S_p_left": stack.S_p_left,
         "S_n_right": stack.S_n_right,
@@ -409,21 +419,32 @@ def _config_dict_from_path(path: str) -> dict:
 def build_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceStack:
     """Return a DeviceStack from either an inline device dict (preferred) or a YAML path."""
     if device is not None:
-        return stack_from_dict(device)
-    if not config_path:
-        raise HTTPException(status_code=400, detail="Either 'device' or 'config_path' must be provided")
-    resolved = resolve_config_path(config_path)
-    # SCAPS-schema files need the scaps_compat parser; load_device_from_yaml
-    # assumes the standard schema and raises KeyError 'mu_n' on them.
+        stack = stack_from_dict(device)
+    else:
+        if not config_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'device' or 'config_path' must be provided",
+            )
+        resolved = resolve_config_path(config_path)
+        # SCAPS-schema files need the scaps_compat parser; load_device_from_yaml
+        # assumes the standard schema and raises KeyError 'mu_n' on them.
+        try:
+            with open(resolved) as f:
+                is_scaps = _is_scaps_schema(yaml.safe_load(f))
+        except (OSError, yaml.YAMLError):
+            is_scaps = False
+        if is_scaps:
+            from perovskite_sim.scaps_compat import load_scaps_yaml
+
+            stack = load_scaps_yaml(resolved)
+        else:
+            stack = load_device_from_yaml(resolved)
     try:
-        with open(resolved) as f:
-            is_scaps = _is_scaps_schema(yaml.safe_load(f))
-    except (OSError, yaml.YAMLError):
-        is_scaps = False
-    if is_scaps:
-        from perovskite_sim.scaps_compat import load_scaps_yaml
-        return load_scaps_yaml(resolved)
-    return load_device_from_yaml(resolved)
+        stack.require_interface_charge_off(consumer="backend experiment routes")
+    except InterfaceChargeClosureParkedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return stack
 
 
 def to_serializable(obj):

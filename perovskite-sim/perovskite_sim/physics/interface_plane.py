@@ -1616,6 +1616,38 @@ def solve_interface_states_live_qss(
     )
 
 
+def equilibrium_referenced_interface_trap_charge(
+    occupancy: float | np.ndarray,
+    equilibrium_occupancy: float | np.ndarray,
+    trap_density_m2: float | np.ndarray,
+) -> np.ndarray:
+    """Return the signed incremental sheet charge ``-q Nt (f - f_eq)``.
+
+    The equilibrium-referenced increment has the same sign for acceptor-like
+    ``-q Nt f`` and donor-like ``+q Nt (1-f)`` traps.  This API deliberately
+    accepts no caller-provided sign multiplier, so it cannot be confused with
+    an absolute-charge convention.
+    """
+    f, f_eq, density = np.broadcast_arrays(
+        np.asarray(occupancy, dtype=float),
+        np.asarray(equilibrium_occupancy, dtype=float),
+        np.asarray(trap_density_m2, dtype=float),
+    )
+    if not (
+        np.all(np.isfinite(f))
+        and np.all(np.isfinite(f_eq))
+        and np.all(np.isfinite(density))
+    ):
+        raise ValueError("occupancies and trap_density_m2 must be finite")
+    if np.any((f < 0.0) | (f > 1.0)):
+        raise ValueError("occupancy must lie in [0, 1]")
+    if np.any((f_eq < 0.0) | (f_eq > 1.0)):
+        raise ValueError("equilibrium_occupancy must lie in [0, 1]")
+    if np.any(density < 0.0):
+        raise ValueError("trap_density_m2 must be non-negative")
+    return -Q * density * (f - f_eq)
+
+
 def compute_interface_trap_charge(
     iface_state: np.ndarray,
     stack,
@@ -1631,12 +1663,14 @@ def compute_interface_trap_charge(
 
     (capture of electrons + emission of holes fill the trap; the standard
     SRH occupancy with per-side trap-level sums). The trapped areal
-    charge MAGNITUDE q*N_t*(f - f_eq) is returned per interface [C/m^2];
-    the caller applies the sign convention (acceptor-like -1 / donor-like
-    +1 via ``MaterialArrays.iface_state_charge``) and converts to a
-    volumetric Poisson contribution at the interface node. ``f_eq`` is
-    evaluated on the dark-equilibrium state projections, so equilibrium
-    is exactly charge-neutral by construction.
+    signed equilibrium-referenced sheet charge
+    ``-q*N_t*(f - f_eq)`` is returned per interface [C/m^2]. Acceptor-like
+    and donor-like traps have the same incremental sign. No absolute-charge
+    convention is implemented.
+
+    This helper is a parked constitutive primitive. Its current ``f_eq`` is a
+    bulk-equilibrium projection, not yet a residual-certified dark interface
+    state, and production Poisson paths therefore must not consume its output.
     """
     from perovskite_sim.models.device import electrical_interface_defects
 
@@ -1689,5 +1723,7 @@ def compute_interface_trap_charge(
                  + float(mat.interface_p_L_eq[k]))
         f_eq = _f(nS_eq, pS_eq, n1S, p1S, v_n, v_p)
         N_t_m2 = float(defect.N_t_cm2) * 1.0e4      # cm^-2 -> m^-2
-        out[k] = 1.602176634e-19 * N_t_m2 * (f - f_eq)
+        out[k] = float(
+            equilibrium_referenced_interface_trap_charge(f, f_eq, N_t_m2)
+        )
     return out

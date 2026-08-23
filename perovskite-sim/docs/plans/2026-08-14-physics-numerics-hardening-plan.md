@@ -250,6 +250,12 @@ first slice 的残差阈值（载流子面积率、离子面积率、DC face spr
 
 ### 1.6 P0.5：界面陷阱电荷明确 `PARKED`
 
+2026-08-23 checkpoint：配置层已用 `off | equilibrium_referenced` 枚举替代
+公开的任意符号语义；`equilibrium_referenced` 必须显式确认 SCAPS calibration
+失效，但所有生产求解/API 仍 fail closed。纯 helper 已固定返回
+`-q*N_t*(f-f_eq)`，旧 `iface_state_charge +/-` shared-node 通道已禁止。
+这只完成 parked policy/sign prerequisite，不表示 Phase 3 已解锁。
+
 当前代码状态：
 
 - `perovskite_sim/solver/mol.py::_charge_density()` 的主 `rho` 不含 bulk trap occupancy charge；

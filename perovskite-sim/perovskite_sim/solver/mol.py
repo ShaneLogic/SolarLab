@@ -23,7 +23,8 @@ from perovskite_sim.physics.doping import layer_doping_profiles
 from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
 from perovskite_sim.models.device import (
-    DeviceStack, electrical_layers, electrical_interfaces,
+    DeviceStack, InterfaceChargeClosureParkedError,
+    electrical_layers, electrical_interfaces,
     electrical_interface_defects,
 )
 
@@ -226,10 +227,10 @@ class MaterialArrays:
     # the shared-occupancy form on PLANE densities is SCAPS's actual
     # formulation on the right substrate. Set by the SS driver.
     iface_state_shared_occ: bool = False
-    # Occupancy-derived interface trapped charge in Poisson (P1): the
-    # surviving E_t mechanism after three rate-algebra falsifications.
-    # 0.0 = off (bit-identical); -1.0 = acceptor-like (charge -q*N_t*f),
-    # +1.0 = donor-like. Set by the SS driver.
+    # Deprecated internal prototype. Public configuration uses
+    # DeviceStack.interface_charge_closure; every non-zero value here now
+    # fails closed because the old +/- scalar confuses absolute and
+    # equilibrium-referenced charge and lumps a sheet onto a shared node.
     iface_state_charge: float = 0.0
     # Correct hole-density step implied by E_v = -chi-Eg and the SG
     # zero-flux ratio: p_R/p_L = exp(-(dchi+dEg)/V_T). The historical state
@@ -784,6 +785,7 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     node indices. Built once per experiment and threaded through the hot
     path (assemble_rhs, _compute_current, interface recombination).
     """
+    stack.require_interface_charge_off(consumer="build_material_arrays")
     N = len(x)
 
     eps_r = np.ones(N)
@@ -2210,22 +2212,12 @@ def assemble_rhs(
             p, n, sv.P, mat.P_ion0, mat.N_A, mat.N_D,
             P_neg=sv.P_neg, P_neg0=mat.P_ion0_neg,
         )
-        # Occupancy-derived interface trapped charge (P1 of scaps_mode):
-        # areal q*N_t*(f - f_eq) at each defect interface, signed by the
-        # acceptor/donor convention, as a volumetric source at the node.
-        if (
-            mat.N_iface_state > 0
-            and mat.iface_state_charge != 0.0
-            and sv.iface_state is not None
-        ):
-            from perovskite_sim.physics.interface_plane import (
-                compute_interface_trap_charge,
+        if mat.iface_state_charge != 0.0:
+            raise InterfaceChargeClosureParkedError(
+                "MaterialArrays.iface_state_charge is a retired +/- scalar; "
+                "interface trap electrostatics is PARKED and cannot be lumped "
+                "onto a shared Poisson node"
             )
-            _dQ = compute_interface_trap_charge(sv.iface_state, stack, mat)
-            rho = rho.copy()
-            for _k in range(min(mat.N_iface_state, len(mat.interface_nodes))):
-                _ix = mat.interface_nodes[_k]
-                rho[_ix] += mat.iface_state_charge * _dQ[_k] / mat.dx_cell[_ix]
         phi = solve_poisson_prefactored(
             mat.poisson_factor, rho, phi_left=0.0,
             phi_right=poisson_right_boundary(mat, V_app),
