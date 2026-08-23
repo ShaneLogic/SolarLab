@@ -783,3 +783,10 @@ but fails the declared SCAPS-shape gate (`certified=false`).
 The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
 Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
+
+Phase 4.1 now includes a research-only semi-explicit DAE residual for the
+single-layer, ohmic, no-ion/no-interface limit. It retains Poisson potential as
+an algebraic coordinate, constructs a residual-certified consistent initial
+condition, and exposes exact baseline Jacobian blocks with finite-difference
+tests. It is intentionally disconnected from production transient and backend
+routes; see [the DAE capability boundary](docs/dae-research-backbone.md).

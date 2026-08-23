@@ -635,6 +635,12 @@ Phase 4 不是一个大 PR。每个子 lane 必须单独立项、默认关闭、
 
 目标：显式保留 Poisson/界面代数变量或采用可靠 Schur/IFT，使 transient ions、algebraic interface states 和 small-signal 使用同一状态拓扑。
 
+首个 checkpoint 已新增 research-only `solver/dae.py`：只覆盖单层 ohmic、无离子、
+无界面的 `(log n, log p, phi)` 半显式残差，分列 differential/algebraic rows，
+提供可重复 consistent initial condition、精确 `dF/d(qdot)` 及 carrier-boundary/
+Poisson `dF/dq`。它没有接入默认 MoL、实验或 backend；下一 checkpoint 必须先完成
+time-discrete no-ion refinement/cost lane，之后才允许扩展 ion/interface topology。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。
