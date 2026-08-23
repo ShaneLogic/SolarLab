@@ -44,7 +44,9 @@ from perovskite_sim.experiments.mott_schottky import _fit_mott_schottky
 from perovskite_sim.experiments.quasi_fermi_steady_state import (
     DEFAULT_ILLUMINATION_STEPS,
     _prepare_two_sided_material,
+    build_equilibrium_referenced_interface_charge_dark_reference,
     build_two_sided_trace_grid,
+    solve_equilibrium_referenced_interface_charge_steady_state,
     solve_quasi_fermi_jv_sweep,
     solve_quasi_fermi_steady_state,
 )
@@ -55,7 +57,11 @@ from perovskite_sim.experiments.steady_state import (
     solve_steady_state,
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.models.device import electrical_layers
+from perovskite_sim.models.device import (
+    electrical_interface_defects,
+    electrical_interfaces,
+    electrical_layers,
+)
 from perovskite_sim.physics.contacts import (
     require_contact_thermodynamic_certificate,
 )
@@ -2001,6 +2007,479 @@ def run_interface_recombination_charge_off(
                     "poisson_tolerance_V": solve_controls["poisson_tolerance_V"],
                 },
                 "voltage_grid_V": voltages.tolist(),
+            },
+        }
+    )
+
+
+def _interface_charge_research_protocol(
+    *,
+    bias_voltage_V: float,
+    illuminated_voltage_V: float,
+    base_finite_difference_step: float,
+    base_newton_residual_tolerance: float,
+    max_newton_iterations: int,
+    base_poisson_tolerance_V: float,
+    poisson_max_iterations: int,
+    continuity_tolerance_A_m2: float,
+    current_spread_tolerance_A_m2: float,
+    poisson_residual_tolerance: float,
+) -> dict[str, Any]:
+    """Describe the charged matrix without embedding its grid or tolerance rung."""
+    return {
+        "acceptance": {
+            "continuity_tolerance_A_m2": continuity_tolerance_A_m2,
+            "current_spread_tolerance_A_m2": current_spread_tolerance_A_m2,
+            "local_interface_residual_limit": 1.0e-7,
+            "normalized_gauss_residual_limit": 1.0e-10,
+            "poisson_residual_tolerance": poisson_residual_tolerance,
+            "require_contact_thermodynamic_certificate": True,
+            "require_dark_charge_off_bit_identity": True,
+        },
+        "adapter": "equilibrium-referenced-interface-charge-two-sided-qf",
+        "dark_reference": {
+            "charge_closure": "off",
+            "illumination": "dark",
+            "occupancy": "shared_two_sided_interface_trap",
+            "voltage_V": 0.0,
+        },
+        "interface": {
+            "charge_closure": "equilibrium_referenced",
+            "charge_law": "-q*N_t*(f-f_eq)",
+            "cross_transmission": 1.0,
+            "topology": TWO_SIDED_TRACE,
+            "transport_model": FERMI_DIRAC_RICHARDSON,
+        },
+        "measurement": "charged_steady_state_bias_and_light",
+        "schema_version": "interface-charge-research-protocol-v1",
+        "solver": {
+            "base_finite_difference_step": base_finite_difference_step,
+            "base_newton_residual_tolerance": base_newton_residual_tolerance,
+            "base_poisson_tolerance_V": base_poisson_tolerance_V,
+            "illumination_steps": list(DEFAULT_ILLUMINATION_STEPS),
+            "max_newton_iterations": max_newton_iterations,
+            "poisson_max_iterations": poisson_max_iterations,
+            "refinement_factor_source": "matrix.tolerance_factor",
+            "refinement_mapping": {
+                "finite_difference_step": "base*sqrt(factor)",
+                "newton_residual_tolerance": "base*factor",
+                "poisson_tolerance_V": "base*factor",
+            },
+            "type": "quasi_fermi_residual_certified_with_local_ift",
+        },
+        "targets": [
+            {
+                "illuminated": False,
+                "label": "dark_bias",
+                "voltage_V": bias_voltage_V,
+            },
+            {
+                "illuminated": True,
+                "label": "illuminated_operating_point",
+                "voltage_V": illuminated_voltage_V,
+            },
+        ],
+    }
+
+
+def _dark_charge_reference_arrays_are_bit_identical(reference, charged_dark) -> bool:
+    fields = (
+        "y",
+        "phi",
+        "electron_quasi_fermi_potential_V",
+        "hole_quasi_fermi_potential_V",
+        "electron_face_current_A_m2",
+        "hole_face_current_A_m2",
+        "total_face_current_A_m2",
+        "electron_rate_per_s",
+        "hole_rate_per_s",
+    )
+    return all(
+        np.array_equal(getattr(reference.dark_state, name), getattr(charged_dark, name))
+        for name in fields
+    )
+
+
+def run_equilibrium_referenced_interface_charge(
+    lane: LaneDefinition,
+    point: MatrixPoint,
+    project_root: Path,
+) -> CellMeasurement:
+    """Certify self-consistent equilibrium-referenced interface charge."""
+    options = lane.options
+    stack = _load_stack(lane, project_root)
+    if stack.interface_charge_closure != "equilibrium_referenced":
+        raise RuntimeError(
+            "charged reference requires charge_closure='equilibrium_referenced'"
+        )
+    if not stack.interface_charge_rebaseline_acknowledged:
+        raise RuntimeError("charged reference requires explicit rebaseline intent")
+    if stack.het_recomb_despike != 0.0:
+        raise RuntimeError("charged reference forbids recombination de-spiking")
+    if stack.flat_band_contacts or stack.flat_band_metal_contacts:
+        raise RuntimeError("charged reference forbids calibrated contact floors")
+    if stack.contact_phi_B_eV != 0.0:
+        raise RuntimeError("charged reference forbids a calibrated contact barrier")
+    defects = electrical_interface_defects(stack)
+    if not defects or any(defect is None for defect in defects):
+        raise RuntimeError(
+            "charged reference requires one interface defect per physical interface"
+        )
+    if any(
+        defect.N_t_cm2 <= 0.0
+        or defect.calibration_factor != 1.0
+        or defect.iface_state_calibration_factor != 1.0
+        for defect in defects
+        if defect is not None
+    ):
+        raise RuntimeError(
+            "charged reference requires positive trap densities and unity calibration"
+        )
+
+    shared_grid = build_electrical_grid(stack, point.grid)
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+    charge_off_stack = replace(stack, interface_charge_closure="off")
+    base_material = build_material_arrays(grid, charge_off_stack)
+    if base_material.iface_state_charge != 0.0:
+        raise RuntimeError("legacy shared-node interface charge must remain zero")
+    contact_certificate = require_contact_thermodynamic_certificate(
+        charge_off_stack,
+        base_material,
+    )
+
+    bias_voltage = _option(options, "bias_voltage_V", float, 0.05)
+    illuminated_voltage = _option(
+        options,
+        "illuminated_voltage_V",
+        float,
+        0.0,
+    )
+    base_fd_step = _option(
+        options,
+        "base_finite_difference_step",
+        float,
+        1.0e-5,
+    )
+    base_newton_tol = _option(
+        options,
+        "base_newton_residual_tolerance",
+        float,
+        4.0e-7,
+    )
+    max_newton = _option(options, "max_newton_iterations", int, 60)
+    base_poisson_tol = _option(
+        options,
+        "base_poisson_tolerance_V",
+        float,
+        1.0e-12,
+    )
+    poisson_max = _option(options, "poisson_max_iterations", int, 100)
+    continuity_tol = _option(
+        options,
+        "continuity_tolerance_A_m2",
+        float,
+        1.0e-4,
+    )
+    spread_tol = _option(
+        options,
+        "current_spread_tolerance_A_m2",
+        float,
+        1.0e-4,
+    )
+    poisson_residual_tol = _option(
+        options,
+        "poisson_residual_tolerance",
+        float,
+        1.0e-8,
+    )
+    protocol = _interface_charge_research_protocol(
+        bias_voltage_V=bias_voltage,
+        illuminated_voltage_V=illuminated_voltage,
+        base_finite_difference_step=base_fd_step,
+        base_newton_residual_tolerance=base_newton_tol,
+        max_newton_iterations=max_newton,
+        base_poisson_tolerance_V=base_poisson_tol,
+        poisson_max_iterations=poisson_max,
+        continuity_tolerance_A_m2=continuity_tol,
+        current_spread_tolerance_A_m2=spread_tol,
+        poisson_residual_tolerance=poisson_residual_tol,
+    )
+    factor = point.tolerance_factor
+    solve_controls = {
+        "finite_difference_step": base_fd_step * np.sqrt(factor),
+        "newton_residual_tolerance": base_newton_tol * factor,
+        "max_newton_iterations": max_newton,
+        "poisson_tolerance_V": base_poisson_tol * factor,
+        "poisson_max_iterations": poisson_max,
+        "continuity_tolerance_A_m2": continuity_tol,
+        "current_spread_tolerance_A_m2": spread_tol,
+        "poisson_residual_tolerance": poisson_residual_tol,
+    }
+
+    reference = build_equilibrium_referenced_interface_charge_dark_reference(
+        grid,
+        stack,
+        interface_transmission=1.0,
+        **solve_controls,
+    )
+    charged_dark = solve_equilibrium_referenced_interface_charge_steady_state(
+        grid,
+        stack,
+        0.0,
+        dark_reference=reference,
+        illuminated=False,
+        **solve_controls,
+    )
+    target_specs = (
+        ("dark_bias", bias_voltage, False),
+        ("illuminated_operating_point", illuminated_voltage, True),
+    )
+    target_results = tuple(
+        solve_equilibrium_referenced_interface_charge_steady_state(
+            grid,
+            stack,
+            voltage,
+            dark_reference=reference,
+            illuminated=illuminated,
+            **solve_controls,
+        )
+        for _label, voltage, illuminated in target_specs
+    )
+
+    interface_count = len(reference.equilibrium_occupancy)
+    if interface_count == 0 or interface_count != len(defects):
+        raise RuntimeError("charged interface evidence is not defect-aligned")
+    expected_trace_shape = (interface_count, 2)
+    for result in target_results:
+        shapes = (
+            np.asarray(result.interface_equilibrium_occupancy).shape,
+            np.asarray(result.interface_occupancy).shape,
+            np.asarray(result.interface_incremental_sheet_charge_C_m2).shape,
+            np.asarray(result.interface_normalized_gauss_residual).shape,
+            np.asarray(result.interface_scaled_local_jacobian_condition).shape,
+        )
+        if any(shape != (interface_count,) for shape in shapes):
+            raise RuntimeError("charged interface result has a misaligned vector")
+        if np.asarray(result.interface_trace_potential_shift_V).shape != (
+            expected_trace_shape
+        ):
+            raise RuntimeError("charged interface result has a misaligned trace shift")
+
+    equilibrium = np.asarray(reference.equilibrium_occupancy, dtype=float)
+    trap_density = np.asarray(reference.trap_density_m2, dtype=float)
+    occupancy = np.asarray(
+        [result.interface_occupancy for result in target_results],
+        dtype=float,
+    )
+    sheet_charge = np.asarray(
+        [result.interface_incremental_sheet_charge_C_m2 for result in target_results],
+        dtype=float,
+    )
+    trace_shift = np.asarray(
+        [result.interface_trace_potential_shift_V for result in target_results],
+        dtype=float,
+    )
+    expected_charge = -Q * trap_density[np.newaxis, :] * (
+        occupancy - equilibrium[np.newaxis, :]
+    )
+    charge_law_consistent = bool(
+        np.allclose(sheet_charge, expected_charge, rtol=1.0e-12, atol=0.0)
+    )
+    charge_fraction = np.abs(sheet_charge) / (Q * trap_density[np.newaxis, :])
+    all_states = (reference.dark_state, charged_dark, *target_results)
+    all_occupancy = np.r_[equilibrium, occupancy.ravel()]
+    dark_arrays_identical = _dark_charge_reference_arrays_are_bit_identical(
+        reference,
+        charged_dark,
+    )
+    dark_charge = np.asarray(
+        charged_dark.interface_incremental_sheet_charge_C_m2,
+        dtype=float,
+    )
+    dark_trace_shift = np.asarray(
+        charged_dark.interface_trace_potential_shift_V,
+        dtype=float,
+    )
+    interface_pairs = electrical_interfaces(stack)
+    target_evidence = []
+    for (label, voltage, illuminated), result in zip(
+        target_specs,
+        target_results,
+    ):
+        target_evidence.append(
+            {
+                "current_A_m2": result.current_A_m2,
+                "equilibrium_occupancy": list(result.interface_equilibrium_occupancy),
+                "illuminated": illuminated,
+                "incremental_sheet_charge_C_m2": list(
+                    result.interface_incremental_sheet_charge_C_m2
+                ),
+                "local_interface_residual": result.interface_local_residual,
+                "normalized_gauss_residual": list(
+                    result.interface_normalized_gauss_residual
+                ),
+                "occupancy": list(result.interface_occupancy),
+                "scaled_local_jacobian_condition": list(
+                    result.interface_scaled_local_jacobian_condition
+                ),
+                "state_sha256": content_sha256(
+                    {
+                        "phi_V": result.phi.tolist(),
+                        "state": result.y.tolist(),
+                    }
+                ),
+                "target": label,
+                "trace_potential_shift_V": [
+                    list(values)
+                    for values in result.interface_trace_potential_shift_V
+                ],
+                "voltage_V": voltage,
+            }
+        )
+
+    return CellMeasurement.from_mapping(
+        {
+            "observables": {
+                "charged_current_density_A_m2": [
+                    result.current_A_m2 for result in target_results
+                ],
+                "interface_occupancy": occupancy.ravel(),
+                "interface_sheet_charge_C_m2": sheet_charge.ravel(),
+                "interface_trace_potential_shift_V": trace_shift.ravel(),
+            },
+            "quality": {
+                "all_points_certified": float(
+                    all(result.certified for result in all_states)
+                ),
+                "calibration_factors_unity": float(
+                    all(
+                        defect is not None
+                        and defect.calibration_factor == 1.0
+                        and defect.iface_state_calibration_factor == 1.0
+                        for defect in defects
+                    )
+                ),
+                "charge_law_consistent": float(charge_law_consistent),
+                "contact_thermodynamics_certified": float(
+                    contact_certificate.certified
+                ),
+                "dark_charge_off_bit_identical": float(dark_arrays_identical),
+                "dark_incremental_charge_zero_C_m2": float(
+                    np.max(np.abs(dark_charge))
+                ),
+                "dark_reference_certified": float(reference.dark_state.certified),
+                "dark_reference_hash_verified": 1.0,
+                "dark_trace_shift_zero_V": float(
+                    np.max(np.abs(dark_trace_shift))
+                ),
+                "interface_evidence_aligned": 1.0,
+                "max_charge_fraction_of_one_electron": float(
+                    np.max(charge_fraction)
+                ),
+                "max_continuity_bound_A_m2": max(
+                    max(
+                        result.electron_continuity_bound_A_m2,
+                        result.hole_continuity_bound_A_m2,
+                    )
+                    for result in all_states
+                ),
+                "max_current_spread_A_m2": max(
+                    result.face_current_spread_A_m2 for result in all_states
+                ),
+                "max_interface_local_residual": max(
+                    result.interface_local_residual for result in all_states
+                ),
+                "max_normalized_cell_residual": max(
+                    result.max_normalized_cell_residual for result in all_states
+                ),
+                "max_normalized_gauss_residual": float(
+                    np.max(
+                        np.abs(
+                            [
+                                result.interface_normalized_gauss_residual
+                                for result in target_results
+                            ]
+                        )
+                    )
+                ),
+                "max_poisson_residual": max(
+                    result.poisson_residual for result in all_states
+                ),
+                "max_scaled_local_jacobian_condition": float(
+                    np.max(
+                        [
+                            result.interface_scaled_local_jacobian_condition
+                            for result in target_results
+                        ]
+                    )
+                ),
+                "occupancy_bounded": float(
+                    np.all((all_occupancy >= 0.0) & (all_occupancy <= 1.0))
+                ),
+                "rebaseline_acknowledged": float(
+                    stack.interface_charge_rebaseline_acknowledged
+                ),
+                "research_charge_closure_active": float(
+                    all(
+                        result.interface_charge_closure
+                        == "equilibrium_referenced"
+                        for result in (charged_dark, *target_results)
+                    )
+                ),
+                "two_sided_topology_active": float(
+                    all(
+                        result.interface_topology == TWO_SIDED_TRACE
+                        for result in all_states
+                    )
+                ),
+            },
+            "units": {
+                "charged_current_density_A_m2": "A m-2",
+                "dark_incremental_charge_zero_C_m2": "C m-2",
+                "dark_trace_shift_zero_V": "V",
+                "interface_sheet_charge_C_m2": "C m-2",
+                "interface_trace_potential_shift_V": "V",
+                "max_continuity_bound_A_m2": "A m-2",
+                "max_current_spread_A_m2": "A m-2",
+            },
+            "metadata": {
+                **_protocol_metadata(protocol),
+                "actual_intervals": len(grid) - 1,
+                "contact_thermodynamics": dataclasses.asdict(contact_certificate),
+                "dark_reference": {
+                    "dark_state_sha256": reference.dark_state_sha256,
+                    "equilibrium_occupancy": list(reference.equilibrium_occupancy),
+                    "grid_sha256": reference.grid_sha256,
+                    "stack_sha256": reference.stack_sha256,
+                    "trap_density_m2": list(reference.trap_density_m2),
+                },
+                "interfaces": [
+                    {
+                        "capture_velocity_n_m_s": pair[0],
+                        "capture_velocity_p_m_s": pair[1],
+                        "charge_character": "equilibrium_increment_character_independent",
+                        "energy_reference": "below_local_conduction_band",
+                        "trap_energy_eV": defect.E_t_eV,
+                        "trap_density_m2": defect.N_t_cm2 * 1.0e4,
+                    }
+                    for pair, defect in zip(interface_pairs, defects)
+                    if defect is not None
+                ],
+                "source_grid_intervals": point.grid,
+                "target_evidence": target_evidence,
+                "target_layout": "target_major_interface_minor",
+                "tolerance_controls": {
+                    "finite_difference_step": solve_controls[
+                        "finite_difference_step"
+                    ],
+                    "newton_residual_tolerance": solve_controls[
+                        "newton_residual_tolerance"
+                    ],
+                    "poisson_tolerance_V": solve_controls[
+                        "poisson_tolerance_V"
+                    ],
+                },
+                "trace_shift_layout": "target_major_interface_minor_side_minor",
             },
         }
     )

@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: ba68e4a736ebf91be3cf8a2199b7fcf8afe8722b423ee940bfcc6bd9e685fbc7
+  sha256: 146e7ee4b245b799ffcba50438748fd1a8e90f7cdc8ca2ba84da1c9bb00c8b62
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -75,6 +75,7 @@ benchmarks:
       - configs/driftfusion_calado2016_repro.yaml
       - configs/field_mobility_demo.yaml
       - configs/interface_charge_reference.yaml
+      - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
       - configs/ionmonger_benchmark_tmm.yaml
       - configs/ionmonger_courtier2019_repro.yaml
@@ -113,6 +114,7 @@ benchmarks:
     configs:
       - configs/cSi_homojunction.yaml
       - configs/interface_charge_reference.yaml
+      - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
       - configs/scaps_mirror.yaml
       - configs/twod/nip_MAPbI3_uniform.yaml
@@ -136,6 +138,27 @@ benchmarks:
       - the content-addressed 3x3 matrix is internally certified for source commit 29c94b4 with certificate SHA-256 0a4fdebdf18eb0237eaa1a4bef599872745697d148461f6de25d10a6985a950b
       - interface electrostatic trap charge remains disabled, so this benchmark makes no charged Gauss-jump claim
       - the uncalibrated reference makes no SCAPS-parity claim
+  interface-charge-qf-research:
+    kind: numerical
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/experiments/test_quasi_fermi_steady_state.py::test_charged_outer_poisson_closes_and_reference_state_has_zero_charge
+      tests/unit/experiments/test_quasi_fermi_steady_state.py::test_research_api_binds_dark_reference_and_keeps_production_gate_parked
+      tests/unit/validation/test_refinement_executors.py::test_equilibrium_referenced_interface_charge_executor_smoke
+    tests:
+      - tests/unit/experiments/test_quasi_fermi_steady_state.py
+      - tests/unit/validation/test_refinement_executors.py
+    node_ids:
+      - tests/unit/experiments/test_quasi_fermi_steady_state.py::test_charged_outer_poisson_closes_and_reference_state_has_zero_charge
+      - tests/unit/experiments/test_quasi_fermi_steady_state.py::test_research_api_binds_dark_reference_and_keeps_production_gate_parked
+      - tests/unit/validation/test_refinement_executors.py::test_equilibrium_referenced_interface_charge_executor_smoke
+    configs: [configs/interface_charge_research.yaml]
+    limitations:
+      - dark, biased, and illuminated device solves close through the research-only QF API
+      - the registered 3x3 grid/tolerance matrix remains pending, so this benchmark is partial
+      - this is an internal numerical reference with no SCAPS or experimental-validation claim
   courtier2019-ionmonger:
     kind: external
     status: pass
@@ -1055,6 +1078,15 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - interface-charge-off-qf-reference
+  - path: configs/interface_charge_research.yaml
+    sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
+    semantic_sha256: 1298a3257d96c0fb4660c979a4ade76d97f9d92c427d4c78bb2e00d493e6c5a8
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - interface-charge-qf-research
   - path: configs/ionmonger_benchmark.yaml
     sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     semantic_sha256: a7e07b83a752dc2836231c7a3605ae32791ac18c19cde2a176d8d6e9c2d4438d

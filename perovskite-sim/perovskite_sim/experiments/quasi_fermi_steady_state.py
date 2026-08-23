@@ -867,7 +867,9 @@ class _QuasiFermiSystem:
             cross_transmission=self.interface_transmission,
             interface_transport_model=self.interface_transport_model,
             initial_state_m3=interface_seed,
-            fail_on_residual=True,
+            # Trial bulk states need a finite IFT elimination, while the
+            # converged outer state is residual-certified below.
+            fail_on_residual=False,
         )
         factor = self.mat.poisson_factor
         raw = (
@@ -1939,6 +1941,9 @@ def solve_quasi_fermi_steady_state(
     )
     total_iterations = 0
     edge_coordinate_predictor_iterations = 0
+    charged_edge_continuation = bool(
+        research_charge and edge_coordinate_seed is not None
+    )
     # Exact face drops already provide a cancellation-safe same-grid voltage
     # seed. Nodal prediction is needed only after regridding or for legacy
     # states that do not carry those drops.
@@ -1970,7 +1975,11 @@ def solve_quasi_fermi_steady_state(
         edge_coordinate_seed = None
     for stage_index, fraction in enumerate(stages):
         use_edge_coordinates = (
-            interface_boundary and stage_index == len(stages) - 1
+            interface_boundary
+            and (
+                charged_edge_continuation
+                or stage_index == len(stages) - 1
+            )
         )
         if use_edge_coordinates and not using_edge_coordinates:
             per_carrier = len(grid) - 2

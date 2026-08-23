@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import perovskite_sim.experiments.quasi_fermi_steady_state as qf_module
+import perovskite_sim.physics.two_sided_interface as two_sided_module
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.constants import EPS_0, Q
@@ -912,7 +913,73 @@ def test_charged_outer_poisson_closes_and_reference_state_has_zero_charge():
     assert np.max(biased.normalized_gauss_residual) < 1.0e-7
 
 
-def test_research_api_binds_dark_reference_and_keeps_production_gate_parked():
+def test_charged_poisson_defers_local_residual_gate_until_outer_certificate(
+    monkeypatch,
+):
+    stack, grid, material = _prepared_charged_interface_system_inputs()
+    off_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    reference_qss = solve_material_two_sided_interfaces_qss(
+        material,
+        stack,
+        off_system.base[: len(grid)],
+        off_system.base[len(grid) : 2 * len(grid)],
+        off_system.phi0,
+        cross_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        fail_on_residual=True,
+    )
+    charged_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        interface_charge_reference_occupancy=reference_qss.occupancy,
+        interface_charge_trap_density_m2=np.array([5.0e14]),
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    original = (
+        two_sided_module.
+        solve_material_equilibrium_referenced_two_sided_interfaces_qss
+    )
+    fail_flags = []
+
+    def record_gate(*args, **kwargs):
+        fail_flags.append(kwargs["fail_on_residual"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        two_sided_module,
+        "solve_material_equilibrium_referenced_two_sided_interfaces_qss",
+        record_gate,
+    )
+    charged_system._evaluate_charged_poisson_system(
+        charged_system.phi0,
+        np.zeros(len(grid)),
+        np.zeros(len(grid)),
+    )
+
+    assert fail_flags == [False]
+
+
+def test_research_api_binds_dark_reference_and_keeps_production_gate_parked(
+    monkeypatch,
+):
     stack = _research_interface_charge_stack()
     shared_grid = multilayer_grid(
         [Layer(1.0e-7, 4), Layer(1.0e-7, 4)],
@@ -959,6 +1026,18 @@ def test_research_api_binds_dark_reference_and_keeps_production_gate_parked():
     assert abs(biased.interface_incremental_sheet_charge_C_m2[0]) <= Q * 5.0e14
     assert max(biased.interface_normalized_gauss_residual) < 1.0e-7
 
+    stage_calls = []
+    original_stage_solver = qf_module._solve_newton_stage
+
+    def record_stage_coordinates(*args, **kwargs):
+        stage_calls.append(kwargs.get("edge_coordinates", False))
+        return original_stage_solver(*args, **kwargs)
+
+    monkeypatch.setattr(
+        qf_module,
+        "_solve_newton_stage",
+        record_stage_coordinates,
+    )
     light = solve_equilibrium_referenced_interface_charge_steady_state(
         grid,
         stack,
@@ -971,6 +1050,7 @@ def test_research_api_binds_dark_reference_and_keeps_production_gate_parked():
     assert light.interface_occupancy != light.interface_equilibrium_occupancy
     assert abs(light.interface_incremental_sheet_charge_C_m2[0]) > 0.0
     assert max(light.interface_normalized_gauss_residual) < 1.0e-7
+    assert stage_calls == [True, True, True]
 
 
 def test_research_api_rejects_reference_from_a_different_stack():

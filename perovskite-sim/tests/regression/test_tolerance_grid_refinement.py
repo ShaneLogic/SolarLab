@@ -111,6 +111,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "csi-qf-frequency-domain-resolved-v2",
         "twod-uniform-limit",
         "interface-recombination-charge-off",
+        "interface-charge-equilibrium-referenced-v1",
     }
     assert all(len(lane.matrix_points) == 9 for lane in registry.lanes)
     assert all(lane.definition_sha256 for lane in registry.lanes)
@@ -156,6 +157,27 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert interface_quality["max_interface_state_residual_A_m2"].limit == (
         interface_quality["max_continuity_bound_A_m2"].limit
     ) == pytest.approx(1.0e-4)
+    interface_charge = registry.lane(
+        "interface-charge-equilibrium-referenced-v1"
+    )
+    assert interface_charge.grid_values == (30, 60, 120)
+    assert interface_charge.tolerance_factors == (1.0, 0.5, 0.25)
+    charged_observables = {
+        gate.metric: gate for gate in interface_charge.observables
+    }
+    assert charged_observables[
+        "interface_trace_potential_shift_V"
+    ].limit == pytest.approx(1.0e-3)
+    assert charged_observables[
+        "interface_sheet_charge_C_m2"
+    ].comparison == "pointwise_relative_linf"
+    charged_quality = {
+        gate.metric: gate for gate in interface_charge.quality_gates
+    }
+    assert charged_quality["max_normalized_gauss_residual"].limit == (
+        pytest.approx(1.0e-10)
+    )
+    assert charged_quality["dark_incremental_charge_zero_C_m2"].limit == 0.0
     with pytest.raises(FrozenInstanceError):
         registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
 

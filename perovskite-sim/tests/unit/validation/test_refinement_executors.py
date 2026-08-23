@@ -1006,6 +1006,179 @@ def test_interface_charge_off_executor_smoke(monkeypatch):
     assert protocol["solver"]["base_newton_residual_tolerance"] == pytest.approx(4.0e-7)
 
 
+def test_equilibrium_referenced_interface_charge_executor_smoke(monkeypatch):
+    lane = _lane(
+        options={
+            "bias_voltage_V": 0.05,
+            "illuminated_voltage_V": 0.0,
+        }
+    )
+    defect = SimpleNamespace(
+        E_t_eV=0.55,
+        N_t_cm2=1.0e12,
+        calibration_factor=1.0,
+        iface_state_calibration_factor=1.0,
+    )
+
+    @dataclass(frozen=True)
+    class ChargedStack:
+        interface_charge_closure: str = "equilibrium_referenced"
+        interface_charge_rebaseline_acknowledged: bool = True
+        het_recomb_despike: float = 0.0
+        flat_band_contacts: bool = False
+        flat_band_metal_contacts: bool = False
+        contact_phi_B_eV: float = 0.0
+
+    stack = ChargedStack()
+    monkeypatch.setattr(executors, "_load_stack", lambda *_: stack)
+    monkeypatch.setattr(
+        executors,
+        "electrical_interface_defects",
+        lambda *_: (defect,),
+    )
+    monkeypatch.setattr(
+        executors,
+        "electrical_interfaces",
+        lambda *_: ((0.03, 0.05),),
+    )
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_: np.linspace(0.0, 1.0, 4),
+    )
+    monkeypatch.setattr(executors, "build_two_sided_trace_grid", lambda x, _: x)
+    monkeypatch.setattr(
+        executors,
+        "build_material_arrays",
+        lambda *_: SimpleNamespace(iface_state_charge=0.0),
+    )
+    contact = ContactThermodynamicCertificate(
+        status="certified",
+        built_in_potential_mode="semiconductor_work_function",
+        tolerance_eV=5.0e-3,
+        fermi_level_span_eV=0.0,
+        potential_mismatch_V=0.0,
+        metal_work_function_mismatch_eV=None,
+        contact_quasi_fermi_levels_eV=(0.0, 0.0, 0.0, 0.0),
+        message="test",
+    )
+    monkeypatch.setattr(
+        executors,
+        "require_contact_thermodynamic_certificate",
+        lambda *_: contact,
+    )
+
+    arrays = {
+        "y": np.ones(12),
+        "phi": np.zeros(4),
+        "electron_quasi_fermi_potential_V": np.zeros(4),
+        "hole_quasi_fermi_potential_V": np.zeros(4),
+        "electron_face_current_A_m2": np.zeros(3),
+        "hole_face_current_A_m2": np.zeros(3),
+        "total_face_current_A_m2": np.zeros(3),
+        "electron_rate_per_s": np.zeros(4),
+        "hole_rate_per_s": np.zeros(4),
+    }
+
+    def result(
+        *,
+        closure="equilibrium_referenced",
+        occupancy=0.25,
+        charge=0.0,
+        shift=0.0,
+        current=0.0,
+    ):
+        return SimpleNamespace(
+            **arrays,
+            certified=True,
+            current_A_m2=current,
+            electron_continuity_bound_A_m2=1.0e-9,
+            hole_continuity_bound_A_m2=2.0e-9,
+            face_current_spread_A_m2=3.0e-9,
+            interface_local_residual=4.0e-11,
+            max_normalized_cell_residual=5.0e-10,
+            poisson_residual=6.0e-12,
+            interface_topology=executors.TWO_SIDED_TRACE,
+            interface_charge_closure=closure,
+            interface_equilibrium_occupancy=(0.25,),
+            interface_occupancy=(occupancy,),
+            interface_incremental_sheet_charge_C_m2=(charge,),
+            interface_trace_potential_shift_V=((shift, shift),),
+            interface_normalized_gauss_residual=(7.0e-12,),
+            interface_scaled_local_jacobian_condition=(100.0,),
+        )
+
+    dark = result(closure="off")
+    charged_dark = result()
+    trap_density = 1.0e16
+    bias_occupancy = 0.20
+    light_occupancy = 0.75
+    bias = result(
+        occupancy=bias_occupancy,
+        charge=-executors.Q * trap_density * (bias_occupancy - 0.25),
+        shift=1.0e-4,
+        current=1.0,
+    )
+    light = result(
+        occupancy=light_occupancy,
+        charge=-executors.Q * trap_density * (light_occupancy - 0.25),
+        shift=-2.0e-4,
+        current=-2.0,
+    )
+    reference = SimpleNamespace(
+        dark_state=dark,
+        equilibrium_occupancy=(0.25,),
+        trap_density_m2=(trap_density,),
+        interface_transmission=1.0,
+        grid_sha256="1" * 64,
+        stack_sha256="2" * 64,
+        dark_state_sha256="3" * 64,
+    )
+    monkeypatch.setattr(
+        executors,
+        "build_equilibrium_referenced_interface_charge_dark_reference",
+        lambda *_a, **_k: reference,
+    )
+
+    def solve(_x, _stack, voltage, *, illuminated, **_kwargs):
+        if not illuminated and voltage == 0.0:
+            return charged_dark
+        if illuminated:
+            return light
+        return bias
+
+    monkeypatch.setattr(
+        executors,
+        "solve_equilibrium_referenced_interface_charge_steady_state",
+        solve,
+    )
+
+    measurement = executors.run_equilibrium_referenced_interface_charge(
+        lane,
+        MatrixPoint(30, 0.5),
+        Path("."),
+    )
+
+    _assert_protocol(measurement)
+    _assert_registry_contract(
+        measurement,
+        "interface-charge-equilibrium-referenced-v1",
+    )
+    observables = _metric_dict(measurement)
+    quality = _metric_dict(measurement, quality=True)
+    assert observables["interface_sheet_charge_C_m2"].shape == (2,)
+    assert observables["interface_trace_potential_shift_V"].shape == (4,)
+    assert quality["dark_charge_off_bit_identical"].values == (1.0,)
+    assert quality["charge_law_consistent"].values == (1.0,)
+    metadata = json.loads(measurement.metadata_json)
+    assert metadata["dark_reference"]["dark_state_sha256"] == "3" * 64
+    assert [item["target"] for item in metadata["target_evidence"]] == [
+        "dark_bias",
+        "illuminated_operating_point",
+    ]
+    assert metadata["protocol"]["interface"]["charge_law"] == "-q*N_t*(f-f_eq)"
+
+
 def test_two_sided_interface_evidence_checks_carrier_and_state_balance():
     result = SimpleNamespace(
         capture_flux_m2_s=np.array([2.0, 1.0, 3.0, 4.0]),
