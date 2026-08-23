@@ -4,6 +4,13 @@ import math
 import yaml
 
 from perovskite_sim.constants import Q, K_B, T, V_T  # noqa: F401
+from perovskite_sim.physics.band_gap_narrowing import (
+    BAND_GAP_NARROWING_OFF,
+    SLOTBOOM,
+    BandGapNarrowingModel,
+    apply_band_gap_narrowing,
+    normalize_band_gap_narrowing_model,
+)
 from perovskite_sim.physics.statistics import (
     CarrierStatistics,
     DISCRETE_LEVEL,
@@ -62,6 +69,14 @@ class MaterialParams:
     acceptor_binding_energy_eV: float | None = None
     donor_degeneracy: float = 2.0
     acceptor_degeneracy: float = 4.0
+    # Static heavy-doping band-edge correction. Slotboom parameters use SI
+    # density and eV energy units; the conduction fraction partitions DeltaEg
+    # between the two physical band edges.
+    band_gap_narrowing_model: BandGapNarrowingModel = BAND_GAP_NARROWING_OFF
+    bgn_reference_energy_eV: float = 0.009
+    bgn_reference_density_m3: float = 1.0e23
+    bgn_log_shape: float = 0.5
+    bgn_conduction_band_fraction: float = 0.5
     mu_T_gamma: float = -1.5        # mobility temperature exponent
     E_a_ion: float = 0.58           # ion activation energy [eV] (Arrhenius)
     # Phase 4b temperature scaling of radiative recombination and bandgap.
@@ -153,6 +168,12 @@ class MaterialParams:
             self.dopant_ionization_model
         )
         object.__setattr__(self, "dopant_ionization_model", ionization)
+        narrowing_model = normalize_band_gap_narrowing_model(
+            self.band_gap_narrowing_model
+        )
+        object.__setattr__(
+            self, "band_gap_narrowing_model", narrowing_model
+        )
 
         if ionization == FULLY_IONIZED:
             if (
@@ -204,7 +225,41 @@ class MaterialParams:
                 if not math.isfinite(float(value)) or float(value) <= 0.0:
                     raise ValueError(f"{name} must be finite and positive")
 
-        if statistics != FERMI_DIRAC and ionization != DISCRETE_LEVEL:
+        if narrowing_model == BAND_GAP_NARROWING_OFF:
+            if (
+                self.bgn_reference_energy_eV != 0.009
+                or self.bgn_reference_density_m3 != 1.0e23
+                or self.bgn_log_shape != 0.5
+                or self.bgn_conduction_band_fraction != 0.5
+            ):
+                raise ValueError(
+                    "BGN parameters require "
+                    "band_gap_narrowing_model='slotboom'"
+                )
+        elif narrowing_model == SLOTBOOM:
+            apply_band_gap_narrowing(
+                electron_affinity_eV=float(self.chi),
+                band_gap_eV=float(self.Eg),
+                acceptor_density_m3=max(
+                    float(self.N_A), float(self.N_A_bulk or 0.0)
+                ),
+                donor_density_m3=max(
+                    float(self.N_D), float(self.N_D_bulk or 0.0)
+                ),
+                model=SLOTBOOM,
+                reference_energy_eV=float(self.bgn_reference_energy_eV),
+                reference_density_m3=float(self.bgn_reference_density_m3),
+                log_shape=float(self.bgn_log_shape),
+                conduction_band_fraction=float(
+                    self.bgn_conduction_band_fraction
+                ),
+            )
+
+        if (
+            statistics != FERMI_DIRAC
+            and ionization != DISCRETE_LEVEL
+            and narrowing_model != SLOTBOOM
+        ):
             return
         required_positive = {
             "Eg": self.Eg,
@@ -222,7 +277,11 @@ class MaterialParams:
             closure_name = (
                 "fermi_dirac carrier statistics"
                 if statistics == FERMI_DIRAC
-                else "discrete_level ionization"
+                else (
+                    "discrete_level ionization"
+                    if ionization == DISCRETE_LEVEL
+                    else "slotboom band-gap narrowing"
+                )
             )
             raise ValueError(
                 f"{closure_name} require finite positive "
@@ -235,7 +294,11 @@ class MaterialParams:
             closure_name = (
                 "fermi_dirac carrier statistics"
                 if statistics == FERMI_DIRAC
-                else "discrete_level ionization"
+                else (
+                    "discrete_level ionization"
+                    if ionization == DISCRETE_LEVEL
+                    else "slotboom band-gap narrowing"
+                )
             )
             raise ValueError(
                 f"{closure_name} require finite non-negative "

@@ -353,6 +353,19 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
         ),
         donor_degeneracy=_f(layer_cfg.get("donor_degeneracy", 2.0)),
         acceptor_degeneracy=_f(layer_cfg.get("acceptor_degeneracy", 4.0)),
+        band_gap_narrowing_model=layer_cfg.get(
+            "band_gap_narrowing_model", "off"
+        ),
+        bgn_reference_energy_eV=_f(
+            layer_cfg.get("bgn_reference_energy_eV", 0.009)
+        ),
+        bgn_reference_density_m3=_f(
+            layer_cfg.get("bgn_reference_density_m3", 1.0e23)
+        ),
+        bgn_log_shape=_f(layer_cfg.get("bgn_log_shape", 0.5)),
+        bgn_conduction_band_fraction=_f(
+            layer_cfg.get("bgn_conduction_band_fraction", 0.5)
+        ),
         mu_T_gamma=_f(layer_cfg.get("mu_T_gamma", -1.5)),
         E_a_ion=_f(layer_cfg.get("E_a_ion", 0.58)),
         B_rad_T_gamma=_f(layer_cfg.get("B_rad_T_gamma", 0.0)),

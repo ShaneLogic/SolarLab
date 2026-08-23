@@ -150,6 +150,46 @@ def test_layer_dopant_ionization_default_and_discrete_opt_in_are_strict():
         material_params_from_dict(layer)
 
 
+def test_layer_band_gap_narrowing_default_and_slotboom_opt_in_are_strict():
+    cfg = yaml.safe_load(open(_BASE))
+    layer = dict(cfg["layers"][1])
+    baseline = material_params_from_dict(layer)
+    assert baseline.band_gap_narrowing_model == "off"
+    assert baseline.bgn_reference_energy_eV == 0.009
+    assert baseline.bgn_reference_density_m3 == 1.0e23
+
+    layer.update(
+        band_gap_narrowing_model=" Slotboom ",
+        Eg=1.6,
+        Nc300=2.8e25,
+        Nv300=1.04e25,
+        N_D=3.0e23,
+        bgn_reference_energy_eV=0.01,
+        bgn_reference_density_m3=2.0e23,
+        bgn_log_shape=0.4,
+        bgn_conduction_band_fraction=0.6,
+    )
+    parsed = material_params_from_dict(layer)
+    assert parsed.band_gap_narrowing_model == "slotboom"
+    assert parsed.bgn_reference_energy_eV == 0.01
+    assert parsed.bgn_reference_density_m3 == 2.0e23
+    assert parsed.bgn_log_shape == 0.4
+    assert parsed.bgn_conduction_band_fraction == 0.6
+
+    layer["band_gap_narrowing_model"] = "jain_roulston"
+    with pytest.raises(ValueError, match="band-gap narrowing model"):
+        material_params_from_dict(layer)
+
+
+def test_band_gap_narrowing_companions_require_active_model():
+    cfg = yaml.safe_load(open(_BASE))
+    layer = dict(cfg["layers"][1])
+    layer["bgn_reference_energy_eV"] = 0.01
+
+    with pytest.raises(ValueError, match="BGN parameters require"):
+        material_params_from_dict(layer)
+
+
 def test_discrete_dopant_level_requires_active_species_binding_energy():
     cfg = yaml.safe_load(open(_BASE))
     layer = dict(cfg["layers"][1])
@@ -187,5 +227,30 @@ def test_default_material_assembly_rejects_incomplete_ionization():
     with pytest.raises(
         BulkCarrierStatisticsCapabilityError,
         match="incomplete-ionization transport closure is not enabled",
+    ):
+        build_material_arrays(grid, stack)
+
+
+def test_default_material_assembly_rejects_band_gap_narrowing():
+    cfg = yaml.safe_load(open(_BASE))
+    layer = dict(cfg["layers"][1])
+    layer.update(
+        band_gap_narrowing_model="slotboom",
+        N_D=3.0e23,
+        Eg=1.6,
+        Nc300=2.8e25,
+        Nv300=1.04e25,
+    )
+    params = material_params_from_dict(layer)
+    stack = DeviceStack(
+        layers=(LayerSpec("narrowed", 100.0e-9, params, "absorber"),),
+        Phi=0.0,
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    grid = multilayer_grid((Layer(100.0e-9, 8),))
+
+    with pytest.raises(
+        BulkCarrierStatisticsCapabilityError,
+        match="band-gap-narrowing transport closure is not enabled",
     ):
         build_material_arrays(grid, stack)

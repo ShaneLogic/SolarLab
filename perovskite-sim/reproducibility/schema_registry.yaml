@@ -41,6 +41,18 @@ schemas:
         donor_keys: [donor_binding_energy_eV, donor_degeneracy]
         acceptor_keys: [acceptor_binding_energy_eV, acceptor_degeneracy]
         binding_energy_units: eV
+      band_gap_narrowing:
+        selector: band_gap_narrowing_model
+        default: "off"
+        supported_modes: ["off", slotboom]
+        slotboom_required_material_keys: [Eg, Nc300, Nv300]
+        companion_keys:
+          - bgn_reference_energy_eV
+          - bgn_reference_density_m3
+          - bgn_log_shape
+          - bgn_conduction_band_fraction
+        energy_units: eV
+        density_units: m-3
       spatial_doping_profile:
         activation_keys: [N_A_bulk, N_D_bulk]
         companion_keys:

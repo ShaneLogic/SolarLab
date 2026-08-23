@@ -185,6 +185,89 @@ def test_incomplete_ionization_device_work_function_uses_contact_closure():
     )
 
 
+def test_slotboom_contact_state_uses_narrowed_band_edges():
+    baseline = _silicon(donors=3.0e25, statistics=FERMI_DIRAC)
+    narrowed_params = replace(
+        baseline,
+        band_gap_narrowing_model="slotboom",
+        bgn_conduction_band_fraction=0.4,
+    )
+    narrowed = build_semiconductor_contact_state(
+        narrowed_params,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+    reference = build_semiconductor_contact_state(
+        baseline,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+
+    assert narrowed.band_gap_narrowing_eV > 0.0
+    assert narrowed.band_gap_eV == pytest.approx(
+        baseline.Eg - narrowed.band_gap_narrowing_eV
+    )
+    assert narrowed.electron_affinity_eV == pytest.approx(
+        baseline.chi + 0.4 * narrowed.band_gap_narrowing_eV
+    )
+    assert narrowed.conduction_band_shift_eV == pytest.approx(
+        0.4 * narrowed.band_gap_narrowing_eV
+    )
+    assert narrowed.valence_band_shift_eV == pytest.approx(
+        0.6 * narrowed.band_gap_narrowing_eV
+    )
+    assert narrowed.neutrality.normalized_charge_residual < 2.0e-13
+    assert narrowed.work_function_eV != pytest.approx(reference.work_function_eV)
+
+
+def test_slotboom_device_work_function_uses_the_same_contact_states():
+    left = replace(
+        _silicon(acceptors=3.0e25, statistics=FERMI_DIRAC),
+        band_gap_narrowing_model="slotboom",
+    )
+    right = replace(
+        _silicon(donors=3.0e25, statistics=FERMI_DIRAC),
+        band_gap_narrowing_model="slotboom",
+    )
+    stack = DeviceStack(
+        layers=(
+            LayerSpec("p_plus", 100.0e-9, left, "HTL"),
+            LayerSpec("n_plus", 100.0e-9, right, "ETL"),
+        ),
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    left_state = build_semiconductor_contact_state(
+        left,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+    right_state = build_semiconductor_contact_state(
+        right,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+
+    assert stack.compute_semiconductor_V_bi() == pytest.approx(
+        left_state.work_function_eV - right_state.work_function_eV,
+        abs=2.0e-14,
+    )
+
+
+def test_slotboom_requires_explicit_thermodynamic_contact_mode():
+    params = replace(
+        _silicon(donors=3.0e23),
+        band_gap_narrowing_model="slotboom",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="band-gap narrowing requires explicit",
+    ):
+        DeviceStack(
+            layers=(LayerSpec("narrowed", 100.0e-9, params, "ETL"),),
+        )
+
+
 @pytest.mark.parametrize(
     "mode_fields",
     (

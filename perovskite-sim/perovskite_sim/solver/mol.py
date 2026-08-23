@@ -329,6 +329,8 @@ class MaterialArrays:
     acceptor_binding_energy_eV: np.ndarray | None = None
     donor_degeneracy: np.ndarray | None = None
     acceptor_degeneracy: np.ndarray | None = None
+    band_gap_narrowing_model: str = "off"
+    band_gap_narrowing_eV: np.ndarray | None = None
     degenerate_recombination_model: str = "maxwell_boltzmann"
     te_physical_norm: bool = False
     # Physical diffusion-only steric ion flux (review F05). When True, the
@@ -848,6 +850,7 @@ def build_material_arrays(
     acceptor_binding_energy_eV = np.zeros(N)
     donor_degeneracy = np.full(N, 2.0)
     acceptor_degeneracy = np.full(N, 4.0)
+    band_gap_narrowing_eV = np.zeros(N)
     alpha = np.zeros(N)
     chi = np.zeros(N)
     Eg = np.zeros(N)
@@ -928,6 +931,19 @@ def build_material_arrays(
             "for assessment only. Activated layers: "
             + ", ".join(incomplete_ionization_layers)
         )
+    band_gap_narrowing_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.params is not None
+        and layer.params.band_gap_narrowing_model != "off"
+    )
+    if band_gap_narrowing_layers and not research_degenerate_transport:
+        raise BulkCarrierStatisticsCapabilityError(
+            "bulk band-gap-narrowing transport closure is not enabled on the "
+            "default solver path; contact thermodynamics are available for "
+            "assessment only. Activated layers: "
+            + ", ".join(band_gap_narrowing_layers)
+        )
     carrier_statistics_models = {
         layer.params.carrier_statistics
         for layer in elec_layers
@@ -938,19 +954,35 @@ def build_material_arrays(
         for layer in elec_layers
         if layer.params is not None
     }
+    band_gap_narrowing_models = {
+        layer.params.band_gap_narrowing_model
+        for layer in elec_layers
+        if layer.params is not None
+    }
     if research_degenerate_transport:
         if (
             any(layer.params is None for layer in elec_layers)
             or len(carrier_statistics_models) != 1
             or len(dopant_ionization_models) != 1
+            or len(band_gap_narrowing_models) != 1
         ):
             raise BulkCarrierStatisticsCapabilityError(
                 "research degenerate transport requires material parameters "
-                "and one carrier-statistics/dopant-ionization law on every "
-                "electrical layer"
+                "and one carrier-statistics/dopant-ionization/BGN law on "
+                "every electrical layer"
             )
         reference = elec_layers[0].params
-        homogeneous_fields = ("eps_r", "chi", "Eg", "Nc300", "Nv300")
+        homogeneous_fields = (
+            "eps_r",
+            "chi",
+            "Eg",
+            "Nc300",
+            "Nv300",
+            "bgn_reference_energy_eV",
+            "bgn_reference_density_m3",
+            "bgn_log_shape",
+            "bgn_conduction_band_fraction",
+        )
         mismatched = [
             field_name
             for field_name in homogeneous_fields
@@ -1147,6 +1179,40 @@ def build_material_arrays(
             chi[mask] = p.chi
             Eg[mask] = Eg_T
 
+        if p.band_gap_narrowing_model != "off":
+            from perovskite_sim.physics.band_gap_narrowing import (
+                apply_band_gap_narrowing,
+            )
+
+            narrowed_edges = tuple(
+                apply_band_gap_narrowing(
+                    electron_affinity_eV=float(affinity),
+                    band_gap_eV=float(gap),
+                    acceptor_density_m3=float(acceptors),
+                    donor_density_m3=float(donors),
+                    model=p.band_gap_narrowing_model,
+                    reference_energy_eV=float(p.bgn_reference_energy_eV),
+                    reference_density_m3=float(p.bgn_reference_density_m3),
+                    log_shape=float(p.bgn_log_shape),
+                    conduction_band_fraction=float(
+                        p.bgn_conduction_band_fraction
+                    ),
+                )
+                for affinity, gap, acceptors, donors in zip(
+                    chi[mask], Eg[mask], N_A[mask], N_D[mask]
+                )
+            )
+            chi[mask] = np.asarray([
+                state.effective_electron_affinity_eV
+                for state in narrowed_edges
+            ])
+            Eg[mask] = np.asarray([
+                state.effective_band_gap_eV for state in narrowed_edges
+            ])
+            band_gap_narrowing_eV[mask] = np.asarray([
+                state.narrowing_eV for state in narrowed_edges
+            ])
+
         # Temperature-scaled mobility → diffusion (Einstein: D = mu * V_T)
         mu_n_T = mu_at_T(p.mu_n, T_dev, p.mu_T_gamma)
         mu_p_T = mu_at_T(p.mu_p, T_dev, p.mu_T_gamma)
@@ -1165,6 +1231,15 @@ def build_material_arrays(
             ni_sq[mask] = grade_ni_sq(ni_T ** 2, Eg[mask], Eg_T, V_T_dev)
         else:
             ni_sq[mask] = ni_T ** 2
+            if p.band_gap_narrowing_model != "off":
+                intrinsic_product_scale = np.exp(
+                    band_gap_narrowing_eV[mask] / V_T_dev
+                )
+                if not np.all(np.isfinite(intrinsic_product_scale)):
+                    raise FloatingPointError(
+                        "band-gap narrowing intrinsic-product scale is non-finite"
+                    )
+                ni_sq[mask] *= intrinsic_product_scale
 
         tau_n[mask] = p.tau_n
         tau_p[mask] = p.tau_p
@@ -1187,8 +1262,15 @@ def build_material_arrays(
                 Eg[mask], Eg_T, V_T_dev,
             )
         else:
-            n1[mask] = p.n1 * n1_p1_scale
-            p1[mask] = p.p1 * n1_p1_scale
+            bgn_reference_scale = np.exp(
+                0.5 * band_gap_narrowing_eV[mask] / V_T_dev
+            )
+            if not np.all(np.isfinite(bgn_reference_scale)):
+                raise FloatingPointError(
+                    "band-gap narrowing SRH-reference scale is non-finite"
+                )
+            n1[mask] = p.n1 * n1_p1_scale * bgn_reference_scale
+            p1[mask] = p.p1 * n1_p1_scale * bgn_reference_scale
         # Phase 4b: temperature-scaled radiative coefficient. gamma=0
         # (the default) short-circuits to B_300 so pre-Phase-4b configs
         # are unaffected.
@@ -2051,6 +2133,10 @@ def build_material_arrays(
         donor_degeneracy=(donor_degeneracy if incomplete_ionization_layers else None),
         acceptor_degeneracy=(
             acceptor_degeneracy if incomplete_ionization_layers else None
+        ),
+        band_gap_narrowing_model=next(iter(band_gap_narrowing_models)),
+        band_gap_narrowing_eV=(
+            band_gap_narrowing_eV if band_gap_narrowing_layers else None
         ),
         degenerate_recombination_model=(
             "off" if research_degenerate_transport else "maxwell_boltzmann"

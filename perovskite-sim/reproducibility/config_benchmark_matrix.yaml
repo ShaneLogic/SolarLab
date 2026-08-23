@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 2997c073e696909cbdc029dc82c8661cb778f2a6baf307f9453ac799b8f1bb1d
+  sha256: 0d9315f5ca7af8ae7dd3c7277f16827261a08bac393009dc2f5c39d9a0aff80b
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -68,6 +68,7 @@ benchmarks:
     configs:
       - configs/cSi_homojunction.yaml
       - configs/csi_degenerate_pn_research.yaml
+      - configs/csi_incomplete_ionization_bgn_pn_research.yaml
       - configs/csi_incomplete_ionization_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/cigs_baseline.yaml
@@ -116,6 +117,7 @@ benchmarks:
     configs:
       - configs/cSi_homojunction.yaml
       - configs/csi_degenerate_pn_research.yaml
+      - configs/csi_incomplete_ionization_bgn_pn_research.yaml
       - configs/csi_incomplete_ionization_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/interface_charge_reference.yaml
@@ -1077,6 +1079,27 @@ benchmarks:
       - the source-clean 3x3 matrix is internally certified at commit 1090354 with certificate SHA-256 902ae0f91b77cf7403349d4d54553c2d43c3c774b1f2a62530e2a27c9fbc0254
       - the discrete-level model excludes impurity bands, the Mott transition, band-gap narrowing, recombination, bias, and production experiment routes
       - the temperature curve and refinement checks are internal evidence rather than external solver or experimental validation
+  incomplete-ionization-bgn-internal-closure:
+    kind: internal
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: pytest -q tests/unit/physics/test_band_gap_narrowing.py tests/unit/physics/test_contact_statistics.py tests/unit/solver/test_degenerate_equilibrium.py tests/unit/validation/test_bgn_refinement.py
+    tests:
+      - tests/unit/physics/test_band_gap_narrowing.py
+      - tests/unit/physics/test_contact_statistics.py
+      - tests/unit/solver/test_degenerate_equilibrium.py
+      - tests/unit/validation/test_bgn_refinement.py
+    node_ids:
+      - tests/unit/physics/test_band_gap_narrowing.py::test_slotboom_is_monotone_and_stable_below_ratio_underflow
+      - tests/unit/physics/test_contact_statistics.py::test_slotboom_contact_state_uses_narrowed_band_edges
+      - tests/unit/solver/test_degenerate_equilibrium.py::test_research_material_composes_bgn_with_incomplete_ionization
+      - tests/unit/solver/test_degenerate_equilibrium.py::test_incomplete_ionization_and_bgn_equilibrium_close_together
+      - tests/unit/validation/test_bgn_refinement.py::test_registered_executor_real_temperature_cell_matches_contract
+    configs: [configs/csi_incomplete_ionization_bgn_pn_research.yaml]
+    limitations:
+      - the source-clean 3x3 numerical matrix has not yet been executed, so this checkpoint remains partial
+      - the lane is a dark, homogeneous, recombination-off research equilibrium and not a production J-V, C-V, or impedance route
+      - Slotboom coefficients are an empirical silicon closure; external Sentaurus or PC1D validation and experimental validation remain absent
 
 configs:
   - path: configs/cSi_homojunction.yaml
@@ -1108,6 +1131,15 @@ configs:
     benchmarks:
       - loader-contract
       - incomplete-ionization-internal-closure
+      - phase1-refinement-contract
+  - path: configs/csi_incomplete_ionization_bgn_pn_research.yaml
+    sha256: 2fb63bd79a0f0917083d887e80301712d65b9ca46ace02bedb9cb5c5336e789b
+    semantic_sha256: 9262db6efde8a7ba5008f4a47797b99e3be80dafd96d38f311b17c5ad47d8f04
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - incomplete-ionization-bgn-internal-closure
       - phase1-refinement-contract
   - path: configs/csi_vannijen2025_pn_cv.yaml
     sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad

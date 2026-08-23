@@ -130,6 +130,18 @@ def _canonical(value: Any) -> Any:
                 "acceptor_degeneracy",
             ):
                 mapping.pop(key, None)
+        if (
+            isinstance(value, MaterialParams)
+            and value.band_gap_narrowing_model == "off"
+        ):
+            for key in (
+                "band_gap_narrowing_model",
+                "bgn_reference_energy_eV",
+                "bgn_reference_density_m3",
+                "bgn_log_shape",
+                "bgn_conduction_band_fraction",
+            ):
+                mapping.pop(key, None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}

@@ -111,6 +111,21 @@ def _incomplete_stack(temperature_K: float) -> DeviceStack:
     return _stack(left=left, right=right, T=temperature_K)
 
 
+def _incomplete_bgn_stack(temperature_K: float) -> DeviceStack:
+    base = _incomplete_stack(temperature_K)
+    layers = tuple(
+        replace(
+            layer,
+            params=replace(
+                layer.params,
+                band_gap_narrowing_model="slotboom",
+            ),
+        )
+        for layer in base.layers
+    )
+    return replace(base, layers=layers)
+
+
 def test_research_material_uses_the_same_fd_contact_reservoirs():
     stack = _stack()
     material = build_material_arrays(
@@ -158,6 +173,58 @@ def test_research_material_carries_discrete_dopant_parameters():
     assert np.all(material.acceptor_degeneracy == 4.0)
     assert material.n_L < 1.0e23
     assert material.p_R < 1.0e23
+
+
+def test_research_material_composes_bgn_with_incomplete_ionization():
+    temperature = 150.0
+    stack = _incomplete_bgn_stack(temperature)
+    reference_stack = _incomplete_stack(temperature)
+    grid = _grid(10)
+    material = build_material_arrays(
+        grid,
+        stack,
+        carrier_statistics_transport=(
+            DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF
+        ),
+    )
+    reference = build_material_arrays(
+        grid,
+        reference_stack,
+        carrier_statistics_transport=(
+            DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF
+        ),
+    )
+
+    assert material.band_gap_narrowing_model == "slotboom"
+    assert material.band_gap_narrowing_eV is not None
+    assert np.all(material.band_gap_narrowing_eV > 0.0)
+    np.testing.assert_allclose(
+        reference.Eg_phys - material.Eg_phys,
+        material.band_gap_narrowing_eV,
+        rtol=2.0e-14,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        material.ni_sq / reference.ni_sq,
+        np.exp(material.band_gap_narrowing_eV / material.V_T_device),
+        rtol=2.0e-14,
+        atol=0.0,
+    )
+    reference_scale = np.exp(
+        0.5 * material.band_gap_narrowing_eV / material.V_T_device
+    )
+    np.testing.assert_allclose(
+        material.n1 / reference.n1,
+        reference_scale,
+        rtol=2.0e-14,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        material.p1 / reference.p1,
+        reference_scale,
+        rtol=2.0e-14,
+        atol=0.0,
+    )
 
 
 def test_default_material_path_still_rejects_fd_transport():
@@ -322,6 +389,25 @@ def test_incomplete_ionization_equilibrium_closes_across_temperature():
         assert result.charge_balance_relative_error < 0.01
         assert np.all(result.ionized_donor_density_m3 >= 0.0)
         assert np.all(result.ionized_acceptor_density_m3 >= 0.0)
+
+
+def test_incomplete_ionization_and_bgn_equilibrium_close_together():
+    results = [
+        solve_degenerate_pn_equilibrium(
+            _grid(30),
+            _incomplete_bgn_stack(temperature),
+        )
+        for temperature in (100.0, 200.0, 300.0)
+    ]
+
+    for result in results:
+        assert np.all(result.band_gap_narrowing_eV > 0.02)
+        assert result.maximum_normalized_poisson_residual < 1.0e-8
+        assert result.maximum_relative_face_current < 1.0e-12
+        assert result.maximum_normalized_carrier_rate < 1.0e-12
+        assert result.charge_balance_relative_error < 0.015
+        assert np.all(result.electron_density_m3 > 0.0)
+        assert np.all(result.hole_density_m3 > 0.0)
 
 
 @pytest.mark.parametrize("poisson_tolerance", (1.0e-8, 1.0e-10, 1.0e-12))

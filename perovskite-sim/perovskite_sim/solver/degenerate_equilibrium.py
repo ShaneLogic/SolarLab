@@ -43,6 +43,7 @@ class DegeneratePNEquilibriumResult:
     potential_V: np.ndarray
     electron_density_m3: np.ndarray
     hole_density_m3: np.ndarray
+    band_gap_narrowing_eV: np.ndarray
     ionized_acceptor_density_m3: np.ndarray
     ionized_donor_density_m3: np.ndarray
     electron_face_current_A_m2: np.ndarray
@@ -585,6 +586,11 @@ def solve_degenerate_pn_equilibrium(
         potential_V=potential,
         electron_density_m3=n,
         hole_density_m3=p,
+        band_gap_narrowing_eV=(
+            np.zeros_like(n)
+            if mat.band_gap_narrowing_eV is None
+            else np.asarray(mat.band_gap_narrowing_eV, dtype=float).copy()
+        ),
         ionized_acceptor_density_m3=density.ionized_acceptor_density_m3,
         ionized_donor_density_m3=density.ionized_donor_density_m3,
         electron_face_current_A_m2=electron_current,

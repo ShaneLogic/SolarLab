@@ -28,10 +28,10 @@ def _matrix():
 
 def test_matrix_covers_and_loads_every_shipped_config():
     report = validate_matrix(ROOT)
-    assert report["configs"] == 33
+    assert report["configs"] == 34
     assert report["resources"] == 21
     assert report["schemas"] == {
-        "standard-device-v1": 27,
+        "standard-device-v1": 28,
         "scaps-device-v1": 5,
         "tandem-v1": 1,
     }
@@ -70,6 +70,11 @@ def test_default_thermal_velocity_preserves_frozen_semantics():
         "acceptor_binding_energy_eV",
         "donor_degeneracy",
         "acceptor_degeneracy",
+        "band_gap_narrowing_model",
+        "bgn_reference_energy_eV",
+        "bgn_reference_density_m3",
+        "bgn_log_shape",
+        "bgn_conduction_band_fraction",
     }
     historical_payload = {
         field.name: getattr(baseline, field.name)
@@ -204,6 +209,23 @@ def test_standard_schema_registers_bulk_carrier_statistics_contract():
         "Eg",
         "Nc300",
         "Nv300",
+    }
+
+    narrowing = registry["schemas"]["standard-device-v1"][
+        "optional_layer_groups"
+    ]["band_gap_narrowing"]
+    assert narrowing["default"] == "off"
+    assert narrowing["supported_modes"] == ["off", "slotboom"]
+    assert set(narrowing["slotboom_required_material_keys"]) == {
+        "Eg",
+        "Nc300",
+        "Nv300",
+    }
+    assert set(narrowing["companion_keys"]) == {
+        "bgn_reference_energy_eV",
+        "bgn_reference_density_m3",
+        "bgn_log_shape",
+        "bgn_conduction_band_fraction",
     }
 
 

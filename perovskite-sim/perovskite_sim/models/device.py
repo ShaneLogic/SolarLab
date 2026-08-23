@@ -396,6 +396,20 @@ class DeviceStack:
                 "activated layers: "
                 + ", ".join(fermi_dirac_layers)
             )
+        narrowing_layers = tuple(
+            layer.name
+            for layer in self.layers
+            if layer.role != "substrate"
+            and layer.params is not None
+            and layer.params.band_gap_narrowing_model != "off"
+        )
+        if narrowing_layers and mode != "semiconductor_work_function":
+            raise ValueError(
+                "band-gap narrowing requires explicit "
+                "built_in_potential_mode='semiconductor_work_function'; "
+                "activated layers: "
+                + ", ".join(narrowing_layers)
+            )
         if not math.isfinite(float(self.V_bi)):
             raise ValueError("V_bi must be finite")
         if mode == "legacy_manual" and float(self.V_bi) < 0.0:
@@ -744,6 +758,7 @@ def _semiconductor_work_function(
     if (
         p.carrier_statistics == "fermi_dirac"
         or p.dopant_ionization_model == "discrete_level"
+        or p.band_gap_narrowing_model != "off"
     ):
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,

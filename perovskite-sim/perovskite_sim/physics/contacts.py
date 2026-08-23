@@ -107,8 +107,12 @@ class SemiconductorContactState:
 
     statistics: "CarrierStatistics"
     electron_affinity_eV: float
+    band_gap_eV: float
     work_function_eV: float
     neutrality: "BulkChargeNeutralityState"
+    band_gap_narrowing_eV: float
+    conduction_band_shift_eV: float
+    valence_band_shift_eV: float
 
     @property
     def electron_density_m3(self) -> float:
@@ -141,6 +145,9 @@ def build_semiconductor_contact_state(
     """
     from perovskite_sim.physics.statistics import (
         solve_charge_neutrality,
+    )
+    from perovskite_sim.physics.band_gap_narrowing import (
+        apply_band_gap_narrowing,
     )
     from perovskite_sim.physics.temperature import eg_at_T
 
@@ -182,9 +189,20 @@ def build_semiconductor_contact_state(
     dos_scale = (
         (temperature / 300.0) ** 1.5 if use_temperature_scaling else 1.0
     )
+    band_edges = apply_band_gap_narrowing(
+        electron_affinity_eV=float(params.chi),
+        band_gap_eV=band_gap,
+        acceptor_density_m3=float(params.N_A),
+        donor_density_m3=float(params.N_D),
+        model=params.band_gap_narrowing_model,
+        reference_energy_eV=float(params.bgn_reference_energy_eV),
+        reference_density_m3=float(params.bgn_reference_density_m3),
+        log_shape=float(params.bgn_log_shape),
+        conduction_band_fraction=float(params.bgn_conduction_band_fraction),
+    )
     neutrality = solve_charge_neutrality(
         temperature_K=temperature,
-        band_gap_eV=band_gap,
+        band_gap_eV=band_edges.effective_band_gap_eV,
         effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
         effective_valence_dos_m3=float(params.Nv300) * dos_scale,
         acceptor_density_m3=float(params.N_A),
@@ -196,7 +214,7 @@ def build_semiconductor_contact_state(
         donor_degeneracy=float(params.donor_degeneracy),
         acceptor_degeneracy=float(params.acceptor_degeneracy),
     )
-    affinity = float(params.chi)
+    affinity = band_edges.effective_electron_affinity_eV
     work_function = affinity - (
         neutrality.thermal_voltage_V
         * neutrality.reduced_electron_fermi_level
@@ -206,8 +224,12 @@ def build_semiconductor_contact_state(
     return SemiconductorContactState(
         statistics=neutrality.statistics,
         electron_affinity_eV=affinity,
+        band_gap_eV=band_edges.effective_band_gap_eV,
         work_function_eV=float(work_function),
         neutrality=neutrality,
+        band_gap_narrowing_eV=band_edges.narrowing_eV,
+        conduction_band_shift_eV=band_edges.conduction_band_shift_eV,
+        valence_band_shift_eV=band_edges.valence_band_shift_eV,
     )
 
 
