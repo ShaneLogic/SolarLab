@@ -221,6 +221,44 @@ def test_dense_reference_is_deterministic():
     np.testing.assert_array_equal(first.physical_states, second.physical_states)
 
 
+@pytest.mark.parametrize("shared_site", [True, False], ids=["shared", "distinct"])
+def test_structured_reference_matches_dense_trajectory(shared_site):
+    _grid, _stack, model, initial = _problem(shared_site=shared_site)
+    time = np.linspace(0.0, 2.0e-3, 3)
+    dense = run_dual_ion_backward_euler_reference(
+        model,
+        time,
+        initial=initial,
+    )
+    structured = run_dual_ion_backward_euler_reference(
+        model,
+        time,
+        initial=initial,
+        jacobian_mode="structured_analytic",
+    )
+
+    assert structured.jacobian_mode == "structured_analytic"
+    np.testing.assert_allclose(
+        structured.coordinates,
+        dense.coordinates,
+        rtol=0.0,
+        atol=2.0e-14,
+    )
+    np.testing.assert_allclose(
+        structured.physical_states,
+        dense.physical_states,
+        rtol=3.0e-14,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.potentials_V,
+        dense.potentials_V,
+        rtol=0.0,
+        atol=3.0e-15,
+    )
+    assert structured.total_residual_evaluations < dense.total_residual_evaluations
+
+
 @pytest.mark.parametrize(
     ("time_s", "kwargs", "match"),
     [
@@ -228,6 +266,7 @@ def test_dense_reference_is_deterministic():
         (np.array([0.0, 0.0]), {}, "time_s"),
         (np.array([0.0, 1.0e-3]), {"residual_tolerance": 0.0}, "residual_tolerance"),
         (np.array([0.0, 1.0e-3]), {"max_newton_iterations": 0}, "max_newton_iterations"),
+        (np.array([0.0, 1.0e-3]), {"jacobian_mode": "unknown"}, "jacobian_mode"),
     ],
 )
 def test_dense_reference_rejects_invalid_controls(time_s, kwargs, match):

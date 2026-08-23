@@ -275,6 +275,70 @@ class DualIonDAE:
             raise ValueError("dual-ion coordinate mass matrix is non-finite")
         return result
 
+    def ion_coordinate_hessian_m3(self, coordinate: np.ndarray) -> np.ndarray:
+        """Return node-local second derivatives of both ion densities.
+
+        The result is indexed ``[node, physical_species, first_coordinate,
+        second_coordinate]``.  Shared-site entries include every softmax cross
+        derivative; distinct-sublattice entries are diagonal logistic terms.
+        """
+        _n, _p, positive_ion, negative_ion, _phi = self.physical_fields(
+            coordinate
+        )
+        layout = self.layout
+        result = np.zeros((layout.node_count, 2, 2, 2), dtype=float)
+        if layout.shared_site:
+            limit = layout.positive_ion_site_limit_m3
+            fractions = np.stack(
+                (positive_ion / limit, negative_ion / limit),
+                axis=1,
+            )
+            for species in range(2):
+                for first in range(2):
+                    for second in range(2):
+                        delta_species_second = float(species == second)
+                        delta_species_first = float(species == first)
+                        delta_first_second = float(first == second)
+                        result[:, species, first, second] = (
+                            limit
+                            * fractions[:, species]
+                            * (
+                                (
+                                    delta_species_second
+                                    - fractions[:, second]
+                                )
+                                * (
+                                    delta_species_first
+                                    - fractions[:, first]
+                                )
+                                - fractions[:, first]
+                                * (
+                                    delta_first_second
+                                    - fractions[:, second]
+                                )
+                            )
+                        )
+        else:
+            positive_fraction = (
+                positive_ion / layout.positive_ion_site_limit_m3
+            )
+            negative_fraction = (
+                negative_ion / layout.negative_ion_site_limit_m3
+            )
+            result[:, 0, 0, 0] = (
+                positive_ion
+                * (1.0 - positive_fraction)
+                * (1.0 - 2.0 * positive_fraction)
+            )
+            result[:, 1, 1, 1] = (
+                negative_ion
+                * (1.0 - negative_fraction)
+                * (1.0 - 2.0 * negative_fraction)
+            )
+        if not np.all(np.isfinite(result)):
+            raise ValueError("dual-ion coordinate Hessian is non-finite")
+        return result
+
     def packed_physical_state(self, coordinate: np.ndarray) -> np.ndarray:
         n, p, positive_ion, negative_ion, _phi = self.physical_fields(coordinate)
         return StateVec.pack(n, p, positive_ion, negative_ion)
