@@ -266,15 +266,19 @@ class NoIonNoInterfaceDAE:
 
     def derivative_jacobian(self, coordinate: np.ndarray) -> np.ndarray:
         """Return exact ``dF/d(qdot)`` in scaled log-density coordinates."""
+        return np.diag(self.derivative_jacobian_diagonal(coordinate))
+
+    def derivative_jacobian_diagonal(self, coordinate: np.ndarray) -> np.ndarray:
+        """Return the nonzero diagonal of exact ``dF/d(qdot)``."""
         n, p, _phi = self.physical_fields(coordinate)
         layout = self.layout
-        result = np.zeros((layout.size, layout.size), dtype=float)
+        result = np.zeros(layout.size, dtype=float)
         indices = np.arange(1, layout.node_count - 1)
-        result[indices, indices] = (
+        result[indices] = (
             n[indices] / layout.electron_rate_scale_m3_s[indices]
         )
         hole_indices = layout.node_count + indices
-        result[hole_indices, hole_indices] = (
+        result[hole_indices] = (
             p[indices] / layout.hole_rate_scale_m3_s[indices]
         )
         return result

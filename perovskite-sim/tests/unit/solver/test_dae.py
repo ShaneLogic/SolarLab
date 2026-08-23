@@ -168,6 +168,10 @@ def test_exact_derivative_jacobian_matches_central_difference(
 
     np.testing.assert_allclose(exact, central, rtol=2.0e-10, atol=2.0e-14)
     np.testing.assert_array_equal(
+        np.diag(exact),
+        model.derivative_jacobian_diagonal(initial.coordinate),
+    )
+    np.testing.assert_array_equal(
         exact[model.layout.algebraic_mask],
         np.zeros((model.layout.node_count + 4, model.layout.size)),
     )

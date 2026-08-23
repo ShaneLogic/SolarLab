@@ -63,6 +63,39 @@ high-accuracy Radau/MoL trajectory at first order. This is internal numerical
 equivalence only. The dense baseline does not satisfy the Phase-4 cost-scaling
 gate and cannot justify replacing the production transient.
 
+## Structured Newton Checkpoint
+
+`solver/dae_jacobian.py` assembles the smooth first-slice tangent directly as
+CSR. It reuses the analytic Scharfetter-Gummel, CT/PF field-mobility, and
+SRH/radiative/Auger derivatives already certified in the ion-aware operator.
+The adapter adds only finite-volume divergence, log-density chain, storage,
+ohmic boundary, and explicit-Poisson blocks. A non-smooth field-mobility point,
+self-consistent photon recycling, heterojunction de-spiking, or interface cap
+fails capability checks.
+
+The explicit `jacobian_mode="structured_analytic"` path uses sparse LU and a
+sparse one-norm condition estimate. `dense_central` remains the default
+reference. Analytic active/inactive field-mobility matrices agree with an
+independent full-residual stencil within a `1.2e-5` group-normalized envelope;
+the limiting entry is a minority-carrier Poisson derivative below the stencil's
+floating-point resolution.
+
+On 2026-08-23, with OpenBLAS, OMP, and vecLib fixed to one thread, five-repeat
+median one-step measurements were:
+
+| nodes | dense central | sparse analytic | speedup | dense/structured RHS |
+|---:|---:|---:|---:|---:|
+| 9 | 25.34 ms | 3.35 ms | 7.6x | 221 / 5 |
+| 17 | 46.95 ms | 3.93 ms | 12.0x | 413 / 5 |
+| 33 | 115.94 ms | 6.84 ms | 17.0x | 996 / 6 |
+| 65 | 242.78 ms | 9.41 ms | 25.8x | 1956 / 6 |
+
+The 9-to-65-node wall-time growth is 9.58x for dense central and 2.81x for
+sparse analytic. Timing is a workstation observation, not a CI threshold.
+The executable gates use trajectory equivalence, linear CSR nonzero growth,
+and deterministic residual-evaluation counts. Reproduce the wall-time table
+with `scripts/benchmark_dae_jacobian.py` under the same thread controls.
+
 ## Capability Boundary
 
 This slice fails closed for physical interfaces, `InterfaceDefect`, dynamic or
@@ -72,5 +105,6 @@ single electrical layer with ohmic contacts only.
 
 Those exclusions are evidence boundaries, not claims that the omitted physics
 can be added by changing a flag. The next checkpoint must add a time-discrete
-structured Jacobian and demonstrate better grid-cost scaling than this dense
-reference before any ion or algebraic interface-state topology is introduced.
+content-addressed refinement lane for the first-slice error, residual, balance,
+and work gates before any ion or algebraic interface-state topology is
+introduced.

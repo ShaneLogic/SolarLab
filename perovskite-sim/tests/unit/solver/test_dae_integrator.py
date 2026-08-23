@@ -105,6 +105,37 @@ def test_illuminated_steps_are_residual_and_balance_certified():
     assert np.any(result.physical_states[-1] != result.physical_states[0])
 
 
+def test_structured_newton_matches_dense_reference_with_less_rhs_work():
+    _grid, _stack, _reference, model = _homogeneous_model(illuminated=True)
+    time = np.linspace(0.0, 1.0e-9, 5)
+
+    dense = run_backward_euler_reference(model, time)
+    structured = run_backward_euler_reference(
+        model,
+        time,
+        jacobian_mode="structured_analytic",
+    )
+
+    assert dense.jacobian_mode == "dense_central"
+    assert structured.jacobian_mode == "structured_analytic"
+    assert "sparse-analytic" in structured.method
+    np.testing.assert_allclose(
+        structured.physical_states,
+        dense.physical_states,
+        rtol=2.0e-11,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.potentials_V,
+        dense.potentials_V,
+        rtol=0.0,
+        atol=2.0e-14,
+    )
+    assert structured.total_residual_evaluations < (
+        dense.total_residual_evaluations / 20
+    )
+
+
 @pytest.mark.parametrize(
     "time",
     [
@@ -129,6 +160,7 @@ def test_time_grid_validation_fails_closed(time):
         ("max_line_search_backtracks", -1, "max_line_search_backtracks"),
         ("max_log_density_update", np.inf, "max_log_density_update"),
         ("finite_difference_relative_step", np.nan, "finite_difference"),
+        ("jacobian_mode", "unsupported", "jacobian_mode"),
     ],
 )
 def test_solver_control_validation_fails_closed(keyword, value, match):

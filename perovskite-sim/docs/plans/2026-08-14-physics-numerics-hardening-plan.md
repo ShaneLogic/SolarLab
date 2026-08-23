@@ -648,6 +648,14 @@ Newton 仍是 analytic algebraic blocks + dense central differential blocks，�
 correctness/cost baseline；在 structured Jacobian 的 N-scaling 优于该基线前不通过
 P4.1 性能门，也不扩展 ions/interface states。
 
+第三个 checkpoint 将 smooth transport/recombination/field-mobility tangent 装配为
+explicit-Poisson CSR，并以 sparse LU 求解。单线程 N=9/17/33/65 的 one-step
+中位耗时由 dense `25.34/46.95/115.94/242.78 ms` 降为 structured
+`3.35/3.93/6.84/9.41 ms`；最细层 25.8x，RHS evaluations 1956→6，
+9→65 节点增长 9.58x→2.81x。墙钟只作 workstation observation；CI 冻结
+trajectory equivalence、CSR linear nnz 和 deterministic work-count。下一步必须注册
+content-addressed P1 matrix，不能凭该本地表扩大到 ions/interface DAE 声明。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。

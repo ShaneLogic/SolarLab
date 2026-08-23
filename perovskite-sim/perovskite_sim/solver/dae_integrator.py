@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from typing import Literal
 
 import numpy as np
+from scipy.sparse import diags
+from scipy.sparse.linalg import LinearOperator, onenormest, splu
 
 from perovskite_sim.constants import Q
 from perovskite_sim.solver.dae import (
@@ -21,6 +24,7 @@ from perovskite_sim.solver.dae import (
     finite_difference_state_jacobian,
     project_algebraic_state,
 )
+from perovskite_sim.solver.dae_jacobian import build_structured_state_jacobian
 
 
 class DAEIntegrationError(RuntimeError):
@@ -108,6 +112,7 @@ class DAETransientResult:
     step_reports: tuple[DAETimeStepReport, ...]
     success: bool
     method: str
+    jacobian_mode: str
     total_nonlinear_iterations: int
     total_residual_evaluations: int
     total_jacobian_evaluations: int
@@ -217,6 +222,10 @@ def run_backward_euler_reference(
     max_line_search_backtracks: int = 12,
     max_log_density_update: float = 2.0,
     finite_difference_relative_step: float = 1.0e-6,
+    jacobian_mode: Literal[
+        "dense_central",
+        "structured_analytic",
+    ] = "dense_central",
 ) -> DAETransientResult:
     """Integrate the narrow research DAE with conservative backward Euler.
 
@@ -242,6 +251,10 @@ def run_backward_euler_reference(
     ):
         raise ValueError(
             "max_line_search_backtracks must be a non-negative integer"
+        )
+    if jacobian_mode not in ("dense_central", "structured_analytic"):
+        raise ValueError(
+            "jacobian_mode must be 'dense_central' or 'structured_analytic'"
         )
 
     initial_state = (
@@ -327,35 +340,66 @@ def run_backward_euler_reference(
                     residual_norm=residual_norm,
                 )
             try:
-                state_jacobian = finite_difference_state_jacobian(
-                    model,
-                    coordinate,
-                    derivative,
-                    relative_step=finite_difference_relative_step,
-                )
-                residual_evaluations += 2 * layout.size
-                exact_algebraic = model.algebraic_state_jacobian(coordinate)
-                state_jacobian[layout.algebraic_mask] = exact_algebraic[
-                    layout.algebraic_mask
-                ]
                 derivative_chain = _backward_euler_derivative_chain(
                     model,
                     coordinate,
                     previous,
                     dt_s,
                 )
-                jacobian = state_jacobian + (
-                    model.derivative_jacobian(coordinate)
-                    * derivative_chain[np.newaxis, :]
-                )
-                condition = float(np.linalg.cond(jacobian))
-                if not np.isfinite(condition):
-                    raise np.linalg.LinAlgError("non-finite Jacobian condition")
-                delta = np.linalg.solve(
-                    jacobian,
-                    -report.normalized_residual,
-                )
-            except (ValueError, np.linalg.LinAlgError) as exc:
+                if jacobian_mode == "dense_central":
+                    state_jacobian = finite_difference_state_jacobian(
+                        model,
+                        coordinate,
+                        derivative,
+                        relative_step=finite_difference_relative_step,
+                    )
+                    residual_evaluations += 2 * layout.size
+                    exact_algebraic = model.algebraic_state_jacobian(coordinate)
+                    state_jacobian[layout.algebraic_mask] = exact_algebraic[
+                        layout.algebraic_mask
+                    ]
+                    jacobian = state_jacobian + np.diag(
+                        model.derivative_jacobian_diagonal(coordinate)
+                        * derivative_chain
+                    )
+                    condition = float(np.linalg.cond(jacobian))
+                    if not np.isfinite(condition):
+                        raise np.linalg.LinAlgError(
+                            "non-finite Jacobian condition"
+                        )
+                    delta = np.linalg.solve(
+                        jacobian,
+                        -report.normalized_residual,
+                    )
+                else:
+                    state_jacobian = build_structured_state_jacobian(
+                        model,
+                        coordinate,
+                        derivative,
+                    ).matrix
+                    jacobian = (
+                        state_jacobian
+                        + diags(
+                            model.derivative_jacobian_diagonal(coordinate)
+                            * derivative_chain
+                        )
+                    ).tocsc()
+                    factor = splu(jacobian)
+                    inverse = LinearOperator(
+                        jacobian.shape,
+                        matvec=factor.solve,
+                        rmatvec=lambda value: factor.solve(value, trans="T"),
+                        dtype=float,
+                    )
+                    condition = float(
+                        onenormest(jacobian) * onenormest(inverse)
+                    )
+                    if not np.isfinite(condition):
+                        raise np.linalg.LinAlgError(
+                            "non-finite sparse Jacobian condition estimate"
+                        )
+                    delta = factor.solve(-report.normalized_residual)
+            except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
                 raise DAEIntegrationError(
                     f"Jacobian solve failed: {exc}",
                     step_index=step_index,
@@ -465,7 +509,12 @@ def run_backward_euler_reference(
         potentials_V=potential_ro,
         step_reports=report_tuple,
         success=True,
-        method="physical-density-backward-euler/dense-hybrid-newton-v1",
+        method=(
+            "physical-density-backward-euler/dense-hybrid-newton-v1"
+            if jacobian_mode == "dense_central"
+            else "physical-density-backward-euler/sparse-analytic-newton-v1"
+        ),
+        jacobian_mode=jacobian_mode,
         total_nonlinear_iterations=sum(
             item.nonlinear_iterations for item in report_tuple
         ),
