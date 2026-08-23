@@ -148,3 +148,32 @@ def test_backward_euler_contracts_to_eliminated_qss_mol_reference():
         np.abs(np.log(mol_terminal.n / initial_state.n))
     ) > 1.0e-4
     assert Q * results[-1].max_interface_state_balance_m2_s < 1.0e-12
+
+    structured = run_algebraic_interface_backward_euler_reference(
+        model,
+        np.linspace(0.0, final_time_s, 9),
+        initial=initial,
+        residual_tolerance=1.0e-8,
+        jacobian_mode="structured_analytic",
+    )
+    np.testing.assert_allclose(
+        structured.physical_states,
+        results[-1].physical_states,
+        rtol=2.0e-12,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.interface_states_m3,
+        results[-1].interface_states_m3,
+        rtol=2.0e-12,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.potentials_V,
+        results[-1].potentials_V,
+        rtol=0.0,
+        atol=2.0e-13,
+    )
+    assert structured.total_residual_evaluations < (
+        results[-1].total_residual_evaluations / 20
+    )

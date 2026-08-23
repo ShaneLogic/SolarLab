@@ -13,6 +13,9 @@ from perovskite_sim.solver.dae_interface_integrator import (
     _backward_euler_derivative,
     run_algebraic_interface_backward_euler_reference,
 )
+from perovskite_sim.solver.dae_interface_jacobian import (
+    build_algebraic_interface_structured_backward_euler_jacobian,
+)
 from perovskite_sim.solver.dae_interface_states import (
     build_algebraic_interface_consistent_initial_condition,
     build_algebraic_interface_state_dae,
@@ -209,7 +212,7 @@ def test_time_grid_validation_fails_closed(time):
         ("max_log_density_update", np.inf, "max_log_density_update"),
         ("max_interface_logit_update", 0.0, "max_interface_logit_update"),
         ("finite_difference_relative_step", np.nan, "finite_difference"),
-        ("jacobian_mode", "structured_analytic", "dense_central"),
+        ("jacobian_mode", "automatic", "jacobian_mode"),
     ],
 )
 def test_solver_control_validation_fails_closed(keyword, value, match):
@@ -253,3 +256,108 @@ def test_newton_exhaustion_reports_step_time_and_residual():
     assert caught.value.step_index == 1
     assert caught.value.time_s == pytest.approx(1.0e-7)
     assert np.isfinite(caught.value.residual_norm)
+
+
+def test_structured_newton_matches_dense_trajectory_with_far_fewer_residuals():
+    model = _model()
+    time = np.linspace(0.0, 2.0e-9, 5)
+    dense = run_algebraic_interface_backward_euler_reference(
+        model,
+        time,
+        jacobian_mode="dense_central",
+    )
+    structured = run_algebraic_interface_backward_euler_reference(
+        model,
+        time,
+        jacobian_mode="structured_analytic",
+    )
+
+    assert dense.success and structured.success
+    assert structured.jacobian_mode == "structured_analytic"
+    assert structured.method.endswith("sparse-analytic-newton-v1")
+    np.testing.assert_allclose(
+        structured.coordinates,
+        dense.coordinates,
+        rtol=0.0,
+        atol=2.0e-13,
+    )
+    np.testing.assert_allclose(
+        structured.physical_states,
+        dense.physical_states,
+        rtol=3.0e-13,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.interface_states_m3,
+        dense.interface_states_m3,
+        rtol=3.0e-13,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.potentials_V,
+        dense.potentials_V,
+        rtol=0.0,
+        atol=2.0e-16,
+    )
+    assert structured.total_residual_evaluations < (
+        dense.total_residual_evaluations / 20
+    )
+    assert structured.max_normalized_carrier_residual <= 1.0e-9
+    assert structured.max_normalized_interface_residual <= 1.0e-9
+    assert all(
+        np.isfinite(report.max_scaled_jacobian_condition)
+        for report in structured.step_reports
+    )
+
+
+def test_structured_work_is_linear_and_residual_evaluations_are_grid_stable():
+    node_counts = []
+    layout_sizes = []
+    nonzero_counts = []
+    structured_evaluations = []
+    dense_evaluations = []
+    for intervals in (4, 8, 16):
+        model = _model(intervals=intervals)
+        initial = build_algebraic_interface_consistent_initial_condition(
+            model,
+            residual_tolerance=1.0e-8,
+        )
+        tangent = build_algebraic_interface_structured_backward_euler_jacobian(
+            model,
+            initial.coordinate,
+            1.0e-9,
+        )
+        time = np.array([0.0, 1.0e-10])
+        structured = run_algebraic_interface_backward_euler_reference(
+            model,
+            time,
+            initial=initial,
+            residual_tolerance=1.0e-8,
+            jacobian_mode="structured_analytic",
+        )
+        dense = run_algebraic_interface_backward_euler_reference(
+            model,
+            time,
+            initial=initial,
+            residual_tolerance=1.0e-8,
+            jacobian_mode="dense_central",
+        )
+        node_counts.append(model.layout.node_count)
+        layout_sizes.append(model.layout.size)
+        nonzero_counts.append(tangent.nonzero_count)
+        structured_evaluations.append(structured.total_residual_evaluations)
+        dense_evaluations.append(dense.total_residual_evaluations)
+
+    assert node_counts == [9, 17, 33]
+    assert nonzero_counts == [157, 309, 613]
+    np.testing.assert_array_equal(
+        np.diff(nonzero_counts),
+        19 * np.diff(node_counts),
+    )
+    assert all(
+        nonzero_count < 6 * layout_size
+        for nonzero_count, layout_size in zip(nonzero_counts, layout_sizes)
+    )
+    assert max(structured_evaluations) - min(structured_evaluations) <= 1
+    assert dense_evaluations[0] < dense_evaluations[1] < dense_evaluations[2]
+    assert structured_evaluations[-1] < dense_evaluations[-1] / 100
