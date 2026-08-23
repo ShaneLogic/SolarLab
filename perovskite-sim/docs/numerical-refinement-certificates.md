@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 15 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit、Phase 3 interface charge-off/charged research closure，以及 Phase 4.1 no-ion、single-positive-ion 与 dual-mobile-ion DAE slices。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 16 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit、Phase 3 interface charge-off/charged research closure，以及 Phase 4.1 no-ion、single-positive-ion、dual-mobile-ion 与 algebraic-interface-state DAE slices。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -40,6 +40,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `no-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态误差、carrier inventory response、dense/structured 等价性 |
 | `single-positive-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P/phi 误差、正离子守恒、dense/structured 等价性 |
 | `dual-mobile-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P+/P-/phi 误差、逐离子守恒、shared-site bounds、dense/structured 等价性 |
+| `algebraic-interface-state-dae-transient-v1` | 每层区间 4/8/16 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/interface/phi 误差、interface occupation、clamp-inactive、dense/structured 等价性 |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -80,6 +81,14 @@ blocking unit-charge species、positive/negative/vacancy 三态 shared-site soft
 site-limit 是 protocol 明确冻结的合成输入，不解释为 source IonMonger publication
 参数。每个 cell 同样运行 strict Radau/MoL、dense-central BE 和
 structured-analytic BE；该证书不继承 single-ion 结果。
+
+algebraic-interface-state DAE protocol 独立固定两层、单界面、ohmic、无离子、
+charge-off topology，四个 DOS-bounded Fermi-Richardson algebraic states，以及
+bulk projection、cross-plane exchange 和 shared-occupancy interface-SRH 的
+clamp-inactive analytic tangent。这里的相邻 bulk/interface 交叉导数不表示启用
+可配置 cross-node carrier sampling；后者与 `InterfaceDefect`、dynamic states、
+interface charge、selective contacts 等仍显式排除。每格同时执行 locally
+eliminated-QSS Radau/MoL、dense-central BE 和 structured-analytic BE。
 
 manifest 保存去重后的完整 protocol document 和 hash。certificate 只有在所有完成 cell 的 protocol 内容自校验通过且 hash 跨 grid/tolerance 一致时才记录 `protocol_sha256`。protocol provenance 不替代 config、source、environment、grid 或 tolerance provenance。
 
@@ -131,6 +140,7 @@ python scripts/run_numerical_refinement.py interface-charge-device-stress-resolv
 python scripts/run_numerical_refinement.py no-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1 --dry-run
+python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1 --dry-run
 ```
 
 建议固定 BLAS 线程后逐 lane 执行：
@@ -151,6 +161,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py no-ion-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1
 ```
 
 先执行一个 cell 并留下可恢复状态：
@@ -165,7 +176,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-当前 registry 共 15 条 lane；十三条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 127 个 content-addressed cell。其内部工作量至少包括：
+当前 registry 共 16 条 lane；十四条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 136 个 content-addressed cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
@@ -195,8 +206,12 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
   dense-central BE 与 structured-analytic BE；分列 n/p/P+/P- differential
   residual、逐 species blocking inventory、shared-site vacancy 与 Poisson/边界
   algebraic residual，最细 cell 为 128 步。
+- algebraic-interface-state DAE：9 个 cell 各执行两层同网格的 strict
+  locally-eliminated-QSS Radau/MoL、dense-central BE 与 structured-analytic BE；
+  分列 carrier/interface/algebraic residual、三类 continuity balance、interface
+  occupation/bounds、clamp margin 和 structured work，最细 cell 为 128 步。
 
-因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 127 个 cell 的真实结果。
+因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 136 个 cell 的真实结果。
 
 `certified` 只表示该冻结代码/config/protocol/environment 下的内部数值收敛。它不等于 SCAPS/IonMonger 外部 solver parity，不等于实验验证，也不证明材料参数或模型闭包唯一正确。
 
@@ -280,6 +295,35 @@ algebraic interface state、选择性接触、生产 transient/experiment/backen
 的 research DAE topology gate。负离子参数是合成 protocol 输入；这不是外部
 IonMonger parity，也不认证 algebraic interface state、选择性接触、生产
 transient/experiment/backend route。
+
+### 2026-08-24 algebraic-interface-state DAE certificate
+
+`algebraic-interface-state-dae-transient-v1` 在 source commit `008aef3`、source
+changes 为空且 BLAS/OpenMP 单线程的环境下完成 9/9 cell，0 failed、0 missing；
+相同环境重复执行为 0 executed、9 reused，run/certificate hash 不变：
+
+- run ID：`407927842820d9360b132aaad50fa97c5bec55b146bef75f86811edd06845cad`；
+- certificate SHA-256：`21bb12e4655c60ce7c97ce2a3cf57617fc3c2cb667990dab244fc04dc4a53c89`；
+- protocol SHA-256：`9ffcc7e0cf2adfa52192686563455558f9fc4afa3a1982736d87f1c03af75efd`；
+- terminal grid/time-step interface-occupation differences
+  `4.92480e-3 / 5.57687e-13`；terminal MoL interface/log-density error changes
+  `7.60700e-10 / 5.57733e-13` 与 `7.60825e-10 / 5.59330e-13`；
+- 全矩阵最大 carrier/interface/algebraic normalized residual
+  `4.97175e-8 / 2.55161e-14 / 2.55161e-14`，electron/hole/interface balance
+  defect `8.47196e-15 / 1.50341e-15 / 1.45516e-15 A/m2`；
+- 全轨迹 dense/structured log-density、interface-state relative density、potential
+  差异至多 `6.61882e-12 / 6.61504e-12 / 2.01228e-16 V`；structured RHS-work
+  fraction 最大 `2.18447e-2`，4/8/16 每层区间对应 CSR nonzeros/node
+  `17.4444 / 18.1765 / 18.5758`；
+- 全部 clamp-inactive、bounded-interface-state、positive-terminal-density 与
+  strict MoL numerical-health gate 通过。
+
+该证书只关闭 dark 10 mV/10 ns、两层 ohmic、单个 uncharged interface、四个
+DOS-bounded algebraic Fermi-Richardson states 的 research DAE topology gate。
+`InterfaceDefect`、可配置 cross-node carrier sampling、dynamic states、interface
+charge、two-sided trace、ions、selective contacts、field mobility、photon recycling
+及 clamp-active operating point 均不在声明内；它也不是生产 transient、外部
+solver、SCAPS 或实验验证。
 
 ### 2026-08-23 charge-off reference certificate
 

@@ -784,18 +784,23 @@ The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
 Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
 
-Phase 4.1 now includes research-only semi-explicit DAE residuals for three
-single-layer, ohmic, no-interface slices: no ions, one blocking positive ion,
-and blocking positive/negative ions on a shared finite-site lattice. All retain
+Phase 4.1 now includes four research-only semi-explicit DAE slices. The first
+three are single-layer, ohmic, no-interface topologies: no ions, one blocking
+positive ion, and blocking positive/negative ions on a shared finite-site
+lattice. The fourth is a two-layer, ion-free, charge-off topology with one
+physical interface and four algebraic Fermi-Richardson trace states. All retain
 Poisson potential as an algebraic coordinate, construct a
 residual-certified consistent initial condition, and provide dense reference
 and sparse analytic Newton paths. The ion slices add bounded coordinates,
 production blocking flux/tangents, per-species dual-cell inventory, and exact
-ion-storage derivatives. The registered 9-cell `no-ion-dae-transient-v1`,
-`single-positive-ion-dae-transient-v1`, and `dual-mobile-ion-dae-transient-v1`
-matrices are internally certified at source commits `985a234`, `6e9a274`, and
-`2d6b32f` (certificates `44807d654d...`, `7538fa4ace...`, and
-`15a6a4dcf...`). The dual lane's negative-ion parameters are synthetic protocol
-inputs. These certificates do not extend the claim to interfaces, algebraic
-interface states, selective contacts, experiments, or backend routes; see
+ion-storage derivatives. The interface slice adds exact adjacent bulk/state
+cross-block tangents for projection, reciprocal exchange, and shared-occupancy
+SRH, and fails closed if any defining clamp activates. The four registered
+9-cell matrices are internally certified at source commits `985a234`,
+`6e9a274`, `2d6b32f`, and `008aef3` (certificates `44807d654d...`,
+`7538fa4ace...`, `15a6a4dcf...`, and `21bb12e465...`). The dual lane's
+negative-ion parameters are synthetic protocol inputs. The interface certificate
+does not include `InterfaceDefect`, configurable cross-node carrier sampling,
+dynamic/charged interface states, ions, selective contacts, field mobility,
+photon recycling, clamp-active points, experiments, or backend routes; see
 [the DAE capability boundary](docs/dae-research-backbone.md).

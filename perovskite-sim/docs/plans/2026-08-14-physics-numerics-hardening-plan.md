@@ -700,6 +700,28 @@ algebraic residual 为 `3.4486e-10 / 4.6729e-16 / 1.6714e-16 / 8.1975e-16`，
 不是外部 IonMonger 参数验证。下一 checkpoint 才进入 algebraic interface-state
 topology；它不能继承当前 no-interface 证书。
 
+第九个 checkpoint 建立 algebraic-interface-state DAE topology：两层、单界面、
+ohmic、无离子、charge-off slice 的状态加入四个 DOS-bounded algebraic
+Fermi-Richardson trace densities。analytic tangent 覆盖 adjacent bulk Fermi
+projection、reciprocal cross-plane exchange、shared-occupancy interface SRH 及其
+对 bulk/interface/potential 坐标的全部交叉导数；interface face 从标准 SG
+装配中移除并以同一 thermionic flux 同时闭合两侧 continuity rows。projection、
+activity、positive-state、SRH occupancy 或 DOS/logit clamp 一旦激活即 fail-close。
+N=9/17/33 的 CSR nnz 为 `157/309/613`，结构化 residual evaluations 为
+`7/7/8`，对应 dense `379/667/1450`。
+
+第十个 checkpoint 已注册并真实执行
+`algebraic-interface-state-dae-transient-v1`：source-clean commit `008aef3` 的
+9/9 cell 获得内部 `certified` 证书 `21bb12e465...`。terminal grid/time-step
+interface-occupation differences 为 `4.9248e-3 / 5.5769e-13`；全矩阵最大
+carrier/interface/algebraic residual 为
+`4.9718e-8 / 2.5516e-14 / 2.5516e-14`，三类 balance defect 均小于
+`8.5e-15 A/m2`，structured RHS-work fraction 最大 `2.1845e-2`。这只关闭
+clamp-inactive、uncharged、single-interface research topology gate；它不认证
+`InterfaceDefect`、可配置 cross-node carrier sampling、dynamic states、ions、
+selective contacts、field mobility、photon recycling 或生产 route，也不替换默认
+MoL。P4.1 下一步应先选择并预注册一个新的组合拓扑，而不是扩大本证书措辞。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。

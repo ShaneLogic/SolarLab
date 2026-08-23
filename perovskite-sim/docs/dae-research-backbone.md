@@ -238,20 +238,88 @@ single-threaded BLAS/OpenMP:
 This is an internal numerical certificate for one dual-ion topology, not
 external IonMonger parity or a production-route certificate.
 
+## Algebraic Interface-State Slice
+
+The fourth capability slice uses two electrical layers and one replaced
+heterojunction face. Its coordinate is
+
+```text
+q = (log(n / n_ref), log(p / p_ref), eta_n1s, eta_p1s,
+     eta_n2s, eta_p2s, phi).
+```
+
+Carrier continuity rows remain differential. The four DOS-bounded interface
+trace densities and Poisson potential are algebraic. At the interface, the
+ordinary Scharfetter-Gummel face is removed from both adjacent carrier rows and
+replaced by the same bulk-to-plane thermionic flux used in the four interface
+state balances. The local analytic tangent differentiates adjacent bulk Fermi
+projection, reciprocal cross-plane Fermi-Richardson exchange, and
+shared-occupancy interface SRH with respect to all coupled bulk, interface, and
+potential coordinates. This cross-block dependence is not the separately
+configurable cross-node carrier-sampling feature; that feature remains rejected.
+
+`solver/dae_interface_states.py` defines the residual and consistent initial
+condition. `solver/dae_interface_jacobian.py` assembles the complete physical-
+density backward-Euler CSR tangent, and `solver/dae_interface_integrator.py`
+provides dense-central and structured-analytic Newton paths. Analytic
+linearization is valid only while the projection exponent, Fermi activity,
+positive-state, SRH occupancy, and DOS/logit clamps are inactive. Any active
+clamp fails closed instead of silently using a derivative of the clamped branch.
+
+The registered `algebraic-interface-state-dae-transient-v1` lane freezes a dark
+`10 mV`, `10 ns`, two-layer ohmic slice of
+`configs/interface_charge_research.yaml`, with one uncharged interface, no
+mobile ions, four algebraic Fermi-Richardson states, and locally eliminated QSS
+states in the production MoL reference. It combines 4/8/16 intervals per layer
+with three backward-Euler step factors. Every cell runs strict Radau/MoL plus
+dense and structured DAE paths.
+
+On 2026-08-24, source-clean commit `008aef3` completed all 9 cells under
+single-threaded BLAS/OpenMP:
+
+- run ID `407927842820d9360b132aaad50fa97c5bec55b146bef75f86811edd06845cad`;
+- certificate `21bb12e4655c60ce7c97ce2a3cf57617fc3c2cb667990dab244fc04dc4a53c89`;
+- protocol `9ffcc7e0cf2adfa52192686563455558f9fc4afa3a1982736d87f1c03af75efd`;
+- terminal grid/time-step interface-occupation changes
+  `4.92480e-3 / 5.57687e-13`, below the frozen `2e-2` limit;
+- all-cell maximum carrier/interface/algebraic normalized residual
+  `4.97175e-8 / 2.55161e-14 / 2.55161e-14`;
+- electron/hole/interface balance defects at most
+  `8.47196e-15 / 1.50341e-15 / 1.45516e-15 A/m2`;
+- dense/structured trajectory difference at most `6.61882e-12` in log density,
+  `6.61504e-12` in interface-state relative density, and `2.01228e-16 V` in
+  potential; structured RHS-work fraction at most `0.02185`, while CSR storage
+  is `17.44 / 18.18 / 18.58` nonzeros per node on the three grids;
+- all clamp-inactive, bounded-interface-state, positive-terminal-density, and
+  strict MoL numerical-health gates passed.
+
+This certificate establishes internal numerical equivalence and conservation
+for that frozen algebraic-interface topology. It is not a production transient
+certificate, external solver validation, SCAPS parity, or a general interface
+physics certificate.
+
 ## Capability Boundary
 
 The no-ion slice fails closed for any mobile ion. The single-ion slice admits
 one positive mobile ion only and fails closed for a negative mobile ion. The
 dual-ion slice requires exactly one positive and one negative unit-charge
 species; its registered lane additionally requires the diffusion-only
-shared-site steric law. All three fail closed for physical interfaces,
-`InterfaceDefect`, dynamic or QSS interface states, selective contacts,
-nonzero structural ion coordinates outside their declared topology, and
-nonpositive carrier references. All support one electrical layer with ohmic
-contacts only.
+shared-site steric law. These three slices fail closed for physical interfaces,
+`InterfaceDefect`, dynamic or QSS interface states, selective contacts, nonzero
+structural ion coordinates outside their declared topology, and nonpositive
+carrier references. They support one electrical layer with ohmic contacts only.
+
+The algebraic-interface slice instead requires exactly two electrical layers,
+one physical interface, four DOS-bounded Fermi-Richardson algebraic states,
+ohmic contacts, charge-off electrostatics, and inactive clamps. It fails closed
+for `InterfaceDefect`, configurable cross-node carrier sampling, dynamic
+interface states, interface charge, two-sided trace geometry, mobile ions,
+selective contacts, field-dependent mobility, photon recycling, and clamp-active
+operating points.
 
 Those exclusions are evidence boundaries, not claims that the omitted physics
-can be added by changing a flag. The no-ion, single-positive-ion, and dual-ion
-certificates are separately complete. Any algebraic interface-state topology
-must use a new capability contract and a new content-addressed lane; it cannot
-inherit an ion-free or ion-topology certificate.
+can be added by changing a flag. The no-ion, single-positive-ion, dual-ion, and
+algebraic-interface certificates are separately complete only for their frozen
+topologies. Any combined ion/interface, charged-interface, `InterfaceDefect`, or
+production-route topology needs a new capability contract and a new content-
+addressed lane; it cannot inherit one of these certificates.
