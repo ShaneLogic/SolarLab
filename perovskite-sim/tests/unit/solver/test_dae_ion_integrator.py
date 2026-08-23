@@ -202,6 +202,43 @@ def test_voltage_driven_ion_motion_preserves_blocking_inventory():
     assert grid.size == count
 
 
+def test_structured_newton_matches_dense_reference_with_less_rhs_work():
+    _grid, model = _single_ion_model(V_app_V=0.01)
+    time = np.array([0.0, 5.0e-3, 1.0e-2])
+
+    dense = run_single_ion_backward_euler_reference(
+        model,
+        time,
+        max_newton_iterations=24,
+    )
+    structured = run_single_ion_backward_euler_reference(
+        model,
+        time,
+        max_newton_iterations=24,
+        jacobian_mode="structured_analytic",
+    )
+
+    assert dense.jacobian_mode == "dense_central"
+    assert structured.jacobian_mode == "structured_analytic"
+    assert "sparse-analytic" in structured.method
+    np.testing.assert_allclose(
+        structured.physical_states,
+        dense.physical_states,
+        rtol=2.0e-11,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.potentials_V,
+        dense.potentials_V,
+        rtol=0.0,
+        atol=2.0e-14,
+    )
+    assert structured.max_relative_positive_ion_inventory_drift < 2.0e-15
+    assert structured.total_residual_evaluations < (
+        dense.total_residual_evaluations / 20
+    )
+
+
 @pytest.mark.parametrize(
     ("keyword", "value", "match"),
     [
@@ -211,6 +248,7 @@ def test_voltage_driven_ion_motion_preserves_blocking_inventory():
         ("max_log_density_update", np.inf, "max_log_density_update"),
         ("max_ion_logit_update", 0.0, "max_ion_logit_update"),
         ("finite_difference_relative_step", np.nan, "finite_difference"),
+        ("jacobian_mode", "unsupported", "jacobian_mode"),
     ],
 )
 def test_solver_control_validation_fails_closed(keyword, value, match):
