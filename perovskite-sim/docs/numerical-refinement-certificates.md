@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 10 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit，以及 Phase 3 interface charge-off/charged research closure。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 12 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit，以及 Phase 3 interface charge-off/charged research closure。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -36,6 +36,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `interface-recombination-charge-off` | N30/60/90 | QF residual factor 1/0.5/0.25 | two-sided interface flux、归一化 J-V、Voc |
 | `interface-charge-equilibrium-referenced-v1` | N30/60/120 | QF residual factor 1/0.5/0.25 | charged current、occupancy、sheet charge、trace shift |
 | `interface-charge-device-stress-v1` | N30/60 | QF residual factor 1/0.5 | 9-point Et/CBO/Nd/Nt current、dark occupancy、sheet charge、trace shift |
+| `interface-charge-device-stress-resolved-v2` | N30/60/90 | QF residual factor 1/0.5 | v1 同一 9-point observable 与门限，N90 为 terminal grid |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -103,6 +104,7 @@ python scripts/run_numerical_refinement.py twod-uniform-limit --dry-run
 python scripts/run_numerical_refinement.py interface-recombination-charge-off --dry-run
 python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenced-v1 --dry-run
 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1 --dry-run
+python scripts/run_numerical_refinement.py interface-charge-device-stress-resolved-v2 --dry-run
 ```
 
 建议固定 BLAS 线程后逐 lane 执行：
@@ -119,6 +121,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-recombination-charge-off
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenced-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-device-stress-resolved-v2
 ```
 
 先执行一个 cell 并留下可恢复状态：
@@ -133,7 +136,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-当前 registry 共 11 条 lane；十条既有 lane 各 9 个 cell，device-stress lane 为 4 个 cell，合计 94 个 content-addressed cell。其内部工作量至少包括：
+当前 registry 共 12 条 lane；十条既有 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 100 个 content-addressed cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
@@ -149,11 +152,11 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 - equilibrium-referenced interface charge：9 个重新认证的 charge-off dark
   anchors、9 个 dark-bias state 和 9 个 illuminated state，并逐点保存
   `f_eq/f/Delta sigma`、trace shift、Gauss、IFT condition 与状态哈希。
-- interface-charge device stress：每个 4-cell refinement point 内执行 9 个
-  one-factor device variants；合计重建 36 个 contact-certified dark anchors，
-  并求 36 个 dark-bias 与 36 个 illuminated target states。
+- interface-charge device stress：v1/v2 每个 refinement cell 内执行 9 个
+  one-factor device variants；两条 lane 合计重建 90 个 contact-certified dark
+  anchors，并求 90 个 dark-bias 与 90 个 illuminated target states。
 
-因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 94 个 cell 的真实结果。
+因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 100 个 cell 的真实结果。
 
 `certified` 只表示该冻结代码/config/protocol/environment 下的内部数值收敛。它不等于 SCAPS/IonMonger 外部 solver parity，不等于实验验证，也不证明材料参数或模型闭包唯一正确。
 

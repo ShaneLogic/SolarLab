@@ -619,8 +619,12 @@ charge-off/fail-close。下一项为 `E_t/CBO/Nd/Nt` device stress matrix，完�
 N30/N60 与 QF factor 1/0.5。初版 `N_D=1e16 cm^-3` 在 N30/factor=0.5
 fail-close，随后 `5e15 cm^-3` 在 N60/factor=0.5 fail-close；`1e17/1e18 cm^-3`
 也不能通过当前 local-QSS basin，均明确保留为 unsupported stress boundary，未放宽
-门限。新版非零掺杂端点保留 20 倍跨度，但在 clean source identity 下完成新版
-4-cell artifact 之前仍只算 registered candidate。
+门限。新版非零掺杂端点保留 20 倍跨度；v1 clean 4-cell artifact 无失败或缺失，
+但因 N30 到 N60 的 sheet-charge 相对差 `1.4735%` 保持 `partial`。独立
+resolved-v2 保留全部设备点与门限，并预注册 N30/N60/N90、factor 1/0.5 的
+6-cell ladder；N90 最细预检通过且 limiting sheet-charge 变化约 `0.155%`。
+N120 最细预检在 `N_D=2e15 cm^-3` dark-bias 点 fail-close，因此明确列为
+当前 solver-basin 上界而不用于扩大声明。
 
 ## 5. Phase 4：统一 DAE 与材料物理完备性（6 至 12 个月，分决策门推进）
 

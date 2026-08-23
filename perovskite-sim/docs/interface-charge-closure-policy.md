@@ -213,15 +213,22 @@ source/config/protocol identity:
   the purpose-built research config).
 
 The backend research endpoint and its explicit evidence schema are completed.
-The broader `E_t`/CBO/`N_D`/`N_t` work is pre-registered as
+The broader `E_t`/CBO/`N_D`/`N_t` work is registered as
 `interface-charge-device-stress-v1`: nine one-factor device variants evaluated
-on N30/N60 and residual factors 1/0.5. Direct N30 and finest N60 preflight
-probes close, but they are not a content-addressed certificate; the clean
-four-cell matrix must run before the supported device envelope is expanded.
+on N30/N60 and residual factors 1/0.5. Its source-clean four-cell matrix has no
+failed or missing cell, but remains `partial`: the N30-to-N60 pointwise sheet-
+charge difference is `1.4735%`, above the fixed `1%` gate. The resolved-v2
+companion retains every physical point and gate and adds N90 as the terminal
+grid; it remains a candidate until its clean six-cell matrix completes.
 The initial `N_D=1e16 cm^-3` endpoint failed N30/factor=0.5, while an
 intermediate `5e15 cm^-3` endpoint failed N60/factor=0.5. Both failed runs are
 retained as unsupported boundaries. The registered nonzero endpoints are
 `1e14` and `2e15 cm^-3`, a 20-fold span, without changing any residual gate.
+N90/factor=0.5 closes all nine points and reduces the N60-to-N90 sheet-charge
+difference at the limiting `N_D=2e15 cm^-3` illuminated target to about
+`0.155%`. N120/factor=0.5 instead fails closed at that point's dark-bias target,
+so N120 is explicitly outside the current solver basin rather than being used
+to extend the claim.
 The historical three-layer SCAPS-derived reference also remains an unresolved
 illuminated stress case. Transient, impedance and 2D require the later unified
 algebraic-state topology. None of these gaps may be hidden by enabling the

@@ -113,11 +113,15 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "interface-recombination-charge-off",
         "interface-charge-equilibrium-referenced-v1",
         "interface-charge-device-stress-v1",
+        "interface-charge-device-stress-resolved-v2",
     }
     assert all(
         len(lane.matrix_points) == 9
         for lane in registry.lanes
-        if lane.lane_id != "interface-charge-device-stress-v1"
+        if lane.lane_id not in {
+            "interface-charge-device-stress-v1",
+            "interface-charge-device-stress-resolved-v2",
+        }
     )
     assert all(lane.definition_sha256 for lane in registry.lanes)
     assert all(lane.observables for lane in registry.lanes)
@@ -205,6 +209,15 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert stress_quality["max_normalized_gauss_residual"].limit == (
         pytest.approx(1.0e-10)
     )
+    resolved_stress = registry.lane(
+        "interface-charge-device-stress-resolved-v2"
+    )
+    assert resolved_stress.grid_values == (30, 60, 90)
+    assert resolved_stress.tolerance_factors == stress.tolerance_factors
+    assert len(resolved_stress.matrix_points) == 6
+    assert resolved_stress.observables == stress.observables
+    assert resolved_stress.quality_gates == stress.quality_gates
+    assert resolved_stress.options == stress.options
     with pytest.raises(FrozenInstanceError):
         registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
 

@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 18d4f57bce1895bc777eb016c3cb858c4b2089588f7fb2df7315c680a327469a
+  sha256: 77ac3fd87c454a8f3197577b5aa34dbfe2d2a3a52169e896ee016cd450bf1242
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -175,9 +175,11 @@ benchmarks:
       - tests/unit/sweeps/test_interface_defect_sweep.py::test_interface_defect_N_t_cm2_updates_charge_capacity_and_preserves_srv_ratio
     configs: [configs/interface_charge_research.yaml]
     limitations:
-      - the real N30 nine-point probe closes, but the registered 2x2 refinement matrix has not yet been executed under a clean source identity
+      - the v1 N30/N60 matrix completes all four cells but remains partial because one pointwise sheet-charge grid difference is 1.4735 percent against a fixed 1 percent gate
+      - the resolved-v2 N30/N60/N90 companion retains every v1 device point and gate; its six-cell clean matrix is not yet complete
       - the matrix is one-factor-at-a-time and does not certify Et/CBO/Nd/Nt interactions
       - Nd=5e15 and 1e16 cm-3 fail different tight-residual grid cells, while 1e17 and 1e18 cm-3 remain outside the local-QSS basin
+      - N120 at factor 0.5 fails closed for the Nd=2e15 cm-3 dark-bias target and is outside the current solver basin
       - this is internal numerical evidence with no SCAPS or experimental-validation claim
   courtier2019-ionmonger:
     kind: external
