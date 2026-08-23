@@ -696,3 +696,65 @@ lanes:
       - Charge-barrier sign consistency is an internal electrostatic law check, not an experimental trend validation.
       - The lane remains limited to the purpose-built two-layer stack and equilibrium-referenced incremental charge.
       - Transient, impedance, 2-D, production experiment routes, absolute trap charge, and whole-device neutrality remain out of scope.
+
+  no-ion-dae-transient-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/csi_vannijen2025_pn_cv.yaml
+    config_sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad
+    executor: perovskite_sim.validation.dae_refinement:run_no_ion_dae_transient
+    executor_version: v1
+    grid:
+      parameter: single_layer_intervals
+      values: [8, 16, 32]
+    tolerance:
+      parameter: backward_euler_time_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      terminal_carrier_inventory_response: {comparison: absolute_linf, limit: 0.04, units: "1"}
+      terminal_log_density_error: {comparison: absolute_linf, limit: 1.1e-4, units: "1"}
+      terminal_potential_error_V: {comparison: absolute_linf, limit: 5.0e-13, units: V}
+      structured_dense_terminal_log_density_difference: {comparison: absolute_linf, limit: 1.0e-10, units: "1"}
+      structured_dense_terminal_potential_difference_V: {comparison: absolute_linf, limit: 1.0e-12, units: V}
+    quality_gates:
+      bulk_srh_denominator_positive: {operator: eq, limit: 1.0, units: "1"}
+      consistent_initial_condition_certified: {operator: eq, limit: 1.0, units: "1"}
+      dense_reference_success: {operator: eq, limit: 1.0, units: "1"}
+      first_slice_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      max_electron_balance_defect_A_m2: {operator: le, limit: 2.0e-8, units: A m-2}
+      max_hole_balance_defect_A_m2: {operator: le, limit: 2.0e-8, units: A m-2}
+      max_normalized_algebraic_residual: {operator: le, limit: 1.0e-9, units: "1"}
+      max_normalized_differential_residual: {operator: le, limit: 1.0e-9, units: "1"}
+      max_structured_dense_log_density_difference: {operator: le, limit: 1.0e-10, units: "1"}
+      max_structured_dense_potential_difference_V: {operator: le, limit: 1.0e-12, units: V}
+      max_terminal_log_density_error: {operator: le, limit: 5.0e-4, units: "1"}
+      max_terminal_potential_error_V: {operator: le, limit: 1.0e-10, units: V}
+      mol_numerical_health_passed: {operator: eq, limit: 1.0, units: "1"}
+      mol_reference_success: {operator: eq, limit: 1.0, units: "1"}
+      structured_analytic_success: {operator: eq, limit: 1.0, units: "1"}
+      structured_csr_nonzeros_per_node: {operator: le, limit: 20.0, units: "1"}
+      structured_jacobian_condition_finite: {operator: eq, limit: 1.0, units: "1"}
+      structured_rhs_work_fraction: {operator: le, limit: 0.1, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      source_layer_index: 1
+      source_layer_name: n_base
+      alpha_m1: 2.0e4
+      photon_flux_m2_s: 1.0e17
+      final_time_s: 1.0e-9
+      reference_time_s: 1.0e-9
+      base_time_steps: 8
+      reference_grid_intervals: 8
+      newton_residual_tolerance: 1.0e-9
+      max_newton_iterations: 16
+      max_line_search_backtracks: 12
+      max_log_density_update: 2.0
+      finite_difference_relative_step: 1.0e-6
+      mol_rtol: 1.0e-10
+      mol_atol_m3: 1.0e-3
+      mol_max_step_divisor: 100
+    limitations:
+      - This lane certifies only the illuminated single-layer ohmic no-ion/no-interface research DAE slice extracted from the c-Si configuration.
+      - Dense-central and structured-analytic backward Euler are compared to the same high-accuracy eliminated-Poisson MoL trajectory; this is internal numerical equivalence, not external device validation.
+      - Selective contacts, InterfaceDefect, cross-node interface sampling, mobile ions, algebraic interface states, experiment routes, and backend routes remain excluded.
