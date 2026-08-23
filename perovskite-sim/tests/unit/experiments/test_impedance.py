@@ -186,6 +186,7 @@ def test_frequency_window_reports_omitted_ionmonger_branch():
 
     assert assessment.has_mobile_ions
     assert assessment.ionic_branch_covered is False
+    assert assessment.full_timescale_envelope_bracketed is False
     assert len(assessment.ionic_timescales) == 1
     scale = assessment.ionic_timescales[0]
     assert scale.debye_length_m == pytest.approx(1.467e-9, rel=5e-3)
@@ -221,7 +222,10 @@ def test_frequency_window_does_not_promote_one_characteristic_point():
 
     assert assessment.characteristic_frequency_bracketed
     assert not assessment.ionic_branch_covered
-    assert "ionic_branch_sampling_inadequate" in assessment.warnings[0]
+    assert not assessment.full_timescale_envelope_bracketed
+    assert "ionic_timescale_envelope_not_bracketed" in (
+        assessment.warnings[0]
+    )
 
 
 def test_frequency_window_does_not_promote_sparse_endpoint_envelope():
@@ -235,6 +239,7 @@ def test_frequency_window_does_not_promote_sparse_endpoint_envelope():
     )
 
     assert assessment.characteristic_frequency_bracketed
+    assert assessment.full_timescale_envelope_bracketed
     assert not assessment.ionic_branch_covered
     assert "ionic_branch_sampling_inadequate" in assessment.warnings[0]
 
@@ -246,15 +251,8 @@ def test_frequency_window_certifies_dense_margin_coverage():
 
     x, mat = _ionmonger_frequency_fixture()
     seed = assess_impedance_frequency_window(x, mat, np.array([1.0]))
-    scale = seed.ionic_timescales[0]
-    low = min(
-        scale.blocking_charge_frequency_Hz,
-        scale.dielectric_frequency_Hz,
-    ) / 10.0
-    high = max(
-        scale.blocking_charge_frequency_Hz,
-        scale.dielectric_frequency_Hz,
-    ) * 10.0
+    low = seed.recommended_f_min_Hz
+    high = seed.recommended_f_max_Hz
     decades = np.log10(high / low)
     n_points = int(np.ceil(decades / 0.25)) + 3
     frequencies = np.logspace(
@@ -265,7 +263,10 @@ def test_frequency_window_certifies_dense_margin_coverage():
     assessment = assess_impedance_frequency_window(x, mat, frequencies)
 
     assert assessment.characteristic_frequency_bracketed
+    assert assessment.full_timescale_envelope_bracketed
     assert assessment.ionic_branch_covered
+    assert assessment.ionic_branch_assessments[0].covered
+    assert assessment.max_observed_sampling_gap_decades <= 0.5
     assert assessment.warnings == ()
 
 

@@ -103,4 +103,52 @@ describe('impedance points-per-cycle controls', () => {
     expect(warning?.textContent).toContain('Legacy impedance result')
     expect(warning?.textContent).toContain('unclassified')
   })
+
+  it('marks a pre-envelope frequency assessment as legacy unclassified', async () => {
+    await mountImpedancePanel(container)
+    ;(document.getElementById('btn-is') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(mocks.streamJobEvents).toHaveBeenCalledTimes(1)
+    })
+
+    const handlers = mocks.streamJobEvents.mock.calls[0][1] as JobStreamHandlers<ISResult>
+    handlers.onResult({
+      frequencies: [1e3],
+      Z_real: [1],
+      Z_imag: [-1],
+      protocol: {
+        method: 'transient_ion_aware',
+        V_dc: 0,
+        delta_V: 0.01,
+        illuminated: false,
+        dc_settle_time: 1e-3,
+        n_cycles: 5,
+        n_extract: 2,
+        points_per_cycle: 40,
+      },
+      operating_point: {
+        certified: true,
+        reasons: [],
+      } as unknown as NonNullable<ISResult['operating_point']>,
+      frequency_window: {
+        f_min_Hz: 1e3,
+        f_max_Hz: 1e3,
+        has_mobile_ions: true,
+        characteristic_frequency_bracketed: true,
+        ionic_branch_covered: true,
+        ionic_timescales: [],
+        warnings: [],
+      },
+      grid_assessment: {
+        certified: true,
+        warnings: [],
+      } as unknown as NonNullable<ISResult['grid_assessment']>,
+    })
+
+    expect(
+      container.querySelector<HTMLElement>(
+        '[data-test="impedance-evidence-warning"]',
+      )?.textContent,
+    ).toContain('Legacy impedance result')
+  })
 })

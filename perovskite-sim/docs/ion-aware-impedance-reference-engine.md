@@ -1,7 +1,8 @@
 # Ion-aware impedance reference engine
 
-Status: `INTERNAL_TESTED_REFERENCE` as of 2026-08-21. This is not yet an
-`INTERNAL_CERTIFIED` impedance lane and is not external validation.
+Status: `INTERNAL_TESTED_REFERENCE_AND_FREQUENCY_WINDOW` as of 2026-08-23.
+This is not yet an `INTERNAL_CERTIFIED` grid/frequency lane and is not external
+validation.
 
 ## Scope
 
@@ -72,7 +73,8 @@ SHA-256 binds:
 - ordered frequencies and nominal AC amplitude;
 - state/voltage finite-difference steps and refinement ladder;
 - current-continuity, linear-solve, perturbation, mass, inventory, and
-  current-decomposition limits.
+  current-decomposition limits;
+- frequency-envelope margin and maximum log-frequency sampling gap.
 
 The default finite-difference ladder is `1`, `0.5`, `0.25`. The final response
 must pass all-face relative admittance spread `<=5e-4`, componentwise backward
@@ -88,6 +90,40 @@ stencil crossing the ion site limit. Contact thermodynamics remains a
 separate strict axis: the current IonMonger deck is
 `compatible_unverified`, so a numerically passing response still has
 `certified=false`.
+
+## Frequency-window evidence
+
+Protocol v2 calls the same shared
+`experiments.impedance_frequency` assessment used by the public impedance
+engine. Each contiguous positive- or negative-ion active region is evaluated
+independently using its median diffusivity and equilibrium density, mean
+permittivity, and finite-volume region length. The screening scales are
+
+```text
+lambda_D = sqrt(epsilon V_T / (q P))
+f_dielectric = D / (2 pi lambda_D^2)
+f_blocking = D / (pi L lambda_D)
+f_diffusion = D / (2 pi L^2).
+```
+
+These are model-derived order-of-magnitude frequencies, not fitted circuit
+constants. The assessment preserves the historical blocking-frequency bracket
+flag and separately reports whether the full diffusion/blocking/dielectric
+envelope is bracketed. For each region it recommends
+
+```text
+f_min <= min(f_diffusion, f_blocking, f_dielectric) / 10^margin
+f_max >= max(f_diffusion, f_blocking, f_dielectric) * 10^margin,
+```
+
+with protocol defaults `margin=1 decade` and maximum sampling gap `0.5
+decades`. Coverage requires both margins and the sampling-gap gate for every
+active region and ion species. The result records per-region bracket flags,
+recommended bounds, observed gap, and warnings. It never inserts, removes, or
+moves a requested frequency. An uncovered window leaves the linear solve's
+`numerically_certified` flag intact but sets the separate
+`frequency_window_certified=false`, so combined certification cannot be
+claimed from a high-frequency-only sweep.
 
 ## Usage
 
@@ -133,9 +169,14 @@ The real single-ion IonMonger N13 probe at 0.9 V, one sun and frequencies
 
 A symmetric dual-ion N13 probe also passed, with both ionic current/storage
 blocks active, maximum inventory response `1.07e-13`, all-face spread
-`2.07e-8`, and backward error `2.49e-16`. The focused impedance/DC suite is
-`85 passed, 1 deselected`; the existing c-Si QF slow regression is `8 passed`.
-The repository default suite is `2028 passed, 2 skipped, 263 deselected`.
+`2.07e-8`, and backward error `2.49e-16`. Both species receive independent
+frequency evidence.
+
+For IonMonger N30, the shared assessment reports `lambda_D=1.467 nm`,
+`f_diffusion=1.008e-5 Hz`, `f_blocking=5.487e-3 Hz`, and
+`f_dielectric=0.7470 Hz`. The default one-decade policy therefore recommends
+approximately `1.008e-6` through `7.470 Hz`. A `10 Hz--100 kHz` request is
+returned unchanged and explicitly remains uncovered.
 
 The N61 single-ion performance probe used 138 dynamic coordinates and 30
 frequencies from `1e-4` to `1e6 Hz`, with all three finite-difference levels.
@@ -159,13 +200,11 @@ certificate.
    frozen-potential differences.
    See
    [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
-2. Add device-timescale frequency-window assessment without changing user
-   frequencies.
-3. Register grid, finite-difference and frequency-coverage matrices and mint
+2. Register grid, finite-difference and frequency-coverage matrices and mint
    per-frequency certificates.
-4. Cross-check selected frequencies against transient lock-in using the exact
+3. Cross-check selected frequencies against transient lock-in using the exact
    same DC state and protocol.
-5. Only after those gates pass, route the method through `run_impedance`, the
+4. Only after those gates pass, route the method through `run_impedance`, the
    backend, and frontend diagnostics.
 
 External IonMonger/Driftfusion artifacts and experimental spectroscopy remain

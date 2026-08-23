@@ -107,6 +107,13 @@ function makeIS(): ISResult {
       ionic_branch_covered: true,
       ionic_timescales: [],
       warnings: [],
+      full_timescale_envelope_bracketed: true,
+      recommended_f_min_Hz: 1e2,
+      recommended_f_max_Hz: 1e5,
+      branch_margin_decades: 1,
+      max_allowed_sampling_gap_decades: 1,
+      max_observed_sampling_gap_decades: 1,
+      ionic_branch_assessments: [],
     },
     grid_assessment: {
       certified: true,
@@ -143,8 +150,10 @@ describe('renderImpedance', () => {
     expect(el.querySelector('[data-test="impedance-style-mode"]')).not.toBeNull()
     expect(el.querySelector('[data-test="impedance-evidence-warning"]')).toBeNull()
     const summary = el.querySelector<HTMLElement>('[data-test="impedance-evidence-summary"]')
-    expect(summary?.textContent).toContain('characteristic frequency bracketed')
+    expect(summary?.textContent).toContain('blocking-charge frequency bracketed')
+    expect(summary?.textContent).toContain('full ionic envelope bracketed')
     expect(summary?.textContent).toContain('ionic branch covered')
+    expect(summary?.textContent).toContain('recommended range: [100, 1.00e+5] Hz')
     expect(summary?.textContent).toContain('Grid: certified')
     expect(summary?.textContent).toContain('guarded cells: 6')
     expect(summary?.textContent).toContain('offenders: 0')
@@ -173,6 +182,7 @@ describe('renderImpedance', () => {
     result.frequency_window = {
       ...result.frequency_window!,
       characteristic_frequency_bracketed: false,
+      full_timescale_envelope_bracketed: false,
       ionic_branch_covered: false,
       warnings: ['ionic_blocking_charge_frequency_not_bracketed'],
     }

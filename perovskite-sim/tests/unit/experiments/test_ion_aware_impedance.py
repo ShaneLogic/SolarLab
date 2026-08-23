@@ -44,6 +44,13 @@ def test_protocol_round_trip_binds_dc_protocol_and_state(dc_fixture):
     assert rebuilt.protocol_hash == protocol.protocol_hash
     assert rebuilt.dc_protocol_sha256 == dc_state.protocol_hash
     assert len(rebuilt.dc_state_sha256) == 64
+    assert rebuilt.frequency_branch_margin_decades == 1.0
+    assert rebuilt.max_frequency_sampling_gap_decades == 0.5
+    assert rebuilt.schema_version.endswith("-v2")
+    assert replace(
+        rebuilt,
+        frequency_branch_margin_decades=2.0,
+    ).protocol_hash != rebuilt.protocol_hash
 
 
 def test_protocol_rejects_unknown_and_missing_fields(dc_fixture):
@@ -69,6 +76,8 @@ def test_protocol_rejects_unknown_and_missing_fields(dc_fixture):
         ({"delta_V": 0.02}, "20 mV"),
         ({"refinement_factors": (1.0, 0.5)}, "at least three"),
         ({"refinement_factors": (1.0, 0.5, 0.75)}, "strictly decreasing"),
+        ({"frequency_branch_margin_decades": 0.0}, "positive"),
+        ({"max_frequency_sampling_gap_decades": 0.0}, "positive"),
     ],
 )
 def test_protocol_rejects_ambiguous_or_nonlinear_requests(
@@ -122,6 +131,18 @@ def test_reference_lane_returns_mass_current_and_storage_decomposition(dc_fixtur
     assert result.certificate.numerically_certified
     assert not result.certificate.thermodynamically_certified
     assert not result.certificate.certified
+    assert not result.certificate.frequency_window_certified
+    assert result.frequency_window.has_mobile_ions
+    assert not result.frequency_window.characteristic_frequency_bracketed
+    assert not result.frequency_window.full_timescale_envelope_bracketed
+    assert not result.frequency_window.ionic_branch_covered
+    assert result.frequency_window.recommended_f_min_Hz < (
+        np.min(protocol.frequencies_Hz)
+    )
+    np.testing.assert_array_equal(
+        result.frequencies,
+        np.asarray(protocol.frequencies_Hz),
+    )
     assert result.negative_ion_admittance_faces_S_m2 is None
     assert result.negative_ion_storage_response_F_m2 is None
     np.testing.assert_allclose(
@@ -145,6 +166,48 @@ def test_reference_lane_returns_mass_current_and_storage_decomposition(dc_fixtur
     )
     assert all(item.passed for item in result.certificate.perturbation_assessments)
     assert np.all(np.isfinite(result.Z))
+
+
+def test_dense_full_timescale_window_is_separately_certified(dc_fixture):
+    stack, x, mat, dc_state = dc_fixture
+    seed = impedance.assess_impedance_frequency_window(
+        x,
+        mat,
+        np.array([1.0]),
+    )
+    low = seed.recommended_f_min_Hz
+    high = seed.recommended_f_max_Hz
+    assert low is not None and high is not None
+    count = int(np.ceil(np.log10(high / low) / 0.25)) + 3
+    frequencies = np.logspace(
+        np.log10(low) - 0.01,
+        np.log10(high) + 0.01,
+        count,
+    )
+    protocol = impedance.build_ion_aware_impedance_protocol(
+        dc_state,
+        frequencies,
+    )
+
+    result = impedance.run_ion_aware_impedance(
+        x,
+        stack,
+        protocol,
+        dc_state=dc_state,
+        mat=mat,
+    )
+
+    assert result.certificate.numerically_certified
+    assert result.certificate.frequency_window_certified
+    assert not result.certificate.thermodynamically_certified
+    assert not result.certificate.certified
+    assert result.frequency_window.characteristic_frequency_bracketed
+    assert result.frequency_window.full_timescale_envelope_bracketed
+    assert result.frequency_window.ionic_branch_covered
+    assert result.frequency_window.warnings == ()
+    assert result.frequency_window.max_observed_sampling_gap_decades <= (
+        protocol.max_frequency_sampling_gap_decades
+    )
 
 
 def test_reference_lane_rejects_stale_state_hash_before_linearization(dc_fixture):

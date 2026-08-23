@@ -5,13 +5,14 @@ from typing import Callable, Literal
 
 import numpy as np
 
-from perovskite_sim.constants import EPS_0, Q
+from perovskite_sim.constants import Q
 from perovskite_sim.discretization.grid import (
     MAX_INTERFACE_CELL_DEBYE_RATIO,
     MIN_GUARDED_LAYER_DEBYE_SPAN,
     require_thick_layer_interface_resolution,
 )
 from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.experiments import impedance_frequency as _frequency
 from perovskite_sim.physics.contacts import (
     ContactThermodynamicCertificate,
     assess_contact_thermodynamics,
@@ -57,6 +58,15 @@ _IMPEDANCE_METHOD_ALIASES = {
     "qf_frequency_ion_free": "qf_frequency_ion_free",
 }
 
+# Backward-compatible public exports; implementation lives in the shared
+# frequency-assessment module used by both impedance engines.
+FrequencyWindowAssessment = _frequency.FrequencyWindowAssessment
+IonicBranchCoverage = _frequency.IonicBranchCoverage
+IonicTimescale = _frequency.IonicTimescale
+assess_impedance_frequency_window = (
+    _frequency.assess_impedance_frequency_window
+)
+
 
 @dataclass(frozen=True)
 class ImpedanceProtocol:
@@ -71,35 +81,6 @@ class ImpedanceProtocol:
     n_extract: int | None
     points_per_cycle: int | None = None
     experiment_protocol: ExperimentProtocol | None = None
-
-
-@dataclass(frozen=True)
-class IonicTimescale:
-    """Order-of-magnitude ionic frequencies for one mobile-ion region."""
-
-    species: Literal["positive", "negative"]
-    region_start_m: float
-    region_end_m: float
-    region_length_m: float
-    diffusion_coefficient_m2_s: float
-    equilibrium_density_m3: float
-    debye_length_m: float
-    dielectric_frequency_Hz: float
-    blocking_charge_frequency_Hz: float
-    diffusion_frequency_Hz: float
-
-
-@dataclass(frozen=True)
-class FrequencyWindowAssessment:
-    """Whether the requested sweep can observe the model's ionic branch."""
-
-    f_min_Hz: float
-    f_max_Hz: float
-    has_mobile_ions: bool
-    characteristic_frequency_bracketed: bool | None = None
-    ionic_branch_covered: bool | None = None
-    ionic_timescales: tuple[IonicTimescale, ...] = ()
-    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -278,166 +259,6 @@ def _lockin_extract(
     if abs(delta_I) == 0.0:
         return complex(np.inf, 0.0)
     return delta_V / delta_I
-
-
-def _contiguous_true_regions(mask: np.ndarray) -> tuple[tuple[int, int], ...]:
-    """Return inclusive index bounds for each contiguous true region."""
-    indices = np.flatnonzero(np.asarray(mask, dtype=bool))
-    if indices.size == 0:
-        return ()
-    breaks = np.flatnonzero(np.diff(indices) > 1)
-    starts = np.r_[indices[0], indices[breaks + 1]]
-    ends = np.r_[indices[breaks], indices[-1]]
-    return tuple((int(start), int(end)) for start, end in zip(starts, ends))
-
-
-def _node_values_from_faces(values: np.ndarray, size: int) -> np.ndarray:
-    """Build diagnostic node values from a face cache."""
-    faces = np.asarray(values, dtype=float)
-    nodes = np.zeros(size, dtype=float)
-    if size < 2 or faces.size != size - 1:
-        return nodes
-    nodes[0] = faces[0]
-    nodes[-1] = faces[-1]
-    if size > 2:
-        nodes[1:-1] = 0.5 * (faces[:-1] + faces[1:])
-    return nodes
-
-
-def assess_impedance_frequency_window(
-    x: np.ndarray,
-    mat,
-    frequencies: np.ndarray,
-) -> FrequencyWindowAssessment:
-    """Compare a requested sweep with Debye, charging, and diffusion scales.
-
-    These are screening estimates, not fitted equivalent-circuit constants.
-    They are deliberately returned with the result so a high-frequency-only
-    sweep cannot be described as covering ionic response without evidence.
-    """
-    grid = np.asarray(x, dtype=float)
-    freq = np.asarray(frequencies, dtype=float)
-    if grid.ndim != 1 or grid.size < 2 or np.any(np.diff(grid) <= 0.0):
-        raise ValueError("x must be a strictly increasing one-dimensional grid")
-    if freq.size == 0 or np.any(~np.isfinite(freq)) or np.any(freq <= 0.0):
-        raise ValueError("frequencies must be finite, positive, and non-empty")
-
-    species_data: list[tuple[str, np.ndarray, np.ndarray]] = [
-        (
-            "positive",
-            np.asarray(mat.D_ion_node, dtype=float),
-            np.asarray(mat.P_ion0, dtype=float),
-        )
-    ]
-    if mat.has_dual_ions and mat.P_ion0_neg is not None:
-        species_data.append((
-            "negative",
-            _node_values_from_faces(mat.D_ion_neg_face, grid.size),
-            np.asarray(mat.P_ion0_neg, dtype=float),
-        ))
-
-    timescales: list[IonicTimescale] = []
-    for species, diffusion, density in species_data:
-        active = (
-            np.isfinite(diffusion) & np.isfinite(density)
-            & (diffusion > 0.0) & (density > 0.0)
-        )
-        for start, end in _contiguous_true_regions(active):
-            sl = slice(start, end + 1)
-            D_eff = float(np.median(diffusion[sl]))
-            P_eff = float(np.median(density[sl]))
-            eps_eff = float(np.mean(np.asarray(mat.eps_r, dtype=float)[sl]))
-            region_length = float(np.sum(np.asarray(mat.dx_cell)[sl]))
-            debye = float(np.sqrt(
-                EPS_0 * eps_eff * float(mat.V_T_device) / (Q * P_eff)
-            ))
-            tau_dielectric = debye * debye / D_eff
-            tau_charging = region_length * debye / (2.0 * D_eff)
-            tau_diffusion = region_length * region_length / D_eff
-            scale = 2.0 * np.pi
-            derived = (
-                region_length,
-                debye,
-                tau_dielectric,
-                tau_charging,
-                tau_diffusion,
-            )
-            if any(not np.isfinite(value) or value <= 0.0 for value in derived):
-                raise ValueError(
-                    "mobile-ion timescale inputs produced a non-finite or "
-                    "non-positive diagnostic"
-                )
-            timescales.append(IonicTimescale(
-                species=species,
-                region_start_m=float(grid[start]),
-                region_end_m=float(grid[end]),
-                region_length_m=region_length,
-                diffusion_coefficient_m2_s=D_eff,
-                equilibrium_density_m3=P_eff,
-                debye_length_m=debye,
-                dielectric_frequency_Hz=float(1.0 / (scale * tau_dielectric)),
-                blocking_charge_frequency_Hz=float(1.0 / (scale * tau_charging)),
-                diffusion_frequency_Hz=float(1.0 / (scale * tau_diffusion)),
-            ))
-
-    f_min = float(np.min(freq))
-    f_max = float(np.max(freq))
-    if not timescales:
-        return FrequencyWindowAssessment(
-            f_min_Hz=f_min,
-            f_max_Hz=f_max,
-            has_mobile_ions=False,
-        )
-
-    bracketed = tuple(
-        f_min <= item.blocking_charge_frequency_Hz <= f_max
-        for item in timescales
-    )
-    log_samples = np.unique(np.log10(freq))
-    covered: list[bool] = []
-    for item in timescales:
-        branch_low = min(
-            item.blocking_charge_frequency_Hz,
-            item.dielectric_frequency_Hz,
-        ) / 10.0
-        branch_high = max(
-            item.blocking_charge_frequency_Hz,
-            item.dielectric_frequency_Hz,
-        ) * 10.0
-        has_margins = f_min <= branch_low and f_max >= branch_high
-        if not has_margins:
-            covered.append(False)
-            continue
-        log_low = float(np.log10(branch_low))
-        log_high = float(np.log10(branch_high))
-        in_branch = log_samples[
-            (log_samples >= log_low) & (log_samples <= log_high)
-        ]
-        sampling_nodes = np.unique(np.r_[log_low, in_branch, log_high])
-        max_gap_decades = float(np.max(np.diff(sampling_nodes)))
-        covered.append(max_gap_decades <= 0.5)
-
-    warnings: list[str] = []
-    if not all(bracketed):
-        warnings.append(
-            "ionic_blocking_charge_frequency_not_bracketed; extend the sweep "
-            "before attributing or excluding a low-frequency ionic branch"
-        )
-    elif not all(covered):
-        warnings.append(
-            "ionic_branch_sampling_inadequate; include at least one decade "
-            "below the blocking-charge scale and above the dielectric scale "
-            "with no sampling gap larger than 0.5 decades"
-        )
-    return FrequencyWindowAssessment(
-        f_min_Hz=f_min,
-        f_max_Hz=f_max,
-        has_mobile_ions=True,
-        characteristic_frequency_bracketed=all(bracketed),
-        ionic_branch_covered=all(covered),
-        ionic_timescales=tuple(timescales),
-        warnings=tuple(warnings),
-    )
 
 
 def _assess_impedance_grid(

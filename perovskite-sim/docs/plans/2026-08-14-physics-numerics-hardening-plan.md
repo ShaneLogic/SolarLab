@@ -474,7 +474,15 @@ residual-certified ion/electron/hole DC state
    cross-node QSS 器件的完整 rate/forcing 和阻抗幅相共同通过。dynamic
    interface states 与 QF `two_sided_trace` 仍不在该合同内。
 13. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-14. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+14. **`INTERNAL_TESTED_ION_AWARE_FREQUENCY_WINDOW` (2026-08-23)**：共享
+   assessment 按每个正/负离子连续活性区分别计算 Debye length、diffusion、
+   blocking-charge 与 dielectric frequency；protocol v2 绑定 decade margin
+   和最大 log-frequency gap。结果分列 blocking bracket、完整三尺度 envelope
+   bracket 与 dense coverage，给出逐区推荐上下界和 warning，但绝不改写用户
+   频点。IonMonger N30 的推荐范围约为 `1.008e-6--7.470 Hz`；原
+   `10 Hz--100 kHz` 仍明确为 uncovered。线性求解 numerical certificate
+   与 frequency-window certificate 分列，后者未过时不能获得 combined
+   certification。
 15. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛

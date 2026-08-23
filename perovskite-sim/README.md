@@ -653,10 +653,11 @@ strict perturbation bound below 20 mV.
 Every result now carries the exact bias/light/cycle protocol, a DC operating
 point report, an electrical-grid assessment, and a frequency-window assessment.
 For an ionic device the assessment reports Debye, blocking-charge, and
-diffusion frequency estimates. It distinguishes merely bracketing a
-characteristic frequency from covering the branch with one-decade margins and
-no sampling gap above 0.5 decades. A single marker frequency or two sparse
-endpoints do not count as branch coverage.
+diffusion frequency estimates. It distinguishes merely bracketing the
+blocking scale from bracketing the full diffusion/blocking/dielectric envelope
+and from covering that envelope with one-decade margins and no sampling gap
+above 0.5 decades. A single marker frequency or two sparse endpoints do not
+count as branch coverage; recommendations never rewrite requested points.
 
 The transient engine applies a continuous sinusoidal boundary voltage in one
 Radau solve per frequency. Edge and midpoint states co-locate centered

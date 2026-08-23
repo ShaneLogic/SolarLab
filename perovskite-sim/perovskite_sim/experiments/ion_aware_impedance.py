@@ -20,6 +20,10 @@ from typing import Any, Callable, Literal, Mapping, Self
 import numpy as np
 
 from perovskite_sim.constants import EPS_0, Q
+from perovskite_sim.experiments.impedance_frequency import (
+    FrequencyWindowAssessment,
+    assess_impedance_frequency_window,
+)
 from perovskite_sim.experiments.ion_aware_dc import (
     IonAwareDCResult,
     assess_ion_aware_dc_state,
@@ -46,7 +50,7 @@ from perovskite_sim.solver.small_signal import (
 )
 
 
-ION_AWARE_IMPEDANCE_PROTOCOL_SCHEMA = "ion-aware-impedance-protocol-v1"
+ION_AWARE_IMPEDANCE_PROTOCOL_SCHEMA = "ion-aware-impedance-protocol-v2"
 MAX_LINEAR_PERTURBATION_V = 0.02
 DEFAULT_REFINEMENT_FACTORS = (1.0, 0.5, 0.25)
 ProgressCallback = Callable[[str, int, int, str], None]
@@ -115,10 +119,12 @@ class IonAwareImpedanceProtocol:
     max_mass_matrix_relative_error: float = 1.0e-8
     max_ion_inventory_response_relative: float = 1.0e-8
     max_current_decomposition_relative_error: float = 1.0e-7
+    frequency_branch_margin_decades: float = 1.0
+    max_frequency_sampling_gap_decades: float = 0.5
     ion_boundary_condition: Literal["blocking"] = "blocking"
     coordinate_mode: Literal["log_density_increment"] = "log_density_increment"
     current_convention: Literal["passive"] = "passive"
-    schema_version: Literal["ion-aware-impedance-protocol-v1"] = (
+    schema_version: Literal["ion-aware-impedance-protocol-v2"] = (
         ION_AWARE_IMPEDANCE_PROTOCOL_SCHEMA
     )
 
@@ -159,6 +165,8 @@ class IonAwareImpedanceProtocol:
             "max_mass_matrix_relative_error",
             "max_ion_inventory_response_relative",
             "max_current_decomposition_relative_error",
+            "frequency_branch_margin_decades",
+            "max_frequency_sampling_gap_decades",
         ):
             object.__setattr__(self, name, _positive(getattr(self, name), name))
         try:
@@ -179,7 +187,7 @@ class IonAwareImpedanceProtocol:
             )
         object.__setattr__(self, "refinement_factors", factors)
         if self.ion_boundary_condition != "blocking":
-            raise ValueError("ion-aware impedance v1 supports blocking ions only")
+            raise ValueError("ion-aware impedance supports blocking ions only")
         if self.coordinate_mode != "log_density_increment":
             raise ValueError("unsupported ion-aware impedance coordinate mode")
         if self.current_convention != "passive":
@@ -245,6 +253,8 @@ def build_ion_aware_impedance_protocol(
     max_mass_matrix_relative_error: float = 1.0e-8,
     max_ion_inventory_response_relative: float = 1.0e-8,
     max_current_decomposition_relative_error: float = 1.0e-7,
+    frequency_branch_margin_decades: float = 1.0,
+    max_frequency_sampling_gap_decades: float = 0.5,
 ) -> IonAwareImpedanceProtocol:
     """Bind a small-signal request to one exact certified DC result."""
     if not isinstance(dc_state, IonAwareDCResult):
@@ -272,6 +282,10 @@ def build_ion_aware_impedance_protocol(
         ),
         max_current_decomposition_relative_error=(
             max_current_decomposition_relative_error
+        ),
+        frequency_branch_margin_decades=frequency_branch_margin_decades,
+        max_frequency_sampling_gap_decades=(
+            max_frequency_sampling_gap_decades
         ),
     )
 
@@ -343,6 +357,7 @@ class IonAwareImpedanceCertificate:
     max_mass_off_diagonal_relative: float
     max_ion_inventory_response_relative: float
     max_current_decomposition_relative_error: float
+    frequency_window_certified: bool
     perturbation_assessments: tuple[PerturbationStepAssessment, ...]
     reasons: tuple[str, ...]
 
@@ -369,6 +384,7 @@ class IonAwareImpedanceResult:
     coordinate_layout: IonAwareStateCoordinateLayout
     reference_linearization: FrequencyDomainResult
     reference_linearizations: tuple[FrequencyDomainResult, ...]
+    frequency_window: FrequencyWindowAssessment
     protocol: IonAwareImpedanceProtocol
     dc_state: IonAwareDCResult
     certificate: IonAwareImpedanceCertificate
@@ -677,8 +693,18 @@ def run_ion_aware_impedance(
     material = build_material_arrays(grid, stack) if mat is None else mat
     if material.N_iface_state:
         raise IonAwareImpedanceCapabilityError(
-            "dynamic interface-state blocks remain outside ion-aware impedance v1"
+            "dynamic interface-state blocks remain outside ion-aware impedance"
         )
+    frequencies = np.asarray(protocol.frequencies_Hz, dtype=float)
+    frequency_window = assess_impedance_frequency_window(
+        grid,
+        material,
+        frequencies,
+        branch_margin_decades=protocol.frequency_branch_margin_decades,
+        max_sampling_gap_decades=(
+            protocol.max_frequency_sampling_gap_decades
+        ),
+    )
     reassessed = assess_ion_aware_dc_state(
         grid,
         dc_state.y,
@@ -732,7 +758,6 @@ def run_ion_aware_impedance(
 
     levels: list[tuple[float, FrequencyDomainResult]] = []
     coordinate = np.zeros(layout.size, dtype=float)
-    frequencies = np.asarray(protocol.frequencies_Hz, dtype=float)
     for level_index, factor in enumerate(protocol.refinement_factors):
         if progress is not None:
             progress(
@@ -842,10 +867,15 @@ def run_ion_aware_impedance(
         reasons.append("current_decomposition_closure_exceeds_limit")
     numerical = not reasons
     thermodynamic = reassessed.thermodynamically_certified
+    frequency_window_certified = (
+        frequency_window.ionic_branch_covered is True
+    )
     certificate = IonAwareImpedanceCertificate(
         numerically_certified=numerical,
         thermodynamically_certified=thermodynamic,
-        certified=numerical and thermodynamic,
+        certified=(
+            numerical and thermodynamic and frequency_window_certified
+        ),
         max_relative_face_spread=max_spread,
         max_backward_error=max_backward,
         minimum_reciprocal_condition=min_rcond,
@@ -853,6 +883,7 @@ def run_ion_aware_impedance(
         max_mass_off_diagonal_relative=mass_off_diagonal,
         max_ion_inventory_response_relative=inventory_response,
         max_current_decomposition_relative_error=decomposition_error,
+        frequency_window_certified=frequency_window_certified,
         perturbation_assessments=assessments,
         reasons=tuple(reasons),
     )
@@ -906,6 +937,7 @@ def run_ion_aware_impedance(
         coordinate_layout=layout,
         reference_linearization=final,
         reference_linearizations=tuple(response for _, response in levels),
+        frequency_window=frequency_window,
         protocol=protocol,
         dc_state=dc_state,
         certificate=certificate,
@@ -921,6 +953,7 @@ def run_ion_aware_impedance(
 
 __all__ = [
     "DEFAULT_REFINEMENT_FACTORS",
+    "FrequencyWindowAssessment",
     "ION_AWARE_IMPEDANCE_PROTOCOL_SCHEMA",
     "IonAwareImpedanceCapabilityError",
     "IonAwareImpedanceCertificate",
@@ -932,5 +965,6 @@ __all__ = [
     "MAX_LINEAR_PERTURBATION_V",
     "PerturbationStepAssessment",
     "build_ion_aware_impedance_protocol",
+    "assess_impedance_frequency_window",
     "run_ion_aware_impedance",
 ]

@@ -3,12 +3,26 @@ import type { ISResult } from './types'
 export const LEGACY_IMPEDANCE_EVIDENCE_WARNING =
   'Legacy impedance result: certificate evidence is incomplete; classification is unclassified.'
 
+function hasFrequencyWindowCertificate(result: ISResult): boolean {
+  const frequencyWindow = result.frequency_window
+  if (!frequencyWindow) return false
+  return [
+    'full_timescale_envelope_bracketed',
+    'recommended_f_min_Hz',
+    'recommended_f_max_Hz',
+    'branch_margin_decades',
+    'max_allowed_sampling_gap_decades',
+    'max_observed_sampling_gap_decades',
+    'ionic_branch_assessments',
+  ].every(field => Object.prototype.hasOwnProperty.call(frequencyWindow, field))
+}
+
 export function collectImpedanceEvidenceWarnings(result: ISResult): string[] {
   const warnings: string[] = []
   const completeEvidence = Boolean(
     result.protocol
       && result.operating_point
-      && result.frequency_window
+      && hasFrequencyWindowCertificate(result)
       && result.grid_assessment,
   )
 
@@ -76,15 +90,21 @@ export function summarizeImpedanceEvidence(result: ISResult): string[] {
     : 'Operating point: unclassified'
 
   const frequencySummary = frequencyWindow
-    ? `Frequency window: characteristic frequency ${triState(
+    ? `Frequency window: blocking-charge frequency ${triState(
       frequencyWindow.characteristic_frequency_bracketed,
+      'bracketed',
+      'not bracketed',
+    )}; full ionic envelope ${triState(
+      frequencyWindow.full_timescale_envelope_bracketed,
       'bracketed',
       'not bracketed',
     )}; ionic branch ${triState(
       frequencyWindow.ionic_branch_covered,
       'covered',
       'not covered',
-    )}`
+    )}; recommended range: [${compactNumber(
+      frequencyWindow.recommended_f_min_Hz,
+    )}, ${compactNumber(frequencyWindow.recommended_f_max_Hz)}] Hz`
     : 'Frequency window: unclassified'
 
   const gridSummary = grid

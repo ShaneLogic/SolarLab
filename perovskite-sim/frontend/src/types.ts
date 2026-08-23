@@ -275,6 +275,21 @@ export interface IonicTimescale {
   diffusion_frequency_Hz: number
 }
 
+export interface IonicBranchCoverage {
+  species: 'positive' | 'negative'
+  region_start_m: number
+  region_end_m: number
+  diffusion_frequency_bracketed: boolean
+  blocking_charge_frequency_bracketed: boolean
+  dielectric_frequency_bracketed: boolean
+  full_timescale_envelope_bracketed: boolean
+  recommended_f_min_Hz: number
+  recommended_f_max_Hz: number
+  margin_covered: boolean
+  max_sampling_gap_decades: number
+  covered: boolean
+}
+
 export interface FrequencyWindowAssessment {
   f_min_Hz: number
   f_max_Hz: number
@@ -283,6 +298,13 @@ export interface FrequencyWindowAssessment {
   ionic_branch_covered: boolean | null
   ionic_timescales: IonicTimescale[]
   warnings: string[]
+  full_timescale_envelope_bracketed?: boolean | null
+  recommended_f_min_Hz?: number | null
+  recommended_f_max_Hz?: number | null
+  branch_margin_decades?: number
+  max_allowed_sampling_gap_decades?: number
+  max_observed_sampling_gap_decades?: number | null
+  ionic_branch_assessments?: IonicBranchCoverage[]
 }
 
 export interface GridAssessment {

@@ -42,7 +42,14 @@ def test_ionmonger_certified_dc_drives_reference_frequency_operator():
     assert certificate.numerically_certified
     assert not certificate.thermodynamically_certified
     assert not certificate.certified
+    assert not certificate.frequency_window_certified
     assert not certificate.reasons
+    assert result.frequency_window.characteristic_frequency_bracketed
+    assert not result.frequency_window.full_timescale_envelope_bracketed
+    assert not result.frequency_window.ionic_branch_covered
+    assert "ionic_timescale_envelope_not_bracketed" in (
+        result.frequency_window.warnings[0]
+    )
     assert certificate.max_relative_face_spread < protocol.max_relative_face_spread
     assert certificate.max_backward_error < protocol.max_backward_error
     assert certificate.max_ion_inventory_response_relative < (
@@ -98,6 +105,11 @@ def test_symmetric_dual_ion_state_keeps_both_blocking_inventory_constraints():
     assert result.negative_ion_admittance_faces_S_m2 is not None
     assert result.negative_ion_storage_response_F_m2 is not None
     assert result.coordinate_layout.negative_ion_state_indices
+    assert len(result.frequency_window.ionic_timescales) == 2
+    assert {
+        item.species for item in result.frequency_window.ionic_timescales
+    } == {"positive", "negative"}
+    assert not result.certificate.frequency_window_certified
     assert result.certificate.max_ion_inventory_response_relative < (
         protocol.max_ion_inventory_response_relative
     )
