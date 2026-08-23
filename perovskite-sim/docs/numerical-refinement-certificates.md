@@ -552,3 +552,30 @@ source changes 为空且 BLAS/OpenMP 单线程环境下完成 9/9 cell，0 faile
 silicon p/n equilibrium，并冻结一个空间均匀 truncated-Gaussian acceptor-like
 分布。它不覆盖 bias/illumination、瞬态占据、Fermi-Dirac trap kinetics、
 heterojunction、ions、production experiment routes，也不是外部 TCAD 或实验验证。
+
+### 2026-08-24 composition-graded CIGS optics certificate
+
+`cigs-graded-optics-v1` 在 source commit `6ba9055`、source changes 为空且
+BLAS/OpenMP 单线程环境下完成 9/9 cell，0 failed、0 missing、0 reused：
+
+- run ID：`f6b38cbc8ea5dd92aacfc4141a362ddc2cd687bf9f138095098f91064259a620`；
+- certificate SHA-256：
+  `e14e9f6f50c958e2e18dd514984e026d430688e785a9986892d0e21dfcff9958`；
+- protocol SHA-256：
+  `2031a7c5111de50b0e692ab69a605acab100bd84aff94620767385046bb01708`；
+- terminal grid difference：absorbed flux `4.44665e-5`、generation centroid
+  `1.24744e-4`、mean reflectance `1.44788e-5`、normalized generation profile
+  `2.98005e-3`；对应 terminal KK-tolerance difference 为
+  `8.78859e-7 / 3.56778e-8 / 1.35178e-6 / 1.57803e-6`；
+- 全矩阵最坏 Carron composition median relative error `7.09067%`，完整
+  Minoura/Carron ratio 范围 `0.662386-1.057105`，electrical/optical endpoint
+  gap mismatch `8.52 meV`；
+- photon-budget excess 与 reflectance-bound violation 均为 0，uniform
+  composition reflectance difference 最大 `7.22e-16`；所有 causal `n,k`、
+  topology、default-off、positive-flux、shared-coordinate 和 453-point
+  Carron-completion gate 均逐 cell 通过。
+
+该证书只认证 frozen research preset 的 composition-resolved CIGS absorber
+optics、TMM slice/KK 收敛和列出的内部物理门。ZnO/CdS 仍是 nominal scalar
+fallback；它不包含 transport solve，也不是 measured-device、外部 SCAPS/Setfos、
+J-V/PCE 或实验验证。

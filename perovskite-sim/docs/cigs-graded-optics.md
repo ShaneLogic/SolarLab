@@ -122,7 +122,31 @@ or thickness of a measured cell. The lane contains no transport solve and
 therefore cannot certify J-V, PCE improvement, external SCAPS/Setfos parity,
 or experimental validity.
 
-At the implementation checkpoint the source-clean 3x3 certificate is pending.
-Its run ID, certificate hash, terminal differences, and worst quality values
-will be recorded here only after the implementation is committed and the
-matrix is executed from that clean source identity.
+## Source-clean certificate
+
+`cigs-graded-optics-v1` ran once from source commit `6ba9055` with an empty
+source-change set and single-threaded BLAS/OpenMP. All 9/9 cells completed;
+none failed, were missing, or were reused:
+
+- run ID: `f6b38cbc8ea5dd92aacfc4141a362ddc2cd687bf9f138095098f91064259a620`;
+- certificate SHA-256:
+  `e14e9f6f50c958e2e18dd514984e026d430688e785a9986892d0e21dfcff9958`;
+- protocol SHA-256:
+  `2031a7c5111de50b0e692ab69a605acab100bd84aff94620767385046bb01708`.
+
+The terminal slice-grid differences were `4.44665e-5` relative absorbed
+flux, `1.24744e-4` absolute centroid, `1.44788e-5` absolute mean reflectance,
+and `2.98005e-3` profile `L_inf`. Their KK-tolerance counterparts were
+`8.78859e-7`, `3.56778e-8`, `1.35178e-6`, and `1.57803e-6` respectively.
+
+Across every cell, the worst Carron composition-wise median relative error
+was `7.09067%`; the full Minoura/Carron ratio range was
+`0.662386-1.057105`; endpoint gap mismatch was `8.52 meV`; photon-budget and
+reflectance-bound excesses were zero; and the uniform-composition reflectance
+difference was at most `7.22e-16`. Causality, topology, default-off inertness,
+positive flux, shared-coordinate, and all 453-point Carron-completion gates
+passed in every cell.
+
+This certificate closes the registered internal numerical claim only. The
+measurement, external-simulator, transport, J-V, and PCE boundaries above are
+unchanged.

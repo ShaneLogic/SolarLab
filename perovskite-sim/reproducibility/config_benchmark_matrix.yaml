@@ -606,7 +606,7 @@ benchmarks:
       - the roughly 31.8 to 33.7 percent PCE values are highly idealized and must not be compared directly with experiment
   cigs-graded-optics-internal-closure:
     kind: numerical
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: >-
       pytest -q
@@ -622,7 +622,7 @@ benchmarks:
       - tests/unit/validation/test_cigs_optics_refinement.py::test_registered_executor_real_cell_matches_exact_contract
     configs: [configs/cigs_graded_optics.yaml]
     limitations:
-      - the source-clean registered 3x3 matrix is pending at this implementation checkpoint
+      - the source-clean registered 3x3 matrix is internally certified at commit 6ba9055 with certificate SHA-256 e14e9f6f50c958e2e18dd514984e026d430688e785a9986892d0e21dfcff9958
       - this is a literature-model and internal numerical closure, not a measured-device, external simulator, or PCE-optimization certificate
       - ZnO and CdS retain nominal scalar optical fallbacks, so the claim is restricted to the graded CIGS absorber
   csi-grid-envelope-gap:
@@ -1221,7 +1221,7 @@ configs:
     sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
     semantic_sha256: a78884b0074063e50076ac6f2382bd199375e034d263ad76261fd4f83a7a185f
     schema: standard-device-v1
-    status: partial
+    status: certified
     benchmarks:
       - loader-contract
       - phase1-refinement-contract

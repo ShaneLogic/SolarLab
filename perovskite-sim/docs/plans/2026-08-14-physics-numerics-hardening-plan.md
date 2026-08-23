@@ -759,7 +759,10 @@ MoL。P4.1 下一步应先选择并预注册一个新的组合拓扑，而不是
 2026-08-24 checkpoint：CIGS 子项已实现为显式 opt-in 的 Minoura
 `n,k(lambda,GGI,CGI)` TMM slices，并以 Carron `alpha`、uniform-composition、
 photon budget、optical-slice/KK 3x3 refinement 作为门槛；它不升级旧
-`cigs_graded_notch` 的 optics/PCE claim。2D ion/interface closure、外部 circuit/
+`cigs_graded_notch` 的 optics/PCE claim。source-clean lane 已在 commit `6ba9055`
+完成 9/9 cells 并取得 certificate
+`e14e9f6f50c958e2e18dd514984e026d430688e785a9986892d0e21dfcff9958`；其证据
+边界仍只到内部 graded-absorber optics。2D ion/interface closure、外部 circuit/
 thermal layer 与高通量反演仍是后续独立子项。
 
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
