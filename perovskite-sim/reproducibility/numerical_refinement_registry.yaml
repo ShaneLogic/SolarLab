@@ -572,14 +572,14 @@ lanes:
           axis: conduction_band_offset
           label: CBO=+0.20 eV
           updates: {etl_delta_ec_eV: 0.20}
-        - point_id: nd_1e15
+        - point_id: nd_1e14
           axis: etl_doping
-          label: ETL Nd=1e15 cm-3
-          updates: {etl_doping_cm3: 1.0e15}
-        - point_id: nd_5e15
+          label: ETL Nd=1e14 cm-3
+          updates: {etl_doping_cm3: 1.0e14}
+        - point_id: nd_2e15
           axis: etl_doping
-          label: ETL Nd=5e15 cm-3
-          updates: {etl_doping_cm3: 5.0e15}
+          label: ETL Nd=2e15 cm-3
+          updates: {etl_doping_cm3: 2.0e15}
         - point_id: nt_1e8
           axis: trap_density
           label: Nt=1e8 cm-2

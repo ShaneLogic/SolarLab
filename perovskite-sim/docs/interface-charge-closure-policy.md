@@ -218,9 +218,10 @@ The broader `E_t`/CBO/`N_D`/`N_t` work is pre-registered as
 on N30/N60 and residual factors 1/0.5. Direct N30 and finest N60 preflight
 probes close, but they are not a content-addressed certificate; the clean
 four-cell matrix must run before the supported device envelope is expanded.
-The initial `N_D=1e16 cm^-3` endpoint failed the N30/factor=0.5 cell and is
-retained as an unsupported coarse-grid boundary; the registered upper endpoint
-is `5e15 cm^-3`, without changing any residual gate.
+The initial `N_D=1e16 cm^-3` endpoint failed N30/factor=0.5, while an
+intermediate `5e15 cm^-3` endpoint failed N60/factor=0.5. Both failed runs are
+retained as unsupported boundaries. The registered nonzero endpoints are
+`1e14` and `2e15 cm^-3`, a 20-fold span, without changing any residual gate.
 The historical three-layer SCAPS-derived reference also remains an unresolved
 illuminated stress case. Transient, impedance and 2D require the later unified
 algebraic-state topology. None of these gaps may be hidden by enabling the

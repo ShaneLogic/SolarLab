@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: da1422ea3dd50a7ef10319020327ea4cbd3f67a5263b6a3943c3909fb91a2814
+  sha256: 18d4f57bce1895bc777eb016c3cb858c4b2089588f7fb2df7315c680a327469a
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -177,7 +177,7 @@ benchmarks:
     limitations:
       - the real N30 nine-point probe closes, but the registered 2x2 refinement matrix has not yet been executed under a clean source identity
       - the matrix is one-factor-at-a-time and does not certify Et/CBO/Nd/Nt interactions
-      - Nd=1e16 cm-3 fails the coarse-grid tight-residual cell, while 1e17 and 1e18 cm-3 remain outside the local-QSS basin
+      - Nd=5e15 and 1e16 cm-3 fail different tight-residual grid cells, while 1e17 and 1e18 cm-3 remain outside the local-QSS basin
       - this is internal numerical evidence with no SCAPS or experimental-validation claim
   courtier2019-ionmonger:
     kind: external

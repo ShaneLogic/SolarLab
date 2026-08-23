@@ -615,11 +615,12 @@ charge-off/fail-close。下一项为 `E_t/CBO/Nd/Nt` device stress matrix，完�
 
 同日 device-stress implementation checkpoint：预注册 9 个 one-factor 设备点，
 覆盖 `E_t=0.20/0.55/1.20 eV`、CBO `=-0.25/-0.10/+0.20 eV`、ETL
-`N_D=0/1e15/5e15 cm^-3`、interface `N_t=1e8/1e10/1e13 cm^-2`，外层为
+`N_D=0/1e14/2e15 cm^-3`、interface `N_t=1e8/1e10/1e13 cm^-2`，外层为
 N30/N60 与 QF factor 1/0.5。初版 `N_D=1e16 cm^-3` 在 N30/factor=0.5
-fail-close；`1e17/1e18 cm^-3` 也不能通过当前 local-QSS basin，均明确保留为
-unsupported stress boundary，未放宽门限。直接 N30 与 finest N60 preflight 均通过，
-但在 clean source identity 下完成新版 4-cell artifact 之前仍只算 registered candidate。
+fail-close，随后 `5e15 cm^-3` 在 N60/factor=0.5 fail-close；`1e17/1e18 cm^-3`
+也不能通过当前 local-QSS basin，均明确保留为 unsupported stress boundary，未放宽
+门限。新版非零掺杂端点保留 20 倍跨度，但在 clean source identity 下完成新版
+4-cell artifact 之前仍只算 registered candidate。
 
 ## 5. Phase 4：统一 DAE 与材料物理完备性（6 至 12 个月，分决策门推进）
 
