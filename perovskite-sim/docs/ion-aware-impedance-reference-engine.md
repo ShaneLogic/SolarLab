@@ -1,8 +1,8 @@
 # Ion-aware impedance reference engine
 
-Status: `INTERNAL_TESTED_REFERENCE_AND_FREQUENCY_WINDOW` as of 2026-08-23.
-This is not yet an `INTERNAL_CERTIFIED` grid/frequency lane and is not external
-validation.
+Status: `INTERNAL_TESTED_PER_FREQUENCY_GRID_CERTIFICATE` as of 2026-08-23.
+This is a canonical internal numerical certificate, not yet a content-addressed
+release artifact or external validation.
 
 ## Scope
 
@@ -125,6 +125,29 @@ moves a requested frequency. An uncovered window leaves the linear solve's
 `frequency_window_certified=false`, so combined certification cannot be
 claimed from a high-frequency-only sweep.
 
+## Per-frequency and grid certificates
+
+The sweep certificate no longer relies only on global extrema. Every requested
+frequency receives an immutable `IonAwareImpedanceFrequencyCertificate` with:
+
+- all-face relative admittance spread, reciprocal condition and componentwise
+  backward error;
+- the magnitude and phase change for every adjacent state/voltage stencil
+  pair, with the finest pair controlling promotion;
+- positive- and negative-ion blocking-inventory response;
+- current-decomposition closure and the complex electron, hole, positive-ion,
+  negative-ion, and net-charge storage responses.
+
+`IonAwareImpedanceGridProtocol` then binds at least three ordered DC states.
+Its canonical SHA-256 covers each exact grid-coordinate SHA-256, each packed DC
+state and DC-history protocol, the common frequency/stencil request, and the
+grid limits. Equal node counts on different clustered grids are therefore not
+interchangeable evidence. Execution rejects reordered or replaced grids/states
+before AC linearization. All adjacent grid comparisons are retained, while the
+finest two grids control promotion at every frequency using default limits of
+2% in `|Z|` and 1 degree in phase. Numerical, frequency-window, and contact
+thermodynamic certification remain separate axes.
+
 ## Usage
 
 ```python
@@ -187,8 +210,18 @@ the frequency reference solve took `0.276 s`. It passed with all-face spread
 decomposition closure. These timings are a local baseline, not a cross-host
 performance certificate.
 
-These are implementation tests and probes, not a registered grid/frequency
-certificate.
+The real IonMonger grid ladder uses actual node counts `61/91/121`, 29 fixed
+frequencies from `1e-6` through `10 Hz` at 0.25-decade spacing, and the same
+canonical DC history on every grid. All 29 per-frequency certificates passed.
+The finest `91 -> 121` comparison had maximum `|Z|` change `0.311%` and phase
+change `0.0349 deg`, below the declared runtime limits of `2%` and `1 deg`;
+all three grids also passed full frequency-window coverage. Combined physical
+certification remains false because the source deck's contact thermodynamics
+is `compatible_unverified`.
+
+These are implementation tests and canonical runtime evidence. A
+content-addressed validation-runner artifact and external comparison remain
+separate deliverables.
 
 ## Remaining Phase 2 work
 
@@ -200,8 +233,8 @@ certificate.
    frozen-potential differences.
    See
    [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
-2. Register grid, finite-difference and frequency-coverage matrices and mint
-   per-frequency certificates.
+2. Register the canonical grid/stencil/frequency matrix in the content-addressed
+   validation runner and mint a release artifact.
 3. Cross-check selected frequencies against transient lock-in using the exact
    same DC state and protocol.
 4. Only after those gates pass, route the method through `run_impedance`, the

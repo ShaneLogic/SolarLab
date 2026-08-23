@@ -659,6 +659,16 @@ and from covering that envelope with one-decade margins and no sampling gap
 above 0.5 decades. A single marker frequency or two sparse endpoints do not
 count as branch coverage; recommendations never rewrite requested points.
 
+The opt-in ion-aware frequency-domain reference additionally emits one
+certificate per frequency instead of only sweep-wide extrema. Each point
+retains its all-face spread, linear-solve diagnostics, both finite-difference
+step comparisons, ionic inventory response, current decomposition, and
+carrier/ion storage components. Its canonical grid-ladder protocol hashes the
+exact coordinates and DC state on at least three strictly increasing meshes;
+the finest pair must agree within 2% in impedance magnitude and 1 degree in
+phase at every frequency. This reference/grid API remains separate from the
+legacy method selector until the transient cross-check is complete.
+
 The transient engine applies a continuous sinusoidal boundary voltage in one
 Radau solve per frequency. Edge and midpoint states co-locate centered
 displacement current with midpoint conduction current; `points_per_cycle`

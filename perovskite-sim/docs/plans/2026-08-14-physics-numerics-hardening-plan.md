@@ -473,7 +473,15 @@ residual-certified ion/electron/hole DC state
    64 次以消除 small-signal 量化噪声；独立 complex Newton、真实 local 与
    cross-node QSS 器件的完整 rate/forcing 和阻抗幅相共同通过。dynamic
    interface states 与 QF `two_sided_trace` 仍不在该合同内。
-13. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+13. **`INTERNAL_TESTED_PER_FREQUENCY_GRID_CERTIFICATE` (2026-08-23)**：每个
+   频点分别返回 `rcond`、componentwise backward error、all-face admittance
+   spread、正/负离子库存响应、current/storage decomposition 和两级
+   perturbation-step sensitivity。canonical grid protocol 绑定至少三张严格递增
+   网格的精确 coordinate SHA、DC state/history SHA、共同 frequency/stencil
+   合同及 `2%/1 deg` 门槛；保留全部相邻比较，仅最细两级控制晋级。真实
+   IonMonger `61/91/121` 节点、`1e-6--10 Hz`、0.25-decade 矩阵的全部 29
+   个频点通过，最细 pair 最大 `|Z|` 变化 `0.311%`、phase `0.0349 deg`。
+   content-addressed runner artifact 仍是独立下一项，接触热力学仍未认证。
 14. **`INTERNAL_TESTED_ION_AWARE_FREQUENCY_WINDOW` (2026-08-23)**：共享
    assessment 按每个正/负离子连续活性区分别计算 Debye length、diffusion、
    blocking-charge 与 dielectric frequency；protocol v2 绑定 decade margin

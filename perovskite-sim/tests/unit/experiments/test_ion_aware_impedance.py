@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -165,7 +166,63 @@ def test_reference_lane_returns_mass_current_and_storage_decomposition(dc_fixtur
         protocol.max_current_decomposition_relative_error
     )
     assert all(item.passed for item in result.certificate.perturbation_assessments)
+    point_certificates = result.certificate.frequency_point_certificates
+    assert len(point_certificates) == len(result.frequencies)
+    assert all(item.numerically_certified for item in point_certificates)
+    np.testing.assert_allclose(
+        [item.max_relative_face_spread for item in point_certificates],
+        result.reference_linearization.max_relative_face_spread,
+    )
+    np.testing.assert_allclose(
+        [item.backward_error for item in point_certificates],
+        result.reference_linearization.backward_error,
+    )
+    np.testing.assert_allclose(
+        [item.reciprocal_condition for item in point_certificates],
+        result.reference_linearization.reciprocal_condition,
+    )
+    assert all(
+        len(item.perturbation_assessments)
+        == len(protocol.refinement_factors) - 1
+        for item in point_certificates
+    )
+    np.testing.assert_allclose(
+        [item.net_charge_storage_response_F_m2 for item in point_certificates],
+        result.net_charge_storage_response_F_m2,
+    )
     assert np.all(np.isfinite(result.Z))
+
+
+def test_perturbation_assessment_retains_a_fail_closed_result_per_frequency():
+    frequencies = np.array([1.0, 10.0])
+    coarse = SimpleNamespace(
+        frequencies=frequencies,
+        impedance=np.array([1.0 + 0.0j, 1.0 + 0.0j]),
+    )
+    fine = SimpleNamespace(
+        frequencies=frequencies,
+        impedance=np.array([1.001 + 0.0j, 0.0 + 2.0j]),
+    )
+    protocol = SimpleNamespace(
+        max_impedance_magnitude_relative_change=0.01,
+        max_impedance_phase_change_deg=0.5,
+    )
+
+    assessment = impedance._perturbation_assessment(
+        1.0,
+        0.5,
+        coarse,
+        fine,
+        protocol,
+    )
+
+    assert assessment.frequency_assessments[0].passed
+    assert not assessment.frequency_assessments[1].passed
+    assert not assessment.passed
+    assert assessment.max_impedance_magnitude_relative_change == pytest.approx(
+        0.5
+    )
+    assert assessment.max_impedance_phase_change_deg == pytest.approx(90.0)
 
 
 def test_dense_full_timescale_window_is_separately_certified(dc_fixture):
@@ -208,6 +265,30 @@ def test_dense_full_timescale_window_is_separately_certified(dc_fixture):
     assert result.frequency_window.max_observed_sampling_gap_decades <= (
         protocol.max_frequency_sampling_gap_decades
     )
+
+
+def test_frequency_window_strict_gate_retains_diagnostic_result(dc_fixture):
+    stack, x, mat, dc_state = dc_fixture
+    protocol = impedance.build_ion_aware_impedance_protocol(
+        dc_state,
+        np.array([10.0, 100.0]),
+    )
+
+    with pytest.raises(
+        impedance.IonAwareImpedanceCertificationError,
+        match="frequency-window certificate failed",
+    ) as captured:
+        impedance.run_ion_aware_impedance(
+            x,
+            stack,
+            protocol,
+            dc_state=dc_state,
+            mat=mat,
+            require_frequency_window_certificate=True,
+        )
+
+    assert captured.value.result.certificate.numerically_certified
+    assert not captured.value.result.certificate.frequency_window_certified
 
 
 def test_reference_lane_rejects_stale_state_hash_before_linearization(dc_fixture):
@@ -326,4 +407,9 @@ def test_reference_lane_retains_failed_gate_evidence_in_diagnostic_mode(dc_fixtu
     )
     assert "mass_matrix_log_coordinate_identity_failed" in (
         diagnostic.certificate.reasons
+    )
+    assert all(
+        not item.numerically_certified
+        and "mass_matrix_log_coordinate_identity_failed" in item.reasons
+        for item in diagnostic.certificate.frequency_point_certificates
     )

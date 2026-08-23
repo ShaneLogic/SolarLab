@@ -337,12 +337,42 @@ class IonAwareStateCoordinateLayout:
 
 
 @dataclass(frozen=True, slots=True)
+class FrequencyPerturbationAssessment:
+    frequency_Hz: float
+    coarse_factor: float
+    fine_factor: float
+    impedance_magnitude_relative_change: float
+    impedance_phase_change_deg: float
+    passed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PerturbationStepAssessment:
     coarse_factor: float
     fine_factor: float
     max_impedance_magnitude_relative_change: float
     max_impedance_phase_change_deg: float
     passed: bool
+    frequency_assessments: tuple[FrequencyPerturbationAssessment, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class IonAwareImpedanceFrequencyCertificate:
+    frequency_Hz: float
+    numerically_certified: bool
+    max_relative_face_spread: float
+    reciprocal_condition: float
+    backward_error: float
+    positive_ion_inventory_response_relative: float
+    negative_ion_inventory_response_relative: float
+    current_decomposition_relative_error: float
+    electron_storage_response_F_m2: complex
+    hole_storage_response_F_m2: complex
+    positive_ion_storage_response_F_m2: complex
+    negative_ion_storage_response_F_m2: complex | None
+    net_charge_storage_response_F_m2: complex
+    perturbation_assessments: tuple[FrequencyPerturbationAssessment, ...]
+    reasons: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +389,9 @@ class IonAwareImpedanceCertificate:
     max_current_decomposition_relative_error: float
     frequency_window_certified: bool
     perturbation_assessments: tuple[PerturbationStepAssessment, ...]
+    frequency_point_certificates: tuple[
+        IonAwareImpedanceFrequencyCertificate, ...
+    ]
     reasons: tuple[str, ...]
 
 
@@ -511,15 +544,15 @@ def _storage_integral(
     return Q * (response[:, coordinate_slice] @ widths[nodes])
 
 
-def _inventory_response_relative(
+def _inventory_response_relative_by_frequency(
     response: np.ndarray,
     layout: IonAwareStateCoordinateLayout,
     species: str,
     widths: np.ndarray,
-) -> float:
+) -> np.ndarray:
     coordinate_slice = layout.coordinate_slice(species)
     if coordinate_slice.stop == coordinate_slice.start:
-        return 0.0
+        return np.zeros(response.shape[0], dtype=float)
     values = response[:, coordinate_slice]
     node_widths = widths[layout.node_indices(species)]
     inventory = values @ node_widths
@@ -530,7 +563,7 @@ def _inventory_response_relative(
         out=np.zeros_like(scale, dtype=float),
         where=scale > np.finfo(float).tiny,
     )
-    return float(np.max(ratio))
+    return np.asarray(ratio, dtype=float)
 
 
 def _perturbation_assessment(
@@ -540,24 +573,148 @@ def _perturbation_assessment(
     fine: FrequencyDomainResult,
     protocol: IonAwareImpedanceProtocol,
 ) -> PerturbationStepAssessment:
+    if not np.array_equal(coarse.frequencies, fine.frequencies):
+        raise IonAwareImpedanceError(
+            "finite-difference levels changed the requested frequencies"
+        )
     magnitude_scale = np.maximum(np.abs(fine.impedance), np.finfo(float).tiny)
-    magnitude_change = float(
-        np.max(np.abs(np.abs(fine.impedance) - np.abs(coarse.impedance)) / magnitude_scale)
+    magnitude_change = (
+        np.abs(np.abs(fine.impedance) - np.abs(coarse.impedance))
+        / magnitude_scale
     )
-    phase_change = float(
-        np.max(np.abs(np.angle(fine.impedance / coarse.impedance, deg=True)))
+    phase_change = np.abs(
+        np.angle(fine.impedance / coarse.impedance, deg=True)
     )
-    passed = (
-        magnitude_change <= protocol.max_impedance_magnitude_relative_change
-        and phase_change <= protocol.max_impedance_phase_change_deg
+    frequency_assessments = tuple(
+        FrequencyPerturbationAssessment(
+            frequency_Hz=float(frequency),
+            coarse_factor=coarse_factor,
+            fine_factor=fine_factor,
+            impedance_magnitude_relative_change=float(magnitude),
+            impedance_phase_change_deg=float(phase),
+            passed=bool(
+                magnitude
+                <= protocol.max_impedance_magnitude_relative_change
+                and phase <= protocol.max_impedance_phase_change_deg
+            ),
+        )
+        for frequency, magnitude, phase in zip(
+            fine.frequencies,
+            magnitude_change,
+            phase_change,
+            strict=True,
+        )
     )
     return PerturbationStepAssessment(
         coarse_factor=coarse_factor,
         fine_factor=fine_factor,
-        max_impedance_magnitude_relative_change=magnitude_change,
-        max_impedance_phase_change_deg=phase_change,
-        passed=passed,
+        max_impedance_magnitude_relative_change=float(
+            np.max(magnitude_change)
+        ),
+        max_impedance_phase_change_deg=float(np.max(phase_change)),
+        passed=all(item.passed for item in frequency_assessments),
+        frequency_assessments=frequency_assessments,
     )
+
+
+def _frequency_point_certificates(
+    final: FrequencyDomainResult,
+    protocol: IonAwareImpedanceProtocol,
+    assessments: tuple[PerturbationStepAssessment, ...],
+    *,
+    mass_matrix_passed: bool,
+    positive_inventory_response: np.ndarray,
+    negative_inventory_response: np.ndarray,
+    decomposition_error: np.ndarray,
+    electron_storage: np.ndarray,
+    hole_storage: np.ndarray,
+    positive_storage: np.ndarray,
+    negative_storage: np.ndarray | None,
+    net_charge_storage: np.ndarray,
+) -> tuple[IonAwareImpedanceFrequencyCertificate, ...]:
+    points: list[IonAwareImpedanceFrequencyCertificate] = []
+    for index, frequency in enumerate(final.frequencies):
+        perturbations = tuple(
+            item.frequency_assessments[index] for item in assessments
+        )
+        reasons: list[str] = []
+        if (
+            final.max_relative_face_spread[index]
+            > protocol.max_relative_face_spread
+        ):
+            reasons.append("all_face_admittance_spread_exceeds_limit")
+        if final.backward_error[index] > protocol.max_backward_error:
+            reasons.append("componentwise_backward_error_exceeds_limit")
+        if final.reciprocal_condition[index] <= np.finfo(float).eps:
+            reasons.append("frequency_operator_numerically_singular")
+        if not perturbations[-1].passed:
+            reasons.append("finite_difference_refinement_not_converged")
+        if not mass_matrix_passed:
+            reasons.append("mass_matrix_log_coordinate_identity_failed")
+        if (
+            max(
+                positive_inventory_response[index],
+                negative_inventory_response[index],
+            )
+            > protocol.max_ion_inventory_response_relative
+        ):
+            reasons.append("blocking_ion_inventory_response_exceeds_limit")
+        if (
+            decomposition_error[index]
+            > protocol.max_current_decomposition_relative_error
+        ):
+            reasons.append("current_decomposition_closure_exceeds_limit")
+        negative_value = (
+            None
+            if negative_storage is None
+            else complex(negative_storage[index])
+        )
+        storage_values = (
+            electron_storage[index],
+            hole_storage[index],
+            positive_storage[index],
+            net_charge_storage[index],
+        )
+        if negative_value is not None:
+            storage_values += (negative_value,)
+        if not all(np.isfinite(value) for value in storage_values):
+            reasons.append("storage_decomposition_nonfinite")
+        points.append(
+            IonAwareImpedanceFrequencyCertificate(
+                frequency_Hz=float(frequency),
+                numerically_certified=not reasons,
+                max_relative_face_spread=float(
+                    final.max_relative_face_spread[index]
+                ),
+                reciprocal_condition=float(
+                    final.reciprocal_condition[index]
+                ),
+                backward_error=float(final.backward_error[index]),
+                positive_ion_inventory_response_relative=float(
+                    positive_inventory_response[index]
+                ),
+                negative_ion_inventory_response_relative=float(
+                    negative_inventory_response[index]
+                ),
+                current_decomposition_relative_error=float(
+                    decomposition_error[index]
+                ),
+                electron_storage_response_F_m2=complex(
+                    electron_storage[index]
+                ),
+                hole_storage_response_F_m2=complex(hole_storage[index]),
+                positive_ion_storage_response_F_m2=complex(
+                    positive_storage[index]
+                ),
+                negative_ion_storage_response_F_m2=negative_value,
+                net_charge_storage_response_F_m2=complex(
+                    net_charge_storage[index]
+                ),
+                perturbation_assessments=perturbations,
+                reasons=tuple(reasons),
+            )
+        )
+    return tuple(points)
 
 
 def _build_reference_evaluator(
@@ -647,6 +804,7 @@ def run_ion_aware_impedance(
     mat: MaterialArrays | None = None,
     require_numerical_certificate: bool = True,
     require_contact_certificate: bool = False,
+    require_frequency_window_certificate: bool = False,
     progress: ProgressCallback | None = None,
 ) -> IonAwareImpedanceResult:
     """Build and solve a reference mobile-ion small-signal operator."""
@@ -809,21 +967,27 @@ def run_ion_aware_impedance(
     mass_diagonal_error = float(np.max(np.abs(diagonal - 1.0)))
     mass_off_diagonal = float(np.max(np.abs(off_diagonal)))
     widths = np.asarray(material.dx_cell, dtype=float)
-    positive_inventory_response = _inventory_response_relative(
-        final.storage_response,
-        layout,
-        "positive_ion",
-        widths,
+    positive_inventory_by_frequency = (
+        _inventory_response_relative_by_frequency(
+            final.storage_response,
+            layout,
+            "positive_ion",
+            widths,
+        )
     )
-    negative_inventory_response = _inventory_response_relative(
-        final.storage_response,
-        layout,
-        "negative_ion",
-        widths,
+    negative_inventory_by_frequency = (
+        _inventory_response_relative_by_frequency(
+            final.storage_response,
+            layout,
+            "negative_ion",
+            widths,
+        )
     )
-    inventory_response = max(
-        positive_inventory_response,
-        negative_inventory_response,
+    inventory_response = float(
+        max(
+            np.max(positive_inventory_by_frequency),
+            np.max(negative_inventory_by_frequency),
+        )
     )
     max_spread = float(np.max(final.max_relative_face_spread))
     max_backward = float(np.max(final.backward_error))
@@ -844,11 +1008,75 @@ def run_ion_aware_impedance(
         ),
         np.finfo(float).tiny,
     )
-    decomposition_error = float(
-        np.max(
-            np.abs(final.conduction_admittance_faces - component_sum)
-            / decomposition_scale
+    decomposition_error_by_frequency = np.max(
+        np.abs(final.conduction_admittance_faces - component_sum)
+        / decomposition_scale,
+        axis=1,
+    )
+    decomposition_error = float(np.max(decomposition_error_by_frequency))
+    electron_storage = _storage_integral(
+        final.storage_response,
+        layout,
+        "electron",
+        widths,
+    )
+    hole_storage = _storage_integral(
+        final.storage_response,
+        layout,
+        "hole",
+        widths,
+    )
+    positive_storage = _storage_integral(
+        final.storage_response,
+        layout,
+        "positive_ion",
+        widths,
+    )
+    negative_storage = _storage_integral(
+        final.storage_response,
+        layout,
+        "negative_ion",
+        widths,
+    )
+    if electron_storage is None or hole_storage is None:
+        raise IonAwareImpedanceError(
+            "ion-aware coordinate layout lost a carrier storage block"
         )
+    if positive_storage is None and negative_storage is None:
+        raise IonAwareImpedanceError(
+            "ion-aware coordinate layout lost every mobile-ion storage block"
+        )
+    positive_storage_array = (
+        np.zeros_like(electron_storage)
+        if positive_storage is None
+        else positive_storage
+    )
+    net_charge_storage = (
+        -electron_storage
+        + hole_storage
+        + positive_storage_array
+        - (
+            np.zeros_like(electron_storage)
+            if negative_storage is None
+            else negative_storage
+        )
+    )
+    mass_matrix_passed = max(mass_diagonal_error, mass_off_diagonal) <= (
+        protocol.max_mass_matrix_relative_error
+    )
+    frequency_point_certificates = _frequency_point_certificates(
+        final,
+        protocol,
+        assessments,
+        mass_matrix_passed=mass_matrix_passed,
+        positive_inventory_response=positive_inventory_by_frequency,
+        negative_inventory_response=negative_inventory_by_frequency,
+        decomposition_error=decomposition_error_by_frequency,
+        electron_storage=electron_storage,
+        hole_storage=hole_storage,
+        positive_storage=positive_storage_array,
+        negative_storage=negative_storage,
+        net_charge_storage=net_charge_storage,
     )
     reasons: list[str] = []
     if max_spread > protocol.max_relative_face_spread:
@@ -857,14 +1085,17 @@ def run_ion_aware_impedance(
         reasons.append("componentwise_backward_error_exceeds_limit")
     if not assessments[-1].passed:
         reasons.append("finite_difference_refinement_not_converged")
-    if max(mass_diagonal_error, mass_off_diagonal) > (
-        protocol.max_mass_matrix_relative_error
-    ):
+    if not mass_matrix_passed:
         reasons.append("mass_matrix_log_coordinate_identity_failed")
     if inventory_response > protocol.max_ion_inventory_response_relative:
         reasons.append("blocking_ion_inventory_response_exceeds_limit")
     if decomposition_error > protocol.max_current_decomposition_relative_error:
         reasons.append("current_decomposition_closure_exceeds_limit")
+    if not all(
+        item.numerically_certified
+        for item in frequency_point_certificates
+    ) and not reasons:
+        reasons.append("per_frequency_numerical_evidence_failed")
     numerical = not reasons
     thermodynamic = reassessed.thermodynamically_certified
     frequency_window_certified = (
@@ -885,36 +1116,8 @@ def run_ion_aware_impedance(
         max_current_decomposition_relative_error=decomposition_error,
         frequency_window_certified=frequency_window_certified,
         perturbation_assessments=assessments,
+        frequency_point_certificates=frequency_point_certificates,
         reasons=tuple(reasons),
-    )
-    electron_storage = _storage_integral(
-        final.storage_response, layout, "electron", widths
-    )
-    hole_storage = _storage_integral(
-        final.storage_response, layout, "hole", widths
-    )
-    positive_storage = _storage_integral(
-        final.storage_response, layout, "positive_ion", widths
-    )
-    negative_storage = _storage_integral(
-        final.storage_response, layout, "negative_ion", widths
-    )
-    if electron_storage is None or hole_storage is None:
-        raise IonAwareImpedanceError(
-            "ion-aware coordinate layout lost a carrier storage block"
-        )
-    if positive_storage is None and negative_storage is None:
-        raise IonAwareImpedanceError(
-            "ion-aware coordinate layout lost every mobile-ion storage block"
-        )
-    positive_storage_array = (
-        np.zeros_like(electron_storage)
-        if positive_storage is None
-        else positive_storage
-    )
-    net_charge_storage = (
-        -electron_storage + hole_storage + positive_storage_array
-        - (np.zeros_like(electron_storage) if negative_storage is None else negative_storage)
     )
     result = IonAwareImpedanceResult(
         frequencies=final.frequencies,
@@ -948,17 +1151,25 @@ def run_ion_aware_impedance(
             + ", ".join(reasons),
             result,
         )
+    if require_frequency_window_certificate and not frequency_window_certified:
+        raise IonAwareImpedanceCertificationError(
+            "ion-aware impedance frequency-window certificate failed: "
+            + "; ".join(frequency_window.warnings),
+            result,
+        )
     return result
 
 
 __all__ = [
     "DEFAULT_REFINEMENT_FACTORS",
     "FrequencyWindowAssessment",
+    "FrequencyPerturbationAssessment",
     "ION_AWARE_IMPEDANCE_PROTOCOL_SCHEMA",
     "IonAwareImpedanceCapabilityError",
     "IonAwareImpedanceCertificate",
     "IonAwareImpedanceCertificationError",
     "IonAwareImpedanceError",
+    "IonAwareImpedanceFrequencyCertificate",
     "IonAwareImpedanceProtocol",
     "IonAwareImpedanceResult",
     "IonAwareStateCoordinateLayout",
