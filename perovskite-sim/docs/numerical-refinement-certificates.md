@@ -207,3 +207,41 @@ source changes 为空且 BLAS/OpenMP 单线程的环境下完成 9/9 cell，0 fa
 认证。它不启用 production material assembly、backend experiment、
 transient、impedance 或 2D，也不是 SCAPS parity、实验验证或绝对 trap
 charge/全器件电中性证明。
+
+### 2026-08-23 interface-charge device-stress certificates
+
+`interface-charge-device-stress-v1` 在 source commit `56cd1bb` 完成 4/4
+cell，0 failed、0 missing、0 reused，但证书保持 `partial`：N30 到 N60 的
+`stress_sheet_charge_C_m2` pointwise relative difference 为 `1.47351e-2`，
+超过固定 `1e-2` 门限。run ID 为
+`250a3a8d934f327ab0f73f5197113d2a1de9d57be07f58d71bbd89904fd025a6`，
+partial certificate 为
+`000fd33d2f162de00ac97fe15e174c27d0d3b995c4aabb9b22e5e62e687df657`。
+该结果未被删除、重试或通过放宽门限覆盖。
+
+独立的 `interface-charge-device-stress-resolved-v2` 保留同一 9 个设备点、
+observable、quality gate 与 protocol，仅把 terminal grid 扩展为 N90。在
+source commit `a3c6b30`、source changes 为空且 BLAS/OpenMP 单线程环境下，
+它完成 6/6 cell，0 failed、0 missing、0 reused：
+
+- run ID：`30b146b7f95934fd4353890916d8318f8847e3bb8cb7f556f61afa02223a7b55`；
+- certificate SHA-256：`f6e214307fe73fbc9d866d5e2537658cdb563134df78a419ecb6f4f873bd0844`；
+- protocol SHA-256：`ff0d4f385ef67bfc749045be955004979d925e2436dca22d3495265951d865f3`；
+- terminal grid differences：current `1.00579e-3`、equilibrium occupancy
+  `9.87823e-7`、target occupancy `9.87955e-7`、sheet charge
+  `1.54775e-3`、trace shift `4.26550e-5 V`；
+- terminal tolerance differences：current `3.15183e-10`、equilibrium
+  occupancy `1.11022e-16`、target occupancy `4.19165e-12`、sheet charge
+  `4.02521e-8`、trace shift `4.73996e-14 V`；
+- 全矩阵最大 continuity bound `8.49714e-7 A/m2`、current spread
+  `2.36611e-7 A/m2`、local interface residual `2.99688e-10`、normalized
+  cell residual `2.36611e-7`、normalized Gauss residual `8.58907e-15`、
+  Poisson residual `1.16539e-14`、scaled local Jacobian condition
+  `1.04812e7`；
+- dark incremental charge 与 trace shift 全部严格为零，所有 device point
+  均通过 contact、charge-law、occupancy、sign 与 stack-identity gate。
+
+该证书只把冻结的 two-layer one-factor `E_t/CBO/N_D/N_t` 设备包络升级为
+内部数值认证。N120/factor=0.5 在 `N_D=2e15 cm^-3` dark-bias target 上
+fail-close；`N_D>=5e15 cm^-3`、多参数交互、历史三层 SCAPS-derived illuminated
+case、transient、impedance、2D、绝对 trap charge 与全器件电中性仍不在声明内。

@@ -1,7 +1,8 @@
 # Interface-charge closure policy
 
-Status: internally certified research-only steady-state Python lane;
-production and backend routes remain `PARKED` (2026-08-23).
+Status: internally certified research-only steady-state Python lane and
+fail-closed research endpoint; production experiment routes remain `PARKED`
+(2026-08-23).
 
 SolarLab's production interface-state paths remain recombination-only. The
 explicit research API below provides a self-consistent occupancy-dependent
@@ -219,7 +220,12 @@ on N30/N60 and residual factors 1/0.5. Its source-clean four-cell matrix has no
 failed or missing cell, but remains `partial`: the N30-to-N60 pointwise sheet-
 charge difference is `1.4735%`, above the fixed `1%` gate. The resolved-v2
 companion retains every physical point and gate and adds N90 as the terminal
-grid; it remains a candidate until its clean six-cell matrix completes.
+grid. Its source-clean six-cell matrix is internally `certified`: run
+`30b146b7f95934fd4353890916d8318f8847e3bb8cb7f556f61afa02223a7b55`,
+certificate
+`f6e214307fe73fbc9d866d5e2537658cdb563134df78a419ecb6f4f873bd0844`,
+and protocol
+`ff0d4f385ef67bfc749045be955004979d925e2436dca22d3495265951d865f3`.
 The initial `N_D=1e16 cm^-3` endpoint failed N30/factor=0.5, while an
 intermediate `5e15 cm^-3` endpoint failed N60/factor=0.5. Both failed runs are
 retained as unsupported boundaries. The registered nonzero endpoints are
@@ -229,6 +235,10 @@ difference at the limiting `N_D=2e15 cm^-3` illuminated target to about
 `0.155%`. N120/factor=0.5 instead fails closed at that point's dark-bias target,
 so N120 is explicitly outside the current solver basin rather than being used
 to extend the claim.
+For the terminal N60-to-N90 pair, current changes by `0.1006%`, sheet charge
+by `0.1548%`, and the largest absolute trace-potential shift is `42.7 uV`.
+All six cells retain exact dark charge-off identity, contact certification,
+the signed charge law, occupancy bounds, and charge/barrier sign consistency.
 The historical three-layer SCAPS-derived reference also remains an unresolved
 illuminated stress case. Transient, impedance and 2D require the later unified
 algebraic-state topology. None of these gaps may be hidden by enabling the

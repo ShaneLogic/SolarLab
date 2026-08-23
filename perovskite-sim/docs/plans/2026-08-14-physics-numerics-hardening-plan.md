@@ -622,7 +622,8 @@ fail-close，随后 `5e15 cm^-3` 在 N60/factor=0.5 fail-close；`1e17/1e18 cm^-
 门限。新版非零掺杂端点保留 20 倍跨度；v1 clean 4-cell artifact 无失败或缺失，
 但因 N30 到 N60 的 sheet-charge 相对差 `1.4735%` 保持 `partial`。独立
 resolved-v2 保留全部设备点与门限，并预注册 N30/N60/N90、factor 1/0.5 的
-6-cell ladder；N90 最细预检通过且 limiting sheet-charge 变化约 `0.155%`。
+6-cell ladder；source-clean 六格矩阵已在 commit `a3c6b30` 获得内部
+`certified` 证书 `f6e214307f...`，terminal sheet-charge 变化 `0.1548%`。
 N120 最细预检在 `N_D=2e15 cm^-3` dark-bias 点 fail-close，因此明确列为
 当前 solver-basin 上界而不用于扩大声明。
 
