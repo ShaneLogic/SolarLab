@@ -20,7 +20,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from perovskite_sim.constants import EPS_0, Q
-from perovskite_sim.discretization.fe_operators import bernoulli
+from perovskite_sim.discretization.fe_operators import bernoulli, bernoulli_derivative
 from perovskite_sim.physics.fermi_dirac import (
     fermi_dirac_half_log_derivative,
     fermi_dirac_one,
@@ -157,6 +157,8 @@ class TwoSidedCarrierBalance:
     capture_flux_m2_s: np.ndarray
     residual_m2_s: np.ndarray
     jacobian_log_state_m2_s: np.ndarray
+    jacobian_trace_potential_m2_s_V: np.ndarray
+    jacobian_bulk_coordinates: np.ndarray
     one_way_cross_scale_m2_s: np.ndarray
 
 
@@ -173,6 +175,38 @@ class ChargedElectrostaticTraceBalance:
     incremental_sheet_charge_C_m2: float
     residual: np.ndarray
     jacobian_trace_and_log_state: np.ndarray
+
+
+@dataclass(frozen=True)
+class CoupledChargedInterfaceBalance:
+    """Unscaled local residual and Jacobians for IFT elimination.
+
+    Local columns are ``(phi_Ls, phi_Rs, log n_Ls, log p_Ls, log n_Rs,
+    log p_Rs)``. Bulk columns are ``(phi_L, phi_R, log n_L, log p_L,
+    log n_R, log p_R)``. Residual rows are potential jump, Gauss law, then
+    the four carrier balances.
+    """
+
+    electrostatic: ChargedElectrostaticTraceBalance
+    carrier: TwoSidedCarrierBalance
+    residual: np.ndarray
+    jacobian_local: np.ndarray
+    jacobian_bulk: np.ndarray
+
+
+@dataclass(frozen=True)
+class EquilibriumReferencedTwoSidedInterfaceResult:
+    """Self-consistent charged local state and IFT evidence."""
+
+    balance: CoupledChargedInterfaceBalance
+    residual_row_scale: np.ndarray
+    normalized_electrostatic_residual: float
+    normalized_carrier_residual: float
+    local_coordinate_sensitivity_to_bulk: np.ndarray
+    sheet_charge_jacobian_bulk: np.ndarray
+    scaled_local_jacobian_condition: float
+    evaluations: int
+    converged: bool
 
 
 @dataclass(frozen=True)
@@ -463,9 +497,18 @@ def solve_electrostatic_traces(
     return InterfaceTracePotentials(phi_left, phi_right)
 
 
-def _bernoulli_pair(value: float) -> tuple[float, float]:
-    pair = bernoulli(np.array([float(value), -float(value)]))
-    return float(pair[0]), float(pair[1])
+def _bernoulli_pair_with_derivative(
+    value: float,
+) -> tuple[float, float, float, float]:
+    arguments = np.array([float(value), -float(value)])
+    pair = bernoulli(arguments)
+    derivative = bernoulli_derivative(arguments)
+    return (
+        float(pair[0]),
+        float(pair[1]),
+        float(derivative[0]),
+        float(derivative[1]),
+    )
 
 
 def _bulk_flux_and_log_jacobian(
@@ -474,7 +517,7 @@ def _bulk_flux_and_log_jacobian(
     geometry: TwoSidedInterfaceGeometry,
     physics: TwoSidedInterfacePhysics,
     bulk: TwoSidedBulkState,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_left, p_left, n_right, p_right = state
     thermal_voltage = float(physics.thermal_voltage_V)
     xi_left = (
@@ -483,8 +526,12 @@ def _bulk_flux_and_log_jacobian(
     xi_right = (
         float(bulk.phi_right_V) - float(traces.phi_right_V)
     ) / thermal_voltage
-    b_left, b_minus_left = _bernoulli_pair(xi_left)
-    b_right, b_minus_right = _bernoulli_pair(xi_right)
+    b_left, b_minus_left, db_left, db_minus_left = (
+        _bernoulli_pair_with_derivative(xi_left)
+    )
+    b_right, b_minus_right, db_right, db_minus_right = (
+        _bernoulli_pair_with_derivative(xi_right)
+    )
     k_n_left = float(physics.D_n_left_m2_s) / float(geometry.left_distance_m)
     k_n_right = float(physics.D_n_right_m2_s) / float(
         geometry.right_distance_m
@@ -512,7 +559,39 @@ def _bulk_flux_and_log_jacobian(
             -k_p_right * b_right * p_right,
         ]
     )
-    return flux, jacobian
+    trace_jacobian = np.zeros((_STATE_SIZE, 2), dtype=float)
+    trace_jacobian[_N_LEFT, 0] = k_n_left / thermal_voltage * (
+        -db_minus_left * bulk.n_left_m3 - db_left * n_left
+    )
+    trace_jacobian[_P_LEFT, 0] = k_p_left / thermal_voltage * (
+        db_left * bulk.p_left_m3 + db_minus_left * p_left
+    )
+    trace_jacobian[_N_RIGHT, 1] = -k_n_right / thermal_voltage * (
+        db_right * bulk.n_right_m3 + db_minus_right * n_right
+    )
+    trace_jacobian[_P_RIGHT, 1] = k_p_right / thermal_voltage * (
+        db_minus_right * bulk.p_right_m3 + db_right * p_right
+    )
+
+    # Bulk columns are (phi_L, phi_R, log n_L, log p_L, log n_R, log p_R).
+    bulk_jacobian = np.zeros((_STATE_SIZE, 2 + _STATE_SIZE), dtype=float)
+    bulk_jacobian[_N_LEFT, 0] = -trace_jacobian[_N_LEFT, 0]
+    bulk_jacobian[_P_LEFT, 0] = -trace_jacobian[_P_LEFT, 0]
+    bulk_jacobian[_N_RIGHT, 1] = -trace_jacobian[_N_RIGHT, 1]
+    bulk_jacobian[_P_RIGHT, 1] = -trace_jacobian[_P_RIGHT, 1]
+    bulk_jacobian[_N_LEFT, 2 + _N_LEFT] = (
+        k_n_left * b_minus_left * bulk.n_left_m3
+    )
+    bulk_jacobian[_P_LEFT, 2 + _P_LEFT] = (
+        k_p_left * b_left * bulk.p_left_m3
+    )
+    bulk_jacobian[_N_RIGHT, 2 + _N_RIGHT] = (
+        k_n_right * b_right * bulk.n_right_m3
+    )
+    bulk_jacobian[_P_RIGHT, 2 + _P_RIGHT] = (
+        k_p_right * b_minus_right * bulk.p_right_m3
+    )
+    return flux, jacobian, trace_jacobian, bulk_jacobian
 
 
 def _one_way_fermi_supply(
@@ -520,7 +599,7 @@ def _one_way_fermi_supply(
     density_of_states_m3: float,
     barrier_eV: float,
     thermal_voltage_V: float,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     ratio = float(density_m3) / float(density_of_states_m3)
     eta = inverse_fermi_dirac_half(ratio)
     argument = eta - float(barrier_eV) / float(thermal_voltage_V)
@@ -528,39 +607,41 @@ def _one_way_fermi_supply(
     log_slope = fermi_dirac_half_log_derivative(eta)
     if not math.isfinite(log_slope) or log_slope <= 0.0:
         raise FloatingPointError("invalid Fermi-Dirac constitutive derivative")
-    derivative_log_density = fermi_dirac_zero(argument) / log_slope
-    return supply, derivative_log_density
+    fermi_zero = fermi_dirac_zero(argument)
+    derivative_log_density = fermi_zero / log_slope
+    derivative_barrier_eV = -fermi_zero / float(thermal_voltage_V)
+    return supply, derivative_log_density, derivative_barrier_eV
 
 
 def _cross_flux_and_log_derivatives(
     state: np.ndarray,
     traces: InterfaceTracePotentials,
     physics: TwoSidedInterfacePhysics,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     potential_jump = float(traces.phi_right_V - traces.phi_left_V)
     electron_step = float(physics.conduction_band_step_eV) - potential_jump
     hole_step = float(physics.hole_transport_step_eV) + potential_jump
     thermal_voltage = float(physics.thermal_voltage_V)
 
-    n_left_supply, dn_left = _one_way_fermi_supply(
+    n_left_supply, dn_left, dn_left_barrier = _one_way_fermi_supply(
         state[_N_LEFT],
         physics.N_C_left_m3,
         max(electron_step, 0.0),
         thermal_voltage,
     )
-    n_right_supply, dn_right = _one_way_fermi_supply(
+    n_right_supply, dn_right, dn_right_barrier = _one_way_fermi_supply(
         state[_N_RIGHT],
         physics.N_C_right_m3,
         max(-electron_step, 0.0),
         thermal_voltage,
     )
-    p_left_supply, dp_left = _one_way_fermi_supply(
+    p_left_supply, dp_left, dp_left_barrier = _one_way_fermi_supply(
         state[_P_LEFT],
         physics.N_V_left_m3,
         max(hole_step, 0.0),
         thermal_voltage,
     )
-    p_right_supply, dp_right = _one_way_fermi_supply(
+    p_right_supply, dp_right, dp_right_barrier = _one_way_fermi_supply(
         state[_P_RIGHT],
         physics.N_V_right_m3,
         max(-hole_step, 0.0),
@@ -585,6 +666,23 @@ def _cross_flux_and_log_derivatives(
     derivative[0, _N_RIGHT] = -prefactor_n * dn_right
     derivative[1, _P_LEFT] = prefactor_p * dp_left
     derivative[1, _P_RIGHT] = -prefactor_p * dp_right
+    electron_jump_derivative = 0.0
+    if electron_step > 0.0:
+        electron_jump_derivative = prefactor_n * (-dn_left_barrier)
+    elif electron_step < 0.0:
+        electron_jump_derivative = prefactor_n * (-dn_right_barrier)
+    hole_jump_derivative = 0.0
+    if hole_step > 0.0:
+        hole_jump_derivative = prefactor_p * dp_left_barrier
+    elif hole_step < 0.0:
+        hole_jump_derivative = prefactor_p * dp_right_barrier
+    trace_derivative = np.array(
+        [
+            [-electron_jump_derivative, electron_jump_derivative],
+            [-hole_jump_derivative, hole_jump_derivative],
+        ],
+        dtype=float,
+    )
     one_way_scale = np.array(
         [
             prefactor_n * max(n_left_supply, n_right_supply),
@@ -592,7 +690,12 @@ def _cross_flux_and_log_derivatives(
         ],
         dtype=float,
     )
-    return np.array([cross_n, cross_p]), derivative, one_way_scale
+    return (
+        np.array([cross_n, cross_p]),
+        derivative,
+        trace_derivative,
+        one_way_scale,
+    )
 
 
 def _shared_trap_occupancy_and_denominator(
@@ -780,10 +883,13 @@ def carrier_balance_and_jacobian(
     state = np.exp(values)
     if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
         raise FloatingPointError("interface trace densities left finite range")
-    bulk_flux, bulk_jacobian = _bulk_flux_and_log_jacobian(
-        state, trace_values, geometry, physics, bulk
-    )
-    cross_pair, cross_derivative, one_way_scale = (
+    (
+        bulk_flux,
+        bulk_jacobian,
+        bulk_trace_jacobian,
+        bulk_coordinate_jacobian,
+    ) = _bulk_flux_and_log_jacobian(state, trace_values, geometry, physics, bulk)
+    cross_pair, cross_derivative, cross_trace_derivative, one_way_scale = (
         _cross_flux_and_log_derivatives(state, trace_values, physics)
     )
     cross_flux = np.array(
@@ -795,6 +901,11 @@ def carrier_balance_and_jacobian(
     cross_jacobian[_N_RIGHT] = cross_derivative[0]
     cross_jacobian[_P_LEFT] = -cross_derivative[1]
     cross_jacobian[_P_RIGHT] = cross_derivative[1]
+    cross_trace_jacobian = np.zeros((_STATE_SIZE, 2), dtype=float)
+    cross_trace_jacobian[_N_LEFT] = -cross_trace_derivative[0]
+    cross_trace_jacobian[_N_RIGHT] = cross_trace_derivative[0]
+    cross_trace_jacobian[_P_LEFT] = -cross_trace_derivative[1]
+    cross_trace_jacobian[_P_RIGHT] = cross_trace_derivative[1]
     capture_flux, capture_jacobian = _capture_flux_and_log_jacobian(
         state, physics
     )
@@ -807,7 +918,221 @@ def carrier_balance_and_jacobian(
         capture_flux_m2_s=capture_flux,
         residual_m2_s=residual,
         jacobian_log_state_m2_s=jacobian,
+        jacobian_trace_potential_m2_s_V=(
+            bulk_trace_jacobian + cross_trace_jacobian
+        ),
+        jacobian_bulk_coordinates=bulk_coordinate_jacobian,
         one_way_cross_scale_m2_s=one_way_scale,
+    )
+
+
+def equilibrium_referenced_two_sided_balance(
+    trace_and_log_state: np.ndarray,
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    charge: EquilibriumReferencedSheetCharge,
+) -> CoupledChargedInterfaceBalance:
+    """Return the coupled charged local residual and both analytic tangents."""
+    values = np.asarray(trace_and_log_state, dtype=float)
+    electrostatic = equilibrium_referenced_electrostatic_trace_balance(
+        values, geometry, physics, bulk, charge
+    )
+    traces = InterfaceTracePotentials(float(values[0]), float(values[1]))
+    carrier = carrier_balance_and_jacobian(
+        values[2:], geometry, physics, bulk, traces
+    )
+    residual = np.concatenate((electrostatic.residual, carrier.residual_m2_s))
+    jacobian_local = np.zeros((2 + _STATE_SIZE, 2 + _STATE_SIZE), dtype=float)
+    jacobian_local[:2] = electrostatic.jacobian_trace_and_log_state
+    jacobian_local[2:, :2] = carrier.jacobian_trace_potential_m2_s_V
+    jacobian_local[2:, 2:] = carrier.jacobian_log_state_m2_s
+
+    capacitance_left = (
+        EPS_0 * float(geometry.eps_r_left) / float(geometry.left_distance_m)
+    )
+    capacitance_right = (
+        EPS_0 * float(geometry.eps_r_right) / float(geometry.right_distance_m)
+    )
+    jacobian_bulk = np.zeros_like(jacobian_local)
+    jacobian_bulk[1, 0] = -capacitance_left
+    jacobian_bulk[1, 1] = -capacitance_right
+    jacobian_bulk[2:] = carrier.jacobian_bulk_coordinates
+    return CoupledChargedInterfaceBalance(
+        electrostatic=electrostatic,
+        carrier=carrier,
+        residual=residual,
+        jacobian_local=jacobian_local,
+        jacobian_bulk=jacobian_bulk,
+    )
+
+
+def solve_equilibrium_referenced_two_sided_interface(
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    charge: EquilibriumReferencedSheetCharge,
+    *,
+    initial_state_m3: np.ndarray | None = None,
+    residual_tolerance: float = 1.0e-9,
+    max_evaluations: int = 300,
+    fail_on_residual: bool = True,
+) -> EquilibriumReferencedTwoSidedInterfaceResult:
+    """Jointly eliminate charged electrostatic and carrier trace variables."""
+    _validate_inputs(geometry, physics, bulk)
+    _require_positive("residual_tolerance", residual_tolerance)
+    if int(max_evaluations) <= 0:
+        raise ValueError("max_evaluations must be positive")
+    traces = solve_electrostatic_traces(geometry, bulk)
+    seed = (
+        solve_two_sided_interface(
+            geometry,
+            physics,
+            bulk,
+            residual_tolerance=max(residual_tolerance, 1.0e-9),
+            max_evaluations=max_evaluations,
+        ).state_m3
+        if initial_state_m3 is None
+        else np.asarray(initial_state_m3, dtype=float)
+    )
+    if seed.shape != (_STATE_SIZE,) or not np.all(np.isfinite(seed)):
+        raise ValueError("initial_state_m3 must contain four finite values")
+    if np.any(seed <= 0.0):
+        raise ValueError("initial_state_m3 must be strictly positive")
+    density_reference = max(
+        float(np.max(seed)),
+        physics.N_C_left_m3,
+        physics.N_C_right_m3,
+        physics.N_V_left_m3,
+        physics.N_V_right_m3,
+        physics.n1_left_m3,
+        physics.n1_right_m3,
+        physics.p1_left_m3,
+        physics.p1_right_m3,
+        1.0,
+    )
+    log_lower = math.log(1.0e-100)
+    log_upper = math.log(density_reference) + math.log(1.0e12)
+    coordinates = np.concatenate(
+        (
+            np.array([traces.phi_left_V, traces.phi_right_V]),
+            np.clip(np.log(seed), log_lower + 1.0, log_upper - 1.0),
+        )
+    )
+    seed_carrier = carrier_balance_and_jacobian(
+        coordinates[2:], geometry, physics, bulk, traces
+    )
+    electron_scale = max(
+        abs(seed_carrier.bulk_flux_m2_s[_N_LEFT]),
+        abs(seed_carrier.bulk_flux_m2_s[_N_RIGHT]),
+        abs(seed_carrier.capture_flux_m2_s[_N_LEFT]),
+        abs(seed_carrier.capture_flux_m2_s[_N_RIGHT]),
+        seed_carrier.one_way_cross_scale_m2_s[0],
+        1.0,
+    )
+    hole_scale = max(
+        abs(seed_carrier.bulk_flux_m2_s[_P_LEFT]),
+        abs(seed_carrier.bulk_flux_m2_s[_P_RIGHT]),
+        abs(seed_carrier.capture_flux_m2_s[_P_LEFT]),
+        abs(seed_carrier.capture_flux_m2_s[_P_RIGHT]),
+        seed_carrier.one_way_cross_scale_m2_s[1],
+        1.0,
+    )
+    capacitance_scale = (
+        EPS_0
+        * (
+            float(geometry.eps_r_left) / float(geometry.left_distance_m)
+            + float(geometry.eps_r_right) / float(geometry.right_distance_m)
+        )
+        * float(physics.thermal_voltage_V)
+    )
+    gauss_scale = max(
+        capacitance_scale,
+        abs(float(geometry.fixed_sheet_charge_C_m2)),
+        Q * float(charge.trap_density_m2),
+        np.finfo(float).tiny,
+    )
+    row_scale = np.array(
+        [
+            physics.thermal_voltage_V,
+            gauss_scale,
+            electron_scale,
+            hole_scale,
+            electron_scale,
+            hole_scale,
+        ],
+        dtype=float,
+    )
+
+    def residual(local_coordinates: np.ndarray) -> np.ndarray:
+        balance = equilibrium_referenced_two_sided_balance(
+            local_coordinates, geometry, physics, bulk, charge
+        )
+        return balance.residual / row_scale
+
+    def jacobian(local_coordinates: np.ndarray) -> np.ndarray:
+        balance = equilibrium_referenced_two_sided_balance(
+            local_coordinates, geometry, physics, bulk, charge
+        )
+        return balance.jacobian_local / row_scale[:, np.newaxis]
+
+    lower = np.concatenate((np.full(2, -np.inf), np.full(4, log_lower)))
+    upper = np.concatenate((np.full(2, np.inf), np.full(4, log_upper)))
+    solution = least_squares(
+        residual,
+        coordinates,
+        jac=jacobian,
+        bounds=(lower, upper),
+        x_scale="jac",
+        ftol=1.0e-13,
+        xtol=1.0e-13,
+        gtol=1.0e-13,
+        max_nfev=int(max_evaluations),
+    )
+    balance = equilibrium_referenced_two_sided_balance(
+        solution.x, geometry, physics, bulk, charge
+    )
+    normalized = np.abs(balance.residual / row_scale)
+    normalized_electrostatic = float(np.max(normalized[:2]))
+    normalized_carrier = float(np.max(normalized[2:]))
+    scaled_local_jacobian = balance.jacobian_local / row_scale[:, np.newaxis]
+    scaled_bulk_jacobian = balance.jacobian_bulk / row_scale[:, np.newaxis]
+    sensitivity = np.linalg.solve(
+        scaled_local_jacobian,
+        -scaled_bulk_jacobian,
+    )
+    sheet_charge_gradient_local = np.zeros(2 + _STATE_SIZE, dtype=float)
+    sheet_charge_gradient_local[2:] = (
+        -balance.electrostatic.jacobian_trace_and_log_state[1, 2:]
+    )
+    sheet_charge_jacobian_bulk = sheet_charge_gradient_local @ sensitivity
+    condition = float(np.linalg.cond(scaled_local_jacobian))
+    converged = bool(
+        solution.success
+        and max(normalized_electrostatic, normalized_carrier)
+        <= residual_tolerance
+        and np.all(np.isfinite(sensitivity))
+        and np.all(np.isfinite(sheet_charge_jacobian_bulk))
+        and math.isfinite(condition)
+    )
+    if fail_on_residual and not converged:
+        raise RuntimeError(
+            "charged two-sided interface QSS did not certify: "
+            f"solver_success={solution.success}, "
+            f"electrostatic_residual={normalized_electrostatic:.6g}, "
+            f"carrier_residual={normalized_carrier:.6g}, "
+            f"evaluations={solution.nfev}"
+        )
+    return EquilibriumReferencedTwoSidedInterfaceResult(
+        balance=balance,
+        residual_row_scale=row_scale,
+        normalized_electrostatic_residual=normalized_electrostatic,
+        normalized_carrier_residual=normalized_carrier,
+        local_coordinate_sensitivity_to_bulk=sensitivity,
+        sheet_charge_jacobian_bulk=sheet_charge_jacobian_bulk,
+        scaled_local_jacobian_condition=condition,
+        evaluations=int(solution.nfev),
+        converged=converged,
     )
 
 
@@ -1127,8 +1452,10 @@ def solve_material_two_sided_interfaces_qss(
 
 __all__ = [
     "ChargedElectrostaticTraceBalance",
+    "CoupledChargedInterfaceBalance",
     "DEDUPLICATED_QSS",
     "EquilibriumReferencedSheetCharge",
+    "EquilibriumReferencedTwoSidedInterfaceResult",
     "INTERFACE_TOPOLOGIES",
     "InterfaceTracePotentials",
     "TWO_SIDED_TRACE",
@@ -1143,10 +1470,12 @@ __all__ = [
     "carrier_balance_and_jacobian",
     "electrostatic_trace_residual_and_jacobian",
     "equilibrium_referenced_electrostatic_trace_balance",
+    "equilibrium_referenced_two_sided_balance",
     "remove_shared_interface_nodes",
     "shared_trap_occupancy",
     "shared_trap_occupancy_and_log_jacobian",
     "solve_electrostatic_traces",
+    "solve_equilibrium_referenced_two_sided_interface",
     "solve_material_two_sided_interfaces_qss",
     "solve_two_sided_interface",
     "validate_interface_topology",

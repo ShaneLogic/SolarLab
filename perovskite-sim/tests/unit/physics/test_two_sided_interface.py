@@ -17,8 +17,10 @@ from perovskite_sim.physics.two_sided_interface import (
     carrier_balance_and_jacobian,
     electrostatic_trace_residual_and_jacobian,
     equilibrium_referenced_electrostatic_trace_balance,
+    equilibrium_referenced_two_sided_balance,
     remove_shared_interface_nodes,
     solve_electrostatic_traces,
+    solve_equilibrium_referenced_two_sided_interface,
     shared_trap_occupancy,
     shared_trap_occupancy_and_log_jacobian,
     solve_two_sided_interface,
@@ -69,6 +71,30 @@ def _bulk(**updates) -> TwoSidedBulkState:
             p_right_m3=3.0e20,
         ),
         **updates,
+    )
+
+
+def _bulk_coordinates(bulk: TwoSidedBulkState) -> np.ndarray:
+    return np.array(
+        [
+            bulk.phi_left_V,
+            bulk.phi_right_V,
+            np.log(bulk.n_left_m3),
+            np.log(bulk.p_left_m3),
+            np.log(bulk.n_right_m3),
+            np.log(bulk.p_right_m3),
+        ]
+    )
+
+
+def _bulk_from_coordinates(values: np.ndarray) -> TwoSidedBulkState:
+    return TwoSidedBulkState(
+        phi_left_V=float(values[0]),
+        phi_right_V=float(values[1]),
+        n_left_m3=float(np.exp(values[2])),
+        p_left_m3=float(np.exp(values[3])),
+        n_right_m3=float(np.exp(values[4])),
+        p_right_m3=float(np.exp(values[5])),
     )
 
 
@@ -537,6 +563,174 @@ def test_charged_gauss_law_closes_across_dielectric_jump(
     assert np.sign(balance.incremental_sheet_charge_C_m2) == expected_sign
     assert displacement_jump == pytest.approx(total_sheet_charge, abs=2.0e-18)
     assert np.max(np.abs(balance.residual / scale)) < 1.0e-10
+
+
+def test_coupled_charged_local_and_bulk_jacobians_match_central_difference():
+    geometry = _geometry(
+        potential_jump_right_minus_left_V=0.01,
+        fixed_sheet_charge_C_m2=2.0e-6,
+    )
+    physics = _physics(
+        conduction_band_step_eV=0.12,
+        hole_transport_step_eV=-0.07,
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    bulk = _bulk()
+    state = np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20])
+    charge = EquilibriumReferencedSheetCharge(
+        shared_trap_occupancy(state * np.array([0.9, 1.1, 1.2, 0.8]), physics),
+        3.0e16,
+    )
+    local = np.concatenate(([0.013, 0.023], np.log(state)))
+    balance = equilibrium_referenced_two_sided_balance(
+        local, geometry, physics, bulk, charge
+    )
+
+    local_fd = np.empty((6, 6))
+    for column in range(6):
+        step = 1.0e-7 if column < 2 else 1.0e-6
+        plus = local.copy()
+        minus = local.copy()
+        plus[column] += step
+        minus[column] -= step
+        local_fd[:, column] = (
+            equilibrium_referenced_two_sided_balance(
+                plus, geometry, physics, bulk, charge
+            ).residual
+            - equilibrium_referenced_two_sided_balance(
+                minus, geometry, physics, bulk, charge
+            ).residual
+        ) / (2.0 * step)
+
+    bulk_coordinates = _bulk_coordinates(bulk)
+    bulk_fd = np.empty((6, 6))
+    for column in range(6):
+        step = 1.0e-7 if column < 2 else 1.0e-6
+        plus = bulk_coordinates.copy()
+        minus = bulk_coordinates.copy()
+        plus[column] += step
+        minus[column] -= step
+        bulk_fd[:, column] = (
+            equilibrium_referenced_two_sided_balance(
+                local, geometry, physics, _bulk_from_coordinates(plus), charge
+            ).residual
+            - equilibrium_referenced_two_sided_balance(
+                local, geometry, physics, _bulk_from_coordinates(minus), charge
+            ).residual
+        ) / (2.0 * step)
+
+    row_scale = np.maximum(
+        np.max(
+            np.abs(
+                np.concatenate(
+                    (balance.jacobian_local, balance.jacobian_bulk), axis=1
+                )
+            ),
+            axis=1,
+        ),
+        1.0e-30,
+    )
+    np.testing.assert_allclose(
+        balance.jacobian_local / row_scale[:, None],
+        local_fd / row_scale[:, None],
+        rtol=3.0e-5,
+        atol=3.0e-10,
+    )
+    np.testing.assert_allclose(
+        balance.jacobian_bulk / row_scale[:, None],
+        bulk_fd / row_scale[:, None],
+        rtol=3.0e-5,
+        atol=3.0e-10,
+    )
+
+
+def test_charged_local_ift_sheet_charge_tangent_matches_resolved_bulk_fd():
+    geometry = _geometry(
+        eps_r_left=9.0,
+        eps_r_right=31.0,
+        potential_jump_right_minus_left_V=0.008,
+    )
+    physics = _physics(
+        conduction_band_step_eV=0.11,
+        hole_transport_step_eV=-0.06,
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    reference_bulk = _bulk()
+    reference_off = solve_two_sided_interface(geometry, physics, reference_bulk)
+    reference_occupancy = shared_trap_occupancy(
+        np.exp(np.log(reference_off.state_m3)), physics
+    )
+    charge = EquilibriumReferencedSheetCharge(reference_occupancy, 2.0e16)
+    biased_bulk = _bulk(
+        phi_left_V=-0.01,
+        phi_right_V=0.08,
+        n_left_m3=2.4e20,
+        p_right_m3=3.6e20,
+    )
+    result = solve_equilibrium_referenced_two_sided_interface(
+        geometry,
+        physics,
+        biased_bulk,
+        charge,
+        residual_tolerance=1.0e-9,
+    )
+
+    bulk_coordinates = _bulk_coordinates(biased_bulk)
+    finite_difference = np.empty(6)
+    for column in range(6):
+        step = 2.0e-6 if column < 2 else 2.0e-5
+        plus = bulk_coordinates.copy()
+        minus = bulk_coordinates.copy()
+        plus[column] += step
+        minus[column] -= step
+        plus_result = solve_equilibrium_referenced_two_sided_interface(
+            geometry,
+            physics,
+            _bulk_from_coordinates(plus),
+            charge,
+            initial_state_m3=result.balance.carrier.state_m3,
+            residual_tolerance=1.0e-9,
+        )
+        minus_result = solve_equilibrium_referenced_two_sided_interface(
+            geometry,
+            physics,
+            _bulk_from_coordinates(minus),
+            charge,
+            initial_state_m3=result.balance.carrier.state_m3,
+            residual_tolerance=1.0e-9,
+        )
+        finite_difference[column] = (
+            plus_result.balance.electrostatic.incremental_sheet_charge_C_m2
+            - minus_result.balance.electrostatic.incremental_sheet_charge_C_m2
+        ) / (2.0 * step)
+
+    scale = max(
+        float(np.max(np.abs(result.sheet_charge_jacobian_bulk))),
+        float(np.max(np.abs(finite_difference))),
+        1.0e-30,
+    )
+    assert result.converged
+    assert result.normalized_electrostatic_residual <= 1.0e-9
+    assert result.normalized_carrier_residual <= 1.0e-9
+    assert abs(result.balance.electrostatic.incremental_sheet_charge_C_m2) <= (
+        Q * charge.trap_density_m2
+    )
+    np.testing.assert_allclose(
+        result.sheet_charge_jacobian_bulk / scale,
+        finite_difference / scale,
+        rtol=1.0e-4,
+        atol=2.0e-7,
+    )
 
 
 def test_shared_trap_occupancy_rejects_undefined_or_negative_state():

@@ -68,9 +68,19 @@ the Gauss law across unequal left/right permittivity to a normalized residual
 below `1e-10`.
 
 This primitive is not a device solve and does not unlock the configuration.
+The local physics layer now also solves the two electrostatic equations and
+four carrier balances jointly. Its analytic Jacobian includes SG half-flux
+potential derivatives and the clamp-inactive Fermi-Richardson barrier slice.
+It reports the IFT sensitivity of all six eliminated coordinates to the two
+adjacent bulk potentials and four bulk log densities, including the resulting
+`d Delta sigma / d bulk`. Both the complete local/bulk residual Jacobians and
+the sheet-charge sensitivity after independently re-solving perturbed systems
+match central differences; the latter uses the roadmap relative threshold
+`1e-4`.
+
 The charged state is not yet eliminated into the outer quasi-Fermi Poisson
-residual, so using it only after a charge-off Poisson solve would still be
-non-self-consistent and is prohibited.
+residual. Using this local result only after a charge-off Poisson solve would
+still be non-self-consistent and is prohibited.
 
 ## Charge-off reference lane
 
@@ -117,7 +127,8 @@ or executable certificates under one frozen source/config/protocol identity:
 - stored per-interface `f_eq` in the same topology and energy gauge (completed
   for the charge-off reference; the charged lane must consume this identity);
 - occupancy-dependent sheet charge inside the outer Poisson residual and a
-  verified analytic/IFT Jacobian;
+  verified analytic/IFT Jacobian (local analytic/IFT closure completed; outer
+  Poisson consumption remains pending);
 - dark reference identity and charge/grid conservation gates.
 
 The pure sign-law tests and existing two-sided electrostatic unit tests are
