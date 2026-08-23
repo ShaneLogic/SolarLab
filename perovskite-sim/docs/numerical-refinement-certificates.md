@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 13 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit、Phase 3 interface charge-off/charged research closure，以及 Phase 4.1 no-ion DAE first slice。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 14 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit、Phase 3 interface charge-off/charged research closure，以及 Phase 4.1 no-ion 与 single-positive-ion DAE slices。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -38,6 +38,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `interface-charge-device-stress-v1` | N30/60 | QF residual factor 1/0.5 | 9-point Et/CBO/Nd/Nt current、dark occupancy、sheet charge、trace shift |
 | `interface-charge-device-stress-resolved-v2` | N30/60/90 | QF residual factor 1/0.5 | v1 同一 9-point observable 与门限，N90 为 terminal grid |
 | `no-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态误差、carrier inventory response、dense/structured 等价性 |
+| `single-positive-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P/phi 误差、正离子守恒、dense/structured 等价性 |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -64,6 +65,13 @@ no-ion DAE protocol 固定 c-Si 配置中的单层切片、ohmic/no-ion/no-inter
 高精度 Radau 参考。为保持扩散问题在空间加密后的时间误差可比，步数按
 `base_steps * (N/N_ref)^2 / tolerance_factor` 预注册；实际 cell 的 N 和步数
 写在 metadata，不进入跨矩阵必须一致的 protocol document。
+
+single-positive-ion DAE protocol 独立固定 IonMonger MAPbI3 absorber 切片、
+ohmic/blocking/no-interface 拓扑、`(log n, log p, logit(P/P_lim), phi)` 坐标、
+finite-site steric law、10 mV/10 ms 暗态历史以及同样的 N 平方时间步阶梯。
+每个 cell 同时执行 strict Radau/MoL、dense-central BE 和
+structured-analytic BE，并分列 carrier/ion/algebraic residual、离子库存与
+site-occupancy 证据；它不继承 no-ion DAE 的 protocol 或证书。
 
 manifest 保存去重后的完整 protocol document 和 hash。certificate 只有在所有完成 cell 的 protocol 内容自校验通过且 hash 跨 grid/tolerance 一致时才记录 `protocol_sha256`。protocol provenance 不替代 config、source、environment、grid 或 tolerance provenance。
 
@@ -113,6 +121,7 @@ python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenc
 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1 --dry-run
 python scripts/run_numerical_refinement.py interface-charge-device-stress-resolved-v2 --dry-run
 python scripts/run_numerical_refinement.py no-ion-dae-transient-v1 --dry-run
+python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1 --dry-run
 ```
 
 建议固定 BLAS 线程后逐 lane 执行：
@@ -131,6 +140,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-device-stress-resolved-v2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py no-ion-dae-transient-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1
 ```
 
 先执行一个 cell 并留下可恢复状态：
@@ -145,7 +155,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-当前 registry 共 13 条 lane；十一条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 109 个 content-addressed cell。其内部工作量至少包括：
+当前 registry 共 14 条 lane；十二条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 118 个 content-addressed cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
@@ -167,8 +177,12 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 - no-ion DAE：9 个 cell 各执行同网格高精度 Radau/MoL 参考、dense-central
   backward Euler 和 structured-analytic backward Euler；N=8/16/32 的时间步
   按 N 平方缩放，最细 cell 为 512 步。
+- single-positive-ion DAE：9 个 cell 各执行同网格 strict Radau/MoL、
+  dense-central BE 与 structured-analytic BE；分列 n/p/P differential residual、
+  Poisson/边界 algebraic residual、blocking-ion inventory 和 finite-site bounds，
+  最细 cell 为 128 步。
 
-因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 109 个 cell 的真实结果。
+因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 118 个 cell 的真实结果。
 
 `certified` 只表示该冻结代码/config/protocol/environment 下的内部数值收敛。它不等于 SCAPS/IonMonger 外部 solver parity，不等于实验验证，也不证明材料参数或模型闭包唯一正确。
 
@@ -198,6 +212,31 @@ BLAS/OpenMP 单线程的环境下完成 9/9 cell，0 failed、0 missing、0 reus
 research DAE first-slice entry gate。它不认证移动离子、代数界面态、选择性
 接触、cross-node interface sampling、生产 transient/experiment/backend route，
 也不是外部 c-Si device validation。
+
+### 2026-08-24 single-positive-ion DAE certificate
+
+`single-positive-ion-dae-transient-v1` 在 source commit `6e9a274`、source
+changes 为空且 BLAS/OpenMP 单线程的环境下完成 9/9 cell，0 failed、0 missing：
+
+- run ID：`d71d74acc5574e920edf8e0edb05020c043f3e8a87b1c95c926aa14556658dab`；
+- certificate SHA-256：`7538fa4acea081c1c51c5f75201dfec90ebc64bca9e4d62068cb440f97b627e8`；
+- protocol SHA-256：`3f0b24b96136e42972b689258aea16c547ac4e18e948ec7aa269ca23af1f989c`；
+- terminal grid/time-step differences：log-density error
+  `1.95655e-9 / 2.30604e-9`、positive-ion relative error
+  `5.53590e-11 / 9.84279e-11`、potential error
+  `5.00667e-11 / 5.94353e-11 V`，全部通过预注册门限；
+- 全矩阵最大 carrier/positive-ion/algebraic normalized residual
+  `4.31830e-10 / 1.33230e-16 / 1.34261e-16`，positive-ion inventory drift
+  `3.14321e-16`，electron/hole balance defect
+  `3.35000e-18 / 7.79983e-18 A/m2`；
+- 正离子最小相对运动 `2.94123e-6`，证明测试不是静态零变化；全矩阵
+  dense/structured trajectory 的 log-density、positive-ion、potential 差异至多
+  `5.55112e-16 / 0 / 4.33681e-19 V`；structured RHS-work fraction 最大
+  `2.55639e-2`，CSR nonzeros/node 最大 `24.7273`。
+
+该证书关闭的是单层、ohmic、blocking single-positive-ion、无 interface 的
+research DAE topology gate。它不是外部 IonMonger solver parity，不认证双离子、
+algebraic interface state、选择性接触、生产 transient/experiment/backend route。
 
 ### 2026-08-23 charge-off reference certificate
 

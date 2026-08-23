@@ -666,6 +666,22 @@ algebraic residual 为 `9.3274e-10 / 1.9789e-16`。这只关闭 first-slice entr
 single-ion、dual-ion 和 algebraic interface-state 必须各自建立新 capability contract
 与 content-addressed 证据，不能继承该证书。
 
+第五个 checkpoint 建立 single-positive-ion DAE topology：状态扩展为
+`(log n, log p, logit(P/P_lim), phi)`，正离子全部节点为 differential rows，
+blocking FV flux、finite-site bound、dual-cell inventory 与 Poisson ion charge
+分别进入残差和 analytic tangent。dense-central 与 structured-analytic BE 均以
+physical density storage 求解，并与 strict Radau/MoL 比较。N=9/17/33 的结构化
+矩阵 nnz 为 `192/400/816`，RHS evaluations 为 `3`，对应 dense 的
+`147/275/531`，轨迹差小于 `8e-16`。
+
+第六个 checkpoint 已注册并真实执行 `single-positive-ion-dae-transient-v1`：
+source-clean commit `6e9a274` 的 9/9 cell 获得内部 `certified` 证书
+`7538fa4ace...`。terminal grid/time positive-ion relative-error changes 为
+`5.5359e-11 / 9.8428e-11`；全矩阵最大 carrier/ion/algebraic residual 为
+`4.3183e-10 / 1.3323e-16 / 1.3426e-16`，离子库存漂移 `3.1432e-16`。
+该证书只关闭 single-positive-ion/no-interface topology gate；下一 checkpoint
+从 dual-ion topology 开始，之后才进入 algebraic interface state。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。

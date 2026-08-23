@@ -784,13 +784,15 @@ The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
 Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
 
-Phase 4.1 now includes a research-only semi-explicit DAE residual for the
-single-layer, ohmic, no-ion/no-interface limit. It retains Poisson potential as
-an algebraic coordinate, constructs a residual-certified consistent initial
-condition, and exposes exact baseline Jacobian blocks with finite-difference
-tests. A separate opt-in structured lane assembles the smooth first-slice
-tangent as CSR and uses sparse Newton. The registered 9-cell
-`no-ion-dae-transient-v1` matrix is internally certified at source commit
-`985a234` (certificate `44807d654d...`), with no failed or missing cells. This
-does not extend the claim to ions, interfaces, selective contacts, experiments,
-or backend routes; see [the DAE capability boundary](docs/dae-research-backbone.md).
+Phase 4.1 now includes research-only semi-explicit DAE residuals for two
+single-layer, ohmic, no-interface slices: no ions and one blocking positive ion.
+Both retain Poisson potential as an algebraic coordinate, construct a
+residual-certified consistent initial condition, and provide dense reference
+and sparse analytic Newton paths. The positive-ion slice adds a finite-site
+shifted-logit coordinate, the production blocking ion flux/tangent, and exact
+dual-cell inventory evidence. The registered 9-cell `no-ion-dae-transient-v1`
+and `single-positive-ion-dae-transient-v1` matrices are internally certified at
+source commits `985a234` and `6e9a274` (certificates `44807d654d...` and
+`7538fa4ace...`). This does not extend the claim to dual ions, interfaces,
+selective contacts, experiments, or backend routes; see
+[the DAE capability boundary](docs/dae-research-backbone.md).
