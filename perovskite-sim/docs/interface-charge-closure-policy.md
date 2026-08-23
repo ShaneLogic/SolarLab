@@ -1,10 +1,12 @@
 # Interface-charge closure policy
 
-Status: `PARKED` (2026-08-23).
+Status: research-only steady-state Python lane; production routes remain
+`PARKED` (2026-08-23).
 
-SolarLab's active interface-state paths are recombination-only. They do not
-currently provide a residual-certified equilibrium occupancy reference or a
-self-consistent occupancy-dependent sheet charge in the outer Poisson system.
+SolarLab's production interface-state paths remain recombination-only. The
+explicit research API below provides a self-consistent occupancy-dependent
+sheet charge in the QF outer Poisson system, but it is not yet backed by the
+charged grid/tolerance certificate required for production exposure.
 
 ## Configuration contract
 
@@ -29,7 +31,10 @@ invalidates the historical SCAPS calibration. A charge-off reference config may
 set it while establishing the fresh baseline; doing so changes its semantic
 identity without enabling charge. It is not an enable switch: all production
 material assembly and backend experiment routes still reject
-`equilibrium_referenced` with a `PARKED` capability error.
+`equilibrium_referenced` with a `PARKED` capability error. The only activation
+path is the explicit two-call research API described below; it internally
+builds charge-off material arrays and threads the signed charge through the
+separate charged QF system.
 
 ## Charge convention
 
@@ -78,9 +83,34 @@ the sheet-charge sensitivity after independently re-solving perturbed systems
 match central differences; the latter uses the roadmap relative threshold
 `1e-4`.
 
-The charged state is not yet eliminated into the outer quasi-Fermi Poisson
-residual. Using this local result only after a charge-off Poisson solve would
-still be non-self-consistent and is prohibited.
+## Self-consistent research API
+
+`build_equilibrium_referenced_interface_charge_dark_reference()` first solves
+and certifies a charge-off, zero-bias dark state in the same two-sided topology.
+It requires one positive-`N_t` `InterfaceDefect` per physical interface and
+stores SHA-256 identities for the grid, stack, and dark state together with
+`f_eq` and `N_t`. A changed grid, stack, defect density, or uncertified dark
+state is rejected before the charged solve.
+
+`solve_equilibrium_referenced_interface_charge_steady_state()` is the only
+Python activation API. At each inner Poisson Newton iteration it jointly
+eliminates the charged local interface state, distributes `Delta sigma` to the
+two adjacent control volumes using the exact left/right dielectric
+capacitances, and adds the IFT `d Delta sigma / d phi_bulk` to the banded
+Poisson Jacobian. The converged charged local state is reused by continuity;
+there is no post-processing-only charge path. The result stores `f_eq`, `f`,
+`Delta sigma`, both trace shifts, normalized Gauss residual, and the scaled
+local Jacobian condition for every interface.
+
+The dark research result reuses the certified charge-off arrays exactly and
+reports zero incremental charge/trace shift. Focused device tests cover dark,
+bias, and light; the complete outer banded Jacobian, including a re-solved
+local QSS for every perturbation, matches central differences at the roadmap
+`1e-4` threshold.
+
+This does not expose the closure through backend, transient, QF impedance, or
+2D routes. Those combinations continue to fail through the production
+material-assembly capability gate.
 
 ## Charge-off reference lane
 
@@ -114,22 +144,28 @@ Voc five orders, and normalized J-V four orders).
 
 ## Unlock conditions
 
-The research lane remains unavailable until all of these are content-addressed
-or executable certificates under one frozen source/config/protocol identity:
+Production/API unlock remains unavailable until all of these are
+content-addressed or executable certificates under one frozen
+source/config/protocol identity:
 
 - contact-consistent residual-certified dark reference (completed in the
   charge-off certificate above);
 - complete charge-off interface steady-state grid/tolerance matrix (completed
   in the charge-off certificate above);
 - local two-sided Gauss jump and analytic sheet-charge tangent with
-  discontinuous permittivity (completed); the device-level outer-coupling
-  certificate remains pending;
+  discontinuous permittivity (completed); the registered device-level
+  outer-coupling certificate remains pending;
 - stored per-interface `f_eq` in the same topology and energy gauge (completed
   for the charge-off reference; the charged lane must consume this identity);
 - occupancy-dependent sheet charge inside the outer Poisson residual and a
-  verified analytic/IFT Jacobian (local analytic/IFT closure completed; outer
-  Poisson consumption remains pending);
+  verified analytic/IFT Jacobian (completed for the research steady-state
+  Python lane);
 - dark reference identity and charge/grid conservation gates.
+
+The remaining unlock work is a registered charged grid/tolerance certificate,
+including barrier-shift convergence and content-addressed dark-reference
+identity. Until that artifact is certified, the capability must not be called
+production-ready or externally validated.
 
 The pure sign-law tests and existing two-sided electrostatic unit tests are
 necessary prerequisites. They are not a device-level interface-charge

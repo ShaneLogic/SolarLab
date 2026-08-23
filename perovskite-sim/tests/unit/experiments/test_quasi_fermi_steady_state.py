@@ -11,24 +11,32 @@ import pytest
 import perovskite_sim.experiments.quasi_fermi_steady_state as qf_module
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
-from perovskite_sim.constants import EPS_0
+from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.experiments.quasi_fermi_steady_state import (
     QuasiFermiSteadyStateError,
     _QuasiFermiSystem,
     _density_from_log,
     _prepare_two_sided_material,
     _regrid_edge_drops,
+    build_equilibrium_referenced_interface_charge_dark_reference,
     build_two_sided_trace_grid,
+    solve_equilibrium_referenced_interface_charge_steady_state,
     solve_quasi_fermi_jv_sweep,
     solve_quasi_fermi_steady_state,
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.models.device import (
+    DeviceStack,
+    InterfaceChargeClosureParkedError,
+    InterfaceDefect,
+    LayerSpec,
+)
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
 from perovskite_sim.physics.two_sided_interface import (
     DEDUPLICATED_QSS,
     TWO_SIDED_TRACE,
+    solve_material_two_sided_interfaces_qss,
 )
 from perovskite_sim.solver.mol import build_material_arrays
 
@@ -98,6 +106,55 @@ def _two_layer_interface_stack() -> DeviceStack:
         V_bi=0.0,
         Phi=0.0,
         mode="full",
+    )
+
+
+def _prepared_charged_interface_system_inputs():
+    stack = replace(
+        _two_layer_interface_stack(),
+        interfaces=((0.03, 0.05),),
+    )
+    shared_grid = multilayer_grid(
+        [Layer(1.0e-7, 4), Layer(1.0e-7, 4)],
+        alpha=(2.0, 2.0),
+    )
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+    material = _prepare_two_sided_material(
+        grid,
+        stack,
+        build_material_arrays(grid, stack),
+    )
+    material = replace(
+        material,
+        N_iface_state=0,
+        iface_state_v_th=1.0e5,
+        iface_state_live_proj=True,
+        iface_state_shared_occ=True,
+        iface_state_physical_offsets=True,
+        iface_qss_exclusive_transport=True,
+        iface_qss_cross_transmission=1.0,
+        iface_qss_transport_model=FERMI_DIRAC_RICHARDSON,
+        iface_qss_allow_inexact_inner=True,
+    )
+    return stack, grid, material
+
+
+def _research_interface_charge_stack() -> DeviceStack:
+    base = _two_layer_interface_stack()
+    illuminated_left = replace(
+        base.layers[0],
+        params=replace(base.layers[0].params, alpha=1.0e6),
+    )
+    return replace(
+        base,
+        layers=(illuminated_left, base.layers[1]),
+        interfaces=((0.03, 0.05),),
+        interface_defects=(
+            InterfaceDefect(E_t_eV=0.55, N_t_cm2=5.0e10),
+        ),
+        interface_charge_closure="equilibrium_referenced",
+        interface_charge_rebaseline_acknowledged=True,
+        Phi=1.0e18,
     )
 
 
@@ -707,6 +764,285 @@ def test_two_sided_trace_full_device_dark_state_is_certified():
                 result,
                 interface_topology=DEDUPLICATED_QSS,
             ),
+        )
+
+
+def test_charged_outer_poisson_jacobian_matches_resolved_central_difference():
+    stack, grid, material = _prepared_charged_interface_system_inputs()
+    off_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    reference_qss = solve_material_two_sided_interfaces_qss(
+        material,
+        stack,
+        off_system.base[: len(grid)],
+        off_system.base[len(grid) : 2 * len(grid)],
+        off_system.phi0,
+        cross_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        fail_on_residual=True,
+    )
+    charged_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        interface_charge_reference_occupancy=reference_qss.occupancy,
+        interface_charge_trap_density_m2=np.array([5.0e14]),
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    dqfn = np.linspace(0.0, 0.003, len(grid))
+    dqfp = np.linspace(0.0, -0.002, len(grid))
+    phi = charged_system.phi0.copy()
+    phi[1:-1] += np.linspace(-0.002, 0.003, len(grid) - 2)
+    raw, banded, _n, _p, charged_qss = (
+        charged_system._evaluate_charged_poisson_system(
+            phi,
+            dqfn,
+            dqfp,
+        )
+    )
+    interior_size = len(grid) - 2
+    analytic = np.zeros((interior_size, interior_size))
+    analytic[np.arange(interior_size), np.arange(interior_size)] = banded[1]
+    analytic[np.arange(interior_size - 1), np.arange(1, interior_size)] = (
+        banded[0, 1:]
+    )
+    analytic[np.arange(1, interior_size), np.arange(interior_size - 1)] = (
+        banded[2, :-1]
+    )
+    finite_difference = np.empty_like(analytic)
+    step = 1.0e-7
+    for column in range(interior_size):
+        plus = phi.copy()
+        minus = phi.copy()
+        plus[column + 1] += step
+        minus[column + 1] -= step
+        plus_raw = charged_system._evaluate_charged_poisson_system(
+            plus,
+            dqfn,
+            dqfp,
+            interface_seed=charged_qss.qss.state_m3,
+        )[0]
+        minus_raw = charged_system._evaluate_charged_poisson_system(
+            minus,
+            dqfn,
+            dqfp,
+            interface_seed=charged_qss.qss.state_m3,
+        )[0]
+        finite_difference[:, column] = (plus_raw - minus_raw) / (2.0 * step)
+
+    scale = max(float(np.max(np.abs(analytic))), 1.0e-30)
+    np.testing.assert_allclose(
+        analytic / scale,
+        finite_difference / scale,
+        rtol=1.0e-4,
+        atol=2.0e-8,
+    )
+    assert np.max(charged_qss.normalized_gauss_residual) < 1.0e-7
+
+
+def test_charged_outer_poisson_closes_and_reference_state_has_zero_charge():
+    stack, grid, material = _prepared_charged_interface_system_inputs()
+    off_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    reference_qss = solve_material_two_sided_interfaces_qss(
+        material,
+        stack,
+        off_system.base[: len(grid)],
+        off_system.base[len(grid) : 2 * len(grid)],
+        off_system.phi0,
+        cross_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        fail_on_residual=True,
+    )
+    charged_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        interface_charge_reference_occupancy=reference_qss.occupancy,
+        interface_charge_trap_density_m2=np.array([5.0e14]),
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    zeros = np.zeros(len(grid))
+    _phi, _n, _p, poisson_residual, _raw, reference = (
+        charged_system._solve_poisson(zeros, zeros)
+    )
+    assert poisson_residual < 1.0e-8
+    assert abs(reference.incremental_sheet_charge_C_m2[0]) < 1.0e-18
+
+    dqfn = np.linspace(0.0, 0.004, len(grid))
+    dqfp = np.linspace(0.0, -0.003, len(grid))
+    _phi, _n, _p, poisson_residual, _raw, biased = (
+        charged_system._solve_poisson(dqfn, dqfp)
+    )
+    assert poisson_residual < 1.0e-8
+    assert abs(biased.incremental_sheet_charge_C_m2[0]) > 1.0e-12
+    assert abs(biased.incremental_sheet_charge_C_m2[0]) <= Q * 5.0e14
+    assert np.max(biased.normalized_gauss_residual) < 1.0e-7
+
+
+def test_research_api_binds_dark_reference_and_keeps_production_gate_parked():
+    stack = _research_interface_charge_stack()
+    shared_grid = multilayer_grid(
+        [Layer(1.0e-7, 4), Layer(1.0e-7, 4)],
+        alpha=(2.0, 2.0),
+    )
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+
+    with pytest.raises(InterfaceChargeClosureParkedError):
+        build_material_arrays(grid, stack)
+
+    reference = build_equilibrium_referenced_interface_charge_dark_reference(
+        grid,
+        stack,
+    )
+    dark = solve_equilibrium_referenced_interface_charge_steady_state(
+        grid,
+        stack,
+        0.0,
+        dark_reference=reference,
+        illuminated=False,
+    )
+
+    assert reference.dark_state.certified
+    assert len(reference.grid_sha256) == 64
+    assert len(reference.stack_sha256) == 64
+    assert len(reference.dark_state_sha256) == 64
+    assert reference.trap_density_m2 == pytest.approx((5.0e14,))
+    np.testing.assert_array_equal(dark.y, reference.dark_state.y)
+    np.testing.assert_array_equal(dark.phi, reference.dark_state.phi)
+    assert dark.interface_charge_closure == "equilibrium_referenced"
+    assert dark.interface_incremental_sheet_charge_C_m2 == (0.0,)
+    assert dark.interface_occupancy == dark.interface_equilibrium_occupancy
+
+    biased = solve_equilibrium_referenced_interface_charge_steady_state(
+        grid,
+        stack,
+        0.005,
+        dark_reference=reference,
+        illuminated=False,
+    )
+    assert biased.certified
+    assert biased.interface_charge_closure == "equilibrium_referenced"
+    assert len(biased.interface_incremental_sheet_charge_C_m2) == 1
+    assert abs(biased.interface_incremental_sheet_charge_C_m2[0]) <= Q * 5.0e14
+    assert max(biased.interface_normalized_gauss_residual) < 1.0e-7
+
+    light = solve_equilibrium_referenced_interface_charge_steady_state(
+        grid,
+        stack,
+        0.0,
+        dark_reference=reference,
+        illuminated=True,
+        illumination_steps=(0.0, 1.0e-3, 1.0),
+    )
+    assert light.certified
+    assert light.interface_occupancy != light.interface_equilibrium_occupancy
+    assert abs(light.interface_incremental_sheet_charge_C_m2[0]) > 0.0
+    assert max(light.interface_normalized_gauss_residual) < 1.0e-7
+
+
+def test_research_api_rejects_reference_from_a_different_stack():
+    stack = _research_interface_charge_stack()
+    shared_grid = multilayer_grid(
+        [Layer(1.0e-7, 3), Layer(1.0e-7, 3)],
+        alpha=(2.0, 2.0),
+    )
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+    reference = build_equilibrium_referenced_interface_charge_dark_reference(
+        grid,
+        stack,
+    )
+    changed = replace(
+        stack,
+        interface_defects=(
+            replace(stack.interface_defects[0], N_t_cm2=6.0e10),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="stack does not match"):
+        solve_equilibrium_referenced_interface_charge_steady_state(
+            grid,
+            changed,
+            0.005,
+            dark_reference=reference,
+            illuminated=False,
+        )
+
+
+def test_raw_interface_charge_payload_cannot_bypass_dark_reference_api():
+    stack = _research_interface_charge_stack()
+    shared_grid = multilayer_grid(
+        [Layer(1.0e-7, 3), Layer(1.0e-7, 3)],
+        alpha=(2.0, 2.0),
+    )
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+
+    with pytest.raises(ValueError, match="certified dark-reference API"):
+        solve_quasi_fermi_steady_state(
+            grid,
+            stack,
+            0.005,
+            illuminated=False,
+            interface_boundary=True,
+            interface_topology=TWO_SIDED_TRACE,
+            interface_transport_model=FERMI_DIRAC_RICHARDSON,
+            _research_interface_charge_reference_occupancy=np.array([0.5]),
+            _research_interface_charge_trap_density_m2=np.array([5.0e14]),
+        )
+
+
+def test_research_api_rejects_tampered_dark_reference_state_hash():
+    stack = _research_interface_charge_stack()
+    shared_grid = multilayer_grid(
+        [Layer(1.0e-7, 3), Layer(1.0e-7, 3)],
+        alpha=(2.0, 2.0),
+    )
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+    reference = build_equilibrium_referenced_interface_charge_dark_reference(
+        grid,
+        stack,
+    )
+    tampered = replace(reference, dark_state_sha256="0" * 64)
+
+    with pytest.raises(ValueError, match="state content hash"):
+        solve_equilibrium_referenced_interface_charge_steady_state(
+            grid,
+            stack,
+            0.005,
+            dark_reference=tampered,
+            illuminated=False,
         )
 
 

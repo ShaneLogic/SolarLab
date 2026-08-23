@@ -19,6 +19,7 @@ interface-plane boundary remains default-off.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
 from typing import Literal
 
 import numpy as np
@@ -43,6 +44,7 @@ from perovskite_sim.physics.interface_plane import (
 from perovskite_sim.physics.poisson import factor_poisson_from_finite_volume
 from perovskite_sim.physics.two_sided_interface import (
     DEDUPLICATED_QSS,
+    EquilibriumReferencedMaterialQSSResult,
     TWO_SIDED_TRACE,
     build_two_sided_interface_stencils,
     remove_shared_interface_nodes,
@@ -95,6 +97,7 @@ INTERFACE_FALLBACK_ILLUMINATION_STEPS = (
 
 _MAX_ABS_LOG_DENSITY = 100.0
 _INTERFACE_NUMERICAL_RESIDUAL_FLOOR = 1.0e-7
+_RESEARCH_INTERFACE_CHARGE_TOKEN = object()
 
 
 class QuasiFermiSteadyStateError(RuntimeError):
@@ -152,6 +155,26 @@ class QuasiFermiSteadyStateResult:
     interface_local_residual: float = 0.0
     interface_max_state_to_dos: float = 0.0
     numerical_residual_limit: float = 1.0e-10
+    interface_charge_closure: str = "off"
+    interface_equilibrium_occupancy: tuple[float, ...] = ()
+    interface_occupancy: tuple[float, ...] = ()
+    interface_incremental_sheet_charge_C_m2: tuple[float, ...] = ()
+    interface_trace_potential_shift_V: tuple[tuple[float, float], ...] = ()
+    interface_normalized_gauss_residual: tuple[float, ...] = ()
+    interface_scaled_local_jacobian_condition: tuple[float, ...] = ()
+
+
+@dataclass(frozen=True)
+class EquilibriumReferencedInterfaceChargeDarkReference:
+    """Certified charge-off dark state used by the charged research lane."""
+
+    dark_state: QuasiFermiSteadyStateResult
+    equilibrium_occupancy: tuple[float, ...]
+    trap_density_m2: tuple[float, ...]
+    interface_transmission: float
+    grid_sha256: str
+    stack_sha256: str
+    dark_state_sha256: str
 
 
 @dataclass(frozen=True)
@@ -201,6 +224,7 @@ class _Evaluation:
     current_p: np.ndarray
     poisson_residual: float
     poisson_residual_C_m2: float
+    interface_charge_qss: EquilibriumReferencedMaterialQSSResult | None = None
 
 
 def _pin_mask(node_count: int) -> np.ndarray:
@@ -605,6 +629,8 @@ class _QuasiFermiSystem:
         interface_topology: str = DEDUPLICATED_QSS,
         interface_transmission: float = 1.0,
         interface_transport_model: str = FERMI_RICHARDSON,
+        interface_charge_reference_occupancy: np.ndarray | None = None,
+        interface_charge_trap_density_m2: np.ndarray | None = None,
         poisson_tolerance_V: float,
         poisson_max_iterations: int,
     ) -> None:
@@ -630,6 +656,43 @@ class _QuasiFermiSystem:
             if self.interface_boundary
             else ()
         )
+        references = (
+            None
+            if interface_charge_reference_occupancy is None
+            else np.asarray(interface_charge_reference_occupancy, dtype=float)
+        )
+        densities = (
+            None
+            if interface_charge_trap_density_m2 is None
+            else np.asarray(interface_charge_trap_density_m2, dtype=float)
+        )
+        if (references is None) != (densities is None):
+            raise ValueError(
+                "interface charge reference occupancies and trap densities "
+                "must be supplied together"
+            )
+        if references is not None:
+            if not self.interface_boundary or self.interface_topology != TWO_SIDED_TRACE:
+                raise ValueError(
+                    "equilibrium-referenced interface charge requires the "
+                    "two-sided interface boundary"
+                )
+            expected = (len(self.interface_faces),)
+            if references.shape != expected or densities.shape != expected:
+                raise ValueError(
+                    "interface charge arrays must match physical interfaces"
+                )
+            if (
+                not np.all(np.isfinite(references))
+                or np.any((references < 0.0) | (references > 1.0))
+                or not np.all(np.isfinite(densities))
+                or np.any(densities < 0.0)
+            ):
+                raise ValueError(
+                    "interface charge references/densities must be physical"
+                )
+        self.interface_charge_reference_occupancy = references
+        self.interface_charge_trap_density_m2 = densities
         self.base, self.phi0 = _transport_balanced_seed(
             x,
             stack,
@@ -704,13 +767,208 @@ class _QuasiFermiSystem:
         out[~positive] = b[~positive] * np.expm1(delta[~positive])
         return out
 
+    def _add_interface_sheet_charge_to_poisson(
+        self,
+        raw: np.ndarray,
+        charged_qss: EquilibriumReferencedMaterialQSSResult,
+        banded: np.ndarray | None = None,
+    ) -> None:
+        left_nodes = tuple(int(value) for value in self.mat.iface_qss_left_nodes)
+        right_nodes = tuple(int(value) for value in self.mat.iface_qss_right_nodes)
+        left_distances = tuple(
+            float(value) for value in self.mat.iface_qss_left_distances_m
+        )
+        right_distances = tuple(
+            float(value) for value in self.mat.iface_qss_right_distances_m
+        )
+        for index, (left, right) in enumerate(zip(left_nodes, right_nodes)):
+            if left <= 0 or right >= self.node_count - 1 or right != left + 1:
+                raise QuasiFermiSteadyStateError(
+                    "charged two-sided interfaces require adjacent interior nodes"
+                )
+            capacitance_left = (
+                EPS_0
+                * float(self.mat.eps_r[left])
+                / left_distances[index]
+            )
+            capacitance_right = (
+                EPS_0
+                * float(self.mat.eps_r[right])
+                / right_distances[index]
+            )
+            capacitance_sum = capacitance_left + capacitance_right
+            weight_left = capacitance_left / capacitance_sum
+            weight_right = capacitance_right / capacitance_sum
+            sheet_charge = charged_qss.incremental_sheet_charge_C_m2[index]
+            raw[left - 1] += weight_left * sheet_charge
+            raw[right - 1] += weight_right * sheet_charge
+            if banded is None:
+                continue
+            derivative_left, derivative_right = (
+                charged_qss.sheet_charge_jacobian_bulk_phi_C_m2_V[index]
+            )
+            left_row = left - 1
+            right_row = right - 1
+            banded[1, left_row] += weight_left * derivative_left
+            banded[0, right_row] += weight_left * derivative_right
+            banded[2, left_row] += weight_right * derivative_left
+            banded[1, right_row] += weight_right * derivative_right
+
+    def _evaluate_charged_poisson_system(
+        self,
+        phi: np.ndarray,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        *,
+        interface_seed: np.ndarray | None = None,
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        EquilibriumReferencedMaterialQSSResult,
+    ]:
+        from perovskite_sim.physics.two_sided_interface import (
+            solve_material_equilibrium_referenced_two_sided_interfaces_qss,
+        )
+
+        if (
+            self.interface_charge_reference_occupancy is None
+            or self.interface_charge_trap_density_m2 is None
+        ):
+            raise QuasiFermiSteadyStateError(
+                "charged Poisson evaluation requires an explicit dark reference"
+            )
+        dphi = phi - self.phi0
+        n = _density_from_log(
+            self.log_n0 + (dqfn + dphi) / self.thermal_voltage,
+            context="charged electron Poisson-Boltzmann evaluation",
+        )
+        p = _density_from_log(
+            self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
+            context="charged hole Poisson-Boltzmann evaluation",
+        )
+        rho = _charge_density(
+            p,
+            n,
+            self.base[2 * self.node_count : 3 * self.node_count],
+            self.mat.P_ion0,
+            self.mat.N_A,
+            self.mat.N_D,
+        )
+        charged_qss = solve_material_equilibrium_referenced_two_sided_interfaces_qss(
+            self.mat,
+            self.stack,
+            n,
+            p,
+            phi,
+            equilibrium_occupancy=self.interface_charge_reference_occupancy,
+            trap_density_m2=self.interface_charge_trap_density_m2,
+            cross_transmission=self.interface_transmission,
+            interface_transport_model=self.interface_transport_model,
+            initial_state_m3=interface_seed,
+            fail_on_residual=True,
+        )
+        factor = self.mat.poisson_factor
+        raw = (
+            factor.C[:-1] * (phi[:-2] - phi[1:-1])
+            + factor.C[1:] * (phi[2:] - phi[1:-1])
+            + rho[1:-1] * factor.h_cell
+        )
+        banded = np.zeros((3, self.node_count - 2), dtype=float)
+        banded[0, 1:] = factor.C[1:-1]
+        banded[1] = -(
+            factor.C[:-1] + factor.C[1:]
+        ) - Q * (n[1:-1] + p[1:-1]) / self.thermal_voltage * factor.h_cell
+        banded[2, :-1] = factor.C[1:-1]
+        self._add_interface_sheet_charge_to_poisson(raw, charged_qss, banded)
+        return raw, banded, n, p, charged_qss
+
+    def _solve_charged_poisson(
+        self,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        *,
+        V_app: float | None = None,
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        float,
+        float,
+        EquilibriumReferencedMaterialQSSResult,
+    ]:
+        if (
+            self.interface_charge_reference_occupancy is None
+            or self.interface_charge_trap_density_m2 is None
+        ):
+            raise QuasiFermiSteadyStateError(
+                "charged Poisson solve requires an explicit dark reference"
+            )
+        phi = self.phi0.copy()
+        voltage = self.V_app if V_app is None else float(V_app)
+        phi[0] = 0.0
+        phi[-1] = poisson_right_boundary(self.mat, voltage)
+        factor = self.mat.poisson_factor
+        interface_seed: np.ndarray | None = None
+        charged_qss: EquilibriumReferencedMaterialQSSResult | None = None
+        for _ in range(self.poisson_max_iterations):
+            raw, banded, _n, _p, charged_qss = (
+                self._evaluate_charged_poisson_system(
+                    phi,
+                    dqfn,
+                    dqfp,
+                    interface_seed=interface_seed,
+                )
+            )
+            interface_seed = charged_qss.qss.state_m3
+            step = solve_banded((1, 1), banded, -raw)
+            damping = min(
+                1.0,
+                0.05 / max(float(np.max(np.abs(step))), np.finfo(float).tiny),
+            )
+            phi[1:-1] += damping * step
+            if float(np.max(np.abs(damping * step))) < self.poisson_tolerance_V:
+                break
+        else:
+            raise QuasiFermiSteadyStateError(
+                "charged eliminated Poisson-Boltzmann solve did not converge"
+            )
+
+        raw, _banded, n, p, charged_qss = (
+            self._evaluate_charged_poisson_system(
+                phi,
+                dqfn,
+                dqfp,
+                interface_seed=interface_seed,
+            )
+        )
+        scale = (factor.C[:-1] + factor.C[1:]) * self.thermal_voltage
+        return (
+            phi,
+            n,
+            p,
+            float(np.max(np.abs(raw / scale))),
+            float(np.max(np.abs(raw))),
+            charged_qss,
+        )
+
     def _solve_poisson(
         self,
         dqfn: np.ndarray,
         dqfp: np.ndarray,
         *,
         V_app: float | None = None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        float,
+        float,
+        EquilibriumReferencedMaterialQSSResult | None,
+    ]:
+        if self.interface_charge_reference_occupancy is not None:
+            return self._solve_charged_poisson(dqfn, dqfp, V_app=V_app)
         phi = self.phi0.copy()
         voltage = self.V_app if V_app is None else float(V_app)
         phi[0] = 0.0
@@ -787,6 +1045,7 @@ class _QuasiFermiSystem:
             p,
             float(np.max(np.abs(raw / scale))),
             float(np.max(np.abs(raw))),
+            None,
         )
 
     def _evaluate_increments(
@@ -824,7 +1083,7 @@ class _QuasiFermiSystem:
             if not np.all(np.isfinite(edge_n)) or not np.all(np.isfinite(edge_p)):
                 raise ValueError("quasi-Fermi edge increments must be finite")
         voltage = self.V_app if V_app is None else float(V_app)
-        phi, n, p, poisson_scaled, poisson_raw = self._solve_poisson(
+        phi, n, p, poisson_scaled, poisson_raw, charged_qss = self._solve_poisson(
             dqfn_arr,
             dqfp_arr,
             V_app=voltage,
@@ -836,20 +1095,23 @@ class _QuasiFermiSystem:
         interface_qss = None
         if self.interface_boundary:
             if self.interface_topology == TWO_SIDED_TRACE:
-                from perovskite_sim.physics.two_sided_interface import (
-                    solve_material_two_sided_interfaces_qss,
-                )
+                if charged_qss is not None:
+                    interface_qss = charged_qss.qss
+                else:
+                    from perovskite_sim.physics.two_sided_interface import (
+                        solve_material_two_sided_interfaces_qss,
+                    )
 
-                interface_qss = solve_material_two_sided_interfaces_qss(
-                    self.mat,
-                    self.stack,
-                    n,
-                    p,
-                    phi,
-                    cross_transmission=self.interface_transmission,
-                    interface_transport_model=self.interface_transport_model,
-                    fail_on_residual=False,
-                )
+                    interface_qss = solve_material_two_sided_interfaces_qss(
+                        self.mat,
+                        self.stack,
+                        n,
+                        p,
+                        phi,
+                        cross_transmission=self.interface_transmission,
+                        interface_transport_model=self.interface_transport_model,
+                        fail_on_residual=False,
+                    )
             else:
                 from perovskite_sim.physics.interface_plane import (
                     solve_interface_states_live_qss,
@@ -965,6 +1227,7 @@ class _QuasiFermiSystem:
             current_p=reported_current_p,
             poisson_residual=poisson_scaled,
             poisson_residual_C_m2=poisson_raw,
+            interface_charge_qss=charged_qss,
         )
 
     def evaluate_quasi_fermi(
@@ -1211,6 +1474,9 @@ def solve_quasi_fermi_steady_state(
     continuity_tolerance_A_m2: float = 1.0e-4,
     current_spread_tolerance_A_m2: float = 1.0e-4,
     poisson_residual_tolerance: float = 1.0e-8,
+    _research_interface_charge_reference_occupancy: np.ndarray | None = None,
+    _research_interface_charge_trap_density_m2: np.ndarray | None = None,
+    _research_interface_charge_token: object | None = None,
 ) -> QuasiFermiSteadyStateResult:
     """Solve and certify the guarded local QF steady-state problem.
 
@@ -1267,6 +1533,27 @@ def solve_quasi_fermi_steady_state(
                 "two_sided_trace currently requires "
                 f"interface_transport_model={FERMI_DIRAC_RICHARDSON!r}"
             )
+    research_charge = _research_interface_charge_reference_occupancy is not None
+    if research_charge != (_research_interface_charge_trap_density_m2 is not None):
+        raise ValueError(
+            "research interface-charge reference and density must be supplied together"
+        )
+    if research_charge and _research_interface_charge_token is not (
+        _RESEARCH_INTERFACE_CHARGE_TOKEN
+    ):
+        raise ValueError(
+            "research interface charge must be entered through the certified "
+            "dark-reference API"
+        )
+    if not research_charge and _research_interface_charge_token is not None:
+        raise ValueError("research interface-charge token has no charge payload")
+    if research_charge and (
+        not interface_boundary or topology != TWO_SIDED_TRACE
+    ):
+        raise ValueError(
+            "research interface charge requires interface_boundary=True and "
+            "interface_topology='two_sided_trace'"
+        )
 
     stages = _validate_illumination_steps(illuminated, illumination_steps)
     input_material = build_material_arrays(grid, stack) if mat is None else mat
@@ -1302,6 +1589,12 @@ def solve_quasi_fermi_steady_state(
         interface_topology=topology,
         interface_transmission=interface_transmission,
         interface_transport_model=transport_model,
+        interface_charge_reference_occupancy=(
+            _research_interface_charge_reference_occupancy
+        ),
+        interface_charge_trap_density_m2=(
+            _research_interface_charge_trap_density_m2
+        ),
         poisson_tolerance_V=poisson_tolerance_V,
         poisson_max_iterations=poisson_max_iterations,
     )
@@ -1728,24 +2021,28 @@ def solve_quasi_fermi_steady_state(
         final = system.evaluate(z, stages[-1])
     interface_local_residual = 0.0
     interface_max_state_to_dos = 0.0
+    interface_certificate = None
     if interface_boundary:
         try:
             if topology == TWO_SIDED_TRACE:
-                from perovskite_sim.physics.two_sided_interface import (
-                    solve_material_two_sided_interfaces_qss,
-                )
+                if final.interface_charge_qss is not None:
+                    interface_certificate = final.interface_charge_qss.qss
+                else:
+                    from perovskite_sim.physics.two_sided_interface import (
+                        solve_material_two_sided_interfaces_qss,
+                    )
 
-                interface_certificate = solve_material_two_sided_interfaces_qss(
-                    material,
-                    stack,
-                    final.y[: len(grid)],
-                    final.y[len(grid) : 2 * len(grid)],
-                    final.phi,
-                    cross_transmission=interface_transmission,
-                    interface_transport_model=transport_model,
-                    residual_tolerance=1.0e-7,
-                    fail_on_residual=True,
-                )
+                    interface_certificate = solve_material_two_sided_interfaces_qss(
+                        material,
+                        stack,
+                        final.y[: len(grid)],
+                        final.y[len(grid) : 2 * len(grid)],
+                        final.phi,
+                        cross_transmission=interface_transmission,
+                        interface_transport_model=transport_model,
+                        residual_tolerance=1.0e-7,
+                        fail_on_residual=True,
+                    )
             else:
                 from perovskite_sim.physics.interface_plane import (
                     solve_interface_states_live_qss,
@@ -1837,6 +2134,11 @@ def solve_quasi_fermi_steady_state(
             interface_local_residual,
             1.0e-7,
         )
+    if final.interface_charge_qss is not None:
+        diagnostics["charged interface Gauss residual"] = (
+            float(np.max(final.interface_charge_qss.normalized_gauss_residual)),
+            1.0e-7,
+        )
     failures = [
         f"{name}={value:.6g} > {limit:.6g}"
         for name, (value, limit) in diagnostics.items()
@@ -1854,6 +2156,15 @@ def solve_quasi_fermi_steady_state(
     )
     if any(not np.all(np.isfinite(value)) for value in arrays):
         failures.append("result contains non-finite state or current values")
+    if final.interface_charge_qss is not None:
+        charge_arrays = (
+            final.interface_charge_qss.incremental_sheet_charge_C_m2,
+            final.interface_charge_qss.trace_potential_shift_V,
+            final.interface_charge_qss.normalized_gauss_residual,
+            final.interface_charge_qss.scaled_local_jacobian_condition,
+        )
+        if any(not np.all(np.isfinite(value)) for value in charge_arrays):
+            failures.append("interface-charge evidence contains non-finite values")
     if failures:
         raise QuasiFermiSteadyStateError(
             "QF Newton terminated without a physical certificate: "
@@ -1919,7 +2230,273 @@ def solve_quasi_fermi_steady_state(
         interface_local_residual=interface_local_residual,
         interface_max_state_to_dos=interface_max_state_to_dos,
         numerical_residual_limit=numerical_residual_limit,
+        interface_charge_closure=(
+            "equilibrium_referenced"
+            if final.interface_charge_qss is not None
+            else "off"
+        ),
+        interface_equilibrium_occupancy=(
+            ()
+            if final.interface_charge_qss is None
+            else tuple(
+                float(value)
+                for value in final.interface_charge_qss.equilibrium_occupancy
+            )
+        ),
+        interface_occupancy=(
+            ()
+            if interface_certificate is None
+            or getattr(interface_certificate, "occupancy", None) is None
+            else tuple(
+                float(value)
+                for value in getattr(interface_certificate, "occupancy")
+            )
+        ),
+        interface_incremental_sheet_charge_C_m2=(
+            ()
+            if final.interface_charge_qss is None
+            else tuple(
+                float(value)
+                for value in (
+                    final.interface_charge_qss.incremental_sheet_charge_C_m2
+                )
+            )
+        ),
+        interface_trace_potential_shift_V=(
+            ()
+            if final.interface_charge_qss is None
+            else tuple(
+                (float(values[0]), float(values[1]))
+                for values in final.interface_charge_qss.trace_potential_shift_V
+            )
+        ),
+        interface_normalized_gauss_residual=(
+            ()
+            if final.interface_charge_qss is None
+            else tuple(
+                float(value)
+                for value in final.interface_charge_qss.normalized_gauss_residual
+            )
+        ),
+        interface_scaled_local_jacobian_condition=(
+            ()
+            if final.interface_charge_qss is None
+            else tuple(
+                float(value)
+                for value in (
+                    final.interface_charge_qss.scaled_local_jacobian_condition
+                )
+            )
+        ),
     )
+
+
+def _research_array_sha256(label: str, *arrays: np.ndarray) -> str:
+    digest = hashlib.sha256(label.encode("ascii"))
+    for value in arrays:
+        array = np.ascontiguousarray(np.asarray(value, dtype=np.float64))
+        digest.update(str(array.shape).encode("ascii"))
+        digest.update(array.dtype.str.encode("ascii"))
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def _require_equilibrium_referenced_research_stack(stack: DeviceStack) -> None:
+    if stack.interface_charge_closure != "equilibrium_referenced":
+        raise ValueError(
+            "interface-charge research requires "
+            "interface_charge_closure='equilibrium_referenced'"
+        )
+    if not stack.interface_charge_rebaseline_acknowledged:
+        raise ValueError(
+            "interface-charge research requires the rebaseline acknowledgement"
+        )
+
+
+def _research_charge_off_stack(stack: DeviceStack) -> DeviceStack:
+    _require_equilibrium_referenced_research_stack(stack)
+    return replace(stack, interface_charge_closure="off")
+
+
+def build_equilibrium_referenced_interface_charge_dark_reference(
+    x: np.ndarray,
+    stack: DeviceStack,
+    *,
+    interface_transmission: float = 1.0,
+    **solver_controls,
+) -> EquilibriumReferencedInterfaceChargeDarkReference:
+    """Build the certified charge-off dark reference for the research lane."""
+    from perovskite_sim.models.device import electrical_interface_defects
+
+    reserved = {
+        "V_app",
+        "illuminated",
+        "mat",
+        "interface_boundary",
+        "interface_topology",
+        "interface_transmission",
+        "interface_transport_model",
+        "initial_state",
+        "initial_state_grid",
+        "_research_interface_charge_reference_occupancy",
+        "_research_interface_charge_trap_density_m2",
+        "_research_interface_charge_token",
+    }
+    overlap = reserved.intersection(solver_controls)
+    if overlap:
+        raise ValueError(
+            "dark-reference builder owns solver controls: "
+            + ", ".join(sorted(overlap))
+        )
+    grid = np.asarray(x, dtype=float)
+    charge_off_stack = _research_charge_off_stack(stack)
+    dark = solve_quasi_fermi_steady_state(
+        grid,
+        charge_off_stack,
+        0.0,
+        illuminated=False,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=interface_transmission,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        **solver_controls,
+    )
+    if not dark.certified or not dark.interface_occupancy:
+        raise QuasiFermiSteadyStateError(
+            "charge-off dark reference lacks interface occupancy evidence"
+        )
+    defects = electrical_interface_defects(stack)
+    if len(defects) != len(dark.interface_occupancy):
+        raise QuasiFermiSteadyStateError(
+            "interface defects are not aligned with the dark reference"
+        )
+    if any(defect is None or float(defect.N_t_cm2) <= 0.0 for defect in defects):
+        raise QuasiFermiSteadyStateError(
+            "equilibrium-referenced charge requires one positive-Nt "
+            "InterfaceDefect per physical interface"
+        )
+    trap_density = tuple(float(defect.N_t_cm2) * 1.0e4 for defect in defects)
+    equilibrium_occupancy = tuple(float(value) for value in dark.interface_occupancy)
+    grid_sha256 = _research_array_sha256("interface-charge-grid-v1", grid)
+    stack_sha256 = hashlib.sha256(repr(stack).encode("utf-8")).hexdigest()
+    dark_state_sha256 = _research_array_sha256(
+        "interface-charge-dark-state-v1",
+        grid,
+        dark.y,
+        dark.phi,
+        dark.electron_quasi_fermi_potential_V,
+        dark.hole_quasi_fermi_potential_V,
+        np.asarray(equilibrium_occupancy),
+    )
+    return EquilibriumReferencedInterfaceChargeDarkReference(
+        dark_state=dark,
+        equilibrium_occupancy=equilibrium_occupancy,
+        trap_density_m2=trap_density,
+        interface_transmission=float(interface_transmission),
+        grid_sha256=grid_sha256,
+        stack_sha256=stack_sha256,
+        dark_state_sha256=dark_state_sha256,
+    )
+
+
+def solve_equilibrium_referenced_interface_charge_steady_state(
+    x: np.ndarray,
+    stack: DeviceStack,
+    V_app: float,
+    *,
+    dark_reference: EquilibriumReferencedInterfaceChargeDarkReference,
+    illuminated: bool = True,
+    **solver_controls,
+) -> QuasiFermiSteadyStateResult:
+    """Solve one self-consistent charged QF state from a certified dark anchor."""
+    reserved = {
+        "mat",
+        "interface_boundary",
+        "interface_topology",
+        "interface_transmission",
+        "interface_transport_model",
+        "initial_state",
+        "initial_state_grid",
+        "_research_interface_charge_reference_occupancy",
+        "_research_interface_charge_trap_density_m2",
+        "_research_interface_charge_token",
+    }
+    overlap = reserved.intersection(solver_controls)
+    if overlap:
+        raise ValueError(
+            "charged research solver owns solver controls: "
+            + ", ".join(sorted(overlap))
+        )
+    grid = np.asarray(x, dtype=float)
+    charge_off_stack = _research_charge_off_stack(stack)
+    if _research_array_sha256("interface-charge-grid-v1", grid) != (
+        dark_reference.grid_sha256
+    ):
+        raise ValueError("dark reference grid does not match the charged solve")
+    stack_sha256 = hashlib.sha256(repr(stack).encode("utf-8")).hexdigest()
+    if stack_sha256 != dark_reference.stack_sha256:
+        raise ValueError("dark reference stack does not match the charged solve")
+    if not dark_reference.dark_state.certified:
+        raise ValueError("dark reference state must remain certified")
+    current_dark_state_sha256 = _research_array_sha256(
+        "interface-charge-dark-state-v1",
+        grid,
+        dark_reference.dark_state.y,
+        dark_reference.dark_state.phi,
+        dark_reference.dark_state.electron_quasi_fermi_potential_V,
+        dark_reference.dark_state.hole_quasi_fermi_potential_V,
+        np.asarray(dark_reference.equilibrium_occupancy),
+    )
+    if current_dark_state_sha256 != dark_reference.dark_state_sha256:
+        raise ValueError("dark reference state content hash does not match")
+    interface_count = len(dark_reference.equilibrium_occupancy)
+    if interface_count == 0 or len(dark_reference.trap_density_m2) != interface_count:
+        raise ValueError("dark reference interface arrays are empty or misaligned")
+    if float(V_app) == 0.0 and not illuminated:
+        zeros = tuple(0.0 for _ in range(interface_count))
+        trace_zeros = tuple((0.0, 0.0) for _ in range(interface_count))
+        return replace(
+            dark_reference.dark_state,
+            interface_charge_closure="equilibrium_referenced",
+            interface_equilibrium_occupancy=dark_reference.equilibrium_occupancy,
+            interface_occupancy=dark_reference.equilibrium_occupancy,
+            interface_incremental_sheet_charge_C_m2=zeros,
+            interface_trace_potential_shift_V=trace_zeros,
+            interface_normalized_gauss_residual=zeros,
+            interface_scaled_local_jacobian_condition=zeros,
+        )
+    result = solve_quasi_fermi_steady_state(
+        grid,
+        charge_off_stack,
+        float(V_app),
+        illuminated=illuminated,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=dark_reference.interface_transmission,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        initial_state=dark_reference.dark_state,
+        _research_interface_charge_reference_occupancy=np.asarray(
+            dark_reference.equilibrium_occupancy,
+            dtype=float,
+        ),
+        _research_interface_charge_trap_density_m2=np.asarray(
+            dark_reference.trap_density_m2,
+            dtype=float,
+        ),
+        _research_interface_charge_token=_RESEARCH_INTERFACE_CHARGE_TOKEN,
+        **solver_controls,
+    )
+    if result.interface_charge_closure != "equilibrium_referenced":
+        raise QuasiFermiSteadyStateError(
+            "charged solve returned without interface-charge evidence"
+        )
+    charge = np.asarray(result.interface_incremental_sheet_charge_C_m2)
+    density = np.asarray(dark_reference.trap_density_m2)
+    if charge.shape != density.shape or np.any(np.abs(charge) > Q * density):
+        raise QuasiFermiSteadyStateError(
+            "charged solve violated the one-electron-per-trap bound"
+        )
+    return result
 
 
 def solve_quasi_fermi_jv_sweep(
@@ -2211,9 +2788,12 @@ def solve_quasi_fermi_jv_sweep(
 
 __all__ = [
     "DEFAULT_ILLUMINATION_STEPS",
+    "EquilibriumReferencedInterfaceChargeDarkReference",
     "QuasiFermiSteadyStateError",
     "QuasiFermiJVSweepResult",
     "QuasiFermiSteadyStateResult",
+    "build_equilibrium_referenced_interface_charge_dark_reference",
+    "solve_equilibrium_referenced_interface_charge_steady_state",
     "solve_quasi_fermi_jv_sweep",
     "solve_quasi_fermi_steady_state",
 ]
