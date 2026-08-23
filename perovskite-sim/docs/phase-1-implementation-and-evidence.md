@@ -55,6 +55,19 @@ showed that prolongation can help N=90 converge, but the N=60 to N=90 Voc
 change was about 2.01 mV, above the registered 1 mV gate. It was therefore not
 introduced as a passing companion after seeing the result.
 
+### Post-Phase-1 interface reference closure (2026-08-23)
+
+The failed legacy shared-node interface lane above remains historical negative
+evidence. Phase 3 replaced its execution contract with an explicitly
+uncalibrated, contact-consistent two-sided QF charge-off reference. Under
+source commit `29c94b4`, run
+`d0dc822393290d892e7118bcb7fabd4214b5584815f51ff9ff24f663822687e4`
+completed 9/9 cells and produced internally certified certificate
+`0a4fdebdf18eb0237eaa1a4bef599872745697d148461f6de25d10a6985a950b`.
+This closes the charge-off grid/tolerance and dark-occupancy entry gates; it
+does not enable interface sheet charge or revise the historical Phase 1
+certificate.
+
 The 2D matrix completed all nine execution attempts. Its multiplier-1 and
 multiplier-2 cells completed, while every multiplier-4 tolerance cell failed
 at `V_app=0.1 V` with `actual nfev=200001` against the registered 200000

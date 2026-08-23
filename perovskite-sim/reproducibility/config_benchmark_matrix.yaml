@@ -121,7 +121,7 @@ benchmarks:
       - no pre-registered physical lane is promoted until its content-addressed matrix closes
   interface-charge-off-qf-reference:
     kind: numerical
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: >-
       pytest -q
@@ -133,7 +133,7 @@ benchmarks:
       - tests/unit/validation/test_refinement_executors.py::test_two_sided_interface_evidence_checks_carrier_and_state_balance
     configs: [configs/interface_charge_reference.yaml]
     limitations:
-      - the registered two-sided charge-off executor is physically gated but its content-addressed 3x3 matrix is not yet complete
+      - the content-addressed 3x3 matrix is internally certified for source commit 29c94b4 with certificate SHA-256 0a4fdebdf18eb0237eaa1a4bef599872745697d148461f6de25d10a6985a950b
       - interface electrostatic trap charge remains disabled, so this benchmark makes no charged Gauss-jump claim
       - the uncalibrated reference makes no SCAPS-parity claim
   courtier2019-ionmonger:

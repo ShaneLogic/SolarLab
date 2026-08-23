@@ -74,15 +74,28 @@ The absolute interface-state balance uses the same `1e-4 A/m2` conservation
 contract as the device continuity bound; the independent normalized local QSS
 gate remains `1e-7`.
 
+The source-clean single-threaded matrix at commit `29c94b4` is internally
+`certified`: run `d0dc822393290d892e7118bcb7fabd4214b5584815f51ff9ff24f663822687e4`,
+certificate
+`0a4fdebdf18eb0237eaa1a4bef599872745697d148461f6de25d10a6985a950b`.
+All nine cells completed with no failed or missing artifacts. The terminal
+grid differences were `0.3311 A/m2` for interface flux, `9.740e-4` for
+normalized J-V, and `4.852e-6 V` for Voc; all tolerance differences were at
+least four orders below their registered limits (interface flux six orders,
+Voc five orders, and normalized J-V four orders).
+
 ## Unlock conditions
 
 The research lane remains unavailable until all of these are content-addressed
 or executable certificates under one frozen source/config/protocol identity:
 
-- contact-consistent residual-certified dark reference;
-- complete charge-off interface steady-state grid/tolerance matrix;
+- contact-consistent residual-certified dark reference (completed in the
+  charge-off certificate above);
+- complete charge-off interface steady-state grid/tolerance matrix (completed
+  in the charge-off certificate above);
 - two-sided Gauss-jump certificate with discontinuous permittivity;
-- stored per-interface `f_eq` in the same topology and energy gauge;
+- stored per-interface `f_eq` in the same topology and energy gauge (completed
+  for the charge-off reference; the charged lane must consume this identity);
 - occupancy-dependent sheet charge inside the outer Poisson residual and a
   verified analytic/IFT Jacobian;
 - dark reference identity and charge/grid conservation gates.

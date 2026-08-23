@@ -132,8 +132,32 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
   certificate，Radau 失败时再走 BDF，原始及 resolved 网格证据分别保留；
 - c-Si minimum-roadmap lane：54 个 bias/FD-step operating-point calls，共 162 个 frequency points；resolved-v2 companion 另有同等工作量；
 - 2D：117 个 2D finite-time voltage settles，外加 9 个 matched 1D forward/reverse sweeps 和 2D seed；
-- interface charge-off：225 个 residual-certified steady voltage points，并计算 interface-state RHS/flux residual。
+- interface charge-off：9 个 certified dark occupancy references、225 个
+  requested two-sided QF illuminated voltage points及其 illumination ladders，
+  并逐点计算 capture flux、local QSS、continuity 与 current-spread evidence。
 
 因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 54 个 cell 的真实结果。
 
 `certified` 只表示该冻结代码/config/protocol/environment 下的内部数值收敛。它不等于 SCAPS/IonMonger 外部 solver parity，不等于实验验证，也不证明材料参数或模型闭包唯一正确。
+
+### 2026-08-23 charge-off reference certificate
+
+`interface-recombination-charge-off` 在 source commit `29c94b4`、单线程
+BLAS/OpenMP 环境下完成 9/9 cell，0 failed、0 missing、0 reused：
+
+- run ID：`d0dc822393290d892e7118bcb7fabd4214b5584815f51ff9ff24f663822687e4`；
+- certificate SHA-256：`0a4fdebdf18eb0237eaa1a4bef599872745697d148461f6de25d10a6985a950b`；
+- protocol SHA-256：`d423c42dcf486d40b2bc84c930a806de7aa838810f84885b10b7a4a203755048`；
+- terminal grid differences：interface flux `0.331079 A/m2`、normalized J-V
+  `9.73989e-4`、Voc `4.85196e-6 V`；
+- terminal tolerance differences：interface flux `9.41419e-7 A/m2`、
+  normalized J-V `4.17758e-7`、Voc `4.16675e-9 V`；
+- 全矩阵最大 continuity bound `8.07169e-5 A/m2`、current spread
+  `7.96574e-5 A/m2`、interface carrier imbalance `1.09200e-12 A/m2`、
+  normalized local interface residual `2.20496e-8`、Poisson residual
+  `3.69425e-14`。
+
+该证书只关闭 charge-off reference entry gate。trap sheet charge 仍未进入
+outer Poisson residual，charged Gauss jump、analytic/IFT Jacobian 与 charged
+grid/tolerance certificate 均未完成，因此 interface electrostatics 仍为
+`PARKED`。
