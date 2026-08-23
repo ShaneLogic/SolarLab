@@ -116,6 +116,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "interface-charge-device-stress-resolved-v2",
         "no-ion-dae-transient-v1",
         "single-positive-ion-dae-transient-v1",
+        "dual-mobile-ion-dae-transient-v1",
     }
     assert all(
         len(lane.matrix_points) == 9

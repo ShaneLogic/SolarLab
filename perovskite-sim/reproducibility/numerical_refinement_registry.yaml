@@ -830,3 +830,90 @@ lanes:
       - This lane certifies only the dark, 10 mV, single-layer ohmic, single-positive-ion blocking-boundary research DAE slice extracted from the IonMonger configuration.
       - Dense-central and structured-analytic backward Euler are compared to the same high-accuracy eliminated-Poisson MoL trajectory; this is internal numerical equivalence, not external device validation.
       - Negative mobile ions, selective contacts, InterfaceDefect, cross-node interface sampling, algebraic interface states, experiment routes, and backend routes remain excluded.
+
+  dual-mobile-ion-dae-transient-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/ionmonger_benchmark.yaml
+    config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    executor: perovskite_sim.validation.dae_dual_ion_refinement:run_dual_ion_dae_transient
+    executor_version: v1
+    grid:
+      parameter: single_layer_intervals
+      values: [8, 16, 32]
+    tolerance:
+      parameter: backward_euler_time_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      structured_dense_terminal_log_density_difference: {comparison: absolute_linf, limit: 1.0e-10, units: "1"}
+      structured_dense_terminal_positive_ion_relative_difference: {comparison: absolute_linf, limit: 1.0e-12, units: "1"}
+      structured_dense_terminal_negative_ion_relative_difference: {comparison: absolute_linf, limit: 1.0e-12, units: "1"}
+      structured_dense_terminal_potential_difference_V: {comparison: absolute_linf, limit: 1.0e-12, units: V}
+      terminal_log_density_error: {comparison: absolute_linf, limit: 1.0e-8, units: "1"}
+      terminal_positive_ion_relative_error: {comparison: absolute_linf, limit: 1.2e-10, units: "1"}
+      terminal_negative_ion_relative_error: {comparison: absolute_linf, limit: 1.2e-10, units: "1"}
+      terminal_potential_error_V: {comparison: absolute_linf, limit: 5.0e-10, units: V}
+    quality_gates:
+      bulk_srh_denominator_positive: {operator: eq, limit: 1.0, units: "1"}
+      consistent_initial_condition_certified: {operator: eq, limit: 1.0, units: "1"}
+      dense_reference_success: {operator: eq, limit: 1.0, units: "1"}
+      dual_ion_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      max_electron_balance_defect_A_m2: {operator: le, limit: 2.0e-8, units: A m-2}
+      max_hole_balance_defect_A_m2: {operator: le, limit: 2.0e-8, units: A m-2}
+      max_negative_ion_balance_relative: {operator: le, limit: 1.0e-12, units: "1"}
+      max_negative_ion_inventory_relative_drift: {operator: le, limit: 1.0e-12, units: "1"}
+      max_negative_ion_rhs_inventory_relative: {operator: le, limit: 1.0e-12, units: "1"}
+      max_normalized_algebraic_residual: {operator: le, limit: 1.0e-9, units: "1"}
+      max_normalized_carrier_residual: {operator: le, limit: 1.0e-9, units: "1"}
+      max_normalized_negative_ion_residual: {operator: le, limit: 1.0e-9, units: "1"}
+      max_normalized_positive_ion_residual: {operator: le, limit: 1.0e-9, units: "1"}
+      max_positive_ion_balance_relative: {operator: le, limit: 1.0e-12, units: "1"}
+      max_positive_ion_inventory_relative_drift: {operator: le, limit: 1.0e-12, units: "1"}
+      max_positive_ion_rhs_inventory_relative: {operator: le, limit: 1.0e-12, units: "1"}
+      max_structured_dense_log_density_difference: {operator: le, limit: 1.0e-10, units: "1"}
+      max_structured_dense_negative_ion_relative_difference: {operator: le, limit: 1.0e-12, units: "1"}
+      max_structured_dense_positive_ion_relative_difference: {operator: le, limit: 1.0e-12, units: "1"}
+      max_structured_dense_potential_difference_V: {operator: le, limit: 1.0e-12, units: V}
+      max_terminal_log_density_error: {operator: le, limit: 6.0e-8, units: "1"}
+      max_terminal_negative_ion_relative_error: {operator: le, limit: 3.0e-10, units: "1"}
+      max_terminal_positive_ion_relative_error: {operator: le, limit: 6.0e-10, units: "1"}
+      max_terminal_potential_error_V: {operator: le, limit: 1.0e-9, units: V}
+      minimum_negative_ion_relative_motion: {operator: ge, limit: 1.0e-7, units: "1"}
+      minimum_positive_ion_relative_motion: {operator: ge, limit: 1.0e-6, units: "1"}
+      minimum_shared_site_vacancy_fraction: {operator: ge, limit: 0.95, units: "1"}
+      mol_numerical_health_passed: {operator: eq, limit: 1.0, units: "1"}
+      mol_reference_success: {operator: eq, limit: 1.0, units: "1"}
+      site_occupancy_admissible: {operator: eq, limit: 1.0, units: "1"}
+      structured_analytic_success: {operator: eq, limit: 1.0, units: "1"}
+      structured_csr_nonzeros_per_node: {operator: le, limit: 40.0, units: "1"}
+      structured_jacobian_condition_finite: {operator: eq, limit: 1.0, units: "1"}
+      structured_rhs_work_fraction: {operator: le, limit: 0.1, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      source_layer_index: 1
+      source_layer_name: MAPbI3
+      applied_voltage_V: 0.01
+      final_time_s: 1.0e-2
+      carrier_reference_time_s: 1.0e-9
+      ion_reference_time_s: 1.0
+      negative_ion_diffusion_m2_s: 3.2e-18
+      negative_ion_density_m3: 1.6e25
+      negative_ion_site_limit_m3: 1.6e27
+      ion_steric_diffusion_only: true
+      ion_steric_shared_site: true
+      base_time_steps: 2
+      reference_grid_intervals: 8
+      newton_residual_tolerance: 1.0e-9
+      max_newton_iterations: 24
+      max_line_search_backtracks: 12
+      max_log_density_update: 2.0
+      max_ion_coordinate_update: 2.0
+      finite_difference_relative_step: 1.0e-6
+      mol_rtol: 1.0e-10
+      mol_atol_m3: 1.0e2
+      mol_max_step_divisor: 400
+    limitations:
+      - This lane certifies only the dark, 10 mV, single-layer ohmic, shared-site dual-mobile-ion blocking-boundary research DAE slice derived from the IonMonger absorber.
+      - The negative-ion parameters are synthetic protocol inputs, not values claimed by the source IonMonger publication; the result is internal numerical equivalence rather than external solver or device validation.
+      - Selective contacts, InterfaceDefect, cross-node interface sampling, algebraic interface states, experiment routes, and backend routes remain excluded.
