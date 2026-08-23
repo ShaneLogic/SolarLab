@@ -641,6 +641,13 @@ Phase 4 不是一个大 PR。每个子 lane 必须单独立项、默认关闭、
 Poisson `dF/dq`。它没有接入默认 MoL、实验或 backend；下一 checkpoint 必须先完成
 time-discrete no-ion refinement/cost lane，之后才允许扩展 ion/interface topology。
 
+第二个 checkpoint 新增 physical-density backward-Euler reference：每步分列
+algebraic/differential residual、积分 continuity defect 与 nonlinear-work 证据；
+illuminated c-Si 单层的 2/4/8 步终态误差相对高精度 Radau 呈一阶收缩。当前
+Newton 仍是 analytic algebraic blocks + dense central differential blocks，明确仅作
+correctness/cost baseline；在 structured Jacobian 的 N-scaling 优于该基线前不通过
+P4.1 性能门，也不扩展 ions/interface states。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。
