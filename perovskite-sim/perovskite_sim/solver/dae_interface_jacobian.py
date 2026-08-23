@@ -7,14 +7,21 @@ import math
 
 import numpy as np
 from scipy.special import expit
+from scipy.sparse import coo_matrix, csr_matrix
 
 from perovskite_sim.constants import Q
+from perovskite_sim.discretization.fe_operators import ScharfetterGummelFaceJacobian
 from perovskite_sim.models.device import electrical_interfaces
 from perovskite_sim.physics.interface_plane import (
     FERMI_RICHARDSON,
     compute_interface_srh_occupancy_on_state,
 )
+from perovskite_sim.physics.recombination import (
+    bulk_srh_denominator,
+    total_recombination_derivatives,
+)
 from perovskite_sim.solver.dae_interface_states import AlgebraicInterfaceStateDAE
+from perovskite_sim.solver.dae_jacobian import build_carrier_face_jacobians
 
 
 _PLANE_EXPONENT_LIMIT = 30.0
@@ -67,6 +74,18 @@ class AlgebraicInterfaceLocalLinearization:
     minimum_srh_occupancy_margin: float
     minimum_interface_density_margin_m3: float
     minimum_interface_dos_margin_m3: float
+
+
+@dataclass(frozen=True, slots=True)
+class AlgebraicInterfaceStructuredJacobian:
+    """Sparse DAE tangent and its local smooth-capability evidence."""
+
+    matrix: csr_matrix
+    nonzero_count: int
+    minimum_bulk_srh_denominator_s_m3: float
+    local_interface: AlgebraicInterfaceLocalLinearization
+    electron_current_faces_A_m2: np.ndarray
+    hole_current_faces_A_m2: np.ndarray
 
 
 def _fermi_projection(
@@ -450,8 +469,372 @@ def linearize_algebraic_interface_response(
     )
 
 
+def _assemble_algebraic_interface_structured_jacobian(
+    model: AlgebraicInterfaceStateDAE,
+    coordinate: np.ndarray,
+    *,
+    derivative: np.ndarray | None,
+    backward_euler_dt_s: float | None,
+) -> AlgebraicInterfaceStructuredJacobian:
+    layout = model.layout
+    count = layout.node_count
+    if (derivative is None) == (backward_euler_dt_s is None):
+        raise ValueError(
+            "provide exactly one of derivative or backward_euler_dt_s"
+        )
+    if derivative is not None:
+        rate = np.asarray(derivative, dtype=float)
+        if rate.shape != (layout.size,) or not np.all(np.isfinite(rate)):
+            raise ValueError(
+                "algebraic-interface DAE derivative must be finite and layout-sized"
+            )
+        dt_s = None
+    else:
+        dt_s = float(backward_euler_dt_s)
+        if not math.isfinite(dt_s) or dt_s <= 0.0:
+            raise ValueError("backward_euler_dt_s must be finite and positive")
+        rate = None
+
+    n_raw, p_raw, _state, phi = model.physical_fields(coordinate)
+    material = model.material
+    if material.has_field_mobility:
+        raise AlgebraicInterfaceJacobianCapabilityError(
+            "field mobility is outside the algebraic-interface DAE slice"
+        )
+    if material.has_radiative_reabsorption:
+        raise AlgebraicInterfaceJacobianCapabilityError(
+            "self-consistent radiative reabsorption has no local tangent"
+        )
+    if material.het_recomb_despike > 0.0 and material.het_recomb_nodes:
+        raise AlgebraicInterfaceJacobianCapabilityError(
+            "heterojunction recombination de-spike has no smooth tangent"
+        )
+
+    local = linearize_algebraic_interface_response(model, coordinate)
+    interface_face = local.interface_node - 1
+    exclusive_faces = tuple(
+        int(value)
+        for value in material.carrier_params.get("exclusive_interface_faces", ())
+    )
+    if exclusive_faces != (interface_face,):
+        raise AlgebraicInterfaceJacobianCapabilityError(
+            "exactly the physical interface face must be excluded from bulk SG"
+        )
+
+    # assemble_rhs overwrites the four ohmic carrier reservoirs before it
+    # evaluates transport and recombination.
+    n = np.array(n_raw, copy=True)
+    p = np.array(p_raw, copy=True)
+    n[[0, -1]] = (material.n_L, material.n_R)
+    p[[0, -1]] = (material.p_L, material.p_R)
+    electron_face, hole_face = build_carrier_face_jacobians(model, n, p, phi)
+    electron_current = np.array(electron_face.flux, dtype=float, copy=True)
+    hole_current = np.array(hole_face.flux, dtype=float, copy=True)
+    electron_current[interface_face] = 0.0
+    hole_current[interface_face] = 0.0
+
+    denominator = bulk_srh_denominator(
+        n,
+        p,
+        material.tau_n,
+        material.tau_p,
+        material.n1,
+        material.p1,
+    )
+    if not np.all(np.isfinite(denominator)) or np.any(denominator <= 0.0):
+        raise AlgebraicInterfaceJacobianCapabilityError(
+            "bulk SRH denominator must be finite and positive"
+        )
+    reaction = total_recombination_derivatives(
+        n,
+        p,
+        material.ni_sq,
+        material.tau_n,
+        material.tau_p,
+        material.n1,
+        material.p1,
+        material.B_rad,
+        material.C_n,
+        material.C_p,
+    )
+    reaction_arrays = (
+        reaction.rate,
+        reaction.electron_density_derivative,
+        reaction.hole_density_derivative,
+    )
+    if any(
+        np.asarray(value).shape != (count,) or not np.all(np.isfinite(value))
+        for value in reaction_arrays
+    ):
+        raise AlgebraicInterfaceJacobianCapabilityError(
+            "bulk recombination tangent is not finite and node matched"
+        )
+
+    rows: list[int] = []
+    columns: list[int] = []
+    values: list[float] = []
+
+    def add(row: int, column: int, value: float) -> None:
+        number = float(value)
+        if not math.isfinite(number):
+            raise AlgebraicInterfaceJacobianCapabilityError(
+                "structured interface DAE assembly produced a non-finite entry"
+            )
+        if number != 0.0:
+            rows.append(row)
+            columns.append(column)
+            values.append(number)
+
+    for index in (0, count - 1, count, 2 * count - 1):
+        add(index, index, 1.0)
+
+    for node in range(1, count - 1):
+        electron_row = node
+        hole_row = count + node
+        electron_scale = layout.electron_rate_scale_m3_s[node]
+        hole_scale = layout.hole_rate_scale_m3_s[node]
+        electron_storage = n[node] / dt_s if dt_s is not None else n[node] * rate[node]
+        hole_storage = (
+            p[node] / dt_s
+            if dt_s is not None
+            else p[node] * rate[count + node]
+        )
+        add(electron_row, node, electron_storage / electron_scale)
+        add(hole_row, count + node, hole_storage / hole_scale)
+        d_recombination_dlogn = (
+            reaction.electron_density_derivative[node] * n[node]
+        )
+        d_recombination_dlogp = (
+            reaction.hole_density_derivative[node] * p[node]
+        )
+        for row, scale in (
+            (electron_row, electron_scale),
+            (hole_row, hole_scale),
+        ):
+            add(row, node, d_recombination_dlogn / scale)
+            add(row, count + node, d_recombination_dlogp / scale)
+
+    potential_offset = layout.potential_slice.start
+
+    def distribute_face(
+        face: int,
+        face_tangent: ScharfetterGummelFaceJacobian,
+        density: np.ndarray,
+        density_offset: int,
+        *,
+        electron: bool,
+    ) -> None:
+        face_columns: list[tuple[int, float]] = []
+        if 0 < face < count - 1:
+            face_columns.append(
+                (
+                    density_offset + face,
+                    face_tangent.density_left_derivative[face] * density[face],
+                )
+            )
+        right_node = face + 1
+        if 0 < right_node < count - 1:
+            face_columns.append(
+                (
+                    density_offset + right_node,
+                    face_tangent.density_right_derivative[face]
+                    * density[right_node],
+                )
+            )
+        face_columns.extend(
+            (
+                (
+                    potential_offset + face,
+                    face_tangent.potential_left_derivative[face],
+                ),
+                (
+                    potential_offset + right_node,
+                    face_tangent.potential_right_derivative[face],
+                ),
+            )
+        )
+        if 0 < face < count - 1:
+            row = face if electron else count + face
+            scale = (
+                layout.electron_rate_scale_m3_s[face]
+                if electron
+                else layout.hole_rate_scale_m3_s[face]
+            )
+            coefficient = (-1.0 if electron else 1.0) / (
+                Q * material.dx_cell[face] * scale
+            )
+            for column, tangent in face_columns:
+                add(row, column, coefficient * tangent)
+        if 0 < right_node < count - 1:
+            row = right_node if electron else count + right_node
+            scale = (
+                layout.electron_rate_scale_m3_s[right_node]
+                if electron
+                else layout.hole_rate_scale_m3_s[right_node]
+            )
+            coefficient = (1.0 if electron else -1.0) / (
+                Q * material.dx_cell[right_node] * scale
+            )
+            for column, tangent in face_columns:
+                add(row, column, coefficient * tangent)
+
+    for face in range(count - 1):
+        if face == interface_face:
+            continue
+        distribute_face(face, electron_face, n, 0, electron=True)
+        distribute_face(face, hole_face, p, count, electron=False)
+
+    bulk_columns = (
+        local.interface_node,
+        count + local.interface_node,
+        local.interface_node - 1,
+        count + local.interface_node - 1,
+    )
+    potential_columns = (
+        potential_offset + local.interface_node,
+        potential_offset + local.interface_node - 1,
+    )
+    interface_columns = tuple(
+        range(layout.interface_slice.start, layout.interface_slice.stop)
+    )
+    carrier_rows = bulk_columns
+    for component, row in enumerate(carrier_rows):
+        node = row if row < count else row - count
+        scale = (
+            layout.electron_rate_scale_m3_s[node]
+            if component in (0, 2)
+            else layout.hole_rate_scale_m3_s[node]
+        )
+        coefficient = 1.0 / (material.dx_cell[node] * scale)
+        for column_index, column in enumerate(bulk_columns):
+            add(
+                row,
+                column,
+                coefficient
+                * local.bulk_bulk_log_jacobian_m2_s[component, column_index],
+            )
+        for column_index, column in enumerate(potential_columns):
+            add(
+                row,
+                column,
+                coefficient
+                * local.bulk_potential_jacobian_m2_s_V[component, column_index],
+            )
+        for column_index, column in enumerate(interface_columns):
+            add(
+                row,
+                column,
+                coefficient
+                * local.bulk_interface_coordinate_jacobian_m2_s[
+                    component, column_index
+                ],
+            )
+
+    for component, row in enumerate(interface_columns):
+        scale = layout.interface_flux_scale_m2_s[component]
+        for column_index, column in enumerate(bulk_columns):
+            add(
+                row,
+                column,
+                local.state_bulk_log_jacobian_m2_s[component, column_index]
+                / scale,
+            )
+        for column_index, column in enumerate(potential_columns):
+            add(
+                row,
+                column,
+                local.state_potential_jacobian_m2_s_V[component, column_index]
+                / scale,
+            )
+        for column_index, column in enumerate(interface_columns):
+            add(
+                row,
+                column,
+                local.state_interface_coordinate_jacobian_m2_s[
+                    component, column_index
+                ]
+                / scale,
+            )
+
+    add(potential_offset, potential_offset, 1.0 / layout.potential_scale_V)
+    add(layout.size - 1, layout.size - 1, 1.0 / layout.potential_scale_V)
+    capacitance = material.poisson_factor.C
+    widths = material.poisson_factor.h_cell
+    for local_index, node in enumerate(range(1, count - 1)):
+        row = potential_offset + node
+        scale = layout.poisson_scale_C_m2[local_index]
+        add(row, node, -Q * n[node] * widths[local_index] / scale)
+        add(row, count + node, Q * p[node] * widths[local_index] / scale)
+        add(row, potential_offset + node - 1, capacitance[node - 1] / scale)
+        add(
+            row,
+            potential_offset + node,
+            -(capacitance[node - 1] + capacitance[node]) / scale,
+        )
+        add(row, potential_offset + node + 1, capacitance[node] / scale)
+
+    matrix = coo_matrix(
+        (values, (rows, columns)),
+        shape=(layout.size, layout.size),
+        dtype=float,
+    ).tocsr()
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    if not np.all(np.isfinite(matrix.data)):
+        raise AlgebraicInterfaceJacobianCapabilityError(
+            "structured interface DAE matrix contains non-finite entries"
+        )
+    return AlgebraicInterfaceStructuredJacobian(
+        matrix=matrix,
+        nonzero_count=int(matrix.nnz),
+        minimum_bulk_srh_denominator_s_m3=float(np.min(denominator)),
+        local_interface=local,
+        electron_current_faces_A_m2=_readonly(
+            electron_current,
+            (count - 1,),
+            "electron current faces",
+        ),
+        hole_current_faces_A_m2=_readonly(
+            hole_current,
+            (count - 1,),
+            "hole current faces",
+        ),
+    )
+
+
+def build_algebraic_interface_structured_state_jacobian(
+    model: AlgebraicInterfaceStateDAE,
+    coordinate: np.ndarray,
+    derivative: np.ndarray,
+) -> AlgebraicInterfaceStructuredJacobian:
+    """Assemble exact smooth ``dF/dq`` with interface states held algebraic."""
+    return _assemble_algebraic_interface_structured_jacobian(
+        model,
+        coordinate,
+        derivative=derivative,
+        backward_euler_dt_s=None,
+    )
+
+
+def build_algebraic_interface_structured_backward_euler_jacobian(
+    model: AlgebraicInterfaceStateDAE,
+    coordinate: np.ndarray,
+    dt_s: float,
+) -> AlgebraicInterfaceStructuredJacobian:
+    """Assemble the complete physical-density backward-Euler tangent."""
+    return _assemble_algebraic_interface_structured_jacobian(
+        model,
+        coordinate,
+        derivative=None,
+        backward_euler_dt_s=dt_s,
+    )
+
+
 __all__ = [
     "AlgebraicInterfaceJacobianCapabilityError",
     "AlgebraicInterfaceLocalLinearization",
+    "AlgebraicInterfaceStructuredJacobian",
+    "build_algebraic_interface_structured_backward_euler_jacobian",
+    "build_algebraic_interface_structured_state_jacobian",
     "linearize_algebraic_interface_response",
 ]
