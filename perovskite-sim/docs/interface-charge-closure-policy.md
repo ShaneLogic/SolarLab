@@ -109,9 +109,25 @@ bias, and light; the complete outer banded Jacobian, including a re-solved
 local QSS for every perturbation, matches central differences at the roadmap
 `1e-4` threshold.
 
-This does not expose the closure through backend, transient, QF impedance, or
-2D routes. Those combinations continue to fail through the production
-material-assembly capability gate.
+The fail-closed backend exposure is
+`POST /api/research/interface-charge/steady-state`. Each request must set
+`research_acknowledged=true`, supply exactly one inline device or config path,
+and use an uncalibrated `equilibrium_referenced` stack with explicit rebaseline
+acknowledgement. The endpoint fixes the same certificate-compatible solver
+controls used by the registered lane; callers cannot weaken residual gates.
+It constructs and hashes the charge-off dark reference inside the request,
+verifies contact thermodynamics on the same two-sided grid, then returns an
+explicit evidence schema containing `f_eq`, `f`, `N_t`, `Delta sigma`, both
+trace shifts, normalized Gauss residual, scaled local Jacobian condition,
+continuity/current/Poisson bounds, contact evidence, and all three reference
+hashes. Response assembly independently rechecks array alignment,
+`Delta sigma = -q Nt (f-f_eq)`, the one-electron-per-trap bound, and finite
+certificate fields.
+
+This endpoint is labelled `internal_numerical_research` and always reports
+`production_unlocked=false`. It is not part of `/api/jv` or `/api/jobs`, and
+there is no frontend control for it. Production J-V, transient, QF impedance,
+and 2D routes continue to fail through the material-assembly capability gate.
 
 ## Charge-off reference lane
 
@@ -196,8 +212,8 @@ source/config/protocol identity:
 - dark reference identity and charge/grid conservation gates (completed for
   the purpose-built research config).
 
-The remaining Phase-3 exposure work is a backend research endpoint with an
-explicit evidence schema and a broader device stress matrix over `E_t`, band
+The backend research endpoint and its explicit evidence schema are completed.
+The remaining Phase-3 device work is a broader stress matrix over `E_t`, band
 offset, doping and trap density. The historical three-layer SCAPS-derived
 reference also remains an unresolved illuminated stress case. Transient,
 impedance and 2D require the later unified algebraic-state topology. None of

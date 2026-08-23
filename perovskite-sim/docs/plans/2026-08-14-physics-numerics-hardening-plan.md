@@ -605,6 +605,14 @@ biased/light outer Newton iterate
 
 `equilibrium_referenced` 只补“相对暗态”的增量电静力，不等于绝对 trap charge 或完整 equilibrium band bending。绝对闭环还需要 fixed countercharge、neutral reference 和全器件电中性。Phase 3 最多升级为 `INTERNAL_CERTIFIED`；与 SCAPS 的幅值重新接近仍只是 cross-code evidence，且任何重新调过 `iface_state_calibration_factor` 的结果只能标为 `CROSS_CODE_CALIBRATED`。
 
+2026-08-23 checkpoint：新增独立的
+`POST /api/research/interface-charge/steady-state`。请求必须显式确认研究语义，
+在一次调用内重建 contact-certified charge-off dark reference，并返回固定 schema
+的 `f_eq/f/Delta sigma/trace/Gauss/condition` 与 hash 证据；调用者不能放宽求解
+门限。生产 `/api/jv`、jobs、transient、impedance、2D 与 frontend 仍保持
+charge-off/fail-close。下一项为 `E_t/CBO/Nd/Nt` device stress matrix，完成前不扩大
+内部证书的设备适用范围。
+
 ## 5. Phase 4：统一 DAE 与材料物理完备性（6 至 12 个月，分决策门推进）
 
 Phase 4 不是一个大 PR。每个子 lane 必须单独立项、默认关闭、建立 analytic limit，并通过 Phase 1 的证书框架。

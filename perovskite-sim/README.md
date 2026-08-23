@@ -352,10 +352,12 @@ These active interface paths are recombination-only. The explicit
 `interface_charge_closure` schema defaults to `off`; its reserved
 `equilibrium_referenced` research value is recognized but fails closed in all
 production experiment routes. The retired `iface_state_charge` scalar cannot
-feed the shared-node Poisson scaffold. The signed constitutive primitive is
-fixed at `Delta sigma = -q Nt (f-f_eq)` for both donor-like and acceptor-like
-traps, but it is not coupled to the outer Poisson solve and must not be cited as
-supported trap electrostatics. See
+feed the shared-node Poisson scaffold. A dedicated ion-free QF research lane
+does couple the signed law `Delta sigma = -q Nt (f-f_eq)` into the outer
+two-sided Poisson residual and analytic/IFT Jacobian. It is available through
+the two-call Python API and the fail-closed
+`POST /api/research/interface-charge/steady-state` endpoint only; it is not a
+production trap-electrostatics capability. See
 [`docs/interface-charge-closure-policy.md`](docs/interface-charge-closure-policy.md).
 
 <br>

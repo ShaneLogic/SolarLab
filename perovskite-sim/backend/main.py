@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -24,11 +25,11 @@ if os.environ.get("PEROVSKITE_BLAS_PIN", "1") != "0":
 import numpy as np
 import traceback
 import yaml
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
 from perovskite_sim.experiments import dark_jv as dark_jv_exp
@@ -46,8 +47,12 @@ from perovskite_sim.experiments.protocol import (
 from perovskite_sim.experiments.steady_state import run_jv_sweep_ss
 from perovskite_sim.experiments.quasi_fermi_steady_state import (
     QuasiFermiSteadyStateError,
+    build_equilibrium_referenced_interface_charge_dark_reference,
+    build_two_sided_trace_grid,
+    solve_equilibrium_referenced_interface_charge_steady_state,
     solve_quasi_fermi_jv_sweep,
 )
+from perovskite_sim.constants import Q
 from perovskite_sim.discretization.grid import (
     GridResolutionError,
     require_thick_layer_interface_resolution,
@@ -64,8 +69,14 @@ from perovskite_sim.models.device import (
     DeviceStack,
     InterfaceChargeClosureParkedError,
     LayerSpec,
+    electrical_interface_defects,
 )
 from perovskite_sim.models.mode import resolve_mode
+from perovskite_sim.physics.contacts import (
+    ContactThermodynamicError,
+    require_contact_thermodynamic_certificate,
+)
+from perovskite_sim.solver.mol import build_material_arrays
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
 from backend.user_configs import (
@@ -416,10 +427,10 @@ def _config_dict_from_path(path: str) -> dict:
     return cfg
 
 
-def build_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceStack:
-    """Return a DeviceStack from either an inline device dict (preferred) or a YAML path."""
+def _load_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceStack:
+    """Load a stack without applying an experiment-specific capability gate."""
     if device is not None:
-        stack = stack_from_dict(device)
+        return stack_from_dict(device)
     else:
         if not config_path:
             raise HTTPException(
@@ -437,13 +448,63 @@ def build_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceSta
         if is_scaps:
             from perovskite_sim.scaps_compat import load_scaps_yaml
 
-            stack = load_scaps_yaml(resolved)
-        else:
-            stack = load_device_from_yaml(resolved)
+            return load_scaps_yaml(resolved)
+        return load_device_from_yaml(resolved)
+
+
+def build_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceStack:
+    """Load a stack and enforce the production interface-charge gate."""
+    stack = _load_stack(config_path, device)
     try:
         stack.require_interface_charge_off(consumer="backend experiment routes")
     except InterfaceChargeClosureParkedError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return stack
+
+
+def build_interface_charge_research_stack(
+    config_path: Optional[str],
+    device: Optional[dict],
+) -> DeviceStack:
+    """Load only stacks eligible for the charged steady-state research lane."""
+    if (config_path is None) == (device is None):
+        raise HTTPException(
+            status_code=422,
+            detail="provide exactly one of 'device' or 'config_path'",
+        )
+    stack = _load_stack(config_path, device)
+    violations: list[str] = []
+    if stack.interface_charge_closure != "equilibrium_referenced":
+        violations.append(
+            "interface_charge_closure must be 'equilibrium_referenced'"
+        )
+    if not stack.interface_charge_rebaseline_acknowledged:
+        violations.append("interface-charge rebaseline must be acknowledged")
+    if stack.het_recomb_despike != 0.0:
+        violations.append("recombination de-spiking must be disabled")
+    if stack.flat_band_contacts or stack.flat_band_metal_contacts:
+        violations.append("calibrated flat-band contact floors must be disabled")
+    if stack.contact_phi_B_eV != 0.0:
+        violations.append("the calibrated contact barrier must be zero")
+    if stack.autoloop_generated_lever:
+        violations.append("autoloop-generated calibration levers are not accepted")
+    defects = electrical_interface_defects(stack)
+    if not defects or any(defect is None for defect in defects):
+        violations.append(
+            "one explicit InterfaceDefect is required per electrical interface"
+        )
+    elif any(
+        defect.N_t_cm2 <= 0.0
+        or defect.calibration_factor != 1.0
+        or defect.iface_state_calibration_factor != 1.0
+        for defect in defects
+        if defect is not None
+    ):
+        violations.append(
+            "interface traps require positive Nt and unity calibration factors"
+        )
+    if violations:
+        raise HTTPException(status_code=422, detail="; ".join(violations))
     return stack
 
 
@@ -700,6 +761,111 @@ def save_user_config(payload: UserConfigPayload):
     return {"status": "ok", "saved": payload.name}
 
 
+class InterfaceChargeSteadyStateResearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    config_path: Optional[str] = None
+    device: Optional[dict] = None
+    N_grid: StrictInt = 60
+    V_app: float = 0.0
+    illuminated: StrictBool = True
+    research_acknowledged: StrictBool = False
+
+
+class InterfaceChargeSolverControlsEvidence(BaseModel):
+    finite_difference_step: float
+    newton_residual_tolerance: float
+    max_newton_iterations: int
+    poisson_tolerance_V: float
+    poisson_max_iterations: int
+    continuity_tolerance_A_m2: float
+    current_spread_tolerance_A_m2: float
+    poisson_residual_tolerance: float
+    illumination_steps: tuple[float, ...]
+
+
+class InterfaceChargeContactEvidence(BaseModel):
+    status: str
+    built_in_potential_mode: str
+    tolerance_eV: float
+    fermi_level_span_eV: Optional[float]
+    potential_mismatch_V: Optional[float]
+    metal_work_function_mismatch_eV: Optional[float]
+    contact_quasi_fermi_levels_eV: tuple[float, ...]
+    message: str
+
+
+class InterfaceChargeDarkReferenceEvidence(BaseModel):
+    certified: bool
+    charge_on_off_bit_identical: bool
+    grid_sha256: str
+    stack_sha256: str
+    dark_state_sha256: str
+    equilibrium_occupancy: tuple[float, ...]
+    trap_density_m2: tuple[float, ...]
+    incremental_sheet_charge_C_m2: tuple[float, ...]
+    trace_potential_shift_V: tuple[tuple[float, float], ...]
+
+
+class InterfaceChargeOperatingPointEvidence(BaseModel):
+    V_app_V: float
+    illuminated: bool
+    certified: bool
+    current_density_A_m2: float
+    electron_continuity_bound_A_m2: float
+    hole_continuity_bound_A_m2: float
+    face_current_spread_A_m2: float
+    max_normalized_cell_residual: float
+    poisson_residual: float
+    poisson_residual_C_m2: float
+    interface_local_residual: float
+    numerical_residual_limit: float
+    newton_iterations: int
+    residual_evaluations: int
+    operating_state_sha256: str
+
+
+class InterfaceChargePerInterfaceEvidence(BaseModel):
+    interface_index: int
+    equilibrium_occupancy: float
+    occupancy: float
+    trap_density_m2: float
+    incremental_sheet_charge_C_m2: float
+    trace_potential_shift_left_V: float
+    trace_potential_shift_right_V: float
+    normalized_gauss_residual: float
+    scaled_local_jacobian_condition: float
+
+
+class InterfaceChargeResearchProvenance(BaseModel):
+    requested_grid_intervals: int
+    actual_grid_nodes: int
+    interface_count: int
+    interface_topology: str
+    interface_charge_closure: str
+    research_acknowledged: bool
+
+
+class InterfaceChargeSteadyStateResearchResult(BaseModel):
+    evidence_status: Literal["internal_numerical_research"]
+    capability_scope: Literal[
+        "steady_state_equilibrium_referenced_interface_charge"
+    ]
+    production_unlocked: Literal[False]
+    provenance: InterfaceChargeResearchProvenance
+    solver_controls: InterfaceChargeSolverControlsEvidence
+    contact_thermodynamics: InterfaceChargeContactEvidence
+    dark_reference: InterfaceChargeDarkReferenceEvidence
+    operating_point: InterfaceChargeOperatingPointEvidence
+    interfaces: tuple[InterfaceChargePerInterfaceEvidence, ...]
+    limitations: tuple[str, ...]
+
+
+class InterfaceChargeSteadyStateResearchResponse(BaseModel):
+    status: Literal["ok"]
+    result: InterfaceChargeSteadyStateResearchResult
+
+
 class JVRequest(BaseModel):
     config_path: Optional[str] = None
     device: Optional[dict] = None
@@ -717,6 +883,348 @@ class JVRequest(BaseModel):
     interface_transport_model: str = "fermi_richardson"
     protocol_mode: ProtocolMode = "compatibility"
     experiment_protocol: Optional[dict[str, Any]] = None
+
+
+def _interface_charge_research_solver_controls() -> dict[str, float | int]:
+    """Return the frozen, certificate-compatible controls for the API lane."""
+    return {
+        "finite_difference_step": 1.0e-5,
+        "newton_residual_tolerance": 4.0e-7,
+        "max_newton_iterations": 60,
+        "poisson_tolerance_V": 1.0e-12,
+        "poisson_max_iterations": 100,
+        "continuity_tolerance_A_m2": 1.0e-4,
+        "current_spread_tolerance_A_m2": 1.0e-4,
+        "poisson_residual_tolerance": 1.0e-8,
+    }
+
+
+def _require_research_sha256(name: str, value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(char not in "0123456789abcdef" for char in value)
+    ):
+        raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _backend_research_array_sha256(label: str, *arrays: object) -> str:
+    digest = hashlib.sha256(label.encode("ascii"))
+    for value in arrays:
+        array = np.ascontiguousarray(np.asarray(value, dtype=np.float64))
+        digest.update(str(array.shape).encode("ascii"))
+        digest.update(array.dtype.str.encode("ascii"))
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def _build_interface_charge_research_result(
+    req: InterfaceChargeSteadyStateResearchRequest,
+    grid: np.ndarray,
+    charge_off_material: object,
+    contact_certificate: object,
+    dark_reference: object,
+    charged_dark: object,
+    result: object,
+    solver_controls: dict[str, float | int],
+) -> InterfaceChargeSteadyStateResearchResult:
+    """Validate and serialize the charged operating-point evidence."""
+    if not bool(getattr(contact_certificate, "certified", False)):
+        raise ValueError("contact thermodynamic certificate is not certified")
+    if not bool(getattr(dark_reference.dark_state, "certified", False)):
+        raise ValueError("dark reference is not certified")
+    if (
+        not bool(getattr(charged_dark, "certified", False))
+        or charged_dark.interface_charge_closure != "equilibrium_referenced"
+    ):
+        raise ValueError("charged dark-reference validation is not certified")
+    if not bool(getattr(result, "certified", False)):
+        raise ValueError("charged operating point is not certified")
+    if result.interface_charge_closure != "equilibrium_referenced":
+        raise ValueError("charged result has the wrong interface-charge closure")
+    if result.interface_topology != "two_sided_trace":
+        raise ValueError("charged result has the wrong interface topology")
+    if not bool(result.interface_boundary):
+        raise ValueError("charged result lacks the two-sided interface boundary")
+    if float(result.V_app) != float(req.V_app):
+        raise ValueError("charged result voltage does not match the request")
+    if bool(result.illuminated) is not bool(req.illuminated):
+        raise ValueError("charged result illumination does not match the request")
+
+    equilibrium = np.asarray(dark_reference.equilibrium_occupancy, dtype=float)
+    trap_density = np.asarray(dark_reference.trap_density_m2, dtype=float)
+    result_equilibrium = np.asarray(
+        result.interface_equilibrium_occupancy,
+        dtype=float,
+    )
+    occupancy = np.asarray(result.interface_occupancy, dtype=float)
+    sheet_charge = np.asarray(
+        result.interface_incremental_sheet_charge_C_m2,
+        dtype=float,
+    )
+    trace_shift = np.asarray(
+        result.interface_trace_potential_shift_V,
+        dtype=float,
+    )
+    gauss = np.asarray(result.interface_normalized_gauss_residual, dtype=float)
+    condition = np.asarray(
+        result.interface_scaled_local_jacobian_condition,
+        dtype=float,
+    )
+    interface_count = equilibrium.size
+    if interface_count == 0:
+        raise ValueError("interface evidence must not be empty")
+    vectors = (
+        trap_density,
+        result_equilibrium,
+        occupancy,
+        sheet_charge,
+        gauss,
+        condition,
+    )
+    if equilibrium.shape != (interface_count,) or any(
+        vector.shape != (interface_count,) for vector in vectors
+    ):
+        raise ValueError("interface evidence arrays are misaligned")
+    if trace_shift.shape != (interface_count, 2):
+        raise ValueError("interface trace-shift evidence is misaligned")
+    if any(
+        not np.all(np.isfinite(value))
+        for value in (equilibrium, *vectors, trace_shift)
+    ):
+        raise ValueError("interface evidence contains non-finite values")
+    if np.any(trap_density <= 0.0):
+        raise ValueError("interface trap densities must be positive")
+    if np.any((equilibrium < 0.0) | (equilibrium > 1.0)) or np.any(
+        (occupancy < 0.0) | (occupancy > 1.0)
+    ):
+        raise ValueError("interface occupancies must lie in [0, 1]")
+    if not np.array_equal(result_equilibrium, equilibrium):
+        raise ValueError("operating-point f_eq differs from the dark reference")
+    expected_charge = -Q * trap_density * (occupancy - equilibrium)
+    if not np.allclose(
+        sheet_charge,
+        expected_charge,
+        rtol=1.0e-12,
+        atol=0.0,
+    ):
+        raise ValueError("interface sheet charge violates -q*Nt*(f-f_eq)")
+    if np.any(np.abs(sheet_charge) > Q * trap_density * (1.0 + 1.0e-12)):
+        raise ValueError("interface sheet charge exceeds one electron per trap")
+    if np.any(np.abs(gauss) > 1.0e-10):
+        raise ValueError("interface Gauss residual exceeds the research gate")
+    if np.any((condition < 0.0) | (condition > 1.0e8)):
+        raise ValueError("interface Jacobian condition exceeds the research gate")
+
+    dark_charge = np.asarray(
+        charged_dark.interface_incremental_sheet_charge_C_m2,
+        dtype=float,
+    )
+    dark_trace_shift = np.asarray(
+        charged_dark.interface_trace_potential_shift_V,
+        dtype=float,
+    )
+    if dark_charge.shape != (interface_count,) or dark_trace_shift.shape != (
+        interface_count,
+        2,
+    ):
+        raise ValueError("charged dark-reference evidence is misaligned")
+    if np.any(dark_charge != 0.0) or np.any(dark_trace_shift != 0.0):
+        raise ValueError("charged dark reference must have exact zero increment")
+    if not np.array_equal(
+        np.asarray(charged_dark.interface_equilibrium_occupancy, dtype=float),
+        equilibrium,
+    ) or not np.array_equal(
+        np.asarray(charged_dark.interface_occupancy, dtype=float),
+        equilibrium,
+    ):
+        raise ValueError("charged dark-reference occupancy differs from f_eq")
+    dark_identity_fields = (
+        "y",
+        "phi",
+        "electron_quasi_fermi_potential_V",
+        "hole_quasi_fermi_potential_V",
+        "electron_face_current_A_m2",
+        "hole_face_current_A_m2",
+        "total_face_current_A_m2",
+        "electron_rate_per_s",
+        "hole_rate_per_s",
+    )
+    dark_arrays_identical = all(
+        np.array_equal(
+            np.asarray(getattr(dark_reference.dark_state, name)),
+            np.asarray(getattr(charged_dark, name)),
+        )
+        for name in dark_identity_fields
+    )
+    if not dark_arrays_identical:
+        raise ValueError("charged and charge-off dark arrays are not bit-identical")
+
+    grid_array = np.asarray(grid, dtype=float)
+    if (
+        grid_array.ndim != 1
+        or grid_array.size < 3
+        or not np.all(np.isfinite(grid_array))
+        or np.any(np.diff(grid_array) <= 0.0)
+    ):
+        raise ValueError("research grid is not finite and strictly increasing")
+    scalar_evidence = (
+        result.current_A_m2,
+        result.electron_continuity_bound_A_m2,
+        result.hole_continuity_bound_A_m2,
+        result.face_current_spread_A_m2,
+        result.max_normalized_cell_residual,
+        result.poisson_residual,
+        result.poisson_residual_C_m2,
+        result.interface_local_residual,
+        result.numerical_residual_limit,
+    )
+    if not np.all(np.isfinite(np.asarray(scalar_evidence, dtype=float))):
+        raise ValueError("operating-point certificate contains non-finite values")
+    if any(value < 0.0 for value in scalar_evidence[1:]):
+        raise ValueError("operating-point residual evidence must be non-negative")
+    scalar_gates = (
+        (
+            result.electron_continuity_bound_A_m2,
+            solver_controls["continuity_tolerance_A_m2"],
+        ),
+        (
+            result.hole_continuity_bound_A_m2,
+            solver_controls["continuity_tolerance_A_m2"],
+        ),
+        (
+            result.face_current_spread_A_m2,
+            solver_controls["current_spread_tolerance_A_m2"],
+        ),
+        (
+            result.max_normalized_cell_residual,
+            solver_controls["newton_residual_tolerance"],
+        ),
+        (
+            result.poisson_residual,
+            solver_controls["poisson_residual_tolerance"],
+        ),
+        (result.interface_local_residual, 1.0e-7),
+        (
+            result.numerical_residual_limit,
+            solver_controls["newton_residual_tolerance"],
+        ),
+    )
+    if any(value > limit for value, limit in scalar_gates):
+        raise ValueError("operating-point certificate exceeds a research gate")
+    if result.newton_iterations < 0 or result.residual_evaluations <= 0:
+        raise ValueError("operating-point iteration evidence is invalid")
+    state_arrays = (
+        np.asarray(result.y, dtype=float),
+        np.asarray(result.phi, dtype=float),
+        np.asarray(result.electron_quasi_fermi_potential_V, dtype=float),
+        np.asarray(result.hole_quasi_fermi_potential_V, dtype=float),
+    )
+    ion_blocks = 2 if bool(charge_off_material.has_dual_ions) else 1
+    expected_state_size = (
+        (2 + ion_blocks) * grid_array.size
+        + 4 * int(charge_off_material.N_iface_state)
+    )
+    if (
+        state_arrays[0].shape != (expected_state_size,)
+        or any(array.shape != (grid_array.size,) for array in state_arrays[1:])
+        or any(not np.all(np.isfinite(array)) for array in state_arrays)
+    ):
+        raise ValueError("operating-point state arrays are non-finite or misaligned")
+    operating_state_sha256 = _backend_research_array_sha256(
+        "interface-charge-api-operating-state-v1",
+        grid_array,
+        *state_arrays,
+        equilibrium,
+        occupancy,
+        sheet_charge,
+        trace_shift,
+    )
+
+    contact_payload = asdict(contact_certificate)
+    return InterfaceChargeSteadyStateResearchResult(
+        evidence_status="internal_numerical_research",
+        capability_scope=(
+            "steady_state_equilibrium_referenced_interface_charge"
+        ),
+        production_unlocked=False,
+        provenance=InterfaceChargeResearchProvenance(
+            requested_grid_intervals=int(req.N_grid),
+            actual_grid_nodes=int(grid_array.size),
+            interface_count=int(interface_count),
+            interface_topology=result.interface_topology,
+            interface_charge_closure=result.interface_charge_closure,
+            research_acknowledged=bool(req.research_acknowledged),
+        ),
+        solver_controls=InterfaceChargeSolverControlsEvidence(
+            **solver_controls,
+            illumination_steps=tuple(float(v) for v in result.illumination_steps),
+        ),
+        contact_thermodynamics=InterfaceChargeContactEvidence(**contact_payload),
+        dark_reference=InterfaceChargeDarkReferenceEvidence(
+            certified=True,
+            charge_on_off_bit_identical=dark_arrays_identical,
+            grid_sha256=_require_research_sha256(
+                "grid_sha256", dark_reference.grid_sha256
+            ),
+            stack_sha256=_require_research_sha256(
+                "stack_sha256", dark_reference.stack_sha256
+            ),
+            dark_state_sha256=_require_research_sha256(
+                "dark_state_sha256", dark_reference.dark_state_sha256
+            ),
+            equilibrium_occupancy=tuple(float(v) for v in equilibrium),
+            trap_density_m2=tuple(float(v) for v in trap_density),
+            incremental_sheet_charge_C_m2=tuple(float(v) for v in dark_charge),
+            trace_potential_shift_V=tuple(
+                (float(values[0]), float(values[1]))
+                for values in dark_trace_shift
+            ),
+        ),
+        operating_point=InterfaceChargeOperatingPointEvidence(
+            V_app_V=float(result.V_app),
+            illuminated=bool(result.illuminated),
+            certified=True,
+            current_density_A_m2=float(result.current_A_m2),
+            electron_continuity_bound_A_m2=float(
+                result.electron_continuity_bound_A_m2
+            ),
+            hole_continuity_bound_A_m2=float(
+                result.hole_continuity_bound_A_m2
+            ),
+            face_current_spread_A_m2=float(result.face_current_spread_A_m2),
+            max_normalized_cell_residual=float(
+                result.max_normalized_cell_residual
+            ),
+            poisson_residual=float(result.poisson_residual),
+            poisson_residual_C_m2=float(result.poisson_residual_C_m2),
+            interface_local_residual=float(result.interface_local_residual),
+            numerical_residual_limit=float(result.numerical_residual_limit),
+            newton_iterations=int(result.newton_iterations),
+            residual_evaluations=int(result.residual_evaluations),
+            operating_state_sha256=operating_state_sha256,
+        ),
+        interfaces=tuple(
+            InterfaceChargePerInterfaceEvidence(
+                interface_index=index,
+                equilibrium_occupancy=float(equilibrium[index]),
+                occupancy=float(occupancy[index]),
+                trap_density_m2=float(trap_density[index]),
+                incremental_sheet_charge_C_m2=float(sheet_charge[index]),
+                trace_potential_shift_left_V=float(trace_shift[index, 0]),
+                trace_potential_shift_right_V=float(trace_shift[index, 1]),
+                normalized_gauss_residual=float(gauss[index]),
+                scaled_local_jacobian_condition=float(condition[index]),
+            )
+            for index in range(interface_count)
+        ),
+        limitations=(
+            "internal numerical evidence only; no external solver validation",
+            "equilibrium-referenced incremental charge is not absolute trap charge",
+            "production J-V, transient, impedance, and 2D charge coupling remain parked",
+        ),
+    )
 
 
 def _parse_experiment_protocol(
@@ -1141,6 +1649,108 @@ def run_jv(req: JVRequest):
         print("[JV API Exception]", e)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post(
+    "/api/research/interface-charge/steady-state",
+    response_model=InterfaceChargeSteadyStateResearchResponse,
+)
+def run_interface_charge_steady_state_research(
+    req: InterfaceChargeSteadyStateResearchRequest,
+):
+    """Run the only backend-exposed equilibrium-referenced charge workflow."""
+    try:
+        if not req.research_acknowledged:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "research_acknowledged=true is required; this endpoint "
+                    "does not unlock production interface charge"
+                ),
+            )
+        if req.N_grid < 12 or req.N_grid > 240:
+            raise HTTPException(
+                status_code=422,
+                detail="N_grid must lie in the closed interval [12, 240]",
+            )
+        if not np.isfinite(req.V_app) or abs(req.V_app) > 2.0:
+            raise HTTPException(
+                status_code=422,
+                detail="V_app must be finite and lie in [-2, 2] V",
+            )
+
+        stack = build_interface_charge_research_stack(
+            req.config_path,
+            req.device,
+        )
+        shared_grid = jv_sweep.build_electrical_grid(stack, req.N_grid)
+        grid = build_two_sided_trace_grid(shared_grid, stack)
+        charge_off_stack = replace(stack, interface_charge_closure="off")
+        charge_off_material = build_material_arrays(grid, charge_off_stack)
+        if charge_off_material.iface_state_charge != 0.0:
+            raise ValueError("legacy shared-node interface charge must remain zero")
+        contact_certificate = require_contact_thermodynamic_certificate(
+            charge_off_stack,
+            charge_off_material,
+        )
+        solver_controls = _interface_charge_research_solver_controls()
+        dark_reference = (
+            build_equilibrium_referenced_interface_charge_dark_reference(
+                grid,
+                stack,
+                interface_transmission=1.0,
+                **solver_controls,
+            )
+        )
+        charged_dark = (
+            solve_equilibrium_referenced_interface_charge_steady_state(
+                grid,
+                stack,
+                0.0,
+                dark_reference=dark_reference,
+                illuminated=False,
+                **solver_controls,
+            )
+        )
+        result = solve_equilibrium_referenced_interface_charge_steady_state(
+            grid,
+            stack,
+            float(req.V_app),
+            dark_reference=dark_reference,
+            illuminated=bool(req.illuminated),
+            **solver_controls,
+        )
+        evidence = _build_interface_charge_research_result(
+            req,
+            grid,
+            charge_off_material,
+            contact_certificate,
+            dark_reference,
+            charged_dark,
+            result,
+            solver_controls,
+        )
+        return InterfaceChargeSteadyStateResearchResponse(
+            status="ok",
+            result=evidence,
+        )
+    except HTTPException:
+        raise
+    except (
+        ContactThermodynamicError,
+        GridResolutionError,
+        QuasiFermiSteadyStateError,
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        yaml.YAMLError,
+    ) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        print("[Interface Charge Research API Exception]", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
