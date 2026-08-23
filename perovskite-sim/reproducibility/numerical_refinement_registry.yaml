@@ -386,38 +386,52 @@ lanes:
 
   interface-recombination-charge-off:
     claim_level: internal-numerical-candidate
-    config: configs/solarscale_nip_band_aligned_iface.yaml
-    config_sha256: 538fed52f0d40123ecc1b8a4c1391616f9f35a93637157f3374e90fc8f43c344
+    config: configs/interface_charge_reference.yaml
+    config_sha256: 300f57a256dc764995b916a55b98b642ecd8244eccd2ca456624d9521e0e2705
     executor: perovskite_sim.validation.refinement_executors:run_interface_recombination_charge_off
-    executor_version: v2
+    executor_version: v3
     grid:
       parameter: N_grid
       values: [30, 60, 90]
     tolerance:
-      parameter: steady_residual_tolerance_factor
-      factors: [1.0, 0.1, 0.01]
+      parameter: qf_residual_tolerance_factor
+      factors: [1.0, 0.5, 0.25]
     observables:
-      interface_flux_A_m2: {comparison: absolute_linf, limit: 0.01, units: A m-2}
+      interface_flux_A_m2: {comparison: absolute_linf, limit: 1.0, units: A m-2}
       jv_normalized: {comparison: absolute_linf, limit: 0.005, units: "1"}
       voc_V: {comparison: absolute_linf, limit: 0.001, units: V}
     quality_gates:
-      max_interface_flux_residual_A_m2: {operator: le, limit: 0.01, units: A m-2}
-      max_current_spread_A_m2: {operator: le, limit: 0.01, units: A m-2}
-      max_residual_per_s: {operator: le, limit: 0.5, units: s-1}
+      all_points_certified: {operator: eq, limit: 1.0, units: "1"}
+      calibration_factors_unity: {operator: eq, limit: 1.0, units: "1"}
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      dark_reference_certified: {operator: eq, limit: 1.0, units: "1"}
+      max_continuity_bound_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
+      max_current_spread_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
+      max_interface_carrier_balance_A_m2: {operator: le, limit: 1.0e-8, units: A m-2}
+      max_interface_local_residual: {operator: le, limit: 1.0e-7, units: "1"}
+      max_interface_state_residual_A_m2: {operator: le, limit: 1.0e-5, units: A m-2}
+      max_normalized_cell_residual: {operator: le, limit: 4.0e-7, units: "1"}
+      max_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      occupancy_bounded: {operator: eq, limit: 1.0, units: "1"}
+      rebaseline_acknowledged: {operator: eq, limit: 1.0, units: "1"}
       trap_electrostatic_charge_enabled: {operator: eq, limit: 0.0, units: "1"}
-      all_points_residual_converged: {operator: eq, limit: 1.0, units: "1"}
+      two_sided_topology_active: {operator: eq, limit: 1.0, units: "1"}
       voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
     options:
-      config_loader: standard
+      config_loader: scaps
       require_protocol: true
-      interface_states: true
-      illuminated: true
       V_max_V: 1.2
       voltage_points: 25
-      base_residual_tolerance_per_s: 1.0e-6
-      base_log_step_tolerance: 1.0e-8
-      base_stall_tolerance_per_s: 0.5
-      max_continuity_current_error_A_m2: 0.1
+      base_finite_difference_step: 1.0e-5
+      base_newton_residual_tolerance: 4.0e-7
+      max_newton_iterations: 60
+      base_poisson_tolerance_V: 1.0e-12
+      poisson_max_iterations: 100
+      continuity_tolerance_A_m2: 1.0e-4
+      current_spread_tolerance_A_m2: 1.0e-4
+      poisson_residual_tolerance: 1.0e-8
+      interface_qss_residual_tolerance: 1.0e-7
     limitations:
       - Interface electrostatic trap charge remains parked and must stay disabled in this lane.
-      - This lane certifies recombination flux convergence only; it makes no Gauss-jump claim.
+      - This uncalibrated reference deliberately makes no SCAPS-parity claim.
+      - The two-sided trace lane certifies recombination flux convergence only; it makes no charged Gauss-jump claim.

@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: d51ee921e7272ecb2886308991751e571dc7634fd15138820c137ae86845ca4a
+  sha256: dd142187071ab0c8cbc3d1e1eb568e632f194cd8d4d4f11f2eb237f6b593315e
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -74,6 +74,7 @@ benchmarks:
       - configs/driftfusion_benchmark_tmm.yaml
       - configs/driftfusion_calado2016_repro.yaml
       - configs/field_mobility_demo.yaml
+      - configs/interface_charge_reference.yaml
       - configs/ionmonger_benchmark.yaml
       - configs/ionmonger_benchmark_tmm.yaml
       - configs/ionmonger_courtier2019_repro.yaml
@@ -111,13 +112,30 @@ benchmarks:
       - tests/regression/test_tolerance_grid_refinement.py::test_plan_refinement_is_read_only
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/interface_charge_reference.yaml
       - configs/ionmonger_benchmark.yaml
       - configs/scaps_mirror.yaml
-      - configs/solarscale_nip_band_aligned_iface.yaml
       - configs/twod/nip_MAPbI3_uniform.yaml
     limitations:
       - this passing benchmark certifies the immutable schema and runner mechanics only
       - no pre-registered physical lane is promoted until its content-addressed matrix closes
+  interface-charge-off-qf-reference:
+    kind: numerical
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/validation/test_refinement_executors.py::test_interface_charge_off_executor_smoke
+      tests/unit/validation/test_refinement_executors.py::test_two_sided_interface_evidence_checks_carrier_and_state_balance
+    tests: [tests/unit/validation/test_refinement_executors.py]
+    node_ids:
+      - tests/unit/validation/test_refinement_executors.py::test_interface_charge_off_executor_smoke
+      - tests/unit/validation/test_refinement_executors.py::test_two_sided_interface_evidence_checks_carrier_and_state_balance
+    configs: [configs/interface_charge_reference.yaml]
+    limitations:
+      - the registered two-sided charge-off executor is physically gated but its content-addressed 3x3 matrix is not yet complete
+      - interface electrostatic trap charge remains disabled, so this benchmark makes no charged Gauss-jump claim
+      - the uncalibrated reference makes no SCAPS-parity claim
   courtier2019-ionmonger:
     kind: external
     status: pass
@@ -1028,6 +1046,15 @@ configs:
     schema: standard-device-v1
     status: load_only
     benchmarks: [loader-contract]
+  - path: configs/interface_charge_reference.yaml
+    sha256: 300f57a256dc764995b916a55b98b642ecd8244eccd2ca456624d9521e0e2705
+    semantic_sha256: 1fd48e611f337e1c1a44801bd8dac3947d437b2e908f77ef35bbf980e24a46de
+    schema: scaps-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - interface-charge-off-qf-reference
   - path: configs/ionmonger_benchmark.yaml
     sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     semantic_sha256: a7e07b83a752dc2836231c7a3605ae32791ac18c19cde2a176d8d6e9c2d4438d
@@ -1134,7 +1161,7 @@ configs:
     semantic_sha256: 9c2bf332f1ae352693b44a2c829e803b3d14be2636ddbbba6597871d417ced1c
     schema: standard-device-v1
     status: demo
-    benchmarks: [loader-contract, phase1-refinement-contract]
+    benchmarks: [loader-contract]
   - path: configs/tandem_lin2019.yaml
     sha256: 2eb26eb1902d0b9fbaf6e1b019dc79a163d2989adb13654c90ef508b4fdaded0
     semantic_sha256: 80912db53c3c7129a6adb5e7454e08e4a15c8fc0ea787e662cea3fc4036d5c49

@@ -51,10 +51,6 @@ def test_parser_recognizes_research_intent_and_acknowledgement():
             {"interface_charge_closure": "equilibrium_referenced"},
             "rebaseline_acknowledged=true",
         ),
-        (
-            {"interface_charge_rebaseline_acknowledged": True},
-            "only valid",
-        ),
     ],
 )
 def test_device_stack_rejects_ambiguous_charge_contracts(updates, message):
@@ -69,6 +65,18 @@ def test_invalid_acknowledgement_is_not_truthiness_coerced():
         interface_charge_fields_from_device_dict(
             {"interface_charge_rebaseline_acknowledged": 1}
         )
+
+
+def test_charge_off_reference_can_acknowledge_a_fresh_rebaseline():
+    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    reference = dataclasses.replace(
+        base,
+        interface_charge_rebaseline_acknowledged=True,
+    )
+
+    assert reference.interface_charge_closure == "off"
+    assert reference.interface_charge_rebaseline_acknowledged is True
+    build_material_arrays(_grid(reference), reference)
 
 
 def test_research_intent_roundtrips_but_is_not_solver_capability():

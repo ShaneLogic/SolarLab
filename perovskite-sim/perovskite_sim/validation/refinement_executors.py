@@ -41,26 +41,34 @@ from perovskite_sim.experiments.ion_aware_impedance_grid import (
     ion_aware_impedance_grid_sha256,
 )
 from perovskite_sim.experiments.mott_schottky import _fit_mott_schottky
+from perovskite_sim.experiments.quasi_fermi_steady_state import (
+    DEFAULT_ILLUMINATION_STEPS,
+    _prepare_two_sided_material,
+    build_two_sided_trace_grid,
+    solve_quasi_fermi_jv_sweep,
+    solve_quasi_fermi_steady_state,
+)
 from perovskite_sim.experiments.quasi_fermi_impedance import (
     run_quasi_fermi_impedance,
 )
 from perovskite_sim.experiments.steady_state import (
-    _TE_SOFTNESS,
-    _enable_iface_states,
     solve_steady_state,
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import electrical_layers
-from perovskite_sim.physics.interface_plane import (
-    compute_interface_srh_on_state,
-    compute_interface_srh_shared_on_state,
+from perovskite_sim.physics.contacts import (
+    require_contact_thermodynamic_certificate,
+)
+from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
+from perovskite_sim.physics.two_sided_interface import (
+    TWO_SIDED_TRACE,
+    solve_material_two_sided_interfaces_qss,
 )
 from perovskite_sim.physics.generation import dual_cell_integral
 from perovskite_sim.scaps_compat.loader import load_scaps_yaml
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import (
     StateVec,
-    assemble_rhs,
     build_material_arrays,
 )
 from perovskite_sim.solver.numerical_diagnostics import (
@@ -1621,150 +1629,377 @@ def run_twod_uniform_limit(
     )
 
 
+def _interface_charge_off_protocol(
+    voltages: np.ndarray,
+    *,
+    base_finite_difference_step: float,
+    base_newton_residual_tolerance: float,
+    max_newton_iterations: int,
+    base_poisson_tolerance_V: float,
+    poisson_max_iterations: int,
+    continuity_tolerance_A_m2: float,
+    current_spread_tolerance_A_m2: float,
+    poisson_residual_tolerance: float,
+    interface_qss_residual_tolerance: float,
+) -> dict[str, Any]:
+    """Describe the charge-off QF reference without embedding a matrix rung."""
+    return {
+        "acceptance": {
+            "continuity_tolerance_A_m2": continuity_tolerance_A_m2,
+            "current_spread_tolerance_A_m2": current_spread_tolerance_A_m2,
+            "interface_qss_residual_tolerance": (interface_qss_residual_tolerance),
+            "poisson_residual_tolerance": poisson_residual_tolerance,
+            "require_contact_thermodynamic_certificate": True,
+            "require_voc_bracket": True,
+        },
+        "adapter": "interface-charge-off-two-sided-qf-jv",
+        "continuation": {
+            "first_point": "dark_then_registered_illumination_ladder",
+            "illumination_steps": list(DEFAULT_ILLUMINATION_STEPS),
+            "subsequent_points": "previous_certified_qf_state",
+            "voltage_bridge": "disabled_fail_closed",
+        },
+        "dark_reference": {
+            "illumination": "dark",
+            "occupancy": "shared_two_sided_interface_trap",
+            "voltage_V": 0.0,
+        },
+        "interface": {
+            "charge_closure": "off",
+            "cross_transmission": 1.0,
+            "rebaseline_acknowledged": True,
+            "topology": TWO_SIDED_TRACE,
+            "transport_model": FERMI_DIRAC_RICHARDSON,
+        },
+        "measurement": "steady_state_jv_and_interface_capture_flux",
+        "sampling_voltage_V": voltages.tolist(),
+        "schema_version": "interface-charge-off-reference-protocol-v1",
+        "solver": {
+            "base_finite_difference_step": base_finite_difference_step,
+            "base_newton_residual_tolerance": (base_newton_residual_tolerance),
+            "base_poisson_tolerance_V": base_poisson_tolerance_V,
+            "max_newton_iterations": max_newton_iterations,
+            "poisson_max_iterations": poisson_max_iterations,
+            "refinement_factor_source": "matrix.tolerance_factor",
+            "refinement_mapping": {
+                "finite_difference_step": "base*sqrt(factor)",
+                "newton_residual_tolerance": "base*factor",
+                "poisson_tolerance_V": "base*factor",
+            },
+            "type": "quasi_fermi_residual_certified",
+        },
+    }
+
+
+def _two_sided_interface_evidence(
+    result: Any,
+    *,
+    interface_count: int,
+) -> tuple[list[float], float, float, np.ndarray]:
+    """Extract signed recombination and independent local balance defects."""
+    capture = np.asarray(result.capture_flux_m2_s, dtype=float)
+    residual = np.asarray(result.state_flux_m2_s, dtype=float)
+    occupancy = np.asarray(result.occupancy, dtype=float)
+    expected = 4 * interface_count
+    if capture.shape != (expected,) or residual.shape != (expected,):
+        raise RuntimeError("two-sided QSS result has an invalid trace layout")
+    if occupancy.shape != (interface_count,):
+        raise RuntimeError("two-sided QSS result has an invalid occupancy layout")
+    if not all(
+        np.all(np.isfinite(values)) for values in (capture, residual, occupancy)
+    ):
+        raise RuntimeError("two-sided QSS evidence contains non-finite values")
+    if np.any((occupancy < 0.0) | (occupancy > 1.0)):
+        raise RuntimeError("two-sided QSS occupancy left [0, 1]")
+
+    fluxes: list[float] = []
+    maximum_carrier_balance = 0.0
+    for index in range(interface_count):
+        base = 4 * index
+        electron_capture = float(capture[base] + capture[base + 2])
+        hole_capture = float(capture[base + 1] + capture[base + 3])
+        fluxes.append(Q * electron_capture)
+        maximum_carrier_balance = max(
+            maximum_carrier_balance,
+            Q * abs(electron_capture - hole_capture),
+        )
+    maximum_state_residual = float(Q * np.max(np.abs(residual)))
+    return fluxes, maximum_carrier_balance, maximum_state_residual, occupancy
+
+
 def run_interface_recombination_charge_off(
     lane: LaneDefinition,
     point: MatrixPoint,
     project_root: Path,
 ) -> CellMeasurement:
-    """Certify live interface-state recombination while trap charge stays off."""
+    """Certify the uncalibrated two-sided QF reference with trap charge off."""
     options = lane.options
     stack = _load_stack(lane, project_root)
-    grid = build_electrical_grid(stack, point.grid)
-    material = replace(build_material_arrays(grid, stack), te_softness=_TE_SOFTNESS)
-    material = _enable_iface_states(material)
-    if material.N_iface_state == 0:
-        raise RuntimeError("interface lane resolved no live interface states")
-    if material.iface_state_charge != 0.0:
+    if stack.interface_charge_closure != "off":
+        raise RuntimeError("charge-off reference requires charge_closure='off'")
+    if not stack.interface_charge_rebaseline_acknowledged:
+        raise RuntimeError("charge-off reference requires explicit rebaseline intent")
+    if stack.het_recomb_despike != 0.0:
+        raise RuntimeError("charge-off reference forbids recombination de-spiking")
+    if stack.flat_band_contacts or stack.flat_band_metal_contacts:
+        raise RuntimeError("charge-off reference forbids calibrated contact floors")
+    if stack.contact_phi_B_eV != 0.0:
+        raise RuntimeError("charge-off reference forbids a calibrated contact barrier")
+    defects = tuple(defect for defect in stack.interface_defects if defect is not None)
+    if not defects:
+        raise RuntimeError("charge-off reference resolved no interface defects")
+    if any(
+        defect.calibration_factor != 1.0 or defect.iface_state_calibration_factor != 1.0
+        for defect in defects
+    ):
+        raise RuntimeError("charge-off reference requires unity calibration factors")
+
+    shared_grid = build_electrical_grid(stack, point.grid)
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+    base_material = build_material_arrays(grid, stack)
+    if base_material.iface_state_charge != 0.0:
         raise RuntimeError(
             "interface electrostatic trap charge must remain disabled in this lane"
         )
+    contact_certificate = require_contact_thermodynamic_certificate(
+        stack,
+        base_material,
+    )
+    material = _prepare_two_sided_material(grid, stack, base_material)
+    interface_count = len(material.iface_qss_left_nodes)
+    if interface_count == 0 or interface_count != len(defects):
+        raise RuntimeError("two-sided topology is not aligned with interface defects")
+
     voltage_max = _option(options, "V_max_V", float, 1.2)
     voltage_points = _option(options, "voltage_points", int, 25)
-    base_tol = _option(options, "base_residual_tolerance_per_s", float, 1.0e-6)
-    base_step_tol = _option(options, "base_log_step_tolerance", float, 1.0e-8)
-    base_accept = _option(options, "base_stall_tolerance_per_s", float, 0.5)
-    max_current_error = _option(
+    base_fd_step = _option(
         options,
-        "max_continuity_current_error_A_m2",
+        "base_finite_difference_step",
         float,
-        0.1,
+        1.0e-5,
+    )
+    base_newton_tol = _option(
+        options,
+        "base_newton_residual_tolerance",
+        float,
+        4.0e-7,
+    )
+    max_newton = _option(options, "max_newton_iterations", int, 60)
+    base_poisson_tol = _option(
+        options,
+        "base_poisson_tolerance_V",
+        float,
+        1.0e-12,
+    )
+    poisson_max = _option(options, "poisson_max_iterations", int, 100)
+    continuity_tol = _option(
+        options,
+        "continuity_tolerance_A_m2",
+        float,
+        1.0e-4,
+    )
+    spread_tol = _option(
+        options,
+        "current_spread_tolerance_A_m2",
+        float,
+        1.0e-4,
+    )
+    poisson_residual_tol = _option(
+        options,
+        "poisson_residual_tolerance",
+        float,
+        1.0e-8,
+    )
+    interface_qss_tol = _option(
+        options,
+        "interface_qss_residual_tolerance",
+        float,
+        1.0e-7,
     )
     voltages = np.linspace(0.0, voltage_max, voltage_points)
-    numerical_protocol = _steady_jv_numerical_protocol(
+    numerical_protocol = _interface_charge_off_protocol(
         voltages,
-        adapter="interface-charge-off-residual-certified-steady-jv",
-        illuminated=True,
-        base_residual_tolerance_per_s=base_tol,
-        base_log_step_tolerance=base_step_tol,
-        base_stall_tolerance_per_s=base_accept,
-        max_continuity_current_error_A_m2=max_current_error,
+        base_finite_difference_step=base_fd_step,
+        base_newton_residual_tolerance=base_newton_tol,
+        max_newton_iterations=max_newton,
+        base_poisson_tolerance_V=base_poisson_tol,
+        poisson_max_iterations=poisson_max,
+        continuity_tolerance_A_m2=continuity_tol,
+        current_spread_tolerance_A_m2=spread_tol,
+        poisson_residual_tolerance=poisson_residual_tol,
+        interface_qss_residual_tolerance=interface_qss_tol,
     )
-    previous = None
-    currents: list[float] = []
-    residuals: list[float] = []
-    current_spreads: list[float] = []
-    acceptances: list[str] = []
+    factor = point.tolerance_factor
+    solve_controls = {
+        "interface_boundary": True,
+        "interface_topology": TWO_SIDED_TRACE,
+        "interface_transmission": 1.0,
+        "interface_transport_model": FERMI_DIRAC_RICHARDSON,
+        "finite_difference_step": base_fd_step * np.sqrt(factor),
+        "newton_residual_tolerance": base_newton_tol * factor,
+        "max_newton_iterations": max_newton,
+        "poisson_tolerance_V": base_poisson_tol * factor,
+        "poisson_max_iterations": poisson_max,
+        "continuity_tolerance_A_m2": continuity_tol,
+        "current_spread_tolerance_A_m2": spread_tol,
+        "poisson_residual_tolerance": poisson_residual_tol,
+    }
+
+    dark = solve_quasi_fermi_steady_state(
+        grid,
+        stack,
+        0.0,
+        illuminated=False,
+        mat=base_material,
+        **solve_controls,
+    )
+    dark_qss = solve_material_two_sided_interfaces_qss(
+        material,
+        stack,
+        dark.y[: len(grid)],
+        dark.y[len(grid) : 2 * len(grid)],
+        dark.phi,
+        cross_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        residual_tolerance=interface_qss_tol,
+        fail_on_residual=True,
+    )
+    dark_flux, dark_balance, dark_state_residual, f_eq = _two_sided_interface_evidence(
+        dark_qss,
+        interface_count=interface_count,
+    )
+    if not dark.certified:
+        raise RuntimeError("dark reference lacks a QF physical certificate")
+
+    sweep = solve_quasi_fermi_jv_sweep(
+        grid,
+        stack,
+        voltages,
+        mat=base_material,
+        **solve_controls,
+    )
+    if len(sweep.points) != len(voltages):
+        raise RuntimeError("QF sweep did not retain every registered voltage")
+
     interface_fluxes: list[float] = []
-    interface_flux_residuals: list[float] = []
-
-    for voltage in voltages:
-        result = solve_steady_state(
-            grid,
-            stack,
-            float(voltage),
-            illuminated=True,
-            mat=material,
-            y0=previous,
-            tol=base_tol * point.tolerance_factor,
-            tol_step=base_step_tol * point.tolerance_factor,
-            tol_accept=base_accept * point.tolerance_factor,
-            max_continuity_current_error=max_current_error,
-            relative_log_variables=previous is not None,
-        )
-        previous = result.y
-        current, spread = _compute_current_ss_with_spread(
-            grid,
-            result.y,
-            stack,
-            float(voltage),
-            mat=material,
-        )
-        state = StateVec.unpack(
-            result.y,
-            len(grid),
-            N_iface_state=material.N_iface_state,
-        )
-        if state.iface_state is None:
-            raise RuntimeError("steady-state result omitted interface-state block")
-        rhs = assemble_rhs(
-            0.0,
-            result.y,
-            grid,
-            stack,
+    carrier_balance_defects = [dark_balance]
+    state_residuals = [dark_state_residual]
+    occupancies = [f_eq]
+    local_residuals = [dark.interface_local_residual]
+    for result in sweep.points:
+        if result.interface_topology != TWO_SIDED_TRACE:
+            raise RuntimeError("QF point did not retain two-sided topology")
+        qss = solve_material_two_sided_interfaces_qss(
             material,
-            illuminated=True,
-            V_app=float(voltage),
+            stack,
+            result.y[: len(grid)],
+            result.y[len(grid) : 2 * len(grid)],
+            result.phi,
+            cross_transmission=1.0,
+            interface_transport_model=FERMI_DIRAC_RICHARDSON,
+            residual_tolerance=interface_qss_tol,
+            fail_on_residual=True,
         )
-        interface_rate = rhs[-4 * material.N_iface_state :]
-        sink = (
-            compute_interface_srh_shared_on_state(
-                state.iface_state,
-                stack,
-                material,
-            )
-            if material.iface_state_shared_occ
-            else compute_interface_srh_on_state(
-                state.iface_state,
-                stack,
-                material,
-            )
+        flux, balance, state_residual, occupancy = _two_sided_interface_evidence(
+            qss, interface_count=interface_count
         )
-        for interface_index in range(material.N_iface_state):
-            base = 4 * interface_index
-            node = material.interface_nodes[interface_index]
-            interface_fluxes.append(-Q * float(sink[base] + sink[base + 2]))
-            interface_flux_residuals.extend(
-                abs(Q * material.dx_cell[node] * value)
-                for value in interface_rate[base : base + 4]
-            )
-        currents.append(current)
-        current_spreads.append(spread)
-        residuals.append(result.residual)
-        acceptances.append(result.acceptance)
+        interface_fluxes.extend(flux)
+        carrier_balance_defects.append(balance)
+        state_residuals.append(state_residual)
+        occupancies.append(occupancy)
+        local_residuals.append(result.interface_local_residual)
 
-    current_array = np.asarray(currents, dtype=float)
-    metrics = compute_metrics(voltages, current_array)
-    current_scale = max(abs(metrics.J_sc), 1.0e-30)
+    current_array = np.asarray(sweep.currents_A_m2, dtype=float)
+    current_scale = max(abs(sweep.metrics.J_sc), 1.0e-30)
+    all_points = (dark, *sweep.points)
+    occupancy_array = np.concatenate(occupancies)
+    calibration_unity = all(
+        defect.calibration_factor == 1.0
+        and defect.iface_state_calibration_factor == 1.0
+        for defect in defects
+    )
     return CellMeasurement.from_mapping(
         {
             "observables": {
                 "interface_flux_A_m2": interface_fluxes,
                 "jv_normalized": current_array / current_scale,
-                "voc_V": metrics.V_oc,
+                "voc_V": sweep.metrics.V_oc,
             },
             "quality": {
-                "all_points_residual_converged": float(
-                    all(item == "residual_converged" for item in acceptances)
+                "all_points_certified": float(dark.certified and sweep.certified),
+                "calibration_factors_unity": float(calibration_unity),
+                "contact_thermodynamics_certified": float(
+                    contact_certificate.certified
                 ),
-                "max_interface_flux_residual_A_m2": max(interface_flux_residuals),
-                "max_current_spread_A_m2": max(current_spreads),
-                "max_residual_per_s": max(residuals),
+                "dark_reference_certified": float(dark.certified),
+                "max_continuity_bound_A_m2": max(
+                    max(
+                        result.electron_continuity_bound_A_m2,
+                        result.hole_continuity_bound_A_m2,
+                    )
+                    for result in all_points
+                ),
+                "max_current_spread_A_m2": max(
+                    result.face_current_spread_A_m2 for result in all_points
+                ),
+                "max_interface_carrier_balance_A_m2": max(carrier_balance_defects),
+                "max_interface_local_residual": max(local_residuals),
+                "max_interface_state_residual_A_m2": max(state_residuals),
+                "max_normalized_cell_residual": max(
+                    result.max_normalized_cell_residual for result in all_points
+                ),
+                "max_poisson_residual": max(
+                    result.poisson_residual for result in all_points
+                ),
+                "occupancy_bounded": float(
+                    np.all((occupancy_array >= 0.0) & (occupancy_array <= 1.0))
+                ),
+                "rebaseline_acknowledged": float(
+                    stack.interface_charge_rebaseline_acknowledged
+                ),
                 "trap_electrostatic_charge_enabled": float(
-                    material.iface_state_charge != 0.0
+                    base_material.iface_state_charge != 0.0
                 ),
-                "voc_bracketed": float(metrics.voc_bracketed),
+                "two_sided_topology_active": float(
+                    dark.interface_topology == TWO_SIDED_TRACE
+                    and all(
+                        result.interface_topology == TWO_SIDED_TRACE
+                        for result in sweep.points
+                    )
+                ),
+                "voc_bracketed": float(sweep.metrics.voc_bracketed),
             },
             "units": {
                 "interface_flux_A_m2": "A m-2",
                 "voc_V": "V",
-                "max_interface_flux_residual_A_m2": "A m-2",
+                "max_continuity_bound_A_m2": "A m-2",
                 "max_current_spread_A_m2": "A m-2",
-                "max_residual_per_s": "s-1",
+                "max_interface_carrier_balance_A_m2": "A m-2",
+                "max_interface_state_residual_A_m2": "A m-2",
             },
             "metadata": {
                 **_protocol_metadata(numerical_protocol),
                 "actual_intervals": len(grid) - 1,
-                "interface_count": material.N_iface_state,
+                "contact_thermodynamics": dataclasses.asdict(contact_certificate),
+                "dark_interface_flux_A_m2": dark_flux,
+                "dark_reference_occupancy": f_eq.tolist(),
+                "dark_reference_state_sha256": content_sha256(
+                    {
+                        "occupancy": f_eq.tolist(),
+                        "phi_V": dark.phi.tolist(),
+                        "state": dark.y.tolist(),
+                    }
+                ),
+                "interface_count": interface_count,
+                "interface_flux_layout": "voltage_major_interface_minor",
+                "source_grid_intervals": point.grid,
+                "tolerance_controls": {
+                    "finite_difference_step": solve_controls["finite_difference_step"],
+                    "newton_residual_tolerance": solve_controls[
+                        "newton_residual_tolerance"
+                    ],
+                    "poisson_tolerance_V": solve_controls["poisson_tolerance_V"],
+                },
                 "voltage_grid_V": voltages.tolist(),
             },
         }

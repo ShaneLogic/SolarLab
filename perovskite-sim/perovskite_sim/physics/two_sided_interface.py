@@ -166,6 +166,8 @@ class TwoSidedMaterialQSSResult:
     normalized_residual: float
     evaluations: int
     transport_model: str
+    capture_flux_m2_s: np.ndarray | None = None
+    occupancy: np.ndarray | None = None
 
 
 def validate_interface_topology(topology: str) -> str:
@@ -557,14 +559,14 @@ def _cross_flux_and_log_derivatives(
     return np.array([cross_n, cross_p]), derivative, one_way_scale
 
 
-def _capture_flux_and_log_jacobian(
+def _shared_trap_occupancy_and_denominator(
     state: np.ndarray,
     physics: TwoSidedInterfacePhysics,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[float, float]:
     velocity_n = float(physics.surface_recombination_velocity_n_m_s)
     velocity_p = float(physics.surface_recombination_velocity_p_m_s)
     if velocity_n == 0.0 and velocity_p == 0.0:
-        return np.zeros(_STATE_SIZE), np.zeros((_STATE_SIZE, _STATE_SIZE))
+        raise ValueError("shared-trap occupancy is undefined without capture")
 
     n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
     p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
@@ -577,6 +579,37 @@ def _capture_flux_and_log_jacobian(
     if denominator <= 0.0 or not math.isfinite(denominator):
         raise FloatingPointError("invalid shared-trap occupancy denominator")
     occupancy = numerator / denominator
+    if not math.isfinite(occupancy) or not 0.0 <= occupancy <= 1.0:
+        raise FloatingPointError("shared-trap occupancy left [0, 1]")
+    return occupancy, denominator
+
+
+def shared_trap_occupancy(
+    state_m3: np.ndarray,
+    physics: TwoSidedInterfacePhysics,
+) -> float:
+    """Return the common electron occupancy of one two-sided interface trap."""
+    state = np.asarray(state_m3, dtype=float)
+    if state.shape != (_STATE_SIZE,) or not np.all(np.isfinite(state)):
+        raise ValueError("state_m3 must contain four finite values")
+    if np.any(state < 0.0):
+        raise ValueError("state_m3 must be non-negative")
+    occupancy, _ = _shared_trap_occupancy_and_denominator(state, physics)
+    return occupancy
+
+
+def _capture_flux_and_log_jacobian(
+    state: np.ndarray,
+    physics: TwoSidedInterfacePhysics,
+) -> tuple[np.ndarray, np.ndarray]:
+    velocity_n = float(physics.surface_recombination_velocity_n_m_s)
+    velocity_p = float(physics.surface_recombination_velocity_p_m_s)
+    if velocity_n == 0.0 and velocity_p == 0.0:
+        return np.zeros(_STATE_SIZE), np.zeros((_STATE_SIZE, _STATE_SIZE))
+
+    n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
+    p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
+    occupancy, denominator = _shared_trap_occupancy_and_denominator(state, physics)
     derivative_occupancy = np.array(
         [
             velocity_n * (1.0 - occupancy) / denominator,
@@ -851,7 +884,15 @@ def solve_material_two_sided_interfaces_qss(
     if interface_count == 0:
         empty = np.zeros(0, dtype=float)
         return TwoSidedMaterialQSSResult(
-            empty, empty, empty, empty, 0.0, 0, model
+            state_m3=empty,
+            bulk_flux_m2_s=empty,
+            cross_flux_m2_s=empty,
+            state_flux_m2_s=empty,
+            normalized_residual=0.0,
+            evaluations=0,
+            transport_model=model,
+            capture_flux_m2_s=empty,
+            occupancy=empty,
         )
     if mat.D_n_node is None or mat.D_p_node is None:
         raise ValueError("two-sided interface transport requires nodal diffusivity")
@@ -871,7 +912,9 @@ def solve_material_two_sided_interfaces_qss(
     state = np.empty(size, dtype=float)
     bulk_flux = np.empty(size, dtype=float)
     cross_flux = np.empty(size, dtype=float)
+    capture_flux = np.empty(size, dtype=float)
     residual = np.empty(size, dtype=float)
+    occupancy = np.empty(interface_count, dtype=float)
     maximum_residual = 0.0
     evaluations = 0
     for index, (left, right) in enumerate(zip(left_nodes, right_nodes)):
@@ -947,7 +990,13 @@ def solve_material_two_sided_interfaces_qss(
         state[base : base + 4] = local.state_m3[right_first]
         bulk_flux[base : base + 4] = local.bulk_flux_m2_s[right_first]
         cross_flux[base : base + 4] = local.cross_flux_m2_s[right_first]
+        capture_flux[base : base + 4] = local.capture_flux_m2_s[right_first]
         residual[base : base + 4] = local.residual_m2_s[right_first]
+        occupancy[index] = (
+            shared_trap_occupancy(local.state_m3, physics)
+            if velocity_n > 0.0 or velocity_p > 0.0
+            else np.nan
+        )
         maximum_residual = max(maximum_residual, local.normalized_residual)
         evaluations += local.evaluations
     return TwoSidedMaterialQSSResult(
@@ -958,6 +1007,8 @@ def solve_material_two_sided_interfaces_qss(
         normalized_residual=maximum_residual,
         evaluations=evaluations,
         transport_model=model,
+        capture_flux_m2_s=capture_flux,
+        occupancy=occupancy,
     )
 
 
@@ -977,6 +1028,7 @@ __all__ = [
     "carrier_balance_and_jacobian",
     "electrostatic_trace_residual_and_jacobian",
     "remove_shared_interface_nodes",
+    "shared_trap_occupancy",
     "solve_electrostatic_traces",
     "solve_material_two_sided_interfaces_qss",
     "solve_two_sided_interface",

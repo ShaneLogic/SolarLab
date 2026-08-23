@@ -17,6 +17,7 @@ from perovskite_sim.physics.two_sided_interface import (
     electrostatic_trace_residual_and_jacobian,
     remove_shared_interface_nodes,
     solve_electrostatic_traces,
+    shared_trap_occupancy,
     solve_two_sided_interface,
 )
 
@@ -316,6 +317,41 @@ def test_local_qss_certifies_conservation_with_shared_trap_capture():
         rtol=0.0,
         atol=max(1.0, float(np.max(np.abs(result.bulk_flux_m2_s))) * 2.0e-9),
     )
+
+    occupancy = shared_trap_occupancy(result.state_m3, physics)
+    assert 0.0 <= occupancy <= 1.0
+
+
+def test_shared_trap_occupancy_is_invariant_to_common_velocity_scaling():
+    state = np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20])
+    physics = _physics(
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    scaled = replace(
+        physics,
+        surface_recombination_velocity_n_m_s=3.0e4,
+        surface_recombination_velocity_p_m_s=5.0e4,
+    )
+
+    assert shared_trap_occupancy(state, scaled) == pytest.approx(
+        shared_trap_occupancy(state, physics),
+        rel=2.0e-16,
+    )
+
+
+def test_shared_trap_occupancy_rejects_undefined_or_negative_state():
+    with pytest.raises(ValueError, match="undefined"):
+        shared_trap_occupancy(np.ones(4), _physics())
+    with pytest.raises(ValueError, match="non-negative"):
+        shared_trap_occupancy(
+            np.array([1.0, -1.0, 1.0, 1.0]),
+            _physics(surface_recombination_velocity_n_m_s=1.0),
+        )
 
 
 def test_homojunction_mirror_reverses_cross_flux_and_trace_state():

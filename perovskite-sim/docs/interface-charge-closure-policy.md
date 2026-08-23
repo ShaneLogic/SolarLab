@@ -12,21 +12,23 @@ The device schema recognizes two values:
 
 ```yaml
 device:
-  interface_charge_closure: off
+  interface_charge_closure: "off"
 ```
 
 and the reserved research intent:
 
 ```yaml
 device:
-  interface_charge_closure: equilibrium_referenced
+  interface_charge_closure: "equilibrium_referenced"
   interface_charge_rebaseline_acknowledged: true
 ```
 
 `off` is the default and preserves the historical material arrays and RHS.
 The acknowledgement records that activating electrostatic trap charge
-invalidates the historical SCAPS calibration. It is not an enable switch:
-all production material assembly and backend experiment routes still reject
+invalidates the historical SCAPS calibration. A charge-off reference config may
+set it while establishing the fresh baseline; doing so changes its semantic
+identity without enabling charge. It is not an enable switch: all production
+material assembly and backend experiment routes still reject
 `equilibrium_referenced` with a `PARKED` capability error.
 
 ## Charge convention
@@ -51,6 +53,23 @@ neutrality.
 The legacy `MaterialArrays.iface_state_charge` scalar is retired. A manually
 constructed non-zero value fails before Poisson rather than depositing charge
 on the shared interface node.
+
+## Charge-off reference lane
+
+`configs/interface_charge_reference.yaml` is the uncalibrated Phase-3
+reference. It uses `semiconductor_work_function` contacts, explicitly records
+the fresh-rebaseline acknowledgement, and removes the historical SCAPS
+de-spike, contact-floor, barrier, and interface calibration factors. It makes
+no SCAPS-parity claim.
+
+The registered `interface-recombination-charge-off` lane uses the two-sided
+trace topology and cancellation-safe quasi-Fermi steady solver. Before
+measuring the illuminated J-V arc, it requires a contact thermodynamic
+certificate and solves a dark reference in the same topology. Cell artifacts
+store the per-interface dark occupancy, dark-state hash, signed capture flux,
+carrier-balance defect, local QSS residual, Poisson residual, continuity
+bound, and current-spread evidence. The 3x3 grid/tolerance certificate is a
+required entry artifact; a partial or failed matrix does not unlock charge.
 
 ## Unlock conditions
 

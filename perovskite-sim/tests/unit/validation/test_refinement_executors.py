@@ -890,55 +890,91 @@ def test_twod_lateral_uniformity_includes_hole_variation():
 
 def test_interface_charge_off_executor_smoke(monkeypatch):
     lane = _lane(options={"V_max_V": 1.0, "voltage_points": 3})
-    monkeypatch.setattr(executors, "_load_stack", lambda *_: object())
+    defect = SimpleNamespace(
+        calibration_factor=1.0,
+        iface_state_calibration_factor=1.0,
+    )
+    stack = SimpleNamespace(
+        interface_charge_closure="off",
+        interface_charge_rebaseline_acknowledged=True,
+        het_recomb_despike=0.0,
+        flat_band_contacts=False,
+        flat_band_metal_contacts=False,
+        contact_phi_B_eV=0.0,
+        interface_defects=(defect,),
+    )
+    monkeypatch.setattr(executors, "_load_stack", lambda *_: stack)
     monkeypatch.setattr(
         executors,
         "build_electrical_grid",
         lambda *_: np.linspace(0.0, 1.0, 3),
     )
-    base_material = SimpleNamespace(te_softness=0.0)
+    monkeypatch.setattr(executors, "build_two_sided_trace_grid", lambda x, _: x)
+    base_material = SimpleNamespace(iface_state_charge=0.0)
     monkeypatch.setattr(executors, "build_material_arrays", lambda *_: base_material)
+    material = SimpleNamespace(iface_qss_left_nodes=(0,))
     monkeypatch.setattr(
         executors,
-        "replace",
-        lambda value, **kwargs: SimpleNamespace(**(vars(value) | kwargs)),
+        "_prepare_two_sided_material",
+        lambda *_: material,
     )
-    material = SimpleNamespace(
-        N_iface_state=1,
-        iface_state_charge=0.0,
-        iface_state_shared_occ=True,
-        interface_nodes=(1,),
-        dx_cell=np.ones(3),
-        te_softness=0.02,
+    contact = ContactThermodynamicCertificate(
+        status="certified",
+        built_in_potential_mode="semiconductor_work_function",
+        tolerance_eV=5.0e-3,
+        fermi_level_span_eV=0.0,
+        potential_mismatch_V=0.0,
+        metal_work_function_mismatch_eV=None,
+        contact_quasi_fermi_levels_eV=(0.0, 0.0, 0.0, 0.0),
+        message="test",
     )
-    monkeypatch.setattr(executors, "_enable_iface_states", lambda _mat: material)
+    monkeypatch.setattr(
+        executors,
+        "require_contact_thermodynamic_certificate",
+        lambda *_: contact,
+    )
     state = StateVec.pack(
         np.ones(3),
         np.ones(3),
         np.ones(3),
-        iface_state=np.ones(4),
     )
-
-    def solve(_grid, _stack, voltage, **_kwargs):
-        return SimpleNamespace(
-            y=state,
-            residual=1.0e-8,
-            acceptance="residual_converged",
-        )
-
-    monkeypatch.setattr(executors, "solve_steady_state", solve)
+    point = SimpleNamespace(
+        y=state,
+        phi=np.zeros(3),
+        certified=True,
+        electron_continuity_bound_A_m2=1.0e-8,
+        hole_continuity_bound_A_m2=2.0e-8,
+        face_current_spread_A_m2=3.0e-8,
+        interface_local_residual=4.0e-9,
+        interface_topology=executors.TWO_SIDED_TRACE,
+        max_normalized_cell_residual=5.0e-9,
+        poisson_residual=6.0e-10,
+    )
+    monkeypatch.setattr(
+        executors, "solve_quasi_fermi_steady_state", lambda *_a, **_k: point
+    )
+    metrics = executors.compute_metrics(
+        np.array([0.0, 0.5, 1.0]),
+        np.array([1.0, 0.0, -1.0]),
+    )
+    sweep = SimpleNamespace(
+        points=(point, point, point),
+        currents_A_m2=np.array([1.0, 0.0, -1.0]),
+        metrics=metrics,
+        certified=True,
+    )
     monkeypatch.setattr(
         executors,
-        "_compute_current_ss_with_spread",
-        lambda _x, _y, _stack, voltage, **_kwargs: (1.0 - 2.0 * voltage, 1e-8),
+        "solve_quasi_fermi_jv_sweep",
+        lambda *_a, **_k: sweep,
+    )
+    qss = SimpleNamespace(
+        capture_flux_m2_s=np.array([2.0, 1.0, 3.0, 4.0]),
+        state_flux_m2_s=np.zeros(4),
+        occupancy=np.array([0.4]),
     )
     monkeypatch.setattr(
-        executors, "assemble_rhs", lambda *_args, **_kwargs: np.zeros(13)
-    )
-    monkeypatch.setattr(
-        executors,
-        "compute_interface_srh_shared_on_state",
-        lambda *_args, **_kwargs: -np.ones(4) * 1.0e10,
+        executors, "solve_material_two_sided_interfaces_qss", lambda *_a, **_k: qss
     )
 
     measurement = executors.run_interface_recombination_charge_off(
@@ -957,10 +993,42 @@ def test_interface_charge_off_executor_smoke(monkeypatch):
         "trap_electrostatic_charge_enabled"
     ].values == (0.0,)
     assert _metric_dict(measurement, quality=True)[
-        "max_interface_flux_residual_A_m2"
+        "max_interface_state_residual_A_m2"
     ].values == (0.0,)
     protocol = json.loads(measurement.metadata_json)["protocol"]
-    assert protocol["settle"]["max_continuity_current_error_A_m2"] == pytest.approx(
-        0.1
+    assert protocol["interface"] == {
+        "charge_closure": "off",
+        "cross_transmission": 1.0,
+        "rebaseline_acknowledged": True,
+        "topology": executors.TWO_SIDED_TRACE,
+        "transport_model": executors.FERMI_DIRAC_RICHARDSON,
+    }
+    assert protocol["solver"]["base_newton_residual_tolerance"] == pytest.approx(4.0e-7)
+
+
+def test_two_sided_interface_evidence_checks_carrier_and_state_balance():
+    result = SimpleNamespace(
+        capture_flux_m2_s=np.array([2.0, 1.0, 3.0, 4.0]),
+        state_flux_m2_s=np.array([1.0, -2.0, 3.0, -4.0]),
+        occupancy=np.array([0.25]),
     )
-    assert "max_current_spread_A_m2" not in protocol["settle"]
+
+    flux, carrier_balance, state_residual, occupancy = (
+        executors._two_sided_interface_evidence(result, interface_count=1)
+    )
+
+    assert flux == pytest.approx([5.0 * executors.Q])
+    assert carrier_balance == pytest.approx(0.0)
+    assert state_residual == pytest.approx(4.0 * executors.Q)
+    assert occupancy == pytest.approx([0.25])
+
+
+def test_two_sided_interface_evidence_rejects_unbounded_occupancy():
+    result = SimpleNamespace(
+        capture_flux_m2_s=np.zeros(4),
+        state_flux_m2_s=np.zeros(4),
+        occupancy=np.array([1.01]),
+    )
+
+    with pytest.raises(RuntimeError, match="occupancy left"):
+        executors._two_sided_interface_evidence(result, interface_count=1)

@@ -367,14 +367,6 @@ class DeviceStack:
                 "interface_charge_rebaseline_acknowledged=true because the "
                 "historical SCAPS calibration is no longer valid"
             )
-        if (
-            self.interface_charge_closure == "off"
-            and self.interface_charge_rebaseline_acknowledged
-        ):
-            raise ValueError(
-                "interface_charge_rebaseline_acknowledged is only valid with "
-                "interface_charge_closure='equilibrium_referenced'"
-            )
         if self.jv_solver_policy not in (
             "general",
             "cancellation_safe_qf_required",
