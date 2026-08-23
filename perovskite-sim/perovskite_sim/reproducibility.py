@@ -107,6 +107,14 @@ def _canonical(value: Any) -> Any:
         # any non-default value remains part of the semantic payload.
         if isinstance(value, MaterialParams) and value.v_th == 1.0e5:
             mapping.pop("v_th", None)
+        if (
+            isinstance(value, MaterialParams)
+            and value.carrier_statistics == "maxwell_boltzmann"
+        ):
+            # The non-degenerate model predates the explicit selector. Its
+            # default must not churn frozen semantic hashes, while an FD
+            # research opt-in remains part of the content address.
+            mapping.pop("carrier_statistics", None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}

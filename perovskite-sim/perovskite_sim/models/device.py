@@ -382,6 +382,20 @@ class DeviceStack:
                 "built_in_potential_mode must be one of "
                 f"{BUILT_IN_POTENTIAL_MODES}, got {mode!r}"
             )
+        fermi_dirac_layers = tuple(
+            layer.name
+            for layer in self.layers
+            if layer.role != "substrate"
+            and layer.params is not None
+            and layer.params.carrier_statistics == "fermi_dirac"
+        )
+        if fermi_dirac_layers and mode != "semiconductor_work_function":
+            raise ValueError(
+                "fermi_dirac carrier statistics require explicit "
+                "built_in_potential_mode='semiconductor_work_function'; "
+                "activated layers: "
+                + ", ".join(fermi_dirac_layers)
+            )
         if not math.isfinite(float(self.V_bi)):
             raise ValueError("V_bi must be finite")
         if mode == "legacy_manual" and float(self.V_bi) < 0.0:
@@ -443,9 +457,9 @@ class DeviceStack:
 
         Unlike the historical :meth:`compute_V_bi`, this physical path is
         fail-closed: both electrical contact layers must provide positive
-        ``chi``, ``Eg``, ``Nc300`` and ``Nv300``. The Maxwell-Boltzmann work
-        function is evaluated at the temperature used by the active physics
-        tier and includes the configured Varshni shift and contact-face
+        ``chi``, ``Eg``, ``Nc300`` and ``Nv300``. The configured carrier
+        statistics are evaluated at the temperature used by the active
+        physics tier and include the configured Varshni shift and contact-face
         grading/doping profile.
         """
         from perovskite_sim.models.mode import resolve_mode
@@ -719,7 +733,7 @@ def _semiconductor_work_function(
     temperature: float,
     use_temperature_scaling: bool,
 ) -> float:
-    """Maxwell-Boltzmann semiconductor work function below vacuum [eV]."""
+    """Semiconductor work function below vacuum [eV]."""
     from perovskite_sim.physics.temperature import eg_at_T, thermal_voltage
 
     if p is None:
@@ -727,6 +741,16 @@ def _semiconductor_work_function(
             "semiconductor_work_function requires material parameters on both "
             "electrical contact layers"
         )
+    if p.carrier_statistics == "fermi_dirac":
+        from perovskite_sim.physics.contacts import (
+            build_semiconductor_contact_state,
+        )
+
+        return build_semiconductor_contact_state(
+            p,
+            temperature_K=temperature,
+            use_temperature_scaling=use_temperature_scaling,
+        ).work_function_eV
     required = {
         "chi": p.chi,
         "Eg": p.Eg,

@@ -61,6 +61,10 @@ from perovskite_sim.solver.numerical_diagnostics import (
 from perovskite_sim.physics.regularization import RHSRegularization
 
 
+class BulkCarrierStatisticsCapabilityError(ValueError):
+    """A stack requests statistics not yet closed by bulk transport."""
+
+
 @dataclass
 class StateVec:
     n: np.ndarray
@@ -846,6 +850,19 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     if len(elec_layers) == 0:
         raise ValueError(
             "stack has no electrical layers (all layers have role:substrate)"
+        )
+    fermi_dirac_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.params is not None
+        and layer.params.carrier_statistics == "fermi_dirac"
+    )
+    if fermi_dirac_layers:
+        raise BulkCarrierStatisticsCapabilityError(
+            "bulk Fermi-Dirac transport closure is not enabled yet; "
+            "contact thermodynamics are available for assessment only. "
+            "Activated layers: "
+            + ", ".join(fermi_dirac_layers)
         )
 
     # Continuous bandgap grading (2026-06). When enabled (and not LEGACY),

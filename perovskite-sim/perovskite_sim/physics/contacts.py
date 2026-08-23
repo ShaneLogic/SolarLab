@@ -63,6 +63,11 @@ from perovskite_sim.constants import Q
 
 if TYPE_CHECKING:
     from perovskite_sim.models.device import DeviceStack
+    from perovskite_sim.models.parameters import MaterialParams
+    from perovskite_sim.physics.statistics import (
+        BulkChargeNeutralityState,
+        CarrierStatistics,
+    )
     from perovskite_sim.solver.mol import MaterialArrays
 
 
@@ -94,6 +99,111 @@ class ContactThermodynamicCertificate:
 
 class ContactThermodynamicError(ValueError):
     """The selected Poisson/contact-reservoir pair lacks a certificate."""
+
+
+@dataclass(frozen=True, slots=True)
+class SemiconductorContactState:
+    """Thermodynamically closed equilibrium state at one contact face."""
+
+    statistics: "CarrierStatistics"
+    electron_affinity_eV: float
+    work_function_eV: float
+    neutrality: "BulkChargeNeutralityState"
+
+    @property
+    def electron_density_m3(self) -> float:
+        return self.neutrality.electron_density_m3
+
+    @property
+    def hole_density_m3(self) -> float:
+        return self.neutrality.hole_density_m3
+
+    @property
+    def reduced_electron_fermi_level(self) -> float:
+        return self.neutrality.reduced_electron_fermi_level
+
+    @property
+    def reduced_hole_fermi_level(self) -> float:
+        return self.neutrality.reduced_hole_fermi_level
+
+
+def build_semiconductor_contact_state(
+    params: "MaterialParams",
+    *,
+    temperature_K: float,
+    use_temperature_scaling: bool,
+) -> SemiconductorContactState:
+    """Build one fully-ionized contact state from a single statistics law.
+
+    The density reservoirs and work function are derived from the same common
+    Fermi level.  This prevents an FD Poisson boundary from being paired with
+    independently constructed Maxwell-Boltzmann carrier reservoirs.
+    """
+    from perovskite_sim.physics.statistics import (
+        solve_fully_ionized_charge_neutrality,
+    )
+    from perovskite_sim.physics.temperature import eg_at_T
+
+    if params is None:
+        raise ValueError(
+            "semiconductor contact state requires material parameters"
+        )
+    required = {
+        "chi": params.chi,
+        "Eg": params.Eg,
+        "Nc300": params.Nc300,
+        "Nv300": params.Nv300,
+    }
+    invalid = [
+        name
+        for name, value in required.items()
+        if value is None
+        or not np.isfinite(float(value))
+        or float(value) <= 0.0
+    ]
+    if invalid:
+        raise ValueError(
+            "semiconductor contact state requires finite positive "
+            + ", ".join(invalid)
+        )
+    temperature = float(temperature_K)
+    if not np.isfinite(temperature) or temperature <= 0.0:
+        raise ValueError("contact temperature must be finite and positive")
+    band_gap = (
+        eg_at_T(
+            float(params.Eg),
+            temperature,
+            float(params.varshni_alpha),
+            float(params.varshni_beta),
+        )
+        if use_temperature_scaling
+        else float(params.Eg)
+    )
+    dos_scale = (
+        (temperature / 300.0) ** 1.5 if use_temperature_scaling else 1.0
+    )
+    neutrality = solve_fully_ionized_charge_neutrality(
+        temperature_K=temperature,
+        band_gap_eV=band_gap,
+        effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
+        effective_valence_dos_m3=float(params.Nv300) * dos_scale,
+        acceptor_density_m3=float(params.N_A),
+        donor_density_m3=float(params.N_D),
+        statistics=params.carrier_statistics,
+    )
+    affinity = float(params.chi)
+    work_function = affinity - (
+        neutrality.thermal_voltage_V
+        * neutrality.reduced_electron_fermi_level
+    )
+    if not np.isfinite(work_function):
+        raise FloatingPointError("semiconductor work function is non-finite")
+    return SemiconductorContactState(
+        statistics=neutrality.statistics,
+        electron_affinity_eV=affinity,
+        work_function_eV=float(work_function),
+        neutrality=neutrality,
+    )
 
 
 def assess_contact_thermodynamics(
@@ -439,7 +549,9 @@ __all__ = [
     "CONTACT_THERMODYNAMIC_TOLERANCE_EV",
     "ContactThermodynamicCertificate",
     "ContactThermodynamicError",
+    "SemiconductorContactState",
     "assess_contact_thermodynamics",
+    "build_semiconductor_contact_state",
     "require_contact_thermodynamic_certificate",
     "selective_contact_flux",
     "apply_selective_contacts",

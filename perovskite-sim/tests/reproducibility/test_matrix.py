@@ -64,6 +64,7 @@ def test_default_thermal_velocity_preserves_frozen_semantics():
         "doping_decay_length",
         "doping_edge",
         "v_th",
+        "carrier_statistics",
     }
     historical_payload = {
         field.name: getattr(baseline, field.name)
@@ -75,6 +76,17 @@ def test_default_thermal_velocity_preserves_frozen_semantics():
     assert semantic_sha256(replace(baseline, v_th=2.0e5)) != (
         semantic_sha256(baseline)
     )
+    mb_with_dos = replace(
+        baseline,
+        Eg=1.124,
+        Nc300=2.8e25,
+        Nv300=1.04e25,
+    )
+    fd_with_dos = replace(
+        mb_with_dos,
+        carrier_statistics="fermi_dirac",
+    )
+    assert semantic_sha256(fd_with_dos) != semantic_sha256(mb_with_dos)
 
 
 def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
@@ -155,6 +167,25 @@ def test_standard_schema_registers_spatial_doping_profile_contract():
     assert set(profile["supported_edges"]) == {"front", "back"}
     assert profile["density_units"] == "m-3"
     assert profile["length_units"] == "m"
+
+
+def test_standard_schema_registers_bulk_carrier_statistics_contract():
+    registry = yaml.safe_load(
+        (ROOT / "reproducibility/schema_registry.yaml").read_text()
+    )
+    statistics = registry["schemas"]["standard-device-v1"][
+        "optional_layer_groups"
+    ]["bulk_carrier_statistics"]
+    assert statistics["default"] == "maxwell_boltzmann"
+    assert set(statistics["supported_modes"]) == {
+        "maxwell_boltzmann",
+        "fermi_dirac",
+    }
+    assert set(statistics["fermi_dirac_required_keys"]) == {
+        "Eg",
+        "Nc300",
+        "Nv300",
+    }
 
 
 def test_p0_patch_and_frozen_files_match_manifest():

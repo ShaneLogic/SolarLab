@@ -28,6 +28,11 @@ schemas:
       - N_A
       - N_D
     optional_layer_groups:
+      bulk_carrier_statistics:
+        selector: carrier_statistics
+        default: maxwell_boltzmann
+        supported_modes: [maxwell_boltzmann, fermi_dirac]
+        fermi_dirac_required_keys: [Eg, Nc300, Nv300]
       spatial_doping_profile:
         activation_keys: [N_A_bulk, N_D_bulk]
         companion_keys:

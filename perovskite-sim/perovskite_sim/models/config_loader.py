@@ -337,6 +337,9 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
         P_lim_neg=_f(layer_cfg.get("P_lim_neg", 1e30)),
         Nc300=float(layer_cfg["Nc300"]) if "Nc300" in layer_cfg else None,
         Nv300=float(layer_cfg["Nv300"]) if "Nv300" in layer_cfg else None,
+        carrier_statistics=layer_cfg.get(
+            "carrier_statistics", "maxwell_boltzmann"
+        ),
         mu_T_gamma=_f(layer_cfg.get("mu_T_gamma", -1.5)),
         E_a_ion=_f(layer_cfg.get("E_a_ion", 0.58)),
         B_rad_T_gamma=_f(layer_cfg.get("B_rad_T_gamma", 0.0)),

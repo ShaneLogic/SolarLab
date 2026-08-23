@@ -1,9 +1,15 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
+import math
 import yaml
 
 from perovskite_sim.constants import Q, K_B, T, V_T  # noqa: F401
+from perovskite_sim.physics.statistics import (
+    CarrierStatistics,
+    FERMI_DIRAC,
+    MAXWELL_BOLTZMANN,
+    normalize_carrier_statistics,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,10 @@ class MaterialParams:
     # Temperature-dependent scaling parameters (all optional, T=300 K default)
     Nc300: float | None = None      # effective conduction-band DOS at 300 K [m⁻³]
     Nv300: float | None = None      # effective valence-band DOS at 300 K [m⁻³]
+    # Bulk carrier statistics.  Maxwell-Boltzmann is the historical/default
+    # constitutive law.  Fermi-Dirac is an explicit research opt-in and
+    # requires physical band-edge DOS data on every activated layer.
+    carrier_statistics: CarrierStatistics = MAXWELL_BOLTZMANN
     mu_T_gamma: float = -1.5        # mobility temperature exponent
     E_a_ion: float = 0.58           # ion activation energy [eV] (Arrhenius)
     # Phase 4b temperature scaling of radiative recombination and bandgap.
@@ -123,6 +133,37 @@ class MaterialParams:
     doping_profile_shape: str | None = None  # currently "gaussian"
     doping_decay_length: float | None = None  # Gaussian 1/e distance [m]
     doping_edge: str = "front"              # "front" | "back"
+
+    def __post_init__(self) -> None:
+        statistics = normalize_carrier_statistics(self.carrier_statistics)
+        object.__setattr__(self, "carrier_statistics", statistics)
+        if statistics != FERMI_DIRAC:
+            return
+        required_positive = {
+            "Eg": self.Eg,
+            "Nc300": self.Nc300,
+            "Nv300": self.Nv300,
+        }
+        invalid = [
+            name
+            for name, value in required_positive.items()
+            if value is None
+            or not math.isfinite(float(value))
+            or float(value) <= 0.0
+        ]
+        if invalid:
+            raise ValueError(
+                "fermi_dirac carrier statistics require finite positive "
+                + ", ".join(invalid)
+            )
+        if not all(
+            math.isfinite(float(value)) and float(value) >= 0.0
+            for value in (self.N_A, self.N_D)
+        ):
+            raise ValueError(
+                "fermi_dirac carrier statistics require finite non-negative "
+                "N_A and N_D"
+            )
 
     @property
     def D_n(self) -> float:

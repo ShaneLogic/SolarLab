@@ -10,10 +10,15 @@ actually activates end-to-end from a standard YAML.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import yaml
 
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
-from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.models.config_loader import (
+    load_device_from_yaml,
+    material_params_from_dict,
+)
+from perovskite_sim.physics.statistics import FERMI_DIRAC, MAXWELL_BOLTZMANN
 from perovskite_sim.solver.mol import build_material_arrays
 
 _BASE = "configs/nip_MAPbI3.yaml"
@@ -83,3 +88,27 @@ def test_no_dos_data_is_bit_identical_even_with_flag(tmp_path):
     x, _ = _build(off)
     np.testing.assert_array_equal(build_material_arrays(x, off).chi,
                                   build_material_arrays(x, on).chi)
+
+
+def test_layer_carrier_statistics_default_and_fd_opt_in_are_strict():
+    cfg = yaml.safe_load(open(_BASE))
+    layer = dict(cfg["layers"][1])
+    assert (
+        material_params_from_dict(layer).carrier_statistics
+        == MAXWELL_BOLTZMANN
+    )
+
+    layer.update(
+        carrier_statistics=" Fermi_Dirac ",
+        Eg=1.6,
+        Nc300=2.8e25,
+        Nv300=1.04e25,
+    )
+    assert material_params_from_dict(layer).carrier_statistics == FERMI_DIRAC
+
+    layer["carrier_statistics"] = "fd"
+    with pytest.raises(ValueError, match="carrier statistics"):
+        material_params_from_dict(layer)
+    layer["carrier_statistics"] = 1
+    with pytest.raises(ValueError, match="must be a string"):
+        material_params_from_dict(layer)
