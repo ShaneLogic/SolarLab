@@ -54,6 +54,24 @@ The legacy `MaterialArrays.iface_state_charge` scalar is retired. A manually
 constructed non-zero value fails before Poisson rather than depositing charge
 on the shared interface node.
 
+## Local charged-Gauss primitive
+
+The research-only two-sided element now exposes an explicit
+`EquilibriumReferencedSheetCharge` contract and evaluates the coupled local
+coordinates
+`(phi_L, phi_R, log n_L, log p_L, log n_R, log p_R)`. Its Gauss row includes
+the signed incremental sheet charge and an analytic
+`d Delta sigma / d log(state)` obtained from the shared SRH occupancy law.
+Central-difference tests cover both the occupancy derivative and the complete
+2x6 electrostatic tangent. Separate positive/negative sheet-charge cases close
+the Gauss law across unequal left/right permittivity to a normalized residual
+below `1e-10`.
+
+This primitive is not a device solve and does not unlock the configuration.
+The charged state is not yet eliminated into the outer quasi-Fermi Poisson
+residual, so using it only after a charge-off Poisson solve would still be
+non-self-consistent and is prohibited.
+
 ## Charge-off reference lane
 
 `configs/interface_charge_reference.yaml` is the uncalibrated Phase-3
@@ -93,7 +111,9 @@ or executable certificates under one frozen source/config/protocol identity:
   charge-off certificate above);
 - complete charge-off interface steady-state grid/tolerance matrix (completed
   in the charge-off certificate above);
-- two-sided Gauss-jump certificate with discontinuous permittivity;
+- local two-sided Gauss jump and analytic sheet-charge tangent with
+  discontinuous permittivity (completed); the device-level outer-coupling
+  certificate remains pending;
 - stored per-interface `f_eq` in the same topology and energy gauge (completed
   for the charge-off reference; the charged lane must consume this identity);
 - occupancy-dependent sheet charge inside the outer Poisson residual and a

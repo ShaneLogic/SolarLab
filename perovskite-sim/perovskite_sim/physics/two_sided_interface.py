@@ -122,6 +122,27 @@ class InterfaceTracePotentials:
 
 
 @dataclass(frozen=True)
+class EquilibriumReferencedSheetCharge:
+    """Research-only incremental interface-charge closure.
+
+    The physical convention is fixed to ``Delta sigma = -q Nt (f - f_eq)``.
+    No trap-character sign is accepted because donor-like and acceptor-like
+    traps have the same equilibrium-referenced increment.
+    """
+
+    equilibrium_occupancy: float
+    trap_density_m2: float
+
+    def __post_init__(self) -> None:
+        occupancy = float(self.equilibrium_occupancy)
+        density = float(self.trap_density_m2)
+        if not math.isfinite(occupancy) or not 0.0 <= occupancy <= 1.0:
+            raise ValueError("equilibrium_occupancy must lie in [0, 1]")
+        if not math.isfinite(density) or density < 0.0:
+            raise ValueError("trap_density_m2 must be finite and non-negative")
+
+
+@dataclass(frozen=True)
 class TwoSidedCarrierBalance:
     """Raw carrier balance and its log-density Jacobian.
 
@@ -137,6 +158,21 @@ class TwoSidedCarrierBalance:
     residual_m2_s: np.ndarray
     jacobian_log_state_m2_s: np.ndarray
     one_way_cross_scale_m2_s: np.ndarray
+
+
+@dataclass(frozen=True)
+class ChargedElectrostaticTraceBalance:
+    """Potential-jump/Gauss balance with occupancy-dependent sheet charge.
+
+    Jacobian columns use ``(phi_L, phi_R, log n_L, log p_L, log n_R,
+    log p_R)`` ordering. The incremental charge is reported separately from
+    any fixed sheet charge already carried by the geometry.
+    """
+
+    occupancy: float
+    incremental_sheet_charge_C_m2: float
+    residual: np.ndarray
+    jacobian_trace_and_log_state: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -598,6 +634,41 @@ def shared_trap_occupancy(
     return occupancy
 
 
+def _shared_trap_occupancy_and_linear_jacobian(
+    state: np.ndarray,
+    physics: TwoSidedInterfacePhysics,
+) -> tuple[float, np.ndarray]:
+    velocity_n = float(physics.surface_recombination_velocity_n_m_s)
+    velocity_p = float(physics.surface_recombination_velocity_p_m_s)
+    occupancy, denominator = _shared_trap_occupancy_and_denominator(state, physics)
+    derivative = np.array(
+        [
+            velocity_n * (1.0 - occupancy) / denominator,
+            -velocity_p * occupancy / denominator,
+            velocity_n * (1.0 - occupancy) / denominator,
+            -velocity_p * occupancy / denominator,
+        ],
+        dtype=float,
+    )
+    return occupancy, derivative
+
+
+def shared_trap_occupancy_and_log_jacobian(
+    state_m3: np.ndarray,
+    physics: TwoSidedInterfacePhysics,
+) -> tuple[float, np.ndarray]:
+    """Return shared occupancy and ``d f / d log(state_m3)``."""
+    state = np.asarray(state_m3, dtype=float)
+    if state.shape != (_STATE_SIZE,) or not np.all(np.isfinite(state)):
+        raise ValueError("state_m3 must contain four finite values")
+    if np.any(state < 0.0):
+        raise ValueError("state_m3 must be non-negative")
+    occupancy, derivative_linear = _shared_trap_occupancy_and_linear_jacobian(
+        state, physics
+    )
+    return occupancy, derivative_linear * state
+
+
 def _capture_flux_and_log_jacobian(
     state: np.ndarray,
     physics: TwoSidedInterfacePhysics,
@@ -609,15 +680,8 @@ def _capture_flux_and_log_jacobian(
 
     n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
     p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
-    occupancy, denominator = _shared_trap_occupancy_and_denominator(state, physics)
-    derivative_occupancy = np.array(
-        [
-            velocity_n * (1.0 - occupancy) / denominator,
-            -velocity_p * occupancy / denominator,
-            velocity_n * (1.0 - occupancy) / denominator,
-            -velocity_p * occupancy / denominator,
-        ],
-        dtype=float,
+    occupancy, derivative_occupancy = (
+        _shared_trap_occupancy_and_linear_jacobian(state, physics)
     )
 
     capture = np.empty(_STATE_SIZE, dtype=float)
@@ -650,6 +714,55 @@ def _capture_flux_and_log_jacobian(
                 + (state[row] + trap_density) * derivative_occupancy[column]
             )
     return capture, jacobian_linear * state[np.newaxis, :]
+
+
+def equilibrium_referenced_electrostatic_trace_balance(
+    trace_and_log_state: np.ndarray,
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    charge: EquilibriumReferencedSheetCharge,
+) -> ChargedElectrostaticTraceBalance:
+    """Evaluate the charged two-sided Gauss law and its analytic tangent.
+
+    This is a local research primitive. It does not enable interface charge in
+    a device solve; the outer Poisson system must consume this residual and
+    tangent explicitly before the closure is self-consistent.
+    """
+    _validate_inputs(geometry, physics, bulk)
+    values = np.asarray(trace_and_log_state, dtype=float)
+    if values.shape != (2 + _STATE_SIZE,) or not np.all(np.isfinite(values)):
+        raise ValueError("trace_and_log_state must contain six finite values")
+    state = np.exp(values[2:])
+    if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
+        raise FloatingPointError("interface trace densities left finite range")
+    occupancy, occupancy_jacobian = shared_trap_occupancy_and_log_jacobian(
+        state, physics
+    )
+    from perovskite_sim.physics.interface_plane import (
+        equilibrium_referenced_interface_trap_charge,
+    )
+
+    incremental_charge = float(
+        equilibrium_referenced_interface_trap_charge(
+            occupancy,
+            charge.equilibrium_occupancy,
+            charge.trap_density_m2,
+        )
+    )
+    residual, trace_jacobian = electrostatic_trace_residual_and_jacobian(
+        values[:2], geometry, bulk
+    )
+    residual[1] -= incremental_charge
+    jacobian = np.zeros((2, 2 + _STATE_SIZE), dtype=float)
+    jacobian[:, :2] = trace_jacobian
+    jacobian[1, 2:] = Q * charge.trap_density_m2 * occupancy_jacobian
+    return ChargedElectrostaticTraceBalance(
+        occupancy=occupancy,
+        incremental_sheet_charge_C_m2=incremental_charge,
+        residual=residual,
+        jacobian_trace_and_log_state=jacobian,
+    )
 
 
 def carrier_balance_and_jacobian(
@@ -1013,7 +1126,9 @@ def solve_material_two_sided_interfaces_qss(
 
 
 __all__ = [
+    "ChargedElectrostaticTraceBalance",
     "DEDUPLICATED_QSS",
+    "EquilibriumReferencedSheetCharge",
     "INTERFACE_TOPOLOGIES",
     "InterfaceTracePotentials",
     "TWO_SIDED_TRACE",
@@ -1027,8 +1142,10 @@ __all__ = [
     "build_two_sided_interface_stencils",
     "carrier_balance_and_jacobian",
     "electrostatic_trace_residual_and_jacobian",
+    "equilibrium_referenced_electrostatic_trace_balance",
     "remove_shared_interface_nodes",
     "shared_trap_occupancy",
+    "shared_trap_occupancy_and_log_jacobian",
     "solve_electrostatic_traces",
     "solve_material_two_sided_interfaces_qss",
     "solve_two_sided_interface",

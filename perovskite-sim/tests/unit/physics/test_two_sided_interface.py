@@ -6,18 +6,21 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from perovskite_sim.constants import EPS_0
+from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.physics.fermi_dirac import fermi_dirac_half
 from perovskite_sim.physics.two_sided_interface import (
+    EquilibriumReferencedSheetCharge,
     TwoSidedBulkState,
     TwoSidedInterfaceGeometry,
     TwoSidedInterfacePhysics,
     build_two_sided_interface_stencils,
     carrier_balance_and_jacobian,
     electrostatic_trace_residual_and_jacobian,
+    equilibrium_referenced_electrostatic_trace_balance,
     remove_shared_interface_nodes,
     solve_electrostatic_traces,
     shared_trap_occupancy,
+    shared_trap_occupancy_and_log_jacobian,
     solve_two_sided_interface,
 )
 
@@ -342,6 +345,198 @@ def test_shared_trap_occupancy_is_invariant_to_common_velocity_scaling():
         shared_trap_occupancy(state, physics),
         rel=2.0e-16,
     )
+
+
+def test_shared_trap_occupancy_log_jacobian_matches_central_difference():
+    state = np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20])
+    physics = _physics(
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    occupancy, analytic = shared_trap_occupancy_and_log_jacobian(state, physics)
+    log_state = np.log(state)
+    step = 1.0e-6
+    finite_difference = np.empty(4)
+    for column in range(4):
+        plus = log_state.copy()
+        minus = log_state.copy()
+        plus[column] += step
+        minus[column] -= step
+        finite_difference[column] = (
+            shared_trap_occupancy(np.exp(plus), physics)
+            - shared_trap_occupancy(np.exp(minus), physics)
+        ) / (2.0 * step)
+
+    assert 0.0 <= occupancy <= 1.0
+    np.testing.assert_allclose(analytic, finite_difference, rtol=2.0e-7, atol=1e-12)
+
+
+def test_equilibrium_referenced_gauss_tangent_matches_central_difference():
+    geometry = _geometry(
+        potential_jump_right_minus_left_V=0.011,
+        fixed_sheet_charge_C_m2=3.0e-6,
+    )
+    physics = _physics(
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    state = np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20])
+    reference = shared_trap_occupancy(
+        state * np.array([0.8, 1.1, 1.2, 0.9]), physics
+    )
+    charge = EquilibriumReferencedSheetCharge(reference, 2.5e16)
+    coordinates = np.concatenate(([0.013, 0.024], np.log(state)))
+    balance = equilibrium_referenced_electrostatic_trace_balance(
+        coordinates, geometry, physics, _bulk(), charge
+    )
+    finite_difference = np.empty((2, 6))
+    for column in range(6):
+        step = 1.0e-7 if column < 2 else 1.0e-6
+        plus = coordinates.copy()
+        minus = coordinates.copy()
+        plus[column] += step
+        minus[column] -= step
+        finite_difference[:, column] = (
+            equilibrium_referenced_electrostatic_trace_balance(
+                plus, geometry, physics, _bulk(), charge
+            ).residual
+            - equilibrium_referenced_electrostatic_trace_balance(
+                minus, geometry, physics, _bulk(), charge
+            ).residual
+        ) / (2.0 * step)
+
+    row_scale = np.maximum(
+        np.max(np.abs(balance.jacobian_trace_and_log_state), axis=1),
+        1.0e-30,
+    )
+    np.testing.assert_allclose(
+        balance.jacobian_trace_and_log_state / row_scale[:, None],
+        finite_difference / row_scale[:, None],
+        rtol=2.0e-7,
+        atol=2.0e-10,
+    )
+
+
+def test_equilibrium_reference_is_exactly_charge_off_and_sign_is_physical():
+    geometry = _geometry()
+    physics = _physics(
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    state = np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20])
+    traces = solve_electrostatic_traces(geometry, _bulk())
+    coordinates = np.concatenate(
+        ([traces.phi_left_V, traces.phi_right_V], np.log(state))
+    )
+    occupancy = shared_trap_occupancy(np.exp(coordinates[2:]), physics)
+    off_residual = electrostatic_trace_residual_and_jacobian(
+        coordinates[:2], geometry, _bulk()
+    )[0]
+    reference = equilibrium_referenced_electrostatic_trace_balance(
+        coordinates,
+        geometry,
+        physics,
+        _bulk(),
+        EquilibriumReferencedSheetCharge(occupancy, 2.5e16),
+    )
+
+    np.testing.assert_array_equal(reference.residual, off_residual)
+    assert reference.incremental_sheet_charge_C_m2 == 0.0
+
+    more_electrons = coordinates.copy()
+    more_electrons[[2, 4]] += 0.2
+    charged = equilibrium_referenced_electrostatic_trace_balance(
+        more_electrons,
+        geometry,
+        physics,
+        _bulk(),
+        EquilibriumReferencedSheetCharge(occupancy, 2.5e16),
+    )
+    assert charged.occupancy > occupancy
+    assert charged.incremental_sheet_charge_C_m2 < 0.0
+    assert abs(charged.incremental_sheet_charge_C_m2) <= Q * 2.5e16
+
+
+@pytest.mark.parametrize(
+    ("log_state_shift", "expected_sign"),
+    [
+        (np.array([0.3, 0.0, 0.3, 0.0]), -1.0),
+        (np.array([0.0, 0.3, 0.0, 0.3]), 1.0),
+    ],
+)
+def test_charged_gauss_law_closes_across_dielectric_jump(
+    log_state_shift,
+    expected_sign,
+):
+    geometry = _geometry(
+        eps_r_left=8.0,
+        eps_r_right=35.0,
+        potential_jump_right_minus_left_V=0.017,
+        fixed_sheet_charge_C_m2=4.0e-6,
+    )
+    physics = _physics(
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    bulk = _bulk()
+    reference_log_state = np.log(np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20]))
+    reference = shared_trap_occupancy(np.exp(reference_log_state), physics)
+    charge = EquilibriumReferencedSheetCharge(reference, 6.0e16)
+    log_state = reference_log_state + log_state_shift
+    probe = equilibrium_referenced_electrostatic_trace_balance(
+        np.concatenate(([0.0, 0.017], log_state)),
+        geometry,
+        physics,
+        bulk,
+        charge,
+    )
+    effective_geometry = replace(
+        geometry,
+        fixed_sheet_charge_C_m2=(
+            geometry.fixed_sheet_charge_C_m2
+            + probe.incremental_sheet_charge_C_m2
+        ),
+    )
+    traces = solve_electrostatic_traces(effective_geometry, bulk)
+    balance = equilibrium_referenced_electrostatic_trace_balance(
+        np.concatenate(([traces.phi_left_V, traces.phi_right_V], log_state)),
+        geometry,
+        physics,
+        bulk,
+        charge,
+    )
+    capacitance_left = EPS_0 * geometry.eps_r_left / geometry.left_distance_m
+    capacitance_right = EPS_0 * geometry.eps_r_right / geometry.right_distance_m
+    total_sheet_charge = (
+        geometry.fixed_sheet_charge_C_m2
+        + balance.incremental_sheet_charge_C_m2
+    )
+    displacement_jump = capacitance_left * (
+        traces.phi_left_V - bulk.phi_left_V
+    ) + capacitance_right * (traces.phi_right_V - bulk.phi_right_V)
+    scale = np.array(
+        [physics.thermal_voltage_V, max(abs(total_sheet_charge), 1.0e-30)]
+    )
+
+    assert np.sign(balance.incremental_sheet_charge_C_m2) == expected_sign
+    assert displacement_jump == pytest.approx(total_sheet_charge, abs=2.0e-18)
+    assert np.max(np.abs(balance.residual / scale)) < 1.0e-10
 
 
 def test_shared_trap_occupancy_rejects_undefined_or_negative_state():
