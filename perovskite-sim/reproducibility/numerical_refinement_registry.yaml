@@ -987,3 +987,45 @@ lanes:
       - This lane certifies only a dark 10 mV two-layer ohmic research slice with one uncharged algebraic interface and four DOS-bounded Fermi-Richardson states.
       - InterfaceDefect, cross-node carrier sampling, dynamic interface states, interface electrostatic charge, mobile ions, selective contacts, two-sided trace geometry, field mobility, photon recycling, and clamp-active operating points remain excluded.
       - The eliminated-interface-state MoL comparison and dense-versus-structured agreement are internal numerical evidence, not external solver validation, experimental validation, SCAPS parity, or a general interface-physics certificate.
+
+  degenerate-pn-equilibrium-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/csi_degenerate_pn_research.yaml
+    config_sha256: 6d707f97bc1632521b5176f55d6e004cc171636e0264e85aa4f20eadafe2dfcb
+    executor: perovskite_sim.validation.degenerate_refinement:run_degenerate_pn_equilibrium_refinement
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values: [40, 80, 160]
+    tolerance:
+      parameter: poisson_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      depletion_width_to_analytic_ratio: {comparison: absolute_linf, limit: 0.002, units: "1"}
+      peak_field_to_analytic_ratio: {comparison: absolute_linf, limit: 0.004, units: "1"}
+      space_charge_balance_relative_error: {comparison: absolute_linf, limit: 0.01, units: "1"}
+    quality_gates:
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      fd_recombination_off_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      max_depletion_approximation_relative_error: {operator: le, limit: 0.05, units: "1"}
+      max_normalized_carrier_rate: {operator: le, limit: 1.0e-12, units: "1"}
+      max_normalized_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_peak_field_approximation_relative_error: {operator: le, limit: 0.05, units: "1"}
+      max_relative_face_current: {operator: le, limit: 1.0e-12, units: "1"}
+      max_space_charge_balance_relative_error: {operator: le, limit: 0.02, units: "1"}
+      newton_iterations: {operator: le, limit: 20.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      left_layer_name: p_plus
+      right_layer_name: n_plus
+      grid_alpha: 3.0
+      base_poisson_tolerance: 1.0e-8
+      max_newton_iterations: 100
+      max_potential_step_V: 0.1
+      max_line_search_backtracks: 20
+    limitations:
+      - This lane certifies only a symmetric, dark, fully-ionized, homogeneous silicon p+/n+ equilibrium with Fermi-Dirac charge and generalized Scharfetter-Gummel transport.
+      - Bulk recombination is explicitly disabled because the repository's historical np-ni^2 laws are Maxwell-Boltzmann closures; illumination, bias, heterojunctions, spatial doping profiles, ions, selective contacts, field mobility, and interface states remain excluded.
+      - The abrupt depletion approximation is an internal analytic quality oracle. This is not external Sentaurus or PC1D validation, experimental validation, or a production J-V/C-V/impedance certificate.

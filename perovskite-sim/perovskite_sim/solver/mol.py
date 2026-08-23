@@ -65,6 +65,12 @@ class BulkCarrierStatisticsCapabilityError(ValueError):
     """A stack requests statistics not yet closed by bulk transport."""
 
 
+DEGENERATE_TRANSPORT_DEFAULT = "default"
+DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF = (
+    "research_recombination_off"
+)
+
+
 @dataclass
 class StateVec:
     n: np.ndarray
@@ -315,6 +321,10 @@ class MaterialArrays:
     # thermionic supplies; NaN marks a layer that did not declare the value.
     N_C_physical: np.ndarray | None = None
     N_V_physical: np.ndarray | None = None
+    # Explicit research bulk-statistics lane. Defaults preserve the historical
+    # MB flux/recombination path and are omitted from carrier_params below.
+    carrier_statistics: str = "maxwell_boltzmann"
+    degenerate_recombination_model: str = "maxwell_boltzmann"
     te_physical_norm: bool = False
     # Physical diffusion-only steric ion flux (review F05). When True, the
     # ion continuity RHS folds the crowding potential into the SG drift
@@ -462,6 +472,21 @@ class MaterialArrays:
             C_n=self.C_n, C_p=self.C_p,
             chi=self.chi, Eg=self.Eg,
         )
+        if self.carrier_statistics == "fermi_dirac":
+            if self.N_C_physical is None or self.N_V_physical is None:
+                raise BulkCarrierStatisticsCapabilityError(
+                    "Fermi-Dirac carrier transport requires physical DOS arrays"
+                )
+            d["carrier_statistics"] = self.carrier_statistics
+            d["degenerate_recombination_model"] = (
+                self.degenerate_recombination_model
+            )
+            d["N_C"] = float(self.N_C_physical[0])
+            d["N_V"] = float(self.N_V_physical[0])
+            d["chi_statistics"] = self.chi_phys
+            d["Eg_statistics"] = self.Eg_phys
+        elif self.degenerate_recombination_model == "off":
+            d["degenerate_recombination_model"] = "off"
         if self.interface_faces:
             d["interface_faces"] = list(self.interface_faces)
             d["A_star_n"] = self.A_star_n
@@ -781,7 +806,12 @@ def _layer_node_masks(x: np.ndarray, layers) -> list[np.ndarray]:
     return [owner == i for i in range(len(layers))]
 
 
-def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
+def build_material_arrays(
+    x: np.ndarray,
+    stack: DeviceStack,
+    *,
+    carrier_statistics_transport: str = DEGENERATE_TRANSPORT_DEFAULT,
+) -> MaterialArrays:
     """Construct the immutable per-experiment material array bundle.
 
     Single source of truth for per-node / per-face material arrays,
@@ -790,6 +820,14 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     path (assemble_rhs, _compute_current, interface recombination).
     """
     stack.require_interface_charge_off(consumer="build_material_arrays")
+    if carrier_statistics_transport not in {
+        DEGENERATE_TRANSPORT_DEFAULT,
+        DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF,
+    }:
+        raise ValueError(
+            "carrier_statistics_transport must be 'default' or "
+            "'research_recombination_off'"
+        )
     N = len(x)
 
     eps_r = np.ones(N)
@@ -857,13 +895,130 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         if layer.params is not None
         and layer.params.carrier_statistics == "fermi_dirac"
     )
-    if fermi_dirac_layers:
+    research_degenerate_transport = (
+        carrier_statistics_transport
+        == DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF
+    )
+    if fermi_dirac_layers and not research_degenerate_transport:
         raise BulkCarrierStatisticsCapabilityError(
             "bulk Fermi-Dirac transport closure is not enabled yet; "
             "contact thermodynamics are available for assessment only. "
             "Activated layers: "
             + ", ".join(fermi_dirac_layers)
         )
+    carrier_statistics_models = {
+        layer.params.carrier_statistics
+        for layer in elec_layers
+        if layer.params is not None
+    }
+    if research_degenerate_transport:
+        if (
+            any(layer.params is None for layer in elec_layers)
+            or len(carrier_statistics_models) != 1
+        ):
+            raise BulkCarrierStatisticsCapabilityError(
+                "research degenerate transport requires material parameters "
+                "and one statistics law on every electrical layer"
+            )
+        reference = elec_layers[0].params
+        homogeneous_fields = ("eps_r", "chi", "Eg", "Nc300", "Nv300")
+        mismatched = [
+            field_name
+            for field_name in homogeneous_fields
+            if any(
+                getattr(layer.params, field_name)
+                != getattr(reference, field_name)
+                for layer in elec_layers[1:]
+            )
+        ]
+        active_interfaces = tuple(
+            pair
+            for pair in electrical_interfaces(stack)
+            if any(float(value) != 0.0 for value in pair)
+        )
+        active_defects = tuple(
+            defect
+            for defect in electrical_interface_defects(stack)
+            if defect is not None
+        )
+        disallowed = []
+        if mismatched:
+            disallowed.append(
+                "non-homojunction fields=" + ",".join(mismatched)
+            )
+        if active_interfaces or active_defects:
+            disallowed.append("interface recombination")
+        if float(stack.Phi) != 0.0:
+            disallowed.append("optical generation")
+        if stack.band_grading:
+            disallowed.append("band grading")
+        if any(
+            layer.params.N_A_bulk is not None
+            or layer.params.N_D_bulk is not None
+            for layer in elec_layers
+        ):
+            disallowed.append("spatial doping profiles")
+        if stack.flat_band_contacts or stack.flat_band_metal_contacts:
+            disallowed.append("calibrated contact floors")
+        if stack.autoloop_generated_lever:
+            disallowed.append("generated material lever")
+        if any(
+            value is not None
+            for value in (
+                stack.S_n_left,
+                stack.S_p_left,
+                stack.S_n_right,
+                stack.S_p_right,
+            )
+        ):
+            disallowed.append("selective contacts")
+        if any(
+            (
+                layer.params.D_ion != 0.0
+                or layer.params.P0 != 0.0
+                or layer.params.D_ion_neg != 0.0
+                or layer.params.P0_neg != 0.0
+            )
+            for layer in elec_layers
+        ):
+            disallowed.append("mobile ions")
+        if any(
+            (
+                layer.params.v_sat_n != 0.0
+                or layer.params.v_sat_p != 0.0
+                or layer.params.pf_gamma_n != 0.0
+                or layer.params.pf_gamma_p != 0.0
+            )
+            for layer in elec_layers
+        ):
+            disallowed.append("field-dependent mobility")
+        if (
+            stack.interface_plane_projection
+            or stack.interface_two_sided
+            or stack.interface_shared_occupancy
+            or stack.interface_plane_closure
+            or stack.interface_plane_generation
+            or stack.interface_tunneling
+            or stack.het_recomb_despike != 0.0
+        ):
+            disallowed.append("advanced interface closure")
+        if stack.built_in_potential_mode != "semiconductor_work_function":
+            disallowed.append("non-thermodynamic contact potential")
+        active_environment_overrides = sorted(
+            name
+            for name, value in os.environ.items()
+            if name.startswith("SOLARLAB_") and value not in {"", "0"}
+        )
+        if active_environment_overrides:
+            disallowed.append(
+                "environment overrides="
+                + ",".join(active_environment_overrides)
+            )
+        if disallowed:
+            raise BulkCarrierStatisticsCapabilityError(
+                "research degenerate transport topology rejected: "
+                + "; ".join(disallowed)
+            )
 
     # Continuous bandgap grading (2026-06). When enabled (and not LEGACY),
     # a graded layer interpolates its per-node chi/Eg — and the Eg-derived
@@ -1569,8 +1724,32 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
     # continuity node.
     ni_sq_L = float(ni_sq[0])
     ni_sq_R = float(ni_sq[-1])
-    n_L, p_L = _equilibrium_np(N_D[0], N_A[0], np.sqrt(ni_sq_L))
-    n_R, p_R = _equilibrium_np(N_D[-1], N_A[-1], np.sqrt(ni_sq_R))
+    if research_degenerate_transport:
+        from perovskite_sim.physics.contacts import (
+            build_semiconductor_contact_state,
+        )
+
+        left_contact = build_semiconductor_contact_state(
+            first,
+            temperature_K=T_dev,
+            use_temperature_scaling=sim_mode.use_temperature_scaling,
+        )
+        right_contact = build_semiconductor_contact_state(
+            last,
+            temperature_K=T_dev,
+            use_temperature_scaling=sim_mode.use_temperature_scaling,
+        )
+        n_L, p_L = (
+            left_contact.electron_density_m3,
+            left_contact.hole_density_m3,
+        )
+        n_R, p_R = (
+            right_contact.electron_density_m3,
+            right_contact.hole_density_m3,
+        )
+    else:
+        n_L, p_L = _equilibrium_np(N_D[0], N_A[0], np.sqrt(ni_sq_L))
+        n_R, p_R = _equilibrium_np(N_D[-1], N_A[-1], np.sqrt(ni_sq_R))
 
     # Flat-band metal-contact reservoir floor (2026-07) — see DeviceStack.
     # flat_band_metal_contacts. The contact carrier reservoir is the LARGER of
@@ -1818,6 +1997,10 @@ def build_material_arrays(x: np.ndarray, stack: DeviceStack) -> MaterialArrays:
         N_V_node=(N_V_node_arr if _te_phys else None),
         N_C_physical=N_C_node_arr,
         N_V_physical=N_V_node_arr,
+        carrier_statistics=next(iter(carrier_statistics_models)),
+        degenerate_recombination_model=(
+            "off" if research_degenerate_transport else "maxwell_boltzmann"
+        ),
         te_physical_norm=_te_phys,
         ion_steric_diffusion_only=_ion_steric_diff,
         ion_steric_shared_site=bool(getattr(stack, "ion_steric_shared_site", True)),

@@ -140,8 +140,53 @@ def carrier_continuity_rhs(
         phi_n = phi + chi
         phi_p = phi + chi + Eg
 
-    J_n = sg_fluxes_n(phi_n, n, dx, D_n, V_T)     # (N-1,)
-    J_p = sg_fluxes_p(phi_p, p, dx, D_p, V_T)     # (N-1,)
+    carrier_statistics = params.get(
+        "carrier_statistics", "maxwell_boltzmann"
+    )
+    if carrier_statistics == "fermi_dirac":
+        from perovskite_sim.physics.degenerate_transport import (
+            generalized_sg_fluxes_n,
+            generalized_sg_fluxes_p,
+        )
+
+        if params.get("degenerate_recombination_model") != "off":
+            raise ValueError(
+                "Fermi-Dirac bulk transport requires an explicit compatible "
+                "recombination closure"
+            )
+        chi_statistics = params.get("chi_statistics", chi)
+        Eg_statistics = params.get("Eg_statistics", Eg)
+        phi_n_statistics = (
+            phi
+            if chi_statistics is None
+            else phi + chi_statistics
+        )
+        phi_p_statistics = (
+            phi
+            if chi_statistics is None
+            else phi + chi_statistics + Eg_statistics
+        )
+        J_n = generalized_sg_fluxes_n(
+            phi_n_statistics,
+            n,
+            dx,
+            np.asarray(D_n) / V_T,
+            V_T,
+            params["N_C"],
+            statistics=carrier_statistics,
+        )
+        J_p = generalized_sg_fluxes_p(
+            phi_p_statistics,
+            p,
+            dx,
+            np.asarray(D_p) / V_T,
+            V_T,
+            params["N_V"],
+            statistics=carrier_statistics,
+        )
+    else:
+        J_n = sg_fluxes_n(phi_n, n, dx, D_n, V_T)     # (N-1,)
+        J_p = sg_fluxes_p(phi_p, p, dx, D_p, V_T)     # (N-1,)
 
     # Thermionic emission capping at heterointerfaces
     interface_faces = params.get("interface_faces")
@@ -312,10 +357,13 @@ def carrier_continuity_rhs(
                 p_rec[_i] = nb_p + (p[_i] - nb_p) * (1.0 - _despike)
     else:
         n_rec, p_rec = n, p
-    R = total_recombination(
-        n_rec, p_rec, params["ni_sq"], params["tau_n"], params["tau_p"],
-        params["n1"], params["p1"], params["B_rad"], params["C_n"], params["C_p"]
-    )
+    if params.get("degenerate_recombination_model") == "off":
+        R = np.zeros_like(n_rec)
+    else:
+        R = total_recombination(
+            n_rec, p_rec, params["ni_sq"], params["tau_n"], params["tau_p"],
+            params["n1"], params["p1"], params["B_rad"], params["C_n"], params["C_p"]
+        )
 
     # Dual-grid cell widths
     dx_cell = np.empty(len(x))

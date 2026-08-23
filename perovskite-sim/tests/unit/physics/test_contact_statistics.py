@@ -9,9 +9,13 @@ import pytest
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.models.device import DeviceStack, LayerSpec
 from perovskite_sim.models.parameters import MaterialParams
-from perovskite_sim.physics.contacts import build_semiconductor_contact_state
+from perovskite_sim.physics.contacts import (
+    build_semiconductor_contact_state,
+    require_contact_thermodynamic_certificate,
+)
 from perovskite_sim.physics.statistics import FERMI_DIRAC, MAXWELL_BOLTZMANN
 from perovskite_sim.solver.mol import (
+    DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF,
     BulkCarrierStatisticsCapabilityError,
     build_material_arrays,
 )
@@ -145,6 +149,36 @@ def test_bulk_solver_fails_closed_until_fd_transport_is_enabled():
         match="bulk Fermi-Dirac transport closure is not enabled",
     ):
         build_material_arrays(grid, stack)
+
+
+def test_fd_contact_certificate_uses_the_fd_inverse_density_law():
+    left = _silicon(acceptors=3.0e25, statistics=FERMI_DIRAC)
+    right = _silicon(donors=3.0e25, statistics=FERMI_DIRAC)
+    stack = DeviceStack(
+        layers=(
+            LayerSpec("p_plus", 100.0e-9, left, "HTL"),
+            LayerSpec("n_plus", 100.0e-9, right, "ETL"),
+        ),
+        Phi=0.0,
+        interfaces=((0.0, 0.0),),
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    grid = multilayer_grid(
+        (Layer(100.0e-9, N=20), Layer(100.0e-9, N=20)),
+        alpha=3.0,
+    )
+    material = build_material_arrays(
+        grid,
+        stack,
+        carrier_statistics_transport=(
+            DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF
+        ),
+    )
+
+    certificate = require_contact_thermodynamic_certificate(stack, material)
+
+    assert certificate.certified
+    assert certificate.fermi_level_span_eV < 1.0e-12
 
 
 @pytest.mark.parametrize(

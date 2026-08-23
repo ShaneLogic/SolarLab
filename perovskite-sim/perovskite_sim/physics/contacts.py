@@ -212,7 +212,7 @@ def assess_contact_thermodynamics(
     *,
     tolerance_eV: float = CONTACT_THERMODYNAMIC_TOLERANCE_EV,
 ) -> ContactThermodynamicCertificate:
-    """Assess whether all four Maxwell-Boltzmann contact QFLs agree.
+    """Assess whether all four statistics-consistent contact QFLs agree.
 
     A zero-bias equilibrium requires the electron and hole reservoir on both
     contacts to share one Fermi level. This check uses the exact densities and
@@ -242,6 +242,11 @@ def assess_contact_thermodynamics(
 
     levels: list[float] = []
     semiconductor_work_functions: list[float] = []
+    carrier_statistics = getattr(
+        mat,
+        "carrier_statistics",
+        "maxwell_boltzmann",
+    )
     nc_values = getattr(mat, "N_C_physical", None)
     nv_values = getattr(mat, "N_V_physical", None)
     chi_values = getattr(mat, "chi_phys", None)
@@ -257,6 +262,10 @@ def assess_contact_thermodynamics(
             (0, 0.0, float(mat.n_L), float(mat.p_L)),
             (-1, float(mat.V_bi_bc), float(mat.n_R), float(mat.p_R)),
         )
+        from perovskite_sim.physics.statistics import (
+            reduced_fermi_level_from_density,
+        )
+
         for index, phi, density_n, density_p in reservoirs:
             values = (nc[index], nv[index], chi[index], eg[index])
             if (
@@ -268,24 +277,24 @@ def assess_contact_thermodynamics(
             ):
                 conduction_edge = -phi - chi[index]
                 valence_edge = conduction_edge - eg[index]
+                eta_n = reduced_fermi_level_from_density(
+                    density_n,
+                    nc[index],
+                    statistics=carrier_statistics,
+                )
+                eta_p = reduced_fermi_level_from_density(
+                    density_p,
+                    nv[index],
+                    statistics=carrier_statistics,
+                )
                 levels.extend((
-                    float(
-                        conduction_edge
-                        + mat.V_T_device * np.log(density_n / nc[index])
-                    ),
-                    float(
-                        valence_edge
-                        - mat.V_T_device * np.log(density_p / nv[index])
-                    ),
+                    float(conduction_edge + mat.V_T_device * eta_n),
+                    float(valence_edge - mat.V_T_device * eta_p),
                 ))
                 semiconductor_work_functions.extend((
+                    float(chi[index] - mat.V_T_device * eta_n),
                     float(
-                        chi[index]
-                        - mat.V_T_device * np.log(density_n / nc[index])
-                    ),
-                    float(
-                        chi[index] + eg[index]
-                        + mat.V_T_device * np.log(density_p / nv[index])
+                        chi[index] + eg[index] + mat.V_T_device * eta_p
                     ),
                 ))
 

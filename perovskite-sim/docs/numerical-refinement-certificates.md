@@ -41,6 +41,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `single-positive-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P/phi 误差、正离子守恒、dense/structured 等价性 |
 | `dual-mobile-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P+/P-/phi 误差、逐离子守恒、shared-site bounds、dense/structured 等价性 |
 | `algebraic-interface-state-dae-transient-v1` | 每层区间 4/8/16 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/interface/phi 误差、interface occupation、clamp-inactive、dense/structured 等价性 |
+| `degenerate-pn-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | FD generalized-SG equilibrium、耗尽宽度、峰值场、空间电荷平衡 |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -89,6 +90,11 @@ clamp-inactive analytic tangent。这里的相邻 bulk/interface 交叉导数不
 可配置 cross-node carrier sampling；后者与 `InterfaceDefect`、dynamic states、
 interface charge、selective contacts 等仍显式排除。每格同时执行 locally
 eliminated-QSS Radau/MoL、dense-central BE 和 structured-analytic BE。
+
+degenerate-PN protocol 固定 symmetric high-doping c-Si p+/n+、dark equilibrium、
+fully-ionized FD charge、semiconductor-work-function ohmic contacts 和
+diffusion-enhanced generalized-SG flux。bulk recombination 明确关闭；解析 abrupt
+depletion width/peak field 只是内部 quality oracle，不是 Sentaurus/PC1D 外部验证。
 
 manifest 保存去重后的完整 protocol document 和 hash。certificate 只有在所有完成 cell 的 protocol 内容自校验通过且 hash 跨 grid/tolerance 一致时才记录 `protocol_sha256`。protocol provenance 不替代 config、source、environment、grid 或 tolerance provenance。
 
@@ -141,6 +147,7 @@ python scripts/run_numerical_refinement.py no-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1 --dry-run
+python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1 --dry-run
 ```
 
 建议固定 BLAS 线程后逐 lane 执行：
@@ -162,6 +169,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1
 ```
 
 先执行一个 cell 并留下可恢复状态：
@@ -176,7 +184,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-当前 registry 共 16 条 lane；十四条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 136 个 content-addressed cell。其内部工作量至少包括：
+当前 registry 共 17 条 lane；十五条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 145 个 content-addressed cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
@@ -210,8 +218,11 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
   locally-eliminated-QSS Radau/MoL、dense-central BE 与 structured-analytic BE；
   分列 carrier/interface/algebraic residual、三类 continuity balance、interface
   occupation/bounds、clamp margin 和 structured work，最细 cell 为 128 步。
+- degenerate PN：9 个 cell 各重建 statistics-aware contacts，并在同一冻结
+  high-doping homojunction 上求 fully-ionized FD-Poisson equilibrium、generalized-SG
+  零流和 abrupt-depletion analytic oracle。
 
-因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 136 个 cell 的真实结果。
+因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 145 个 cell 的真实结果。
 
 `certified` 只表示该冻结代码/config/protocol/environment 下的内部数值收敛。它不等于 SCAPS/IonMonger 外部 solver parity，不等于实验验证，也不证明材料参数或模型闭包唯一正确。
 

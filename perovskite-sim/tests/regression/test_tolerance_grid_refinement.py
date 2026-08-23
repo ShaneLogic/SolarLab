@@ -118,6 +118,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "single-positive-ion-dae-transient-v1",
         "dual-mobile-ion-dae-transient-v1",
         "algebraic-interface-state-dae-transient-v1",
+        "degenerate-pn-equilibrium-v1",
     }
     assert all(
         len(lane.matrix_points) == 9

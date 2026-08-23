@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 2783ec83498501977958ae7939149d8da116aaacea49dcf40f7ad260a98858a7
+  sha256: 149c27248bf9115d332406a8972099367b2556c432a38a7faad0e83a53f93c50
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -67,6 +67,7 @@ benchmarks:
       - tests/reproducibility/test_matrix.py::test_matrix_covers_and_loads_every_shipped_config
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/csi_degenerate_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/cigs_baseline.yaml
       - configs/cigs_graded_notch.yaml
@@ -113,6 +114,7 @@ benchmarks:
       - tests/regression/test_tolerance_grid_refinement.py::test_plan_refinement_is_read_only
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/csi_degenerate_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
@@ -1034,6 +1036,23 @@ benchmarks:
     limitations:
       - the metal-reservoir contact barrier is a calibrated model parameter
       - the 60 mV SCAPS comparison window is not an independent holdout validation
+  degenerate-pn-internal-closure:
+    kind: internal
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: pytest -q tests/unit/physics/test_degenerate_transport.py tests/unit/solver/test_degenerate_equilibrium.py tests/unit/validation/test_degenerate_refinement.py
+    tests:
+      - tests/unit/physics/test_degenerate_transport.py
+      - tests/unit/solver/test_degenerate_equilibrium.py
+      - tests/unit/validation/test_degenerate_refinement.py
+    node_ids:
+      - tests/unit/physics/test_degenerate_transport.py::test_fd_flux_vanishes_for_constant_quasi_fermi_potentials
+      - tests/unit/solver/test_degenerate_equilibrium.py::test_high_doping_fd_pn_equilibrium_closes_across_grid_and_tolerance
+      - tests/unit/validation/test_degenerate_refinement.py::test_registered_executor_real_cell_matches_exact_contract
+    configs: [configs/csi_degenerate_pn_research.yaml]
+    limitations:
+      - the registered path is fully ionized, dark, recombination-off, homojunction-only, and not a production experiment route
+      - the depletion approximation is an internal analytic oracle rather than external Sentaurus or PC1D validation
 
 configs:
   - path: configs/cSi_homojunction.yaml
@@ -1047,6 +1066,15 @@ configs:
       - csi-jv-driver-capability-boundary
       - csi-qf-internal-validation
       - csi-qf-frequency-domain-cv
+      - phase1-refinement-contract
+  - path: configs/csi_degenerate_pn_research.yaml
+    sha256: 6d707f97bc1632521b5176f55d6e004cc171636e0264e85aa4f20eadafe2dfcb
+    semantic_sha256: bb6a036e6359172545d3b0f0cb47e368fe0ef0e4517f71341fda63a35eeee87d
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - degenerate-pn-internal-closure
       - phase1-refinement-contract
   - path: configs/csi_vannijen2025_pn_cv.yaml
     sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad

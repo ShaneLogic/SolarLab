@@ -36,7 +36,7 @@ The verifier fails if any of the following drifts:
   exact blob ID before applying the patch forward. A target that is also a
   placeholder may use an explicitly declared, SHA-256-pinned baseline snapshot,
   whose bytes must still match the patch's full target Git blob ID;
-- the set or byte-level SHA-256 of the 29 shipped YAML configs;
+- the set or byte-level SHA-256 of the shipped YAML configs;
 - the normalized loader semantic hash of any config;
 - the set or byte-level SHA-256 of the AM1.5G and n,k resources;
 - exact n,k CSV-to-manifest stem coverage;
