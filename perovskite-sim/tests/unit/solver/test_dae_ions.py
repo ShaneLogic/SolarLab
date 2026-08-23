@@ -86,6 +86,17 @@ def test_logit_coordinate_fails_closed_at_floating_point_saturation():
         model.physical_fields(coordinate)
 
 
+def test_logit_mapping_is_continuous_at_reference_coordinate():
+    _grid, _stack, _reference, model = _single_ion_problem()
+    reference = model.physical_fields(np.zeros(model.layout.size))[2]
+    coordinate = np.zeros(model.layout.size)
+    coordinate[model.layout.positive_ion_slice] = np.finfo(float).eps**2
+
+    perturbed = model.physical_fields(coordinate)[2]
+
+    np.testing.assert_array_equal(perturbed, reference)
+
+
 def test_consistent_initial_condition_closes_all_rows_and_blocking_inventory():
     grid, _stack, _reference, model = _single_ion_problem(illuminated=True)
     initial = build_single_ion_consistent_initial_condition(model)

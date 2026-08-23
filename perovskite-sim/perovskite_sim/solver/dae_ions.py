@@ -143,11 +143,23 @@ class SinglePositiveIonDAE:
             p = layout.hole_reference_m3 * np.exp(value[layout.hole_slice])
         ion_coordinate = value[layout.positive_ion_slice]
         theta = expit(layout.positive_ion_logit_reference + ion_coordinate)
-        positive_ion = layout.positive_ion_site_limit_m3 * theta
-        positive_ion = np.where(
-            ion_coordinate == 0.0,
-            layout.positive_ion_reference_m3,
-            positive_ion,
+        theta_reference = (
+            layout.positive_ion_reference_m3
+            / layout.positive_ion_site_limit_m3
+        )
+        positive_delta = (
+            theta
+            * (1.0 - theta_reference)
+            * (-np.expm1(-np.maximum(ion_coordinate, 0.0)))
+        )
+        negative_delta = (
+            -theta_reference
+            * (1.0 - theta)
+            * (-np.expm1(np.minimum(ion_coordinate, 0.0)))
+        )
+        positive_ion = layout.positive_ion_reference_m3 + (
+            layout.positive_ion_site_limit_m3
+            * np.where(ion_coordinate >= 0.0, positive_delta, negative_delta)
         )
         phi = np.asarray(value[layout.potential_slice], dtype=float)
         if not np.all(np.isfinite(n)) or not np.all(np.isfinite(p)):
