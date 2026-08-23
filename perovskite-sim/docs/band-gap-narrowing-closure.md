@@ -89,3 +89,27 @@ parameterizations, dopant kinetics, degenerate SRH/Auger/radiative
 recombination, biased transport, heterojunctions, or production experiments.
 Passing the registered matrix establishes internal numerical consistency only;
 it is not external Sentaurus/PC1D validation or experimental validation.
+
+## Internal numerical certificate
+
+The source-clean 3x3 matrix at commit `d34ef7f` completed all nine cells with
+zero failed, missing, or reused cells:
+
+```text
+run ID       bc654a0c76f2d13cdbf64256160fc22b8c7079388aa4babd76998e866e3c3557
+certificate  bc1285a3ef9d42e1e6346aedad33ad3871b5597a7b409f4ea002bf029f024ce6
+protocol     58c95444ae1d35ad819b53a238cc266c18699d984cb700ee28a89db76b992e3a
+```
+
+At the terminal grid/tolerance cell, `Delta E_g` is `0.0216460 eV` across the
+frozen temperature scan while the Varshni-adjusted effective gap decreases
+from `1.141408 eV` at 100 K to `1.102354 eV` at 300 K. Acceptor and donor
+ionized fractions increase from `0.09027/0.19690` to `0.68718/0.90058`.
+
+Terminal grid differences are `2.1641e-4` for normalized integrated charge
+width, `1.1777e-3` for normalized peak field, and `4.9062e-4` for space-charge
+balance. Corresponding terminal tolerance differences are `1.8514e-7`,
+`5.6964e-8`, and `2.7499e-7`. Across the full matrix, maximum normalized
+Poisson residual, carrier rate, relative face current, and charge-balance
+error are `7.3089e-9`, `1.7262e-13`, `2.1785e-13`, and `1.9930e-3`; no solve
+required more than nine Newton iterations.

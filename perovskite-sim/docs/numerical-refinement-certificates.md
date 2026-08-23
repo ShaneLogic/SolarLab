@@ -472,3 +472,32 @@ donor/acceptor equilibrium。低温耗尽区内离化电荷随势变化，因此
 fully-ionized abrupt-depletion analytic oracle。impurity band、Mott transition、
 BGN、dopant kinetics、bias/illumination、recombination、heterojunction、生产
 J-V/C-V/impedance，以及 Sentaurus/PC1D 或实验验证均不在声明内。
+
+### 2026-08-24 incomplete-ionization plus BGN temperature certificate
+
+`incomplete-ionization-bgn-temperature-equilibrium-v1` 在 source commit
+`d34ef7f`、source changes 为空且 BLAS/OpenMP 单线程环境下完成 9/9 cell，
+0 failed、0 missing、0 reused：
+
+- run ID：`bc654a0c76f2d13cdbf64256160fc22b8c7079388aa4babd76998e866e3c3557`；
+- certificate SHA-256：
+  `bc1285a3ef9d42e1e6346aedad33ad3871b5597a7b409f4ea002bf029f024ce6`；
+- protocol SHA-256：
+  `58c95444ae1d35ad819b53a238cc266c18699d984cb700ee28a89db76b992e3a`；
+- terminal grid difference：归一化积分电荷宽度 `2.16407e-4`、归一化峰值场
+  `1.17771e-3`、电荷平衡温度曲线 `4.90624e-4`；对应 terminal tolerance
+  difference 为 `1.85145e-7 / 5.69642e-8 / 2.74987e-7`；
+- BGN、effective-gap 和两条 contact ionization 温度曲线的 terminal grid 与
+  tolerance differences 均为 0；`Delta E_g=0.0216460 eV`，effective gap 从
+  100 K 的 `1.141408 eV` 降至 300 K 的 `1.102354 eV`；
+- 全矩阵最大 normalized Poisson residual `7.30886e-9`、normalized carrier
+  rate `1.72625e-13`、relative face current `2.17846e-13`、space-charge
+  balance error `1.99296e-3`，最多 9 次 Newton iteration；
+- terminal grid 的 acceptor/donor 离化率从 `0.09027/0.19690` 上升到
+  `0.68718/0.90058`，所有 cell 的 BGN chemical-doping law、组合拓扑、接触
+  热力学、载流子正性和离化率有界 gate 均通过。
+
+该证书只认证 dark、homogeneous、recombination-off 的 frozen Slotboom BGN 与
+noninteracting discrete dopant equilibrium 组合。它不覆盖 impurity band、Mott
+transition、其他 BGN 参数化、degenerate recombination、bias/illumination、
+heterojunction、生产实验路由、Sentaurus/PC1D 外部验证或实验验证。

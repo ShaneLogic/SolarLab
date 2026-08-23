@@ -1081,7 +1081,7 @@ benchmarks:
       - the temperature curve and refinement checks are internal evidence rather than external solver or experimental validation
   incomplete-ionization-bgn-internal-closure:
     kind: internal
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: pytest -q tests/unit/physics/test_band_gap_narrowing.py tests/unit/physics/test_contact_statistics.py tests/unit/solver/test_degenerate_equilibrium.py tests/unit/validation/test_bgn_refinement.py
     tests:
@@ -1097,7 +1097,7 @@ benchmarks:
       - tests/unit/validation/test_bgn_refinement.py::test_registered_executor_real_temperature_cell_matches_contract
     configs: [configs/csi_incomplete_ionization_bgn_pn_research.yaml]
     limitations:
-      - the source-clean 3x3 numerical matrix has not yet been executed, so this checkpoint remains partial
+      - the source-clean 3x3 matrix is internally certified at commit d34ef7f with certificate SHA-256 bc1285a3ef9d42e1e6346aedad33ad3871b5597a7b409f4ea002bf029f024ce6
       - the lane is a dark, homogeneous, recombination-off research equilibrium and not a production J-V, C-V, or impedance route
       - Slotboom coefficients are an empirical silicon closure; external Sentaurus or PC1D validation and experimental validation remain absent
 
