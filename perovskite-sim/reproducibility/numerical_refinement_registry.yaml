@@ -493,3 +493,103 @@ lanes:
       - This lane certifies equilibrium-referenced incremental charge, not absolute trap charge, fixed countercharge, or whole-device neutrality.
       - The purpose-built two-layer stack is an internal numerical reference and makes no SCAPS or experimental-validation claim.
       - Only the QF steady-state research API is in scope; transient, impedance, 2-D, and production experiment routes remain parked.
+
+  interface-charge-device-stress-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/interface_charge_research.yaml
+    config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
+    executor: perovskite_sim.validation.interface_charge_stress:run_equilibrium_referenced_interface_charge_stress
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [30, 60]
+    tolerance:
+      parameter: qf_residual_tolerance_factor
+      factors: [1.0, 0.5]
+    observables:
+      stress_current_density_A_m2: {comparison: relative_linf, limit: 0.01, units: A m-2}
+      stress_equilibrium_occupancy: {comparison: absolute_linf, limit: 2.0e-4, units: "1"}
+      stress_interface_occupancy: {comparison: absolute_linf, limit: 2.0e-4, units: "1"}
+      stress_sheet_charge_C_m2: {comparison: pointwise_relative_linf, limit: 0.01, units: C m-2}
+      stress_trace_potential_shift_V: {comparison: absolute_linf, limit: 0.001, units: V}
+    quality_gates:
+      all_points_certified: {operator: eq, limit: 1.0, units: "1"}
+      barrier_shift_charge_sign_consistent: {operator: eq, limit: 1.0, units: "1"}
+      calibration_factors_unity: {operator: eq, limit: 1.0, units: "1"}
+      charge_law_consistent: {operator: eq, limit: 1.0, units: "1"}
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      dark_charge_off_bit_identical: {operator: eq, limit: 1.0, units: "1"}
+      dark_incremental_charge_zero_C_m2: {operator: le, limit: 0.0, units: C m-2}
+      dark_reference_certified: {operator: eq, limit: 1.0, units: "1"}
+      dark_reference_hash_verified: {operator: eq, limit: 1.0, units: "1"}
+      dark_trace_shift_zero_V: {operator: le, limit: 0.0, units: V}
+      grid_geometry_aligned: {operator: eq, limit: 1.0, units: "1"}
+      interface_evidence_aligned: {operator: eq, limit: 1.0, units: "1"}
+      max_charge_fraction_of_one_electron: {operator: le, limit: 1.0, units: "1"}
+      max_continuity_bound_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
+      max_current_spread_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
+      max_interface_local_residual: {operator: le, limit: 1.0e-7, units: "1"}
+      max_normalized_cell_residual: {operator: le, limit: 4.0e-7, units: "1"}
+      max_normalized_gauss_residual: {operator: le, limit: 1.0e-10, units: "1"}
+      max_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_scaled_local_jacobian_condition: {operator: le, limit: 1.0e8, units: "1"}
+      occupancy_bounded: {operator: eq, limit: 1.0, units: "1"}
+      parameter_values_applied: {operator: eq, limit: 1.0, units: "1"}
+      rebaseline_acknowledged: {operator: eq, limit: 1.0, units: "1"}
+      research_charge_closure_active: {operator: eq, limit: 1.0, units: "1"}
+      stress_point_count: {operator: eq, limit: 9.0, units: "1"}
+      two_sided_topology_active: {operator: eq, limit: 1.0, units: "1"}
+      variant_stack_identities_unique: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      base_finite_difference_step: 1.0e-5
+      base_newton_residual_tolerance: 4.0e-7
+      max_newton_iterations: 60
+      base_poisson_tolerance_V: 1.0e-12
+      poisson_max_iterations: 100
+      continuity_tolerance_A_m2: 1.0e-4
+      current_spread_tolerance_A_m2: 1.0e-4
+      poisson_residual_tolerance: 1.0e-8
+      stress_points:
+        - point_id: baseline
+          axis: baseline
+          label: baseline Et=0.55 eV, CBO=-0.10 eV, Nd=0, Nt=1e13 cm-2
+          updates: {}
+        - point_id: et_shallow_0p20
+          axis: trap_energy
+          label: Et=0.20 eV below Ec
+          updates: {interface_defect_E_t_eV: 0.20, interface_defect_target: pvk/etl}
+        - point_id: et_deep_1p20
+          axis: trap_energy
+          label: Et=1.20 eV below Ec
+          updates: {interface_defect_E_t_eV: 1.20, interface_defect_target: pvk/etl}
+        - point_id: cbo_cliff_m0p25
+          axis: conduction_band_offset
+          label: CBO=-0.25 eV
+          updates: {etl_delta_ec_eV: -0.25}
+        - point_id: cbo_spike_p0p20
+          axis: conduction_band_offset
+          label: CBO=+0.20 eV
+          updates: {etl_delta_ec_eV: 0.20}
+        - point_id: nd_1e15
+          axis: etl_doping
+          label: ETL Nd=1e15 cm-3
+          updates: {etl_doping_cm3: 1.0e15}
+        - point_id: nd_1e16
+          axis: etl_doping
+          label: ETL Nd=1e16 cm-3
+          updates: {etl_doping_cm3: 1.0e16}
+        - point_id: nt_1e8
+          axis: trap_density
+          label: Nt=1e8 cm-2
+          updates: {interface_defect_N_t_cm2: 1.0e8, interface_defect_target: pvk/etl}
+        - point_id: nt_1e10
+          axis: trap_density
+          label: Nt=1e10 cm-2
+          updates: {interface_defect_N_t_cm2: 1.0e10, interface_defect_target: pvk/etl}
+    limitations:
+      - This one-factor-at-a-time stress matrix does not establish interaction effects between Et, CBO, Nd, and Nt.
+      - Charge-barrier sign consistency is an internal electrostatic law check, not an experimental trend validation.
+      - The lane remains limited to the purpose-built two-layer stack and equilibrium-referenced incremental charge.
+      - Transient, impedance, 2-D, production experiment routes, absolute trap charge, and whole-device neutrality remain out of scope.

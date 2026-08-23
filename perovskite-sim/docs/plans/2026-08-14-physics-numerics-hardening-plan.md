@@ -613,6 +613,14 @@ biased/light outer Newton iterate
 charge-off/fail-close。下一项为 `E_t/CBO/Nd/Nt` device stress matrix，完成前不扩大
 内部证书的设备适用范围。
 
+同日 device-stress implementation checkpoint：预注册 9 个 one-factor 设备点，
+覆盖 `E_t=0.20/0.55/1.20 eV`、CBO `=-0.25/-0.10/+0.20 eV`、ETL
+`N_D=0/1e15/1e16 cm^-3`、interface `N_t=1e8/1e10/1e13 cm^-2`，外层为
+N30/N60 与 QF factor 1/0.5。`N_D=1e17/1e18 cm^-3` 的探针不能通过当前 local-QSS
+证书，明确保留为 unsupported stress boundary，未放宽门限。直接 N30 与 finest
+N60 preflight 均通过，但在 clean source identity 下完成 4-cell artifact 之前仍只算
+registered candidate。
+
 ## 5. Phase 4：统一 DAE 与材料物理完备性（6 至 12 个月，分决策门推进）
 
 Phase 4 不是一个大 PR。每个子 lane 必须单独立项、默认关闭、建立 analytic limit，并通过 Phase 1 的证书框架。

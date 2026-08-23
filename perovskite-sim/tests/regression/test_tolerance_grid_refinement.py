@@ -112,8 +112,13 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "twod-uniform-limit",
         "interface-recombination-charge-off",
         "interface-charge-equilibrium-referenced-v1",
+        "interface-charge-device-stress-v1",
     }
-    assert all(len(lane.matrix_points) == 9 for lane in registry.lanes)
+    assert all(
+        len(lane.matrix_points) == 9
+        for lane in registry.lanes
+        if lane.lane_id != "interface-charge-device-stress-v1"
+    )
     assert all(lane.definition_sha256 for lane in registry.lanes)
     assert all(lane.observables for lane in registry.lanes)
     assert all(lane.quality_gates for lane in registry.lanes)
@@ -178,6 +183,28 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         pytest.approx(1.0e-10)
     )
     assert charged_quality["dark_incremental_charge_zero_C_m2"].limit == 0.0
+    stress = registry.lane("interface-charge-device-stress-v1")
+    assert stress.grid_values == (30, 60)
+    assert stress.tolerance_factors == (1.0, 0.5)
+    assert len(stress.matrix_points) == 4
+    assert len(stress.options["stress_points"]) == 9
+    assert {
+        point["axis"] for point in stress.options["stress_points"]
+    } == {
+        "baseline",
+        "trap_energy",
+        "conduction_band_offset",
+        "etl_doping",
+        "trap_density",
+    }
+    stress_quality = {gate.metric: gate for gate in stress.quality_gates}
+    assert stress_quality["stress_point_count"].limit == 9.0
+    assert stress_quality[
+        "barrier_shift_charge_sign_consistent"
+    ].limit == 1.0
+    assert stress_quality["max_normalized_gauss_residual"].limit == (
+        pytest.approx(1.0e-10)
+    )
     with pytest.raises(FrozenInstanceError):
         registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
 

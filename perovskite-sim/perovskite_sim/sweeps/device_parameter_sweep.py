@@ -14,12 +14,12 @@ import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from perovskite_sim.constants import V_T
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.models.device import DeviceStack, LayerSpec, electrical_layers
+from perovskite_sim.models.device import DeviceStack, LayerSpec
 from perovskite_sim.models.parameters import MaterialParams
 
 
@@ -695,13 +695,14 @@ def _apply_interface_defect_N_t_cm2(
     *,
     target: str = "pvk/etl",
 ) -> DeviceStack:
-    """Set the SRV on ``DeviceStack.interfaces[k]`` from a SCAPS areal
-    trap density ``N_t [cm^-2]``, preserving ``InterfaceDefect.E_t_eV``.
+    """Set one interface's areal trap density and sigma-consistent SRVs.
 
-    Translates SCAPS kinetic identity using fixed σ=1e-15 cm² and
-    v_th=1e7 cm/s — the standard SCAPS PVK/ETL Gaussian-defect cross-
-    section and thermal velocity. SRV [m/s] = σ_cm2 · v_th_cm_s ·
-    N_t_cm2 · 1e-2. The sweep handler does NOT touch
+    The stored ``InterfaceDefect.N_t_cm2`` is the electrostatic sheet-charge
+    capacity and is updated together with ``DeviceStack.interfaces[k]``.
+    When the baseline defect records its density, the electron and hole SRVs
+    are scaled separately by the same density ratio, preserving asymmetric
+    capture cross sections. Older defects without a recorded density fall
+    back to σ=1e-15 cm² and v_th=1e7 cm/s. The handler does NOT touch
     ``MaterialParams.trap_N_t_interface`` (the Phase 4a layer-trap-
     profile knob driven by the separate ``interface_trap_density_cm3``
     sweep key).
@@ -717,6 +718,8 @@ def _apply_interface_defect_N_t_cm2(
     ``htl/pvk``, ``left`` (first interior interface), ``right`` (last
     interior interface).
     """
+    if not math.isfinite(N_t_cm2_areal) or N_t_cm2_areal <= 0.0:
+        raise ValueError("interface defect N_t_cm2 must be finite and positive")
     n_interfaces = max(0, len(stack.layers) - 1)
     if n_interfaces == 0:
         raise ValueError("DeviceStack has no interior interfaces")
@@ -738,13 +741,18 @@ def _apply_interface_defect_N_t_cm2(
     # is σ-consistent and the base point (N_t == N_t_cm2) reproduces the config
     # baseline exactly. Fall back to the legacy σ=1e-15 derivation only when
     # the base N_t / base SRV are unavailable.
-    base_N_t = float(getattr(defects[k], "N_t_cm2", 0.0) or 0.0)
-    base_srv = float(interfaces[k][0]) if interfaces[k] else 0.0
-    if base_N_t > 0.0 and base_srv > 0.0:
-        srv_m_s = base_srv * (float(N_t_cm2_areal) / base_N_t)
+    defect = defects[k]
+    assert defect is not None
+    base_N_t = float(getattr(defect, "N_t_cm2", 0.0) or 0.0)
+    base_pair = tuple(float(value) for value in interfaces[k])
+    if base_N_t > 0.0 and any(value > 0.0 for value in base_pair):
+        ratio = float(N_t_cm2_areal) / base_N_t
+        swept_pair = tuple(value * ratio for value in base_pair)
     else:
         srv_m_s = 1.0e-15 * 1.0e7 * float(N_t_cm2_areal) * 1.0e-2
-    interfaces[k] = (srv_m_s, srv_m_s)
+        swept_pair = (srv_m_s, srv_m_s)
+    interfaces[k] = swept_pair
+    defects[k] = dataclasses.replace(defect, N_t_cm2=float(N_t_cm2_areal))
     return dataclasses.replace(
         stack,
         interfaces=tuple(interfaces),
@@ -826,7 +834,7 @@ def _resolve_interface_sweep_target(
     raise ValueError(
         f"unknown interface target {target!r} — no adjacent layer pair "
         f"matches roles ({left_alias!r}, {right_alias!r}) in the stack "
-        + str([l.role for l in layers])
+        + str([layer.role for layer in layers])
     )
 
 

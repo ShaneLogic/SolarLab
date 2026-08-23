@@ -213,12 +213,16 @@ source/config/protocol identity:
   the purpose-built research config).
 
 The backend research endpoint and its explicit evidence schema are completed.
-The remaining Phase-3 device work is a broader stress matrix over `E_t`, band
-offset, doping and trap density. The historical three-layer SCAPS-derived
-reference also remains an unresolved illuminated stress case. Transient,
-impedance and 2D require the later unified algebraic-state topology. None of
-these gaps may be hidden by enabling the production material path, and the
-current internal certificate must not be described as external validation.
+The broader `E_t`/CBO/`N_D`/`N_t` work is pre-registered as
+`interface-charge-device-stress-v1`: nine one-factor device variants evaluated
+on N30/N60 and residual factors 1/0.5. Direct N30 and finest N60 preflight
+probes close, but they are not a content-addressed certificate; the clean
+four-cell matrix must run before the supported device envelope is expanded.
+The historical three-layer SCAPS-derived reference also remains an unresolved
+illuminated stress case. Transient, impedance and 2D require the later unified
+algebraic-state topology. None of these gaps may be hidden by enabling the
+production material path, and the current internal certificate must not be
+described as external validation.
 
 The pure sign-law and two-sided electrostatic unit tests are prerequisites;
 the device-level claim is limited to the frozen research config and protocol

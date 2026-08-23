@@ -14,10 +14,12 @@ adds the right handler.
 
 Contract:
 1. ``interface_defect_N_t_cm2`` sweep key modulates
-   ``DeviceStack.interfaces[k]`` SRV using σ=1e-15 cm², v_th=1e7 cm/s
-   (SCAPS PVK/ETL standard). N_t_cm2 → SRV_m_s by
-   SRV = σ_cm2 · v_th_cm_s · N_t_cm2 · 1e-2.
-2. The existing ``InterfaceDefect.E_t_eV`` is preserved.
+   ``DeviceStack.interfaces[k]`` SRV and the stored electrostatic
+   ``InterfaceDefect.N_t_cm2``. Recorded asymmetric base SRVs are scaled by
+   the same density ratio; legacy defects fall back to σ=1e-15 cm² and
+   v_th=1e7 cm/s.
+2. The existing ``InterfaceDefect.E_t_eV`` is preserved and nonpositive or
+   nonfinite densities fail closed.
 3. The legacy Phase 4a ``MaterialParams.trap_N_t_interface`` is NOT
    touched (independent code path).
 4. Target alias: ``pvk/etl``, ``htl/pvk``, ``left``, ``right`` —
@@ -65,6 +67,28 @@ def test_interface_defect_N_t_cm2_preserves_E_t():
     assert swept.interface_defects[-1].E_t_eV == pytest.approx(baseline_E_t)
 
 
+def test_interface_defect_N_t_cm2_updates_charge_capacity_and_preserves_srv_ratio():
+    stack = _baseline_scaps_stack()
+    base_pair = stack.interfaces[-1]
+    base_density = stack.interface_defects[-1].N_t_cm2
+    target_density = base_density * 2.5
+    pt = SweepPoint(
+        "p",
+        "n",
+        "scaled",
+        {"interface_defect_N_t_cm2": target_density},
+    )
+
+    swept = apply_sweep_point(stack, pt)
+
+    assert swept.interface_defects[-1].N_t_cm2 == pytest.approx(target_density)
+    assert swept.interfaces[-1][0] == pytest.approx(base_pair[0] * 2.5)
+    assert swept.interfaces[-1][1] == pytest.approx(base_pair[1] * 2.5)
+    assert swept.interfaces[-1][1] / swept.interfaces[-1][0] == pytest.approx(
+        base_pair[1] / base_pair[0]
+    )
+
+
 def test_interface_defect_N_t_cm2_does_not_touch_phase_4a_trap_profile():
     """The Phase 4a ``MaterialParams.trap_N_t_interface`` (per-layer
     edge-tapered trap profile) is on a separate code path. Sweeping the
@@ -90,6 +114,20 @@ def test_interface_defect_N_t_cm2_raises_when_no_baseline_defect(tmp_path):
     pt = SweepPoint("p", "n", "1e10", {"interface_defect_N_t_cm2": 1.0e10})
     with pytest.raises(ValueError, match="no InterfaceDefect"):
         apply_sweep_point(stripped, pt)
+
+
+@pytest.mark.parametrize("density", [0.0, -1.0, float("nan"), float("inf")])
+def test_interface_defect_N_t_cm2_rejects_nonpositive_or_nonfinite(density):
+    stack = _baseline_scaps_stack()
+    point = SweepPoint(
+        "invalid",
+        "n",
+        "invalid",
+        {"interface_defect_N_t_cm2": density},
+    )
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        apply_sweep_point(stack, point)
 
 
 def test_legacy_interface_trap_density_cm3_still_routes_to_phase_4a():

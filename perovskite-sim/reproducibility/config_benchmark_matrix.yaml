@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 146e7ee4b245b799ffcba50438748fd1a8e90f7cdc8ca2ba84da1c9bb00c8b62
+  sha256: 66cd9c478a5062cd9647fe95a135e8f7e811bdf8b93aa784657f0a467e4518ed
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -159,6 +159,26 @@ benchmarks:
       - dark, biased, and illuminated device solves close through the research-only QF API
       - the source-clean 3x3 matrix is internally certified at commit 23783a3 with certificate SHA-256 1691eaee87208f2494207c94a6f8c484299e34c4ac99c952b6c8df7915cf1921
       - this is an internal numerical reference with no SCAPS or experimental-validation claim
+  interface-charge-device-stress:
+    kind: numerical
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/validation/test_interface_charge_stress.py::test_interface_charge_stress_executor_smoke
+      tests/unit/sweeps/test_interface_defect_sweep.py::test_interface_defect_N_t_cm2_updates_charge_capacity_and_preserves_srv_ratio
+    tests:
+      - tests/unit/validation/test_interface_charge_stress.py
+      - tests/unit/sweeps/test_interface_defect_sweep.py
+    node_ids:
+      - tests/unit/validation/test_interface_charge_stress.py::test_interface_charge_stress_executor_smoke
+      - tests/unit/sweeps/test_interface_defect_sweep.py::test_interface_defect_N_t_cm2_updates_charge_capacity_and_preserves_srv_ratio
+    configs: [configs/interface_charge_research.yaml]
+    limitations:
+      - the real N30 nine-point probe closes, but the registered 2x2 refinement matrix has not yet been executed under a clean source identity
+      - the matrix is one-factor-at-a-time and does not certify Et/CBO/Nd/Nt interactions
+      - the Nd=1e17 and 1e18 cm-3 probes remain outside the certified local-QSS basin
+      - this is internal numerical evidence with no SCAPS or experimental-validation claim
   courtier2019-ionmonger:
     kind: external
     status: pass
@@ -1087,6 +1107,7 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - interface-charge-qf-research
+      - interface-charge-device-stress
   - path: configs/ionmonger_benchmark.yaml
     sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     semantic_sha256: a7e07b83a752dc2836231c7a3605ae32791ac18c19cde2a176d8d6e9c2d4438d
