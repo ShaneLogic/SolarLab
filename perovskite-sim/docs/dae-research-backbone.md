@@ -183,17 +183,75 @@ This certificate establishes internal numerical equivalence and conservation
 for the frozen single-positive-ion topology. It is not an external IonMonger
 validation and does not authorize replacing the production transient.
 
+## Dual-Mobile-Ion Slice
+
+The dual-ion capability extends the coordinate to
+
+```text
+q = (log(n / n_ref), log(p / p_ref), eta_plus, eta_minus, phi).
+```
+
+For the registered shared-site topology, `eta_plus` and `eta_minus` are the two
+log ratios in a three-state softmax over positive ion, negative ion, and
+vacancy. This enforces positive species densities and
+`P_plus + P_minus < P_lim` without post-step clipping. The ion storage block is
+therefore a node-local coupled `2 x 2` mass matrix. Its exact coordinate
+Jacobian and Hessian enter the residual and backward-Euler tangent, including
+the cross-species storage curvature. Positive and negative flux divergence,
+blocking-boundary inventory, motion, charge sign, and site vacancy are reported
+separately.
+
+`solver/dae_dual_ions.py` supplies the residual and consistent initial
+condition; `solver/dae_dual_ion_integrator.py` supplies dense-central and sparse
+structured backward Euler. The analytic CSR tangent includes both ion-face
+flux derivatives, both Poisson charge signs, and the shared-softmax chain. The
+dense and structured paths retain the same physical-density storage equation.
+
+The registered `dual-mobile-ion-dae-transient-v1` lane freezes the same dark
+`10 mV`, `10 ms`, single-layer MAPbI3 slice, now with two blocking mobile-ion
+species and a shared finite-site limit. The negative-ion diffusion, density,
+and site-limit values are synthetic protocol inputs used to exercise the
+topology; they are not attributed to the source IonMonger publication. Each of
+the 9 cells runs strict Radau/MoL plus dense and structured DAE paths.
+
+On 2026-08-24, source-clean commit `2d6b32f` completed all 9 cells under
+single-threaded BLAS/OpenMP:
+
+- run ID `a5e50a9f6522bf1229e1f2b416caf9b5ba914e574ceca2a08a363e1627581cc2`;
+- certificate `15a6a4dcf38db26e2fa78f41ede0d908ad154c267ce86de13eeaf7e6c1f050ab`;
+- protocol `8693f4c2009eb4487978671e5452db8c5ba596e3b365d12c13663a9257af348d`;
+- terminal grid/time-step changes in positive-ion relative error
+  `5.49541e-11 / 9.77153e-11`, negative-ion relative error
+  `4.75563e-12 / 8.46220e-12`, log-density error
+  `2.10299e-9 / 2.48429e-9`, and potential error
+  `5.38119e-11 / 6.40295e-11 V`;
+- all-cell maximum carrier/positive-ion/negative-ion/algebraic normalized
+  residual `3.44856e-10 / 4.67293e-16 / 1.67140e-16 / 8.19753e-16`;
+- positive/negative inventory drift at most `2.95472e-16 / 3.08323e-16`,
+  minimum relative motion `2.94124e-6 / 9.31920e-7`, and minimum shared-site
+  vacancy fraction `0.9799999`;
+- dense/structured trajectory difference at most `5.55112e-16` in log density,
+  zero for both ion densities, and `8.67362e-19 V` in potential; structured
+  RHS-work fraction at most `0.02056` and CSR storage at most `37.43` nonzeros
+  per node.
+
+This is an internal numerical certificate for one dual-ion topology, not
+external IonMonger parity or a production-route certificate.
+
 ## Capability Boundary
 
 The no-ion slice fails closed for any mobile ion. The single-ion slice admits
-one positive mobile ion only and fails closed for a negative mobile ion. Both
-fail closed for physical interfaces, `InterfaceDefect`, dynamic or QSS
-interface states, selective contacts, nonzero structural ion coordinates
-outside their declared topology, and nonpositive carrier references. Both
-support one electrical layer with ohmic contacts only.
+one positive mobile ion only and fails closed for a negative mobile ion. The
+dual-ion slice requires exactly one positive and one negative unit-charge
+species; its registered lane additionally requires the diffusion-only
+shared-site steric law. All three fail closed for physical interfaces,
+`InterfaceDefect`, dynamic or QSS interface states, selective contacts,
+nonzero structural ion coordinates outside their declared topology, and
+nonpositive carrier references. All support one electrical layer with ohmic
+contacts only.
 
 Those exclusions are evidence boundaries, not claims that the omitted physics
-can be added by changing a flag. The no-ion and single-positive-ion certificates
-are separately complete. Any dual-ion or algebraic interface-state topology
+can be added by changing a flag. The no-ion, single-positive-ion, and dual-ion
+certificates are separately complete. Any algebraic interface-state topology
 must use a new capability contract and a new content-addressed lane; it cannot
-inherit either certificate.
+inherit an ion-free or ion-topology certificate.

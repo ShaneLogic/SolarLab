@@ -784,15 +784,18 @@ The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
 Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
 
-Phase 4.1 now includes research-only semi-explicit DAE residuals for two
-single-layer, ohmic, no-interface slices: no ions and one blocking positive ion.
-Both retain Poisson potential as an algebraic coordinate, construct a
+Phase 4.1 now includes research-only semi-explicit DAE residuals for three
+single-layer, ohmic, no-interface slices: no ions, one blocking positive ion,
+and blocking positive/negative ions on a shared finite-site lattice. All retain
+Poisson potential as an algebraic coordinate, construct a
 residual-certified consistent initial condition, and provide dense reference
-and sparse analytic Newton paths. The positive-ion slice adds a finite-site
-shifted-logit coordinate, the production blocking ion flux/tangent, and exact
-dual-cell inventory evidence. The registered 9-cell `no-ion-dae-transient-v1`
-and `single-positive-ion-dae-transient-v1` matrices are internally certified at
-source commits `985a234` and `6e9a274` (certificates `44807d654d...` and
-`7538fa4ace...`). This does not extend the claim to dual ions, interfaces,
-selective contacts, experiments, or backend routes; see
+and sparse analytic Newton paths. The ion slices add bounded coordinates,
+production blocking flux/tangents, per-species dual-cell inventory, and exact
+ion-storage derivatives. The registered 9-cell `no-ion-dae-transient-v1`,
+`single-positive-ion-dae-transient-v1`, and `dual-mobile-ion-dae-transient-v1`
+matrices are internally certified at source commits `985a234`, `6e9a274`, and
+`2d6b32f` (certificates `44807d654d...`, `7538fa4ace...`, and
+`15a6a4dcf...`). The dual lane's negative-ion parameters are synthetic protocol
+inputs. These certificates do not extend the claim to interfaces, algebraic
+interface states, selective contacts, experiments, or backend routes; see
 [the DAE capability boundary](docs/dae-research-backbone.md).
