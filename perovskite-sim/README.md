@@ -787,11 +787,11 @@ The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
 Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
 
-Phase 4.1 now includes four research-only semi-explicit DAE slices. The first
-three are single-layer, ohmic, no-interface topologies: no ions, one blocking
-positive ion, and blocking positive/negative ions on a shared finite-site
-lattice. The fourth is a two-layer, ion-free, charge-off topology with one
-physical interface and four algebraic Fermi-Richardson trace states. All retain
+Phase 4.1 now includes four certified research-only semi-explicit DAE slices.
+The first three are single-layer, ohmic, no-interface topologies: no ions, one
+blocking positive ion, and blocking positive/negative ions on a shared
+finite-site lattice. The fourth is a two-layer, ion-free, charge-off topology
+with one physical interface and four algebraic Fermi-Richardson trace states. All retain
 Poisson potential as an algebraic coordinate, construct a
 residual-certified consistent initial condition, and provide dense reference
 and sparse analytic Newton paths. The ion slices add bounded coordinates,
@@ -807,6 +807,14 @@ does not include `InterfaceDefect`, configurable cross-node carrier sampling,
 dynamic/charged interface states, ions, selective contacts, field mobility,
 photon recycling, clamp-active points, experiments, or backend routes; see
 [the DAE capability boundary](docs/dae-research-backbone.md).
+
+A fifth `INTERNAL_TESTED` topology checkpoint now combines one blocking
+positive ion with the same four algebraic interface traces in a two-layer,
+single-interface, charge-off system. It separates carrier, ion, interface, and
+Poisson residuals and certifies a deterministic consistent state plus exact
+storage/boundary/ion-aware-Poisson Jacobian blocks. It has not yet acquired a
+time-discrete structured solver or content-addressed refinement certificate,
+so it does not inherit any of the four certificates above.
 
 Phase 4.3 adds a separate, research-only energy-distributed bulk-trap
 equilibrium closure. A strict standard-SI schema defines integrated trap

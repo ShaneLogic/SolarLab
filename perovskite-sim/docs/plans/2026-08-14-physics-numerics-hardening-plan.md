@@ -722,6 +722,20 @@ clamp-inactive、uncharged、single-interface research topology gate；它不认
 selective contacts、field mobility、photon recycling 或生产 route，也不替换默认
 MoL。P4.1 下一步应先选择并预注册一个新的组合拓扑，而不是扩大本证书措辞。
 
+第十一个 checkpoint 已选择并实现首个组合 residual topology：两层、单界面、
+单正离子、blocking ion boundaries、四个 algebraic Fermi-Richardson trace states、
+charge-off 和 ohmic contacts。状态为
+`(log n, log p, logit(P/P_lim), 4 interface logits, phi)`；载流子、离子、
+界面与 Poisson residual 分列，Poisson 显式包含 `P-P0`，离子库存按 dual-cell
+离散不变量记录。consistent projection 先解 ion-aware Poisson，再解局域 QSS
+interface states；`dF/d(qdot)` 和 boundary/ion-aware Poisson `dF/dq` 已与独立
+central stencil 对齐。旧 single-ion 与 ion-free interface builders 仍拒绝该组合。
+本 checkpoint 只到 `INTERNAL_TESTED` topology contract；下一 checkpoint 必须加入
+physical-density backward Euler 与完整 structured analytic tangent，之后才能预注册
+新的 content-addressed matrix。`InterfaceDefect`、cross-node sampling、interface
+charge、dual ions、dynamic/two-sided states、selective contacts、field mobility、
+photon recycling 与 production route 均继续 fail-close。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。

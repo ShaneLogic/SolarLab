@@ -298,6 +298,39 @@ for that frozen algebraic-interface topology. It is not a production transient
 certificate, external solver validation, SCAPS parity, or a general interface
 physics certificate.
 
+## Single-Ion Algebraic-Interface Topology
+
+The fifth checkpoint selects the first combined topology instead of widening
+either earlier certificate. Its coordinate is
+
+```text
+q = (log(n / n_ref), log(p / p_ref), logit(P / P_lim),
+     eta_n1s, eta_p1s, eta_n2s, eta_p2s, phi).
+```
+
+`solver/dae_ion_interface_states.py` combines two electrical layers, one
+positive mobile ion active at every node, blocking ion boundaries, one
+uncharged physical interface, four algebraic Fermi-Richardson trace densities,
+and ohmic carrier contacts. The residual reports carrier, positive-ion,
+interface-state, and Poisson rows separately. It also records the dual-cell
+ion-inventory residual and uses the production `assemble_rhs` path with the
+same explicit interface response that defines the four algebraic balances.
+
+The consistent projection pins carrier reservoirs, solves Poisson with
+`P - P0`, then eliminates the four local trace densities. Exact
+`dF/d(qdot)` includes physical carrier and finite-site ion storage, while the
+first state tangent covers carrier boundaries and the ion-aware Poisson block.
+Independent central stencils verify both analytic blocks. Interface/transport
+state derivatives, physical-density backward Euler, sparse Newton, and a
+content-addressed refinement matrix are deliberately subsequent checkpoints;
+this topology checkpoint is `INTERNAL_TESTED`, not `INTERNAL_CERTIFIED`.
+
+The combined slice fails closed for dual ions, `InterfaceDefect`, configurable
+cross-node sampling, interface charge, dynamic or two-sided interface states,
+selective contacts, field mobility, photon recycling, and heterojunction
+de-spiking. The two older builders continue to reject the combined stack, so
+no prior certificate is silently reused.
+
 ## Capability Boundary
 
 The no-ion slice fails closed for any mobile ion. The single-ion slice admits
@@ -309,10 +342,10 @@ shared-site steric law. These three slices fail closed for physical interfaces,
 structural ion coordinates outside their declared topology, and nonpositive
 carrier references. They support one electrical layer with ohmic contacts only.
 
-The algebraic-interface slice instead requires exactly two electrical layers,
-one physical interface, four DOS-bounded Fermi-Richardson algebraic states,
-ohmic contacts, charge-off electrostatics, and inactive clamps. It fails closed
-for `InterfaceDefect`, configurable cross-node carrier sampling, dynamic
+The ion-free algebraic-interface slice instead requires exactly two electrical
+layers, one physical interface, four DOS-bounded Fermi-Richardson algebraic
+states, ohmic contacts, charge-off electrostatics, and inactive clamps. It
+fails closed for `InterfaceDefect`, configurable cross-node carrier sampling, dynamic
 interface states, interface charge, two-sided trace geometry, mobile ions,
 selective contacts, field-dependent mobility, photon recycling, and clamp-active
 operating points.
@@ -320,6 +353,7 @@ operating points.
 Those exclusions are evidence boundaries, not claims that the omitted physics
 can be added by changing a flag. The no-ion, single-positive-ion, dual-ion, and
 algebraic-interface certificates are separately complete only for their frozen
-topologies. Any combined ion/interface, charged-interface, `InterfaceDefect`, or
-production-route topology needs a new capability contract and a new content-
-addressed lane; it cannot inherit one of these certificates.
+topologies. The new combined residual has its own capability contract but no
+time-discrete or content-addressed certificate yet. Charged-interface,
+`InterfaceDefect`, dual-ion/interface, and production-route topologies still
+need separate contracts and lanes; none can inherit an earlier certificate.
