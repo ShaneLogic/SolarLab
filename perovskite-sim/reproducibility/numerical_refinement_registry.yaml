@@ -576,10 +576,10 @@ lanes:
           axis: etl_doping
           label: ETL Nd=1e15 cm-3
           updates: {etl_doping_cm3: 1.0e15}
-        - point_id: nd_1e16
+        - point_id: nd_5e15
           axis: etl_doping
-          label: ETL Nd=1e16 cm-3
-          updates: {etl_doping_cm3: 1.0e16}
+          label: ETL Nd=5e15 cm-3
+          updates: {etl_doping_cm3: 5.0e15}
         - point_id: nt_1e8
           axis: trap_density
           label: Nt=1e8 cm-2
