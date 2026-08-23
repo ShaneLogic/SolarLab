@@ -27,6 +27,16 @@ from perovskite_sim.models.device import InterfaceDefect
 from perovskite_sim.solver.mol import build_material_arrays
 
 
+def _stack_with_cross_node_defect(stack):
+    defects = list(stack.interface_defects)
+    defects.extend([None] * (len(stack.interfaces) - len(defects)))
+    defects[-1] = InterfaceDefect(
+        E_t_eV=0.8,
+        calibration_factor=1.0e-10,
+    )
+    return replace(stack, interface_defects=tuple(defects))
+
+
 @pytest.fixture(scope="module")
 def comparison_fixture():
     stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
@@ -92,9 +102,12 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
         "analytic_sg_field_mobility_transport"
     )
     assert rebuilt.reaction_linearization == (
-        "analytic_bulk_local_interface_selective_contact"
+        "analytic_bulk_local_cross_node_interface_selective_contact"
     )
-    assert rebuilt.schema_version.endswith("-v6")
+    assert rebuilt.interface_clamp_linearization == (
+        "positive_branch_stencil_certified"
+    )
+    assert rebuilt.schema_version.endswith("-v7")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -113,6 +126,8 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         replace(protocol, column_relevance_floor_relative=1.01)
     with pytest.raises(ValueError, match="positive"):
         replace(protocol, max_rate_jacobian_column_relative_error=0.0)
+    with pytest.raises(ValueError, match="interface clamp"):
+        replace(protocol, interface_clamp_linearization="allow_generation")
     with pytest.raises(ValueError, match="positive"):
         replace(
             protocol,
@@ -476,6 +491,10 @@ def test_analytic_interface_reaction_is_local_and_matches_independent_stencil(
     assert reaction.surface_recombination_rate_m2_s.shape == (
         len(reaction.interface_nodes),
     )
+    assert reaction.electron_evaluation_nodes == reaction.interface_nodes
+    assert reaction.hole_evaluation_nodes == reaction.interface_nodes
+    assert not reaction.cross_node_interface_indices
+    assert reaction.minimum_cross_node_clamp_margin_m2_s is None
     assert comparison.passed
     assert comparison.max_group_normalized_error < 1.0e-6
     for species in ("positive_ion", "negative_ion"):
@@ -514,6 +533,68 @@ def test_analytic_interface_reaction_is_local_and_matches_independent_stencil(
             assert actual_rows <= expected_rows
             nonzero_carrier_columns += bool(actual_rows)
     assert nonzero_carrier_columns > 0
+
+
+def test_analytic_interface_reaction_uses_cross_node_columns_and_sink_rows(
+    comparison_fixture,
+):
+    stack, x, _mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    defect_stack = _stack_with_cross_node_defect(stack)
+    defect_mat = build_material_arrays(x, defect_stack)
+    reaction = (
+        analytic_reaction
+        .build_ion_aware_analytic_interface_reaction_linearization(
+            x,
+            defect_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            defect_mat,
+            result.reference.coordinate_layout,
+            potential_at_operating_point_V=(
+                result.poisson_sensitivity.potential_at_operating_point_V
+            ),
+            state_steps=result.poisson_sensitivity.state_steps,
+        )
+    )
+    layout = result.reference.coordinate_layout
+    interface_index = len(reaction.interface_nodes) - 1
+    sink_node = reaction.interface_nodes[interface_index]
+    electron_node = reaction.electron_evaluation_nodes[interface_index]
+    hole_node = reaction.hole_evaluation_nodes[interface_index]
+
+    assert reaction.cross_node_interface_indices == (interface_index,)
+    assert electron_node == sink_node + 1
+    assert hole_node == sink_node - 1
+    assert reaction.minimum_cross_node_clamp_margin_m2_s > 0.0
+    np.testing.assert_allclose(
+        reaction.rate_jacobian,
+        reaction.complex_step_rate_jacobian,
+        rtol=2.0e-10,
+        atol=0.0,
+    )
+
+    coordinate_by_state_index = {
+        state_index: column
+        for column, state_index in enumerate(layout.state_indices)
+    }
+    row_by_state_index = {
+        state_index: row
+        for row, state_index in enumerate(layout.state_indices)
+    }
+    target_rows = {
+        row_by_state_index[state_index]
+        for state_index in (sink_node, layout.n_nodes + sink_node)
+    }
+    for state_index in (
+        electron_node,
+        layout.n_nodes + hole_node,
+    ):
+        column = coordinate_by_state_index[state_index]
+        assert set(np.flatnonzero(reaction.rate_jacobian[:, column])) == (
+            target_rows
+        )
 
 
 def test_analytic_selective_contact_block_covers_all_four_sign_conventions(
@@ -992,7 +1073,7 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
                     *mat.interface_eval_node_n[1:],
                 )
             },
-            "cross-node interface sampling",
+            "requires a declared InterfaceDefect",
         ),
     ):
         with pytest.raises(
@@ -1015,7 +1096,7 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
     )
     with pytest.raises(
         analytic_reaction.IonAwareAnalyticReactionCapabilityError,
-        match="declared interface defects",
+        match="not represented by cross-node material sampling",
     ):
         build(
             x,
@@ -1023,6 +1104,92 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
             dc_state.y,
             impedance_protocol.V_dc,
             mat,
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    defect_stack = _stack_with_cross_node_defect(stack)
+    defect_mat = build_material_arrays(x, defect_stack)
+    monkeypatch.setenv("SOLARLAB_IFACE_ALLOW_GEN", "1")
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="SOLARLAB_IFACE_ALLOW_GEN",
+    ):
+        build(
+            x,
+            defect_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            defect_mat,
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+    monkeypatch.delenv("SOLARLAB_IFACE_ALLOW_GEN")
+
+    cross_index = len(defect_mat.interface_nodes) - 1
+    electron_node = defect_mat.interface_eval_node_n[cross_index]
+    hole_node = defect_mat.interface_eval_node_p[cross_index]
+    negative_state = np.asarray(dc_state.y, dtype=float).copy()
+    negative_state[electron_node] = 1.0
+    negative_state[x.size + hole_node] = 1.0
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="clamp must be inactive",
+    ):
+        build(
+            x,
+            defect_stack,
+            negative_state,
+            impedance_protocol.V_dc,
+            defect_mat,
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    zero_state = np.asarray(dc_state.y, dtype=float).copy()
+    zero_state[electron_node] = 1.0
+    zero_state[x.size + hole_node] = (
+        defect_mat.interface_ni_sq_eff[cross_index]
+    )
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="clamp must be inactive",
+    ):
+        build(
+            x,
+            defect_stack,
+            zero_state,
+            impedance_protocol.V_dc,
+            defect_mat,
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    coordinate_by_state_index = {
+        state_index: column
+        for column, state_index in enumerate(
+            result.reference.coordinate_layout.state_indices
+        )
+    }
+    electron_step = result.poisson_sensitivity.state_steps[
+        coordinate_by_state_index[electron_node]
+    ]
+    crossing_state = np.asarray(dc_state.y, dtype=float).copy()
+    crossing_state[electron_node] = 1.0
+    crossing_state[x.size + hole_node] = (
+        defect_mat.interface_ni_sq_eff[cross_index]
+        * float(np.exp(0.5 * electron_step))
+    )
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="central stencil crosses",
+    ):
+        build(
+            x,
+            defect_stack,
+            crossing_state,
+            impedance_protocol.V_dc,
+            defect_mat,
             result.reference.coordinate_layout,
             **kwargs,
         )

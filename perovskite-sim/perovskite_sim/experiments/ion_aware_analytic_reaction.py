@@ -54,9 +54,13 @@ class IonAwareAnalyticBulkReactionLinearization:
 
 @dataclass(frozen=True, slots=True)
 class IonAwareAnalyticInterfaceReactionLinearization:
-    """Defect-free, single-node interface SRH rate derivatives."""
+    """Local and clamp-inactive cross-node interface-SRH derivatives."""
 
     interface_nodes: tuple[int, ...]
+    electron_evaluation_nodes: tuple[int, ...]
+    hole_evaluation_nodes: tuple[int, ...]
+    cross_node_interface_indices: tuple[int, ...]
+    minimum_cross_node_clamp_margin_m2_s: float | None
     surface_recombination_rate_m2_s: np.ndarray
     electron_density_derivative_m_s: np.ndarray
     hole_density_derivative_m_s: np.ndarray
@@ -273,7 +277,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     potential_at_operating_point_V: np.ndarray,
     state_steps: np.ndarray,
 ) -> IonAwareAnalyticInterfaceReactionLinearization:
-    """Assemble smooth, local interface-SRH tangents in log coordinates."""
+    """Assemble smooth interface-SRH tangents in log coordinates."""
 
     grid = np.asarray(x, dtype=float)
     state = np.asarray(base_state, dtype=float)
@@ -333,10 +337,6 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         raise IonAwareAnalyticReactionCapabilityError(
             "electrical interface topology and material nodes are not aligned"
         )
-    if any(defect is not None for defect in defects):
-        raise IonAwareAnalyticReactionCapabilityError(
-            "declared interface defects require an unsupported interface tangent"
-        )
     if any(node < 0 or node >= grid.size for node in nodes):
         raise IonAwareAnalyticReactionCapabilityError(
             "interface node lies outside the electrical grid"
@@ -379,9 +379,35 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             nodes,
         )
     )
-    if eval_n != nodes or eval_p != nodes:
+    if any(
+        value < 0 or value >= grid.size
+        for value in (*eval_n, *eval_p)
+    ):
         raise IonAwareAnalyticReactionCapabilityError(
-            "cross-node interface sampling has no declared analytic tangent"
+            "interface evaluation node lies outside the electrical grid"
+        )
+    cross_node_indices: list[int] = []
+    for index, (node, n_node, p_node, defect) in enumerate(
+        zip(nodes, eval_n, eval_p, defects, strict=True)
+    ):
+        if defect is None and (n_node != node or p_node != node):
+            raise IonAwareAnalyticReactionCapabilityError(
+                "cross-node interface sampling requires a declared InterfaceDefect"
+            )
+        if defect is not None and (n_node == node or p_node == node):
+            raise IonAwareAnalyticReactionCapabilityError(
+                "declared InterfaceDefect is not represented by cross-node "
+                "material sampling"
+            )
+        if defect is not None:
+            cross_node_indices.append(index)
+    if (
+        cross_node_indices
+        and os.environ.get("SOLARLAB_IFACE_ALLOW_GEN", "") == "1"
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "clamp-inactive cross-node interface tangents require "
+            "SOLARLAB_IFACE_ALLOW_GEN to remain disabled"
         )
     ni_sq_eff = tuple(
         float(value)
@@ -424,6 +450,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     surface_rate = np.zeros(count, dtype=float)
     electron_derivative = np.zeros(count, dtype=float)
     hole_derivative = np.zeros(count, dtype=float)
+    minimum_cross_node_clamp_margin = np.inf
     coordinate_by_state_index = {
         state_index: column
         for column, state_index in enumerate(layout.state_indices)
@@ -437,8 +464,8 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         zip(nodes, interfaces, strict=True)
     ):
         dx_cell = float(material.dx_cell[node])
-        n_value = float(n[node])
-        p_value = float(p[node])
+        n_value = float(n[eval_n[index]])
+        p_value = float(p[eval_p[index]])
         n1 = float(material.interface_n1[index])
         p1 = float(material.interface_p1[index])
         v_n = float(velocities[0]) * calibration[index]
@@ -455,7 +482,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             or v_p < 0.0
         ):
             raise IonAwareAnalyticReactionCapabilityError(
-                "local interface SRH inputs must be finite and physically admissible"
+                "interface SRH inputs must be finite and physically admissible"
             )
         if v_n > 0.0 and v_p > 0.0:
             denominator = interface_srh_denominator(
@@ -488,6 +515,17 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             raise IonAwareAnalyticReactionCapabilityError(
                 "analytic interface-reaction formula produced a non-finite block"
             )
+        is_cross_node = index in cross_node_indices
+        if is_cross_node:
+            if float(derivatives.rate) <= 0.0:
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "cross-node interface clamp must be inactive at the "
+                    "operating point (raw R_s > 0)"
+                )
+            minimum_cross_node_clamp_margin = min(
+                minimum_cross_node_clamp_margin,
+                float(derivatives.rate),
+            )
         surface_rate[index] = float(derivatives.rate)
         electron_derivative[index] = float(
             derivatives.electron_density_derivative
@@ -498,8 +536,18 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             for state_index in (node, grid.size + node)
         )
         for species, state_index, density, density_derivative in (
-            ("electron", node, n_value, electron_derivative[index]),
-            ("hole", grid.size + node, p_value, hole_derivative[index]),
+            (
+                "electron",
+                eval_n[index],
+                n_value,
+                electron_derivative[index],
+            ),
+            (
+                "hole",
+                grid.size + eval_p[index],
+                p_value,
+                hole_derivative[index],
+            ),
         ):
             column = coordinate_by_state_index.get(state_index)
             if column is None:
@@ -518,25 +566,37 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             else:
                 p_plus *= float(np.exp(step))
                 p_minus *= float(np.exp(-step))
+            rate_plus = interface_recombination(
+                n_plus,
+                p_plus,
+                ni_sq_eff[index],
+                n1,
+                p1,
+                v_n,
+                v_p,
+            )
+            rate_minus = interface_recombination(
+                n_minus,
+                p_minus,
+                ni_sq_eff[index],
+                n1,
+                p1,
+                v_n,
+                v_p,
+            )
+            if is_cross_node:
+                stencil_minimum = min(float(rate_plus), float(rate_minus))
+                if not np.isfinite(stencil_minimum) or stencil_minimum <= 0.0:
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "cross-node interface central stencil crosses the "
+                        "inactive clamp branch"
+                    )
+                minimum_cross_node_clamp_margin = min(
+                    minimum_cross_node_clamp_margin,
+                    stencil_minimum,
+                )
             finite_recombination = 0.5 * (
-                interface_recombination(
-                    n_plus,
-                    p_plus,
-                    ni_sq_eff[index],
-                    n1,
-                    p1,
-                    v_n,
-                    v_p,
-                )
-                - interface_recombination(
-                    n_minus,
-                    p_minus,
-                    ni_sq_eff[index],
-                    n1,
-                    p1,
-                    v_n,
-                    v_p,
-                )
+                rate_plus - rate_minus
             ) / dx_cell
             complex_epsilon = 1.0e-30
             if species == "electron":
@@ -586,6 +646,14 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         )
     return IonAwareAnalyticInterfaceReactionLinearization(
         interface_nodes=nodes,
+        electron_evaluation_nodes=eval_n,
+        hole_evaluation_nodes=eval_p,
+        cross_node_interface_indices=tuple(cross_node_indices),
+        minimum_cross_node_clamp_margin_m2_s=(
+            float(minimum_cross_node_clamp_margin)
+            if cross_node_indices
+            else None
+        ),
         surface_recombination_rate_m2_s=surface_rate,
         electron_density_derivative_m_s=electron_derivative,
         hole_density_derivative_m_s=hole_derivative,

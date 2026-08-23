@@ -1,21 +1,22 @@
 # Ion-aware structured Jacobian comparison
 
-Status: `INTERNAL_TESTED_ANALYTIC_FIELD_MOBILITY` as of 2026-08-22.
+Status: `INTERNAL_TESTED_ANALYTIC_CROSS_NODE_INTERFACE_REACTION` as of
+2026-08-23.
 This is a validation path for the ion-aware impedance reference engine.
 Poisson, Scharfetter-Gummel transport, local bulk SRH/radiative/Auger
-recombination, defect-free single-node interface SRH, and finite-rate outer
-selective contacts are analytic. The carrier transport tangent now also
-includes the production Caughey-Thomas and Poole-Frenkel field-mobility chain
-at differentiable operating points. Cross-node/projected interface reaction
-and unsupported non-smooth or nonlocal closures are not. It is not yet a
-fully analytic production Jacobian, a registered numerical certificate, or
-external validation.
+recombination, defect-free single-node interface SRH, clamp-inactive cross-node
+`InterfaceDefect` SRH, and finite-rate outer selective contacts are analytic.
+The carrier transport tangent also includes the production Caughey-Thomas and
+Poole-Frenkel field-mobility chain at differentiable operating points.
+Projected, QSS, shared-occupancy, and two-sided interface closures are not. It
+is not yet a fully analytic production Jacobian, a registered numerical
+certificate, or external validation.
 
 ## Purpose
 
 `perovskite_sim.experiments.ion_aware_structured_jacobian` tests the global
 chain rule in the eliminated-Poisson formulation before a production sparse
-Jacobian is introduced. Protocol v6 retains six independently constructed
+Jacobian is introduced. Protocol v7 retains six independently constructed
 objects:
 
 1. the existing nonlinear callback, which re-solves Poisson at every finite-
@@ -28,7 +29,7 @@ objects:
 4. a bulk-reaction hybrid, which additionally replaces local bulk
    SRH/radiative/Auger rate derivatives;
 5. an interface-reaction hybrid, which also replaces defect-free single-node
-   interface SRH;
+   and clamp-inactive cross-node interface SRH;
 6. the final hybrid operator, which replaces finite-rate outer-contact rate
    rows while retaining frozen-potential finite differences only for explicitly
    unsupported interface closures.
@@ -188,16 +189,23 @@ heterojunction recombination de-spiking introduces a cross-node geometric-mean
 tangent. These branches remain valid in the ordinary solver and finite-
 difference reference; they are only outside this analytic lane.
 
-## Analytic local-interface reaction block
+## Analytic interface-reaction block
 
-For a defect-free interface whose electron and hole evaluation nodes both
-equal the interface control-volume node, the production surface sink is
+For a defect-free interface, the electron and hole evaluation nodes both equal
+the interface control-volume node. For a declared `InterfaceDefect`, the
+production cross-carrier path instead samples electrons from `idx + 1` and
+holes from `idx - 1`, while applying both continuity losses at `idx`. In either
+case the unclamped production surface sink is
 
 ```text
 R_s = (n p - ni^2) / D_s
 D_s = (n + n1) / v_p + (p + p1) / v_n
 R_vol = R_s / dx_cell
 ```
+
+For the cross-node defect path, `ni^2` in this notation is the cached detailed-
+balance reference `n_R,eq * p_L,eq`; it is not the local intrinsic-density
+square at `idx`.
 
 The exact density derivatives are
 
@@ -208,9 +216,22 @@ dR_s/dp = (n - R_s / v_n) / D_s
 
 and the assembled log-coordinate columns are
 `-(dR_s/dn) n h_j / dx_cell` or
-`-(dR_s/dp) p h_j / dx_cell` in both carrier continuity rows. Ion columns and
-the direct voltage derivative are zero. A blocked electron or hole capture
-channel retains the production limit `R_s = 0` with a zero tangent.
+`-(dR_s/dp) p h_j / dx_cell` in both carrier continuity rows. For the cross-
+node path, those columns belong to `n[idx + 1]` and `p[idx - 1]`; the two target
+rows remain `n[idx]` and `p[idx]`. Ion columns and the direct voltage derivative
+are zero. A blocked electron or hole capture channel retains the production
+limit `R_s = 0` with a zero tangent only for the defect-free local path.
+
+The production solver defaults to `R_s = max(R_s_raw, 0)` for cross-node
+defects. Protocol v7 certifies only the differentiable, clamp-inactive slice.
+It requires `SOLARLAB_IFACE_ALLOW_GEN != 1`, `R_s_raw > 0` at the operating
+point, and `R_s_raw > 0` at both sides of every active log-density central
+stencil. A negative or exactly zero operating rate, or any stencil that crosses
+zero, fails closed instead of receiving a zero or one-sided derivative. The
+linearization report records the electron/hole evaluation nodes, the cross-node
+interface indices, and the minimum raw surface rate over the operating point
+and accepted stencils. This is a branch certificate, not a smoothing of the
+production clamp.
 
 Two independent numerical objects are retained. The ordinary double-precision
 central stencil is subtracted from the composite frozen-potential matrix so the
@@ -221,12 +242,14 @@ step. The certificate compares the analytic matrix to this complex-step
 reference, while the final global rate and impedance gates still compare
 against the full nonlinear central-difference operator.
 
-This first interface slice fails closed for cross-node defect sampling,
-Boltzmann interface-plane projection, the QSS local root solve, shared
-occupancy, two-sided mirror recombination, dynamic interface-plane states,
-exclusive interface transport, non-aligned interface arrays, invalid dual-cell
-widths, or non-finite/nonphysical local inputs. Those models remain available
-in the ordinary solver; protocol v5 does not certify their tangent.
+This interface slice fails closed for clamp-active or clamp-crossing defect
+states, the allow-generation escape branch, a mismatch between declared
+defects and material sampling, Boltzmann interface-plane projection, the QSS
+local root solve, shared occupancy, two-sided mirror recombination, dynamic
+interface-plane states, exclusive interface transport, non-aligned interface
+arrays, invalid dual-cell widths, or non-finite/nonphysical inputs. Those
+models remain available in the ordinary solver; protocol v7 does not certify
+their tangent.
 
 ## Analytic selective-contact block
 
@@ -363,18 +386,22 @@ both locally differentiable and numerically resolvable. This is constitutive
 and operator-assembly evidence, not calibration of the demonstration mobility
 parameters.
 
-The field-mobility physics unit layer is `26 passed`, and the structured unit
-layer is `18 passed`; the real single-ion, symmetric
-dual-ion, N61, N91, active-selective-contact, and active-field-mobility
-integration layer is `6 passed`. The explicitly enumerated field-mobility,
-DC/impedance/continuity/contact/recombination domain is `154 passed`.
-The repository default suite is `2070 passed, 2 skipped,
-263 deselected`. These are internal numerical checks, not external validation.
+The structured unit layer is `19 passed`. The real single-ion, symmetric
+dual-ion, N61, N91, active-selective-contact, active-field-mobility, and active
+cross-node-defect integration layer is `7 passed`. In the new IonMonger defect
+case the minimum raw cross-node rate over the accepted stencils is
+`9.2599e12 m^-2 s^-1`; the analytic-to-complex-step interface error is
+`8.56e-11`, the full rate error is `4.10e-6`, and the impedance magnitude and
+phase errors are `2.40e-8` and `1.84e-7 deg`. The repository-wide counts below
+are `2072 passed, 2 skipped, 263 deselected`; the focused interface/DC/
+impedance domain is `144 passed, 1 skipped, 14 deselected`. These are internal
+numerical checks, not external validation.
 
 ## Remaining work
 
-1. Extend interface tangents to cross-node/projected defect topologies only
-   after their clamp and QSS branch semantics have differentiable contracts.
+1. Extend interface tangents to projected/QSS/shared-occupancy/two-sided defect
+   topologies only after their implicit and non-smooth branch semantics have
+   differentiable contracts.
 2. Replace the remaining frozen-potential reaction differences block by block,
    preserving these per-column comparisons.
 3. Introduce sparse or matrix-free assembly only after analytic parity passes.

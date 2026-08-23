@@ -17,6 +17,7 @@ from perovskite_sim.experiments.ion_aware_structured_jacobian import (
 )
 from perovskite_sim.experiments.jv_sweep import build_electrical_grid
 from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.models.device import InterfaceDefect
 
 
 def _solve_comparison(
@@ -254,6 +255,46 @@ def test_field_mobility_structured_operator_closes_ct_and_pf_chain_rule():
     assert (
         result.poisson_sensitivity.max_nonsmooth_voltage_field_stencil_fraction
         <= result.protocol.max_nonsmooth_field_stencil_fraction
+    )
+    assert certificate.rate_jacobian.passed
+    assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
+    assert certificate.max_impedance_phase_error_deg < 1.0e-5
+
+
+def test_cross_node_interface_srh_closes_the_clamp_inactive_tangent():
+    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    defects = list(base.interface_defects)
+    defects.extend([None] * (len(base.interfaces) - len(defects)))
+    defects[-1] = InterfaceDefect(
+        E_t_eV=0.8,
+        calibration_factor=1.0e-10,
+    )
+    result = _solve_comparison(
+        replace(base, interface_defects=tuple(defects))
+    )
+    certificate = result.certificate
+    reaction = result.analytic_interface_reaction
+    interface_index = len(reaction.interface_nodes) - 1
+
+    assert certificate.numerically_certified
+    assert reaction.cross_node_interface_indices == (interface_index,)
+    assert (
+        reaction.electron_evaluation_nodes[interface_index]
+        == reaction.interface_nodes[interface_index] + 1
+    )
+    assert (
+        reaction.hole_evaluation_nodes[interface_index]
+        == reaction.interface_nodes[interface_index] - 1
+    )
+    assert reaction.minimum_cross_node_clamp_margin_m2_s > 0.0
+    assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert not (
+        certificate.analytic_interface_reaction_rate_jacobian.failed_columns
+    )
+    assert (
+        certificate.analytic_interface_reaction_rate_jacobian
+        .max_group_normalized_error
+        < 1.0e-6
     )
     assert certificate.rate_jacobian.passed
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6

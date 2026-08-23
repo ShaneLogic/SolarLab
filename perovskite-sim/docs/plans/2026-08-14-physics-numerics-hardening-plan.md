@@ -431,9 +431,17 @@ residual-certified ion/electron/hole DC state
    完成全局链式闭合。独立逐面 central stencil、CT+PF 真实器件以及阻抗幅相
    共同认证；硬 PF 零场、`beta<=1` 的 CT 零场和 PF clip 表面 fail-close，
    非光滑面还限制 state/voltage stencil 的相对场扰动。
-8. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-9. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
-10. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+8. **`INTERNAL_TESTED_ANALYTIC_CROSS_NODE_INTERFACE_REACTION` (2026-08-23)**：
+   声明 `InterfaceDefect` 的生产 cross-carrier SRH 已按真实
+   `n[idx+1]`、`p[idx-1]` 采样列和 `n[idx]`、`p[idx]` sink 行解析闭合。
+   仅当默认 no-generation clamp 在工作点及每个 `+/-h` 中心 stencil 上均
+   严格 inactive (`R_s_raw > 0`) 时进入；负支、零点、跨零 stencil 和
+   `SOLARLAB_IFACE_ALLOW_GEN=1` 均 fail-closed。真实单离子 defect 器件的
+   complex-step、完整 rate 矩阵及阻抗幅相共同通过；projection、QSS、shared
+   occupancy、two-sided 与 dynamic interface states 仍未解析。
+9. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+10. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+11. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛
 
