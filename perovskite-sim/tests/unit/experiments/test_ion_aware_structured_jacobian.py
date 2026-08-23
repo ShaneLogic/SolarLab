@@ -102,7 +102,7 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
         "analytic_sg_field_mobility_transport"
     )
     assert rebuilt.reaction_linearization == (
-        "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_qss_interface_selective_contact"
     )
     assert rebuilt.interface_clamp_linearization == (
         "positive_branch_stencil_certified"
@@ -116,7 +116,15 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
     assert rebuilt.interface_two_sided_linearization == (
         "positive_mirror_pair_stencil_certified"
     )
-    assert rebuilt.schema_version.endswith("-v10")
+    assert not rebuilt.qss_interface_enabled
+    assert rebuilt.qss_transport_velocity_m_s == (
+        analytic_reaction._QSS_V_TH_MS
+    )
+    assert rebuilt.interface_qss_linearization == (
+        "interior_implicit_root_stencil_certified"
+    )
+    assert rebuilt.max_qss_root_relative_residual == 1.0e-6
+    assert rebuilt.schema_version.endswith("-v11")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -146,6 +154,14 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         )
     with pytest.raises(ValueError, match="two-sided"):
         replace(protocol, interface_two_sided_linearization="clipped_secant")
+    with pytest.raises(ValueError, match="interface QSS"):
+        replace(protocol, interface_qss_linearization="secant_root")
+    with pytest.raises(TypeError, match="must be a bool"):
+        replace(protocol, qss_interface_enabled=1)
+    with pytest.raises(ValueError, match="positive"):
+        replace(protocol, qss_transport_velocity_m_s=0.0)
+    with pytest.raises(ValueError, match="positive"):
+        replace(protocol, max_qss_root_relative_residual=0.0)
     with pytest.raises(ValueError, match="positive"):
         replace(
             protocol,
@@ -172,6 +188,47 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         )
     with pytest.raises(ValueError, match="cannot exceed"):
         replace(protocol, maximum_state_step=2.0e-2)
+
+
+def test_structured_protocol_binds_qss_environment_and_velocity(
+    comparison_fixture,
+    monkeypatch,
+):
+    stack, x, mat, dc_state, impedance_protocol, protocol, _result = (
+        comparison_fixture
+    )
+    monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
+    with pytest.raises(
+        structured.IonAwareStructuredJacobianCapabilityError,
+        match="QSS interface mode",
+    ):
+        structured.run_ion_aware_structured_jacobian_comparison(
+            x,
+            stack,
+            impedance_protocol,
+            protocol,
+            dc_state=dc_state,
+            mat=mat,
+        )
+
+    qss_protocol = replace(protocol, qss_interface_enabled=True)
+    with pytest.raises(
+        structured.IonAwareStructuredJacobianCapabilityError,
+        match="QSS transport velocity",
+    ):
+        structured.run_ion_aware_structured_jacobian_comparison(
+            x,
+            stack,
+            impedance_protocol,
+            replace(
+                qss_protocol,
+                qss_transport_velocity_m_s=(
+                    qss_protocol.qss_transport_velocity_m_s * 2.0
+                ),
+            ),
+            dc_state=dc_state,
+            mat=mat,
+        )
 
 
 def test_poisson_field_stencils_fail_closed_before_crossing_pf_zero_surface(
@@ -515,11 +572,16 @@ def test_analytic_interface_reaction_is_local_and_matches_independent_stencil(
     assert not reaction.projected_interface_indices
     assert not reaction.shared_occupancy_interface_indices
     assert not reaction.two_sided_interface_indices
+    assert not reaction.qss_interface_indices
     assert reaction.minimum_cross_node_clamp_margin_m2_s is None
     assert reaction.minimum_projection_exponent_cap_margin is None
     assert reaction.minimum_shared_density_floor_margin_m3 is None
     assert reaction.minimum_two_sided_clamp_margin_m2_s is None
     assert reaction.minimum_two_sided_density_floor_margin_m3 is None
+    assert reaction.qss_transport_velocity_m_s is None
+    assert reaction.minimum_qss_supply_rate_margin_m2_s is None
+    assert reaction.minimum_qss_root_headroom_m3 is None
+    assert reaction.maximum_qss_root_relative_residual is None
     np.testing.assert_array_equal(
         reaction.mirror_surface_recombination_rate_m2_s,
         0.0,
@@ -965,6 +1027,227 @@ def test_analytic_interface_reaction_closes_two_sided_projected_pair(
         )
     )
     assert np.any(reaction.rate_jacobian[:, ion_columns] != 0.0)
+
+
+def test_analytic_qss_interface_reaction_closes_local_implicit_roots(
+    comparison_fixture,
+    monkeypatch,
+):
+    stack, x, mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
+    reaction = (
+        analytic_reaction
+        .build_ion_aware_analytic_interface_reaction_linearization(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            mat,
+            result.reference.coordinate_layout,
+            potential_at_operating_point_V=(
+                result.poisson_sensitivity.potential_at_operating_point_V
+            ),
+            potential_state_jacobian_V=(
+                result.poisson_sensitivity.potential_state_jacobian_V
+            ),
+            potential_voltage_derivative=(
+                result.poisson_sensitivity.potential_voltage_derivative
+            ),
+            state_steps=result.poisson_sensitivity.state_steps,
+            voltage_step=result.protocol.voltage_step,
+            qss_transport_velocity_m_s=(
+                analytic_reaction._QSS_V_TH_MS
+            ),
+        )
+    )
+
+    assert reaction.qss_interface_indices == tuple(
+        range(len(reaction.interface_nodes))
+    )
+    assert not reaction.projected_interface_indices
+    assert not reaction.two_sided_interface_indices
+    assert reaction.minimum_cross_node_clamp_margin_m2_s is None
+    assert reaction.qss_transport_velocity_m_s == (
+        analytic_reaction._QSS_V_TH_MS
+    )
+    assert reaction.minimum_qss_supply_rate_margin_m2_s > 0.0
+    assert reaction.minimum_qss_root_headroom_m3 > 0.0
+    assert reaction.maximum_qss_root_relative_residual < 1.0e-12
+    np.testing.assert_allclose(
+        reaction.rate_jacobian,
+        reaction.complex_step_rate_jacobian,
+        rtol=5.0e-9,
+        atol=0.0,
+    )
+    state_scale = max(
+        float(np.max(np.abs(reaction.rate_jacobian))),
+        np.finfo(float).tiny,
+    )
+    assert (
+        float(
+            np.max(
+                np.abs(
+                    reaction.rate_jacobian
+                    - reaction.finite_difference_rate_jacobian
+                )
+            )
+        )
+        / state_scale
+        < 5.0e-6
+    )
+    np.testing.assert_array_equal(reaction.rate_voltage_derivative, 0.0)
+
+
+def test_analytic_qss_cross_node_reaction_closes_projected_root_and_priority(
+    comparison_fixture,
+    monkeypatch,
+):
+    stack, x, _mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    defects = list(stack.interface_defects)
+    defects.extend([None] * (len(stack.interfaces) - len(defects)))
+    defects[-1] = InterfaceDefect(
+        E_t_eV=0.8,
+        calibration_factor=1.0e-6,
+    )
+    qss_stack = replace(
+        stack,
+        interface_defects=tuple(defects),
+        interface_two_sided=True,
+    )
+    qss_material = build_material_arrays(x, qss_stack)
+    monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
+    monkeypatch.setenv("SOLARLAB_IFACE_ALLOW_GEN", "1")
+    reaction = (
+        analytic_reaction
+        .build_ion_aware_analytic_interface_reaction_linearization(
+            x,
+            qss_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            qss_material,
+            result.reference.coordinate_layout,
+            potential_at_operating_point_V=(
+                result.poisson_sensitivity.potential_at_operating_point_V
+            ),
+            potential_state_jacobian_V=(
+                result.poisson_sensitivity.potential_state_jacobian_V
+            ),
+            potential_voltage_derivative=(
+                result.poisson_sensitivity.potential_voltage_derivative
+            ),
+            state_steps=result.poisson_sensitivity.state_steps,
+            voltage_step=result.protocol.voltage_step,
+            qss_transport_velocity_m_s=(
+                analytic_reaction._QSS_V_TH_MS
+            ),
+        )
+    )
+    interface_index = len(reaction.interface_nodes) - 1
+
+    assert reaction.qss_interface_indices == tuple(
+        range(len(reaction.interface_nodes))
+    )
+    assert reaction.projected_interface_indices == (interface_index,)
+    assert not reaction.two_sided_interface_indices
+    assert not reaction.shared_occupancy_interface_indices
+    assert reaction.minimum_cross_node_clamp_margin_m2_s is None
+    assert reaction.minimum_projection_exponent_cap_margin > 0.0
+    assert reaction.minimum_qss_supply_rate_margin_m2_s > 0.0
+    assert reaction.minimum_qss_root_headroom_m3 > 0.0
+    assert reaction.maximum_qss_root_relative_residual < 1.0e-12
+    np.testing.assert_allclose(
+        reaction.rate_jacobian,
+        reaction.complex_step_rate_jacobian,
+        rtol=5.0e-9,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        reaction.rate_voltage_derivative,
+        reaction.complex_step_rate_voltage_derivative,
+        rtol=5.0e-9,
+        atol=0.0,
+    )
+    state_scale = max(
+        float(np.max(np.abs(reaction.rate_jacobian))),
+        np.finfo(float).tiny,
+    )
+    voltage_scale = max(
+        float(np.max(np.abs(reaction.rate_voltage_derivative))),
+        np.finfo(float).tiny,
+    )
+    assert (
+        float(
+            np.max(
+                np.abs(
+                    reaction.rate_jacobian
+                    - reaction.finite_difference_rate_jacobian
+                )
+            )
+        )
+        / state_scale
+        < 5.0e-6
+    )
+    assert (
+        float(
+            np.max(
+                np.abs(
+                    reaction.rate_voltage_derivative
+                    - reaction.finite_difference_rate_voltage_derivative
+                )
+            )
+        )
+        / voltage_scale
+        < 5.0e-6
+    )
+    layout = result.reference.coordinate_layout
+    ion_columns = np.concatenate(
+        (
+            np.arange(layout.size)[layout.coordinate_slice("positive_ion")],
+            np.arange(layout.size)[layout.coordinate_slice("negative_ion")],
+        )
+    )
+    assert np.any(reaction.rate_jacobian[:, ion_columns] != 0.0)
+
+
+def test_qss_implicit_root_contract_rejects_nonsmooth_branches():
+    evaluate = analytic_reaction._evaluate_qss_interior_rate
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="supply rate",
+    ):
+        evaluate(1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 1.0, 1.0e5)
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="transport-limited",
+    ):
+        evaluate(
+            1.0e20,
+            1.0e20,
+            1.0,
+            1.0,
+            1.0,
+            1.0e3,
+            1.0e3,
+            1.0e-20,
+        )
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="not residual-resolved",
+    ):
+        evaluate(
+            1.0e20,
+            1.0e20,
+            1.0,
+            1.0,
+            1.0,
+            1.0e-20,
+            1.0e-20,
+            1.0e5,
+        )
 
 
 def test_analytic_selective_contact_block_covers_all_four_sign_conventions(
@@ -1706,7 +1989,7 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
     monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
     with pytest.raises(
         analytic_reaction.IonAwareAnalyticReactionCapabilityError,
-        match="QSS interface-plane root solve",
+        match="protocol velocity",
     ):
         build(
             x,
@@ -1715,6 +1998,9 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
             impedance_protocol.V_dc,
             mat,
             result.reference.coordinate_layout,
+            qss_transport_velocity_m_s=(
+                analytic_reaction._QSS_V_TH_MS * 2.0
+            ),
             **kwargs,
         )
 

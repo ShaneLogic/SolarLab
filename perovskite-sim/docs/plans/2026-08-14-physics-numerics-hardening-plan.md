@@ -463,9 +463,19 @@ residual-certified ion/electron/hole DC state
    fail-close；shared 同时开启时遵守 production shared-first 优先级。真实
    N13 pair A+B projected defect 的 complex-step、完整 rate/forcing 与阻抗
    幅相共同通过。该合同不包含 QF `two_sided_trace` 零体积拓扑。
-12. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-13. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
-14. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+12. **`INTERNAL_TESTED_ANALYTIC_QSS_INTERFACE_REACTION` (2026-08-23)**：
+   env-gated MoL QSS interface closure 已按
+   `v_th*delta=SRH(N-delta,P-delta,ref)` 的 interior implicit root 解析闭合，
+   并保留 production 的 cross-node Boltzmann projection、shared-first 与
+   QSS-before-two-sided 优先级。协议显式绑定 QSS 开关和 `v_th`；正供给、
+   非 transport-limited、严格内点、正隐式分母及 production root residual
+   在工作点和全部 stencil 上逐项 fail-close。生产固定二分从 40 提升到
+   64 次以消除 small-signal 量化噪声；独立 complex Newton、真实 local 与
+   cross-node QSS 器件的完整 rate/forcing 和阻抗幅相共同通过。dynamic
+   interface states 与 QF `two_sided_trace` 仍不在该合同内。
+13. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+14. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+15. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛
 

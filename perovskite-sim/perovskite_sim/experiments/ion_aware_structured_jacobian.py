@@ -8,8 +8,9 @@ SRH is analytic for defect-free single-node sampling and for declared-defect
 cross-node sampling whose no-generation clamp is proven inactive. Smooth,
 unclipped Boltzmann interface-plane projection, positive-density
 shared-occupancy sampling, and the positive-density additive two-sided mirror
-pair are included. Finite-rate selective outer contacts have an analytic local
-rate block.
+pair are included. The environment-gated QSS closure is analytic on its
+residual-resolved interior implicit-root branch. Finite-rate selective outer
+contacts have an analytic local rate block.
 Unsupported interface closures remain central differences at a frozen
 potential carrying the implicit Poisson sensitivity. It remains a comparison
 scaffold, not yet a fully analytic production operator.
@@ -20,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Literal, Mapping, Self
@@ -64,6 +66,7 @@ from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.mol import (
     MaterialArrays,
+    _QSS_V_TH_MS,
     _harmonic_face_average,
     assemble_rhs,
     build_material_arrays,
@@ -77,7 +80,7 @@ from perovskite_sim.solver.small_signal import (
 
 
 ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA = (
-    "ion-aware-structured-jacobian-protocol-v10"
+    "ion-aware-structured-jacobian-protocol-v11"
 )
 
 
@@ -156,6 +159,7 @@ class IonAwareStructuredJacobianProtocol:
     max_analytic_contact_jacobian_column_relative_error: float = 5.0e-6
     max_impedance_magnitude_relative_error: float = 1.0e-4
     max_impedance_phase_error_deg: float = 1.0e-3
+    max_qss_root_relative_residual: float = 1.0e-6
     poisson_linearization: Literal["exact_discrete_implicit"] = (
         "exact_discrete_implicit"
     )
@@ -165,9 +169,9 @@ class IonAwareStructuredJacobianProtocol:
         "analytic_sg_field_mobility_transport"
     )
     reaction_linearization: Literal[
-        "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_qss_interface_selective_contact"
     ] = (
-        "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_qss_interface_selective_contact"
     )
     interface_clamp_linearization: Literal[
         "positive_branch_stencil_certified"
@@ -181,9 +185,14 @@ class IonAwareStructuredJacobianProtocol:
     interface_two_sided_linearization: Literal[
         "positive_mirror_pair_stencil_certified"
     ] = "positive_mirror_pair_stencil_certified"
+    qss_interface_enabled: bool = False
+    qss_transport_velocity_m_s: float = _QSS_V_TH_MS
+    interface_qss_linearization: Literal[
+        "interior_implicit_root_stencil_certified"
+    ] = "interior_implicit_root_stencil_certified"
     rate_row_scaling: Literal["operating_storage"] = "operating_storage"
     column_grouping: Literal["species_blocks"] = "species_blocks"
-    schema_version: Literal["ion-aware-structured-jacobian-protocol-v10"] = (
+    schema_version: Literal["ion-aware-structured-jacobian-protocol-v11"] = (
         ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA
     )
 
@@ -223,8 +232,12 @@ class IonAwareStructuredJacobianProtocol:
             "max_analytic_contact_jacobian_column_relative_error",
             "max_impedance_magnitude_relative_error",
             "max_impedance_phase_error_deg",
+            "max_qss_root_relative_residual",
+            "qss_transport_velocity_m_s",
         ):
             object.__setattr__(self, name, _positive(getattr(self, name), name))
+        if type(self.qss_interface_enabled) is not bool:
+            raise TypeError("qss_interface_enabled must be a bool")
         if self.column_relevance_floor_relative > 1.0:
             raise ValueError("column_relevance_floor_relative cannot exceed one")
         if self.max_nonsmooth_field_stencil_fraction > 0.25:
@@ -242,7 +255,7 @@ class IonAwareStructuredJacobianProtocol:
         ):
             raise ValueError("unsupported transport linearization")
         if self.reaction_linearization != (
-            "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_interface_selective_contact"
+            "analytic_bulk_local_cross_node_projected_shared_occupancy_two_sided_qss_interface_selective_contact"
         ):
             raise ValueError("unsupported reaction linearization")
         if self.interface_clamp_linearization != (
@@ -263,6 +276,10 @@ class IonAwareStructuredJacobianProtocol:
             "positive_mirror_pair_stencil_certified"
         ):
             raise ValueError("unsupported interface two-sided linearization")
+        if self.interface_qss_linearization != (
+            "interior_implicit_root_stencil_certified"
+        ):
+            raise ValueError("unsupported interface QSS linearization")
         if self.rate_row_scaling != "operating_storage":
             raise ValueError("unsupported structured rate row scaling")
         if self.column_grouping != "species_blocks":
@@ -309,7 +326,7 @@ class IonAwareStructuredJacobianProtocol:
 
 def build_ion_aware_structured_jacobian_protocol(
     impedance_protocol: IonAwareImpedanceProtocol,
-    **overrides: float,
+    **overrides: Any,
 ) -> IonAwareStructuredJacobianProtocol:
     """Bind a structured comparison to the final reference FD level."""
     if not isinstance(impedance_protocol, IonAwareImpedanceProtocol):
@@ -323,6 +340,10 @@ def build_ion_aware_structured_jacobian_protocol(
         "maximum_state_step": 1.0e-3,
         "target_potential_step_V": 1.0e-9,
         "voltage_step": impedance_protocol.voltage_step,
+        "qss_interface_enabled": (
+            os.environ.get("SOLARLAB_IFACE_QSS", "") == "1"
+        ),
+        "qss_transport_velocity_m_s": _QSS_V_TH_MS,
     }
     values.update(overrides)
     return IonAwareStructuredJacobianProtocol(**values)
@@ -916,6 +937,17 @@ def run_ion_aware_structured_jacobian_comparison(
         raise IonAwareStructuredJacobianCapabilityError(
             "structured protocol does not match the impedance protocol hash"
         )
+    qss_interface_enabled = (
+        os.environ.get("SOLARLAB_IFACE_QSS", "") == "1"
+    )
+    if structured_protocol.qss_interface_enabled != qss_interface_enabled:
+        raise IonAwareStructuredJacobianCapabilityError(
+            "structured protocol QSS interface mode does not match production"
+        )
+    if structured_protocol.qss_transport_velocity_m_s != _QSS_V_TH_MS:
+        raise IonAwareStructuredJacobianCapabilityError(
+            "structured protocol QSS transport velocity does not match production"
+        )
     grid = np.asarray(x, dtype=float)
     material = build_material_arrays(grid, stack) if mat is None else mat
     reference = run_ion_aware_impedance(
@@ -1069,6 +1101,12 @@ def run_ion_aware_structured_jacobian_comparison(
                 ),
                 state_steps=poisson.state_steps,
                 voltage_step=structured_protocol.voltage_step,
+                qss_transport_velocity_m_s=(
+                    structured_protocol.qss_transport_velocity_m_s
+                ),
+                max_qss_root_relative_residual=(
+                    structured_protocol.max_qss_root_relative_residual
+                ),
             )
         )
         analytic_interface_reaction_result = (

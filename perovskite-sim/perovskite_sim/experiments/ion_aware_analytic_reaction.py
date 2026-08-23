@@ -26,7 +26,12 @@ from perovskite_sim.physics.recombination import (
     total_recombination,
     total_recombination_derivatives,
 )
-from perovskite_sim.solver.mol import MaterialArrays, _IFACE_PROJ_EXP_CAP
+from perovskite_sim.solver.mol import (
+    MaterialArrays,
+    _IFACE_PROJ_EXP_CAP,
+    _QSS_V_TH_MS,
+    _qss_interface_R,
+)
 from perovskite_sim.solver.small_signal import (
     FrequencyDomainResult,
     ProgressCallback,
@@ -55,7 +60,7 @@ class IonAwareAnalyticBulkReactionLinearization:
 
 @dataclass(frozen=True, slots=True)
 class IonAwareAnalyticInterfaceReactionLinearization:
-    """Local and clamp-inactive cross-node interface-SRH derivatives."""
+    """Certified smooth interface-SRH and implicit QSS derivatives."""
 
     interface_nodes: tuple[int, ...]
     electron_evaluation_nodes: tuple[int, ...]
@@ -64,11 +69,16 @@ class IonAwareAnalyticInterfaceReactionLinearization:
     projected_interface_indices: tuple[int, ...]
     shared_occupancy_interface_indices: tuple[int, ...]
     two_sided_interface_indices: tuple[int, ...]
+    qss_interface_indices: tuple[int, ...]
     minimum_cross_node_clamp_margin_m2_s: float | None
     minimum_projection_exponent_cap_margin: float | None
     minimum_shared_density_floor_margin_m3: float | None
     minimum_two_sided_clamp_margin_m2_s: float | None
     minimum_two_sided_density_floor_margin_m3: float | None
+    qss_transport_velocity_m_s: float | None
+    minimum_qss_supply_rate_margin_m2_s: float | None
+    minimum_qss_root_headroom_m3: float | None
+    maximum_qss_root_relative_residual: float | None
     surface_recombination_rate_m2_s: np.ndarray
     electron_density_derivative_m_s: np.ndarray
     hole_density_derivative_m_s: np.ndarray
@@ -95,6 +105,227 @@ class IonAwareAnalyticContactLinearization:
     finite_difference_rate_jacobian: np.ndarray
     rate_voltage_derivative: np.ndarray
     finite_difference_rate_voltage_derivative: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class _QSSInteriorEvaluation:
+    rate_m2_s: float
+    supply_rate_m2_s: float
+    depletion_m3: float
+    root_headroom_m3: float
+    relative_root_residual: float
+    electron_density_derivative_m_s: float
+    hole_density_derivative_m_s: float
+    reference_derivative_m4_s: float
+
+
+def _evaluate_qss_interior_rate(
+    n_supply: float,
+    p_supply: float,
+    ni_sq_reference: float,
+    n1: float,
+    p1: float,
+    v_n: float,
+    v_p: float,
+    transport_velocity_m_s: float,
+    *,
+    max_relative_root_residual: float = 1.0e-6,
+) -> _QSSInteriorEvaluation:
+    supply_rate = float(
+        interface_recombination(
+            n_supply,
+            p_supply,
+            ni_sq_reference,
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
+    )
+    if not np.isfinite(supply_rate) or supply_rate <= 0.0:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "QSS interface supply rate must remain strictly positive"
+        )
+    upper = min(n_supply, p_supply) * (1.0 - 1.0e-9)
+    if not np.isfinite(upper) or upper <= 0.0:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "QSS interface root bracket must be finite and positive"
+        )
+    upper_residual = transport_velocity_m_s * upper - float(
+        interface_recombination(
+            n_supply - upper,
+            p_supply - upper,
+            ni_sq_reference,
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
+    )
+    if not np.isfinite(upper_residual) or upper_residual <= 0.0:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "QSS interface transport-limited branch must be inactive"
+        )
+    rate = float(
+        _qss_interface_R(
+            n_supply,
+            p_supply,
+            ni_sq_reference,
+            n1,
+            p1,
+            v_n,
+            v_p,
+            transport_velocity_m_s,
+        )
+    )
+    depletion = rate / transport_velocity_m_s
+    headroom = min(depletion, upper - depletion)
+    if (
+        not np.isfinite(rate)
+        or not np.isfinite(depletion)
+        or not np.isfinite(headroom)
+        or rate <= 0.0
+        or headroom <= 0.0
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "QSS interface root must lie strictly inside its bracket"
+        )
+    depleted_n = n_supply - depletion
+    depleted_p = p_supply - depletion
+    inner_rate = float(
+        interface_recombination(
+            depleted_n,
+            depleted_p,
+            ni_sq_reference,
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
+    )
+    residual_scale = max(abs(rate), abs(inner_rate), np.finfo(float).tiny)
+    relative_residual = abs(rate - inner_rate) / residual_scale
+    if (
+        not np.isfinite(relative_residual)
+        or relative_residual > max_relative_root_residual
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "QSS interface production root is not residual-resolved"
+        )
+    inner_denominator = float(
+        interface_srh_denominator(
+            depleted_n,
+            depleted_p,
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
+    )
+    inner_derivatives = interface_recombination_derivatives(
+        depleted_n,
+        depleted_p,
+        ni_sq_reference,
+        n1,
+        p1,
+        v_n,
+        v_p,
+    )
+    implicit_denominator = transport_velocity_m_s + float(
+        inner_derivatives.electron_density_derivative
+        + inner_derivatives.hole_density_derivative
+    )
+    if (
+        not np.isfinite(inner_denominator)
+        or inner_denominator <= 0.0
+        or not np.isfinite(implicit_denominator)
+        or implicit_denominator <= 0.0
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "QSS interface implicit derivative denominator must be positive"
+        )
+    derivative_scale = transport_velocity_m_s / implicit_denominator
+    return _QSSInteriorEvaluation(
+        rate_m2_s=rate,
+        supply_rate_m2_s=supply_rate,
+        depletion_m3=depletion,
+        root_headroom_m3=headroom,
+        relative_root_residual=relative_residual,
+        electron_density_derivative_m_s=(
+            derivative_scale
+            * float(inner_derivatives.electron_density_derivative)
+        ),
+        hole_density_derivative_m_s=(
+            derivative_scale
+            * float(inner_derivatives.hole_density_derivative)
+        ),
+        reference_derivative_m4_s=(
+            -derivative_scale / inner_denominator
+        ),
+    )
+
+
+def _complex_qss_interior_rate(
+    n_supply: complex,
+    p_supply: complex,
+    ni_sq_reference: complex,
+    n1: float,
+    p1: float,
+    v_n: float,
+    v_p: float,
+    transport_velocity_m_s: float,
+    depletion_at_operating_point_m3: float,
+) -> complex:
+    depletion = complex(depletion_at_operating_point_m3)
+    for _ in range(6):
+        derivatives = interface_recombination_derivatives(
+            n_supply - depletion,
+            p_supply - depletion,
+            ni_sq_reference,
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
+        residual = transport_velocity_m_s * depletion - complex(
+            derivatives.rate
+        )
+        derivative = transport_velocity_m_s + complex(
+            derivatives.electron_density_derivative
+            + derivatives.hole_density_derivative
+        )
+        if not np.isfinite(derivative) or abs(derivative) <= 0.0:
+            raise IonAwareAnalyticReactionCapabilityError(
+                "complex QSS interface Newton derivative is singular"
+            )
+        depletion -= residual / derivative
+    rate = transport_velocity_m_s * depletion
+    inner_rate = complex(
+        interface_recombination(
+            n_supply - depletion,
+            p_supply - depletion,
+            ni_sq_reference,
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
+    )
+    residual = rate - inner_rate
+    residual_scale = max(
+        abs(rate),
+        abs(inner_rate),
+        np.finfo(float).tiny,
+    )
+    if (
+        not np.isfinite(rate)
+        or not np.isfinite(residual)
+        or abs(residual) / residual_scale > 1.0e-12
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "complex QSS interface reference did not converge"
+        )
+    return rate
 
 
 def _node_recombination_rate(
@@ -296,6 +527,8 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     potential_voltage_derivative: np.ndarray,
     state_steps: np.ndarray,
     voltage_step: float,
+    qss_transport_velocity_m_s: float = _QSS_V_TH_MS,
+    max_qss_root_relative_residual: float = 1.0e-6,
 ) -> IonAwareAnalyticInterfaceReactionLinearization:
     """Assemble smooth interface-SRH tangents in log coordinates."""
 
@@ -326,6 +559,10 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         or not np.isfinite(V_dc)
         or not np.isfinite(voltage_step)
         or voltage_step <= 0.0
+        or not np.isfinite(qss_transport_velocity_m_s)
+        or qss_transport_velocity_m_s <= 0.0
+        or not np.isfinite(max_qss_root_relative_residual)
+        or max_qss_root_relative_residual <= 0.0
     ):
         raise IonAwareAnalyticReactionCapabilityError(
             "analytic interface-reaction inputs must be finite and shape matched"
@@ -349,9 +586,10 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         raise IonAwareAnalyticReactionCapabilityError(
             f"{active_closures[0]} has no declared analytic tangent"
         )
-    if os.environ.get("SOLARLAB_IFACE_QSS", "") == "1":
+    qss_active = os.environ.get("SOLARLAB_IFACE_QSS", "") == "1"
+    if qss_active and qss_transport_velocity_m_s != _QSS_V_TH_MS:
         raise IonAwareAnalyticReactionCapabilityError(
-            "QSS interface-plane root solve has no declared analytic tangent"
+            "QSS interface protocol velocity does not match production"
         )
     projection_active = bool(material.iface_plane_projection)
     shared_occupancy_active = bool(material.iface_shared_occ)
@@ -437,6 +675,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     if (
         cross_node_indices
         and os.environ.get("SOLARLAB_IFACE_ALLOW_GEN", "") == "1"
+        and (not qss_active or shared_occupancy_active)
     ):
         raise IonAwareAnalyticReactionCapabilityError(
             "clamp-inactive cross-node interface tangents require "
@@ -539,6 +778,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     mirror_electron_derivative = np.zeros(count, dtype=float)
     mirror_hole_derivative = np.zeros(count, dtype=float)
     minimum_cross_node_clamp_margin = np.inf
+    clamp_certified_indices: list[int] = []
     projected_indices: list[int] = []
     minimum_projection_cap_margin = np.inf
     shared_occupancy_indices: list[int] = []
@@ -546,6 +786,8 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     two_sided_indices: list[int] = []
     minimum_two_sided_clamp_margin = np.inf
     minimum_two_sided_density_floor_margin = np.inf
+    qss_indices: list[int] = []
+    qss_evaluations: list[_QSSInteriorEvaluation] = []
     row_by_state_index = {
         state_index: row
         for row, state_index in enumerate(layout.state_indices)
@@ -611,8 +853,14 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             ni_reference = ni_sq_eff[index]
         v_n = float(velocities[0]) * calibration[index]
         v_p = float(velocities[1]) * calibration[index]
+        qss_branch = qss_active and not is_shared_occupancy
+        is_qss = qss_branch and v_n > 0.0 and v_p > 0.0
+        if qss_branch:
+            qss_indices.append(index)
         is_projected = (
-            projection_active and is_cross_node and not is_shared_occupancy
+            (projection_active or qss_branch)
+            and is_cross_node
+            and not is_shared_occupancy
         )
         projection_log_n = 0.0
         projection_log_p = 0.0
@@ -670,55 +918,92 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             raise IonAwareAnalyticReactionCapabilityError(
                 "interface SRH inputs must be finite and physically admissible"
             )
-        if v_n > 0.0 and v_p > 0.0:
-            denominator = interface_srh_denominator(
+        qss_base_evaluation: _QSSInteriorEvaluation | None = None
+        if is_qss:
+            qss_base_evaluation = _evaluate_qss_interior_rate(
                 projected_n,
                 projected_p,
+                projected_ni_sq,
+                n1,
+                p1,
+                v_n,
+                v_p,
+                qss_transport_velocity_m_s,
+                max_relative_root_residual=(
+                    max_qss_root_relative_residual
+                ),
+            )
+            qss_evaluations.append(qss_base_evaluation)
+            rate_value = qss_base_evaluation.rate_m2_s
+            rate_electron_derivative = (
+                qss_base_evaluation.electron_density_derivative_m_s
+            )
+            rate_hole_derivative = (
+                qss_base_evaluation.hole_density_derivative_m_s
+            )
+            rate_reference_derivative = (
+                qss_base_evaluation.reference_derivative_m4_s
+            )
+        else:
+            if v_n > 0.0 and v_p > 0.0:
+                denominator = interface_srh_denominator(
+                    projected_n,
+                    projected_p,
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
+                if not np.isfinite(denominator) or denominator <= 0.0:
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "interface SRH denominator must be finite and positive"
+                    )
+            else:
+                denominator = np.inf
+            derivatives = interface_recombination_derivatives(
+                projected_n,
+                projected_p,
+                projected_ni_sq,
                 n1,
                 p1,
                 v_n,
                 v_p,
             )
-            if not np.isfinite(denominator) or denominator <= 0.0:
-                raise IonAwareAnalyticReactionCapabilityError(
-                    "interface SRH denominator must be finite and positive"
-                )
-        else:
-            denominator = np.inf
-        derivatives = interface_recombination_derivatives(
-            projected_n,
-            projected_p,
-            projected_ni_sq,
-            n1,
-            p1,
-            v_n,
-            v_p,
-        )
+            rate_value = float(derivatives.rate)
+            rate_electron_derivative = float(
+                derivatives.electron_density_derivative
+            )
+            rate_hole_derivative = float(
+                derivatives.hole_density_derivative
+            )
+            rate_reference_derivative = -1.0 / denominator
         local_values = (
-            derivatives.rate,
-            derivatives.electron_density_derivative,
-            derivatives.hole_density_derivative,
+            rate_value,
+            rate_electron_derivative,
+            rate_hole_derivative,
+            rate_reference_derivative,
         )
         if any(not np.all(np.isfinite(value)) for value in local_values):
             raise IonAwareAnalyticReactionCapabilityError(
                 "analytic interface-reaction formula produced a non-finite block"
             )
-        if is_cross_node:
-            if float(derivatives.rate) <= 0.0:
+        if is_cross_node and not qss_branch:
+            if rate_value <= 0.0:
                 raise IonAwareAnalyticReactionCapabilityError(
                     "cross-node interface clamp must be inactive at the "
                     "operating point (raw R_s > 0)"
                 )
+            clamp_certified_indices.append(index)
             minimum_cross_node_clamp_margin = min(
                 minimum_cross_node_clamp_margin,
-                float(derivatives.rate),
+                rate_value,
             )
-        surface_rate[index] = float(derivatives.rate)
-        electron_derivative[index] = float(
-            derivatives.electron_density_derivative
-        ) * projection_factor_n
+        surface_rate[index] = rate_value
+        electron_derivative[index] = (
+            rate_electron_derivative * projection_factor_n
+        )
         hole_derivative[index] = (
-            float(derivatives.hole_density_derivative) * projection_factor_p
+            rate_hole_derivative * projection_factor_p
         )
         target_rows = tuple(
             row_by_state_index.get(state_index)
@@ -726,21 +1011,83 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         )
 
         def projected_rate(
-            electron_density: complex | float,
-            hole_density: complex | float,
-            electron_log_factor: complex | float,
-            hole_log_factor: complex | float,
-        ) -> complex | float:
-            factor_n = np.exp(electron_log_factor)
-            factor_p = np.exp(hole_log_factor)
+            electron_density: float,
+            hole_density: float,
+            electron_log_factor: float,
+            hole_log_factor: float,
+        ) -> float:
+            factor_n = float(np.exp(electron_log_factor))
+            factor_p = float(np.exp(hole_log_factor))
+            projected_electron = electron_density * factor_n
+            projected_hole = hole_density * factor_p
+            projected_reference = ni_reference * factor_n * factor_p
+            if is_qss:
+                evaluation = _evaluate_qss_interior_rate(
+                    projected_electron,
+                    projected_hole,
+                    projected_reference,
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                    qss_transport_velocity_m_s,
+                    max_relative_root_residual=(
+                        max_qss_root_relative_residual
+                    ),
+                )
+                qss_evaluations.append(evaluation)
+                return evaluation.rate_m2_s
+            if qss_branch:
+                return 0.0
             return interface_recombination(
-                electron_density * factor_n,
-                hole_density * factor_p,
-                ni_reference * factor_n * factor_p,
+                projected_electron,
+                projected_hole,
+                projected_reference,
                 n1,
                 p1,
                 v_n,
                 v_p,
+            )
+
+        def complex_projected_rate(
+            electron_density: complex,
+            hole_density: complex,
+            electron_log_factor: complex,
+            hole_log_factor: complex,
+        ) -> complex:
+            factor_n = np.exp(electron_log_factor)
+            factor_p = np.exp(hole_log_factor)
+            projected_electron = electron_density * factor_n
+            projected_hole = hole_density * factor_p
+            projected_reference = ni_reference * factor_n * factor_p
+            if is_qss:
+                if qss_base_evaluation is None:
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "QSS interface operating-point root is unavailable"
+                    )
+                return _complex_qss_interior_rate(
+                    projected_electron,
+                    projected_hole,
+                    projected_reference,
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                    qss_transport_velocity_m_s,
+                    qss_base_evaluation.depletion_m3,
+                )
+            if qss_branch:
+                return 0.0j
+            return complex(
+                interface_recombination(
+                    projected_electron,
+                    projected_hole,
+                    projected_reference,
+                    n1,
+                    p1,
+                    v_n,
+                    v_p,
+                )
             )
 
         if is_shared_occupancy:
@@ -831,13 +1178,11 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 direct_p_increment + p_value * projection_delta_p
             )
             analytic_recombination = (
-                float(derivatives.electron_density_derivative)
-                * projected_n_increment
-                + float(derivatives.hole_density_derivative)
-                * projected_p_increment
-                - projected_ni_sq
+                rate_electron_derivative * projected_n_increment
+                + rate_hole_derivative * projected_p_increment
+                + rate_reference_derivative
+                * projected_ni_sq
                 * reference_log_increment
-                / denominator
             ) / dx_cell
             n_plus = n_value + direct_n_component * float(np.expm1(step))
             n_minus = n_value + direct_n_component * float(np.expm1(-step))
@@ -855,7 +1200,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 projection_log_n - projection_delta_n,
                 projection_log_p - projection_delta_p,
             )
-            if is_cross_node:
+            if is_cross_node and not qss_branch:
                 stencil_minimum = min(float(rate_plus), float(rate_minus))
                 if not np.isfinite(stencil_minimum) or stencil_minimum <= 0.0:
                     raise IonAwareAnalyticReactionCapabilityError(
@@ -870,17 +1215,25 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 rate_plus - rate_minus
             ) / dx_cell
             complex_epsilon = 1.0e-30
-            complex_rate = projected_rate(
-                n_value
-                + direct_n_component
-                * np.expm1(1j * step * complex_epsilon),
-                p_value
-                + direct_p_component
-                * np.expm1(1j * step * complex_epsilon),
-                projection_log_n
-                + 1j * projection_delta_n * complex_epsilon,
-                projection_log_p
-                + 1j * projection_delta_p * complex_epsilon,
+            complex_rate = complex_projected_rate(
+                complex(
+                    n_value
+                    + direct_n_component
+                    * np.expm1(1j * step * complex_epsilon)
+                ),
+                complex(
+                    p_value
+                    + direct_p_component
+                    * np.expm1(1j * step * complex_epsilon)
+                ),
+                complex(
+                    projection_log_n
+                    + 1j * projection_delta_n * complex_epsilon
+                ),
+                complex(
+                    projection_log_p
+                    + 1j * projection_delta_p * complex_epsilon
+                ),
             )
             complex_recombination = (
                 float(np.imag(complex_rate)) / complex_epsilon / dx_cell
@@ -921,15 +1274,15 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 projection_voltage_n + projection_voltage_p
             )
             analytic_voltage_recombination = (
-                float(derivatives.electron_density_derivative)
+                rate_electron_derivative
                 * projected_n
                 * projection_voltage_n
-                + float(derivatives.hole_density_derivative)
+                + rate_hole_derivative
                 * projected_p
                 * projection_voltage_p
-                - projected_ni_sq
+                + rate_reference_derivative
+                * projected_ni_sq
                 * projection_voltage_reference
-                / denominator
             ) / dx_cell
             rate_voltage_plus = projected_rate(
                 n_value,
@@ -943,7 +1296,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 projection_log_n - voltage_projection_step_n,
                 projection_log_p - voltage_projection_step_p,
             )
-            if is_cross_node:
+            if is_cross_node and not qss_branch:
                 stencil_minimum = min(
                     float(rate_voltage_plus),
                     float(rate_voltage_minus),
@@ -961,13 +1314,17 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 float(rate_voltage_plus) - float(rate_voltage_minus)
             ) / (2.0 * voltage_step * dx_cell)
             complex_epsilon = 1.0e-30
-            complex_voltage_rate = projected_rate(
-                n_value,
-                p_value,
-                projection_log_n
-                + 1j * projection_voltage_n * complex_epsilon,
-                projection_log_p
-                + 1j * projection_voltage_p * complex_epsilon,
+            complex_voltage_rate = complex_projected_rate(
+                complex(n_value),
+                complex(p_value),
+                complex(
+                    projection_log_n
+                    + 1j * projection_voltage_n * complex_epsilon
+                ),
+                complex(
+                    projection_log_p
+                    + 1j * projection_voltage_p * complex_epsilon
+                ),
             )
             complex_voltage_recombination = (
                 float(np.imag(complex_voltage_rate))
@@ -985,7 +1342,10 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                     )
 
         is_two_sided = (
-            two_sided_active and is_cross_node and not is_shared_occupancy
+            two_sided_active
+            and is_cross_node
+            and not is_shared_occupancy
+            and not qss_branch
         )
         if is_two_sided:
             mirror_n_value = float(n[hole_node])
@@ -1422,9 +1782,10 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         projected_interface_indices=tuple(projected_indices),
         shared_occupancy_interface_indices=tuple(shared_occupancy_indices),
         two_sided_interface_indices=tuple(two_sided_indices),
+        qss_interface_indices=tuple(qss_indices),
         minimum_cross_node_clamp_margin_m2_s=(
             float(minimum_cross_node_clamp_margin)
-            if cross_node_indices
+            if clamp_certified_indices
             else None
         ),
         minimum_projection_exponent_cap_margin=(
@@ -1445,6 +1806,24 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         minimum_two_sided_density_floor_margin_m3=(
             float(minimum_two_sided_density_floor_margin)
             if two_sided_indices
+            else None
+        ),
+        qss_transport_velocity_m_s=(
+            float(qss_transport_velocity_m_s) if qss_indices else None
+        ),
+        minimum_qss_supply_rate_margin_m2_s=(
+            min(item.supply_rate_m2_s for item in qss_evaluations)
+            if qss_evaluations
+            else None
+        ),
+        minimum_qss_root_headroom_m3=(
+            min(item.root_headroom_m3 for item in qss_evaluations)
+            if qss_evaluations
+            else None
+        ),
+        maximum_qss_root_relative_residual=(
+            max(item.relative_root_residual for item in qss_evaluations)
+            if qss_evaluations
             else None
         ),
         surface_recombination_rate_m2_s=surface_rate,

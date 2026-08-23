@@ -153,9 +153,10 @@ certificate.
 
 1. Exact discrete Poisson sensitivity, analytic SG transport, local bulk,
    defect-free, clamp-inactive cross-node/projected, and positive-density
-   shared-occupancy/additive-two-sided interface reaction, selective-contact,
-   and differentiable CT/PF mobility blocks are implemented; replace the
-   remaining unsupported interface/nonlocal frozen-potential differences.
+   shared-occupancy/additive-two-sided and interior-root QSS interface
+   reaction, selective-contact, and differentiable CT/PF mobility blocks are
+   implemented; replace the remaining unsupported interface/nonlocal
+   frozen-potential differences.
    See
    [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
 2. Add device-timescale frequency-window assessment without changing user

@@ -1,6 +1,6 @@
 # Ion-aware structured Jacobian comparison
 
-Status: `INTERNAL_TESTED_ANALYTIC_TWO_SIDED_INTERFACE_REACTION` as of
+Status: `INTERNAL_TESTED_ANALYTIC_QSS_INTERFACE_REACTION` as of
 2026-08-23.
 This is a validation path for the ion-aware impedance reference engine.
 Poisson, Scharfetter-Gummel transport, local bulk SRH/radiative/Auger
@@ -8,19 +8,20 @@ recombination, defect-free single-node interface SRH, clamp-inactive cross-node
 `InterfaceDefect` SRH, its smooth unclipped Boltzmann projection, and finite-rate
 outer selective contacts are analytic. The algebraic shared-occupancy
 cross-interface SRH branch is also analytic on its positive-density,
-clamp-inactive slice, as is the additive two-sided mirror pair.
+clamp-inactive slice, as is the additive two-sided mirror pair. The opt-in QSS
+interface closure is analytic on its positive-supply, residual-resolved,
+strictly interior implicit-root branch.
 The carrier transport tangent also includes the production Caughey-Thomas and
 Poole-Frenkel field-mobility chain at differentiable operating points.
-The QSS interface closure is not analytic. The separate QF
-`two_sided_trace` zero-volume topology is outside this MoL comparison. This is
-not yet a fully analytic production Jacobian, a registered numerical
-certificate, or external validation.
+The separate QF `two_sided_trace` zero-volume topology is outside this MoL
+comparison. This is not yet a fully analytic production Jacobian, a registered
+numerical certificate, or external validation.
 
 ## Purpose
 
 `perovskite_sim.experiments.ion_aware_structured_jacobian` tests the global
 chain rule in the eliminated-Poisson formulation before a production sparse
-Jacobian is introduced. Protocol v10 retains six independently constructed
+Jacobian is introduced. Protocol v11 retains six independently constructed
 objects:
 
 1. the existing nonlinear callback, which re-solves Poisson at every finite-
@@ -33,8 +34,8 @@ objects:
 4. a bulk-reaction hybrid, which additionally replaces local bulk
    SRH/radiative/Auger rate derivatives;
 5. an interface-reaction hybrid, which also replaces defect-free single-node,
-   clamp-inactive cross-node, smooth unclipped projected, and positive-density
-   shared-occupancy/additive-two-sided interface SRH;
+   clamp-inactive cross-node, smooth unclipped projected, positive-density
+   shared-occupancy/additive-two-sided, and interior-root QSS interface SRH;
 6. the final hybrid operator, which replaces finite-rate outer-contact rate
    rows while retaining frozen-potential finite differences only for explicitly
    unsupported interface closures.
@@ -229,7 +230,7 @@ channel retains the production limit `R_s = 0` with a zero tangent only for the
 defect-free local path.
 
 The production solver defaults to `R_s = max(R_s_raw, 0)` for cross-node
-defects. Protocol v10 certifies only the differentiable, clamp-inactive slice.
+defects. Protocol v11 certifies only the differentiable, clamp-inactive slice.
 It requires `SOLARLAB_IFACE_ALLOW_GEN != 1`, `R_s_raw > 0` at the operating
 point, and `R_s_raw > 0` at both sides of every active log-density central
 stencil. A negative or exactly zero operating rate, or any stencil that crosses
@@ -297,7 +298,7 @@ direct voltage dependence, so ion columns and its voltage forcing are exactly
 zero. If projection is also enabled, shared occupancy wins exactly as it does
 in production; no projected derivative is invented.
 
-Production floors each of the four raw sampled densities at zero. Protocol v10
+Production floors each of the four raw sampled densities at zero. Protocol v11
 accepts only strictly positive operating densities and positive values on both
 sides of every log-density stencil, so those floors are inactive. It also
 applies the same positive raw-rate clamp gates as the ordinary cross-node
@@ -317,7 +318,7 @@ R_B = SRH(n_L, p_R; ni_B^2 = n_L,eq p_R,eq).
 Both rates use the same `n1`, `p1`, calibrated capture velocities, interface
 control-volume width, and two sink rows. Pair B contributes direct columns at
 `n[idx-1]` and `p[idx+1]`. Production floors those two minority densities at
-zero and applies pair B only for `R_B>0`; protocol v10 therefore requires
+zero and applies pair B only for `R_B>0`; protocol v11 therefore requires
 strictly positive densities and a strictly positive raw pair-B rate at the
 operating point and every state/voltage stencil. Pair A retains its own
 independent clamp certificate.
@@ -343,6 +344,55 @@ implemented QF `two_sided_trace` control-volume topology. The latter changes
 the grid and locally eliminates a zero-volume interface system; it is neither
 executed nor certified by this MoL impedance lane.
 
+When `SOLARLAB_IFACE_QSS=1`, production replaces each non-shared interface
+rate with a bounded scalar balance. It always Boltzmann-projects a cross-node
+supply, even when `interface_plane_projection=False`, and solves
+
+```text
+g(delta) = v_th delta - R_SRH(N - delta, P - delta, ref) = 0
+R_QSS = v_th delta.
+```
+
+Here `N`, `P`, and `ref` are the jointly projected electron supply, hole
+supply, and detailed-balance reference. Define the depleted-point SRH
+derivatives `R_n`, `R_p`, denominator `D`, and
+
+```text
+G_delta = v_th + R_n + R_p.
+```
+
+On the smooth interior root, implicit differentiation gives
+
+```text
+dR_QSS/dN   = v_th R_n / G_delta
+dR_QSS/dP   = v_th R_p / G_delta
+dR_QSS/dref = -v_th / (D G_delta).
+```
+
+Those three partials feed the same projected potential chain described above.
+Local QSS interfaces therefore have only direct carrier columns, while a
+cross-node QSS interface has the global carrier/ion columns and direct voltage
+forcing induced by eliminated Poisson. The analytic lane preserves production
+precedence: shared occupancy wins before QSS, while an active QSS branch
+continues before and suppresses the additive two-sided mirror pair.
+
+Protocol v11 binds the QSS environment mode, the production `v_th=1e5 m/s`
+value, and the `1e-6` root-residual acceptance limit; changing the mode or
+velocity after protocol construction fails before the reference solve. The
+production bounded root now uses 64 fixed bisection
+steps so its central stencils are resolved at binary64 precision over the
+tested density range. Certification still requires a strictly positive raw
+supply rate, a finite positive bracket, `f(hi)>0` so the transport-limited
+fallback is inactive, a strictly interior root, a positive `G_delta`, and a
+production-root relative residual no larger than `1e-6` at the operating point
+and every real state/voltage stencil. A separate complex Newton continuation
+from the accepted operating root validates the implicit derivative without
+reusing production's bisection arithmetic. Negative/zero supply,
+transport-limited, endpoint, singular, or unresolved roots fail closed rather
+than being assigned a secant or one-sided derivative. The report records QSS
+interface indices, transport velocity, minimum positive supply margin, minimum
+root headroom, and maximum production-root residual.
+
 Two independent numerical objects are retained for both state and voltage
 directions. The ordinary double-precision central stencil is subtracted from
 the composite frozen-potential operator so the same nonlinear block is
@@ -356,10 +406,10 @@ against the full nonlinear central-difference operator.
 This interface slice fails closed for clamp-active or clamp-crossing defect
 states, a projection-cap-active or cap-crossing stencil, the allow-generation
 escape branch, a mismatch between declared defects and material sampling, the
-QSS local root solve, dynamic interface-plane states, exclusive interface
-transport, non-aligned interface arrays, invalid dual-cell widths, or
-non-finite/nonphysical inputs. Those models remain available in the ordinary
-solver; protocol v10 does not certify their tangent.
+non-smooth QSS branches listed above, dynamic interface-plane states, exclusive
+interface transport, non-aligned interface arrays, invalid dual-cell widths,
+or non-finite/nonphysical inputs. Those models remain available in the
+ordinary solver; protocol v11 certifies only the declared smooth slices.
 
 ## Analytic selective-contact block
 
@@ -430,7 +480,7 @@ Default gates include:
 | analytic electron/hole `dmu/dE` error | `5e-6` |
 | non-smooth field-stencil fraction | `0.1` |
 | analytic bulk-reaction column error | `5e-6` |
-| analytic local/cross-node/projected interface reaction column error | `5e-6` |
+| analytic local/cross-node/projected/shared/two-sided/QSS interface reaction column error | `5e-6` |
 | analytic selective-contact column error | `5e-6` |
 | impedance magnitude error | `1e-4` |
 | impedance phase error | `1e-3 deg` |
@@ -496,9 +546,9 @@ both locally differentiable and numerically resolvable. This is constitutive
 and operator-assembly evidence, not calibration of the demonstration mobility
 parameters.
 
-The structured unit layer is `23 passed`. The real single-ion, symmetric
+The structured unit layer is `27 passed`. The real single-ion, symmetric
 dual-ion, N61, N91, active-selective-contact, active-field-mobility, and active
-cross-node-defect integration layer is `10 passed`. In the unprojected
+cross-node-defect/QSS integration layer is `12 passed`. In the unprojected
 IonMonger defect
 case the minimum raw cross-node rate over the accepted stencils is
 `9.2599e12 m^-2 s^-1`; the analytic-to-complex-step interface error is
@@ -517,19 +567,30 @@ of `2.4439e7 m^-2 s^-1`, minimum pair-B raw-rate and density-floor margins of
 `2.4371e7 m^-2 s^-1` and `8.8198e11 m^-3`, and projection-cap margin
 `36.8276`. Its analytic-to-complex-step interface error is `1.14e-10`, full
 rate/voltage errors are `4.10e-6` and `6.62e-9`, and impedance magnitude/phase
-errors are `3.07e-8` and `2.02e-7 deg`. The repository-wide suite is `2079
-passed, 2 skipped, 263 deselected`; the focused ion-aware/interface domain is
-`103 passed, 2 deselected`. These are internal numerical checks, not external
-validation.
+errors are `3.07e-8` and `2.02e-7 deg`.
+
+With QSS enabled, the defect-free local N13 variant has minimum supply-rate and
+root-headroom margins of `6.6081e17 m^-2 s^-1` and `1.6495e12 m^-3`; its
+maximum production-root relative residual is `8.72e-15`. The analytic-to-
+complex interface state error is `1.03e-12`, the full rate error is `4.10e-6`,
+and impedance magnitude/phase errors are `2.65e-8` and `1.91e-7 deg`. A
+cross-node QSS defect with calibration `1e-6` has minimum supply and root
+headroom of `4.0500e16 m^-2 s^-1` and `4.0500e11 m^-3`, maximum root residual
+`1.89e-14`, analytic state/voltage errors `1.76e-12` and `4.28e-16`, and
+impedance magnitude/phase errors `4.39e-8` and `2.44e-7 deg`. It also proves
+that QSS activates projection without the material projection flag and
+suppresses the configured additive mirror exactly as production does.
+
+The focused ion-aware DC/impedance/interface selection is `95 passed`. The
+repository-wide default suite is `2085 passed, 2 skipped, 263 deselected`.
+These are internal numerical checks, not external validation.
 
 ## Remaining work
 
-1. Extend the interface tangent to QSS only after its implicit and non-smooth
-   branch semantics have a differentiable contract.
-2. Replace the remaining frozen-potential reaction differences block by block,
+1. Replace the remaining frozen-potential reaction differences block by block,
    preserving these per-column comparisons.
-3. Introduce sparse or matrix-free assembly only after analytic parity passes.
-4. Complete frequency-window coverage and transient lock-in cross-checks
+2. Introduce sparse or matrix-free assembly only after analytic parity passes.
+3. Complete frequency-window coverage and transient lock-in cross-checks
    before routing ion-aware impedance through public backend or frontend APIs.
 
 Contact thermodynamics, external IonMonger or Driftfusion comparison, and

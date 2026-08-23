@@ -431,3 +431,73 @@ def test_two_sided_projected_interface_srh_closes_both_positive_pairs():
     assert certificate.rate_voltage_derivative.passed
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
     assert certificate.max_impedance_phase_error_deg < 1.0e-5
+
+
+def test_local_qss_interface_srh_closes_the_implicit_root_tangent(
+    monkeypatch,
+):
+    monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
+    result = _solve_comparison(
+        load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    )
+    certificate = result.certificate
+    reaction = result.analytic_interface_reaction
+
+    assert certificate.numerically_certified
+    assert result.protocol.qss_interface_enabled
+    assert reaction.qss_interface_indices == tuple(
+        range(len(reaction.interface_nodes))
+    )
+    assert not reaction.projected_interface_indices
+    assert reaction.minimum_qss_supply_rate_margin_m2_s > 0.0
+    assert reaction.minimum_qss_root_headroom_m3 > 0.0
+    assert reaction.maximum_qss_root_relative_residual < 1.0e-12
+    assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert (
+        certificate.analytic_interface_reaction_rate_voltage_derivative.passed
+    )
+    assert certificate.rate_jacobian.passed
+    assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
+    assert certificate.max_impedance_phase_error_deg < 1.0e-5
+
+
+def test_cross_node_qss_interface_srh_closes_projection_and_suppresses_mirror(
+    monkeypatch,
+):
+    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    defects = list(base.interface_defects)
+    defects.extend([None] * (len(base.interfaces) - len(defects)))
+    defects[-1] = InterfaceDefect(
+        E_t_eV=0.8,
+        calibration_factor=1.0e-6,
+    )
+    monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
+    result = _solve_comparison(
+        replace(
+            base,
+            interface_defects=tuple(defects),
+            interface_two_sided=True,
+        )
+    )
+    certificate = result.certificate
+    reaction = result.analytic_interface_reaction
+    interface_index = len(reaction.interface_nodes) - 1
+
+    assert certificate.numerically_certified
+    assert reaction.qss_interface_indices == tuple(
+        range(len(reaction.interface_nodes))
+    )
+    assert reaction.projected_interface_indices == (interface_index,)
+    assert not reaction.two_sided_interface_indices
+    assert reaction.minimum_cross_node_clamp_margin_m2_s is None
+    assert reaction.minimum_qss_supply_rate_margin_m2_s > 0.0
+    assert reaction.minimum_qss_root_headroom_m3 > 0.0
+    assert reaction.maximum_qss_root_relative_residual < 1.0e-12
+    assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert (
+        certificate.analytic_interface_reaction_rate_voltage_derivative.passed
+    )
+    assert certificate.rate_jacobian.passed
+    assert certificate.rate_voltage_derivative.passed
+    assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
+    assert certificate.max_impedance_phase_error_deg < 1.0e-5

@@ -1878,6 +1878,7 @@ _IFACE_PROJ_EXP_CAP = 40.0  # cap |Δφ/V_T| before exp() to avoid overflow
 # Large → interface-plane state ≈ projected bulk for weak SRH (R = SRH(proj));
 # self-limiting (depletion) for strong SRH. Env-overridable for tuning probes.
 _QSS_V_TH_MS = float(os.environ.get("SOLARLAB_QSS_VTH", "1.0e5"))
+_QSS_ROOT_BISECTION_STEPS = 64
 
 
 def _qss_interface_R(proj_n, proj_p, ni_sq, n1, p1, v_n, v_p, v_th):
@@ -1907,7 +1908,10 @@ def _qss_interface_R(proj_n, proj_p, ni_sq, n1, p1, v_n, v_p, v_th):
     if f(hi) < 0.0:
         return v_th * hi  # transport(TE)-limited recombination
     lo, h = 0.0, hi
-    for _ in range(40):
+    # Sixty-four fixed iterations resolve the root below binary64 precision
+    # across the density spans used by the interface stencil. The former 40
+    # iterations left visible quantization noise in small-signal derivatives.
+    for _ in range(_QSS_ROOT_BISECTION_STEPS):
         mid = 0.5 * (lo + h)
         if f(mid) > 0.0:
             h = mid
