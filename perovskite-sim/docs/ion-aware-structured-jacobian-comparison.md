@@ -1,22 +1,23 @@
 # Ion-aware structured Jacobian comparison
 
-Status: `INTERNAL_TESTED_ANALYTIC_CROSS_NODE_INTERFACE_REACTION` as of
+Status: `INTERNAL_TESTED_ANALYTIC_PROJECTED_INTERFACE_REACTION` as of
 2026-08-23.
 This is a validation path for the ion-aware impedance reference engine.
 Poisson, Scharfetter-Gummel transport, local bulk SRH/radiative/Auger
 recombination, defect-free single-node interface SRH, clamp-inactive cross-node
-`InterfaceDefect` SRH, and finite-rate outer selective contacts are analytic.
+`InterfaceDefect` SRH, its smooth unclipped Boltzmann projection, and finite-rate
+outer selective contacts are analytic.
 The carrier transport tangent also includes the production Caughey-Thomas and
 Poole-Frenkel field-mobility chain at differentiable operating points.
-Projected, QSS, shared-occupancy, and two-sided interface closures are not. It
-is not yet a fully analytic production Jacobian, a registered numerical
-certificate, or external validation.
+QSS, shared-occupancy, and two-sided interface closures are not. It is not yet
+a fully analytic production Jacobian, a registered numerical certificate, or
+external validation.
 
 ## Purpose
 
 `perovskite_sim.experiments.ion_aware_structured_jacobian` tests the global
 chain rule in the eliminated-Poisson formulation before a production sparse
-Jacobian is introduced. Protocol v7 retains six independently constructed
+Jacobian is introduced. Protocol v8 retains six independently constructed
 objects:
 
 1. the existing nonlinear callback, which re-solves Poisson at every finite-
@@ -28,8 +29,8 @@ objects:
    and matching conservative flux-divergence rate rows;
 4. a bulk-reaction hybrid, which additionally replaces local bulk
    SRH/radiative/Auger rate derivatives;
-5. an interface-reaction hybrid, which also replaces defect-free single-node
-   and clamp-inactive cross-node interface SRH;
+5. an interface-reaction hybrid, which also replaces defect-free single-node,
+   clamp-inactive cross-node, and smooth unclipped projected interface SRH;
 6. the final hybrid operator, which replaces finite-rate outer-contact rate
    rows while retaining frozen-potential finite differences only for explicitly
    unsupported interface closures.
@@ -218,12 +219,13 @@ and the assembled log-coordinate columns are
 `-(dR_s/dn) n h_j / dx_cell` or
 `-(dR_s/dp) p h_j / dx_cell` in both carrier continuity rows. For the cross-
 node path, those columns belong to `n[idx + 1]` and `p[idx - 1]`; the two target
-rows remain `n[idx]` and `p[idx]`. Ion columns and the direct voltage derivative
-are zero. A blocked electron or hole capture channel retains the production
-limit `R_s = 0` with a zero tangent only for the defect-free local path.
+rows remain `n[idx]` and `p[idx]`. Without Boltzmann projection, ion columns and
+the direct voltage derivative are zero. A blocked electron or hole capture
+channel retains the production limit `R_s = 0` with a zero tangent only for the
+defect-free local path.
 
 The production solver defaults to `R_s = max(R_s_raw, 0)` for cross-node
-defects. Protocol v7 certifies only the differentiable, clamp-inactive slice.
+defects. Protocol v8 certifies only the differentiable, clamp-inactive slice.
 It requires `SOLARLAB_IFACE_ALLOW_GEN != 1`, `R_s_raw > 0` at the operating
 point, and `R_s_raw > 0` at both sides of every active log-density central
 stencil. A negative or exactly zero operating rate, or any stencil that crosses
@@ -233,22 +235,58 @@ interface indices, and the minimum raw surface rate over the operating point
 and accepted stencils. This is a branch certificate, not a smoothing of the
 production clamp.
 
-Two independent numerical objects are retained. The ordinary double-precision
-central stencil is subtracted from the composite frozen-potential matrix so the
-same nonlinear block is replaced. A separate complex-step matrix validates the
-analytic formula and its topology/volume assembly without the subtraction
+When `interface_plane_projection=True`, the certified cross-node slice also
+uses the exact production Boltzmann projection before SRH evaluation. With
+`R=idx+1`, `L=idx-1`, and
+
+```text
+a_n = (phi_idx - phi_R) / V_T
+a_p = (phi_L - phi_idx) / V_T
+n_tilde = n_R exp(a_n)
+p_tilde = p_L exp(a_p)
+ni_tilde^2 = ni_eff^2 exp(a_n + a_p),
+```
+
+the joint `ni_eff^2` projection preserves the detailed-balance numerator:
+`n_tilde*p_tilde-ni_tilde^2 = exp(a_n+a_p)*(n_R*p_L-ni_eff^2)`.
+For any state or voltage direction `q`, the analytic surface-rate tangent is
+
+```text
+dR_s/dq = R_n n_tilde (dlog(n_R)/dq + da_n/dq)
+         + R_p p_tilde (dlog(p_L)/dq + da_p/dq)
+         - ni_tilde^2 (da_n/dq + da_p/dq) / D_s,
+```
+
+where `da_n/dq=(dphi_idx/dq-dphi_R/dq)/V_T` and
+`da_p/dq=(dphi_L/dq-dphi_idx/dq)/V_T`. The exact eliminated-Poisson
+sensitivities therefore introduce physically required global carrier/ion
+columns and a direct voltage derivative; both sink rows still receive
+`-dR_s/(dx_cell dq)`.
+
+This projection tangent is admitted only while production's exponent cap is
+strictly inactive at the operating point and at both sides of every declared
+state and voltage stencil. Touching or crossing `|a|=40` fails closed. The
+report records projected interface indices and the minimum remaining exponent
+margin. This certifies the smooth interior branch; it does not differentiate
+the hard cap itself.
+
+Two independent numerical objects are retained for both state and voltage
+directions. The ordinary double-precision central stencil is subtracted from
+the composite frozen-potential operator so the same nonlinear block is
+replaced. A separate complex-step object validates the analytic formula,
+projection chain, and topology/volume assembly without the subtraction
 cancellation seen when a large surface rate is differenced at the N91 minimum
-step. The certificate compares the analytic matrix to this complex-step
+step. The certificate compares the analytic matrix/vector to this complex-step
 reference, while the final global rate and impedance gates still compare
 against the full nonlinear central-difference operator.
 
 This interface slice fails closed for clamp-active or clamp-crossing defect
-states, the allow-generation escape branch, a mismatch between declared
-defects and material sampling, Boltzmann interface-plane projection, the QSS
-local root solve, shared occupancy, two-sided mirror recombination, dynamic
+states, a projection-cap-active or cap-crossing stencil, the allow-generation
+escape branch, a mismatch between declared defects and material sampling, the
+QSS local root solve, shared occupancy, two-sided mirror recombination, dynamic
 interface-plane states, exclusive interface transport, non-aligned interface
 arrays, invalid dual-cell widths, or non-finite/nonphysical inputs. Those
-models remain available in the ordinary solver; protocol v7 does not certify
+models remain available in the ordinary solver; protocol v8 does not certify
 their tangent.
 
 ## Analytic selective-contact block
@@ -320,7 +358,7 @@ Default gates include:
 | analytic electron/hole `dmu/dE` error | `5e-6` |
 | non-smooth field-stencil fraction | `0.1` |
 | analytic bulk-reaction column error | `5e-6` |
-| analytic local-interface reaction column error | `5e-6` |
+| analytic local/cross-node/projected interface reaction column error | `5e-6` |
 | analytic selective-contact column error | `5e-6` |
 | impedance magnitude error | `1e-4` |
 | impedance phase error | `1e-3 deg` |
@@ -386,20 +424,26 @@ both locally differentiable and numerically resolvable. This is constitutive
 and operator-assembly evidence, not calibration of the demonstration mobility
 parameters.
 
-The structured unit layer is `19 passed`. The real single-ion, symmetric
+The structured unit layer is `21 passed`. The real single-ion, symmetric
 dual-ion, N61, N91, active-selective-contact, active-field-mobility, and active
-cross-node-defect integration layer is `7 passed`. In the new IonMonger defect
+cross-node-defect integration layer is `8 passed`. In the unprojected
+IonMonger defect
 case the minimum raw cross-node rate over the accepted stencils is
 `9.2599e12 m^-2 s^-1`; the analytic-to-complex-step interface error is
 `8.56e-11`, the full rate error is `4.10e-6`, and the impedance magnitude and
-phase errors are `2.40e-8` and `1.84e-7 deg`. The repository-wide counts below
-are `2072 passed, 2 skipped, 263 deselected`; the focused interface/DC/
-impedance domain is `144 passed, 1 skipped, 14 deselected`. These are internal
-numerical checks, not external validation.
+phase errors are `2.40e-8` and `1.84e-7 deg`. The projected N13 variant has a
+minimum raw-rate margin `4.0500e12 m^-2 s^-1` and exponent-cap margin `36.8276`.
+Its analytic-to-complex-step interface state error is `2.72e-10`, voltage
+error is `3.92e-16`, full rate/voltage errors are `4.10e-6` and `3.09e-9`, and
+the impedance magnitude/phase errors are `3.07e-8` and `2.29e-7 deg`.
+The repository-wide suite is `2075 passed, 2 skipped, 263 deselected`; the
+focused ion-aware DC/impedance/structured, recombination, and small-signal
+suite is `84 passed`. These are internal numerical checks, not external
+validation.
 
 ## Remaining work
 
-1. Extend interface tangents to projected/QSS/shared-occupancy/two-sided defect
+1. Extend interface tangents to QSS/shared-occupancy/two-sided defect
    topologies only after their implicit and non-smooth branch semantics have
    differentiable contracts.
 2. Replace the remaining frozen-potential reaction differences block by block,

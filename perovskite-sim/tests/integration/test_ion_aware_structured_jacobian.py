@@ -299,3 +299,45 @@ def test_cross_node_interface_srh_closes_the_clamp_inactive_tangent():
     assert certificate.rate_jacobian.passed
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
     assert certificate.max_impedance_phase_error_deg < 1.0e-5
+
+
+def test_projected_cross_node_interface_srh_closes_the_smooth_tangent():
+    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    defects = list(base.interface_defects)
+    defects.extend([None] * (len(base.interfaces) - len(defects)))
+    defects[-1] = InterfaceDefect(
+        E_t_eV=0.8,
+        calibration_factor=1.0e-10,
+    )
+    result = _solve_comparison(
+        replace(
+            base,
+            interface_defects=tuple(defects),
+            interface_plane_projection=True,
+        )
+    )
+    certificate = result.certificate
+    reaction = result.analytic_interface_reaction
+    interface_index = len(reaction.interface_nodes) - 1
+
+    assert certificate.numerically_certified
+    assert reaction.cross_node_interface_indices == (interface_index,)
+    assert reaction.projected_interface_indices == (interface_index,)
+    assert reaction.minimum_cross_node_clamp_margin_m2_s > 0.0
+    assert reaction.minimum_projection_exponent_cap_margin > 0.0
+    assert certificate.analytic_interface_reaction_rate_jacobian.passed
+    assert (
+        certificate.analytic_interface_reaction_rate_voltage_derivative.passed
+    )
+    assert not (
+        certificate.analytic_interface_reaction_rate_jacobian.failed_columns
+    )
+    assert (
+        certificate.analytic_interface_reaction_rate_jacobian
+        .max_group_normalized_error
+        < 1.0e-6
+    )
+    assert certificate.rate_jacobian.passed
+    assert certificate.rate_voltage_derivative.passed
+    assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
+    assert certificate.max_impedance_phase_error_deg < 1.0e-5

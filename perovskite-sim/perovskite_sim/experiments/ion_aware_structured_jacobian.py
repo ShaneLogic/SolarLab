@@ -5,7 +5,8 @@ difference stencil.  This module independently differentiates the exact
 discrete Poisson solve and the carrier/ion Scharfetter-Gummel face currents.
 Bulk SRH, radiative, and Auger recombination are also analytic.  Interface
 SRH is analytic for defect-free single-node sampling and for declared-defect
-cross-node sampling whose no-generation clamp is proven inactive. Finite-rate
+cross-node sampling whose no-generation clamp is proven inactive. Smooth,
+unclipped Boltzmann interface-plane projection is included. Finite-rate
 selective outer contacts have an analytic local rate block. Unsupported
 interface closures remain central differences at a frozen potential carrying
 the implicit Poisson sensitivity. It remains a comparison scaffold, not yet a
@@ -74,7 +75,7 @@ from perovskite_sim.solver.small_signal import (
 
 
 ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA = (
-    "ion-aware-structured-jacobian-protocol-v7"
+    "ion-aware-structured-jacobian-protocol-v8"
 )
 
 
@@ -162,16 +163,19 @@ class IonAwareStructuredJacobianProtocol:
         "analytic_sg_field_mobility_transport"
     )
     reaction_linearization: Literal[
-        "analytic_bulk_local_cross_node_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_interface_selective_contact"
     ] = (
-        "analytic_bulk_local_cross_node_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_interface_selective_contact"
     )
     interface_clamp_linearization: Literal[
         "positive_branch_stencil_certified"
     ] = "positive_branch_stencil_certified"
+    interface_projection_linearization: Literal[
+        "smooth_unclipped_boltzmann"
+    ] = "smooth_unclipped_boltzmann"
     rate_row_scaling: Literal["operating_storage"] = "operating_storage"
     column_grouping: Literal["species_blocks"] = "species_blocks"
-    schema_version: Literal["ion-aware-structured-jacobian-protocol-v7"] = (
+    schema_version: Literal["ion-aware-structured-jacobian-protocol-v8"] = (
         ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA
     )
 
@@ -230,13 +234,17 @@ class IonAwareStructuredJacobianProtocol:
         ):
             raise ValueError("unsupported transport linearization")
         if self.reaction_linearization != (
-            "analytic_bulk_local_cross_node_interface_selective_contact"
+            "analytic_bulk_local_cross_node_projected_interface_selective_contact"
         ):
             raise ValueError("unsupported reaction linearization")
         if self.interface_clamp_linearization != (
             "positive_branch_stencil_certified"
         ):
             raise ValueError("unsupported interface clamp linearization")
+        if self.interface_projection_linearization != (
+            "smooth_unclipped_boltzmann"
+        ):
+            raise ValueError("unsupported interface projection linearization")
         if self.rate_row_scaling != "operating_storage":
             raise ValueError("unsupported structured rate row scaling")
         if self.column_grouping != "species_blocks":
@@ -1035,7 +1043,14 @@ def run_ion_aware_structured_jacobian_comparison(
                 potential_at_operating_point_V=(
                     poisson.potential_at_operating_point_V
                 ),
+                potential_state_jacobian_V=(
+                    poisson.potential_state_jacobian_V
+                ),
+                potential_voltage_derivative=(
+                    poisson.potential_voltage_derivative
+                ),
                 state_steps=poisson.state_steps,
+                voltage_step=structured_protocol.voltage_step,
             )
         )
         analytic_interface_reaction_result = (
@@ -1246,7 +1261,7 @@ def run_ion_aware_structured_jacobian_comparison(
     )
     analytic_bulk_reaction_voltage = _vector_comparison(
         "analytic_bulk_reaction_rate_voltage_derivative",
-        np.zeros_like(analytic_bulk_reaction.rate_voltage_derivative),
+        analytic_bulk_reaction.finite_difference_rate_voltage_derivative,
         analytic_bulk_reaction.rate_voltage_derivative,
         limit=structured_protocol.max_rate_voltage_relative_error,
     )
@@ -1269,7 +1284,7 @@ def run_ion_aware_structured_jacobian_comparison(
     )
     analytic_interface_reaction_voltage = _vector_comparison(
         "analytic_interface_reaction_rate_voltage_derivative",
-        np.zeros_like(analytic_interface_reaction.rate_voltage_derivative),
+        analytic_interface_reaction.complex_step_rate_voltage_derivative,
         analytic_interface_reaction.rate_voltage_derivative,
         limit=structured_protocol.max_rate_voltage_relative_error,
     )
@@ -1292,7 +1307,7 @@ def run_ion_aware_structured_jacobian_comparison(
     )
     analytic_contact_voltage = _vector_comparison(
         "analytic_contact_rate_voltage_derivative",
-        np.zeros_like(analytic_contact.rate_voltage_derivative),
+        analytic_contact.finite_difference_rate_voltage_derivative,
         analytic_contact.rate_voltage_derivative,
         limit=structured_protocol.max_rate_voltage_relative_error,
     )

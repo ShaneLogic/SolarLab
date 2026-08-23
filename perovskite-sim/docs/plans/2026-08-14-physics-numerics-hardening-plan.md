@@ -437,11 +437,19 @@ residual-certified ion/electron/hole DC state
    仅当默认 no-generation clamp 在工作点及每个 `+/-h` 中心 stencil 上均
    严格 inactive (`R_s_raw > 0`) 时进入；负支、零点、跨零 stencil 和
    `SOLARLAB_IFACE_ALLOW_GEN=1` 均 fail-closed。真实单离子 defect 器件的
-   complex-step、完整 rate 矩阵及阻抗幅相共同通过；projection、QSS、shared
-   occupancy、two-sided 与 dynamic interface states 仍未解析。
-9. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-10. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
-11. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+   complex-step、完整 rate 矩阵及阻抗幅相共同通过；projection 进入下一项
+   独立合同，QSS、shared occupancy、two-sided 与 dynamic interface states
+   仍未解析。
+9. **`INTERNAL_TESTED_ANALYTIC_PROJECTED_INTERFACE_REACTION` (2026-08-23)**：
+   production Boltzmann projection 的 `n_R`、`p_L` 与 `ni_eff^2` 联合指数
+   变换已通过精确 Poisson state/voltage sensitivity 完成全局链式闭合。
+   operating point、每个 state stencil 与 voltage stencil 必须严格位于
+   `|Delta phi/V_T| < 40` 且 no-generation clamp 的正支内，否则 fail-close；
+   真实 N13 projected defect 的 complex-step、完整 rate/forcing 与阻抗幅相
+   共同通过。QSS、shared occupancy、two-sided 与 dynamic states 仍未解析。
+10. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+11. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+12. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛
 

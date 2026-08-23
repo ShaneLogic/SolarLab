@@ -151,10 +151,11 @@ certificate.
 
 ## Remaining Phase 2 work
 
-1. Exact discrete Poisson sensitivity, analytic SG transport, local bulk and
-   defect-free interface reaction, selective-contact, and differentiable CT/PF
-   mobility blocks are implemented; replace the remaining unsupported
-   interface/nonlocal frozen-potential differences.
+1. Exact discrete Poisson sensitivity, analytic SG transport, local bulk,
+   defect-free and clamp-inactive cross-node/projected interface reaction,
+   selective-contact, and differentiable CT/PF mobility blocks are implemented;
+   replace the remaining unsupported interface/nonlocal frozen-potential
+   differences.
    See
    [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
 2. Add device-timescale frequency-window assessment without changing user

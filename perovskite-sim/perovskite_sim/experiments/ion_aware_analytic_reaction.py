@@ -26,7 +26,7 @@ from perovskite_sim.physics.recombination import (
     total_recombination,
     total_recombination_derivatives,
 )
-from perovskite_sim.solver.mol import MaterialArrays
+from perovskite_sim.solver.mol import MaterialArrays, _IFACE_PROJ_EXP_CAP
 from perovskite_sim.solver.small_signal import (
     FrequencyDomainResult,
     ProgressCallback,
@@ -50,6 +50,7 @@ class IonAwareAnalyticBulkReactionLinearization:
     rate_jacobian: np.ndarray
     finite_difference_rate_jacobian: np.ndarray
     rate_voltage_derivative: np.ndarray
+    finite_difference_rate_voltage_derivative: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +61,9 @@ class IonAwareAnalyticInterfaceReactionLinearization:
     electron_evaluation_nodes: tuple[int, ...]
     hole_evaluation_nodes: tuple[int, ...]
     cross_node_interface_indices: tuple[int, ...]
+    projected_interface_indices: tuple[int, ...]
     minimum_cross_node_clamp_margin_m2_s: float | None
+    minimum_projection_exponent_cap_margin: float | None
     surface_recombination_rate_m2_s: np.ndarray
     electron_density_derivative_m_s: np.ndarray
     hole_density_derivative_m_s: np.ndarray
@@ -68,6 +71,8 @@ class IonAwareAnalyticInterfaceReactionLinearization:
     finite_difference_rate_jacobian: np.ndarray
     complex_step_rate_jacobian: np.ndarray
     rate_voltage_derivative: np.ndarray
+    finite_difference_rate_voltage_derivative: np.ndarray
+    complex_step_rate_voltage_derivative: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +86,7 @@ class IonAwareAnalyticContactLinearization:
     rate_jacobian: np.ndarray
     finite_difference_rate_jacobian: np.ndarray
     rate_voltage_derivative: np.ndarray
+    finite_difference_rate_voltage_derivative: np.ndarray
 
 
 def _node_recombination_rate(
@@ -263,6 +269,9 @@ def build_ion_aware_analytic_bulk_reaction_linearization(
         rate_jacobian=analytic,
         finite_difference_rate_jacobian=finite_difference,
         rate_voltage_derivative=voltage_derivative,
+        finite_difference_rate_voltage_derivative=np.zeros_like(
+            voltage_derivative
+        ),
     )
 
 
@@ -275,13 +284,18 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     layout: IonAwareStateCoordinateLayout,
     *,
     potential_at_operating_point_V: np.ndarray,
+    potential_state_jacobian_V: np.ndarray,
+    potential_voltage_derivative: np.ndarray,
     state_steps: np.ndarray,
+    voltage_step: float,
 ) -> IonAwareAnalyticInterfaceReactionLinearization:
     """Assemble smooth interface-SRH tangents in log coordinates."""
 
     grid = np.asarray(x, dtype=float)
     state = np.asarray(base_state, dtype=float)
     potential = np.asarray(potential_at_operating_point_V, dtype=float)
+    potential_jacobian = np.asarray(potential_state_jacobian_V, dtype=float)
+    potential_voltage = np.asarray(potential_voltage_derivative, dtype=float)
     steps = np.asarray(state_steps, dtype=float)
     expected_state_size = (4 if material.has_dual_ions else 3) * grid.size
     if (
@@ -294,10 +308,16 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         or not np.all(np.isfinite(state))
         or potential.shape != grid.shape
         or not np.all(np.isfinite(potential))
+        or potential_jacobian.shape != (grid.size, layout.size)
+        or not np.all(np.isfinite(potential_jacobian))
+        or potential_voltage.shape != grid.shape
+        or not np.all(np.isfinite(potential_voltage))
         or steps.shape != (layout.size,)
         or not np.all(np.isfinite(steps))
         or np.any(steps <= 0.0)
         or not np.isfinite(V_dc)
+        or not np.isfinite(voltage_step)
+        or voltage_step <= 0.0
     ):
         raise IonAwareAnalyticReactionCapabilityError(
             "analytic interface-reaction inputs must be finite and shape matched"
@@ -315,7 +335,6 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         for name, active in (
             ("interface-plane closure", material.iface_plane_closure),
             ("shared-occupancy interface closure", material.iface_shared_occ),
-            ("interface-plane projection", material.iface_plane_projection),
             ("two-sided interface closure", material.iface_two_sided),
         )
         if active
@@ -327,6 +346,12 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     if os.environ.get("SOLARLAB_IFACE_QSS", "") == "1":
         raise IonAwareAnalyticReactionCapabilityError(
             "QSS interface-plane root solve has no declared analytic tangent"
+        )
+    projection_active = bool(material.iface_plane_projection)
+    thermal_voltage = float(material.V_T_device)
+    if not np.isfinite(thermal_voltage) or thermal_voltage <= 0.0:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "interface projection requires a finite positive thermal voltage"
         )
 
     interfaces = electrical_interfaces(stack)
@@ -447,14 +472,14 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     finite_difference = np.zeros_like(analytic)
     complex_step = np.zeros_like(analytic)
     voltage_derivative = np.zeros(layout.size, dtype=float)
+    finite_difference_voltage = np.zeros(layout.size, dtype=float)
+    complex_step_voltage = np.zeros(layout.size, dtype=float)
     surface_rate = np.zeros(count, dtype=float)
     electron_derivative = np.zeros(count, dtype=float)
     hole_derivative = np.zeros(count, dtype=float)
     minimum_cross_node_clamp_margin = np.inf
-    coordinate_by_state_index = {
-        state_index: column
-        for column, state_index in enumerate(layout.state_indices)
-    }
+    projected_indices: list[int] = []
+    minimum_projection_cap_margin = np.inf
     row_by_state_index = {
         state_index: row
         for row, state_index in enumerate(layout.state_indices)
@@ -464,13 +489,59 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         zip(nodes, interfaces, strict=True)
     ):
         dx_cell = float(material.dx_cell[node])
-        n_value = float(n[eval_n[index]])
-        p_value = float(p[eval_p[index]])
+        electron_node = eval_n[index]
+        hole_node = eval_p[index]
+        n_value = float(n[electron_node])
+        p_value = float(p[hole_node])
         n1 = float(material.interface_n1[index])
         p1 = float(material.interface_p1[index])
         v_n = float(velocities[0]) * calibration[index]
         v_p = float(velocities[1]) * calibration[index]
-        scalars = (dx_cell, n_value, p_value, n1, p1, v_n, v_p)
+        is_cross_node = index in cross_node_indices
+        is_projected = projection_active and is_cross_node
+        projection_log_n = 0.0
+        projection_log_p = 0.0
+        if is_projected:
+            projection_log_n = (
+                float(potential[node]) - float(potential[electron_node])
+            ) / thermal_voltage
+            projection_log_p = (
+                float(potential[hole_node]) - float(potential[node])
+            ) / thermal_voltage
+            projection_margin = _IFACE_PROJ_EXP_CAP - max(
+                abs(projection_log_n),
+                abs(projection_log_p),
+            )
+            if not np.isfinite(projection_margin) or projection_margin <= 0.0:
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "interface projection exponent cap is active at the "
+                    "operating point"
+                )
+            projected_indices.append(index)
+            minimum_projection_cap_margin = min(
+                minimum_projection_cap_margin,
+                projection_margin,
+            )
+
+        projection_factor_n = float(np.exp(projection_log_n))
+        projection_factor_p = float(np.exp(projection_log_p))
+        projected_n = n_value * projection_factor_n
+        projected_p = p_value * projection_factor_p
+        projected_ni_sq = (
+            ni_sq_eff[index] * projection_factor_n * projection_factor_p
+        )
+        scalars = (
+            dx_cell,
+            n_value,
+            p_value,
+            projected_n,
+            projected_p,
+            projected_ni_sq,
+            n1,
+            p1,
+            v_n,
+            v_p,
+        )
         if (
             not np.all(np.isfinite(scalars))
             or dx_cell <= 0.0
@@ -486,8 +557,8 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             )
         if v_n > 0.0 and v_p > 0.0:
             denominator = interface_srh_denominator(
-                n_value,
-                p_value,
+                projected_n,
+                projected_p,
                 n1,
                 p1,
                 v_n,
@@ -497,10 +568,12 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 raise IonAwareAnalyticReactionCapabilityError(
                     "interface SRH denominator must be finite and positive"
                 )
+        else:
+            denominator = np.inf
         derivatives = interface_recombination_derivatives(
-            n_value,
-            p_value,
-            ni_sq_eff[index],
+            projected_n,
+            projected_p,
+            projected_ni_sq,
             n1,
             p1,
             v_n,
@@ -515,7 +588,6 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             raise IonAwareAnalyticReactionCapabilityError(
                 "analytic interface-reaction formula produced a non-finite block"
             )
-        is_cross_node = index in cross_node_indices
         if is_cross_node:
             if float(derivatives.rate) <= 0.0:
                 raise IonAwareAnalyticReactionCapabilityError(
@@ -529,60 +601,101 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         surface_rate[index] = float(derivatives.rate)
         electron_derivative[index] = float(
             derivatives.electron_density_derivative
+        ) * projection_factor_n
+        hole_derivative[index] = (
+            float(derivatives.hole_density_derivative) * projection_factor_p
         )
-        hole_derivative[index] = float(derivatives.hole_density_derivative)
         target_rows = tuple(
             row_by_state_index.get(state_index)
             for state_index in (node, grid.size + node)
         )
-        for species, state_index, density, density_derivative in (
-            (
-                "electron",
-                eval_n[index],
-                n_value,
-                electron_derivative[index],
-            ),
-            (
-                "hole",
-                grid.size + eval_p[index],
-                p_value,
-                hole_derivative[index],
-            ),
-        ):
-            column = coordinate_by_state_index.get(state_index)
-            if column is None:
-                continue
+
+        def projected_rate(
+            electron_density: complex | float,
+            hole_density: complex | float,
+            electron_log_factor: complex | float,
+            hole_log_factor: complex | float,
+        ) -> complex | float:
+            factor_n = np.exp(electron_log_factor)
+            factor_p = np.exp(hole_log_factor)
+            return interface_recombination(
+                electron_density * factor_n,
+                hole_density * factor_p,
+                ni_sq_eff[index] * factor_n * factor_p,
+                n1,
+                p1,
+                v_n,
+                v_p,
+            )
+
+        for column, state_index in enumerate(layout.state_indices):
             step = float(steps[column])
+            direct_log_n = step if state_index == electron_node else 0.0
+            direct_log_p = (
+                step if state_index == grid.size + hole_node else 0.0
+            )
+            projection_delta_n = 0.0
+            projection_delta_p = 0.0
+            if is_projected:
+                potential_increment = potential_jacobian[:, column] * step
+                projection_delta_n = (
+                    float(potential_increment[node])
+                    - float(potential_increment[electron_node])
+                ) / thermal_voltage
+                projection_delta_p = (
+                    float(potential_increment[hole_node])
+                    - float(potential_increment[node])
+                ) / thermal_voltage
+            directional_log_n = direct_log_n + projection_delta_n
+            directional_log_p = direct_log_p + projection_delta_p
+            reference_log_increment = projection_delta_n + projection_delta_p
+            if (
+                directional_log_n == 0.0
+                and directional_log_p == 0.0
+                and reference_log_increment == 0.0
+            ):
+                continue
+            if is_projected:
+                projection_margin = _IFACE_PROJ_EXP_CAP - max(
+                    abs(projection_log_n + projection_delta_n),
+                    abs(projection_log_n - projection_delta_n),
+                    abs(projection_log_p + projection_delta_p),
+                    abs(projection_log_p - projection_delta_p),
+                )
+                if (
+                    not np.isfinite(projection_margin)
+                    or projection_margin <= 0.0
+                ):
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "interface projection state stencil reaches the "
+                        "exponent cap"
+                    )
+                minimum_projection_cap_margin = min(
+                    minimum_projection_cap_margin,
+                    projection_margin,
+                )
             analytic_recombination = (
-                density_derivative * density * step / dx_cell
+                float(derivatives.electron_density_derivative)
+                * projected_n
+                * directional_log_n
+                + float(derivatives.hole_density_derivative)
+                * projected_p
+                * directional_log_p
+                - projected_ni_sq
+                * reference_log_increment
+                / denominator
+            ) / dx_cell
+            rate_plus = projected_rate(
+                n_value * float(np.exp(direct_log_n)),
+                p_value * float(np.exp(direct_log_p)),
+                projection_log_n + projection_delta_n,
+                projection_log_p + projection_delta_p,
             )
-            n_plus = n_value
-            n_minus = n_value
-            p_plus = p_value
-            p_minus = p_value
-            if species == "electron":
-                n_plus *= float(np.exp(step))
-                n_minus *= float(np.exp(-step))
-            else:
-                p_plus *= float(np.exp(step))
-                p_minus *= float(np.exp(-step))
-            rate_plus = interface_recombination(
-                n_plus,
-                p_plus,
-                ni_sq_eff[index],
-                n1,
-                p1,
-                v_n,
-                v_p,
-            )
-            rate_minus = interface_recombination(
-                n_minus,
-                p_minus,
-                ni_sq_eff[index],
-                n1,
-                p1,
-                v_n,
-                v_p,
+            rate_minus = projected_rate(
+                n_value * float(np.exp(-direct_log_n)),
+                p_value * float(np.exp(-direct_log_p)),
+                projection_log_n - projection_delta_n,
+                projection_log_p - projection_delta_p,
             )
             if is_cross_node:
                 stencil_minimum = min(float(rate_plus), float(rate_minus))
@@ -599,37 +712,115 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                 rate_plus - rate_minus
             ) / dx_cell
             complex_epsilon = 1.0e-30
-            if species == "electron":
-                complex_rate = interface_recombination(
-                    n_value + 1j * n_value * complex_epsilon,
-                    p_value,
-                    ni_sq_eff[index],
-                    n1,
-                    p1,
-                    v_n,
-                    v_p,
-                )
-            else:
-                complex_rate = interface_recombination(
-                    n_value,
-                    p_value + 1j * p_value * complex_epsilon,
-                    ni_sq_eff[index],
-                    n1,
-                    p1,
-                    v_n,
-                    v_p,
-                )
+            complex_rate = projected_rate(
+                n_value * np.exp(1j * direct_log_n * complex_epsilon),
+                p_value * np.exp(1j * direct_log_p * complex_epsilon),
+                projection_log_n
+                + 1j * projection_delta_n * complex_epsilon,
+                projection_log_p
+                + 1j * projection_delta_p * complex_epsilon,
+            )
             complex_recombination = (
-                float(np.imag(complex_rate))
-                / complex_epsilon
-                * step
-                / dx_cell
+                float(np.imag(complex_rate)) / complex_epsilon / dx_cell
             )
             for row in target_rows:
                 if row is not None:
                     analytic[row, column] -= analytic_recombination
                     finite_difference[row, column] -= finite_recombination
                     complex_step[row, column] -= complex_recombination
+
+        if is_projected:
+            projection_voltage_n = (
+                float(potential_voltage[node])
+                - float(potential_voltage[electron_node])
+            ) / thermal_voltage
+            projection_voltage_p = (
+                float(potential_voltage[hole_node])
+                - float(potential_voltage[node])
+            ) / thermal_voltage
+            voltage_projection_step_n = projection_voltage_n * voltage_step
+            voltage_projection_step_p = projection_voltage_p * voltage_step
+            projection_margin = _IFACE_PROJ_EXP_CAP - max(
+                abs(projection_log_n + voltage_projection_step_n),
+                abs(projection_log_n - voltage_projection_step_n),
+                abs(projection_log_p + voltage_projection_step_p),
+                abs(projection_log_p - voltage_projection_step_p),
+            )
+            if not np.isfinite(projection_margin) or projection_margin <= 0.0:
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "interface projection voltage stencil reaches the "
+                    "exponent cap"
+                )
+            minimum_projection_cap_margin = min(
+                minimum_projection_cap_margin,
+                projection_margin,
+            )
+            projection_voltage_reference = (
+                projection_voltage_n + projection_voltage_p
+            )
+            analytic_voltage_recombination = (
+                float(derivatives.electron_density_derivative)
+                * projected_n
+                * projection_voltage_n
+                + float(derivatives.hole_density_derivative)
+                * projected_p
+                * projection_voltage_p
+                - projected_ni_sq
+                * projection_voltage_reference
+                / denominator
+            ) / dx_cell
+            rate_voltage_plus = projected_rate(
+                n_value,
+                p_value,
+                projection_log_n + voltage_projection_step_n,
+                projection_log_p + voltage_projection_step_p,
+            )
+            rate_voltage_minus = projected_rate(
+                n_value,
+                p_value,
+                projection_log_n - voltage_projection_step_n,
+                projection_log_p - voltage_projection_step_p,
+            )
+            if is_cross_node:
+                stencil_minimum = min(
+                    float(rate_voltage_plus),
+                    float(rate_voltage_minus),
+                )
+                if not np.isfinite(stencil_minimum) or stencil_minimum <= 0.0:
+                    raise IonAwareAnalyticReactionCapabilityError(
+                        "cross-node interface voltage stencil crosses the "
+                        "inactive clamp branch"
+                    )
+                minimum_cross_node_clamp_margin = min(
+                    minimum_cross_node_clamp_margin,
+                    stencil_minimum,
+                )
+            finite_voltage_recombination = (
+                float(rate_voltage_plus) - float(rate_voltage_minus)
+            ) / (2.0 * voltage_step * dx_cell)
+            complex_epsilon = 1.0e-30
+            complex_voltage_rate = projected_rate(
+                n_value,
+                p_value,
+                projection_log_n
+                + 1j * projection_voltage_n * complex_epsilon,
+                projection_log_p
+                + 1j * projection_voltage_p * complex_epsilon,
+            )
+            complex_voltage_recombination = (
+                float(np.imag(complex_voltage_rate))
+                / complex_epsilon
+                / dx_cell
+            )
+            for row in target_rows:
+                if row is not None:
+                    voltage_derivative[row] -= analytic_voltage_recombination
+                    finite_difference_voltage[row] -= (
+                        finite_voltage_recombination
+                    )
+                    complex_step_voltage[row] -= (
+                        complex_voltage_recombination
+                    )
 
     arrays = (
         surface_rate,
@@ -639,6 +830,8 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         finite_difference,
         complex_step,
         voltage_derivative,
+        finite_difference_voltage,
+        complex_step_voltage,
     )
     if any(not np.all(np.isfinite(value)) for value in arrays):
         raise IonAwareAnalyticReactionCapabilityError(
@@ -649,9 +842,15 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         electron_evaluation_nodes=eval_n,
         hole_evaluation_nodes=eval_p,
         cross_node_interface_indices=tuple(cross_node_indices),
+        projected_interface_indices=tuple(projected_indices),
         minimum_cross_node_clamp_margin_m2_s=(
             float(minimum_cross_node_clamp_margin)
             if cross_node_indices
+            else None
+        ),
+        minimum_projection_exponent_cap_margin=(
+            float(minimum_projection_cap_margin)
+            if projected_indices
             else None
         ),
         surface_recombination_rate_m2_s=surface_rate,
@@ -661,6 +860,10 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         finite_difference_rate_jacobian=finite_difference,
         complex_step_rate_jacobian=complex_step,
         rate_voltage_derivative=voltage_derivative,
+        finite_difference_rate_voltage_derivative=(
+            finite_difference_voltage
+        ),
+        complex_step_rate_voltage_derivative=complex_step_voltage,
     )
 
 
@@ -879,6 +1082,9 @@ def build_ion_aware_analytic_contact_linearization(
         rate_jacobian=analytic,
         finite_difference_rate_jacobian=finite_difference,
         rate_voltage_derivative=voltage_derivative,
+        finite_difference_rate_voltage_derivative=np.zeros_like(
+            voltage_derivative
+        ),
     )
 
 
@@ -905,12 +1111,15 @@ def _apply_analytic_reaction_linearization(
         analytic.rate_jacobian,
         analytic.finite_difference_rate_jacobian,
         analytic.rate_voltage_derivative,
+        analytic.finite_difference_rate_voltage_derivative,
     )
     if (
         reference.rate_jacobian.shape != state_shape
         or analytic.rate_jacobian.shape != state_shape
         or analytic.finite_difference_rate_jacobian.shape != state_shape
         or analytic.rate_voltage_derivative.shape != (layout.size,)
+        or analytic.finite_difference_rate_voltage_derivative.shape
+        != (layout.size,)
         or weights.shape != (face_count,)
         or not np.all(np.isfinite(weights))
         or np.any(weights < 0.0)
@@ -927,7 +1136,9 @@ def _apply_analytic_reaction_linearization(
         + analytic.rate_jacobian
     )
     rate_voltage = (
-        reference.rate_voltage_derivative + analytic.rate_voltage_derivative
+        reference.rate_voltage_derivative
+        - analytic.finite_difference_rate_voltage_derivative
+        + analytic.rate_voltage_derivative
     )
 
     def evaluate(coordinate: np.ndarray, voltage: float) -> SmallSignalEvaluation:

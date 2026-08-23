@@ -102,12 +102,15 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
         "analytic_sg_field_mobility_transport"
     )
     assert rebuilt.reaction_linearization == (
-        "analytic_bulk_local_cross_node_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_interface_selective_contact"
     )
     assert rebuilt.interface_clamp_linearization == (
         "positive_branch_stencil_certified"
     )
-    assert rebuilt.schema_version.endswith("-v7")
+    assert rebuilt.interface_projection_linearization == (
+        "smooth_unclipped_boltzmann"
+    )
+    assert rebuilt.schema_version.endswith("-v8")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -128,6 +131,8 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         replace(protocol, max_rate_jacobian_column_relative_error=0.0)
     with pytest.raises(ValueError, match="interface clamp"):
         replace(protocol, interface_clamp_linearization="allow_generation")
+    with pytest.raises(ValueError, match="interface projection"):
+        replace(protocol, interface_projection_linearization="hard_cap")
     with pytest.raises(ValueError, match="positive"):
         replace(
             protocol,
@@ -494,7 +499,17 @@ def test_analytic_interface_reaction_is_local_and_matches_independent_stencil(
     assert reaction.electron_evaluation_nodes == reaction.interface_nodes
     assert reaction.hole_evaluation_nodes == reaction.interface_nodes
     assert not reaction.cross_node_interface_indices
+    assert not reaction.projected_interface_indices
     assert reaction.minimum_cross_node_clamp_margin_m2_s is None
+    assert reaction.minimum_projection_exponent_cap_margin is None
+    np.testing.assert_array_equal(
+        reaction.finite_difference_rate_voltage_derivative,
+        0.0,
+    )
+    np.testing.assert_array_equal(
+        reaction.complex_step_rate_voltage_derivative,
+        0.0,
+    )
     assert comparison.passed
     assert comparison.max_group_normalized_error < 1.0e-6
     for species in ("positive_ion", "negative_ion"):
@@ -555,7 +570,14 @@ def test_analytic_interface_reaction_uses_cross_node_columns_and_sink_rows(
             potential_at_operating_point_V=(
                 result.poisson_sensitivity.potential_at_operating_point_V
             ),
+            potential_state_jacobian_V=(
+                result.poisson_sensitivity.potential_state_jacobian_V
+            ),
+            potential_voltage_derivative=(
+                result.poisson_sensitivity.potential_voltage_derivative
+            ),
             state_steps=result.poisson_sensitivity.state_steps,
+            voltage_step=result.protocol.voltage_step,
         )
     )
     layout = result.reference.coordinate_layout
@@ -595,6 +617,99 @@ def test_analytic_interface_reaction_uses_cross_node_columns_and_sink_rows(
         assert set(np.flatnonzero(reaction.rate_jacobian[:, column])) == (
             target_rows
         )
+
+
+def test_analytic_interface_reaction_closes_smooth_projected_chain_rule(
+    comparison_fixture,
+):
+    stack, x, _mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    projected_stack = replace(
+        _stack_with_cross_node_defect(stack),
+        interface_plane_projection=True,
+    )
+    projected_mat = build_material_arrays(x, projected_stack)
+    reaction = (
+        analytic_reaction
+        .build_ion_aware_analytic_interface_reaction_linearization(
+            x,
+            projected_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            projected_mat,
+            result.reference.coordinate_layout,
+            potential_at_operating_point_V=(
+                result.poisson_sensitivity.potential_at_operating_point_V
+            ),
+            potential_state_jacobian_V=(
+                result.poisson_sensitivity.potential_state_jacobian_V
+            ),
+            potential_voltage_derivative=(
+                result.poisson_sensitivity.potential_voltage_derivative
+            ),
+            state_steps=result.poisson_sensitivity.state_steps,
+            voltage_step=result.protocol.voltage_step,
+        )
+    )
+    interface_index = len(reaction.interface_nodes) - 1
+
+    assert reaction.projected_interface_indices == (interface_index,)
+    assert reaction.minimum_projection_exponent_cap_margin > 0.0
+    assert reaction.minimum_cross_node_clamp_margin_m2_s > 0.0
+    np.testing.assert_allclose(
+        reaction.rate_jacobian,
+        reaction.complex_step_rate_jacobian,
+        rtol=5.0e-10,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        reaction.rate_voltage_derivative,
+        reaction.complex_step_rate_voltage_derivative,
+        rtol=5.0e-10,
+        atol=0.0,
+    )
+    state_scale = max(
+        float(np.max(np.abs(reaction.rate_jacobian))),
+        np.finfo(float).tiny,
+    )
+    voltage_scale = max(
+        float(np.max(np.abs(reaction.rate_voltage_derivative))),
+        np.finfo(float).tiny,
+    )
+    assert (
+        float(
+            np.max(
+                np.abs(
+                    reaction.rate_jacobian
+                    - reaction.finite_difference_rate_jacobian
+                )
+            )
+        )
+        / state_scale
+        < 5.0e-6
+    )
+    assert (
+        float(
+            np.max(
+                np.abs(
+                    reaction.rate_voltage_derivative
+                    - reaction.finite_difference_rate_voltage_derivative
+                )
+            )
+        )
+        / voltage_scale
+        < 5.0e-6
+    )
+
+    layout = result.reference.coordinate_layout
+    ion_columns = np.concatenate(
+        (
+            np.arange(layout.size)[layout.coordinate_slice("positive_ion")],
+            np.arange(layout.size)[layout.coordinate_slice("negative_ion")],
+        )
+    )
+    assert np.any(reaction.rate_jacobian[:, ion_columns] != 0.0)
 
 
 def test_analytic_selective_contact_block_covers_all_four_sign_conventions(
@@ -1045,7 +1160,14 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
         "potential_at_operating_point_V": (
             result.poisson_sensitivity.potential_at_operating_point_V
         ),
+        "potential_state_jacobian_V": (
+            result.poisson_sensitivity.potential_state_jacobian_V
+        ),
+        "potential_voltage_derivative": (
+            result.poisson_sensitivity.potential_voltage_derivative
+        ),
         "state_steps": result.poisson_sensitivity.state_steps,
+        "voltage_step": result.protocol.voltage_step,
     }
     build = (
         analytic_reaction
@@ -1053,7 +1175,6 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
     )
 
     for changed, message in (
-        ({"iface_plane_projection": True}, "interface-plane projection"),
         ({"iface_shared_occ": True}, "shared-occupancy"),
         ({"iface_two_sided": True}, "two-sided"),
         ({"iface_plane_closure": True}, "interface-plane closure"),
@@ -1208,6 +1329,98 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
             result.reference.coordinate_layout,
             **kwargs,
         )
+
+
+def test_projected_interface_reaction_rejects_exponent_cap_surfaces(
+    comparison_fixture,
+):
+    stack, x, _mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    projected_stack = replace(
+        _stack_with_cross_node_defect(stack),
+        interface_plane_projection=True,
+    )
+    projected_mat = build_material_arrays(x, projected_stack)
+    layout = result.reference.coordinate_layout
+    potential = np.asarray(
+        result.poisson_sensitivity.potential_at_operating_point_V,
+        dtype=float,
+    )
+    potential_jacobian = np.asarray(
+        result.poisson_sensitivity.potential_state_jacobian_V,
+        dtype=float,
+    )
+    potential_voltage = np.asarray(
+        result.poisson_sensitivity.potential_voltage_derivative,
+        dtype=float,
+    )
+    state_steps = result.poisson_sensitivity.state_steps
+    voltage_step = result.protocol.voltage_step
+    interface_index = len(projected_mat.interface_nodes) - 1
+    node = projected_mat.interface_nodes[interface_index]
+    electron_node = projected_mat.interface_eval_node_n[interface_index]
+    hole_node = projected_mat.interface_eval_node_p[interface_index]
+    thermal_voltage = projected_mat.V_T_device
+
+    def build(**overrides):
+        arguments = {
+            "potential_at_operating_point_V": potential,
+            "potential_state_jacobian_V": potential_jacobian,
+            "potential_voltage_derivative": potential_voltage,
+            "state_steps": state_steps,
+            "voltage_step": voltage_step,
+        }
+        arguments.update(overrides)
+        return (
+            analytic_reaction
+            .build_ion_aware_analytic_interface_reaction_linearization(
+                x,
+                projected_stack,
+                dc_state.y,
+                impedance_protocol.V_dc,
+                projected_mat,
+                layout,
+                **arguments,
+            )
+        )
+
+    capped_potential = potential.copy()
+    capped_potential[electron_node] = (
+        capped_potential[node]
+        - analytic_reaction._IFACE_PROJ_EXP_CAP * thermal_voltage
+    )
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="cap is active",
+    ):
+        build(potential_at_operating_point_V=capped_potential)
+
+    log_n = (potential[node] - potential[electron_node]) / thermal_voltage
+    excess_log_step = (
+        analytic_reaction._IFACE_PROJ_EXP_CAP - abs(log_n) + 1.0
+    )
+    capped_state_jacobian = np.zeros_like(potential_jacobian)
+    capped_state_jacobian[node, 0] = (
+        excess_log_step * thermal_voltage / state_steps[0]
+    )
+    capped_state_jacobian[hole_node, 0] = capped_state_jacobian[node, 0]
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="state stencil reaches",
+    ):
+        build(potential_state_jacobian_V=capped_state_jacobian)
+
+    capped_voltage = np.zeros_like(potential_voltage)
+    capped_voltage[node] = (
+        excess_log_step * thermal_voltage / voltage_step
+    )
+    capped_voltage[hole_node] = capped_voltage[node]
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="voltage stencil reaches",
+    ):
+        build(potential_voltage_derivative=capped_voltage)
 
 
 def test_mismatched_hash_is_rejected_before_comparison(
