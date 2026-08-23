@@ -1,8 +1,8 @@
 # Ion-aware impedance reference engine
 
-Status: `REGISTERED_CONTENT_ADDRESSED_CANDIDATE` as of 2026-08-23.
-This is a canonical internal numerical certificate with a registered runner
-lane; its release artifact and external validation remain separate evidence.
+Status: `INTERNAL_CERTIFIED_GRID_AND_TRANSIENT_CROSSCHECK` as of 2026-08-23.
+This is canonical internal numerical evidence with a content-addressed matrix
+and exact-DC transient cross-check; external validation remains separate.
 
 ## Scope
 
@@ -148,6 +148,32 @@ finest two grids control promotion at every frequency using default limits of
 2% in `|Z|` and 1 degree in phase. Numerical, frequency-window, and contact
 thermodynamic certification remain separate axes.
 
+## Exact-DC transient lock-in cross-check
+
+`experiments.ion_aware_impedance_lockin` is an independent opt-in check of the
+frequency-domain operator. Its frozen protocol hashes the exact electrical
+grid, DC history, packed DC state, frequency-domain protocol, selected
+frequencies, AC amplitude, time-resolution ladder, and every acceptance limit.
+Execution rejects any replaced state, grid, stack, history, or frequency before
+starting a transient.
+
+Every selected frequency starts directly from the bound `IonAwareDCResult.y`;
+it never invokes the legacy fixed-time DC preconditioner. A continuous
+sinusoidal boundary drives the full MoL equations. Edge and midpoint states are
+sampled together so finite-difference displacement current and midpoint
+conduction current share one lock-in timestamp. Each run retains strict
+positivity/SRH diagnostics, blocking-ion inventory drift, last-cycle current
+waveform closure, and same-phase state closure. At least three increasing
+points-per-cycle levels are required; the finest pair controls time-resolution
+promotion before the finest transient is compared with the bound
+frequency-domain response at each frequency.
+
+The default numerical limits are 2% and 1 degree for transient-to-frequency
+agreement, 1% and 0.5 degree for the finest time-resolution pair, 1% for
+last-cycle current closure, `1e-3` for same-phase state closure, and `1e-10`
+for blocking-ion inventory drift. Numerical agreement, frequency-window
+coverage, and contact thermodynamics remain separate axes.
+
 ## Usage
 
 ```python
@@ -225,8 +251,24 @@ content-addressed runner lane named
 nominal-grid matrix, external finite-difference factors `1/0.5/0.25`, and all
 29 frequency points. Magnitude convergence uses a pointwise relative norm so a
 large impedance elsewhere in the spectrum cannot hide one unconverged
-frequency. The release execution and external comparison remain separate
-deliverables.
+frequency. Its clean-source run `b9374bbe...dcc0ab2`, bound to commit
+`ea4ff0f`, completed all 9 cells with no failures or missing cells and minted
+certificate `9d05787d...e077c`. The finest grid pair changed impedance by at
+most `0.3108%` and `0.03490 deg`; the finest finite-difference matrix pair
+changed it by `2.87e-5%` and `7.76e-6 deg`.
+
+The real N13 exact-DC transient probe selected `1 mHz`, `10 mHz`, and `1 Hz`
+from the same 29-frequency protocol and used `20/40/80` points per cycle. The
+finest transient differed from the frequency-domain response by at most
+`0.530%` in magnitude and `0.00235 deg` in phase. The finest time pair changed
+by at most `0.0285%` and `0.000276 deg`; last-cycle current closure was
+`0.1465%`, same-phase state closure `6.28e-5`, and blocking-ion inventory drift
+`2.27e-15`. The numerical cross-check passed. Combined physical certification
+remains false solely because contact thermodynamics is
+`compatible_unverified`. A separate run of the default `40/80/160`, six-cycle,
+`rtol=1e-6` protocol at `1 mHz` and `1 Hz` also passed, with maximum
+frequency-domain magnitude difference `0.519%` and finest time-resolution
+change `0.00194%`. External comparison remains a separate deliverable.
 
 ## Remaining Phase 2 work
 
@@ -238,11 +280,7 @@ deliverables.
    frozen-potential differences.
    See
    [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
-2. Execute the registered canonical grid/stencil/frequency matrix and mint its
-   content-addressed release artifact.
-3. Cross-check selected frequencies against transient lock-in using the exact
-   same DC state and protocol.
-4. Only after those gates pass, route the method through `run_impedance`, the
+2. Route the certified method through `run_impedance`, the
    backend, and frontend diagnostics.
 
 External IonMonger/Driftfusion artifacts and experimental spectroscopy remain
