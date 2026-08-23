@@ -1074,7 +1074,7 @@ benchmarks:
       - tests/unit/validation/test_incomplete_ionization_refinement.py::test_registered_executor_real_temperature_cell_matches_contract
     configs: [configs/csi_incomplete_ionization_pn_research.yaml]
     limitations:
-      - the registered 3x3 matrix is a candidate until a source-clean run records a certificate
+      - the source-clean 3x3 matrix is internally certified at commit 1090354 with certificate SHA-256 902ae0f91b77cf7403349d4d54553c2d43c3c774b1f2a62530e2a27c9fbc0254
       - the discrete-level model excludes impurity bands, the Mott transition, band-gap narrowing, recombination, bias, and production experiment routes
       - the temperature curve and refinement checks are internal evidence rather than external solver or experimental validation
 

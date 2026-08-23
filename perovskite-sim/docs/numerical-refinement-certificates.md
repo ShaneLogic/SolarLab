@@ -445,3 +445,30 @@ BLAS/OpenMP 单线程的环境下完成 9/9 cell，0 failed、0 missing、0 reus
 recombination、incomplete ionization、BGN、bias/illumination、heterojunction 和
 production experiment routes 均不继承此证书；解析 depletion approximation 也不等于
 Sentaurus/PC1D 外部验证。
+
+### 2026-08-24 incomplete-ionization temperature certificate
+
+`incomplete-ionization-temperature-equilibrium-v1` 在 source commit `1090354`、
+source changes 为空且 BLAS/OpenMP 单线程的环境下完成 9/9 cell，0 failed、
+0 missing、0 reused：
+
+- run ID：`ad690a7e5398a6e3829f7f04d470a59fe20144e5c863a896f681a87fa3ac8008`；
+- certificate SHA-256：
+  `902ae0f91b77cf7403349d4d54553c2d43c3c774b1f2a62530e2a27c9fbc0254`；
+- protocol SHA-256：
+  `33b421757a1521f214047ae58b3ad0cfd412570b65f6b7103e3fe3ed1c99d779`；
+- terminal grid difference：归一化积分电荷宽度 `2.05168e-4`、归一化峰值场
+  `1.13830e-3`、电荷平衡温度曲线 `4.84260e-4`；对应 terminal tolerance
+  difference 为 `2.27381e-7 / 4.26088e-8 / 4.57735e-7`；
+- 全矩阵最大 normalized Poisson residual `9.12692e-9`、normalized carrier
+  rate `1.07050e-13`、relative face current `1.08413e-13`、space-charge
+  balance error `1.96418e-3`，最多 9 次 Newton iteration；
+- terminal grid 的 acceptor 离化率从 100 K 的 `0.09027` 上升到 300 K 的
+  `0.68718`，donor 从 `0.19690` 上升到 `0.90058`；所有 cell 的离化率有界、
+  载流子为正、接触热力学证书通过。
+
+该证书只覆盖 dark、homogeneous、recombination-off、noninteracting discrete
+donor/acceptor equilibrium。低温耗尽区内离化电荷随势变化，因此不继承
+fully-ionized abrupt-depletion analytic oracle。impurity band、Mott transition、
+BGN、dopant kinetics、bias/illumination、recombination、heterojunction、生产
+J-V/C-V/impedance，以及 Sentaurus/PC1D 或实验验证均不在声明内。

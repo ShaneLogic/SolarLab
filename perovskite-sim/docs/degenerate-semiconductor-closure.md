@@ -85,7 +85,7 @@ solver. Standard transient/J-V/C-V/impedance assembly fails closed. Contact
 reservoirs, semiconductor work functions, built-in voltage, local ionized
 space charge, and the Poisson tangent all consume the same level parameters.
 
-`incomplete-ionization-temperature-equilibrium-v1` pre-registers a 100, 150,
+`incomplete-ionization-temperature-equilibrium-v1` registers a 100, 150,
 200, 250, and 300 K scan on the 40/80/160 by 1/0.1/0.01 grid/tolerance matrix.
 It checks freeze-out curves, contact thermodynamics, equilibrium currents,
 Poisson residuals, integrated charge balance, and bounded ionized fractions.
@@ -100,12 +100,35 @@ and the incomplete-ionization treatment discussed by
 The current checkpoint does not include impurity-band formation, the Mott
 transition, or dopant capture/emission kinetics.
 
+The source-clean commit `1090354` completed all nine registered cells with
+single-threaded BLAS/OpenMP settings:
+
+- run ID: `ad690a7e5398a6e3829f7f04d470a59fe20144e5c863a896f681a87fa3ac8008`;
+- certificate SHA-256:
+  `902ae0f91b77cf7403349d4d54553c2d43c3c774b1f2a62530e2a27c9fbc0254`;
+- protocol SHA-256:
+  `33b421757a1521f214047ae58b3ad0cfd412570b65f6b7103e3fe3ed1c99d779`;
+- terminal grid differences: normalized integrated-charge width `2.05168e-4`,
+  normalized peak field `1.13830e-3`, and charge-balance curve `4.84260e-4`;
+- terminal tolerance differences for those quantities: `2.27381e-7`,
+  `4.26088e-8`, and `4.57735e-7`; and
+- full-matrix maxima: normalized Poisson residual `9.12692e-9`, normalized
+  carrier rate `1.07050e-13`, relative face current `1.08413e-13`,
+  charge-balance error `1.96418e-3`, and nine Newton iterations.
+
+The terminal-grid acceptor fraction rises from `0.09027` at 100 K to
+`0.68718` at 300 K; the donor fraction rises from `0.19690` to `0.90058`.
+Every cell retained bounded ionized fractions, positive carrier densities,
+and a statistics/ionization-consistent contact certificate. This reaches the
+repository's internal numerical certification tier only.
+
 ## Next gates
 
-The registered incomplete-ionization matrix must run source-clean before its
-candidate can become an internal certificate. Band-gap narrowing then follows
-as a separate model because it changes band edges, DOS references, intrinsic
-products, contacts, and the Poisson source simultaneously.
+Band-gap narrowing is the next constitutive gate. It remains a separate model
+because it changes band edges, DOS references, intrinsic products, contacts,
+and the Poisson source simultaneously. Its combination with incomplete
+ionization requires a new certificate rather than inheriting either component
+certificate.
 
 External solver and experimental validation remain out of scope until frozen
 reference inputs and data are registered. Formula implementation and internal
