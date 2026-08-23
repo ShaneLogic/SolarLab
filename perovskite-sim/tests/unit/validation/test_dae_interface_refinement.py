@@ -117,7 +117,7 @@ def test_registered_executor_real_cell_matches_exact_contract():
     assert all(
         quality[gate.metric].units == gate.units for gate in lane.quality_gates
     )
-    assert observables["terminal_interface_state_relative_response"].shape == (4,)
+    assert observables["terminal_interface_occupation"].shape == (4,)
     assert quality["algebraic_interface_topology_verified"].values == (1.0,)
     assert quality["clamp_inactive_slice_verified"].values == (1.0,)
     assert quality["structured_analytic_success"].values == (1.0,)

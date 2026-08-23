@@ -550,8 +550,8 @@ def run_algebraic_interface_dae_transient(
                     )
                 ),
                 "terminal_interface_state_relative_error": terminal_interface_error,
-                "terminal_interface_state_relative_response": (
-                    structured_interface / initial.interface_state_m3 - 1.0
+                "terminal_interface_occupation": (
+                    structured_interface / model.layout.interface_capacity_m3
                 ),
                 "terminal_log_density_error": terminal_log_error,
                 "terminal_potential_error_V": terminal_potential_error,
@@ -645,7 +645,7 @@ def run_algebraic_interface_dae_transient(
                 "structured_rhs_work_fraction": "1",
                 "terminal_densities_positive": "1",
                 "terminal_interface_state_relative_error": "1",
-                "terminal_interface_state_relative_response": "1",
+                "terminal_interface_occupation": "1",
                 "terminal_interface_states_bounded": "1",
                 "terminal_log_density_error": "1",
                 "terminal_potential_error_V": "V",
