@@ -6,11 +6,12 @@ discrete Poisson solve and the carrier/ion Scharfetter-Gummel face currents.
 Bulk SRH, radiative, and Auger recombination are also analytic.  Interface
 SRH is analytic for defect-free single-node sampling and for declared-defect
 cross-node sampling whose no-generation clamp is proven inactive. Smooth,
-unclipped Boltzmann interface-plane projection is included. Finite-rate
-selective outer contacts have an analytic local rate block. Unsupported
-interface closures remain central differences at a frozen potential carrying
-the implicit Poisson sensitivity. It remains a comparison scaffold, not yet a
-fully analytic production operator.
+unclipped Boltzmann interface-plane projection and positive-density
+shared-occupancy sampling are included. Finite-rate selective outer contacts
+have an analytic local rate block. Unsupported interface closures remain
+central differences at a frozen potential carrying the implicit Poisson
+sensitivity. It remains a comparison scaffold, not yet a fully analytic
+production operator.
 """
 
 from __future__ import annotations
@@ -75,7 +76,7 @@ from perovskite_sim.solver.small_signal import (
 
 
 ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA = (
-    "ion-aware-structured-jacobian-protocol-v8"
+    "ion-aware-structured-jacobian-protocol-v9"
 )
 
 
@@ -163,9 +164,9 @@ class IonAwareStructuredJacobianProtocol:
         "analytic_sg_field_mobility_transport"
     )
     reaction_linearization: Literal[
-        "analytic_bulk_local_cross_node_projected_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_shared_occupancy_interface_selective_contact"
     ] = (
-        "analytic_bulk_local_cross_node_projected_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_shared_occupancy_interface_selective_contact"
     )
     interface_clamp_linearization: Literal[
         "positive_branch_stencil_certified"
@@ -173,9 +174,12 @@ class IonAwareStructuredJacobianProtocol:
     interface_projection_linearization: Literal[
         "smooth_unclipped_boltzmann"
     ] = "smooth_unclipped_boltzmann"
+    interface_shared_occupancy_linearization: Literal[
+        "positive_density_sum_stencil_certified"
+    ] = "positive_density_sum_stencil_certified"
     rate_row_scaling: Literal["operating_storage"] = "operating_storage"
     column_grouping: Literal["species_blocks"] = "species_blocks"
-    schema_version: Literal["ion-aware-structured-jacobian-protocol-v8"] = (
+    schema_version: Literal["ion-aware-structured-jacobian-protocol-v9"] = (
         ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA
     )
 
@@ -234,7 +238,7 @@ class IonAwareStructuredJacobianProtocol:
         ):
             raise ValueError("unsupported transport linearization")
         if self.reaction_linearization != (
-            "analytic_bulk_local_cross_node_projected_interface_selective_contact"
+            "analytic_bulk_local_cross_node_projected_shared_occupancy_interface_selective_contact"
         ):
             raise ValueError("unsupported reaction linearization")
         if self.interface_clamp_linearization != (
@@ -245,6 +249,12 @@ class IonAwareStructuredJacobianProtocol:
             "smooth_unclipped_boltzmann"
         ):
             raise ValueError("unsupported interface projection linearization")
+        if self.interface_shared_occupancy_linearization != (
+            "positive_density_sum_stencil_certified"
+        ):
+            raise ValueError(
+                "unsupported interface shared-occupancy linearization"
+            )
         if self.rate_row_scaling != "operating_storage":
             raise ValueError("unsupported structured rate row scaling")
         if self.column_grouping != "species_blocks":

@@ -102,7 +102,7 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
         "analytic_sg_field_mobility_transport"
     )
     assert rebuilt.reaction_linearization == (
-        "analytic_bulk_local_cross_node_projected_interface_selective_contact"
+        "analytic_bulk_local_cross_node_projected_shared_occupancy_interface_selective_contact"
     )
     assert rebuilt.interface_clamp_linearization == (
         "positive_branch_stencil_certified"
@@ -110,7 +110,10 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
     assert rebuilt.interface_projection_linearization == (
         "smooth_unclipped_boltzmann"
     )
-    assert rebuilt.schema_version.endswith("-v8")
+    assert rebuilt.interface_shared_occupancy_linearization == (
+        "positive_density_sum_stencil_certified"
+    )
+    assert rebuilt.schema_version.endswith("-v9")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -133,6 +136,11 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         replace(protocol, interface_clamp_linearization="allow_generation")
     with pytest.raises(ValueError, match="interface projection"):
         replace(protocol, interface_projection_linearization="hard_cap")
+    with pytest.raises(ValueError, match="shared-occupancy"):
+        replace(
+            protocol,
+            interface_shared_occupancy_linearization="floored_secant",
+        )
     with pytest.raises(ValueError, match="positive"):
         replace(
             protocol,
@@ -500,8 +508,10 @@ def test_analytic_interface_reaction_is_local_and_matches_independent_stencil(
     assert reaction.hole_evaluation_nodes == reaction.interface_nodes
     assert not reaction.cross_node_interface_indices
     assert not reaction.projected_interface_indices
+    assert not reaction.shared_occupancy_interface_indices
     assert reaction.minimum_cross_node_clamp_margin_m2_s is None
     assert reaction.minimum_projection_exponent_cap_margin is None
+    assert reaction.minimum_shared_density_floor_margin_m3 is None
     np.testing.assert_array_equal(
         reaction.finite_difference_rate_voltage_derivative,
         0.0,
@@ -710,6 +720,113 @@ def test_analytic_interface_reaction_closes_smooth_projected_chain_rule(
         )
     )
     assert np.any(reaction.rate_jacobian[:, ion_columns] != 0.0)
+
+
+def test_analytic_interface_reaction_closes_shared_occupancy_sum(
+    comparison_fixture,
+):
+    stack, x, _mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    shared_stack = replace(
+        _stack_with_cross_node_defect(stack),
+        interface_plane_projection=True,
+        interface_shared_occupancy=True,
+    )
+    shared_mat = build_material_arrays(x, shared_stack)
+    reaction = (
+        analytic_reaction
+        .build_ion_aware_analytic_interface_reaction_linearization(
+            x,
+            shared_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            shared_mat,
+            result.reference.coordinate_layout,
+            potential_at_operating_point_V=(
+                result.poisson_sensitivity.potential_at_operating_point_V
+            ),
+            potential_state_jacobian_V=(
+                result.poisson_sensitivity.potential_state_jacobian_V
+            ),
+            potential_voltage_derivative=(
+                result.poisson_sensitivity.potential_voltage_derivative
+            ),
+            state_steps=result.poisson_sensitivity.state_steps,
+            voltage_step=result.protocol.voltage_step,
+        )
+    )
+    layout = result.reference.coordinate_layout
+    interface_index = len(reaction.interface_nodes) - 1
+    sink_node = reaction.interface_nodes[interface_index]
+    electron_node = reaction.electron_evaluation_nodes[interface_index]
+    hole_node = reaction.hole_evaluation_nodes[interface_index]
+
+    assert reaction.shared_occupancy_interface_indices == (interface_index,)
+    assert not reaction.projected_interface_indices
+    assert reaction.minimum_shared_density_floor_margin_m3 > 0.0
+    assert reaction.minimum_cross_node_clamp_margin_m2_s > 0.0
+    np.testing.assert_allclose(
+        reaction.rate_jacobian,
+        reaction.complex_step_rate_jacobian,
+        rtol=5.0e-10,
+        atol=0.0,
+    )
+    np.testing.assert_array_equal(reaction.rate_voltage_derivative, 0.0)
+    np.testing.assert_array_equal(
+        reaction.finite_difference_rate_voltage_derivative,
+        0.0,
+    )
+    np.testing.assert_array_equal(
+        reaction.complex_step_rate_voltage_derivative,
+        0.0,
+    )
+    scale = max(
+        float(np.max(np.abs(reaction.rate_jacobian))),
+        np.finfo(float).tiny,
+    )
+    assert (
+        float(
+            np.max(
+                np.abs(
+                    reaction.rate_jacobian
+                    - reaction.finite_difference_rate_jacobian
+                )
+            )
+        )
+        / scale
+        < 5.0e-6
+    )
+
+    coordinate_by_state_index = {
+        state_index: column
+        for column, state_index in enumerate(layout.state_indices)
+    }
+    row_by_state_index = {
+        state_index: row
+        for row, state_index in enumerate(layout.state_indices)
+    }
+    target_rows = {
+        row_by_state_index[state_index]
+        for state_index in (sink_node, layout.n_nodes + sink_node)
+    }
+    sampled_state_indices = (
+        hole_node,
+        electron_node,
+        layout.n_nodes + hole_node,
+        layout.n_nodes + electron_node,
+    )
+    for state_index in sampled_state_indices:
+        column = coordinate_by_state_index[state_index]
+        assert set(np.flatnonzero(reaction.rate_jacobian[:, column])) == (
+            target_rows
+        )
+    for species in ("positive_ion", "negative_ion"):
+        coordinate_slice = layout.coordinate_slice(species)
+        np.testing.assert_array_equal(
+            reaction.rate_jacobian[:, coordinate_slice],
+            0.0,
+        )
 
 
 def test_analytic_selective_contact_block_covers_all_four_sign_conventions(
@@ -1175,7 +1292,6 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
     )
 
     for changed, message in (
-        ({"iface_shared_occ": True}, "shared-occupancy"),
         ({"iface_two_sided": True}, "two-sided"),
         ({"iface_plane_closure": True}, "interface-plane closure"),
         ({"N_iface_state": 1}, "dynamic interface-plane states"),
@@ -1231,6 +1347,66 @@ def test_analytic_interface_reaction_gates_unimplemented_topologies(
 
     defect_stack = _stack_with_cross_node_defect(stack)
     defect_mat = build_material_arrays(x, defect_stack)
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="shared-occupancy interface arrays",
+    ):
+        build(
+            x,
+            defect_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(
+                defect_mat,
+                iface_shared_occ=True,
+                interface_n1_L=(),
+            ),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="finite and nonnegative",
+    ):
+        build(
+            x,
+            defect_stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            replace(
+                defect_mat,
+                iface_shared_occ=True,
+                interface_n1_L=(
+                    -1.0,
+                    *defect_mat.interface_n1_L[1:],
+                ),
+            ),
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
+    shared_stack = replace(
+        defect_stack,
+        interface_shared_occupancy=True,
+    )
+    shared_mat = build_material_arrays(x, shared_stack)
+    floor_state = np.asarray(dc_state.y, dtype=float).copy()
+    shared_index = len(shared_mat.interface_nodes) - 1
+    floor_state[shared_mat.interface_eval_node_p[shared_index]] = -1.0
+    with pytest.raises(
+        analytic_reaction.IonAwareAnalyticReactionCapabilityError,
+        match="density floors must be inactive",
+    ):
+        build(
+            x,
+            shared_stack,
+            floor_state,
+            impedance_protocol.V_dc,
+            shared_mat,
+            result.reference.coordinate_layout,
+            **kwargs,
+        )
+
     monkeypatch.setenv("SOLARLAB_IFACE_ALLOW_GEN", "1")
     with pytest.raises(
         analytic_reaction.IonAwareAnalyticReactionCapabilityError,

@@ -62,8 +62,10 @@ class IonAwareAnalyticInterfaceReactionLinearization:
     hole_evaluation_nodes: tuple[int, ...]
     cross_node_interface_indices: tuple[int, ...]
     projected_interface_indices: tuple[int, ...]
+    shared_occupancy_interface_indices: tuple[int, ...]
     minimum_cross_node_clamp_margin_m2_s: float | None
     minimum_projection_exponent_cap_margin: float | None
+    minimum_shared_density_floor_margin_m3: float | None
     surface_recombination_rate_m2_s: np.ndarray
     electron_density_derivative_m_s: np.ndarray
     hole_density_derivative_m_s: np.ndarray
@@ -334,7 +336,6 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         name
         for name, active in (
             ("interface-plane closure", material.iface_plane_closure),
-            ("shared-occupancy interface closure", material.iface_shared_occ),
             ("two-sided interface closure", material.iface_two_sided),
         )
         if active
@@ -348,6 +349,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             "QSS interface-plane root solve has no declared analytic tangent"
         )
     projection_active = bool(material.iface_plane_projection)
+    shared_occupancy_active = bool(material.iface_shared_occ)
     thermal_voltage = float(material.V_T_device)
     if not np.isfinite(thermal_voltage) or thermal_voltage <= 0.0:
         raise IonAwareAnalyticReactionCapabilityError(
@@ -459,6 +461,34 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         raise IonAwareAnalyticReactionCapabilityError(
             "interface references and calibration factors must be finite and nonnegative"
         )
+    shared_arrays = (
+        material.interface_n1_L,
+        material.interface_p1_L,
+        material.interface_n1_R,
+        material.interface_p1_R,
+        material.interface_n_L_eq,
+        material.interface_p_L_eq,
+        material.interface_n_R_eq,
+        material.interface_p_R_eq,
+    )
+    if shared_occupancy_active and any(
+        len(values) != count for values in shared_arrays
+    ):
+        raise IonAwareAnalyticReactionCapabilityError(
+            "shared-occupancy interface arrays are not topology aligned"
+        )
+    if shared_occupancy_active:
+        shared_values = np.asarray(
+            [value for values in shared_arrays for value in values],
+            dtype=float,
+        )
+        if (
+            not np.all(np.isfinite(shared_values))
+            or np.any(shared_values < 0.0)
+        ):
+            raise IonAwareAnalyticReactionCapabilityError(
+                "shared-occupancy interface arrays must be finite and nonnegative"
+            )
 
     n, p, _phi, _state_vector = _state_fields(
         grid,
@@ -480,6 +510,8 @@ def build_ion_aware_analytic_interface_reaction_linearization(
     minimum_cross_node_clamp_margin = np.inf
     projected_indices: list[int] = []
     minimum_projection_cap_margin = np.inf
+    shared_occupancy_indices: list[int] = []
+    minimum_shared_density_floor_margin = np.inf
     row_by_state_index = {
         state_index: row
         for row, state_index in enumerate(layout.state_indices)
@@ -491,14 +523,63 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         dx_cell = float(material.dx_cell[node])
         electron_node = eval_n[index]
         hole_node = eval_p[index]
-        n_value = float(n[electron_node])
-        p_value = float(p[hole_node])
-        n1 = float(material.interface_n1[index])
-        p1 = float(material.interface_p1[index])
+        is_cross_node = index in cross_node_indices
+        is_shared_occupancy = shared_occupancy_active and is_cross_node
+        if is_shared_occupancy:
+            electron_components = (
+                float(n[hole_node]),
+                float(n[electron_node]),
+            )
+            hole_components = (
+                float(p[hole_node]),
+                float(p[electron_node]),
+            )
+            density_components = (*electron_components, *hole_components)
+            if (
+                not np.all(np.isfinite(density_components))
+                or np.any(np.asarray(density_components) <= 0.0)
+            ):
+                raise IonAwareAnalyticReactionCapabilityError(
+                    "shared-occupancy density floors must be inactive"
+                )
+            n_value = float(sum(electron_components))
+            p_value = float(sum(hole_components))
+            n1 = float(
+                material.interface_n1_L[index]
+                + material.interface_n1_R[index]
+            )
+            p1 = float(
+                material.interface_p1_L[index]
+                + material.interface_p1_R[index]
+            )
+            ni_reference = float(
+                (
+                    material.interface_n_L_eq[index]
+                    + material.interface_n_R_eq[index]
+                )
+                * (
+                    material.interface_p_L_eq[index]
+                    + material.interface_p_R_eq[index]
+                )
+            )
+            shared_occupancy_indices.append(index)
+            minimum_shared_density_floor_margin = min(
+                minimum_shared_density_floor_margin,
+                *density_components,
+            )
+        else:
+            electron_components = (float(n[electron_node]),)
+            hole_components = (float(p[hole_node]),)
+            n_value = electron_components[0]
+            p_value = hole_components[0]
+            n1 = float(material.interface_n1[index])
+            p1 = float(material.interface_p1[index])
+            ni_reference = ni_sq_eff[index]
         v_n = float(velocities[0]) * calibration[index]
         v_p = float(velocities[1]) * calibration[index]
-        is_cross_node = index in cross_node_indices
-        is_projected = projection_active and is_cross_node
+        is_projected = (
+            projection_active and is_cross_node and not is_shared_occupancy
+        )
         projection_log_n = 0.0
         projection_log_p = 0.0
         if is_projected:
@@ -528,7 +609,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         projected_n = n_value * projection_factor_n
         projected_p = p_value * projection_factor_p
         projected_ni_sq = (
-            ni_sq_eff[index] * projection_factor_n * projection_factor_p
+            ni_reference * projection_factor_n * projection_factor_p
         )
         scalars = (
             dx_cell,
@@ -621,19 +702,54 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             return interface_recombination(
                 electron_density * factor_n,
                 hole_density * factor_p,
-                ni_sq_eff[index] * factor_n * factor_p,
+                ni_reference * factor_n * factor_p,
                 n1,
                 p1,
                 v_n,
                 v_p,
             )
 
+        if is_shared_occupancy:
+            electron_component_by_state_index = {
+                hole_node: electron_components[0],
+                electron_node: electron_components[1],
+            }
+            hole_component_by_state_index = {
+                grid.size + hole_node: hole_components[0],
+                grid.size + electron_node: hole_components[1],
+            }
+        else:
+            electron_component_by_state_index = {
+                electron_node: electron_components[0],
+            }
+            hole_component_by_state_index = {
+                grid.size + hole_node: hole_components[0],
+            }
+
         for column, state_index in enumerate(layout.state_indices):
             step = float(steps[column])
-            direct_log_n = step if state_index == electron_node else 0.0
-            direct_log_p = (
-                step if state_index == grid.size + hole_node else 0.0
+            direct_n_component = float(
+                electron_component_by_state_index.get(state_index, 0.0)
             )
+            direct_p_component = float(
+                hole_component_by_state_index.get(state_index, 0.0)
+            )
+            direct_n_increment = direct_n_component * step
+            direct_p_increment = direct_p_component * step
+            if is_shared_occupancy and (
+                direct_n_component > 0.0 or direct_p_component > 0.0
+            ):
+                minimum_shared_density_floor_margin = min(
+                    minimum_shared_density_floor_margin,
+                    *(
+                        value
+                        for value in (
+                            direct_n_component * float(np.exp(-step)),
+                            direct_p_component * float(np.exp(-step)),
+                        )
+                        if value > 0.0
+                    ),
+                )
             projection_delta_n = 0.0
             projection_delta_p = 0.0
             if is_projected:
@@ -646,12 +762,12 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                     float(potential_increment[hole_node])
                     - float(potential_increment[node])
                 ) / thermal_voltage
-            directional_log_n = direct_log_n + projection_delta_n
-            directional_log_p = direct_log_p + projection_delta_p
             reference_log_increment = projection_delta_n + projection_delta_p
             if (
-                directional_log_n == 0.0
-                and directional_log_p == 0.0
+                direct_n_increment == 0.0
+                and direct_p_increment == 0.0
+                and projection_delta_n == 0.0
+                and projection_delta_p == 0.0
                 and reference_log_increment == 0.0
             ):
                 continue
@@ -674,26 +790,34 @@ def build_ion_aware_analytic_interface_reaction_linearization(
                     minimum_projection_cap_margin,
                     projection_margin,
                 )
+            projected_n_increment = projection_factor_n * (
+                direct_n_increment + n_value * projection_delta_n
+            )
+            projected_p_increment = projection_factor_p * (
+                direct_p_increment + p_value * projection_delta_p
+            )
             analytic_recombination = (
                 float(derivatives.electron_density_derivative)
-                * projected_n
-                * directional_log_n
+                * projected_n_increment
                 + float(derivatives.hole_density_derivative)
-                * projected_p
-                * directional_log_p
+                * projected_p_increment
                 - projected_ni_sq
                 * reference_log_increment
                 / denominator
             ) / dx_cell
+            n_plus = n_value + direct_n_component * float(np.expm1(step))
+            n_minus = n_value + direct_n_component * float(np.expm1(-step))
+            p_plus = p_value + direct_p_component * float(np.expm1(step))
+            p_minus = p_value + direct_p_component * float(np.expm1(-step))
             rate_plus = projected_rate(
-                n_value * float(np.exp(direct_log_n)),
-                p_value * float(np.exp(direct_log_p)),
+                n_plus,
+                p_plus,
                 projection_log_n + projection_delta_n,
                 projection_log_p + projection_delta_p,
             )
             rate_minus = projected_rate(
-                n_value * float(np.exp(-direct_log_n)),
-                p_value * float(np.exp(-direct_log_p)),
+                n_minus,
+                p_minus,
                 projection_log_n - projection_delta_n,
                 projection_log_p - projection_delta_p,
             )
@@ -713,8 +837,12 @@ def build_ion_aware_analytic_interface_reaction_linearization(
             ) / dx_cell
             complex_epsilon = 1.0e-30
             complex_rate = projected_rate(
-                n_value * np.exp(1j * direct_log_n * complex_epsilon),
-                p_value * np.exp(1j * direct_log_p * complex_epsilon),
+                n_value
+                + direct_n_component
+                * np.expm1(1j * step * complex_epsilon),
+                p_value
+                + direct_p_component
+                * np.expm1(1j * step * complex_epsilon),
                 projection_log_n
                 + 1j * projection_delta_n * complex_epsilon,
                 projection_log_p
@@ -843,6 +971,7 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         hole_evaluation_nodes=eval_p,
         cross_node_interface_indices=tuple(cross_node_indices),
         projected_interface_indices=tuple(projected_indices),
+        shared_occupancy_interface_indices=tuple(shared_occupancy_indices),
         minimum_cross_node_clamp_margin_m2_s=(
             float(minimum_cross_node_clamp_margin)
             if cross_node_indices
@@ -851,6 +980,11 @@ def build_ion_aware_analytic_interface_reaction_linearization(
         minimum_projection_exponent_cap_margin=(
             float(minimum_projection_cap_margin)
             if projected_indices
+            else None
+        ),
+        minimum_shared_density_floor_margin_m3=(
+            float(minimum_shared_density_floor_margin)
+            if shared_occupancy_indices
             else None
         ),
         surface_recombination_rate_m2_s=surface_rate,
