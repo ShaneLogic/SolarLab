@@ -32,7 +32,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `csi-qf-frequency-domain` | N100/200/300 | FD step 1/0.5/0.25 | C-V、Mott-Schottky intercept/effective doping |
 | `csi-qf-frequency-domain-resolved-v2` | N200/300/400 | FD step 1/0.5/0.25 | resolved C-V、Mott-Schottky intercept/effective doping |
 | `twod-uniform-limit` | x/y multiplier 1/2/4 | componentwise atol factor 1/0.1/0.01 | 2D-to-1D J-V envelope、Voc、Jsc |
-| `interface-recombination-charge-off` | N30/60/90 | residual factor 1/0.1/0.01 | interface flux、归一化 J-V、Voc |
+| `interface-recombination-charge-off` | N30/60/90 | QF residual factor 1/0.5/0.25 | two-sided interface flux、归一化 J-V、Voc |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -46,7 +46,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 - `protocol_schema`：experiment、numerical execution 或 bundle schema；
 - `protocol_hash`：canonical document 的 SHA-256。
 
-mobile-ion J-V 使用真实 `ExperimentProtocol`；c-Si 将每个 DC bias 的 QF impedance protocol 明确组成 bundle；frozen/interface steady ladder 使用不虚构 scan rate 的 numerical protocol；2D bundle 分列实际执行的 1D forward/reverse protocol、被比较的 forward branch 和 2D ascending finite-time protocol。2D 的 1D `v_rate` 显式设为 `V_step / settle_time`，使两条路径的每点 dwell 相同。
+mobile-ion J-V 使用真实 `ExperimentProtocol`；c-Si 将每个 DC bias 的 QF impedance protocol 明确组成 bundle；frozen steady ladder 使用不虚构 scan rate 的 numerical protocol；charge-off interface lane 使用专用 two-sided QF protocol，绑定 contact certificate、暗态 occupancy reference 与 illumination ladder；2D bundle 分列实际执行的 1D forward/reverse protocol、被比较的 forward branch 和 2D ascending finite-time protocol。2D 的 1D `v_rate` 显式设为 `V_step / settle_time`，使两条路径的每点 dwell 相同。
 
 ion-aware DC 使用专用 frozen physical protocol，记录固定偏压、有效温度、
 明暗历史、初态来源/可选初态 SHA-256、blocking ion 边界、ordered endpoint

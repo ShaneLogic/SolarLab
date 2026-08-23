@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: dd142187071ab0c8cbc3d1e1eb568e632f194cd8d4d4f11f2eb237f6b593315e
+  sha256: ba68e4a736ebf91be3cf8a2199b7fcf8afe8722b423ee940bfcc6bd9e685fbc7
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5

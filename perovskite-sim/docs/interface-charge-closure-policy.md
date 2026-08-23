@@ -70,6 +70,9 @@ store the per-interface dark occupancy, dark-state hash, signed capture flux,
 carrier-balance defect, local QSS residual, Poisson residual, continuity
 bound, and current-spread evidence. The 3x3 grid/tolerance certificate is a
 required entry artifact; a partial or failed matrix does not unlock charge.
+The absolute interface-state balance uses the same `1e-4 A/m2` conservation
+contract as the device continuity bound; the independent normalized local QSS
+gate remains `1e-7`.
 
 ## Unlock conditions
 

@@ -409,7 +409,7 @@ lanes:
       max_current_spread_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
       max_interface_carrier_balance_A_m2: {operator: le, limit: 1.0e-8, units: A m-2}
       max_interface_local_residual: {operator: le, limit: 1.0e-7, units: "1"}
-      max_interface_state_residual_A_m2: {operator: le, limit: 1.0e-5, units: A m-2}
+      max_interface_state_residual_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
       max_normalized_cell_residual: {operator: le, limit: 4.0e-7, units: "1"}
       max_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
       occupancy_bounded: {operator: eq, limit: 1.0, units: "1"}

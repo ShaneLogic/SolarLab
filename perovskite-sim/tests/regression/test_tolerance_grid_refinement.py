@@ -149,6 +149,13 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert csi_resolved.observables == csi_minimum.observables
     assert csi_resolved.quality_gates == csi_minimum.quality_gates
     assert csi_resolved.options == csi_minimum.options
+    interface_charge_off = registry.lane("interface-recombination-charge-off")
+    interface_quality = {
+        gate.metric: gate for gate in interface_charge_off.quality_gates
+    }
+    assert interface_quality["max_interface_state_residual_A_m2"].limit == (
+        interface_quality["max_continuity_bound_A_m2"].limit
+    ) == pytest.approx(1.0e-4)
     with pytest.raises(FrozenInstanceError):
         registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
 
