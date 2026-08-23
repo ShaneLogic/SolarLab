@@ -22,6 +22,10 @@ from perovskite_sim.physics.ion_migration import (
     IonFaceFluxJacobian,
     ion_face_flux_jacobian,
 )
+from perovskite_sim.physics.field_mobility import (
+    apply_field_mobility,
+    linearize_field_mobility,
+)
 from perovskite_sim.solver.mol import MaterialArrays
 from perovskite_sim.solver.small_signal import (
     FrequencyDomainResult,
@@ -47,6 +51,22 @@ class AnalyticCurrentComponentLinearization:
 
 
 @dataclass(frozen=True, slots=True)
+class IonAwareAnalyticFieldMobilityLinearization:
+    """Per-face CT/PF mobility tangents and independent production stencils."""
+
+    active: bool
+    electric_field_V_m: np.ndarray
+    electron_field_step_V_m: np.ndarray
+    hole_field_step_V_m: np.ndarray
+    electron_mobility_m2_V_s: np.ndarray
+    hole_mobility_m2_V_s: np.ndarray
+    electron_field_derivative_m3_V2_s: np.ndarray
+    hole_field_derivative_m3_V2_s: np.ndarray
+    electron_finite_difference_derivative_m3_V2_s: np.ndarray
+    hole_finite_difference_derivative_m3_V2_s: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
 class IonAwareAnalyticTransportLinearization:
     """Analytic carrier and ion current blocks in scaled log coordinates."""
 
@@ -54,6 +74,279 @@ class IonAwareAnalyticTransportLinearization:
     conduction_current_faces: np.ndarray
     conduction_current_jacobian: np.ndarray
     conduction_current_voltage_derivative: np.ndarray
+    field_mobility: IonAwareAnalyticFieldMobilityLinearization
+
+
+def _field_mobility_linearization(
+    grid: np.ndarray,
+    potential: np.ndarray,
+    material: MaterialArrays,
+) -> IonAwareAnalyticFieldMobilityLinearization:
+    spacing = np.diff(grid)
+    electric_field = -np.diff(potential) / spacing
+    electron_base = material.D_n_face / material.V_T_device
+    hole_base = material.D_p_face / material.V_T_device
+    zeros = np.zeros_like(electric_field)
+    if not material.has_field_mobility:
+        return IonAwareAnalyticFieldMobilityLinearization(
+            active=False,
+            electric_field_V_m=electric_field,
+            electron_field_step_V_m=zeros,
+            hole_field_step_V_m=zeros.copy(),
+            electron_mobility_m2_V_s=electron_base,
+            hole_mobility_m2_V_s=hole_base,
+            electron_field_derivative_m3_V2_s=zeros,
+            hole_field_derivative_m3_V2_s=zeros.copy(),
+            electron_finite_difference_derivative_m3_V2_s=zeros.copy(),
+            hole_finite_difference_derivative_m3_V2_s=zeros.copy(),
+        )
+
+    parameter_arrays = (
+        material.v_sat_n_face,
+        material.v_sat_p_face,
+        material.ct_beta_n_face,
+        material.ct_beta_p_face,
+        material.pf_gamma_n_face,
+        material.pf_gamma_p_face,
+    )
+    if any(value is None for value in parameter_arrays):
+        raise IonAwareAnalyticTransportCapabilityError(
+            "field-mobility material arrays are incomplete"
+        )
+    arrays = tuple(np.asarray(value, dtype=float) for value in parameter_arrays)
+    if any(
+        value.shape != spacing.shape or not np.all(np.isfinite(value))
+        for value in arrays
+    ):
+        raise IonAwareAnalyticTransportCapabilityError(
+            "field-mobility material arrays must be finite and face matched"
+        )
+    (
+        v_sat_n,
+        v_sat_p,
+        beta_n,
+        beta_p,
+        gamma_n,
+        gamma_p,
+    ) = arrays
+    electron = linearize_field_mobility(
+        electron_base,
+        electric_field,
+        v_sat_n,
+        beta_n,
+        gamma_n,
+    )
+    hole = linearize_field_mobility(
+        hole_base,
+        electric_field,
+        v_sat_p,
+        beta_p,
+        gamma_p,
+    )
+    differentiable = electron.differentiable & hole.differentiable
+    if not np.all(differentiable):
+        faces = tuple(np.flatnonzero(~differentiable).tolist())
+        raise IonAwareAnalyticTransportCapabilityError(
+            "field-mobility operating point touches a non-differentiable "
+            f"face: {faces}"
+        )
+
+    def _clip_region(gamma: np.ndarray, field: np.ndarray) -> np.ndarray:
+        argument = gamma * np.sqrt(np.abs(field))
+        return np.where(argument <= -80.0, -1, np.where(argument >= 80.0, 1, 0))
+
+    def _independent_stencil(
+        mobility0: np.ndarray,
+        saturation_velocity: np.ndarray,
+        exponent: np.ndarray,
+        gamma: np.ndarray,
+        analytic_mobility: np.ndarray,
+        analytic_derivative: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        ct_active = (saturation_velocity > 0.0) & (exponent > 0.0)
+        constitutive_active = ct_active | (gamma != 0.0)
+        step = np.maximum(np.abs(electric_field) * 1.0e-5, 1.0e-3)
+        maximum_step = step.copy()
+        quadratic_zero_smooth = (
+            ct_active
+            & (gamma == 0.0)
+            & (exponent == 2.0)
+            & (analytic_mobility > 0.0)
+        )
+        characteristic = np.divide(
+            saturation_velocity,
+            analytic_mobility,
+            out=np.full_like(electric_field, np.inf),
+            where=ct_active & (analytic_mobility > 0.0),
+        )
+        optimal_quadratic_step = np.cbrt(np.finfo(float).eps) * characteristic
+        step[quadratic_zero_smooth] = np.maximum(
+            step[quadratic_zero_smooth],
+            optimal_quadratic_step[quadratic_zero_smooth],
+        )
+        maximum_step[quadratic_zero_smooth] = np.maximum(
+            step[quadratic_zero_smooth],
+            10.0 * optimal_quadratic_step[quadratic_zero_smooth],
+        )
+        zero_sensitive = (
+            constitutive_active
+            & ~quadratic_zero_smooth
+            & (electric_field != 0.0)
+        )
+        maximum_step[zero_sensitive] = np.minimum(
+            maximum_step[zero_sensitive],
+            0.25 * np.abs(electric_field[zero_sensitive]),
+        )
+        step = np.minimum(step, maximum_step)
+        if (
+            np.any(step <= 0.0)
+            or np.any(electric_field + step == electric_field)
+            or np.any(electric_field - step == electric_field)
+        ):
+            raise IonAwareAnalyticTransportCapabilityError(
+                "field-mobility operating point is too close to a zero-field "
+                "kink for an independent stencil"
+            )
+        for _ in range(8):
+            plus = apply_field_mobility(
+                mobility0,
+                electric_field + step,
+                saturation_velocity,
+                exponent,
+                gamma,
+            )
+            minus = apply_field_mobility(
+                mobility0,
+                electric_field - step,
+                saturation_velocity,
+                exponent,
+                gamma,
+            )
+            resolution = (
+                64.0
+                * np.finfo(float).eps
+                * np.maximum.reduce(
+                    (np.abs(plus), np.abs(minus), np.abs(analytic_mobility))
+                )
+            )
+            unresolved = (
+                constitutive_active
+                & (analytic_derivative != 0.0)
+                & (np.abs(plus - minus) < resolution)
+            )
+            grow = unresolved & (step < maximum_step)
+            if not np.any(grow):
+                break
+            step[grow] = np.minimum(10.0 * step[grow], maximum_step[grow])
+        field_plus = electric_field + step
+        field_minus = electric_field - step
+        if np.any(
+            (_clip_region(gamma, field_plus) != _clip_region(gamma, electric_field))
+            | (_clip_region(gamma, field_minus) != _clip_region(gamma, electric_field))
+        ):
+            raise IonAwareAnalyticTransportCapabilityError(
+                "field-mobility stencil crosses a Poole-Frenkel clipping surface"
+            )
+        plus = apply_field_mobility(
+            mobility0,
+            field_plus,
+            saturation_velocity,
+            exponent,
+            gamma,
+        )
+        minus = apply_field_mobility(
+            mobility0,
+            field_minus,
+            saturation_velocity,
+            exponent,
+            gamma,
+        )
+        return step, (plus - minus) / (2.0 * step)
+
+    electron_step, electron_finite_difference = _independent_stencil(
+        electron_base,
+        v_sat_n,
+        beta_n,
+        gamma_n,
+        electron.mobility_m2_V_s,
+        electron.field_derivative_m3_V2_s,
+    )
+    hole_step, hole_finite_difference = _independent_stencil(
+        hole_base,
+        v_sat_p,
+        beta_p,
+        gamma_p,
+        hole.mobility_m2_V_s,
+        hole.field_derivative_m3_V2_s,
+    )
+    outputs = (
+        electric_field,
+        electron_step,
+        hole_step,
+        electron.mobility_m2_V_s,
+        hole.mobility_m2_V_s,
+        electron.field_derivative_m3_V2_s,
+        hole.field_derivative_m3_V2_s,
+        electron_finite_difference,
+        hole_finite_difference,
+    )
+    if any(not np.all(np.isfinite(value)) for value in outputs):
+        raise IonAwareAnalyticTransportCapabilityError(
+            "field-mobility analytic or finite-difference tangent is non-finite"
+        )
+    return IonAwareAnalyticFieldMobilityLinearization(
+        active=True,
+        electric_field_V_m=electric_field,
+        electron_field_step_V_m=electron_step,
+        hole_field_step_V_m=hole_step,
+        electron_mobility_m2_V_s=electron.mobility_m2_V_s,
+        hole_mobility_m2_V_s=hole.mobility_m2_V_s,
+        electron_field_derivative_m3_V2_s=(
+            electron.field_derivative_m3_V2_s
+        ),
+        hole_field_derivative_m3_V2_s=hole.field_derivative_m3_V2_s,
+        electron_finite_difference_derivative_m3_V2_s=(
+            electron_finite_difference
+        ),
+        hole_finite_difference_derivative_m3_V2_s=hole_finite_difference,
+    )
+
+
+def _add_field_mobility_tangent(
+    local: ScharfetterGummelFaceJacobian,
+    mobility: np.ndarray,
+    mobility_field_derivative: np.ndarray,
+    spacing: np.ndarray,
+) -> ScharfetterGummelFaceJacobian:
+    if (
+        mobility.shape != spacing.shape
+        or mobility_field_derivative.shape != spacing.shape
+        or not np.all(np.isfinite(mobility))
+        or not np.all(np.isfinite(mobility_field_derivative))
+        or np.any(mobility < 0.0)
+        or np.any((mobility == 0.0) & (mobility_field_derivative != 0.0))
+    ):
+        raise IonAwareAnalyticTransportCapabilityError(
+            "field-mobility SG chain requires non-negative finite mobility "
+            "with a zero tangent on zero-mobility faces"
+        )
+    mobility_potential_left = np.divide(
+        local.flux * mobility_field_derivative,
+        mobility * spacing,
+        out=np.zeros_like(mobility),
+        where=mobility > 0.0,
+    )
+    return ScharfetterGummelFaceJacobian(
+        flux=local.flux,
+        density_left_derivative=local.density_left_derivative,
+        density_right_derivative=local.density_right_derivative,
+        potential_left_derivative=(
+            local.potential_left_derivative + mobility_potential_left
+        ),
+        potential_right_derivative=(
+            local.potential_right_derivative - mobility_potential_left
+        ),
+    )
 
 
 def _face_density_of_states(
@@ -275,10 +568,6 @@ def build_ion_aware_analytic_transport_linearization(
         raise IonAwareAnalyticTransportCapabilityError(
             "dynamic interface-state transport has no analytic current block"
         )
-    if material.has_field_mobility:
-        raise IonAwareAnalyticTransportCapabilityError(
-            "field-dependent mobility derivatives are not implemented"
-        )
 
     n, p, _phi, state_vector = _state_fields(
         grid,
@@ -291,20 +580,48 @@ def build_ion_aware_analytic_transport_linearization(
     spacing = np.diff(grid)
     potential_coordinate_jacobian = sensitivity * steps[None, :]
     polarity = float(material.junction_polarity)
+    field_mobility = _field_mobility_linearization(
+        grid,
+        potential,
+        material,
+    )
+    if field_mobility.active:
+        electron_diffusivity = (
+            field_mobility.electron_mobility_m2_V_s * material.V_T_device
+        )
+        hole_diffusivity = (
+            field_mobility.hole_mobility_m2_V_s * material.V_T_device
+        )
+    else:
+        electron_diffusivity = material.D_n_face
+        hole_diffusivity = material.D_p_face
     electron_local = sg_fluxes_n_jacobian(
         potential + material.chi,
         n,
         spacing,
-        material.D_n_face,
+        electron_diffusivity,
         material.V_T_device,
     )
     hole_local = sg_fluxes_p_jacobian(
         potential + material.chi + material.Eg,
         p,
         spacing,
-        material.D_p_face,
+        hole_diffusivity,
         material.V_T_device,
     )
+    if field_mobility.active:
+        electron_local = _add_field_mobility_tangent(
+            electron_local,
+            field_mobility.electron_mobility_m2_V_s,
+            field_mobility.electron_field_derivative_m3_V2_s,
+            spacing,
+        )
+        hole_local = _add_field_mobility_tangent(
+            hole_local,
+            field_mobility.hole_mobility_m2_V_s,
+            field_mobility.hole_field_derivative_m3_V2_s,
+            spacing,
+        )
     _require_inactive_thermionic_caps(
         material,
         n,
@@ -438,6 +755,7 @@ def build_ion_aware_analytic_transport_linearization(
         conduction_current_faces=faces,
         conduction_current_jacobian=jacobian,
         conduction_current_voltage_derivative=voltage,
+        field_mobility=field_mobility,
     )
 
 
@@ -591,6 +909,7 @@ def apply_analytic_transport_linearization(
 
 __all__ = [
     "AnalyticCurrentComponentLinearization",
+    "IonAwareAnalyticFieldMobilityLinearization",
     "IonAwareAnalyticTransportCapabilityError",
     "IonAwareAnalyticTransportLinearization",
     "apply_analytic_transport_linearization",

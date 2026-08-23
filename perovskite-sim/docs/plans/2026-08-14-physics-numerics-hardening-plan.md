@@ -425,9 +425,15 @@ residual-certified ion/electron/hole DC state
    carrier boundary rate 行；独立 central block 直接调用生产 contact flux，
    并验证 `sinh(h)/h` 截断关系。部分通道、显式 `S=0` 和非法参数均有
    fail-closed 测试；接触热力学证书仍是独立证据轴。
-7. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
-8. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
-9. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
+7. **`INTERNAL_TESTED_ANALYTIC_FIELD_MOBILITY` (2026-08-22)**：生产
+   Poole-Frenkel-first/Caughey-Thomas-second 组合已有 signed-field 解析导数，
+   并通过 SG 通量、精确 Poisson 隐式灵敏度和守恒 continuity divergence
+   完成全局链式闭合。独立逐面 central stencil、CT+PF 真实器件以及阻抗幅相
+   共同认证；硬 PF 零场、`beta<=1` 的 CT 零场和 PF clip 表面 fail-close，
+   非光滑面还限制 state/voltage stencil 的相对场扰动。
+8. 每个频点返回 `rcond`、componentwise backward error、all-face admittance spread、storage decomposition 和 perturbation-step sensitivity。
+9. 根据物理 timescale 自动建议频带，但只 warning，不偷偷改用户频率。
+10. 用 transient lock-in 在少量频点独立交叉检查；两条方法必须共享 DC state 和协议。
 
 ### 3.3 测试矩阵与通过门槛
 

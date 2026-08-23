@@ -1,19 +1,21 @@
 # Ion-aware structured Jacobian comparison
 
-Status: `INTERNAL_TESTED_ANALYTIC_SELECTIVE_CONTACT` as of 2026-08-22.
+Status: `INTERNAL_TESTED_ANALYTIC_FIELD_MOBILITY` as of 2026-08-22.
 This is a validation path for the ion-aware impedance reference engine.
 Poisson, Scharfetter-Gummel transport, local bulk SRH/radiative/Auger
 recombination, defect-free single-node interface SRH, and finite-rate outer
-selective contacts are analytic. Cross-node/projected interface reaction and
-unsupported non-smooth or nonlocal closures are not. It is not yet a fully
-analytic production Jacobian, a registered numerical certificate, or external
-validation.
+selective contacts are analytic. The carrier transport tangent now also
+includes the production Caughey-Thomas and Poole-Frenkel field-mobility chain
+at differentiable operating points. Cross-node/projected interface reaction
+and unsupported non-smooth or nonlocal closures are not. It is not yet a
+fully analytic production Jacobian, a registered numerical certificate, or
+external validation.
 
 ## Purpose
 
 `perovskite_sim.experiments.ion_aware_structured_jacobian` tests the global
 chain rule in the eliminated-Poisson formulation before a production sparse
-Jacobian is introduced. Protocol v5 retains six independently constructed
+Jacobian is introduced. Protocol v6 retains six independently constructed
 objects:
 
 1. the existing nonlinear callback, which re-solves Poisson at every finite-
@@ -21,8 +23,8 @@ objects:
 2. a frozen-potential finite-difference operator, used as a block-local
    transport reference;
 3. a transport-structured operator with exact discrete Poisson sensitivities,
-   analytic carrier/ion SG face currents and matching conservative flux-
-   divergence rate rows;
+   analytic carrier/ion SG face currents, analytic CT/PF mobility tangents,
+   and matching conservative flux-divergence rate rows;
 4. a bulk-reaction hybrid, which additionally replaces local bulk
    SRH/radiative/Auger rate derivatives;
 5. an interface-reaction hybrid, which also replaces defect-free single-node
@@ -98,11 +100,59 @@ This paired replacement is required: replacing current alone produced a
 measured low-frequency all-face spread of `6.66e-1`; replacing its matching
 conservative divergence reduced it below `4e-7` on N13/N61/N91.
 
-The analytic lane fails closed for a field-dependent mobility, an active or
-near-switching thermionic cap, a smoothed thermionic cap, exclusive interface
-transport, incomplete dual-ion arrays, or an active face on a steric clipping
-kink. A zero-diffusivity structural face is allowed because every derivative
-there is identically zero.
+The analytic lane fails closed for an active or near-switching thermionic cap,
+a smoothed thermionic cap, exclusive interface transport, incomplete dual-ion
+or field-mobility arrays, a non-differentiable field-mobility face, or an
+active face on a steric clipping kink. A zero-diffusivity structural face is
+allowed because every derivative there is identically zero.
+
+## Analytic field-mobility chain
+
+The production ordering is Poole-Frenkel first and Caughey-Thomas second:
+
+```text
+mu_pf = mu_0 exp(clip(gamma sqrt(abs(E)), -80, 80))
+r = mu_pf abs(E) / v_sat
+mu = mu_pf (1 + r^beta)^(-1/beta)
+```
+
+For an active CT channel define `w = r^beta / (1 + r^beta)`. Away from a
+constitutive kink the exact signed-field tangent is
+
+```text
+dmu/dE = mu [(1 - w) d(log(mu_pf))/dE - w sign(E)/abs(E)].
+```
+
+Inside the unclipped hard PF branch,
+`d(log(mu_pf))/dE = gamma sign(E) / (2 sqrt(abs(E)))`. The reusable physics
+helper also differentiates the opt-in compact PF zero-field regularization;
+the ion-aware impedance lane itself evaluates the historical hard expression.
+The returned mobility is always evaluated by the production
+`apply_field_mobility` function, so the certificate validates the tangent and
+does not duplicate the constitutive value path.
+
+Because each SG face flux is linear in mobility, the extra potential chain is
+
+```text
+dJ/dphi_left  += (J/mu) (dmu/dE) / dx
+dJ/dphi_right -= (J/mu) (dmu/dE) / dx.
+```
+
+These terms then pass through the exact eliminated-Poisson state and voltage
+sensitivities and enter both terminal current and the matching conservative
+continuity divergence. A zero-mobility face has an exact zero flux/tangent and
+is handled without division by zero.
+
+An independent adaptive central stencil calls `apply_field_mobility` directly
+on every face and species. Its electron and hole derivatives are separate
+certificate quantities with a `5e-6` relative-error limit. The hard PF law is
+not differentiable at `E=0`; CT is not differentiable there for `beta <= 1`;
+and the exact PF clipping surfaces are also kinks. Exact contact with any of
+those surfaces fails closed. For PF and non-smooth CT zero-field surfaces,
+the global state and voltage stencils must additionally satisfy
+`abs(delta E) / abs(E) <= 0.1`; if the reference minimum step cannot meet that
+condition, the comparison is rejected instead of using a secant as a tangent.
+The independent local stencil also rejects any PF clipping-surface crossing.
 
 ## Analytic bulk-reaction block
 
@@ -244,6 +294,8 @@ Default gates include:
 | named current-component column error | `1e-4` |
 | analytic SG transport column error | `5e-6` |
 | analytic SG transport voltage error | `5e-6` |
+| analytic electron/hole `dmu/dE` error | `5e-6` |
+| non-smooth field-stencil fraction | `0.1` |
 | analytic bulk-reaction column error | `5e-6` |
 | analytic local-interface reaction column error | `5e-6` |
 | analytic selective-contact column error | `5e-6` |
@@ -299,23 +351,34 @@ error is `1.91e-7 deg`, all-face spread is `2.84e-8`, and linear-system
 backward error is `1.74e-16`. This is a numerical boundary-operator test, not a
 claim that those four demonstration velocities are experimentally calibrated.
 
-The structured unit layer is `16 passed`; the real single-ion, symmetric
-dual-ion, N61, N91, and active-selective-contact integration layer is
-`5 passed`. The explicitly enumerated
-DC/impedance/continuity/contact/recombination domain is `119 passed,
-2 deselected`. The repository default suite is `2061 passed, 2 skipped,
+A real four-node IonMonger closure activates PF holes in the HTL
+(`gamma_p=3e-4 (V/m)^-0.5`) and beta-2 CT electrons and holes in the absorber
+(`v_sat=1e5 m/s`). Its final log-density reference step is `1e-7`; the maximum
+PF state and voltage field fractions are `1.43e-3` and `4.31e-5`. Electron and
+hole local `dmu/dE` errors are `2.92e-9` and `1.39e-12`, the full storage-scaled
+rate error is `2.51e-6`, impedance magnitude error is `7.53e-8`, phase error is
+`1.34e-7 deg`, and all-face spread is `1.36e-9`. A finer-grid HTL example with
+near-zero PF faces is deliberately rejected when no finite-difference step is
+both locally differentiable and numerically resolvable. This is constitutive
+and operator-assembly evidence, not calibration of the demonstration mobility
+parameters.
+
+The field-mobility physics unit layer is `26 passed`, and the structured unit
+layer is `18 passed`; the real single-ion, symmetric
+dual-ion, N61, N91, active-selective-contact, and active-field-mobility
+integration layer is `6 passed`. The explicitly enumerated field-mobility,
+DC/impedance/continuity/contact/recombination domain is `154 passed`.
+The repository default suite is `2070 passed, 2 skipped,
 263 deselected`. These are internal numerical checks, not external validation.
 
 ## Remaining work
 
 1. Extend interface tangents to cross-node/projected defect topologies only
    after their clamp and QSS branch semantics have differentiable contracts.
-2. Implement analytic field-mobility derivatives, or retain explicit
-   capability gates where a smooth tangent is unavailable.
-3. Replace the remaining frozen-potential reaction differences block by block,
+2. Replace the remaining frozen-potential reaction differences block by block,
    preserving these per-column comparisons.
-4. Introduce sparse or matrix-free assembly only after analytic parity passes.
-5. Complete frequency-window coverage and transient lock-in cross-checks
+3. Introduce sparse or matrix-free assembly only after analytic parity passes.
+4. Complete frequency-window coverage and transient lock-in cross-checks
    before routing ion-aware impedance through public backend or frontend APIs.
 
 Contact thermodynamics, external IonMonger or Driftfusion comparison, and

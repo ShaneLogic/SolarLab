@@ -19,7 +19,14 @@ from perovskite_sim.experiments.jv_sweep import build_electrical_grid
 from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
-def _solve_comparison(stack, *, grid_points=12, frequencies=None):
+def _solve_comparison(
+    stack,
+    *,
+    grid_points=12,
+    frequencies=None,
+    state_step=1.0e-5,
+    voltage_step=1.0e-5,
+):
     x = build_electrical_grid(stack, grid_points)
     dc_state = solve_ion_aware_dc(
         x,
@@ -37,6 +44,8 @@ def _solve_comparison(stack, *, grid_points=12, frequencies=None):
             if frequencies is None
             else np.asarray(frequencies, dtype=float)
         ),
+        state_step=state_step,
+        voltage_step=voltage_step,
     )
     structured_protocol = build_ion_aware_structured_jacobian_protocol(
         impedance_protocol
@@ -205,3 +214,47 @@ def test_selective_contact_structured_operator_replaces_all_boundary_rate_blocks
     )
     assert certificate.rate_jacobian.passed
     assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
+
+
+def test_field_mobility_structured_operator_closes_ct_and_pf_chain_rule():
+    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    layers = []
+    for layer in base.layers:
+        params = layer.params
+        if layer.role == "HTL":
+            params = replace(params, pf_gamma_p=3.0e-4)
+        elif layer.role == "absorber":
+            params = replace(
+                params,
+                v_sat_n=1.0e5,
+                v_sat_p=1.0e5,
+                ct_beta_n=2.0,
+                ct_beta_p=2.0,
+            )
+        layers.append(replace(layer, params=params))
+    result = _solve_comparison(
+        replace(base, layers=tuple(layers)),
+        grid_points=5,
+        state_step=4.0e-7,
+    )
+    certificate = result.certificate
+    mobility = result.analytic_transport.field_mobility
+
+    assert certificate.numerically_certified
+    assert mobility.active
+    assert np.any(mobility.electron_field_derivative_m3_V2_s != 0.0)
+    assert np.any(mobility.hole_field_derivative_m3_V2_s != 0.0)
+    assert certificate.analytic_electron_field_mobility_derivative.passed
+    assert certificate.analytic_hole_field_mobility_derivative.passed
+    assert certificate.analytic_transport_conduction_jacobian.passed
+    assert (
+        result.poisson_sensitivity.max_nonsmooth_state_field_stencil_fraction
+        <= result.protocol.max_nonsmooth_field_stencil_fraction
+    )
+    assert (
+        result.poisson_sensitivity.max_nonsmooth_voltage_field_stencil_fraction
+        <= result.protocol.max_nonsmooth_field_stencil_fraction
+    )
+    assert certificate.rate_jacobian.passed
+    assert certificate.max_impedance_magnitude_relative_error < 1.0e-6
+    assert certificate.max_impedance_phase_error_deg < 1.0e-5

@@ -73,7 +73,7 @@ from perovskite_sim.solver.small_signal import (
 
 
 ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA = (
-    "ion-aware-structured-jacobian-protocol-v5"
+    "ion-aware-structured-jacobian-protocol-v6"
 )
 
 
@@ -128,6 +128,7 @@ class IonAwareStructuredJacobianProtocol:
     maximum_state_step: float
     target_potential_step_V: float
     voltage_step: float
+    max_nonsmooth_field_stencil_fraction: float = 0.1
     column_relevance_floor_relative: float = 1.0e-4
     max_poisson_backward_error: float = 2.0e-12
     max_group_normalized_column_error: float = 1.0e-6
@@ -143,6 +144,7 @@ class IonAwareStructuredJacobianProtocol:
     max_component_voltage_relative_error: float = 5.0e-5
     max_analytic_transport_jacobian_column_relative_error: float = 5.0e-6
     max_analytic_transport_voltage_relative_error: float = 5.0e-6
+    max_analytic_field_mobility_derivative_relative_error: float = 5.0e-6
     max_analytic_bulk_reaction_jacobian_column_relative_error: float = 5.0e-6
     max_analytic_interface_reaction_jacobian_column_relative_error: float = (
         5.0e-6
@@ -153,8 +155,10 @@ class IonAwareStructuredJacobianProtocol:
     poisson_linearization: Literal["exact_discrete_implicit"] = (
         "exact_discrete_implicit"
     )
-    transport_linearization: Literal["analytic_sg_transport"] = (
-        "analytic_sg_transport"
+    transport_linearization: Literal[
+        "analytic_sg_field_mobility_transport"
+    ] = (
+        "analytic_sg_field_mobility_transport"
     )
     reaction_linearization: Literal[
         "analytic_bulk_local_interface_selective_contact"
@@ -163,7 +167,7 @@ class IonAwareStructuredJacobianProtocol:
     )
     rate_row_scaling: Literal["operating_storage"] = "operating_storage"
     column_grouping: Literal["species_blocks"] = "species_blocks"
-    schema_version: Literal["ion-aware-structured-jacobian-protocol-v5"] = (
+    schema_version: Literal["ion-aware-structured-jacobian-protocol-v6"] = (
         ION_AWARE_STRUCTURED_JACOBIAN_PROTOCOL_SCHEMA
     )
 
@@ -181,6 +185,7 @@ class IonAwareStructuredJacobianProtocol:
             "maximum_state_step",
             "target_potential_step_V",
             "voltage_step",
+            "max_nonsmooth_field_stencil_fraction",
             "column_relevance_floor_relative",
             "max_poisson_backward_error",
             "max_group_normalized_column_error",
@@ -196,6 +201,7 @@ class IonAwareStructuredJacobianProtocol:
             "max_component_voltage_relative_error",
             "max_analytic_transport_jacobian_column_relative_error",
             "max_analytic_transport_voltage_relative_error",
+            "max_analytic_field_mobility_derivative_relative_error",
             "max_analytic_bulk_reaction_jacobian_column_relative_error",
             "max_analytic_interface_reaction_jacobian_column_relative_error",
             "max_analytic_contact_jacobian_column_relative_error",
@@ -205,13 +211,19 @@ class IonAwareStructuredJacobianProtocol:
             object.__setattr__(self, name, _positive(getattr(self, name), name))
         if self.column_relevance_floor_relative > 1.0:
             raise ValueError("column_relevance_floor_relative cannot exceed one")
+        if self.max_nonsmooth_field_stencil_fraction > 0.25:
+            raise ValueError(
+                "max_nonsmooth_field_stencil_fraction cannot exceed 0.25"
+            )
         if self.maximum_state_step < self.minimum_state_step:
             raise ValueError("maximum_state_step must not be below minimum_state_step")
         if self.maximum_state_step > 1.0e-2:
             raise ValueError("maximum_state_step cannot exceed 1e-2")
         if self.poisson_linearization != "exact_discrete_implicit":
             raise ValueError("unsupported Poisson linearization")
-        if self.transport_linearization != "analytic_sg_transport":
+        if self.transport_linearization != (
+            "analytic_sg_field_mobility_transport"
+        ):
             raise ValueError("unsupported transport linearization")
         if self.reaction_linearization != (
             "analytic_bulk_local_interface_selective_contact"
@@ -291,6 +303,8 @@ class PoissonImplicitSensitivity:
     potential_voltage_derivative: np.ndarray
     state_steps: np.ndarray
     max_componentwise_backward_error: float
+    max_nonsmooth_state_field_stencil_fraction: float
+    max_nonsmooth_voltage_field_stencil_fraction: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +357,8 @@ class IonAwareStructuredJacobianCertificate:
     analytic_transport_conduction_jacobian: MatrixColumnComparison
     analytic_transport_conduction_voltage_derivative: VectorComparison
     analytic_transport_components: tuple[CurrentComponentComparison, ...]
+    analytic_electron_field_mobility_derivative: VectorComparison
+    analytic_hole_field_mobility_derivative: VectorComparison
     analytic_bulk_reaction_rate_jacobian: MatrixColumnComparison
     analytic_bulk_reaction_rate_voltage_derivative: VectorComparison
     analytic_interface_reaction_rate_jacobian: MatrixColumnComparison
@@ -586,12 +602,108 @@ def _build_poisson_implicit_sensitivity(
         protocol.minimum_state_step,
         protocol.maximum_state_step,
     )
+    max_state_field_fraction = 0.0
+    max_voltage_field_fraction = 0.0
+    if material.has_field_mobility:
+        parameter_arrays = (
+            material.v_sat_n_face,
+            material.v_sat_p_face,
+            material.ct_beta_n_face,
+            material.ct_beta_p_face,
+            material.pf_gamma_n_face,
+            material.pf_gamma_p_face,
+        )
+        if any(value is None for value in parameter_arrays):
+            raise IonAwareStructuredJacobianCapabilityError(
+                "field-mobility material arrays are incomplete"
+            )
+        arrays = tuple(np.asarray(value, dtype=float) for value in parameter_arrays)
+        face_shape = (x.size - 1,)
+        if any(
+            value.shape != face_shape or not np.all(np.isfinite(value))
+            for value in arrays
+        ):
+            raise IonAwareStructuredJacobianCapabilityError(
+                "field-mobility material arrays must be finite and face matched"
+            )
+        (
+            v_sat_n,
+            v_sat_p,
+            beta_n,
+            beta_p,
+            gamma_n,
+            gamma_p,
+        ) = arrays
+        nonsmooth_faces = (
+            (gamma_n != 0.0)
+            | (gamma_p != 0.0)
+            | ((v_sat_n > 0.0) & (beta_n > 0.0) & (beta_n <= 1.0))
+            | ((v_sat_p > 0.0) & (beta_p > 0.0) & (beta_p <= 1.0))
+        )
+        if np.any(nonsmooth_faces):
+            spacing = np.diff(x)
+            operating_field = -np.diff(base_phi) / spacing
+            if (
+                not np.all(np.isfinite(operating_field))
+                or np.any(operating_field[nonsmooth_faces] == 0.0)
+            ):
+                raise IonAwareStructuredJacobianCapabilityError(
+                    "a non-smooth field-mobility face is at zero electric field"
+                )
+            field_sensitivity = -np.diff(sensitivity, axis=0) / spacing[:, None]
+            selected_sensitivity = np.abs(field_sensitivity[nonsmooth_faces])
+            selected_field = np.abs(operating_field[nonsmooth_faces])
+            allowed_field_change = (
+                protocol.max_nonsmooth_field_stencil_fraction
+                * selected_field[:, None]
+            )
+            per_face_caps = np.divide(
+                allowed_field_change,
+                selected_sensitivity,
+                out=np.full_like(selected_sensitivity, np.inf),
+                where=selected_sensitivity > 0.0,
+            )
+            state_caps = np.min(per_face_caps, axis=0)
+            if np.any(
+                state_caps
+                < protocol.minimum_state_step
+                * (1.0 - 16.0 * np.finfo(float).eps)
+            ):
+                raise IonAwareStructuredJacobianCapabilityError(
+                    "the minimum state step crosses a non-smooth "
+                    "field-mobility zero-field surface"
+                )
+            state_steps = np.minimum(state_steps, state_caps)
+            state_field_fraction = np.divide(
+                selected_sensitivity * state_steps[None, :],
+                selected_field[:, None],
+            )
+            max_state_field_fraction = float(np.max(state_field_fraction))
+
+            voltage_field_sensitivity = (
+                -np.diff(voltage_derivative) / spacing
+            )
+            voltage_field_fraction = np.abs(
+                voltage_field_sensitivity[nonsmooth_faces]
+                * protocol.voltage_step
+            ) / selected_field
+            max_voltage_field_fraction = float(np.max(voltage_field_fraction))
+            if max_voltage_field_fraction > (
+                protocol.max_nonsmooth_field_stencil_fraction
+                * (1.0 + 16.0 * np.finfo(float).eps)
+            ):
+                raise IonAwareStructuredJacobianCapabilityError(
+                    "the voltage step crosses a non-smooth field-mobility "
+                    "zero-field surface"
+                )
     return PoissonImplicitSensitivity(
         potential_at_operating_point_V=np.asarray(base_phi, dtype=float).copy(),
         potential_state_jacobian_V=sensitivity,
         potential_voltage_derivative=voltage_derivative,
         state_steps=state_steps,
         max_componentwise_backward_error=float(np.max(backward_errors)),
+        max_nonsmooth_state_field_stencil_fraction=max_state_field_fraction,
+        max_nonsmooth_voltage_field_stencil_fraction=max_voltage_field_fraction,
     )
 
 
@@ -1088,6 +1200,25 @@ def run_ion_aware_structured_jacobian_comparison(
             structured_protocol.max_analytic_transport_voltage_relative_error
         ),
     )
+    field_mobility = analytic_transport.field_mobility
+    analytic_electron_field_mobility = _vector_comparison(
+        "analytic_electron_field_mobility_derivative",
+        field_mobility.electron_finite_difference_derivative_m3_V2_s,
+        field_mobility.electron_field_derivative_m3_V2_s,
+        limit=(
+            structured_protocol
+            .max_analytic_field_mobility_derivative_relative_error
+        ),
+    )
+    analytic_hole_field_mobility = _vector_comparison(
+        "analytic_hole_field_mobility_derivative",
+        field_mobility.hole_finite_difference_derivative_m3_V2_s,
+        field_mobility.hole_field_derivative_m3_V2_s,
+        limit=(
+            structured_protocol
+            .max_analytic_field_mobility_derivative_relative_error
+        ),
+    )
     analytic_bulk_reaction_rate = _matrix_column_comparison(
         "analytic_bulk_reaction_rate_jacobian",
         analytic_bulk_reaction.finite_difference_rate_jacobian
@@ -1198,6 +1329,8 @@ def run_ion_aware_structured_jacobian_comparison(
         displacement_voltage,
         analytic_transport_conduction,
         analytic_transport_voltage,
+        analytic_electron_field_mobility,
+        analytic_hole_field_mobility,
         analytic_bulk_reaction_rate,
         analytic_bulk_reaction_voltage,
         analytic_interface_reaction_rate,
@@ -1261,6 +1394,12 @@ def run_ion_aware_structured_jacobian_comparison(
             analytic_transport_voltage
         ),
         analytic_transport_components=analytic_transport_components,
+        analytic_electron_field_mobility_derivative=(
+            analytic_electron_field_mobility
+        ),
+        analytic_hole_field_mobility_derivative=(
+            analytic_hole_field_mobility
+        ),
         analytic_bulk_reaction_rate_jacobian=analytic_bulk_reaction_rate,
         analytic_bulk_reaction_rate_voltage_derivative=(
             analytic_bulk_reaction_voltage

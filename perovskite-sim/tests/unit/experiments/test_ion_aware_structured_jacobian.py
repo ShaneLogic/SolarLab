@@ -87,11 +87,14 @@ def test_protocol_round_trip_binds_the_reference_level(comparison_fixture):
     assert rebuilt.maximum_state_step == 1.0e-3
     assert rebuilt.target_potential_step_V == 1.0e-9
     assert rebuilt.voltage_step == impedance_protocol.voltage_step
-    assert rebuilt.transport_linearization == "analytic_sg_transport"
+    assert rebuilt.max_nonsmooth_field_stencil_fraction == 0.1
+    assert rebuilt.transport_linearization == (
+        "analytic_sg_field_mobility_transport"
+    )
     assert rebuilt.reaction_linearization == (
         "analytic_bulk_local_interface_selective_contact"
     )
-    assert rebuilt.schema_version.endswith("-v5")
+    assert rebuilt.schema_version.endswith("-v6")
 
 
 def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
@@ -120,6 +123,13 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
             protocol,
             max_analytic_contact_jacobian_column_relative_error=0.0,
         )
+    with pytest.raises(ValueError, match="positive"):
+        replace(
+            protocol,
+            max_analytic_field_mobility_derivative_relative_error=0.0,
+        )
+    with pytest.raises(ValueError, match="cannot exceed"):
+        replace(protocol, max_nonsmooth_field_stencil_fraction=0.5)
     with pytest.raises(ValueError, match="unsupported reaction"):
         replace(protocol, reaction_linearization="finite_difference_bulk")
     with pytest.raises(ValueError, match="must not be below"):
@@ -129,6 +139,61 @@ def test_protocol_schema_and_numeric_fields_fail_closed(comparison_fixture):
         )
     with pytest.raises(ValueError, match="cannot exceed"):
         replace(protocol, maximum_state_step=2.0e-2)
+
+
+def test_poisson_field_stencils_fail_closed_before_crossing_pf_zero_surface(
+    comparison_fixture,
+):
+    stack, x, mat, dc_state, _impedance, protocol, result = comparison_fixture
+    face_count = x.size - 1
+    zeros = np.zeros(face_count)
+    field_mat = replace(
+        mat,
+        has_field_mobility=True,
+        v_sat_n_face=zeros,
+        v_sat_p_face=zeros,
+        ct_beta_n_face=np.full(face_count, 2.0),
+        ct_beta_p_face=np.full(face_count, 2.0),
+        pf_gamma_n_face=zeros,
+        pf_gamma_p_face=np.full(face_count, 3.0e-4),
+    )
+    layout = result.reference.coordinate_layout
+
+    with pytest.raises(
+        structured.IonAwareStructuredJacobianCapabilityError,
+        match="minimum state step crosses",
+    ):
+        structured._build_poisson_implicit_sensitivity(
+            x,
+            stack,
+            dc_state,
+            field_mat,
+            layout,
+            replace(
+                protocol,
+                minimum_state_step=1.0e-3,
+                maximum_state_step=1.0e-3,
+            ),
+            progress=None,
+        )
+
+    with pytest.raises(
+        structured.IonAwareStructuredJacobianCapabilityError,
+        match="voltage step crosses",
+    ):
+        structured._build_poisson_implicit_sensitivity(
+            x,
+            stack,
+            dc_state,
+            field_mat,
+            layout,
+            replace(
+                protocol,
+                minimum_state_step=1.0e-12,
+                voltage_step=1.0e-2,
+            ),
+            progress=None,
+        )
 
 
 def test_species_grouped_comparison_bounds_only_declared_weak_columns():
@@ -319,6 +384,9 @@ def test_real_comparison_retains_every_reference_level_and_passes(
     assert certificate.analytic_interface_reaction_rate_voltage_derivative.passed
     assert certificate.analytic_contact_rate_jacobian.passed
     assert certificate.analytic_contact_rate_voltage_derivative.passed
+    assert certificate.analytic_electron_field_mobility_derivative.passed
+    assert certificate.analytic_hole_field_mobility_derivative.passed
+    assert not result.analytic_transport.field_mobility.active
     assert not result.analytic_contact.active_channels
     assert (
         certificate.analytic_transport_conduction_voltage_derivative.passed
@@ -647,6 +715,103 @@ def test_analytic_component_base_currents_match_the_nonlinear_evaluator(
         )
 
 
+def test_analytic_field_mobility_chain_matches_local_and_current_stencils(
+    comparison_fixture,
+):
+    stack, x, mat, dc_state, impedance_protocol, _protocol, result = (
+        comparison_fixture
+    )
+    face_count = x.size - 1
+    zeros = np.zeros(face_count)
+    v_sat_n = zeros.copy()
+    v_sat_p = zeros.copy()
+    gamma_p = zeros.copy()
+    v_sat_n[4:8] = 1.0e5
+    v_sat_p[4:8] = 2.0e5
+    gamma_p[:4] = 1.0e-5
+    electron_diffusivity = mat.D_n_face.copy()
+    electron_diffusivity[4] = 0.0
+    active_mat = replace(
+        mat,
+        D_n_face=electron_diffusivity,
+        has_field_mobility=True,
+        v_sat_n_face=v_sat_n,
+        v_sat_p_face=v_sat_p,
+        ct_beta_n_face=np.full(face_count, 2.0),
+        ct_beta_p_face=np.full(face_count, 1.0),
+        pf_gamma_n_face=zeros,
+        pf_gamma_p_face=gamma_p,
+    )
+    analytic = (
+        analytic_transport.build_ion_aware_analytic_transport_linearization(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            active_mat,
+            result.reference.coordinate_layout,
+            potential_at_operating_point_V=(
+                result.poisson_sensitivity.potential_at_operating_point_V
+            ),
+            potential_state_jacobian_V=(
+                result.poisson_sensitivity.potential_state_jacobian_V
+            ),
+            potential_voltage_derivative=(
+                result.poisson_sensitivity.potential_voltage_derivative
+            ),
+            state_steps=result.poisson_sensitivity.state_steps,
+        )
+    )
+    mobility = analytic.field_mobility
+
+    assert mobility.active
+    assert mobility.electron_mobility_m2_V_s[4] == 0.0
+    assert mobility.electron_field_derivative_m3_V2_s[4] == 0.0
+    assert np.any(mobility.electron_field_derivative_m3_V2_s != 0.0)
+    assert np.any(mobility.hole_field_derivative_m3_V2_s != 0.0)
+    for expected, actual in (
+        (
+            mobility.electron_finite_difference_derivative_m3_V2_s,
+            mobility.electron_field_derivative_m3_V2_s,
+        ),
+        (
+            mobility.hole_finite_difference_derivative_m3_V2_s,
+            mobility.hole_field_derivative_m3_V2_s,
+        ),
+    ):
+        scale = max(float(np.max(np.abs(expected))), np.finfo(float).tiny)
+        assert float(np.max(np.abs(actual - expected)) / scale) < 5.0e-6
+
+    evaluator = structured._structured_evaluator(
+        x,
+        stack,
+        dc_state,
+        impedance_protocol,
+        active_mat,
+        result.reference.coordinate_layout,
+        result.poisson_sensitivity,
+    )
+    base = evaluator(
+        np.zeros(result.reference.coordinate_layout.size),
+        impedance_protocol.V_dc,
+    )
+    expected_currents = {
+        component.name: component.current_faces
+        for component in base.current_components
+    }
+    for component in analytic.current_components:
+        np.testing.assert_allclose(
+            component.current_faces,
+            expected_currents[component.name],
+            rtol=2.0e-14,
+            atol=max(
+                float(np.max(np.abs(expected_currents[component.name]))),
+                1.0,
+            )
+            * 2.0e-14,
+        )
+
+
 def test_analytic_transport_capability_gates_nonanalytic_active_branches(
     comparison_fixture,
 ):
@@ -667,7 +832,7 @@ def test_analytic_transport_capability_gates_nonanalytic_active_branches(
     }
     with pytest.raises(
         analytic_transport.IonAwareAnalyticTransportCapabilityError,
-        match="field-dependent mobility",
+        match="arrays are incomplete",
     ):
         analytic_transport.build_ion_aware_analytic_transport_linearization(
             x,
@@ -677,6 +842,35 @@ def test_analytic_transport_capability_gates_nonanalytic_active_branches(
             replace(mat, has_field_mobility=True),
             result.reference.coordinate_layout,
             **kwargs,
+        )
+
+    face_count = x.size - 1
+    zeros = np.zeros(face_count)
+    cusp_mat = replace(
+        mat,
+        has_field_mobility=True,
+        v_sat_n_face=zeros,
+        v_sat_p_face=zeros,
+        ct_beta_n_face=np.full(face_count, 2.0),
+        ct_beta_p_face=np.full(face_count, 2.0),
+        pf_gamma_n_face=np.full(face_count, 3.0e-4),
+        pf_gamma_p_face=zeros,
+    )
+    with pytest.raises(
+        analytic_transport.IonAwareAnalyticTransportCapabilityError,
+        match="non-differentiable face",
+    ):
+        analytic_transport.build_ion_aware_analytic_transport_linearization(
+            x,
+            stack,
+            dc_state.y,
+            impedance_protocol.V_dc,
+            cusp_mat,
+            result.reference.coordinate_layout,
+            **{
+                **kwargs,
+                "potential_at_operating_point_V": np.zeros_like(x),
+            },
         )
 
     with pytest.raises(

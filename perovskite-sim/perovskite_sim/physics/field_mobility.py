@@ -52,7 +52,18 @@ grid once per call without reallocating.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
+
+
+@dataclass(frozen=True, slots=True)
+class FieldMobilityLinearization:
+    """Mobility and its signed-electric-field derivative on each face."""
+
+    mobility_m2_V_s: np.ndarray
+    field_derivative_m3_V2_s: np.ndarray
+    differentiable: np.ndarray
 
 
 def caughey_thomas(
@@ -173,4 +184,167 @@ def apply_field_mobility(
     return caughey_thomas(mu_pf, E_abs, v_sat, beta)
 
 
-__all__ = ["caughey_thomas", "poole_frenkel", "apply_field_mobility"]
+def linearize_field_mobility(
+    mu0: np.ndarray,
+    E: np.ndarray,
+    v_sat: np.ndarray,
+    beta: np.ndarray,
+    gamma_pf: np.ndarray,
+    *,
+    pf_field_regularization_width_V_m: float = 0.0,
+) -> FieldMobilityLinearization:
+    """Differentiate the production CT/PF composition with respect to ``E``.
+
+    The derivative is with respect to the signed electric field even though
+    the constitutive law depends on ``abs(E)``.  The returned mobility is
+    evaluated by :func:`apply_field_mobility` itself; the analytic work here is
+    limited to its tangent.  ``differentiable`` is false at the historical
+    zero-field Poole-Frenkel cusp, the zero-field CT cusp for ``beta <= 1``,
+    and the exact ``exp`` clipping surfaces.  Callers performing numerical
+    certification must reject those faces rather than interpreting the finite
+    placeholder derivative as a physical tangent.
+    """
+
+    from perovskite_sim.physics.regularization import compact_sqrt_abs
+
+    try:
+        mobility0, field, saturation_velocity, exponent, gamma = (
+            np.broadcast_arrays(
+                np.asarray(mu0, dtype=float),
+                np.asarray(E, dtype=float),
+                np.asarray(v_sat, dtype=float),
+                np.asarray(beta, dtype=float),
+                np.asarray(gamma_pf, dtype=float),
+            )
+        )
+    except ValueError as exc:
+        raise ValueError("field-mobility inputs must be broadcast compatible") from exc
+    inputs = (mobility0, field, saturation_velocity, exponent, gamma)
+    if (
+        any(not np.all(np.isfinite(value)) for value in inputs)
+        or np.any(mobility0 < 0.0)
+    ):
+        raise ValueError(
+            "field-mobility linearization requires finite inputs and "
+            "non-negative low-field mobility"
+        )
+
+    root_field = compact_sqrt_abs(
+        field,
+        pf_field_regularization_width_V_m,
+    )
+    width = float(pf_field_regularization_width_V_m)
+    field_magnitude = np.abs(field)
+    field_sign = np.sign(field)
+    root_derivative = np.zeros_like(field_magnitude)
+    positive_field = field_magnitude > 0.0
+    if width == 0.0:
+        root_derivative[positive_field] = (
+            field_sign[positive_field]
+            / (2.0 * np.sqrt(field_magnitude[positive_field]))
+        )
+    else:
+        exact = positive_field & (field_magnitude >= width)
+        root_derivative[exact] = (
+            field_sign[exact]
+            / (2.0 * np.sqrt(field_magnitude[exact]))
+        )
+        transition = positive_field & (field_magnitude < width)
+        z = field_magnitude[transition] / width
+        polynomial_derivative = (
+            154.0 * z - 264.0 * z**3 + 126.0 * z**5
+        ) / 32.0
+        root_derivative[transition] = (
+            field_sign[transition]
+            * polynomial_derivative
+            / np.sqrt(width)
+        )
+
+    raw_pf_argument = gamma * root_field
+    clipped_pf_argument = np.clip(raw_pf_argument, -80.0, 80.0)
+    pf_clip_interior = (raw_pf_argument > -80.0) & (raw_pf_argument < 80.0)
+    pf_log_derivative = np.where(
+        pf_clip_interior,
+        gamma * root_derivative,
+        0.0,
+    )
+    mobility_pf = mobility0 * np.exp(clipped_pf_argument)
+
+    ct_active = (saturation_velocity > 0.0) & (exponent > 0.0)
+    safe_velocity = np.where(saturation_velocity > 0.0, saturation_velocity, 1.0)
+    ratio = np.where(
+        ct_active,
+        mobility_pf * field_magnitude / safe_velocity,
+        0.0,
+    )
+    with np.errstate(invalid="ignore", over="ignore"):
+        ratio_power = np.where(
+            ct_active,
+            ratio ** np.where(ct_active, exponent, 1.0),
+            0.0,
+        )
+    ct_weight = np.zeros_like(ratio_power)
+    finite_power = ct_active & np.isfinite(ratio_power)
+    ct_weight[finite_power] = (
+        ratio_power[finite_power] / (1.0 + ratio_power[finite_power])
+    )
+    ct_weight[ct_active & np.isposinf(ratio_power)] = 1.0
+
+    signed_inverse_field = np.divide(
+        field_sign,
+        field_magnitude,
+        out=np.zeros_like(field_magnitude),
+        where=positive_field,
+    )
+    mobility = apply_field_mobility(
+        mobility0,
+        field,
+        saturation_velocity,
+        exponent,
+        gamma,
+        pf_field_regularization_width_V_m=(
+            pf_field_regularization_width_V_m
+        ),
+    )
+    field_derivative = mobility * (
+        (1.0 - ct_weight) * pf_log_derivative
+        - ct_weight * signed_inverse_field
+    )
+
+    differentiable = np.ones(field.shape, dtype=bool)
+    if width == 0.0:
+        differentiable &= ~(
+            (field_magnitude == 0.0)
+            & (gamma != 0.0)
+            & (mobility0 > 0.0)
+        )
+    differentiable &= ~(
+        (field_magnitude == 0.0)
+        & ct_active
+        & (exponent <= 1.0)
+        & (mobility_pf > 0.0)
+    )
+    differentiable &= ~(
+        (np.abs(raw_pf_argument) == 80.0)
+        & (mobility0 > 0.0)
+    )
+    if (
+        not np.all(np.isfinite(mobility))
+        or np.any(mobility < 0.0)
+        or np.any(~np.isfinite(field_derivative) & differentiable)
+    ):
+        raise ValueError("field-mobility linearization produced a non-finite tangent")
+    return FieldMobilityLinearization(
+        mobility_m2_V_s=np.asarray(mobility, dtype=float),
+        field_derivative_m3_V2_s=np.asarray(field_derivative, dtype=float),
+        differentiable=differentiable,
+    )
+
+
+__all__ = [
+    "FieldMobilityLinearization",
+    "apply_field_mobility",
+    "caughey_thomas",
+    "linearize_field_mobility",
+    "poole_frenkel",
+]

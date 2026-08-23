@@ -7,6 +7,7 @@ import pytest
 from perovskite_sim.physics.field_mobility import (
     apply_field_mobility,
     caughey_thomas,
+    linearize_field_mobility,
     poole_frenkel,
 )
 
@@ -235,3 +236,135 @@ def test_composition_pf_then_ct_ordering():
     mu = float(apply_field_mobility(mu0, E, v_sat=v_sat, beta=2.0, gamma_pf=gamma))
     v_drift = mu * E
     assert abs(v_drift - v_sat) / v_sat < 0.05
+
+
+# --- Analytic signed-field derivative --------------------------------------
+
+
+def test_composed_field_derivative_matches_production_central_stencil():
+    mu0 = np.array([1.0e-7, 2.0e-4, 2.0e-4, 1.0e-4])
+    field = np.array([-1.0e6, -1.0e7, 1.0e7, 3.4])
+    v_sat = np.array([0.0, 1.0e5, 1.0e5, 1.0e5])
+    beta = np.array([2.0, 2.0, 1.0, 2.0])
+    gamma = np.array([3.0e-4, 0.0, 1.0e-5, 3.0e-4])
+    tangent = linearize_field_mobility(mu0, field, v_sat, beta, gamma)
+    step = np.maximum(np.abs(field) * 1.0e-5, 1.0e-3)
+    finite_difference = (
+        apply_field_mobility(mu0, field + step, v_sat, beta, gamma)
+        - apply_field_mobility(mu0, field - step, v_sat, beta, gamma)
+    ) / (2.0 * step)
+
+    np.testing.assert_array_equal(tangent.differentiable, True)
+    np.testing.assert_array_equal(
+        tangent.mobility_m2_V_s,
+        apply_field_mobility(mu0, field, v_sat, beta, gamma),
+    )
+    np.testing.assert_allclose(
+        tangent.field_derivative_m3_V2_s,
+        finite_difference,
+        rtol=5.0e-7,
+        atol=1.0e-18,
+    )
+    assert tangent.field_derivative_m3_V2_s[0] < 0.0
+    assert tangent.field_derivative_m3_V2_s[1] > 0.0
+
+
+def test_regularized_pf_derivative_is_smooth_through_zero_field():
+    field = np.array([-500.0, -10.0, 0.0, 10.0, 500.0])
+    mu0 = np.full_like(field, 1.0e-7)
+    gamma = np.full_like(field, 3.0e-4)
+    zeros = np.zeros_like(field)
+    beta = np.full_like(field, 2.0)
+    width = 1.0e3
+    tangent = linearize_field_mobility(
+        mu0,
+        field,
+        zeros,
+        beta,
+        gamma,
+        pf_field_regularization_width_V_m=width,
+    )
+    step = np.full_like(field, 1.0e-3)
+    plus = apply_field_mobility(
+        mu0,
+        field + step,
+        zeros,
+        beta,
+        gamma,
+        pf_field_regularization_width_V_m=width,
+    )
+    minus = apply_field_mobility(
+        mu0,
+        field - step,
+        zeros,
+        beta,
+        gamma,
+        pf_field_regularization_width_V_m=width,
+    )
+
+    np.testing.assert_array_equal(tangent.differentiable, True)
+    np.testing.assert_allclose(
+        tangent.field_derivative_m3_V2_s,
+        (plus - minus) / (2.0 * step),
+        rtol=2.0e-7,
+        atol=1.0e-18,
+    )
+    assert tangent.field_derivative_m3_V2_s[2] == 0.0
+
+
+def test_zero_field_cusps_are_explicitly_marked_non_differentiable():
+    tangent = linearize_field_mobility(
+        np.full(4, 1.0e-4),
+        np.zeros(4),
+        np.array([0.0, 1.0e5, 1.0e5, 1.0e5]),
+        np.array([2.0, 1.0, 0.5, 2.0]),
+        np.array([3.0e-4, 0.0, 0.0, 0.0]),
+    )
+
+    np.testing.assert_array_equal(
+        tangent.differentiable,
+        np.array([False, False, False, True]),
+    )
+    assert tangent.field_derivative_m3_V2_s[-1] == 0.0
+
+
+def test_pf_clip_interior_has_zero_pf_derivative():
+    tangent = linearize_field_mobility(
+        np.array([1.0e-7]),
+        np.array([1.0e12]),
+        np.array([0.0]),
+        np.array([2.0]),
+        np.array([1.0e-2]),
+    )
+
+    np.testing.assert_array_equal(tangent.differentiable, True)
+    np.testing.assert_array_equal(tangent.field_derivative_m3_V2_s, 0.0)
+
+
+def test_exact_pf_clip_surface_is_marked_non_differentiable():
+    gamma = np.array([1.0e-2, -1.0e-2])
+    clip_field = np.full(2, (80.0 / abs(gamma[0])) ** 2)
+    tangent = linearize_field_mobility(
+        np.full(2, 1.0e-7),
+        clip_field,
+        np.zeros(2),
+        np.full(2, 2.0),
+        gamma,
+    )
+
+    np.testing.assert_array_equal(tangent.differentiable, False)
+
+
+def test_field_mobility_linearization_rejects_invalid_inputs():
+    with pytest.raises(ValueError, match="non-negative"):
+        linearize_field_mobility(-1.0, 1.0, 0.0, 2.0, 0.0)
+    with pytest.raises(ValueError, match="finite"):
+        linearize_field_mobility(1.0, np.nan, 0.0, 2.0, 0.0)
+    with pytest.raises(ValueError, match="broadcast compatible"):
+        linearize_field_mobility(
+            np.ones(2),
+            np.ones(3),
+            0.0,
+            2.0,
+            0.0,
+        )
