@@ -140,7 +140,7 @@ benchmarks:
       - the uncalibrated reference makes no SCAPS-parity claim
   interface-charge-qf-research:
     kind: numerical
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: >-
       pytest -q
@@ -157,7 +157,7 @@ benchmarks:
     configs: [configs/interface_charge_research.yaml]
     limitations:
       - dark, biased, and illuminated device solves close through the research-only QF API
-      - the registered 3x3 grid/tolerance matrix remains pending, so this benchmark is partial
+      - the source-clean 3x3 matrix is internally certified at commit 23783a3 with certificate SHA-256 1691eaee87208f2494207c94a6f8c484299e34c4ac99c952b6c8df7915cf1921
       - this is an internal numerical reference with no SCAPS or experimental-validation claim
   courtier2019-ionmonger:
     kind: external

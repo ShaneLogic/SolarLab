@@ -1,12 +1,13 @@
 # Interface-charge closure policy
 
-Status: research-only steady-state Python lane; production routes remain
-`PARKED` (2026-08-23).
+Status: internally certified research-only steady-state Python lane;
+production and backend routes remain `PARKED` (2026-08-23).
 
 SolarLab's production interface-state paths remain recombination-only. The
 explicit research API below provides a self-consistent occupancy-dependent
-sheet charge in the QF outer Poisson system, but it is not yet backed by the
-charged grid/tolerance certificate required for production exposure.
+sheet charge in the QF outer Poisson system. Its purpose-built grid/tolerance
+lane is internally certified; this does not promote the closure to a
+production or externally validated model.
 
 ## Configuration contract
 
@@ -142,9 +143,41 @@ normalized J-V, and `4.852e-6 V` for Voc; all tolerance differences were at
 least four orders below their registered limits (interface flux six orders,
 Voc five orders, and normalized J-V four orders).
 
+## Charged research certificate lane
+
+`configs/interface_charge_research.yaml` is a purpose-built two-layer,
+single-interface numerical reference. Its contact reservoirs and Poisson drop
+share the `semiconductor_work_function` gauge, its asymmetric grid clustering
+is fixed at `(2, 3)`, and its `N_t=1e13 cm^-2` interface samples the upper end
+of the registered trap-density law without carrying any SCAPS calibration.
+
+The registered `interface-charge-equilibrium-referenced-v1` lane evaluates
+N30/N60/N120 and QF residual factors 1/0.5/0.25. Every cell rebuilds a
+content-addressed charge-off dark reference, verifies exact charge-on/off dark
+array identity, then independently solves a dark biased state and an
+illuminated operating point through the charged public Python API. Artifacts
+store contact, grid, stack, dark-state and target-state identities together
+with `f_eq`, `f`, `Delta sigma`, trace shifts, Gauss residual, local residual
+and IFT condition evidence.
+
+The source-clean single-threaded matrix at commit `23783a3` is internally
+`certified`: run
+`f94831ce5f26b6d4aafa702313846aaf717a6d91b58b99ade72481e77f1ae5c4`,
+certificate
+`1691eaee87208f2494207c94a6f8c484299e34c4ac99c952b6c8df7915cf1921`,
+and protocol
+`63b646172ca135f58227000cdcb5f35a07e9a4b70387a5d197a0498592c605b3`.
+All nine cells completed with no failure, missing cell or reuse. Terminal grid
+differences were `7.594e-4` for current, `7.627e-7` for occupancy,
+`8.436e-4` relative for sheet charge and `8.918e-6 V` for trace shift. The
+largest tolerance difference was `3.256e-10` for sheet charge. Across the
+matrix, the worst normalized Gauss residual was `1.743e-16`, local interface
+residual `1.866e-12`, continuity bound `4.571e-9 A/m2`, current spread
+`4.554e-9 A/m2`, and scaled local Jacobian condition `4.874e4`.
+
 ## Unlock conditions
 
-Production/API unlock remains unavailable until all of these are
+Production and backend unlock remain unavailable until all of these are
 content-addressed or executable certificates under one frozen
 source/config/protocol identity:
 
@@ -153,20 +186,24 @@ source/config/protocol identity:
 - complete charge-off interface steady-state grid/tolerance matrix (completed
   in the charge-off certificate above);
 - local two-sided Gauss jump and analytic sheet-charge tangent with
-  discontinuous permittivity (completed); the registered device-level
-  outer-coupling certificate remains pending;
+  discontinuous permittivity (completed), including the registered
+  device-level outer-coupling certificate above;
 - stored per-interface `f_eq` in the same topology and energy gauge (completed
-  for the charge-off reference; the charged lane must consume this identity);
+  and consumed through a content-addressed dark-reference identity);
 - occupancy-dependent sheet charge inside the outer Poisson residual and a
   verified analytic/IFT Jacobian (completed for the research steady-state
   Python lane);
-- dark reference identity and charge/grid conservation gates.
+- dark reference identity and charge/grid conservation gates (completed for
+  the purpose-built research config).
 
-The remaining unlock work is a registered charged grid/tolerance certificate,
-including barrier-shift convergence and content-addressed dark-reference
-identity. Until that artifact is certified, the capability must not be called
-production-ready or externally validated.
+The remaining Phase-3 exposure work is a backend research endpoint with an
+explicit evidence schema and a broader device stress matrix over `E_t`, band
+offset, doping and trap density. The historical three-layer SCAPS-derived
+reference also remains an unresolved illuminated stress case. Transient,
+impedance and 2D require the later unified algebraic-state topology. None of
+these gaps may be hidden by enabling the production material path, and the
+current internal certificate must not be described as external validation.
 
-The pure sign-law tests and existing two-sided electrostatic unit tests are
-necessary prerequisites. They are not a device-level interface-charge
-certificate.
+The pure sign-law and two-sided electrostatic unit tests are prerequisites;
+the device-level claim is limited to the frozen research config and protocol
+identified by the certificate above.
