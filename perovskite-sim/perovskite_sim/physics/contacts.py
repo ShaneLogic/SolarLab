@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         BulkChargeNeutralityState,
         CarrierStatistics,
     )
+    from perovskite_sim.physics.bulk_traps import BulkTrapState
     from perovskite_sim.solver.mol import MaterialArrays
 
 
@@ -113,6 +114,7 @@ class SemiconductorContactState:
     band_gap_narrowing_eV: float
     conduction_band_shift_eV: float
     valence_band_shift_eV: float
+    bulk_trap_state: "BulkTrapState | None" = None
 
     @property
     def electron_density_m3(self) -> float:
@@ -136,6 +138,7 @@ def build_semiconductor_contact_state(
     *,
     temperature_K: float,
     use_temperature_scaling: bool,
+    bulk_trap_quadrature_order: int = 64,
 ) -> SemiconductorContactState:
     """Build one contact state from one statistics/ionization closure.
 
@@ -200,20 +203,39 @@ def build_semiconductor_contact_state(
         log_shape=float(params.bgn_log_shape),
         conduction_band_fraction=float(params.bgn_conduction_band_fraction),
     )
-    neutrality = solve_charge_neutrality(
-        temperature_K=temperature,
-        band_gap_eV=band_edges.effective_band_gap_eV,
-        effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
-        effective_valence_dos_m3=float(params.Nv300) * dos_scale,
-        acceptor_density_m3=float(params.N_A),
-        donor_density_m3=float(params.N_D),
-        statistics=params.carrier_statistics,
-        dopant_ionization_model=params.dopant_ionization_model,
-        donor_binding_energy_eV=params.donor_binding_energy_eV,
-        acceptor_binding_energy_eV=params.acceptor_binding_energy_eV,
-        donor_degeneracy=float(params.donor_degeneracy),
-        acceptor_degeneracy=float(params.acceptor_degeneracy),
-    )
+    trap_state = None
+    if params.bulk_trap_distribution is None:
+        neutrality = solve_charge_neutrality(
+            temperature_K=temperature,
+            band_gap_eV=band_edges.effective_band_gap_eV,
+            effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
+            effective_valence_dos_m3=float(params.Nv300) * dos_scale,
+            acceptor_density_m3=float(params.N_A),
+            donor_density_m3=float(params.N_D),
+            statistics=params.carrier_statistics,
+            dopant_ionization_model=params.dopant_ionization_model,
+            donor_binding_energy_eV=params.donor_binding_energy_eV,
+            acceptor_binding_energy_eV=params.acceptor_binding_energy_eV,
+            donor_degeneracy=float(params.donor_degeneracy),
+            acceptor_degeneracy=float(params.acceptor_degeneracy),
+        )
+    else:
+        from perovskite_sim.physics.bulk_traps import (
+            solve_bulk_trap_charge_neutrality,
+        )
+
+        trap_neutrality = solve_bulk_trap_charge_neutrality(
+            temperature_K=temperature,
+            band_gap_eV=band_edges.effective_band_gap_eV,
+            effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
+            effective_valence_dos_m3=float(params.Nv300) * dos_scale,
+            acceptor_density_m3=float(params.N_A),
+            donor_density_m3=float(params.N_D),
+            distribution=params.bulk_trap_distribution,
+            quadrature_order=bulk_trap_quadrature_order,
+        )
+        neutrality = trap_neutrality.neutrality
+        trap_state = trap_neutrality.trap_state
     affinity = band_edges.effective_electron_affinity_eV
     work_function = affinity - (
         neutrality.thermal_voltage_V
@@ -230,6 +252,7 @@ def build_semiconductor_contact_state(
         band_gap_narrowing_eV=band_edges.narrowing_eV,
         conduction_band_shift_eV=band_edges.conduction_band_shift_eV,
         valence_band_shift_eV=band_edges.valence_band_shift_eV,
+        bulk_trap_state=trap_state,
     )
 
 

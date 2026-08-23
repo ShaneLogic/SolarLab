@@ -142,6 +142,13 @@ def _canonical(value: Any) -> Any:
                 "bgn_conduction_band_fraction",
             ):
                 mapping.pop(key, None)
+        if (
+            isinstance(value, MaterialParams)
+            and value.bulk_trap_distribution is None
+        ):
+            # The absent P4.3 schema is behaviorally inert. Active structured
+            # distributions remain fully content-addressed.
+            mapping.pop("bulk_trap_distribution", None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}

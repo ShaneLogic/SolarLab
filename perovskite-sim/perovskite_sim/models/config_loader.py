@@ -7,6 +7,9 @@ import yaml
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.physics.doping import validate_doping_profile_params
+from perovskite_sim.physics.bulk_traps import (
+    bulk_trap_distribution_from_mapping,
+)
 from perovskite_sim.twod.microstructure import load_microstructure_from_yaml_block
 
 
@@ -376,6 +379,13 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
         trap_decay_length=float(layer_cfg["trap_decay_length"]) if "trap_decay_length" in layer_cfg else None,
         trap_profile_shape=str(layer_cfg.get("trap_profile_shape", "exponential")),
         trap_edge=str(layer_cfg.get("trap_edge", "both")),
+        bulk_trap_distribution=(
+            bulk_trap_distribution_from_mapping(
+                layer_cfg["bulk_trap_distribution"]
+            )
+            if "bulk_trap_distribution" in layer_cfg
+            else None
+        ),
         optical_material=layer_cfg.get("optical_material"),
         n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
         incoherent=_parse_bool(layer_cfg.get("incoherent", False)),

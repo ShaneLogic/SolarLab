@@ -59,16 +59,23 @@ from perovskite_sim.solver.numerical_diagnostics import (
     StateLayout,
 )
 from perovskite_sim.physics.regularization import RHSRegularization
+from perovskite_sim.physics.bulk_traps import BulkTrapDistribution
 
 
 class BulkCarrierStatisticsCapabilityError(ValueError):
     """A stack requests statistics not yet closed by bulk transport."""
 
 
+class BulkTrapChargeCapabilityError(ValueError):
+    """A production path requested the research-only bulk-trap charge."""
+
+
 DEGENERATE_TRANSPORT_DEFAULT = "default"
 DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF = (
     "research_recombination_off"
 )
+BULK_TRAP_CHARGE_OFF = "off"
+BULK_TRAP_CHARGE_RESEARCH_EQUILIBRIUM = "research_equilibrium"
 
 
 @dataclass
@@ -332,6 +339,10 @@ class MaterialArrays:
     band_gap_narrowing_model: str = "off"
     band_gap_narrowing_eV: np.ndarray | None = None
     degenerate_recombination_model: str = "maxwell_boltzmann"
+    # Explicit P4.3 research slice. Production MoL rejects any non-off value;
+    # the dedicated equilibrium solver consumes the same material cache.
+    bulk_trap_charge_closure: str = BULK_TRAP_CHARGE_OFF
+    bulk_trap_distribution: BulkTrapDistribution | None = None
     te_physical_norm: bool = False
     # Physical diffusion-only steric ion flux (review F05). When True, the
     # ion continuity RHS folds the crowding potential into the SG drift
@@ -818,6 +829,7 @@ def build_material_arrays(
     stack: DeviceStack,
     *,
     carrier_statistics_transport: str = DEGENERATE_TRANSPORT_DEFAULT,
+    bulk_trap_charge_closure: str = BULK_TRAP_CHARGE_OFF,
 ) -> MaterialArrays:
     """Construct the immutable per-experiment material array bundle.
 
@@ -834,6 +846,13 @@ def build_material_arrays(
         raise ValueError(
             "carrier_statistics_transport must be 'default' or "
             "'research_recombination_off'"
+        )
+    if bulk_trap_charge_closure not in {
+        BULK_TRAP_CHARGE_OFF,
+        BULK_TRAP_CHARGE_RESEARCH_EQUILIBRIUM,
+    }:
+        raise ValueError(
+            "bulk_trap_charge_closure must be 'off' or 'research_equilibrium'"
         )
     N = len(x)
 
@@ -943,6 +962,28 @@ def build_material_arrays(
             "default solver path; contact thermodynamics are available for "
             "assessment only. Activated layers: "
             + ", ".join(band_gap_narrowing_layers)
+        )
+    bulk_trap_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.params is not None
+        and layer.params.bulk_trap_distribution is not None
+    )
+    research_bulk_trap_equilibrium = (
+        bulk_trap_charge_closure
+        == BULK_TRAP_CHARGE_RESEARCH_EQUILIBRIUM
+    )
+    if bulk_trap_layers and not research_bulk_trap_equilibrium:
+        raise BulkTrapChargeCapabilityError(
+            "energy-resolved bulk trap charge is not enabled on the default "
+            "solver path; use the dedicated research equilibrium closure. "
+            "Activated layers: "
+            + ", ".join(bulk_trap_layers)
+        )
+    if research_bulk_trap_equilibrium and not bulk_trap_layers:
+        raise BulkTrapChargeCapabilityError(
+            "research bulk-trap equilibrium requires an explicit "
+            "bulk_trap_distribution on every electrical layer"
         )
     carrier_statistics_models = {
         layer.params.carrier_statistics
@@ -1078,6 +1119,121 @@ def build_material_arrays(
         if disallowed:
             raise BulkCarrierStatisticsCapabilityError(
                 "research degenerate transport topology rejected: "
+                + "; ".join(disallowed)
+            )
+
+    if research_bulk_trap_equilibrium:
+        if any(layer.params is None for layer in elec_layers):
+            raise BulkTrapChargeCapabilityError(
+                "research bulk-trap equilibrium requires material parameters "
+                "on every electrical layer"
+            )
+        reference = elec_layers[0].params
+        assert reference is not None
+        homogeneous_fields = (
+            "eps_r",
+            "chi",
+            "Eg",
+            "Nc300",
+            "Nv300",
+            "bulk_trap_distribution",
+        )
+        mismatched = [
+            field_name
+            for field_name in homogeneous_fields
+            if any(
+                getattr(layer.params, field_name)
+                != getattr(reference, field_name)
+                for layer in elec_layers[1:]
+            )
+        ]
+        disallowed = []
+        if len(bulk_trap_layers) != len(elec_layers):
+            disallowed.append("partial-layer bulk trap activation")
+        if mismatched:
+            disallowed.append(
+                "non-homojunction fields=" + ",".join(mismatched)
+            )
+        if any(
+            layer.params.carrier_statistics != "maxwell_boltzmann"
+            or layer.params.dopant_ionization_model != "fully_ionized"
+            or layer.params.band_gap_narrowing_model != "off"
+            for layer in elec_layers
+        ):
+            disallowed.append("non-MB/fully-ionized/base-gap constitutive law")
+        if any(
+            any(float(value) != 0.0 for value in pair)
+            for pair in electrical_interfaces(stack)
+        ) or any(
+            defect is not None
+            for defect in electrical_interface_defects(stack)
+        ):
+            disallowed.append("interface recombination")
+        if float(stack.Phi) != 0.0:
+            disallowed.append("optical generation")
+        if stack.band_grading:
+            disallowed.append("band grading")
+        if any(
+            layer.params.N_A_bulk is not None
+            or layer.params.N_D_bulk is not None
+            for layer in elec_layers
+        ):
+            disallowed.append("spatial doping profiles")
+        if any(
+            (
+                layer.params.D_ion != 0.0
+                or layer.params.P0 != 0.0
+                or layer.params.D_ion_neg != 0.0
+                or layer.params.P0_neg != 0.0
+            )
+            for layer in elec_layers
+        ):
+            disallowed.append("mobile ions")
+        if any(
+            (
+                layer.params.v_sat_n != 0.0
+                or layer.params.v_sat_p != 0.0
+                or layer.params.pf_gamma_n != 0.0
+                or layer.params.pf_gamma_p != 0.0
+            )
+            for layer in elec_layers
+        ):
+            disallowed.append("field-dependent mobility")
+        if any(
+            value is not None
+            for value in (
+                stack.S_n_left,
+                stack.S_p_left,
+                stack.S_n_right,
+                stack.S_p_right,
+            )
+        ) or stack.flat_band_contacts or stack.flat_band_metal_contacts:
+            disallowed.append("non-ohmic or calibrated contacts")
+        if (
+            stack.interface_plane_projection
+            or stack.interface_two_sided
+            or stack.interface_shared_occupancy
+            or stack.interface_plane_closure
+            or stack.interface_plane_generation
+            or stack.interface_tunneling
+            or stack.het_recomb_despike != 0.0
+        ):
+            disallowed.append("advanced interface closure")
+        if stack.built_in_potential_mode != "semiconductor_work_function":
+            disallowed.append("non-thermodynamic contact potential")
+        active_environment_overrides = sorted(
+            name
+            for name, value in os.environ.items()
+            if name.startswith("SOLARLAB_") and value not in {"", "0"}
+        )
+        if active_environment_overrides:
+            disallowed.append(
+                "environment overrides="
+                + ",".join(active_environment_overrides)
+            )
+        if disallowed:
+            raise BulkTrapChargeCapabilityError(
+                "research bulk-trap equilibrium topology rejected: "
                 + "; ".join(disallowed)
             )
 
@@ -1424,6 +1580,25 @@ def build_material_arrays(
     # nothing downstream of the fold can tell the difference.
     chi_phys = chi.copy()
     Eg_phys = Eg.copy()
+    if research_bulk_trap_equilibrium:
+        expected_ni_sq = (
+            N_C_node_arr
+            * N_V_node_arr
+            * np.exp(-Eg_phys / V_T_dev)
+        )
+        if (
+            not np.all(np.isfinite(expected_ni_sq))
+            or not np.allclose(
+                ni_sq,
+                expected_ni_sq,
+                rtol=1.0e-12,
+                atol=0.0,
+            )
+        ):
+            raise BulkTrapChargeCapabilityError(
+                "research bulk-trap equilibrium requires ni, Nc, Nv, and Eg "
+                "to satisfy the same Maxwell-Boltzmann mass-action law"
+            )
 
     if _dos_band:
         _ref = next(
@@ -1847,7 +2022,7 @@ def build_material_arrays(
     # continuity node.
     ni_sq_L = float(ni_sq[0])
     ni_sq_R = float(ni_sq[-1])
-    if research_degenerate_transport:
+    if research_degenerate_transport or research_bulk_trap_equilibrium:
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,
         )
@@ -2140,6 +2315,12 @@ def build_material_arrays(
         ),
         degenerate_recombination_model=(
             "off" if research_degenerate_transport else "maxwell_boltzmann"
+        ),
+        bulk_trap_charge_closure=bulk_trap_charge_closure,
+        bulk_trap_distribution=(
+            elec_layers[0].params.bulk_trap_distribution
+            if research_bulk_trap_equilibrium
+            else None
         ),
         te_physical_norm=_te_phys,
         ion_steric_diffusion_only=_ion_steric_diff,
@@ -2510,6 +2691,11 @@ def assemble_rhs(
     would allocate ~20 numpy arrays per Radau RHS call and dominated runtime
     of the caching refactor's target experiments.
     """
+    if mat.bulk_trap_charge_closure != BULK_TRAP_CHARGE_OFF:
+        raise BulkTrapChargeCapabilityError(
+            "production MoL does not include energy-resolved bulk trap charge; "
+            "use solve_bulk_trap_pn_equilibrium for the restricted research slice"
+        )
     if regularization is not None and not isinstance(
         regularization, RHSRegularization
     ):

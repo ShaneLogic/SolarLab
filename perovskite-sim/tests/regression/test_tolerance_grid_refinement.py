@@ -121,6 +121,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "degenerate-pn-equilibrium-v1",
         "incomplete-ionization-temperature-equilibrium-v1",
         "incomplete-ionization-bgn-temperature-equilibrium-v1",
+        "bulk-energy-distributed-trap-equilibrium-v1",
     }
     assert all(
         len(lane.matrix_points) == 9

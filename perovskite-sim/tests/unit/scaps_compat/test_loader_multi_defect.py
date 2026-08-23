@@ -302,6 +302,7 @@ def test_bulk_distribution_single_default(tmp_path):
     pvk = stack.layers[1]
     expected_tau = 1.0 / (1.0e-15 * 1.0e-4 * cms_to_ms(1.0e7) * cm3_to_m3(1.0e12))
     assert math.isclose(pvk.params.tau_n, expected_tau, rel_tol=1e-9)
+    assert pvk.params.bulk_trap_distribution is None
 
 
 def test_bulk_distribution_gaussian_uses_N_t_directly(tmp_path):
@@ -329,6 +330,7 @@ def test_bulk_distribution_gaussian_uses_N_t_directly(tmp_path):
     pvk = stack.layers[1]
     expected_tau = 1.0 / (1.0e-15 * 1.0e-4 * cms_to_ms(1.0e7) * cm3_to_m3(1.0e12))
     assert math.isclose(pvk.params.tau_n, expected_tau, rel_tol=1e-9)
+    assert pvk.params.bulk_trap_distribution is None
 
 
 def test_bulk_distribution_unknown_value_rejected(tmp_path):

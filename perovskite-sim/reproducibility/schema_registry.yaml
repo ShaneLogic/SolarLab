@@ -53,6 +53,22 @@ schemas:
           - bgn_conduction_band_fraction
         energy_units: eV
         density_units: m-3
+      bulk_trap_energy_distribution:
+        block: bulk_trap_distribution
+        selector: distribution
+        supported_modes: [single_level, gaussian]
+        required_keys:
+          - total_density_m3
+          - center_eV_above_vb
+          - sigma_n_m2
+          - sigma_p_m2
+          - thermal_velocity_m_s
+          - charge_transition
+        gaussian_required_keys: [energy_sigma_eV]
+        supported_charge_transitions: [acceptor, donor]
+        capability: research-equilibrium-only
+        density_units: m-3
+        energy_units: eV
       spatial_doping_profile:
         activation_keys: [N_A_bulk, N_D_bulk]
         companion_keys:
@@ -92,6 +108,10 @@ schemas:
       - N_D_cm3
       - N_A_cm3
       - v_th_cm_s
+    parked_defect_metadata:
+      fields: [distribution, E_char_eV, N_peak_cm3]
+      capability: parked
+      reason: imported Gaussian peak/total normalization is ambiguous
     unknown_key_policy: strict-for-defect-records
   tandem-v1:
     detector: tandem_2T_monolithic

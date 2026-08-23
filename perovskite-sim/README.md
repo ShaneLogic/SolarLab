@@ -804,3 +804,13 @@ does not include `InterfaceDefect`, configurable cross-node carrier sampling,
 dynamic/charged interface states, ions, selective contacts, field mobility,
 photon recycling, clamp-active points, experiments, or backend routes; see
 [the DAE capability boundary](docs/dae-research-backbone.md).
+
+Phase 4.3 adds a separate, research-only energy-distributed bulk-trap
+equilibrium closure. A strict standard-SI schema defines integrated trap
+density, energy distribution, capture cross sections, thermal velocity, and
+the donor/acceptor neutral-charge reference. Occupancy, SRH recombination, and
+absolute trap charge share one controlled energy quadrature, and the Poisson
+Newton solve uses the analytic trap-charge tangent. Default MoL and experiment
+routes fail closed when this field is active; historical lifetime profiles and
+SCAPS Gaussian metadata are not reinterpreted. See
+[the P4.3 capability contract](docs/bulk-trap-energy-distribution-closure.md).

@@ -1127,3 +1127,55 @@ lanes:
       - This lane certifies only a dark homogeneous silicon p/n equilibrium combining independent discrete donor/acceptor levels with the frozen Slotboom chemical-doping band-gap-narrowing law over 100-300 K.
       - The model excludes impurity bands, the Mott transition, alternate BGN parameterizations, dopant capture kinetics, bulk recombination, illumination, bias, heterojunctions, ions, selective contacts, and production experiment routes.
       - The temperature and refinement curves are internal numerical evidence, not Sentaurus or PC1D validation, experimental validation, or a production device certificate.
+
+  bulk-energy-distributed-trap-equilibrium-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/csi_gaussian_bulk_trap_pn_research.yaml
+    config_sha256: 7e8bf1ab6669bd8088cd402ef73aca1cd75c9ae1755d3137faf6650569ac481b
+    executor: perovskite_sim.validation.bulk_trap_refinement:run_bulk_trap_equilibrium_refinement
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values: [40, 80, 160]
+    tolerance:
+      parameter: poisson_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      left_contact_trap_occupancy: {comparison: absolute_linf, limit: 1.0e-12, units: "1"}
+      normalized_integrated_bulk_trap_charge: {comparison: absolute_linf, limit: 5.0e-4, units: "1"}
+      peak_field_to_average_built_in_ratio: {comparison: absolute_linf, limit: 0.05, units: "1"}
+      right_contact_trap_occupancy: {comparison: absolute_linf, limit: 1.0e-12, units: "1"}
+    quality_gates:
+      bulk_trap_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      default_production_path_rejected: {operator: eq, limit: 1.0, units: "1"}
+      energy_quadrature_orders_completed: {operator: eq, limit: 3.0, units: "1"}
+      max_energy_charge_relative_change: {operator: le, limit: 0.005, units: "1"}
+      max_energy_occupancy_relative_change: {operator: le, limit: 0.005, units: "1"}
+      max_energy_recombination_relative_change: {operator: le, limit: 0.005, units: "1"}
+      max_gauss_law_relative_error: {operator: le, limit: 1.0e-7, units: "1"}
+      max_mass_action_relative_error: {operator: le, limit: 1.0e-12, units: "1"}
+      max_normalized_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_relative_face_current: {operator: le, limit: 1.0e-12, units: "1"}
+      maximum_newton_iterations: {operator: le, limit: 25.0, units: "1"}
+      minimum_absolute_integrated_bulk_trap_charge_C_m2: {operator: ge, limit: 0.001, units: C/m2}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+      trap_occupancy_bounded: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      left_layer_name: p_trap
+      right_layer_name: n_trap
+      energy_quadrature_orders: [16, 32, 64]
+      probe_electron_density_m3: 2.0e20
+      probe_hole_density_m3: 2.0e20
+      grid_alpha: 3.0
+      base_poisson_tolerance: 1.0e-8
+      max_newton_iterations: 100
+      max_potential_step_V: 0.1
+      max_line_search_backtracks: 20
+    limitations:
+      - This lane certifies only a dark homogeneous Maxwell-Boltzmann silicon p/n equilibrium with one spatially uniform truncated-Gaussian acceptor-like trap distribution and fully ionized dopants.
+      - Recombination, occupancy, and absolute bulk-trap charge share one frozen 16/32/64 energy quadrature; legacy SCAPS gaussian metadata and lifetime-only trap profiles remain parked and are not reinterpreted.
+      - Bias, illumination, transient occupancy, Fermi-Dirac trap kinetics, amphoteric or multi-charge defects, heterojunctions, ions, selective contacts, field mobility, and every production experiment route remain excluded.
+      - This is internal numerical evidence against mass action, Gauss law, and refinement gates, not external TCAD validation, experimental validation, or a materials-parameter claim.

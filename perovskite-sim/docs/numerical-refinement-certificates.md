@@ -42,6 +42,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `dual-mobile-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P+/P-/phi 误差、逐离子守恒、shared-site bounds、dense/structured 等价性 |
 | `algebraic-interface-state-dae-transient-v1` | 每层区间 4/8/16 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/interface/phi 误差、interface occupation、clamp-inactive、dense/structured 等价性 |
 | `degenerate-pn-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | FD generalized-SG equilibrium、耗尽宽度、峰值场、空间电荷平衡 |
+| `bulk-energy-distributed-trap-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01；每格 energy order 16/32/64 | trap occupancy/recombination/absolute charge、analytic charge tangent、Gauss balance |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -96,6 +97,12 @@ fully-ionized FD charge、semiconductor-work-function ohmic contacts 和
 diffusion-enhanced generalized-SG flux。bulk recombination 明确关闭；解析 abrupt
 depletion width/peak field 只是内部 quality oracle，不是 Sentaurus/PC1D 外部验证。
 
+bulk-trap protocol 固定 homogeneous MB p/n、fully-ionized dopants、一个
+truncated-Gaussian acceptor-like energy distribution、trap-aware semiconductor
+work-function contacts，以及每格 16/32/64 的共享 occupancy/recombination/charge
+quadrature。默认 MoL 必须拒绝该配置；energy doubling、mass action、face current、
+Poisson 和离散 Gauss balance 分列 gate。旧 SCAPS Gaussian metadata 不进入该闭合。
+
 manifest 保存去重后的完整 protocol document 和 hash。certificate 只有在所有完成 cell 的 protocol 内容自校验通过且 hash 跨 grid/tolerance 一致时才记录 `protocol_sha256`。protocol provenance 不替代 config、source、environment、grid 或 tolerance provenance。
 
 ## Content-addressed outputs
@@ -148,6 +155,7 @@ python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1 
 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1 --dry-run
+python scripts/run_numerical_refinement.py bulk-energy-distributed-trap-equilibrium-v1 --dry-run
 ```
 
 建议固定 BLAS 线程后逐 lane 执行：
@@ -170,6 +178,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py bulk-energy-distributed-trap-equilibrium-v1
 ```
 
 先执行一个 cell 并留下可恢复状态：

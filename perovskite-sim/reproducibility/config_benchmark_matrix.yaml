@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 0d9315f5ca7af8ae7dd3c7277f16827261a08bac393009dc2f5c39d9a0aff80b
+  sha256: 20e334a2a0e3c6fbfe9a0083144844236874ca43c629dbc4700175ec03a890e0
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -67,6 +67,7 @@ benchmarks:
       - tests/reproducibility/test_matrix.py::test_matrix_covers_and_loads_every_shipped_config
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/csi_gaussian_bulk_trap_pn_research.yaml
       - configs/csi_degenerate_pn_research.yaml
       - configs/csi_incomplete_ionization_bgn_pn_research.yaml
       - configs/csi_incomplete_ionization_pn_research.yaml
@@ -116,6 +117,7 @@ benchmarks:
       - tests/regression/test_tolerance_grid_refinement.py::test_plan_refinement_is_read_only
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/csi_gaussian_bulk_trap_pn_research.yaml
       - configs/csi_degenerate_pn_research.yaml
       - configs/csi_incomplete_ionization_bgn_pn_research.yaml
       - configs/csi_incomplete_ionization_pn_research.yaml
@@ -1100,6 +1102,27 @@ benchmarks:
       - the source-clean 3x3 matrix is internally certified at commit d34ef7f with certificate SHA-256 bc1285a3ef9d42e1e6346aedad33ad3871b5597a7b409f4ea002bf029f024ce6
       - the lane is a dark, homogeneous, recombination-off research equilibrium and not a production J-V, C-V, or impedance route
       - Slotboom coefficients are an empirical silicon closure; external Sentaurus or PC1D validation and experimental validation remain absent
+  bulk-trap-energy-distribution-internal-closure:
+    kind: internal
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: pytest -q tests/unit/physics/test_bulk_traps.py tests/unit/models/test_bulk_trap_schema.py tests/unit/solver/test_bulk_trap_equilibrium.py tests/unit/validation/test_bulk_trap_refinement.py
+    tests:
+      - tests/unit/physics/test_bulk_traps.py
+      - tests/unit/models/test_bulk_trap_schema.py
+      - tests/unit/solver/test_bulk_trap_equilibrium.py
+      - tests/unit/validation/test_bulk_trap_refinement.py
+    node_ids:
+      - tests/unit/physics/test_bulk_traps.py::test_gaussian_delta_limit_recovers_the_single_level_model
+      - tests/unit/physics/test_bulk_traps.py::test_recombination_and_charge_tangents_match_centered_differences
+      - tests/unit/models/test_bulk_trap_schema.py::test_default_material_and_mol_paths_fail_closed
+      - tests/unit/solver/test_bulk_trap_equilibrium.py::test_real_equilibrium_closes_poisson_transport_traps_and_gauss_law
+      - tests/unit/validation/test_bulk_trap_refinement.py::test_registered_executor_real_cell_matches_exact_contract
+    configs: [configs/csi_gaussian_bulk_trap_pn_research.yaml]
+    limitations:
+      - the source-clean registered 3x3 matrix is pending at this code checkpoint
+      - the lane is restricted to a dark homogeneous Maxwell-Boltzmann equilibrium with one Gaussian acceptor-like distribution and fully ionized dopants
+      - legacy SCAPS Gaussian metadata remains parked, and external TCAD or experimental validation is absent
 
 configs:
   - path: configs/cSi_homojunction.yaml
@@ -1140,6 +1163,15 @@ configs:
     benchmarks:
       - loader-contract
       - incomplete-ionization-bgn-internal-closure
+      - phase1-refinement-contract
+  - path: configs/csi_gaussian_bulk_trap_pn_research.yaml
+    sha256: 7e8bf1ab6669bd8088cd402ef73aca1cd75c9ae1755d3137faf6650569ac481b
+    semantic_sha256: 3492a6fa6cd1774427a10c771fef10aecab40e74de872fa9777ce6b94de1238a
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - bulk-trap-energy-distribution-internal-closure
       - phase1-refinement-contract
   - path: configs/csi_vannijen2025_pn_cv.yaml
     sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad

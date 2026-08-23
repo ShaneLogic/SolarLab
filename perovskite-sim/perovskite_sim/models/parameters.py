@@ -11,6 +11,7 @@ from perovskite_sim.physics.band_gap_narrowing import (
     apply_band_gap_narrowing,
     normalize_band_gap_narrowing_model,
 )
+from perovskite_sim.physics.bulk_traps import BulkTrapDistribution
 from perovskite_sim.physics.statistics import (
     CarrierStatistics,
     DISCRETE_LEVEL,
@@ -111,6 +112,10 @@ class MaterialParams:
     # interface trap) can drive asymmetric recombination that responds
     # to the band offset on that side.
     trap_edge: str = "both"                  # "both" | "left" | "right"
+    # Explicit energy-resolved bulk defects. This is distinct from the legacy
+    # spatial lifetime profile above: it carries an integrated density, capture
+    # kinetics, and a donor/acceptor neutral-charge reference.
+    bulk_trap_distribution: BulkTrapDistribution | None = None
     # Optical data source for TMM (None = use scalar alpha Beer-Lambert)
     optical_material: str | None = None   # e.g. "MAPbI3", "TiO2", "spiro_OMeTAD"
     n_optical: float | None = None        # constant refractive index (fallback)
@@ -174,6 +179,37 @@ class MaterialParams:
         object.__setattr__(
             self, "band_gap_narrowing_model", narrowing_model
         )
+        bulk_trap = self.bulk_trap_distribution
+        if bulk_trap is not None:
+            if not isinstance(bulk_trap, BulkTrapDistribution):
+                raise TypeError(
+                    "bulk_trap_distribution must be a BulkTrapDistribution or None"
+                )
+            try:
+                bulk_trap_gap = float(self.Eg)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "energy-resolved bulk traps require a finite positive Eg"
+                ) from exc
+            if not math.isfinite(bulk_trap_gap) or bulk_trap_gap <= 0.0:
+                raise ValueError(
+                    "energy-resolved bulk traps require a finite positive Eg"
+                )
+            bulk_trap.validate_band_gap(bulk_trap_gap)
+            if statistics != MAXWELL_BOLTZMANN:
+                raise ValueError(
+                    "energy-resolved bulk traps currently require "
+                    "carrier_statistics='maxwell_boltzmann'"
+                )
+            if ionization != FULLY_IONIZED:
+                raise ValueError(
+                    "energy-resolved bulk traps currently require "
+                    "dopant_ionization_model='fully_ionized'"
+                )
+            if narrowing_model != BAND_GAP_NARROWING_OFF:
+                raise ValueError(
+                    "energy-resolved bulk traps currently exclude band-gap narrowing"
+                )
 
         if ionization == FULLY_IONIZED:
             if (
@@ -259,6 +295,7 @@ class MaterialParams:
             statistics != FERMI_DIRAC
             and ionization != DISCRETE_LEVEL
             and narrowing_model != SLOTBOOM
+            and bulk_trap is None
         ):
             return
         required_positive = {
@@ -280,7 +317,11 @@ class MaterialParams:
                 else (
                     "discrete_level ionization"
                     if ionization == DISCRETE_LEVEL
-                    else "slotboom band-gap narrowing"
+                    else (
+                        "slotboom band-gap narrowing"
+                        if narrowing_model == SLOTBOOM
+                        else "energy-resolved bulk traps"
+                    )
                 )
             )
             raise ValueError(
@@ -297,7 +338,11 @@ class MaterialParams:
                 else (
                     "discrete_level ionization"
                     if ionization == DISCRETE_LEVEL
-                    else "slotboom band-gap narrowing"
+                    else (
+                        "slotboom band-gap narrowing"
+                        if narrowing_model == SLOTBOOM
+                        else "energy-resolved bulk traps"
+                    )
                 )
             )
             raise ValueError(
