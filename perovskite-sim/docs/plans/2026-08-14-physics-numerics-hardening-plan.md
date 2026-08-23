@@ -736,6 +736,18 @@ physical-density backward Euler 与完整 structured analytic tangent，之后�
 charge、dual ions、dynamic/two-sided states、selective contacts、field mobility、
 photon recycling 与 production route 均继续 fail-close。
 
+第十二个 checkpoint 已加入组合 topology 的 dense physical-density backward-Euler
+正确性参考：carrier 与单正离子 storage 采用真实密度差，四个 interface traces 与
+Poisson 保持 algebraic；每步分列 carrier/ion/interface balance、dual-cell ion
+inventory、Newton work 与 residual。两层 `10 mV`、`10 ms` integration 中，2/4/8
+步对 strict production Radau/MoL eliminated-QSS reference 的四类终态误差均以
+`0.50019--0.50050` 的比例收缩；8 步 carrier-log/positive-ion/interface/potential
+误差为 `3.5005e-9 / 1.6279e-8 / 1.9014e-9 / 9.1821e-11 V`。离子相对运动
+`9.8245e-5`、界面态相对运动 `0.93578`，库存漂移 `1.1381e-16`，因此不是冻结态
+或零耦合伪通过。该 checkpoint 仍只到 `INTERNAL_TESTED`；下一笔必须完成组合
+structured analytic tangent，并在 sparse Newton 与 dense reference 对齐后才能注册
+新的 9-cell certificate lane。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。

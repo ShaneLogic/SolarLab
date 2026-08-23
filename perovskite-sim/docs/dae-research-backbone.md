@@ -320,10 +320,26 @@ The consistent projection pins carrier reservoirs, solves Poisson with
 `P - P0`, then eliminates the four local trace densities. Exact
 `dF/d(qdot)` includes physical carrier and finite-site ion storage, while the
 first state tangent covers carrier boundaries and the ion-aware Poisson block.
-Independent central stencils verify both analytic blocks. Interface/transport
-state derivatives, physical-density backward Euler, sparse Newton, and a
-content-addressed refinement matrix are deliberately subsequent checkpoints;
-this topology checkpoint is `INTERNAL_TESTED`, not `INTERNAL_CERTIFIED`.
+Independent central stencils verify both analytic blocks.
+
+`solver/dae_ion_interface_integrator.py` adds the next correctness reference:
+physical-density backward Euler for carriers and the bounded positive ion,
+with the four interface traces and Poisson potential kept algebraic. Its dense
+central Newton path reports carrier/ion/interface balances, dual-cell ion
+inventory, residual work, conditioning, and an immutable trajectory digest.
+On the two-layer `10 mV`, `10 ms` integration test, 2/4/8 backward-Euler steps
+contract toward a strict production Radau/MoL eliminated-QSS reference with
+successive error ratios `0.50019` to `0.50050`. At eight steps the terminal
+carrier-log, positive-ion-relative, interface-relative, and potential errors
+are respectively `3.50049e-9`, `1.62786e-8`, `1.90141e-9`, and
+`9.18213e-11 V`. The reference also exercises positive-ion relative motion
+`9.82449e-5` and interface-state relative motion `9.35783e-1`, while the
+maximum relative ion-inventory drift is `1.13812e-16`.
+
+The complete interface/transport state tangent, sparse Newton, and a
+content-addressed refinement matrix remain subsequent checkpoints. The
+combined topology therefore remains `INTERNAL_TESTED`, not
+`INTERNAL_CERTIFIED`.
 
 The combined slice fails closed for dual ions, `InterfaceDefect`, configurable
 cross-node sampling, interface charge, dynamic or two-sided interface states,
@@ -354,6 +370,6 @@ Those exclusions are evidence boundaries, not claims that the omitted physics
 can be added by changing a flag. The no-ion, single-positive-ion, dual-ion, and
 algebraic-interface certificates are separately complete only for their frozen
 topologies. The new combined residual has its own capability contract but no
-time-discrete or content-addressed certificate yet. Charged-interface,
+structured analytic or content-addressed certificate yet. Charged-interface,
 `InterfaceDefect`, dual-ion/interface, and production-route topologies still
 need separate contracts and lanes; none can inherit an earlier certificate.

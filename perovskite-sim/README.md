@@ -812,9 +812,12 @@ A fifth `INTERNAL_TESTED` topology checkpoint now combines one blocking
 positive ion with the same four algebraic interface traces in a two-layer,
 single-interface, charge-off system. It separates carrier, ion, interface, and
 Poisson residuals and certifies a deterministic consistent state plus exact
-storage/boundary/ion-aware-Poisson Jacobian blocks. It has not yet acquired a
-time-discrete structured solver or content-addressed refinement certificate,
-so it does not inherit any of the four certificates above.
+storage/boundary/ion-aware-Poisson Jacobian blocks. A dense-central
+physical-density backward-Euler reference now verifies simultaneous carrier,
+ion, interface-state, and electrostatic evolution against the production MoL
+eliminated-QSS path. The combined slice has not yet acquired its complete
+structured analytic tangent or a content-addressed refinement certificate, so
+it does not inherit any of the four certificates above.
 
 Phase 4.3 adds a separate, research-only energy-distributed bulk-trap
 equilibrium closure. A strict standard-SI schema defines integrated trap
