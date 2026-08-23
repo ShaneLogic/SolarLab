@@ -6,9 +6,13 @@ import yaml
 from perovskite_sim.constants import Q, K_B, T, V_T  # noqa: F401
 from perovskite_sim.physics.statistics import (
     CarrierStatistics,
+    DISCRETE_LEVEL,
+    DopantIonizationModel,
     FERMI_DIRAC,
+    FULLY_IONIZED,
     MAXWELL_BOLTZMANN,
     normalize_carrier_statistics,
+    normalize_dopant_ionization_model,
 )
 
 
@@ -50,6 +54,14 @@ class MaterialParams:
     # constitutive law.  Fermi-Dirac is an explicit research opt-in and
     # requires physical band-edge DOS data on every activated layer.
     carrier_statistics: CarrierStatistics = MAXWELL_BOLTZMANN
+    # Dopants remain fully ionized unless a discrete donor/acceptor level is
+    # explicitly selected. Binding energies are measured from the adjacent
+    # band edge: E_C-E_D for donors and E_A-E_V for acceptors.
+    dopant_ionization_model: DopantIonizationModel = FULLY_IONIZED
+    donor_binding_energy_eV: float | None = None
+    acceptor_binding_energy_eV: float | None = None
+    donor_degeneracy: float = 2.0
+    acceptor_degeneracy: float = 4.0
     mu_T_gamma: float = -1.5        # mobility temperature exponent
     E_a_ion: float = 0.58           # ion activation energy [eV] (Arrhenius)
     # Phase 4b temperature scaling of radiative recombination and bandgap.
@@ -137,7 +149,62 @@ class MaterialParams:
     def __post_init__(self) -> None:
         statistics = normalize_carrier_statistics(self.carrier_statistics)
         object.__setattr__(self, "carrier_statistics", statistics)
-        if statistics != FERMI_DIRAC:
+        ionization = normalize_dopant_ionization_model(
+            self.dopant_ionization_model
+        )
+        object.__setattr__(self, "dopant_ionization_model", ionization)
+
+        if ionization == FULLY_IONIZED:
+            if (
+                self.donor_binding_energy_eV is not None
+                or self.acceptor_binding_energy_eV is not None
+                or self.donor_degeneracy != 2.0
+                or self.acceptor_degeneracy != 4.0
+            ):
+                raise ValueError(
+                    "dopant level parameters require "
+                    "dopant_ionization_model='discrete_level'"
+                )
+        elif ionization == DISCRETE_LEVEL:
+            if not all(
+                math.isfinite(float(value)) and float(value) >= 0.0
+                for value in (self.N_A, self.N_D)
+            ):
+                raise ValueError(
+                    "discrete_level ionization requires finite non-negative "
+                    "N_A and N_D"
+                )
+            donor_active = self.N_D > 0.0 or (
+                self.N_D_bulk is not None and self.N_D_bulk > 0.0
+            )
+            acceptor_active = self.N_A > 0.0 or (
+                self.N_A_bulk is not None and self.N_A_bulk > 0.0
+            )
+            if donor_active and self.donor_binding_energy_eV is None:
+                raise ValueError(
+                    "active discrete donors require donor_binding_energy_eV"
+                )
+            if acceptor_active and self.acceptor_binding_energy_eV is None:
+                raise ValueError(
+                    "active discrete acceptors require "
+                    "acceptor_binding_energy_eV"
+                )
+            for name, value in (
+                ("donor_binding_energy_eV", self.donor_binding_energy_eV),
+                ("acceptor_binding_energy_eV", self.acceptor_binding_energy_eV),
+            ):
+                if value is not None and (
+                    not math.isfinite(float(value)) or float(value) < 0.0
+                ):
+                    raise ValueError(f"{name} must be finite and non-negative")
+            for name, value in (
+                ("donor_degeneracy", self.donor_degeneracy),
+                ("acceptor_degeneracy", self.acceptor_degeneracy),
+            ):
+                if not math.isfinite(float(value)) or float(value) <= 0.0:
+                    raise ValueError(f"{name} must be finite and positive")
+
+        if statistics != FERMI_DIRAC and ionization != DISCRETE_LEVEL:
             return
         required_positive = {
             "Eg": self.Eg,
@@ -152,16 +219,26 @@ class MaterialParams:
             or float(value) <= 0.0
         ]
         if invalid:
+            closure_name = (
+                "fermi_dirac carrier statistics"
+                if statistics == FERMI_DIRAC
+                else "discrete_level ionization"
+            )
             raise ValueError(
-                "fermi_dirac carrier statistics require finite positive "
+                f"{closure_name} require finite positive "
                 + ", ".join(invalid)
             )
         if not all(
             math.isfinite(float(value)) and float(value) >= 0.0
             for value in (self.N_A, self.N_D)
         ):
+            closure_name = (
+                "fermi_dirac carrier statistics"
+                if statistics == FERMI_DIRAC
+                else "discrete_level ionization"
+            )
             raise ValueError(
-                "fermi_dirac carrier statistics require finite non-negative "
+                f"{closure_name} require finite non-negative "
                 "N_A and N_D"
             )
 

@@ -33,6 +33,14 @@ schemas:
         default: maxwell_boltzmann
         supported_modes: [maxwell_boltzmann, fermi_dirac]
         fermi_dirac_required_keys: [Eg, Nc300, Nv300]
+      dopant_ionization:
+        selector: dopant_ionization_model
+        default: fully_ionized
+        supported_modes: [fully_ionized, discrete_level]
+        discrete_level_required_material_keys: [Eg, Nc300, Nv300]
+        donor_keys: [donor_binding_energy_eV, donor_degeneracy]
+        acceptor_keys: [acceptor_binding_energy_eV, acceptor_degeneracy]
+        binding_energy_units: eV
       spatial_doping_profile:
         activation_keys: [N_A_bulk, N_D_bulk]
         companion_keys:

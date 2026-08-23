@@ -741,7 +741,10 @@ def _semiconductor_work_function(
             "semiconductor_work_function requires material parameters on both "
             "electrical contact layers"
         )
-    if p.carrier_statistics == "fermi_dirac":
+    if (
+        p.carrier_statistics == "fermi_dirac"
+        or p.dopant_ionization_model == "discrete_level"
+    ):
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,
         )

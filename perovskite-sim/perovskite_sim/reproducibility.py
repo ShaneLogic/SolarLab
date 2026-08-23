@@ -115,6 +115,21 @@ def _canonical(value: Any) -> Any:
             # default must not churn frozen semantic hashes, while an FD
             # research opt-in remains part of the content address.
             mapping.pop("carrier_statistics", None)
+        if (
+            isinstance(value, MaterialParams)
+            and value.dopant_ionization_model == "fully_ionized"
+        ):
+            # Fixed dopant charge predates the explicit selector. All five
+            # fields are inert at their defaults and must not churn frozen
+            # device hashes; discrete levels remain content-addressed.
+            for key in (
+                "dopant_ionization_model",
+                "donor_binding_energy_eV",
+                "acceptor_binding_energy_eV",
+                "donor_degeneracy",
+                "acceptor_degeneracy",
+            ):
+                mapping.pop(key, None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}

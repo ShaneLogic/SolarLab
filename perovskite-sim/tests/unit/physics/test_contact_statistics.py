@@ -13,7 +13,11 @@ from perovskite_sim.physics.contacts import (
     build_semiconductor_contact_state,
     require_contact_thermodynamic_certificate,
 )
-from perovskite_sim.physics.statistics import FERMI_DIRAC, MAXWELL_BOLTZMANN
+from perovskite_sim.physics.statistics import (
+    DISCRETE_LEVEL,
+    FERMI_DIRAC,
+    MAXWELL_BOLTZMANN,
+)
 from perovskite_sim.solver.mol import (
     DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF,
     BulkCarrierStatisticsCapabilityError,
@@ -106,6 +110,72 @@ def test_fd_device_work_function_uses_the_same_contact_neutrality_states():
     right_state = build_semiconductor_contact_state(
         right,
         temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+
+    assert stack.compute_semiconductor_V_bi() == pytest.approx(
+        left_state.work_function_eV - right_state.work_function_eV,
+        abs=2.0e-14,
+    )
+
+
+def test_discrete_donor_contact_state_resolves_temperature_freeze_out():
+    params = replace(
+        _silicon(donors=1.0e23, statistics=FERMI_DIRAC),
+        dopant_ionization_model=DISCRETE_LEVEL,
+        donor_binding_energy_eV=0.045,
+    )
+    cold = build_semiconductor_contact_state(
+        params,
+        temperature_K=100.0,
+        use_temperature_scaling=True,
+    )
+    warm = build_semiconductor_contact_state(
+        params,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+
+    assert cold.neutrality.dopant_ionization_model == DISCRETE_LEVEL
+    assert cold.neutrality.normalized_charge_residual < 2.0e-13
+    assert warm.neutrality.normalized_charge_residual < 2.0e-13
+    assert (
+        0.0
+        < cold.neutrality.donor_ionized_fraction
+        < warm.neutrality.donor_ionized_fraction
+        < 1.0
+    )
+    assert cold.work_function_eV < warm.work_function_eV
+
+
+def test_incomplete_ionization_device_work_function_uses_contact_closure():
+    left = replace(
+        _silicon(acceptors=1.0e23, statistics=FERMI_DIRAC),
+        dopant_ionization_model=DISCRETE_LEVEL,
+        acceptor_binding_energy_eV=0.045,
+    )
+    right = replace(
+        _silicon(donors=1.0e23, statistics=FERMI_DIRAC),
+        dopant_ionization_model=DISCRETE_LEVEL,
+        donor_binding_energy_eV=0.045,
+    )
+    stack = DeviceStack(
+        layers=(
+            LayerSpec("p", 1.0e-6, left, "HTL"),
+            LayerSpec("n", 1.0e-6, right, "ETL"),
+        ),
+        T=150.0,
+        mode="full",
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    left_state = build_semiconductor_contact_state(
+        left,
+        temperature_K=150.0,
+        use_temperature_scaling=True,
+    )
+    right_state = build_semiconductor_contact_state(
+        right,
+        temperature_K=150.0,
         use_temperature_scaling=True,
     )
 

@@ -21,8 +21,10 @@ from perovskite_sim.physics.degenerate_transport import (
 )
 from perovskite_sim.physics.generation import dual_cell_widths
 from perovskite_sim.physics.statistics import (
+    DISCRETE_LEVEL,
     carrier_density_derivative_reduced_fermi_level,
     carrier_density_from_reduced_fermi_level,
+    dopant_charge_state,
 )
 from perovskite_sim.solver.mol import (
     DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF,
@@ -41,6 +43,8 @@ class DegeneratePNEquilibriumResult:
     potential_V: np.ndarray
     electron_density_m3: np.ndarray
     hole_density_m3: np.ndarray
+    ionized_acceptor_density_m3: np.ndarray
+    ionized_donor_density_m3: np.ndarray
     electron_face_current_A_m2: np.ndarray
     hole_face_current_A_m2: np.ndarray
     left_contact: SemiconductorContactState
@@ -70,6 +74,34 @@ class DegeneratePNEquilibriumResult:
         ) / self.analytic_peak_electric_field_V_m
 
 
+@dataclass(frozen=True, slots=True)
+class _EquilibriumDensityState:
+    electron_density_m3: np.ndarray
+    hole_density_m3: np.ndarray
+    electron_density_derivative_eta_n_m3: np.ndarray
+    hole_density_derivative_eta_p_m3: np.ndarray
+    ionized_donor_density_m3: np.ndarray
+    ionized_acceptor_density_m3: np.ndarray
+    donor_density_derivative_eta_n_m3: np.ndarray
+    acceptor_density_derivative_eta_p_m3: np.ndarray
+
+    def charge_density_C_m3(self) -> np.ndarray:
+        return Q * (
+            self.hole_density_m3
+            - self.electron_density_m3
+            + self.ionized_donor_density_m3
+            - self.ionized_acceptor_density_m3
+        )
+
+    def charge_derivative_potential_C_m3_V(self, thermal_V: float) -> np.ndarray:
+        return Q * (
+            -self.electron_density_derivative_eta_n_m3
+            - self.hole_density_derivative_eta_p_m3
+            + self.donor_density_derivative_eta_n_m3
+            + self.acceptor_density_derivative_eta_p_m3
+        ) / thermal_V
+
+
 def _contact_states(
     stack: DeviceStack,
     mat: MaterialArrays,
@@ -96,7 +128,7 @@ def _density_state(
     potential_V: np.ndarray,
     mat: MaterialArrays,
     left_work_function_eV: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> _EquilibriumDensityState:
     thermal = mat.V_T_device
     chi = np.asarray(mat.chi_phys, dtype=float)
     gap = np.asarray(mat.Eg_phys, dtype=float)
@@ -149,7 +181,72 @@ def _density_state(
         ],
         dtype=float,
     )
-    return n, p, dn_deta, dp_deta
+    ionized_donors = np.asarray(mat.N_D, dtype=float)
+    ionized_acceptors = np.asarray(mat.N_A, dtype=float)
+    donor_derivative = np.zeros_like(ionized_donors)
+    acceptor_derivative = np.zeros_like(ionized_acceptors)
+    if mat.dopant_ionization_model == DISCRETE_LEVEL:
+        required = (
+            mat.donor_binding_energy_eV,
+            mat.acceptor_binding_energy_eV,
+            mat.donor_degeneracy,
+            mat.acceptor_degeneracy,
+        )
+        if any(value is None for value in required):
+            raise ValueError(
+                "discrete-level equilibrium requires dopant parameter arrays"
+            )
+        dopant_states = tuple(
+            dopant_charge_state(
+                reduced_electron_fermi_level=float(eta_n[index]),
+                reduced_hole_fermi_level=float(eta_p[index]),
+                donor_density_m3=float(mat.N_D[index]),
+                acceptor_density_m3=float(mat.N_A[index]),
+                thermal_voltage_V=thermal,
+                model=DISCRETE_LEVEL,
+                donor_binding_energy_eV=float(
+                    mat.donor_binding_energy_eV[index]
+                ),
+                acceptor_binding_energy_eV=float(
+                    mat.acceptor_binding_energy_eV[index]
+                ),
+                donor_degeneracy=float(mat.donor_degeneracy[index]),
+                acceptor_degeneracy=float(mat.acceptor_degeneracy[index]),
+            )
+            for index in range(potential_V.size)
+        )
+        ionized_donors = np.asarray(
+            [state.ionized_donor_density_m3 for state in dopant_states],
+            dtype=float,
+        )
+        ionized_acceptors = np.asarray(
+            [state.ionized_acceptor_density_m3 for state in dopant_states],
+            dtype=float,
+        )
+        donor_derivative = np.asarray(
+            [
+                state.donor_density_derivative_eta_n_m3
+                for state in dopant_states
+            ],
+            dtype=float,
+        )
+        acceptor_derivative = np.asarray(
+            [
+                state.acceptor_density_derivative_eta_p_m3
+                for state in dopant_states
+            ],
+            dtype=float,
+        )
+    return _EquilibriumDensityState(
+        electron_density_m3=n,
+        hole_density_m3=p,
+        electron_density_derivative_eta_n_m3=dn_deta,
+        hole_density_derivative_eta_p_m3=dp_deta,
+        ionized_donor_density_m3=ionized_donors,
+        ionized_acceptor_density_m3=ionized_acceptors,
+        donor_density_derivative_eta_n_m3=donor_derivative,
+        acceptor_density_derivative_eta_p_m3=acceptor_derivative,
+    )
 
 
 def _poisson_residual(
@@ -303,9 +400,10 @@ def solve_degenerate_pn_equilibrium(
     layers = electrical_layers(stack)
     if len(layers) != 2:
         raise ValueError("degenerate PN equilibrium requires exactly two layers")
-    left_net = float(layers[0].params.N_A - layers[0].params.N_D)
-    right_net = float(layers[1].params.N_D - layers[1].params.N_A)
-    if left_net <= 0.0 or right_net <= 0.0:
+    if (
+        float(layers[0].params.N_A - layers[0].params.N_D) <= 0.0
+        or float(layers[1].params.N_D - layers[1].params.N_A) <= 0.0
+    ):
         raise ValueError("degenerate PN equilibrium requires p-left and n-right")
 
     mat = build_material_arrays(
@@ -316,6 +414,16 @@ def solve_degenerate_pn_equilibrium(
         ),
     )
     left_contact, right_contact = _contact_states(stack, mat)
+    left_net = float(
+        left_contact.neutrality.ionized_acceptor_density_m3
+        - left_contact.neutrality.ionized_donor_density_m3
+    )
+    right_net = float(
+        right_contact.neutrality.ionized_donor_density_m3
+        - right_contact.neutrality.ionized_acceptor_density_m3
+    )
+    if left_net <= 0.0 or right_net <= 0.0:
+        raise ValueError("ionized contact charge does not preserve p-left/n-right")
     phi_left = float(stack.phi_left)
     phi_right = phi_left + float(mat.V_bi_bc)
     potential = np.linspace(phi_left, phi_right, coordinate.size)
@@ -323,12 +431,12 @@ def solve_degenerate_pn_equilibrium(
     last_normalized = math.inf
 
     for iteration in range(1, max_newton_iterations + 1):
-        n, p, dn_deta, dp_deta = _density_state(
+        density = _density_state(
             potential,
             mat,
             left_contact.work_function_eV,
         )
-        charge = Q * (p - n + mat.N_D - mat.N_A)
+        charge = density.charge_density_C_m3()
         residual = _poisson_residual(potential, charge, mat)
         normalized = _normalized_poisson_residual(
             residual,
@@ -336,7 +444,9 @@ def solve_degenerate_pn_equilibrium(
         )
         if normalized <= poisson_tolerance:
             break
-        charge_derivative = -Q * (dn_deta + dp_deta) / mat.V_T_device
+        charge_derivative = density.charge_derivative_potential_C_m3_V(
+            mat.V_T_device
+        )
         banded = np.zeros((3, coordinate.size - 2), dtype=float)
         banded[0, 1:] = factor.C[1:-1]
         banded[1] = -(
@@ -355,14 +465,12 @@ def solve_degenerate_pn_equilibrium(
         for _ in range(max_line_search_backtracks + 1):
             trial = potential.copy()
             trial[1:-1] += damping * step
-            trial_n, trial_p, _, _ = _density_state(
+            trial_density = _density_state(
                 trial,
                 mat,
                 left_contact.work_function_eV,
             )
-            trial_charge = Q * (
-                trial_p - trial_n + mat.N_D - mat.N_A
-            )
+            trial_charge = trial_density.charge_density_C_m3()
             trial_residual = _poisson_residual(trial, trial_charge, mat)
             trial_normalized = _normalized_poisson_residual(
                 trial_residual,
@@ -385,12 +493,14 @@ def solve_degenerate_pn_equilibrium(
             f"residual {last_normalized:.6g}"
         )
 
-    n, p, _, _ = _density_state(
+    density = _density_state(
         potential,
         mat,
         left_contact.work_function_eV,
     )
-    charge = Q * (p - n + mat.N_D - mat.N_A)
+    n = density.electron_density_m3
+    p = density.hole_density_m3
+    charge = density.charge_density_C_m3()
     residual = _poisson_residual(potential, charge, mat)
     normalized = _normalized_poisson_residual(
         residual,
@@ -475,6 +585,8 @@ def solve_degenerate_pn_equilibrium(
         potential_V=potential,
         electron_density_m3=n,
         hole_density_m3=p,
+        ionized_acceptor_density_m3=density.ionized_acceptor_density_m3,
+        ionized_donor_density_m3=density.ionized_donor_density_m3,
         electron_face_current_A_m2=electron_current,
         hole_face_current_A_m2=hole_current,
         left_contact=left_contact,

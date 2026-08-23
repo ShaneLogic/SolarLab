@@ -1029,3 +1029,50 @@ lanes:
       - This lane certifies only a symmetric, dark, fully-ionized, homogeneous silicon p+/n+ equilibrium with Fermi-Dirac charge and generalized Scharfetter-Gummel transport.
       - Bulk recombination is explicitly disabled because the repository's historical np-ni^2 laws are Maxwell-Boltzmann closures; illumination, bias, heterojunctions, spatial doping profiles, ions, selective contacts, field mobility, and interface states remain excluded.
       - The abrupt depletion approximation is an internal analytic quality oracle. This is not external Sentaurus or PC1D validation, experimental validation, or a production J-V/C-V/impedance certificate.
+
+  incomplete-ionization-temperature-equilibrium-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/csi_incomplete_ionization_pn_research.yaml
+    config_sha256: d98b07049abfb17f44404eac91557338dad3a16341b6350d291d940c258abc72
+    executor: perovskite_sim.validation.incomplete_ionization_refinement:run_incomplete_ionization_temperature_refinement
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values: [40, 80, 160]
+    tolerance:
+      parameter: poisson_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      acceptor_ionized_fraction_temperature_curve: {comparison: absolute_linf, limit: 1.0e-12, units: "1"}
+      donor_ionized_fraction_temperature_curve: {comparison: absolute_linf, limit: 1.0e-12, units: "1"}
+      normalized_integrated_charge_width_temperature_curve: {comparison: absolute_linf, limit: 5.0e-4, units: "1"}
+      normalized_peak_field_temperature_curve: {comparison: absolute_linf, limit: 0.002, units: "1"}
+      space_charge_balance_temperature_curve: {comparison: absolute_linf, limit: 0.001, units: "1"}
+    quality_gates:
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      freeze_out_monotone_with_temperature: {operator: eq, limit: 1.0, units: "1"}
+      incomplete_ionization_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      ionized_fractions_bounded: {operator: eq, limit: 1.0, units: "1"}
+      max_normalized_carrier_rate: {operator: le, limit: 1.0e-12, units: "1"}
+      max_normalized_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_relative_face_current: {operator: le, limit: 1.0e-12, units: "1"}
+      max_space_charge_balance_relative_error: {operator: le, limit: 0.02, units: "1"}
+      maximum_newton_iterations: {operator: le, limit: 25.0, units: "1"}
+      minimum_freeze_out_fraction_change: {operator: ge, limit: 0.5, units: "1"}
+      temperature_points_completed: {operator: eq, limit: 5.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      left_layer_name: p_discrete
+      right_layer_name: n_discrete
+      temperature_values_K: [100.0, 150.0, 200.0, 250.0, 300.0]
+      grid_alpha: 3.0
+      base_poisson_tolerance: 1.0e-8
+      max_newton_iterations: 100
+      max_potential_step_V: 0.1
+      max_line_search_backtracks: 20
+    limitations:
+      - This lane certifies only a dark homogeneous silicon p/n equilibrium with independent discrete donor and acceptor levels over the frozen 100-300 K scan.
+      - The model excludes impurity-band formation, the Mott transition, band-gap narrowing, dopant capture kinetics, recombination, illumination, bias, heterojunctions, ions, selective contacts, and production experiment routes.
+      - Low-temperature depletion charge is state dependent, so the fully-ionized abrupt depletion formula is not used as a quality oracle. This is internal numerical evidence, not Sentaurus or PC1D validation or experimental validation.

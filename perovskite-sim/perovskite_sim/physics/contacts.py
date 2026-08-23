@@ -133,14 +133,14 @@ def build_semiconductor_contact_state(
     temperature_K: float,
     use_temperature_scaling: bool,
 ) -> SemiconductorContactState:
-    """Build one fully-ionized contact state from a single statistics law.
+    """Build one contact state from one statistics/ionization closure.
 
     The density reservoirs and work function are derived from the same common
     Fermi level.  This prevents an FD Poisson boundary from being paired with
     independently constructed Maxwell-Boltzmann carrier reservoirs.
     """
     from perovskite_sim.physics.statistics import (
-        solve_fully_ionized_charge_neutrality,
+        solve_charge_neutrality,
     )
     from perovskite_sim.physics.temperature import eg_at_T
 
@@ -182,7 +182,7 @@ def build_semiconductor_contact_state(
     dos_scale = (
         (temperature / 300.0) ** 1.5 if use_temperature_scaling else 1.0
     )
-    neutrality = solve_fully_ionized_charge_neutrality(
+    neutrality = solve_charge_neutrality(
         temperature_K=temperature,
         band_gap_eV=band_gap,
         effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
@@ -190,6 +190,11 @@ def build_semiconductor_contact_state(
         acceptor_density_m3=float(params.N_A),
         donor_density_m3=float(params.N_D),
         statistics=params.carrier_statistics,
+        dopant_ionization_model=params.dopant_ionization_model,
+        donor_binding_energy_eV=params.donor_binding_energy_eV,
+        acceptor_binding_energy_eV=params.acceptor_binding_energy_eV,
+        donor_degeneracy=float(params.donor_degeneracy),
+        acceptor_degeneracy=float(params.acceptor_degeneracy),
     )
     affinity = float(params.chi)
     work_function = affinity - (

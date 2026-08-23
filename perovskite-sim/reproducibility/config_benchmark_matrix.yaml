@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 149c27248bf9115d332406a8972099367b2556c432a38a7faad0e83a53f93c50
+  sha256: 2997c073e696909cbdc029dc82c8661cb778f2a6baf307f9453ac799b8f1bb1d
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -68,6 +68,7 @@ benchmarks:
     configs:
       - configs/cSi_homojunction.yaml
       - configs/csi_degenerate_pn_research.yaml
+      - configs/csi_incomplete_ionization_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/cigs_baseline.yaml
       - configs/cigs_graded_notch.yaml
@@ -115,6 +116,7 @@ benchmarks:
     configs:
       - configs/cSi_homojunction.yaml
       - configs/csi_degenerate_pn_research.yaml
+      - configs/csi_incomplete_ionization_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
@@ -1054,6 +1056,27 @@ benchmarks:
       - the source-clean 3x3 matrix is internally certified at commit d756c76 with certificate SHA-256 968ad3bb67dc696b841a6bb8544c16eba3f9d5748b2fe737e20b8c7e30f8373f
       - the registered path is fully ionized, dark, recombination-off, homojunction-only, and not a production experiment route
       - the depletion approximation is an internal analytic oracle rather than external Sentaurus or PC1D validation
+  incomplete-ionization-internal-closure:
+    kind: internal
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q tests/unit/physics/test_statistics.py tests/unit/physics/test_contact_statistics.py tests/unit/solver/test_degenerate_equilibrium.py tests/unit/validation/test_incomplete_ionization_refinement.py
+    tests:
+      - tests/unit/physics/test_statistics.py
+      - tests/unit/physics/test_contact_statistics.py
+      - tests/unit/solver/test_degenerate_equilibrium.py
+      - tests/unit/validation/test_incomplete_ionization_refinement.py
+    node_ids:
+      - tests/unit/physics/test_statistics.py::test_discrete_donor_neutrality_closes_and_resolves_freeze_out
+      - tests/unit/physics/test_contact_statistics.py::test_discrete_donor_contact_state_resolves_temperature_freeze_out
+      - tests/unit/solver/test_degenerate_equilibrium.py::test_incomplete_ionization_poisson_derivative_matches_finite_difference
+      - tests/unit/solver/test_degenerate_equilibrium.py::test_incomplete_ionization_equilibrium_closes_across_temperature
+      - tests/unit/validation/test_incomplete_ionization_refinement.py::test_registered_executor_real_temperature_cell_matches_contract
+    configs: [configs/csi_incomplete_ionization_pn_research.yaml]
+    limitations:
+      - the registered 3x3 matrix is a candidate until a source-clean run records a certificate
+      - the discrete-level model excludes impurity bands, the Mott transition, band-gap narrowing, recombination, bias, and production experiment routes
+      - the temperature curve and refinement checks are internal evidence rather than external solver or experimental validation
 
 configs:
   - path: configs/cSi_homojunction.yaml
@@ -1076,6 +1099,15 @@ configs:
     benchmarks:
       - loader-contract
       - degenerate-pn-internal-closure
+      - phase1-refinement-contract
+  - path: configs/csi_incomplete_ionization_pn_research.yaml
+    sha256: d98b07049abfb17f44404eac91557338dad3a16341b6350d291d940c258abc72
+    semantic_sha256: 88030a3c1c45e293d393ab94f7ab3e3e4c100eaeb978417f10cd70d8bbc3d8a6
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - incomplete-ionization-internal-closure
       - phase1-refinement-contract
   - path: configs/csi_vannijen2025_pn_cv.yaml
     sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad

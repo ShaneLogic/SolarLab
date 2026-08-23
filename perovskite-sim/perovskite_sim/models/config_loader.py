@@ -340,6 +340,19 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
         carrier_statistics=layer_cfg.get(
             "carrier_statistics", "maxwell_boltzmann"
         ),
+        dopant_ionization_model=layer_cfg.get(
+            "dopant_ionization_model", "fully_ionized"
+        ),
+        donor_binding_energy_eV=(
+            float(layer_cfg["donor_binding_energy_eV"])
+            if "donor_binding_energy_eV" in layer_cfg else None
+        ),
+        acceptor_binding_energy_eV=(
+            float(layer_cfg["acceptor_binding_energy_eV"])
+            if "acceptor_binding_energy_eV" in layer_cfg else None
+        ),
+        donor_degeneracy=_f(layer_cfg.get("donor_degeneracy", 2.0)),
+        acceptor_degeneracy=_f(layer_cfg.get("acceptor_degeneracy", 4.0)),
         mu_T_gamma=_f(layer_cfg.get("mu_T_gamma", -1.5)),
         E_a_ion=_f(layer_cfg.get("E_a_ion", 0.58)),
         B_rad_T_gamma=_f(layer_cfg.get("B_rad_T_gamma", 0.0)),

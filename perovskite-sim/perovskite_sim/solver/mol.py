@@ -324,6 +324,11 @@ class MaterialArrays:
     # Explicit research bulk-statistics lane. Defaults preserve the historical
     # MB flux/recombination path and are omitted from carrier_params below.
     carrier_statistics: str = "maxwell_boltzmann"
+    dopant_ionization_model: str = "fully_ionized"
+    donor_binding_energy_eV: np.ndarray | None = None
+    acceptor_binding_energy_eV: np.ndarray | None = None
+    donor_degeneracy: np.ndarray | None = None
+    acceptor_degeneracy: np.ndarray | None = None
     degenerate_recombination_model: str = "maxwell_boltzmann"
     te_physical_norm: bool = False
     # Physical diffusion-only steric ion flux (review F05). When True, the
@@ -839,6 +844,10 @@ def build_material_arrays(
     P_ion0_neg = np.zeros(N)
     N_A = np.zeros(N)
     N_D = np.zeros(N)
+    donor_binding_energy_eV = np.zeros(N)
+    acceptor_binding_energy_eV = np.zeros(N)
+    donor_degeneracy = np.full(N, 2.0)
+    acceptor_degeneracy = np.full(N, 4.0)
     alpha = np.zeros(N)
     chi = np.zeros(N)
     Eg = np.zeros(N)
@@ -906,8 +915,26 @@ def build_material_arrays(
             "Activated layers: "
             + ", ".join(fermi_dirac_layers)
         )
+    incomplete_ionization_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.params is not None
+        and layer.params.dopant_ionization_model == "discrete_level"
+    )
+    if incomplete_ionization_layers and not research_degenerate_transport:
+        raise BulkCarrierStatisticsCapabilityError(
+            "bulk incomplete-ionization transport closure is not enabled on "
+            "the default solver path; contact thermodynamics are available "
+            "for assessment only. Activated layers: "
+            + ", ".join(incomplete_ionization_layers)
+        )
     carrier_statistics_models = {
         layer.params.carrier_statistics
+        for layer in elec_layers
+        if layer.params is not None
+    }
+    dopant_ionization_models = {
+        layer.params.dopant_ionization_model
         for layer in elec_layers
         if layer.params is not None
     }
@@ -915,10 +942,12 @@ def build_material_arrays(
         if (
             any(layer.params is None for layer in elec_layers)
             or len(carrier_statistics_models) != 1
+            or len(dopant_ionization_models) != 1
         ):
             raise BulkCarrierStatisticsCapabilityError(
                 "research degenerate transport requires material parameters "
-                "and one statistics law on every electrical layer"
+                "and one carrier-statistics/dopant-ionization law on every "
+                "electrical layer"
             )
         reference = elec_layers[0].params
         homogeneous_fields = ("eps_r", "chi", "Eg", "Nc300", "Nv300")
@@ -1073,6 +1102,18 @@ def build_material_arrays(
         N_A[mask], N_D[mask] = layer_doping_profiles(
             x_local, layer.thickness, p
         )
+        donor_binding_energy_eV[mask] = float(
+            0.0
+            if p.donor_binding_energy_eV is None
+            else p.donor_binding_energy_eV
+        )
+        acceptor_binding_energy_eV[mask] = float(
+            0.0
+            if p.acceptor_binding_energy_eV is None
+            else p.acceptor_binding_energy_eV
+        )
+        donor_degeneracy[mask] = float(p.donor_degeneracy)
+        acceptor_degeneracy[mask] = float(p.acceptor_degeneracy)
         alpha[mask] = p.alpha
 
         # Phase 4b: temperature-shifted bandgap via Varshni, feeding both
@@ -1998,6 +2039,19 @@ def build_material_arrays(
         N_C_physical=N_C_node_arr,
         N_V_physical=N_V_node_arr,
         carrier_statistics=next(iter(carrier_statistics_models)),
+        dopant_ionization_model=next(iter(dopant_ionization_models)),
+        donor_binding_energy_eV=(
+            donor_binding_energy_eV
+            if incomplete_ionization_layers else None
+        ),
+        acceptor_binding_energy_eV=(
+            acceptor_binding_energy_eV
+            if incomplete_ionization_layers else None
+        ),
+        donor_degeneracy=(donor_degeneracy if incomplete_ionization_layers else None),
+        acceptor_degeneracy=(
+            acceptor_degeneracy if incomplete_ionization_layers else None
+        ),
         degenerate_recombination_model=(
             "off" if research_degenerate_transport else "maxwell_boltzmann"
         ),

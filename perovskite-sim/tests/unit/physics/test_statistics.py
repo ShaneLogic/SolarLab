@@ -7,15 +7,21 @@ import math
 import pytest
 
 from perovskite_sim.physics.statistics import (
+    DISCRETE_LEVEL,
     FERMI_DIRAC,
+    FULLY_IONIZED,
     MAXWELL_BOLTZMANN,
     carrier_density_derivative_reduced_fermi_level,
     carrier_density_from_reduced_fermi_level,
     carrier_logarithmic_compressibility,
     carrier_occupation,
+    dopant_charge_state,
     generalized_einstein_factor,
     normalize_carrier_statistics,
+    normalize_dopant_ionization_model,
     reduced_fermi_level_from_density,
+    solve_charge_neutrality,
+    solve_discrete_level_charge_neutrality,
     solve_fully_ionized_charge_neutrality,
 )
 
@@ -27,6 +33,70 @@ def test_statistics_identifier_is_strict_and_normalized():
         normalize_carrier_statistics("fd")
     with pytest.raises(ValueError, match="string"):
         normalize_carrier_statistics(None)
+
+
+def test_dopant_ionization_identifier_is_strict_and_normalized():
+    assert normalize_dopant_ionization_model(" Discrete_Level ") == DISCRETE_LEVEL
+    assert normalize_dopant_ionization_model(FULLY_IONIZED) == FULLY_IONIZED
+    with pytest.raises(ValueError, match="dopant ionization model"):
+        normalize_dopant_ionization_model("freeze_out")
+    with pytest.raises(ValueError, match="must be a string"):
+        normalize_dopant_ionization_model(None)
+
+
+def test_discrete_dopant_charge_derivatives_match_centered_differences():
+    eta_n = -2.3
+    eta_p = -3.1
+    step = 1.0e-6
+
+    def evaluate(electron_level, hole_level):
+        return dopant_charge_state(
+            reduced_electron_fermi_level=electron_level,
+            reduced_hole_fermi_level=hole_level,
+            donor_density_m3=2.0e23,
+            acceptor_density_m3=3.0e23,
+            thermal_voltage_V=0.025852,
+            model=DISCRETE_LEVEL,
+            donor_binding_energy_eV=0.045,
+            acceptor_binding_energy_eV=0.057,
+        )
+
+    state = evaluate(eta_n, eta_p)
+    donor_difference = (
+        evaluate(eta_n + step, eta_p).ionized_donor_density_m3
+        - evaluate(eta_n - step, eta_p).ionized_donor_density_m3
+    ) / (2.0 * step)
+    acceptor_difference = (
+        evaluate(eta_n, eta_p + step).ionized_acceptor_density_m3
+        - evaluate(eta_n, eta_p - step).ionized_acceptor_density_m3
+    ) / (2.0 * step)
+
+    assert state.donor_density_derivative_eta_n_m3 == pytest.approx(
+        donor_difference,
+        rel=2.0e-9,
+    )
+    assert state.acceptor_density_derivative_eta_p_m3 == pytest.approx(
+        acceptor_difference,
+        rel=2.0e-9,
+    )
+    assert state.donor_density_derivative_eta_n_m3 < 0.0
+    assert state.acceptor_density_derivative_eta_p_m3 < 0.0
+
+
+@pytest.mark.parametrize("eta", [-math.inf, -1.0e3, 1.0e3, math.inf])
+def test_discrete_dopant_occupations_are_bounded_at_extreme_levels(eta):
+    state = dopant_charge_state(
+        reduced_electron_fermi_level=eta,
+        reduced_hole_fermi_level=-eta,
+        donor_density_m3=1.0e23,
+        acceptor_density_m3=1.0e23,
+        thermal_voltage_V=0.025852,
+        model=DISCRETE_LEVEL,
+        donor_binding_energy_eV=0.045,
+        acceptor_binding_energy_eV=0.045,
+    )
+    assert 0.0 <= state.donor_ionized_fraction <= 1.0
+    assert 0.0 <= state.acceptor_ionized_fraction <= 1.0
 
 
 @pytest.mark.parametrize("eta", [-30.0, -3.0, 0.0, 4.0])
@@ -174,6 +244,45 @@ def test_symmetric_intrinsic_fermi_dirac_level_is_midgap():
     )
     assert state.electron_density_m3 == pytest.approx(state.hole_density_m3)
     assert state.normalized_charge_residual < 2.0e-13
+
+
+@pytest.mark.parametrize("statistics", [MAXWELL_BOLTZMANN, FERMI_DIRAC])
+def test_discrete_donor_neutrality_closes_and_resolves_freeze_out(statistics):
+    def solve(temperature):
+        scale = (temperature / 300.0) ** 1.5
+        return solve_discrete_level_charge_neutrality(
+            temperature_K=temperature,
+            band_gap_eV=1.124,
+            effective_conduction_dos_m3=2.8e25 * scale,
+            effective_valence_dos_m3=1.04e25 * scale,
+            donor_density_m3=1.0e23,
+            donor_binding_energy_eV=0.045,
+            statistics=statistics,
+        )
+
+    cold = solve(100.0)
+    warm = solve(300.0)
+    assert cold.dopant_ionization_model == DISCRETE_LEVEL
+    assert cold.normalized_charge_residual < 2.0e-13
+    assert warm.normalized_charge_residual < 2.0e-13
+    assert 0.0 < cold.donor_ionized_fraction < warm.donor_ionized_fraction < 1.0
+    assert cold.electron_density_m3 == pytest.approx(
+        cold.ionized_donor_density_m3,
+        rel=2.0e-12,
+    )
+
+
+def test_generic_fully_ionized_dispatch_preserves_existing_solution():
+    kwargs = {
+        "temperature_K": 300.0,
+        "band_gap_eV": 1.124,
+        "effective_conduction_dos_m3": 2.8e25,
+        "effective_valence_dos_m3": 1.04e25,
+        "acceptor_density_m3": 2.0e23,
+    }
+    direct = solve_fully_ionized_charge_neutrality(**kwargs)
+    dispatched = solve_charge_neutrality(**kwargs)
+    assert dispatched == direct
 
 
 @pytest.mark.parametrize(

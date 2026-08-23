@@ -18,8 +18,17 @@ from perovskite_sim.models.config_loader import (
     load_device_from_yaml,
     material_params_from_dict,
 )
-from perovskite_sim.physics.statistics import FERMI_DIRAC, MAXWELL_BOLTZMANN
-from perovskite_sim.solver.mol import build_material_arrays
+from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.physics.statistics import (
+    DISCRETE_LEVEL,
+    FERMI_DIRAC,
+    FULLY_IONIZED,
+    MAXWELL_BOLTZMANN,
+)
+from perovskite_sim.solver.mol import (
+    BulkCarrierStatisticsCapabilityError,
+    build_material_arrays,
+)
 
 _BASE = "configs/nip_MAPbI3.yaml"
 
@@ -112,3 +121,71 @@ def test_layer_carrier_statistics_default_and_fd_opt_in_are_strict():
     layer["carrier_statistics"] = 1
     with pytest.raises(ValueError, match="must be a string"):
         material_params_from_dict(layer)
+
+
+def test_layer_dopant_ionization_default_and_discrete_opt_in_are_strict():
+    cfg = yaml.safe_load(open(_BASE))
+    layer = dict(cfg["layers"][1])
+    baseline = material_params_from_dict(layer)
+    assert baseline.dopant_ionization_model == FULLY_IONIZED
+    assert baseline.donor_binding_energy_eV is None
+    assert baseline.acceptor_binding_energy_eV is None
+
+    layer.update(
+        dopant_ionization_model=" Discrete_Level ",
+        N_D=1.0e23,
+        N_A=0.0,
+        Eg=1.6,
+        Nc300=2.8e25,
+        Nv300=1.04e25,
+        donor_binding_energy_eV=0.045,
+    )
+    parsed = material_params_from_dict(layer)
+    assert parsed.dopant_ionization_model == DISCRETE_LEVEL
+    assert parsed.donor_binding_energy_eV == 0.045
+    assert parsed.donor_degeneracy == 2.0
+
+    layer["dopant_ionization_model"] = "freeze_out"
+    with pytest.raises(ValueError, match="dopant ionization model"):
+        material_params_from_dict(layer)
+
+
+def test_discrete_dopant_level_requires_active_species_binding_energy():
+    cfg = yaml.safe_load(open(_BASE))
+    layer = dict(cfg["layers"][1])
+    layer.update(
+        dopant_ionization_model=DISCRETE_LEVEL,
+        N_D=1.0e23,
+        N_A=0.0,
+        Eg=1.6,
+        Nc300=2.8e25,
+        Nv300=1.04e25,
+    )
+    with pytest.raises(ValueError, match="active discrete donors"):
+        material_params_from_dict(layer)
+
+
+def test_default_material_assembly_rejects_incomplete_ionization():
+    cfg = yaml.safe_load(open(_BASE))
+    layer = dict(cfg["layers"][1])
+    layer.update(
+        dopant_ionization_model=DISCRETE_LEVEL,
+        N_D=1.0e23,
+        N_A=0.0,
+        Eg=1.6,
+        Nc300=2.8e25,
+        Nv300=1.04e25,
+        donor_binding_energy_eV=0.045,
+    )
+    params = material_params_from_dict(layer)
+    stack = DeviceStack(
+        layers=(LayerSpec("discrete", 100.0e-9, params, "absorber"),),
+        Phi=0.0,
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    grid = multilayer_grid((Layer(100.0e-9, 8),))
+    with pytest.raises(
+        BulkCarrierStatisticsCapabilityError,
+        match="incomplete-ionization transport closure is not enabled",
+    ):
+        build_material_arrays(grid, stack)

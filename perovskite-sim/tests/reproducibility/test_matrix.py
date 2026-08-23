@@ -28,10 +28,10 @@ def _matrix():
 
 def test_matrix_covers_and_loads_every_shipped_config():
     report = validate_matrix(ROOT)
-    assert report["configs"] == 32
+    assert report["configs"] == 33
     assert report["resources"] == 21
     assert report["schemas"] == {
-        "standard-device-v1": 26,
+        "standard-device-v1": 27,
         "scaps-device-v1": 5,
         "tandem-v1": 1,
     }
@@ -65,6 +65,11 @@ def test_default_thermal_velocity_preserves_frozen_semantics():
         "doping_edge",
         "v_th",
         "carrier_statistics",
+        "dopant_ionization_model",
+        "donor_binding_energy_eV",
+        "acceptor_binding_energy_eV",
+        "donor_degeneracy",
+        "acceptor_degeneracy",
     }
     historical_payload = {
         field.name: getattr(baseline, field.name)
@@ -182,6 +187,20 @@ def test_standard_schema_registers_bulk_carrier_statistics_contract():
         "fermi_dirac",
     }
     assert set(statistics["fermi_dirac_required_keys"]) == {
+        "Eg",
+        "Nc300",
+        "Nv300",
+    }
+
+    ionization = registry["schemas"]["standard-device-v1"][
+        "optional_layer_groups"
+    ]["dopant_ionization"]
+    assert ionization["default"] == "fully_ionized"
+    assert set(ionization["supported_modes"]) == {
+        "fully_ionized",
+        "discrete_level",
+    }
+    assert set(ionization["discrete_level_required_material_keys"]) == {
         "Eg",
         "Nc300",
         "Nv300",
