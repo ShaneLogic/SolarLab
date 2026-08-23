@@ -118,3 +118,29 @@ The registered lane is internal numerical evidence only. It is not an
 external Sentaurus/COMSOL/SCAPS comparison, experimental validation, a
 production J-V/C-V/impedance capability, or evidence that the synthetic trap
 parameters describe a particular silicon device.
+
+## Internal numerical certificate
+
+The source-clean, single-threaded 3x3 matrix at commit `d336e45` completed all
+nine cells with zero failed, missing, or reused cells:
+
+```text
+run ID       b69fa02f71039b8f1d8c753a8ee07ef8689bc261e206c58c0ea91da2b5ef07f4
+certificate  bd385f0a01db4ad769f6fc1591c5cd79acafef5663d60f81ddee6cb9987991fc
+protocol     b114187900dfe84e793031a68e360afe4aa3881218fb1df8737c253b4149af51
+```
+
+The terminal grid differences were `9.92921e-5` for normalized integrated
+trap charge and `3.07036e-2` for the peak-to-average field ratio; their
+terminal tolerance differences were `5.07738e-11` and `1.97698e-7`.
+Contact occupancies were invariant in both dimensions. Across all cells, the
+largest energy-quadrature changes were `5.02648e-4` for charge/occupancy and
+`4.80659e-4` for recombination. The maximum normalized Poisson residual,
+Gauss-law error, and relative face current were `2.70886e-9`, `2.16308e-8`,
+and `7.32418e-14`; Newton required at most 11 iterations. Every contact,
+topology, positivity, occupancy, mass-action, and default-path rejection gate
+passed.
+
+This certificate does not expand the capability boundary above. In
+particular, it remains internal numerical convergence evidence for the frozen
+dark-equilibrium slice, not external physical validation.

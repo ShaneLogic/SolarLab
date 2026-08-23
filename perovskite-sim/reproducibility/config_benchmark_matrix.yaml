@@ -1104,7 +1104,7 @@ benchmarks:
       - Slotboom coefficients are an empirical silicon closure; external Sentaurus or PC1D validation and experimental validation remain absent
   bulk-trap-energy-distribution-internal-closure:
     kind: internal
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: pytest -q tests/unit/physics/test_bulk_traps.py tests/unit/models/test_bulk_trap_schema.py tests/unit/solver/test_bulk_trap_equilibrium.py tests/unit/validation/test_bulk_trap_refinement.py
     tests:
@@ -1120,7 +1120,7 @@ benchmarks:
       - tests/unit/validation/test_bulk_trap_refinement.py::test_registered_executor_real_cell_matches_exact_contract
     configs: [configs/csi_gaussian_bulk_trap_pn_research.yaml]
     limitations:
-      - the source-clean registered 3x3 matrix is pending at this code checkpoint
+      - the source-clean 3x3 matrix is internally certified at commit d336e45 with certificate SHA-256 bd385f0a01db4ad769f6fc1591c5cd79acafef5663d60f81ddee6cb9987991fc
       - the lane is restricted to a dark homogeneous Maxwell-Boltzmann equilibrium with one Gaussian acceptor-like distribution and fully ionized dopants
       - legacy SCAPS Gaussian metadata remains parked, and external TCAD or experimental validation is absent
 

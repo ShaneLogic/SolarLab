@@ -510,3 +510,30 @@ J-V/C-V/impedance，以及 Sentaurus/PC1D 或实验验证均不在声明内。
 noninteracting discrete dopant equilibrium 组合。它不覆盖 impurity band、Mott
 transition、其他 BGN 参数化、degenerate recombination、bias/illumination、
 heterojunction、生产实验路由、Sentaurus/PC1D 外部验证或实验验证。
+
+### 2026-08-24 energy-distributed bulk-trap equilibrium certificate
+
+`bulk-energy-distributed-trap-equilibrium-v1` 在 source commit `d336e45`、
+source changes 为空且 BLAS/OpenMP 单线程环境下完成 9/9 cell，0 failed、
+0 missing、0 reused：
+
+- run ID：`b69fa02f71039b8f1d8c753a8ee07ef8689bc261e206c58c0ea91da2b5ef07f4`；
+- certificate SHA-256：
+  `bd385f0a01db4ad769f6fc1591c5cd79acafef5663d60f81ddee6cb9987991fc`；
+- protocol SHA-256：
+  `b114187900dfe84e793031a68e360afe4aa3881218fb1df8737c253b4149af51`；
+- terminal grid difference：归一化积分陷阱电荷 `9.92921e-5`、峰值场/平均
+  内建场比值 `3.07036e-2`；对应 terminal tolerance difference 为
+  `5.07738e-11 / 1.97698e-7`，两端 contact occupancy 在两维均严格不变；
+- 全矩阵最大 energy charge/occupancy/recombination relative change 为
+  `5.02648e-4 / 5.02648e-4 / 4.80659e-4`；
+- 最大 normalized Poisson residual `2.70886e-9`、Gauss-law relative error
+  `2.16308e-8`、relative face current `7.32418e-14`、mass-action error
+  `4.48251e-15`，最多 11 次 Newton iteration；
+- 所有 cell 的 contact thermodynamics、拓扑、载流子正性、occupancy 有界、
+  非零绝对 trap charge 与默认 production-path rejection gate 均通过。
+
+该证书只覆盖 dark、homogeneous、Maxwell-Boltzmann、fully-ionized 的两层
+silicon p/n equilibrium，并冻结一个空间均匀 truncated-Gaussian acceptor-like
+分布。它不覆盖 bias/illumination、瞬态占据、Fermi-Dirac trap kinetics、
+heterojunction、ions、production experiment routes，也不是外部 TCAD 或实验验证。
