@@ -88,6 +88,29 @@ describe('grading round-trip', () => {
     expect(out.layers[1].grading_char_length).toBe(2e-8)
   })
 
+  it('preserves the hidden graded-CIGS model and master gate', () => {
+    const c = cfg({
+      Eg_back: 1.4,
+      chi_back: 4.3,
+      cigs_graded_optics: {
+        model: 'minoura_2015',
+        ggi_front: 0.225,
+        ggi_back: 0.6,
+        cgi: 0.9,
+        slices: 25,
+        kk_quadrature_order: 192,
+      },
+    })
+    c.device.band_grading = true
+    c.device.graded_optics = true
+    renderDeviceEditor(container, c, 'full', 1)
+    const out = readDeviceEditor(c, 1)
+    expect(out.device.graded_optics).toBe(true)
+    expect(out.layers[1].cigs_graded_optics).toEqual(
+      c.layers[1].cigs_graded_optics,
+    )
+  })
+
   it('preserves a YAML-defined spatial doping profile through the editor', () => {
     const c = cfg({
       N_A: 1e25,

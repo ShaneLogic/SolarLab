@@ -27,13 +27,14 @@ Design decisions
   ungraded scalar-broadcast path — interior-node IEEE rounding of
   ``(1-y)·E + y·E`` never leaks in.
 
-Documented limitation
----------------------
-The optical absorption (``alpha`` / external TMM ``n,k``) is **not** graded:
-a graded absorber's absorption edge does not blue/red-shift spatially. SCAPS
-grades ``alpha(lambda, y)``; SolarLab keeps layer-nominal optics. A true CIGS
-V-notch is composed of two graded sub-layers (front linear + back exponential
-Ga-rich), which the existing multilayer machinery already supports.
+Optical coupling
+----------------
+Electrical grading remains independent of optics by default, preserving the
+historical layer-nominal ``alpha``/``n,k`` path.  A research-only CIGS layer
+may explicitly enable ``graded_optics`` and provide ``cigs_graded_optics``;
+that adapter consumes this module's exact same ``grading_coordinate`` to
+construct composition-resolved TMM slices.  Other material systems still need
+their own provenance-backed optical-composition model.
 """
 from __future__ import annotations
 

@@ -10,6 +10,7 @@ from perovskite_sim.physics.doping import validate_doping_profile_params
 from perovskite_sim.physics.bulk_traps import (
     bulk_trap_distribution_from_mapping,
 )
+from perovskite_sim.physics.cigs_optics import cigs_graded_optics_from_mapping
 from perovskite_sim.twod.microstructure import load_microstructure_from_yaml_block
 
 
@@ -388,6 +389,11 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
         ),
         optical_material=layer_cfg.get("optical_material"),
         n_optical=float(layer_cfg["n_optical"]) if "n_optical" in layer_cfg else None,
+        cigs_graded_optics=(
+            cigs_graded_optics_from_mapping(layer_cfg["cigs_graded_optics"])
+            if "cigs_graded_optics" in layer_cfg
+            else None
+        ),
         incoherent=_parse_bool(layer_cfg.get("incoherent", False)),
         v_sat_n=_f(layer_cfg.get("v_sat_n", 0.0)),
         v_sat_p=_f(layer_cfg.get("v_sat_p", 0.0)),
@@ -526,6 +532,10 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
         band_grading=(
             str(dev.get("band_grading", False)).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
+        graded_optics=(
+            str(dev.get("graded_optics", False)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
         interface_tunneling=(

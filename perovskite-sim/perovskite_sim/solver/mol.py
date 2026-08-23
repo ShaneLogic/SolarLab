@@ -610,22 +610,24 @@ def _compute_tmm_generation(
     ``G`` so that callers (e.g. the photon-recycling layer) can compute
     per-layer escape probabilities without rebuilding the TMM stack.
     """
-    has_optical = any(
-        layer.params is not None and layer.params.optical_material is not None
-        for layer in stack.layers
+    from perovskite_sim.physics.optical_stack import (
+        build_device_optical_stack,
+        has_wavelength_resolved_optics,
     )
+
+    has_optical = has_wavelength_resolved_optics(stack)
     if not has_optical:
         if return_absorbance:
             return None, None
         return None
 
     from perovskite_sim.physics.optics import (
-        TMMLayer, tmm_absorption_profile, tmm_absorbed_photon_flux_per_cell,
+        tmm_absorption_profile, tmm_absorbed_photon_flux_per_cell,
     )
     from perovskite_sim.physics.generation import (
         dual_cell_faces, dual_cell_widths,
     )
-    from perovskite_sim.data import load_nk, load_am15g
+    from perovskite_sim.data import load_am15g
 
     wavelengths_nm = np.linspace(lam_min, lam_max, n_wavelengths)
     wavelengths_m = wavelengths_nm * 1e-9
@@ -633,34 +635,11 @@ def _compute_tmm_generation(
     # Load AM1.5G spectrum
     _, spectral_flux = load_am15g(wavelengths_nm)
 
-    # Build TMM layers from the FULL stack (substrate included).
-    tmm_layers: list[TMMLayer] = []
-    for layer in stack.layers:
-        p = layer.params
-        if p.optical_material is not None:
-            _, n_arr, k_arr = load_nk(p.optical_material, wavelengths_nm)
-        elif p.n_optical is not None:
-            # Constant refractive index, compute k from scalar alpha
-            n_arr = np.full(n_wavelengths, p.n_optical)
-            # k = alpha * lambda / (4 * pi)
-            k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
-        else:
-            # Fallback: estimate n from eps_r, k from alpha
-            n_arr = np.full(n_wavelengths, np.sqrt(p.eps_r))
-            k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
-        tmm_layers.append(
-            TMMLayer(
-                d=layer.thickness,
-                n=n_arr,
-                k=k_arr,
-                incoherent=bool(p.incoherent),
-            )
-        )
-
-    # Layer boundaries for spatial mapping (full stack).
-    boundaries = np.zeros(len(stack.layers) + 1)
-    for i, layer in enumerate(stack.layers):
-        boundaries[i + 1] = boundaries[i] + layer.thickness
+    # Build TMM layers from the FULL stack (substrate included). Active CIGS
+    # optical grades expand one physical absorber into composition slices.
+    optical_stack = build_device_optical_stack(stack, wavelengths_nm)
+    tmm_layers = list(optical_stack.layers)
+    boundaries = optical_stack.boundaries_m
 
     # Shift electrical x by the cumulative substrate thickness so the
     # queries land inside the post-substrate thin films.
@@ -702,6 +681,7 @@ def _compute_tmm_generation(
             "boundaries": boundaries,
             "A_xl": A_xl,
             "substrate_offset": substrate_offset,
+            "physical_layer_slices": optical_stack.physical_layer_slices,
         }
         return G, tmm_info
     return G
@@ -2105,8 +2085,8 @@ def build_material_arrays(
     V_bi_bc = stack.poisson_built_in_potential()
     junction_polarity = -1.0 if V_bi_bc < 0.0 else 1.0
 
-    # TMM optical generation: computed when any layer has optical data and
-    # the active mode enables TMM. Legacy/fast fall back to Beer-Lambert.
+    # TMM optical generation: computed when the active mode enables TMM.
+    # Legacy mode falls back to Beer-Lambert; fast mode keeps TMM enabled.
     # When photon recycling is also active we capture the spectral
     # absorbance A(x, λ) returned by TMM so we can derive a per-absorber
     # escape probability and scale B_rad by (1 − P_esc) in place.
@@ -2153,6 +2133,7 @@ def build_material_arrays(
         )
         wavelengths_m = tmm_info["wavelengths_m"]
         tmm_layers_full = tmm_info["tmm_layers"]
+        physical_layer_slices = tmm_info["physical_layer_slices"]
         # Absorber layers live inside the electrical stack; TMM indexes
         # them against the *full* stack, so shift by the substrate prefix
         # count to get the TMM layer index.
@@ -2183,15 +2164,28 @@ def build_material_arrays(
                     )
                     if np.any(mask_abs):
                         lam_gap = wavelength_at_gap(Eg_eV)
-                        tmm_idx = i_elec + substrate_prefix
-                        n_lambda = tmm_layers_full[tmm_idx].n
-                        k_lambda = tmm_layers_full[tmm_idx].k
-                        n_at_gap = float(
-                            np.interp(lam_gap, wavelengths_m, n_lambda)
-                        )
-                        k_at_gap = float(
-                            np.interp(lam_gap, wavelengths_m, k_lambda)
-                        )
+                        physical_idx = i_elec + substrate_prefix
+                        if (
+                            bool(getattr(stack, "graded_optics", False))
+                            and p.cigs_graded_optics is not None
+                        ):
+                            from perovskite_sim.physics.optical_stack import (
+                                cigs_nk_at_electrical_gap_edge,
+                            )
+
+                            n_at_gap, k_at_gap = cigs_nk_at_electrical_gap_edge(
+                                layer, lam_gap
+                            )
+                        else:
+                            tmm_idx = physical_layer_slices[physical_idx].start
+                            n_lambda = tmm_layers_full[tmm_idx].n
+                            k_lambda = tmm_layers_full[tmm_idx].k
+                            n_at_gap = float(
+                                np.interp(lam_gap, wavelengths_m, n_lambda)
+                            )
+                            k_at_gap = float(
+                                np.interp(lam_gap, wavelengths_m, k_lambda)
+                            )
                         # α = 4π k / λ  [m⁻¹]
                         alpha_gap = 4.0 * np.pi * k_at_gap / lam_gap
                         P_esc = compute_p_esc(

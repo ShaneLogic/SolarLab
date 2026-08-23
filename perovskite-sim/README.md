@@ -155,6 +155,7 @@ explicitly; unsupported combinations fail before the numerical solve. Likewise,
 | `pin_MAPbI3` | TiO2 / MAPbI3 / spiro | Yes | Beer-Lambert |
 | `ionmonger_benchmark` | Courtier 2019 reference | Yes | Beer-Lambert |
 | `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert |
+| `cigs_graded_optics` | ZnO / CdS / graded CIGS | No | Composition-resolved TMM |
 | `cSi_homojunction` | n+ / p Si wafer | No | Beer-Lambert |
 | `csi_vannijen2025_pn_cv` | Gaussian p+ / n Si C-V cross-check | No | Dark only |
 | `tandem_lin2019` | Wide-gap / narrow-gap tandem | Yes | TMM |
@@ -162,10 +163,12 @@ explicitly; unsupported combinations fail before the numerical solve. Likewise,
 | `twod/nip_MAPbI3_singleGB` | 2D MAPbI3 with one vertical grain boundary | Frozen in 2D | Beer-Lambert |
 | `twod/bcx_combined_demo` | 2D combined Robin / field-mobility / microstructure demo | Frozen in 2D | Beer-Lambert |
 
-Continuous `chi/Eg` grading currently changes electrical transport only.
-Optical `alpha(lambda, x)` and `n,k(lambda, x)` are not composition-graded, so
-CIGS notch studies must not be interpreted as graded-optics Jsc/PCE
-optimization.
+Continuous `chi/Eg` grading changes electrical transport only by default, so
+the historical CIGS notch studies must not be interpreted as graded-optics
+Jsc/PCE optimization. The separate research preset `cigs_graded_optics`
+explicitly couples the same composition coordinate to Minoura CIGS `n,k`
+TMM slices; it remains an internal constitutive/numerical model rather than a
+calibrated device.
 
 <br>
 
@@ -814,3 +817,12 @@ Newton solve uses the analytic trap-charge tangent. Default MoL and experiment
 routes fail closed when this field is active; historical lifetime profiles and
 SCAPS Gaussian metadata are not reinterpreted. See
 [the P4.3 capability contract](docs/bulk-trap-energy-distribution-closure.md).
+
+Phase 4.4 adds an opt-in composition-resolved CIGS optical path. Minoura
+Tauc-Lorentz reference spectra and critical-point shifts construct
+Kramers-Kronig-related `n,k`; Carron's independent absorption expression is a
+three-composition benchmark. The exact electrical grading coordinate drives
+the TMM slice compositions, and the shared adapter is used by build-once
+generation, photon recycling, EQE, EL, and tandem optics. Historical graded
+CIGS presets remain scalar-optics by default. See
+[the P4.4 CIGS optics contract](docs/cigs-graded-optics.md).

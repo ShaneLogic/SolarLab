@@ -450,7 +450,7 @@ function renderScapsPhysics(config: DeviceConfig): string {
             <span class="param-label"><span class="sym">de-spike <i>f</i></span></span>
             ${numAttr('dev-despike', d.het_recomb_despike, { placeholder: '0 — off', title: 'het_recomb_despike (0 = off, 0.53 = SCAPS-emulation)' })}
           </label>
-          ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Electrical chi/Eg grading only; optical alpha and n,k are not composition-graded (YAML band_grading).')}
+          ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Electrical chi/Eg grading. An explicit graded_optics CIGS block may use the same composition coordinate for n,k (YAML band_grading).')}
           ${cb('dev-iface-tunnel', 'Interface tunnelling (TFE)', !!d.interface_tunneling, 'Intra-band thermionic-field-emission through CB/VB spikes — static Padovani-Stratton enhancement of A* at TE-capped faces (YAML interface_tunneling).')}
           <label class="param" title="Tunnelling effective mass relative to the free-electron mass (YAML tunnel_mass_eff). Only used when Interface tunnelling is on.">
             <span class="param-label"><span class="sym"><i>m</i><sub>tun</sub>/<i>m</i><sub>e</sub></span></span>
@@ -872,6 +872,7 @@ export function readDeviceEditor(
     'interface_shared_occupancy',
     'interface_plane_generation',
     'jv_solver_policy',
+    'graded_optics',
   ] as const
   const hiddenPhysicsField: Record<string, boolean | number | string> = {}
   for (const key of hiddenPhysicsKeys) {

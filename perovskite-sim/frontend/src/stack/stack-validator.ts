@@ -169,9 +169,94 @@ export function validate(config: DeviceConfig): ValidationReport {
     }
   }
 
+  // 7. Composition-resolved CIGS optics is a strict, research-only opt-in.
+  // Mirror the backend activation contract here so malformed jobs do not get
+  // as far as the solver worker.  A dormant layer block is preserved but is
+  // deliberately not interpreted until the device master gate is enabled.
+  const cigsLayerIdxs = layers
+    .map((item, index) => (item.cigs_graded_optics != null ? index : -1))
+    .filter(index => index >= 0)
+  if (config.device.graded_optics === true) {
+    if (config.device.band_grading !== true) {
+      errors.push({
+        layerIdx: null,
+        field: 'graded_optics',
+        message: 'Graded CIGS optics requires bandgap grading',
+      })
+    }
+    if (cigsLayerIdxs.length === 0) {
+      errors.push({
+        layerIdx: null,
+        field: 'graded_optics',
+        message: 'Graded optics is enabled but no layer declares a CIGS optical model',
+      })
+    }
+    for (const index of cigsLayerIdxs) {
+      const item = layers[index]
+      const model = item.cigs_graded_optics!
+      if (item.role !== 'absorber') {
+        errors.push({
+          layerIdx: index,
+          field: 'cigs_graded_optics',
+          message: 'Graded CIGS optics is restricted to absorber layers',
+        })
+      }
+      if (item.Eg_back == null && item.chi_back == null) {
+        errors.push({
+          layerIdx: index,
+          field: 'cigs_graded_optics',
+          message: 'Graded CIGS optics requires an Eg_back or chi_back endpoint',
+        })
+      }
+      for (const field of ['ggi_front', 'ggi_back'] as const) {
+        const value = model[field]
+        if (!(Number.isFinite(value) && value >= 0 && value <= 1)) {
+          errors.push({
+            layerIdx: index,
+            field,
+            message: `${field} must be finite and lie in [0, 1]`,
+          })
+        }
+      }
+      if (!(Number.isFinite(model.cgi) && model.cgi >= 0.75 && model.cgi <= 1)) {
+        errors.push({
+          layerIdx: index,
+          field: 'cgi',
+          message: 'cgi must be finite and lie in [0.75, 1]',
+        })
+      }
+      const slices = model.slices ?? 25
+      if (!(Number.isInteger(slices) && slices >= 1 && slices <= 512)) {
+        errors.push({
+          layerIdx: index,
+          field: 'slices',
+          message: 'slices must be an integer in [1, 512]',
+        })
+      }
+      const quadrature = model.kk_quadrature_order ?? 192
+      if (!(Number.isInteger(quadrature) && quadrature >= 48 && quadrature <= 2048)) {
+        errors.push({
+          layerIdx: index,
+          field: 'kk_quadrature_order',
+          message: 'kk_quadrature_order must be an integer in [48, 2048]',
+        })
+      }
+      if (model.model !== undefined && model.model !== 'minoura_2015') {
+        errors.push({
+          layerIdx: index,
+          field: 'model',
+          message: 'Only the minoura_2015 CIGS optical model is supported',
+        })
+      }
+    }
+  }
+
   // Warnings
-  const tmmCount = layers.filter(
-    l => l.optical_material != null && l.optical_material !== '',
+  const gradedOpticsActive = config.device.graded_optics === true
+    && config.device.band_grading === true
+  const tmmCount = layers.filter(l =>
+    (l.optical_material != null && l.optical_material !== '')
+    || (gradedOpticsActive && l.cigs_graded_optics != null),
   ).length
   if (tmmCount > 0 && tmmCount < layers.length) {
     warnings.push({
@@ -184,7 +269,7 @@ export function validate(config: DeviceConfig): ValidationReport {
     warnings.push({
       layerIdx: null,
       field: 'optical_material',
-      message: 'TMM is dormant — set optical_material to enable',
+      message: 'TMM is dormant — set optical_material or activate graded CIGS optics',
     })
   }
 

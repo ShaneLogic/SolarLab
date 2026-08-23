@@ -42,10 +42,10 @@ penalty climbs into the hundreds of mV.
 
 Implementation notes
 --------------------
-- Requires a TMM-capable stack (at least one layer with
-  ``optical_material``). Beer-Lambert configs have no wavelength-
-  resolved absorptance and raise ``ValueError`` - same guard ``compute_eqe``
-  uses.
+- Requires a TMM-capable stack: tabulated ``optical_material`` data or an
+  active composition-graded CIGS optical model. Beer-Lambert-only configs
+  have no wavelength-resolved absorptance and raise ``ValueError`` - the
+  same guard ``compute_eqe`` uses.
 - The dark-current measurement reuses ``run_jv_sweep(illuminated=False)``
   so that ion equilibration up to ``V_inj`` is treated consistently with
   the rest of the simulator (no new solver path).
@@ -68,12 +68,15 @@ import numpy as np
 
 from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.constants import K_B, Q
-from perovskite_sim.data import load_nk
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.models.el import ELResult
 from perovskite_sim.physics.optics import TMMLayer, tmm_absorption_profile
+from perovskite_sim.physics.optical_stack import (
+    build_device_optical_stack,
+    has_wavelength_resolved_optics,
+)
 
 ProgressCallback = Callable[[str, int, int, str], None]
 
@@ -86,15 +89,11 @@ C_LIGHT = 299_792_458.0
 
 def _require_tmm_optical_data(stack: DeviceStack) -> None:
     """Raise a helpful error if no layer has wavelength-resolved optics."""
-    has_optical = any(
-        layer.params is not None and layer.params.optical_material is not None
-        for layer in stack.layers
-    )
+    has_optical = has_wavelength_resolved_optics(stack)
     if not has_optical:
         raise ValueError(
             "run_el_spectrum requires at least one layer with "
-            "optical_material set (tabulated n, k). Use one of the "
-            "*_tmm.yaml configs or add optical_material to your stack."
+            "tabulated optical_material data or an active graded CIGS model."
         )
 
 
@@ -111,39 +110,15 @@ def _build_tmm_layers(
 
     Returns (tmm_layers, layer_boundaries [m], substrate_offset [m]).
     """
-    wavelengths_m = wavelengths_nm * 1e-9
-    n_wl = len(wavelengths_nm)
-
-    tmm_layers: list[TMMLayer] = []
-    for layer in stack.layers:
-        p = layer.params
-        if p is None:
-            raise ValueError(
-                f"Layer {layer.name!r} has no MaterialParams; cannot build "
-                "TMM stack for EL."
-            )
-        if p.optical_material is not None:
-            _, n_arr, k_arr = load_nk(p.optical_material, wavelengths_nm)
-        elif p.n_optical is not None:
-            n_arr = np.full(n_wl, p.n_optical, dtype=float)
-            k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
-        else:
-            n_arr = np.full(n_wl, np.sqrt(p.eps_r), dtype=float)
-            k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
-        tmm_layers.append(
-            TMMLayer(
-                d=layer.thickness, n=n_arr, k=k_arr,
-                incoherent=bool(p.incoherent),
-            )
-        )
-
-    boundaries = np.zeros(len(stack.layers) + 1)
-    for i, layer in enumerate(stack.layers):
-        boundaries[i + 1] = boundaries[i] + layer.thickness
+    optical_stack = build_device_optical_stack(stack, wavelengths_nm)
     substrate_offset = sum(
         l.thickness for l in stack.layers if l.role == "substrate"
     )
-    return tmm_layers, boundaries, substrate_offset
+    return (
+        list(optical_stack.layers),
+        optical_stack.boundaries_m,
+        substrate_offset,
+    )
 
 
 def _absorber_mask(x: np.ndarray, stack: DeviceStack) -> np.ndarray:
@@ -212,8 +187,8 @@ def run_el_spectrum(
     Parameters
     ----------
     stack : DeviceStack
-        Must carry at least one layer with ``optical_material`` set so the
-        wavelength-resolved absorptance is well defined.
+        Must carry tabulated ``optical_material`` data or an active graded
+        CIGS optical model so wavelength-resolved absorptance is well defined.
     V_inj : float, default 1.0
         Forward bias [V] at which to inject carriers and evaluate the
         reciprocity spectrum. 1.0 V is close to the operating point of

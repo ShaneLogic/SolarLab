@@ -27,6 +27,13 @@ schemas:
       - alpha
       - N_A
       - N_D
+    optional_device_groups:
+      graded_cigs_optics:
+        selector: graded_optics
+        default: false
+        required_companion_key: band_grading
+        required_layer_block: cigs_graded_optics
+        capability: research-build-once-optics
     optional_layer_groups:
       bulk_carrier_statistics:
         selector: carrier_statistics
@@ -69,6 +76,18 @@ schemas:
         capability: research-equilibrium-only
         density_units: m-3
         energy_units: eV
+      graded_cigs_optics:
+        block: cigs_graded_optics
+        selector: model
+        supported_modes: [minoura_2015]
+        required_keys: [ggi_front, ggi_back, cgi]
+        companion_keys: [slices, kk_quadrature_order]
+        composition_domains:
+          ggi: [0.0, 1.0]
+          cgi: [0.75, 1.0]
+        wavelength_domain_nm: [190.745, 1771.203]
+        independent_absorption_benchmark: carron_2018
+        capability: absorber-only-shared-electrical-grade
       spatial_doping_profile:
         activation_keys: [N_A_bulk, N_D_bulk]
         companion_keys:

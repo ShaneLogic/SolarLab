@@ -756,6 +756,12 @@ MoL。P4.1 下一步应先选择并预注册一个新的组合拓扑，而不是
 
 各 lane 的共同门槛：1D/uniform/zero-coupling analytic limit；网格与参数 quadrature 收敛；默认关闭；独立 benchmark；registry 中明确 `claim_level`。没有 graded optical data 时，CIGS 仍只能称 graded transport；没有 2D ion/interface closure 时，2D scope 不升级。
 
+2026-08-24 checkpoint：CIGS 子项已实现为显式 opt-in 的 Minoura
+`n,k(lambda,GGI,CGI)` TMM slices，并以 Carron `alpha`、uniform-composition、
+photon budget、optical-slice/KK 3x3 refinement 作为门槛；它不升级旧
+`cigs_graded_notch` 的 optics/PCE claim。2D ion/interface closure、外部 circuit/
+thermal layer 与高通量反演仍是后续独立子项。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。

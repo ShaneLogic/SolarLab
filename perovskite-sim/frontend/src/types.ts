@@ -52,6 +52,14 @@ export interface LayerConfig {
   chi?: number
   Eg?: number
   optical_material?: string | null
+  cigs_graded_optics?: {
+    model?: 'minoura_2015'
+    ggi_front: number
+    ggi_back: number
+    cgi: number
+    slices?: number
+    kk_quadrature_order?: number
+  }
   incoherent?: boolean
   // Stage B(c.2) field-dependent mobility μ(E) — optional, FULL-tier-only.
   // Sentinel 0.0 disables that branch on this layer (Caughey-Thomas: v_sat=0
@@ -169,6 +177,9 @@ export interface DeviceConfig {
     // Continuous bandgap grading master switch (device-level, FULL-tier-only).
     // Absent → off → uniform layers (bit-identical). See physics/grading.py.
     band_grading?: boolean
+    // Research-only composition-resolved CIGS TMM master gate. The layer
+    // block remains inert unless both this and band_grading are true.
+    graded_optics?: boolean
     // Intra-band TFE tunnelling at heterointerfaces (device-level, FULL-tier).
     // Folds a static Padovani-Stratton enhancement into A* at TE-capped faces.
     // Absent → off (bit-identical). tunnel_mass_eff = tunnelling effective

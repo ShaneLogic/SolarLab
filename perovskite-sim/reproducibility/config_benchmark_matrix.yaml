@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 20e334a2a0e3c6fbfe9a0083144844236874ca43c629dbc4700175ec03a890e0
+  sha256: f541daff907173840eeda248c1c80a90ed4b9182c7853c439f6b87ea030739bc
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -73,6 +73,7 @@ benchmarks:
       - configs/csi_incomplete_ionization_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/cigs_baseline.yaml
+      - configs/cigs_graded_optics.yaml
       - configs/cigs_graded_notch.yaml
       - configs/driftfusion_benchmark.yaml
       - configs/driftfusion_benchmark_tmm.yaml
@@ -122,6 +123,7 @@ benchmarks:
       - configs/csi_incomplete_ionization_bgn_pn_research.yaml
       - configs/csi_incomplete_ionization_pn_research.yaml
       - configs/csi_vannijen2025_pn_cv.yaml
+      - configs/cigs_graded_optics.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
@@ -602,6 +604,27 @@ benchmarks:
       - Nc300 and Nv300 are absent and the SI provenance of ni, n1, and p1 is unresolved
       - the Beer-Lambert alpha and photon flux are uniform proxies and do not grade with composition
       - the roughly 31.8 to 33.7 percent PCE values are highly idealized and must not be compared directly with experiment
+  cigs-graded-optics-internal-closure:
+    kind: numerical
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/integration/test_cigs_graded_optics.py
+      tests/unit/validation/test_cigs_optics_refinement.py
+    tests:
+      - tests/integration/test_cigs_graded_optics.py
+      - tests/unit/validation/test_cigs_optics_refinement.py
+    node_ids:
+      - tests/integration/test_cigs_graded_optics.py::test_shipped_research_config_builds_finite_photon_bounded_generation
+      - tests/integration/test_cigs_graded_optics.py::test_uniform_composition_slice_limit_matches_one_homogeneous_layer
+      - tests/integration/test_cigs_graded_optics.py::test_minoura_high_energy_absorption_agrees_with_independent_carron_model
+      - tests/unit/validation/test_cigs_optics_refinement.py::test_registered_executor_real_cell_matches_exact_contract
+    configs: [configs/cigs_graded_optics.yaml]
+    limitations:
+      - the source-clean registered 3x3 matrix is pending at this implementation checkpoint
+      - this is a literature-model and internal numerical closure, not a measured-device, external simulator, or PCE-optimization certificate
+      - ZnO and CdS retain nominal scalar optical fallbacks, so the claim is restricted to the graded CIGS absorber
   csi-grid-envelope-gap:
     kind: gap
     status: closed
@@ -1194,6 +1217,15 @@ configs:
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, cigs-internal-validation]
+  - path: configs/cigs_graded_optics.yaml
+    sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
+    semantic_sha256: a78884b0074063e50076ac6f2382bd199375e034d263ad76261fd4f83a7a185f
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - cigs-graded-optics-internal-closure
   - path: configs/driftfusion_benchmark.yaml
     sha256: 3e4cea0244bcb71072194d24ff5a31e50eb780d8d93dc8bc2343a8032de3fbf7
     semantic_sha256: 3def7117f3a49f1a7b99b6a1f49f646a1d57c193143320ce1c06fdfbdf5ba38c

@@ -158,6 +158,62 @@ describe('validate', () => {
     expect(r.errors.some(e => e.message.includes('absorber'))).toBe(true)
   })
 
+  it('accepts an active, in-domain graded-CIGS optical model', () => {
+    const c = cfg([layer({
+      name: 'CIGS',
+      Eg: 1.15,
+      Eg_back: 1.4,
+      cigs_graded_optics: {
+        model: 'minoura_2015',
+        ggi_front: 0.225,
+        ggi_back: 0.6,
+        cgi: 0.9,
+        slices: 25,
+        kk_quadrature_order: 192,
+      },
+    })])
+    c.device.band_grading = true
+    c.device.graded_optics = true
+    const r = validate(c)
+    expect(r.errors).toEqual([])
+    expect(r.warnings.some(w => w.message.includes('dormant'))).toBe(false)
+  })
+
+  it('rejects graded-CIGS activation without the electrical grade', () => {
+    const c = cfg([layer({
+      name: 'CIGS',
+      cigs_graded_optics: {
+        ggi_front: 0.225,
+        ggi_back: 0.6,
+        cgi: 0.9,
+      },
+    })])
+    c.device.graded_optics = true
+    const fields = validate(c).errors.map(error => error.field)
+    expect(fields).toContain('graded_optics')
+    expect(fields).toContain('cigs_graded_optics')
+  })
+
+  it('rejects a CIGS model outside its published composition domain', () => {
+    const c = cfg([layer({
+      name: 'CIGS',
+      Eg_back: 1.4,
+      cigs_graded_optics: {
+        ggi_front: -0.1,
+        ggi_back: 0.6,
+        cgi: 0.7,
+        slices: 0,
+        kk_quadrature_order: 24,
+      },
+    })])
+    c.device.band_grading = true
+    c.device.graded_optics = true
+    const fields = validate(c).errors.map(error => error.field)
+    expect(fields).toEqual(expect.arrayContaining([
+      'ggi_front', 'cgi', 'slices', 'kk_quadrature_order',
+    ]))
+  })
+
   it('requires both explicit metal work functions', () => {
     const c = cfg([
       layer({ name: 'H', role: 'HTL' }),

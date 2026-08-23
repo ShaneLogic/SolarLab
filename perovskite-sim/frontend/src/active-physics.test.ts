@@ -59,6 +59,38 @@ describe('describeActivePhysics', () => {
     )
   })
 
+  it('adds TMM for an active graded-CIGS optical block', () => {
+    const layers = [{
+      ...emptyLayer('CIGS'),
+      Eg: 1.15,
+      Eg_back: 1.4,
+      cigs_graded_optics: {
+        ggi_front: 0.225,
+        ggi_back: 0.6,
+        cgi: 0.9,
+      },
+    }]
+    expect(describeActivePhysics(makeDevice(
+      'full',
+      { band_grading: true, graded_optics: true },
+      layers,
+    ))).toBe('Active physics: Reabsorption, Photon recycling, TMM')
+  })
+
+  it('does not activate a dormant graded-CIGS layer block', () => {
+    const layers = [{
+      ...emptyLayer('CIGS'),
+      cigs_graded_optics: {
+        ggi_front: 0.225,
+        ggi_back: 0.6,
+        cgi: 0.9,
+      },
+    }]
+    expect(describeActivePhysics(makeDevice('full', {}, layers))).toBe(
+      'Active physics: Reabsorption, Photon recycling',
+    )
+  })
+
   it('adds Microstructure when grain_boundaries is non-empty', () => {
     const ms = {
       grain_boundaries: [{ x_position: 1e-7, width: 5e-9, tau_n: 1e-9, tau_p: 1e-9 }],

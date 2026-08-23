@@ -341,6 +341,11 @@ class DeviceStack:
     # The acknowledgement is required in the config before readiness can even
     # be assessed; it does not bypass the parked production capability gate.
     interface_charge_rebaseline_acknowledged: bool = False
+    # Composition-dependent CIGS n,k optical slicing. Appended to preserve
+    # positional compatibility. This master gate is independent from merely
+    # carrying a cigs_graded_optics block on a layer; activation also requires
+    # band_grading so electrical and optical properties share one coordinate.
+    graded_optics: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, "layers", tuple(self.layers))
@@ -348,6 +353,8 @@ class DeviceStack:
             self, "grid_interval_weights", tuple(self.grid_interval_weights)
         )
         object.__setattr__(self, "grid_alphas", tuple(self.grid_alphas))
+        if not isinstance(self.graded_optics, bool):
+            raise ValueError("graded_optics must be boolean")
         if self.interface_charge_closure not in INTERFACE_CHARGE_CLOSURES:
             raise ValueError(
                 "interface_charge_closure must be one of "

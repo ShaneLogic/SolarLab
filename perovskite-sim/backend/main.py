@@ -275,6 +275,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         ),
         het_recomb_despike=float(dev.get("het_recomb_despike", 0.0)),
         band_grading=_flag(dev.get("band_grading")),
+        graded_optics=_flag(dev.get("graded_optics")),
         interface_tunneling=_flag(dev.get("interface_tunneling")),
         tunnel_mass_eff=float(dev.get("tunnel_mass_eff", 0.2)),
         # Stage B(c.1) Robin / selective contacts. None = ohmic Dirichlet
@@ -364,6 +365,7 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         "interface_plane_projection": stack.interface_plane_projection,
         "het_recomb_despike": stack.het_recomb_despike,
         "band_grading": stack.band_grading,
+        "graded_optics": stack.graded_optics,
         "interface_tunneling": stack.interface_tunneling,
         "tunnel_mass_eff": stack.tunnel_mass_eff,
         "jv_solver_policy": stack.jv_solver_policy,

@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 16 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit、Phase 3 interface charge-off/charged research closure，以及 Phase 4.1 no-ion、single-positive-ion、dual-mobile-ion 与 algebraic-interface-state DAE slices。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 21 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps，以及 P4.4 CIGS graded optics。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -42,7 +42,10 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `dual-mobile-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P+/P-/phi 误差、逐离子守恒、shared-site bounds、dense/structured 等价性 |
 | `algebraic-interface-state-dae-transient-v1` | 每层区间 4/8/16 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/interface/phi 误差、interface occupation、clamp-inactive、dense/structured 等价性 |
 | `degenerate-pn-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | FD generalized-SG equilibrium、耗尽宽度、峰值场、空间电荷平衡 |
+| `incomplete-ionization-temperature-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | donor/acceptor freeze-out、温度曲线、耗尽宽度、峰值场 |
+| `incomplete-ionization-bgn-temperature-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | freeze-out + Slotboom BGN、effective gap、空间电荷平衡 |
 | `bulk-energy-distributed-trap-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01；每格 energy order 16/32/64 | trap occupancy/recombination/absolute charge、analytic charge tangent、Gauss balance |
+| `cigs-graded-optics-v1` | optical slices 8/16/32 | inverse KK factor 1/0.5/0.25 -> order 96/192/384 | absorbed flux、generation profile/centroid、reflectance、Carron/uniform/photon-budget gates |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -103,6 +106,13 @@ work-function contacts，以及每格 16/32/64 的共享 occupancy/recombination
 quadrature。默认 MoL 必须拒绝该配置；energy doubling、mass action、face current、
 Poisson 和离散 Gauss balance 分列 gate。旧 SCAPS Gaussian metadata 不进入该闭合。
 
+CIGS graded-optics protocol 固定 Minoura composition-resolved dielectric
+model、与 electrical Eg/chi 共用的 GGI coordinate、8/16/32 optical slices、
+96/192/384 KK quadrature、固定 electrical observation mesh 与 AM1.5G wavelength
+grid。Carron alpha 在 front/mid/back 三个 GGI 上作为独立 benchmark；每格另检查
+default-off、uniform-composition、causal n/k、reflectance 和 photon budget。该 lane
+不执行 transport，因此不产生 J-V/PCE 或外部器件认证。
+
 manifest 保存去重后的完整 protocol document 和 hash。certificate 只有在所有完成 cell 的 protocol 内容自校验通过且 hash 跨 grid/tolerance 一致时才记录 `protocol_sha256`。protocol provenance 不替代 config、source、environment、grid 或 tolerance provenance。
 
 ## Content-addressed outputs
@@ -156,6 +166,7 @@ python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1 --dr
 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1 --dry-run
 python scripts/run_numerical_refinement.py bulk-energy-distributed-trap-equilibrium-v1 --dry-run
+python scripts/run_numerical_refinement.py cigs-graded-optics-v1 --dry-run
 ```
 
 建议固定 BLAS 线程后逐 lane 执行：
@@ -179,6 +190,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py bulk-energy-distributed-trap-equilibrium-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py cigs-graded-optics-v1
 ```
 
 先执行一个 cell 并留下可恢复状态：
@@ -193,7 +205,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-当前 registry 共 17 条 lane；十五条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 145 个 content-addressed cell。其内部工作量至少包括：
+当前 registry 共 21 条 lane；十九条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 181 个 content-addressed cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
@@ -230,8 +242,11 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 - degenerate PN：9 个 cell 各重建 statistics-aware contacts，并在同一冻结
   high-doping homojunction 上求 fully-ionized FD-Poisson equilibrium、generalized-SG
   零流和 abrupt-depletion analytic oracle。
+- CIGS graded optics：9 个 cell 各执行 photon-conserving AM1.5G TMM、
+  uniform-composition companion 和 front/mid/back Carron comparison；matrix
+  分别加密 absorber slices 与 Kramers-Kronig quadrature，不执行 transport。
 
-因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 145 个 cell 的真实结果。
+因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 181 个 cell 的真实结果。
 
 `certified` 只表示该冻结代码/config/protocol/environment 下的内部数值收敛。它不等于 SCAPS/IonMonger 外部 solver parity，不等于实验验证，也不证明材料参数或模型闭包唯一正确。
 

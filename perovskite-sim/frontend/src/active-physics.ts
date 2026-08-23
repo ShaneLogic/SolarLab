@@ -108,6 +108,11 @@ function hasFieldMobility(device: DeviceConfig): boolean {
 
 function hasTmmOptics(device: DeviceConfig): boolean {
   return device.layers.some(L => Boolean(L.optical_material))
+    || (
+      device.device.graded_optics === true
+      && device.device.band_grading === true
+      && device.layers.some(L => L.cigs_graded_optics != null)
+    )
 }
 
 /**

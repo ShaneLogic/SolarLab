@@ -122,6 +122,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "incomplete-ionization-temperature-equilibrium-v1",
         "incomplete-ionization-bgn-temperature-equilibrium-v1",
         "bulk-energy-distributed-trap-equilibrium-v1",
+        "cigs-graded-optics-v1",
     }
     assert all(
         len(lane.matrix_points) == 9
@@ -226,6 +227,22 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert resolved_stress.observables == stress.observables
     assert resolved_stress.quality_gates == stress.quality_gates
     assert resolved_stress.options == stress.options
+    cigs_optics = registry.lane("cigs-graded-optics-v1")
+    assert cigs_optics.grid_values == (8, 16, 32)
+    assert cigs_optics.tolerance_factors == (1.0, 0.5, 0.25)
+    cigs_observables = {
+        gate.metric: gate for gate in cigs_optics.observables
+    }
+    assert cigs_observables["normalized_generation_profile"].limit == (
+        pytest.approx(0.005)
+    )
+    cigs_quality = {gate.metric: gate for gate in cigs_optics.quality_gates}
+    assert cigs_quality[
+        "max_electrical_optical_gap_mismatch_eV"
+    ].limit == pytest.approx(0.01)
+    assert cigs_quality[
+        "independent_carron_energy_points_completed"
+    ].limit == 453.0
     with pytest.raises(FrozenInstanceError):
         registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
 

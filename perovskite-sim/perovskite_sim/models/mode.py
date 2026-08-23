@@ -3,8 +3,9 @@
 Three tiered modes control which physics upgrades are active at runtime.
 All three tiers act as a **ceiling** — they enable a feature only when the
 configuration actually provides the required parameters (e.g. FULL does not
-build the TMM generation profile unless at least one layer sets
-``optical_material``; FULL does not activate selective contacts unless at
+build the TMM generation profile unless at least one layer supplies tabulated
+``optical_material`` data or an active graded-CIGS model; FULL does not
+activate selective contacts unless at
 least one of the four outer ``S_*`` values is non-null). The mode therefore
 never forces an upgrade that the config cannot support, which keeps legacy
 YAML files working unchanged.

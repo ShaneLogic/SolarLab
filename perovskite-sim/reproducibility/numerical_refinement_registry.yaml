@@ -1179,3 +1179,50 @@ lanes:
       - Recombination, occupancy, and absolute bulk-trap charge share one frozen 16/32/64 energy quadrature; legacy SCAPS gaussian metadata and lifetime-only trap profiles remain parked and are not reinterpreted.
       - Bias, illumination, transient occupancy, Fermi-Dirac trap kinetics, amphoteric or multi-charge defects, heterojunctions, ions, selective contacts, field mobility, and every production experiment route remain excluded.
       - This is internal numerical evidence against mass action, Gauss law, and refinement gates, not external TCAD validation, experimental validation, or a materials-parameter claim.
+
+  cigs-graded-optics-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/cigs_graded_optics.yaml
+    config_sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
+    executor: perovskite_sim.validation.cigs_optics_refinement:run_cigs_graded_optics_refinement
+    executor_version: v1
+    grid:
+      parameter: cigs_optical_slices
+      values: [8, 16, 32]
+    tolerance:
+      parameter: inverse_kk_quadrature_order_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      absorbed_photon_flux_m2_s: {comparison: relative_linf, limit: 0.001, units: m-2 s-1}
+      generation_centroid_fraction: {comparison: absolute_linf, limit: 0.001, units: "1"}
+      mean_spectral_reflectance: {comparison: absolute_linf, limit: 0.001, units: "1"}
+      normalized_generation_profile: {comparison: absolute_linf, limit: 0.005, units: "1"}
+    quality_gates:
+      causal_nk_verified: {operator: eq, limit: 1.0, units: "1"}
+      cigs_optical_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      default_gate_off_inert: {operator: eq, limit: 1.0, units: "1"}
+      independent_carron_energy_points_completed: {operator: eq, limit: 453.0, units: "1"}
+      max_carron_composition_median_relative_error: {operator: le, limit: 0.08, units: "1"}
+      max_minoura_to_carron_ratio: {operator: le, limit: 1.15, units: "1"}
+      max_electrical_optical_gap_mismatch_eV: {operator: le, limit: 0.01, units: eV}
+      max_photon_budget_excess_fraction: {operator: le, limit: 1.0e-12, units: "1"}
+      max_reflectance_bound_violation: {operator: le, limit: 1.0e-12, units: "1"}
+      max_uniform_composition_reflectance_difference: {operator: le, limit: 1.0e-12, units: "1"}
+      min_minoura_to_carron_ratio: {operator: ge, limit: 0.60, units: "1"}
+      positive_absorbed_photon_flux: {operator: eq, limit: 1.0, units: "1"}
+      shared_composition_coordinate_verified: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      absorber_layer_name: CIGS_absorber
+      fixed_electrical_intervals_per_layer: 32
+      wavelength_points: 100
+      wavelength_min_nm: 300.0
+      wavelength_max_nm: 1000.0
+      base_kk_quadrature_order: 96
+      carron_energy_points_per_composition: 151
+      carron_minimum_excess_above_gap_eV: 0.15
+    limitations:
+      - This lane certifies only the composition-resolved CIGS absorber optics in the frozen research preset; ZnO and CdS retain nominal scalar optical fallbacks.
+      - Minoura n,k and the independent Carron alpha expression are literature models, not a measurement of this synthetic device or an external SCAPS/Setfos device reproduction.
+      - The lane covers build-once AM1.5G generation, optical-slice and Kramers-Kronig refinement, causality, photon budget, uniform composition, and optical/electrical endpoint consistency; it does not solve transport or certify PCE optimization.

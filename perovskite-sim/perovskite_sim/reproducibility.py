@@ -65,6 +65,10 @@ def _canonical(value: Any) -> Any:
             mapping.pop("grid_alphas", None)
         if isinstance(value, DeviceStack) and value.jv_solver_policy == "general":
             mapping.pop("jv_solver_policy", None)
+        if isinstance(value, DeviceStack) and not value.graded_optics:
+            # P4.4 is an explicit opt-in. Merely adding its false master gate
+            # must not churn every frozen pre-P4.4 device hash.
+            mapping.pop("graded_optics", None)
         if (
             isinstance(value, DeviceStack)
             and value.interface_charge_closure == "off"
@@ -149,6 +153,13 @@ def _canonical(value: Any) -> Any:
             # The absent P4.3 schema is behaviorally inert. Active structured
             # distributions remain fully content-addressed.
             mapping.pop("bulk_trap_distribution", None)
+        if (
+            isinstance(value, MaterialParams)
+            and value.cigs_graded_optics is None
+        ):
+            # An absent composition-optics block is behaviorally inert. An
+            # active block remains recursively content-addressed in full.
+            mapping.pop("cigs_graded_optics", None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}

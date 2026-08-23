@@ -12,8 +12,8 @@ Design contract:
     - wavelengths are always in METRES throughout this module.
     - load_nk is called with wavelengths in NANOMETRES (the existing data API).
     - TMMLayer field names match physics/optics.py: d, n, k, incoherent.
-    - DeviceStack layers expose .params.optical_material (or .params.n_optical /
-      .params.alpha / .params.eps_r as fallbacks) — identical to mol.py.
+    - DeviceStack layers use the same centralized optical-stack adapter as
+      mol.py: tabulated data, active graded CIGS slices, or scalar fallbacks.
     - JunctionLayer exposes .optical_material directly (no nested .params).
 """
 from __future__ import annotations
@@ -26,6 +26,7 @@ from perovskite_sim.physics.optics import (
     TMMLayer,
     tmm_absorbed_photon_flux_per_cell,
 )
+from perovskite_sim.physics.optical_stack import build_device_optical_stack
 from perovskite_sim.models.tandem_config import TandemConfig, JunctionLayer
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.data import load_nk
@@ -170,43 +171,6 @@ def _generation_on_grid(
     return G
 
 
-def _tmm_layer_from_stack_layer(layer, wavelengths_nm: np.ndarray) -> TMMLayer:
-    """Build a TMMLayer from a DeviceStack LayerSpec.
-
-    Mirrors the adapter in solver/mol.py:_compute_tmm_generation so that
-    both paths use the same material priority order:
-      1. optical_material CSV (n, k from file)
-      2. n_optical constant (k derived from scalar alpha)
-      3. fallback: sqrt(eps_r) for n, alpha-derived k
-
-    Args:
-        layer: a LayerSpec (has .thickness and .params)
-        wavelengths_nm: wavelength grid in nanometres
-    """
-    p = layer.params
-    n_wl = len(wavelengths_nm)
-    wavelengths_m = wavelengths_nm * 1e-9
-
-    if p is not None and p.optical_material is not None:
-        _, n_arr, k_arr = load_nk(p.optical_material, wavelengths_nm)
-    elif p is not None and p.n_optical is not None:
-        n_arr = np.full(n_wl, p.n_optical)
-        k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
-    elif p is not None:
-        n_arr = np.full(n_wl, np.sqrt(p.eps_r))
-        k_arr = p.alpha * wavelengths_m / (4.0 * np.pi)
-    else:
-        # Layer has no params — transparent placeholder
-        n_arr = np.ones(n_wl)
-        k_arr = np.zeros(n_wl)
-
-    incoherent = bool(p.incoherent) if p is not None and hasattr(p, "incoherent") else False
-    # Enforce a tiny k floor: exact k=0 over multi-layer stacks can produce
-    # singular cumulative transfer matrices and NaN field profiles.
-    k_arr = np.maximum(k_arr, 1e-6)
-    return TMMLayer(d=layer.thickness, n=n_arr, k=k_arr, incoherent=incoherent)
-
-
 def _tmm_layer_from_junction_layer(
     jlayer: JunctionLayer,
     wavelengths_nm: np.ndarray,
@@ -230,7 +194,19 @@ def _build_tmm_layers_from_stack(
     wavelengths_nm: np.ndarray,
 ) -> list[TMMLayer]:
     """Convert every layer in a DeviceStack to a TMMLayer for the TMM solver."""
-    return [_tmm_layer_from_stack_layer(layer, wavelengths_nm) for layer in stack.layers]
+    optical_stack = build_device_optical_stack(stack, wavelengths_nm)
+    # Preserve tandem's historical tiny-k floor.  The single-junction TMM
+    # does not need it, but exact zero-k layers can make the longer combined
+    # tandem transfer product singular at isolated wavelengths.
+    return [
+        TMMLayer(
+            d=layer.d,
+            n=layer.n,
+            k=np.maximum(layer.k, 1e-6),
+            incoherent=layer.incoherent,
+        )
+        for layer in optical_stack.layers
+    ]
 
 
 def _substrate_prefix_thickness(stack: DeviceStack) -> float:

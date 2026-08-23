@@ -31,11 +31,11 @@ For each wavelength we:
    with the declared finite-time illuminated protocol at V_app = 0, and read J_sc from
    ``_compute_current``.
 
-Beer-Lambert–only stacks raise a ``ValueError`` — EQE is a
-wavelength-resolved quantity, and MaterialParams carries only a scalar
-α (absorption at the design wavelength). Without tabulated n(λ), k(λ)
-optical data (``optical_material``) the TMM absorption spectrum is not
-defined.
+Beer-Lambert-only stacks raise a ``ValueError`` because EQE is a
+wavelength-resolved quantity. The TMM absorption spectrum is defined by
+tabulated n(λ), k(λ) optical data (``optical_material``) or an explicitly
+activated composition-graded CIGS optical model; a scalar α alone is
+insufficient.
 
 Sign convention
 ---------------
@@ -58,7 +58,7 @@ import numpy as np
 
 from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.constants import Q
-from perovskite_sim.data import load_am15g, load_nk
+from perovskite_sim.data import load_am15g
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.experiments.jv_sweep import (
     _compute_current_ss_with_spread,
@@ -66,6 +66,10 @@ from perovskite_sim.experiments.jv_sweep import (
 from perovskite_sim.experiments.suns_voc import _solve_illuminated_ss_with_mat
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.optics import TMMLayer, tmm_absorption_profile
+from perovskite_sim.physics.optical_stack import (
+    build_device_optical_stack,
+    has_wavelength_resolved_optics,
+)
 from perovskite_sim.solver.mol import (
     MaterialArrays,
     build_material_arrays,
@@ -192,43 +196,15 @@ def _build_tmm_layers_single_wavelength(
 ) -> tuple[list[TMMLayer], np.ndarray]:
     """Return (tmm_layers, layer_boundaries) for a single-wavelength query.
 
-    Mirrors ``solver.mol._compute_tmm_generation``'s layer construction
-    but at a single wavelength. Layers with tabulated n, k data
-    (``optical_material``) use ``load_nk``; layers with only a scalar
-    ``n_optical`` and α fall back to k = α·λ/(4π) — same fallbacks the
-    full-spectrum path uses, so monochromatic EQE is consistent with the
-    integrated simulation.
+    Uses the same centralized optical-stack adapter as the full-spectrum
+    solver. It expands active graded CIGS absorbers into composition slices,
+    loads tabulated n, k where configured, and retains the scalar
+    ``n_optical``/α fallback for other layers.
     """
-    wavelengths_m = np.array([lam_m], dtype=float)
-    wavelengths_nm = wavelengths_m * 1e9
-
-    tmm_layers: list[TMMLayer] = []
-    for layer in stack.layers:
-        p = layer.params
-        if p is None:
-            raise ValueError(
-                f"Layer {layer.name!r} has no MaterialParams; cannot build "
-                "TMM stack for EQE."
-            )
-        if p.optical_material is not None:
-            _, n_arr, k_arr = load_nk(p.optical_material, wavelengths_nm)
-        elif p.n_optical is not None:
-            n_arr = np.full(1, p.n_optical, dtype=float)
-            k_arr = np.array([p.alpha * lam_m / (4.0 * np.pi)], dtype=float)
-        else:
-            n_arr = np.full(1, np.sqrt(p.eps_r), dtype=float)
-            k_arr = np.array([p.alpha * lam_m / (4.0 * np.pi)], dtype=float)
-        tmm_layers.append(
-            TMMLayer(
-                d=layer.thickness, n=n_arr, k=k_arr,
-                incoherent=bool(p.incoherent),
-            )
-        )
-
-    boundaries = np.zeros(len(stack.layers) + 1)
-    for i, layer in enumerate(stack.layers):
-        boundaries[i + 1] = boundaries[i] + layer.thickness
-    return tmm_layers, boundaries
+    optical_stack = build_device_optical_stack(
+        stack, np.array([lam_m * 1e9], dtype=float)
+    )
+    return list(optical_stack.layers), optical_stack.boundaries_m
 
 
 def _single_wavelength_generation(
@@ -260,21 +236,16 @@ def _single_wavelength_generation(
 def _require_tmm_optical_data(stack: DeviceStack) -> None:
     """Raise a helpful error if no layer has wavelength-resolved optics.
 
-    EQE needs n(λ), k(λ) tables so the absorption spectrum has the right
-    shape across the probe range. A scalar α per layer (Beer-Lambert)
-    cannot produce a meaningful EQE curve, so we bail out early with a
-    clear message rather than silently returning a flat-ish EQE that
-    integrates to the wrong J_sc.
+    EQE needs wavelength-resolved n(λ), k(λ), supplied by tables or the
+    active graded CIGS model. A scalar α per layer (Beer-Lambert) cannot
+    produce a meaningful EQE curve, so fail early rather than return a
+    spectrum with the wrong shape and integrated J_sc.
     """
-    has_optical = any(
-        layer.params is not None and layer.params.optical_material is not None
-        for layer in stack.layers
-    )
+    has_optical = has_wavelength_resolved_optics(stack)
     if not has_optical:
         raise ValueError(
-            "compute_eqe requires at least one layer with optical_material "
-            "set (tabulated n, k). Use one of the *_tmm.yaml configs (e.g. "
-            "nip_MAPbI3_tmm.yaml) or add optical_material to your stack."
+            "compute_eqe requires tabulated optical_material data or an active "
+            "device.graded_optics CIGS model."
         )
 
 
@@ -295,8 +266,8 @@ def compute_eqe(
     Parameters
     ----------
     stack : DeviceStack
-        Must include at least one layer with wavelength-resolved optical
-        data (``optical_material``). See ``_require_tmm_optical_data``.
+        Must include tabulated wavelength-resolved optical data or an active
+        graded CIGS model. See ``_require_tmm_optical_data``.
     wavelengths_nm : np.ndarray, optional
         Probe wavelengths [nm]. Default is 300-1000 nm in 25-nm steps
         (29 points), which comfortably spans AM1.5G's peak region and

@@ -28,10 +28,10 @@ def _matrix():
 
 def test_matrix_covers_and_loads_every_shipped_config():
     report = validate_matrix(ROOT)
-    assert report["configs"] == 35
+    assert report["configs"] == 36
     assert report["resources"] == 21
     assert report["schemas"] == {
-        "standard-device-v1": 29,
+        "standard-device-v1": 30,
         "scaps-device-v1": 5,
         "tandem-v1": 1,
     }
@@ -76,6 +76,7 @@ def test_default_thermal_velocity_preserves_frozen_semantics():
         "bgn_log_shape",
         "bgn_conduction_band_fraction",
         "bulk_trap_distribution",
+        "cigs_graded_optics",
     }
     historical_payload = {
         field.name: getattr(baseline, field.name)
@@ -116,6 +117,7 @@ def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
             "jv_solver_policy",
             "interface_charge_closure",
             "interface_charge_rebaseline_acknowledged",
+            "graded_optics",
         }
     }
 
@@ -149,6 +151,7 @@ def test_parked_interface_charge_defaults_preserve_historical_hash():
             "jv_solver_policy",
             "interface_charge_closure",
             "interface_charge_rebaseline_acknowledged",
+            "graded_optics",
         }
     }
     research_intent = replace(

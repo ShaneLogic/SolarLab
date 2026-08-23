@@ -12,6 +12,7 @@ from perovskite_sim.physics.band_gap_narrowing import (
     normalize_band_gap_narrowing_model,
 )
 from perovskite_sim.physics.bulk_traps import BulkTrapDistribution
+from perovskite_sim.physics.cigs_optics import CIGSGradedOptics
 from perovskite_sim.physics.statistics import (
     CarrierStatistics,
     DISCRETE_LEVEL,
@@ -165,6 +166,10 @@ class MaterialParams:
     doping_profile_shape: str | None = None  # currently "gaussian"
     doping_decay_length: float | None = None  # Gaussian 1/e distance [m]
     doping_edge: str = "front"              # "front" | "back"
+    # Composition-resolved CIGS dielectric model.  Appended to preserve
+    # positional compatibility. Merely declaring the block is inert;
+    # DeviceStack.graded_optics is the separate runtime master gate.
+    cigs_graded_optics: CIGSGradedOptics | None = None
 
     def __post_init__(self) -> None:
         statistics = normalize_carrier_statistics(self.carrier_statistics)
@@ -209,6 +214,18 @@ class MaterialParams:
             if narrowing_model != BAND_GAP_NARROWING_OFF:
                 raise ValueError(
                     "energy-resolved bulk traps currently exclude band-gap narrowing"
+                )
+
+        cigs_optics = self.cigs_graded_optics
+        if cigs_optics is not None:
+            if not isinstance(cigs_optics, CIGSGradedOptics):
+                raise TypeError(
+                    "cigs_graded_optics must be a CIGSGradedOptics or None"
+                )
+            if self.optical_material is not None or self.n_optical is not None:
+                raise ValueError(
+                    "cigs_graded_optics cannot be combined with optical_material "
+                    "or n_optical on the same layer"
                 )
 
         if ionization == FULLY_IONIZED:

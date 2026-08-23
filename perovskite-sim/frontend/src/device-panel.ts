@@ -31,19 +31,25 @@ export interface MountDevicePanelOptions {
 /**
  * Render the "TMM active · N layers" badge shown in the device-pane header.
  * Returns an empty string unless the device is on the `full` tier AND at
- * least one layer has a non-empty `optical_material` field.
+ * least one layer has a wavelength-resolved optical source.  That source is
+ * either a tabulated `optical_material` or an active graded-CIGS block.
  */
 export function computeTmmBadge(
   config: DeviceConfig,
   tier: SimulationModeName | undefined,
 ): string {
   if (tier !== 'full') return ''
-  const tmmLayers = config.layers.filter(
-    l => l.optical_material != null && l.optical_material !== '',
+  const tmmLayers = config.layers.filter(l =>
+    (l.optical_material != null && l.optical_material !== '')
+    || (
+      config.device.graded_optics === true
+      && config.device.band_grading === true
+      && l.cigs_graded_optics != null
+    ),
   )
   if (tmmLayers.length === 0) return ''
   const noun = tmmLayers.length === 1 ? 'layer' : 'layers'
-  return `<span class="tmm-badge" title="Optical generation computed with transfer-matrix method. Layers without optical_material fall back to Beer-Lambert.">TMM active · ${tmmLayers.length} ${noun}</span>`
+  return `<span class="tmm-badge" title="Optical generation computed with transfer-matrix method. Layers without wavelength-resolved optics use scalar fallbacks.">TMM active · ${tmmLayers.length} ${noun}</span>`
 }
 
 export async function mountDevicePanel(
