@@ -1038,7 +1038,7 @@ benchmarks:
       - the 60 mV SCAPS comparison window is not an independent holdout validation
   degenerate-pn-internal-closure:
     kind: internal
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: pytest -q tests/unit/physics/test_degenerate_transport.py tests/unit/solver/test_degenerate_equilibrium.py tests/unit/validation/test_degenerate_refinement.py
     tests:
@@ -1051,6 +1051,7 @@ benchmarks:
       - tests/unit/validation/test_degenerate_refinement.py::test_registered_executor_real_cell_matches_exact_contract
     configs: [configs/csi_degenerate_pn_research.yaml]
     limitations:
+      - the source-clean 3x3 matrix is internally certified at commit d756c76 with certificate SHA-256 968ad3bb67dc696b841a6bb8544c16eba3f9d5748b2fe737e20b8c7e30f8373f
       - the registered path is fully ionized, dark, recombination-off, homojunction-only, and not a production experiment route
       - the depletion approximation is an internal analytic oracle rather than external Sentaurus or PC1D validation
 

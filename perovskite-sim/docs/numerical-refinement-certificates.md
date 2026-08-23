@@ -393,6 +393,7 @@ cell，0 failed、0 missing、0 reused，但证书保持 `partial`：N30 到 N60
 `250a3a8d934f327ab0f73f5197113d2a1de9d57be07f58d71bbd89904fd025a6`，
 partial certificate 为
 `000fd33d2f162de00ac97fe15e174c27d0d3b995c4aabb9b22e5e62e687df657`。
+
 该结果未被删除、重试或通过放宽门限覆盖。
 
 独立的 `interface-charge-device-stress-resolved-v2` 保留同一 9 个设备点、
@@ -421,3 +422,26 @@ source commit `a3c6b30`、source changes 为空且 BLAS/OpenMP 单线程环境�
 内部数值认证。N120/factor=0.5 在 `N_D=2e15 cm^-3` dark-bias target 上
 fail-close；`N_D>=5e15 cm^-3`、多参数交互、历史三层 SCAPS-derived illuminated
 case、transient、impedance、2D、绝对 trap charge 与全器件电中性仍不在声明内。
+
+### 2026-08-24 degenerate PN equilibrium certificate
+
+`degenerate-pn-equilibrium-v1` 在 source commit `d756c76`、source changes 为空且
+BLAS/OpenMP 单线程的环境下完成 9/9 cell，0 failed、0 missing、0 reused：
+
+- run ID：`3c7c98f9d67bbb2ff2864f946183af9db2b008cf0971a76945e6fdaa7a602eb9`；
+- certificate SHA-256：`968ad3bb67dc696b841a6bb8544c16eba3f9d5748b2fe737e20b8c7e30f8373f`；
+- protocol SHA-256：`96dd6e56aeb90ad458c5ce86ad31c7aa61eea7e4737573fb7cc30852c5ac91e9`；
+- terminal grid difference：depletion ratio `1.24453e-3`、peak-field ratio
+  `8.10282e-4`、space-charge balance error `4.22650e-3`；三项 terminal
+  tolerance difference 均为 0；
+- 全矩阵最大 normalized Poisson residual `1.31861e-12`、normalized carrier
+  rate `3.90497e-14`、relative face current `4.02601e-14`、space-charge
+  balance error `1.75650e-2`；
+- depletion-width / peak-field analytic error 最大 `3.37788e-2 / 2.92171e-2`，
+  所有 cell 均保持正载流子、statistics-aware contact certificate 和
+  recombination-off topology gate。
+
+该证书只覆盖 fully-ionized、dark、homogeneous c-Si p+/n+ equilibrium。
+recombination、incomplete ionization、BGN、bias/illumination、heterojunction 和
+production experiment routes 均不继承此证书；解析 depletion approximation 也不等于
+Sentaurus/PC1D 外部验证。
