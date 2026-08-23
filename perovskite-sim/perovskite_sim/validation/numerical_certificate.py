@@ -246,7 +246,11 @@ class ObservableGate:
     """Pre-registered convergence limit for one reported observable."""
 
     metric: str
-    comparison: Literal["absolute_linf", "relative_linf"]
+    comparison: Literal[
+        "absolute_linf",
+        "relative_linf",
+        "pointwise_relative_linf",
+    ]
     limit: float
     units: str = "1"
     relative_floor: float = 1.0e-30
@@ -255,7 +259,11 @@ class ObservableGate:
         object.__setattr__(
             self, "metric", _require_identifier(self.metric, "observable metric")
         )
-        if self.comparison not in {"absolute_linf", "relative_linf"}:
+        if self.comparison not in {
+            "absolute_linf",
+            "relative_linf",
+            "pointwise_relative_linf",
+        }:
             raise NumericalCertificateError(
                 f"observable {self.metric}: unsupported comparison {self.comparison!r}"
             )
@@ -1215,6 +1223,12 @@ def _observable_delta(
     absolute = float(np.max(np.abs(b - a)))
     if gate.comparison == "absolute_linf":
         return absolute
+    if gate.comparison == "pointwise_relative_linf":
+        scale = np.maximum(
+            np.maximum(np.abs(a), np.abs(b)),
+            gate.relative_floor,
+        )
+        return float(np.max(np.abs(b - a) / scale))
     scale = max(
         float(np.max(np.abs(a))),
         float(np.max(np.abs(b))),

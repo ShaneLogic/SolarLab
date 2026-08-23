@@ -1,12 +1,12 @@
 # Ion-aware impedance reference engine
 
-Status: `INTERNAL_TESTED_PER_FREQUENCY_GRID_CERTIFICATE` as of 2026-08-23.
-This is a canonical internal numerical certificate, not yet a content-addressed
-release artifact or external validation.
+Status: `REGISTERED_CONTENT_ADDRESSED_CANDIDATE` as of 2026-08-23.
+This is a canonical internal numerical certificate with a registered runner
+lane; its release artifact and external validation remain separate evidence.
 
 ## Scope
 
-`perovskite_sim.experiments.ion_aware_impedance` implements Phase 2 steps 2
+`perovskite_sim.experiments.ion_aware_impedance` implements Phase 2 step 2
 and the reference half of step 3. It consumes one exact
 `IonAwareDCResult`, re-evaluates its full-MOL DC certificate, and constructs
 the small-signal system
@@ -220,8 +220,13 @@ certification remains false because the source deck's contact thermodynamics
 is `compatible_unverified`.
 
 These are implementation tests and canonical runtime evidence. A
-content-addressed validation-runner artifact and external comparison remain
-separate deliverables.
+content-addressed runner lane named
+`ionmonger-ion-aware-impedance-resolved-v1` now binds the `60/90/120`
+nominal-grid matrix, external finite-difference factors `1/0.5/0.25`, and all
+29 frequency points. Magnitude convergence uses a pointwise relative norm so a
+large impedance elsewhere in the spectrum cannot hide one unconverged
+frequency. The release execution and external comparison remain separate
+deliverables.
 
 ## Remaining Phase 2 work
 
@@ -233,8 +238,8 @@ separate deliverables.
    frozen-potential differences.
    See
    [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
-2. Register the canonical grid/stencil/frequency matrix in the content-addressed
-   validation runner and mint a release artifact.
+2. Execute the registered canonical grid/stencil/frequency matrix and mint its
+   content-addressed release artifact.
 3. Cross-check selected frequencies against transient lock-in using the exact
    same DC state and protocol.
 4. Only after those gates pass, route the method through `run_impedance`, the

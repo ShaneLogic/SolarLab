@@ -13,6 +13,15 @@ from perovskite_sim.experiments.jv_sweep import (
     JVMetrics,
     JVPointStatus,
 )
+from perovskite_sim.experiments.impedance_frequency import (
+    FrequencyWindowAssessment,
+)
+from perovskite_sim.experiments.ion_aware_impedance import (
+    FrequencyPerturbationAssessment,
+    IonAwareImpedanceCertificate,
+    IonAwareImpedanceFrequencyCertificate,
+    PerturbationStepAssessment,
+)
 from perovskite_sim.discretization.grid import GridResolutionError
 from perovskite_sim.physics.contacts import ContactThermodynamicCertificate
 from perovskite_sim.solver.numerical_diagnostics import (
@@ -375,6 +384,175 @@ def test_ion_aware_dc_executor_smoke(monkeypatch):
     metadata = json.loads(measurement.metadata_json)
     assert metadata["thermodynamically_certified"] is False
     assert metadata["total_settle_time_s"] == pytest.approx(2.0)
+
+
+def test_ion_aware_impedance_executor_smoke(monkeypatch):
+    registry = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    )
+    lane = registry.lane("ionmonger-ion-aware-impedance-resolved-v1")
+    stack = SimpleNamespace(T=300.0, mode="full")
+    grid = np.linspace(0.0, 1.0, 5)
+    monkeypatch.setattr(executors, "_load_stack", lambda *_args: stack)
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_args: grid,
+    )
+    monkeypatch.setattr(executors, "build_material_arrays", lambda *_args: object())
+
+    contact = ContactThermodynamicCertificate(
+        status="compatible_unverified",
+        built_in_potential_mode="legacy_manual",
+        tolerance_eV=0.005,
+        fermi_level_span_eV=None,
+        potential_mismatch_V=0.0,
+        metal_work_function_mismatch_eV=None,
+        contact_quasi_fermi_levels_eV=(),
+        message="endpoint DOS unavailable",
+    )
+    dc_certificate = SimpleNamespace(
+        contact_thermodynamics=contact,
+        max_ion_inventory_relative_drift=2.0e-13,
+        maximum_site_occupancy_fraction=0.02,
+    )
+    captured = {}
+
+    def fake_dc(_grid, _stack, protocol, **kwargs):
+        captured["dc_atol"] = kwargs["atol"]
+        captured["dc_require"] = kwargs["require_numerical_certificate"]
+        return SimpleNamespace(
+            y=np.ones(15),
+            protocol_hash=protocol.protocol_hash,
+            numerically_certified=True,
+            thermodynamically_certified=False,
+            state_certificate=dc_certificate,
+        )
+
+    monkeypatch.setattr(executors, "solve_ion_aware_dc", fake_dc)
+
+    def fake_build_impedance(dc_state, frequencies, **kwargs):
+        captured["frequencies"] = np.asarray(frequencies)
+        captured["state_step"] = kwargs["state_step"]
+        captured["voltage_step"] = kwargs["voltage_step"]
+        payload = {
+            "dc_protocol_sha256": dc_state.protocol_hash,
+            "schema_version": "test-ion-aware-impedance-protocol-v1",
+            "state_step": kwargs["state_step"],
+            "voltage_step": kwargs["voltage_step"],
+        }
+        return SimpleNamespace(
+            protocol_hash="b" * 64,
+            to_dict=lambda: payload,
+        )
+
+    monkeypatch.setattr(
+        executors,
+        "build_ion_aware_impedance_protocol",
+        fake_build_impedance,
+    )
+
+    def fake_impedance(_grid, _stack, protocol, **kwargs):
+        captured["impedance_kwargs"] = kwargs
+        frequencies = captured["frequencies"]
+        frequency_assessments = tuple(
+            FrequencyPerturbationAssessment(
+                frequency_Hz=float(frequency),
+                coarse_factor=0.5,
+                fine_factor=0.25,
+                impedance_magnitude_relative_change=1.0e-4,
+                impedance_phase_change_deg=2.0e-3,
+                passed=True,
+            )
+            for frequency in frequencies
+        )
+        step = PerturbationStepAssessment(
+            coarse_factor=0.5,
+            fine_factor=0.25,
+            max_impedance_magnitude_relative_change=1.0e-4,
+            max_impedance_phase_change_deg=2.0e-3,
+            passed=True,
+            frequency_assessments=frequency_assessments,
+        )
+        points = tuple(
+            IonAwareImpedanceFrequencyCertificate(
+                frequency_Hz=float(frequency),
+                numerically_certified=True,
+                max_relative_face_spread=1.0e-6,
+                reciprocal_condition=0.1,
+                backward_error=1.0e-13,
+                positive_ion_inventory_response_relative=2.0e-12,
+                negative_ion_inventory_response_relative=0.0,
+                current_decomposition_relative_error=3.0e-12,
+                electron_storage_response_F_m2=1.0e-5 + 2.0e-6j,
+                hole_storage_response_F_m2=2.0e-5 + 3.0e-6j,
+                positive_ion_storage_response_F_m2=3.0e-5 + 4.0e-6j,
+                negative_ion_storage_response_F_m2=None,
+                net_charge_storage_response_F_m2=4.0e-5 + 5.0e-6j,
+                perturbation_assessments=(frequency_assessments[0],),
+                reasons=(),
+            )
+            for frequency in frequencies
+        )
+        certificate = IonAwareImpedanceCertificate(
+            numerically_certified=True,
+            thermodynamically_certified=False,
+            certified=False,
+            max_relative_face_spread=1.0e-6,
+            max_backward_error=1.0e-13,
+            minimum_reciprocal_condition=0.1,
+            max_mass_diagonal_relative_error=4.0e-12,
+            max_mass_off_diagonal_relative=5.0e-12,
+            max_ion_inventory_response_relative=2.0e-12,
+            max_current_decomposition_relative_error=3.0e-12,
+            frequency_window_certified=True,
+            perturbation_assessments=(step,),
+            frequency_point_certificates=points,
+            reasons=(),
+        )
+        window = FrequencyWindowAssessment(
+            f_min_Hz=float(frequencies[0]),
+            f_max_Hz=float(frequencies[-1]),
+            has_mobile_ions=True,
+            ionic_branch_covered=True,
+            max_observed_sampling_gap_decades=0.25,
+        )
+        return SimpleNamespace(
+            Z=np.asarray([10.0 - 1.0j] * len(frequencies)),
+            certificate=certificate,
+            frequency_window=window,
+            protocol_hash=protocol.protocol_hash,
+        )
+
+    monkeypatch.setattr(executors, "run_ion_aware_impedance", fake_impedance)
+
+    measurement = executors.run_ion_aware_impedance_frequency_domain(
+        lane,
+        MatrixPoint(60, 0.5),
+        Path("."),
+    )
+
+    _assert_protocol(measurement)
+    _assert_registry_contract(
+        measurement,
+        "ionmonger-ion-aware-impedance-resolved-v1",
+    )
+    assert captured["dc_atol"].refinement_factor == pytest.approx(1.0)
+    assert captured["dc_require"] is False
+    assert captured["state_step"] == pytest.approx(5.0e-6)
+    assert captured["voltage_step"] == pytest.approx(5.0e-6)
+    assert captured["impedance_kwargs"]["require_numerical_certificate"] is False
+    quality = _metric_dict(measurement, quality=True)
+    assert quality["all_frequency_points_certified"].values == (1.0,)
+    assert quality["frequency_window_certified"].values == (1.0,)
+    metadata = json.loads(measurement.metadata_json)
+    assert metadata["actual_nodes"] == 5
+    assert metadata["external_finite_difference_step_factor"] == pytest.approx(0.5)
+    assert metadata["raw_impedance_ohm_m2"][0] == {
+        "imag": -1.0,
+        "real": 10.0,
+    }
 
 
 def test_csi_qf_frequency_executor_smoke(monkeypatch):

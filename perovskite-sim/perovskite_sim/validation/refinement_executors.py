@@ -30,7 +30,15 @@ from perovskite_sim.experiments.jv_sweep import (
 from perovskite_sim.experiments.impedance import build_impedance_experiment_protocol
 from perovskite_sim.experiments.ion_aware_dc import (
     build_ion_aware_dc_protocol,
+    ion_aware_dc_state_sha256,
     solve_ion_aware_dc,
+)
+from perovskite_sim.experiments.ion_aware_impedance import (
+    build_ion_aware_impedance_protocol,
+    run_ion_aware_impedance,
+)
+from perovskite_sim.experiments.ion_aware_impedance_grid import (
+    ion_aware_impedance_grid_sha256,
 )
 from perovskite_sim.experiments.mott_schottky import _fit_mott_schottky
 from perovskite_sim.experiments.quasi_fermi_impedance import (
@@ -542,6 +550,17 @@ def _numeric_array_option(
     return values
 
 
+def _complex_metadata(values: np.ndarray) -> list[dict[str, float]]:
+    """Encode a finite complex trace without relying on JSON coercion."""
+    trace = np.asarray(values, dtype=complex)
+    if trace.ndim != 1 or not np.all(np.isfinite(trace)):
+        raise ValueError("complex metadata trace must be finite and one-dimensional")
+    return [
+        {"real": float(value.real), "imag": float(value.imag)}
+        for value in trace
+    ]
+
+
 def run_ion_aware_dc_operating_point(
     lane: LaneDefinition,
     point: MatrixPoint,
@@ -750,6 +769,329 @@ def run_ion_aware_dc_operating_point(
                 "used_settle_end_times_s": [
                     step.target_time_s for step in result.steps
                 ],
+            },
+        }
+    )
+
+
+def run_ion_aware_impedance_frequency_domain(
+    lane: LaneDefinition,
+    point: MatrixPoint,
+    project_root: Path,
+) -> CellMeasurement:
+    """Run one cell of the ion-aware impedance grid/stencil matrix."""
+    options = lane.options
+    stack = _load_stack(lane, project_root)
+    grid = build_electrical_grid(stack, point.grid)
+    material = build_material_arrays(grid, stack)
+
+    voltage = _option(options, "V_dc_V", float, 0.9)
+    illuminated = _option(options, "illuminated", bool, True)
+    dc_rtol = _option(options, "dc_rtol", float, 1.0e-4)
+    end_times = tuple(
+        float(value)
+        for value in _numeric_array_option(
+            options,
+            "settle_end_times_s",
+            (1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 32.0, 64.0, 128.0),
+        )
+    )
+    required_passes = _option(options, "required_consecutive_passes", int, 2)
+    max_carrier_rate = _option(
+        options, "max_carrier_area_rate_A_m2", float, 1.0e-1
+    )
+    max_ion_rate = _option(options, "max_ion_area_rate_A_m2", float, 1.0e-6)
+    max_ion_current = _option(
+        options, "max_ionic_face_current_A_m2", float, 1.0e-6
+    )
+    max_dc_spread = _option(
+        options, "max_dc_face_current_spread_A_m2", float, 1.0e-1
+    )
+    max_dc_inventory_drift = _option(
+        options, "max_dc_ion_inventory_relative_drift", float, 1.0e-10
+    )
+    max_nfev = _option(options, "max_nfev_per_attempt", int, 20_000)
+    dc_atol = ComponentwiseAtol(
+        carrier_fraction=_option(
+            options, "carrier_atol_fraction", float, 1.0e-12
+        ),
+        ion_fraction=_option(options, "ion_atol_fraction", float, 1.0e-12),
+        interface_fraction=_option(
+            options, "interface_atol_fraction", float, 1.0e-12
+        ),
+        minimum_atol=_option(options, "minimum_atol", float, 1.0e-6),
+    )
+    dc_protocol = build_ion_aware_dc_protocol(
+        stack,
+        V_dc=voltage,
+        illuminated=illuminated,
+        settle_end_times_s=end_times,
+        required_consecutive_passes=required_passes,
+        max_carrier_area_rate_A_m2=max_carrier_rate,
+        max_ion_area_rate_A_m2=max_ion_rate,
+        max_ionic_face_current_A_m2=max_ion_current,
+        max_dc_face_current_spread_A_m2=max_dc_spread,
+        max_ion_inventory_relative_drift=max_dc_inventory_drift,
+    )
+    dc_result = solve_ion_aware_dc(
+        grid,
+        stack,
+        dc_protocol,
+        mat=material,
+        rtol=dc_rtol,
+        atol=dc_atol,
+        method_ladder=("Radau", "BDF"),
+        max_nfev_per_attempt=max_nfev,
+        require_numerical_certificate=False,
+        require_contact_certificate=False,
+    )
+
+    frequency_min = _option(options, "frequency_min_Hz", float, 1.0e-6)
+    frequency_max = _option(options, "frequency_max_Hz", float, 10.0)
+    frequency_count = _option(options, "frequency_count", int, 29)
+    spacing = _option(options, "frequency_spacing", str, "logspace")
+    if frequency_min <= 0.0 or frequency_max <= frequency_min:
+        raise ValueError("frequency bounds must be positive and increasing")
+    if frequency_count < 2:
+        raise ValueError("frequency_count must be at least two")
+    if spacing != "logspace":
+        raise ValueError("ion-aware impedance matrix requires logspace frequencies")
+    frequencies = np.logspace(
+        np.log10(frequency_min),
+        np.log10(frequency_max),
+        frequency_count,
+    )
+
+    delta_voltage = _option(options, "delta_V", float, 0.01)
+    base_state_step = _option(options, "base_state_step", float, 1.0e-5)
+    base_voltage_step = _option(options, "base_voltage_step", float, 1.0e-5)
+    refinement_factors = tuple(
+        float(value)
+        for value in _numeric_array_option(
+            options, "internal_refinement_factors", (1.0, 0.5, 0.25)
+        )
+    )
+    max_face_spread = _option(
+        options, "max_relative_face_spread", float, 5.0e-4
+    )
+    max_backward = _option(options, "max_backward_error", float, 1.0e-10)
+    max_stencil_magnitude = _option(
+        options,
+        "max_impedance_magnitude_relative_change",
+        float,
+        1.0e-2,
+    )
+    max_stencil_phase = _option(
+        options, "max_impedance_phase_change_deg", float, 0.5
+    )
+    max_mass = _option(
+        options, "max_mass_matrix_relative_error", float, 1.0e-8
+    )
+    max_inventory_response = _option(
+        options, "max_ion_inventory_response_relative", float, 1.0e-8
+    )
+    max_decomposition = _option(
+        options, "max_current_decomposition_relative_error", float, 1.0e-7
+    )
+    branch_margin = _option(
+        options, "frequency_branch_margin_decades", float, 1.0
+    )
+    max_frequency_gap = _option(
+        options, "max_frequency_sampling_gap_decades", float, 0.5
+    )
+    impedance_protocol = build_ion_aware_impedance_protocol(
+        dc_result,
+        frequencies,
+        delta_V=delta_voltage,
+        state_step=base_state_step * point.tolerance_factor,
+        voltage_step=base_voltage_step * point.tolerance_factor,
+        refinement_factors=refinement_factors,
+        max_relative_face_spread=max_face_spread,
+        max_backward_error=max_backward,
+        max_impedance_magnitude_relative_change=max_stencil_magnitude,
+        max_impedance_phase_change_deg=max_stencil_phase,
+        max_mass_matrix_relative_error=max_mass,
+        max_ion_inventory_response_relative=max_inventory_response,
+        max_current_decomposition_relative_error=max_decomposition,
+        frequency_branch_margin_decades=branch_margin,
+        max_frequency_sampling_gap_decades=max_frequency_gap,
+    )
+    impedance_result = run_ion_aware_impedance(
+        grid,
+        stack,
+        impedance_protocol,
+        dc_state=dc_result,
+        require_numerical_certificate=False,
+        require_contact_certificate=False,
+        require_frequency_window_certificate=False,
+    )
+
+    certificate = impedance_result.certificate
+    dc_certificate = dc_result.state_certificate
+    contact = dc_certificate.contact_thermodynamics
+    observed_frequency_gap = (
+        impedance_result.frequency_window.max_observed_sampling_gap_decades
+    )
+    if observed_frequency_gap is None:
+        observed_frequency_gap = np.finfo(float).max
+    mass_matrix_error = max(
+        certificate.max_mass_diagonal_relative_error,
+        certificate.max_mass_off_diagonal_relative,
+    )
+    numerical_protocol = {
+        "acceptance": {
+            "matrix_observables": {
+                gate.metric: gate.to_dict() for gate in lane.observables
+            },
+            "per_cell_quality": {
+                gate.metric: gate.to_dict() for gate in lane.quality_gates
+            },
+        },
+        "adapter": "ionmonger-ion-aware-impedance-grid-stencil-matrix",
+        "dc_protocol": dc_protocol.to_dict(),
+        "frequency_request": {
+            "count": frequency_count,
+            "maximum_Hz": frequency_max,
+            "minimum_Hz": frequency_min,
+            "spacing": spacing,
+        },
+        "numerical_controls": {
+            "dc_atol_policy": dataclasses.asdict(dc_atol),
+            "dc_atol_refinement_factor": 1.0,
+            "dc_rtol": dc_rtol,
+            "finite_difference_factor_source": "matrix.tolerance_factor",
+            "grid_source": "matrix.grid",
+            "impedance_base_state_step": base_state_step,
+            "impedance_base_voltage_step": base_voltage_step,
+            "impedance_internal_refinement_factors": list(refinement_factors),
+            "max_nfev_per_attempt": max_nfev,
+            "method_ladder": ["Radau", "BDF"],
+        },
+        "schema_version": "ion-aware-impedance-refinement-execution-protocol-v1",
+    }
+    frequency_evidence = [
+        {
+            "backward_error": item.backward_error,
+            "current_decomposition_relative_error": (
+                item.current_decomposition_relative_error
+            ),
+            "electron_storage_response_F_m2": {
+                "real": float(item.electron_storage_response_F_m2.real),
+                "imag": float(item.electron_storage_response_F_m2.imag),
+            },
+            "frequency_Hz": item.frequency_Hz,
+            "hole_storage_response_F_m2": {
+                "real": float(item.hole_storage_response_F_m2.real),
+                "imag": float(item.hole_storage_response_F_m2.imag),
+            },
+            "max_relative_face_spread": item.max_relative_face_spread,
+            "negative_ion_inventory_response_relative": (
+                item.negative_ion_inventory_response_relative
+            ),
+            "negative_ion_storage_response_F_m2": (
+                None
+                if item.negative_ion_storage_response_F_m2 is None
+                else {
+                    "real": float(
+                        item.negative_ion_storage_response_F_m2.real
+                    ),
+                    "imag": float(
+                        item.negative_ion_storage_response_F_m2.imag
+                    ),
+                }
+            ),
+            "net_charge_storage_response_F_m2": {
+                "real": float(item.net_charge_storage_response_F_m2.real),
+                "imag": float(item.net_charge_storage_response_F_m2.imag),
+            },
+            "numerically_certified": item.numerically_certified,
+            "perturbation_assessments": [
+                dataclasses.asdict(assessment)
+                for assessment in item.perturbation_assessments
+            ],
+            "positive_ion_inventory_response_relative": (
+                item.positive_ion_inventory_response_relative
+            ),
+            "positive_ion_storage_response_F_m2": {
+                "real": float(item.positive_ion_storage_response_F_m2.real),
+                "imag": float(item.positive_ion_storage_response_F_m2.imag),
+            },
+            "reasons": list(item.reasons),
+            "reciprocal_condition": item.reciprocal_condition,
+        }
+        for item in certificate.frequency_point_certificates
+    ]
+    return CellMeasurement.from_mapping(
+        {
+            "observables": {
+                "impedance_magnitude_ohm_m2": np.abs(impedance_result.Z),
+                "impedance_phase_deg": np.angle(impedance_result.Z, deg=True),
+            },
+            "quality": {
+                "all_frequency_points_certified": float(
+                    all(
+                        item.numerically_certified
+                        for item in certificate.frequency_point_certificates
+                    )
+                ),
+                "contact_not_inconsistent": float(contact.status != "inconsistent"),
+                "dc_numerically_certified": float(dc_result.numerically_certified),
+                "frequency_window_certified": float(
+                    certificate.frequency_window_certified
+                ),
+                "impedance_numerically_certified": float(
+                    certificate.numerically_certified
+                ),
+                "max_backward_error": certificate.max_backward_error,
+                "max_current_decomposition_relative_error": (
+                    certificate.max_current_decomposition_relative_error
+                ),
+                "max_dc_ion_inventory_relative_drift": (
+                    dc_certificate.max_ion_inventory_relative_drift
+                ),
+                "max_frequency_sampling_gap_decades": observed_frequency_gap,
+                "max_ion_inventory_response_relative": (
+                    certificate.max_ion_inventory_response_relative
+                ),
+                "max_mass_matrix_relative_error": mass_matrix_error,
+                "max_relative_face_spread": certificate.max_relative_face_spread,
+                "site_occupancy_admissible": float(
+                    dc_certificate.maximum_site_occupancy_fraction <= 1.0 + 1.0e-8
+                ),
+            },
+            "units": {
+                "impedance_magnitude_ohm_m2": "ohm m2",
+                "impedance_phase_deg": "deg",
+            },
+            "metadata": {
+                **_protocol_metadata(numerical_protocol),
+                "actual_intervals": len(grid) - 1,
+                "actual_nodes": len(grid),
+                "contact_thermodynamics": dataclasses.asdict(contact),
+                "dc_numerically_certified": dc_result.numerically_certified,
+                "dc_protocol_hash": dc_result.protocol_hash,
+                "dc_state_hash": ion_aware_dc_state_sha256(dc_result.y),
+                "external_finite_difference_step_factor": (
+                    point.tolerance_factor
+                ),
+                "frequency_evidence": frequency_evidence,
+                "frequency_window": dataclasses.asdict(
+                    impedance_result.frequency_window
+                ),
+                "grid_sha256": ion_aware_impedance_grid_sha256(grid),
+                "impedance_numerically_certified": (
+                    certificate.numerically_certified
+                ),
+                "impedance_protocol": impedance_protocol.to_dict(),
+                "impedance_protocol_hash": impedance_result.protocol_hash,
+                "perturbation_assessments": [
+                    dataclasses.asdict(item)
+                    for item in certificate.perturbation_assessments
+                ],
+                "raw_impedance_ohm_m2": _complex_metadata(impedance_result.Z),
+                "thermodynamically_certified": (
+                    certificate.thermodynamically_certified
+                ),
             },
         }
     )

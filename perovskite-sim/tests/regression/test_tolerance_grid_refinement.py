@@ -23,6 +23,7 @@ from perovskite_sim.validation.numerical_certificate import (
     NumericalCertificateError,
     ObservableGate,
     QualityGate,
+    _observable_delta,
     canonical_json_bytes,
     content_sha256,
     evaluate_numerical_certificate,
@@ -105,6 +106,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "ionmonger-mobile-ion-transient",
         "ionmonger-ion-aware-dc-v1",
         "ionmonger-ion-aware-dc-resolved-v2",
+        "ionmonger-ion-aware-impedance-resolved-v1",
         "csi-qf-frequency-domain",
         "csi-qf-frequency-domain-resolved-v2",
         "twod-uniform-limit",
@@ -127,6 +129,14 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert ion_dc_resolved.observables == ion_dc.observables
     assert ion_dc_resolved.quality_gates == ion_dc.quality_gates
     assert ion_dc_resolved.options == ion_dc.options
+    ion_impedance = registry.lane(
+        "ionmonger-ion-aware-impedance-resolved-v1"
+    )
+    assert ion_impedance.grid_values == (60, 90, 120)
+    assert ion_impedance.tolerance_factors == (1.0, 0.5, 0.25)
+    assert ion_impedance.observables[0].comparison == (
+        "pointwise_relative_linf"
+    )
     csi_minimum = registry.lane("csi-qf-frequency-domain")
     csi_resolved = registry.lane("csi-qf-frequency-domain-resolved-v2")
     assert csi_minimum.grid_values == (100, 200, 300)
@@ -141,6 +151,18 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert csi_resolved.options == csi_minimum.options
     with pytest.raises(FrozenInstanceError):
         registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
+
+
+def test_pointwise_relative_linf_does_not_hide_small_frequency_bins():
+    coarse = MetricValue.from_value("spectrum", [1000.0, 1.0])
+    fine = MetricValue.from_value("spectrum", [1000.0, 1.1])
+    global_gate = ObservableGate("spectrum", "relative_linf", 0.01)
+    pointwise_gate = ObservableGate(
+        "spectrum", "pointwise_relative_linf", 0.01
+    )
+
+    assert _observable_delta(coarse, fine, global_gate) < global_gate.limit
+    assert _observable_delta(coarse, fine, pointwise_gate) > pointwise_gate.limit
 
 
 def test_certificate_distinguishes_certified_partial_and_failed(tmp_path):

@@ -200,6 +200,75 @@ lanes:
       - The source deck lacks endpoint effective-DOS data, so contact thermodynamics remains compatible_unverified and the combined physical certificate is false.
       - Dynamic interface-state blocks remain excluded until their electrostatic charge closure is independently certified.
 
+  ionmonger-ion-aware-impedance-resolved-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/ionmonger_benchmark.yaml
+    config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
+    executor: perovskite_sim.validation.refinement_executors:run_ion_aware_impedance_frequency_domain
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [60, 90, 120]
+    tolerance:
+      parameter: finite_difference_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      impedance_magnitude_ohm_m2: {comparison: pointwise_relative_linf, limit: 0.02, units: ohm m2}
+      impedance_phase_deg: {comparison: absolute_linf, limit: 1.0, units: deg}
+    quality_gates:
+      all_frequency_points_certified: {operator: eq, limit: 1.0, units: "1"}
+      contact_not_inconsistent: {operator: eq, limit: 1.0, units: "1"}
+      dc_numerically_certified: {operator: eq, limit: 1.0, units: "1"}
+      frequency_window_certified: {operator: eq, limit: 1.0, units: "1"}
+      impedance_numerically_certified: {operator: eq, limit: 1.0, units: "1"}
+      max_backward_error: {operator: le, limit: 1.0e-10, units: "1"}
+      max_current_decomposition_relative_error: {operator: le, limit: 1.0e-7, units: "1"}
+      max_dc_ion_inventory_relative_drift: {operator: le, limit: 1.0e-10, units: "1"}
+      max_frequency_sampling_gap_decades: {operator: le, limit: 0.5, units: "1"}
+      max_ion_inventory_response_relative: {operator: le, limit: 1.0e-8, units: "1"}
+      max_mass_matrix_relative_error: {operator: le, limit: 1.0e-8, units: "1"}
+      max_relative_face_spread: {operator: le, limit: 5.0e-4, units: "1"}
+      site_occupancy_admissible: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_dc_V: 0.9
+      illuminated: true
+      settle_end_times_s: [1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 32.0, 64.0, 128.0]
+      required_consecutive_passes: 2
+      max_carrier_area_rate_A_m2: 0.1
+      max_ion_area_rate_A_m2: 1.0e-6
+      max_ionic_face_current_A_m2: 1.0e-6
+      max_dc_face_current_spread_A_m2: 0.1
+      max_dc_ion_inventory_relative_drift: 1.0e-10
+      max_nfev_per_attempt: 20000
+      dc_rtol: 1.0e-4
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+      frequency_min_Hz: 1.0e-6
+      frequency_max_Hz: 10.0
+      frequency_count: 29
+      frequency_spacing: logspace
+      delta_V: 0.01
+      base_state_step: 1.0e-5
+      base_voltage_step: 1.0e-5
+      internal_refinement_factors: [1.0, 0.5, 0.25]
+      max_relative_face_spread: 5.0e-4
+      max_backward_error: 1.0e-10
+      max_impedance_magnitude_relative_change: 0.01
+      max_impedance_phase_change_deg: 0.5
+      max_mass_matrix_relative_error: 1.0e-8
+      max_ion_inventory_response_relative: 1.0e-8
+      max_current_decomposition_relative_error: 1.0e-7
+      frequency_branch_margin_decades: 1.0
+      max_frequency_sampling_gap_decades: 0.5
+    limitations:
+      - This lane certifies internal ion-aware frequency-domain grid and finite-difference convergence, not an external impedance spectrum.
+      - The source deck lacks endpoint effective-DOS data, so contact thermodynamics remains compatible_unverified even when numerical and frequency-window axes pass.
+      - Dynamic interface-state blocks and transient lock-in agreement remain separate, fail-closed deliverables.
+
   csi-qf-frequency-domain:
     claim_level: internal-numerical-candidate
     config: configs/cSi_homojunction.yaml
