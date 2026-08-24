@@ -81,7 +81,26 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
   const illumCb = container.querySelector<HTMLInputElement>('#jv2d-illum')!
   const snapsCb = container.querySelector<HTMLInputElement>('#jv2d-snaps')!
   const bcSel = container.querySelector<HTMLSelectElement>('#jv2d-bc')!
+  const gbCb = container.querySelector<HTMLInputElement>('#jv2d-gb-en')!
   const physSlot = container.querySelector<HTMLDivElement>('#jv2d-active-physics')!
+
+  function configuredGrainBoundaryIsActive(): boolean {
+    const active = opts.getActiveDevice()
+    const config = active?.config as DeviceConfig & {
+      microstructure?: { grain_boundaries?: unknown[] }
+    }
+    return Boolean(config?.microstructure?.grain_boundaries?.length)
+  }
+
+  function syncMicrostructureBoundaryConstraint(): void {
+    const constrained = gbCb.checked || configuredGrainBoundaryIsActive()
+    const periodic = bcSel.querySelector<HTMLOptionElement>('option[value="periodic"]')
+    if (periodic) periodic.disabled = constrained
+    if (constrained && bcSel.value === 'periodic') bcSel.value = 'neumann'
+    bcSel.title = constrained
+      ? 'Finite-width grain boundaries currently require Neumann lateral boundaries.'
+      : ''
+  }
 
   // Pre-run mirror of the backend ``_describe_active_physics``. Reflects
   // ONLY the device's currently configured physics extras (mode tier flags
@@ -93,9 +112,11 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
     physSlot.textContent = active
       ? describeActivePhysics(active.config)
       : 'Active physics: (no active device)'
+    syncMicrostructureBoundaryConstraint()
   }
   refreshActivePhysics()
   container.addEventListener('mouseenter', refreshActivePhysics)
+  gbCb.addEventListener('change', syncMicrostructureBoundaryConstraint)
 
   btn.addEventListener('click', () => {
     const active = opts.getActiveDevice()
@@ -124,8 +145,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
 
     // Stage-B microstructure: when the checkbox is on, pack a single GB into
     // the request body. Backend treats this as a YAML-block-shaped dict.
-    const gbCb = container.querySelector<HTMLInputElement>('#jv2d-gb-en')
-    if (gbCb && gbCb.checked) {
+    if (gbCb.checked) {
       params.microstructure = {
         grain_boundaries: [
           {

@@ -1,8 +1,9 @@
 """V_oc(L_g) headline experiment.
 
 For each grain size L_g in the input sequence, runs a 2D J-V sweep on a
-device with one centred vertical grain boundary (GB) and periodic lateral
-BCs. The GB band has reduced SRH lifetime ``tau_gb`` and width ``gb_width``;
+device with one centred vertical grain boundary (GB) and Neumann lateral
+symmetry boundaries. The GB band has reduced SRH lifetime ``tau_gb`` and
+width ``gb_width``;
 its position is fixed at ``x = L_g / 2`` so each L_g sees one GB inside the
 unit cell. Returns V_oc, J_sc, FF as functions of L_g.
 """
@@ -50,14 +51,15 @@ def run_voc_grain_sweep(
     """Sweep lateral grain size with one centred absorber GB.
 
     Each grain size ``L_g`` produces a 2D run with ``lateral_length = L_g``,
-    ``Nx`` lateral intervals, periodic lateral BCs, and a single GB at
-    ``x_position = L_g / 2``. Returns V_oc, J_sc, FF for each grain size.
+    ``Nx`` lateral intervals, Neumann lateral symmetry boundaries, and a
+    single GB at ``x_position = L_g / 2``. Returns V_oc, J_sc, FF for each
+    grain size.
 
     Parameters
     ----------
     stack
         Device configuration. ``stack.microstructure`` is ignored — this
-        sweep paints a single GB per L_g.
+        sweep constructs one finite-volume GB per L_g.
     grain_sizes
         Sequence of grain sizes (m). Non-positive entries are skipped.
     tau_gb
@@ -93,7 +95,10 @@ def run_voc_grain_sweep(
             stack=stack, microstructure=ms,
             lateral_length=float(L_g), Nx=Nx,
             V_max=V_max, V_step=V_step,
-            illuminated=illuminated, lateral_bc="periodic",
+            # A centred GB in a finite grain cell uses lateral symmetry
+            # planes. The duplicate-endpoint periodic topology is not
+            # area-certified for finite-width microstructure.
+            illuminated=illuminated, lateral_bc="neumann",
             Ny_per_layer=Ny_per_layer, settle_t=settle_t,
         )
         V = np.asarray(r.V)

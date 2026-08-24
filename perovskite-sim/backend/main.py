@@ -2348,21 +2348,37 @@ def start_job(req: JobRequest):
             Microstructure, load_microstructure_from_yaml_block,
         )
 
-        def _run(reporter: ProgressReporter) -> dict:
-            _illum = p.get("illuminated", True)
-            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
-            _save = p.get("save_snapshots", True)
-            save_snapshots = bool(_save) if not isinstance(_save, str) else _save.lower() != "false"
-
-            # Microstructure resolution order:
-            #   1. params.microstructure block (UI-supplied) — wins
-            #   2. stack.microstructure (auto-attached by the YAML loader)
-            #   3. Microstructure() (Stage-A lateral-uniform fallback)
+        # Resolve and validate geometry before submitting an asynchronous job.
+        # A bad microstructure/BC pair is a request-contract error, not a
+        # numerical worker failure.
+        try:
             ms_block = p.get("microstructure")
             if ms_block:
                 ms = load_microstructure_from_yaml_block(ms_block)
             else:
                 ms = getattr(stack, "microstructure", None) or Microstructure()
+            requested_lateral_bc = p.get("lateral_bc")
+            if requested_lateral_bc is None:
+                lateral_bc = "neumann" if ms.grain_boundaries else "periodic"
+            else:
+                lateral_bc = str(requested_lateral_bc)
+            if lateral_bc not in {"periodic", "neumann"}:
+                raise ValueError(
+                    "jv_2d lateral_bc must be 'periodic' or 'neumann'"
+                )
+            if ms.grain_boundaries and lateral_bc != "neumann":
+                raise ValueError(
+                    "finite-width jv_2d grain boundaries require "
+                    "lateral_bc='neumann'; periodic-x is not area-certified"
+                )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        def _run(reporter: ProgressReporter) -> dict:
+            _illum = p.get("illuminated", True)
+            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
+            _save = p.get("save_snapshots", True)
+            save_snapshots = bool(_save) if not isinstance(_save, str) else _save.lower() != "false"
 
             result = run_jv_sweep_2d(
                 stack=stack,
@@ -2372,7 +2388,7 @@ def start_job(req: JobRequest):
                 V_max=float(p.get("V_max", 1.2)),
                 V_step=float(p.get("V_step", 0.05)),
                 illuminated=illuminated,
-                lateral_bc=str(p.get("lateral_bc", "periodic")),
+                lateral_bc=lateral_bc,
                 Ny_per_layer=int(p.get("Ny_per_layer", 20)),
                 settle_t=float(p.get("settle_t", 1e-7)),
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),

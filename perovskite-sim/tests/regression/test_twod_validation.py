@@ -295,7 +295,7 @@ def test_twod_robin_microstructure_coexistence_smoke():
         V_max=1.0,
         V_step=0.25,
         illuminated=True,
-        lateral_bc="periodic",
+        lateral_bc="neumann",
         Ny_per_layer=5,
         settle_t=1e-4,
     )
@@ -550,7 +550,7 @@ def test_twod_field_mobility_robin_microstructure_coexistence_smoke():
         V_max=1.0,
         V_step=0.25,
         illuminated=True,
-        lateral_bc="periodic",
+        lateral_bc="neumann",
         Ny_per_layer=5,
         settle_t=1e-4,
     )
@@ -894,7 +894,7 @@ def test_twod_radiative_reabsorption_robin_field_mobility_coexistence_smoke():
 
     grid_2d = build_grid_2d(layers_compat, lateral_length=300e-9, Nx=6)
     mat = build_material_arrays_2d(
-        grid_2d, stack, ms, lateral_bc="periodic", P_ion_static_1d=sv.P,
+        grid_2d, stack, ms, lateral_bc="neumann", P_ion_static_1d=sv.P,
     )
     Ny, Nx_nodes = grid_2d.Ny, grid_2d.Nx
     n_2d = np.broadcast_to(sv.n[:, None], (Ny, Nx_nodes)).copy()

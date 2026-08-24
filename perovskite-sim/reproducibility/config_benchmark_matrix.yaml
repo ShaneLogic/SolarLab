@@ -1383,13 +1383,13 @@ configs:
     status: partial
     benchmarks: [loader-contract, lin2019-tandem]
   - path: configs/twod/bcx_combined_demo.yaml
-    sha256: 99be980f03ac242965554563287ccfd385a71bbbd429bf36fba0be76757ed940
+    sha256: de41a3ea4547a2c97a4327f2c2edaeab4b162e6a51ed43aae4e40ef3047c46dc
     semantic_sha256: f06713037915c1100cd3269587f448d37c21929911d062343a3bf629d5ebc162
     schema: standard-device-v1
     status: load_only
     benchmarks: [loader-contract]
   - path: configs/twod/nip_MAPbI3_singleGB.yaml
-    sha256: fcc945605af5b7e3968b7cf43ef44d1ef08f57600b08a297c8d085a39f3ce7a4
+    sha256: 01870c441a410f0c99a6d71ee363e862798ee05fdaaf03156bb657a16b6cf5b6
     semantic_sha256: 7a593a9281e03466f3e6084dff9e9064aca80966be7d855958bb237379f1b826
     schema: standard-device-v1
     status: load_only

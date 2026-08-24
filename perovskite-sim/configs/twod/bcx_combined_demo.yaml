@@ -114,8 +114,8 @@ layers:
     alpha: 0.0
 
 # Stage B(a) microstructure — one centred absorber grain boundary so the
-# combined demo also exercises the GB tau-painting path. Width and τ_GB
-# match the regression-test envelope (~50 ns vs 1 µs bulk).
+# combined demo also exercises the finite-volume GB SRH-mixture path. The
+# 50 ns versus 1 us values are an internal sensitivity preset, not a fit.
 microstructure:
   grain_boundaries:
     - x_position: 250e-9

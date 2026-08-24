@@ -4,8 +4,14 @@ from dataclasses import replace as dc_replace
 import numpy as np
 import pytest
 
-from perovskite_sim.twod.solver_2d import build_material_arrays_2d, MaterialArrays2D
-from perovskite_sim.twod.microstructure import Microstructure
+from perovskite_sim.twod.solver_2d import (
+    build_material_arrays_2d,
+    recombination_rate_2d,
+)
+from perovskite_sim.twod.microstructure import (
+    Microstructure,
+    lateral_dual_cell_widths,
+)
 from perovskite_sim.twod.grid_2d import build_grid_2d
 from perovskite_sim.discretization.grid import Layer
 from perovskite_sim.models.config_loader import load_device_from_yaml
@@ -138,37 +144,134 @@ def test_material_arrays_2d_left_maps_to_top():
     assert mat.S_p_bot == 0.0
 
 
-def test_material_arrays_2d_tau_field_with_singleGB():
-    """End-to-end Stage-B: build_material_arrays_2d driven by a stack carrying
-    a non-empty microstructure must produce a 2D τ field with reduced lifetime
-    at the GB column on rows tagged ``layer_role="absorber"``, and the bulk
-    lifetime everywhere else."""
+def test_material_arrays_2d_builds_area_conservative_single_gb_region():
+    """The build retains bulk tau and stores exact GB overlap geometry."""
     from perovskite_sim.twod.solver_2d import _layer_role_at_each_y
     stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=500e-9, Nx=10, lateral_uniform=True)
-    mat = build_material_arrays_2d(g, stack, stack.microstructure)
+    mat = build_material_arrays_2d(
+        g,
+        stack,
+        stack.microstructure,
+        lateral_bc="neumann",
+    )
 
     assert mat.tau_n.shape == (g.Ny, g.Nx)
     assert mat.tau_p.shape == (g.Ny, g.Nx)
-
-    i_gb = int(np.argmin(np.abs(g.x - 250e-9)))
-    i_bulk = 0
-
-    # Use the role-tag-per-y the build path itself uses. This is the ground
-    # truth for which rows the GB band should touch.
     roles = _layer_role_at_each_y(g.y, stack)
     is_absorber = np.array([r == "absorber" for r in roles])
-    is_other = ~is_absorber
+    assert np.allclose(mat.tau_n, mat.tau_n[:, [0]])
+    assert np.allclose(mat.tau_p, mat.tau_p[:, [0]])
+    assert len(mat.grain_boundary_regions) == 1
+    region = mat.grain_boundary_regions[0]
+    np.testing.assert_array_equal(region.y_mask, is_absorber)
+    assert np.dot(
+        region.x_overlap_fraction,
+        lateral_dual_cell_widths(g.x),
+    ) == pytest.approx(5e-9, rel=2e-14, abs=1e-21)
+    assert region.tau_n == pytest.approx(5e-8)
+    assert region.tau_p == pytest.approx(5e-8)
 
-    # Absorber rows in the GB column → τ_GB (5e-8 s).
-    assert np.allclose(mat.tau_n[is_absorber, i_gb], 5e-8)
-    assert np.allclose(mat.tau_p[is_absorber, i_gb], 5e-8)
-    # Non-absorber rows in the GB column → unchanged from the bulk column
-    # (the GB band only paints absorber rows).
-    assert np.allclose(
-        mat.tau_n[is_other, i_gb], mat.tau_n[is_other, i_bulk]
+
+def test_material_arrays_2d_rejects_gb_on_uncertified_periodic_topology():
+    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    g = build_grid_2d(
+        _layers_for_stack(stack),
+        lateral_length=500e-9,
+        Nx=10,
+        lateral_uniform=True,
     )
+    with pytest.raises(ValueError, match="not area-certified"):
+        build_material_arrays_2d(
+            g,
+            stack,
+            stack.microstructure,
+            lateral_bc="periodic",
+        )
+
+
+def test_recombination_rate_2d_empty_microstructure_is_bit_identical():
+    from perovskite_sim.physics.recombination import total_recombination
+
+    stack = _stack()
+    g = build_grid_2d(
+        _layers_for_stack(stack),
+        lateral_length=500e-9,
+        Nx=8,
+        lateral_uniform=True,
+    )
+    mat = build_material_arrays_2d(g, stack, Microstructure())
+    n = mat.ni * np.linspace(1.1, 3.0, g.Ny)[:, None]
+    p = mat.ni * np.linspace(2.7, 1.2, g.Ny)[:, None]
+    expected = total_recombination(
+        n=n.flatten(),
+        p=p.flatten(),
+        ni_sq=(mat.ni ** 2).flatten(),
+        tau_n=mat.tau_n.flatten(),
+        tau_p=mat.tau_p.flatten(),
+        n1=mat.n1.flatten(),
+        p1=mat.p1.flatten(),
+        B_rad=mat.B_rad.flatten(),
+        C_n=mat.C_n.flatten(),
+        C_p=mat.C_p.flatten(),
+    ).reshape((g.Ny, g.Nx))
+    actual = recombination_rate_2d(n, p, mat)
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("intervals", [4, 9, 32])
+def test_integrated_gb_srh_correction_is_grid_independent(intervals):
+    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    g = build_grid_2d(
+        _layers_for_stack(stack),
+        lateral_length=500e-9,
+        Nx=intervals,
+        lateral_uniform=True,
+    )
+    mat_gb = build_material_arrays_2d(
+        g,
+        stack,
+        stack.microstructure,
+        lateral_bc="neumann",
+    )
+    mat_bulk = dc_replace(mat_gb, grain_boundary_regions=())
+    n = np.full((g.Ny, g.Nx), 5e20)
+    p = np.full((g.Ny, g.Nx), 2e20)
+    delta = (
+        recombination_rate_2d(n, p, mat_gb)
+        - recombination_rate_2d(n, p, mat_bulk)
+    )
+    weights = lateral_dual_cell_widths(g.x)
+    absorber_row = int(np.flatnonzero(mat_gb.grain_boundary_regions[0].y_mask)[0])
+    integrated_delta = float(np.dot(delta[absorber_row], weights))
+
+    from perovskite_sim.physics.recombination import srh_recombination
+
+    bulk_rate = float(
+        srh_recombination(
+            n[absorber_row, 0],
+            p[absorber_row, 0],
+            mat_gb.ni[absorber_row, 0] ** 2,
+            mat_gb.tau_n[absorber_row, 0],
+            mat_gb.tau_p[absorber_row, 0],
+            mat_gb.n1[absorber_row, 0],
+            mat_gb.p1[absorber_row, 0],
+        )
+    )
+    gb_rate = float(
+        srh_recombination(
+            n[absorber_row, 0],
+            p[absorber_row, 0],
+            mat_gb.ni[absorber_row, 0] ** 2,
+            5e-8,
+            5e-8,
+            mat_gb.n1[absorber_row, 0],
+            mat_gb.p1[absorber_row, 0],
+        )
+    )
+    expected = 5e-9 * (gb_rate - bulk_rate)
+    assert integrated_delta == pytest.approx(expected, rel=2e-13)
 
 
 def test_assemble_rhs_2d_dirichlet_boundary_rows_exactly_zero():

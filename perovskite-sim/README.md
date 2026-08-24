@@ -308,8 +308,12 @@ The Stage A/B 2D solver uses the same physical stack but extrudes it onto a
 tensor-product grid. The vertical stack direction carries the device-contact
 boundary conditions: top/bottom carrier rows are ohmic by default, or Robin
 when FULL-mode selective-contact coefficients are configured. The lateral
-direction is periodic, so laterally uniform presets reproduce the 1D J-V
-semantics while microstructure presets can add vertical grain boundaries.
+direction supports periodic boundaries for laterally uniform presets and
+Neumann symmetry boundaries for finite-domain microstructure studies. The
+latter can add finite-volume vertical grain boundaries whose physical band
+width is preserved by sub-cell SRH mixing rather than whole-node lifetime
+painting; non-empty microstructures currently fail closed on the periodic
+topology.
 Positive and negative ions are frozen as static Poisson background fields
 during 2D J-V runs. The 2D continuity path also omits the 1D interface-defect
 and interface-plane recombination channels. Its certified scope is the

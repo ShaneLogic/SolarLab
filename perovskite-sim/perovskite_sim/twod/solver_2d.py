@@ -5,7 +5,10 @@ import numpy as np
 from perovskite_sim.constants import Q
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.contacts import selective_contact_flux
-from perovskite_sim.physics.recombination import total_recombination
+from perovskite_sim.physics.recombination import (
+    srh_recombination,
+    total_recombination,
+)
 from perovskite_sim.solver.mol import build_material_arrays as build_material_arrays_1d
 from perovskite_sim.solver.tolerances import (
     AbsoluteTolerance,
@@ -18,7 +21,12 @@ from perovskite_sim.twod.field_mobility_2d import (
     recompute_d_eff_2d,
 )
 from perovskite_sim.twod.grid_2d import Grid2D
-from perovskite_sim.twod.microstructure import Microstructure, build_tau_field
+from perovskite_sim.twod.microstructure import (
+    GrainBoundaryRegion2D,
+    Microstructure,
+    build_grain_boundary_regions,
+    build_tau_field,
+)
 from perovskite_sim.twod.poisson_2d import (
     Poisson2DFactor, build_poisson_2d_factor, solve_poisson_2d,
 )
@@ -30,8 +38,9 @@ class MaterialArrays2D:
     """2D analogue of the 1D MaterialArrays cache.
 
     All per-node fields are shape (Ny, Nx). For Stage A every field is a
-    uniform extrusion of the 1D MaterialArrays along x; Stage B will
-    override τ_n and τ_p inside grain-boundary bands.
+    uniform extrusion of the 1D MaterialArrays along x. Finite-width grain
+    boundaries retain bulk tau fields and are represented by exact
+    control-volume overlap regions used by the recombination operator.
 
     Field-name notes vs. 1D MaterialArrays:
     - ``D_n`` / ``D_p``: per-node (Ny, Nx) diffusion coefficients. The 1D
@@ -143,6 +152,9 @@ class MaterialArrays2D:
     absorber_p_esc_2d:              tuple[float, ...]                  = ()
     absorber_thicknesses_2d:        tuple[float, ...]                  = ()
     absorber_areas_2d:              tuple[float, ...]                  = ()
+    # Finite-volume GB geometry. Empty preserves the pre-existing pointwise
+    # recombination path exactly; non-empty is currently Neumann-x only.
+    grain_boundary_regions:         tuple[GrainBoundaryRegion2D, ...] = ()
 
 
 def build_material_arrays_2d(
@@ -157,8 +169,9 @@ def build_material_arrays_2d(
 
     Strategy: build the 1D MaterialArrays with the existing solver, then
     extrude every per-node field along x (Stage A has no x-features).
-    τ_n, τ_p go through ``build_tau_field``, which respects GBs in Stage B
-    but identity-extrudes when the microstructure is empty (Stage A).
+    tau_n and tau_p remain bulk extrusions. Stage-B grain-boundary bands are
+    mapped to exact control-volume overlap fractions and mixed at the
+    recombination-rate level, avoiding grid-dependent whole-node painting.
 
     Field-name adaptations from the prescribed spec:
     - ``D_n`` / ``D_p`` are reconstructed per-node from layer mu * V_T,
@@ -238,8 +251,8 @@ def build_material_arrays_2d(
     D_n = extrude(D_n_node_1d)
     D_p = extrude(D_p_node_1d)
 
-    # tau: may be a 1D array or a scalar — normalise to (Ny,) then pass to
-    # build_tau_field so Stage B grain-boundary overrides work correctly.
+    # tau: may be a 1D array or a scalar. The per-node fields remain the bulk
+    # values; finite-width GBs are represented separately below.
     tau_n_1d = np.atleast_1d(mat1d.tau_n)
     tau_p_1d = np.atleast_1d(mat1d.tau_p)
     if tau_n_1d.size == 1:
@@ -249,10 +262,16 @@ def build_material_arrays_2d(
 
     layer_role_per_y = tuple(_layer_role_at_each_y(grid.y, stack))
     tau_n, tau_p = build_tau_field(
-        grid, ustruct,
+        grid, Microstructure(),
         tau_n_bulk_per_y=tau_n_1d,
         tau_p_bulk_per_y=tau_p_1d,
         layer_role_per_y=layer_role_per_y,
+    )
+    grain_boundary_regions = build_grain_boundary_regions(
+        grid,
+        ustruct,
+        layer_role_per_y,
+        lateral_bc=lateral_bc,
     )
 
     # Boundary equilibrium concentrations — scalars on the 1D side.
@@ -464,6 +483,7 @@ def build_material_arrays_2d(
         absorber_p_esc_2d=absorber_p_esc_2d,
         absorber_thicknesses_2d=absorber_thicknesses_2d,
         absorber_areas_2d=absorber_areas_2d,
+        grain_boundary_regions=grain_boundary_regions,
     )
 
 
@@ -625,6 +645,72 @@ def _apply_robin_contacts_2d(
     return dn, dp
 
 
+def recombination_rate_2d(
+    n: np.ndarray,
+    p: np.ndarray,
+    mat: MaterialArrays2D,
+) -> np.ndarray:
+    """Return bulk recombination plus exact finite-volume GB corrections.
+
+    A GB cell stores a physical overlap fraction ``f``. Its SRH source is
+    therefore ``R_bulk + f * (R_gb - R_bulk)`` rather than a lifetime painted
+    across the whole nodal control volume. Radiative and Auger channels remain
+    bulk material properties. The empty-region branch performs the same single
+    ``total_recombination`` call as the pre-closure implementation.
+    """
+    expected_shape = (mat.grid.Ny, mat.grid.Nx)
+    if n.shape != expected_shape or p.shape != expected_shape:
+        raise ValueError(
+            f"2D recombination state must have shape {expected_shape}; "
+            f"got n={n.shape}, p={p.shape}"
+        )
+
+    recombination = total_recombination(
+        n=n.flatten(),
+        p=p.flatten(),
+        ni_sq=(mat.ni ** 2).flatten(),
+        tau_n=mat.tau_n.flatten(),
+        tau_p=mat.tau_p.flatten(),
+        n1=mat.n1.flatten(),
+        p1=mat.p1.flatten(),
+        B_rad=mat.B_rad.flatten(),
+        C_n=mat.C_n.flatten(),
+        C_p=mat.C_p.flatten(),
+    ).reshape(expected_shape)
+    if not mat.grain_boundary_regions:
+        return recombination
+
+    result = recombination.copy()
+    ni_sq = mat.ni ** 2
+    for region in mat.grain_boundary_regions:
+        row_indices = np.flatnonzero(region.y_mask)
+        column_indices = np.flatnonzero(region.x_overlap_fraction > 0.0)
+        if row_indices.size == 0 or column_indices.size == 0:
+            continue
+        selection = np.ix_(row_indices, column_indices)
+        bulk_srh = srh_recombination(
+            n[selection],
+            p[selection],
+            ni_sq[selection],
+            mat.tau_n[selection],
+            mat.tau_p[selection],
+            mat.n1[selection],
+            mat.p1[selection],
+        )
+        gb_srh = srh_recombination(
+            n[selection],
+            p[selection],
+            ni_sq[selection],
+            region.tau_n,
+            region.tau_p,
+            mat.n1[selection],
+            mat.p1[selection],
+        )
+        fractions = region.x_overlap_fraction[column_indices][None, :]
+        result[selection] += fractions * (gb_srh - bulk_srh)
+    return result
+
+
 def assemble_rhs_2d(
     t: float,
     y_state: np.ndarray,
@@ -675,18 +761,7 @@ def assemble_rhs_2d(
     # (SRH + radiative + Auger) come from the extruded 1D layer config so
     # R(n, p) matches the 1D solver pointwise — required for V_oc / FF
     # parity in the validation gate.
-    R = total_recombination(
-        n=n.flatten(),
-        p=p.flatten(),
-        ni_sq=(mat.ni ** 2).flatten(),
-        tau_n=mat.tau_n.flatten(),
-        tau_p=mat.tau_p.flatten(),
-        n1=mat.n1.flatten(),
-        p1=mat.p1.flatten(),
-        B_rad=mat.B_rad.flatten(),
-        C_n=mat.C_n.flatten(),
-        C_p=mat.C_p.flatten(),
-    ).reshape((g.Ny, g.Nx))
+    R = recombination_rate_2d(n, p, mat)
 
     # --- Band-offset quasi-Fermi potentials --------------------------------
     # Use chi/Eg from MaterialArrays2D so the SG fluxes correctly account for
