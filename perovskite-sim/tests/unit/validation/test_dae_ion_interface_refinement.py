@@ -18,7 +18,7 @@ from perovskite_sim.validation.numerical_certificate import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-LANE_ID = "single-ion-algebraic-interface-dae-transient-v1"
+LANE_ID = "single-ion-algebraic-interface-dae-transient-resolved-v2"
 
 
 def _lane():

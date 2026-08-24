@@ -119,6 +119,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "dual-mobile-ion-dae-transient-v1",
         "algebraic-interface-state-dae-transient-v1",
         "single-ion-algebraic-interface-dae-transient-v1",
+        "single-ion-algebraic-interface-dae-transient-resolved-v2",
         "degenerate-pn-equilibrium-v1",
         "incomplete-ionization-temperature-equilibrium-v1",
         "incomplete-ionization-bgn-temperature-equilibrium-v1",
@@ -268,6 +269,32 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     )
     assert combined_dae.options["newton_residual_tolerance"] == (
         pytest.approx(1.0e-8)
+    )
+    resolved_combined_dae = registry.lane(
+        "single-ion-algebraic-interface-dae-transient-resolved-v2"
+    )
+    assert resolved_combined_dae.grid_values == combined_dae.grid_values
+    assert (
+        resolved_combined_dae.tolerance_factors
+        == combined_dae.tolerance_factors
+    )
+    resolved_observables = {
+        gate.metric: gate for gate in resolved_combined_dae.observables
+    }
+    assert resolved_observables[
+        "terminal_positive_ion_relative_error"
+    ].limit == pytest.approx(3.0e-6)
+    resolved_quality = {
+        gate.metric: gate for gate in resolved_combined_dae.quality_gates
+    }
+    assert resolved_quality[
+        "max_normalized_carrier_residual"
+    ].limit == pytest.approx(5.0e-8)
+    assert resolved_quality[
+        "max_terminal_positive_ion_relative_error"
+    ].limit == pytest.approx(1.0e-5)
+    assert resolved_combined_dae.options["newton_residual_tolerance"] == (
+        pytest.approx(5.0e-8)
     )
     cigs_optics = registry.lane("cigs-graded-optics-v1")
     assert cigs_optics.grid_values == (8, 16, 32)
