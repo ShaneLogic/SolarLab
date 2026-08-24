@@ -77,9 +77,33 @@ so changing an array or a `certified` flag cannot create valid evidence.
 
 This checkpoint is internally tested against exact linear-heating solutions,
 radiative steady states, zero-heat limits, and cumulative first-law closure. It
-is not yet an electrothermal device model. In particular, terminal power is
-constant during a transient, temperature is not fed back into carrier, ion,
-contact, optical, or external-circuit calculations, and no spatial heat
-equation, thermal contact resistance, spectral thermalization model, or
-measured thermal parameter set is included. A separate refinement certificate
-is required before this layer is labeled internally certified.
+remains usable as an independent constant-power balance.
+
+## Steady Electrothermal Operating Point
+
+`solve_electrothermal_operating_point` adds an opt-in steady feedback loop. At
+every trial temperature it creates a fresh `DeviceStack`, runs the same strict
+forward/reverse transient J-V protocol, applies the frozen series/shunt circuit,
+selects one explicitly named branch's sampled terminal maximum-power point,
+and evaluates the thermal residual. A bounded Brent root closes
+
+```text
+P_abs + P_internal - P_terminal,mpp(T) - P_rejection(T) = 0.
+```
+
+`ElectrothermalJVProtocol` freezes the grid, scan, voltage range, solver
+tolerances, incident power, and fresh-state rule.
+`ElectrothermalOperatingPointProtocol` freezes the branch, sampled-MPP rule,
+root method, temperature tolerance, and iteration bound. The result includes
+every evaluated temperature and its complete `ExperimentProtocol`, intrinsic
+source hash, external mapping hash, terminal MPP, and first-law residual. The
+backend exposes the same strict contract at
+`POST /api/jv/electrothermal-operating-point`.
+
+This is a protocol-conditioned steady operating point, not a joint
+electrical-thermal transient DAE. Each temperature starts a new J-V history;
+there is no thermal-memory or ion-state handoff between temperatures. The
+model does not yet include a spatial heat equation, thermal contact
+resistance, temperature-dependent optical constants, spectral thermalization,
+or measured thermal parameters. A source-clean grid/tolerance certificate is
+still required before the coupled layer is labeled internally certified.

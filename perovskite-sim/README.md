@@ -554,13 +554,18 @@ one-sided far-field radiation. Canonical protocol hashes, immutable cumulative
 energy ledgers, maximum-temperature envelopes, and recomputed residual checks
 make invalid or altered evidence fail closed.
 
-This opt-in checkpoint is an independent thermal balance, not yet
-self-consistent electrothermal feedback: the device J-V curve and terminal
-power do not change with the evolving temperature. Absorbed optical power is
-an explicit input and is not inferred from incident irradiance. See
+The independent transient keeps terminal power constant. The separate opt-in
+`solve_electrothermal_operating_point` path closes a steady feedback root by
+re-running a fresh, strict temperature-dependent J-V experiment, applying the
+frozen external circuit, and feeding its sampled terminal MPP export into the
+thermal balance. It retains every temperature trial, full experiment protocol,
+source/mapping hashes, and first-law residual. This is not yet a joint
+electrical-thermal transient DAE or a spatial heat equation. Absorbed optical
+power remains an explicit input and is not inferred from incident irradiance. See
 [`docs/thermal-energy-balance.md`](docs/thermal-energy-balance.md).
 
-*Source:* `perovskite_sim/experiments/thermal_balance.py`
+*Sources:* `perovskite_sim/experiments/thermal_balance.py`,
+`perovskite_sim/experiments/electrothermal.py`
 
 <br>
 

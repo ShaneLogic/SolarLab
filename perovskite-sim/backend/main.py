@@ -33,6 +33,8 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
 from perovskite_sim.experiments import external_circuit as external_circuit_exp
+from perovskite_sim.experiments import electrothermal as electrothermal_exp
+from perovskite_sim.experiments import thermal_balance as thermal_balance_exp
 from perovskite_sim.experiments import dark_jv as dark_jv_exp
 from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
@@ -897,6 +899,19 @@ class ExternalCircuitJVRequest(JVRequest):
     incident_power_W_m2: float = 1000.0
 
 
+class ElectrothermalOperatingPointRequest(BaseModel):
+    """Strict protocols for a fresh-state electrothermal MPP root."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    config_path: Optional[str] = None
+    device: Optional[dict] = None
+    thermal_protocol: dict[str, Any]
+    external_circuit_protocol: dict[str, Any]
+    electrical_protocol: dict[str, Any]
+    operating_protocol: dict[str, Any]
+
+
 def _interface_charge_research_solver_controls() -> dict[str, float | int]:
     """Return the frozen, certificate-compatible controls for the API lane."""
     return {
@@ -1716,6 +1731,61 @@ def run_external_circuit_jv(req: ExternalCircuitJVRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         print("[External Circuit J-V API Exception]", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/jv/electrothermal-operating-point")
+def run_electrothermal_operating_point(req: ElectrothermalOperatingPointRequest):
+    """Solve one protocol-conditioned terminal-MPP electrothermal root."""
+
+    try:
+        thermal = thermal_balance_exp.LumpedThermalProtocol.from_dict(
+            req.thermal_protocol
+        )
+        circuit = external_circuit_exp.ExternalCircuitProtocol.from_dict(
+            req.external_circuit_protocol
+        )
+        electrical = electrothermal_exp.ElectrothermalJVProtocol.from_dict(
+            req.electrical_protocol
+        )
+        operating = (
+            electrothermal_exp.ElectrothermalOperatingPointProtocol.from_dict(
+                req.operating_protocol
+            )
+        )
+    except (
+        electrothermal_exp.ElectrothermalError,
+        external_circuit_exp.ExternalCircuitError,
+        thermal_balance_exp.ThermalBalanceError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        stack = build_stack(req.config_path, req.device)
+        result = electrothermal_exp.solve_electrothermal_operating_point(
+            stack,
+            thermal,
+            circuit,
+            electrical,
+            operating,
+        )
+        return {"status": "ok", "result": to_serializable(result)}
+    except HTTPException:
+        raise
+    except (
+        ExperimentProtocolError,
+        GridResolutionError,
+        electrothermal_exp.ElectrothermalError,
+        external_circuit_exp.ExternalCircuitError,
+        thermal_balance_exp.ThermalBalanceError,
+        jv_sweep.JVDriverCapabilityError,
+    ) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        print("[Electrothermal Operating Point API Exception]", exc)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
