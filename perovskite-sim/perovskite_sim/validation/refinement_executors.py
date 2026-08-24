@@ -82,11 +82,16 @@ from perovskite_sim.solver.numerical_diagnostics import (
 )
 from perovskite_sim.solver.tolerances import ComponentwiseAtol
 from perovskite_sim.twod.experiments.jv_sweep_2d import (
+    build_jv_2d_execution_protocol,
     compute_terminal_current_2d,
     extract_snapshot_2d,
+    run_jv_sweep_2d,
 )
 from perovskite_sim.twod.grid_2d import build_grid_2d
-from perovskite_sim.twod.microstructure import Microstructure
+from perovskite_sim.twod.microstructure import (
+    Microstructure,
+    lateral_dual_cell_widths,
+)
 from perovskite_sim.twod.solver_2d import (
     _charge_density_2d,
     build_material_arrays_2d,
@@ -1630,6 +1635,334 @@ def run_twod_uniform_limit(
                 "one_d_intervals": one_d_n_grid - 1,
                 "one_d_certified": one_d.certified,
                 "voltage_grid_V": voltages.tolist(),
+            },
+        }
+    )
+
+
+def _twod_mobile_interface_refinement_protocol(
+    lane: LaneDefinition,
+) -> dict[str, Any]:
+    """Return the lane-stable study contract around point-specific protocols."""
+    options = lane.options
+    return {
+        "adapter": "twod-mobile-ion-interface-srh-jv-refinement",
+        "config": {
+            "path": lane.config_path,
+            "sha256": lane.config_sha256,
+        },
+        "execution": {
+            "current_composition": (
+                "electron_hole_positive_ion_displacement"
+            ),
+            "dwell_time_per_voltage_s": _option(
+                options, "settle_time_s", float, 1.0e-8
+            ),
+            "illumination": "stack_baseline_generation",
+            "initial_state_settle_s": _option(
+                options, "initial_state_settle_s", float, 1.0e-6
+            ),
+            "interface_srh": "two_sided_cross_node",
+            "ion_boundary_condition": "blocking",
+            "lateral_boundary_condition": "neumann",
+            "state_topology": "single_positive_mobile_ion",
+            "voltage_values_V": [
+                float(value)
+                for value in np.arange(
+                    0.0,
+                    _option(options, "V_max_V", float, 0.1)
+                    + 0.5 * _option(options, "V_step_V", float, 0.05),
+                    _option(options, "V_step_V", float, 0.05),
+                )
+            ],
+        },
+        "matrix": {
+            "grid_parameter": lane.grid_parameter,
+            "grid_values": list(lane.grid_values),
+            "tolerance_factors": list(lane.tolerance_factors),
+            "tolerance_parameter": lane.tolerance_parameter,
+        },
+        "point_protocol": {
+            "location": "cell_metadata.execution_protocol",
+            "schema_version": "jv-2d-execution-protocol-v1",
+            "validation": "exact_explicit_protocol_hash_match",
+        },
+        "schema_version": "twod-combined-refinement-protocol-v1",
+    }
+
+
+def _grain_boundary_width_relative_error(material) -> float:
+    widths = lateral_dual_cell_widths(material.grid.x)
+    errors: list[float] = []
+    for region in material.grain_boundary_regions:
+        represented = float(np.dot(region.x_overlap_fraction, widths))
+        errors.append(
+            abs(represented - region.physical_width) / region.physical_width
+        )
+    if not errors:
+        raise RuntimeError("combined 2D refinement requires a grain boundary")
+    return max(errors)
+
+
+def _interface_recombination_evidence(
+    report,
+    x: np.ndarray,
+) -> tuple[float, int, bool]:
+    widths = lateral_dual_cell_widths(x)
+    domain_width = float(x[-1] - x[0])
+    rates = np.asarray(report.total_surface_rate_m2_s, dtype=float)
+    if (
+        rates.ndim != 2
+        or rates.shape[1] != x.size
+        or not np.all(np.isfinite(rates))
+    ):
+        raise RuntimeError("combined 2D refinement received malformed interface rates")
+    pair_a_clamped = np.asarray(report.pair_a_clamped)
+    pair_b_clamped = np.asarray(report.pair_b_clamped)
+    if (
+        pair_a_clamped.shape != rates.shape
+        or pair_b_clamped.shape != rates.shape
+        or pair_a_clamped.dtype != np.dtype(bool)
+        or pair_b_clamped.dtype != np.dtype(bool)
+    ):
+        raise RuntimeError("combined 2D refinement received malformed clamp masks")
+    lateral_average = rates @ widths / domain_width
+    clamp_count = int(np.count_nonzero(pair_a_clamped)) + int(
+        np.count_nonzero(pair_b_clamped)
+    )
+    return (
+        float(Q * np.sum(lateral_average)),
+        clamp_count,
+        bool(np.all(rates > 0.0)),
+    )
+
+
+def _current_decomposition_relative_error(report) -> float:
+    components = (
+        report.terminal_electron_A_m2,
+        report.terminal_hole_A_m2,
+        report.terminal_positive_ion_A_m2,
+        report.terminal_displacement_A_m2,
+    )
+    scale = max(sum(abs(float(value)) for value in components), np.finfo(float).tiny)
+    return abs(float(report.terminal_total_A_m2) - sum(components)) / scale
+
+
+def run_twod_mobile_ion_interface_srh(
+    lane: LaneDefinition,
+    point: MatrixPoint,
+    project_root: Path,
+) -> CellMeasurement:
+    """Run the combined 2D GB/mobile-ion/interface-SRH refinement cell."""
+    options = lane.options
+    stack = _load_stack(lane, project_root)
+    microstructure = getattr(stack, "microstructure", None)
+    if not isinstance(microstructure, Microstructure):
+        raise TypeError("combined 2D refinement config must carry a Microstructure")
+    if len(microstructure.grain_boundaries) != 1:
+        raise ValueError("combined 2D refinement requires exactly one grain boundary")
+
+    intervals = int(point.grid)
+    lateral_length = _option(options, "lateral_length_m", float, 1.0e-7)
+    voltage_max = _option(options, "V_max_V", float, 0.1)
+    voltage_step = _option(options, "V_step_V", float, 0.05)
+    settle_time = _option(options, "settle_time_s", float, 1.0e-8)
+    initial_settle = _option(options, "initial_state_settle_s", float, 1.0e-6)
+    rtol = _option(options, "rtol", float, 1.0e-6)
+    max_nfev = _option(options, "max_nfev", int, 50_000)
+    max_bisect = _option(options, "max_bisect", int, 2)
+    inventory_rtol = _option(options, "ion_inventory_rtol", float, 1.0e-9)
+    policy = _componentwise_policy(options, point.tolerance_factor)
+    common = {
+        "lateral_length": lateral_length,
+        "Nx": intervals,
+        "V_max": voltage_max,
+        "V_step": voltage_step,
+        "illuminated": True,
+        "lateral_bc": "neumann",
+        "Ny_per_layer": intervals,
+        "settle_t": settle_time,
+        "save_snapshots": True,
+        "ion_dynamics": "single_mobile",
+        "interface_srh": "two_sided_cross_node",
+        "rtol": rtol,
+        "atol": policy,
+        "max_nfev_per_solve": max_nfev,
+        "max_bisect": max_bisect,
+        "ion_inventory_rtol": inventory_rtol,
+        "initial_state_settle_s": initial_settle,
+    }
+    execution_protocol = build_jv_2d_execution_protocol(
+        stack,
+        microstructure,
+        **common,
+    )
+    result = run_jv_sweep_2d(
+        stack,
+        microstructure,
+        **common,
+        jv_2d_protocol=execution_protocol,
+        protocol_mode="research_strict",
+    )
+    if (
+        result.protocol is None
+        or result.protocol.implicit_legacy_protocol
+        or result.protocol.protocol_hash != execution_protocol.protocol_hash
+    ):
+        raise RuntimeError("combined 2D J-V returned a mismatched protocol")
+
+    voltages = np.asarray(result.V, dtype=float)
+    expected_points = len(execution_protocol.voltage_values_V)
+    evidence_counts = {
+        "current": len(result.current_components),
+        "interface": len(result.interface_srh_diagnostics),
+        "ion": len(result.ion_diagnostics),
+        "snapshots": len(result.snapshots),
+        "voltage": voltages.size,
+    }
+    if set(evidence_counts.values()) != {expected_points}:
+        raise RuntimeError(
+            "combined 2D J-V evidence count mismatch: " + repr(evidence_counts)
+        )
+    if not np.array_equal(
+        voltages,
+        np.asarray(execution_protocol.voltage_values_V, dtype=float),
+    ):
+        raise RuntimeError("combined 2D J-V voltage history differs from protocol")
+
+    grid = build_grid_2d(
+        [Layer(layer.thickness, intervals) for layer in electrical_layers(stack)],
+        lateral_length=lateral_length,
+        Nx=intervals,
+        lateral_uniform=True,
+    )
+    material = build_material_arrays_2d(
+        grid,
+        stack,
+        microstructure,
+        lateral_bc="neumann",
+        ion_dynamics="single_mobile",
+        interface_srh="two_sided_cross_node",
+    )
+    if not np.array_equal(result.grid_x, grid.x) or not np.array_equal(
+        result.grid_y, grid.y
+    ):
+        raise RuntimeError("combined 2D J-V result grid differs from registered cell")
+    if material.P_lim_2d is None or material.D_ion_2d is None:
+        raise RuntimeError("combined 2D material is missing mobile-ion arrays")
+    active_ion = np.asarray(material.D_ion_2d, dtype=float) > 0.0
+    if not np.any(active_ion):
+        raise RuntimeError("combined 2D refinement has no active mobile-ion nodes")
+
+    snapshots = result.snapshots
+    site_fraction = np.asarray(
+        [
+            np.max(snapshot.P_ion[active_ion] / material.P_lim_2d[active_ion])
+            for snapshot in snapshots
+        ],
+        dtype=float,
+    )
+    initial_ion = np.asarray(snapshots[0].P_ion, dtype=float)[active_ion]
+    terminal_ion = np.asarray(snapshots[-1].P_ion, dtype=float)[active_ion]
+    redistribution = float(
+        np.max(np.abs(terminal_ion - initial_ion) / initial_ion)
+    )
+    lateral_variation = np.asarray(
+        [_max_lateral_carrier_variation_relative(item) for item in snapshots],
+        dtype=float,
+    )
+    interface_evidence = tuple(
+        _interface_recombination_evidence(report, grid.x)
+        for report in result.interface_srh_diagnostics
+    )
+    interface_current = np.asarray(
+        [item[0] for item in interface_evidence],
+        dtype=float,
+    )
+    clamp_count = sum(item[1] for item in interface_evidence)
+    interface_rates_positive = all(item[2] for item in interface_evidence)
+    current_errors = [
+        _current_decomposition_relative_error(report)
+        for report in result.current_components
+    ]
+    component_current = np.asarray(
+        [report.terminal_total_A_m2 for report in result.current_components],
+        dtype=float,
+    )
+    if not np.array_equal(np.asarray(result.J, dtype=float), component_current):
+        raise RuntimeError(
+            "combined 2D J-V trace differs from complete-current evidence"
+        )
+    ion_diagnostics_passed = all(
+        bool(report.passed) for report in result.ion_diagnostics
+    )
+    terminal_density_positive = all(
+        report.terminal_min_electron_density_m3 > 0.0
+        and report.terminal_min_hole_density_m3 > 0.0
+        for report in result.ion_diagnostics
+    )
+    active_ion_positive = all(
+        np.all(np.asarray(snapshot.P_ion)[active_ion] > 0.0)
+        for snapshot in snapshots
+    )
+
+    study_protocol = _twod_mobile_interface_refinement_protocol(lane)
+    return CellMeasurement.from_mapping(
+        {
+            "observables": {
+                "complete_terminal_current_A_m2": np.asarray(result.J, dtype=float),
+                "interface_recombination_current_A_m2": interface_current,
+                "lateral_carrier_variation_relative": lateral_variation,
+                "max_mobile_ion_site_fraction": site_fraction,
+                "mobile_ion_relative_redistribution": redistribution,
+            },
+            "quality": {
+                "active_ion_density_positive": float(active_ion_positive),
+                "clamp_inactive_slice_verified": float(clamp_count == 0),
+                "combined_gb_ion_interface_topology_verified": float(
+                    bool(material.grain_boundary_regions)
+                    and material.has_mobile_ions
+                    and bool(material.interface_srh_couplings)
+                ),
+                "explicit_execution_protocol_verified": 1.0,
+                "ion_diagnostics_passed": float(ion_diagnostics_passed),
+                "interface_rates_finite": float(np.all(np.isfinite(interface_current))),
+                "interface_rates_positive": float(interface_rates_positive),
+                "max_complete_current_face_spread_A_m2": max(
+                    report.max_face_spread_A_m2
+                    for report in result.current_components
+                ),
+                "max_current_decomposition_relative_error": max(current_errors),
+                "max_grain_boundary_width_relative_error": (
+                    _grain_boundary_width_relative_error(material)
+                ),
+                "max_ion_inventory_relative_drift": max(
+                    report.relative_inventory_drift
+                    for report in result.ion_diagnostics
+                ),
+                "minimum_lateral_carrier_variation_relative": float(
+                    np.min(lateral_variation)
+                ),
+                "minimum_mobile_ion_relative_redistribution": redistribution,
+                "site_occupancy_admissible": float(
+                    np.all(site_fraction >= 0.0) and np.all(site_fraction <= 1.0)
+                ),
+                "terminal_carrier_densities_positive": float(
+                    terminal_density_positive
+                ),
+                "voltage_points_completed": float(expected_points),
+            },
+            "units": {
+                "complete_terminal_current_A_m2": "A m-2",
+                "interface_recombination_current_A_m2": "A m-2",
+                "max_complete_current_face_spread_A_m2": "A m-2",
+            },
+            "metadata": {
+                **_protocol_metadata(study_protocol),
+                "execution_protocol": execution_protocol.to_dict(),
+                "execution_protocol_hash": execution_protocol.protocol_hash,
+                "grid_intervals_per_axis_or_layer": intervals,
+                "point_tolerance_factor": point.tolerance_factor,
             },
         }
     )

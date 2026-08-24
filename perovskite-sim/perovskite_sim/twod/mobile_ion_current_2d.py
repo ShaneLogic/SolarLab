@@ -117,6 +117,22 @@ def _lateral_average(values: np.ndarray, x: np.ndarray) -> np.ndarray:
     return np.asarray(averaged, dtype=float)
 
 
+def _terminal_decomposition_is_roundoff_consistent(
+    total: float,
+    components: tuple[float, ...],
+) -> bool:
+    """Test a current sum against the scale of its cancelling operands."""
+    component_sum = sum(components)
+    roundoff_scale = max(
+        abs(float(total)),
+        sum(abs(float(value)) for value in components),
+        np.finfo(float).tiny,
+    )
+    return abs(float(total) - component_sum) <= (
+        64.0 * np.finfo(float).eps * roundoff_scale
+    )
+
+
 def evaluate_mobile_ion_current_components_2d(
     snapshot: SpatialSnapshot2D,
     state_derivative: np.ndarray,
@@ -202,9 +218,10 @@ def evaluate_mobile_ion_current_components_2d(
         float(average_displacement[terminal_index]),
     )
     terminal_total = float(average_total[terminal_index])
-    decomposition_total = sum(terminal_components)
-    scale = max(abs(terminal_total), abs(decomposition_total), 1.0e-30)
-    if abs(terminal_total - decomposition_total) > 32.0 * np.finfo(float).eps * scale:
+    if not _terminal_decomposition_is_roundoff_consistent(
+        terminal_total,
+        terminal_components,
+    ):
         raise RuntimeError("mobile-ion terminal-current decomposition is inconsistent")
     spread = float(np.ptp(average_total))
     face_scale = max(float(np.max(np.abs(average_total))), 1.0e-30)

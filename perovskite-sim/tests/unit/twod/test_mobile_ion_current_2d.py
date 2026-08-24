@@ -21,6 +21,7 @@ from perovskite_sim.twod.flux_2d import sg_fluxes_2d_n, sg_fluxes_2d_p
 from perovskite_sim.twod.ion_migration_2d import positive_ion_fluxes_2d
 from perovskite_sim.twod.microstructure import Microstructure
 from perovskite_sim.twod.mobile_ion_current_2d import (
+    _terminal_decomposition_is_roundoff_consistent,
     evaluate_mobile_ion_current_components_2d,
 )
 from perovskite_sim.twod.solver_2d import (
@@ -365,6 +366,13 @@ def test_terminal_total_equals_all_four_components_and_arrays_are_immutable():
     )
     assert not report.total_y_A_m2.flags.writeable
     assert not report.lateral_average_total_A_m2.flags.writeable
+
+
+def test_terminal_decomposition_gate_uses_cancelling_operand_scale():
+    components = (-2.0e-2, 2.0e-2, 0.0, 2.0e-18)
+
+    assert _terminal_decomposition_is_roundoff_consistent(1.0e-18, components)
+    assert not _terminal_decomposition_is_roundoff_consistent(1.0e-3, components)
 
 
 def test_lateral_uniform_rhs_has_uniform_maxwell_current_across_y_faces():

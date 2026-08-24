@@ -1,0 +1,78 @@
+# Internal 2D refinement fixture for the combined grain-boundary,
+# single-positive-mobile-ion, and clamp-inactive two-sided interface-SRH path.
+# The deliberately fast ion is synthetic and exists to exercise redistribution
+# over a short, reproducible J-V protocol; it is not a MAPbI3 parameter claim.
+device:
+  V_bi: 0.0
+  Phi: 1.0e18
+  mode: full
+  interface_two_sided: true
+  interface_defects:
+    - sigma_n_cm2: 3.0e-19
+      sigma_p_cm2: 5.0e-19
+      v_th_cm_s: 1.0e7
+      N_t_cm2: 1.0e12
+      E_t_eV_below_cb: 0.5
+
+layers:
+  - name: illuminated_mobile_absorber
+    role: absorber
+    thickness: 1.0e-7
+    eps_r: 10.0
+    mu_n: 1.0e-3
+    mu_p: 1.0e-3
+    D_ion: 1.0e-10
+    P_lim: 1.0e24
+    P0: 1.0e22
+    ni: 1.0e12
+    tau_n: 1.0e30
+    tau_p: 1.0e30
+    n1: 1.0e12
+    p1: 1.0e12
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1.0e7
+    N_A: 0.0
+    N_D: 0.0
+    chi: 4.0
+    Eg: 1.5
+    Nc300: 1.0e25
+    Nv300: 1.0e25
+    A_star_n: 1.2017e6
+    A_star_p: 1.2017e6
+
+  - name: intrinsic_etl
+    role: ETL
+    thickness: 1.0e-7
+    eps_r: 10.0
+    mu_n: 1.0e-3
+    mu_p: 1.0e-3
+    D_ion: 0.0
+    P_lim: 1.0e24
+    P0: 0.0
+    ni: 1.0e12
+    tau_n: 1.0e30
+    tau_p: 1.0e30
+    n1: 1.0e12
+    p1: 1.0e12
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    N_A: 0.0
+    N_D: 0.0
+    chi: 4.0
+    Eg: 1.5
+    Nc300: 1.0e25
+    Nv300: 1.0e25
+    A_star_n: 1.2017e6
+    A_star_p: 1.2017e6
+
+microstructure:
+  grain_boundaries:
+    - x_position: 5.0e-8
+      width: 1.0e-8
+      tau_n: 1.0e-9
+      tau_p: 1.0e-9
+      layer_role: absorber

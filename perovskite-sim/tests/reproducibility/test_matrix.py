@@ -28,10 +28,10 @@ def _matrix():
 
 def test_matrix_covers_and_loads_every_shipped_config():
     report = validate_matrix(ROOT)
-    assert report["configs"] == 36
+    assert report["configs"] == 37
     assert report["resources"] == 21
     assert report["schemas"] == {
-        "standard-device-v1": 30,
+        "standard-device-v1": 31,
         "scaps-device-v1": 5,
         "tandem-v1": 1,
     }
