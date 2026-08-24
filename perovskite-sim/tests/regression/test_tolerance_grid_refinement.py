@@ -118,6 +118,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "single-positive-ion-dae-transient-v1",
         "dual-mobile-ion-dae-transient-v1",
         "algebraic-interface-state-dae-transient-v1",
+        "single-ion-algebraic-interface-dae-transient-v1",
         "degenerate-pn-equilibrium-v1",
         "incomplete-ionization-temperature-equilibrium-v1",
         "incomplete-ionization-bgn-temperature-equilibrium-v1",
@@ -227,6 +228,47 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert resolved_stress.observables == stress.observables
     assert resolved_stress.quality_gates == stress.quality_gates
     assert resolved_stress.options == stress.options
+    combined_dae = registry.lane(
+        "single-ion-algebraic-interface-dae-transient-v1"
+    )
+    assert combined_dae.grid_values == (4, 8, 16)
+    assert combined_dae.tolerance_factors == (1.0, 0.5, 0.25)
+    combined_observables = {
+        gate.metric: gate for gate in combined_dae.observables
+    }
+    assert combined_observables[
+        "structured_dense_terminal_log_density_difference"
+    ].limit == pytest.approx(1.0e-9)
+    assert combined_observables[
+        "terminal_positive_ion_relative_error"
+    ].limit == pytest.approx(1.0e-6)
+    combined_quality = {
+        gate.metric: gate for gate in combined_dae.quality_gates
+    }
+    assert combined_quality[
+        "max_positive_ion_inventory_relative_drift"
+    ].limit == pytest.approx(1.0e-12)
+    assert combined_quality[
+        "max_terminal_interface_state_relative_error"
+    ].limit == pytest.approx(5.0e-7)
+    assert combined_quality[
+        "structured_csr_nonzeros_per_node"
+    ].limit == pytest.approx(27.0)
+    assert combined_quality["structured_rhs_work_fraction"].limit == (
+        pytest.approx(0.1)
+    )
+    assert combined_dae.options["positive_ion_diffusion_m2_s"] == (
+        pytest.approx(1.0e-16)
+    )
+    assert combined_dae.options["positive_ion_reference_m3"] == (
+        pytest.approx(1.0e22)
+    )
+    assert combined_dae.options["positive_ion_site_limit_m3"] == (
+        pytest.approx(1.0e24)
+    )
+    assert combined_dae.options["newton_residual_tolerance"] == (
+        pytest.approx(1.0e-8)
+    )
     cigs_optics = registry.lane("cigs-graded-optics-v1")
     assert cigs_optics.grid_values == (8, 16, 32)
     assert cigs_optics.tolerance_factors == (1.0, 0.5, 0.25)
