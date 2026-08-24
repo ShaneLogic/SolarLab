@@ -544,6 +544,26 @@ validation.
 
 <br>
 
+### Lumped Thermal Energy Balance
+
+`LumpedThermalProtocol` defines an explicit area-normalized first-law control
+volume around the device plus lumped parasitics. `solve_lumped_thermal_steady_state`
+and `run_lumped_thermal_transient` account for absorbed optical power, terminal
+electrical export, optional internal heat, linear heat rejection, and
+one-sided far-field radiation. Canonical protocol hashes, immutable cumulative
+energy ledgers, maximum-temperature envelopes, and recomputed residual checks
+make invalid or altered evidence fail closed.
+
+This opt-in checkpoint is an independent thermal balance, not yet
+self-consistent electrothermal feedback: the device J-V curve and terminal
+power do not change with the evolving temperature. Absorbed optical power is
+an explicit input and is not inferred from incident irradiance. See
+[`docs/thermal-energy-balance.md`](docs/thermal-energy-balance.md).
+
+*Source:* `perovskite_sim/experiments/thermal_balance.py`
+
+<br>
+
 ### V<sub>oc</sub> Bracket Detection
 
 `compute_metrics(V, J)` returns a frozen `JVMetrics(V_oc, J_sc, FF, PCE,
