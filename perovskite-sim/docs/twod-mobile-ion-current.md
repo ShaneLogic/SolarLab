@@ -86,5 +86,7 @@ thermionic current-source reuse, and every declared fail-closed boundary.
 
 The public protocol, ion-aware state initialization, dwell history, and
 per-point diagnostics are documented in `docs/twod-jv-execution-protocol.md`.
-This still does not certify a mobile-ion 2D J-V curve. A content-addressed
-grid/tolerance certificate is the next required layer.
+The source-clean `twod-mobile-ion-interface-srh-v1` matrix now certifies this
+complete-current decomposition inside one explicit short-dwell combined slice;
+see `docs/twod-combined-numerical-certificate.md`. That certificate does not
+cover dual ions, selective contacts, long-time scans, or general 2D devices.

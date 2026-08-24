@@ -98,5 +98,7 @@ in `docs/twod-two-sided-interface-srh.md` and can compose with this state
 topology. The complete instantaneous current is documented in
 `docs/twod-mobile-ion-current.md`. Strict public experiment/protocol wiring is
 documented in `docs/twod-jv-execution-protocol.md`. A new content-addressed
-combined grid/tolerance certificate remains required, so the default 2D J-V
-stays frozen-ion and the full microstructure claim remains blocked.
+combined grid/tolerance lane now certifies one short, synthetic stress slice;
+see `docs/twod-combined-numerical-certificate.md`. The default 2D J-V remains
+frozen-ion, and long-time, dual-ion, selective-contact, or general
+microstructure claims remain outside that certificate.

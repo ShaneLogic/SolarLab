@@ -164,3 +164,22 @@ ignored local-output tree. The README-facing rendered artifact is
 [`cbo_interface_validation.png`](../../docs/manual/figures/cbo_interface_validation.png).
 A clean clone cannot regenerate that panel until the exact machine-readable
 result is restored; a different scan is not an acceptable substitute.
+
+## Combined 2D Mobile-Ion/Interface-SRH Certificate
+
+The registered `twod-mobile-ion-interface-srh-v1` lane completed its
+source-clean 4/6/8 matched-grid by 1/0.1/0.01 tolerance matrix at commit
+`0c9eb26`. Run
+`89d108b8817fb4af5d0749bd5848efada9dda99a1b559ed395a8cb0603eaa55b`
+completed all 9 cells, and certificate
+`b02bc4f8b3b5d470d599f6dacde746b26c263591aafecd14cc6c890a94b677dd`
+has status `certified` with no unconverged dimension.
+
+This closes internal convergence and conservation only for the explicit
+Neumann-x, ohmic, blocking single-positive-ion, finite-width grain-boundary,
+clamp-inactive cross-node `InterfaceDefect`, short-dwell slice. Its accelerated
+ion and defect parameters are synthetic stress inputs. Dual ions, selective
+contacts, interface charge/state, long-time hysteresis, external simulator
+parity, measured-device validation, and material-parameter validation remain
+outside the certificate. The complete contract and values are in
+[`twod-combined-numerical-certificate.md`](../docs/twod-combined-numerical-certificate.md).

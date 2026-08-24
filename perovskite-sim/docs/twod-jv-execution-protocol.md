@@ -90,7 +90,12 @@ reabsorption slicing, and backend pre-submit mismatch rejection. Real small
 two-point Radau runs cover mobile current and the combined
 grain-boundary/interface/mobile topology.
 
-This is public execution provenance, not a numerical certificate. A new
-content-addressed grid/tolerance lane must still close J-V convergence, ion
-inventory, positive state, interface clamp status, current decomposition, and
-all-face Maxwell-current gates.
+Protocol provenance alone is not a numerical certificate. The separate
+`twod-mobile-ion-interface-srh-v1` lane has now closed those gates for one
+explicit, synthetic 0.0/0.05/0.10 V combined slice on a 4/6/8 matched-grid by
+1/0.1/0.01 tolerance matrix. The source-clean certificate is
+`b02bc4f8b3b5d470d599f6dacde746b26c263591aafecd14cc6c890a94b677dd`.
+It checks ion inventory and bounds, carrier positivity, inactive clamps,
+current decomposition, all-face Maxwell current, physical grain-boundary
+width, and nontrivial lateral/ionic response. See
+`docs/twod-combined-numerical-certificate.md` for the exact evidence boundary.

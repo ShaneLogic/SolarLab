@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 21 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform limit、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps，以及 P4.4 CIGS graded optics。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 24 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform/combined limits、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps，以及 P4.4 CIGS graded optics。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -33,6 +33,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `csi-qf-frequency-domain` | N100/200/300 | FD step 1/0.5/0.25 | C-V、Mott-Schottky intercept/effective doping |
 | `csi-qf-frequency-domain-resolved-v2` | N200/300/400 | FD step 1/0.5/0.25 | resolved C-V、Mott-Schottky intercept/effective doping |
 | `twod-uniform-limit` | x/y multiplier 1/2/4 | componentwise atol factor 1/0.1/0.01 | 2D-to-1D J-V envelope、Voc、Jsc |
+| `twod-mobile-ion-interface-srh-v1` | matched x/y intervals 4/6/8 | componentwise atol factor 1/0.1/0.01 | complete current、interface current、lateral response、site fraction、ion redistribution |
 | `interface-recombination-charge-off` | N30/60/90 | QF residual factor 1/0.5/0.25 | two-sided interface flux、归一化 J-V、Voc |
 | `interface-charge-equilibrium-referenced-v1` | N30/60/120 | QF residual factor 1/0.5/0.25 | charged current、occupancy、sheet charge、trace shift |
 | `interface-charge-device-stress-v1` | N30/60 | QF residual factor 1/0.5 | 9-point Et/CBO/Nd/Nt current、dark occupancy、sheet charge、trace shift |
@@ -41,6 +42,8 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `single-positive-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P/phi 误差、正离子守恒、dense/structured 等价性 |
 | `dual-mobile-ion-dae-transient-v1` | 单层区间 8/16/32 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/P+/P-/phi 误差、逐离子守恒、shared-site bounds、dense/structured 等价性 |
 | `algebraic-interface-state-dae-transient-v1` | 每层区间 4/8/16 | BE time-step factor 1/0.5/0.25 | MoL 终态 n/p/interface/phi 误差、interface occupation、clamp-inactive、dense/structured 等价性 |
+| `single-ion-algebraic-interface-dae-transient-v1` | 每层区间 4/8/16 | BE time-step factor 1/0.5/0.25 | combined MoL n/p/P/interface/phi 误差、守恒、clamp-inactive、dense/structured 等价性 |
+| `single-ion-algebraic-interface-dae-transient-resolved-v2` | 每层区间 8/12/16 | BE time-step factor 1/0.5/0.25 | resolved combined DAE 与同一 topology/quality contract |
 | `degenerate-pn-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | FD generalized-SG equilibrium、耗尽宽度、峰值场、空间电荷平衡 |
 | `incomplete-ionization-temperature-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | donor/acceptor freeze-out、温度曲线、耗尽宽度、峰值场 |
 | `incomplete-ionization-bgn-temperature-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | freeze-out + Slotboom BGN、effective gap、空间电荷平衡 |
@@ -94,6 +97,18 @@ clamp-inactive analytic tangent。这里的相邻 bulk/interface 交叉导数不
 可配置 cross-node carrier sampling；后者与 `InterfaceDefect`、dynamic states、
 interface charge、selective contacts 等仍显式排除。每格同时执行 locally
 eliminated-QSS Radau/MoL、dense-central BE 和 structured-analytic BE。
+
+single-ion plus algebraic-interface DAE protocol 将 synthetic blocking positive
+ion 与上述四个 algebraic trace states 组合，并逐 cell 同时检查 ion inventory、
+site bounds、interface clamp、状态/Poisson residual 和 dense/structured tangent
+等价性。v1 与 resolved-v2 使用不同 grid ladder，证书不能互相替代。
+
+combined 2D protocol 固定 Neumann-x、ohmic、single-positive blocking ion、一个
+finite-width grain boundary 与一个 clamp-inactive cross-node `InterfaceDefect`
+sheet，并为每个 cell 构造完全匹配的 explicit `jv-2d-execution-protocol-v1`。
+外层 numerical protocol 固定 4/6/8 matched x/y intervals、0.0/0.05/0.10 V、
+每点 10 ns dwell 及 tolerance ladder；完整边界见
+`docs/twod-combined-numerical-certificate.md`。
 
 degenerate-PN protocol 固定 symmetric high-doping c-Si p+/n+、dark equilibrium、
 fully-ionized FD charge、semiconductor-work-function ohmic contacts 和
@@ -156,6 +171,7 @@ python scripts/run_numerical_refinement.py ionmonger-ion-aware-impedance-resolve
 python scripts/run_numerical_refinement.py csi-qf-frequency-domain --dry-run
 python scripts/run_numerical_refinement.py csi-qf-frequency-domain-resolved-v2 --dry-run
 python scripts/run_numerical_refinement.py twod-uniform-limit --dry-run
+python scripts/run_numerical_refinement.py twod-mobile-ion-interface-srh-v1 --dry-run
 python scripts/run_numerical_refinement.py interface-recombination-charge-off --dry-run
 python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenced-v1 --dry-run
 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1 --dry-run
@@ -164,7 +180,11 @@ python scripts/run_numerical_refinement.py no-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1 --dry-run
 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1 --dry-run
+python scripts/run_numerical_refinement.py single-ion-algebraic-interface-dae-transient-v1 --dry-run
+python scripts/run_numerical_refinement.py single-ion-algebraic-interface-dae-transient-resolved-v2 --dry-run
 python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1 --dry-run
+python scripts/run_numerical_refinement.py incomplete-ionization-temperature-equilibrium-v1 --dry-run
+python scripts/run_numerical_refinement.py incomplete-ionization-bgn-temperature-equilibrium-v1 --dry-run
 python scripts/run_numerical_refinement.py bulk-energy-distributed-trap-equilibrium-v1 --dry-run
 python scripts/run_numerical_refinement.py cigs-graded-optics-v1 --dry-run
 ```
@@ -180,6 +200,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py csi-qf-frequency-domain
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py csi-qf-frequency-domain-resolved-v2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py twod-uniform-limit
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py twod-mobile-ion-interface-srh-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-recombination-charge-off
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenced-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1
@@ -188,7 +209,11 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py single-positive-ion-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py dual-mobile-ion-dae-transient-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py algebraic-interface-state-dae-transient-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py single-ion-algebraic-interface-dae-transient-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py single-ion-algebraic-interface-dae-transient-resolved-v2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py degenerate-pn-equilibrium-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py incomplete-ionization-temperature-equilibrium-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py incomplete-ionization-bgn-temperature-equilibrium-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py bulk-energy-distributed-trap-equilibrium-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py cigs-graded-optics-v1
 ```
@@ -205,7 +230,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-当前 registry 共 21 条 lane；十九条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 181 个 content-addressed cell。其内部工作量至少包括：
+当前 registry 共 24 条 lane；二十二条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 208 个 content-addressed cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
@@ -214,7 +239,8 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 - ion-aware impedance：9 次 certified DC anchor 加完整 frequency/stencil
   response，并逐频率检查 backward error、库存响应和 current decomposition；
 - c-Si minimum-roadmap lane：54 个 bias/FD-step operating-point calls，共 162 个 frequency points；resolved-v2 companion 另有同等工作量；
-- 2D：117 个 2D finite-time voltage settles，外加 9 个 matched 1D forward/reverse sweeps 和 2D seed；
+- frozen 2D uniform lane：117 个 2D finite-time voltage settles，外加 9 个 matched 1D forward/reverse sweeps 和 2D seed；
+- combined 2D lane：9 个 strict public J-V runs，各有 3 个 fixed-voltage dwell，并逐点重建 complete current、ion/interface diagnostics 与 GB geometry evidence；
 - interface charge-off：9 个 certified dark occupancy references、225 个
   requested two-sided QF illuminated voltage points及其 illumination ladders，
   并逐点计算 capture flux、local QSS、continuity 与 current-spread evidence。
@@ -579,3 +605,33 @@ BLAS/OpenMP 单线程环境下完成 9/9 cell，0 failed、0 missing、0 reused�
 optics、TMM slice/KK 收敛和列出的内部物理门。ZnO/CdS 仍是 nominal scalar
 fallback；它不包含 transport solve，也不是 measured-device、外部 SCAPS/Setfos、
 J-V/PCE 或实验验证。
+
+### 2026-08-24 combined 2D mobile-ion/interface-SRH certificate
+
+`twod-mobile-ion-interface-srh-v1` 在 source commit `0c9eb26`、source changes
+为空且 BLAS/OpenMP 单线程环境下完成 9/9 cell，0 failed、0 missing、0 reused：
+
+- run ID：`89d108b8817fb4af5d0749bd5848efada9dda99a1b559ed395a8cb0603eaa55b`；
+- certificate SHA-256：
+  `b02bc4f8b3b5d470d599f6dacde746b26c263591aafecd14cc6c890a94b677dd`；
+- protocol SHA-256：
+  `2b5371b8f89c2c4a749250fe13844495ca6750181fc4232579ed7c82d1775eee`；
+- terminal grid differences：complete current `6.095485e-3 A m-2`、interface
+  current `4.278045e-9 A m-2`、lateral variation `4.980758e-5`、maximum ion
+  site fraction `6.800086e-5`、ion redistribution `3.956838e-4`；对应
+  terminal tolerance differences 分别为 `1.55e-15 / 4.76e-22 /
+  2.73e-15 / 3.12e-17 / 2.10e-15`；
+- 全矩阵最大 ion inventory drift `7.49e-16`、all-face complete-current
+  spread `5.71e-14 A m-2`、current-decomposition relative error `2.93e-16`、
+  physical GB width relative error `4.97e-16`；
+- 所有 cell 的 active-ion/carrier positivity、site occupancy、ion diagnostics、
+  clamp-inactive、finite positive interface rates、combined topology、explicit
+  protocol 和三电压完成 gate 均通过；minimum lateral response `1.95e-3`、
+  minimum ion redistribution `1.18e-2`，证明未静默退化到 uniform/frozen lane。
+
+该证书只认证一个 0.0/0.05/0.10 V、每点 10 ns 的 synthetic Neumann-x、ohmic、
+blocking single-positive-ion、finite-width GB、clamp-inactive cross-node
+`InterfaceDefect` slice。它不覆盖 dual ions、selective contacts、interface
+charge/state、field mobility、long-time hysteresis、一般 2D microstructure、
+外部 solver 或实验验证。完整边界见
+`docs/twod-combined-numerical-certificate.md`。

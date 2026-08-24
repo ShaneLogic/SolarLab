@@ -314,11 +314,13 @@ latter can add finite-volume vertical grain boundaries whose physical band
 width is preserved by sub-cell SRH mixing rather than whole-node lifetime
 painting; non-empty microstructures currently fail closed on the periodic
 topology.
-Positive and negative ions are frozen as static Poisson background fields
-during 2D J-V runs. The default 2D continuity path also omits the 1D
-interface-defect and interface-plane recombination channels. Its certified
-scope is the lateral-uniform/frozen-ion limit and prescribed lifetime
-patterns, not a complete 2D perovskite microstructure model.
+The default 2D J-V path keeps positive and negative ions as static Poisson
+background fields and omits the 1D interface-defect/interface-plane channels.
+That compatibility path is certified only in the lateral-uniform frozen-ion
+limit and for prescribed lifetime patterns. A separate explicit research path
+supports one blocking positive ion and a restricted cross-node interface-SRH
+sheet; it does not turn the default path into a complete 2D perovskite
+microstructure model.
 
 At solver level, an explicit `ion_dynamics="single_mobile"` research transient
 adds one positive-ion state on Neumann-x domains with blocking boundaries and
@@ -339,6 +341,9 @@ projection, shared occupancy, QSS/dynamic interface states, and interface
 charge. It composes with the mobile-ion state in the same strict public
 research protocol. See
 [`docs/twod-two-sided-interface-srh.md`](docs/twod-two-sided-interface-srh.md).
+The exact combined slice has a source-clean 3x3 grid/tolerance certificate;
+see
+[`docs/twod-combined-numerical-certificate.md`](docs/twod-combined-numerical-certificate.md).
 
 2D presets live in `configs/twod/`; the backend exposes them through
 `GET /api/configs` and runs them with `kind="jv_2d"` or
@@ -813,6 +818,13 @@ but fails the declared SCAPS-shape gate (`certified=false`).
 The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
 Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
+
+Separately, `twod-mobile-ion-interface-srh-v1` certifies one synthetic,
+research-only Neumann-x slice combining a finite-width grain boundary, one
+blocking positive ion, clamp-inactive cross-node `InterfaceDefect` SRH, and
+complete carrier/ion/displacement current. Its source-clean 9-cell certificate
+is `b02bc4f8b3b5d470d599f6dacde746b26c263591aafecd14cc6c890a94b677dd`;
+it is not external solver or measured-device validation.
 
 Phase 4.1 now includes five certified research-only semi-explicit DAE slices.
 The first three are single-layer, ohmic, no-interface topologies: no ions, one

@@ -850,6 +850,20 @@ inventory/bounds、四分量 current 及 interface clamp evidence；backend mism
 在 worker submit 前以 422 fail closed。新的 3x3 content-addressed certificate
 仍未完成，因此该 checkpoint 只关闭 public provenance，不升级 2D scope claim。
 
+最终 combined-certificate checkpoint 注册
+`twod-mobile-ion-interface-srh-v1`，在 source-clean commit `0c9eb26` 上完成
+4/6/8 matched x/y intervals 与 1/0.1/0.01 tolerance 的 9/9 cells，certificate
+`b02bc4f8b3b5d470d599f6dacde746b26c263591aafecd14cc6c890a94b677dd`
+为 `certified`。terminal grid differences 为 complete current
+`6.09548e-3 A m-2`、interface current `4.27804e-9 A m-2`、lateral variation
+`4.98076e-5`、site fraction `6.80009e-5`、ion redistribution `3.95684e-4`，
+且逐 cell conservation、clamp、current decomposition、GB physical width、
+positive state 和 explicit protocol gates 全部通过。因此 2D scope 只升级到
+该 Neumann-x、ohmic、blocking single-positive-ion、clamp-inactive
+`InterfaceDefect`、0--0.1 V short-dwell synthetic slice；dual ions、selective
+contacts、interface charge/state、long-time hysteresis、外部 solver 与实验验证
+仍保持未认证。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。
