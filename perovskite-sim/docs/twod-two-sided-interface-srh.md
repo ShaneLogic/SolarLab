@@ -88,6 +88,6 @@ while removing electron-hole pairs only when the interface mode is enabled.
 
 This is an internal solver closure, not an external interface-defect
 validation. The independent mobile-ion-complete current evaluator is now
-available, but public protocol wiring and a content-addressed combined 2D
-refinement certificate remain required before the repository can enlarge its
-2D microstructure claim.
+available and both closures now compose in the strict public 2D J-V protocol.
+A content-addressed combined 2D refinement certificate remains required before
+the repository can enlarge its 2D microstructure claim.

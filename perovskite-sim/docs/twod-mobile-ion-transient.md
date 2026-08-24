@@ -96,7 +96,7 @@ coordinate or a dedicated DAE integrator.
 The independent two-sided cross-node interface-SRH sheet closure is documented
 in `docs/twod-two-sided-interface-srh.md` and can compose with this state
 topology. The complete instantaneous current is documented in
-`docs/twod-mobile-ion-current.md`. Remaining work is public experiment/protocol
-wiring and a new content-addressed combined grid/tolerance certificate. Until
-those are complete, 2D J-V remains frozen-ion and the full microstructure claim
-remains blocked.
+`docs/twod-mobile-ion-current.md`. Strict public experiment/protocol wiring is
+documented in `docs/twod-jv-execution-protocol.md`. A new content-addressed
+combined grid/tolerance certificate remains required, so the default 2D J-V
+stays frozen-ion and the full microstructure claim remains blocked.

@@ -550,6 +550,37 @@ export interface SpatialSnapshot2D {
   Jy_n: number[][]       // (Ny-1, Nx)
   Jx_p: number[][]       // (Ny, Nx-1)
   Jy_p: number[][]       // (Ny-1, Nx)
+  P_ion?: number[][] | null
+}
+
+export interface JV2DCurrentDiagnostic {
+  terminal_electron_A_m2: number
+  terminal_hole_A_m2: number
+  terminal_positive_ion_A_m2: number
+  terminal_displacement_A_m2: number
+  terminal_total_A_m2: number
+  max_face_spread_A_m2: number
+  max_relative_face_spread: number
+}
+
+export interface JV2DIonDiagnostic {
+  initial_inventory_m1: number
+  terminal_inventory_m1: number
+  relative_inventory_drift: number
+  terminal_min_electron_density_m3: number
+  terminal_min_hole_density_m3: number
+  terminal_min_density_m3: number
+  terminal_max_site_fraction: number
+  inventory_rtol: number
+  passed: boolean
+  violations: string[]
+}
+
+export interface JV2DInterfaceSRHDiagnostic {
+  interface_rows: number[]
+  max_total_surface_rate_m2_s: number
+  pair_a_clamped_count: number
+  pair_b_clamped_count: number
 }
 
 export interface JV2DResult {
@@ -559,6 +590,11 @@ export interface JV2DResult {
   grid_y: number[]                  // vertical nodes, nm
   lateral_bc: 'periodic' | 'neumann'
   snapshots: SpatialSnapshot2D[]    // empty when save_snapshots=false
+  protocol?: Record<string, unknown> | null
+  protocol_hash?: string | null
+  current_diagnostics?: JV2DCurrentDiagnostic[]
+  ion_diagnostics?: JV2DIonDiagnostic[]
+  interface_srh_diagnostics?: JV2DInterfaceSRHDiagnostic[]
   /** Layer 2 of the Phase 6 acceptance follow-up. The backend extracts
    *  V_oc / J_sc / FF / PCE via the centralised ``compute_metrics`` and
    *  reports ``voc_bracketed=false`` when V_max stopped short of V_oc.

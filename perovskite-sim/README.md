@@ -324,17 +324,20 @@ At solver level, an explicit `ion_dynamics="single_mobile"` research transient
 adds one positive-ion state on Neumann-x domains with blocking boundaries and
 discrete inventory checks. An explicit companion evaluator reconstructs
 electron, hole, ionic, and instantaneous displacement current from the same
-semidiscrete RHS and constitutive face laws. It is not yet wired into 2D J-V;
-the historical carrier-only terminal-current API still rejects mobile-ion
-snapshots. See
+semidiscrete RHS and constitutive face laws. A matching explicit
+`jv-2d-execution-protocol-v1` opens the research-only Python/backend J-V path;
+the workstation and historical carrier-only terminal-current API remain on
+the frozen compatibility lane. See
 [`docs/twod-mobile-ion-transient.md`](docs/twod-mobile-ion-transient.md) and
-[`docs/twod-mobile-ion-current.md`](docs/twod-mobile-ion-current.md).
+[`docs/twod-mobile-ion-current.md`](docs/twod-mobile-ion-current.md), plus
+[`docs/twod-jv-execution-protocol.md`](docs/twod-jv-execution-protocol.md).
 
 An independent `interface_srh="two_sided_cross_node"` research opt-in maps
 the 1D two-sided interface-defect surface rate onto a conservative Neumann-x
 2D sheet sink and composes with the mobile-ion state. It explicitly excludes
 projection, shared occupancy, QSS/dynamic interface states, and interface
-charge, and is not wired into 2D J-V. See
+charge. It composes with the mobile-ion state in the same strict public
+research protocol. See
 [`docs/twod-two-sided-interface-srh.md`](docs/twod-two-sided-interface-srh.md).
 
 2D presets live in `configs/twod/`; the backend exposes them through
@@ -344,6 +347,7 @@ charge, and is not wired into 2D J-V. See
 *Source:* `perovskite_sim/twod/solver_2d.py`,
 `perovskite_sim/twod/mobile_ion_current_2d.py`,
 `perovskite_sim/twod/interface_recombination_2d.py`,
+`perovskite_sim/twod/experiments/jv_protocol_2d.py`,
 `perovskite_sim/twod/experiments/jv_sweep_2d.py`
 
 <br>

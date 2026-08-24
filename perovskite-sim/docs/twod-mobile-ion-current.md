@@ -4,8 +4,8 @@
 
 The Neumann-x, single-positive-mobile-ion research lane has an instantaneous
 terminal-current evaluator containing electron, hole, positive-ion, and
-displacement current. It is a solver-level closure and remains disabled from
-the public 2D J-V experiment.
+displacement current. It is wired into the public 2D J-V Python/backend
+research path only under a matching strict execution protocol.
 
 The historical `compute_terminal_current_2d(snapshot)` API remains the
 carrier-conduction-only evaluator and continues to reject snapshots carrying
@@ -84,6 +84,7 @@ source, differentiated-Poisson directional derivatives, lateral-uniform 1D/2D
 parity, face-uniform Maxwell current, immutable evidence, field-mobility and
 thermionic current-source reuse, and every declared fail-closed boundary.
 
-This does not certify a mobile-ion 2D J-V curve. A public execution protocol,
-ion-aware state initialization and dwell history, per-point diagnostics, and a
-content-addressed grid/tolerance certificate are the next required layer.
+The public protocol, ion-aware state initialization, dwell history, and
+per-point diagnostics are documented in `docs/twod-jv-execution-protocol.md`.
+This still does not certify a mobile-ion 2D J-V curve. A content-addressed
+grid/tolerance certificate is the next required layer.

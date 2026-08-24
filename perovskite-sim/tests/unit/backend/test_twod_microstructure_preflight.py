@@ -1,3 +1,4 @@
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,6 +7,11 @@ from fastapi import HTTPException
 
 import backend.main as backend
 from perovskite_sim.twod.experiments.jv_sweep_2d import JV2DResult
+from perovskite_sim.twod.experiments.jv_sweep_2d import (
+    build_jv_2d_execution_protocol,
+)
+from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.solver.tolerances import ComponentwiseAtol
 from perovskite_sim.twod.microstructure import GrainBoundary, Microstructure
 
 
@@ -18,7 +24,7 @@ class _CaptureRegistry:
         return "twod-job"
 
 
-def _result(lateral_bc: str) -> JV2DResult:
+def _result(lateral_bc: str, protocol=None) -> JV2DResult:
     return JV2DResult(
         V=np.array([0.0]),
         J=np.array([0.0]),
@@ -26,6 +32,7 @@ def _result(lateral_bc: str) -> JV2DResult:
         grid_x=np.array([0.0, 1.0]),
         grid_y=np.array([0.0, 1.0]),
         lateral_bc=lateral_bc,
+        protocol=protocol,
     )
 
 
@@ -45,15 +52,18 @@ def _install_fakes(monkeypatch, stack):
     def fake_run(*, stack, **kwargs):
         del stack
         captured.update(kwargs)
-        return _result(str(kwargs["lateral_bc"]))
+        return _result(
+            str(kwargs["lateral_bc"]),
+            protocol=kwargs.get("jv_2d_protocol"),
+        )
 
     monkeypatch.setattr(jv_2d, "run_jv_sweep_2d", fake_run)
     return registry, captured
 
 
-def _run_captured(registry: _CaptureRegistry) -> None:
+def _run_captured(registry: _CaptureRegistry):
     assert registry.fn is not None
-    registry.fn(SimpleNamespace(report=lambda *_args: None))
+    return registry.fn(SimpleNamespace(report=lambda *_args: None))
 
 
 def test_jv_2d_empty_microstructure_defaults_to_periodic(monkeypatch):
@@ -118,4 +128,118 @@ def test_jv_2d_periodic_grain_boundary_rejected_before_submit(monkeypatch):
         )
     assert error.value.status_code == 422
     assert "not area-certified" in error.value.detail
+    assert registry.fn is None
+
+
+def _mobile_protocol(stack):
+    return build_jv_2d_execution_protocol(
+        stack,
+        Microstructure(),
+        lateral_length=500e-9,
+        Nx=10,
+        V_max=1.2,
+        V_step=0.05,
+        illuminated=True,
+        lateral_bc="neumann",
+        Ny_per_layer=20,
+        settle_t=1.0e-7,
+        save_snapshots=True,
+        ion_dynamics="single_mobile",
+        atol=ComponentwiseAtol(),
+        max_nfev_per_solve=200_000,
+        max_bisect=6,
+        ion_inventory_rtol=1.0e-9,
+        initial_state_settle_s=1.0e-3,
+    )
+
+
+def test_jv_2d_mobile_requires_strict_protocol_before_submit(monkeypatch):
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    registry, _captured = _install_fakes(monkeypatch, stack)
+
+    with pytest.raises(HTTPException) as error:
+        backend.start_job(
+            backend.JobRequest(
+                kind="jv_2d",
+                params={
+                    "lateral_bc": "neumann",
+                    "ion_dynamics": "single_mobile",
+                },
+            )
+        )
+
+    assert error.value.status_code == 422
+    assert "research_strict" in error.value.detail
+    assert registry.fn is None
+
+
+def test_jv_2d_mobile_protocol_mismatch_rejected_before_submit(monkeypatch):
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    registry, _captured = _install_fakes(monkeypatch, stack)
+    protocol = replace(
+        _mobile_protocol(stack),
+        dwell_time_per_voltage_s=2.0e-7,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        backend.start_job(
+            backend.JobRequest(
+                kind="jv_2d",
+                params={
+                    "lateral_bc": "neumann",
+                    "ion_dynamics": "single_mobile",
+                    "protocol_mode": "research_strict",
+                    "jv_2d_protocol": protocol.to_dict(),
+                },
+            )
+        )
+
+    assert error.value.status_code == 422
+    assert "dwell_time_per_voltage_s" in error.value.detail
+    assert registry.fn is None
+
+
+def test_jv_2d_matching_mobile_protocol_is_forwarded_and_serialized(monkeypatch):
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    registry, captured = _install_fakes(monkeypatch, stack)
+    protocol = _mobile_protocol(stack)
+
+    response = backend.start_job(
+        backend.JobRequest(
+            kind="jv_2d",
+            params={
+                "lateral_bc": "neumann",
+                "ion_dynamics": "single_mobile",
+                "protocol_mode": "research_strict",
+                "jv_2d_protocol": protocol.to_dict(),
+            },
+        )
+    )
+    output = _run_captured(registry)
+
+    assert response["job_id"] == "twod-job"
+    assert captured["jv_2d_protocol"] == protocol
+    assert captured["protocol_mode"] == "research_strict"
+    assert isinstance(captured["atol"], ComponentwiseAtol)
+    assert output["protocol"] == protocol.to_dict()
+    assert output["protocol_hash"] == protocol.protocol_hash
+
+
+def test_jv_2d_rejects_ambiguous_absolute_tolerance_before_submit(monkeypatch):
+    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    registry, _captured = _install_fakes(monkeypatch, stack)
+
+    with pytest.raises(HTTPException) as error:
+        backend.start_job(
+            backend.JobRequest(
+                kind="jv_2d",
+                params={
+                    "atol": 1.0e-8,
+                    "componentwise_atol": asdict(ComponentwiseAtol()),
+                },
+            )
+        )
+
+    assert error.value.status_code == 422
+    assert "either atol or componentwise_atol" in error.value.detail
     assert registry.fn is None

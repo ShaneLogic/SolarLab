@@ -2343,7 +2343,15 @@ def start_job(req: JobRequest):
                 "benchmark": cfg.benchmark,
             }
     elif kind == "jv_2d":
-        from perovskite_sim.twod.experiments.jv_sweep_2d import run_jv_sweep_2d
+        from perovskite_sim.solver.tolerances import ComponentwiseAtol
+        from perovskite_sim.twod.experiments.jv_protocol_2d import (
+            JV2DProtocol,
+            resolve_jv_2d_protocol,
+        )
+        from perovskite_sim.twod.experiments.jv_sweep_2d import (
+            build_jv_2d_execution_protocol,
+            run_jv_sweep_2d,
+        )
         from perovskite_sim.twod.microstructure import (
             Microstructure, load_microstructure_from_yaml_block,
         )
@@ -2371,28 +2379,157 @@ def start_job(req: JobRequest):
                     "finite-width jv_2d grain boundaries require "
                     "lateral_bc='neumann'; periodic-x is not area-certified"
                 )
+            ion_dynamics = str(p.get("ion_dynamics", "frozen"))
+            if ion_dynamics not in {"frozen", "single_mobile"}:
+                raise ValueError(
+                    "jv_2d ion_dynamics must be 'frozen' or 'single_mobile'"
+                )
+            interface_srh = str(p.get("interface_srh", "off"))
+            if interface_srh not in {"off", "two_sided_cross_node"}:
+                raise ValueError(
+                    "jv_2d interface_srh must be 'off' or "
+                    "'two_sided_cross_node'"
+                )
+            extended_topology = (
+                ion_dynamics != "frozen" or interface_srh != "off"
+            )
+
+            _illum = p.get("illuminated", True)
+            illuminated = (
+                bool(_illum)
+                if not isinstance(_illum, str)
+                else _illum.lower() != "false"
+            )
+            _save = p.get("save_snapshots", True)
+            save_snapshots = (
+                bool(_save)
+                if not isinstance(_save, str)
+                else _save.lower() != "false"
+            )
+            lateral_length = float(p.get("lateral_length", 500e-9))
+            nx_intervals = int(p.get("Nx", 10))
+            voltage_maximum = float(p.get("V_max", 1.2))
+            voltage_step = float(p.get("V_step", 0.05))
+            ny_per_layer = int(p.get("Ny_per_layer", 20))
+            settle_time = float(p.get("settle_t", 1e-7))
+            solver_rtol = float(p.get("rtol", 1.0e-6))
+            max_nfev_per_solve = int(p.get("max_nfev_per_solve", 200_000))
+            max_bisect = int(p.get("max_bisect", 6))
+            ion_inventory_rtol = float(p.get("ion_inventory_rtol", 1.0e-9))
+            initial_state_settle_s = float(
+                p.get("initial_state_settle_s", 1.0e-3)
+            )
+            raw_atol = p.get("componentwise_atol")
+            if raw_atol is None:
+                solver_atol = (
+                    float(p["atol"])
+                    if "atol" in p
+                    else (ComponentwiseAtol() if extended_topology else 1.0e-8)
+                )
+            else:
+                if "atol" in p:
+                    raise ValueError(
+                        "jv_2d accepts either atol or componentwise_atol, not both"
+                    )
+                if not isinstance(raw_atol, dict):
+                    raise TypeError("componentwise_atol must be a JSON object")
+                expected_atol_keys = {
+                    "carrier_fraction",
+                    "ion_fraction",
+                    "interface_fraction",
+                    "minimum_atol",
+                    "refinement_factor",
+                }
+                if set(raw_atol) != expected_atol_keys:
+                    raise ValueError(
+                        "componentwise_atol keys do not match schema; "
+                        f"missing={sorted(expected_atol_keys - set(raw_atol))}, "
+                        f"extra={sorted(set(raw_atol) - expected_atol_keys)}"
+                    )
+                solver_atol = ComponentwiseAtol(**raw_atol)
+
+            jv_protocol_mode = str(p.get("protocol_mode", "compatibility"))
+            if jv_protocol_mode not in {"compatibility", "research_strict"}:
+                raise ValueError(
+                    "jv_2d protocol_mode must be 'compatibility' or "
+                    "'research_strict'"
+                )
+            supplied_jv_protocol = None
+            raw_jv_protocol = p.get("jv_2d_protocol")
+            if raw_jv_protocol is not None:
+                if not isinstance(raw_jv_protocol, dict):
+                    raise TypeError("jv_2d_protocol must be a JSON object")
+                supplied_jv_protocol = JV2DProtocol.from_dict(raw_jv_protocol)
+
+            # Legacy requests do not need an outer duplicate preflight. Any
+            # protocol-bearing or extended request is validated before job
+            # submission so a mismatch is an HTTP 422 rather than a worker
+            # failure after a job id has been returned.
+            resolved_jv_protocol = supplied_jv_protocol
+            if (
+                extended_topology
+                or supplied_jv_protocol is not None
+                or jv_protocol_mode != "compatibility"
+            ):
+                expected_protocol = build_jv_2d_execution_protocol(
+                    stack,
+                    ms,
+                    lateral_length=lateral_length,
+                    Nx=nx_intervals,
+                    V_max=voltage_maximum,
+                    V_step=voltage_step,
+                    illuminated=illuminated,
+                    lateral_bc=lateral_bc,
+                    Ny_per_layer=ny_per_layer,
+                    settle_t=settle_time,
+                    save_snapshots=save_snapshots,
+                    ion_dynamics=ion_dynamics,
+                    interface_srh=interface_srh,
+                    rtol=solver_rtol,
+                    atol=solver_atol,
+                    max_nfev_per_solve=max_nfev_per_solve,
+                    max_bisect=max_bisect,
+                    ion_inventory_rtol=ion_inventory_rtol,
+                    initial_state_settle_s=initial_state_settle_s,
+                    implicit_legacy_protocol=True,
+                )
+                if extended_topology and jv_protocol_mode != "research_strict":
+                    raise ImplicitProtocolError(
+                        "mobile-ion or interface-SRH jv_2d requires an explicit "
+                        "research_strict protocol"
+                    )
+                resolved_jv_protocol = resolve_jv_2d_protocol(
+                    supplied_jv_protocol,
+                    expected_protocol,
+                    mode=jv_protocol_mode,
+                )
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         def _run(reporter: ProgressReporter) -> dict:
-            _illum = p.get("illuminated", True)
-            illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
-            _save = p.get("save_snapshots", True)
-            save_snapshots = bool(_save) if not isinstance(_save, str) else _save.lower() != "false"
-
             result = run_jv_sweep_2d(
                 stack=stack,
                 microstructure=ms,
-                lateral_length=float(p.get("lateral_length", 500e-9)),
-                Nx=int(p.get("Nx", 10)),
-                V_max=float(p.get("V_max", 1.2)),
-                V_step=float(p.get("V_step", 0.05)),
+                lateral_length=lateral_length,
+                Nx=nx_intervals,
+                V_max=voltage_maximum,
+                V_step=voltage_step,
                 illuminated=illuminated,
                 lateral_bc=lateral_bc,
-                Ny_per_layer=int(p.get("Ny_per_layer", 20)),
-                settle_t=float(p.get("settle_t", 1e-7)),
+                Ny_per_layer=ny_per_layer,
+                settle_t=settle_time,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
                 save_snapshots=save_snapshots,
+                ion_dynamics=ion_dynamics,
+                interface_srh=interface_srh,
+                rtol=solver_rtol,
+                atol=solver_atol,
+                max_nfev_per_solve=max_nfev_per_solve,
+                max_bisect=max_bisect,
+                ion_inventory_rtol=ion_inventory_rtol,
+                initial_state_settle_s=initial_state_settle_s,
+                jv_2d_protocol=resolved_jv_protocol,
+                protocol_mode=jv_protocol_mode,
             )
 
             def snap2d_to_dict(s):
@@ -2407,6 +2544,7 @@ def start_job(req: JobRequest):
                     "Jy_n": s.Jy_n.tolist(),
                     "Jx_p": s.Jx_p.tolist(),
                     "Jy_p": s.Jy_p.tolist(),
+                    "P_ion": None if s.P_ion is None else s.P_ion.tolist(),
                 }
 
             out = {
@@ -2425,8 +2563,47 @@ def start_job(req: JobRequest):
                 # tandem block at L909 does), so a module-qualified call
                 # would crash the worker thread with a NameError.
                 "metrics": asdict(result.metrics),
+                "protocol": (
+                    None if result.protocol is None else result.protocol.to_dict()
+                ),
+                "protocol_hash": (
+                    None if result.protocol is None else result.protocol.protocol_hash
+                ),
+                "current_diagnostics": [
+                    {
+                        "terminal_electron_A_m2": item.terminal_electron_A_m2,
+                        "terminal_hole_A_m2": item.terminal_hole_A_m2,
+                        "terminal_positive_ion_A_m2": (
+                            item.terminal_positive_ion_A_m2
+                        ),
+                        "terminal_displacement_A_m2": (
+                            item.terminal_displacement_A_m2
+                        ),
+                        "terminal_total_A_m2": item.terminal_total_A_m2,
+                        "max_face_spread_A_m2": item.max_face_spread_A_m2,
+                        "max_relative_face_spread": item.max_relative_face_spread,
+                    }
+                    for item in result.current_components
+                ],
+                "ion_diagnostics": to_serializable(result.ion_diagnostics),
+                "interface_srh_diagnostics": [
+                    {
+                        "interface_rows": list(item.interface_rows),
+                        "max_total_surface_rate_m2_s": float(
+                            np.max(item.total_surface_rate_m2_s)
+                        ),
+                        "pair_a_clamped_count": int(np.sum(item.pair_a_clamped)),
+                        "pair_b_clamped_count": int(np.sum(item.pair_b_clamped)),
+                    }
+                    for item in result.interface_srh_diagnostics
+                ],
             }
-            out["active_physics"] = _describe_active_physics(stack)
+            active_physics = _describe_active_physics(stack)
+            if ion_dynamics == "single_mobile":
+                active_physics += " · 2D single positive mobile ion"
+            if interface_srh == "two_sided_cross_node":
+                active_physics += " · 2D two-sided interface SRH"
+            out["active_physics"] = active_physics
             return out
     elif kind == "voc_grain_sweep":
         from perovskite_sim.twod.experiments.voc_grain_sweep import run_voc_grain_sweep

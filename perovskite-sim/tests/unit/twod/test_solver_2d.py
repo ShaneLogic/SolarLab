@@ -1084,6 +1084,51 @@ def test_bake_radiative_reabsorption_step_2d_clears_flag_and_augments_G():
     )
 
 
+def test_bake_radiative_reabsorption_uses_second_block_in_mobile_state():
+    from perovskite_sim.twod.experiments.jv_sweep_2d import (
+        _bake_radiative_reabsorption_step_2d,
+    )
+
+    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    layers = _layers_for_stack(stack)
+    grid = build_grid_2d(
+        layers,
+        lateral_length=300e-9,
+        Nx=4,
+        lateral_uniform=True,
+    )
+    frozen = build_material_arrays_2d(
+        grid,
+        stack,
+        Microstructure(),
+        lateral_bc="periodic",
+    )
+    n = np.broadcast_to(
+        np.linspace(frozen.n_eq_left[0], frozen.n_eq_right[0], grid.Ny)[:, None],
+        (grid.Ny, grid.Nx),
+    ).copy()
+    p = np.broadcast_to(
+        np.linspace(frozen.p_eq_left[0], frozen.p_eq_right[0], grid.Ny)[:, None],
+        (grid.Ny, grid.Nx),
+    ).copy()
+    ions = np.full_like(n, 9.0e24)
+    two_block = np.concatenate([n.ravel(), p.ravel()])
+    three_block = np.concatenate([n.ravel(), p.ravel(), ions.ravel()])
+
+    expected = _bake_radiative_reabsorption_step_2d(
+        two_block,
+        frozen,
+        illuminated=True,
+    )
+    actual = _bake_radiative_reabsorption_step_2d(
+        three_block,
+        frozen,
+        illuminated=True,
+    )
+
+    np.testing.assert_array_equal(actual.G_optical, expected.G_optical)
+
+
 def test_bake_radiative_reabsorption_step_2d_no_op_when_dark():
     """When illuminated=False, the bake helper is a no-op (matches 1D)."""
     from perovskite_sim.twod.experiments.jv_sweep_2d import _bake_radiative_reabsorption_step_2d

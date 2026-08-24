@@ -839,6 +839,17 @@ Neumann lateral average 使用同一 dual-cell 宽度。它仍只支持 ohmic、
 single-positive-ion topology；public 2D J-V、execution protocol 和新的 3x3
 content-addressed certificate 仍未完成，因此 2D scope claim 暂不升级。
 
+随后 public protocol checkpoint 新增 strict canonical
+`jv-2d-execution-protocol-v1`，逐字段绑定单向 voltage array、每点完整 dwell、
+1D initial-state history、精确 tensor grid/GB geometry、ion/interface/contact
+topology、instantaneous complete-current sampling、Radau tolerance 与 recovery
+budget。默认 frozen 调用只生成有标记的 implicit compatibility protocol；
+mobile-ion 或 two-sided interface-SRH 必须提交匹配 explicit protocol 并选择
+`research_strict`。Python result 和 backend payload 保留 protocol/hash、逐点 ion
+inventory/bounds、四分量 current 及 interface clamp evidence；backend mismatch
+在 worker submit 前以 422 fail closed。新的 3x3 content-addressed certificate
+仍未完成，因此该 checkpoint 只关闭 public provenance，不升级 2D scope claim。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。
