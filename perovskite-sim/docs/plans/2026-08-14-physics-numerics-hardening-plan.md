@@ -820,6 +820,16 @@ fail closed，默认 frozen `(n,p)` path 保持不变。现有 2D terminal curre
 ion-aware 2D J-V。该 checkpoint 只关闭 solver topology；two-sided interface
 SRH、完备 terminal current、public protocol 及新 refinement certificate 仍未完成。
 
+随后 2D interface checkpoint 加入显式 opt-in 的
+`interface_srh="two_sided_cross_node"`：严格复用 1D production 的 pair-A/pair-B
+Pauwels-Vanhoutte 详细平衡参考和独立非负 clamp，把表面率按 interface-row
+dual width 转为电子/空穴等量体 sink；tensor control-volume 积分严格回到 lateral
+surface integral，横向均匀极限与 1D source 逐点相等。该 lane 只支持 Neumann-x、
+`InterfaceDefect`、未投影且 clamp-inactive 的 cross-node slice；projection、QSS、
+shared occupancy、dynamic state、interface charge 与 generation escape hatch 均
+fail closed。默认 off path bit-identical，并可与 single-positive-mobile-ion block
+组合。现有 public 2D J-V、terminal current 与 refinement certificate 仍未升级。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。

@@ -315,10 +315,10 @@ width is preserved by sub-cell SRH mixing rather than whole-node lifetime
 painting; non-empty microstructures currently fail closed on the periodic
 topology.
 Positive and negative ions are frozen as static Poisson background fields
-during 2D J-V runs. The 2D continuity path also omits the 1D interface-defect
-and interface-plane recombination channels. Its certified scope is the
-lateral-uniform/frozen-ion limit and prescribed lifetime patterns, not a
-complete 2D perovskite microstructure model.
+during 2D J-V runs. The default 2D continuity path also omits the 1D
+interface-defect and interface-plane recombination channels. Its certified
+scope is the lateral-uniform/frozen-ion limit and prescribed lifetime
+patterns, not a complete 2D perovskite microstructure model.
 
 At solver level, an explicit `ion_dynamics="single_mobile"` research transient
 adds one positive-ion state on Neumann-x domains with blocking boundaries and
@@ -327,11 +327,19 @@ fail closed in the carrier-only terminal-current post-processor until ionic and
 displacement current are implemented. See
 [`docs/twod-mobile-ion-transient.md`](docs/twod-mobile-ion-transient.md).
 
+An independent `interface_srh="two_sided_cross_node"` research opt-in maps
+the 1D two-sided interface-defect surface rate onto a conservative Neumann-x
+2D sheet sink and composes with the mobile-ion state. It explicitly excludes
+projection, shared occupancy, QSS/dynamic interface states, and interface
+charge, and is not wired into 2D J-V. See
+[`docs/twod-two-sided-interface-srh.md`](docs/twod-two-sided-interface-srh.md).
+
 2D presets live in `configs/twod/`; the backend exposes them through
 `GET /api/configs` and runs them with `kind="jv_2d"` or
 `kind="voc_grain_sweep"`.
 
 *Source:* `perovskite_sim/twod/solver_2d.py`,
+`perovskite_sim/twod/interface_recombination_2d.py`,
 `perovskite_sim/twod/experiments/jv_sweep_2d.py`
 
 <br>

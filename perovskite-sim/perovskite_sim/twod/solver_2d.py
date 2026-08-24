@@ -26,6 +26,11 @@ from perovskite_sim.twod.ion_migration_2d import (
     assess_mobile_ion_terminal_2d,
     positive_ion_continuity_rhs_2d,
 )
+from perovskite_sim.twod.interface_recombination_2d import (
+    TwoSidedInterfaceSRHCoupling2D,
+    build_two_sided_interface_srh_couplings_2d,
+    evaluate_two_sided_interface_srh_2d,
+)
 from perovskite_sim.twod.microstructure import (
     GrainBoundaryRegion2D,
     Microstructure,
@@ -166,6 +171,9 @@ class MaterialArrays2D:
     D_ion_2d:                        np.ndarray | None = None
     P_lim_2d:                        np.ndarray | None = None
     ion_steric_diffusion_only:       bool = False
+    # Explicit research-only clamp-passive cross-node interface-SRH sheets.
+    # Empty preserves the historical bulk/GB-only 2D recombination path.
+    interface_srh_couplings: tuple[TwoSidedInterfaceSRHCoupling2D, ...] = ()
 
 
 def build_material_arrays_2d(
@@ -176,6 +184,7 @@ def build_material_arrays_2d(
     lateral_bc: str = "periodic",
     P_ion_static_1d: np.ndarray | None = None,
     ion_dynamics: str = "frozen",
+    interface_srh: str = "off",
 ) -> MaterialArrays2D:
     """Assemble the 2D MaterialArrays from a stack and a microstructure.
 
@@ -198,11 +207,21 @@ def build_material_arrays_2d(
         raise ValueError(
             "ion_dynamics must be 'frozen' or 'single_mobile'"
         )
+    if interface_srh not in {"off", "two_sided_cross_node"}:
+        raise ValueError(
+            "interface_srh must be 'off' or 'two_sided_cross_node'"
+        )
     has_mobile_ions = ion_dynamics == "single_mobile"
+    has_interface_srh = interface_srh == "two_sided_cross_node"
     if has_mobile_ions and lateral_bc != "neumann":
         raise ValueError(
             "2D single-mobile-ion dynamics requires lateral_bc='neumann'; "
             "periodic-x is not topology-certified"
+        )
+    if has_interface_srh and lateral_bc != "neumann":
+        raise ValueError(
+            "2D two-sided interface SRH requires lateral_bc='neumann'; "
+            "periodic-x sheet area is not topology-certified"
         )
     if has_mobile_ions and P_ion_static_1d is not None:
         raise ValueError(
@@ -211,6 +230,11 @@ def build_material_arrays_2d(
         )
 
     mat1d = build_material_arrays_1d(grid.y, stack)
+    interface_srh_couplings = (
+        build_two_sided_interface_srh_couplings_2d(stack, mat1d)
+        if has_interface_srh
+        else ()
+    )
     if has_mobile_ions and mat1d.has_dual_ions:
         raise ValueError(
             "2D mobile-ion dynamics currently supports one positive species; "
@@ -541,6 +565,7 @@ def build_material_arrays_2d(
         ion_steric_diffusion_only=(
             mat1d.ion_steric_diffusion_only if has_mobile_ions else False
         ),
+        interface_srh_couplings=interface_srh_couplings,
     )
 
 
@@ -939,6 +964,16 @@ def assemble_rhs_2d(
             A_star_p=mat.A_star_p,
             T=mat.T_device,
         )
+
+    if mat.interface_srh_couplings:
+        interface_report = evaluate_two_sided_interface_srh_2d(
+            n,
+            p,
+            g.y,
+            mat.interface_srh_couplings,
+        )
+        dn -= interface_report.volumetric_sink_m3_s
+        dp -= interface_report.volumetric_sink_m3_s
 
     # --- Contact boundary conditions ---------------------------------------
     # Dirichlet (ohmic) path: pin all four boundary rows to zero (unchanged

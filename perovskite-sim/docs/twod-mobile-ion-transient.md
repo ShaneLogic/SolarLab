@@ -93,8 +93,10 @@ density. That is a documented numerical boundary, not a reason to relax the
 physical gate. Long-time 2D mobile-ion work will need a positivity-preserving
 coordinate or a dedicated DAE integrator.
 
-Remaining closure work is two-sided interface recombination, mobile-ion-complete
-terminal current (including displacement current), public experiment/protocol
-wiring, and a new content-addressed grid/tolerance certificate. Until those are
+The independent two-sided cross-node interface-SRH sheet closure is documented
+in `docs/twod-two-sided-interface-srh.md` and can compose with this state
+topology. Remaining work is mobile-ion-complete terminal current (including
+displacement current), public experiment/protocol wiring, and a new
+content-addressed combined grid/tolerance certificate. Until those are
 complete, 2D J-V remains frozen-ion and the full microstructure claim remains
 blocked.
