@@ -348,8 +348,19 @@ physical-density backward-Euler tangent differs by at most `3.02564e-7`.
 Projection, occupation, SRH, DOS/logit, and steric differentiability clamps
 remain explicit fail-closed boundaries.
 
-Sparse Newton integration and a content-addressed refinement matrix remain
-subsequent checkpoints. The combined topology therefore remains
+The explicit `jacobian_mode="structured_analytic"` integrator path now factors
+that CSR matrix with sparse LU while sharing the dense path's predictor,
+physical-density residual, update limits, line search, and accepted-step
+evidence. On the nontrivial `10 mV`, `10 ms`, two-step trajectory, dense and
+structured paths both take 12 Newton iterations, while residual evaluations
+fall from `976` to `16` (`0.01639` of dense work). Their maximum coordinate and
+physical-state relative differences are `1.02141e-14`, interface-state relative
+difference is `8.43769e-15`, and potential difference is `8.67362e-19 V`.
+Across 5/9/17 nodes, dense residual evaluations grow `295/487/1016`, while the
+structured path uses `7/7/8`.
+
+A content-addressed refinement matrix remains the next checkpoint. Until that
+source-clean matrix is complete, the combined topology remains
 `INTERNAL_TESTED`, not `INTERNAL_CERTIFIED`.
 
 The combined slice fails closed for dual ions, `InterfaceDefect`, configurable

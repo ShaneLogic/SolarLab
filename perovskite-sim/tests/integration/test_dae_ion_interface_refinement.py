@@ -194,3 +194,33 @@ def test_combined_be_contracts_to_eliminated_qss_mol_reference():
     assert positive_ion_errors[-1] < 1.0e-5
     assert interface_errors[-1] < 1.0e-7
     assert potential_errors[-1] < 1.0e-8
+
+    structured = run_ion_interface_backward_euler_reference(
+        model,
+        np.linspace(0.0, final_time_s, 9),
+        initial=initial,
+        residual_tolerance=1.0e-8,
+        max_newton_iterations=24,
+        jacobian_mode="structured_analytic",
+    )
+    np.testing.assert_allclose(
+        structured.physical_states,
+        results[-1].physical_states,
+        rtol=2.0e-10,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.interface_states_m3,
+        results[-1].interface_states_m3,
+        rtol=2.0e-10,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.potentials_V,
+        results[-1].potentials_V,
+        rtol=0.0,
+        atol=2.0e-12,
+    )
+    assert structured.total_residual_evaluations < (
+        results[-1].total_residual_evaluations / 20
+    )

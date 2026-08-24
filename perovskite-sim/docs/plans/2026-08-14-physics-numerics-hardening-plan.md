@@ -759,6 +759,15 @@ DOS-logit clamp 或 steric kink 激活时继续 fail-close。该矩阵尚未接�
 Newton，因此下一 checkpoint 是 structured/dense trajectory equivalence 与工作量
 比较，而不是直接注册 certificate。
 
+第十四个 checkpoint 已将组合 CSR tangent 接入同一 backward-Euler residual 和
+line search 的 sparse-LU Newton 分支。`10 mV`、`10 ms` 两步非平凡轨迹中，dense
+与 structured 均使用 12 次 Newton，RHS evaluations 从 `976` 降到 `16`
+（fraction `0.01639`）；坐标/物理状态最大差 `1.0214e-14`，interface-state 相对差
+`8.4377e-15`，potential 差 `8.6736e-19 V`，离子库存与 accepted residual 继续使用
+同一门槛。5/9/17 节点 dense RHS work 为 `295/487/1016`，structured 为
+`7/7/8`。下一 checkpoint 现在可以预注册并执行新的 combined 9-cell matrix；在
+source-clean certificate 完成前，能力标签仍为 `INTERNAL_TESTED`。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。

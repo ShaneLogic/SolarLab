@@ -817,9 +817,11 @@ physical-density backward-Euler reference now verifies simultaneous carrier,
 ion, interface-state, and electrostatic evolution against the production MoL
 eliminated-QSS path. Its complete clamp-inactive structured tangent now combines
 the existing interface cross-block derivatives with ion face-flux, storage,
-and Poisson-ion blocks. That matrix is not yet wired into the time integrator,
-and the combined slice has no content-addressed refinement certificate, so it
-does not inherit any of the four certificates above.
+and Poisson-ion blocks. The same backward-Euler entry point exposes an explicit
+sparse-analytic Newton mode whose trajectory matches the dense reference while
+using far fewer residual evaluations. The combined slice still has no
+content-addressed refinement certificate, so it does not inherit any of the
+four certificates above.
 
 Phase 4.3 adds a separate, research-only energy-distributed bulk-trap
 equilibrium closure. A strict standard-SI schema defines integrated trap

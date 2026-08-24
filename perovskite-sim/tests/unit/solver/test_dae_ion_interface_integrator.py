@@ -290,6 +290,101 @@ def test_every_accepted_bounded_state_stays_inside_its_capacity():
     )
 
 
+def test_structured_newton_matches_dense_trajectory_with_far_fewer_residuals():
+    _grid, _stack, _reference, model = _problem(V_app_V=0.01)
+    time = np.array([0.0, 5.0e-3, 1.0e-2])
+    dense = run_ion_interface_backward_euler_reference(
+        model,
+        time,
+        residual_tolerance=1.0e-8,
+        max_newton_iterations=24,
+    )
+    structured = run_ion_interface_backward_euler_reference(
+        model,
+        time,
+        residual_tolerance=1.0e-8,
+        max_newton_iterations=24,
+        jacobian_mode="structured_analytic",
+    )
+
+    assert dense.success and structured.success
+    assert structured.jacobian_mode == "structured_analytic"
+    assert structured.method.endswith("sparse-analytic-newton-v1")
+    np.testing.assert_allclose(
+        structured.coordinates,
+        dense.coordinates,
+        rtol=0.0,
+        atol=2.0e-10,
+    )
+    np.testing.assert_allclose(
+        structured.physical_states,
+        dense.physical_states,
+        rtol=2.0e-10,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.interface_states_m3,
+        dense.interface_states_m3,
+        rtol=2.0e-10,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        structured.potentials_V,
+        dense.potentials_V,
+        rtol=0.0,
+        atol=2.0e-12,
+    )
+    assert structured.total_residual_evaluations < (
+        dense.total_residual_evaluations / 20
+    )
+    assert structured.max_normalized_carrier_residual <= 1.0e-8
+    assert structured.max_normalized_positive_ion_residual <= 1.0e-8
+    assert structured.max_normalized_interface_residual <= 1.0e-8
+    assert structured.max_normalized_algebraic_residual <= 1.0e-8
+    assert structured.max_relative_positive_ion_inventory_drift < 2.0e-15
+
+
+def test_structured_work_is_grid_stable_while_dense_work_grows():
+    dense_evaluations = []
+    structured_evaluations = []
+    for intervals in (2, 4, 8):
+        _grid, _stack, _reference, model = _problem(intervals=intervals)
+        time = np.array([0.0, 1.0e-9])
+        dense = run_ion_interface_backward_euler_reference(
+            model,
+            time,
+            residual_tolerance=1.0e-8,
+        )
+        structured = run_ion_interface_backward_euler_reference(
+            model,
+            time,
+            residual_tolerance=1.0e-8,
+            jacobian_mode="structured_analytic",
+        )
+        np.testing.assert_allclose(
+            structured.coordinates,
+            dense.coordinates,
+            rtol=0.0,
+            atol=2.0e-10,
+        )
+        dense_evaluations.append(dense.total_residual_evaluations)
+        structured_evaluations.append(structured.total_residual_evaluations)
+
+    assert np.all(np.diff(dense_evaluations) > 0)
+    assert max(structured_evaluations) - min(structured_evaluations) <= 2
+    assert structured_evaluations[-1] < dense_evaluations[-1] / 20
+
+
+def test_unknown_jacobian_mode_fails_before_integration():
+    _grid, _stack, _reference, model = _problem()
+    with pytest.raises(ValueError, match="jacobian_mode"):
+        run_ion_interface_backward_euler_reference(
+            model,
+            np.array([0.0, 1.0e-9]),
+            jacobian_mode="automatic",
+        )
+
+
 @pytest.mark.parametrize(
     "time",
     [

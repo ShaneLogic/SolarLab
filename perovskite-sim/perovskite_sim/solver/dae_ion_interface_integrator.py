@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from typing import Literal
 
 import numpy as np
+from scipy.sparse.linalg import LinearOperator, onenormest, splu
 
 from perovskite_sim.constants import Q
 from perovskite_sim.physics.generation import dual_cell_integral
+from perovskite_sim.solver.dae_ion_interface_jacobian import (
+    build_ion_interface_structured_backward_euler_jacobian,
+)
 from perovskite_sim.solver.dae_ion_interface_states import (
     IonInterfaceDAEConsistentInitialCondition,
     IonInterfaceDAEResidualReport,
@@ -359,8 +364,12 @@ def run_ion_interface_backward_euler_reference(
     max_ion_logit_update: float = 2.0,
     max_interface_logit_update: float = 2.0,
     finite_difference_relative_step: float = 1.0e-6,
+    jacobian_mode: Literal[
+        "dense_central",
+        "structured_analytic",
+    ] = "dense_central",
 ) -> IonInterfaceDAETransientResult:
-    """Integrate the combined topology with a dense correctness reference."""
+    """Integrate the combined topology with dense or structured Newton."""
     time = _validate_time_grid(time_s)
     scalar_controls = {
         "residual_tolerance": residual_tolerance,
@@ -379,6 +388,10 @@ def run_ion_interface_backward_euler_reference(
         or max_line_search_backtracks < 0
     ):
         raise ValueError("max_line_search_backtracks must be a non-negative integer")
+    if jacobian_mode not in ("dense_central", "structured_analytic"):
+        raise ValueError(
+            "jacobian_mode must be 'dense_central' or 'structured_analytic'"
+        )
 
     initial_state = (
         build_single_ion_algebraic_interface_consistent_initial_condition(
@@ -475,23 +488,43 @@ def run_ion_interface_backward_euler_reference(
                     residual_norm=residual_norm,
                 )
             try:
-                jacobian = finite_difference_ion_interface_backward_euler_jacobian(
-                    model,
-                    coordinate,
-                    previous,
-                    dt_s,
-                    relative_step=finite_difference_relative_step,
-                )
-                residual_evaluations += 2 * layout.size
-                exact_rows = model.boundary_poisson_state_jacobian(coordinate)
-                exact_mask = np.zeros(layout.size, dtype=bool)
-                exact_mask[[0, count - 1, count, 2 * count - 1]] = True
-                exact_mask[layout.potential_slice] = True
-                jacobian[exact_mask] = exact_rows[exact_mask]
-                condition = float(np.linalg.cond(jacobian))
-                if not np.isfinite(condition):
-                    raise np.linalg.LinAlgError("non-finite Jacobian condition")
-                delta = np.linalg.solve(jacobian, -report.normalized_residual)
+                if jacobian_mode == "dense_central":
+                    jacobian = finite_difference_ion_interface_backward_euler_jacobian(
+                        model,
+                        coordinate,
+                        previous,
+                        dt_s,
+                        relative_step=finite_difference_relative_step,
+                    )
+                    residual_evaluations += 2 * layout.size
+                    exact_rows = model.boundary_poisson_state_jacobian(coordinate)
+                    exact_mask = np.zeros(layout.size, dtype=bool)
+                    exact_mask[[0, count - 1, count, 2 * count - 1]] = True
+                    exact_mask[layout.potential_slice] = True
+                    jacobian[exact_mask] = exact_rows[exact_mask]
+                    condition = float(np.linalg.cond(jacobian))
+                    if not np.isfinite(condition):
+                        raise np.linalg.LinAlgError("non-finite Jacobian condition")
+                    delta = np.linalg.solve(jacobian, -report.normalized_residual)
+                else:
+                    jacobian = build_ion_interface_structured_backward_euler_jacobian(
+                        model,
+                        coordinate,
+                        dt_s,
+                    ).matrix.tocsc()
+                    factor = splu(jacobian)
+                    inverse = LinearOperator(
+                        jacobian.shape,
+                        matvec=factor.solve,
+                        rmatvec=lambda vector: factor.solve(vector, trans="T"),
+                        dtype=float,
+                    )
+                    condition = float(onenormest(jacobian) * onenormest(inverse))
+                    if not np.isfinite(condition):
+                        raise np.linalg.LinAlgError(
+                            "non-finite sparse Jacobian condition estimate"
+                        )
+                    delta = factor.solve(-report.normalized_residual)
             except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
                 raise IonInterfaceDAEIntegrationError(
                     f"Jacobian solve failed: {exc}",
@@ -638,8 +671,12 @@ def run_ion_interface_backward_euler_reference(
         potentials_V=potential_ro,
         step_reports=report_tuple,
         success=True,
-        method="physical-density-backward-euler/ion-interface-dense-central-v1",
-        jacobian_mode="dense_central",
+        method=(
+            "physical-density-backward-euler/ion-interface-dense-central-v1"
+            if jacobian_mode == "dense_central"
+            else "physical-density-backward-euler/ion-interface-sparse-analytic-newton-v1"
+        ),
+        jacobian_mode=jacobian_mode,
         total_nonlinear_iterations=sum(
             item.nonlinear_iterations for item in report_tuple
         ),
