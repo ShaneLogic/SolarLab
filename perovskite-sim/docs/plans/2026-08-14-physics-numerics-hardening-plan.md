@@ -875,6 +875,25 @@ terminal-voltage fold 均 fail closed。当前标签为 `INTERNAL_TESTED`：它�
 post-processing 层，不是 terminal-voltage 驱动的 transient circuit DAE；
 source-clean grid/parameter certificate 仍需作为下一 checkpoint 注册。
 
+随后 external-circuit certificate checkpoint 先保留
+`external-series-shunt-dc-v1` 的 9/9-cell `partial` 结果：其 0--1.2 V junction
+full trace 在 deep-forward injection 达到约 `-17.8 kA m-2` 和 `3.55 V` series
+drop，N=30 到 N=40 的 finest-tolerance tail 差异未通过冻结阈值，未通过放宽
+threshold 掩盖。resolved
+`external-series-shunt-dc-operating-quadrant-v2` 改为直接预注册器件发电象限：
+正反扫各在 21 个固定 `V_terminal/Voc_terminal` 坐标比较 `J_terminal/Jsc`，
+同时独立检查 Voc/Jsc/FF/PCE、完整曲线 Kirchhoff balance、协议/source hash、
+branch monotonicity、寄生元件活动性和 zero-coupling exact limit。source-clean
+commit `2392ba3` 的 20/30/40 x 1/0.1/0.01 矩阵完成 9/9 cells，certificate
+`a9f6d63a229ec613594d78d73a2ac94e6d0aea756c10e960948dc31123e1bf26`
+为 `certified`；terminal grid differences 为 normalized quadrant `0.001592`、
+Voc `0.2841 mV`、Jsc `0.1335%`、FF `5.87e-5`、PCE `0.0943%`，逐 cell
+current/voltage balance 均为 exact zero。该 scope 因此升级为
+`INTERNAL_CERTIFIED` 的 synthetic DC operating-quadrant mapping；高注入 tail、
+实测 Rs/Rsh、terminal-voltage transient、自热、分布电阻与实验验证仍未认证。
+下一器件外部本构 checkpoint 转入 thermal/energy-balance，不把热效应塞回
+contact calibration 或本 algebraic circuit layer。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。

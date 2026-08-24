@@ -527,6 +527,19 @@ changing `/api/jv` or the workstation default. This is a DC post-processing
 layer, not yet a terminal-voltage-driven transient circuit DAE. See
 [`docs/external-circuit-dc.md`](docs/external-circuit-dc.md).
 
+The source-clean `external-series-shunt-dc-operating-quadrant-v2` lane is
+internally certified at commit `2392ba3` with 9/9 grid/tolerance cells and
+certificate SHA-256
+`a9f6d63a229ec613594d78d73a2ac94e6d0aea756c10e960948dc31123e1bf26`.
+It compares both branches on fixed $V_{terminal}/V_{oc}\in[0,1]$ coordinates,
+while separately certifying terminal $V_{oc}$, $J_{sc}$, FF, PCE, exact
+Kirchhoff balances, source/protocol provenance, and the bit-exact zero-coupling
+limit. The earlier full-junction-trace v1 lane remains `partial` because its
+deep-forward-injection tail is not grid converged; that tail is explicitly not
+covered by the v2 certificate. The resistance values are synthetic stress
+inputs, so this remains internal numerical evidence rather than measured-device
+validation.
+
 *Source:* `perovskite_sim/experiments/external_circuit.py`
 
 <br>
