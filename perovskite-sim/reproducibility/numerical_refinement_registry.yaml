@@ -555,6 +555,78 @@ lanes:
       - The mapping remains an algebraic DC postprocess and excludes coupled circuit-device transients, capacitance, inductance, heating, and distributed resistance.
       - Passing is internal grid/tolerance, provenance, and Kirchhoff-balance evidence; it is not external simulator validation, experimental validation, SCAPS parity, or material-parameter validation.
 
+  electrothermal-terminal-mpp-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/nip_MAPbI3.yaml
+    config_sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
+    executor: perovskite_sim.validation.electrothermal_refinement:run_electrothermal_terminal_mpp_refinement
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [10, 15, 20]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      ambient_to_maximum_mpp_power_change_W_m2: {comparison: relative_linf, limit: 0.02, units: W m-2}
+      operating_temperature_K: {comparison: absolute_linf, limit: 0.5, units: K}
+      temperature_rise_K: {comparison: absolute_linf, limit: 0.5, units: K}
+      terminal_mpp_current_A_m2: {comparison: relative_linf, limit: 0.02, units: A m-2}
+      terminal_mpp_power_W_m2: {comparison: relative_linf, limit: 0.02, units: W m-2}
+      terminal_mpp_voltage_V: {comparison: absolute_linf, limit: 0.05, units: V}
+    quality_gates:
+      all_temperature_evaluations_certified: {operator: eq, limit: 1.0, units: "1"}
+      ambient_residual_positive: {operator: eq, limit: 1.0, units: "1"}
+      base_stack_immutable: {operator: eq, limit: 1.0, units: "1"}
+      circuit_protocol_hash_verified: {operator: eq, limit: 1.0, units: "1"}
+      electrical_protocol_hash_verified: {operator: eq, limit: 1.0, units: "1"}
+      electrothermal_certified: {operator: eq, limit: 1.0, units: "1"}
+      final_external_mapping_verified: {operator: eq, limit: 1.0, units: "1"}
+      first_law_reconstruction_error_W_m2: {operator: le, limit: 1.0e-12, units: W m-2}
+      maximum_residual_negative: {operator: eq, limit: 1.0, units: "1"}
+      mpp_series_voltage_drop_V: {operator: ge, limit: 0.005, units: V}
+      mpp_shunt_current_A_m2: {operator: ge, limit: 1.0, units: A m-2}
+      operating_protocol_hash_verified: {operator: eq, limit: 1.0, units: "1"}
+      power_balance_residual_W_m2: {operator: le, limit: 0.2, units: W m-2}
+      root_iterations: {operator: le, limit: 30.0, units: "1"}
+      temperature_evaluations: {operator: le, limit: 12.0, units: "1"}
+      temperature_evaluations_within_envelope: {operator: eq, limit: 1.0, units: "1"}
+      temperature_protocols_aligned: {operator: eq, limit: 1.0, units: "1"}
+      temperature_response_active_W_m2: {operator: ge, limit: 1.0, units: W m-2}
+      terminal_power_below_absorption: {operator: eq, limit: 1.0, units: "1"}
+      thermal_protocol_hash_verified: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_max_V: 1.2
+      voltage_points: 6
+      scan_rate_V_s: 20.0
+      rtol: 1.0e-4
+      series_resistance_ohm_m2: 2.0e-4
+      shunt_resistance_ohm_m2: 0.2
+      incident_power_W_m2: 1000.0
+      absorbed_optical_power_W_m2: 800.0
+      ambient_temperature_K: 300.0
+      areal_heat_capacity_J_m2_K: 2000.0
+      heat_transfer_coefficient_W_m2_K: 20.0
+      emissivity: 0.85
+      maximum_temperature_K: 380.0
+      constant_internal_heat_W_m2: 0.0
+      steady_power_residual_tolerance_W_m2: 0.2
+      temperature_absolute_tolerance_K: 0.005
+      maximum_root_iterations: 30
+      operating_branch: forward
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - This lane certifies one fresh-state, protocol-conditioned forward-branch sampled terminal-MPP root; it does not certify voltage-sampling refinement or a continuously optimized MPP.
+      - Each temperature restarts the complete transient J-V history, so the lane does not model a joint thermal-ion trajectory, thermal memory, or temperature ramp history.
+      - The 800 W/m2 absorbed power, heat-transfer coefficient, emissivity, heat capacity, and series/shunt resistances are synthetic stress inputs, not measured parameters of the nip_MAPbI3 preset.
+      - The control volume is lumped and excludes a spatial heat equation, thermal contact resistance, spectral thermalization, temperature-dependent optical constants, and non-radiative heat localization.
+      - Passing is internal grid/tolerance, first-law, and provenance evidence; it is not external simulator validation, experimental validation, lifetime prediction, or validation of a real device temperature.
+
   interface-recombination-charge-off:
     claim_level: internal-numerical-candidate
     config: configs/interface_charge_reference.yaml

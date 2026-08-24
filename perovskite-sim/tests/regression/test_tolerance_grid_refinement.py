@@ -113,6 +113,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "twod-mobile-ion-interface-srh-v1",
         "external-series-shunt-dc-v1",
         "external-series-shunt-dc-operating-quadrant-v2",
+        "electrothermal-terminal-mpp-v1",
         "interface-recombination-charge-off",
         "interface-charge-equilibrium-referenced-v1",
         "interface-charge-device-stress-v1",
@@ -189,6 +190,27 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert resolved_external_quality[
         "terminal_quadrant_points_completed"
     ].limit == 42.0
+    electrothermal = registry.lane("electrothermal-terminal-mpp-v1")
+    assert electrothermal.grid_values == (10, 15, 20)
+    assert electrothermal.tolerance_factors == (1.0, 0.1, 0.01)
+    electrothermal_observables = {
+        gate.metric: gate for gate in electrothermal.observables
+    }
+    assert electrothermal_observables["operating_temperature_K"].limit == (
+        pytest.approx(0.5)
+    )
+    assert electrothermal_observables["terminal_mpp_power_W_m2"].limit == (
+        pytest.approx(0.02)
+    )
+    electrothermal_quality = {
+        gate.metric: gate for gate in electrothermal.quality_gates
+    }
+    assert electrothermal_quality["power_balance_residual_W_m2"].limit == (
+        pytest.approx(0.2)
+    )
+    assert electrothermal_quality["temperature_response_active_W_m2"].limit == (
+        pytest.approx(1.0)
+    )
     ion_dc = registry.lane("ionmonger-ion-aware-dc-v1")
     ion_dc_resolved = registry.lane("ionmonger-ion-aware-dc-resolved-v2")
     assert ion_dc.grid_values == (30, 60, 90)
