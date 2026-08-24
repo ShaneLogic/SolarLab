@@ -359,9 +359,54 @@ difference is `8.43769e-15`, and potential difference is `8.67362e-19 V`.
 Across 5/9/17 nodes, dense residual evaluations grow `295/487/1016`, while the
 structured path uses `7/7/8`.
 
-A content-addressed refinement matrix remains the next checkpoint. Until that
-source-clean matrix is complete, the combined topology remains
-`INTERNAL_TESTED`, not `INTERNAL_CERTIFIED`.
+The first registered matrix, `single-ion-algebraic-interface-dae-transient-v1`,
+failed transparently in five of nine cells: the dense-central Newton reference
+stalled between `1.03386e-8` and `1.54244e-8`, immediately above its `1e-8`
+stopping threshold. A finite-difference-step sweep from `1e-7` to `3e-5`
+reproduced the same carrier physical-rate subtraction floor, rather than a
+divergent structured tangent. The failed run and certificate remain immutable:
+run `b8684dd9ee5245fce39ee33a644107a641227204bf8b7f7186cbe06f6df4ca9a`,
+certificate
+`56b83ebcf02cad5562b8a516436c5f8dcaecff3fb6949545b4bacec7334a876f`.
+
+The additive
+`single-ion-algebraic-interface-dae-transient-resolved-v2` lane records the
+measured float64 floor explicitly. It uses a `5e-8` carrier/Newton residual
+contract while retaining `2e-8` ion, interface, and algebraic gates. Its ion
+terminal-error convergence and all-cell bounds are `3e-6` and `1e-5`,
+respectively; the observed worst all-cell error is `4.57793e-6`. The frozen
+matrix uses 4/8/16 intervals per electrical layer, time-step factors
+1/0.5/0.25, a dark 10 mV, 10 ms protocol, strict production Radau/MoL, and both
+dense-central and structured-analytic backward Euler.
+
+The source-clean, single-threaded matrix is `INTERNAL_CERTIFIED`:
+
+- source commit `dc540caeb8a6470fbac015ee2651094310a27b1b`;
+- run ID `d4c74bb998e530ddcf71c44e3a30608c5d96e288111102c070b628458e1b7e74`;
+- certificate `02f9e0b2bdf0de4a6243ab8833374503f2c3893d085c21084ae4d90994a90809`;
+- manifest `31491f1ae9927c8f14410c07498926e720756357667ae99166ad436706be3986`;
+- protocol `9ff80d32dee26f5f085bf4445474bb5c850eb0a279088bdb20fafd64289f63e2`;
+- all 9 cells completed, with no failed, missing, or unconverged dimensions;
+- terminal positive-ion-error grid/time-step changes
+  `6.44678e-7 / 1.14522e-6`, below the frozen `3e-6` limit, and terminal
+  interface-occupation changes `4.92483e-3 / 9.41550e-10`, below `3e-2`;
+- all-cell maximum carrier/positive-ion/interface/algebraic normalized residual
+  `4.97707e-8 / 1.54565e-10 / 2.29723e-14 / 2.29723e-14`;
+- all-cell maximum positive-ion inventory drift `9.69749e-14` and normalized
+  balance defect `1.31836e-13`;
+- dense/structured trajectory difference at most `8.99725e-13` in log density,
+  `5.15108e-13` in positive-ion relative density, `8.95400e-13` in interface
+  relative density, and `1.29237e-16 V` in potential;
+- structured RHS-work fraction at most `0.01935`, with `23.78` to `25.39` CSR
+  nonzeros per node; and
+- every topology, strict MoL health, positive/bounded-state, clamp-inactive,
+  SRH-denominator, finite-condition, and conservation quality gate passed.
+
+This is internal numerical evidence for the frozen synthetic single-ion,
+uncharged-interface protocol. It is not external solver validation,
+experimental validation, SCAPS parity, material-parameter validation, a
+production experiment-route certificate, or a general ion/interface physics
+certificate.
 
 The combined slice fails closed for dual ions, `InterfaceDefect`, configurable
 cross-node sampling, interface charge, dynamic or two-sided interface states,
@@ -389,9 +434,9 @@ selective contacts, field-dependent mobility, photon recycling, and clamp-active
 operating points.
 
 Those exclusions are evidence boundaries, not claims that the omitted physics
-can be added by changing a flag. The no-ion, single-positive-ion, dual-ion, and
-algebraic-interface certificates are separately complete only for their frozen
-topologies. The new combined residual has its own capability contract but no
-structured-Newton or content-addressed certificate yet. Charged-interface,
-`InterfaceDefect`, dual-ion/interface, and production-route topologies still
-need separate contracts and lanes; none can inherit an earlier certificate.
+can be added by changing a flag. The no-ion, single-positive-ion, dual-ion,
+algebraic-interface, and combined single-ion/algebraic-interface certificates
+are separately complete only for their frozen topologies. Charged-interface,
+`InterfaceDefect`, configurable cross-node sampling, dual-ion/interface, and
+production-route topologies still need separate contracts and lanes; none can
+inherit an earlier certificate.

@@ -787,41 +787,34 @@ The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
 Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
 
-Phase 4.1 now includes four certified research-only semi-explicit DAE slices.
+Phase 4.1 now includes five certified research-only semi-explicit DAE slices.
 The first three are single-layer, ohmic, no-interface topologies: no ions, one
 blocking positive ion, and blocking positive/negative ions on a shared
 finite-site lattice. The fourth is a two-layer, ion-free, charge-off topology
-with one physical interface and four algebraic Fermi-Richardson trace states. All retain
-Poisson potential as an algebraic coordinate, construct a
+with one physical interface and four algebraic Fermi-Richardson trace states.
+The fifth combines one synthetic blocking positive ion with those four
+algebraic traces in the same two-layer, charge-off topology. All retain Poisson
+potential as an algebraic coordinate, construct a
 residual-certified consistent initial condition, and provide dense reference
 and sparse analytic Newton paths. The ion slices add bounded coordinates,
 production blocking flux/tangents, per-species dual-cell inventory, and exact
 ion-storage derivatives. The interface slice adds exact adjacent bulk/state
 cross-block tangents for projection, reciprocal exchange, and shared-occupancy
-SRH, and fails closed if any defining clamp activates. The four registered
+SRH, and fails closed if any defining clamp activates. The five registered
 9-cell matrices are internally certified at source commits `985a234`,
-`6e9a274`, `2d6b32f`, and `008aef3` (certificates `44807d654d...`,
-`7538fa4ace...`, `15a6a4dcf...`, and `21bb12e465...`). The dual lane's
-negative-ion parameters are synthetic protocol inputs. The interface certificate
-does not include `InterfaceDefect`, configurable cross-node carrier sampling,
-dynamic/charged interface states, ions, selective contacts, field mobility,
-photon recycling, clamp-active points, experiments, or backend routes; see
-[the DAE capability boundary](docs/dae-research-backbone.md).
-
-A fifth `INTERNAL_TESTED` topology checkpoint now combines one blocking
-positive ion with the same four algebraic interface traces in a two-layer,
-single-interface, charge-off system. It separates carrier, ion, interface, and
-Poisson residuals and certifies a deterministic consistent state plus exact
-storage/boundary/ion-aware-Poisson Jacobian blocks. A dense-central
-physical-density backward-Euler reference now verifies simultaneous carrier,
-ion, interface-state, and electrostatic evolution against the production MoL
-eliminated-QSS path. Its complete clamp-inactive structured tangent now combines
-the existing interface cross-block derivatives with ion face-flux, storage,
-and Poisson-ion blocks. The same backward-Euler entry point exposes an explicit
-sparse-analytic Newton mode whose trajectory matches the dense reference while
-using far fewer residual evaluations. The combined slice still has no
-content-addressed refinement certificate, so it does not inherit any of the
-four certificates above.
+`6e9a274`, `2d6b32f`, `008aef3`, and `dc540ca` (certificates
+`44807d654d...`, `7538fa4ace...`, `15a6a4dcf...`, `21bb12e465...`, and
+`02f9e0b2bd...`). The dual and combined lanes' ion parameters are synthetic
+protocol inputs. The combined certificate covers a source-clean 9-cell
+grid/time-step matrix: all cells completed, maximum carrier/ion/interface
+normalized residuals were `4.97707e-8 / 1.54565e-10 / 2.29723e-14`, maximum
+ion inventory drift was `9.69749e-14`, and the sparse path used at most
+`0.01935` of the dense residual work. It excludes `InterfaceDefect`,
+configurable cross-node carrier sampling, dynamic/charged or two-sided
+interface states, dual ions, selective contacts, field mobility, photon
+recycling, clamp-active points, experiments, and backend routes. These are
+internal numerical certificates, not external solver or experimental
+validation; see [the DAE capability boundary](docs/dae-research-backbone.md).
 
 Phase 4.3 adds a separate, research-only energy-distributed bulk-trap
 equilibrium closure. A strict standard-SI schema defines integrated trap
