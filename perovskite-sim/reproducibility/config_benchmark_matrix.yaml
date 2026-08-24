@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 2b00ee117a007f45eb29a87ffa8b3ae74799c6611e2a23f4ef0f09ec62e7e94b
+  sha256: be159cd94ce2547f90e83a5f57d96e819a971bc07723dcc22a80c02bd2b7f763
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -128,6 +128,7 @@ benchmarks:
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
+      - configs/nip_MAPbI3.yaml
       - configs/scaps_mirror.yaml
       - configs/twod/combined_mobile_interface_research.yaml
       - configs/twod/nip_MAPbI3_uniform.yaml
@@ -535,6 +536,27 @@ benchmarks:
       - the source-clean 3x3 matrix is internally certified at commit 0c9eb26 with certificate SHA-256 b02bc4f8b3b5d470d599f6dacde746b26c263591aafecd14cc6c890a94b677dd
       - the fast positive-ion diffusivity and all interface and grain-boundary parameters are synthetic numerical stress inputs
       - this is internal conservation and convergence evidence, not an external simulator, measured-device, or material-parameter validation
+  external-series-shunt-dc-internal-closure:
+    kind: numerical
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/integration/test_external_circuit_refinement.py
+      tests/unit/validation/test_external_circuit_refinement.py
+    tests:
+      - tests/integration/test_external_circuit_refinement.py
+      - tests/unit/validation/test_external_circuit_refinement.py
+    node_ids:
+      - tests/integration/test_external_circuit_refinement.py::test_real_registered_external_circuit_cell_returns_all_certificate_axes
+      - tests/unit/validation/test_external_circuit_refinement.py::test_executor_matches_registry_and_binds_explicit_protocol
+      - tests/unit/validation/test_external_circuit_refinement.py::test_study_protocol_is_identical_across_matrix_cells
+      - tests/unit/validation/test_external_circuit_refinement.py::test_executor_fails_closed_on_source_protocol_mismatch
+    configs: [configs/nip_MAPbI3.yaml]
+    limitations:
+      - the pre-registered source-clean 3x3 grid/tolerance matrix has not yet been executed
+      - the area-normalized series and shunt resistance values are synthetic stress inputs, not fitted device parameters
+      - this is an algebraic DC postprocess and excludes coupled circuit-device transients, heating, distributed resistance, and experimental validation
   twod-radiative-reabsorption:
     kind: internal
     status: pass
@@ -1319,8 +1341,11 @@ configs:
     sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
     semantic_sha256: 92d27b4b9d47ca66725318ba9115a5dfa99448485044dd02015f9318dfcd7dce
     schema: standard-device-v1
-    status: load_only
-    benchmarks: [loader-contract]
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - external-series-shunt-dc-internal-closure
   - path: configs/nip_MAPbI3_tmm.yaml
     sha256: 4624f6923ffc10fbd401ce37702250f72b558d3e4ecdbd5d8e766ab84e21b1b2
     semantic_sha256: 5ea55c1257834ab7f7dd10a867c2b78aea03ee2691936281b227ee833e59571a

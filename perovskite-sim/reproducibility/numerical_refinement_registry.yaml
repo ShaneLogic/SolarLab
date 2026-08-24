@@ -441,6 +441,62 @@ lanes:
       - Interface projection, shared or dynamic interface occupancy, interface charge, dual ions, selective contacts, field mobility, and photon recycling remain outside this certificate.
       - Passing is internal grid/tolerance and conservation evidence; it is not external solver validation, experimental validation, SCAPS parity, or validation of a real grain-boundary parameter set.
 
+  external-series-shunt-dc-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/nip_MAPbI3.yaml
+    config_sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
+    executor: perovskite_sim.validation.external_circuit_refinement:run_external_series_shunt_dc_refinement
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [20, 30, 40]
+    tolerance:
+      parameter: componentwise_atol_refinement_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      series_voltage_drop_V: {comparison: absolute_linf, limit: 0.002, units: V}
+      terminal_current_normalized_trace: {comparison: absolute_linf, limit: 0.01, units: "1"}
+      terminal_ff: {comparison: absolute_linf, limit: 0.01, units: "1"}
+      terminal_jsc_A_m2: {comparison: relative_linf, limit: 0.01, units: A m-2}
+      terminal_pce_percent: {comparison: relative_linf, limit: 0.02, units: "%"}
+      terminal_voc_V: {comparison: absolute_linf, limit: 0.005, units: V}
+      terminal_voltage_trace_V: {comparison: absolute_linf, limit: 0.01, units: V}
+    quality_gates:
+      circuit_protocol_hash_verified: {operator: eq, limit: 1.0, units: "1"}
+      external_circuit_certified: {operator: eq, limit: 1.0, units: "1"}
+      intrinsic_jv_certified: {operator: eq, limit: 1.0, units: "1"}
+      max_current_balance_error_A_m2: {operator: eq, limit: 0.0, units: A m-2}
+      max_pce_loss_fraction: {operator: le, limit: 0.5, units: "1"}
+      max_voltage_balance_error_V: {operator: eq, limit: 0.0, units: V}
+      min_pce_loss_fraction: {operator: ge, limit: 0.01, units: "1"}
+      peak_series_voltage_drop_V: {operator: ge, limit: 0.01, units: V}
+      peak_shunt_current_A_m2: {operator: ge, limit: 1.0, units: A m-2}
+      source_experiment_protocol_verified: {operator: eq, limit: 1.0, units: "1"}
+      terminal_branches_monotonic: {operator: eq, limit: 1.0, units: "1"}
+      terminal_voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
+      voltage_points_per_branch_completed: {operator: eq, limit: 12.0, units: "1"}
+      zero_coupling_exact: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_max_V: 1.2
+      voltage_points: 12
+      scan_rate_V_s: 20.0
+      rtol: 1.0e-4
+      series_resistance_ohm_m2: 2.0e-4
+      shunt_resistance_ohm_m2: 0.2
+      incident_power_W_m2: 1000.0
+      current_normalization_A_m2: 250.0
+      carrier_atol_fraction: 1.0e-12
+      ion_atol_fraction: 1.0e-12
+      interface_atol_fraction: 1.0e-12
+      minimum_atol: 1.0e-6
+    limitations:
+      - This lane certifies an algebraic area-normalized DC mapping applied to a certified intrinsic transient J-V curve; it does not solve a terminal-voltage-driven circuit-device transient.
+      - The 2e-4 ohm m2 series resistance and 0.2 ohm m2 shunt resistance are synthetic stress inputs and are not fitted or attributed to a measured MAPbI3 device.
+      - The mapping excludes capacitance, inductance, lead dynamics, distributed sheet resistance, contact heating, and bias-dependent parasitic elements.
+      - Passing is internal grid/tolerance, provenance, and Kirchhoff-balance evidence; it is not external simulator validation, experimental validation, SCAPS parity, or material-parameter validation.
+
   interface-recombination-charge-off:
     claim_level: internal-numerical-candidate
     config: configs/interface_charge_reference.yaml
