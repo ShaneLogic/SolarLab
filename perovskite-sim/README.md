@@ -505,6 +505,32 @@ does not resolve open circuit.
 
 <br>
 
+### External Series and Shunt Resistance
+
+Series resistance and shunt leakage are modeled in an independent,
+area-normalized DC circuit layer rather than as contact-calibration knobs. For
+photovoltaic output current positive, it maps an intrinsic junction curve as
+
+$$
+J_{\mathrm{terminal}}=J_{\mathrm{device}}-\frac{V_j}{R_{\mathrm{sh}}},
+\qquad
+V_{\mathrm{terminal}}=V_j-J_{\mathrm{terminal}}R_s.
+$$
+
+`ExternalCircuitProtocol` freezes the topology, sign convention and resistance
+values; `apply_external_circuit` retains both junction and terminal arrays,
+balance residuals, source/protocol/mapping hashes, and adjusted metrics. The
+zero-coupling default preserves the source curve and 1-sun metrics exactly.
+Folded terminal curves and uncertified source results fail closed. The separate
+`POST /api/jv/external-circuit` route exposes this opt-in result without
+changing `/api/jv` or the workstation default. This is a DC post-processing
+layer, not yet a terminal-voltage-driven transient circuit DAE. See
+[`docs/external-circuit-dc.md`](docs/external-circuit-dc.md).
+
+*Source:* `perovskite_sim/experiments/external_circuit.py`
+
+<br>
+
 ### V<sub>oc</sub> Bracket Detection
 
 `compute_metrics(V, J)` returns a frozen `JVMetrics(V_oc, J_sc, FF, PCE,

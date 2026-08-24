@@ -32,6 +32,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
+from perovskite_sim.experiments import external_circuit as external_circuit_exp
 from perovskite_sim.experiments import dark_jv as dark_jv_exp
 from perovskite_sim.experiments import suns_voc as suns_voc_exp
 from perovskite_sim.experiments import eqe as eqe_exp
@@ -887,6 +888,15 @@ class JVRequest(BaseModel):
     experiment_protocol: Optional[dict[str, Any]] = None
 
 
+class ExternalCircuitJVRequest(JVRequest):
+    """Intrinsic J-V request plus a strict, area-normalized DC circuit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    external_circuit_protocol: dict[str, Any]
+    incident_power_W_m2: float = 1000.0
+
+
 def _interface_charge_research_solver_controls() -> dict[str, float | int]:
     """Return the frozen, certificate-compatible controls for the API lane."""
     return {
@@ -1651,6 +1661,63 @@ def run_jv(req: JVRequest):
         print("[JV API Exception]", e)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/jv/external-circuit")
+def run_external_circuit_jv(req: ExternalCircuitJVRequest):
+    """Run an intrinsic J-V experiment, then map it to terminal coordinates."""
+
+    try:
+        circuit = external_circuit_exp.ExternalCircuitProtocol.from_dict(
+            req.external_circuit_protocol
+        )
+        if (
+            not np.isfinite(req.incident_power_W_m2)
+            or req.incident_power_W_m2 <= 0.0
+        ):
+            raise ValueError("incident_power_W_m2 must be positive and finite")
+        experiment_protocol, protocol_mode = _parse_protocol_inputs(
+            req.experiment_protocol,
+            req.protocol_mode,
+        )
+    except (ExperimentProtocolError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        stack = build_stack(req.config_path, req.device)
+        intrinsic = _run_jv_dispatch(
+            stack,
+            N_grid=req.N_grid,
+            n_points=req.n_points,
+            v_rate=req.v_rate,
+            V_max=req.V_max,
+            illuminated=True,
+            solver=req.solver,
+            iface_states=req.iface_states,
+            interface_boundary=req.interface_boundary,
+            interface_transport_model=req.interface_transport_model,
+            experiment_protocol=experiment_protocol,
+            protocol_mode=protocol_mode,
+        )
+        result = external_circuit_exp.apply_external_circuit(
+            intrinsic,
+            circuit,
+            incident_power_W_m2=req.incident_power_W_m2,
+        )
+        return {"status": "ok", "result": to_serializable(result)}
+    except HTTPException:
+        raise
+    except (
+        ExperimentProtocolError,
+        GridResolutionError,
+        external_circuit_exp.ExternalCircuitError,
+        jv_sweep.JVDriverCapabilityError,
+    ) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        print("[External Circuit J-V API Exception]", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post(

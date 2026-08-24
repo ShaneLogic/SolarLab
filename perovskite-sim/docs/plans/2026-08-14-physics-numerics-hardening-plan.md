@@ -864,6 +864,17 @@ positive state 和 explicit protocol gates 全部通过。因此 2D scope 只升
 contacts、interface charge/state、long-time hysteresis、外部 solver 与实验验证
 仍保持未认证。
 
+2026-08-24 external-circuit core checkpoint 新增独立、面积归一化的
+`ExternalCircuitProtocol` 和 `/api/jv/external-circuit`。它不修改 contact 或
+PDE state，而是对 certified intrinsic curve 显式执行
+`J_terminal=J_device-V_j/R_sh` 与
+`V_terminal=V_j-J_terminal*R_s`，并同时保留 junction/terminal arrays、两条
+balance residual、source/protocol/mapping SHA-256 和 adjusted metrics。
+`R_s=0, R_sh=off` 的默认 1-sun 结果逐值保留；非法参数、未认证源曲线和
+terminal-voltage fold 均 fail closed。当前标签为 `INTERNAL_TESTED`：它是 DC
+post-processing 层，不是 terminal-voltage 驱动的 transient circuit DAE；
+source-clean grid/parameter certificate 仍需作为下一 checkpoint 注册。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。
