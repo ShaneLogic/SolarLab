@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: be159cd94ce2547f90e83a5f57d96e819a971bc07723dcc22a80c02bd2b7f763
+  sha256: cd55e40116326933e2533654d7e4948492c445ccd8780c6bd384dba30238d5d7
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -549,12 +549,14 @@ benchmarks:
       - tests/unit/validation/test_external_circuit_refinement.py
     node_ids:
       - tests/integration/test_external_circuit_refinement.py::test_real_registered_external_circuit_cell_returns_all_certificate_axes
+      - tests/integration/test_external_circuit_refinement.py::test_real_resolved_external_circuit_cell_covers_operating_quadrant
       - tests/unit/validation/test_external_circuit_refinement.py::test_executor_matches_registry_and_binds_explicit_protocol
       - tests/unit/validation/test_external_circuit_refinement.py::test_study_protocol_is_identical_across_matrix_cells
+      - tests/unit/validation/test_external_circuit_refinement.py::test_resolved_executor_samples_fixed_terminal_power_quadrant
       - tests/unit/validation/test_external_circuit_refinement.py::test_executor_fails_closed_on_source_protocol_mismatch
     configs: [configs/nip_MAPbI3.yaml]
     limitations:
-      - the pre-registered source-clean 3x3 grid/tolerance matrix has not yet been executed
+      - the v1 full-trace matrix is partial only in its deep-forward-injection tail; the pre-registered v2 power-quadrant matrix has not yet been executed
       - the area-normalized series and shunt resistance values are synthetic stress inputs, not fitted device parameters
       - this is an algebraic DC postprocess and excludes coupled circuit-device transients, heating, distributed resistance, and experimental validation
   twod-radiative-reabsorption:

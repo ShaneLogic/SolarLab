@@ -112,6 +112,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "twod-uniform-limit",
         "twod-mobile-ion-interface-srh-v1",
         "external-series-shunt-dc-v1",
+        "external-series-shunt-dc-operating-quadrant-v2",
         "interface-recombination-charge-off",
         "interface-charge-equilibrium-referenced-v1",
         "interface-charge-device-stress-v1",
@@ -165,6 +166,29 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert external_quality[
         "min_pce_loss_fraction"
     ].limit == pytest.approx(0.01)
+    external_resolved = registry.lane(
+        "external-series-shunt-dc-operating-quadrant-v2"
+    )
+    assert external_resolved.grid_values == external_circuit.grid_values
+    assert (
+        external_resolved.tolerance_factors
+        == external_circuit.tolerance_factors
+    )
+    resolved_external_observables = {
+        gate.metric: gate for gate in external_resolved.observables
+    }
+    assert resolved_external_observables[
+        "terminal_power_quadrant_normalized_trace"
+    ].limit == pytest.approx(0.005)
+    assert "terminal_current_normalized_trace" not in (
+        resolved_external_observables
+    )
+    resolved_external_quality = {
+        gate.metric: gate for gate in external_resolved.quality_gates
+    }
+    assert resolved_external_quality[
+        "terminal_quadrant_points_completed"
+    ].limit == 42.0
     ion_dc = registry.lane("ionmonger-ion-aware-dc-v1")
     ion_dc_resolved = registry.lane("ionmonger-ion-aware-dc-resolved-v2")
     assert ion_dc.grid_values == (30, 60, 90)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -312,3 +313,153 @@ def run_external_series_shunt_dc_refinement(
 
 
 __all__ = ["run_external_series_shunt_dc_refinement"]
+
+
+def _measurement_metric(
+    measurement: CellMeasurement,
+    name: str,
+    *,
+    quality: bool = False,
+) -> np.ndarray:
+    metrics = measurement.quality if quality else measurement.observables
+    try:
+        metric = next(item for item in metrics if item.name == name)
+    except StopIteration as exc:
+        raise RuntimeError(f"base external-circuit measurement lacks {name!r}") from exc
+    values = np.asarray(metric.values, dtype=float)
+    return values.reshape(metric.shape) if metric.shape else values
+
+
+def run_external_series_shunt_dc_operating_quadrant_refinement(
+    lane: LaneDefinition,
+    point: MatrixPoint,
+    project_root: Path,
+) -> CellMeasurement:
+    """Compare the terminal power-producing quadrant on fixed V/Voc nodes."""
+
+    base = run_external_series_shunt_dc_refinement(lane, point, project_root)
+    voltage_points = _integer_option(
+        lane.options,
+        "voltage_points",
+        12,
+        minimum=3,
+    )
+    quadrant_points = _integer_option(
+        lane.options,
+        "quadrant_voltage_fraction_points",
+        21,
+        minimum=3,
+    )
+    terminal_voltage = _measurement_metric(
+        base,
+        "terminal_voltage_trace_V",
+    )
+    normalized_current = _measurement_metric(
+        base,
+        "terminal_current_normalized_trace",
+    )
+    terminal_voc = _measurement_metric(base, "terminal_voc_V")
+    terminal_jsc = _measurement_metric(base, "terminal_jsc_A_m2")
+    current_normalization = _finite_option(
+        lane.options,
+        "current_normalization_A_m2",
+        250.0,
+    )
+    if (
+        terminal_voltage.shape != (2 * voltage_points,)
+        or normalized_current.shape != terminal_voltage.shape
+        or terminal_voc.shape != (2,)
+        or terminal_jsc.shape != (2,)
+    ):
+        raise RuntimeError("base external-circuit trace violates the v2 shape contract")
+    if np.any(terminal_voc <= 0.0) or np.any(terminal_jsc <= 0.0):
+        raise RuntimeError(
+            "terminal Voc and Jsc must be positive in the power quadrant"
+        )
+
+    voltage_fraction = np.linspace(0.0, 1.0, quadrant_points)
+    normalized_quadrants: list[np.ndarray] = []
+    for branch_index in range(2):
+        start = branch_index * voltage_points
+        stop = start + voltage_points
+        branch_voltage_fraction = (
+            terminal_voltage[start:stop] / terminal_voc[branch_index]
+        )
+        branch_current_fraction = (
+            normalized_current[start:stop]
+            * current_normalization
+            / terminal_jsc[branch_index]
+        )
+        order = np.argsort(branch_voltage_fraction)
+        sorted_voltage = branch_voltage_fraction[order]
+        sorted_current = branch_current_fraction[order]
+        if (
+            not np.all(np.isfinite(sorted_voltage))
+            or not np.all(np.isfinite(sorted_current))
+            or np.any(np.diff(sorted_voltage) <= 0.0)
+            or sorted_voltage[0] > 0.0
+            or sorted_voltage[-1] < 1.0
+        ):
+            raise RuntimeError(
+                "terminal branch does not cover the normalized power quadrant"
+            )
+        normalized_quadrants.append(
+            np.interp(voltage_fraction, sorted_voltage, sorted_current)
+        )
+    normalized_trace = np.concatenate(normalized_quadrants)
+    if not np.all(np.isfinite(normalized_trace)):
+        raise RuntimeError("normalized terminal power-quadrant trace is non-finite")
+
+    metadata = json.loads(base.metadata_json)
+    base_protocol_hash = metadata["protocol_hash"]
+    protocol = metadata["protocol"]
+    protocol["schema_version"] = (
+        "external-series-shunt-dc-operating-quadrant-refinement-protocol-v2"
+    )
+    protocol["observable_sampling"] = {
+        "branch_order": ["forward", "reverse"],
+        "current_coordinate": "J_terminal/Jsc_terminal",
+        "interpolation": "piecewise_linear",
+        "scope": "terminal_power_producing_quadrant",
+        "voltage_coordinate": "V_terminal/Voc_terminal",
+        "voltage_fraction_points": voltage_fraction.tolist(),
+    }
+    actual = metadata["actual"]
+    actual["base_full_trace_protocol_hash"] = base_protocol_hash
+
+    observables = {
+        name: _measurement_metric(base, name)
+        for name in (
+            "terminal_ff",
+            "terminal_jsc_A_m2",
+            "terminal_pce_percent",
+            "terminal_voc_V",
+        )
+    }
+    observables["terminal_power_quadrant_normalized_trace"] = normalized_trace
+    quality = {item.name: item.values[0] for item in base.quality}
+    quality.update(
+        {
+            "power_quadrant_interpolation_verified": 1.0,
+            "terminal_quadrant_points_completed": float(2 * quadrant_points),
+        }
+    )
+    units = {
+        item.name: item.units
+        for item in (*base.observables, *base.quality)
+        if item.name in observables or item.name in quality
+    }
+    return CellMeasurement.from_mapping(
+        {
+            "observables": observables,
+            "quality": quality,
+            "units": units,
+            "metadata": {
+                **_protocol_metadata(protocol),
+                "actual": actual,
+            },
+        }
+    )
+
+
+__all__.append("run_external_series_shunt_dc_operating_quadrant_refinement")

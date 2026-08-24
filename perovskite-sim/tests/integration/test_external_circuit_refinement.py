@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from perovskite_sim.validation.external_circuit_refinement import (
+    run_external_series_shunt_dc_operating_quadrant_refinement,
     run_external_series_shunt_dc_refinement,
 )
 from perovskite_sim.validation.numerical_certificate import (
@@ -42,3 +43,26 @@ def test_real_registered_external_circuit_cell_returns_all_certificate_axes():
     )
     assert metadata["actual"]["grid"] == 20
     assert metadata["actual"]["tolerance_factor"] == 1.0
+
+
+def test_real_resolved_external_circuit_cell_covers_operating_quadrant():
+    lane = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    ).lane("external-series-shunt-dc-operating-quadrant-v2")
+
+    measurement = run_external_series_shunt_dc_operating_quadrant_refinement(
+        lane,
+        MatrixPoint(20, 1.0),
+        ROOT,
+    )
+
+    observables = {item.name: item for item in measurement.observables}
+    quality = {item.name: item.values[0] for item in measurement.quality}
+    assert set(observables) == {gate.metric for gate in lane.observables}
+    assert set(quality) == {gate.metric for gate in lane.quality_gates}
+    assert observables["terminal_power_quadrant_normalized_trace"].shape == (42,)
+    assert quality["power_quadrant_interpolation_verified"] == 1.0
+    assert quality["terminal_quadrant_points_completed"] == 42.0
+    assert quality["intrinsic_jv_certified"] == 1.0
+    assert quality["external_circuit_certified"] == 1.0

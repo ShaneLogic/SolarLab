@@ -134,6 +134,46 @@ def test_study_protocol_is_identical_across_matrix_cells(monkeypatch):
     assert first_metadata["actual"] != second_metadata["actual"]
 
 
+def test_resolved_executor_samples_fixed_terminal_power_quadrant(monkeypatch):
+    lane = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    ).lane("external-series-shunt-dc-operating-quadrant-v2")
+
+    def run(*_args, **kwargs):
+        return _source_result(kwargs["experiment_protocol"])
+
+    monkeypatch.setattr(refinement, "run_jv_sweep", run)
+    measurement = refinement.run_external_series_shunt_dc_operating_quadrant_refinement(
+        lane,
+        MatrixPoint(30, 0.1),
+        ROOT,
+    )
+
+    observables = _metrics(measurement)
+    quality = _metrics(measurement, quality=True)
+    assert set(observables) == {gate.metric for gate in lane.observables}
+    assert set(quality) == {gate.metric for gate in lane.quality_gates}
+    trace = observables["terminal_power_quadrant_normalized_trace"]
+    assert trace.shape == (42,)
+    assert np.all(np.isfinite(trace.values))
+    assert trace.values[0] == pytest.approx(1.0)
+    assert trace.values[21] == pytest.approx(1.0)
+    assert quality["power_quadrant_interpolation_verified"].values == (1.0,)
+    assert quality["terminal_quadrant_points_completed"].values == (42.0,)
+    metadata = json.loads(measurement.metadata_json)
+    assert metadata["protocol_schema"] == (
+        "external-series-shunt-dc-operating-quadrant-refinement-protocol-v2"
+    )
+    assert metadata["protocol"]["observable_sampling"]["scope"] == (
+        "terminal_power_producing_quadrant"
+    )
+    assert (
+        len(metadata["protocol"]["observable_sampling"]["voltage_fraction_points"])
+        == 21
+    )
+
+
 def test_executor_fails_closed_on_source_protocol_mismatch(monkeypatch):
     lane = _lane()
     stack = refinement.load_device_from_yaml(ROOT / lane.config_path)
