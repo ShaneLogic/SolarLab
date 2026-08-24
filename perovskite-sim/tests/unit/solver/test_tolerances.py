@@ -323,6 +323,39 @@ def test_2d_policy_flattens_n_then_p_and_reaches_solver(monkeypatch):
     assert captured[0].shape == y0.shape
 
 
+def test_2d_policy_appends_mobile_ion_block():
+    ni = np.array([[10.0, 20.0], [30.0, 40.0]])
+    ions = np.array([[1.0e20, 2.0e20], [3.0e20, 4.0e20]])
+    policy = ComponentwiseAtol(
+        carrier_fraction=0.1,
+        ion_fraction=0.01,
+        minimum_atol=1.0,
+    )
+
+    atol = build_componentwise_atol_2d(
+        policy,
+        ni=ni,
+        N_A=np.zeros_like(ni),
+        N_D=np.zeros_like(ni),
+        P_ion0=ions,
+    )
+
+    np.testing.assert_array_equal(atol[-ions.size:], 0.01 * ions.ravel())
+    assert atol.shape == (3 * ni.size,)
+
+
+def test_2d_policy_rejects_invalid_mobile_ion_reference():
+    ni = np.ones((2, 2))
+    with pytest.raises(ValueError, match="must be non-negative"):
+        build_componentwise_atol_2d(
+            ComponentwiseAtol(),
+            ni=ni,
+            N_A=np.zeros_like(ni),
+            N_D=np.zeros_like(ni),
+            P_ion0=np.array([[1.0, -1.0], [1.0, 1.0]]),
+        )
+
+
 def test_2d_scalar_default_is_unchanged(monkeypatch):
     ni = np.ones((1, 2))
     mat = SimpleNamespace(ni=ni, N_A=np.zeros_like(ni), N_D=np.zeros_like(ni))

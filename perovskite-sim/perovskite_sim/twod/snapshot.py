@@ -16,3 +16,4 @@ class SpatialSnapshot2D:
     Jy_n: np.ndarray         # (Ny-1, Nx)
     Jx_p: np.ndarray         # (Ny, Nx-1)
     Jy_p: np.ndarray         # (Ny-1, Nx)
+    P_ion: np.ndarray | None = None  # (Ny, Nx), opt-in mobile-ion state

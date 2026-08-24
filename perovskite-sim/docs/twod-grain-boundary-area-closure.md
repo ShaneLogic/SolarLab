@@ -11,8 +11,10 @@ named electrical layer. The input contract remains:
 - target `layer_role`.
 
 This checkpoint closes the lateral area dependence for Neumann-x domains. It
-does not validate the lifetime values against an external MAPbI3 data set, add
-mobile ions, or add a two-sided heterointerface defect plane.
+does not validate the lifetime values against an external MAPbI3 data set or
+add a two-sided heterointerface defect plane. A separate solver-level
+single-mobile-ion transient now exists, but it is not yet a mobile-ion-complete
+2D J-V experiment.
 
 ## Finite-Volume Form
 
@@ -59,6 +61,7 @@ geometry, integrated SRH correction, and bit identity of the empty path. Slow
 device tests retain only an internal qualitative `V_oc` trend and finiteness
 checks. They are not experimental or external-solver validation.
 
-The full "2D perovskite microstructure" claim remains blocked until the
-separate mobile-ion and interface-recombination closures are implemented and a
-new content-addressed 2D refinement certificate is run.
+The full "2D perovskite microstructure" claim remains blocked until two-sided
+interface recombination, mobile-ion-complete terminal current and experiment
+wiring are implemented and a new content-addressed 2D refinement certificate
+is run.

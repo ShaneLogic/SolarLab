@@ -320,6 +320,13 @@ and interface-plane recombination channels. Its certified scope is the
 lateral-uniform/frozen-ion limit and prescribed lifetime patterns, not a
 complete 2D perovskite microstructure model.
 
+At solver level, an explicit `ion_dynamics="single_mobile"` research transient
+adds one positive-ion state on Neumann-x domains with blocking boundaries and
+discrete inventory checks. It is not wired into 2D J-V: mobile-ion snapshots
+fail closed in the carrier-only terminal-current post-processor until ionic and
+displacement current are implemented. See
+[`docs/twod-mobile-ion-transient.md`](docs/twod-mobile-ion-transient.md).
+
 2D presets live in `configs/twod/`; the backend exposes them through
 `GET /api/configs` and runs them with `kind="jv_2d"` or
 `kind="voc_grain_sweep"`.

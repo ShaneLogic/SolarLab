@@ -21,6 +21,11 @@ from perovskite_sim.twod.field_mobility_2d import (
     recompute_d_eff_2d,
 )
 from perovskite_sim.twod.grid_2d import Grid2D
+from perovskite_sim.twod.ion_migration_2d import (
+    MobileIonDiagnostics2D,
+    assess_mobile_ion_terminal_2d,
+    positive_ion_continuity_rhs_2d,
+)
 from perovskite_sim.twod.microstructure import (
     GrainBoundaryRegion2D,
     Microstructure,
@@ -155,6 +160,12 @@ class MaterialArrays2D:
     # Finite-volume GB geometry. Empty preserves the pre-existing pointwise
     # recombination path exactly; non-empty is currently Neumann-x only.
     grain_boundary_regions:         tuple[GrainBoundaryRegion2D, ...] = ()
+    # Explicit research-only single-positive-ion transient. Frozen is the
+    # compatibility default and retains the historical (n, p) state layout.
+    has_mobile_ions:                 bool = False
+    D_ion_2d:                        np.ndarray | None = None
+    P_lim_2d:                        np.ndarray | None = None
+    ion_steric_diffusion_only:       bool = False
 
 
 def build_material_arrays_2d(
@@ -164,6 +175,7 @@ def build_material_arrays_2d(
     *,
     lateral_bc: str = "periodic",
     P_ion_static_1d: np.ndarray | None = None,
+    ion_dynamics: str = "frozen",
 ) -> MaterialArrays2D:
     """Assemble the 2D MaterialArrays from a stack and a microstructure.
 
@@ -182,7 +194,44 @@ def build_material_arrays_2d(
       configs); the 2D RHS will supply Beer-Lambert generation instead.
     - ``V_T`` is read from ``mat1d.V_T_device`` (actual field name on 1D cache).
     """
+    if ion_dynamics not in {"frozen", "single_mobile"}:
+        raise ValueError(
+            "ion_dynamics must be 'frozen' or 'single_mobile'"
+        )
+    has_mobile_ions = ion_dynamics == "single_mobile"
+    if has_mobile_ions and lateral_bc != "neumann":
+        raise ValueError(
+            "2D single-mobile-ion dynamics requires lateral_bc='neumann'; "
+            "periodic-x is not topology-certified"
+        )
+    if has_mobile_ions and P_ion_static_1d is not None:
+        raise ValueError(
+            "P_ion_static_1d cannot be combined with mobile-ion dynamics; "
+            "supply the initial P block in the transient state"
+        )
+
     mat1d = build_material_arrays_1d(grid.y, stack)
+    if has_mobile_ions and mat1d.has_dual_ions:
+        raise ValueError(
+            "2D mobile-ion dynamics currently supports one positive species; "
+            "dual-ion stacks are not certified"
+        )
+    if has_mobile_ions:
+        active_ions = np.asarray(mat1d.D_ion_node) > 0.0
+        initial_ions = np.asarray(mat1d.P_ion0)
+        site_limits = np.asarray(mat1d.P_lim_node)
+        if not np.any(active_ions):
+            raise ValueError(
+                "single_mobile ion dynamics requires positive ionic diffusion"
+            )
+        if np.any(initial_ions[active_ions] <= 0.0):
+            raise ValueError(
+                "mobile-ion nodes require a positive initial ion density"
+            )
+        if np.any(initial_ions[active_ions] > site_limits[active_ions]):
+            raise ValueError(
+                "mobile-ion initial density cannot exceed the site limit"
+            )
     Nx, Ny = grid.Nx, grid.Ny
 
     def extrude(v_1d: np.ndarray) -> np.ndarray:
@@ -227,6 +276,8 @@ def build_material_arrays_2d(
         P_ion_static = P_ion0_2d.copy()
     else:
         P_ion_static = extrude(np.asarray(P_ion_static_1d, dtype=float))
+    D_ion_2d = extrude(mat1d.D_ion_node) if has_mobile_ions else None
+    P_lim_2d = extrude(mat1d.P_lim_node) if has_mobile_ions else None
 
     # G_optical: 1D returns None for Beer-Lambert stacks (it computes BL at
     # runtime per voltage step). Stage A 2D pre-computes BL at build time
@@ -484,6 +535,12 @@ def build_material_arrays_2d(
         absorber_thicknesses_2d=absorber_thicknesses_2d,
         absorber_areas_2d=absorber_areas_2d,
         grain_boundary_regions=grain_boundary_regions,
+        has_mobile_ions=has_mobile_ions,
+        D_ion_2d=D_ion_2d,
+        P_lim_2d=P_lim_2d,
+        ion_steric_diffusion_only=(
+            mat1d.ion_steric_diffusion_only if has_mobile_ions else False
+        ),
     )
 
 
@@ -567,16 +624,52 @@ def _diffusion_per_node(
     return D_n_node, D_p_node
 
 
-def _charge_density_2d(n: np.ndarray, p: np.ndarray, mat: MaterialArrays2D) -> np.ndarray:
+def _unpack_state_2d(
+    y_state: np.ndarray,
+    mat: MaterialArrays2D,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Unpack the exact frozen or single-mobile-ion 2D state layout."""
+    g = mat.grid
+    state = np.asarray(y_state, dtype=float)
+    block_count = 3 if mat.has_mobile_ions else 2
+    expected = block_count * g.n_nodes
+    if state.ndim != 1 or state.size != expected:
+        raise ValueError(
+            f"2D state must be one-dimensional with {expected} entries "
+            f"for {block_count} blocks; got shape {state.shape}"
+        )
+    Nn = g.n_nodes
+    shape = (g.Ny, g.Nx)
+    n = state[:Nn].reshape(shape)
+    p = state[Nn:2 * Nn].reshape(shape)
+    P_ion = state[2 * Nn:].reshape(shape) if mat.has_mobile_ions else None
+    return n, p, P_ion
+
+
+def _charge_density_2d(
+    n: np.ndarray,
+    p: np.ndarray,
+    mat: MaterialArrays2D,
+    P_ion: np.ndarray | None = None,
+) -> np.ndarray:
     """Space-charge density rho = q*(p - n + N_D - N_A + (P_ion - P_ion0)).
 
-    Stage A holds the ion profile fixed at ``mat.P_ion_static``; defaults to
+    The default path holds the ion profile fixed at ``mat.P_ion_static``; defaults to
     ``mat.P_ion0_2d`` (uniform initial), which makes the ion term identically
     zero on a cold start. Passing an equilibrated 1D ion profile via
     ``P_ion_static_1d=`` to ``build_material_arrays_2d`` adds the matching
     1D background charge so 2D-1D parity holds on lateral-uniform states.
     """
-    return Q * (p - n + mat.N_D - mat.N_A + (mat.P_ion_static - mat.P_ion0_2d))
+    if mat.has_mobile_ions:
+        if P_ion is None:
+            raise ValueError("mobile-ion charge requires the P state block")
+        return Q * (p - n + mat.N_D - mat.N_A + (P_ion - mat.P_ion0_2d))
+    if P_ion is not None:
+        raise ValueError("frozen-ion charge does not accept a P state block")
+    return Q * (
+        p - n + mat.N_D - mat.N_A
+        + (mat.P_ion_static - mat.P_ion0_2d)
+    )
 
 
 def _apply_robin_contacts_2d(
@@ -717,7 +810,7 @@ def assemble_rhs_2d(
     mat: MaterialArrays2D,
     V_app: float,
 ) -> np.ndarray:
-    """Time-derivative of the flattened state (n, p) on the (Ny, Nx) grid.
+    """Time derivative of flattened ``(n, p[, P])`` on the 2D grid.
 
     Flatten convention: C-order over (j, i) — y-major. Row j of the (Ny, Nx)
     array sits in y_state[j*Nx : (j+1)*Nx].
@@ -744,12 +837,10 @@ def assemble_rhs_2d(
       the missing fields (mirroring the 1D MaterialArrays layout).
     """
     g = mat.grid
-    Nn = g.n_nodes
-    n = y_state[:Nn].reshape((g.Ny, g.Nx))
-    p = y_state[Nn:].reshape((g.Ny, g.Nx))
+    n, p, P_ion = _unpack_state_2d(y_state, mat)
 
     # --- Poisson -----------------------------------------------------------
-    rho = _charge_density_2d(n, p, mat)
+    rho = _charge_density_2d(n, p, mat, P_ion)
     phi = solve_poisson_2d(
         mat.poisson_factor, rho,
         phi_bottom=0.0,
@@ -861,7 +952,23 @@ def assemble_rhs_2d(
         dp[0, :] = 0.0
         dp[-1, :] = 0.0
 
-    return np.concatenate([dn.flatten(), dp.flatten()])
+    blocks = [dn.flatten(), dp.flatten()]
+    if mat.has_mobile_ions:
+        if P_ion is None or mat.D_ion_2d is None or mat.P_lim_2d is None:
+            raise ValueError("mobile-ion material arrays are incomplete")
+        dP = positive_ion_continuity_rhs_2d(
+            g.x,
+            g.y,
+            phi,
+            P_ion,
+            mat.D_ion_2d,
+            mat.V_T,
+            mat.P_lim_2d,
+            lateral_bc=mat.poisson_factor.lateral_bc,
+            steric_diffusion_only=mat.ion_steric_diffusion_only,
+        )
+        blocks.append(dP.flatten())
+    return np.concatenate(blocks)
 
 
 def _layer_role_at_each_y(y: np.ndarray, stack: DeviceStack) -> list[str]:
@@ -913,7 +1020,9 @@ def run_transient_2d(
     rtol: float = 1e-6,
     atol: AbsoluteTolerance = 1e-8,
     max_nfev: int | None = None,
-) -> np.ndarray:
+    ion_inventory_rtol: float = 1e-9,
+    return_ion_diagnostics: bool = False,
+) -> np.ndarray | tuple[np.ndarray, MobileIonDiagnostics2D]:
     """Integrate dy/dt = assemble_rhs_2d(...) on [0, t_end] with Radau.
 
     Returns the state vector at t_end. Raises ``RuntimeError`` if Radau
@@ -921,8 +1030,9 @@ def run_transient_2d(
     exceeded.
 
     Passing :class:`~perovskite_sim.solver.tolerances.ComponentwiseAtol`
-    opts into a flattened ``(n, p)`` tolerance vector built from the local
-    neutral carrier references. The default remains the historical scalar.
+    opts into a flattened ``(n, p[, P])`` tolerance vector built from local
+    neutral carrier references and, when active, ``P_ion0_2d``. The default
+    remains the historical scalar.
 
     The ``max_nfev`` cap mirrors the 1D ``run_transient`` pattern: without
     it Radau can spin in its implicit Newton iteration on nearly singular
@@ -931,6 +1041,35 @@ def run_transient_2d(
     cap converts that hang into a fast ``RuntimeError`` so the caller's
     lagged-fallback path can take over.
     """
+    state0 = np.asarray(y0, dtype=float)
+    block_count = 3 if getattr(mat, "has_mobile_ions", False) else 2
+    expected_size = block_count * np.asarray(mat.ni).size
+    if state0.ndim != 1 or state0.size != expected_size:
+        raise ValueError(
+            f"y0 shape {state0.shape} does not match the 2D state layout "
+            f"shape ({expected_size},)"
+        )
+    if not np.all(np.isfinite(state0)):
+        raise ValueError("y0 must contain only finite values")
+    if return_ion_diagnostics and not getattr(mat, "has_mobile_ions", False):
+        raise ValueError(
+            "return_ion_diagnostics requires single-mobile-ion dynamics"
+        )
+    if getattr(mat, "has_mobile_ions", False):
+        initial_n, initial_p, initial_P = _unpack_state_2d(state0, mat)
+        if initial_P is None or mat.P_lim_2d is None:
+            raise ValueError("mobile-ion material arrays are incomplete")
+        if not np.isfinite(ion_inventory_rtol) or ion_inventory_rtol < 0.0:
+            raise ValueError("ion_inventory_rtol must be finite and non-negative")
+        if np.any(initial_n < 0.0):
+            raise ValueError("2D mobile-ion initial electron density is negative")
+        if np.any(initial_p < 0.0):
+            raise ValueError("2D mobile-ion initial hole density is negative")
+        if np.any(initial_P < 0.0) or np.any(initial_P > mat.P_lim_2d):
+            raise ValueError(
+                "2D mobile-ion initial density must lie within site limits"
+            )
+
     solver_atol = atol
     if isinstance(atol, ComponentwiseAtol):
         solver_atol = build_componentwise_atol_2d(
@@ -938,6 +1077,11 @@ def run_transient_2d(
             ni=mat.ni,
             N_A=mat.N_A,
             N_D=mat.N_D,
+            P_ion0=(
+                mat.P_ion0_2d
+                if getattr(mat, "has_mobile_ions", False)
+                else None
+            ),
         )
         if solver_atol.shape != np.asarray(y0).shape:
             raise ValueError(
@@ -956,7 +1100,7 @@ def run_transient_2d(
 
     try:
         sol = solve_ivp(
-            rhs, (0.0, t_end), y0,
+            rhs, (0.0, t_end), state0,
             method="Radau",
             rtol=rtol, atol=solver_atol,
             max_step=max_step if max_step is not None else np.inf,
@@ -969,7 +1113,32 @@ def run_transient_2d(
         )
     if not sol.success:
         raise RuntimeError(f"Radau failed at V_app={V_app:.4f} V: {sol.message}")
-    return sol.y[:, -1]
+    terminal = sol.y[:, -1]
+    if not getattr(mat, "has_mobile_ions", False):
+        return terminal
+
+    _, _, initial_P = _unpack_state_2d(state0, mat)
+    terminal_n, terminal_p, terminal_P = _unpack_state_2d(terminal, mat)
+    if initial_P is None or terminal_P is None or mat.P_lim_2d is None:
+        raise RuntimeError("mobile-ion terminal diagnostics are incomplete")
+    diagnostics = assess_mobile_ion_terminal_2d(
+        mat.grid.x,
+        mat.grid.y,
+        initial_P,
+        terminal_P,
+        mat.P_lim_2d,
+        terminal_electron_density=terminal_n,
+        terminal_hole_density=terminal_p,
+        inventory_rtol=ion_inventory_rtol,
+    )
+    if not diagnostics.passed:
+        joined = ", ".join(diagnostics.violations)
+        raise RuntimeError(
+            f"2D mobile-ion terminal state failed physical diagnostics: {joined}"
+        )
+    if return_ion_diagnostics:
+        return terminal, diagnostics
+    return terminal
 
 
 from perovskite_sim.twod.snapshot import SpatialSnapshot2D
@@ -982,11 +1151,9 @@ def extract_snapshot_2d(
     """Re-solve Poisson at the given (n, p) state and compute SG fluxes for
     a complete spatial snapshot. Used after run_transient_2d settles."""
     g = mat.grid
-    Nn = g.n_nodes
-    n = y_state[:Nn].reshape((g.Ny, g.Nx))
-    p = y_state[Nn:].reshape((g.Ny, g.Nx))
+    n, p, P_ion = _unpack_state_2d(y_state, mat)
 
-    rho = _charge_density_2d(n, p, mat)
+    rho = _charge_density_2d(n, p, mat, P_ion)
     phi = solve_poisson_2d(
         mat.poisson_factor, rho,
         phi_bottom=0.0,
@@ -1003,6 +1170,7 @@ def extract_snapshot_2d(
         x=g.x.copy(), y=g.y.copy(),
         phi=phi, n=n.copy(), p=p.copy(),
         Jx_n=Jx_n, Jy_n=Jy_n, Jx_p=Jx_p, Jy_p=Jy_p,
+        P_ion=None if P_ion is None else P_ion.copy(),
     )
 
 
@@ -1013,7 +1181,15 @@ def compute_terminal_current_2d(snap: SpatialSnapshot2D) -> float:
     J_y is defined on edges between grid rows j and j+1; the top-most edge
     sits between j=Ny-2 and j=Ny-1 (i.e. row index -1 of Jy arrays).
     Trapezoidal integration over x handles non-uniform x spacing.
+
+    Mobile-ion snapshots fail closed because this carrier-conduction-only
+    post-processor does not yet include ionic or displacement current.
     """
+    if snap.P_ion is not None:
+        raise ValueError(
+            "2D terminal current is not mobile-ion complete: ionic and "
+            "displacement-current terms are not implemented"
+        )
     Jy_top_n = snap.Jy_n[-1, :]      # (Nx,)
     Jy_top_p = snap.Jy_p[-1, :]      # (Nx,)
     dx = np.diff(snap.x)             # (Nx-1,)

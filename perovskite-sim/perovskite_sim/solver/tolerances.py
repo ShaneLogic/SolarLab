@@ -249,8 +249,9 @@ def build_componentwise_atol_2d(
     ni: np.ndarray,
     N_A: np.ndarray,
     N_D: np.ndarray,
+    P_ion0: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Build flattened ``(n, p)`` tolerances for the 2D carrier solver."""
+    """Build flattened ``(n, p[, P])`` tolerances for the 2D solver."""
     ni_arr = np.asarray(ni, dtype=float)
     N_A_arr = np.asarray(N_A, dtype=float)
     N_D_arr = np.asarray(N_D, dtype=float)
@@ -271,7 +272,17 @@ def build_componentwise_atol_2d(
         N_A_arr.ravel(),
         N_D_arr.ravel(),
     )
-    return np.concatenate([
+    blocks = [
         _scaled_atol(n_ref, policy.carrier_fraction, policy),
         _scaled_atol(p_ref, policy.carrier_fraction, policy),
-    ])
+    ]
+    if P_ion0 is not None:
+        P_ref = np.asarray(P_ion0, dtype=float)
+        if P_ref.shape != ni_arr.shape or not np.all(np.isfinite(P_ref)):
+            raise ValueError("P_ion0 must be finite and match the 2D ni shape")
+        if np.any(P_ref < 0.0):
+            raise ValueError("P_ion0 must be non-negative")
+        blocks.append(
+            _scaled_atol(P_ref.ravel(), policy.ion_fraction, policy)
+        )
+    return np.concatenate(blocks)

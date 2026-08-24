@@ -105,6 +105,268 @@ def test_run_transient_2d_short_settle_returns_finite_state():
     assert y_end.shape == y0.shape
 
 
+def _mobile_ion_material():
+    stack = _stack()
+    grid = build_grid_2d(
+        _layers_for_stack(stack),
+        lateral_length=200e-9,
+        Nx=3,
+        lateral_uniform=True,
+    )
+    material = build_material_arrays_2d(
+        grid,
+        stack,
+        Microstructure(),
+        lateral_bc="neumann",
+        ion_dynamics="single_mobile",
+    )
+    return grid, material
+
+
+def _mobile_ion_state(material):
+    n = np.maximum(material.ni, 1.0)
+    p = np.maximum(material.ni, 1.0)
+    return np.concatenate(
+        [n.ravel(), p.ravel(), material.P_ion0_2d.ravel()]
+    )
+
+
+def test_mobile_ion_material_builds_explicit_single_species_arrays():
+    grid, mat = _mobile_ion_material()
+
+    assert mat.has_mobile_ions is True
+    assert mat.poisson_factor.lateral_bc == "neumann"
+    assert mat.D_ion_2d is not None
+    assert mat.P_lim_2d is not None
+    assert mat.D_ion_2d.shape == (grid.Ny, grid.Nx)
+    assert np.any(mat.D_ion_2d > 0.0)
+    assert np.all(mat.P_ion0_2d <= mat.P_lim_2d)
+
+
+def test_mobile_ion_rhs_adds_conservative_third_state_block():
+    from perovskite_sim.twod.ion_migration_2d import control_volume_areas_2d
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+
+    grid, mat = _mobile_ion_material()
+    state = _mobile_ion_state(mat)
+    derivative = assemble_rhs_2d(0.0, state, mat, V_app=0.0)
+    ion_derivative = derivative[2 * grid.n_nodes:].reshape(grid.Ny, grid.Nx)
+    weighted = ion_derivative * control_volume_areas_2d(grid.x, grid.y)
+    cancellation_scale = max(float(np.sum(np.abs(weighted))), 1.0)
+
+    assert derivative.shape == state.shape
+    assert np.all(np.isfinite(derivative))
+    assert abs(float(np.sum(weighted))) / cancellation_scale < 5e-14
+
+
+def test_mobile_ion_snapshot_rejects_incomplete_terminal_current():
+    from perovskite_sim.twod.solver_2d import (
+        compute_terminal_current_2d,
+        extract_snapshot_2d,
+    )
+
+    _grid, mat = _mobile_ion_material()
+    snapshot = extract_snapshot_2d(_mobile_ion_state(mat), mat, V_app=0.0)
+
+    assert snapshot.P_ion is not None
+    np.testing.assert_array_equal(snapshot.P_ion, mat.P_ion0_2d)
+    with pytest.raises(ValueError, match="not mobile-ion complete"):
+        compute_terminal_current_2d(snapshot)
+
+
+def test_frozen_default_and_explicit_mode_are_bit_identical():
+    from perovskite_sim.twod.solver_2d import assemble_rhs_2d
+
+    stack = _stack()
+    grid = build_grid_2d(
+        _layers_for_stack(stack),
+        lateral_length=200e-9,
+        Nx=3,
+        lateral_uniform=True,
+    )
+    default = build_material_arrays_2d(
+        grid, stack, Microstructure(), lateral_bc="neumann"
+    )
+    explicit = build_material_arrays_2d(
+        grid,
+        stack,
+        Microstructure(),
+        lateral_bc="neumann",
+        ion_dynamics="frozen",
+    )
+    n = np.maximum(default.ni, 1.0)
+    p = 1.1 * np.maximum(default.ni, 1.0)
+    state = np.concatenate([n.ravel(), p.ravel()])
+
+    assert default.has_mobile_ions is False
+    assert explicit.has_mobile_ions is False
+    np.testing.assert_array_equal(
+        assemble_rhs_2d(0.0, state, default, V_app=0.0),
+        assemble_rhs_2d(0.0, state, explicit, V_app=0.0),
+    )
+
+
+def test_mobile_ion_builder_rejects_uncertified_options():
+    stack = _stack()
+    grid = build_grid_2d(
+        _layers_for_stack(stack),
+        lateral_length=200e-9,
+        Nx=3,
+        lateral_uniform=True,
+    )
+    with pytest.raises(ValueError, match="periodic-x"):
+        build_material_arrays_2d(
+            grid,
+            stack,
+            Microstructure(),
+            lateral_bc="periodic",
+            ion_dynamics="single_mobile",
+        )
+    with pytest.raises(ValueError, match="cannot be combined"):
+        build_material_arrays_2d(
+            grid,
+            stack,
+            Microstructure(),
+            lateral_bc="neumann",
+            P_ion_static_1d=np.zeros(grid.Ny),
+            ion_dynamics="single_mobile",
+        )
+
+
+def test_mobile_ion_builder_rejects_dual_species():
+    stack = _stack()
+    layers = list(stack.layers)
+    absorber = layers[1]
+    layers[1] = dc_replace(
+        absorber,
+        params=dc_replace(
+            absorber.params,
+            D_ion_neg=2.0e-17,
+            P0_neg=5.0e22,
+            P_lim_neg=1.0e27,
+        ),
+    )
+    dual_stack = dc_replace(stack, layers=tuple(layers))
+    grid = build_grid_2d(
+        _layers_for_stack(dual_stack),
+        lateral_length=200e-9,
+        Nx=3,
+        lateral_uniform=True,
+    )
+
+    with pytest.raises(ValueError, match="dual-ion"):
+        build_material_arrays_2d(
+            grid,
+            dual_stack,
+            Microstructure(),
+            lateral_bc="neumann",
+            ion_dynamics="single_mobile",
+        )
+
+
+def test_mobile_ion_transient_returns_certified_diagnostics(monkeypatch):
+    from types import SimpleNamespace
+
+    from perovskite_sim.twod import solver_2d
+
+    _grid, mat = _mobile_ion_material()
+    state = _mobile_ion_state(mat)
+    monkeypatch.setattr(
+        solver_2d,
+        "solve_ivp",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=True,
+            y=state[:, None],
+        ),
+    )
+
+    terminal, report = solver_2d.run_transient_2d(
+        state,
+        mat,
+        V_app=0.0,
+        t_end=1.0e-9,
+        return_ion_diagnostics=True,
+    )
+
+    np.testing.assert_array_equal(terminal, state)
+    assert report.passed is True
+    assert report.relative_inventory_drift == 0.0
+
+
+def test_mobile_ion_transient_rejects_unphysical_initial_state_before_solve(
+    monkeypatch,
+):
+    from perovskite_sim.twod import solver_2d
+
+    grid, mat = _mobile_ion_material()
+    state = _mobile_ion_state(mat)
+    state[grid.n_nodes] = -1.0
+    called = False
+
+    def fake_solve(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("solve_ivp must not receive an invalid state")
+
+    monkeypatch.setattr(solver_2d, "solve_ivp", fake_solve)
+    with pytest.raises(ValueError, match="initial hole density is negative"):
+        solver_2d.run_transient_2d(
+            state,
+            mat,
+            V_app=0.0,
+            t_end=1.0e-9,
+        )
+    assert called is False
+
+
+@pytest.mark.parametrize(
+    ("block", "violation"),
+    [
+        ("electron", "negative_terminal_electron_density"),
+        ("hole", "negative_terminal_hole_density"),
+        ("ion", "negative_terminal_density"),
+        ("site", "terminal_site_limit_exceeded"),
+    ],
+)
+def test_mobile_ion_transient_rejects_unphysical_terminal_state(
+    monkeypatch,
+    block: str,
+    violation: str,
+):
+    from types import SimpleNamespace
+
+    from perovskite_sim.twod import solver_2d
+
+    grid, mat = _mobile_ion_material()
+    state = _mobile_ion_state(mat)
+    terminal = state.copy()
+    if block == "electron":
+        terminal[0] = -1.0
+    elif block == "hole":
+        terminal[grid.n_nodes] = -1.0
+    elif block == "ion":
+        terminal[2 * grid.n_nodes] = -1.0
+    else:
+        assert mat.P_lim_2d is not None
+        terminal[2 * grid.n_nodes:] = 1.01 * mat.P_lim_2d.ravel()
+    monkeypatch.setattr(
+        solver_2d,
+        "solve_ivp",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            success=True,
+            y=terminal[:, None],
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=violation):
+        solver_2d.run_transient_2d(
+            state,
+            mat,
+            V_app=0.0,
+            t_end=1.0e-9,
+        )
+
+
 def test_material_arrays_2d_default_no_selective_contacts():
     """Without S values on the stack, has_selective_contacts is False and S fields are 0."""
     stack = _stack()  # configs/nip_MAPbI3.yaml — no S values

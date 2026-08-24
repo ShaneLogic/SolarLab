@@ -811,6 +811,15 @@ photon budget、optical-slice/KK 3x3 refinement 作为门槛；它不升级旧
 边界仍只到内部 graded-absorber optics。2D ion/interface closure、外部 circuit/
 thermal layer 与高通量反演仍是后续独立子项。
 
+2026-08-24 2D checkpoint：Neumann-x tensor grid 已加入显式 opt-in 的
+single-positive-mobile-ion `(n,p,P)` transient，Poisson 使用动态 `P-P0`，离子
+SG flux 与 1D constitutive source 对齐，四边 blocking，库存以 2D half-endpoint
+dual-cell area 守恒；终态负载流子/离子、site-limit overflow 和库存漂移均
+fail closed，默认 frozen `(n,p)` path 保持不变。现有 2D terminal current
+不含 ionic/displacement current，因此带 `P` 的 snapshot 会明确拒绝，未开放
+ion-aware 2D J-V。该 checkpoint 只关闭 solver topology；two-sided interface
+SRH、完备 terminal current、public protocol 及新 refinement certificate 仍未完成。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。
