@@ -15,7 +15,10 @@ from perovskite_sim.solver.tolerances import (
     ComponentwiseAtol,
     build_componentwise_atol_2d,
 )
-from perovskite_sim.twod.continuity_2d import continuity_rhs_2d
+from perovskite_sim.twod.continuity_2d import (
+    apply_thermionic_caps_y,
+    continuity_rhs_2d,
+)
 from perovskite_sim.twod.field_mobility_2d import (
     arith_mean_face_x, arith_mean_face_y, arith_mean_face_wrap,
     recompute_d_eff_2d,
@@ -1197,8 +1200,56 @@ def extract_snapshot_2d(
 
     phi_n = phi + mat.chi
     phi_p = phi + mat.chi + mat.Eg
-    Jx_n, Jy_n = sg_fluxes_2d_n(phi_n, n, g.x, g.y, mat.D_n, mat.V_T)
-    Jx_p, Jy_p = sg_fluxes_2d_p(phi_p, p, g.x, g.y, mat.D_p, mat.V_T)
+    if mat.has_field_mobility:
+        effective = recompute_d_eff_2d(
+            phi=phi, x=g.x, y=g.y,
+            D_n=mat.D_n, D_p=mat.D_p, V_T=mat.V_T,
+            v_sat_n_x_face=mat.v_sat_n_x_face,
+            v_sat_n_y_face=mat.v_sat_n_y_face,
+            ct_beta_n_x_face=mat.ct_beta_n_x_face,
+            ct_beta_n_y_face=mat.ct_beta_n_y_face,
+            pf_gamma_n_x_face=mat.pf_gamma_n_x_face,
+            pf_gamma_n_y_face=mat.pf_gamma_n_y_face,
+            v_sat_p_x_face=mat.v_sat_p_x_face,
+            v_sat_p_y_face=mat.v_sat_p_y_face,
+            ct_beta_p_x_face=mat.ct_beta_p_x_face,
+            ct_beta_p_y_face=mat.ct_beta_p_y_face,
+            pf_gamma_p_x_face=mat.pf_gamma_p_x_face,
+            pf_gamma_p_y_face=mat.pf_gamma_p_y_face,
+            lateral_bc=mat.poisson_factor.lateral_bc,
+            v_sat_n_wrap=mat.v_sat_n_wrap,
+            v_sat_p_wrap=mat.v_sat_p_wrap,
+            ct_beta_n_wrap=mat.ct_beta_n_wrap,
+            ct_beta_p_wrap=mat.ct_beta_p_wrap,
+            pf_gamma_n_wrap=mat.pf_gamma_n_wrap,
+            pf_gamma_p_wrap=mat.pf_gamma_p_wrap,
+        )
+        Jx_n, Jy_n = sg_fluxes_2d_n(
+            phi_n, n, g.x, g.y, mat.D_n, mat.V_T,
+            D_n_x_face=effective.D_n_x,
+            D_n_y_face=effective.D_n_y,
+        )
+        Jx_p, Jy_p = sg_fluxes_2d_p(
+            phi_p, p, g.x, g.y, mat.D_p, mat.V_T,
+            D_p_x_face=effective.D_p_x,
+            D_p_y_face=effective.D_p_y,
+        )
+    else:
+        Jx_n, Jy_n = sg_fluxes_2d_n(phi_n, n, g.x, g.y, mat.D_n, mat.V_T)
+        Jx_p, Jy_p = sg_fluxes_2d_p(phi_p, p, g.x, g.y, mat.D_p, mat.V_T)
+    Jy_n, Jy_p = apply_thermionic_caps_y(
+        Jy_n,
+        Jy_p,
+        n,
+        p,
+        mat.chi,
+        mat.Eg,
+        mat.V_T,
+        interface_y_faces=mat.interface_y_faces,
+        A_star_n=mat.A_star_n,
+        A_star_p=mat.A_star_p,
+        T=mat.T_device,
+    )
 
     return SpatialSnapshot2D(
         V=float(V_app),
@@ -1206,6 +1257,31 @@ def extract_snapshot_2d(
         phi=phi, n=n.copy(), p=p.copy(),
         Jx_n=Jx_n, Jy_n=Jy_n, Jx_p=Jx_p, Jy_p=Jy_p,
         P_ion=None if P_ion is None else P_ion.copy(),
+    )
+
+
+def compute_mobile_ion_current_components_2d(
+    y_state: np.ndarray,
+    mat: MaterialArrays2D,
+    V_app: float,
+    *,
+    applied_voltage_rate_V_s: float = 0.0,
+):
+    """Return the instantaneous complete current for an active mobile-ion state."""
+    from perovskite_sim.twod.mobile_ion_current_2d import (
+        evaluate_mobile_ion_current_components_2d,
+    )
+
+    if not mat.has_mobile_ions:
+        raise ValueError("complete mobile-ion current requires ion dynamics")
+    state = np.asarray(y_state, dtype=float)
+    snapshot = extract_snapshot_2d(state, mat, V_app)
+    derivative = assemble_rhs_2d(0.0, state, mat, V_app)
+    return evaluate_mobile_ion_current_components_2d(
+        snapshot,
+        derivative,
+        mat,
+        applied_voltage_rate_V_s=applied_voltage_rate_V_s,
     )
 
 

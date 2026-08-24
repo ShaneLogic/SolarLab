@@ -87,6 +87,7 @@ small-grid Radau transient retains lateral uniformity and positive carriers
 while removing electron-hole pairs only when the interface mode is enabled.
 
 This is an internal solver closure, not an external interface-defect
-validation. Mobile-ion-complete terminal current, public protocol wiring, and
-a content-addressed combined 2D refinement certificate remain required before
-the repository can enlarge its 2D microstructure claim.
+validation. The independent mobile-ion-complete current evaluator is now
+available, but public protocol wiring and a content-addressed combined 2D
+refinement certificate remain required before the repository can enlarge its
+2D microstructure claim.

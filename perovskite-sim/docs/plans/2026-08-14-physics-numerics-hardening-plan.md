@@ -830,6 +830,15 @@ shared occupancy、dynamic state、interface charge 与 generation escape hatch 
 fail closed。默认 off path bit-identical，并可与 single-positive-mobile-ion block
 组合。现有 public 2D J-V、terminal current 与 refinement certificate 仍未升级。
 
+随后 complete-current checkpoint 加入独立的 mobile-ion current evaluator：
+从同一次 `(dn/dt,dp/dt,dP/dt)` 计算 `q(dp/dt-dn/dt+dP/dt)`，用 production
+Poisson factorization 求瞬时 `dphi/dt`，并在每个纵向面组合 electron、hole、
+positive-ion 与 displacement current。carrier current 与 RHS 共用 field-mobility
+face coefficients 和 thermionic interface cap，ion current 严格复用 transport flux，
+Neumann lateral average 使用同一 dual-cell 宽度。它仍只支持 ohmic、blocking、
+single-positive-ion topology；public 2D J-V、execution protocol 和新的 3x3
+content-addressed certificate 仍未完成，因此 2D scope claim 暂不升级。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。

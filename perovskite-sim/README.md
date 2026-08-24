@@ -322,10 +322,13 @@ patterns, not a complete 2D perovskite microstructure model.
 
 At solver level, an explicit `ion_dynamics="single_mobile"` research transient
 adds one positive-ion state on Neumann-x domains with blocking boundaries and
-discrete inventory checks. It is not wired into 2D J-V: mobile-ion snapshots
-fail closed in the carrier-only terminal-current post-processor until ionic and
-displacement current are implemented. See
-[`docs/twod-mobile-ion-transient.md`](docs/twod-mobile-ion-transient.md).
+discrete inventory checks. An explicit companion evaluator reconstructs
+electron, hole, ionic, and instantaneous displacement current from the same
+semidiscrete RHS and constitutive face laws. It is not yet wired into 2D J-V;
+the historical carrier-only terminal-current API still rejects mobile-ion
+snapshots. See
+[`docs/twod-mobile-ion-transient.md`](docs/twod-mobile-ion-transient.md) and
+[`docs/twod-mobile-ion-current.md`](docs/twod-mobile-ion-current.md).
 
 An independent `interface_srh="two_sided_cross_node"` research opt-in maps
 the 1D two-sided interface-defect surface rate onto a conservative Neumann-x
@@ -339,6 +342,7 @@ charge, and is not wired into 2D J-V. See
 `kind="voc_grain_sweep"`.
 
 *Source:* `perovskite_sim/twod/solver_2d.py`,
+`perovskite_sim/twod/mobile_ion_current_2d.py`,
 `perovskite_sim/twod/interface_recombination_2d.py`,
 `perovskite_sim/twod/experiments/jv_sweep_2d.py`
 

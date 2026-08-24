@@ -5,6 +5,51 @@ from perovskite_sim.constants import Q
 from perovskite_sim.twod.flux_2d import sg_fluxes_2d_n, sg_fluxes_2d_p
 
 
+def apply_thermionic_caps_y(
+    Jy_n: np.ndarray,
+    Jy_p: np.ndarray,
+    n: np.ndarray,
+    p: np.ndarray,
+    chi: np.ndarray | None,
+    Eg: np.ndarray | None,
+    V_T: float,
+    *,
+    interface_y_faces: tuple[int, ...],
+    A_star_n: np.ndarray | None,
+    A_star_p: np.ndarray | None,
+    T: float | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Apply the production thermionic magnitude cap to vertical SG faces."""
+    if not interface_y_faces or chi is None or Eg is None or T is None:
+        return Jy_n, Jy_p
+    if A_star_n is None or A_star_p is None:
+        raise ValueError("thermionic interface faces require Richardson arrays")
+
+    capped_n = np.asarray(Jy_n, dtype=float).copy()
+    capped_p = np.asarray(Jy_p, dtype=float).copy()
+    T_sq = T * T
+    for face in interface_y_faces:
+        dEc = float(chi[face, 0] - chi[face + 1, 0])
+        if abs(dEc) > 0.05:
+            left_term = n[face, :] * np.exp(-max(dEc, 0.0) / V_T)
+            right_term = n[face + 1, :] * np.exp(-max(-dEc, 0.0) / V_T)
+            J_te_n = A_star_n[face, :] * T_sq * (left_term - right_term)
+            mask = np.abs(capped_n[face, :]) > np.abs(J_te_n)
+            capped_n[face, mask] = J_te_n[mask]
+
+        dEv = float(
+            (chi[face, 0] + Eg[face, 0])
+            - (chi[face + 1, 0] + Eg[face + 1, 0])
+        )
+        if abs(dEv) > 0.05:
+            left_term = p[face, :] * np.exp(-max(dEv, 0.0) / V_T)
+            right_term = p[face + 1, :] * np.exp(-max(-dEv, 0.0) / V_T)
+            J_te_p = A_star_p[face, :] * T_sq * (left_term - right_term)
+            mask = np.abs(capped_p[face, :]) > np.abs(J_te_p)
+            capped_p[face, mask] = J_te_p[mask]
+    return capped_n, capped_p
+
+
 def continuity_rhs_2d(
     x: np.ndarray, y: np.ndarray,
     phi: np.ndarray, n: np.ndarray, p: np.ndarray,
@@ -97,32 +142,19 @@ def continuity_rhs_2d(
     # Dushman thermionic-emission limit because the band offset compresses
     # into a single grid spacing. Without this cap the 2D RHS at a 1D-
     # converged steady state evaluates to ~1e31 instead of ~0.
-    if interface_y_faces and chi is not None and Eg is not None and T is not None:
-        Jy_n = Jy_n.copy()
-        Jy_p = Jy_p.copy()
-        T_sq = T * T
-        for f in interface_y_faces:
-            # chi varies in y only (Stage A); take column 0 for the band-offset
-            # scalar but apply the cap vectorised across all i columns.
-            dEc = float(chi[f, 0] - chi[f + 1, 0])
-            if abs(dEc) > 0.05:
-                left_term = n[f, :] * np.exp(-max(dEc, 0.0) / V_T)
-                right_term = n[f + 1, :] * np.exp(-max(-dEc, 0.0) / V_T)
-                # A_star_n is (Ny, Nx) extruded; left side is row f.
-                J_te_n = A_star_n[f, :] * T_sq * (left_term - right_term)
-                # SG sign convention for J_n is +y direction = positive; TE
-                # also returns +y so we cap on |·|.
-                mask = np.abs(Jy_n[f, :]) > np.abs(J_te_n)
-                Jy_n[f, mask] = J_te_n[mask]
-            dEv = float(
-                (chi[f, 0] + Eg[f, 0]) - (chi[f + 1, 0] + Eg[f + 1, 0])
-            )
-            if abs(dEv) > 0.05:
-                left_term = p[f, :] * np.exp(-max(dEv, 0.0) / V_T)
-                right_term = p[f + 1, :] * np.exp(-max(-dEv, 0.0) / V_T)
-                J_te_p = A_star_p[f, :] * T_sq * (left_term - right_term)
-                mask = np.abs(Jy_p[f, :]) > np.abs(J_te_p)
-                Jy_p[f, mask] = J_te_p[mask]
+    Jy_n, Jy_p = apply_thermionic_caps_y(
+        Jy_n,
+        Jy_p,
+        n,
+        p,
+        chi,
+        Eg,
+        V_T,
+        interface_y_faces=interface_y_faces,
+        A_star_n=A_star_n,
+        A_star_p=A_star_p,
+        T=T,
+    )
 
     Ny, Nx = phi.shape
     dx = np.diff(x)

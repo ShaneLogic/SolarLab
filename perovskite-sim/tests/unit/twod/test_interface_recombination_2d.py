@@ -23,6 +23,7 @@ from perovskite_sim.twod.microstructure import Microstructure
 from perovskite_sim.twod.solver_2d import (
     assemble_rhs_2d,
     build_material_arrays_2d,
+    compute_mobile_ion_current_components_2d,
 )
 
 
@@ -297,6 +298,24 @@ def test_interface_sheet_composes_with_conservative_mobile_ion_block():
     assert derivative.shape == state.shape
     assert np.all(np.isfinite(derivative))
     assert abs(float(np.sum(weighted))) / cancellation_scale < 5.0e-14
+
+
+def test_interface_sheet_and_mobile_ion_have_complete_maxwell_current():
+    _stack_value, grid, material = _enabled_material(mobile_ions=True)
+    _n_y, _p_y, n, p = _high_injection(grid)
+    n[[0, -1], :] = np.stack([material.n_eq_left, material.n_eq_right])
+    p[[0, -1], :] = np.stack([material.p_eq_left, material.p_eq_right])
+    state = np.concatenate(
+        [n.ravel(), p.ravel(), material.P_ion0_2d.ravel()]
+    )
+
+    report = compute_mobile_ion_current_components_2d(
+        state,
+        material,
+        V_app=0.02,
+    )
+
+    assert report.max_relative_face_spread < 5.0e-12
 
 
 @pytest.mark.parametrize(

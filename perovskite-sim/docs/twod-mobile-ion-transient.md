@@ -9,9 +9,9 @@ path retains the `(n, p)` state; opting in with
 
 This checkpoint closes the solver-level transport topology. It does not expose
 an ion-aware 2D J-V experiment and does not upgrade the repository's 2D scope
-claim. The existing terminal-current post-processor contains electron and hole
-conduction only, so it rejects snapshots carrying a mobile-ion state until
-ionic and displacement-current terms are implemented.
+claim. A separate explicit post-processor now supplies complete instantaneous
+mobile-ion current, while the historical carrier-only terminal-current API
+continues to reject snapshots carrying an ion state.
 
 ## Discrete Model
 
@@ -95,8 +95,8 @@ coordinate or a dedicated DAE integrator.
 
 The independent two-sided cross-node interface-SRH sheet closure is documented
 in `docs/twod-two-sided-interface-srh.md` and can compose with this state
-topology. Remaining work is mobile-ion-complete terminal current (including
-displacement current), public experiment/protocol wiring, and a new
-content-addressed combined grid/tolerance certificate. Until those are
-complete, 2D J-V remains frozen-ion and the full microstructure claim remains
-blocked.
+topology. The complete instantaneous current is documented in
+`docs/twod-mobile-ion-current.md`. Remaining work is public experiment/protocol
+wiring and a new content-addressed combined grid/tolerance certificate. Until
+those are complete, 2D J-V remains frozen-ion and the full microstructure claim
+remains blocked.
