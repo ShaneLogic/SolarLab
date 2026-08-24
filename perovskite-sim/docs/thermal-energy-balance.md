@@ -105,5 +105,37 @@ electrical-thermal transient DAE. Each temperature starts a new J-V history;
 there is no thermal-memory or ion-state handoff between temperatures. The
 model does not yet include a spatial heat equation, thermal contact
 resistance, temperature-dependent optical constants, spectral thermalization,
-or measured thermal parameters. A source-clean grid/tolerance certificate is
-still required before the coupled layer is labeled internally certified.
+or measured thermal parameters.
+
+## Numerical Certificate
+
+The pre-registered convergence history is retained rather than replacing a
+failed coarse ladder with a successful result:
+
+- `electrothermal-terminal-mpp-v1` completed 9/9 cells on grids 10/15/20 but
+  remained `partial`; the 15-to-20 relative change of the 300--380 K MPP-power
+  response was 3.267%, above the frozen 2% limit.
+- `electrothermal-terminal-mpp-resolved-v2` completed 9/9 cells on grids
+  20/30/40 but remained `partial` on the same observable at 13.736%.
+- `electrothermal-terminal-mpp-grid-resolved-v3` kept every observable,
+  quality gate, tolerance, scan, circuit, and thermal input unchanged and used
+  grids 40/60/80. It completed 9/9 cells with no failed or missing cells and is
+  `certified`.
+
+The v3 source commit is `6afb1a69667507dcae36c65403538a44796f9a9f`, run ID is
+`6056c1fb843c563b8de07c0a060713510cbeadf4134883641d40d1237ff1d8b7`,
+protocol SHA-256 is
+`ecad8af783b4bd14c011b31780aec32f325bb9de72e515acf1eb2c031d3d7f01`, and
+certificate SHA-256 is
+`67d18979c9ce2d23a0e2d0e848513f50d8e1e4880819c92a5ff4da8719682cf6`.
+The terminal 60-to-80 grid comparisons were 0.7079% for the temperature
+response, 0.00151 K for operating temperature, 0.0160% for MPP current,
+0.0141% for MPP power, and 12.37 microvolts for MPP voltage. All per-cell
+first-law reconstruction, residual, protocol/hash, source certification,
+temperature-envelope, and active series/shunt gates passed.
+
+This upgrades only the frozen synthetic, fresh-state sampled-MPP coupling to
+internal numerical certification. It does not certify voltage-sampling
+refinement, a continuously optimized MPP, a joint thermal-ion transient,
+external-solver parity, measured thermal parameters, or experimental device
+temperature.

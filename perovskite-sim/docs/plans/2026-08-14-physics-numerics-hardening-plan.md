@@ -894,6 +894,38 @@ current/voltage balance 均为 exact zero。该 scope 因此升级为
 下一器件外部本构 checkpoint 转入 thermal/energy-balance，不把热效应塞回
 contact calibration 或本 algebraic circuit layer。
 
+随后 thermal/energy-balance core checkpoint 新增面积归一化的独立 first-law
+control volume：显式 absorbed optical power 与 optional internal heat 为输入，
+terminal electrical export 只扣除一次，并由 linear convection 与 one-sided
+Stefan-Boltzmann radiation 排热。steady Brent root 与 constant-power transient
+均保存 immutable energy ledger、canonical protocol/hash 和 fail-closed envelope；
+零/线性/radiative analytic limits 与 cumulative energy closure 已覆盖。该层不
+修改 contact/PDE state，也不由 incident irradiance 暗中推断 absorption。
+
+随后 electrothermal coupling checkpoint 对每个 trial temperature 重建 fresh
+`DeviceStack`，运行 explicit strict transient J-V protocol，应用 frozen Rs/Rsh，
+选择 forward sampled terminal MPP，并以其 electrical export 闭合 bounded thermal
+root。Python result 与 `/api/jv/electrothermal-operating-point` 保存全部 temperature
+evaluations、`ExperimentProtocol`、source/external mapping SHA-256 与 first-law
+residual。10/15/20 的 `electrothermal-terminal-mpp-v1` 和 20/30/40 的
+`electrothermal-terminal-mpp-resolved-v2` 均完成 9/9 cells，但 300--380 K MPP
+response 的 terminal-grid relative changes 分别为 3.267% 和 13.736%，超过冻结
+2% 门限，故原样保留为 `partial`，没有放宽阈值。
+
+最终 grid-resolved checkpoint 只把 grid ladder 提高到 40/60/80，所有
+observable、quality gate、tolerance、scan、circuit 与 thermal input 保持不变。
+source-clean commit `6afb1a6` 的 9/9 cells 全部完成，run ID
+`6056c1fb843c563b8de07c0a060713510cbeadf4134883641d40d1237ff1d8b7`，
+certificate
+`67d18979c9ce2d23a0e2d0e848513f50d8e1e4880819c92a5ff4da8719682cf6`
+为 `certified`。60--80 grid differences 为 temperature response `0.7079%`、
+operating T `0.00151 K`、terminal MPP current `0.0160%`、power `0.0141%`、
+voltage `12.37 microV`，全部 first-law/protocol/hash/envelope/Rs-Rsh activity gates
+通过。因此 scope 只升级为 synthetic fresh-state sampled-MPP steady coupling 的
+`INTERNAL_CERTIFIED`；voltage-sampling refinement、continuous MPP、joint
+thermal-ion transient、spatial heat equation、实测热参数、外部 solver 与实验
+温度验证仍未认证。下一 checkpoint 转入 P4.5 identifiability。
+
 ### 5.5 P4.5 identifiability，而不是直接参数拟合
 
 优先回答 `iface_state_calibration_factor`、`het_recomb_despike`、trap density、capture velocity 和 ion parameters 是否可由 J-V/scan-rate/TPV/impedance 联合识别。先用 synthetic recovery、profile likelihood/Fisher rank 和多初值检查结构可辨识性，再考虑 Bayesian posterior。

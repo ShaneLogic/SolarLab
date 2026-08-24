@@ -564,6 +564,18 @@ electrical-thermal transient DAE or a spatial heat equation. Absorbed optical
 power remains an explicit input and is not inferred from incident irradiance. See
 [`docs/thermal-energy-balance.md`](docs/thermal-energy-balance.md).
 
+The source-clean `electrothermal-terminal-mpp-grid-resolved-v3` lane is
+internally certified at commit `6afb1a6` with 9/9 grid/tolerance cells and
+certificate SHA-256
+`67d18979c9ce2d23a0e2d0e848513f50d8e1e4880819c92a5ff4da8719682cf6`.
+Its 60-to-80 terminal-grid differences are 0.7079% for the 300--380 K
+sampled-MPP power response, 0.00151 K for operating temperature, 0.0160% for
+terminal MPP current, 0.0141% for power, and 12.37 microvolts for voltage. The
+10/15/20 v1 and 20/30/40 v2 lanes remain `partial`; their preserved failures
+show that lower grids had not reached the asymptotic regime. This certificate
+is limited to the frozen synthetic thermal/circuit inputs and fresh-state
+sampled-MPP protocol, not measured-device temperature validation.
+
 *Sources:* `perovskite_sim/experiments/thermal_balance.py`,
 `perovskite_sim/experiments/electrothermal.py`
 

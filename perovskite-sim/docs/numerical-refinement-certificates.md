@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 24 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform/combined limits、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps，以及 P4.4 CIGS graded optics。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 29 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform/combined limits、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps、P4.4 CIGS graded optics、外部 Rs/Rsh DC mapping 与 lumped electrothermal terminal-MPP coupling。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -34,6 +34,11 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `csi-qf-frequency-domain-resolved-v2` | N200/300/400 | FD step 1/0.5/0.25 | resolved C-V、Mott-Schottky intercept/effective doping |
 | `twod-uniform-limit` | x/y multiplier 1/2/4 | componentwise atol factor 1/0.1/0.01 | 2D-to-1D J-V envelope、Voc、Jsc |
 | `twod-mobile-ion-interface-srh-v1` | matched x/y intervals 4/6/8 | componentwise atol factor 1/0.1/0.01 | complete current、interface current、lateral response、site fraction、ion redistribution |
+| `external-series-shunt-dc-v1` | N20/30/40 | componentwise atol factor 1/0.1/0.01 | full terminal trace、Voc/Jsc/FF/PCE、Kirchhoff balance |
+| `external-series-shunt-dc-operating-quadrant-v2` | N20/30/40 | componentwise atol factor 1/0.1/0.01 | terminal operating quadrant、Voc/Jsc/FF/PCE、zero coupling |
+| `electrothermal-terminal-mpp-v1` | N10/15/20 | componentwise atol factor 1/0.1/0.01 | 300--380 K MPP response、operating T、terminal MPP |
+| `electrothermal-terminal-mpp-resolved-v2` | N20/30/40 | componentwise atol factor 1/0.1/0.01 | v1 unchanged contract on a higher grid ladder |
+| `electrothermal-terminal-mpp-grid-resolved-v3` | N40/60/80 | componentwise atol factor 1/0.1/0.01 | grid-resolved MPP response、operating T、first-law closure |
 | `interface-recombination-charge-off` | N30/60/90 | QF residual factor 1/0.5/0.25 | two-sided interface flux、归一化 J-V、Voc |
 | `interface-charge-equilibrium-referenced-v1` | N30/60/120 | QF residual factor 1/0.5/0.25 | charged current、occupancy、sheet charge、trace shift |
 | `interface-charge-device-stress-v1` | N30/60 | QF residual factor 1/0.5 | 9-point Et/CBO/Nd/Nt current、dark occupancy、sheet charge、trace shift |
@@ -63,6 +68,12 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 - `protocol_hash`：canonical document 的 SHA-256。
 
 mobile-ion J-V 使用真实 `ExperimentProtocol`；c-Si 将每个 DC bias 的 QF impedance protocol 明确组成 bundle；frozen steady ladder 使用不虚构 scan rate 的 numerical protocol；charge-off interface lane 使用专用 two-sided QF protocol，绑定 contact certificate、暗态 occupancy reference 与 illumination ladder；charged interface lane 进一步绑定 `-q*N_t*(f-f_eq)`、暗态 bit identity、dark-bias/light targets 与 local IFT gates；device-stress companion 将 baseline 加 `E_t/CBO/N_D/N_t` 各两个 one-factor 端点、逐设备暗态参照和 charge/barrier 符号门限写入同一 canonical protocol；2D bundle 分列实际执行的 1D forward/reverse protocol、被比较的 forward branch 和 2D ascending finite-time protocol。2D 的 1D `v_rate` 显式设为 `V_step / settle_time`，使两条路径的每点 dwell 相同。
+
+external-circuit lane 将 intrinsic J-V protocol、area-normalized Rs/Rsh
+topology、source result 与 terminal mapping hash 分开绑定；electrothermal lane
+进一步冻结 fresh-state temperature trials、sampled terminal-MPP rule、thermal
+control volume、root envelope 与完整 first-law inputs。低网格 v1/v2 的 partial
+证据保留，不能由 v3 certified artifact 覆盖。
 
 ion-aware DC 使用专用 frozen physical protocol，记录固定偏压、有效温度、
 明暗历史、初态来源/可选初态 SHA-256、blocking ion 边界、ordered endpoint
@@ -172,6 +183,11 @@ python scripts/run_numerical_refinement.py csi-qf-frequency-domain --dry-run
 python scripts/run_numerical_refinement.py csi-qf-frequency-domain-resolved-v2 --dry-run
 python scripts/run_numerical_refinement.py twod-uniform-limit --dry-run
 python scripts/run_numerical_refinement.py twod-mobile-ion-interface-srh-v1 --dry-run
+python scripts/run_numerical_refinement.py external-series-shunt-dc-v1 --dry-run
+python scripts/run_numerical_refinement.py external-series-shunt-dc-operating-quadrant-v2 --dry-run
+python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-v1 --dry-run
+python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-resolved-v2 --dry-run
+python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-grid-resolved-v3 --dry-run
 python scripts/run_numerical_refinement.py interface-recombination-charge-off --dry-run
 python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenced-v1 --dry-run
 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1 --dry-run
@@ -201,6 +217,11 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py csi-qf-frequency-domain-resolved-v2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py twod-uniform-limit
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py twod-mobile-ion-interface-srh-v1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py external-series-shunt-dc-v1 --allow-noncertified-exit-zero
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py external-series-shunt-dc-operating-quadrant-v2
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-v1 --allow-noncertified-exit-zero
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-resolved-v2 --allow-noncertified-exit-zero
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-grid-resolved-v3
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-recombination-charge-off
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenced-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1
@@ -230,7 +251,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 
 ## 真实矩阵成本和证据边界
 
-当前 registry 共 24 条 lane；二十二条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 208 个 content-addressed cell。其内部工作量至少包括：
+当前 registry 共 29 条 lane；二十七条 lane 各 9 个 cell，device-stress v1/v2 分别为 4/6 个 cell，合计 253 个 content-addressed cell。其内部工作量至少包括：
 
 - frozen SCAPS：279 个 residual-certified steady voltage points；
 - mobile IonMonger：9 次 forward/reverse transient J-V，每次 40 个采样点，且可能触发 recovery/bisection；
@@ -241,6 +262,12 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
 - c-Si minimum-roadmap lane：54 个 bias/FD-step operating-point calls，共 162 个 frequency points；resolved-v2 companion 另有同等工作量；
 - frozen 2D uniform lane：117 个 2D finite-time voltage settles，外加 9 个 matched 1D forward/reverse sweeps 和 2D seed；
 - combined 2D lane：9 个 strict public J-V runs，各有 3 个 fixed-voltage dwell，并逐点重建 complete current、ion/interface diagnostics 与 GB geometry evidence；
+- external circuit：v1/v2 各 9 个 strict intrinsic J-V cells，分别检查完整
+  junction trace 与器件发电象限上的 terminal mapping、Kirchhoff balance、
+  zero-coupling 和 source/protocol provenance；
+- electrothermal：v1/v2/v3 各 9 个 cells；每个 cell 在 ambient、maximum 和
+  Brent root trial temperatures 上重新运行 fresh-state strict J-V，应用 frozen
+  Rs/Rsh，选取 sampled terminal MPP，并重建 first-law ledger；
 - interface charge-off：9 个 certified dark occupancy references、225 个
   requested two-sided QF illuminated voltage points及其 illumination ladders，
   并逐点计算 capture flux、local QSS、continuity 与 current-spread evidence。
@@ -272,7 +299,7 @@ source、executor 或 environment 变化会产生新的 `run_id`，不会误接�
   uniform-composition companion 和 front/mid/back Carron comparison；matrix
   分别加密 absorber slices 与 Kramers-Kronig quadrature，不执行 transport。
 
-因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 181 个 cell 的真实结果。
+因此 CI 只运行 schema、resume 和注入式 adapter smoke；完整物理矩阵应作为受控的长时任务逐 lane 运行。当前 infrastructure、dry-run 或 adapter smoke 不能替代这 253 个 cell 的真实结果。
 
 `certified` 只表示该冻结代码/config/protocol/environment 下的内部数值收敛。它不等于 SCAPS/IonMonger 外部 solver parity，不等于实验验证，也不证明材料参数或模型闭包唯一正确。
 
@@ -635,3 +662,49 @@ blocking single-positive-ion、finite-width GB、clamp-inactive cross-node
 charge/state、field mobility、long-time hysteresis、一般 2D microstructure、
 外部 solver 或实验验证。完整边界见
 `docs/twod-combined-numerical-certificate.md`。
+
+### 2026-08-24 electrothermal terminal-MPP certificates
+
+三条 lane 均固定同一 6-point/branch、20 V/s fresh-state strict J-V、同一
+Rs/Rsh、800 W/m2 absorbed optical power、300--380 K thermal envelope、
+observable、quality gate 与 componentwise tolerance ladder。前两条完整执行但
+未通过预注册 grid gate，证据没有删除或改写：
+
+- `electrothermal-terminal-mpp-v1` 在 commit `4d1273f` 的 10/15/20 ladder
+  完成 9/9 cells，run ID
+  `47798511b2cd28268f6dc1f9ba1c12693b4cef91b705277fb2b49e8fa1fa9a90`，
+  certificate
+  `8cb1a02d11efc7a5622d6d806a17be8c7ab6df0c4c6b7a40d8b2c1be2031ef7a`
+  为 `partial`；300--380 K MPP-power response terminal-grid difference
+  `3.26741% > 2%`。
+- `electrothermal-terminal-mpp-resolved-v2` 在 commit `5605f6d` 的 20/30/40
+  ladder 完成 9/9 cells，run ID
+  `3ae21a1e4d09868fce73f840888739a8cff3a9d2877437e4f8d847e90bf6b42b`，
+  certificate
+  `533471fa0c64897ffde64ee7a9546657bf011fbff5529ddb79dddbfe93602578`
+  仍为 `partial`；同一 response difference 为 `13.7361% > 2%`。
+
+`electrothermal-terminal-mpp-grid-resolved-v3` 只将 ladder 提高到 40/60/80，
+在 source commit `6afb1a6`、source changes 为空且 BLAS/OpenMP 单线程环境下
+完成 9/9 cells，0 failed、0 missing、0 reused：
+
+- run ID：`6056c1fb843c563b8de07c0a060713510cbeadf4134883641d40d1237ff1d8b7`；
+- certificate SHA-256：
+  `67d18979c9ce2d23a0e2d0e848513f50d8e1e4880819c92a5ff4da8719682cf6`；
+- protocol SHA-256：
+  `ecad8af783b4bd14c011b31780aec32f325bb9de72e515acf1eb2c031d3d7f01`；
+- terminal grid differences：300--380 K MPP-power response `0.707880%`、
+  operating temperature/rise `0.00150753 K`、terminal MPP current
+  `0.0160342%`、power `0.0141103%`、voltage `1.23697e-5 V`；
+- terminal tolerance differences：response `2.78525e-5`、temperature
+  `1.13998e-7 K`、current `7.46909e-11`、power `6.57277e-11`、voltage
+  `5.76206e-12 V`；
+- 全部 cell 的 source/external/electrothermal certification、first-law exact
+  reconstruction、protocol/hash alignment、temperature envelope、power residual、
+  active series drop、shunt current 与 nontrivial temperature-response gates 通过。
+
+因此 v3 certificate 只关闭 frozen synthetic inputs 下 fresh-state、forward
+sampled terminal-MPP steady root 的内部 grid/tolerance/first-law/provenance gate。
+它不认证 voltage-sampling refinement、continuous MPP optimizer、joint
+electrical-thermal-ion transient、spatial heat equation、measured parameters、
+external solver parity、lifetime 或实验温度。
