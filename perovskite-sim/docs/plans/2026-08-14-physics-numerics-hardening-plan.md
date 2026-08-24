@@ -748,6 +748,17 @@ inventory、Newton work 与 residual。两层 `10 mV`、`10 ms` integration 中�
 structured analytic tangent，并在 sparse Newton 与 dense reference 对齐后才能注册
 新的 9-cell certificate lane。
 
+第十三个 checkpoint 已完成组合 topology 的 structured analytic tangent。装配器
+将既有 clamp-inactive algebraic-interface CSR block 严格映射到组合坐标，再加入
+finite-site ion storage curvature、全部 ion-face flux derivatives 与 Poisson-ion
+column；没有复制第二套 interface projection/cross-exchange/SRH 公式。5/9/17 节点
+CSR nnz 为 `110/214/422`，完整 state Jacobian 对独立 central stencil 的最大缩放
+误差 `1.3487e-7`，完整 physical-density BE tangent 为 `3.0256e-7`；diffusion-only
+与 legacy whole-flux steric law 均通过。interface projection/occupation/SRH/
+DOS-logit clamp 或 steric kink 激活时继续 fail-close。该矩阵尚未接入 time-step
+Newton，因此下一 checkpoint 是 structured/dense trajectory equivalence 与工作量
+比较，而不是直接注册 certificate。
+
 文件候选：新增 `solver/dae.py`、`solver/jacobian.py`，重构 `solver/mol.py`、`physics/interface_plane.py`、`experiments/impedance.py`。先实现 no-interface/no-ion 极限，再加入单离子、双离子和 algebraic interface state。
 
 通过门槛：DAE algebraic residual、differential residual、charge conservation 分列；no-ion 极限与现有 MoL 在 refinement envelope 内；consistent initial condition 可重复；analytic/AD Jacobian 与 FD 一致；N 翻倍的成本增长明显优于 dense FD 基线。未达到时不能替换默认 MoL。

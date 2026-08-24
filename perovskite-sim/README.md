@@ -815,9 +815,11 @@ Poisson residuals and certifies a deterministic consistent state plus exact
 storage/boundary/ion-aware-Poisson Jacobian blocks. A dense-central
 physical-density backward-Euler reference now verifies simultaneous carrier,
 ion, interface-state, and electrostatic evolution against the production MoL
-eliminated-QSS path. The combined slice has not yet acquired its complete
-structured analytic tangent or a content-addressed refinement certificate, so
-it does not inherit any of the four certificates above.
+eliminated-QSS path. Its complete clamp-inactive structured tangent now combines
+the existing interface cross-block derivatives with ion face-flux, storage,
+and Poisson-ion blocks. That matrix is not yet wired into the time integrator,
+and the combined slice has no content-addressed refinement certificate, so it
+does not inherit any of the four certificates above.
 
 Phase 4.3 adds a separate, research-only energy-distributed bulk-trap
 equilibrium closure. A strict standard-SI schema defines integrated trap

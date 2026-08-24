@@ -336,10 +336,21 @@ are respectively `3.50049e-9`, `1.62786e-8`, `1.90141e-9`, and
 `9.82449e-5` and interface-state relative motion `9.35783e-1`, while the
 maximum relative ion-inventory drift is `1.13812e-16`.
 
-The complete interface/transport state tangent, sparse Newton, and a
-content-addressed refinement matrix remain subsequent checkpoints. The
-combined topology therefore remains `INTERNAL_TESTED`, not
-`INTERNAL_CERTIFIED`.
+`solver/dae_ion_interface_jacobian.py` then supplies the complete smooth
+structured tangent. It maps the existing analytic carrier/interface block into
+the combined coordinate without duplicating its projection, reciprocal
+exchange, or shared-occupancy SRH formulas, then adds finite-site ion storage,
+all ion-face flux derivatives, and the Poisson-ion column. Both the
+diffusion-only and legacy whole-flux steric laws are covered. On 5/9/17-node
+tests the CSR nonzero counts are `110/214/422`; the maximum scaled error against
+an independent complete state stencil is `1.34873e-7`, and the complete
+physical-density backward-Euler tangent differs by at most `3.02564e-7`.
+Projection, occupation, SRH, DOS/logit, and steric differentiability clamps
+remain explicit fail-closed boundaries.
+
+Sparse Newton integration and a content-addressed refinement matrix remain
+subsequent checkpoints. The combined topology therefore remains
+`INTERNAL_TESTED`, not `INTERNAL_CERTIFIED`.
 
 The combined slice fails closed for dual ions, `InterfaceDefect`, configurable
 cross-node sampling, interface charge, dynamic or two-sided interface states,
@@ -370,6 +381,6 @@ Those exclusions are evidence boundaries, not claims that the omitted physics
 can be added by changing a flag. The no-ion, single-positive-ion, dual-ion, and
 algebraic-interface certificates are separately complete only for their frozen
 topologies. The new combined residual has its own capability contract but no
-structured analytic or content-addressed certificate yet. Charged-interface,
+structured-Newton or content-addressed certificate yet. Charged-interface,
 `InterfaceDefect`, dual-ion/interface, and production-route topologies still
 need separate contracts and lanes; none can inherit an earlier certificate.
