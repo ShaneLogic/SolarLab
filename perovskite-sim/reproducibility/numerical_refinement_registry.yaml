@@ -1788,3 +1788,54 @@ lanes:
       - This lane certifies only the composition-resolved CIGS absorber optics in the frozen research preset; ZnO and CdS retain nominal scalar optical fallbacks.
       - Minoura n,k and the independent Carron alpha expression are literature models, not a measurement of this synthetic device or an external SCAPS/Setfos device reproduction.
       - The lane covers build-once AM1.5G generation, optical-slice and Kramers-Kronig refinement, causality, photon budget, uniform composition, and optical/electrical endpoint consistency; it does not solve transport or certify PCE optimization.
+
+  interface-srh-identifiability-synthetic-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/scaps_mirror_v2.yaml
+    config_sha256: 5500c9485f6a9518430511019546933277cdc3274fd3a005182394f39d2fcf67
+    executor: perovskite_sim.validation.identifiability_refinement:run_interface_srh_identifiability_refinement
+    executor_version: v1
+    grid:
+      parameter: carrier_condition_count
+      values: [5, 7, 9]
+    tolerance:
+      parameter: finite_difference_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      full_rank_best_fit_log10: {comparison: absolute_linf, limit: 1.0e-4, units: log10}
+      full_rank_condition_number: {comparison: relative_linf, limit: 0.02, units: "1"}
+      full_rank_normalized_singular_values: {comparison: relative_linf, limit: 0.02, units: "1"}
+      rank_deficient_absolute_nullspace_vector: {comparison: absolute_linf, limit: 1.0e-4, units: "1"}
+      rank_deficient_normalized_nonzero_singular_values: {comparison: relative_linf, limit: 0.025, units: "1"}
+    quality_gates:
+      all_multistarts_converged: {operator: eq, limit: 1.0, units: "1"}
+      all_profiles_completed: {operator: eq, limit: 1.0, units: "1"}
+      config_anchor_verified: {operator: eq, limit: 1.0, units: "1"}
+      forward_failure_count: {operator: eq, limit: 0.0, units: "1"}
+      full_rank_analysis_certified: {operator: eq, limit: 1.0, units: "1"}
+      full_rank_condition_number: {operator: le, limit: 10.0, units: "1"}
+      full_rank_expected_rank: {operator: eq, limit: 1.0, units: "1"}
+      full_rank_parameters_identifiable: {operator: eq, limit: 1.0, units: "1"}
+      full_rank_truth_error_log10: {operator: le, limit: 1.0e-4, units: log10}
+      full_rank_truth_recovered: {operator: eq, limit: 1.0, units: "1"}
+      rank_deficient_analysis_certified: {operator: eq, limit: 1.0, units: "1"}
+      rank_deficient_capture_calibration_null_sum: {operator: le, limit: 1.0e-8, units: "1"}
+      rank_deficient_expected_rank: {operator: eq, limit: 1.0, units: "1"}
+      rank_deficient_parameter_claim_absent: {operator: eq, limit: 1.0, units: "1"}
+      rank_deficient_smallest_to_largest_singular_ratio: {operator: le, limit: 1.0e-7, units: "1"}
+      rank_deficient_trap_null_component: {operator: le, limit: 1.0e-8, units: "1"}
+    options:
+      base_finite_difference_step_log10: 1.0e-3
+      calibration_field: iface_state_calibration_factor
+      config_loader: raw_interface_anchor
+      full_rank_estimated_parameters: [trap_density_cm2, calibration_factor]
+      observable_family: recombination_plus_charge
+      rank_deficient_estimated_parameters: [trap_density_cm2, capture_cross_section_scale, calibration_factor]
+      require_protocol: true
+      synthetic_noise_sigma_multiplier: 0.0
+      target_interface: PVK/ETL
+    limitations:
+      - This lane certifies only a deterministic, noise-free synthetic formula-local interface-SRH inverse problem; it does not solve a device J-V, TPV, impedance, ion, or electrostatic operating point.
+      - The equilibrium-referenced sheet-charge observable is a research closure, not a production absolute interface-defect charge model, and the source YAML values are formula inputs rather than measured or material-truth claims.
+      - The rank-deficient scenario must withhold a parameter claim for the exact capture-scale/calibration-factor product degeneracy; the full-rank recovery scenario fixes capture scale and estimates only trap density and calibration factor.
+      - InterfaceDefect, het_recomb_despike, mobile ions, measured data, external solver validation, experimental validation, Bayesian inference, and uncertainty quantification remain excluded.

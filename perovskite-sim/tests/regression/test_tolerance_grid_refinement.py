@@ -131,6 +131,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "incomplete-ionization-bgn-temperature-equilibrium-v1",
         "bulk-energy-distributed-trap-equilibrium-v1",
         "cigs-graded-optics-v1",
+        "interface-srh-identifiability-synthetic-v1",
     }
     assert all(
         len(lane.matrix_points) == 9
