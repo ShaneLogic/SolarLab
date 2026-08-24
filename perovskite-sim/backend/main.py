@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
 from perovskite_sim.experiments import external_circuit as external_circuit_exp
 from perovskite_sim.experiments import electrothermal as electrothermal_exp
+from perovskite_sim.experiments import identifiability as identifiability_exp
 from perovskite_sim.experiments import thermal_balance as thermal_balance_exp
 from perovskite_sim.experiments import dark_jv as dark_jv_exp
 from perovskite_sim.experiments import suns_voc as suns_voc_exp
@@ -912,6 +913,14 @@ class ElectrothermalOperatingPointRequest(BaseModel):
     operating_protocol: dict[str, Any]
 
 
+class InterfaceSRHIdentifiabilityRequest(BaseModel):
+    """Strict synthetic interface-SRH identifiability protocol."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    protocol: dict[str, Any]
+
+
 def _interface_charge_research_solver_controls() -> dict[str, float | int]:
     """Return the frozen, certificate-compatible controls for the API lane."""
     return {
@@ -1786,6 +1795,28 @@ def run_electrothermal_operating_point(req: ElectrothermalOperatingPointRequest)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         print("[Electrothermal Operating Point API Exception]", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/identifiability/interface-srh-synthetic")
+def run_interface_srh_identifiability(req: InterfaceSRHIdentifiabilityRequest):
+    """Run synthetic recovery/rank evidence without claiming material values."""
+
+    try:
+        protocol = identifiability_exp.InterfaceSRHIdentifiabilityProtocol.from_dict(
+            req.protocol
+        )
+    except (identifiability_exp.IdentifiabilityError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        result = identifiability_exp.run_interface_srh_identifiability(protocol)
+        return {"status": "ok", "result": result.to_dict()}
+    except identifiability_exp.IdentifiabilityError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        print("[Interface SRH Identifiability API Exception]", exc)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
