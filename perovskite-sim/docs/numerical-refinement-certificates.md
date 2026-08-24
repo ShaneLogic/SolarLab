@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 29 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform/combined limits、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps、P4.4 CIGS graded optics、外部 Rs/Rsh DC mapping 与 lumped electrothermal terminal-MPP coupling。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 30 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform/combined limits、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps、P4.4 CIGS graded optics、外部 Rs/Rsh DC mapping、lumped electrothermal terminal-MPP coupling 与 synthetic interface-SRH identifiability。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 
@@ -54,6 +54,7 @@ gate 则在全部九个 cell 上检查。不能只挑选一个已收敛标量或
 | `incomplete-ionization-bgn-temperature-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01 | freeze-out + Slotboom BGN、effective gap、空间电荷平衡 |
 | `bulk-energy-distributed-trap-equilibrium-v1` | 每层区间 40/80/160 | Poisson residual factor 1/0.1/0.01；每格 energy order 16/32/64 | trap occupancy/recombination/absolute charge、analytic charge tangent、Gauss balance |
 | `cigs-graded-optics-v1` | optical slices 8/16/32 | inverse KK factor 1/0.5/0.25 -> order 96/192/384 | absorbed flux、generation profile/centroid、reflectance、Carron/uniform/photon-budget gates |
+| `interface-srh-identifiability-synthetic-v1` | carrier conditions 5/7/9 | log10 FD step factor 1/0.5/0.25 | full-rank recovery/condition/singular values、rank-deficient nullspace/nonclaim |
 
 归一化 J-V/trace 使用 absolute `L_inf <= 0.5%`，Voc 使用 absolute `<= 1 mV`，Jsc 使用 relative `<= 0.2%`。离子库存漂移 gate 为 `<= 1e-10`。c-Si 的 all-face spread 和 backward error gate 分别为 `<= 5e-4` 和 `<= 1e-10`。其余 lane-specific quality gate 见 registry；它们仍是 internal candidate gate，不能解释成外部物理误差条带。
 
@@ -74,6 +75,12 @@ topology、source result 与 terminal mapping hash 分开绑定；electrothermal
 进一步冻结 fresh-state temperature trials、sampled terminal-MPP rule、thermal
 control volume、root envelope 与完整 first-law inputs。低网格 v1/v2 的 partial
 证据保留，不能由 v3 certified artifact 覆盖。
+
+identifiability lane 冻结 carrier-condition 数、有限差分阶梯、production
+interface-SRH formula、equilibrium-referenced charge law、YAML formula-input
+anchor、all-free rank-deficient 与 fixed-capture full-rank 两种场景。每个 cell
+另保存实际 protocol/mapping hash；`analysis_certified` 与
+`parameters_identifiable` 分开 gate，结构秩亏时必须明确禁止 parameter claim。
 
 ion-aware DC 使用专用 frozen physical protocol，记录固定偏压、有效温度、
 明暗历史、初态来源/可选初态 SHA-256、blocking ion 边界、ordered endpoint
@@ -222,6 +229,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-v1 --allow-noncertified-exit-zero
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-resolved-v2 --allow-noncertified-exit-zero
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py electrothermal-terminal-mpp-grid-resolved-v3
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-srh-identifiability-synthetic-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-recombination-charge-off
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-equilibrium-referenced-v1
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/run_numerical_refinement.py interface-charge-device-stress-v1
@@ -708,3 +716,31 @@ sampled terminal-MPP steady root 的内部 grid/tolerance/first-law/provenance g
 它不认证 voltage-sampling refinement、continuous MPP optimizer、joint
 electrical-thermal-ion transient、spatial heat equation、measured parameters、
 external solver parity、lifetime 或实验温度。
+
+### 2026-08-24 synthetic interface-SRH identifiability certificate
+
+`interface-srh-identifiability-synthetic-v1` 在 source commit `12fc7cc`、
+source changes 为空且 BLAS/OpenMP 单线程环境下完成 5/7/9 carrier conditions 与
+1/0.5/0.25 finite-difference factors 的全部 9 个 cells，0 failed、0 missing、
+0 reused：
+
+- run ID：`1069402cb1c90f32255aa6063a30c07500a4d92cb609ec3900cc78f3d9ea8f54`；
+- certificate SHA-256：
+  `b5fd5f2d784277c49b0b2720ad7f225b76586945bd2c9d2c772a34fa3dec5643`；
+- protocol SHA-256：
+  `343b648269636308348fce75181ad59484ecbd8a606c7fbddb1f79b4a3f91051`；
+- all-free `N_t/capture-scale/calibration` 场景在全部 cell 为 rank 2/3，
+  `parameters_identifiable=false`，且 capture/calibration null direction 通过；
+- fixed-capture 的 `N_t/calibration` 场景在全部 cell 为 rank 2/2，finest
+  condition number `2.69276`，log10 truth `(12, -1)` 精确恢复；
+- terminal grid differences 为 condition number `0.9348%`、full-rank
+  normalized singular values `0.5085%`、rank-deficient nonzero singular values
+  `0.6269%`，nullspace absolute difference `5.37e-14`；
+- 全矩阵 multi-start/profile/rank/truth/forward-failure/config/protocol quality
+  gates 通过。
+
+该证书只关闭 deterministic、noise-free、formula-local synthetic inverse
+problem。它不认证 full-device J-V/TPV/impedance identifiability、有噪 recovery
+coverage、`InterfaceDefect`/`het_recomb_despike`/ion parameters、实测数据、材料
+参数、Bayesian/UQ、外部 solver 或实验验证。详细边界见
+`docs/interface-srh-identifiability.md`。

@@ -932,6 +932,22 @@ thermal-ion transient、spatial heat equation、实测热参数、外部 solver 
 
 通过门槛：synthetic truth 在无噪/有噪情况下的 recovery coverage 预注册；参数相关矩阵/秩亏显式报告；前向失败进入 likelihood 的规则固定；不能把宽 posterior 或结构不可辨识参数报告为精确材料常数。
 
+2026-08-24 checkpoint：已实现 frozen/strict interface-SRH synthetic
+identifiability protocol、canonical SHA、multi-start least squares、weighted
+finite-difference Jacobian、Fisher/correlation/SVD rank、canonical nullspace、
+fixed-parameter profile、forward-failure penalty-and-invalidate policy，以及
+CLI/strict API。`interface-srh-identifiability-synthetic-v1` 在 commit
+`12fc7cc` 的 5/7/9 carrier-condition 与 1/0.5/0.25 FD ladder 上 9/9 cells
+`certified`，certificate
+`b5fd5f2d784277c49b0b2720ad7f225b76586945bd2c9d2c772a34fa3dec5643`。
+三参数 all-free 场景稳定为 rank 2/3 并拒绝 parameter claim；固定 capture
+scale 后 `N_t/calibration` 为 rank 2/2 且无噪 truth 精确恢复。
+
+因此当前只关闭了无噪、formula-local 的结构可辨识性最小切片，尚未满足本节
+原定的有噪 recovery coverage，也未接 full-device J-V/scan-rate/TPV/impedance、
+`het_recomb_despike`、ion parameters、measured-data likelihood 或 Bayesian/UQ。
+这些是下一阶段，而不能由本次 internal numerical certificate 代替。
+
 ## 6. 跨阶段统一测试与发布门
 
 ### 6.1 PR 级门槛

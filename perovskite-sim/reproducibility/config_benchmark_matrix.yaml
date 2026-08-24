@@ -130,6 +130,7 @@ benchmarks:
       - configs/ionmonger_benchmark.yaml
       - configs/nip_MAPbI3.yaml
       - configs/scaps_mirror.yaml
+      - configs/scaps_mirror_v2.yaml
       - configs/twod/combined_mobile_interface_research.yaml
       - configs/twod/nip_MAPbI3_uniform.yaml
     limitations:
@@ -1396,7 +1397,7 @@ configs:
     semantic_sha256: 813580bccbe13cdf78d203910b0c4eb31583bfdf779c8b7703f94ba823755071
     schema: scaps-device-v1
     status: partial
-    benchmarks: [loader-contract, scaps-low-doping-etl-boundary]
+    benchmarks: [loader-contract, scaps-low-doping-etl-boundary, phase1-refinement-contract]
   - path: configs/scaps_mirror_v2_robin_moderate.yaml
     sha256: 2d0d25a59802cac9c85f2b4a84ee49f9b42100fe0f87cb00f647462b475a0f95
     semantic_sha256: 8ee02c3a6099628d35d854b2a09fa5ca72f828c5d15132d9947dcf5d51f3d8f9

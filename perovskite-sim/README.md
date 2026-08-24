@@ -581,6 +581,36 @@ sampled-MPP protocol, not measured-device temperature validation.
 
 <br>
 
+### Interface-SRH Identifiability
+
+The opt-in synthetic identifiability workflow evaluates the production
+interface-SRH rate formula together with the research equilibrium-referenced
+sheet-charge closure. A frozen protocol binds carrier conditions, parameter
+bounds and truth, observable noise scales, finite-difference controls,
+multi-start fitting, Fisher/SVD rank, fixed-parameter profiles, and the
+fail-closed forward-error policy. Results report `analysis_certified` and
+`parameters_identifiable` separately so a successfully diagnosed rank
+deficiency cannot be presented as a precise parameter estimate. The CLI
+`scripts/run_interface_srh_identifiability.py` and strict
+`POST /api/identifiability/interface-srh-synthetic` route expose the same
+canonical result contract. See
+[`docs/interface-srh-identifiability.md`](docs/interface-srh-identifiability.md).
+
+The source-clean `interface-srh-identifiability-synthetic-v1` lane is
+internally certified at commit `12fc7cc` with 9/9 carrier-grid/finite-difference
+cells and certificate SHA-256
+`b5fd5f2d784277c49b0b2720ad7f225b76586945bd2c9d2c772a34fa3dec5643`.
+With trap density, capture scale, and calibration all free, every cell reports
+rank 2/3 and the expected capture/calibration null direction; no parameter
+claim is made. Holding capture scale fixed gives rank 2/2 and exact recovery of
+the synthetic trap-density and calibration truth. This is formula-local,
+noise-free internal numerical evidence, not full-device, measured-data, or
+materials-parameter validation.
+
+*Source:* `perovskite_sim/experiments/identifiability.py`
+
+<br>
+
 ### V<sub>oc</sub> Bracket Detection
 
 `compute_metrics(V, J)` returns a frozen `JVMetrics(V_oc, J_sc, FF, PCE,
