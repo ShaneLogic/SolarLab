@@ -353,7 +353,7 @@ def test_material_params_rejects_old_and_new_bulk_trap_schemas_together():
         replace(params, bulk_trap_distribution=old_trap)
 
 
-def test_explicit_model_loads_as_data_but_solver_fails_closed():
+def test_charged_explicit_model_remains_fail_closed_in_def1():
     stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
     layers = []
     for layer in stack.layers:
@@ -378,9 +378,86 @@ def test_explicit_model_loads_as_data_but_solver_fails_closed():
         alpha=2.0,
     )
 
-    with pytest.raises(ExplicitDefectCapabilityError, match="DEF-0"):
+    with pytest.raises(ExplicitDefectCapabilityError, match="neutral species only"):
         build_material_arrays(grid, explicit)
     assert semantic_sha256(explicit) != semantic_sha256(stack)
+
+
+def test_neutral_single_level_model_compiles_without_poisson_charge():
+    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    neutral = replace(
+        _species(
+            transition=NEUTRAL,
+            neutral_reference=NEUTRAL_ALL_OCCUPANCIES,
+        ),
+        degeneracy=1.0,
+    )
+    document = _document(species=(neutral,))
+    explicit = replace(
+        stack,
+        layers=tuple(
+            replace(
+                layer,
+                params=replace(
+                    layer.params,
+                    defect_schema_version=document.schema_version,
+                    defect_model=document.defect_model,
+                    bulk_defects=document.bulk_defects,
+                ),
+            )
+            if layer.role == "absorber"
+            else layer
+            for layer in stack.layers
+        ),
+    )
+    grid = multilayer_grid(
+        tuple(Layer(layer.thickness, 3) for layer in explicit.layers),
+        alpha=2.0,
+    )
+
+    material = build_material_arrays(grid, explicit)
+
+    assert material.neutral_bulk_defects is not None
+    assert len(material.neutral_bulk_defects.species) == 1
+    assert np.all(material.neutral_bulk_defects.explicit_node_mask == (
+        material.Eg_phys == next(
+            layer.params.Eg for layer in explicit.layers if layer.role == "absorber"
+        )
+    ))
+    assert material.iface_state_charge == 0.0
+
+
+def test_def1_rejects_nonunit_degeneracy_instead_of_ignoring_it():
+    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    neutral = _species(
+        transition=NEUTRAL,
+        neutral_reference=NEUTRAL_ALL_OCCUPANCIES,
+    )
+    document = _document(species=(neutral,))
+    explicit = replace(
+        stack,
+        layers=tuple(
+            replace(
+                layer,
+                params=replace(
+                    layer.params,
+                    defect_schema_version=document.schema_version,
+                    defect_model=document.defect_model,
+                    bulk_defects=document.bulk_defects,
+                ),
+            )
+            if layer.role == "absorber"
+            else layer
+            for layer in stack.layers
+        ),
+    )
+    grid = multilayer_grid(
+        tuple(Layer(layer.thickness, 3) for layer in explicit.layers),
+        alpha=2.0,
+    )
+
+    with pytest.raises(ExplicitDefectCapabilityError, match="degeneracy=1.0"):
+        build_material_arrays(grid, explicit)
 
 
 def test_inactive_species_metadata_is_exactly_rhs_inert():

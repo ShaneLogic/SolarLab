@@ -19,11 +19,11 @@ from perovskite_sim.models.device import (
 )
 from perovskite_sim.physics.contacts import selective_contact_flux
 from perovskite_sim.physics.recombination import (
-    bulk_srh_denominator,
+    bulk_recombination_denominators,
     interface_recombination,
     interface_recombination_derivatives,
     interface_srh_denominator,
-    total_recombination,
+    total_recombination_at_node,
     total_recombination_derivatives,
 )
 from perovskite_sim.solver.mol import (
@@ -334,19 +334,19 @@ def _node_recombination_rate(
     n: float,
     p: float,
 ) -> float:
-    return float(
-        total_recombination(
-            np.asarray(n),
-            np.asarray(p),
-            float(material.ni_sq[node]),
-            float(material.tau_n[node]),
-            float(material.tau_p[node]),
-            float(material.n1[node]),
-            float(material.p1[node]),
-            float(material.B_rad[node]),
-            float(material.C_n[node]),
-            float(material.C_p[node]),
-        )
+    return total_recombination_at_node(
+        n,
+        p,
+        float(material.ni_sq[node]),
+        float(material.tau_n[node]),
+        float(material.tau_p[node]),
+        float(material.n1[node]),
+        float(material.p1[node]),
+        float(material.B_rad[node]),
+        float(material.C_n[node]),
+        float(material.C_p[node]),
+        node=node,
+        neutral_bulk_defects=material.neutral_bulk_defects,
     )
 
 
@@ -404,13 +404,14 @@ def build_ion_aware_analytic_bulk_reaction_linearization(
         material,
         phi_frozen=potential,
     )
-    denominator = bulk_srh_denominator(
+    denominator = bulk_recombination_denominators(
         n,
         p,
         material.tau_n,
         material.tau_p,
         material.n1,
         material.p1,
+        neutral_bulk_defects=material.neutral_bulk_defects,
     )
     if not np.all(np.isfinite(denominator)) or np.any(denominator <= 0.0):
         raise IonAwareAnalyticReactionCapabilityError(
@@ -427,6 +428,7 @@ def build_ion_aware_analytic_bulk_reaction_linearization(
         material.B_rad,
         material.C_n,
         material.C_p,
+        neutral_bulk_defects=material.neutral_bulk_defects,
     )
     derivative_arrays = (
         derivatives.rate,

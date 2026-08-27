@@ -15,7 +15,7 @@ from perovskite_sim.discretization.fe_operators import (
 )
 from perovskite_sim.physics.field_mobility import linearize_field_mobility
 from perovskite_sim.physics.recombination import (
-    bulk_srh_denominator,
+    bulk_recombination_denominators,
     total_recombination_derivatives,
 )
 from perovskite_sim.solver.dae import NoIonNoInterfaceDAE
@@ -199,13 +199,14 @@ def build_structured_state_jacobian(
     p[[0, -1]] = (material.p_L, material.p_R)
     electron_face, hole_face = build_carrier_face_jacobians(model, n, p, phi)
 
-    denominator = bulk_srh_denominator(
+    denominator = bulk_recombination_denominators(
         n,
         p,
         material.tau_n,
         material.tau_p,
         material.n1,
         material.p1,
+        neutral_bulk_defects=material.neutral_bulk_defects,
     )
     if not np.all(np.isfinite(denominator)) or np.any(denominator <= 0.0):
         raise DAEStructuredJacobianCapabilityError(
@@ -222,6 +223,7 @@ def build_structured_state_jacobian(
         material.B_rad,
         material.C_n,
         material.C_p,
+        neutral_bulk_defects=material.neutral_bulk_defects,
     )
     reaction_arrays = (
         reaction.rate,
@@ -381,7 +383,9 @@ def build_structured_state_jacobian(
         matrix=matrix,
         nonzero_count=int(matrix.nnz),
         field_mobility_active=bool(material.has_field_mobility),
-        minimum_bulk_srh_denominator_s_m3=float(np.min(denominator)),
+        minimum_bulk_srh_denominator_s_m3=(
+            float(np.min(denominator)) if denominator.size else float("inf")
+        ),
         electron_current_faces_A_m2=np.asarray(electron_face.flux, dtype=float),
         hole_current_faces_A_m2=np.asarray(hole_face.flux, dtype=float),
     )

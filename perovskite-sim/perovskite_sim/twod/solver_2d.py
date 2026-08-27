@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from perovskite_sim.constants import Q
+from perovskite_sim.models.defects import ExplicitDefectCapabilityError
 from perovskite_sim.models.device import DeviceStack, electrical_layers
 from perovskite_sim.physics.contacts import selective_contact_flux
 from perovskite_sim.physics.recombination import (
@@ -233,6 +234,11 @@ def build_material_arrays_2d(
         )
 
     mat1d = build_material_arrays_1d(grid.y, stack)
+    if mat1d.neutral_bulk_defects is not None:
+        raise ExplicitDefectCapabilityError(
+            "DEF-1 explicit neutral defects are 1D-only; 2D execution remains "
+            "fail-closed until its material and diagnostics contracts are defined"
+        )
     interface_srh_couplings = (
         build_two_sided_interface_srh_couplings_2d(stack, mat1d)
         if has_interface_srh

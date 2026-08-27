@@ -17,7 +17,7 @@ from perovskite_sim.physics.interface_plane import (
     compute_interface_srh_occupancy_on_state,
 )
 from perovskite_sim.physics.recombination import (
-    bulk_srh_denominator,
+    bulk_recombination_denominators,
     total_recombination_derivatives,
 )
 from perovskite_sim.solver.dae_interface_states import AlgebraicInterfaceStateDAE
@@ -533,13 +533,14 @@ def _assemble_algebraic_interface_structured_jacobian(
     electron_current[interface_face] = 0.0
     hole_current[interface_face] = 0.0
 
-    denominator = bulk_srh_denominator(
+    denominator = bulk_recombination_denominators(
         n,
         p,
         material.tau_n,
         material.tau_p,
         material.n1,
         material.p1,
+        neutral_bulk_defects=material.neutral_bulk_defects,
     )
     if not np.all(np.isfinite(denominator)) or np.any(denominator <= 0.0):
         raise AlgebraicInterfaceJacobianCapabilityError(
@@ -556,6 +557,7 @@ def _assemble_algebraic_interface_structured_jacobian(
         material.B_rad,
         material.C_n,
         material.C_p,
+        neutral_bulk_defects=material.neutral_bulk_defects,
     )
     reaction_arrays = (
         reaction.rate,
@@ -787,7 +789,9 @@ def _assemble_algebraic_interface_structured_jacobian(
     return AlgebraicInterfaceStructuredJacobian(
         matrix=matrix,
         nonzero_count=int(matrix.nnz),
-        minimum_bulk_srh_denominator_s_m3=float(np.min(denominator)),
+        minimum_bulk_srh_denominator_s_m3=(
+            float(np.min(denominator)) if denominator.size else float("inf")
+        ),
         local_interface=local,
         electron_current_faces_A_m2=_readonly(
             electron_current,

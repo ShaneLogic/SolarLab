@@ -1,8 +1,9 @@
 # Explicit Bulk-Defect Input Contract v1
 
-Status: DEF-0 input contract. The schema is executable as configuration data,
-but `explicit_quasi_steady` remains solver-gated until the later recombination
-and charged-DC checkpoints are complete.
+Status: DEF-1 neutral execution slice. The canonical schema is stable and a
+1D `explicit_quasi_steady` document executes exact neutral, single-level,
+unit-degeneracy multi-species SRH. Charged defects remain solver-gated until
+the later local-closure and charged-DC checkpoints are complete.
 
 ## 1. Compatibility rule
 
@@ -26,9 +27,10 @@ model names raise before a simulation starts.
 
 - `effective_lifetime`: production compatibility path; only
   `tau_n/tau_p/n1/p1` execute.
-- `explicit_quasi_steady`: reserved production target; microscopic species
-  will execute after DEF-1/DEF-3. In DEF-0 it fails closed at material-array
-  construction instead of silently falling back to lifetime SRH.
+- `explicit_quasi_steady`: DEF-1 executes named neutral, single-level species
+  in 1D as `R_total = sum_i R_i`. Acceptor/donor charge, non-unit degeneracy,
+  energy distributions, 2D execution and spatial grading fail closed rather
+  than falling back to lifetime SRH.
 - `explicit_dynamic`: reserved for a future schema and rejected by v1.
 
 Microscopic species retained by the SCAPS adapter while
@@ -38,21 +40,21 @@ and the new `bulk_defects` inventory cannot coexist on one material.
 
 ## 2. Canonical SI schema
 
-The first explicit production target is a named, charge-resolved, single-level
-bulk defect with integrated volume density:
+The executable DEF-1 slice is a named neutral, single-level bulk defect with
+integrated volume density:
 
 ```yaml
 defect_schema_version: solarlab-explicit-bulk-defects-v1
 defect_model: explicit_quasi_steady
 bulk_defects:
-  - name: absorber_acceptor_1
+  - name: absorber_neutral_1
     distribution:
       kind: single_level
       normalization: integrated_total
       total_density_m3: 1.0e22
       center_eV_above_vb: 0.60
-    charge_transition: acceptor
-    neutral_reference: empty
+    charge_transition: neutral
+    neutral_reference: all_occupancies
     kinetics:
       sigma_n_m2: 1.0e-19
       sigma_p_m2: 1.0e-19
@@ -73,7 +75,9 @@ All physical quantities use canonical SI except energies, which use eV:
 
 `normalization: integrated_total` is mandatory. A peak density is not accepted
 as a substitute because doing so would change the integrated inventory when an
-energy width changes.
+energy width changes. DEF-1 requires `degeneracy: 1.0`; other positive values
+remain valid schema data for later occupancy models but are not silently
+ignored by the current solver.
 
 ## 3. Charge and neutral reference
 
@@ -167,9 +171,11 @@ Do not switch only the selector. Before changing to
 4. a declared charge transition and matching neutral reference;
 5. finite SI kinetics and positive degeneracy.
 
-During DEF-0 a valid opt-in document raises
-`ExplicitDefectCapabilityError` at solver construction. This is intentional:
-the configuration contract is frozen before the numerical model is enabled.
+During DEF-1, an opt-in document executes only when every species is neutral,
+single-level, unit-degeneracy and lies in a spatially uniform 1D layer. Other
+valid future-schema cases raise `ExplicitDefectCapabilityError` at solver
+construction. This is intentional: unsupported physics is never approximated
+by an implicit lifetime fallback.
 
 ## 7. Frontend field mapping (UI-0)
 
@@ -192,9 +198,9 @@ UI-0 freezes this mapping only. UI-1 begins after the public Python execution
 contract is stable at DEF-3; UI-2 becomes a normal configuration path only
 after DEF-4 numerical and SCAPS-reference gates pass.
 
-## 8. DEF-0 verification boundary
+## 8. DEF-0 and DEF-1 verification boundary
 
-DEF-0 certifies input and compatibility behavior only:
+DEF-0 certifies input and compatibility behavior:
 
 - immutable schema and strict round-trip;
 - SI/cgs canonical equivalence;
@@ -202,8 +208,49 @@ DEF-0 certifies input and compatibility behavior only:
 - SCAPS parsed-species retention;
 - backend serialization round-trip;
 - inactive metadata is bitwise inert in the RHS;
-- explicit execution fails closed.
+- unsupported explicit execution fails closed.
 
-It does not claim exact multi-species SRH, defect space charge, contact
-thermodynamic closure, Poisson coupling, J-V parity with SCAPS, AC response, or
-dynamic occupancy. Those claims require the later checkpoints in the roadmap.
+DEF-1 additionally implements:
+
+- per-species `tau_n_i`, `tau_p_i`, `n1_i`, and `p1_i` compiled once per grid;
+- exact neutral `R_total = sum_i R_i` with analytic `dR/dn` and `dR/dp`;
+- mixed devices where lifetime layers and explicit-neutral layers use their
+  selected SRH representation without double counting;
+- optional terminal per-species rates/derivatives and canonical model identity;
+- the same dispatch in transient/QF source assembly and supported 1D analytic
+  Jacobian paths;
+- no defect charge field: the serialized DEF-1 diagnostics explicitly report
+  `charge_density_C_m3: null`.
+
+DEF-1 does not claim defect space charge, contact thermodynamic closure,
+charged Poisson coupling, 2D execution, energy distributions, full SCAPS J-V
+parity, AC response, or dynamic occupancy. Those claims require the later
+checkpoints in the roadmap.
+
+## 9. DEF-1 verification record
+
+The checkpoint was exercised through constitutive, material-build, transient,
+residual-certified QF, structured-Jacobian, compatibility, and full repository
+tests. The focused suite includes standard-YAML execution, a two-species exact
+sum, zero-capture and band-edge limits, analytic carrier tangents, and the 2D
+fail-closed boundary.
+
+```text
+python -m pytest tests/unit/solver/test_log_density_coordinates.py \
+  tests/unit/solver/test_numerical_diagnostics.py \
+  tests/unit/solver/test_tolerances.py \
+  tests/unit/physics/test_neutral_defect_recombination.py \
+  tests/integration/test_explicit_neutral_defects.py \
+  tests/unit/models/test_explicit_defect_schema.py -q
+=> 90 passed
+
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
+  python -m pytest -q
+=> 2842 passed, 2 skipped, 264 deselected, 12 existing warnings
+```
+
+For an inactive CIGS device, the 61-node physical RHS byte hash is identical
+to the DEF-0 checkpoint (`ff666669...9906a`). A pinned single-thread microbench
+against a clean archive of DEF-0 measured median per-RHS times of 77.922 us
+and 79.006 us respectively (`+1.39%`). This is a provisional workstation
+overhead measurement, not a portable performance guarantee.

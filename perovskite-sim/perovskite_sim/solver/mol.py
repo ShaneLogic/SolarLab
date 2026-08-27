@@ -29,11 +29,17 @@ from perovskite_sim.models.device import (
 )
 from perovskite_sim.models.defects import (
     EFFECTIVE_LIFETIME,
+    EXPLICIT_QUASI_STEADY,
+    NEUTRAL,
+    SINGLE_LEVEL,
     ExplicitDefectCapabilityError,
 )
 
 from perovskite_sim.physics.recombination import (
+    CompiledNeutralDefectSpecies,
+    NeutralBulkDefectModel,
     _observe_srh_denominators,
+    evaluate_neutral_bulk_defects,
     interface_recombination,
 )
 from perovskite_sim.physics.interface_plane import (
@@ -343,6 +349,10 @@ class MaterialArrays:
     band_gap_narrowing_model: str = "off"
     band_gap_narrowing_eV: np.ndarray | None = None
     degenerate_recombination_model: str = "maxwell_boltzmann"
+    # DEF-1 exact neutral multi-species SRH. None preserves the historical
+    # lifetime dispatch and operation order; an active model replaces only the
+    # bulk SRH term on its declared layer nodes and never contributes charge.
+    neutral_bulk_defects: NeutralBulkDefectModel | None = None
     # Explicit P4.3 research slice. Production MoL rejects any non-off value;
     # the dedicated equilibrium solver consumes the same material cache.
     bulk_trap_charge_closure: str = BULK_TRAP_CHARGE_OFF
@@ -509,6 +519,8 @@ class MaterialArrays:
             d["Eg_statistics"] = self.Eg_phys
         elif self.degenerate_recombination_model == "off":
             d["degenerate_recombination_model"] = "off"
+        if self.neutral_bulk_defects is not None:
+            d["neutral_bulk_defects"] = self.neutral_bulk_defects
         if self.interface_faces:
             d["interface_faces"] = list(self.interface_faces)
             d["A_star_n"] = self.A_star_n
@@ -808,6 +820,105 @@ def _layer_node_masks(x: np.ndarray, layers) -> list[np.ndarray]:
     return [owner == i for i in range(len(layers))]
 
 
+def _compile_neutral_bulk_defects(
+    layers: tuple,
+    layer_masks: tuple[np.ndarray, ...],
+    *,
+    ni_sq: np.ndarray,
+    physical_band_gap_eV: np.ndarray,
+    thermal_voltage_V: float,
+) -> NeutralBulkDefectModel | None:
+    """Compile the DEF-1 neutral single-level inventory onto grid nodes."""
+
+    explicit = [
+        (index, layer, mask)
+        for index, (layer, mask) in enumerate(zip(layers, layer_masks, strict=True))
+        if layer.params.defect_model == EXPLICIT_QUASI_STEADY
+    ]
+    if not explicit:
+        return None
+    node_count = int(np.asarray(ni_sq).size)
+    compiled: list[CompiledNeutralDefectSpecies] = []
+    document_hashes: list[tuple[str, str]] = []
+    for layer_index, layer, mask in explicit:
+        document = layer.params.defect_document
+        if document is None:
+            raise ExplicitDefectCapabilityError(
+                f"explicit layer {layer.name!r} has no canonical defect document"
+            )
+        layer_id = f"layer[{layer_index}]/{layer.name}"
+        document_hashes.append((layer_id, document.sha256))
+        local_gap = np.asarray(physical_band_gap_eV[mask], dtype=float)
+        local_ni_sq = np.asarray(ni_sq[mask], dtype=float)
+        if (
+            local_gap.size == 0
+            or not np.all(np.isfinite(local_gap))
+            or not np.all(local_gap == local_gap[0])
+            or not np.all(np.isfinite(local_ni_sq))
+            or np.any(local_ni_sq <= 0.0)
+        ):
+            raise ExplicitDefectCapabilityError(
+                "DEF-1 explicit neutral SRH requires a uniform positive band gap "
+                f"and intrinsic density in {layer_id}; spatial grading starts at D3"
+            )
+        for species in document.bulk_defects:
+            if species.charge_transition != NEUTRAL:
+                raise ExplicitDefectCapabilityError(
+                    "DEF-1 explicit execution accepts neutral species only; "
+                    f"{layer_id}/{species.name} is {species.charge_transition!r}"
+                )
+            if species.distribution.kind != SINGLE_LEVEL:
+                raise ExplicitDefectCapabilityError(
+                    "DEF-1 explicit execution accepts single-level species only"
+                )
+            if species.degeneracy != 1.0:
+                raise ExplicitDefectCapabilityError(
+                    "DEF-1 does not silently ignore degeneracy; explicit neutral "
+                    f"species {layer_id}/{species.name} must set degeneracy=1.0"
+                )
+            density = float(species.distribution.total_density_m3)
+            inverse_tau_n = (
+                float(species.kinetics.sigma_n_m2)
+                * float(species.kinetics.thermal_velocity_n_m_s)
+                * density
+            )
+            inverse_tau_p = (
+                float(species.kinetics.sigma_p_m2)
+                * float(species.kinetics.thermal_velocity_p_m_s)
+                * density
+            )
+            tau_n_s = 1.0 / inverse_tau_n if inverse_tau_n > 0.0 else math.inf
+            tau_p_s = 1.0 / inverse_tau_p if inverse_tau_p > 0.0 else math.inf
+            active = np.array(mask, dtype=bool, copy=True)
+            n1_nodes = np.zeros(node_count, dtype=float)
+            p1_nodes = np.zeros(node_count, dtype=float)
+            ni = np.sqrt(local_ni_sq)
+            offset_from_midgap_eV = (
+                float(species.distribution.center_eV_above_vb)
+                - 0.5 * local_gap
+            )
+            ratio = np.exp(offset_from_midgap_eV / thermal_voltage_V)
+            n1_nodes[active] = ni * ratio
+            p1_nodes[active] = ni / ratio
+            compiled.append(
+                CompiledNeutralDefectSpecies(
+                    identifier=f"{layer_id}/{species.name}",
+                    document_sha256=document.sha256,
+                    active_nodes=active,
+                    tau_n_s=tau_n_s,
+                    tau_p_s=tau_p_s,
+                    n1_m3=n1_nodes,
+                    p1_m3=p1_nodes,
+                )
+            )
+    explicit_mask = np.logical_or.reduce([item.active_nodes for item in compiled])
+    return NeutralBulkDefectModel(
+        species=tuple(compiled),
+        explicit_node_mask=explicit_mask,
+        layer_document_sha256=tuple(document_hashes),
+    )
+
+
 def build_material_arrays(
     x: np.ndarray,
     stack: DeviceStack,
@@ -823,16 +934,17 @@ def build_material_arrays(
     path (assemble_rhs, _compute_current, interface recombination).
     """
     stack.require_interface_charge_off(consumer="build_material_arrays")
-    explicit_layers = [
-        layer.name
+    unsupported_models = [
+        (layer.name, layer.params.defect_model)
         for layer in electrical_layers(stack)
-        if layer.params.defect_model != EFFECTIVE_LIFETIME
+        if layer.params.defect_model not in {
+            EFFECTIVE_LIFETIME,
+            EXPLICIT_QUASI_STEADY,
+        }
     ]
-    if explicit_layers:
+    if unsupported_models:
         raise ExplicitDefectCapabilityError(
-            "explicit bulk-defect execution is not enabled in DEF-0; "
-            "the canonical input contract is valid but production still uses "
-            f"effective_lifetime only (layers={explicit_layers})"
+            f"unsupported explicit bulk-defect models: {unsupported_models}"
         )
     if carrier_statistics_transport not in {
         DEGENERATE_TRANSPORT_DEFAULT,
@@ -2229,6 +2341,14 @@ def build_material_arrays(
                             B_rad[mask_abs] = B_rad[mask_abs] * P_esc
             offset_pr += layer.thickness
 
+    neutral_bulk_defects = _compile_neutral_bulk_defects(
+        tuple(elec_layers),
+        tuple(layer_masks),
+        ni_sq=ni_sq,
+        physical_band_gap_eV=Eg_phys,
+        thermal_voltage_V=V_T_dev,
+    )
+
     arrays = MaterialArrays(
         eps_r=eps_r,
         D_ion_node=D_ion_node,
@@ -2325,6 +2445,7 @@ def build_material_arrays(
         degenerate_recombination_model=(
             "off" if research_degenerate_transport else "maxwell_boltzmann"
         ),
+        neutral_bulk_defects=neutral_bulk_defects,
         bulk_trap_charge_closure=bulk_trap_charge_closure,
         bulk_trap_distribution=(
             elec_layers[0].params.bulk_trap_distribution
@@ -3349,6 +3470,21 @@ def run_transient(
     )
     solution.numerical_diagnostics = report
     solution.rhs_regularization = regularization or RHSRegularization()
+    terminal_defect_model = getattr(mat, "neutral_bulk_defects", None)
+    if terminal_state is not None and terminal_defect_model is not None:
+        terminal_fields = StateVec.unpack(
+            terminal_state,
+            len(x),
+            mat.N_iface_state,
+        )
+        solution.explicit_bulk_defect_diagnostics = (
+            evaluate_neutral_bulk_defects(
+                terminal_fields.n,
+                terminal_fields.p,
+                mat.ni_sq,
+                terminal_defect_model,
+            )
+        )
     if coordinate_transform is not None:
         solution.state_coordinate_report = coordinate_transform.report()
     return solution
