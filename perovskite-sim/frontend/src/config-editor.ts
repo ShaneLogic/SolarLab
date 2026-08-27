@@ -1,4 +1,7 @@
 import type {
+  BulkDefectChargeTransition,
+  BulkDefectNeutralReference,
+  BulkDefectSpecies,
   BuiltInPotentialMode,
   DeviceConfig,
   InterfaceDefectFields,
@@ -23,6 +26,27 @@ const BUILT_IN_POTENTIAL_OPTIONS: ReadonlyArray<{
   { value: 'metal_work_function', label: 'Explicit metal work functions' },
   { value: 'legacy_manual', label: 'Legacy manual override' },
 ]
+
+const EXPLICIT_DEFECT_SCHEMA_VERSION = 'solarlab-explicit-bulk-defects-v1' as const
+const DEFECT_NEUTRAL_REFERENCE: Record<
+  Exclude<BulkDefectChargeTransition, 'unresolved'>,
+  Exclude<BulkDefectNeutralReference, 'unresolved'>
+> = {
+  neutral: 'all_occupancies',
+  acceptor: 'empty',
+  donor: 'filled',
+}
+
+type DefectDisplayUnit = 'si' | 'scaps_cgs'
+type DefectDimension = 'density' | 'cross_section' | 'velocity'
+
+const DEFECT_DISPLAY_FACTORS: Record<
+  DefectDisplayUnit,
+  Record<DefectDimension, number>
+> = {
+  si: { density: 1, cross_section: 1, velocity: 1 },
+  scaps_cgs: { density: 1e-6, cross_section: 1e4, velocity: 1e2 },
+}
 
 function isModeName(v: unknown): v is SimulationModeName {
   return v === 'full' || v === 'fast' || v === 'legacy'
@@ -247,6 +271,197 @@ function numAttr(id: string, value: unknown, opts?: NumAttrOpts): string {
   return `<input type="text" class="num-input" id="${id}" value="${fmt(value)}" spellcheck="false"${placeholderAttr}${titleAttr}>`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
+}
+
+function bulkDefectEditorUnsupportedReason(layer: LayerConfig): string | null {
+  const raw = layer as unknown as Record<string, unknown>
+  const keys = ['defect_schema_version', 'defect_model', 'bulk_defects'] as const
+  const present = keys.filter(key => raw[key] !== undefined)
+  if (present.length === 0) return null
+  if (present.length !== keys.length) return 'incomplete versioned defect document'
+  if (raw.defect_schema_version !== EXPLICIT_DEFECT_SCHEMA_VERSION) {
+    return 'unsupported schema version'
+  }
+  if (raw.defect_model !== 'effective_lifetime' && raw.defect_model !== 'explicit_quasi_steady') {
+    return 'unsupported defect model'
+  }
+  if (!Array.isArray(raw.bulk_defects)) return 'bulk_defects is not an array'
+  if (raw.defect_model === 'explicit_quasi_steady' && raw.bulk_defects.length === 0) {
+    return 'explicit model has no species'
+  }
+  for (const [index, value] of raw.bulk_defects.entries()) {
+    if (!isRecord(value) || !hasExactKeys(value, [
+      'name', 'distribution', 'charge_transition', 'neutral_reference', 'kinetics', 'degeneracy',
+    ])) return `species ${index + 1} has unsupported metadata`
+    if (!isRecord(value.distribution) || !hasExactKeys(value.distribution, [
+      'kind', 'normalization', 'total_density_m3', 'center_eV_above_vb',
+    ])) return `species ${index + 1} distribution is not editable`
+    if (
+      value.distribution.kind !== 'single_level'
+      || value.distribution.normalization !== 'integrated_total'
+    ) return `species ${index + 1} distribution is not single-level`
+    if (!isRecord(value.kinetics) || !hasExactKeys(value.kinetics, [
+      'sigma_n_m2', 'sigma_p_m2', 'thermal_velocity_n_m_s', 'thermal_velocity_p_m_s',
+    ])) return `species ${index + 1} kinetics has unsupported metadata`
+    if (
+      value.charge_transition !== 'neutral'
+      && value.charge_transition !== 'acceptor'
+      && value.charge_transition !== 'donor'
+    ) return `species ${index + 1} charge transition is unresolved`
+    const expectedReference = DEFECT_NEUTRAL_REFERENCE[value.charge_transition]
+    if (value.neutral_reference !== expectedReference) {
+      return `species ${index + 1} neutral reference is inconsistent`
+    }
+    if (
+      raw.defect_model === 'explicit_quasi_steady'
+      && (typeof value.name !== 'string' || value.name.trim() === '')
+    ) return `species ${index + 1} requires a name`
+  }
+  return null
+}
+
+function defaultBulkDefectSpecies(layer: LayerConfig, index: number): BulkDefectSpecies {
+  const gap = typeof layer.Eg === 'number' && Number.isFinite(layer.Eg) && layer.Eg > 0
+    ? layer.Eg
+    : 1.5
+  return {
+    name: `defect_${index + 1}`,
+    distribution: {
+      kind: 'single_level',
+      normalization: 'integrated_total',
+      total_density_m3: 1e21,
+      center_eV_above_vb: gap / 2,
+    },
+    charge_transition: 'neutral',
+    neutral_reference: 'all_occupancies',
+    kinetics: {
+      sigma_n_m2: 1e-19,
+      sigma_p_m2: 1e-19,
+      thermal_velocity_n_m_s: 1e5,
+      thermal_velocity_p_m_s: 1e5,
+    },
+    degeneracy: 1,
+  }
+}
+
+function defectNumberInput(
+  field: string,
+  value: number,
+  dimension?: DefectDimension,
+): string {
+  const dimensionAttr = dimension ? ` data-defect-dimension="${dimension}"` : ''
+  const canonicalAttr = dimension ? ` data-defect-canonical="${String(value)}"` : ''
+  return `<input type="text" class="num-input" data-defect-field="${field}"${dimensionAttr}${canonicalAttr} value="${fmt(value)}" spellcheck="false">`
+}
+
+function renderBulkDefectSpecies(species: BulkDefectSpecies): string {
+  const transition = species.charge_transition as Exclude<BulkDefectChargeTransition, 'unresolved'>
+  return `
+    <div class="bulk-defect-species" data-defect-species>
+      <div class="bulk-defect-species-head">
+        <label class="param bulk-defect-name">
+          <span class="param-label"><span class="sym">Species name</span></span>
+          <input type="text" class="num-input" data-defect-field="name" value="${escapeHtml(species.name ?? '')}" spellcheck="false">
+        </label>
+        <button type="button" class="btn btn-ghost bulk-defect-remove" data-defect-remove title="Remove defect species" aria-label="Remove defect species">&times;</button>
+      </div>
+      <div class="param-grid bulk-defect-grid">
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>N</i><sub>t</sub></span><span class="unit" data-defect-unit-label="density">m⁻³</span></span>
+          ${defectNumberInput('total_density', species.distribution.total_density_m3, 'density')}
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>E</i><sub>t</sub> above VB</span><span class="unit">eV</span></span>
+          ${defectNumberInput('center_energy', species.distribution.center_eV_above_vb)}
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym">Charge transition</span></span>
+          <select class="num-input" data-defect-field="charge_transition">
+            <option value="neutral"${transition === 'neutral' ? ' selected' : ''}>neutral</option>
+            <option value="acceptor"${transition === 'acceptor' ? ' selected' : ''}>acceptor (0/-)</option>
+            <option value="donor"${transition === 'donor' ? ' selected' : ''}>donor (+/0)</option>
+          </select>
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym">Neutral reference</span></span>
+          <input type="text" class="num-input" data-defect-field="neutral_reference" value="${DEFECT_NEUTRAL_REFERENCE[transition]}" readonly>
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>σ</i><sub>n</sub></span><span class="unit" data-defect-unit-label="cross_section">m²</span></span>
+          ${defectNumberInput('sigma_n', species.kinetics.sigma_n_m2, 'cross_section')}
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>σ</i><sub>p</sub></span><span class="unit" data-defect-unit-label="cross_section">m²</span></span>
+          ${defectNumberInput('sigma_p', species.kinetics.sigma_p_m2, 'cross_section')}
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>v</i><sub>th,n</sub></span><span class="unit" data-defect-unit-label="velocity">m/s</span></span>
+          ${defectNumberInput('thermal_velocity_n', species.kinetics.thermal_velocity_n_m_s, 'velocity')}
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>v</i><sub>th,p</sub></span><span class="unit" data-defect-unit-label="velocity">m/s</span></span>
+          ${defectNumberInput('thermal_velocity_p', species.kinetics.thermal_velocity_p_m_s, 'velocity')}
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym">Degeneracy</span></span>
+          ${defectNumberInput('degeneracy', species.degeneracy)}
+        </label>
+      </div>
+    </div>`
+}
+
+function renderBulkDefectEditor(layer: LayerConfig, idx: number): string {
+  const reason = bulkDefectEditorUnsupportedReason(layer)
+  const hasDocument = layer.defect_schema_version !== undefined
+  if (reason) {
+    return `
+      <details class="param-group bulk-defect-editor bulk-defect-readonly" data-test="bulk-defect-editor" data-layer="${idx}">
+        <summary><h5>Explicit bulk defects</h5><span class="experimental-badge">Experimental</span></summary>
+        <p class="bulk-defect-warning">Loaded metadata is preserved read-only: ${escapeHtml(reason)}.</p>
+      </details>`
+  }
+  const model = layer.defect_model ?? 'explicit_quasi_steady'
+  const species = layer.bulk_defects ?? []
+  return `
+    <details class="param-group bulk-defect-editor" id="layer-${idx}-bulk-defect-editor" data-test="bulk-defect-editor" data-layer="${idx}">
+      <summary><h5>Explicit bulk defects</h5><span class="experimental-badge">Experimental</span></summary>
+      <p class="bulk-defect-warning">Charged species run only on the research QF/DC J–V path. Transient, ion-coupled and 2D execution remain unsupported.</p>
+      <label class="bulk-defect-enable">
+        <input type="checkbox" id="layer-${idx}-defect-enabled"${hasDocument ? ' checked' : ''}>
+        <span>Versioned bulk-defect document</span>
+      </label>
+      <div class="bulk-defect-body" data-defect-body${hasDocument ? '' : ' hidden'}>
+        <div class="bulk-defect-toolbar">
+          <label class="param">
+            <span class="param-label"><span class="sym">Execution model</span></span>
+            <select class="num-input" id="layer-${idx}-defect-model">
+              <option value="explicit_quasi_steady"${model === 'explicit_quasi_steady' ? ' selected' : ''}>Explicit quasi-steady</option>
+              <option value="effective_lifetime"${model === 'effective_lifetime' ? ' selected' : ''}>Effective lifetime</option>
+            </select>
+          </label>
+          <label class="param">
+            <span class="param-label"><span class="sym">Display units</span></span>
+            <select class="num-input" id="layer-${idx}-defect-units" data-current-unit="si">
+              <option value="si">SI</option>
+              <option value="scaps_cgs">SCAPS cgs</option>
+            </select>
+          </label>
+        </div>
+        <p class="param-help bulk-defect-model-note" data-defect-model-note></p>
+        <div class="bulk-defect-list" data-defect-list>${species.map(renderBulkDefectSpecies).join('')}</div>
+        <button type="button" class="btn btn-ghost bulk-defect-add" data-defect-add>+ Add species</button>
+      </div>
+    </details>`
+}
+
 function renderOpticalMaterialSelect(layerIdx: number, currentValue: string | null | undefined): string {
   const id = `layer-${layerIdx}-optical_material`
   const selectedNone = currentValue == null || currentValue === '' ? ' selected' : ''
@@ -333,6 +548,9 @@ function renderLayer(
         <div class="param-grid">${rows}</div>
       </div>`
   }).join('')
+  const bulkDefects = !tier || tier === 'full'
+    ? renderBulkDefectEditor(layer, idx)
+    : ''
 
   const openAttr = (forceOpen || idx === 0) ? 'open' : ''
   return `
@@ -349,7 +567,7 @@ function renderLayer(
           <option value="back_contact" ${layer.role === 'back_contact' ? 'selected' : ''}>back contact</option>
         </select>
       </summary>
-      <div class="param-card-body">${groups}</div>
+      <div class="param-card-body">${groups}${bulkDefects}</div>
     </details>`
 }
 
@@ -625,6 +843,134 @@ export function renderDeviceEditor(
   }
   potentialSelect?.addEventListener('change', syncPotentialFields)
   syncPotentialFields()
+  wireBulkDefectEditors(container, config)
+}
+
+function defectDisplayFactor(unit: DefectDisplayUnit, dimension: string): number {
+  if (dimension !== 'density' && dimension !== 'cross_section' && dimension !== 'velocity') {
+    return 1
+  }
+  return DEFECT_DISPLAY_FACTORS[unit][dimension]
+}
+
+function convertDefectInputs(
+  root: ParentNode,
+  from: DefectDisplayUnit,
+  to: DefectDisplayUnit,
+): void {
+  root.querySelectorAll<HTMLInputElement>('[data-defect-dimension]').forEach(input => {
+    const rawValue = input.value.trim()
+    if (rawValue === '') return
+    const value = Number(rawValue)
+    if (!Number.isFinite(value)) return
+    const dimension = input.dataset.defectDimension ?? ''
+    const storedCanonical = Number(input.dataset.defectCanonical)
+    const expectedDisplay = Number.isFinite(storedCanonical)
+      ? fmt(storedCanonical * defectDisplayFactor(from, dimension))
+      : ''
+    const canonical = Number.isFinite(storedCanonical) && input.value.trim() === expectedDisplay
+      ? storedCanonical
+      : value / defectDisplayFactor(from, dimension)
+    input.dataset.defectCanonical = String(canonical)
+    input.value = fmt(canonical * defectDisplayFactor(to, dimension))
+  })
+}
+
+function updateDefectUnitLabels(root: ParentNode, unit: DefectDisplayUnit): void {
+  const labels: Record<DefectDimension, Record<DefectDisplayUnit, string>> = {
+    density: { si: 'm⁻³', scaps_cgs: 'cm⁻³' },
+    cross_section: { si: 'm²', scaps_cgs: 'cm²' },
+    velocity: { si: 'm/s', scaps_cgs: 'cm/s' },
+  }
+  root.querySelectorAll<HTMLElement>('[data-defect-unit-label]').forEach(label => {
+    const dimension = label.dataset.defectUnitLabel
+    if (dimension === 'density' || dimension === 'cross_section' || dimension === 'velocity') {
+      label.textContent = labels[dimension][unit]
+    }
+  })
+}
+
+function syncDefectTransition(row: Element): void {
+  const transition = row.querySelector<HTMLSelectElement>(
+    '[data-defect-field="charge_transition"]',
+  )?.value
+  const reference = row.querySelector<HTMLInputElement>(
+    '[data-defect-field="neutral_reference"]',
+  )
+  if (
+    reference
+    && (transition === 'neutral' || transition === 'acceptor' || transition === 'donor')
+  ) reference.value = DEFECT_NEUTRAL_REFERENCE[transition]
+}
+
+function wireBulkDefectEditors(container: HTMLElement, config: DeviceConfig): void {
+  config.layers.forEach((layer, idx) => {
+    const editor = container.querySelector<HTMLElement>(`#layer-${idx}-bulk-defect-editor`)
+    if (!editor) return
+    const enabled = editor.querySelector<HTMLInputElement>(`#layer-${idx}-defect-enabled`)
+    const body = editor.querySelector<HTMLElement>('[data-defect-body]')
+    const model = editor.querySelector<HTMLSelectElement>(`#layer-${idx}-defect-model`)
+    const units = editor.querySelector<HTMLSelectElement>(`#layer-${idx}-defect-units`)
+    const list = editor.querySelector<HTMLElement>('[data-defect-list]')
+    const add = editor.querySelector<HTMLButtonElement>('[data-defect-add]')
+    const note = editor.querySelector<HTMLElement>('[data-defect-model-note]')
+    if (!enabled || !body || !model || !units || !list || !add || !note) return
+
+    let nextSpeciesIndex = list.children.length
+    const appendDefaultSpecies = (): void => {
+      const names = new Set(
+        Array.from(list.querySelectorAll<HTMLInputElement>('[data-defect-field="name"]'))
+          .map(input => input.value),
+      )
+      let species: BulkDefectSpecies
+      do {
+        species = defaultBulkDefectSpecies(layer, nextSpeciesIndex)
+        nextSpeciesIndex += 1
+      } while (species.name !== null && names.has(species.name))
+      list.insertAdjacentHTML('beforeend', renderBulkDefectSpecies(species))
+      const row = list.lastElementChild
+      const currentUnit: DefectDisplayUnit = units.value === 'scaps_cgs' ? 'scaps_cgs' : 'si'
+      if (row && currentUnit !== 'si') convertDefectInputs(row, 'si', currentUnit)
+      updateDefectUnitLabels(editor, currentUnit)
+    }
+
+    const syncState = (ensureSpecies: boolean): void => {
+      body.hidden = !enabled.checked
+      if (!enabled.checked) return
+      if (ensureSpecies && model.value === 'explicit_quasi_steady' && list.children.length === 0) {
+        appendDefaultSpecies()
+      }
+      note.textContent = model.value === 'explicit_quasi_steady'
+        ? 'Explicit species active in the QF/DC constitutive closure.'
+        : 'Lifetime SRH active; listed species remain provenance metadata.'
+    }
+
+    enabled.addEventListener('change', () => syncState(true))
+    model.addEventListener('change', () => syncState(true))
+    add.addEventListener('click', appendDefaultSpecies)
+    list.addEventListener('click', event => {
+      const button = (event.target as Element | null)?.closest('[data-defect-remove]')
+      if (!button) return
+      button.closest('[data-defect-species]')?.remove()
+    })
+    list.addEventListener('change', event => {
+      const target = event.target as HTMLElement | null
+      if (target?.dataset.defectField !== 'charge_transition') return
+      const row = target.closest('[data-defect-species]')
+      if (row) syncDefectTransition(row)
+    })
+    units.addEventListener('change', () => {
+      const from: DefectDisplayUnit = units.dataset.currentUnit === 'scaps_cgs'
+        ? 'scaps_cgs'
+        : 'si'
+      const to: DefectDisplayUnit = units.value === 'scaps_cgs' ? 'scaps_cgs' : 'si'
+      convertDefectInputs(list, from, to)
+      updateDefectUnitLabels(editor, to)
+      units.dataset.currentUnit = to
+    })
+    syncState(false)
+    updateDefectUnitLabels(editor, 'si')
+  })
 }
 
 function parseNum(id: string, fallback: number): number {
@@ -678,6 +1024,120 @@ function parseCheckbox(id: string, fallback: boolean): boolean {
   const el = document.getElementById(id) as HTMLInputElement | null
   if (!el) return fallback
   return el.checked
+}
+
+function requiredDefectNumber(
+  row: Element,
+  field: string,
+  label: string,
+  unit: DefectDisplayUnit,
+  constraint: 'positive' | 'nonnegative',
+): number {
+  const input = row.querySelector<HTMLInputElement>(`[data-defect-field="${field}"]`)
+  if (!input) throw new Error(`Missing ${label} input`)
+  const rawValue = input.value.trim()
+  if (rawValue === '') throw new Error(`${label} must not be empty`)
+  const displayed = Number(rawValue)
+  if (!Number.isFinite(displayed)) throw new Error(`${label} must be finite`)
+  const dimension = input.dataset.defectDimension ?? ''
+  const storedCanonical = Number(input.dataset.defectCanonical)
+  const expectedDisplay = Number.isFinite(storedCanonical)
+    ? fmt(storedCanonical * defectDisplayFactor(unit, dimension))
+    : ''
+  const value = dimension && Number.isFinite(storedCanonical) && input.value.trim() === expectedDisplay
+    ? storedCanonical
+    : displayed / defectDisplayFactor(unit, dimension)
+  if (!Number.isFinite(value) || (constraint === 'positive' ? value <= 0 : value < 0)) {
+    throw new Error(`${label} must be finite and ${constraint === 'positive' ? 'positive' : 'non-negative'}`)
+  }
+  return value
+}
+
+function readBulkDefectEditor(
+  next: LayerConfig,
+  idx: number,
+): LayerConfig {
+  const editor = document.getElementById(`layer-${idx}-bulk-defect-editor`)
+  const enabled = document.getElementById(`layer-${idx}-defect-enabled`) as HTMLInputElement | null
+  if (!editor || !enabled) return next
+  if (!enabled.checked) {
+    delete next.defect_schema_version
+    delete next.defect_model
+    delete next.bulk_defects
+    return next
+  }
+  const modelInput = document.getElementById(`layer-${idx}-defect-model`) as HTMLSelectElement | null
+  const unitInput = document.getElementById(`layer-${idx}-defect-units`) as HTMLSelectElement | null
+  const model = modelInput?.value
+  if (model !== 'effective_lifetime' && model !== 'explicit_quasi_steady') {
+    throw new Error(`Layer ${idx + 1} has an unsupported defect model`)
+  }
+  const unit: DefectDisplayUnit = unitInput?.value === 'scaps_cgs' ? 'scaps_cgs' : 'si'
+  const rows = Array.from(editor.querySelectorAll<HTMLElement>('[data-defect-species]'))
+  if (model === 'explicit_quasi_steady' && rows.length === 0) {
+    throw new Error(`Layer ${idx + 1} explicit defect model requires at least one species`)
+  }
+  const species: BulkDefectSpecies[] = rows.map((row, speciesIndex) => {
+    const prefix = `Layer ${idx + 1} defect ${speciesIndex + 1}`
+    const rawName = row.querySelector<HTMLInputElement>('[data-defect-field="name"]')?.value.trim() ?? ''
+    const name = rawName === '' ? null : rawName
+    if (model === 'explicit_quasi_steady' && name === null) {
+      throw new Error(`${prefix} requires a non-empty name`)
+    }
+    const transitionValue = row.querySelector<HTMLSelectElement>(
+      '[data-defect-field="charge_transition"]',
+    )?.value
+    if (
+      transitionValue !== 'neutral'
+      && transitionValue !== 'acceptor'
+      && transitionValue !== 'donor'
+    ) throw new Error(`${prefix} has an unsupported charge transition`)
+    const density = requiredDefectNumber(
+      row, 'total_density', `${prefix} density`, unit, 'positive',
+    )
+    const center = requiredDefectNumber(
+      row, 'center_energy', `${prefix} energy`, unit, 'nonnegative',
+    )
+    if (typeof next.Eg === 'number' && Number.isFinite(next.Eg) && center > next.Eg) {
+      throw new Error(`${prefix} energy must lie inside the layer band gap`)
+    }
+    return {
+      name,
+      distribution: {
+        kind: 'single_level',
+        normalization: 'integrated_total',
+        total_density_m3: density,
+        center_eV_above_vb: center,
+      },
+      charge_transition: transitionValue,
+      neutral_reference: DEFECT_NEUTRAL_REFERENCE[transitionValue],
+      kinetics: {
+        sigma_n_m2: requiredDefectNumber(
+          row, 'sigma_n', `${prefix} electron cross-section`, unit, 'nonnegative',
+        ),
+        sigma_p_m2: requiredDefectNumber(
+          row, 'sigma_p', `${prefix} hole cross-section`, unit, 'nonnegative',
+        ),
+        thermal_velocity_n_m_s: requiredDefectNumber(
+          row, 'thermal_velocity_n', `${prefix} electron thermal velocity`, unit, 'positive',
+        ),
+        thermal_velocity_p_m_s: requiredDefectNumber(
+          row, 'thermal_velocity_p', `${prefix} hole thermal velocity`, unit, 'positive',
+        ),
+      },
+      degeneracy: requiredDefectNumber(
+        row, 'degeneracy', `${prefix} degeneracy`, unit, 'positive',
+      ),
+    }
+  })
+  const names = species.flatMap(item => item.name === null ? [] : [item.name])
+  if (new Set(names).size !== names.length) {
+    throw new Error(`Layer ${idx + 1} defect species names must be unique`)
+  }
+  next.defect_schema_version = EXPLICIT_DEFECT_SCHEMA_VERSION
+  next.defect_model = model
+  next.bulk_defects = species
+  return next
 }
 
 export function readDeviceEditor(
@@ -739,7 +1199,7 @@ export function readDeviceEditor(
       delete g.grading_char_length
       delete g.grading_N_mult
     }
-    return next
+    return readBulkDefectEditor(next, idx)
   })
 
   if (singleLayer) {

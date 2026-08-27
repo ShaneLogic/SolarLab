@@ -418,6 +418,79 @@ def test_dispatch_quasi_fermi_returns_certificate_bearing_jvresult(monkeypatch):
     assert all(s.solver == "quasi_fermi" for s in result.status_fwd)
     assert result.status_fwd[-1].face_current_spread_A_m2 == 4.0e-8
     assert result.status_fwd[-1].poisson_residual == 5.0e-12
+    assert result.bulk_defect_evidence is None
+
+
+def _defect_diagnostics(
+    *,
+    digest="a" * 64,
+    minimum_occupancy=0.1,
+    maximum_occupancy=0.8,
+    minimum_denominator=4.0,
+    charge=(-2.0, 3.0),
+    recombination=(-5.0, 7.0),
+):
+    return SimpleNamespace(
+        model_identity_sha256=digest,
+        species_identifiers=("V_I", "I_i"),
+        charge_transitions=("acceptor", "donor"),
+        minimum_occupancy=minimum_occupancy,
+        maximum_occupancy=maximum_occupancy,
+        minimum_kinetic_denominator_s1=minimum_denominator,
+        total_charge_density_C_m3=np.asarray(charge),
+        total_recombination_rate_m3_s=np.asarray(recombination),
+    )
+
+
+def test_qf_bulk_defect_evidence_preserves_identity_and_global_extrema():
+    points = (
+        SimpleNamespace(bulk_defect_diagnostics=_defect_diagnostics()),
+        SimpleNamespace(bulk_defect_diagnostics=_defect_diagnostics(
+            minimum_occupancy=0.02,
+            maximum_occupancy=0.95,
+            minimum_denominator=2.0,
+            charge=(-11.0, 1.0),
+            recombination=(-3.0, 13.0),
+        )),
+    )
+    evidence = bm._summarize_qf_bulk_defect_evidence(points)
+    assert evidence.model == "monovalent-device-mb-qf-dc-v1"
+    assert evidence.model_identity_sha256 == "a" * 64
+    assert evidence.species_identifiers == ("V_I", "I_i")
+    assert evidence.charge_transitions == ("acceptor", "donor")
+    assert evidence.points_completed == 2
+    assert evidence.minimum_occupancy == pytest.approx(0.02)
+    assert evidence.maximum_occupancy == pytest.approx(0.95)
+    assert evidence.minimum_kinetic_denominator_s1 == pytest.approx(2.0)
+    assert evidence.maximum_absolute_charge_density_C_m3 == pytest.approx(11.0)
+    assert evidence.maximum_absolute_recombination_rate_m3_s == pytest.approx(13.0)
+
+
+@pytest.mark.parametrize(
+    "points, message",
+    [
+        (
+            (
+                SimpleNamespace(bulk_defect_diagnostics=_defect_diagnostics()),
+                SimpleNamespace(bulk_defect_diagnostics=None),
+            ),
+            "incomplete",
+        ),
+        (
+            (
+                SimpleNamespace(bulk_defect_diagnostics=_defect_diagnostics()),
+                SimpleNamespace(bulk_defect_diagnostics=_defect_diagnostics(digest="b" * 64)),
+            ),
+            "identity changed",
+        ),
+    ],
+)
+def test_qf_bulk_defect_evidence_fails_closed_on_incomplete_or_mixed_identity(
+    points,
+    message,
+):
+    with pytest.raises(ValueError, match=message):
+        bm._summarize_qf_bulk_defect_evidence(points)
 
 
 def test_dispatch_quasi_fermi_rejects_dark_jv():

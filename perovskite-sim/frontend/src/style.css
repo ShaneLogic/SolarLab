@@ -414,6 +414,82 @@ input[type="number"] {
   padding-bottom: 0.4375rem;
 }
 
+.bulk-defect-editor > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.bulk-defect-editor > summary h5 { margin: 0; }
+.experimental-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.25rem;
+  padding: 0.0625rem 0.375rem;
+  border: 1px solid #d97706;
+  border-radius: 4px;
+  color: #92400e;
+  background: #fffbeb;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.bulk-defect-warning {
+  margin: 0.625rem 0;
+  padding: 0.5rem 0.625rem;
+  border-left: 3px solid #d97706;
+  background: #fffbeb;
+  color: #78350f;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.bulk-defect-enable {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.bulk-defect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.bulk-defect-body[hidden] { display: none; }
+.bulk-defect-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 14rem));
+  gap: 0.75rem;
+}
+.bulk-defect-list { display: flex; flex-direction: column; gap: 0.625rem; }
+.bulk-defect-species {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+}
+.bulk-defect-species-head {
+  display: flex;
+  align-items: end;
+  gap: 0.5rem;
+  margin-bottom: 0.625rem;
+}
+.bulk-defect-name { flex: 1; }
+.bulk-defect-remove {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.bulk-defect-add { align-self: flex-start; }
+.bulk-defect-model-note { margin: 0; }
+
+@media (max-width: 620px) {
+  .bulk-defect-toolbar { grid-template-columns: 1fr; }
+}
+
 /* ─── Metrics ────────────────────────────────────────────────────────── */
 
 .metrics-grid {
@@ -509,6 +585,21 @@ input[type="number"] {
   color: var(--text-muted);
   font-size: 0.78rem;
   line-height: 1.4;
+}
+.jv-defect-evidence-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.25rem 1rem;
+  padding: 0.375rem 0.5rem;
+  border-left: 3px solid #0f766e;
+  background: #f0fdfa;
+  color: #134e4a;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.jv-defect-evidence-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .impedance-evidence-summary span {
   min-width: 0;

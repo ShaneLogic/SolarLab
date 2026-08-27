@@ -1,9 +1,11 @@
 import Plotly from 'plotly.js-basic-dist-min'
-import { mountDevicePanel } from '../device-panel'
+import { mountDevicePanel, type DevicePanel } from '../device-panel'
 import { startJob, streamJobEvents } from '../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../progress'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'
 import { setStatus, metricCard, numField, readNum, checkField, readCheck } from '../ui-helpers'
+import { summarizeJVBulkDefectEvidence } from '../jv-defect-evidence'
+import { requiresQuasiFermiJVSolver } from '../explicit-defect-capability'
 import type { JVResult } from '../types'
 
 export async function mountJVPanel(root: HTMLElement): Promise<void> {
@@ -57,7 +59,15 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
     darkBox.disabled = solverSelect.value === 'quasi_fermi'
     if (darkBox.disabled) darkBox.checked = false
   }
+  const syncSolverRequirement = (device: ReturnType<DevicePanel['getConfig']>): void => {
+    const required = requiresQuasiFermiJVSolver(device)
+    solverSelect.disabled = required
+    if (required) solverSelect.value = 'quasi_fermi'
+    syncDarkEnabled()
+  }
   solverSelect.addEventListener('change', syncDarkEnabled)
+  devicePanel.onChange(syncSolverRequirement)
+  syncSolverRequirement(devicePanel.getConfig())
   syncDarkEnabled()
   btn.addEventListener('click', async () => {
     btn.disabled = true
@@ -67,10 +77,7 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
     try {
       const device = devicePanel.getConfig()
       const isDark = readCheck('jv-dark', false)
-      if (
-        device.device.jv_solver_policy === 'cancellation_safe_qf_required'
-        && solverSelect.value !== 'quasi_fermi'
-      ) {
+      if (requiresQuasiFermiJVSolver(device) && solverSelect.value !== 'quasi_fermi') {
         throw new Error('This stack requires the Quasi-Fermi J-V solver.')
       }
       const requestedGrid = Math.max(3, Math.round(readNum('jv-N', 60)))
@@ -149,6 +156,20 @@ function renderJVResults(container: HTMLElement, r: JVResult): void {
       <h3>J-V Curves</h3>
       <div id="plot-jv" class="plot-container"></div>
     </div>`
+
+  const defectEvidenceLines = summarizeJVBulkDefectEvidence(r.bulk_defect_evidence)
+  if (defectEvidenceLines.length > 0 && r.bulk_defect_evidence) {
+    const summary = document.createElement('div')
+    summary.className = 'jv-defect-evidence-summary'
+    summary.setAttribute('data-test', 'jv-defect-evidence-summary')
+    summary.title = `${r.bulk_defect_evidence.model} · sha256:${r.bulk_defect_evidence.model_identity_sha256}`
+    for (const line of defectEvidenceLines) {
+      const item = document.createElement('span')
+      item.textContent = line
+      summary.appendChild(item)
+    }
+    container.insertBefore(summary, container.children[1] ?? null)
+  }
 
   const J_fwd_mA = r.J_fwd.map(j => j / 10)
   const J_rev_mA = r.J_rev.map(j => j / 10)

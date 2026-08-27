@@ -80,6 +80,9 @@ from perovskite_sim.physics.contacts import (
     ContactThermodynamicError,
     require_contact_thermodynamic_certificate,
 )
+from perovskite_sim.physics.defect_closure import (
+    MONOVALENT_BULK_DEFECT_MODEL_VERSION,
+)
 from perovskite_sim.solver.mol import build_material_arrays
 from backend.jobs import JobRegistry, JobStatus, _DRAIN_TIMEOUT
 from backend.progress import ProgressReporter
@@ -1420,6 +1423,68 @@ def _preflight_job_experiment_protocol(
     resolve_experiment_protocol(supplied, expected, mode=mode)
 
 
+def _summarize_qf_bulk_defect_evidence(points):
+    """Collapse pointwise constitutive diagnostics without losing identity."""
+
+    diagnostics = [getattr(point, "bulk_defect_diagnostics", None) for point in points]
+    present = [item is not None for item in diagnostics]
+    if not any(present):
+        return None
+    if not all(present):
+        raise ValueError(
+            "QF J-V bulk-defect diagnostics are incomplete across voltage points"
+        )
+    first = diagnostics[0]
+    identity = (
+        first.model_identity_sha256,
+        tuple(first.species_identifiers),
+        tuple(first.charge_transitions),
+    )
+    for item in diagnostics[1:]:
+        candidate = (
+            item.model_identity_sha256,
+            tuple(item.species_identifiers),
+            tuple(item.charge_transitions),
+        )
+        if candidate != identity:
+            raise ValueError(
+                "QF J-V bulk-defect identity changed across voltage points"
+            )
+
+    charge_maxima = []
+    recombination_maxima = []
+    for item in diagnostics:
+        charge = np.asarray(item.total_charge_density_C_m3, dtype=float)
+        recombination = np.asarray(
+            item.total_recombination_rate_m3_s,
+            dtype=float,
+        )
+        if (
+            charge.size == 0
+            or recombination.size == 0
+            or not np.all(np.isfinite(charge))
+            or not np.all(np.isfinite(recombination))
+        ):
+            raise ValueError("QF J-V bulk-defect diagnostics must be finite and non-empty")
+        charge_maxima.append(float(np.max(np.abs(charge))))
+        recombination_maxima.append(float(np.max(np.abs(recombination))))
+
+    return jv_sweep.JVBulkDefectEvidence(
+        model=MONOVALENT_BULK_DEFECT_MODEL_VERSION,
+        model_identity_sha256=identity[0],
+        species_identifiers=identity[1],
+        charge_transitions=identity[2],
+        points_completed=len(diagnostics),
+        minimum_occupancy=min(float(item.minimum_occupancy) for item in diagnostics),
+        maximum_occupancy=max(float(item.maximum_occupancy) for item in diagnostics),
+        minimum_kinetic_denominator_s1=min(
+            float(item.minimum_kinetic_denominator_s1) for item in diagnostics
+        ),
+        maximum_absolute_charge_density_C_m3=max(charge_maxima),
+        maximum_absolute_recombination_rate_m3_s=max(recombination_maxima),
+    )
+
+
 def _run_jv_dispatch(
     stack,
     *,
@@ -1654,6 +1719,7 @@ def _run_jv_dispatch(
             hysteresis_index=0.0,
             status_fwd=_statuses("jv_forward"),
             status_rev=_statuses("jv_reverse"),
+            bulk_defect_evidence=_summarize_qf_bulk_defect_evidence(qf.points),
         )
     if solver != "transient":
         raise ValueError(f"unknown solver {solver!r}")

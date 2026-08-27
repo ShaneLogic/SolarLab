@@ -112,6 +112,37 @@ describe('renderJV — toolbar + style mode', () => {
     expect(traces[1].line.dash).toBe('dash')
     expect(traces[1].marker.symbol).toBe('square')
   })
+
+  it('omits the explicit-defect strip for legacy J-V results', () => {
+    renderJV(el, makeResult())
+    expect(el.querySelector('[data-test="jv-defect-evidence-summary"]')).toBeNull()
+  })
+
+  it('renders QF/DC model identity and constitutive extrema without changing traces', () => {
+    const digest = 'a'.repeat(64)
+    renderJV(el, makeResult({
+      bulk_defect_evidence: {
+        model: 'monovalent-device-mb-qf-dc-v1',
+        model_identity_sha256: digest,
+        species_identifiers: ['V_I', 'I_i'],
+        charge_transitions: ['acceptor', 'donor'],
+        points_completed: 11,
+        minimum_occupancy: 0.0123,
+        maximum_occupancy: 0.9876,
+        minimum_kinetic_denominator_s1: 2.5e5,
+        maximum_absolute_charge_density_C_m3: 4.2e3,
+        maximum_absolute_recombination_rate_m3_s: 8.1e27,
+      },
+    }))
+    const summary = el.querySelector<HTMLElement>('[data-test="jv-defect-evidence-summary"]')!
+    expect(summary).not.toBeNull()
+    expect(summary.textContent).toContain('2 species / 11 points')
+    expect(summary.textContent).toContain('aaaaaaaaaaaa...')
+    expect(summary.textContent).toContain('Occupancy: [0.0123, 0.9876]')
+    expect(summary.textContent).toContain('4.200e+3 C m^-3')
+    expect(summary.title).toContain(digest)
+    expect(_lastNewPlotTraces()).toHaveLength(2)
+  })
 })
 
 describe('renderJV — publication style mode', () => {

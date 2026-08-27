@@ -1,6 +1,7 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum, checkField, readCheck } from '../../ui-helpers'
+import { requiresQuasiFermiJVSolver } from '../../explicit-defect-capability'
 import type {
   DeviceConfig,
   JVResult,
@@ -82,6 +83,16 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   }
   solverSelect.addEventListener('change', syncIfaceEnabled)
   interfaceBoundaryBox.addEventListener('change', syncIfaceEnabled)
+  const syncSolverRequirement = (config: DeviceConfig | null): boolean => {
+    const required = config !== null && requiresQuasiFermiJVSolver(config)
+    solverSelect.disabled = required
+    if (required) solverSelect.value = 'quasi_fermi'
+    syncIfaceEnabled()
+    return required
+  }
+  solverSelect.addEventListener('focus', () => {
+    syncSolverRequirement(opts.getActiveDevice()?.config ?? null)
+  })
   syncIfaceEnabled()
 
   btn.addEventListener('click', () => {
@@ -90,6 +101,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
       setStatus('status-jvp', 'No active device. Select one in the tree.', true)
       return
     }
+    const qfRequired = syncSolverRequirement(active.config)
     btn.disabled = true
     progressBar.reset()
     // Show an active "equilibrating" state immediately: the initial
@@ -112,9 +124,6 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     // Alternative solvers only apply to the plain J-V kind; decomposition and
     // spatial snapshots require the transient driver's per-RHS state.
     const selectedSolver = solverSelect.value
-    const qfRequired = (
-      active.config.device.jv_solver_policy === 'cancellation_safe_qf_required'
-    )
     if (qfRequired && (kind !== 'jv' || selectedSolver !== 'quasi_fermi')) {
       const message = 'This stack requires the Quasi-Fermi J-V solver; decomposition and spatial-profile sweeps are not certified.'
       progressBar.error(message)

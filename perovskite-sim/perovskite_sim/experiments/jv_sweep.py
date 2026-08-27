@@ -202,6 +202,61 @@ class _JVCandidateFailure(RuntimeError):
 
 
 @dataclass(frozen=True)
+class JVBulkDefectEvidence:
+    """Sweep-level constitutive evidence for explicit QF/DC bulk defects."""
+
+    model: Literal["monovalent-device-mb-qf-dc-v1"]
+    model_identity_sha256: str
+    species_identifiers: tuple[str, ...]
+    charge_transitions: tuple[Literal["neutral", "acceptor", "donor"], ...]
+    points_completed: int
+    minimum_occupancy: float
+    maximum_occupancy: float
+    minimum_kinetic_denominator_s1: float
+    maximum_absolute_charge_density_C_m3: float
+    maximum_absolute_recombination_rate_m3_s: float
+
+    def __post_init__(self) -> None:
+        if self.model != "monovalent-device-mb-qf-dc-v1":
+            raise ValueError("unsupported J-V bulk-defect evidence model")
+        digest = str(self.model_identity_sha256).lower()
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("model_identity_sha256 must be a SHA-256 hex")
+        identifiers = tuple(self.species_identifiers)
+        transitions = tuple(self.charge_transitions)
+        if (
+            not identifiers
+            or len(identifiers) != len(set(identifiers))
+            or len(transitions) != len(identifiers)
+            or any(value not in {"neutral", "acceptor", "donor"} for value in transitions)
+        ):
+            raise ValueError("bulk-defect species evidence is inconsistent")
+        if isinstance(self.points_completed, bool) or self.points_completed <= 0:
+            raise ValueError("points_completed must be a positive integer")
+        values = (
+            self.minimum_occupancy,
+            self.maximum_occupancy,
+            self.minimum_kinetic_denominator_s1,
+            self.maximum_absolute_charge_density_C_m3,
+            self.maximum_absolute_recombination_rate_m3_s,
+        )
+        if not all(np.isfinite(float(value)) for value in values):
+            raise ValueError("bulk-defect evidence extrema must be finite")
+        if not 0.0 <= self.minimum_occupancy <= self.maximum_occupancy <= 1.0:
+            raise ValueError("bulk-defect occupancy evidence must lie in [0, 1]")
+        if self.minimum_kinetic_denominator_s1 <= 0.0:
+            raise ValueError("minimum kinetic denominator must be positive")
+        if (
+            self.maximum_absolute_charge_density_C_m3 < 0.0
+            or self.maximum_absolute_recombination_rate_m3_s < 0.0
+        ):
+            raise ValueError("bulk-defect absolute extrema must be non-negative")
+        object.__setattr__(self, "model_identity_sha256", digest)
+        object.__setattr__(self, "species_identifiers", identifiers)
+        object.__setattr__(self, "charge_transitions", transitions)
+
+
+@dataclass(frozen=True)
 class JVResult:
     V_fwd: np.ndarray
     J_fwd: np.ndarray
@@ -219,6 +274,7 @@ class JVResult:
     initial_numerical_diagnostics: IlluminatedPreconditionerDiagnostics | None = None
     protocol: ExperimentProtocol | None = None
     rhs_regularization: RHSRegularization | None = None
+    bulk_defect_evidence: JVBulkDefectEvidence | None = None
 
     @property
     def certified(self) -> bool:

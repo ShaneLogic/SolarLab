@@ -26,6 +26,34 @@ const csiConfig: DeviceConfig = {
   layers: [],
 }
 
+function explicitDefectConfig(transition: 'neutral' | 'acceptor'): DeviceConfig {
+  return {
+    device: { Phi: 2e21 },
+    layers: [{
+      name: 'absorber', role: 'absorber', thickness: 5e-7, eps_r: 20,
+      mu_n: 1e-4, mu_p: 1e-4, ni: 1e15, N_D: 0, N_A: 0,
+      D_ion: 0, P_lim: 0, P0: 0, tau_n: 1e-6, tau_p: 1e-6,
+      n1: 1e15, p1: 1e15, B_rad: 0, C_n: 0, C_p: 0, alpha: 0,
+      defect_schema_version: 'solarlab-explicit-bulk-defects-v1',
+      defect_model: 'explicit_quasi_steady',
+      bulk_defects: [{
+        name: 'D1',
+        distribution: {
+          kind: 'single_level', normalization: 'integrated_total',
+          total_density_m3: 1e21, center_eV_above_vb: 0.7,
+        },
+        charge_transition: transition,
+        neutral_reference: transition === 'neutral' ? 'all_occupancies' : 'empty',
+        kinetics: {
+          sigma_n_m2: 1e-19, sigma_p_m2: 1e-19,
+          thermal_velocity_n_m_s: 1e5, thermal_velocity_p_m_s: 1e5,
+        },
+        degeneracy: 1,
+      }],
+    }],
+  }
+}
+
 let container: HTMLElement
 
 beforeEach(() => {
@@ -116,6 +144,29 @@ describe('J–V pane interface-plane-states gating', () => {
       'steady_state',
       'quasi_fermi',
     ])
+  })
+
+  it('locks charged explicit defects to the QF solver when the control is focused', () => {
+    const charged = explicitDefectConfig('acceptor')
+    mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'charged', config: charged }),
+      onRunComplete: () => {},
+    })
+    boxes().solver.focus()
+    expect(boxes().solver.value).toBe('quasi_fermi')
+    expect(boxes().solver.disabled).toBe(true)
+    expect(boxes().interfaceBoundary.disabled).toBe(false)
+  })
+
+  it('keeps the transient solver available for neutral explicit defects', () => {
+    const neutral = explicitDefectConfig('neutral')
+    mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'neutral', config: neutral }),
+      onRunComplete: () => {},
+    })
+    boxes().solver.focus()
+    expect(boxes().solver.value).toBe('transient')
+    expect(boxes().solver.disabled).toBe(false)
   })
 
   it('rejects a c-Si grid below the preserved config minimum', () => {

@@ -19,6 +19,39 @@ export function isLayerRole(v: unknown): v is LayerRole {
   return typeof v === 'string' && (LAYER_ROLES as readonly string[]).includes(v)
 }
 
+export type BulkDefectModel = 'effective_lifetime' | 'explicit_quasi_steady'
+export type BulkDefectChargeTransition = 'neutral' | 'acceptor' | 'donor' | 'unresolved'
+export type BulkDefectNeutralReference = 'all_occupancies' | 'empty' | 'filled' | 'unresolved'
+
+export interface BulkDefectDistribution {
+  kind: 'single_level' | 'gaussian'
+  normalization: 'integrated_total'
+  total_density_m3: number
+  center_eV_above_vb: number
+  width_eV?: number | null
+  width_convention?:
+    | 'not_applicable'
+    | 'gaussian_standard_deviation'
+    | 'scaps_characteristic_energy'
+    | 'unresolved'
+}
+
+export interface BulkDefectKinetics {
+  sigma_n_m2: number
+  sigma_p_m2: number
+  thermal_velocity_n_m_s: number
+  thermal_velocity_p_m_s: number
+}
+
+export interface BulkDefectSpecies {
+  name: string | null
+  distribution: BulkDefectDistribution
+  charge_transition: BulkDefectChargeTransition
+  neutral_reference: BulkDefectNeutralReference
+  kinetics: BulkDefectKinetics
+  degeneracy: number
+}
+
 export interface LayerConfig {
   name: string
   role: LayerRole
@@ -83,6 +116,12 @@ export interface LayerConfig {
   grading_bowing?: number
   grading_char_length?: number
   grading_N_mult?: number
+  /** Versioned microscopic bulk-defect document. These three keys form one
+   * strict contract and must be present or absent together. Values are always
+   * canonical SI even when the editor displays SCAPS-style cgs units. */
+  defect_schema_version?: 'solarlab-explicit-bulk-defects-v1'
+  defect_model?: BulkDefectModel
+  bulk_defects?: BulkDefectSpecies[]
 }
 
 export type SimulationModeName = 'legacy' | 'fast' | 'full'
@@ -220,6 +259,20 @@ export interface JVResult {
   metrics_fwd: JVMetrics
   metrics_rev: JVMetrics
   hysteresis_index: number
+  bulk_defect_evidence?: JVBulkDefectEvidence | null
+}
+
+export interface JVBulkDefectEvidence {
+  model: 'monovalent-device-mb-qf-dc-v1'
+  model_identity_sha256: string
+  species_identifiers: string[]
+  charge_transitions: Array<'neutral' | 'acceptor' | 'donor'>
+  points_completed: number
+  minimum_occupancy: number
+  maximum_occupancy: number
+  minimum_kinetic_denominator_s1: number
+  maximum_absolute_charge_density_C_m3: number
+  maximum_absolute_recombination_rate_m3_s: number
 }
 
 export interface ComplexNumber {

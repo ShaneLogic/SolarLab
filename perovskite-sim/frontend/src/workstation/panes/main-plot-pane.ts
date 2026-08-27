@@ -15,6 +15,7 @@ import {
   collectImpedanceEvidenceWarnings,
   summarizeImpedanceEvidence,
 } from '../../impedance-evidence'
+import { summarizeJVBulkDefectEvidence } from '../../jv-defect-evidence'
 import type {
   JVResult,
   ISResult,
@@ -707,6 +708,20 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
     toolbar.appendChild(styleSelect)
   }
   el.appendChild(toolbar)
+
+  const defectEvidenceLines = summarizeJVBulkDefectEvidence(r.bulk_defect_evidence)
+  if (defectEvidenceLines.length > 0 && r.bulk_defect_evidence) {
+    const summary = document.createElement('div')
+    summary.className = 'jv-defect-evidence-summary'
+    summary.setAttribute('data-test', 'jv-defect-evidence-summary')
+    summary.title = `${r.bulk_defect_evidence.model} · sha256:${r.bulk_defect_evidence.model_identity_sha256}`
+    for (const line of defectEvidenceLines) {
+      const item = document.createElement('span')
+      item.textContent = line
+      summary.appendChild(item)
+    }
+    el.appendChild(summary)
+  }
 
   const plotDiv = document.createElement('div')
   plotDiv.className = 'jv1d-plot'
