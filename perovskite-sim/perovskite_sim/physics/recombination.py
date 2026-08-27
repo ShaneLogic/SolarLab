@@ -9,6 +9,12 @@ import json
 
 import numpy as np
 
+from perovskite_sim.physics.defect_closure import (
+    MonovalentBulkDefectModel,
+    evaluate_monovalent_bulk_defects,
+    evaluate_monovalent_defect_closure,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RecombinationDerivatives:
@@ -324,8 +330,22 @@ def srh_recombination(
     tau_n: float, tau_p: float, n1: float, p1: float,
     *,
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
+    monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
 ) -> np.ndarray:
     """Shockley-Read-Hall recombination rate [m⁻³ s⁻¹]."""
+    if neutral_bulk_defects is not None and monovalent_bulk_defects is not None:
+        raise ValueError("neutral and monovalent bulk-defect models are exclusive")
+    if monovalent_bulk_defects is not None:
+        return _mixed_monovalent_srh_recombination(
+            n,
+            p,
+            ni_sq,
+            tau_n,
+            tau_p,
+            n1,
+            p1,
+            monovalent_bulk_defects,
+        )
     if neutral_bulk_defects is not None:
         return _mixed_srh_recombination(
             n,
@@ -352,9 +372,23 @@ def srh_recombination_derivatives(
     p1: float,
     *,
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
+    monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
 ) -> RecombinationDerivatives:
     """Return bulk SRH and exact local derivatives with respect to n and p."""
 
+    if neutral_bulk_defects is not None and monovalent_bulk_defects is not None:
+        raise ValueError("neutral and monovalent bulk-defect models are exclusive")
+    if monovalent_bulk_defects is not None:
+        return _mixed_monovalent_srh_recombination_derivatives(
+            n,
+            p,
+            ni_sq,
+            tau_n,
+            tau_p,
+            n1,
+            p1,
+            monovalent_bulk_defects,
+        )
     if neutral_bulk_defects is not None:
         return _mixed_srh_recombination_derivatives(
             n,
@@ -568,6 +602,135 @@ def _mixed_srh_recombination_derivatives(
     )
 
 
+def _broadcast_monovalent_bulk_inputs(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    tau_n: float,
+    tau_p: float,
+    n1: float,
+    p1: float,
+    model: MonovalentBulkDefectModel,
+) -> tuple[np.ndarray, ...]:
+    arrays = np.broadcast_arrays(
+        np.asarray(n, dtype=float),
+        np.asarray(p, dtype=float),
+        np.asarray(ni_sq, dtype=float),
+        np.asarray(tau_n, dtype=float),
+        np.asarray(tau_p, dtype=float),
+        np.asarray(n1, dtype=float),
+        np.asarray(p1, dtype=float),
+    )
+    if arrays[0].shape != (model.node_count,):
+        raise ValueError("monovalent bulk-defect state must match the compiled grid")
+    return tuple(np.asarray(value) for value in arrays)
+
+
+def _mixed_monovalent_srh_recombination(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    tau_n: float,
+    tau_p: float,
+    n1: float,
+    p1: float,
+    model: MonovalentBulkDefectModel,
+) -> np.ndarray:
+    n_a, p_a, ni_a, tau_n_a, tau_p_a, n1_a, p1_a = (
+        _broadcast_monovalent_bulk_inputs(
+            n,
+            p,
+            ni_sq,
+            tau_n,
+            tau_p,
+            n1,
+            p1,
+            model,
+        )
+    )
+    result = np.zeros_like(n_a, dtype=float)
+    explicit = model.explicit_node_mask
+    legacy = ~explicit
+    if np.any(legacy):
+        denominator = bulk_srh_denominator(
+            n_a[legacy],
+            p_a[legacy],
+            tau_n_a[legacy],
+            tau_p_a[legacy],
+            n1_a[legacy],
+            p1_a[legacy],
+        )
+        _record_srh_denominator("bulk", denominator)
+        result[legacy] = (
+            n_a[legacy] * p_a[legacy] - ni_a[legacy]
+        ) / denominator
+    evaluation = evaluate_monovalent_bulk_defects(n_a, p_a, model)
+    result[explicit] = evaluation.total_recombination_rate_m3_s[explicit]
+    return result
+
+
+def _mixed_monovalent_srh_recombination_derivatives(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    tau_n: float,
+    tau_p: float,
+    n1: float,
+    p1: float,
+    model: MonovalentBulkDefectModel,
+) -> RecombinationDerivatives:
+    n_a, p_a, ni_a, tau_n_a, tau_p_a, n1_a, p1_a = (
+        _broadcast_monovalent_bulk_inputs(
+            n,
+            p,
+            ni_sq,
+            tau_n,
+            tau_p,
+            n1,
+            p1,
+            model,
+        )
+    )
+    rate = np.zeros_like(n_a, dtype=float)
+    derivative_n = np.zeros_like(n_a, dtype=float)
+    derivative_p = np.zeros_like(n_a, dtype=float)
+    explicit = model.explicit_node_mask
+    legacy = ~explicit
+    if np.any(legacy):
+        denominator = bulk_srh_denominator(
+            n_a[legacy],
+            p_a[legacy],
+            tau_n_a[legacy],
+            tau_p_a[legacy],
+            n1_a[legacy],
+            p1_a[legacy],
+        )
+        _record_srh_denominator("bulk", denominator)
+        local_rate = (
+            n_a[legacy] * p_a[legacy] - ni_a[legacy]
+        ) / denominator
+        rate[legacy] = local_rate
+        derivative_n[legacy] = (
+            p_a[legacy] - local_rate * tau_p_a[legacy]
+        ) / denominator
+        derivative_p[legacy] = (
+            n_a[legacy] - local_rate * tau_n_a[legacy]
+        ) / denominator
+    evaluation = evaluate_monovalent_bulk_defects(n_a, p_a, model)
+    rate[explicit] = evaluation.total_recombination_rate_m3_s[explicit]
+    derivative_n[explicit] = (
+        evaluation.total_recombination_derivative_n_s1[explicit]
+    )
+    derivative_p[explicit] = (
+        evaluation.total_recombination_derivative_p_s1[explicit]
+    )
+    return RecombinationDerivatives(
+        rate=rate,
+        electron_density_derivative=derivative_n,
+        hole_density_derivative=derivative_p,
+    )
+
+
 def radiative_recombination(
     n: np.ndarray, p: np.ndarray, ni_sq: float, B_rad: float,
 ) -> np.ndarray:
@@ -681,6 +844,7 @@ def total_recombination(
     B_rad: float, C_n: float, C_p: float,
     *,
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
+    monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
 ) -> np.ndarray:
     """Sum of SRH + radiative + Auger [m⁻³ s⁻¹]."""
     return (
@@ -693,6 +857,7 @@ def total_recombination(
             n1,
             p1,
             neutral_bulk_defects=neutral_bulk_defects,
+            monovalent_bulk_defects=monovalent_bulk_defects,
         )
         + radiative_recombination(n, p, ni_sq, B_rad)
         + auger_recombination(n, p, ni_sq, C_n, C_p)
@@ -712,6 +877,7 @@ def total_recombination_derivatives(
     C_p: float,
     *,
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
+    monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
 ) -> RecombinationDerivatives:
     """Return SRH + radiative + Auger and exact local derivatives."""
 
@@ -724,6 +890,7 @@ def total_recombination_derivatives(
         n1,
         p1,
         neutral_bulk_defects=neutral_bulk_defects,
+        monovalent_bulk_defects=monovalent_bulk_defects,
     )
     radiative = radiative_recombination_derivatives(n, p, ni_sq, B_rad)
     auger = auger_recombination_derivatives(n, p, ni_sq, C_n, C_p)
@@ -756,12 +923,27 @@ def total_recombination_at_node(
     *,
     node: int,
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
+    monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
 ) -> float:
     """Scalar total rate using the same lifetime/explicit node dispatch."""
 
-    if neutral_bulk_defects is None or not neutral_bulk_defects.explicit_node_mask[
-        node
-    ]:
+    if neutral_bulk_defects is not None and monovalent_bulk_defects is not None:
+        raise ValueError("neutral and monovalent bulk-defect models are exclusive")
+    monovalent_region = None
+    if monovalent_bulk_defects is not None:
+        monovalent_region = next(
+            (
+                region
+                for region in monovalent_bulk_defects.regions
+                if region.active_nodes[node]
+            ),
+            None,
+        )
+    neutral_explicit = bool(
+        neutral_bulk_defects is not None
+        and neutral_bulk_defects.explicit_node_mask[node]
+    )
+    if not neutral_explicit and monovalent_region is None:
         srh = float(
             srh_recombination(
                 np.asarray(n),
@@ -773,7 +955,8 @@ def total_recombination_at_node(
                 p1,
             )
         )
-    else:
+    elif neutral_explicit:
+        assert neutral_bulk_defects is not None
         srh = 0.0
         for species in neutral_bulk_defects.species:
             if not species.active_nodes[node] or not species.cycle_active:
@@ -790,6 +973,21 @@ def total_recombination_at_node(
             )
             _record_srh_denominator("bulk", np.asarray(denominator))
             srh += (n * p - ni_sq) / denominator
+    else:
+        assert monovalent_region is not None
+        srh = evaluate_monovalent_defect_closure(
+                n,
+                p,
+                monovalent_region.species,
+                band_gap_eV=monovalent_region.band_gap_eV,
+                effective_conduction_dos_m3=(
+                    monovalent_region.effective_conduction_dos_m3
+                ),
+                effective_valence_dos_m3=(
+                    monovalent_region.effective_valence_dos_m3
+                ),
+                temperature_K=monovalent_region.temperature_K,
+            ).total_recombination_rate_m3_s.item()
     return float(
         srh
         + radiative_recombination(np.asarray(n), np.asarray(p), ni_sq, B_rad)

@@ -1,10 +1,9 @@
 # Explicit Bulk-Defect Input Contract v1
 
-Status: DEF-2 local constitutive slice. The canonical schema is stable and a
-1D `explicit_quasi_steady` document executes exact neutral, single-level,
-unit-degeneracy multi-species SRH. Acceptor/donor species can be evaluated by
-the solver-independent DEF-2 local closure, but charged device execution
-remains solver-gated until the DEF-3 charged-DC checkpoint is complete.
+Status: DEF-3 public Python QF/DC contract. The canonical schema is stable; a
+1D `explicit_quasi_steady` document executes exact neutral multi-species SRH,
+and monovalent acceptor/donor species execute on the opt-in QF/DC path. DEF-4
+numerical and SCAPS-reference certification is still pending.
 
 ## 1. Compatibility rule
 
@@ -172,11 +171,13 @@ Do not switch only the selector. Before changing to
 4. a declared charge transition and matching neutral reference;
 5. finite SI kinetics and positive degeneracy.
 
-During DEF-1, an opt-in document executes only when every species is neutral,
-single-level, unit-degeneracy and lies in a spatially uniform 1D layer. Other
-valid future-schema cases raise `ExplicitDefectCapabilityError` at solver
-construction. This is intentional: unsupported physics is never approximated
-by an implicit lifetime fallback.
+An opt-in document executes on the general 1D transient/material path only
+when every species is neutral, single-level, unit-degeneracy and lies in a
+spatially uniform layer. Monovalent acceptor/donor species require the guarded
+QF/DC entry and `semiconductor_work_function` contact mode. Other valid
+future-schema cases raise `ExplicitDefectCapabilityError` at solver
+construction. Unsupported physics is never approximated by an implicit
+lifetime fallback.
 
 ## 7. Frontend field mapping (UI-0)
 
@@ -231,9 +232,15 @@ checkpoints in the roadmap.
 DEF-2 adds `physics.defect_closure.evaluate_monovalent_defect_closure` for
 canonical neutral/acceptor/donor single levels. It returns occupancy,
 recombination, charge, analytic carrier tangents, and explicitly labelled
-fixed-quasi-Fermi potential-direction tangents from one local state. It is not
-called by production material, Poisson, contact, or experiment code; see
-`docs/monovalent-defect-closure.md` for the exact contract and limitations.
+fixed-quasi-Fermi potential-direction tangents from one local state.
+
+DEF-3 compiles that closure across explicit layers and connects one occupancy
+to QF/DC continuity, Poisson charge/tangent, and defect-aware semiconductor
+contact neutrality/work functions. The public steady and J-V results retain
+model identity and per-species diagnostics. Default material/transient,
+impedance, 2D, dynamic occupancy, energy distributions, and charged interface
+defects remain fail closed. See `docs/charged-explicit-defect-qf-dc.md` for the
+exact activation, equations, evidence, and remaining certification boundary.
 
 ## 9. DEF-1 verification record
 

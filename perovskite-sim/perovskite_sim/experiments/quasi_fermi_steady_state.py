@@ -36,6 +36,17 @@ from perovskite_sim.experiments.jv_sweep import (
     thermodynamic_voc_ceiling,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.models.defects import ACCEPTOR, DONOR, EXPLICIT_QUASI_STEADY
+from perovskite_sim.physics.contacts import (
+    ContactThermodynamicCertificate,
+    ContactThermodynamicError,
+    require_contact_thermodynamic_certificate,
+)
+from perovskite_sim.physics.defect_closure import (
+    MonovalentBulkDefectEvaluation,
+    evaluate_monovalent_bulk_defects,
+    solve_monovalent_defect_charge_neutrality,
+)
 from perovskite_sim.physics.interface_plane import (
     FERMI_DIRAC_RICHARDSON,
     FERMI_RICHARDSON,
@@ -51,6 +62,7 @@ from perovskite_sim.physics.two_sided_interface import (
     validate_interface_topology,
 )
 from perovskite_sim.solver.mol import (
+    EXPLICIT_DEFECT_CHARGE_QF_DC,
     MaterialArrays,
     StateVec,
     _charge_density,
@@ -162,6 +174,9 @@ class QuasiFermiSteadyStateResult:
     interface_trace_potential_shift_V: tuple[tuple[float, float], ...] = ()
     interface_normalized_gauss_residual: tuple[float, ...] = ()
     interface_scaled_local_jacobian_condition: tuple[float, ...] = ()
+    bulk_defect_diagnostics: MonovalentBulkDefectEvaluation | None = None
+    contact_thermodynamic_status: str | None = None
+    contact_fermi_level_span_eV: float | None = None
 
 
 @dataclass(frozen=True)
@@ -426,13 +441,71 @@ def _prepare_two_sided_material(
     )
 
 
+def _stack_has_charged_explicit_defects(stack: DeviceStack) -> bool:
+    return any(
+        species.charge_transition in {ACCEPTOR, DONOR}
+        for layer in electrical_layers(stack)
+        for species in layer.params.bulk_defects
+    )
+
+
+def _build_qf_material(
+    grid: np.ndarray,
+    stack: DeviceStack,
+) -> MaterialArrays:
+    if _stack_has_charged_explicit_defects(stack):
+        return build_material_arrays(
+            grid,
+            stack,
+            explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+        )
+    return build_material_arrays(grid, stack)
+
+
+def _require_material_defect_contract(
+    stack: DeviceStack,
+    mat: MaterialArrays,
+) -> None:
+    expected = tuple(
+        (
+            f"layer[{index}]/{layer.name}",
+            layer.params.defect_document.sha256,
+        )
+        for index, layer in enumerate(electrical_layers(stack))
+        if layer.params.defect_document is not None
+        and layer.params.defect_model == EXPLICIT_QUASI_STEADY
+    )
+    model = mat.monovalent_bulk_defects
+    if _stack_has_charged_explicit_defects(stack):
+        if model is None:
+            raise QuasiFermiSteadyStateError(
+                "charged explicit-defect stack requires a qf_dc material cache"
+            )
+        actual = tuple(
+            (region.identifier, region.document_sha256)
+            for region in model.regions
+        )
+        if actual != expected:
+            raise QuasiFermiSteadyStateError(
+                "qf_dc material cache does not match the stack defect documents"
+            )
+    elif model is not None:
+        raise QuasiFermiSteadyStateError(
+            "qf_dc material cache supplied for a stack without charged defects"
+        )
+
+
 def _require_supported(
     mat: MaterialArrays,
     *,
     interface_boundary: bool = False,
     interface_topology: str = DEDUPLICATED_QSS,
+    allow_charged_bulk_defects: bool = False,
 ) -> None:
     unsupported: list[str] = []
+    if mat.monovalent_bulk_defects is not None:
+        if not allow_charged_bulk_defects:
+            unsupported.append("charged explicit bulk defects outside QF/DC")
     if getattr(mat, "has_dual_ions", False):
         unsupported.append("dual ions")
     if np.any(np.asarray(mat.D_ion_face, dtype=float) != 0.0):
@@ -523,6 +596,67 @@ def _validate_illumination_steps(
     return stages
 
 
+def _defect_aware_neutral_carriers(
+    mat: MaterialArrays,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return local dark-neutral carriers including compiled defect charge."""
+
+    net = np.asarray(mat.N_D - mat.N_A, dtype=float)
+    intrinsic_product = np.asarray(mat.ni_sq, dtype=float)
+    discriminant = np.sqrt(net**2 + 4.0 * intrinsic_product)
+    electron_majority = 0.5 * (net + discriminant)
+    hole_majority = 0.5 * (-net + discriminant)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        electron = np.where(
+            net >= 0.0,
+            electron_majority,
+            intrinsic_product / hole_majority,
+        )
+        hole = np.where(
+            net >= 0.0,
+            intrinsic_product / electron_majority,
+            hole_majority,
+        )
+    model = mat.monovalent_bulk_defects
+    if model is not None:
+        for region in model.regions:
+            node_indices = np.flatnonzero(region.active_nodes)
+            doping_pairs = np.column_stack(
+                (mat.N_A[node_indices], mat.N_D[node_indices])
+            )
+            unique_pairs, inverse = np.unique(
+                doping_pairs,
+                axis=0,
+                return_inverse=True,
+            )
+            local_n = np.empty(node_indices.size, dtype=float)
+            local_p = np.empty(node_indices.size, dtype=float)
+            for pair_index, (acceptors, donors) in enumerate(unique_pairs):
+                closure = solve_monovalent_defect_charge_neutrality(
+                    temperature_K=region.temperature_K,
+                    band_gap_eV=region.band_gap_eV,
+                    effective_conduction_dos_m3=(
+                        region.effective_conduction_dos_m3
+                    ),
+                    effective_valence_dos_m3=(
+                        region.effective_valence_dos_m3
+                    ),
+                    acceptor_density_m3=float(acceptors),
+                    donor_density_m3=float(donors),
+                    species=region.species,
+                ).neutrality
+                selected = inverse == pair_index
+                local_n[selected] = closure.electron_density_m3
+                local_p[selected] = closure.hole_density_m3
+            electron[node_indices] = local_n
+            hole[node_indices] = local_p
+    electron = np.maximum(electron, 1.0)
+    hole = np.maximum(hole, 1.0)
+    electron[[0, -1]] = (mat.n_L, mat.n_R)
+    hole[[0, -1]] = (mat.p_L, mat.p_R)
+    return electron, hole
+
+
 def _transport_balanced_seed(
     x: np.ndarray,
     stack: DeviceStack,
@@ -534,9 +668,12 @@ def _transport_balanced_seed(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build a Poisson-consistent seed with resistance-weighted QF drops."""
     node_count = len(x)
-    y_neutral = solve_equilibrium(x, stack)
-    n_neutral = np.maximum(y_neutral[:node_count], 1.0)
-    p_neutral = np.maximum(y_neutral[node_count : 2 * node_count], 1.0)
+    if mat.monovalent_bulk_defects is None:
+        y_neutral = solve_equilibrium(x, stack)
+        n_neutral = np.maximum(y_neutral[:node_count], 1.0)
+        p_neutral = np.maximum(y_neutral[node_count : 2 * node_count], 1.0)
+    else:
+        n_neutral, p_neutral = _defect_aware_neutral_carriers(mat)
     dx = np.diff(x)
     thermal_voltage = mat.V_T_device
     phi_right = poisson_right_boundary(mat, V_app)
@@ -583,6 +720,17 @@ def _transport_balanced_seed(
             context="transport-balanced hole seed",
         )
         rho = Q * (p - n + mat.N_D - mat.N_A)
+        defect_charge_derivative = np.zeros(node_count, dtype=float)
+        if mat.monovalent_bulk_defects is not None:
+            defect_evaluation = evaluate_monovalent_bulk_defects(
+                n,
+                p,
+                mat.monovalent_bulk_defects,
+            )
+            rho = rho + defect_evaluation.total_charge_density_C_m3
+            defect_charge_derivative = (
+                defect_evaluation.total_charge_derivative_fixed_qf_C_m3_V
+            )
         residual = (
             factor.C[:-1] * (phi[:-2] - phi[1:-1])
             + factor.C[1:] * (phi[2:] - phi[1:-1])
@@ -592,7 +740,10 @@ def _transport_balanced_seed(
         banded[0, 1:] = factor.C[1:-1]
         banded[1] = -(
             factor.C[:-1] + factor.C[1:]
-        ) - Q * (n[1:-1] + p[1:-1]) / thermal_voltage * factor.h_cell
+        ) + (
+            -Q * (n[1:-1] + p[1:-1]) / thermal_voltage
+            + defect_charge_derivative[1:-1]
+        ) * factor.h_cell
         banded[2, :-1] = factor.C[1:-1]
         step = solve_banded((1, 1), banded, -residual)
         damping = min(1.0, 0.05 / max(float(np.max(np.abs(step))), np.finfo(float).tiny))
@@ -767,6 +918,32 @@ class _QuasiFermiSystem:
         out[~positive] = b[~positive] * np.expm1(delta[~positive])
         return out
 
+    def _bulk_space_charge_and_tangent(
+        self,
+        n: np.ndarray,
+        p: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Evaluate carrier/dopant/ion and explicit-defect Poisson terms."""
+
+        rho = _charge_density(
+            p,
+            n,
+            self.base[2 * self.node_count : 3 * self.node_count],
+            self.mat.P_ion0,
+            self.mat.N_A,
+            self.mat.N_D,
+        )
+        derivative = -Q * (n + p) / self.thermal_voltage
+        model = self.mat.monovalent_bulk_defects
+        if model is not None:
+            defect = evaluate_monovalent_bulk_defects(n, p, model)
+            rho = rho + defect.total_charge_density_C_m3
+            derivative = (
+                derivative
+                + defect.total_charge_derivative_fixed_qf_C_m3_V
+            )
+        return rho, derivative
+
     def _add_interface_sheet_charge_to_poisson(
         self,
         raw: np.ndarray,
@@ -848,14 +1025,7 @@ class _QuasiFermiSystem:
             self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
             context="charged hole Poisson-Boltzmann evaluation",
         )
-        rho = _charge_density(
-            p,
-            n,
-            self.base[2 * self.node_count : 3 * self.node_count],
-            self.mat.P_ion0,
-            self.mat.N_A,
-            self.mat.N_D,
-        )
+        rho, charge_derivative = self._bulk_space_charge_and_tangent(n, p)
         charged_qss = solve_material_equilibrium_referenced_two_sided_interfaces_qss(
             self.mat,
             self.stack,
@@ -881,7 +1051,7 @@ class _QuasiFermiSystem:
         banded[0, 1:] = factor.C[1:-1]
         banded[1] = -(
             factor.C[:-1] + factor.C[1:]
-        ) - Q * (n[1:-1] + p[1:-1]) / self.thermal_voltage * factor.h_cell
+        ) + charge_derivative[1:-1] * factor.h_cell
         banded[2, :-1] = factor.C[1:-1]
         self._add_interface_sheet_charge_to_poisson(raw, charged_qss, banded)
         return raw, banded, n, p, charged_qss
@@ -986,14 +1156,7 @@ class _QuasiFermiSystem:
                 self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
                 context="hole Poisson-Boltzmann iterate",
             )
-            rho = _charge_density(
-                p,
-                n,
-                self.base[2 * self.node_count : 3 * self.node_count],
-                self.mat.P_ion0,
-                self.mat.N_A,
-                self.mat.N_D,
-            )
+            rho, charge_derivative = self._bulk_space_charge_and_tangent(n, p)
             raw = (
                 factor.C[:-1] * (phi[:-2] - phi[1:-1])
                 + factor.C[1:] * (phi[2:] - phi[1:-1])
@@ -1003,7 +1166,7 @@ class _QuasiFermiSystem:
             banded[0, 1:] = factor.C[1:-1]
             banded[1] = -(
                 factor.C[:-1] + factor.C[1:]
-            ) - Q * (n[1:-1] + p[1:-1]) / self.thermal_voltage * factor.h_cell
+            ) + charge_derivative[1:-1] * factor.h_cell
             banded[2, :-1] = factor.C[1:-1]
             step = solve_banded((1, 1), banded, -raw)
             damping = min(
@@ -1027,14 +1190,7 @@ class _QuasiFermiSystem:
             self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
             context="hole Poisson-Boltzmann solution",
         )
-        rho = _charge_density(
-            p,
-            n,
-            self.base[2 * self.node_count : 3 * self.node_count],
-            self.mat.P_ion0,
-            self.mat.N_A,
-            self.mat.N_D,
-        )
+        rho, _charge_derivative = self._bulk_space_charge_and_tangent(n, p)
         raw = (
             factor.C[:-1] * (phi[:-2] - phi[1:-1])
             + factor.C[1:] * (phi[2:] - phi[1:-1])
@@ -1558,9 +1714,10 @@ def solve_quasi_fermi_steady_state(
         )
 
     stages = _validate_illumination_steps(illuminated, illumination_steps)
-    input_material = build_material_arrays(grid, stack) if mat is None else mat
+    input_material = _build_qf_material(grid, stack) if mat is None else mat
     if len(input_material.eps_r) != len(grid):
         raise ValueError("mat arrays must match the supplied electrical grid")
+    _require_material_defect_contract(stack, input_material)
     material = input_material
     if topology == TWO_SIDED_TRACE:
         material = _prepare_two_sided_material(grid, stack, material)
@@ -1581,7 +1738,20 @@ def solve_quasi_fermi_steady_state(
         material,
         interface_boundary=interface_boundary,
         interface_topology=topology,
+        allow_charged_bulk_defects=True,
     )
+    contact_certificate: ContactThermodynamicCertificate | None = None
+    if material.monovalent_bulk_defects is not None:
+        try:
+            contact_certificate = require_contact_thermodynamic_certificate(
+                stack,
+                material,
+            )
+        except ContactThermodynamicError as exc:
+            raise QuasiFermiSteadyStateError(
+                "charged explicit defects require a certified contact "
+                f"thermodynamic reference: {exc}"
+            ) from exc
     system = _QuasiFermiSystem(
         grid,
         stack,
@@ -1800,7 +1970,12 @@ def solve_quasi_fermi_steady_state(
     interface_basin_initializations = 0
     interface_basin_predictor_failures = 0
     interface_basin_predictor_regrids = 0
-    if interface_boundary and illuminated and initial_state is None:
+    if (
+        interface_boundary
+        and illuminated
+        and initial_state is None
+        and input_material.monovalent_bulk_defects is None
+    ):
         # The dark-to-light QF path becomes rank-deficient when a blocking
         # interface depletes a minority carrier below finite-difference
         # sensitivity. Use the established density-form SG solution only as a
@@ -2028,6 +2203,13 @@ def solve_quasi_fermi_steady_state(
     else:
         z = nonlinear_coordinates
         final = system.evaluate(z, stages[-1])
+    bulk_defect_diagnostics = None
+    if material.monovalent_bulk_defects is not None:
+        bulk_defect_diagnostics = evaluate_monovalent_bulk_defects(
+            final.y[: len(grid)],
+            final.y[len(grid) : 2 * len(grid)],
+            material.monovalent_bulk_defects,
+        )
     interface_local_residual = 0.0
     interface_max_state_to_dos = 0.0
     interface_certificate = None
@@ -2174,6 +2356,23 @@ def solve_quasi_fermi_steady_state(
         )
         if any(not np.all(np.isfinite(value)) for value in charge_arrays):
             failures.append("interface-charge evidence contains non-finite values")
+    if bulk_defect_diagnostics is not None:
+        defect_arrays = (
+            bulk_defect_diagnostics.occupancy,
+            bulk_defect_diagnostics.kinetic_denominator_s1,
+            bulk_defect_diagnostics.charge_density_C_m3,
+            bulk_defect_diagnostics.recombination_rate_m3_s,
+            bulk_defect_diagnostics.total_charge_density_C_m3,
+            bulk_defect_diagnostics.total_recombination_rate_m3_s,
+        )
+        if any(not np.all(np.isfinite(value)) for value in defect_arrays):
+            failures.append("bulk-defect evidence contains non-finite values")
+        if (
+            bulk_defect_diagnostics.minimum_occupancy < 0.0
+            or bulk_defect_diagnostics.maximum_occupancy > 1.0
+            or bulk_defect_diagnostics.minimum_kinetic_denominator_s1 <= 0.0
+        ):
+            failures.append("bulk-defect occupancy or kinetic denominator is invalid")
     if failures:
         raise QuasiFermiSteadyStateError(
             "QF Newton terminated without a physical certificate: "
@@ -2296,6 +2495,15 @@ def solve_quasi_fermi_steady_state(
                     final.interface_charge_qss.scaled_local_jacobian_condition
                 )
             )
+        ),
+        bulk_defect_diagnostics=bulk_defect_diagnostics,
+        contact_thermodynamic_status=(
+            None if contact_certificate is None else contact_certificate.status
+        ),
+        contact_fermi_level_span_eV=(
+            None
+            if contact_certificate is None
+            else contact_certificate.fermi_level_span_eV
         ),
     )
 
@@ -2615,7 +2823,8 @@ def solve_quasi_fermi_jv_sweep(
         raise ValueError("max_voltage_bridge_points must be a positive integer")
 
     grid = np.asarray(x, dtype=float)
-    material = build_material_arrays(grid, stack) if mat is None else mat
+    material = _build_qf_material(grid, stack) if mat is None else mat
+    _require_material_defect_contract(stack, material)
     common = dict(
         illuminated=True,
         mat=material,

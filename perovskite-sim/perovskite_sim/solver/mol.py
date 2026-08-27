@@ -28,6 +28,8 @@ from perovskite_sim.models.device import (
     electrical_interface_defects,
 )
 from perovskite_sim.models.defects import (
+    ACCEPTOR,
+    DONOR,
     EFFECTIVE_LIFETIME,
     EXPLICIT_QUASI_STEADY,
     NEUTRAL,
@@ -41,6 +43,10 @@ from perovskite_sim.physics.recombination import (
     _observe_srh_denominators,
     evaluate_neutral_bulk_defects,
     interface_recombination,
+)
+from perovskite_sim.physics.defect_closure import (
+    MonovalentBulkDefectModel,
+    MonovalentDefectRegion,
 )
 from perovskite_sim.physics.interface_plane import (
     build_plane_params,
@@ -86,6 +92,8 @@ DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF = (
 )
 BULK_TRAP_CHARGE_OFF = "off"
 BULK_TRAP_CHARGE_RESEARCH_EQUILIBRIUM = "research_equilibrium"
+EXPLICIT_DEFECT_CHARGE_OFF = "off"
+EXPLICIT_DEFECT_CHARGE_QF_DC = "qf_dc"
 
 
 @dataclass
@@ -353,6 +361,10 @@ class MaterialArrays:
     # lifetime dispatch and operation order; an active model replaces only the
     # bulk SRH term on its declared layer nodes and never contributes charge.
     neutral_bulk_defects: NeutralBulkDefectModel | None = None
+    # DEF-3 charged/neutral monovalent inventory compiled for the guarded QF
+    # DC lane. Ordinary MoL Poisson assembly rejects this object because that
+    # path does not yet include quasi-steady defect charge in its state law.
+    monovalent_bulk_defects: MonovalentBulkDefectModel | None = None
     # Explicit P4.3 research slice. Production MoL rejects any non-off value;
     # the dedicated equilibrium solver consumes the same material cache.
     bulk_trap_charge_closure: str = BULK_TRAP_CHARGE_OFF
@@ -521,6 +533,8 @@ class MaterialArrays:
             d["degenerate_recombination_model"] = "off"
         if self.neutral_bulk_defects is not None:
             d["neutral_bulk_defects"] = self.neutral_bulk_defects
+        if self.monovalent_bulk_defects is not None:
+            d["monovalent_bulk_defects"] = self.monovalent_bulk_defects
         if self.interface_faces:
             d["interface_faces"] = list(self.interface_faces)
             d["A_star_n"] = self.A_star_n
@@ -919,12 +933,99 @@ def _compile_neutral_bulk_defects(
     )
 
 
+def _compile_monovalent_bulk_defects(
+    layers: tuple,
+    layer_masks: tuple[np.ndarray, ...],
+    *,
+    physical_band_gap_eV: np.ndarray,
+    effective_conduction_dos_m3: np.ndarray,
+    effective_valence_dos_m3: np.ndarray,
+    intrinsic_product_m6: np.ndarray,
+    temperature_K: float,
+) -> MonovalentBulkDefectModel | None:
+    """Compile charged/neutral DEF-3 documents onto disjoint grid regions."""
+
+    explicit = [
+        (index, layer, mask)
+        for index, (layer, mask) in enumerate(
+            zip(layers, layer_masks, strict=True)
+        )
+        if layer.params.defect_model == EXPLICIT_QUASI_STEADY
+    ]
+    if not explicit:
+        return None
+    regions: list[MonovalentDefectRegion] = []
+    for layer_index, layer, mask in explicit:
+        document = layer.params.defect_document
+        if document is None:
+            raise ExplicitDefectCapabilityError(
+                f"explicit layer {layer.name!r} has no canonical defect document"
+            )
+        layer_id = f"layer[{layer_index}]/{layer.name}"
+        local_gap = np.asarray(physical_band_gap_eV[mask], dtype=float)
+        local_nc = np.asarray(effective_conduction_dos_m3[mask], dtype=float)
+        local_nv = np.asarray(effective_valence_dos_m3[mask], dtype=float)
+        local_ni_sq = np.asarray(intrinsic_product_m6[mask], dtype=float)
+        arrays = {
+            "band gap": local_gap,
+            "conduction DOS": local_nc,
+            "valence DOS": local_nv,
+        }
+        invalid = [
+            name
+            for name, values in arrays.items()
+            if (
+                values.size == 0
+                or not np.all(np.isfinite(values))
+                or np.any(values <= 0.0)
+                or not np.all(values == values[0])
+            )
+        ]
+        if invalid:
+            raise ExplicitDefectCapabilityError(
+                "DEF-3 QF/DC explicit defects require uniform finite positive "
+                f"{', '.join(invalid)} in {layer_id}; spatial grading starts "
+                "at DEF-5"
+            )
+        physical_ni_sq = float(local_nc[0] * local_nv[0]) * math.exp(
+            -float(local_gap[0]) / thermal_voltage(float(temperature_K))
+        )
+        relative_intrinsic_mismatch = float(
+            np.max(np.abs(local_ni_sq - physical_ni_sq))
+            / max(physical_ni_sq, np.finfo(float).tiny)
+        )
+        if (
+            not np.all(np.isfinite(local_ni_sq))
+            or np.any(local_ni_sq <= 0.0)
+            or relative_intrinsic_mismatch > 1.0e-10
+        ):
+            raise ExplicitDefectCapabilityError(
+                "DEF-3 QF/DC requires ni^2=Nc*Nv*exp(-Eg/kT) on every "
+                f"explicit node in {layer_id}; maximum relative mismatch="
+                f"{relative_intrinsic_mismatch:.6g}"
+            )
+        regions.append(
+            MonovalentDefectRegion(
+                identifier=layer_id,
+                document_sha256=document.sha256,
+                active_nodes=np.asarray(mask, dtype=bool),
+                band_gap_eV=float(local_gap[0]),
+                effective_conduction_dos_m3=float(local_nc[0]),
+                effective_valence_dos_m3=float(local_nv[0]),
+                temperature_K=float(temperature_K),
+                species=document.bulk_defects,
+            )
+        )
+    return MonovalentBulkDefectModel(regions=tuple(regions))
+
+
 def build_material_arrays(
     x: np.ndarray,
     stack: DeviceStack,
     *,
     carrier_statistics_transport: str = DEGENERATE_TRANSPORT_DEFAULT,
     bulk_trap_charge_closure: str = BULK_TRAP_CHARGE_OFF,
+    explicit_defect_charge_closure: str = EXPLICIT_DEFECT_CHARGE_OFF,
 ) -> MaterialArrays:
     """Construct the immutable per-experiment material array bundle.
 
@@ -960,6 +1061,13 @@ def build_material_arrays(
     }:
         raise ValueError(
             "bulk_trap_charge_closure must be 'off' or 'research_equilibrium'"
+        )
+    if explicit_defect_charge_closure not in {
+        EXPLICIT_DEFECT_CHARGE_OFF,
+        EXPLICIT_DEFECT_CHARGE_QF_DC,
+    }:
+        raise ValueError(
+            "explicit_defect_charge_closure must be 'off' or 'qf_dc'"
         )
     N = len(x)
 
@@ -1080,6 +1188,38 @@ def build_material_arrays(
         bulk_trap_charge_closure
         == BULK_TRAP_CHARGE_RESEARCH_EQUILIBRIUM
     )
+    charged_explicit_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.params is not None
+        and layer.params.defect_model == EXPLICIT_QUASI_STEADY
+        and any(
+            species.charge_transition in {ACCEPTOR, DONOR}
+            for species in layer.params.bulk_defects
+        )
+    )
+    research_monovalent_qf_dc = (
+        explicit_defect_charge_closure == EXPLICIT_DEFECT_CHARGE_QF_DC
+    )
+    if charged_explicit_layers and not research_monovalent_qf_dc:
+        raise ExplicitDefectCapabilityError(
+            "DEF-1 explicit execution accepts neutral species only; charged "
+            "acceptor/donor execution requires the guarded QF/DC closure. "
+            "Activated layers: "
+            + ", ".join(charged_explicit_layers)
+        )
+    if research_monovalent_qf_dc and not charged_explicit_layers:
+        raise ExplicitDefectCapabilityError(
+            "qf_dc explicit-defect charge closure requires at least one "
+            "acceptor or donor species"
+        )
+    if research_monovalent_qf_dc and (
+        stack.built_in_potential_mode != "semiconductor_work_function"
+    ):
+        raise ExplicitDefectCapabilityError(
+            "charged explicit defects require "
+            "built_in_potential_mode='semiconductor_work_function'"
+        )
     if bulk_trap_layers and not research_bulk_trap_equilibrium:
         raise BulkTrapChargeCapabilityError(
             "energy-resolved bulk trap charge is not enabled on the default "
@@ -2129,7 +2269,11 @@ def build_material_arrays(
     # continuity node.
     ni_sq_L = float(ni_sq[0])
     ni_sq_R = float(ni_sq[-1])
-    if research_degenerate_transport or research_bulk_trap_equilibrium:
+    if (
+        research_degenerate_transport
+        or research_bulk_trap_equilibrium
+        or research_monovalent_qf_dc
+    ):
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,
         )
@@ -2341,12 +2485,29 @@ def build_material_arrays(
                             B_rad[mask_abs] = B_rad[mask_abs] * P_esc
             offset_pr += layer.thickness
 
-    neutral_bulk_defects = _compile_neutral_bulk_defects(
-        tuple(elec_layers),
-        tuple(layer_masks),
-        ni_sq=ni_sq,
-        physical_band_gap_eV=Eg_phys,
-        thermal_voltage_V=V_T_dev,
+    monovalent_bulk_defects = (
+        _compile_monovalent_bulk_defects(
+            tuple(elec_layers),
+            tuple(layer_masks),
+            physical_band_gap_eV=Eg_phys,
+            effective_conduction_dos_m3=N_C_node_arr,
+            effective_valence_dos_m3=N_V_node_arr,
+            intrinsic_product_m6=ni_sq,
+            temperature_K=T_dev,
+        )
+        if research_monovalent_qf_dc
+        else None
+    )
+    neutral_bulk_defects = (
+        None
+        if monovalent_bulk_defects is not None
+        else _compile_neutral_bulk_defects(
+            tuple(elec_layers),
+            tuple(layer_masks),
+            ni_sq=ni_sq,
+            physical_band_gap_eV=Eg_phys,
+            thermal_voltage_V=V_T_dev,
+        )
     )
 
     arrays = MaterialArrays(
@@ -2446,6 +2607,7 @@ def build_material_arrays(
             "off" if research_degenerate_transport else "maxwell_boltzmann"
         ),
         neutral_bulk_defects=neutral_bulk_defects,
+        monovalent_bulk_defects=monovalent_bulk_defects,
         bulk_trap_charge_closure=bulk_trap_charge_closure,
         bulk_trap_distribution=(
             elec_layers[0].params.bulk_trap_distribution
@@ -2825,6 +2987,11 @@ def assemble_rhs(
         raise BulkTrapChargeCapabilityError(
             "production MoL does not include energy-resolved bulk trap charge; "
             "use solve_bulk_trap_pn_equilibrium for the restricted research slice"
+        )
+    if mat.monovalent_bulk_defects is not None and phi_frozen is None:
+        raise ExplicitDefectCapabilityError(
+            "charged explicit defects are closed only by the guarded QF/DC "
+            "solver; ordinary MoL Poisson assembly would omit their charge"
         )
     if regularization is not None and not isinstance(
         regularization, RHSRegularization

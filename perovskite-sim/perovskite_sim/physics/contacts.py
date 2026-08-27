@@ -69,6 +69,9 @@ if TYPE_CHECKING:
         CarrierStatistics,
     )
     from perovskite_sim.physics.bulk_traps import BulkTrapState
+    from perovskite_sim.physics.defect_closure import (
+        MonovalentDefectClosureResult,
+    )
     from perovskite_sim.solver.mol import MaterialArrays
 
 
@@ -115,6 +118,7 @@ class SemiconductorContactState:
     conduction_band_shift_eV: float
     valence_band_shift_eV: float
     bulk_trap_state: "BulkTrapState | None" = None
+    explicit_defect_closure: "MonovalentDefectClosureResult | None" = None
 
     @property
     def electron_density_m3(self) -> float:
@@ -204,7 +208,12 @@ def build_semiconductor_contact_state(
         conduction_band_fraction=float(params.bgn_conduction_band_fraction),
     )
     trap_state = None
-    if params.bulk_trap_distribution is None:
+    explicit_defect_closure = None
+    has_charged_explicit_defects = any(
+        item.charge_transition in {"acceptor", "donor"}
+        for item in params.bulk_defects
+    )
+    if params.bulk_trap_distribution is None and not has_charged_explicit_defects:
         neutrality = solve_charge_neutrality(
             temperature_K=temperature,
             band_gap_eV=band_edges.effective_band_gap_eV,
@@ -219,7 +228,7 @@ def build_semiconductor_contact_state(
             donor_degeneracy=float(params.donor_degeneracy),
             acceptor_degeneracy=float(params.acceptor_degeneracy),
         )
-    else:
+    elif params.bulk_trap_distribution is not None:
         from perovskite_sim.physics.bulk_traps import (
             solve_bulk_trap_charge_neutrality,
         )
@@ -236,6 +245,22 @@ def build_semiconductor_contact_state(
         )
         neutrality = trap_neutrality.neutrality
         trap_state = trap_neutrality.trap_state
+    else:
+        from perovskite_sim.physics.defect_closure import (
+            solve_monovalent_defect_charge_neutrality,
+        )
+
+        defect_neutrality = solve_monovalent_defect_charge_neutrality(
+            temperature_K=temperature,
+            band_gap_eV=band_edges.effective_band_gap_eV,
+            effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
+            effective_valence_dos_m3=float(params.Nv300) * dos_scale,
+            acceptor_density_m3=float(params.N_A),
+            donor_density_m3=float(params.N_D),
+            species=params.bulk_defects,
+        )
+        neutrality = defect_neutrality.neutrality
+        explicit_defect_closure = defect_neutrality.closure
     affinity = band_edges.effective_electron_affinity_eV
     work_function = affinity - (
         neutrality.thermal_voltage_V
@@ -253,6 +278,7 @@ def build_semiconductor_contact_state(
         conduction_band_shift_eV=band_edges.conduction_band_shift_eV,
         valence_band_shift_eV=band_edges.valence_band_shift_eV,
         bulk_trap_state=trap_state,
+        explicit_defect_closure=explicit_defect_closure,
     )
 
 

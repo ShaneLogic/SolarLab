@@ -8,6 +8,21 @@ import pytest
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.models.device import DeviceStack, LayerSpec
+from perovskite_sim.models.defects import (
+    ACCEPTOR,
+    DONOR,
+    EXPLICIT_DEFECT_SCHEMA_VERSION,
+    EXPLICIT_QUASI_STEADY,
+    INTEGRATED_TOTAL,
+    NEUTRAL,
+    NEUTRAL_ALL_OCCUPANCIES,
+    NEUTRAL_WHEN_EMPTY,
+    NEUTRAL_WHEN_FILLED,
+    SINGLE_LEVEL,
+    BulkDefectDistribution,
+    BulkDefectKinetics,
+    BulkDefectSpecies,
+)
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.physics.contacts import (
     build_semiconductor_contact_state,
@@ -57,6 +72,44 @@ def _silicon(
     )
 
 
+def _explicit_species(transition: str) -> BulkDefectSpecies:
+    reference = {
+        ACCEPTOR: NEUTRAL_WHEN_EMPTY,
+        DONOR: NEUTRAL_WHEN_FILLED,
+        NEUTRAL: NEUTRAL_ALL_OCCUPANCIES,
+    }[transition]
+    return BulkDefectSpecies(
+        name=f"contact_{transition}",
+        distribution=BulkDefectDistribution(
+            kind=SINGLE_LEVEL,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=8.0e23,
+            center_eV_above_vb=0.55,
+        ),
+        charge_transition=transition,
+        neutral_reference=reference,
+        kinetics=BulkDefectKinetics(
+            sigma_n_m2=2.0e-19,
+            sigma_p_m2=7.0e-20,
+            thermal_velocity_n_m_s=1.0e5,
+            thermal_velocity_p_m_s=1.0e5,
+        ),
+        degeneracy=1.0,
+    )
+
+
+def _with_explicit_defect(
+    params: MaterialParams,
+    transition: str,
+) -> MaterialParams:
+    return replace(
+        params,
+        defect_schema_version=EXPLICIT_DEFECT_SCHEMA_VERSION,
+        defect_model=EXPLICIT_QUASI_STEADY,
+        bulk_defects=(_explicit_species(transition),),
+    )
+
+
 @pytest.mark.parametrize(
     ("acceptors", "donors"),
     ((0.0, 1.0e27), (8.0e26, 0.0)),
@@ -99,6 +152,87 @@ def test_fd_device_work_function_uses_the_same_contact_neutrality_states():
         layers=(
             LayerSpec("p_plus", 1.0e-6, left, "HTL"),
             LayerSpec("n_plus", 1.0e-6, right, "ETL"),
+        ),
+        built_in_potential_mode="semiconductor_work_function",
+    )
+    left_state = build_semiconductor_contact_state(
+        left,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+    right_state = build_semiconductor_contact_state(
+        right,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+
+    assert stack.compute_semiconductor_V_bi() == pytest.approx(
+        left_state.work_function_eV - right_state.work_function_eV,
+        abs=2.0e-14,
+    )
+
+
+@pytest.mark.parametrize("transition", [ACCEPTOR, DONOR])
+def test_charged_explicit_defect_contact_state_uses_shared_local_closure(
+    transition,
+):
+    baseline_params = (
+        _silicon(donors=2.0e22)
+        if transition == ACCEPTOR
+        else _silicon(acceptors=2.0e22)
+    )
+    params = _with_explicit_defect(baseline_params, transition)
+
+    contact = build_semiconductor_contact_state(
+        params,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+    baseline = build_semiconductor_contact_state(
+        baseline_params,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+    closure = contact.explicit_defect_closure
+
+    assert closure is not None
+    assert contact.neutrality.normalized_charge_residual < 1.0e-12
+    assert closure.charge_transitions == (transition,)
+    assert 0.0 < closure.occupancy.item() < 1.0
+    assert contact.work_function_eV != pytest.approx(
+        baseline.work_function_eV,
+        abs=1.0e-6,
+    )
+
+
+def test_neutral_explicit_defect_is_inert_for_contact_thermodynamics():
+    baseline_params = _silicon(donors=2.0e22)
+    params = _with_explicit_defect(baseline_params, NEUTRAL)
+
+    contact = build_semiconductor_contact_state(
+        params,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+    baseline = build_semiconductor_contact_state(
+        baseline_params,
+        temperature_K=300.0,
+        use_temperature_scaling=True,
+    )
+
+    assert contact.explicit_defect_closure is None
+    assert contact.work_function_eV == baseline.work_function_eV
+    assert contact.electron_density_m3 == baseline.electron_density_m3
+    assert contact.hole_density_m3 == baseline.hole_density_m3
+
+
+def test_charged_defect_device_work_function_uses_same_contact_closures():
+    left = _with_explicit_defect(_silicon(acceptors=2.0e22), ACCEPTOR)
+    right = _with_explicit_defect(_silicon(donors=2.0e22), DONOR)
+    stack = DeviceStack(
+        layers=(
+            LayerSpec("p", 100.0e-9, left, "HTL"),
+            LayerSpec("n", 100.0e-9, right, "ETL"),
         ),
         built_in_potential_mode="semiconductor_work_function",
     )

@@ -776,11 +776,16 @@ def _semiconductor_work_function(
             "semiconductor_work_function requires material parameters on both "
             "electrical contact layers"
         )
+    has_charged_explicit_defects = any(
+        item.charge_transition in {"acceptor", "donor"}
+        for item in p.bulk_defects
+    )
     if (
         p.carrier_statistics == "fermi_dirac"
         or p.dopant_ionization_model == "discrete_level"
         or p.band_gap_narrowing_model != "off"
         or p.bulk_trap_distribution is not None
+        or has_charged_explicit_defects
     ):
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,

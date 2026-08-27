@@ -1,9 +1,8 @@
 # Monovalent Bulk-Defect Local Closure
 
-Status: DEF-2 solver-independent constitutive slice. This module is tested but
-is not connected to production Poisson, contacts, J-V, impedance, or transient
-state equations. Charged `explicit_quasi_steady` device execution therefore
-continues to fail closed until DEF-3.
+Status: DEF-2 solver-independent constitutive contract, consumed by the DEF-3
+opt-in QF/DC path. Other charged device paths remain fail closed; see
+`docs/charged-explicit-defect-qf-dc.md` for the integration boundary.
 
 ## 1. Scope
 
@@ -17,8 +16,9 @@ single-level, quasi-steady closure. One call produces, from the same occupancy:
 - the potential-direction derivative at fixed quasi-Fermi levels;
 - immutable, JSON-compatible diagnostics and a content identity.
 
-The closure does not mutate its inputs, clip occupancy, solve a global state,
-or add charge to a production residual.
+The closure does not mutate its inputs, clip occupancy, or solve a global
+state. DEF-3 consumes its compiled device form in QF/DC continuity, Poisson,
+and contact neutrality without changing these local equations.
 
 ## 2. Local equations
 
@@ -119,7 +119,8 @@ balance, centered differences for every tangent, multi-species totals,
 `N_t -> 0`, one-leg capture limits, band-edge levels, 180--420 K extreme
 states, immutable serialization, and fail-closed inputs.
 
-Passing these tests establishes a local constitutive closure only. Production
-charged-defect capability additionally requires, in DEF-3, a shared contact
-neutrality reference, Poisson and continuity coupling, a structured global
-Jacobian, dark/light/bias integration tests, and numerical certification.
+Passing these tests establishes the local constitutive closure only. DEF-3
+adds a shared contact neutrality reference, Poisson/continuity coupling, an
+analytic eliminated-Poisson tangent, and dark/light/bias integration tests.
+DEF-4 still must supply the 3x3 numerical matrix and SCAPS reference evidence
+before the capability can be labelled production-certified.

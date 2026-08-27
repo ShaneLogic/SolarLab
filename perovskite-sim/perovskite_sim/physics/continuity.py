@@ -364,6 +364,7 @@ def carrier_continuity_rhs(
             n_rec, p_rec, params["ni_sq"], params["tau_n"], params["tau_p"],
             params["n1"], params["p1"], params["B_rad"], params["C_n"], params["C_p"],
             neutral_bulk_defects=params.get("neutral_bulk_defects"),
+            monovalent_bulk_defects=params.get("monovalent_bulk_defects"),
         )
 
     # Dual-grid cell widths

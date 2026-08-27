@@ -13,6 +13,8 @@ from perovskite_sim.constants import Q
 from perovskite_sim.models.defects import (
     ACCEPTOR,
     DONOR,
+    EXPLICIT_DEFECT_SCHEMA_VERSION,
+    EXPLICIT_QUASI_STEADY,
     GAUSSIAN,
     INTEGRATED_TOTAL,
     NEUTRAL,
@@ -24,6 +26,7 @@ from perovskite_sim.models.defects import (
     UNRESOLVED,
     WIDTH_GAUSSIAN_SIGMA,
     BulkDefectDistribution,
+    BulkDefectDocument,
     BulkDefectKinetics,
     BulkDefectSpecies,
 )
@@ -33,10 +36,15 @@ from perovskite_sim.physics.bulk_traps import (
 )
 from perovskite_sim.physics.defect_closure import (
     MONOVALENT_DEFECT_CLOSURE_VERSION,
+    MonovalentBulkDefectModel,
     MonovalentDefectClosureCapabilityError,
+    MonovalentDefectRegion,
+    evaluate_monovalent_bulk_defects,
     evaluate_monovalent_defect_closure,
+    solve_monovalent_defect_charge_neutrality,
 )
 from perovskite_sim.physics.recombination import srh_recombination_derivatives
+from perovskite_sim.physics.statistics import solve_charge_neutrality
 from perovskite_sim.physics.temperature import thermal_voltage
 
 
@@ -94,6 +102,14 @@ def _evaluate(n, p, *species):
         effective_valence_dos_m3=NV_M3,
         temperature_K=TEMPERATURE_K,
     )
+
+
+def _document_hash(*species: BulkDefectSpecies) -> str:
+    return BulkDefectDocument(
+        schema_version=EXPLICIT_DEFECT_SCHEMA_VERSION,
+        defect_model=EXPLICIT_QUASI_STEADY,
+        bulk_defects=species,
+    ).sha256
 
 
 def test_acceptor_single_level_matches_closed_form_occupancy_rate_and_charge():
@@ -248,6 +264,115 @@ def test_equilibrium_mass_action_gives_zero_recombination_without_clipping():
     assert 0.0 <= result.minimum_occupancy <= result.maximum_occupancy <= 1.0
 
 
+@pytest.mark.parametrize(
+    ("transition", "acceptors", "donors", "carrier_name", "charge_sign"),
+    [
+        (ACCEPTOR, 0.0, 2.0e20, "electron_density_m3", -1.0),
+        (DONOR, 2.0e20, 0.0, "hole_density_m3", 1.0),
+    ],
+)
+def test_common_fermi_contact_closure_closes_charge_and_mass_action(
+    transition,
+    acceptors,
+    donors,
+    carrier_name,
+    charge_sign,
+):
+    defect = _species(
+        transition,
+        transition,
+        density_m3=8.0e21,
+        center_eV=0.73,
+    )
+    result = solve_monovalent_defect_charge_neutrality(
+        temperature_K=TEMPERATURE_K,
+        band_gap_eV=GAP_EV,
+        effective_conduction_dos_m3=NC_M3,
+        effective_valence_dos_m3=NV_M3,
+        acceptor_density_m3=acceptors,
+        donor_density_m3=donors,
+        species=(defect,),
+    )
+    state = result.neutrality
+    signed_defect_charge = float(
+        np.sum(result.closure.signed_charge_number_density_m3)
+    )
+    residual = (
+        state.hole_density_m3
+        - state.electron_density_m3
+        + donors
+        - acceptors
+        + signed_defect_charge
+    )
+    charge_scale = max(
+        state.electron_density_m3,
+        state.hole_density_m3,
+        acceptors,
+        donors,
+        defect.distribution.total_density_m3,
+    )
+    intrinsic_product = NC_M3 * NV_M3 * math.exp(
+        -GAP_EV / thermal_voltage(TEMPERATURE_K)
+    )
+    recombination_scale = max(
+        abs(
+            result.closure.total_recombination_derivative_n_s1.item()
+            * state.electron_density_m3
+        ),
+        1.0,
+    )
+
+    assert abs(residual) / charge_scale < 1.0e-12
+    assert state.normalized_charge_residual < 1.0e-12
+    assert state.electron_density_m3 * state.hole_density_m3 == pytest.approx(
+        intrinsic_product,
+        rel=2.0e-14,
+    )
+    assert (
+        abs(result.closure.total_recombination_rate_m3_s.item())
+        / recombination_scale
+        < 2.0e-14
+    )
+    assert 0.0 < result.closure.occupancy.item() < 1.0
+    assert charge_sign * signed_defect_charge > 0.0
+    assert getattr(state, carrier_name) < 2.0e20
+
+
+def test_neutral_species_contact_closure_recovers_legacy_neutrality():
+    defect = _species("neutral", NEUTRAL, density_m3=8.0e21)
+    explicit = solve_monovalent_defect_charge_neutrality(
+        temperature_K=TEMPERATURE_K,
+        band_gap_eV=GAP_EV,
+        effective_conduction_dos_m3=NC_M3,
+        effective_valence_dos_m3=NV_M3,
+        acceptor_density_m3=3.0e20,
+        donor_density_m3=0.0,
+        species=(defect,),
+    )
+    legacy = solve_charge_neutrality(
+        temperature_K=TEMPERATURE_K,
+        band_gap_eV=GAP_EV,
+        effective_conduction_dos_m3=NC_M3,
+        effective_valence_dos_m3=NV_M3,
+        acceptor_density_m3=3.0e20,
+        donor_density_m3=0.0,
+    )
+
+    assert explicit.neutrality.electron_density_m3 == pytest.approx(
+        legacy.electron_density_m3,
+        rel=2.0e-14,
+    )
+    assert explicit.neutrality.hole_density_m3 == pytest.approx(
+        legacy.hole_density_m3,
+        rel=2.0e-14,
+    )
+    assert explicit.neutrality.reduced_electron_fermi_level == pytest.approx(
+        legacy.reduced_electron_fermi_level,
+        abs=2.0e-14,
+    )
+    assert explicit.closure.total_charge_density_C_m3.item() == 0.0
+
+
 def test_all_local_tangents_match_independent_centered_differences():
     species = (
         _species("acceptor", ACCEPTOR),
@@ -355,6 +480,103 @@ def test_multiple_species_totals_identity_and_serialization_are_closed():
         value = getattr(result, field.name)
         if isinstance(value, np.ndarray):
             assert not value.flags.writeable
+
+
+def test_device_model_aggregates_disjoint_regions_and_overlapping_species():
+    left_mask = np.asarray([True, True, False, False])
+    right_mask = ~left_mask
+    left_species = (
+        _species("acceptor", ACCEPTOR),
+        _species("neutral", NEUTRAL, center_eV=0.73),
+    )
+    right_species = (_species("donor", DONOR, center_eV=0.91),)
+    model = MonovalentBulkDefectModel(
+        regions=(
+            MonovalentDefectRegion(
+                identifier="layer[0]/left",
+                document_sha256=_document_hash(*left_species),
+                active_nodes=left_mask,
+                band_gap_eV=GAP_EV,
+                effective_conduction_dos_m3=NC_M3,
+                effective_valence_dos_m3=NV_M3,
+                temperature_K=TEMPERATURE_K,
+                species=left_species,
+            ),
+            MonovalentDefectRegion(
+                identifier="layer[1]/right",
+                document_sha256=_document_hash(*right_species),
+                active_nodes=right_mask,
+                band_gap_eV=GAP_EV,
+                effective_conduction_dos_m3=NC_M3,
+                effective_valence_dos_m3=NV_M3,
+                temperature_K=TEMPERATURE_K,
+                species=right_species,
+            ),
+        )
+    )
+    result = evaluate_monovalent_bulk_defects(
+        np.geomspace(1.0e18, 1.0e21, 4),
+        np.geomspace(1.0e21, 1.0e18, 4),
+        model,
+    )
+
+    assert result.species_identifiers == (
+        "layer[0]/left/acceptor",
+        "layer[0]/left/neutral",
+        "layer[1]/right/donor",
+    )
+    np.testing.assert_array_equal(result.active_nodes[0], left_mask)
+    np.testing.assert_array_equal(result.active_nodes[1], left_mask)
+    np.testing.assert_array_equal(result.active_nodes[2], right_mask)
+    np.testing.assert_array_equal(
+        result.total_charge_density_C_m3,
+        np.sum(result.charge_density_C_m3, axis=0),
+    )
+    np.testing.assert_array_equal(
+        result.total_recombination_rate_m3_s,
+        np.sum(result.recombination_rate_m3_s, axis=0),
+    )
+    assert np.all(result.charge_density_C_m3[0, left_mask] < 0.0)
+    assert np.all(result.charge_density_C_m3[1] == 0.0)
+    assert np.all(result.charge_density_C_m3[2, right_mask] > 0.0)
+    assert not result.active_nodes.flags.writeable
+    assert result.to_dict()["model_identity_sha256"] == model.identity_sha256
+
+
+def test_device_model_rejects_overlapping_material_regions():
+    species = (_species("acceptor", ACCEPTOR),)
+    region = MonovalentDefectRegion(
+        identifier="layer[0]/left",
+        document_sha256=_document_hash(*species),
+        active_nodes=np.asarray([True, True, False]),
+        band_gap_eV=GAP_EV,
+        effective_conduction_dos_m3=NC_M3,
+        effective_valence_dos_m3=NV_M3,
+        temperature_K=TEMPERATURE_K,
+        species=species,
+    )
+    overlapping = replace(
+        region,
+        identifier="layer[1]/right",
+        active_nodes=np.asarray([False, True, True]),
+    )
+
+    with pytest.raises(ValueError, match="must not overlap"):
+        MonovalentBulkDefectModel(regions=(region, overlapping))
+
+
+def test_device_region_rejects_document_hash_that_does_not_match_species():
+    with pytest.raises(ValueError, match="does not match its species"):
+        MonovalentDefectRegion(
+            identifier="layer[0]/bad",
+            document_sha256="a" * 64,
+            active_nodes=np.asarray([True, True]),
+            band_gap_eV=GAP_EV,
+            effective_conduction_dos_m3=NC_M3,
+            effective_valence_dos_m3=NV_M3,
+            temperature_K=TEMPERATURE_K,
+            species=(_species("acceptor", ACCEPTOR),),
+        )
 
 
 @pytest.mark.parametrize(
