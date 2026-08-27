@@ -1,9 +1,10 @@
 # Explicit Bulk-Defect Input Contract v1
 
-Status: DEF-1 neutral execution slice. The canonical schema is stable and a
+Status: DEF-2 local constitutive slice. The canonical schema is stable and a
 1D `explicit_quasi_steady` document executes exact neutral, single-level,
-unit-degeneracy multi-species SRH. Charged defects remain solver-gated until
-the later local-closure and charged-DC checkpoints are complete.
+unit-degeneracy multi-species SRH. Acceptor/donor species can be evaluated by
+the solver-independent DEF-2 local closure, but charged device execution
+remains solver-gated until the DEF-3 charged-DC checkpoint is complete.
 
 ## 1. Compatibility rule
 
@@ -226,6 +227,13 @@ DEF-1 does not claim defect space charge, contact thermodynamic closure,
 charged Poisson coupling, 2D execution, energy distributions, full SCAPS J-V
 parity, AC response, or dynamic occupancy. Those claims require the later
 checkpoints in the roadmap.
+
+DEF-2 adds `physics.defect_closure.evaluate_monovalent_defect_closure` for
+canonical neutral/acceptor/donor single levels. It returns occupancy,
+recombination, charge, analytic carrier tangents, and explicitly labelled
+fixed-quasi-Fermi potential-direction tangents from one local state. It is not
+called by production material, Poisson, contact, or experiment code; see
+`docs/monovalent-defect-closure.md` for the exact contract and limitations.
 
 ## 9. DEF-1 verification record
 
