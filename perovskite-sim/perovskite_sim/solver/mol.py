@@ -27,6 +27,10 @@ from perovskite_sim.models.device import (
     electrical_layers, electrical_interfaces,
     electrical_interface_defects,
 )
+from perovskite_sim.models.defects import (
+    EFFECTIVE_LIFETIME,
+    ExplicitDefectCapabilityError,
+)
 
 from perovskite_sim.physics.recombination import (
     _observe_srh_denominators,
@@ -819,6 +823,17 @@ def build_material_arrays(
     path (assemble_rhs, _compute_current, interface recombination).
     """
     stack.require_interface_charge_off(consumer="build_material_arrays")
+    explicit_layers = [
+        layer.name
+        for layer in electrical_layers(stack)
+        if layer.params.defect_model != EFFECTIVE_LIFETIME
+    ]
+    if explicit_layers:
+        raise ExplicitDefectCapabilityError(
+            "explicit bulk-defect execution is not enabled in DEF-0; "
+            "the canonical input contract is valid but production still uses "
+            f"effective_lifetime only (layers={explicit_layers})"
+        )
     if carrier_statistics_transport not in {
         DEGENERATE_TRANSPORT_DEFAULT,
         DEGENERATE_TRANSPORT_RESEARCH_RECOMBINATION_OFF,

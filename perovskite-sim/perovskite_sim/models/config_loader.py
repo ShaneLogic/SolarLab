@@ -6,6 +6,7 @@ from typing import Any, Optional
 import yaml
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
+from perovskite_sim.models.defects import bulk_defect_document_from_layer_mapping
 from perovskite_sim.physics.doping import validate_doping_profile_params
 from perovskite_sim.physics.bulk_traps import (
     bulk_trap_distribution_from_mapping,
@@ -313,6 +314,7 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
     DOS, trap profiles, dual-ion, temperature scaling) the loader carried, which
     silently disabled that physics for UI-built devices.
     """
+    defect_document = bulk_defect_document_from_layer_mapping(layer_cfg)
     params = MaterialParams(
         eps_r=_f(layer_cfg["eps_r"]),
         mu_n=_f(layer_cfg["mu_n"]),
@@ -419,6 +421,17 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
             if "doping_decay_length" in layer_cfg else None
         ),
         doping_edge=str(layer_cfg.get("doping_edge", "front")),
+        defect_schema_version=(
+            defect_document.schema_version if defect_document is not None else None
+        ),
+        defect_model=(
+            defect_document.defect_model
+            if defect_document is not None
+            else "effective_lifetime"
+        ),
+        bulk_defects=(
+            defect_document.bulk_defects if defect_document is not None else ()
+        ),
     )
     validate_doping_profile_params(params)
     return params

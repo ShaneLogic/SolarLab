@@ -77,6 +77,9 @@ def test_default_thermal_velocity_preserves_frozen_semantics():
         "bgn_conduction_band_fraction",
         "bulk_trap_distribution",
         "cigs_graded_optics",
+        "defect_schema_version",
+        "defect_model",
+        "bulk_defects",
     }
     historical_payload = {
         field.name: getattr(baseline, field.name)

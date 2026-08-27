@@ -59,19 +59,26 @@ Phase E6.3 — strict key validation:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
 
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
+from perovskite_sim.models.defects import (
+    EFFECTIVE_LIFETIME,
+    EXPLICIT_DEFECT_SCHEMA_VERSION,
+    BulkDefectDocument,
+    BulkDefectSpecies,
+    bulk_defect_species_from_scaps_mapping,
+)
 from perovskite_sim.models.config_loader import (
     built_in_potential_fields_from_device_dict,
     electrical_grid_from_config_dict,
     interface_charge_fields_from_device_dict,
 )
 from perovskite_sim.models.parameters import MaterialParams
-from perovskite_sim.scaps_compat.defects import srh_lifetime
 from perovskite_sim.scaps_compat.materials import ni_from_dos
 from perovskite_sim.sweeps.device_parameter_sweep import (
     cm3_to_m3,
@@ -100,6 +107,7 @@ _REQUIRED_BULK_DEFECT_KEYS = ("sigma_n_cm2", "sigma_p_cm2", "N_t_cm3")
 _OPTIONAL_BULK_DEFECT_KEYS = (
     "name", "E_t_eV_below_cb", "E_t_eV_above_vb",
     "distribution", "E_char_eV", "N_peak_cm3",
+    "charge_transition", "neutral_reference", "degeneracy",
 )
 _VALID_DISTRIBUTIONS = ("single", "gaussian")
 # SCAPS role aliases for the ``target: A/B`` alias resolver. SCAPS UI uses
@@ -113,6 +121,16 @@ _ROLE_ALIAS = {
     "etl": "etl",
 }
 _DEFECT_FREE_TAU = 1.0e-3  # s; fallback lifetime when no bulk_defect block
+
+
+@dataclass(frozen=True, slots=True)
+class _ParsedBulkDefect:
+    species: BulkDefectSpecies
+    n1: float
+    p1: float
+    legacy_inv_tau_n_s: float
+    legacy_inv_tau_p_s: float
+    legacy_density_m3: float
 
 
 def load_scaps_yaml(path: str | Path) -> DeviceStack:
@@ -319,7 +337,7 @@ def _resolve_interface_index(target: str, layers: tuple[LayerSpec, ...]) -> int:
     raise ValueError(
         f"unknown interface target {target!r} — no adjacent layer pair "
         f"matches roles ({left_alias!r}, {right_alias!r}) in the stack "
-        + str([l.role for l in layers])
+        + str([layer.role for layer in layers])
     )
 
 
@@ -343,7 +361,7 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
             "and 'bulk_defects' (plural)"
         )
 
-    parsed_defects: list[dict[str, float]] = []
+    parsed_defects: list[_ParsedBulkDefect] = []
     if has_singular:
         parsed_defects.append(
             _parse_one_bulk_defect(
@@ -397,6 +415,21 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
             "both": "both",
         }.get(target, "both")
 
+    has_defect_contract = bool(parsed_defects) or any(
+        key in row for key in ("defect_schema_version", "defect_model")
+    )
+    defect_document = (
+        BulkDefectDocument(
+            schema_version=str(
+                row.get("defect_schema_version", EXPLICIT_DEFECT_SCHEMA_VERSION)
+            ),
+            defect_model=str(row.get("defect_model", EFFECTIVE_LIFETIME)),
+            bulk_defects=tuple(item.species for item in parsed_defects),
+        )
+        if has_defect_contract
+        else None
+    )
+
     params = MaterialParams(
         eps_r=float(row["eps_r"]),
         mu_n=float(row["mu_n_cm2"]) * 1.0e-4,
@@ -428,6 +461,17 @@ def _layer_from_scaps_row(row: Mapping[str, Any]) -> LayerSpec:
         trap_decay_length=trap_decay_length,
         trap_profile_shape=trap_profile_shape,
         trap_edge=trap_edge,
+        defect_schema_version=(
+            defect_document.schema_version if defect_document is not None else None
+        ),
+        defect_model=(
+            defect_document.defect_model
+            if defect_document is not None
+            else EFFECTIVE_LIFETIME
+        ),
+        bulk_defects=(
+            defect_document.bulk_defects if defect_document is not None else ()
+        ),
     )
     return LayerSpec(
         name=str(row["name"]),
@@ -502,7 +546,7 @@ def _parse_one_bulk_defect(
     Eg_eV: float,
     v_th_si: float,
     where: str,
-) -> dict[str, float]:
+) -> _ParsedBulkDefect:
     """Translate one bulk_defect entry to (sigma_n, sigma_p, N_t_m3, n1, p1).
 
     Distribution handling: ``single`` and ``gaussian`` both use the
@@ -518,23 +562,37 @@ def _parse_one_bulk_defect(
         where=where,
     )
     _resolve_distribution(d, where)  # validate even if unused downstream
-    sigma_n_si = float(d["sigma_n_cm2"]) * 1.0e-4
-    sigma_p_si = float(d["sigma_p_cm2"]) * 1.0e-4
-    N_t_m3 = cm3_to_m3(float(d["N_t_cm3"]))
     depth, ref = _resolve_trap_depth(d, where, Eg_eV)
     n1, p1 = srh_n1_p1_from_trap_depth(ni_m3, Eg_eV, depth, reference=ref)
-    return {
-        "sigma_n_si": sigma_n_si,
-        "sigma_p_si": sigma_p_si,
-        "N_t_m3": N_t_m3,
-        "v_th_si": v_th_si,
-        "n1": n1,
-        "p1": p1,
-    }
+    species = bulk_defect_species_from_scaps_mapping(
+        d,
+        band_gap_eV=Eg_eV,
+        layer_thermal_velocity_m_s=v_th_si,
+        where=where,
+    )
+    legacy_density_m3 = cm3_to_m3(float(d["N_t_cm3"]))
+    return _ParsedBulkDefect(
+        species=species,
+        n1=n1,
+        p1=p1,
+        legacy_inv_tau_n_s=(
+            float(d["sigma_n_cm2"])
+            * 1.0e-4
+            * v_th_si
+            * legacy_density_m3
+        ),
+        legacy_inv_tau_p_s=(
+            float(d["sigma_p_cm2"])
+            * 1.0e-4
+            * v_th_si
+            * legacy_density_m3
+        ),
+        legacy_density_m3=legacy_density_m3,
+    )
 
 
 def _combine_bulk_defects(
-    parsed: list[dict[str, float]],
+    parsed: list[_ParsedBulkDefect],
 ) -> tuple[float, float, float, float, float | None]:
     """Combine N parallel SRH defects to a single effective (tau, n1, p1).
 
@@ -553,13 +611,13 @@ def _combine_bulk_defects(
     sum_p1_over_tau_p = 0.0
     N_t_sum_m3 = 0.0
     for d in parsed:
-        inv_tau_n_i = d["sigma_n_si"] * d["v_th_si"] * d["N_t_m3"]
-        inv_tau_p_i = d["sigma_p_si"] * d["v_th_si"] * d["N_t_m3"]
+        inv_tau_n_i = d.legacy_inv_tau_n_s
+        inv_tau_p_i = d.legacy_inv_tau_p_s
         inv_tau_n_total += inv_tau_n_i
         inv_tau_p_total += inv_tau_p_i
-        sum_n1_over_tau_n += d["n1"] * inv_tau_n_i
-        sum_p1_over_tau_p += d["p1"] * inv_tau_p_i
-        N_t_sum_m3 += d["N_t_m3"]
+        sum_n1_over_tau_n += d.n1 * inv_tau_n_i
+        sum_p1_over_tau_p += d.p1 * inv_tau_p_i
+        N_t_sum_m3 += d.legacy_density_m3
 
     tau_n = 1.0 / inv_tau_n_total if inv_tau_n_total > 0.0 else _DEFECT_FREE_TAU
     tau_p = 1.0 / inv_tau_p_total if inv_tau_p_total > 0.0 else _DEFECT_FREE_TAU

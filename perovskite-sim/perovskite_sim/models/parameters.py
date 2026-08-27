@@ -13,6 +13,12 @@ from perovskite_sim.physics.band_gap_narrowing import (
 )
 from perovskite_sim.physics.bulk_traps import BulkTrapDistribution
 from perovskite_sim.physics.cigs_optics import CIGSGradedOptics
+from perovskite_sim.models.defects import (
+    EFFECTIVE_LIFETIME,
+    EXPLICIT_QUASI_STEADY,
+    BulkDefectDocument,
+    BulkDefectSpecies,
+)
 from perovskite_sim.physics.statistics import (
     CarrierStatistics,
     DISCRETE_LEVEL,
@@ -170,6 +176,12 @@ class MaterialParams:
     # positional compatibility. Merely declaring the block is inert;
     # DeviceStack.graded_optics is the separate runtime master gate.
     cigs_graded_optics: CIGSGradedOptics | None = None
+    # Versioned microscopic bulk-defect inventory. The default selector uses
+    # tau_n/tau_p exactly as before. An explicit selector is valid input but
+    # remains execution-gated until its solver closure is enabled.
+    defect_schema_version: str | None = None
+    defect_model: str = EFFECTIVE_LIFETIME
+    bulk_defects: tuple[BulkDefectSpecies, ...] = ()
 
     def __post_init__(self) -> None:
         statistics = normalize_carrier_statistics(self.carrier_statistics)
@@ -184,7 +196,50 @@ class MaterialParams:
         object.__setattr__(
             self, "band_gap_narrowing_model", narrowing_model
         )
+        raw_bulk_defects = tuple(self.bulk_defects)
+        object.__setattr__(self, "bulk_defects", raw_bulk_defects)
+        defect_document: BulkDefectDocument | None = None
+        if self.defect_schema_version is None:
+            if self.defect_model != EFFECTIVE_LIFETIME or raw_bulk_defects:
+                raise ValueError(
+                    "defect_schema_version is required when defect_model or "
+                    "bulk_defects are declared"
+                )
+            object.__setattr__(self, "defect_model", EFFECTIVE_LIFETIME)
+        else:
+            defect_document = BulkDefectDocument(
+                schema_version=self.defect_schema_version,
+                defect_model=self.defect_model,
+                bulk_defects=raw_bulk_defects,
+            )
+            defect_document.validate_band_gap(self.Eg)
+            object.__setattr__(self, "defect_model", defect_document.defect_model)
+            object.__setattr__(
+                self, "bulk_defects", defect_document.bulk_defects
+            )
         bulk_trap = self.bulk_trap_distribution
+        if defect_document is not None and raw_bulk_defects and bulk_trap is not None:
+            raise ValueError(
+                "bulk_defects cannot be combined with the legacy "
+                "bulk_trap_distribution research closure"
+            )
+        if defect_document is not None and (
+            defect_document.defect_model == EXPLICIT_QUASI_STEADY
+        ):
+            if statistics != MAXWELL_BOLTZMANN:
+                raise ValueError(
+                    "explicit_quasi_steady v1 requires "
+                    "carrier_statistics='maxwell_boltzmann'"
+                )
+            if ionization != FULLY_IONIZED:
+                raise ValueError(
+                    "explicit_quasi_steady v1 requires "
+                    "dopant_ionization_model='fully_ionized'"
+                )
+            if narrowing_model != BAND_GAP_NARROWING_OFF:
+                raise ValueError(
+                    "explicit_quasi_steady v1 excludes band-gap narrowing"
+                )
         if bulk_trap is not None:
             if not isinstance(bulk_trap, BulkTrapDistribution):
                 raise TypeError(
@@ -378,6 +433,16 @@ class MaterialParams:
     @property
     def ni_sq(self) -> float:
         return self.ni ** 2
+
+    @property
+    def defect_document(self) -> BulkDefectDocument | None:
+        if self.defect_schema_version is None:
+            return None
+        return BulkDefectDocument(
+            schema_version=self.defect_schema_version,
+            defect_model=self.defect_model,
+            bulk_defects=self.bulk_defects,
+        )
 
 
 @dataclass(frozen=True)

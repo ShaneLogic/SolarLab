@@ -326,6 +326,15 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         # "absent" via key-presence and does float(value) when the key exists,
         # so a serialized None would crash with float(None). None == absent.
         d = {k: v for k, v in asdict(ls.params).items() if v is not None}
+        defect_document = ls.params.defect_document
+        if defect_document is None:
+            d.pop("defect_model", None)
+            d.pop("bulk_defects", None)
+        else:
+            defect_payload = defect_document.to_dict()
+            d["defect_schema_version"] = defect_payload["schema_version"]
+            d["defect_model"] = defect_payload["defect_model"]
+            d["bulk_defects"] = defect_payload["bulk_defects"]
         d["name"] = ls.name
         d["role"] = ls.role
         d["thickness"] = ls.thickness

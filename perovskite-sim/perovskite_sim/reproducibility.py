@@ -155,6 +155,17 @@ def _canonical(value: Any) -> Any:
             mapping.pop("bulk_trap_distribution", None)
         if (
             isinstance(value, MaterialParams)
+            and value.defect_model == "effective_lifetime"
+        ):
+            # DEF-0 preserves SCAPS microscopic species as inactive provenance,
+            # while the compatibility selector still executes only tau/n1/p1.
+            # The document has its own SHA-256 and must not churn historical
+            # device semantics until an explicit execution model is selected.
+            mapping.pop("defect_schema_version", None)
+            mapping.pop("defect_model", None)
+            mapping.pop("bulk_defects", None)
+        if (
+            isinstance(value, MaterialParams)
             and value.cigs_graded_optics is None
         ):
             # An absent composition-optics block is behaviorally inert. An
