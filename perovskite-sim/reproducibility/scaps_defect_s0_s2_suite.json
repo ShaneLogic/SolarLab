@@ -1,0 +1,53 @@
+{
+  "derived_pn_device": {
+    "illumination_photon_flux_m2_s": 2e+21,
+    "interfaces": "homojunction_zero_recombination",
+    "left_scenario": "S2",
+    "right_scenario": "S1"
+  },
+  "external_reference_contract": {
+    "independent_export_attestation_required": true,
+    "interpolation_allowed": false,
+    "raw_profile_columns": [
+      "position_um",
+      "electron_density_cm3",
+      "hole_density_cm3",
+      "electrostatic_potential_V",
+      "conduction_band_eV",
+      "valence_band_eV",
+      "defect_occupancy",
+      "defect_charge_number_cm3",
+      "recombination_rate_cm3_s"
+    ],
+    "required_solver": "SCAPS-1D",
+    "source_deck_required_per_scenario": true
+  },
+  "scenarios": [
+    {
+      "charge_transition": "neutral",
+      "config_path": "configs/scaps_defect_s0_neutral.yaml",
+      "config_sha256": "77b89e16c365cd5c4cf9f7aa439f0200ec9ad9b814e60bbe81895afef65025c7",
+      "doping_polarity": "intrinsic",
+      "id": "S0",
+      "purpose": "neutral single-level lifetime equivalence"
+    },
+    {
+      "charge_transition": "acceptor",
+      "config_path": "configs/scaps_defect_s1_acceptor_n.yaml",
+      "config_sha256": "f49900b296a2bfb3c5a28d9135b24dcf8f0d6c409f105a70d4dd27100ebcb681",
+      "doping_polarity": "n_type",
+      "id": "S1",
+      "purpose": "acceptor charge and compensation in an n-type slab"
+    },
+    {
+      "charge_transition": "donor",
+      "config_path": "configs/scaps_defect_s2_donor_p.yaml",
+      "config_sha256": "7fff245d23a99cb1128124d073269a3b3f1d8ee9a9f07730ce558ab4eb3d8066",
+      "doping_polarity": "p_type",
+      "id": "S2",
+      "purpose": "donor charge and compensation in a p-type slab"
+    }
+  ],
+  "schema": "solarlab.scaps_explicit_defect_reference_suite",
+  "schema_version": "1.0"
+}

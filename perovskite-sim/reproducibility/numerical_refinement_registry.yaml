@@ -1742,6 +1742,72 @@ lanes:
       - Bias, illumination, transient occupancy, Fermi-Dirac trap kinetics, amphoteric or multi-charge defects, heterojunctions, ions, selective contacts, field mobility, and every production experiment route remain excluded.
       - This is internal numerical evidence against mass action, Gauss law, and refinement gates, not external TCAD validation, experimental validation, or a materials-parameter claim.
 
+  charged-explicit-defect-qf-dc-v1:
+    claim_level: internal-numerical-candidate
+    config: reproducibility/scaps_defect_s0_s2_suite.json
+    config_sha256: 5ac82fb9826741efacef3f2219b07f9b3bf8bd87a4888b24cf1464eeee60d2ef
+    executor: perovskite_sim.validation.charged_defect_refinement:run_charged_defect_qf_dc_refinement
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values: [32, 64, 128]
+    tolerance:
+      parameter: qf_dc_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      acceptor_normalized_charge_profile: {comparison: absolute_linf, limit: 5.0e-4, units: "1"}
+      acceptor_occupancy_profile: {comparison: absolute_linf, limit: 5.0e-4, units: "1"}
+      donor_normalized_charge_profile: {comparison: absolute_linf, limit: 5.0e-4, units: "1"}
+      donor_occupancy_profile: {comparison: absolute_linf, limit: 5.0e-4, units: "1"}
+      pn_dark_electron_log10_profile: {comparison: absolute_linf, limit: 0.005, units: log10(m-3)}
+      pn_dark_hole_log10_profile: {comparison: absolute_linf, limit: 0.005, units: log10(m-3)}
+      pn_dark_potential_V: {comparison: absolute_linf, limit: 5.0e-4, units: V}
+      pn_ff: {comparison: relative_linf, limit: 0.005, units: "1"}
+      pn_jsc_A_m2: {comparison: relative_linf, limit: 0.002, units: A m-2}
+      pn_jv_current_A_m2: {comparison: relative_linf, limit: 0.005, units: A m-2}
+      pn_voc_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      s1_integrated_defect_charge_C_m2: {comparison: relative_linf, limit: 0.001, units: C m-2}
+      s2_integrated_defect_charge_C_m2: {comparison: relative_linf, limit: 0.001, units: C m-2}
+    quality_gates:
+      all_states_certified: {operator: eq, limit: 1.0, units: "1"}
+      charged_model_hashes_verified: {operator: eq, limit: 1.0, units: "1"}
+      charge_signs_verified: {operator: eq, limit: 1.0, units: "1"}
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      default_charged_path_rejected: {operator: eq, limit: 1.0, units: "1"}
+      max_continuity_bound_A_m2: {operator: le, limit: 2.0e-4, units: A m-2}
+      max_current_spread_A_m2: {operator: le, limit: 2.0e-4, units: A m-2}
+      max_dark_current_A_m2: {operator: le, limit: 1.0e-8, units: A m-2}
+      max_dark_qf_span_V: {operator: le, limit: 1.0e-10, units: V}
+      max_mass_action_relative_error: {operator: le, limit: 1.0e-10, units: "1"}
+      max_normalized_cell_residual: {operator: le, limit: 1.0e-7, units: "1"}
+      max_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      minimum_absolute_defect_charge_C_m3: {operator: ge, limit: 100.0, units: C m-3}
+      minimum_kinetic_denominator_s1: {operator: ge, limit: 1.0, units: s-1}
+      minimum_short_circuit_current_A_m2: {operator: ge, limit: 1.0, units: A m-2}
+      monovalent_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      neutral_lifetime_bit_identical: {operator: eq, limit: 1.0, units: "1"}
+      occupancy_bounded_without_clipping: {operator: eq, limit: 1.0, units: "1"}
+      scenario_count: {operator: eq, limit: 3.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+      voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
+      voltage_points_completed: {operator: eq, limit: 7.0, units: "1"}
+    options:
+      config_loader: scaps_explicit_defect_suite_v1
+      require_protocol: true
+      grid_alpha: 2.0
+      profile_points: 17
+      voltage_grid_V: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+      illumination_steps: [0.0, 1.0e-4, 1.0e-2, 1.0]
+      base_newton_residual_tolerance: 1.0e-8
+      base_poisson_tolerance_V: 1.0e-10
+      base_finite_difference_step: 1.0e-5
+      continuity_tolerance_A_m2: 2.0e-4
+      current_spread_tolerance_A_m2: 2.0e-4
+    limitations:
+      - This lane certifies only the frozen S0 neutral, S1 acceptor/n-type, S2 donor/p-type single-level Maxwell-Boltzmann slabs and an internal S2-p/S1-n illuminated homojunction under the public opt-in QF/DC charged-defect closure.
+      - The 3x3 matrix covers spatial and nonlinear-tolerance refinement, shared occupancy/recombination/Poisson/contact model identity, dark equilibrium, and a seven-point illuminated J-V; it excludes ions, interface defects, energy distributions, metastability, AC, transient defect occupancy, tunnelling, and Fermi-Dirac carrier statistics.
+      - The S0-S2 suite manifest defines a fail-closed external SCAPS export contract, but this lane contains SolarLab internal numerical evidence only. It is not SCAPS parity, experimental validation, or a materials-parameter claim.
+
   cigs-graded-optics-v1:
     claim_level: internal-numerical-candidate
     config: configs/cigs_graded_optics.yaml
