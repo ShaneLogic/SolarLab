@@ -111,7 +111,8 @@ def test_each_solver_protocol_control_changes_content_hash():
 
 def test_suite_fails_closed_when_a_frozen_scenario_config_drifts(tmp_path):
     lane = _lane()
-    suite = json.loads((ROOT / lane.config_path).read_text(encoding="utf-8"))
+    suite_source = ROOT / lane.options["suite_manifest"]
+    suite = json.loads(suite_source.read_text(encoding="utf-8"))
     for scenario in suite["scenarios"]:
         source = ROOT / scenario["config_path"]
         destination = tmp_path / scenario["config_path"]
@@ -119,16 +120,33 @@ def test_suite_fails_closed_when_a_frozen_scenario_config_drifts(tmp_path):
         destination.write_bytes(source.read_bytes())
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(json.dumps(suite), encoding="utf-8")
+    options = dict(lane.options)
+    options["suite_manifest"] = "suite.json"
+    options["suite_manifest_sha256"] = hashlib.sha256(
+        suite_path.read_bytes()
+    ).hexdigest()
     copied_lane = replace(
         lane,
-        config_path="suite.json",
-        config_sha256=hashlib.sha256(suite_path.read_bytes()).hexdigest(),
+        options_json=json.dumps(options),
     )
 
     drifting = tmp_path / suite["scenarios"][1]["config_path"]
     drifting.write_text(drifting.read_text() + "\n# drift\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="config hash drift"):
+        _load_suite(copied_lane, tmp_path)
+
+
+def test_suite_manifest_hash_drift_fails_closed(tmp_path):
+    lane = _lane()
+    suite_source = ROOT / lane.options["suite_manifest"]
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_bytes(suite_source.read_bytes() + b"\n")
+    options = dict(lane.options)
+    options["suite_manifest"] = "suite.json"
+    copied_lane = replace(lane, options_json=json.dumps(options))
+
+    with pytest.raises(ValueError, match="suite manifest hash drift"):
         _load_suite(copied_lane, tmp_path)
 
 

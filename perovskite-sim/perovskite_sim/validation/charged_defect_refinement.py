@@ -109,7 +109,19 @@ def _load_suite(
     lane: LaneDefinition,
     project_root: Path,
 ) -> tuple[dict[str, Any], tuple[_Scenario, ...]]:
-    suite_path = _safe_project_file(project_root, lane.config_path)
+    suite_relative = lane.options.get("suite_manifest")
+    suite_sha256 = lane.options.get("suite_manifest_sha256")
+    if not isinstance(suite_relative, str) or not suite_relative:
+        raise ValueError("charged-defect lane must declare suite_manifest")
+    if not isinstance(suite_sha256, str) or len(suite_sha256) != 64:
+        raise ValueError("charged-defect lane must declare suite_manifest_sha256")
+    suite_path = _safe_project_file(project_root, suite_relative)
+    actual_suite_sha256 = _file_sha256(suite_path)
+    if actual_suite_sha256 != suite_sha256:
+        raise ValueError(
+            "charged-defect suite manifest hash drift: "
+            f"{actual_suite_sha256} != {suite_sha256}"
+        )
     try:
         raw = json.loads(suite_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -178,6 +190,12 @@ def _load_suite(
     if seen != set(_EXPECTED_SCENARIOS):
         raise ValueError("charged-defect suite is missing S0, S1, or S2")
     ordered = tuple(sorted(scenarios, key=lambda item: item.identifier))
+    primary = next(item for item in ordered if item.identifier == "S1")
+    if (
+        lane.config_path != primary.config_path
+        or lane.config_sha256 != primary.config_sha256
+    ):
+        raise ValueError("charged-defect lane primary config must be frozen S1")
     return raw, ordered
 
 
@@ -283,8 +301,10 @@ def _execution_protocol(
         },
         "source": {
             "external_reference_contract": suite["external_reference_contract"],
-            "suite_path": lane.config_path,
-            "suite_sha256": lane.config_sha256,
+            "primary_config_path": lane.config_path,
+            "primary_config_sha256": lane.config_sha256,
+            "suite_manifest_path": lane.options["suite_manifest"],
+            "suite_manifest_sha256": lane.options["suite_manifest_sha256"],
         },
         "topology": {
             "charged_execution": "qf_dc_only",

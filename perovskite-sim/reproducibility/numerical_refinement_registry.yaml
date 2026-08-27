@@ -1744,8 +1744,8 @@ lanes:
 
   charged-explicit-defect-qf-dc-v1:
     claim_level: internal-numerical-candidate
-    config: reproducibility/scaps_defect_s0_s2_suite.json
-    config_sha256: 5ac82fb9826741efacef3f2219b07f9b3bf8bd87a4888b24cf1464eeee60d2ef
+    config: configs/scaps_defect_s1_acceptor_n.yaml
+    config_sha256: f49900b296a2bfb3c5a28d9135b24dcf8f0d6c409f105a70d4dd27100ebcb681
     executor: perovskite_sim.validation.charged_defect_refinement:run_charged_defect_qf_dc_refinement
     executor_version: v1
     grid:
@@ -1794,6 +1794,8 @@ lanes:
     options:
       config_loader: scaps_explicit_defect_suite_v1
       require_protocol: true
+      suite_manifest: reproducibility/scaps_defect_s0_s2_suite.json
+      suite_manifest_sha256: 5ac82fb9826741efacef3f2219b07f9b3bf8bd87a4888b24cf1464eeee60d2ef
       grid_alpha: 2.0
       profile_points: 17
       voltage_grid_V: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]

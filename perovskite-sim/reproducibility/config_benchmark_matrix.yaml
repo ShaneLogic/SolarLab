@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: ee0438faf235a7d722d60f94e3dcb83ead9134a08e03dfd7d186fb5ee56afe71
+  sha256: d1721ed9453e96c765f165e803ff0a8d9eb37f8229a6b4cb64058444e90b9c6f
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -91,6 +91,9 @@ benchmarks:
       - configs/pin_MAPbI3.yaml
       - configs/pin_MAPbI3_tmm.yaml
       - configs/radiative_limit.yaml
+      - configs/scaps_defect_s0_neutral.yaml
+      - configs/scaps_defect_s1_acceptor_n.yaml
+      - configs/scaps_defect_s2_donor_p.yaml
       - configs/scaps_mirror.yaml
       - configs/scaps_mirror_v2.yaml
       - configs/scaps_mirror_v2_robin_moderate.yaml
@@ -129,6 +132,7 @@ benchmarks:
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
       - configs/nip_MAPbI3.yaml
+      - configs/scaps_defect_s1_acceptor_n.yaml
       - configs/scaps_mirror.yaml
       - configs/scaps_mirror_v2.yaml
       - configs/twod/combined_mobile_interface_research.yaml
@@ -1195,6 +1199,37 @@ benchmarks:
       - the source-clean 3x3 matrix is internally certified at commit d336e45 with certificate SHA-256 bd385f0a01db4ad769f6fc1591c5cd79acafef5663d60f81ddee6cb9987991fc
       - the lane is restricted to a dark homogeneous Maxwell-Boltzmann equilibrium with one Gaussian acceptor-like distribution and fully ionized dopants
       - legacy SCAPS Gaussian metadata remains parked, and external TCAD or experimental validation is absent
+  charged-explicit-defect-internal-closure:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/models/test_explicit_defect_schema.py
+      tests/unit/physics/test_monovalent_defect_closure.py
+      tests/integration/test_charged_explicit_defects_qf.py
+      tests/unit/validation/test_charged_defect_refinement.py
+      tests/unit/validation/test_import_scaps_defect_reference.py
+    tests:
+      - tests/unit/models/test_explicit_defect_schema.py
+      - tests/unit/physics/test_monovalent_defect_closure.py
+      - tests/integration/test_charged_explicit_defects_qf.py
+      - tests/unit/validation/test_charged_defect_refinement.py
+      - tests/unit/validation/test_import_scaps_defect_reference.py
+    node_ids:
+      - tests/unit/models/test_explicit_defect_schema.py::test_canonical_document_roundtrip_and_hash_are_stable
+      - tests/unit/physics/test_monovalent_defect_closure.py::test_donor_and_acceptor_share_occupancy_but_use_distinct_charge_reference
+      - tests/integration/test_charged_explicit_defects_qf.py::test_public_qf_jv_sweep_retains_charged_defect_certificates
+      - tests/unit/validation/test_charged_defect_refinement.py::test_registered_executor_real_cell_matches_exact_contract
+      - tests/unit/validation/test_import_scaps_defect_reference.py::test_importer_hashes_all_raw_exports_decks_manifest_and_suite
+    configs:
+      - configs/scaps_defect_s0_neutral.yaml
+      - configs/scaps_defect_s1_acceptor_n.yaml
+      - configs/scaps_defect_s2_donor_p.yaml
+    limitations:
+      - the source-clean 3x3 lane is internal SolarLab grid and tolerance evidence, not SCAPS parity or experimental validation
+      - charged explicit defects are enabled only through the opt-in QF/DC path; the density-form transient path remains fail-closed
+      - ions, interface defects, energy distributions, tunnelling, metastability, AC, and dynamic occupancy remain excluded
 
 configs:
   - path: configs/cSi_homojunction.yaml
@@ -1386,6 +1421,27 @@ configs:
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, twod-radiative-reabsorption]
+  - path: configs/scaps_defect_s0_neutral.yaml
+    sha256: 77b89e16c365cd5c4cf9f7aa439f0200ec9ad9b814e60bbe81895afef65025c7
+    semantic_sha256: a44db13adb9d77e705dec93753a72162569860590f8df4f371caf1ad493e473e
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, charged-explicit-defect-internal-closure]
+  - path: configs/scaps_defect_s1_acceptor_n.yaml
+    sha256: f49900b296a2bfb3c5a28d9135b24dcf8f0d6c409f105a70d4dd27100ebcb681
+    semantic_sha256: 513d87b2828a0b372477657b2744a88b434f6501c88566a6fd9b6933f515c3b6
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - charged-explicit-defect-internal-closure
+      - phase1-refinement-contract
+  - path: configs/scaps_defect_s2_donor_p.yaml
+    sha256: 7fff245d23a99cb1128124d073269a3b3f1d8ee9a9f07730ce558ab4eb3d8066
+    semantic_sha256: 9c5a68947ed42c9c13ab74403b5599785ff1708d7ad7413d4215ef960c90607e
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, charged-explicit-defect-internal-closure]
   - path: configs/scaps_mirror.yaml
     sha256: 7ad4968d9c8249b76ca4e649d41c39e26727f6818cb81a15fe75f6b74b11b881
     semantic_sha256: bbda4b58f4844ce6e1e4bcf99e44ee873603ad1c5d5f7ad939faacc5973b7713

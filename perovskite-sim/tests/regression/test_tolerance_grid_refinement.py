@@ -130,6 +130,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "incomplete-ionization-temperature-equilibrium-v1",
         "incomplete-ionization-bgn-temperature-equilibrium-v1",
         "bulk-energy-distributed-trap-equilibrium-v1",
+        "charged-explicit-defect-qf-dc-v1",
         "cigs-graded-optics-v1",
         "interface-srh-identifiability-synthetic-v1",
     }
