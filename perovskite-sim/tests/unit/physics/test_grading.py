@@ -6,6 +6,7 @@ from perovskite_sim.physics.grading import (
     has_grading_params,
     grading_coordinate,
     band_gap_profile,
+    minimum_band_gap_eV,
     affinity_profile,
     grade_ni_sq,
     grade_n1_p1,
@@ -91,6 +92,13 @@ def test_band_gap_flat_is_constant_front_byte_identical():
     y = np.array([0.0, 0.123, 0.5, 0.777, 1.0])
     Eg = band_gap_profile(y, 1.5, 1.5, bowing=0.0)
     assert np.array_equal(Eg, np.full_like(y, 1.5))
+
+
+def test_minimum_band_gap_includes_positive_bowing_vertex():
+    # Eg(y) = 1.2 - 0.4*y + 0.4*y^2 has its minimum at y=0.5.
+    assert minimum_band_gap_eV(1.2, 1.2, 0.4) == pytest.approx(1.1)
+    assert minimum_band_gap_eV(1.2, 1.0, 0.0) == 1.0
+    assert minimum_band_gap_eV(1.2, None, 0.0) == 1.2
 
 
 def test_affinity_endpoints():

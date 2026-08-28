@@ -103,6 +103,38 @@ def band_gap_profile(
     return (1.0 - y) * Eg_front + y * Eg_back - bowing * y * (1.0 - y)
 
 
+def minimum_band_gap_eV(
+    Eg_front: float,
+    Eg_back: float | None = None,
+    bowing: float = 0.0,
+) -> float:
+    """Exact minimum of the graded band-gap law over ``y in [0, 1]``.
+
+    Every supported grading coordinate spans the full composition interval,
+    so the physical minimum is independent of the spatial profile and its
+    direction. Positive bowing can put the minimum inside the layer; linear
+    and concave laws attain it at an endpoint.
+    """
+    front = float(Eg_front)
+    back = front if Eg_back is None else float(Eg_back)
+    curve = float(bowing)
+    candidates = [front, back]
+    if curve > 0.0:
+        stationary = (front + curve - back) / (2.0 * curve)
+        if 0.0 < stationary < 1.0:
+            candidates.append(
+                float(
+                    band_gap_profile(
+                        np.asarray([stationary]),
+                        front,
+                        back,
+                        curve,
+                    )[0]
+                )
+            )
+    return min(candidates)
+
+
 def affinity_profile(
     y: np.ndarray,
     chi_front: float,

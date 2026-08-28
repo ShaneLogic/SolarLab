@@ -1881,6 +1881,88 @@ lanes:
       - Mobile ions, interfaces, selective contacts, field mobility, spatial grading, dynamic occupancy, Fermi-Dirac statistics, AC, transient defects, tunnelling, and multivalent defects remain excluded.
       - This is internal SolarLab convergence evidence, not external SCAPS parity, experimental validation, or unique microscopic parameter identification.
 
+  spatially-graded-explicit-defect-qf-dc-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/graded_distributed_defect_qf_dc_pn.yaml
+    config_sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
+    executor: perovskite_sim.validation.spatial_defect_refinement:run_spatial_defect_qf_dc_refinement
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values: [16, 32, 64]
+    tolerance:
+      parameter: qf_dc_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    observables:
+      built_in_potential_V: {comparison: absolute_linf, limit: 1.0e-4, units: V}
+      contact_reservoir_log10_m3: {comparison: absolute_linf, limit: 0.005, units: log10(m-3)}
+      dark_band_gap_eV_profile: {comparison: absolute_linf, limit: 1.0e-12, units: eV}
+      dark_electron_affinity_eV_profile: {comparison: absolute_linf, limit: 1.0e-12, units: eV}
+      dark_electron_log10_profile: {comparison: absolute_linf, limit: 0.01, units: log10(m-3)}
+      dark_hole_log10_profile: {comparison: absolute_linf, limit: 0.01, units: log10(m-3)}
+      dark_potential_V: {comparison: absolute_linf, limit: 5.0e-4, units: V}
+      dark_source_density_multiplier_profile: {comparison: absolute_linf, limit: 1.0e-12, units: "1"}
+      dark_source_normalized_charge_profile: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      dark_source_occupancy_profile: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      integrated_source_charge_C_m2: {comparison: relative_linf, limit: 0.005, units: C m-2}
+      jv_current_A_m2: {comparison: relative_linf, limit: 0.002, units: A m-2}
+      short_circuit_current_A_m2: {comparison: relative_linf, limit: 0.002, units: A m-2}
+    quality_gates:
+      all_states_certified: {operator: eq, limit: 1.0, units: "1"}
+      contact_endpoints_verified: {operator: eq, limit: 1.0, units: "1"}
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      default_spatial_path_rejected: {operator: eq, limit: 1.0, units: "1"}
+      energy_orders_completed: {operator: eq, limit: 3.0, units: "1"}
+      graded_energy_metadata_verified: {operator: eq, limit: 1.0, units: "1"}
+      graded_model_hashes_verified: {operator: eq, limit: 1.0, units: "1"}
+      graded_profiles_compiled_verified: {operator: eq, limit: 1.0, units: "1"}
+      graded_topology_verified: {operator: eq, limit: 1.0, units: "1"}
+      max_contact_fermi_level_span_eV: {operator: le, limit: 1.0e-10, units: eV}
+      max_continuity_bound_A_m2: {operator: le, limit: 2.0e-4, units: A m-2}
+      max_continuous_density_normalization_error: {operator: le, limit: 1.0e-12, units: "1"}
+      max_current_spread_A_m2: {operator: le, limit: 2.0e-4, units: A m-2}
+      max_dark_current_A_m2: {operator: le, limit: 1.0e-6, units: A m-2}
+      max_dark_qf_span_V: {operator: le, limit: 1.0e-10, units: V}
+      max_dark_recombination_rate_m3_s: {operator: le, limit: 1.0e12, units: m-3 s-1}
+      max_energy_contact_log10_change: {operator: le, limit: 0.005, units: log10(m-3)}
+      max_energy_current_relative_change: {operator: le, limit: 0.005, units: "1"}
+      max_energy_normalized_charge_change: {operator: le, limit: 0.005, units: "1"}
+      max_energy_occupancy_absolute_change: {operator: le, limit: 0.005, units: "1"}
+      max_energy_potential_change_V: {operator: le, limit: 5.0e-4, units: V}
+      max_energy_recombination_relative_change: {operator: le, limit: 0.005, units: "1"}
+      max_energy_tangent_relative_change: {operator: le, limit: 0.005, units: "1"}
+      max_interface_band_discontinuity_eV: {operator: le, limit: 1.0e-12, units: eV}
+      max_mass_action_relative_error: {operator: le, limit: 1.0e-10, units: "1"}
+      max_normalized_cell_residual: {operator: le, limit: 1.0e-7, units: "1"}
+      max_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      minimum_band_gap_span_eV: {operator: ge, limit: 0.03, units: eV}
+      minimum_density_multiplier: {operator: ge, limit: 0.5, units: "1"}
+      minimum_kinetic_denominator_s1: {operator: ge, limit: 1.0, units: s-1}
+      minimum_support_margin_eV: {operator: ge, limit: 0.04, units: eV}
+      occupancy_bounded_without_clipping: {operator: eq, limit: 1.0, units: "1"}
+      profiled_species_count: {operator: eq, limit: 3.0, units: "1"}
+      source_species_count: {operator: eq, limit: 4.0, units: "1"}
+      terminal_densities_positive: {operator: eq, limit: 1.0, units: "1"}
+      voltage_points_completed: {operator: eq, limit: 3.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      energy_quadrature_orders: [16, 32, 64]
+      grid_alpha: 2.0
+      profile_points: 17
+      voltage_grid_V: [0.0, 0.01, 0.02]
+      illumination_steps: [0.0, 1.0e-4, 1.0e-2, 1.0]
+      base_newton_residual_tolerance: 1.0e-8
+      base_poisson_tolerance_V: 1.0e-10
+      base_finite_difference_step: 1.0e-5
+      continuity_tolerance_A_m2: 2.0e-4
+      current_spread_tolerance_A_m2: 2.0e-4
+    limitations:
+      - This lane certifies one frozen continuous V-shaped band-graded p/n device with four distributed source species, three independent conservative density profiles, and one explicitly uniform species inside v3 documents.
+      - Every outer spatial-grid and nonlinear-tolerance cell executes an inner 16/32/64 energy-order ladder. Endpoint-localized contacts, local band edges, Poisson charge, continuity recombination, analytic tangent, diagnostics, and three-point illuminated J-V share the same source contract and order.
+      - Mobile ions, interfaces, selective contacts, field mobility, dynamic occupancy, Fermi-Dirac statistics, AC, transient defects, tunnelling, multivalent defects, hard-zero profiles, and discontinuous profile steps remain excluded.
+      - This is internal SolarLab convergence evidence, not external SCAPS parity, experimental validation, or unique microscopic parameter identification.
+
   cigs-graded-optics-v1:
     claim_level: internal-numerical-candidate
     config: configs/cigs_graded_optics.yaml

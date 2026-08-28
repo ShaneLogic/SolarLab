@@ -34,6 +34,7 @@ from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     DefectEnergyQuadrature,
     DefectSpeciesEnergyExpansion,
+    density_weighted_mean_occupancy,
     expand_bulk_defect_species_energy,
     validate_defect_energy_quadrature_order,
 )
@@ -196,11 +197,10 @@ class EnergyResolvedSpeciesClosure:
                 raise ValueError(
                     f"{integrated_field} is not the exact node aggregate"
                 )
-        expected_mean = (
-            np.asarray(self.node_closure.occupancy)[0]
-            if self.quadrature.order == 1
-            else np.asarray(self.occupied_density_m3)
-            / float(self.source_species.distribution.total_density_m3)
+        expected_mean = density_weighted_mean_occupancy(
+            self.node_closure.occupancy,
+            self.quadrature.density_weights_m3,
+            self.source_species.distribution.total_density_m3,
         )
         if not np.array_equal(np.asarray(self.mean_occupancy), expected_mean):
             raise ValueError("mean_occupancy is not the density-weighted mean")
@@ -414,10 +414,10 @@ def _integrate_source(
 
     occupied_density = integrate("occupied_density_m3")
     total_density = float(source.distribution.total_density_m3)
-    mean_occupancy = (
-        np.asarray(node_closure.occupancy)[0]
-        if quadrature.order == 1
-        else occupied_density / total_density
+    mean_occupancy = density_weighted_mean_occupancy(
+        node_closure.occupancy,
+        quadrature.density_weights_m3,
+        total_density,
     )
     return EnergyResolvedSpeciesClosure(
         source_species=source,

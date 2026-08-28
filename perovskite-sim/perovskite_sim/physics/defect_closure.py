@@ -35,6 +35,7 @@ from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     DefectEnergyQuadrature,
     DefectSpeciesEnergyExpansion,
+    density_weighted_mean_occupancy,
     expand_bulk_defect_species_energy,
     validate_defect_energy_quadrature_order,
 )
@@ -1522,14 +1523,10 @@ def _evaluate_spatial_defect_region(
 
         kinetic_denominator[source_index] = np.min(denominator, axis=0)
         integrated_occupied = integrate(node_occupied_density)
-        mean_occupancy[source_index] = (
-            node_occupancy[0]
-            if quadrature.order == 1
-            else integrated_occupied
-            / (
-                float(source.distribution.total_density_m3)
-                * multipliers[source_index]
-            )
+        mean_occupancy[source_index] = density_weighted_mean_occupancy(
+            node_occupancy,
+            quadrature.density_weights_m3,
+            source.distribution.total_density_m3,
         )
         occupied_density[source_index] = integrated_occupied
         charge_density[source_index] = integrate(node_charge)

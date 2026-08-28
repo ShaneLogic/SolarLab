@@ -1,10 +1,10 @@
 # Explicit Bulk-Defect Spatial Profile Contract v3
 
-Status: D3-E4b production implementation and regression verification complete.
-The
-canonical D3-E4a input contract is now compiled into the guarded QF/DC material,
-contact, Poisson, continuity, analytic-tangent, and J-V paths. Independent
-three-axis certification remains a D3-E4c requirement.
+Status: D3-E4b production implementation and regression verification complete;
+D3-E4c independent certificate contract registered and single-cell validated.
+The canonical D3-E4a input contract is compiled into the guarded QF/DC
+material, contact, Poisson, continuity, analytic-tangent, and J-V paths. The
+source-clean three-axis D3-E4c matrix remains pending.
 
 ## Version boundary
 
@@ -152,3 +152,61 @@ space x solver-tolerance certificate. The D3-E3 uniform-layer certificate
 cannot be reused. D3-E4b establishes production execution and compatibility;
 it does not establish three-axis convergence, SCAPS parity, or experimental
 validation.
+
+## D3-E4c registered certificate checkpoint
+
+The independent lane is
+`spatially-graded-explicit-defect-qf-dc-v1`. Its frozen device is
+`configs/graded_distributed_defect_qf_dc_pn.yaml` (SHA-256
+`b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f`).
+The device contains a continuous 0.84 -> 0.80 -> 0.84 eV band-gap notch, four
+energy-distributed sources, three conservative spatial profiles, and one
+explicitly uniform v3 source.
+
+The outer matrix is 16/32/64 intervals per electrical layer by solver residual
+factors 1/0.1/0.01. Every cell independently evaluates defect energy orders
+16/32/64. Thirteen observables compare contact state, local bands, carrier and
+potential profiles, source multiplier/charge/occupancy profiles, integrated
+defect charge, J-V, and Jsc. Thirty-six per-cell quality gates bind topology,
+profile conservation and identity, local support, contacts, energy refinement,
+state/residual/current closure, positivity, and the three-point illuminated
+J-V path.
+
+The first dirty-source runner artifact (`4f9cd563...`) failed closed before the
+nonlinear solve because a nearly saturated positive-weight energy distribution
+formed `sum(N_i*f_i)/N_total = 1 + epsilon`. The artifact was retained. The
+constitutive closure now evaluates the same convex mean as
+`sum(w_i*f_i)` below half occupancy and as
+`1 - sum(w_i*(1-f_i))` above half occupancy. These expressions are
+algebraically identical; the second avoids subtractive loss near saturation
+without clipping. Uniform and spatial aggregates use the same helper, and a
+near-saturated valence-band-tail regression pins the bound.
+
+A second dirty-source one-cell run (`2a97bb6b...`) completed
+`grid=16,tolerance=1` in 44.13 s with all 36 frozen quality gates passing. Its
+certificate (`a025f1e463c9d0a040d532775341543cb001f693eeef1b33e9ae3e118cfd7e1a`)
+is intentionally `failed` because the other eight cells are missing. It is not
+three-axis convergence evidence and will not be reused as the final
+certificate.
+
+Adding this graded absorber also exercised a pre-existing temporary V_oc guard.
+`thermodynamic_voc_ceiling` now uses the minimum local absorber gap, including
+an exact positive-bowing interior minimum. A narrower transport-layer gap no
+longer creates an artificially strict thermodynamic ceiling. Stacks without an
+absorber role retain the old electrical-layer fallback; stacks with an
+undeclared absorber gap return no ceiling instead of borrowing a transport
+gap.
+
+Checkpoint verification after these fixes:
+
+- D3-E0 through D3-E4c expanded domain: 182 passed;
+- ceiling/grading/reproducibility focus: 44 passed;
+- certificate contract focus: 21 passed, 1 deselected;
+- default Python suite: 3069 passed, 2 skipped, 264 deselected, 12 pre-existing
+  NumPy compatibility/MMS warnings;
+- scoped Ruff, compileall, and `git diff --check`: passed.
+
+This checkpoint registers and validates the execution contract. It does not
+promote the graded configuration to internally certified until a source-clean
+9/9 matrix closes every registered comparison and quality gate. It also makes
+no SCAPS parity or experimental-validation claim.

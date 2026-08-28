@@ -32,7 +32,10 @@ from perovskite_sim.solver.mol import (
     poisson_right_boundary,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
-from perovskite_sim.physics.grading import has_grading_params
+from perovskite_sim.physics.grading import (
+    has_grading_params,
+    minimum_band_gap_eV,
+)
 from perovskite_sim.models.current import CurrentComponents, IonicCurrentComponents
 from perovskite_sim.models.spatial import SpatialSnapshot
 from perovskite_sim.constants import EPS_0, Q
@@ -442,11 +445,12 @@ def thermodynamic_voc_ceiling(stack: DeviceStack) -> float | None:
     """Hard upper bound on any physical V_oc for ``stack``, in volts.
 
     The open-circuit voltage of a single-junction cell cannot exceed the
-    smallest band gap the carriers must traverse: q·V_oc is the splitting of
-    the quasi-Fermi levels, and that splitting is bounded by the band gap
-    (the radiative / detailed-balance limit is well below it).  Returns
-    ``min(Eg)/q`` over the ELECTRICAL layers — optical-only substrates are
-    excluded, since they carry no carriers.
+    absorber band gap: q·V_oc is the splitting of the quasi-Fermi levels, and
+    that splitting is bounded by the local gap (the radiative /
+    detailed-balance limit is well below it). Returns the smallest local gap
+    over layers tagged ``role: absorber``. For a graded absorber this includes
+    both endpoints and any lower interior bowing vertex. Optical-only
+    substrates and narrower-gap transport layers do not tighten this theorem.
 
     Returns ``None`` when no electrical layer declares a band gap (the legacy
     ``chi = Eg = 0`` presets such as ``nip_MAPbI3``/``pin_MAPbI3``).  There is
@@ -454,22 +458,10 @@ def thermodynamic_voc_ceiling(stack: DeviceStack) -> float | None:
     must not apply one — a ``min()`` over all-zero gaps would reject every
     V_oc.
 
-    Why ``min`` over the electrical layers and not the absorber's gap.  The
-    bound that is actually a theorem is ``V_oc ≤ Eg_absorber/q`` (the
-    splitting is generated in the absorber), and ``min`` is only equal to it
-    while no transport layer is narrower than the absorber.  On every shipped
-    preset it is — measured 2026-07-27 over all of ``configs/*.yaml`` +
-    ``configs/twod/*.yaml``: the ``role: absorber`` layer has the narrowest
-    electrical gap in every config that declares gaps at all (the closest
-    call is ``cSi_homojunction``, where the n-emitter ties it at 1.12 eV).
-    ``min`` is preferred because it needs no ``role`` tag, so a config that
-    omits or mistags roles still gets a ceiling.  A future stack with a
-    genuinely narrow-gap transport layer would make this ceiling TIGHTER
-    than the thermodynamic bound and could refuse a valid V_oc — the
-    equality is therefore pinned by
-    ``tests/unit/experiments/test_voc_collapsed_current.py::
-    test_ceiling_equals_the_absorber_gap_on_every_shipped_preset``, which is
-    the signal to revisit this choice rather than to relax the test.
+    Legacy stacks without any absorber role retain the previous conservative
+    fallback: the smallest positive gap over their electrical layers. If an
+    absorber role exists but its gap is undeclared/non-positive, returns
+    ``None`` rather than substituting a transport-layer gap.
 
     Known plumbing gap (2026-07-27): only :func:`run_jv_sweep` passes this
     ceiling into :func:`compute_metrics`.  The other call sites that hold a
@@ -479,12 +471,25 @@ def thermodynamic_voc_ceiling(stack: DeviceStack) -> float | None:
     — still call it with the default ``V_oc_max=None``, so they keep the
     resolution floor but not the ceiling.
     """
-    gaps = [
-        float(layer.params.Eg)
-        for layer in electrical_layers(stack)
-        if float(layer.params.Eg) > 0.0
-    ]
-    return min(gaps) if gaps else None
+    layers = electrical_layers(stack)
+
+    def local_minimum(layer) -> float:
+        params = layer.params
+        if bool(getattr(stack, "band_grading", False)) and has_grading_params(
+            params
+        ):
+            return minimum_band_gap_eV(
+                params.Eg,
+                params.Eg_back,
+                params.grading_bowing,
+            )
+        return float(params.Eg)
+
+    absorbers = [layer for layer in layers if layer.role == "absorber"]
+    candidates = absorbers if absorbers else list(layers)
+    gaps = [local_minimum(layer) for layer in candidates]
+    positive = [gap for gap in gaps if gap > 0.0]
+    return min(positive) if positive else None
 
 
 def compute_metrics(

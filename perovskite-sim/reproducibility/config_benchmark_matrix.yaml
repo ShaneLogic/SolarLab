@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 22b48b5e20b7b934a01ba2c2e0550c769525abc75f70218ac19c311691f80b30
+  sha256: e1ea92675af79ef049a27458d62d988039fd1e20288a7d7e54e17ac61a74b3c7
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -79,6 +79,7 @@ benchmarks:
       - configs/driftfusion_benchmark_tmm.yaml
       - configs/driftfusion_calado2016_repro.yaml
       - configs/distributed_defect_qf_dc_pn.yaml
+      - configs/graded_distributed_defect_qf_dc_pn.yaml
       - configs/field_mobility_demo.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
@@ -130,6 +131,7 @@ benchmarks:
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/cigs_graded_optics.yaml
       - configs/distributed_defect_qf_dc_pn.yaml
+      - configs/graded_distributed_defect_qf_dc_pn.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
@@ -1260,6 +1262,28 @@ benchmarks:
       - the source-clean 3x3 matrix at commit 8c1f7be997c0cb243229eda3d0c246ed45a0c340 completed 9/9 cells and 272/272 checks with certificate SHA-256 7d21a2c257c00660f6a2e9d5990820c29580c6b5c1315b00eb27eaa15c0b121f
       - the lane is restricted to uniform-layer Maxwell-Boltzmann quasi-steady QF/DC with frozen/no mobile ions
       - spatial grading, interfaces, AC, transient occupancy, tunnelling, multivalent defects, external SCAPS parity, and experimental validation remain absent
+  spatial-explicit-defect-internal-closure:
+    kind: numerical
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/physics/test_distributed_defect_closure.py
+      tests/integration/test_spatially_graded_explicit_defects_qf.py
+      tests/unit/validation/test_spatial_defect_refinement.py
+    tests:
+      - tests/unit/physics/test_distributed_defect_closure.py
+      - tests/integration/test_spatially_graded_explicit_defects_qf.py
+      - tests/unit/validation/test_spatial_defect_refinement.py
+    node_ids:
+      - tests/unit/physics/test_distributed_defect_closure.py::test_nearly_saturated_tail_mean_stays_bounded_without_clipping
+      - tests/integration/test_spatially_graded_explicit_defects_qf.py::test_spatially_graded_dark_qf_state_and_small_jv_are_certified
+      - tests/unit/validation/test_spatial_defect_refinement.py::test_registered_executor_real_cell_matches_exact_contract
+    configs: [configs/graded_distributed_defect_qf_dc_pn.yaml]
+    limitations:
+      - one dirty-source grid-16 tolerance-1 cell completed all 36 frozen quality gates; the source-clean 3x3 matrix remains pending
+      - the lane is restricted to a two-layer band-graded Maxwell-Boltzmann quasi-steady QF/DC device with frozen/no mobile ions
+      - interfaces, AC, transient occupancy, tunnelling, multivalent defects, external SCAPS parity, and experimental validation remain absent
 
 configs:
   - path: configs/cSi_homojunction.yaml
@@ -1367,6 +1391,15 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - distributed-explicit-defect-internal-closure
+  - path: configs/graded_distributed_defect_qf_dc_pn.yaml
+    sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
+    semantic_sha256: f502dd9f6350e6c32a64f75686f17492acc0a64803df1939851777646c93486a
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - spatial-explicit-defect-internal-closure
   - path: configs/field_mobility_demo.yaml
     sha256: 7ca86a8d5d35c50d0892de55e2375eaf8e9d0966477cd378ace6cae1a5e88edd
     semantic_sha256: ce3ed006c48c5b85d01112f3985cda330c3d4a09d12bdcd945b9f1d7a0cc4afe

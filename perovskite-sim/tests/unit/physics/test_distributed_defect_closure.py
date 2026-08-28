@@ -38,6 +38,7 @@ from perovskite_sim.physics.defect_closure import (
     evaluate_monovalent_defect_closure,
 )
 from perovskite_sim.physics.defect_distributions import (
+    density_weighted_mean_occupancy,
     expand_bulk_defect_species_energy,
 )
 from perovskite_sim.physics.distributed_defect_closure import (
@@ -219,7 +220,32 @@ def test_source_aggregation_is_the_exact_sum_of_d2_energy_nodes(kind):
     )
     np.testing.assert_array_equal(
         source.mean_occupancy,
-        np.sum(nodes.occupied_density_m3, axis=0) / TOTAL_DENSITY_M3,
+        density_weighted_mean_occupancy(
+            nodes.occupancy,
+            expansion.quadrature.density_weights_m3,
+            TOTAL_DENSITY_M3,
+        ),
+    )
+
+
+def test_nearly_saturated_tail_mean_stays_bounded_without_clipping():
+    result = _evaluate(
+        1.0e34,
+        1.0,
+        _species("saturated_tail", VALENCE_BAND_TAIL, DONOR),
+        order=16,
+    )
+    source = result.source_closures[0]
+
+    assert np.all(source.node_closure.occupancy <= 1.0)
+    assert np.all(source.mean_occupancy <= 1.0)
+    np.testing.assert_array_equal(
+        source.mean_occupancy,
+        density_weighted_mean_occupancy(
+            source.node_closure.occupancy,
+            source.quadrature.density_weights_m3,
+            TOTAL_DENSITY_M3,
+        ),
     )
 
 

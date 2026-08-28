@@ -66,6 +66,56 @@ def _density_weights(probability_weights: np.ndarray, total: float) -> np.ndarra
     return weights
 
 
+def density_weighted_mean_occupancy(
+    occupancy: object,
+    density_weights_m3: object,
+    total_density_m3: object,
+) -> np.ndarray:
+    """Return a bounded positive-weight mean without clipping.
+
+    Directly evaluating ``sum(w*f)/sum(w)`` can round a nearly saturated
+    occupancy to ``1 + eps``. For means above one half, evaluating the
+    algebraically identical empty-state complement avoids that cancellation:
+    ``1 - sum(w*(1-f))/sum(w)``. Both branches remain exact positive-weight
+    aggregates of the supplied occupancies; no accepted value is clipped.
+    """
+
+    values = np.asarray(occupancy, dtype=float)
+    weights = np.asarray(density_weights_m3, dtype=float)
+    total = _finite_positive(total_density_m3, "total_density_m3")
+    if (
+        values.ndim < 1
+        or weights.ndim != 1
+        or values.shape[0] != weights.size
+        or not np.all(np.isfinite(values))
+        or np.any(values < 0.0)
+        or np.any(values > 1.0)
+        or not np.all(np.isfinite(weights))
+        or np.any(weights <= 0.0)
+        or not math.isclose(
+            math.fsum(float(value) for value in weights),
+            total,
+            rel_tol=8.0e-16,
+            abs_tol=0.0,
+        )
+    ):
+        raise ValueError("occupancy weights must define a finite convex mean")
+    if weights.size == 1:
+        return np.asarray(values[0])
+    weight_shape = (weights.size,) + (1,) * (values.ndim - 1)
+    scaled_weights = weights.reshape(weight_shape)
+    filled = np.sum(scaled_weights * values, axis=0) / total
+    empty = np.sum(scaled_weights * (1.0 - values), axis=0) / total
+    mean = np.where(filled <= 0.5, filled, 1.0 - empty)
+    if (
+        not np.all(np.isfinite(mean))
+        or np.any(mean < 0.0)
+        or np.any(mean > 1.0)
+    ):
+        raise FloatingPointError("density-weighted occupancy left [0, 1]")
+    return mean
+
+
 @dataclass(frozen=True, slots=True)
 class DefectEnergyQuadrature:
     """Finite energy nodes and volume-density weights for one species."""
@@ -404,6 +454,7 @@ __all__ = [
     "DefectEnergyQuadrature",
     "DefectSpeciesEnergyExpansion",
     "build_defect_energy_quadrature",
+    "density_weighted_mean_occupancy",
     "distribution_shape_integral_eV",
     "expand_bulk_defect_species_energy",
     "integrated_density_from_peak_density",

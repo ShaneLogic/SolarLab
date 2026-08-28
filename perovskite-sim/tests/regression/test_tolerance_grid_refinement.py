@@ -132,6 +132,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "bulk-energy-distributed-trap-equilibrium-v1",
         "charged-explicit-defect-qf-dc-v1",
         "distributed-explicit-defect-qf-dc-v1",
+        "spatially-graded-explicit-defect-qf-dc-v1",
         "cigs-graded-optics-v1",
         "interface-srh-identifiability-synthetic-v1",
     }
@@ -420,6 +421,31 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     ].limit == pytest.approx(0.005)
     assert distributed_quality[
         "default_distributed_path_rejected"
+    ].limit == 1.0
+    spatial_defect = registry.lane(
+        "spatially-graded-explicit-defect-qf-dc-v1"
+    )
+    assert spatial_defect.grid_values == (16, 32, 64)
+    assert spatial_defect.tolerance_factors == (1.0, 0.1, 0.01)
+    assert spatial_defect.options["energy_quadrature_orders"] == [16, 32, 64]
+    spatial_observables = {
+        gate.metric: gate for gate in spatial_defect.observables
+    }
+    assert spatial_observables[
+        "dark_source_density_multiplier_profile"
+    ].limit == pytest.approx(1.0e-12)
+    assert spatial_observables["jv_current_A_m2"].limit == pytest.approx(
+        0.002
+    )
+    spatial_quality = {
+        gate.metric: gate for gate in spatial_defect.quality_gates
+    }
+    assert spatial_quality["profiled_species_count"].limit == 3.0
+    assert spatial_quality[
+        "minimum_support_margin_eV"
+    ].limit == pytest.approx(0.04)
+    assert spatial_quality[
+        "graded_profiles_compiled_verified"
     ].limit == 1.0
     cigs_optics = registry.lane("cigs-graded-optics-v1")
     assert cigs_optics.grid_values == (8, 16, 32)

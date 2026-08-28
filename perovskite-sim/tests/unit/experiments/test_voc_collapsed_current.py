@@ -40,9 +40,9 @@ Two independent nets, both in ``experiments/jv_sweep.py``:
    ``J_tol = 1e-3·|J_sc|``, and the J=0 interpolation is clamped to that
    bracket.  Provenance of the constant is metrology + diode slope, argued
    on the constant itself; it is NOT fitted to any observed residual.
-2. ``thermodynamic_voc_ceiling`` — ``min(Eg)/q`` over the ELECTRICAL layers,
-   refused rather than reported.  ``None`` (no ceiling) for the legacy
-   ``chi = Eg = 0`` presets, which declare no gap.
+2. ``thermodynamic_voc_ceiling`` — the minimum local absorber gap, including
+   grading/bowing, refused rather than reported. ``None`` (no ceiling) for
+   the legacy ``chi = Eg = 0`` presets, which declare no absorber gap.
 
 What "voc_bracketed" means after this change
 --------------------------------------------
@@ -75,6 +75,10 @@ from perovskite_sim.experiments.jv_sweep import (
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import electrical_layers
+from perovskite_sim.physics.grading import (
+    has_grading_params,
+    minimum_band_gap_eV,
+)
 from perovskite_sim.scaps_compat import load_scaps_yaml
 
 # scaps_mirror absorber gap; the ceiling for that stack is min(Eg)/q = 1.53 V.
@@ -321,7 +325,9 @@ def test_ceiling_is_none_for_legacy_zero_gap_presets():
     ceiling must be absent, not zero."""
     for cfg in ("configs/nip_MAPbI3.yaml", "configs/pin_MAPbI3.yaml"):
         stack = load_device_from_yaml(cfg)
-        assert all(l.params.Eg == 0.0 for l in electrical_layers(stack))
+        assert all(
+            layer.params.Eg == 0.0 for layer in electrical_layers(stack)
+        )
         assert thermodynamic_voc_ceiling(stack) is None, cfg
 
 
@@ -357,30 +363,55 @@ def _device_configs():
     return out
 
 
-def test_ceiling_equals_the_absorber_gap_on_every_shipped_preset():
-    """``thermodynamic_voc_ceiling`` uses ``min(Eg)`` over the electrical
-    layers, but the bound that is a theorem is the ABSORBER's gap.  The two
-    agree only while no transport layer is narrower than the absorber.  This
-    pins that they agree on everything shipped; if it ever fires, the
-    ceiling has become tighter than the thermodynamic bound and can refuse a
-    valid V_oc, so the DEFINITION must be revisited — do not relax this."""
+def test_ceiling_equals_the_local_absorber_gap_on_every_shipped_preset():
+    """Every shipped absorber uses its actual minimum local gap.
+
+    This guards both uniform stacks and graded absorbers whose front scalar
+    is not their narrowest point. Transport layers are intentionally absent
+    from the theorem when an absorber role is available.
+    """
     checked = 0
     for path, stack in _device_configs():
         ceiling = thermodynamic_voc_ceiling(stack)
-        absorbers = [float(l.params.Eg) for l in electrical_layers(stack)
-                     if l.role == "absorber" and float(l.params.Eg) > 0.0]
+        absorbers = [
+            layer for layer in electrical_layers(stack)
+            if layer.role == "absorber"
+        ]
+        absorber_gaps = []
+        for layer in absorbers:
+            params = layer.params
+            gap = (
+                minimum_band_gap_eV(
+                    params.Eg,
+                    params.Eg_back,
+                    params.grading_bowing,
+                )
+                if stack.band_grading and has_grading_params(params)
+                else float(params.Eg)
+            )
+            if gap > 0.0:
+                absorber_gaps.append(gap)
         if ceiling is None:
-            assert not absorbers, f"{path}: absorber declares a gap but the " \
-                                  f"ceiling is None"
+            assert not absorber_gaps, (
+                f"{path}: absorber declares a gap but the ceiling is None"
+            )
             continue
-        assert absorbers, f"{path}: gaps declared but no role:absorber layer"
-        assert ceiling == max(absorbers), (
-            f"{path}: ceiling {ceiling} is below the absorber gap "
-            f"{max(absorbers)} — a transport layer is now the narrowest "
-            f"electrical gap, so min(Eg) is no longer the thermodynamic bound"
+        assert absorber_gaps, f"{path}: gaps declared but no absorber gap"
+        assert ceiling == min(absorber_gaps), (
+            f"{path}: ceiling {ceiling} differs from the local absorber gap "
+            f"{min(absorber_gaps)}"
         )
         checked += 1
     assert checked >= 5, f"only {checked} gap-declaring configs found"
+
+
+def test_ceiling_tracks_the_graded_defect_absorber_notch():
+    stack = load_device_from_yaml(
+        "configs/graded_distributed_defect_qf_dc_pn.yaml"
+    )
+    assert stack.layers[0].params.Eg == 0.84
+    assert stack.layers[0].params.Eg_back == 0.8
+    assert thermodynamic_voc_ceiling(stack) == 0.8
 
 
 def test_hysteresis_index_forwards_the_ceiling_to_both_branches():
