@@ -16,7 +16,10 @@ from typing import Any
 import yaml
 
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.models.defects import BulkDefectDistribution
+from perovskite_sim.models.defects import (
+    BulkDefectDistribution,
+    BulkDefectSpecies,
+)
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.tandem_config import load_tandem_from_yaml
@@ -100,6 +103,13 @@ def _canonical(value: Any) -> Any:
             # absent defaults must not churn frozen v1 device identities.
             mapping.pop("energy_reference", None)
             mapping.pop("support_width_multiplier", None)
+        if (
+            isinstance(value, BulkDefectSpecies)
+            and value.spatial_profile is None
+        ):
+            # D3-E4a adds an opt-in v3 spatial profile. Its absent default is
+            # not part of historical v1/v2 device semantics.
+            mapping.pop("spatial_profile", None)
         if isinstance(value, MaterialParams) and not (
             value.N_A_bulk is not None or value.N_D_bulk is not None
         ):

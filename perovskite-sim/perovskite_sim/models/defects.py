@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Literal, Self
 
@@ -20,10 +20,12 @@ EXPLICIT_DEFECT_SCHEMA_VERSION = "solarlab-explicit-bulk-defects-v1"
 EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION = (
     "solarlab-explicit-bulk-defects-v2"
 )
+EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION = "solarlab-explicit-bulk-defects-v3"
 SUPPORTED_EXPLICIT_DEFECT_SCHEMA_VERSIONS = frozenset(
     {
         EXPLICIT_DEFECT_SCHEMA_VERSION,
         EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+        EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION,
     }
 )
 EFFECTIVE_LIFETIME = "effective_lifetime"
@@ -37,6 +39,9 @@ CONDUCTION_BAND_TAIL = "conduction_band_tail"
 VALENCE_BAND_TAIL = "valence_band_tail"
 INTEGRATED_TOTAL = "integrated_total"
 ENERGY_ABOVE_VALENCE_BAND = "above_valence_band"
+NORMALIZED_LAYER_COORDINATE = "normalized_layer_coordinate"
+PIECEWISE_LINEAR = "piecewise_linear"
+LAYER_AVERAGE_UNITY = "layer_average_unity"
 
 NEUTRAL = "neutral"
 ACCEPTOR = "acceptor"
@@ -76,6 +81,190 @@ class ExplicitDefectSchemaError(ValueError):
 
 class ExplicitDefectCapabilityError(RuntimeError):
     """A valid defect document requested an execution path not yet enabled."""
+
+
+@dataclass(frozen=True, slots=True)
+class BulkDefectSpatialKnot:
+    """One normalized layer coordinate and local density multiplier."""
+
+    position_fraction: float
+    density_multiplier: float
+
+    def __post_init__(self) -> None:
+        position = _finite_nonnegative(
+            self.position_fraction,
+            "position_fraction",
+        )
+        if position > 1.0:
+            raise ExplicitDefectSchemaError(
+                "position_fraction must lie in [0, 1]"
+            )
+        object.__setattr__(self, "position_fraction", position)
+        object.__setattr__(
+            self,
+            "density_multiplier",
+            _finite_positive(self.density_multiplier, "density_multiplier"),
+        )
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "position_fraction": self.position_fraction,
+            "density_multiplier": self.density_multiplier,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        if not isinstance(value, Mapping):
+            raise ExplicitDefectSchemaError("spatial profile knot must be a mapping")
+        _require_exact_keys(
+            value,
+            {"position_fraction", "density_multiplier"},
+            "bulk defect spatial profile knot",
+        )
+        return cls(**dict(value))
+
+
+@dataclass(frozen=True, slots=True)
+class BulkDefectSpatialProfile:
+    """Conservative per-species density profile across one layer.
+
+    ``total_density_m3`` remains the layer-average density. The exact
+    piecewise-linear integral of the dimensionless multiplier over the
+    normalized layer coordinate must therefore equal one; the parser never
+    renormalizes user input.
+    """
+
+    coordinate: Literal["normalized_layer_coordinate"]
+    interpolation: Literal["piecewise_linear"]
+    density_normalization: Literal["layer_average_unity"]
+    knots: tuple[BulkDefectSpatialKnot, ...]
+
+    def __post_init__(self) -> None:
+        coordinate = str(self.coordinate).strip().lower()
+        interpolation = str(self.interpolation).strip().lower()
+        normalization = str(self.density_normalization).strip().lower()
+        if coordinate != NORMALIZED_LAYER_COORDINATE:
+            raise ExplicitDefectSchemaError(
+                "spatial profile coordinate must be "
+                "'normalized_layer_coordinate'"
+            )
+        if interpolation != PIECEWISE_LINEAR:
+            raise ExplicitDefectSchemaError(
+                "spatial profile interpolation must be 'piecewise_linear'"
+            )
+        if normalization != LAYER_AVERAGE_UNITY:
+            raise ExplicitDefectSchemaError(
+                "spatial profile density_normalization must be "
+                "'layer_average_unity'"
+            )
+        knots = tuple(self.knots)
+        if len(knots) < 2 or not all(
+            isinstance(item, BulkDefectSpatialKnot) for item in knots
+        ):
+            raise ExplicitDefectSchemaError(
+                "spatial profile requires at least two typed knots"
+            )
+        positions = tuple(item.position_fraction for item in knots)
+        if positions[0] != 0.0 or positions[-1] != 1.0:
+            raise ExplicitDefectSchemaError(
+                "spatial profile knots must include exact endpoints 0 and 1"
+            )
+        if any(right <= left for left, right in zip(positions, positions[1:])):
+            raise ExplicitDefectSchemaError(
+                "spatial profile knot positions must be strictly increasing"
+            )
+        integral = math.fsum(
+            0.5
+            * (left.density_multiplier + right.density_multiplier)
+            * (right.position_fraction - left.position_fraction)
+            for left, right in zip(knots, knots[1:])
+        )
+        if not math.isclose(integral, 1.0, rel_tol=0.0, abs_tol=1.0e-12):
+            raise ExplicitDefectSchemaError(
+                "spatial profile density multiplier must have exact "
+                f"layer-average unity; integral={integral:.17g}"
+            )
+        object.__setattr__(self, "coordinate", coordinate)
+        object.__setattr__(self, "interpolation", interpolation)
+        object.__setattr__(self, "density_normalization", normalization)
+        object.__setattr__(self, "knots", knots)
+
+    @property
+    def layer_average_multiplier(self) -> float:
+        return math.fsum(
+            0.5
+            * (left.density_multiplier + right.density_multiplier)
+            * (right.position_fraction - left.position_fraction)
+            for left, right in zip(self.knots, self.knots[1:])
+        )
+
+    @property
+    def is_uniform(self) -> bool:
+        return all(item.density_multiplier == 1.0 for item in self.knots)
+
+    def density_multiplier_at(self, position_fraction: object) -> float:
+        position = _finite_nonnegative(position_fraction, "position_fraction")
+        if position > 1.0:
+            raise ExplicitDefectSchemaError(
+                "position_fraction must lie in [0, 1]"
+            )
+        if position == 1.0:
+            return self.knots[-1].density_multiplier
+        for left, right in zip(self.knots, self.knots[1:]):
+            if left.position_fraction <= position <= right.position_fraction:
+                fraction = (
+                    (position - left.position_fraction)
+                    / (right.position_fraction - left.position_fraction)
+                )
+                return (
+                    left.density_multiplier
+                    + fraction
+                    * (right.density_multiplier - left.density_multiplier)
+                )
+        raise AssertionError("validated spatial profile did not bracket position")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "coordinate": self.coordinate,
+            "interpolation": self.interpolation,
+            "density_normalization": self.density_normalization,
+            "knots": [item.to_dict() for item in self.knots],
+        }
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            self.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("ascii")).hexdigest()
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        if not isinstance(value, Mapping):
+            raise ExplicitDefectSchemaError("spatial profile must be a mapping")
+        _require_exact_keys(
+            value,
+            {"coordinate", "interpolation", "density_normalization", "knots"},
+            "bulk defect spatial profile",
+        )
+        raw_knots = value["knots"]
+        if (
+            not isinstance(raw_knots, Sequence)
+            or isinstance(raw_knots, (str, bytes, bytearray))
+        ):
+            raise ExplicitDefectSchemaError("spatial profile knots must be a list")
+        return cls(
+            coordinate=value["coordinate"],
+            interpolation=value["interpolation"],
+            density_normalization=value["density_normalization"],
+            knots=tuple(BulkDefectSpatialKnot.from_dict(item) for item in raw_knots),
+        )
 
 
 def _finite_positive(value: object, field: str) -> float:
@@ -448,6 +637,7 @@ class BulkDefectSpecies:
     neutral_reference: DefectNeutralReference
     kinetics: BulkDefectKinetics
     degeneracy: float = 1.0
+    spatial_profile: BulkDefectSpatialProfile | None = None
 
     def __post_init__(self) -> None:
         if self.name is not None:
@@ -460,6 +650,13 @@ class BulkDefectSpecies:
             raise TypeError("distribution must be a BulkDefectDistribution")
         if not isinstance(self.kinetics, BulkDefectKinetics):
             raise TypeError("kinetics must be BulkDefectKinetics")
+        if self.spatial_profile is not None and not isinstance(
+            self.spatial_profile,
+            BulkDefectSpatialProfile,
+        ):
+            raise TypeError(
+                "spatial_profile must be BulkDefectSpatialProfile or None"
+            )
         transition = str(self.charge_transition).strip().lower()
         if transition not in _NEUTRAL_REFERENCE_BY_TRANSITION:
             raise ExplicitDefectSchemaError(
@@ -486,11 +683,23 @@ class BulkDefectSpecies:
             self.name is not None
             and self.charge_transition != UNRESOLVED
             and self.distribution.kind == SINGLE_LEVEL
+            and self.spatial_profile is None
         )
 
     @property
     def distributed_explicit_ready(self) -> bool:
         """Whether the species satisfies the v2 explicit input contract."""
+
+        return (
+            self.name is not None
+            and self.charge_transition != UNRESOLVED
+            and self.distribution.v2_ready
+            and self.spatial_profile is None
+        )
+
+    @property
+    def spatial_explicit_ready(self) -> bool:
+        """Whether the species satisfies the v3 spatial input contract."""
 
         return (
             self.name is not None
@@ -502,7 +711,7 @@ class BulkDefectSpecies:
         self.distribution.validate_band_gap(band_gap_eV)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "name": self.name,
             "distribution": self.distribution.to_dict(),
             "charge_transition": self.charge_transition,
@@ -510,6 +719,9 @@ class BulkDefectSpecies:
             "kinetics": self.kinetics.to_dict(),
             "degeneracy": self.degeneracy,
         }
+        if self.spatial_profile is not None:
+            value["spatial_profile"] = self.spatial_profile.to_dict()
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
@@ -523,6 +735,8 @@ class BulkDefectSpecies:
             "kinetics",
             "degeneracy",
         }
+        if "spatial_profile" in value:
+            expected.add("spatial_profile")
         _require_exact_keys(value, expected, "bulk defect species")
         return cls(
             name=value["name"],
@@ -531,6 +745,11 @@ class BulkDefectSpecies:
             neutral_reference=value["neutral_reference"],
             kinetics=BulkDefectKinetics.from_dict(value["kinetics"]),
             degeneracy=value["degeneracy"],
+            spatial_profile=(
+                BulkDefectSpatialProfile.from_dict(value["spatial_profile"])
+                if "spatial_profile" in value
+                else None
+            ),
         )
 
 
@@ -565,7 +784,10 @@ class BulkDefectDocument:
             incompatible = [
                 item.name or f"species[{index}]"
                 for index, item in enumerate(species)
-                if not item.distribution.v1_compatible
+                if (
+                    not item.distribution.v1_compatible
+                    or item.spatial_profile is not None
+                )
             ]
             if incompatible:
                 raise ExplicitDefectSchemaError(
@@ -573,17 +795,37 @@ class BulkDefectDocument:
                     "support, uniform, and band-tail fields; "
                     f"invalid={incompatible}"
                 )
-        else:
+        elif self.schema_version == EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION:
             incomplete = [
                 item.name or f"species[{index}]"
                 for index, item in enumerate(species)
                 if not item.distribution.v2_ready
+                or item.spatial_profile is not None
             ]
             if incomplete:
                 raise ExplicitDefectSchemaError(
                     "explicit defect schema v2 requires an explicit "
                     "above-valence-band reference and complete finite support "
                     f"metadata; invalid={incomplete}"
+                )
+        else:
+            incomplete = [
+                item.name or f"species[{index}]"
+                for index, item in enumerate(species)
+                if not item.spatial_explicit_ready
+            ]
+            if incomplete:
+                raise ExplicitDefectSchemaError(
+                    "explicit defect schema v3 requires named, charge-resolved "
+                    "normalized species; "
+                    f"invalid={incomplete}"
+                )
+            if not any(
+                item.spatial_profile is not None for item in species
+            ):
+                raise ExplicitDefectSchemaError(
+                    "explicit defect schema v3 requires at least one "
+                    "spatial_profile"
                 )
         if model == EXPLICIT_QUASI_STEADY:
             if not species:
@@ -596,11 +838,17 @@ class BulkDefectDocument:
                     for index, item in enumerate(species)
                     if not item.explicit_ready
                 ]
-            else:
+            elif self.schema_version == EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION:
                 not_ready = [
                     item.name or f"species[{index}]"
                     for index, item in enumerate(species)
                     if not item.distributed_explicit_ready
+                ]
+            else:
+                not_ready = [
+                    item.name or f"species[{index}]"
+                    for index, item in enumerate(species)
+                    if not item.spatial_explicit_ready
                 ]
             if not_ready:
                 requirement = (
@@ -681,6 +929,47 @@ def bulk_defect_document_from_layer_mapping(
             "bulk_defects": layer["bulk_defects"],
         }
     )
+
+
+def bulk_defect_species_at_layer_position(
+    species: Sequence[BulkDefectSpecies],
+    position_fraction: object,
+) -> tuple[BulkDefectSpecies, ...]:
+    """Resolve v3 layer-average densities at one normalized position.
+
+    The returned species are local v2-compatible constitutive inputs: their
+    density is explicit and the spatial profile is removed. Species without a
+    profile retain object identity.
+    """
+
+    position = _finite_nonnegative(position_fraction, "position_fraction")
+    if position > 1.0:
+        raise ExplicitDefectSchemaError(
+            "position_fraction must lie in [0, 1]"
+        )
+    resolved = tuple(species)
+    if not all(isinstance(item, BulkDefectSpecies) for item in resolved):
+        raise TypeError("species must contain BulkDefectSpecies values")
+    localized: list[BulkDefectSpecies] = []
+    for item in resolved:
+        profile = item.spatial_profile
+        if profile is None:
+            localized.append(item)
+            continue
+        multiplier = profile.density_multiplier_at(position)
+        localized.append(
+            replace(
+                item,
+                distribution=replace(
+                    item.distribution,
+                    total_density_m3=(
+                        item.distribution.total_density_m3 * multiplier
+                    ),
+                ),
+                spatial_profile=None,
+            )
+        )
+    return tuple(localized)
 
 
 def bulk_defect_species_from_scaps_mapping(
@@ -815,16 +1104,20 @@ __all__ = [
     "EFFECTIVE_LIFETIME",
     "ENERGY_ABOVE_VALENCE_BAND",
     "EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION",
+    "EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION",
     "EXPLICIT_DEFECT_SCHEMA_VERSION",
     "EXPLICIT_DYNAMIC",
     "EXPLICIT_QUASI_STEADY",
     "GAUSSIAN",
     "INTEGRATED_TOTAL",
+    "LAYER_AVERAGE_UNITY",
     "NEUTRAL",
     "NEUTRAL_ALL_OCCUPANCIES",
     "NEUTRAL_REFERENCE_UNRESOLVED",
     "NEUTRAL_WHEN_EMPTY",
     "NEUTRAL_WHEN_FILLED",
+    "NORMALIZED_LAYER_COORDINATE",
+    "PIECEWISE_LINEAR",
     "SINGLE_LEVEL",
     "SUPPORTED_EXPLICIT_DEFECT_SCHEMA_VERSIONS",
     "UNRESOLVED",
@@ -838,9 +1131,12 @@ __all__ = [
     "BulkDefectDistribution",
     "BulkDefectDocument",
     "BulkDefectKinetics",
+    "BulkDefectSpatialKnot",
+    "BulkDefectSpatialProfile",
     "BulkDefectSpecies",
     "ExplicitDefectCapabilityError",
     "ExplicitDefectSchemaError",
     "bulk_defect_document_from_layer_mapping",
+    "bulk_defect_species_at_layer_position",
     "bulk_defect_species_from_scaps_mapping",
 ]
