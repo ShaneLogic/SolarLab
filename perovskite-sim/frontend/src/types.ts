@@ -262,6 +262,8 @@ export interface DeviceConfig {
     interface_shared_occupancy?: boolean
     interface_plane_generation?: boolean
     jv_solver_policy?: 'general' | 'cancellation_safe_qf_required'
+    interface_charge_closure?: 'off' | 'equilibrium_referenced'
+    interface_charge_rebaseline_acknowledged?: boolean
   }
   layers: LayerConfig[]
 }
@@ -287,6 +289,108 @@ export interface JVResult {
   metrics_rev: JVMetrics
   hysteresis_index: number
   bulk_defect_evidence?: JVBulkDefectEvidence | null
+  interface_charge_evidence?: InterfaceChargeJVEvidence | null
+}
+
+export interface InterfaceChargeJVSolverControls {
+  illumination_steps: number[]
+  finite_difference_step: number
+  newton_residual_tolerance: number
+  max_newton_iterations: number
+  poisson_tolerance_V: number
+  poisson_max_iterations: number
+  continuity_tolerance_A_m2: number
+  current_spread_tolerance_A_m2: number
+  poisson_residual_tolerance: number
+  minimum_voltage_step_V: number
+  max_voltage_bridge_points: number
+}
+
+export interface InterfaceChargeJVAcceptance {
+  max_normalized_cell_residual: number
+  max_interface_local_residual: number
+  max_normalized_gauss_residual: number
+  max_scaled_local_jacobian_condition: number
+  max_continuity_bound_A_m2: number
+  max_face_current_spread_A_m2: number
+  max_poisson_residual: number
+  max_contact_fermi_level_span_eV: number
+  require_contact_thermodynamic_certificate: true
+  require_dark_charge_off_bit_identity: true
+  require_voc_bracket: true
+}
+
+export interface InterfaceChargeJVProtocol {
+  voltages_V: number[]
+  temperature_K: number
+  P_in_W_m2: number
+  solver_controls: InterfaceChargeJVSolverControls
+  acceptance: InterfaceChargeJVAcceptance
+  capability: 'equilibrium_referenced_interface_charge_qf_dc_v1'
+  solver: 'quasi_fermi'
+  illumination: 'stack_baseline_one_sun'
+  branch_semantics: 'ascending_zero_scan_rate'
+  initial_state_source: 'certified_charge_off_dark_reference'
+  interface_topology: 'two_sided_trace'
+  interface_transport_model: 'fermi_dirac_richardson'
+  interface_transmission: 1
+  charge_law: '-q*N_t*(f-f_eq)'
+  stop_after_voc: true
+  mpp_interpolation: 'sampled'
+  schema_version: 'interface-charge-jv-protocol-v1'
+}
+
+export interface InterfaceChargeJVPointEvidence {
+  voltage_V: number
+  current_A_m2: number
+  occupancy: number[]
+  incremental_sheet_charge_C_m2: number[]
+  trace_potential_shift_V: Array<[number, number]>
+  normalized_gauss_residual: number[]
+  scaled_local_jacobian_condition: number[]
+  interface_local_residual: number
+  max_normalized_cell_residual: number
+  electron_continuity_bound_A_m2: number
+  hole_continuity_bound_A_m2: number
+  face_current_spread_A_m2: number
+  poisson_residual: number
+  contact_thermodynamic_status: 'certified'
+  contact_fermi_level_span_eV: number
+  certified: true
+}
+
+export interface InterfaceChargeJVEvidence {
+  model: 'interface-charge-jv-evidence-v1'
+  capability: 'equilibrium_referenced_interface_charge_qf_dc_v1'
+  protocol: InterfaceChargeJVProtocol
+  protocol_sha256: string
+  grid_sha256: string
+  stack_sha256: string
+  dark_state_sha256: string
+  dark_contact_thermodynamic_status: 'certified'
+  dark_contact_fermi_level_span_eV: number
+  interface_defect_document_sha256: string[]
+  capture_velocities_m_s: Array<[number, number]>
+  trap_density_m2: number[]
+  equilibrium_occupancy: number[]
+  dark_charge_off_bit_identity_verified: true
+  points: InterfaceChargeJVPointEvidence[]
+  continuation_bridges: InterfaceChargeJVPointEvidence[]
+  continuation_bridge_count: number
+  tolerance_factor: number
+  minimum_occupancy: number
+  maximum_occupancy: number
+  maximum_absolute_sheet_charge_C_m2: number
+  maximum_absolute_trace_potential_shift_V: number
+  maximum_normalized_gauss_residual: number
+  maximum_scaled_local_jacobian_condition: number
+  maximum_interface_local_residual: number
+  maximum_normalized_cell_residual: number
+  maximum_continuity_bound_A_m2: number
+  maximum_face_current_spread_A_m2: number
+  maximum_poisson_residual: number
+  maximum_contact_fermi_level_span_eV: number
+  limitations: string[]
 }
 
 export interface JVBulkDefectEvidence {

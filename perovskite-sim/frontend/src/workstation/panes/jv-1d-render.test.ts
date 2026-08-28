@@ -20,7 +20,7 @@ vi.mock('plotly.js-basic-dist-min', () => ({
 }))
 
 import { renderJV } from './main-plot-pane'
-import type { JVResult, JVMetrics } from '../../types'
+import type { InterfaceChargeJVEvidence, JVResult, JVMetrics } from '../../types'
 import { PUBLICATION_FONT_FAMILY } from '../../plot-theme'
 import Plotly from 'plotly.js-basic-dist-min'
 
@@ -47,6 +47,63 @@ function makeResult(overrides: Partial<JVResult> = {}): JVResult {
     metrics_rev: makeMetrics({ V_oc: 0.948, J_sc: 218.0, FF: 0.815, PCE: 0.1685 }),
     hysteresis_index: 0.012,
     ...overrides,
+  }
+}
+
+function makeInterfaceChargeEvidence(): InterfaceChargeJVEvidence {
+  return {
+    model: 'interface-charge-jv-evidence-v1',
+    capability: 'equilibrium_referenced_interface_charge_qf_dc_v1',
+    protocol: {
+      voltages_V: [0, 0.05, 0.1], temperature_K: 300, P_in_W_m2: 1000,
+      solver_controls: {
+        illumination_steps: [0, 1], finite_difference_step: 7e-6,
+        newton_residual_tolerance: 4e-7, max_newton_iterations: 60,
+        poisson_tolerance_V: 1e-12, poisson_max_iterations: 100,
+        continuity_tolerance_A_m2: 1e-4, current_spread_tolerance_A_m2: 1e-4,
+        poisson_residual_tolerance: 1e-8, minimum_voltage_step_V: 1e-3,
+        max_voltage_bridge_points: 256,
+      },
+      acceptance: {
+        max_normalized_cell_residual: 4e-7, max_interface_local_residual: 1e-7,
+        max_normalized_gauss_residual: 1e-10,
+        max_scaled_local_jacobian_condition: 1e8,
+        max_continuity_bound_A_m2: 1e-4, max_face_current_spread_A_m2: 1e-4,
+        max_poisson_residual: 1e-8, max_contact_fermi_level_span_eV: 5e-3,
+        require_contact_thermodynamic_certificate: true,
+        require_dark_charge_off_bit_identity: true, require_voc_bracket: true,
+      },
+      capability: 'equilibrium_referenced_interface_charge_qf_dc_v1',
+      solver: 'quasi_fermi', illumination: 'stack_baseline_one_sun',
+      branch_semantics: 'ascending_zero_scan_rate',
+      initial_state_source: 'certified_charge_off_dark_reference',
+      interface_topology: 'two_sided_trace',
+      interface_transport_model: 'fermi_dirac_richardson',
+      interface_transmission: 1, charge_law: '-q*N_t*(f-f_eq)',
+      stop_after_voc: true, mpp_interpolation: 'sampled',
+      schema_version: 'interface-charge-jv-protocol-v1',
+    },
+    protocol_sha256: 'a'.repeat(64), grid_sha256: 'b'.repeat(64),
+    stack_sha256: 'c'.repeat(64), dark_state_sha256: 'd'.repeat(64),
+    dark_contact_thermodynamic_status: 'certified',
+    dark_contact_fermi_level_span_eV: 0,
+    interface_defect_document_sha256: ['e'.repeat(64)],
+    capture_velocities_m_s: [[0.03, 0.05]], trap_density_m2: [1e17],
+    equilibrium_occupancy: [0.7], dark_charge_off_bit_identity_verified: true,
+    points: [] as never[], continuation_bridges: [] as never[],
+    continuation_bridge_count: 1, tolerance_factor: 1,
+    minimum_occupancy: 0.7139, maximum_occupancy: 0.7194,
+    maximum_absolute_sheet_charge_C_m2: 8.73e-5,
+    maximum_absolute_trace_potential_shift_V: 2.41e-4,
+    maximum_normalized_gauss_residual: 3.16e-16,
+    maximum_scaled_local_jacobian_condition: 1.19e4,
+    maximum_interface_local_residual: 1.27e-13,
+    maximum_normalized_cell_residual: 3.12e-7,
+    maximum_continuity_bound_A_m2: 3.13e-7,
+    maximum_face_current_spread_A_m2: 3.12e-7,
+    maximum_poisson_residual: 4.59e-15,
+    maximum_contact_fermi_level_span_eV: 1e-5,
+    limitations: ['ion-free'],
   }
 }
 
@@ -148,6 +205,27 @@ describe('renderJV — toolbar + style mode', () => {
     expect(summary.textContent).toContain('m(x) [0.500, 1.500]')
     expect(summary.title).toContain(digest)
     expect(_lastNewPlotTraces()).toHaveLength(2)
+  })
+
+  it('renders charged evidence and one zero-scan curve in both styles', () => {
+    const evidence = makeInterfaceChargeEvidence()
+    evidence.points.push({} as never, {} as never, {} as never)
+    renderJV(el, makeResult({ interface_charge_evidence: evidence }))
+
+    const summary = el.querySelector<HTMLElement>(
+      '[data-test="interface-charge-jv-evidence-summary"]',
+    )!
+    expect(summary.textContent).toContain('3 requested points + 1 bridges')
+    expect(summary.textContent).toContain('aaaaaaaaaaaa...')
+    expect(summary.textContent).toContain('Max Gauss 3.160e-16')
+    expect(summary.title).toContain(`dark sha256:${'d'.repeat(64)}`)
+    expect(_lastNewPlotTraces()).toHaveLength(1)
+    expect(_lastNewPlotTraces()![0].name).toBe('Charged QF/DC')
+
+    _toggleStyle(el, 'publication')
+    expect(_lastNewPlotTraces()).toHaveLength(1)
+    const annotation = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0]
+    expect(annotation.text).toContain('Charged QF/DC')
   })
 })
 

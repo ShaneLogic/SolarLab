@@ -21,11 +21,13 @@ import type {
 
 export interface DevicePanel {
   getConfig(): DeviceConfig
+  setConfig(config: DeviceConfig): void
   onChange(cb: (cfg: DeviceConfig) => void): void
 }
 
 export interface MountDevicePanelOptions {
   tier?: SimulationModeName
+  initialConfig?: DeviceConfig
 }
 
 /**
@@ -82,6 +84,9 @@ export async function mountDevicePanel(
 
   let loaded: DeviceConfig | null = null
   let current: DeviceConfig | null = null
+  let workspaceSnapshot = options.initialConfig
+    ? structuredClone(options.initialConfig)
+    : null
   let selectedLayerIdx = 0
   let templates: Record<string, LayerTemplate> = {}
   const listeners: Array<(c: DeviceConfig) => void> = []
@@ -107,7 +112,13 @@ export async function mountDevicePanel(
   )
   const shipped = entries.filter(e => e.namespace === 'shipped')
   const user = entries.filter(e => e.namespace === 'user')
-  select.innerHTML = optgroup('Shipped presets', shipped) + optgroup('User presets', user)
+  const workspaceSnapshotValue = '__workspace_snapshot__'
+  const workspaceSnapshotOption = '<option value="__workspace_snapshot__">Workspace snapshot</option>'
+  select.innerHTML = (
+    (workspaceSnapshot ? workspaceSnapshotOption : '')
+    + optgroup('Shipped presets', shipped)
+    + optgroup('User presets', user)
+  )
 
   function refreshDirtyPill(): void {
     if (loaded && current && isDirty(loaded, current)) {
@@ -329,27 +340,43 @@ export async function mountDevicePanel(
     URL.revokeObjectURL(url)
   }
 
-  async function load(name: string) {
-    const cfg = await getConfig(name)
+  function applyConfig(cfg: DeviceConfig, notify: boolean): void {
     loaded = structuredClone(cfg)
-    current = cfg
+    current = structuredClone(cfg)
     selectedLayerIdx = 0
     rerender()
-    listeners.forEach(l => l(cfg))
+    if (notify) listeners.forEach(l => l(current!))
   }
 
-  select.addEventListener('change', () => { void load(select.value) })
+  async function load(name: string) {
+    const cfg = await getConfig(name)
+    applyConfig(cfg, true)
+  }
+
+  select.addEventListener('change', () => {
+    if (select.value === workspaceSnapshotValue && workspaceSnapshot) {
+      applyConfig(workspaceSnapshot, true)
+      return
+    }
+    void load(select.value)
+  })
   resetBtn.addEventListener('click', () => {
     if (loaded) {
       current = structuredClone(loaded)
       rerender()
+      listeners.forEach(l => l(current!))
     }
   })
 
-  const initial = shipped.find(e => e.name.includes('ionmonger'))?.name ?? shipped[0]?.name ?? entries[0]?.name
-  if (!initial) throw new Error('no configs available')
-  select.value = initial
-  await load(initial)
+  if (workspaceSnapshot) {
+    select.value = workspaceSnapshotValue
+    applyConfig(workspaceSnapshot, false)
+  } else {
+    const initial = shipped.find(e => e.name.includes('ionmonger'))?.name ?? shipped[0]?.name ?? entries[0]?.name
+    if (!initial) throw new Error('no configs available')
+    select.value = initial
+    await load(initial)
+  }
 
   return {
     getConfig(): DeviceConfig {
@@ -358,6 +385,14 @@ export async function mountDevicePanel(
         return readDeviceEditor(current, selectedLayerIdx)
       }
       return readDeviceEditor(current)
+    },
+    setConfig(config: DeviceConfig): void {
+      workspaceSnapshot = structuredClone(config)
+      if (!select.querySelector(`option[value="${workspaceSnapshotValue}"]`)) {
+        select.insertAdjacentHTML('afterbegin', workspaceSnapshotOption)
+      }
+      select.value = workspaceSnapshotValue
+      applyConfig(workspaceSnapshot, false)
     },
     onChange(cb) { listeners.push(cb) },
   }

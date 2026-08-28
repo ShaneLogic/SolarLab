@@ -1,6 +1,6 @@
 import { mountDevicePanel } from '../../device-panel'
 import type { DevicePanel } from '../../device-panel'
-import type { SimulationModeName } from '../../types'
+import type { DeviceConfig, SimulationModeName } from '../../types'
 import { isLayerBuilderEnabled } from '../tier-gating'
 
 /**
@@ -19,6 +19,7 @@ export async function mountDevicePane(
   container: HTMLElement,
   tabId: string,
   tier: SimulationModeName = 'full',
+  initialConfig?: DeviceConfig,
 ): Promise<DevicePanel> {
   container.classList.add('pane', 'pane-device')
   const inner = document.createElement('div')
@@ -27,5 +28,5 @@ export async function mountDevicePane(
     inner.classList.add('device-pane-grid')
   }
   container.appendChild(inner)
-  return mountDevicePanel(inner, tabId, { tier })
+  return mountDevicePanel(inner, tabId, { tier, initialConfig })
 }

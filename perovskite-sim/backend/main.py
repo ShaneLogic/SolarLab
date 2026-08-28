@@ -32,6 +32,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
+from perovskite_sim.experiments import interface_charge_jv as interface_charge_jv_exp
 from perovskite_sim.experiments import external_circuit as external_circuit_exp
 from perovskite_sim.experiments import electrothermal as electrothermal_exp
 from perovskite_sim.experiments import identifiability as identifiability_exp
@@ -122,6 +123,10 @@ def _describe_active_physics(stack) -> str:
         parts.append("μ(E)")
     if mode.use_selective_contacts:
         parts.append("Robin contacts")
+    if getattr(stack, "interface_charge_closure", "off") == (
+        "equilibrium_referenced"
+    ):
+        parts.append("equilibrium-referenced interface charge")
     return f"{mode.name.upper()}  " + " · ".join(parts)
 
 
@@ -488,17 +493,13 @@ def build_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceSta
     return stack
 
 
-def build_interface_charge_research_stack(
-    config_path: Optional[str],
-    device: Optional[dict],
+def _require_interface_charge_research_stack(
+    stack: DeviceStack,
+    *,
+    consumer: str,
 ) -> DeviceStack:
-    """Load only stacks eligible for the charged steady-state research lane."""
-    if (config_path is None) == (device is None):
-        raise HTTPException(
-            status_code=422,
-            detail="provide exactly one of 'device' or 'config_path'",
-        )
-    stack = _load_stack(config_path, device)
+    """Apply the shared fail-closed contract for charged research stacks."""
+
     violations: list[str] = []
     if stack.interface_charge_closure != "equilibrium_referenced":
         violations.append(
@@ -517,13 +518,52 @@ def build_interface_charge_research_stack(
     try:
         require_uncalibrated_microscopic_interface_defects(
             stack,
-            consumer="interface-charge research endpoint",
+            consumer=consumer,
         )
     except MicroscopicInterfaceDefectContractError as exc:
         violations.append(str(exc))
     if violations:
         raise HTTPException(status_code=422, detail="; ".join(violations))
     return stack
+
+
+def build_jv_stack(
+    config_path: Optional[str],
+    device: Optional[dict],
+) -> DeviceStack:
+    """Load a J-V stack, admitting only the certified charged DC slice."""
+
+    stack = _load_stack(config_path, device)
+    if stack.interface_charge_closure == "off":
+        return stack
+    if (config_path is None) == (device is None):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "charged interface J-V requires exactly one of 'device' or "
+                "'config_path'"
+            ),
+        )
+    return _require_interface_charge_research_stack(
+        stack,
+        consumer="charged interface J-V endpoint",
+    )
+
+
+def build_interface_charge_research_stack(
+    config_path: Optional[str],
+    device: Optional[dict],
+) -> DeviceStack:
+    """Load only stacks eligible for the charged steady-state research lane."""
+    if (config_path is None) == (device is None):
+        raise HTTPException(
+            status_code=422,
+            detail="provide exactly one of 'device' or 'config_path'",
+        )
+    return _require_interface_charge_research_stack(
+        _load_stack(config_path, device),
+        consumer="interface-charge research endpoint",
+    )
 
 
 def to_serializable(obj):
@@ -887,6 +927,8 @@ class InterfaceChargeSteadyStateResearchResponse(BaseModel):
 
 
 class JVRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     config_path: Optional[str] = None
     device: Optional[dict] = None
     N_grid: int = 80
@@ -903,6 +945,7 @@ class JVRequest(BaseModel):
     interface_transport_model: str = "fermi_richardson"
     protocol_mode: ProtocolMode = "compatibility"
     experiment_protocol: Optional[dict[str, Any]] = None
+    interface_charge_jv_protocol: Optional[dict[str, Any]] = None
 
 
 class ExternalCircuitJVRequest(JVRequest):
@@ -1344,6 +1387,162 @@ def _parse_protocol_inputs(
     return protocol, mode
 
 
+_CHARGED_JV_JOB_PARAM_KEYS = frozenset({
+    "N_grid",
+    "n_points",
+    "v_rate",
+    "V_max",
+    "illuminated",
+    "solver",
+    "iface_states",
+    "interface_boundary",
+    "interface_transport_model",
+    "experiment_protocol",
+    "protocol_mode",
+    "interface_charge_jv_protocol",
+})
+
+
+def _resolve_interface_charge_jv_protocol(
+    stack: DeviceStack,
+    *,
+    N_grid: object,
+    n_points: object,
+    v_rate: object,
+    V_max: object | None,
+    illuminated: object,
+    solver: object,
+    iface_states: object,
+    interface_boundary: object,
+    interface_transport_model: object,
+    experiment_protocol: ExperimentProtocol | None,
+    protocol_mode: ProtocolMode,
+    supplied_protocol: object | None,
+    request_param_keys: set[str] | None = None,
+) -> interface_charge_jv_exp.InterfaceChargeJVProtocol | None:
+    """Resolve the sole public protocol admitted for charged interface J-V."""
+
+    if stack.interface_charge_closure == "off":
+        if supplied_protocol is not None:
+            raise interface_charge_jv_exp.InterfaceChargeJVProtocolError(
+                "interface_charge_jv_protocol requires "
+                "interface_charge_closure='equilibrium_referenced'"
+            )
+        return None
+
+    if stack.interface_charge_closure != "equilibrium_referenced":
+        raise interface_charge_jv_exp.InterfaceChargeJVProtocolError(
+            "unsupported interface-charge closure for J-V execution"
+        )
+
+    violations: list[str] = []
+    if request_param_keys is not None:
+        extra = request_param_keys - _CHARGED_JV_JOB_PARAM_KEYS
+        if extra:
+            violations.append(
+                "unknown charged J-V params: " + ", ".join(sorted(extra))
+            )
+    if isinstance(N_grid, (bool, np.bool_)) or not isinstance(
+        N_grid, (int, np.integer)
+    ) or int(N_grid) < 3:
+        violations.append("N_grid must be an integer >= 3")
+    if isinstance(n_points, (bool, np.bool_)) or not isinstance(
+        n_points, (int, np.integer)
+    ) or int(n_points) < 2:
+        violations.append("n_points must be an integer >= 2")
+    try:
+        rate = float(v_rate)
+    except (TypeError, ValueError):
+        rate = float("nan")
+    if (
+        isinstance(v_rate, (bool, np.bool_))
+        or not np.isfinite(rate)
+        or rate != 0.0
+    ):
+        violations.append("charged interface J-V requires v_rate=0")
+    if illuminated is not True:
+        violations.append("charged interface J-V requires illuminated=true")
+    if solver != "quasi_fermi":
+        violations.append("charged interface J-V requires solver='quasi_fermi'")
+    if iface_states is not False:
+        violations.append("charged interface J-V requires iface_states=false")
+    if interface_boundary is not True:
+        violations.append("charged interface J-V requires interface_boundary=true")
+    if interface_transport_model != "fermi_dirac_richardson":
+        violations.append(
+            "charged interface J-V requires "
+            "interface_transport_model='fermi_dirac_richardson'"
+        )
+    if experiment_protocol is not None or protocol_mode != "compatibility":
+        violations.append(
+            "charged interface J-V uses interface_charge_jv_protocol, not "
+            "the transient ExperimentProtocol"
+        )
+
+    active_ions: list[str] = []
+    explicit_bulk_defects: list[str] = []
+    for layer in stack.layers:
+        params = layer.params
+        if params is None:
+            continue
+        if any(
+            float(getattr(params, name)) != 0.0
+            for name in ("D_ion", "P0", "D_ion_neg", "P0_neg")
+        ):
+            active_ions.append(layer.name)
+        if (
+            params.defect_model != "effective_lifetime"
+            or bool(params.bulk_defects)
+            or params.bulk_trap_distribution is not None
+        ):
+            explicit_bulk_defects.append(layer.name)
+    if active_ions:
+        violations.append(
+            "charged interface J-V v1 is ion-free; active ion fields in "
+            + ", ".join(active_ions)
+        )
+    if explicit_bulk_defects:
+        violations.append(
+            "charged interface J-V v1 excludes explicit bulk-defect "
+            "composition; active layers: " + ", ".join(explicit_bulk_defects)
+        )
+
+    try:
+        voltage_max = 1.25 if V_max is None else float(V_max)
+    except (TypeError, ValueError):
+        voltage_max = float("nan")
+    if (
+        isinstance(V_max, (bool, np.bool_))
+        or not np.isfinite(voltage_max)
+        or voltage_max <= 0.0
+    ):
+        violations.append("charged interface J-V requires finite V_max > 0")
+    if violations:
+        raise interface_charge_jv_exp.InterfaceChargeJVProtocolError(
+            "; ".join(violations)
+        )
+
+    expected = interface_charge_jv_exp.build_interface_charge_jv_protocol(
+        stack,
+        np.linspace(0.0, voltage_max, int(n_points)),
+    )
+    if supplied_protocol is None:
+        return expected
+    if not isinstance(supplied_protocol, dict):
+        raise interface_charge_jv_exp.InterfaceChargeJVProtocolError(
+            "interface_charge_jv_protocol must be a JSON object"
+        )
+    resolved = interface_charge_jv_exp.InterfaceChargeJVProtocol.from_dict(
+        supplied_protocol
+    )
+    if resolved != expected:
+        raise interface_charge_jv_exp.InterfaceChargeJVProtocolError(
+            "interface_charge_jv_protocol does not match the requested stack "
+            "temperature or voltage sampling"
+        )
+    return resolved
+
+
 def _preflight_job_experiment_protocol(
     kind: str,
     params: dict[str, Any],
@@ -1544,6 +1743,9 @@ def _run_jv_dispatch(
     interface_transport_model: str = "fermi_richardson",
     experiment_protocol: ExperimentProtocol | None = None,
     protocol_mode: ProtocolMode = "compatibility",
+    interface_charge_jv_protocol: (
+        interface_charge_jv_exp.InterfaceChargeJVProtocol | None
+    ) = None,
     progress=None,
 ):
     """Route a J-V sweep to the requested solver.
@@ -1554,6 +1756,76 @@ def _run_jv_dispatch(
     hysteresis. Stack policy is enforced inside each driver; no implicit
     solver substitution is permitted.
     """
+    interface_charge_closure = getattr(stack, "interface_charge_closure", "off")
+    if interface_charge_closure == "equilibrium_referenced":
+        if interface_charge_jv_protocol is None:
+            raise interface_charge_jv_exp.InterfaceChargeJVProtocolError(
+                "charged interface J-V requires a resolved protocol"
+            )
+        shared_grid = jv_sweep.build_electrical_grid(stack, N_grid)
+        require_thick_layer_interface_resolution(
+            shared_grid,
+            stack,
+            N_grid=N_grid,
+            allow_underresolved_grid=False,
+        )
+        grid = build_two_sided_trace_grid(shared_grid, stack)
+        execution = interface_charge_jv_exp.solve_interface_charge_jv(
+            grid,
+            stack,
+            interface_charge_jv_protocol,
+            progress=progress,
+        )
+        sweep = execution.sweep
+
+        def _charged_statuses(branch: str):
+            return tuple(
+                jv_sweep.JVPointStatus(
+                    branch=branch,
+                    index=index,
+                    voltage=float(point.V_app),
+                    valid=bool(point.certified),
+                    attempted_currents=(float(point.current_A_m2),),
+                    reason_code="certified_interface_charge_qf",
+                    message=(
+                        "equilibrium-referenced interface-charge QF/DC "
+                        "certificate"
+                    ),
+                    candidate_current=float(point.current_A_m2),
+                    solver="quasi_fermi",
+                    max_normalized_residual=float(
+                        point.max_normalized_cell_residual
+                    ),
+                    electron_continuity_bound_A_m2=float(
+                        point.electron_continuity_bound_A_m2
+                    ),
+                    hole_continuity_bound_A_m2=float(
+                        point.hole_continuity_bound_A_m2
+                    ),
+                    face_current_spread_A_m2=float(
+                        point.face_current_spread_A_m2
+                    ),
+                    poisson_residual=float(point.poisson_residual),
+                )
+                for index, point in enumerate(sweep.points)
+            )
+
+        return jv_sweep.JVResult(
+            V_fwd=sweep.voltages_V,
+            J_fwd=sweep.currents_A_m2,
+            V_rev=sweep.voltages_V,
+            J_rev=sweep.currents_A_m2,
+            metrics_fwd=sweep.metrics,
+            metrics_rev=sweep.metrics,
+            hysteresis_index=0.0,
+            status_fwd=_charged_statuses("jv_forward"),
+            status_rev=_charged_statuses("jv_reverse"),
+            interface_charge_evidence=execution.evidence,
+        )
+    if interface_charge_jv_protocol is not None:
+        raise interface_charge_jv_exp.InterfaceChargeJVProtocolError(
+            "interface_charge_jv_protocol cannot be used with charge-off J-V"
+        )
     if solver != "transient" and (
         experiment_protocol is not None or protocol_mode != "compatibility"
     ):
@@ -1782,7 +2054,22 @@ def run_jv(req: JVRequest):
             req.experiment_protocol,
             req.protocol_mode,
         )
-        stack = build_stack(req.config_path, req.device)
+        stack = build_jv_stack(req.config_path, req.device)
+        charged_protocol = _resolve_interface_charge_jv_protocol(
+            stack,
+            N_grid=req.N_grid,
+            n_points=req.n_points,
+            v_rate=req.v_rate,
+            V_max=req.V_max,
+            illuminated=True,
+            solver=req.solver,
+            iface_states=req.iface_states,
+            interface_boundary=req.interface_boundary,
+            interface_transport_model=req.interface_transport_model,
+            experiment_protocol=experiment_protocol,
+            protocol_mode=protocol_mode,
+            supplied_protocol=req.interface_charge_jv_protocol,
+        )
         result = _run_jv_dispatch(
             stack, N_grid=req.N_grid, n_points=req.n_points, v_rate=req.v_rate,
             V_max=req.V_max, illuminated=True, solver=req.solver,
@@ -1791,6 +2078,7 @@ def run_jv(req: JVRequest):
             interface_transport_model=req.interface_transport_model,
             experiment_protocol=experiment_protocol,
             protocol_mode=protocol_mode,
+            interface_charge_jv_protocol=charged_protocol,
         )
         return {"status": "ok", "result": to_serializable(result)}
     except HTTPException:
@@ -1799,6 +2087,11 @@ def run_jv(req: JVRequest):
         ExperimentProtocolError,
         GridResolutionError,
         jv_sweep.JVDriverCapabilityError,
+        interface_charge_jv_exp.InterfaceChargeJVProtocolError,
+        interface_charge_jv_exp.InterfaceChargeJVCertificationError,
+        QuasiFermiSteadyStateError,
+        TypeError,
+        ValueError,
     ) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -2239,6 +2532,9 @@ def start_job(req: JobRequest):
 
     experiment_protocol: ExperimentProtocol | None = None
     protocol_mode: ProtocolMode = "compatibility"
+    interface_charge_jv_protocol: (
+        interface_charge_jv_exp.InterfaceChargeJVProtocol | None
+    ) = None
     if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
         try:
             experiment_protocol, protocol_mode = _parse_protocol_inputs(
@@ -2251,7 +2547,11 @@ def start_job(req: JobRequest):
     # Tandem is config-only (no single DeviceStack), so it skips build_stack.
     if kind != "tandem":
         try:
-            stack = build_stack(req.config_path, req.device)
+            stack = (
+                build_jv_stack(req.config_path, req.device)
+                if kind == "jv"
+                else build_stack(req.config_path, req.device)
+            )
         except HTTPException:
             raise
         except Exception as e:
@@ -2259,14 +2559,46 @@ def start_job(req: JobRequest):
 
     if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
         try:
-            _preflight_job_experiment_protocol(
-                kind,
-                p,
-                stack,
-                experiment_protocol,
-                protocol_mode,
-            )
-        except (ExperimentProtocolError, TypeError, ValueError) as exc:
+            if kind == "jv":
+                interface_charge_jv_protocol = (
+                    _resolve_interface_charge_jv_protocol(
+                        stack,
+                        N_grid=p.get("N_grid", 60),
+                        n_points=p.get("n_points", 30),
+                        v_rate=p.get("v_rate", 1.0),
+                        V_max=p.get("V_max"),
+                        illuminated=p.get("illuminated", True),
+                        solver=p.get("solver", "transient"),
+                        iface_states=p.get("iface_states", False),
+                        interface_boundary=p.get(
+                            "interface_boundary", False
+                        ),
+                        interface_transport_model=p.get(
+                            "interface_transport_model",
+                            "fermi_richardson",
+                        ),
+                        experiment_protocol=experiment_protocol,
+                        protocol_mode=protocol_mode,
+                        supplied_protocol=p.get(
+                            "interface_charge_jv_protocol"
+                        ),
+                        request_param_keys=set(p),
+                    )
+                )
+            if interface_charge_jv_protocol is None:
+                _preflight_job_experiment_protocol(
+                    kind,
+                    p,
+                    stack,
+                    experiment_protocol,
+                    protocol_mode,
+                )
+        except (
+            ExperimentProtocolError,
+            interface_charge_jv_exp.InterfaceChargeJVProtocolError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if kind == "jv":
@@ -2289,6 +2621,7 @@ def start_job(req: JobRequest):
                 ),
                 experiment_protocol=experiment_protocol,
                 protocol_mode=protocol_mode,
+                interface_charge_jv_protocol=interface_charge_jv_protocol,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)

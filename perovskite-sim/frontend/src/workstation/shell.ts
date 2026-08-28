@@ -184,6 +184,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       refreshTree()
       const active = workspace.devices.find(d => d.id === id)
       if (active) {
+        devicePanel?.setConfig(active.config)
         consoleHandle.setPhysics(tierLabel(active.tier), physicsSummary(active.tier))
       }
     },
@@ -213,7 +214,12 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
 
   layout.registerComponentFactoryFunction('device', (container) => {
     const active = workspace.devices.find(d => d.id === workspace.activeDeviceId)
-    void mountDevicePane(container.element, 'ws-device', active?.tier ?? 'full').then(panel => {
+    void mountDevicePane(
+      container.element,
+      'ws-device',
+      active?.tier ?? 'full',
+      active?.config,
+    ).then(panel => {
       devicePanel = panel
       // Sync device config changes (preset dropdown, manual edits) back into the workspace
       panel.onChange((cfg) => {

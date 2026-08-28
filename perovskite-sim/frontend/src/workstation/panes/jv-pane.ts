@@ -1,7 +1,10 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum, checkField, readCheck } from '../../ui-helpers'
-import { requiresQuasiFermiJVSolver } from '../../explicit-defect-capability'
+import {
+  requiresChargedInterfaceJVSolver,
+  requiresQuasiFermiJVSolver,
+} from '../../explicit-defect-capability'
 import type {
   DeviceConfig,
   JVResult,
@@ -40,6 +43,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
           <span>Interface transport</span>
           <select id="jvp-interface-transport">
             <option value="fermi_richardson">Fermi-Richardson</option>
+            <option value="fermi_dirac_richardson">Fermi-Dirac Richardson</option>
             <option value="scaps_thermionic">SCAPS thermionic</option>
             <option value="scaps_thermal_velocity">SCAPS thermal velocity</option>
           </select>
@@ -69,7 +73,30 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   const interfaceTransportSelect = container.querySelector<HTMLSelectElement>(
     '#jvp-interface-transport',
   )!
+  const rateInput = container.querySelector<HTMLInputElement>('#jvp-rate')!
+  const decompBox = container.querySelector<HTMLInputElement>('#jvp-decomp')!
+  const spatialBox = container.querySelector<HTMLInputElement>('#jvp-spatial')!
+  let chargedClosureActive = false
+  let lastGeneralRate = rateInput.value
   const syncIfaceEnabled = (): void => {
+    if (chargedClosureActive) {
+      ifaceBox.checked = false
+      ifaceBox.disabled = true
+      interfaceBoundaryBox.checked = true
+      interfaceBoundaryBox.disabled = true
+      interfaceTransportSelect.value = 'fermi_dirac_richardson'
+      interfaceTransportSelect.disabled = true
+      rateInput.value = '0'
+      rateInput.disabled = true
+      decompBox.checked = false
+      decompBox.disabled = true
+      spatialBox.checked = false
+      spatialBox.disabled = true
+      return
+    }
+    rateInput.disabled = false
+    decompBox.disabled = false
+    spatialBox.disabled = false
     ifaceBox.disabled = solverSelect.value !== 'steady_state'
     if (ifaceBox.disabled) ifaceBox.checked = false
     interfaceBoundaryBox.disabled = solverSelect.value !== 'quasi_fermi'
@@ -85,6 +112,10 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   interfaceBoundaryBox.addEventListener('change', syncIfaceEnabled)
   const syncSolverRequirement = (config: DeviceConfig | null): boolean => {
     const required = config !== null && requiresQuasiFermiJVSolver(config)
+    const charged = config !== null && requiresChargedInterfaceJVSolver(config)
+    if (charged && !chargedClosureActive) lastGeneralRate = rateInput.value
+    if (!charged && chargedClosureActive) rateInput.value = lastGeneralRate
+    chargedClosureActive = charged
     solverSelect.disabled = required
     if (required) solverSelect.value = 'quasi_fermi'
     syncIfaceEnabled()
@@ -93,7 +124,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   solverSelect.addEventListener('focus', () => {
     syncSolverRequirement(opts.getActiveDevice()?.config ?? null)
   })
-  syncIfaceEnabled()
+  syncSolverRequirement(opts.getActiveDevice()?.config ?? null)
 
   btn.addEventListener('click', () => {
     const active = opts.getActiveDevice()
@@ -102,6 +133,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
       return
     }
     const qfRequired = syncSolverRequirement(active.config)
+    const chargedInterface = requiresChargedInterfaceJVSolver(active.config)
     btn.disabled = true
     progressBar.reset()
     // Show an active "equilibrating" state immediately: the initial
@@ -143,7 +175,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     const params = {
       N_grid: requestedGrid,
       n_points: Math.max(2, Math.round(readNum('jvp-np', 30))),
-      v_rate: readNum('jvp-rate', 1.0),
+      v_rate: chargedInterface ? 0 : readNum('jvp-rate', 1.0),
       V_max: readNum('jvp-vmax', 1.4),
       illuminated: true,
       solver: kind === 'jv' ? selectedSolver : 'transient',
@@ -155,13 +187,19 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
       interface_boundary: (
         kind === 'jv'
         && selectedSolver === 'quasi_fermi'
-        && readCheck('jvp-interface-boundary', false)
+        && (chargedInterface || readCheck('jvp-interface-boundary', false))
       ),
       interface_transport_model: (
-        kind === 'jv'
-        && selectedSolver === 'quasi_fermi'
-        && readCheck('jvp-interface-boundary', false)
-      ) ? interfaceTransportSelect.value : 'fermi_richardson',
+        chargedInterface
+          ? 'fermi_dirac_richardson'
+          : (
+              kind === 'jv'
+              && selectedSolver === 'quasi_fermi'
+              && readCheck('jvp-interface-boundary', false)
+            )
+            ? interfaceTransportSelect.value
+            : 'fermi_richardson'
+      ),
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))

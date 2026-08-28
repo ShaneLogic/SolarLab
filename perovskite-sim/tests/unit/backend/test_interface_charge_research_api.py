@@ -284,7 +284,7 @@ def test_research_endpoint_rejects_forged_charge_evidence(monkeypatch):
     assert "-q*Nt*(f-f_eq)" in response.json()["detail"]
 
 
-def test_production_jv_route_keeps_interface_charge_parked():
+def test_charged_jv_route_requires_the_certified_zero_scan_controls():
     with TestClient(backend.app) as client:
         response = client.post(
             "/api/jv",
@@ -297,7 +297,10 @@ def test_production_jv_route_keeps_interface_charge_parked():
         )
 
     assert response.status_code == 422
-    assert "PARKED" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "v_rate=0" in detail
+    assert "interface_boundary=true" in detail
+    assert "fermi_dirac_richardson" in detail
 
 
 def test_research_endpoint_forbids_unknown_request_fields():

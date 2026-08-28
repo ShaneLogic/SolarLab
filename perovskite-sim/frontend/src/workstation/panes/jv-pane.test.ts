@@ -6,9 +6,16 @@
  * no-op combo (iface ticked, transient) impossible by gating the "Interface-
  * plane states" checkbox on the solver selection.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+vi.mock('../../job-stream', () => ({
+  startJob: vi.fn(),
+  streamJobEvents: vi.fn(),
+}))
+
 import { mountJVPane } from './jv-pane'
 import type { DeviceConfig } from '../../types'
+import { startJob } from '../../job-stream'
 
 const opts = { getActiveDevice: () => null, onRunComplete: () => {} }
 
@@ -22,6 +29,15 @@ const csiConfig: DeviceConfig = {
     V_bi: 0.8928964399850017,
     Phi: 2.7e21,
     jv_solver_policy: 'cancellation_safe_qf_required',
+  },
+  layers: [],
+}
+
+const chargedInterfaceConfig: DeviceConfig = {
+  device: {
+    Phi: 1e18,
+    interface_charge_closure: 'equilibrium_referenced',
+    interface_charge_rebaseline_acknowledged: true,
   },
   layers: [],
 }
@@ -60,6 +76,8 @@ beforeEach(() => {
   document.body.replaceChildren()
   container = document.createElement('div')
   document.body.appendChild(container)
+  vi.mocked(startJob).mockReset()
+  vi.mocked(startJob).mockResolvedValue('charged-jv-job')
 })
 
 afterEach(() => {
@@ -131,6 +149,7 @@ describe('J–V pane interface-plane-states gating', () => {
     mountJVPane(container, opts)
     expect(Array.from(boxes().interfaceTransport.options).map(o => o.value)).toEqual([
       'fermi_richardson',
+      'fermi_dirac_richardson',
       'scaps_thermionic',
       'scaps_thermal_velocity',
     ])
@@ -191,6 +210,45 @@ describe('J–V pane interface-plane-states gating', () => {
     boxes().solver.focus()
     expect(boxes().solver.value).toBe('transient')
     expect(boxes().solver.disabled).toBe(false)
+  })
+
+  it('locks charged interface J-V controls and submits the exact API slice', async () => {
+    mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'charged-interface', config: chargedInterfaceConfig }),
+      onRunComplete: () => {},
+    })
+
+    expect(boxes().solver.value).toBe('quasi_fermi')
+    expect(boxes().solver.disabled).toBe(true)
+    expect(boxes().iface.disabled).toBe(true)
+    expect(boxes().interfaceBoundary.checked).toBe(true)
+    expect(boxes().interfaceBoundary.disabled).toBe(true)
+    expect(boxes().interfaceTransport.value).toBe('fermi_dirac_richardson')
+    expect(boxes().interfaceTransport.disabled).toBe(true)
+    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('0')
+    expect((document.getElementById('jvp-rate') as HTMLInputElement).disabled).toBe(true)
+    expect((document.getElementById('jvp-decomp') as HTMLInputElement).disabled).toBe(true)
+    expect((document.getElementById('jvp-spatial') as HTMLInputElement).disabled).toBe(true)
+
+    ;(document.getElementById('jvp-vmax') as HTMLInputElement).value = '0.1'
+    ;(document.getElementById('jvp-np') as HTMLInputElement).value = '5'
+    ;(document.getElementById('btn-jvp') as HTMLButtonElement).click()
+
+    await vi.waitFor(() => expect(startJob).toHaveBeenCalledOnce())
+    expect(vi.mocked(startJob).mock.calls[0]).toEqual([
+      'jv',
+      chargedInterfaceConfig,
+      expect.objectContaining({
+        n_points: 5,
+        v_rate: 0,
+        V_max: 0.1,
+        illuminated: true,
+        solver: 'quasi_fermi',
+        iface_states: false,
+        interface_boundary: true,
+        interface_transport_model: 'fermi_dirac_richardson',
+      }),
+    ])
   })
 
   it('rejects a c-Si grid below the preserved config minimum', () => {

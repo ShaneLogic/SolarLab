@@ -16,6 +16,10 @@ import {
   summarizeImpedanceEvidence,
 } from '../../impedance-evidence'
 import { summarizeJVBulkDefectEvidence } from '../../jv-defect-evidence'
+import {
+  interfaceChargeJVEvidenceTitle,
+  summarizeInterfaceChargeJVEvidence,
+} from '../../interface-charge-jv-evidence'
 import type {
   JVResult,
   ISResult,
@@ -595,7 +599,7 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
 // call ``metricAnnotation(m)`` directly — this picker is 1D-specific.
 type Jv1dPick = {
   metrics: JVResult['metrics_fwd']
-  label: 'Forward' | 'Reverse'
+  label: 'Forward' | 'Reverse' | 'Charged QF/DC'
   source: 'forward' | 'reverse'
 }
 function _jv1dPickMetrics(
@@ -675,6 +679,7 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   el.classList.add('jv1d-render')
 
   const style = readPlotStyleMode(el)
+  const chargedEvidence = r.interface_charge_evidence ?? null
 
   // Toolbar — always rendered when plot data exists. Hosts only the
   // Style: selector for 1D J-V (no Operational/Full sweep concept on
@@ -723,6 +728,20 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
     el.appendChild(summary)
   }
 
+  const interfaceChargeLines = summarizeInterfaceChargeJVEvidence(chargedEvidence)
+  if (interfaceChargeLines.length > 0 && chargedEvidence) {
+    const summary = document.createElement('div')
+    summary.className = 'jv-defect-evidence-summary'
+    summary.setAttribute('data-test', 'interface-charge-jv-evidence-summary')
+    summary.title = interfaceChargeJVEvidenceTitle(chargedEvidence)
+    for (const line of interfaceChargeLines) {
+      const item = document.createElement('span')
+      item.textContent = line
+      summary.appendChild(item)
+    }
+    el.appendChild(summary)
+  }
+
   const plotDiv = document.createElement('div')
   plotDiv.className = 'jv1d-plot'
   plotDiv.id = 'jv1d-plot-inner'
@@ -741,7 +760,14 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   if (style === 'publication') {
     // Single source for annotation, y-range and x-range so that all
     // three derived values agree on which sweep they describe.
-    const pick = _jv1dPickMetrics(r.metrics_fwd, r.metrics_rev)
+    const ordinaryPick = _jv1dPickMetrics(r.metrics_fwd, r.metrics_rev)
+    const pick: Jv1dPick | null = chargedEvidence && r.metrics_fwd
+      ? {
+          metrics: r.metrics_fwd,
+          label: 'Charged QF/DC',
+          source: 'forward',
+        }
+      : ordinaryPick
     const yClipPub = _jv1dComputeYRangePublication(pick)
     const xClipPub = _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, pick)
     const allV = [...r.V_fwd, ...r.V_rev]
@@ -762,25 +788,34 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
 
     Plotly.newPlot(
       plotDiv,
-      [
-        {
-          x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
-        },
-        {
-          x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.reverse,
-            hollow: true,
-            dash: 'dash',
-          }),
-        },
-      ],
+      chargedEvidence
+        ? [{
+            x: r.V_fwd, y: J_fwd_mA, name: 'Charged QF/DC',
+            mode: 'lines+markers',
+            ...publicationTraceStyle({
+              color: PUBLICATION_PALETTE.forward,
+              hollow: true,
+            }),
+          }]
+        : [
+          {
+            x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
+            mode: 'lines+markers',
+            ...publicationTraceStyle({
+              color: PUBLICATION_PALETTE.forward,
+              hollow: true,
+            }),
+          },
+          {
+            x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
+            mode: 'lines+markers',
+            ...publicationTraceStyle({
+              color: PUBLICATION_PALETTE.reverse,
+              hollow: true,
+              dash: 'dash',
+            }),
+          },
+        ],
       publicationLayout({
         xaxis: publicationAxis(xaxisOpts),
         yaxis: publicationAxis(yaxisOpts),
@@ -810,20 +845,27 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   } else {
     Plotly.newPlot(
       plotDiv,
-      [
-        {
-          x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-        {
-          x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
-          mode: 'lines+markers',
-          line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
-          marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
-        },
-      ],
+      chargedEvidence
+        ? [{
+            x: r.V_fwd, y: J_fwd_mA, name: 'Charged QF/DC',
+            mode: 'lines+markers',
+            line: { color: PALETTE.forward, width: LINE.width },
+            marker: { ...MARKER, color: PALETTE.forward },
+          }]
+        : [
+          {
+            x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
+            mode: 'lines+markers',
+            line: { color: PALETTE.forward, width: LINE.width },
+            marker: { ...MARKER, color: PALETTE.forward },
+          },
+          {
+            x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
+            mode: 'lines+markers',
+            line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
+            marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
+          },
+        ],
       baseLayout({
         xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
         yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },

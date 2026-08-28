@@ -145,6 +145,9 @@ export function describeActivePhysics(device: DeviceConfig): string {
   }
 
   // Boundary conditions
+  if (device.device.interface_charge_closure === 'equilibrium_referenced') {
+    fragments.push('Equilibrium-referenced interface charge')
+  }
   if (flags.use_selective_contacts && hasRobinContacts(device)) {
     fragments.push('Robin contacts')
   }

@@ -1,9 +1,10 @@
 # Interface-charge closure policy
 
-Status: D4-E3a protocol-bound charged quasi-Fermi J-V core implemented and
-tested. Production backend/frontend routes remain `PARKED`, and the capability
-is not certified until D4-E3b integration and the D4-E3c source-clean matrix
-complete (2026-08-28).
+Status: D4-E3b protocol-bound charged quasi-Fermi J-V backend/frontend
+integration implemented and tested. The exact illuminated zero-scan-rate slice
+is available through `/api/jv` and `/api/jobs`; all other charged experiment
+routes remain `PARKED`. The capability is not production-certified until the
+D4-E3c source-clean matrix completes (2026-08-29).
 
 D4-E0 (2026-08-28) added the canonical per-area microscopic document described
 in `docs/explicit-interface-defect-schema-v1.md`. D4-E1 now requires that
@@ -12,11 +13,12 @@ reference, backend endpoint, charged refinement, and stress adapters. D4-E2
 minted complete charge-off, charged, and resolved device-stress certificates at
 source commit `851406a`; earlier certificates remain historical baselines only.
 
-SolarLab's production interface-state paths remain recombination-only. The
-explicit research API below provides a self-consistent occupancy-dependent
-sheet charge in the QF outer Poisson system. The current v2 charged lane and v3
-resolved-stress lane are internally numerically certified. That status does not
-promote the closure to a production or externally validated model.
+SolarLab's default and general interface-state paths remain
+recombination-only. The explicit research API and the narrowly gated charged
+J-V route below provide a self-consistent occupancy-dependent sheet charge in
+the QF outer Poisson system. The current v2 charged lane and v3 resolved-stress
+lane are internally numerically certified. That status does not promote the
+new J-V route to a production-certified or externally validated model.
 
 ## Configuration contract
 
@@ -39,12 +41,12 @@ device:
 The acknowledgement records that activating electrostatic trap charge
 invalidates the historical SCAPS calibration. A charge-off reference config may
 set it while establishing the fresh baseline; doing so changes its semantic
-identity without enabling charge. It is not an enable switch: all production
-material assembly and backend experiment routes still reject
-`equilibrium_referenced` with a `PARKED` capability error. The only activation
-path is the explicit two-call research API described below; it internally
-builds charge-off material arrays and threads the signed charge through the
-separate charged QF system.
+identity without enabling charge. It is not a general enable switch: ordinary
+material assembly and every backend experiment other than the exact D4-E3b J-V
+slice reject `equilibrium_referenced` with a `PARKED` capability error. The
+research endpoint and charged J-V dispatcher both build charge-off material
+arrays internally and thread the signed charge through the separate charged QF
+system; neither enables the legacy production material path.
 
 ## Charge convention
 
@@ -139,9 +141,9 @@ velocities. Response assembly independently rechecks array alignment,
 certificate fields.
 
 This endpoint is labelled `internal_numerical_research` and always reports
-`production_unlocked=false`. It is not part of `/api/jv` or `/api/jobs`, and
-there is no frontend control for it. Production J-V, transient, QF impedance,
-and 2D routes continue to fail through the material-assembly capability gate.
+`production_unlocked=false`. It remains separate from the D4-E3b J-V route.
+Transient, QF impedance, 2D, and every other charged experiment continue to
+fail through the material-assembly capability gate.
 
 ## Protocol-bound charged J-V core (D4-E3a)
 
@@ -181,13 +183,72 @@ bound `3.121e-7 A/m2`, normalized Gauss residual `3.16e-16`, and scaled local
 Jacobian condition `1.186e4`. These values demonstrate an internally closed
 execution path only.
 
-D4-E3a does not expose `/api/jv`, `/api/jobs`, or a frontend control. Dark J-V,
-finite-rate hysteresis, current decomposition, spatial snapshots, external
-circuits, TPV, Suns-Voc, EQE, EL, impedance, 2-D, and degradation remain
-unsupported for charged interface defects. D4-E3b must preserve those
-fail-closed boundaries, and D4-E3c must run a newly registered source-clean
-grid/tolerance certificate before this slice can be called production
-certified.
+At the D4-E3a checkpoint this core was not exposed through `/api/jv`,
+`/api/jobs`, or the frontend. D4-E3b adds that narrow integration without
+changing the core protocol. Dark J-V, finite-rate hysteresis, current
+decomposition, spatial snapshots, external circuits, TPV, Suns-Voc, EQE, EL,
+impedance, 2-D, and degradation remain unsupported for charged interface
+defects. D4-E3c must run a newly registered source-clean grid/tolerance
+certificate before this slice can be called production-certified.
+
+## Backend and frontend charged J-V integration (D4-E3b)
+
+The J-V-specific stack gate is the only production-route exception to the
+general charge-off material gate. Both synchronous `/api/jv` and asynchronous
+`/api/jobs kind=jv` resolve the same canonical protocol before solving or
+submitting a worker. A charged request must use the quasi-Fermi solver,
+zero scan rate, illuminated operation, no mobile ions, no bulk-defect
+composition, no legacy interface-state channel, the two-sided physical
+interface boundary, and Fermi-Dirac Richardson transport. Unknown controls,
+protocol mismatches, or a charged protocol attached to a charge-off device fail
+with HTTP 422 before numerical work begins.
+
+`configs/interface_charge_jv_research.yaml` is the runnable uncalibrated
+two-layer companion to the electrostatic stress fixture. It is explicitly an
+internal synthetic numerical reference, not a SCAPS, experimental, or device-
+performance reference. The dispatcher constructs the shared electrical grid,
+applies its resolution guard, converts it to the charged two-sided trace grid,
+and returns the protocol-bound core result in a `JVResult`-compatible envelope.
+Forward and reverse arrays intentionally contain the same stationary branch,
+hysteresis is zero, and the renderer draws one curve rather than implying two
+independent scan histories.
+
+Both J-V frontends detect the charged closure and lock scan rate to zero,
+solver to quasi-Fermi, interface topology to the physical two-sided boundary,
+and transport to Fermi-Dirac Richardson. Decomposition and spatial-profile
+requests are disabled. The result view displays protocol, dark-state, grid and
+stack identities together with requested/bridge counts, occupancy, sheet
+charge, trace shift, Gauss/cell/continuity bounds, contact span, local Jacobian
+condition, and tolerance factor.
+
+The workstation Device panel now initializes from the active persisted
+workspace snapshot instead of independently loading an IonMonger preset. This
+state-ownership fix is part of the charged-route safety boundary: before the
+fix, the controls could describe a charged device while the submitted payload
+came from a different preset. A real browser run at N30 and five points from
+0 to 0.1 V completed 5/5 certified points with zero bridges and rendered one
+non-empty curve plus the full evidence strip. Desktop layout verification is
+clean. The existing whole-workstation Golden Layout remains unsuitable for a
+phone-width viewport; that general responsive-shell limitation is recorded but
+is outside D4-E3b.
+
+The shipped J-V fixture is registered as `partial` in the strict
+config/benchmark matrix and is bound to a dedicated protocol/API integration
+benchmark. The exact registered command passes 40 tests, including real core,
+synchronous endpoint, and asynchronous worker solves. The backend suite passes
+152 tests with three slow tests deselected; the frontend passes 453 tests across
+35 files, TypeScript checking, and a production Vite build. The fixed single-
+thread complete Python suite passes 3139 tests with 2 skipped and 267 deselected.
+An initial full run failed only because the new shipped config was absent from
+the reproducibility matrix; adding its file/semantic hashes and bidirectional
+benchmark mapping fixed that provenance failure, after which the 55 matrix
+tests and the complete suite passed. This failure and repair are retained as
+part of the checkpoint history.
+
+D4-E3b provides an auditable execution and presentation route, not a new
+numerical certificate. The D4-E3c matrix must bind the current source,
+environment, protocol, grid and tolerance identities and finish with no failed,
+missing or reused cells before the capability label can be promoted.
 
 ## Charge-off reference lane
 

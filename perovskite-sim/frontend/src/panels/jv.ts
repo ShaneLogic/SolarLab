@@ -5,7 +5,14 @@ import { createProgressBar, type ProgressBarHandle } from '../progress'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'
 import { setStatus, metricCard, numField, readNum, checkField, readCheck } from '../ui-helpers'
 import { summarizeJVBulkDefectEvidence } from '../jv-defect-evidence'
-import { requiresQuasiFermiJVSolver } from '../explicit-defect-capability'
+import {
+  requiresChargedInterfaceJVSolver,
+  requiresQuasiFermiJVSolver,
+} from '../explicit-defect-capability'
+import {
+  interfaceChargeJVEvidenceTitle,
+  summarizeInterfaceChargeJVEvidence,
+} from '../interface-charge-jv-evidence'
 import type { JVResult } from '../types'
 
 export async function mountJVPanel(root: HTMLElement): Promise<void> {
@@ -55,14 +62,23 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
   const btn = root.querySelector<HTMLButtonElement>('#btn-jv')!
   const solverSelect = root.querySelector<HTMLSelectElement>('#jv-solver')!
   const darkBox = root.querySelector<HTMLInputElement>('#jv-dark')!
+  const rateInput = root.querySelector<HTMLInputElement>('#jv-rate')!
+  let chargedClosureActive = false
+  let lastGeneralRate = rateInput.value
   const syncDarkEnabled = (): void => {
     darkBox.disabled = solverSelect.value === 'quasi_fermi'
     if (darkBox.disabled) darkBox.checked = false
   }
   const syncSolverRequirement = (device: ReturnType<DevicePanel['getConfig']>): void => {
     const required = requiresQuasiFermiJVSolver(device)
+    const charged = requiresChargedInterfaceJVSolver(device)
+    if (charged && !chargedClosureActive) lastGeneralRate = rateInput.value
+    if (!charged && chargedClosureActive) rateInput.value = lastGeneralRate
+    chargedClosureActive = charged
     solverSelect.disabled = required
     if (required) solverSelect.value = 'quasi_fermi'
+    rateInput.disabled = charged
+    if (charged) rateInput.value = '0'
     syncDarkEnabled()
   }
   solverSelect.addEventListener('change', syncDarkEnabled)
@@ -76,6 +92,7 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
     setStatus('status-jv', 'Starting job…')
     try {
       const device = devicePanel.getConfig()
+      const chargedInterface = requiresChargedInterfaceJVSolver(device)
       const isDark = readCheck('jv-dark', false)
       if (requiresQuasiFermiJVSolver(device) && solverSelect.value !== 'quasi_fermi') {
         throw new Error('This stack requires the Quasi-Fermi J-V solver.')
@@ -90,10 +107,15 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
       const params = {
         N_grid: requestedGrid,
         n_points: Math.max(2, Math.round(readNum('jv-np', 30))),
-        v_rate: readNum('jv-rate', 1.0),
+        v_rate: chargedInterface ? 0 : readNum('jv-rate', 1.0),
         V_max: readNum('jv-vmax', 1.4),
         illuminated: !isDark,
         solver: solverSelect.value,
+        iface_states: false,
+        interface_boundary: chargedInterface,
+        interface_transport_model: chargedInterface
+          ? 'fermi_dirac_richardson'
+          : 'fermi_richardson',
       }
       const jobId = await startJob('jv', device, params)
       setStatus('status-jv', 'Running J–V sweep…')
@@ -121,14 +143,21 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
   })
 }
 
-function renderJVResults(container: HTMLElement, r: JVResult): void {
+export function renderJVResults(container: HTMLElement, r: JVResult): void {
   const mf = r.metrics_fwd
   const mr = r.metrics_rev
-  container.innerHTML = `
-    <div class="card">
-      <h3>Performance Metrics</h3>
-      <div class="metrics-grid">
-        <div class="metric-block">
+  const chargedEvidence = r.interface_charge_evidence ?? null
+  const metrics = chargedEvidence
+    ? `<div class="metric-block">
+          <div class="metric-block-title">Certified zero-scan QF/DC</div>
+          <div class="metric-row">
+            ${metricCard('V<sub>oc</sub>', `${mf.V_oc.toFixed(3)} V`)}
+            ${metricCard('J<sub>sc</sub>', `${(mf.J_sc / 10).toFixed(2)} mA/cm²`)}
+            ${metricCard('FF', `${(mf.FF * 100).toFixed(1)} %`)}
+            ${metricCard('PCE', `${(mf.PCE * 100).toFixed(2)} %`)}
+          </div>
+        </div>`
+    : `<div class="metric-block">
           <div class="metric-block-title">Forward</div>
           <div class="metric-row">
             ${metricCard('V<sub>oc</sub>', `${mf.V_oc.toFixed(3)} V`)}
@@ -149,7 +178,12 @@ function renderJVResults(container: HTMLElement, r: JVResult): void {
         <div class="metric-block">
           <div class="metric-block-title">Hysteresis Index</div>
           <div class="hi-value">${r.hysteresis_index.toFixed(3)}</div>
-        </div>
+        </div>`
+  container.innerHTML = `
+    <div class="card">
+      <h3>Performance Metrics</h3>
+      <div class="metrics-grid">
+        ${metrics}
       </div>
     </div>
     <div class="card">
@@ -171,14 +205,34 @@ function renderJVResults(container: HTMLElement, r: JVResult): void {
     container.insertBefore(summary, container.children[1] ?? null)
   }
 
+  const interfaceChargeLines = summarizeInterfaceChargeJVEvidence(chargedEvidence)
+  if (interfaceChargeLines.length > 0 && chargedEvidence) {
+    const summary = document.createElement('div')
+    summary.className = 'jv-defect-evidence-summary'
+    summary.setAttribute('data-test', 'interface-charge-jv-evidence-summary')
+    summary.title = interfaceChargeJVEvidenceTitle(chargedEvidence)
+    for (const line of interfaceChargeLines) {
+      const item = document.createElement('span')
+      item.textContent = line
+      summary.appendChild(item)
+    }
+    container.insertBefore(summary, container.children[1] ?? null)
+  }
+
   const J_fwd_mA = r.J_fwd.map(j => j / 10)
   const J_rev_mA = r.J_rev.map(j => j / 10)
   const V_rev_sorted = [...r.V_rev].reverse()
   const J_rev_sorted = [...J_rev_mA].reverse()
 
-  Plotly.newPlot(
-    'plot-jv',
-    [
+  const traces = chargedEvidence
+    ? [{
+        x: r.V_fwd, y: J_fwd_mA, name: 'Charged QF/DC',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+        hovertemplate: 'V = %{x:.3f} V<br>J = %{y:.2f} mA/cm²<extra>Charged QF/DC</extra>',
+      }]
+    : [
       {
         x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
         mode: 'lines+markers',
@@ -193,7 +247,11 @@ function renderJVResults(container: HTMLElement, r: JVResult): void {
         marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
         hovertemplate: 'V = %{x:.3f} V<br>J = %{y:.2f} mA/cm²<extra>Reverse</extra>',
       },
-    ],
+    ]
+
+  Plotly.newPlot(
+    'plot-jv',
+    traces,
     baseLayout({
       xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
       yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },

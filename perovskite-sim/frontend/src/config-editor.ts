@@ -1967,6 +1967,8 @@ export function readDeviceEditor(
     'interface_shared_occupancy',
     'interface_plane_generation',
     'jv_solver_policy',
+    'interface_charge_closure',
+    'interface_charge_rebaseline_acknowledged',
     'graded_optics',
   ] as const
   const hiddenPhysicsField: Record<string, boolean | number | string> = {}

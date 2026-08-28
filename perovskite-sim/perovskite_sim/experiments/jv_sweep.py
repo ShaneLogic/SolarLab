@@ -362,6 +362,7 @@ class JVResult:
     protocol: ExperimentProtocol | None = None
     rhs_regularization: RHSRegularization | None = None
     bulk_defect_evidence: JVBulkDefectEvidence | None = None
+    interface_charge_evidence: object | None = None
 
     @property
     def certified(self) -> bool:

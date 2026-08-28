@@ -109,6 +109,15 @@ describe('describeActivePhysics', () => {
     )
   })
 
+  it('reports the equilibrium-referenced charged-interface closure', () => {
+    expect(describeActivePhysics(makeDevice('full', {
+      interface_charge_closure: 'equilibrium_referenced',
+      interface_charge_rebaseline_acknowledged: true,
+    }))).toBe(
+      'Active physics: Equilibrium-referenced interface charge, Reabsorption, Photon recycling',
+    )
+  })
+
   it('does NOT report Robin contacts under FAST even when S is set', () => {
     expect(describeActivePhysics(makeDevice('fast', { S_n_left: 1e3 }))).toBe(
       'Active physics: Photon recycling',

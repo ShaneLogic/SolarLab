@@ -10,9 +10,14 @@ export function requiresQuasiFermiBulkDefectSolver(config: DeviceConfig): boolea
   ))
 }
 
+export function requiresChargedInterfaceJVSolver(config: DeviceConfig): boolean {
+  return config.device.interface_charge_closure === 'equilibrium_referenced'
+}
+
 export function requiresQuasiFermiJVSolver(config: DeviceConfig): boolean {
   return (
     config.device.jv_solver_policy === 'cancellation_safe_qf_required'
     || requiresQuasiFermiBulkDefectSolver(config)
+    || requiresChargedInterfaceJVSolver(config)
   )
 }

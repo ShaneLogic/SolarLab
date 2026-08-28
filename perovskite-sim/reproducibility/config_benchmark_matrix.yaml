@@ -81,6 +81,7 @@ benchmarks:
       - configs/distributed_defect_qf_dc_pn.yaml
       - configs/graded_distributed_defect_qf_dc_pn.yaml
       - configs/field_mobility_demo.yaml
+      - configs/interface_charge_jv_research.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
@@ -204,6 +205,28 @@ benchmarks:
       - Nd=5e15 and 1e16 cm-3 fail different tight-residual grid cells, while 1e17 and 1e18 cm-3 remain outside the local-QSS basin
       - N120 at factor 0.5 fails closed for the Nd=2e15 cm-3 dark-bias target and is outside the current solver basin
       - this is internal numerical evidence with no SCAPS or experimental-validation claim
+  interface-charge-jv-api-integration:
+    kind: numerical
+    status: pass
+    claim_level: internal-protocol-bound-route
+    command: >-
+      pytest -q -m 'slow or not slow'
+      tests/unit/experiments/test_interface_charge_jv.py
+      tests/unit/backend/test_interface_charge_jv_api.py
+    tests:
+      - tests/unit/experiments/test_interface_charge_jv.py
+      - tests/unit/backend/test_interface_charge_jv_api.py
+    node_ids:
+      - tests/unit/experiments/test_interface_charge_jv.py::test_protocol_round_trip_and_hash_bind_every_field
+      - tests/unit/experiments/test_interface_charge_jv.py::test_real_small_grid_charged_jv_has_pointwise_evidence
+      - tests/unit/backend/test_interface_charge_jv_api.py::test_charged_protocol_resolver_builds_the_canonical_zero_scan_contract
+      - tests/unit/backend/test_interface_charge_jv_api.py::test_real_sync_charged_jv_api_returns_certified_point_evidence
+      - tests/unit/backend/test_interface_charge_jv_api.py::test_real_async_charged_jv_worker_preserves_protocol_and_evidence
+    configs: [configs/interface_charge_jv_research.yaml]
+    limitations:
+      - this benchmark binds the exact illuminated ion-free zero-scan-rate QF protocol and its sync/async API evidence route
+      - the D4-E3c source-clean grid by tolerance matrix is not yet complete, so the config remains partial rather than certified
+      - the fixture is an uncalibrated synthetic numerical reference with no SCAPS, experimental, or device-performance claim
   courtier2019-ionmonger:
     kind: external
     status: pass
@@ -1417,6 +1440,14 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - interface-charge-off-qf-reference
+  - path: configs/interface_charge_jv_research.yaml
+    sha256: 5f4bbf89cf2d95fb020cdc9ade111d838ed38cc1c14a722e5fd800e30c6590c1
+    semantic_sha256: 7dae78ac306b881971d54c4857ca72d3394332096af21eeb482b7bbd0a062029
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - interface-charge-jv-api-integration
   - path: configs/interface_charge_research.yaml
     sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     semantic_sha256: 2362b220db8d3aae26a2f91f4231871200066ce742e621e6424fed13b206b747
