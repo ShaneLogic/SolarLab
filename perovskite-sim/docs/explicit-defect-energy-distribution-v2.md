@@ -1,9 +1,9 @@
 # Explicit Bulk-Defect Energy Distribution Contract v2
 
-Status: D3-E1 canonical input, carrier-independent quadrature, and pure local
-Gaussian/uniform closure. Only `single_level` is enabled in the production
-QF/DC material path; distributed production execution remains fail closed
-until D3-E3.
+Status: D3-E2 canonical input, carrier-independent quadrature, pure local
+Gaussian/uniform/CB-tail/VB-tail closure, and strict SCAPS-shaped distributed
+conversion. Only `single_level` is enabled in the production QF/DC material
+path; distributed production execution remains fail closed until D3-E3.
 
 ## Version and compatibility
 
@@ -88,8 +88,8 @@ CB/VB exponential tail: Ec [1 - exp(-m)]
 
 `physics/defect_distributions.py` exposes both conversion directions. A single
 delta level deliberately has no finite `Npeak`; asking for one fails closed.
-If a future SCAPS importer receives both `Ntotal` and `Npeak`, it must validate
-these equations instead of choosing one silently.
+The D3-E2 strict SCAPS adapter validates these equations instead of choosing
+one density silently. It is deliberately separate from the legacy loader.
 
 ## Carrier-independent quadrature
 
@@ -108,7 +108,7 @@ requested quadrature order. The existing v1 and v2 single-level production
 closures therefore perform identical arithmetic; only their provenance hashes
 differ because v2 records the energy reference explicitly.
 
-## D3-E1 local Gaussian and uniform closure
+## D3-E1/E2 local distributed closure
 
 `evaluate_energy_distributed_defect_closure` expands each canonical source
 species, evaluates all nodes through the exact D2 monovalent primitive, and
@@ -147,7 +147,69 @@ changes are `5.72e-8` for occupancy, `5.72e-8` for normalized charge,
 `1.16e-7` for recombination, and `3.86e-6` for the worst tangent, all below the
 `5e-3` gate. This is internal constitutive convergence, not SCAPS validation.
 
-## Capability boundary after D3-E1
+### D3-E2 exponential band tails
+
+The same source/node aggregator now accepts `conduction_band_tail` and
+`valence_band_tail`. It does not add a tail-specific occupancy approximation:
+the E0 inverse-CDF quadrature supplies positive, exactly normalized density
+weights, and every energy node still uses the D2 monovalent closure for
+occupancy, recombination, charge, and all analytic tangents.
+
+For the combined CB-tail/VB-tail three-regime fixture, the independent
+`16 -> 32 -> 64` energy-order report has input SHA-256
+`9a5529321d8dc0848fd27214904b2bf6efb780405d559bb4a191fc432fa4614a`.
+The terminal `32 -> 64` maximum changes are `4.62e-9` for occupancy,
+`4.62e-9` for charge normalized by `q Ntotal`, `3.93e-8` for recombination,
+and `2.54e-7` for the worst tangent. These results are local constitutive
+quadrature evidence, not a production DC/J-V or external SCAPS comparison.
+
+## Strict SCAPS-shaped distributed adapter
+
+`scaps_compat.distributed_defects.convert_scaps_distributed_bulk_defect`
+accepts only dimensionally explicit distributed inputs. The supported source
+fields are:
+
+- one canonical distribution name: `gaussian`, `uniform`,
+  `conduction_band_tail`, or `valence_band_tail`;
+- exactly one energy field: `E_t_eV_above_vb`, `E_t_eV_below_cb`, or signed
+  `E_t_eV_above_intrinsic`;
+- `E_char_eV`, plus an explicit `support_width_multiplier` for Gaussian and
+  tails; uniform treats `E_char_eV` as its full width and forbids a multiplier;
+- at least one of integrated `N_total_cm3` or peak `N_peak_cm3_eV`;
+- explicit capture cross sections, charge transition, neutral reference, and
+  a layer thermal velocity supplied in `cm s^-1`.
+
+The intrinsic-level conversion is non-degenerate and uses the supplied layer
+context:
+
+```text
+Ei - Ev = Eg/2 + (VT/2) ln(Nv/Nc)
+Et - Ev = (Ei - Ev) + Et_above_intrinsic.
+```
+
+The adapter converts `cm^-3 -> m^-3`, `cm^-3 eV^-1 -> m^-3 eV^-1`,
+`cm^2 -> m^2`, and `cm s^-1 -> m s^-1` before constructing one canonical v2
+species. When both density fields are present, their relative mismatch must be
+at most `1e-12`; the integrated total remains canonical and any inconsistency
+fails closed. The conversion result retains source cgs fields, resolved SI
+values, intrinsic level, shape integral, canonical species, and its own
+SHA-256, and recomputes all relationships when constructed.
+
+Four literal fixtures freeze both conversion and v2 document identities:
+
+| Distribution | Conversion SHA-256 | Canonical document SHA-256 |
+|---|---|---|
+| Gaussian | `ebfd73e6785e77d4caa24f66e6f85ba6056038077bc522a1baf780c4ee0e31c2` | `ca2724f5701bada98e0f0307f43128f2fce55c8ada416c3fd3f726e90a117da6` |
+| Uniform | `2be71f3a68525c93fb618866edecd6d62ff5e38f1663818038d7263055133ae3` | `80b880ee09033d012e0dc6f70efc6dc90dcf4a53c8fec81fcc8e42405d96cc74` |
+| CB tail | `76c035c065e951aabe86007d81a8797830ba0d91257b3fd67957638f36e34d87` | `c93b2931f5469fc5233a5000e34a68462634148b78a2028513b1043a054cd8c2` |
+| VB tail | `1aa4ca63a14d5ae01e4da1051ed71118dd083176c4f98689eb07d4fca78c571a` | `f1ed3a6bdd45a0af807f687e2e7d6de2858e650410942299269e82c9ef2501e9` |
+
+The existing `load_scaps_yaml` and
+`bulk_defect_species_from_scaps_mapping` paths are unchanged. Their historical
+`N_t_cm3` remains the direct integrated input and legacy `N_peak_cm3` remains
+informational; ambiguous old YAML never acquires v2 executable meaning.
+
+## Capability boundary after D3-E2
 
 Enabled:
 
@@ -156,21 +218,22 @@ Enabled:
 - analytic `Npeak`/`Ntotal` conversion;
 - carrier-independent normalized energy nodes;
 - exact v2 single-level use of the existing D2 QF/DC closure;
-- pure local Gaussian/uniform occupancy, recombination, charge, and analytic
-  tangents with source/node evidence;
+- pure local Gaussian/uniform/CB-tail/VB-tail occupancy, recombination, charge,
+  and analytic tangents with source/node evidence;
 - content-addressed local energy-order refinement independent of space and
-  solver tolerance.
+  solver tolerance;
+- strict SCAPS-shaped distributed conversion with frozen total/peak, energy
+  reference, support, unit, and SHA-256 fixtures.
 
 Still fail closed:
 
 - any distributed closure in the production material/experiment path;
-- CB/VB tail local closure before D3-E2;
 - distributed contact neutrality, Poisson coupling, J-V, AC, and transient
   execution;
-- SCAPS shaped distributed import without explicit, mutually consistent
-  `Ntotal`, `Npeak`, characteristic width, and support metadata;
+- legacy or standard YAML activation of distributed inputs; only the explicit
+  strict adapter can create a normalized SCAPS-shaped v2 species;
 - spatially graded density or energy reference;
 - dynamic occupancy, non-unit degeneracy, and multivalent defects.
 
-D3-E2 adds both band tails and frozen SCAPS conversion fixtures. D3-E3 is the
-first checkpoint allowed to enable distributed defects in production QF/DC.
+D3-E3 is the first checkpoint allowed to enable distributed defects in
+production QF/DC.

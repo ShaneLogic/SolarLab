@@ -1,4 +1,4 @@
-"""D3-E1 independent energy-order refinement evidence."""
+"""D3-E1/E2 independent energy-order refinement evidence."""
 
 from __future__ import annotations
 
@@ -18,15 +18,13 @@ from perovskite_sim.models.defects import (
     NEUTRAL_WHEN_FILLED,
     SINGLE_LEVEL,
     UNIFORM,
+    VALENCE_BAND_TAIL,
     WIDTH_GAUSSIAN_SIGMA,
     WIDTH_SCAPS_CHARACTERISTIC,
     WIDTH_UNIFORM_FULL,
     BulkDefectDistribution,
     BulkDefectKinetics,
     BulkDefectSpecies,
-)
-from perovskite_sim.physics.distributed_defect_closure import (
-    EnergyDistributedDefectClosureCapabilityError,
 )
 from perovskite_sim.validation.defect_energy_refinement import (
     DEFECT_ENERGY_REFINEMENT_VERSION,
@@ -64,6 +62,13 @@ def _species(name: str, kind: str, transition: str) -> BulkDefectSpecies:
     elif kind == CONDUCTION_BAND_TAIL:
         values |= {
             "center_eV_above_vb": 1.45,
+            "width_eV": 0.1,
+            "width_convention": WIDTH_SCAPS_CHARACTERISTIC,
+            "support_width_multiplier": 7.0,
+        }
+    elif kind == VALENCE_BAND_TAIL:
+        values |= {
+            "center_eV_above_vb": 0.05,
             "width_eV": 0.1,
             "width_convention": WIDTH_SCAPS_CHARACTERISTIC,
             "support_width_multiplier": 7.0,
@@ -212,12 +217,48 @@ def test_single_only_input_cannot_claim_energy_refinement():
         _assess(_species("single", SINGLE_LEVEL, ACCEPTOR))
 
 
-def test_tail_input_preserves_the_d3_e2_capability_gate():
-    with pytest.raises(
-        EnergyDistributedDefectClosureCapabilityError,
-        match="D3-E2",
-    ):
-        _assess(_species("tail", CONDUCTION_BAND_TAIL, ACCEPTOR))
+@pytest.mark.parametrize(
+    "kind",
+    (CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
+)
+def test_tail_input_has_independent_energy_order_evidence(kind):
+    report = _assess(
+        _species("tail", kind, ACCEPTOR),
+        orders=(16, 32, 64),
+    )
+
+    assert report.passed
+    assert report.source_identifiers == ("tail",)
+    assert report.distribution_kinds == (kind,)
+    assert all(item.passed for item in report.comparisons)
+
+
+def test_combined_tail_refinement_fixture_freezes_documented_evidence():
+    report = _assess(
+        _species("cb_tail", CONDUCTION_BAND_TAIL, ACCEPTOR),
+        _species("vb_tail", VALENCE_BAND_TAIL, DONOR),
+        orders=(16, 32, 64),
+    )
+    terminal = report.comparisons[-1]
+
+    assert report.input_identity_sha256 == (
+        "9a5529321d8dc0848fd27214904b2bf6efb780405d559bb4a191fc432fa4614a"
+    )
+    assert terminal.maximum_source_occupancy_absolute_change == pytest.approx(
+        4.62427221514794e-09,
+        rel=2.0e-14,
+    )
+    assert terminal.maximum_source_charge_normalized_change == pytest.approx(
+        4.624272260686276e-09,
+        rel=2.0e-14,
+    )
+    assert terminal.maximum_source_recombination_relative_change == (
+        pytest.approx(3.92845990776778e-08, rel=2.0e-14)
+    )
+    assert terminal.maximum_source_tangent_relative_change == pytest.approx(
+        2.541153515274365e-07,
+        rel=2.0e-14,
+    )
 
 
 def test_comparison_pass_flag_is_fail_closed():

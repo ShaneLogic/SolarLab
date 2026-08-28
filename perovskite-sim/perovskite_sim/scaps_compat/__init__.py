@@ -9,7 +9,8 @@ condition code.
 Module layout:
     defects.py   -- microscopic SRH lifetime and interface velocity
     materials.py -- ni from effective DOS plus cgs->SI helpers
-    loader.py    -- read a SCAPS-shape YAML and return a ``DeviceStack``
+    loader.py    -- read a legacy SCAPS-shape YAML into a ``DeviceStack``
+    distributed_defects.py -- strict normalized v2 distribution conversion
 
 The existing ``perovskite_sim.sweeps.device_parameter_sweep`` module already
 exposes ``cm3_to_m3``, ``cms_to_ms`` and ``srh_n1_p1_from_trap_depth``; this
@@ -28,6 +29,10 @@ from perovskite_sim.scaps_compat.defects import (
     interface_surface_velocity,
     srh_lifetime,
 )
+from perovskite_sim.scaps_compat.distributed_defects import (
+    ScapsDistributedDefectConversion,
+    convert_scaps_distributed_bulk_defect,
+)
 from perovskite_sim.scaps_compat.loader import load_scaps_yaml
 from perovskite_sim.scaps_compat.materials import ni_from_dos
 
@@ -37,6 +42,8 @@ __all__ = [
     "interface_surface_velocity",
     "load_scaps_yaml",
     "ni_from_dos",
+    "ScapsDistributedDefectConversion",
+    "convert_scaps_distributed_bulk_defect",
     "srh_lifetime",
     "srh_n1_p1_from_trap_depth",
 ]

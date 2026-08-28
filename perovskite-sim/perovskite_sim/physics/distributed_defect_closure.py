@@ -1,4 +1,4 @@
-"""Local quasi-steady closure for Gaussian and uniform bulk defects.
+"""Local quasi-steady closure for energy-distributed bulk defects.
 
 Each canonical source species is expanded into normalized single-level energy
 nodes and evaluated by the D2 monovalent closure. This module only aggregates
@@ -40,16 +40,21 @@ from perovskite_sim.physics.defect_distributions import (
 ENERGY_DISTRIBUTED_DEFECT_CLOSURE_VERSION = (
     "monovalent-energy-distributed-mb-v1"
 )
-_E1_DISTRIBUTIONS = frozenset({SINGLE_LEVEL, GAUSSIAN, UNIFORM})
-_E2_DISTRIBUTIONS = frozenset(
-    {CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL}
+_LOCAL_DISTRIBUTIONS = frozenset(
+    {
+        SINGLE_LEVEL,
+        GAUSSIAN,
+        UNIFORM,
+        CONDUCTION_BAND_TAIL,
+        VALENCE_BAND_TAIL,
+    }
 )
 
 
 class EnergyDistributedDefectClosureCapabilityError(
     ExplicitDefectCapabilityError
 ):
-    """A valid defect input requested physics outside D3-E1."""
+    """A valid defect input requested unsupported local defect physics."""
 
 
 class EnergyDistributedDefectClosureError(RuntimeError):
@@ -505,7 +510,7 @@ def evaluate_energy_distributed_defect_closure(
     temperature_K: object,
     energy_quadrature_order: int = DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
 ) -> EnergyDistributedDefectClosureResult:
-    """Evaluate and integrate D2 node closures for D3-E1 distributions."""
+    """Evaluate and integrate D2 node closures for canonical distributions."""
 
     resolved = tuple(species)
     if not resolved:
@@ -517,23 +522,16 @@ def evaluate_energy_distributed_defect_closure(
         set(identifiers)
     ):
         raise EnergyDistributedDefectClosureCapabilityError(
-            "D3-E1 requires unique named source species"
+            "energy-distributed closure requires unique named source species"
         )
     unsupported = [
         f"{item.name}:{item.distribution.kind}"
         for item in resolved
-        if item.distribution.kind not in _E1_DISTRIBUTIONS
+        if item.distribution.kind not in _LOCAL_DISTRIBUTIONS
     ]
     if unsupported:
-        if any(
-            item.distribution.kind in _E2_DISTRIBUTIONS for item in resolved
-        ):
-            raise EnergyDistributedDefectClosureCapabilityError(
-                "D3-E1 keeps CB/VB band-tail closure disabled until D3-E2; "
-                f"invalid={unsupported}"
-            )
         raise EnergyDistributedDefectClosureCapabilityError(
-            f"D3-E1 unsupported distributions: {unsupported}"
+            f"unsupported energy distributions: {unsupported}"
         )
 
     gap = _finite_positive(band_gap_eV, "band_gap_eV")
@@ -565,12 +563,12 @@ def evaluate_energy_distributed_defect_closure(
             )
         except MonovalentDefectClosureCapabilityError as exc:
             raise EnergyDistributedDefectClosureCapabilityError(
-                "D3-E1 source closure is unsupported for "
+                "energy-distributed source closure is unsupported for "
                 f"{source.name!r} ({source.distribution.kind}): {exc}"
             ) from exc
         except (FloatingPointError, ValueError) as exc:
             raise EnergyDistributedDefectClosureError(
-                "D3-E1 source evaluation failed for "
+                "energy-distributed source evaluation failed for "
                 f"{source.name!r} ({source.distribution.kind}, "
                 f"requested_order={energy_quadrature_order}): {exc}"
             ) from exc

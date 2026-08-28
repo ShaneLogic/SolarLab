@@ -1,4 +1,4 @@
-"""D3-E1 Gaussian/uniform local defect closure and analytic tangents."""
+"""D3-E1/E2 energy-distributed local closure and analytic tangents."""
 
 from __future__ import annotations
 
@@ -179,7 +179,10 @@ def test_v2_single_level_is_exactly_the_d2_local_closure():
     )
 
 
-@pytest.mark.parametrize("kind", (GAUSSIAN, UNIFORM))
+@pytest.mark.parametrize(
+    "kind",
+    (GAUSSIAN, UNIFORM, CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
+)
 def test_source_aggregation_is_the_exact_sum_of_d2_energy_nodes(kind):
     species = _species("source", kind)
     n = np.asarray([1.0e18, 2.0e21])
@@ -295,7 +298,10 @@ def test_gaussian_matches_the_preexisting_research_primitive_on_same_support():
     )
 
 
-@pytest.mark.parametrize("kind", (GAUSSIAN, UNIFORM))
+@pytest.mark.parametrize(
+    "kind",
+    (GAUSSIAN, UNIFORM, CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
+)
 def test_analytic_carrier_and_fixed_qf_tangents_match_centered_difference(kind):
     source = _species("source", kind)
     n = 4.0e20
@@ -364,7 +370,10 @@ def test_analytic_carrier_and_fixed_qf_tangents_match_centered_difference(kind):
     )
 
 
-@pytest.mark.parametrize("kind", (GAUSSIAN, UNIFORM))
+@pytest.mark.parametrize(
+    "kind",
+    (GAUSSIAN, UNIFORM, CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
+)
 def test_equilibrium_detailed_balance_and_charge_signs(kind):
     thermal = thermal_voltage(TEMPERATURE_K)
     ni_sq = NC_M3 * NV_M3 * math.exp(-GAP_EV / thermal)
@@ -384,7 +393,10 @@ def test_equilibrium_detailed_balance_and_charge_signs(kind):
     assert acceptor.maximum_occupancy <= 1.0
 
 
-@pytest.mark.parametrize("kind", (GAUSSIAN, UNIFORM))
+@pytest.mark.parametrize(
+    "kind",
+    (GAUSSIAN, UNIFORM, CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
+)
 def test_narrow_distribution_recovers_single_level(kind):
     center = 0.68
     single = _species(
@@ -479,12 +491,103 @@ def test_source_permutation_leaves_total_arrays_exactly_unchanged():
     "kind",
     (CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
 )
-def test_band_tails_remain_fail_closed_until_d3_e2(kind):
-    with pytest.raises(
-        EnergyDistributedDefectClosureCapabilityError,
-        match="D3-E2",
+def test_band_tail_closure_retains_source_and_node_evidence(kind):
+    result = _evaluate(
+        np.asarray([1.0e18, 1.0e20]),
+        np.asarray([2.0e21, 3.0e19]),
+        _species("tail", kind),
+        order=24,
+    )
+
+    source = result.source_closures[0]
+    assert source.distribution_kind == kind
+    assert source.quadrature.order == 24
+    assert source.quadrature.integrated_density_m3 == pytest.approx(
+        TOTAL_DENSITY_M3,
+        rel=8.0e-16,
+    )
+    assert len(source.node_closure.species_identifiers) == 24
+    assert np.all(np.isfinite(result.total_recombination_rate_m3_s))
+    assert np.all(np.isfinite(result.total_charge_density_C_m3))
+
+
+@pytest.mark.parametrize(
+    "kind",
+    (CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
+)
+def test_band_tail_inverse_cdf_matches_direct_energy_quadrature(kind):
+    source = _species("tail", kind)
+    n = 4.0e20
+    p = 7.0e19
+    result = _evaluate(n, p, source, order=128).source_closures[0]
+
+    lower, upper = source.distribution.support_bounds_eV()
+    direct_nodes, direct_weights = np.polynomial.legendre.leggauss(256)
+    energies = lower + 0.5 * (direct_nodes + 1.0) * (upper - lower)
+    energy_weights = 0.5 * (upper - lower) * direct_weights
+    center = source.distribution.center_eV_above_vb
+    width = source.distribution.width_eV
+    if kind == CONDUCTION_BAND_TAIL:
+        shape = np.exp((energies - center) / width)
+    else:
+        shape = np.exp(-(energies - center) / width)
+    density_weights = shape * energy_weights
+    density_weights *= TOTAL_DENSITY_M3 / math.fsum(density_weights)
+    density_weights[-1] += TOTAL_DENSITY_M3 - math.fsum(density_weights)
+    direct_species = tuple(
+        replace(
+            source,
+            name=f"direct::{index:03d}",
+            distribution=BulkDefectDistribution(
+                kind=SINGLE_LEVEL,
+                normalization=INTEGRATED_TOTAL,
+                total_density_m3=float(density),
+                center_eV_above_vb=float(energy),
+                energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+            ),
+        )
+        for index, (energy, density) in enumerate(
+            zip(energies, density_weights, strict=True)
+        )
+    )
+    direct = evaluate_monovalent_defect_closure(
+        n,
+        p,
+        direct_species,
+        band_gap_eV=GAP_EV,
+        effective_conduction_dos_m3=NC_M3,
+        effective_valence_dos_m3=NV_M3,
+        temperature_K=TEMPERATURE_K,
+    )
+
+    np.testing.assert_allclose(
+        result.mean_occupancy,
+        np.sum(direct.occupied_density_m3, axis=0) / TOTAL_DENSITY_M3,
+        rtol=2.0e-10,
+        atol=2.0e-13,
+    )
+    for integrated_field, node_field in (
+        ("charge_density_C_m3", "charge_density_C_m3"),
+        ("recombination_rate_m3_s", "recombination_rate_m3_s"),
+        ("recombination_derivative_n_s1", "recombination_derivative_n_s1"),
+        ("recombination_derivative_p_s1", "recombination_derivative_p_s1"),
+        ("charge_derivative_n_C", "charge_derivative_n_C"),
+        ("charge_derivative_p_C", "charge_derivative_p_C"),
+        (
+            "charge_derivative_fixed_qf_C_m3_V",
+            "charge_derivative_fixed_qf_C_m3_V",
+        ),
+        (
+            "recombination_derivative_fixed_qf_m3_s_V",
+            "recombination_derivative_fixed_qf_m3_s_V",
+        ),
     ):
-        _evaluate(1.0e20, 1.0e20, _species("tail", kind))
+        np.testing.assert_allclose(
+            getattr(result, integrated_field),
+            np.sum(getattr(direct, node_field), axis=0),
+            rtol=8.0e-9,
+            atol=0.0,
+        )
 
 
 def test_source_capability_failure_keeps_source_identity_and_reason():
