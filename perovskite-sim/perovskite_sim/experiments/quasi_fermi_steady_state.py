@@ -594,16 +594,17 @@ def _require_supported(
     interface_boundary: bool = False,
     interface_topology: str = DEDUPLICATED_QSS,
     allow_charged_bulk_defects: bool = False,
+    allow_mobile_ions: bool = False,
 ) -> None:
     unsupported: list[str] = []
     if mat.monovalent_bulk_defects is not None:
         if not allow_charged_bulk_defects:
             unsupported.append("charged explicit bulk defects outside QF/DC")
-    if getattr(mat, "has_dual_ions", False):
+    if getattr(mat, "has_dual_ions", False) and not allow_mobile_ions:
         unsupported.append("dual ions")
-    if np.any(np.asarray(mat.D_ion_face, dtype=float) != 0.0):
+    if np.any(np.asarray(mat.D_ion_face, dtype=float) != 0.0) and not allow_mobile_ions:
         unsupported.append("mobile ions")
-    if np.any(np.asarray(mat.P_ion0, dtype=float) != 0.0):
+    if np.any(np.asarray(mat.P_ion0, dtype=float) != 0.0) and not allow_mobile_ions:
         unsupported.append("nonzero ionic background")
     if mat.N_iface_state != 0:
         unsupported.append("interface-plane states/charge")
@@ -881,7 +882,16 @@ def _transport_balanced_seed(
     )
     n[[0, -1]] = (mat.n_L, mat.n_R)
     p[[0, -1]] = (mat.p_L, mat.p_R)
-    return StateVec.pack(n, p, mat.P_ion0.copy()), phi
+    return StateVec.pack(
+        n,
+        p,
+        mat.P_ion0.copy(),
+        (
+            np.asarray(mat.P_ion0_neg, dtype=float).copy()
+            if mat.has_dual_ions and mat.P_ion0_neg is not None
+            else None
+        ),
+    ), phi
 
 
 class _QuasiFermiSystem:
@@ -1045,16 +1055,51 @@ class _QuasiFermiSystem:
         p: np.ndarray,
         *,
         dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
+        positive_ion_density_m3: np.ndarray | None = None,
+        negative_ion_density_m3: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Evaluate carrier/dopant/ion and explicit-defect Poisson terms."""
-
+        positive = (
+            self.base[2 * self.node_count : 3 * self.node_count]
+            if positive_ion_density_m3 is None
+            else np.asarray(positive_ion_density_m3, dtype=float)
+        )
+        if positive.shape != (self.node_count,) or not np.all(np.isfinite(positive)):
+            raise QuasiFermiSteadyStateError(
+                "positive-ion density must be finite and match the grid"
+            )
+        if np.any(positive < 0.0):
+            raise QuasiFermiSteadyStateError("positive-ion density cannot be negative")
+        negative = None
+        if self.mat.has_dual_ions:
+            negative = (
+                self.base[3 * self.node_count : 4 * self.node_count]
+                if negative_ion_density_m3 is None
+                else np.asarray(negative_ion_density_m3, dtype=float)
+            )
+            if negative.shape != (self.node_count,) or not np.all(
+                np.isfinite(negative)
+            ):
+                raise QuasiFermiSteadyStateError(
+                    "negative-ion density must be finite and match the grid"
+                )
+            if np.any(negative < 0.0):
+                raise QuasiFermiSteadyStateError(
+                    "negative-ion density cannot be negative"
+                )
+        elif negative_ion_density_m3 is not None:
+            raise QuasiFermiSteadyStateError(
+                "negative-ion density was supplied to a single-ion material"
+            )
         rho = _charge_density(
             p,
             n,
-            self.base[2 * self.node_count : 3 * self.node_count],
+            positive,
             self.mat.P_ion0,
             self.mat.N_A,
             self.mat.N_D,
+            P_neg=negative,
+            P_neg0=self.mat.P_ion0_neg,
         )
         derivative = -Q * (n + p) / self.thermal_voltage
         model = self.mat.monovalent_bulk_defects
@@ -1137,6 +1182,9 @@ class _QuasiFermiSystem:
         dqfp: np.ndarray,
         *,
         interface_seed: np.ndarray | None = None,
+        dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
+        positive_ion_density_m3: np.ndarray | None = None,
+        negative_ion_density_m3: np.ndarray | None = None,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
@@ -1164,7 +1212,13 @@ class _QuasiFermiSystem:
             self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
             context="charged hole Poisson-Boltzmann evaluation",
         )
-        rho, charge_derivative = self._bulk_space_charge_and_tangent(n, p)
+        rho, charge_derivative = self._bulk_space_charge_and_tangent(
+            n,
+            p,
+            dynamic_bulk_charge_density_C_m3=dynamic_bulk_charge_density_C_m3,
+            positive_ion_density_m3=positive_ion_density_m3,
+            negative_ion_density_m3=negative_ion_density_m3,
+        )
         charged_qss = solve_material_equilibrium_referenced_two_sided_interfaces_qss(
             self.mat,
             self.stack,
@@ -1201,6 +1255,9 @@ class _QuasiFermiSystem:
         dqfp: np.ndarray,
         *,
         V_app: float | None = None,
+        dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
+        positive_ion_density_m3: np.ndarray | None = None,
+        negative_ion_density_m3: np.ndarray | None = None,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
@@ -1229,6 +1286,9 @@ class _QuasiFermiSystem:
                 dqfn,
                 dqfp,
                 interface_seed=interface_seed,
+                dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+                positive_ion_density_m3=positive_ion_density_m3,
+                negative_ion_density_m3=negative_ion_density_m3,
             )
             interface_seed = charged_qss.qss.state_m3
             step = solve_banded((1, 1), banded, -raw)
@@ -1249,6 +1309,9 @@ class _QuasiFermiSystem:
             dqfn,
             dqfp,
             interface_seed=interface_seed,
+            dynamic_bulk_charge_density_C_m3=dynamic_bulk_charge_density_C_m3,
+            positive_ion_density_m3=positive_ion_density_m3,
+            negative_ion_density_m3=negative_ion_density_m3,
         )
         scale = (factor.C[:-1] + factor.C[1:]) * self.thermal_voltage
         return (
@@ -1268,6 +1331,9 @@ class _QuasiFermiSystem:
         occupancy: np.ndarray,
         *,
         interface_seed: np.ndarray | None = None,
+        dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
+        positive_ion_density_m3: np.ndarray | None = None,
+        negative_ion_density_m3: np.ndarray | None = None,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
@@ -1305,7 +1371,13 @@ class _QuasiFermiSystem:
             self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
             context="fixed-interface hole Poisson-Boltzmann evaluation",
         )
-        rho, charge_derivative = self._bulk_space_charge_and_tangent(n, p)
+        rho, charge_derivative = self._bulk_space_charge_and_tangent(
+            n,
+            p,
+            dynamic_bulk_charge_density_C_m3=dynamic_bulk_charge_density_C_m3,
+            positive_ion_density_m3=positive_ion_density_m3,
+            negative_ion_density_m3=negative_ion_density_m3,
+        )
         fixed_result = solve_material_fixed_occupancy_two_sided_interfaces(
             self.mat,
             self.stack,
@@ -1342,6 +1414,9 @@ class _QuasiFermiSystem:
         occupancy: np.ndarray,
         *,
         V_app: float | None = None,
+        dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
+        positive_ion_density_m3: np.ndarray | None = None,
+        negative_ion_density_m3: np.ndarray | None = None,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
@@ -1365,6 +1440,9 @@ class _QuasiFermiSystem:
                     dqfp,
                     occupancy,
                     interface_seed=interface_seed,
+                    dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+                    positive_ion_density_m3=positive_ion_density_m3,
+                    negative_ion_density_m3=negative_ion_density_m3,
                 )
             )
             interface_seed = fixed_result.qss.state_m3
@@ -1387,6 +1465,9 @@ class _QuasiFermiSystem:
                 dqfp,
                 occupancy,
                 interface_seed=interface_seed,
+                dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+                positive_ion_density_m3=positive_ion_density_m3,
+                negative_ion_density_m3=negative_ion_density_m3,
             )
         )
         scale = (factor.C[:-1] + factor.C[1:]) * self.thermal_voltage
@@ -1407,6 +1488,8 @@ class _QuasiFermiSystem:
         V_app: float | None = None,
         dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
         dynamic_interface_occupancy: np.ndarray | None = None,
+        positive_ion_density_m3: np.ndarray | None = None,
+        negative_ion_density_m3: np.ndarray | None = None,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
@@ -1417,29 +1500,25 @@ class _QuasiFermiSystem:
         | FixedOccupancyMaterialInterfaceResult
         | None,
     ]:
-        if (
-            self.interface_charge_reference_occupancy is not None
-            and dynamic_bulk_charge_density_C_m3 is not None
-        ):
-            raise QuasiFermiSteadyStateError(
-                "combined dynamic bulk and interface charge is not yet supported"
-            )
-        if (
-            dynamic_interface_occupancy is not None
-            and dynamic_bulk_charge_density_C_m3 is not None
-        ):
-            raise QuasiFermiSteadyStateError(
-                "combined dynamic bulk and interface occupancy is not yet supported"
-            )
         if dynamic_interface_occupancy is not None:
             return self._solve_fixed_interface_poisson(
                 dqfn,
                 dqfp,
                 dynamic_interface_occupancy,
                 V_app=V_app,
+                dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+                positive_ion_density_m3=positive_ion_density_m3,
+                negative_ion_density_m3=negative_ion_density_m3,
             )
         if self.interface_charge_reference_occupancy is not None:
-            return self._solve_charged_poisson(dqfn, dqfp, V_app=V_app)
+            return self._solve_charged_poisson(
+                dqfn,
+                dqfp,
+                V_app=V_app,
+                dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+                positive_ion_density_m3=positive_ion_density_m3,
+                negative_ion_density_m3=negative_ion_density_m3,
+            )
         phi = self.phi0.copy()
         voltage = self.V_app if V_app is None else float(V_app)
         phi[0] = 0.0
@@ -1459,6 +1538,8 @@ class _QuasiFermiSystem:
                 n,
                 p,
                 dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+                positive_ion_density_m3=positive_ion_density_m3,
+                negative_ion_density_m3=negative_ion_density_m3,
             )
             raw = (
                 factor.C[:-1] * (phi[:-2] - phi[1:-1])
@@ -1498,6 +1579,8 @@ class _QuasiFermiSystem:
             n,
             p,
             dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+            positive_ion_density_m3=positive_ion_density_m3,
+            negative_ion_density_m3=negative_ion_density_m3,
         )
         raw = (
             factor.C[:-1] * (phi[:-2] - phi[1:-1])
@@ -1529,6 +1612,8 @@ class _QuasiFermiSystem:
         dynamic_bulk_reference_p: np.ndarray | None = None,
         dynamic_bulk_reference_occupancy: np.ndarray | None = None,
         dynamic_interface_occupancy: np.ndarray | None = None,
+        positive_ion_density_m3: np.ndarray | None = None,
+        negative_ion_density_m3: np.ndarray | None = None,
     ) -> _Evaluation:
         self.evaluation_count += 1
         dqfn_arr = np.asarray(dqfn, dtype=float)
@@ -1557,10 +1642,6 @@ class _QuasiFermiSystem:
             dynamic_bulk_layout is not None or dynamic_bulk_occupancy is not None
         )
         dynamic_interface = dynamic_interface_occupancy is not None
-        if dynamic_interface and dynamic_bulk:
-            raise QuasiFermiSteadyStateError(
-                "combined dynamic bulk and interface occupancy is not yet supported"
-            )
         if dynamic_interface and (
             not self.interface_boundary or self.interface_topology != TWO_SIDED_TRACE
         ):
@@ -1616,11 +1697,27 @@ class _QuasiFermiSystem:
             V_app=voltage,
             dynamic_bulk_charge_density_C_m3=dynamic_charge,
             dynamic_interface_occupancy=dynamic_interface_occupancy,
+            positive_ion_density_m3=positive_ion_density_m3,
+            negative_ion_density_m3=negative_ion_density_m3,
         )
 
         y = self.base.copy()
         y[: self.node_count] = n
         y[self.node_count : 2 * self.node_count] = p
+        if positive_ion_density_m3 is not None:
+            y[2 * self.node_count : 3 * self.node_count] = np.asarray(
+                positive_ion_density_m3,
+                dtype=float,
+            )
+        if negative_ion_density_m3 is not None:
+            if not self.mat.has_dual_ions:
+                raise QuasiFermiSteadyStateError(
+                    "negative-ion density was supplied to a single-ion material"
+                )
+            y[3 * self.node_count : 4 * self.node_count] = np.asarray(
+                negative_ion_density_m3,
+                dtype=float,
+            )
         interface_qss = None
         if self.interface_boundary:
             if self.interface_topology == TWO_SIDED_TRACE:
@@ -1904,6 +2001,42 @@ class _QuasiFermiSystem:
             edge_increment_n=edge_increment_n,
             edge_increment_p=edge_increment_p,
             dynamic_interface_occupancy=occupancy,
+        )
+
+    def evaluate_quasi_fermi_increments_defect_ion_combined(
+        self,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        illumination_fraction: float,
+        *,
+        positive_ion_density_m3: np.ndarray,
+        negative_ion_density_m3: np.ndarray | None = None,
+        dynamic_bulk_layout: DynamicBulkTrapLayout | None = None,
+        dynamic_bulk_occupancy: np.ndarray | None = None,
+        dynamic_bulk_reference_n: np.ndarray | None = None,
+        dynamic_bulk_reference_p: np.ndarray | None = None,
+        dynamic_bulk_reference_occupancy: np.ndarray | None = None,
+        dynamic_interface_occupancy: np.ndarray | None = None,
+        V_app: float | None = None,
+        edge_increment_n: np.ndarray | None = None,
+        edge_increment_p: np.ndarray | None = None,
+    ) -> _Evaluation:
+        """Evaluate the research-only joint defect/mobile-ion device operator."""
+        return self._evaluate_increments(
+            dqfn,
+            dqfp,
+            illumination_fraction,
+            V_app=V_app,
+            edge_increment_n=edge_increment_n,
+            edge_increment_p=edge_increment_p,
+            dynamic_bulk_layout=dynamic_bulk_layout,
+            dynamic_bulk_occupancy=dynamic_bulk_occupancy,
+            dynamic_bulk_reference_n=dynamic_bulk_reference_n,
+            dynamic_bulk_reference_p=dynamic_bulk_reference_p,
+            dynamic_bulk_reference_occupancy=(dynamic_bulk_reference_occupancy),
+            dynamic_interface_occupancy=dynamic_interface_occupancy,
+            positive_ion_density_m3=positive_ion_density_m3,
+            negative_ion_density_m3=negative_ion_density_m3,
         )
 
     def evaluate(self, z: np.ndarray, illumination_fraction: float) -> _Evaluation:
