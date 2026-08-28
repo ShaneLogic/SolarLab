@@ -1,23 +1,21 @@
 # Interface-charge closure policy
 
-Status: D4-E1 research-only microscopic wiring implemented and fail closed;
-new D4-E2 numerical certificates are pending. Production experiment routes
-remain `PARKED` (2026-08-28).
+Status: D4-E2 research-only microscopic wiring and current-source numerical
+recertification complete. Production experiment routes remain `PARKED` pending
+the separate D4-E3 integration decision (2026-08-28).
 
 D4-E0 (2026-08-28) added the canonical per-area microscopic document described
 in `docs/explicit-interface-defect-schema-v1.md`. D4-E1 now requires that
 document and rebuilds uncalibrated capture velocities from it in the QF dark
-reference, backend endpoint, charged refinement, and stress adapters. Existing
-charged certificates predate this contract and are inherited baselines only.
-D4-E2 must mint new source/protocol identities and rerun the complete matrices
-before any production unlock decision.
+reference, backend endpoint, charged refinement, and stress adapters. D4-E2
+minted complete charge-off, charged, and resolved device-stress certificates at
+source commit `851406a`; earlier certificates remain historical baselines only.
 
 SolarLab's production interface-state paths remain recombination-only. The
 explicit research API below provides a self-consistent occupancy-dependent
-sheet charge in the QF outer Poisson system. Historical grid/tolerance results
-showed convergence before the microscopic contract, but the current v2 lane is
-not certified until D4-E2 completes. Neither status promotes the closure to a
-production or externally validated model.
+sheet charge in the QF outer Poisson system. The current v2 charged lane and v3
+resolved-stress lane are internally numerically certified. That status does not
+promote the closure to a production or externally validated model.
 
 ## Configuration contract
 
@@ -164,10 +162,13 @@ The absolute interface-state balance uses the same `1e-4 A/m2` conservation
 contract as the device continuity bound; the independent normalized local QSS
 gate remains `1e-7`.
 
-The source-clean single-threaded matrix at commit `29c94b4` is internally
-`certified`: run `d0dc822393290d892e7118bcb7fabd4214b5584815f51ff9ff24f663822687e4`,
+The current source-clean single-threaded matrix at commit `851406a` is
+internally `certified`: run
+`6930cd68ca7f0d531c269321e719163bf4079c0d07762bfc7a7275c3f4678722`,
 certificate
-`0a4fdebdf18eb0237eaa1a4bef599872745697d148461f6de25d10a6985a950b`.
+`a4b131062885c5cb89d56a1c3b81246dec8b7980ad35e0b89994c704e894057d`,
+and protocol
+`d423c42dcf486d40b2bc84c930a806de7aa838810f84885b10b7a4a203755048`.
 All nine cells completed with no failed or missing artifacts. The terminal
 grid differences were `0.3311 A/m2` for interface flux, `9.740e-4` for
 normalized J-V, and `4.852e-6 V` for Voc; all tolerance differences were at
@@ -194,30 +195,31 @@ with the canonical documents and hashes, reconstructed capture velocities,
 IFT condition evidence. D4-E1 raises the executor and protocol schemas to v2
 and adds the `microscopic_defect_contract_verified` quality gate.
 
-The source-clean single-threaded matrix at commit `23783a3` was internally
-`certified` under the pre-D4-E1 v1 contract: run
-`f94831ce5f26b6d4aafa702313846aaf717a6d91b58b99ade72481e77f1ae5c4`,
+The current source-clean single-threaded matrix at commit `851406a` is
+internally `certified`: run
+`902b25e2443caf039fb535e136699abe0fa8b7b69d4b8a41a9516255a0a1583a`,
 certificate
-`1691eaee87208f2494207c94a6f8c484299e34c4ac99c952b6c8df7915cf1921`,
+`3d510f06e381ac56fc66afd3fb59db5e7f88e685d84e5037e1d5c9f8c439d631`,
 and protocol
-`63b646172ca135f58227000cdcb5f35a07e9a4b70387a5d197a0498592c605b3`.
+`730ddfd06a484fc0156dfd6ba0968a08382c9871147f209ef464a0caebb031bd`.
 All nine cells completed with no failure, missing cell or reuse. Terminal grid
 differences were `7.594e-4` for current, `7.627e-7` for occupancy,
 `8.436e-4` relative for sheet charge and `8.918e-6 V` for trace shift. The
-largest tolerance difference was `3.256e-10` for sheet charge. Across the
-matrix, the worst normalized Gauss residual was `1.743e-16`, local interface
-residual `1.866e-12`, continuity bound `4.571e-9 A/m2`, current spread
-`4.554e-9 A/m2`, and scaled local Jacobian condition `4.874e4`.
-These values are retained only as historical regression context. The v1
-certificate cannot certify the current v2 executable contract; D4-E2 must
-rerun all nine cells.
+largest tolerance difference was `6.275e-10` for sheet charge. Across the
+matrix, the worst normalized Gauss residual was `9.313e-17`, local interface
+residual `1.582e-12`, continuity bound `4.571e-9 A/m2`, current spread
+`4.554e-9 A/m2`, and scaled local Jacobian condition `4.874e4`. Dark
+incremental charge and trace shift are exactly zero in all cells; the
+microscopic-document, reconstructed-kinetics, charge-law, and evidence-alignment
+gates all pass. Pre-D4-E1 certificates are retained only as historical context.
 
-## Unlock conditions
+## D4-E2 completion and production unlock conditions
 
-Production and backend unlock remain unavailable until all of these are
-content-addressed or executable certificates under one frozen current
-source/config/protocol identity. The physical mechanisms below exist, but the
-current D4-E1 source does not yet have the required D4-E2 matrix certificates:
+D4-E2's internal research exit conditions are now content-addressed under one
+frozen current source identity. Production and general backend experiment
+unlock nevertheless remain unavailable: D4-E3 must separately bind a charged
+J-V protocol, expose fail-closed backend/frontend evidence, and preserve all of
+the following certificates without weakening their gates:
 
 - contact-consistent residual-certified dark reference (completed in the
   charge-off certificate above);
@@ -234,21 +236,24 @@ current D4-E1 source does not yet have the required D4-E2 matrix certificates:
 - dark reference identity and charge/grid conservation gates (completed for
   the purpose-built research config).
 
-The backend research endpoint and its explicit evidence schema are completed
-for D4-E1, including microscopic document identity and reconstructed kinetics.
+The backend research endpoint and its explicit evidence schema are completed,
+including microscopic document identity and reconstructed kinetics.
 The broader `E_t`/CBO/`N_D`/`N_t` work is registered as
 `interface-charge-device-stress-v1`: nine one-factor device variants evaluated
 on N30/N60 and residual factors 1/0.5. Its source-clean four-cell matrix has no
 failed or missing cell, but remains `partial`: the N30-to-N60 pointwise sheet-
 charge difference is `1.4735%`, above the fixed `1%` gate. The resolved-v2
 companion retains every physical point and gate and adds N90 as the terminal
-grid. Its source-clean six-cell matrix was internally `certified` under the
-pre-D4-E1 executor contract: run
-`30b146b7f95934fd4353890916d8318f8847e3bb8cb7f556f61afa02223a7b55`,
+grid. The current v3 executor keeps its central finite-difference Jacobian probe
+fixed at `7e-6`; only the Newton residual and Poisson tolerances tighten with
+the matrix factor. This avoids treating the truncation/roundoff-balanced probe
+as a monotonic convergence tolerance. Its source-clean six-cell matrix at
+commit `851406a` is internally `certified`: run
+`f4b6e916a2ba1827e337c1b9111423497cf3ccc1405b61289a8a863be43935bc`,
 certificate
-`f6e214307fe73fbc9d866d5e2537658cdb563134df78a419ecb6f4f873bd0844`,
+`9f9da1910c43e8c799ce8f13ed71f8603e0150097045f8027d4a314eecba9531`,
 and protocol
-`ff0d4f385ef67bfc749045be955004979d925e2436dca22d3495265951d865f3`.
+`9927fdc22b5fc526146447343d67e4edd1e7293d3bf485e05ab35172026adeb9`.
 The initial `N_D=1e16 cm^-3` endpoint failed N30/factor=0.5, while an
 intermediate `5e15 cm^-3` endpoint failed N60/factor=0.5. Both failed runs are
 retained as unsupported boundaries. The registered nonzero endpoints are
@@ -260,10 +265,17 @@ so N120 is explicitly outside the current solver basin rather than being used
 to extend the claim.
 For the terminal N60-to-N90 pair, current changes by `0.1006%`, sheet charge
 by `0.1548%`, and the largest absolute trace-potential shift is `42.7 uV`.
+The terminal tolerance differences are `4.262e-10` for current,
+`1.092e-11` for target occupancy, `3.246e-8` for sheet charge, and
+`1.750e-13 V` for trace shift. The worst cell has continuity bound
+`3.639e-7 A/m2`, normalized cell residual `2.235e-7`, normalized Gauss
+residual `9.154e-11`, and scaled local Jacobian condition `1.048e7`. The Gauss
+gate passes its fixed `1e-10` limit but has limited margin and must remain
+visible in downstream evidence.
 All six cells retain exact dark charge-off identity, contact certification,
 the signed charge law, occupancy bounds, and charge/barrier sign consistency.
-Those results are historical regression evidence only; the v2 stress executor
-must be rerun in D4-E2 before the resolved claim is current.
+The current v3 results, not the inherited pre-D4-E1 certificates, support the
+resolved internal numerical claim.
 The historical three-layer SCAPS-derived reference also remains an unresolved
 illuminated stress case. Transient, impedance and 2D require the later unified
 algebraic-state topology. None of these gaps may be hidden by enabling the

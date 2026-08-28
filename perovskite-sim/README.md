@@ -392,7 +392,9 @@ does couple the signed law `Delta sigma = -q Nt (f-f_eq)` into the outer
 two-sided Poisson residual and analytic/IFT Jacobian. It is available through
 the two-call Python API and the fail-closed
 `POST /api/research/interface-charge/steady-state` endpoint only; it is not a
-production trap-electrostatics capability. See
+production trap-electrostatics capability. D4-E2 has current-source internal
+grid/tolerance certificates for the charge-off, charged, and resolved
+device-stress lanes; the production gate remains closed pending D4-E3. See
 [`docs/interface-charge-closure-policy.md`](docs/interface-charge-closure-policy.md).
 
 <br>

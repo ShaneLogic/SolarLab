@@ -1,10 +1,10 @@
 # Explicit Interface-Defect Input Contract v1
 
-Status: D4-E1 canonical microscopic identity and charged-research wiring. The
-standard and SCAPS-shaped config adapters populate the document, and every
-charged steady-state research entry point now requires it. Production
-interface-charge routes remain parked pending D4-E2 recertification and the
-D4-E3 production decision.
+Status: D4-E2 canonical microscopic identity, charged-research wiring, and
+current-source internal numerical recertification complete. The standard and
+SCAPS-shaped config adapters populate the document, and every charged
+steady-state research entry point requires it. Production interface-charge
+routes remain parked pending the D4-E3 production decision.
 
 ## Purpose
 
@@ -132,6 +132,7 @@ dark-state array fails before a charged solve.
 - The research backend returns the document hashes and reconstructed capture
   velocities as evidence; the charged refinement executors gate
   `microscopic_defect_contract_verified == 1`.
-- D4-E1 does not unlock production interface charge, J-V, transient, AC, 2D,
-  tunnelling, multivalent, or metastable execution. D4-E2 must mint complete
-  certificates under the v2 protocol/executor identity first.
+- D4-E2 does not unlock production interface charge, J-V, transient, AC, 2D,
+  tunnelling, multivalent, or metastable execution. Current v2 charged and v3
+  resolved-stress certificates close the internal research gate only; D4-E3
+  must separately bind and validate every production route.

@@ -744,3 +744,50 @@ problem。它不认证 full-device J-V/TPV/impedance identifiability、有噪 re
 coverage、`InterfaceDefect`/`het_recomb_despike`/ion parameters、实测数据、材料
 参数、Bayesian/UQ、外部 solver 或实验验证。详细边界见
 `docs/interface-srh-identifiability.md`。
+
+### 2026-08-28 D4-E2 current-source interface-charge certificates
+
+D4-E2 在 source commit `851406a`、source fingerprint
+`d13b9a8cc25b134e38098a9462cd25ec3bfc4863ee121607195be452ba634d75`、
+四个 BLAS/OpenMP thread variables 均为 1 的环境下重新生成三张当前证书：
+
+- charge-off：run `6930cd68ca7f0d531c269321e719163bf4079c0d07762bfc7a7275c3f4678722`，
+  certificate `a4b131062885c5cb89d56a1c3b81246dec8b7980ad35e0b89994c704e894057d`，
+  protocol `d423c42dcf486d40b2bc84c930a806de7aa838810f84885b10b7a4a203755048`，
+  9/9 completed、0 failed/missing/reused；
+- charged：run `902b25e2443caf039fb535e136699abe0fa8b7b69d4b8a41a9516255a0a1583a`，
+  certificate `3d510f06e381ac56fc66afd3fb59db5e7f88e685d84e5037e1d5c9f8c439d631`，
+  protocol `730ddfd06a484fc0156dfd6ba0968a08382c9871147f209ef464a0caebb031bd`，
+  9/9 completed、0 failed/missing/reused；
+- resolved stress v3：run
+  `f4b6e916a2ba1827e337c1b9111423497cf3ccc1405b61289a8a863be43935bc`，
+  certificate `9f9da1910c43e8c799ce8f13ed71f8603e0150097045f8027d4a314eecba9531`，
+  protocol `9927fdc22b5fc526146447343d67e4edd1e7293d3bf485e05ab35172026adeb9`，
+  6/6 completed、0 failed/missing/reused。
+
+charge-off 与 charged 的终端 differences 重现既有数值；所有 microscopic
+document、charge-law、dark-zero、contact、occupancy、continuity、Poisson 与
+Gauss gates 通过。resolved v3 的 terminal grid differences 为 current
+`1.00579e-3`、equilibrium occupancy `9.87823e-7`、target occupancy
+`9.87955e-7`、sheet charge `1.54778e-3`、trace shift `4.26550e-5 V`；
+terminal tolerance differences 分别为 `4.26160e-10`、`0`、`1.09174e-11`、
+`3.24613e-8`、`1.75027e-13 V`。最坏 normalized Gauss residual
+`9.15412e-11` 通过固定 `1e-10` 门但余量有限；continuity bound
+`3.63917e-7 A/m2`、normalized cell residual `2.23480e-7`、scaled local
+Jacobian condition `1.04812e7` 均通过预注册门。
+
+v3 将 finite-difference Jacobian probe 固定在 `7e-6`，而 Newton residual 与
+Poisson tolerances 仍随 matrix factor 收紧。两轮失败证书被保留：第一轮 coarse
+probe `1e-5` 在 N90/`N_D=2e15 cm^-3` 失败，第二轮把 probe 继续缩到
+`4.95e-6` 后在 N60 同一 stress point 失败；它们证明该差分 probe 是截断误差与
+舍入误差平衡参数，不是可单调收紧的收敛门。
+
+证书关闭后的当前源码回归也完成：D4-E2/interface/QF/registry 聚焦集合为
+`163 passed, 2 deselected`；固定单线程环境下完整默认 Python suite 为
+`3101 passed, 2 skipped, 264 deselected`，用时 `416.49 s`。12 条 warning
+均来自既有 NumPy `trapz` compatibility tests/MMS 路径的 deprecation warning，
+没有新增失败。Ruff、`compileall` 与 `git diff --check` 同时通过。
+
+这些证书只关闭 purpose-built、ion-free、two-layer QF research lane 的内部数值
+门。production J-V/API/frontend、transient、impedance、2D、绝对 trap charge、
+全器件电中性、SCAPS parity、外部 solver 和实验验证均不继承 D4-E2 结论。
