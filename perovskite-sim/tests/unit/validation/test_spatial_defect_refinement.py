@@ -29,14 +29,15 @@ from perovskite_sim.validation.spatial_defect_refinement import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-LANE_ID = "spatially-graded-explicit-defect-qf-dc-v1"
+LANE_ID = "spatially-graded-explicit-defect-qf-dc-v2"
+LEGACY_PARTIAL_LANE_ID = "spatially-graded-explicit-defect-qf-dc-v1"
 
 
-def _lane():
+def _lane(lane_id: str = LANE_ID):
     return load_refinement_registry(
         ROOT / "reproducibility/numerical_refinement_registry.yaml",
         project_root=ROOT,
-    ).lane(LANE_ID)
+    ).lane(lane_id)
 
 
 def _protocol(lane):
@@ -92,6 +93,29 @@ def test_protocol_binds_energy_space_tolerance_and_spatial_contract():
         "continuous_band_graded_two_layer_pn_notch"
     )
     assert len(content_sha256(protocol)) == 64
+
+
+def test_v2_tightens_only_base_newton_tolerance_from_immutable_v1():
+    legacy = _lane(LEGACY_PARTIAL_LANE_ID)
+    active = _lane()
+
+    assert legacy.executor_version == "v1"
+    assert active.executor_version == "v2"
+    assert active.executor == legacy.executor
+    assert active.config_path == legacy.config_path
+    assert active.config_sha256 == legacy.config_sha256
+    assert active.grid_parameter == legacy.grid_parameter
+    assert active.grid_values == legacy.grid_values
+    assert active.tolerance_parameter == legacy.tolerance_parameter
+    assert active.tolerance_factors == legacy.tolerance_factors
+    assert active.observables == legacy.observables
+    assert active.quality_gates == legacy.quality_gates
+
+    legacy_options = dict(legacy.options)
+    active_options = dict(active.options)
+    assert legacy_options.pop("base_newton_residual_tolerance") == 1.0e-8
+    assert active_options.pop("base_newton_residual_tolerance") == 1.0e-9
+    assert active_options == legacy_options
 
 
 def test_protocol_hash_changes_for_each_axis_and_spatial_profile():

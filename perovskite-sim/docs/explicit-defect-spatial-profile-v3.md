@@ -210,3 +210,23 @@ This checkpoint registers and validates the execution contract. It does not
 promote the graded configuration to internally certified until a source-clean
 9/9 matrix closes every registered comparison and quality gate. It also makes
 no SCAPS parity or experimental-validation claim.
+
+### Immutable v1 partial result and v2 protocol
+
+The source-clean v1 run
+`490529820738b29820c70d5fb67a27cb9e62fcde5bc64f680d49cda03ea74ecf`
+completed all 9 cells with no failures, missing cells, or reused cells. Its
+nine artifact hashes are unique. Of 350 certificate checks, 349 passed,
+including all 26 grid/tolerance observable comparisons. The only failure was
+`max_dark_current_A_m2` for `grid=64,tolerance=1`: `1.904082e-6 A/m2`
+against the frozen `1e-6 A/m2` limit. At the same grid, factors 0.1 and 0.01
+gave `3.010e-12` and `9.519e-13 A/m2`, respectively. Thus certificate
+`a8c6545c90c380349ccde15354956ef84da6f769686f7c3b072d71c5f91987b6`
+is retained as `partial`; neither the artifact nor the gate is changed.
+
+Lane `spatially-graded-explicit-defect-qf-dc-v2` is the versioned follow-up.
+It retains the v1 config, three grids, factors 1/0.1/0.01, energy orders,
+observables, and quality gates. Its only numerical change is the base Newton
+residual tolerance from `1e-8` to `1e-9`, which makes the v2 coarse factor
+equal to the already observed passing v1 factor 0.1. The v2 matrix must still
+be recomputed from a new source-clean commit before any certification claim.

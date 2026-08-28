@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: e1ea92675af79ef049a27458d62d988039fd1e20288a7d7e54e17ac61a74b3c7
+  sha256: bd962b5bc128639a200c9c473e44b4d5044c0048feb1c493bd99b203efcb9b47
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -1281,7 +1281,8 @@ benchmarks:
       - tests/unit/validation/test_spatial_defect_refinement.py::test_registered_executor_real_cell_matches_exact_contract
     configs: [configs/graded_distributed_defect_qf_dc_pn.yaml]
     limitations:
-      - one dirty-source grid-16 tolerance-1 cell completed all 36 frozen quality gates; the source-clean 3x3 matrix remains pending
+      - the immutable v1 source-clean matrix completed 9/9 cells and 349/350 checks but remains partial because the coarsest grid-64 solve exceeded the frozen dark-current gate
+      - v2 retains every v1 grid, factor, observable, and gate while tightening only the base Newton residual tolerance from 1e-8 to 1e-9; its source-clean matrix remains pending
       - the lane is restricted to a two-layer band-graded Maxwell-Boltzmann quasi-steady QF/DC device with frozen/no mobile ions
       - interfaces, AC, transient occupancy, tunnelling, multivalent defects, external SCAPS parity, and experimental validation remain absent
 
