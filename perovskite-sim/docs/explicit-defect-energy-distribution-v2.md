@@ -1,9 +1,9 @@
 # Explicit Bulk-Defect Energy Distribution Contract v2
 
-Status: D3-E0 canonical input and carrier-independent energy quadrature. The
-five distribution families are parseable and auditable. Only `single_level`
-is enabled in the production QF/DC constitutive closure at this checkpoint;
-distributed production execution remains fail closed until D3-E3.
+Status: D3-E1 canonical input, carrier-independent quadrature, and pure local
+Gaussian/uniform closure. Only `single_level` is enabled in the production
+QF/DC material path; distributed production execution remains fail closed
+until D3-E3.
 
 ## Version and compatibility
 
@@ -108,7 +108,46 @@ requested quadrature order. The existing v1 and v2 single-level production
 closures therefore perform identical arithmetic; only their provenance hashes
 differ because v2 records the energy reference explicitly.
 
-## Capability boundary after D3-E0
+## D3-E1 local Gaussian and uniform closure
+
+`evaluate_energy_distributed_defect_closure` expands each canonical source
+species, evaluates all nodes through the exact D2 monovalent primitive, and
+then integrates without introducing a second occupancy model:
+
+```text
+R_i       = sum_k R_ik
+rho_i     = sum_k rho_ik
+fbar_i    = sum_k (N_ik f_ik) / Ntotal_i
+dR_i/dx   = sum_k dR_ik/dx
+drho_i/dx = sum_k drho_ik/dx
+```
+
+The same node occupancy therefore supplies recombination, occupied density,
+charge, carrier derivatives, and fixed-quasi-Fermi potential derivatives.
+Results retain both levels of evidence: a `source_closures` tuple with the
+quadrature and full D2 node closure, plus stable name-sorted totals. Reordering
+source species leaves every total array bitwise unchanged while intentionally
+changing the provenance identity of the ordered input document.
+
+The result dataclasses recompute every node aggregate, source total, global
+total, extrema, and SHA-256 identity during construction. Inconsistent or
+non-finite payloads fail closed. A one-node source bypasses multiplication and
+summation, preserving the D2 single-level values bit for bit.
+
+`assess_defect_energy_order_refinement` is a separate local validation axis. It
+requires an exact 2x order ladder and records, per adjacent pair, the maximum
+source occupancy absolute change, charge change normalized by `q Ntotal`,
+recombination relative change, and relative change across all analytic
+tangents. Its input hash binds the broadcast carrier state, material constants,
+source species, order ladder, and threshold. It contains no spatial grid or
+solver tolerance field.
+
+For the D3-E1 Gaussian+uniform three-regime fixture, the terminal 16-to-32
+changes are `5.72e-8` for occupancy, `5.72e-8` for normalized charge,
+`1.16e-7` for recombination, and `3.86e-6` for the worst tangent, all below the
+`5e-3` gate. This is internal constitutive convergence, not SCAPS validation.
+
+## Capability boundary after D3-E1
 
 Enabled:
 
@@ -116,12 +155,16 @@ Enabled:
 - all five normalized finite-support distribution contracts;
 - analytic `Npeak`/`Ntotal` conversion;
 - carrier-independent normalized energy nodes;
-- exact v2 single-level use of the existing D2 QF/DC closure.
+- exact v2 single-level use of the existing D2 QF/DC closure;
+- pure local Gaussian/uniform occupancy, recombination, charge, and analytic
+  tangents with source/node evidence;
+- content-addressed local energy-order refinement independent of space and
+  solver tolerance.
 
 Still fail closed:
 
-- distributed recombination, occupancy, charge, and analytic tangents in the
-  production closure;
+- any distributed closure in the production material/experiment path;
+- CB/VB tail local closure before D3-E2;
 - distributed contact neutrality, Poisson coupling, J-V, AC, and transient
   execution;
 - SCAPS shaped distributed import without explicit, mutually consistent
@@ -129,7 +172,5 @@ Still fail closed:
 - spatially graded density or energy reference;
 - dynamic occupancy, non-unit degeneracy, and multivalent defects.
 
-D3-E1 will aggregate Gaussian and uniform node closures and certify energy
-order convergence. D3-E2 adds both band tails and frozen SCAPS conversion
-fixtures. D3-E3 is the first checkpoint allowed to enable distributed defects
-in production QF/DC.
+D3-E2 adds both band tails and frozen SCAPS conversion fixtures. D3-E3 is the
+first checkpoint allowed to enable distributed defects in production QF/DC.
