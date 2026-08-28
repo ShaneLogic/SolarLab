@@ -1234,7 +1234,7 @@ benchmarks:
       - ions, interface defects, energy distributions, tunnelling, metastability, AC, and dynamic occupancy remain excluded
   distributed-explicit-defect-internal-closure:
     kind: numerical
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: >-
       pytest -q
@@ -1257,7 +1257,7 @@ benchmarks:
       - tests/unit/validation/test_distributed_defect_refinement.py::test_registered_executor_real_cell_matches_exact_contract
     configs: [configs/distributed_defect_qf_dc_pn.yaml]
     limitations:
-      - the registered 3 spatial grids x 3 nonlinear tolerances, each with an inner 16/32/64 energy ladder, is not yet complete; status remains partial until the immutable certificate closes
+      - the source-clean 3x3 matrix at commit 8c1f7be997c0cb243229eda3d0c246ed45a0c340 completed 9/9 cells and 272/272 checks with certificate SHA-256 7d21a2c257c00660f6a2e9d5990820c29580c6b5c1315b00eb27eaa15c0b121f
       - the lane is restricted to uniform-layer Maxwell-Boltzmann quasi-steady QF/DC with frozen/no mobile ions
       - spatial grading, interfaces, AC, transient occupancy, tunnelling, multivalent defects, external SCAPS parity, and experimental validation remain absent
 
@@ -1362,7 +1362,7 @@ configs:
     sha256: 7a6b1c16d8ea313177e3a761660bd6b7bbb546b14aa23189f91a9187ff0904f8
     semantic_sha256: 9a0d5095ffacc2b3be9b0b5b6ead96668e7572ff9b8edbfb1dd3a213f3f8ecd7
     schema: standard-device-v1
-    status: partial
+    status: certified
     benchmarks:
       - loader-contract
       - phase1-refinement-contract

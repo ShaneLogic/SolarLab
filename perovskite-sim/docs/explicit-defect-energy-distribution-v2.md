@@ -1,10 +1,9 @@
 # Explicit Bulk-Defect Energy Distribution Contract v2
 
-Status: D3-E3 guarded production QF/DC integration is implemented for uniform
-layers, Maxwell-Boltzmann carriers, quasi-steady occupancy, and frozen/no
-mobile ions. The registered energy x space x tolerance device matrix is still
-pending, so this is an implementation candidate rather than a completed
-numerical certificate or an external SCAPS parity claim.
+Status: D3-E3 guarded production QF/DC integration is internally numerically
+certified for uniform layers, Maxwell-Boltzmann carriers, quasi-steady
+occupancy, and frozen/no mobile ions. This is not an external SCAPS parity or
+experimental-validation claim.
 
 ## Version and compatibility
 
@@ -200,10 +199,22 @@ model/topology/order identity, contact thermodynamics, occupancy and kinetic
 denominators, dark equilibrium, Poisson and continuity residuals, terminal
 current, analytic tangents, and all three energy-order comparisons.
 
-One real `grid=16`, `tolerance=1` cell has completed against the exact
-registered contract. The full nine-cell content-addressed matrix has not yet
-run, so no certificate SHA-256 or `certified` status is claimed here. Before
-the implementation checkpoint, the default Python suite completed with
+The source-clean matrix at commit
+`8c1f7be997c0cb243229eda3d0c246ed45a0c340` completed 9/9 cells with no
+failed, missing, or reused cells. Run ID
+`82d334eca6feac60e48bcd7c0dd40257ff837be139ee155e277b4ab62908242c`
+has certificate SHA-256
+`7d21a2c257c00660f6a2e9d5990820c29580c6b5c1315b00eb27eaa15c0b121f`
+and status `certified`; all 272 checks passed. The cell wall-time sum was
+1383.55 seconds in a single-threaded BLAS environment.
+
+The tightest spatial checks were the dark-potential difference
+`4.8643e-4 V` against `5.0e-4 V`, the dark carrier-profile difference
+`8.1716e-3 decade` against `1.0e-2 decade`, and the J-V/Jsc relative
+difference `1.6775e-3` against `2.0e-3`. The largest energy-order tangent
+change was `1.9949e-3` against `5.0e-3`; all terminal tolerance differences
+were at or below `2.42e-14` for the registered current observables. Before the
+implementation checkpoint, the default Python suite completed with
 `3029 passed, 2 skipped, 264 deselected` and 12 pre-existing `np.trapz`
 deprecation warnings in 368.76 seconds.
 
@@ -253,7 +264,7 @@ The existing `load_scaps_yaml` and
 `N_t_cm3` remains the direct integrated input and legacy `N_peak_cm3` remains
 informational; ambiguous old YAML never acquires v2 executable meaning.
 
-## Capability boundary after the D3-E3 implementation candidate
+## Capability boundary after D3-E3 internal certification
 
 Enabled:
 
@@ -288,6 +299,5 @@ Still fail closed:
 - spatially graded density or energy reference;
 - external SCAPS parity and experimental validation.
 
-D3-E3 becomes complete only after the nine-cell matrix, full test suite,
-checkpoint commit, and remote push close. D3-E4 then extends the model to
-spatial grading rather than reusing the uniform-layer certificate.
+D3-E4 extends the model to spatial grading and must mint a separate
+certificate rather than reusing this uniform-layer evidence.
