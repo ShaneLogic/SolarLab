@@ -1,10 +1,9 @@
 # Explicit Bulk-Defect Spatial Profile Contract v3
 
-Status: D3-E4b production implementation and regression verification complete;
-D3-E4c independent certificate contract registered and single-cell validated.
-The canonical D3-E4a input contract is compiled into the guarded QF/DC
-material, contact, Poisson, continuity, analytic-tangent, and J-V paths. The
-source-clean three-axis D3-E4c matrix remains pending.
+Status: D3-E4c guarded production implementation and independent internal
+three-axis numerical certification complete. The canonical D3-E4a input
+contract is compiled into the QF/DC material, contact, Poisson, continuity,
+analytic-tangent, and J-V paths.
 
 ## Version boundary
 
@@ -110,7 +109,7 @@ profiled and the aggregate multiplier range.
 
 ## Current capability boundary
 
-Implemented through D3-E4b:
+Implemented through D3-E4c:
 
 - immutable knot/profile dataclasses and strict mapping parser;
 - canonical JSON and SHA-256 for the profile and enclosing v3 document;
@@ -126,10 +125,11 @@ Implemented through D3-E4b:
   results;
 - uniform v3 limits for both single-level and Gaussian v2 sources, local-band
   support rejection, and compiled layer-average density checks.
+- a source-clean energy x space x solver-tolerance certificate with 9/9 cells
+  and 350/350 registered checks passing.
 
-Still outside the D3-E4b capability label:
+Still outside the D3-E4c capability label:
 
-- a source-clean independent energy x space x solver-tolerance certificate;
 - any claim that the graded model has SCAPS parity or experimental validation;
 - zero-density knots or discontinuous step profiles;
 - spatial changes to energy center, width, support, kinetics, degeneracy, or
@@ -140,17 +140,19 @@ Still outside the D3-E4b capability label:
 ## Verification
 
 - spatial constitutive/device/QF/backend focused domain: 93 passed;
-- default Python suite: 3059 passed, 2 skipped, 264 deselected;
+- default Python suite: 3070 passed, 2 skipped, 264 deselected;
 - frontend suite: 428 passed across 32 files;
+- D3-E4c v2 source-clean matrix: 9/9 cells, 350/350 checks, internally
+  certified;
 - TypeScript, Vite production build, compileall, scoped Ruff, critical Ruff,
   and `git diff --check`: passed;
 - all 12 Python warnings are pre-existing NumPy `trapz` compatibility/MMS
   warnings, and the Vite build retains its pre-existing large-chunk warning.
 
-D3-E4c will use a new frozen graded configuration and an independent energy x
-space x solver-tolerance certificate. The D3-E3 uniform-layer certificate
-cannot be reused. D3-E4b establishes production execution and compatibility;
-it does not establish three-axis convergence, SCAPS parity, or experimental
+D3-E4c uses a new frozen graded configuration and an independent energy x space
+x solver-tolerance certificate; the D3-E3 uniform-layer certificate was not
+reused. This establishes internal three-axis numerical convergence for the
+declared topology. It does not establish SCAPS parity or experimental
 validation.
 
 ## D3-E4c registered certificate checkpoint
@@ -227,6 +229,31 @@ is retained as `partial`; neither the artifact nor the gate is changed.
 Lane `spatially-graded-explicit-defect-qf-dc-v2` is the versioned follow-up.
 It retains the v1 config, three grids, factors 1/0.1/0.01, energy orders,
 observables, and quality gates. Its only numerical change is the base Newton
-residual tolerance from `1e-8` to `1e-9`, which makes the v2 coarse factor
-equal to the already observed passing v1 factor 0.1. The v2 matrix must still
-be recomputed from a new source-clean commit before any certification claim.
+residual tolerance from `1e-8` to `1e-9`; the v2 coarse Newton target therefore
+equals the already observed passing v1 factor-0.1 target, while the
+factor-scaled finite-difference step remains separately protocol-bound.
+
+The source-clean v2 run
+`10fab830ebbc84e821831bb18e84e9bfed4a00c0f6f7988a98c63721695edc31`
+at commit `1c356b6cf48618dc0a2113c50df97c2297b71ede` completed 9/9 cells
+with no failed, missing, or reused cells. All nine artifact hashes are unique,
+and all 350 checks passed. The certificate identity is:
+
+- source fingerprint:
+  `66c5365d086ae0131b3067982c3fdc88107016463a7a32eb2e74ad4c75d3e0a2`;
+- lane definition:
+  `4b38d54c5b6d0ce94789c53434fa145878c4d128fb6ca80c20e5ad708d5ac354`;
+- protocol:
+  `ba34b3887941baf6174cfdf3d81889f69b8f9f72ace15d21747384988c44da50`;
+- manifest:
+  `3044fe9d5b52de78374798427697a0e282b645a7431ab7d855a91b78eb298e79`;
+- certificate:
+  `a46cc7c190402225dab099ac59ed3ea555b01e337534699ca30f3263ae149bc1`.
+
+The cell wall-time sum was 1056.91 s. The tightest grid check was the dark
+potential profile (`4.675719e-4 / 5e-4 V`), followed by J-V/Jsc
+(`1.707133e-3 / 2e-3`) and dark n/p profiles
+(`7.854862e-3 / 1e-2 decade`). The largest energy-order tangent change was
+`2.069559e-3 / 5e-3`. The formerly failing grid-64 coarse dark current was
+`9.519468e-12 / 1e-6 A/m2`. These are internal numerical limits for the
+frozen model, not accuracy claims against SCAPS or experiment.

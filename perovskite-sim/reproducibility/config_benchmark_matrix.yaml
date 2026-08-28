@@ -1264,7 +1264,7 @@ benchmarks:
       - spatial grading, interfaces, AC, transient occupancy, tunnelling, multivalent defects, external SCAPS parity, and experimental validation remain absent
   spatial-explicit-defect-internal-closure:
     kind: numerical
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: >-
       pytest -q
@@ -1282,7 +1282,8 @@ benchmarks:
     configs: [configs/graded_distributed_defect_qf_dc_pn.yaml]
     limitations:
       - the immutable v1 source-clean matrix completed 9/9 cells and 349/350 checks but remains partial because the coarsest grid-64 solve exceeded the frozen dark-current gate
-      - v2 retains every v1 grid, factor, observable, and gate while tightening only the base Newton residual tolerance from 1e-8 to 1e-9; its source-clean matrix remains pending
+      - v2 retains every v1 grid, factor, observable, and gate while tightening only the base Newton residual tolerance from 1e-8 to 1e-9
+      - the v2 source-clean matrix at commit 1c356b6 completed 9/9 cells and 350/350 checks with certificate SHA-256 a46cc7c190402225dab099ac59ed3ea555b01e337534699ca30f3263ae149bc1
       - the lane is restricted to a two-layer band-graded Maxwell-Boltzmann quasi-steady QF/DC device with frozen/no mobile ions
       - interfaces, AC, transient occupancy, tunnelling, multivalent defects, external SCAPS parity, and experimental validation remain absent
 
@@ -1396,7 +1397,7 @@ configs:
     sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
     semantic_sha256: f502dd9f6350e6c32a64f75686f17492acc0a64803df1939851777646c93486a
     schema: standard-device-v1
-    status: partial
+    status: certified
     benchmarks:
       - loader-contract
       - phase1-refinement-contract
