@@ -79,6 +79,7 @@ from perovskite_sim.physics.recombination import srh_recombination
 from perovskite_sim.physics.two_sided_interface import (
     DEDUPLICATED_QSS,
     EquilibriumReferencedMaterialQSSResult,
+    FixedOccupancyMaterialInterfaceResult,
     TWO_SIDED_TRACE,
     build_two_sided_interface_stencils,
     remove_shared_interface_nodes,
@@ -274,6 +275,7 @@ class _Evaluation:
     poisson_residual: float
     poisson_residual_C_m2: float
     interface_charge_qss: EquilibriumReferencedMaterialQSSResult | None = None
+    interface_charge_dynamic: FixedOccupancyMaterialInterfaceResult | None = None
 
 
 def _pin_mask(node_count: int) -> np.ndarray:
@@ -1081,7 +1083,10 @@ class _QuasiFermiSystem:
     def _add_interface_sheet_charge_to_poisson(
         self,
         raw: np.ndarray,
-        charged_qss: EquilibriumReferencedMaterialQSSResult,
+        charged_qss: (
+            EquilibriumReferencedMaterialQSSResult
+            | FixedOccupancyMaterialInterfaceResult
+        ),
         banded: np.ndarray | None = None,
     ) -> None:
         left_nodes = tuple(int(value) for value in self.mat.iface_qss_left_nodes)
@@ -1111,6 +1116,10 @@ class _QuasiFermiSystem:
             raw[right - 1] += weight_right * sheet_charge
             if banded is None:
                 continue
+            if not isinstance(charged_qss, EquilibriumReferencedMaterialQSSResult):
+                raise TypeError(
+                    "fixed-occupancy interface charge has no bulk-potential tangent"
+                )
             derivative_left, derivative_right = (
                 charged_qss.sheet_charge_jacobian_bulk_phi_C_m2_V[index]
             )
@@ -1251,6 +1260,145 @@ class _QuasiFermiSystem:
             charged_qss,
         )
 
+    def _evaluate_fixed_interface_poisson_system(
+        self,
+        phi: np.ndarray,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        occupancy: np.ndarray,
+        *,
+        interface_seed: np.ndarray | None = None,
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        FixedOccupancyMaterialInterfaceResult,
+    ]:
+        from perovskite_sim.physics.two_sided_interface import (
+            solve_material_fixed_occupancy_two_sided_interfaces,
+        )
+
+        if (
+            self.interface_charge_reference_occupancy is None
+            or self.interface_charge_trap_density_m2 is None
+        ):
+            raise QuasiFermiSteadyStateError(
+                "fixed interface occupancy requires an explicit dark reference"
+            )
+        fixed = np.asarray(occupancy, dtype=float)
+        expected = self.interface_charge_reference_occupancy.shape
+        if (
+            fixed.shape != expected
+            or not np.all(np.isfinite(fixed))
+            or np.any((fixed < 0.0) | (fixed > 1.0))
+        ):
+            raise ValueError(
+                "dynamic interface occupancy must match interfaces and lie in [0, 1]"
+            )
+        dphi = phi - self.phi0
+        n = _density_from_log(
+            self.log_n0 + (dqfn + dphi) / self.thermal_voltage,
+            context="fixed-interface electron Poisson-Boltzmann evaluation",
+        )
+        p = _density_from_log(
+            self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
+            context="fixed-interface hole Poisson-Boltzmann evaluation",
+        )
+        rho, charge_derivative = self._bulk_space_charge_and_tangent(n, p)
+        fixed_result = solve_material_fixed_occupancy_two_sided_interfaces(
+            self.mat,
+            self.stack,
+            n,
+            p,
+            phi,
+            occupancy=fixed,
+            equilibrium_occupancy=self.interface_charge_reference_occupancy,
+            trap_density_m2=self.interface_charge_trap_density_m2,
+            cross_transmission=self.interface_transmission,
+            interface_transport_model=self.interface_transport_model,
+            initial_state_m3=interface_seed,
+            fail_on_residual=False,
+        )
+        factor = self.mat.poisson_factor
+        raw = (
+            factor.C[:-1] * (phi[:-2] - phi[1:-1])
+            + factor.C[1:] * (phi[2:] - phi[1:-1])
+            + rho[1:-1] * factor.h_cell
+        )
+        banded = np.zeros((3, self.node_count - 2), dtype=float)
+        banded[0, 1:] = factor.C[1:-1]
+        banded[1] = (
+            -(factor.C[:-1] + factor.C[1:]) + charge_derivative[1:-1] * factor.h_cell
+        )
+        banded[2, :-1] = factor.C[1:-1]
+        self._add_interface_sheet_charge_to_poisson(raw, fixed_result)
+        return raw, banded, n, p, fixed_result
+
+    def _solve_fixed_interface_poisson(
+        self,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        occupancy: np.ndarray,
+        *,
+        V_app: float | None = None,
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        float,
+        float,
+        FixedOccupancyMaterialInterfaceResult,
+    ]:
+        phi = self.phi0.copy()
+        voltage = self.V_app if V_app is None else float(V_app)
+        phi[0] = 0.0
+        phi[-1] = poisson_right_boundary(self.mat, voltage)
+        factor = self.mat.poisson_factor
+        interface_seed: np.ndarray | None = None
+        fixed_result: FixedOccupancyMaterialInterfaceResult | None = None
+        for _ in range(self.poisson_max_iterations):
+            raw, banded, _n, _p, fixed_result = (
+                self._evaluate_fixed_interface_poisson_system(
+                    phi,
+                    dqfn,
+                    dqfp,
+                    occupancy,
+                    interface_seed=interface_seed,
+                )
+            )
+            interface_seed = fixed_result.qss.state_m3
+            step = solve_banded((1, 1), banded, -raw)
+            damping = min(
+                1.0,
+                0.05 / max(float(np.max(np.abs(step))), np.finfo(float).tiny),
+            )
+            phi[1:-1] += damping * step
+            if float(np.max(np.abs(damping * step))) < self.poisson_tolerance_V:
+                break
+        else:
+            raise QuasiFermiSteadyStateError(
+                "fixed-interface Poisson-Boltzmann solve did not converge"
+            )
+        raw, _banded, n, p, fixed_result = (
+            self._evaluate_fixed_interface_poisson_system(
+                phi,
+                dqfn,
+                dqfp,
+                occupancy,
+                interface_seed=interface_seed,
+            )
+        )
+        scale = (factor.C[:-1] + factor.C[1:]) * self.thermal_voltage
+        return (
+            phi,
+            n,
+            p,
+            float(np.max(np.abs(raw / scale))),
+            float(np.max(np.abs(raw))),
+            fixed_result,
+        )
+
     def _solve_poisson(
         self,
         dqfn: np.ndarray,
@@ -1258,13 +1406,16 @@ class _QuasiFermiSystem:
         *,
         V_app: float | None = None,
         dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
+        dynamic_interface_occupancy: np.ndarray | None = None,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
         np.ndarray,
         float,
         float,
-        EquilibriumReferencedMaterialQSSResult | None,
+        EquilibriumReferencedMaterialQSSResult
+        | FixedOccupancyMaterialInterfaceResult
+        | None,
     ]:
         if (
             self.interface_charge_reference_occupancy is not None
@@ -1272,6 +1423,20 @@ class _QuasiFermiSystem:
         ):
             raise QuasiFermiSteadyStateError(
                 "combined dynamic bulk and interface charge is not yet supported"
+            )
+        if (
+            dynamic_interface_occupancy is not None
+            and dynamic_bulk_charge_density_C_m3 is not None
+        ):
+            raise QuasiFermiSteadyStateError(
+                "combined dynamic bulk and interface occupancy is not yet supported"
+            )
+        if dynamic_interface_occupancy is not None:
+            return self._solve_fixed_interface_poisson(
+                dqfn,
+                dqfp,
+                dynamic_interface_occupancy,
+                V_app=V_app,
             )
         if self.interface_charge_reference_occupancy is not None:
             return self._solve_charged_poisson(dqfn, dqfp, V_app=V_app)
@@ -1363,6 +1528,7 @@ class _QuasiFermiSystem:
         dynamic_bulk_reference_n: np.ndarray | None = None,
         dynamic_bulk_reference_p: np.ndarray | None = None,
         dynamic_bulk_reference_occupancy: np.ndarray | None = None,
+        dynamic_interface_occupancy: np.ndarray | None = None,
     ) -> _Evaluation:
         self.evaluation_count += 1
         dqfn_arr = np.asarray(dqfn, dtype=float)
@@ -1390,6 +1556,17 @@ class _QuasiFermiSystem:
         dynamic_bulk = (
             dynamic_bulk_layout is not None or dynamic_bulk_occupancy is not None
         )
+        dynamic_interface = dynamic_interface_occupancy is not None
+        if dynamic_interface and dynamic_bulk:
+            raise QuasiFermiSteadyStateError(
+                "combined dynamic bulk and interface occupancy is not yet supported"
+            )
+        if dynamic_interface and (
+            not self.interface_boundary or self.interface_topology != TWO_SIDED_TRACE
+        ):
+            raise QuasiFermiSteadyStateError(
+                "dynamic interface occupancy requires two_sided_trace topology"
+            )
         if dynamic_bulk_layout is None or dynamic_bulk_occupancy is None:
             if dynamic_bulk:
                 raise ValueError(
@@ -1433,11 +1610,12 @@ class _QuasiFermiSystem:
             raise ValueError(
                 "dynamic bulk reference values require a layout and occupancy"
             )
-        phi, n, p, poisson_scaled, poisson_raw, charged_qss = self._solve_poisson(
+        phi, n, p, poisson_scaled, poisson_raw, interface_charge = self._solve_poisson(
             dqfn_arr,
             dqfp_arr,
             V_app=voltage,
             dynamic_bulk_charge_density_C_m3=dynamic_charge,
+            dynamic_interface_occupancy=dynamic_interface_occupancy,
         )
 
         y = self.base.copy()
@@ -1446,8 +1624,8 @@ class _QuasiFermiSystem:
         interface_qss = None
         if self.interface_boundary:
             if self.interface_topology == TWO_SIDED_TRACE:
-                if charged_qss is not None:
-                    interface_qss = charged_qss.qss
+                if interface_charge is not None:
+                    interface_qss = interface_charge.qss
                 else:
                     from perovskite_sim.physics.two_sided_interface import (
                         solve_material_two_sided_interfaces_qss,
@@ -1624,7 +1802,19 @@ class _QuasiFermiSystem:
             current_p=reported_current_p,
             poisson_residual=poisson_scaled,
             poisson_residual_C_m2=poisson_raw,
-            interface_charge_qss=charged_qss,
+            interface_charge_qss=(
+                interface_charge
+                if isinstance(
+                    interface_charge,
+                    EquilibriumReferencedMaterialQSSResult,
+                )
+                else None
+            ),
+            interface_charge_dynamic=(
+                interface_charge
+                if isinstance(interface_charge, FixedOccupancyMaterialInterfaceResult)
+                else None
+            ),
         )
 
     def evaluate_quasi_fermi(
@@ -1692,6 +1882,28 @@ class _QuasiFermiSystem:
             dynamic_bulk_reference_n=reference_electron_density_m3,
             dynamic_bulk_reference_p=reference_hole_density_m3,
             dynamic_bulk_reference_occupancy=reference_occupancy,
+        )
+
+    def evaluate_quasi_fermi_increments_dynamic_interface(
+        self,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        occupancy: np.ndarray,
+        illumination_fraction: float,
+        *,
+        V_app: float | None = None,
+        edge_increment_n: np.ndarray | None = None,
+        edge_increment_p: np.ndarray | None = None,
+    ) -> _Evaluation:
+        """Evaluate two-sided transport at explicit shared trap occupancies."""
+        return self._evaluate_increments(
+            dqfn,
+            dqfp,
+            illumination_fraction,
+            V_app=V_app,
+            edge_increment_n=edge_increment_n,
+            edge_increment_p=edge_increment_p,
+            dynamic_interface_occupancy=occupancy,
         )
 
     def evaluate(self, z: np.ndarray, illumination_fraction: float) -> _Evaluation:

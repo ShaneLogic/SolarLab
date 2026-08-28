@@ -1,4 +1,5 @@
 """Constitutive gates for the two-sided zero-volume interface element."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -18,10 +19,13 @@ from perovskite_sim.physics.two_sided_interface import (
     electrostatic_trace_residual_and_jacobian,
     equilibrium_referenced_electrostatic_trace_balance,
     equilibrium_referenced_two_sided_balance,
+    fixed_occupancy_carrier_balance_and_jacobian,
+    fixed_occupancy_trap_capture_flux_and_log_jacobian,
     remove_shared_interface_nodes,
     shared_trap_capture_flux,
     solve_electrostatic_traces,
     solve_equilibrium_referenced_two_sided_interface,
+    solve_fixed_occupancy_two_sided_interface,
     shared_trap_occupancy,
     shared_trap_occupancy_and_log_jacobian,
     solve_two_sided_interface,
@@ -133,8 +137,7 @@ def test_zero_charge_no_dipole_reduces_to_series_dielectric_interpolation():
     capacitance_left = EPS_0 * geometry.eps_r_left / geometry.left_distance_m
     capacitance_right = EPS_0 * geometry.eps_r_right / geometry.right_distance_m
     expected = (
-        capacitance_left * bulk.phi_left_V
-        + capacitance_right * bulk.phi_right_V
+        capacitance_left * bulk.phi_left_V + capacitance_right * bulk.phi_right_V
     ) / (capacitance_left + capacitance_right)
 
     assert traces.phi_left_V == pytest.approx(expected, rel=1.0e-14)
@@ -208,9 +211,7 @@ def test_heterojunction_common_quasi_fermi_state_has_zero_flux():
         n_right_m3=state[2],
         p_right_m3=state[3],
     )
-    balance = carrier_balance_and_jacobian(
-        np.log(state), geometry, physics, bulk
-    )
+    balance = carrier_balance_and_jacobian(np.log(state), geometry, physics, bulk)
     bulk_scale = max(
         physics.D_n_left_m2_s / geometry.left_distance_m * state[0],
         physics.D_p_left_m2_s / geometry.left_distance_m * state[1],
@@ -255,12 +256,8 @@ def test_carrier_log_jacobian_matches_central_finite_difference():
         plus[column] += step
         minus[column] -= step
         finite_difference[:, column] = (
-            carrier_balance_and_jacobian(
-                plus, geometry, physics, bulk
-            ).residual_m2_s
-            - carrier_balance_and_jacobian(
-                minus, geometry, physics, bulk
-            ).residual_m2_s
+            carrier_balance_and_jacobian(plus, geometry, physics, bulk).residual_m2_s
+            - carrier_balance_and_jacobian(minus, geometry, physics, bulk).residual_m2_s
         ) / (2.0 * step)
 
     jacobian_scale = max(float(np.max(np.abs(analytic))), 1.0)
@@ -272,6 +269,127 @@ def test_carrier_log_jacobian_matches_central_finite_difference():
     )
 
 
+def test_fixed_occupancy_capture_and_carrier_tangents_match_central_difference():
+    geometry = _geometry(
+        potential_jump_right_minus_left_V=0.01,
+        fixed_sheet_charge_C_m2=1.0e-5,
+    )
+    physics = _physics(
+        conduction_band_step_eV=0.12,
+        hole_transport_step_eV=-0.07,
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    bulk = _bulk()
+    occupancy = 0.37
+    log_state = np.log(np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20]))
+    state = np.exp(log_state)
+    capture, capture_tangent = fixed_occupancy_trap_capture_flux_and_log_jacobian(
+        state,
+        physics,
+        occupancy,
+    )
+    carrier_tangent = fixed_occupancy_carrier_balance_and_jacobian(
+        log_state,
+        geometry,
+        physics,
+        bulk,
+        occupancy,
+    ).jacobian_log_state_m2_s
+    step = 1.0e-6
+    capture_fd = np.empty_like(capture_tangent)
+    carrier_fd = np.empty_like(carrier_tangent)
+    for column in range(4):
+        plus = log_state.copy()
+        minus = log_state.copy()
+        plus[column] += step
+        minus[column] -= step
+        capture_fd[:, column] = (
+            fixed_occupancy_trap_capture_flux_and_log_jacobian(
+                np.exp(plus), physics, occupancy
+            )[0]
+            - fixed_occupancy_trap_capture_flux_and_log_jacobian(
+                np.exp(minus), physics, occupancy
+            )[0]
+        ) / (2.0 * step)
+        carrier_fd[:, column] = (
+            fixed_occupancy_carrier_balance_and_jacobian(
+                plus, geometry, physics, bulk, occupancy
+            ).residual_m2_s
+            - fixed_occupancy_carrier_balance_and_jacobian(
+                minus, geometry, physics, bulk, occupancy
+            ).residual_m2_s
+        ) / (2.0 * step)
+
+    assert np.any(capture != 0.0)
+    for analytic, finite_difference in (
+        (capture_tangent, capture_fd),
+        (carrier_tangent, carrier_fd),
+    ):
+        scale = max(float(np.max(np.abs(analytic))), 1.0)
+        np.testing.assert_allclose(
+            analytic / scale,
+            finite_difference / scale,
+            rtol=3.0e-5,
+            atol=2.0e-10,
+        )
+
+
+def test_fixed_occupancy_local_solve_recovers_qss_and_applies_sheet_charge():
+    geometry = _geometry(
+        eps_r_left=9.0,
+        eps_r_right=31.0,
+        potential_jump_right_minus_left_V=0.008,
+    )
+    physics = _physics(
+        conduction_band_step_eV=0.11,
+        hole_transport_step_eV=-0.06,
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    bulk = _bulk()
+    qss = solve_two_sided_interface(geometry, physics, bulk)
+    reference = shared_trap_occupancy(qss.state_m3, physics)
+    charge = EquilibriumReferencedSheetCharge(reference, 2.0e16)
+    embedded = solve_fixed_occupancy_two_sided_interface(
+        geometry,
+        physics,
+        bulk,
+        reference,
+        charge,
+        initial_state_m3=qss.state_m3,
+    )
+    shifted = solve_fixed_occupancy_two_sided_interface(
+        geometry,
+        physics,
+        bulk,
+        min(reference + 0.08, 0.95),
+        charge,
+        initial_state_m3=qss.state_m3,
+    )
+
+    assert embedded.qss.converged
+    assert embedded.incremental_sheet_charge_C_m2 == pytest.approx(0.0, abs=1.0e-30)
+    np.testing.assert_allclose(
+        embedded.qss.state_m3,
+        qss.state_m3,
+        rtol=2.0e-10,
+    )
+    assert shifted.qss.converged
+    assert shifted.incremental_sheet_charge_C_m2 < 0.0
+    assert abs(shifted.incremental_sheet_charge_C_m2) <= Q * charge.trap_density_m2
+    assert np.max(np.abs(shifted.trace_potential_shift_V)) > 0.0
+    assert shifted.normalized_gauss_residual <= 1.0e-9
+
+
 def test_exact_left_and_right_distances_control_only_their_half_fluxes():
     bulk = _bulk(phi_left_V=0.0, phi_right_V=0.0)
     physics = _physics(
@@ -279,9 +397,7 @@ def test_exact_left_and_right_distances_control_only_their_half_fluxes():
         hole_transport_step_eV=0.0,
     )
     state = np.array([1.5e20, 6.0e19, 8.0e19, 2.0e20])
-    first = carrier_balance_and_jacobian(
-        np.log(state), _geometry(), physics, bulk
-    )
+    first = carrier_balance_and_jacobian(np.log(state), _geometry(), physics, bulk)
     second = carrier_balance_and_jacobian(
         np.log(state), _geometry(left_distance_m=6.0e-9), physics, bulk
     )
@@ -420,9 +536,7 @@ def test_equilibrium_referenced_gauss_tangent_matches_central_difference():
         p1_right_m3=3.0e17,
     )
     state = np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20])
-    reference = shared_trap_occupancy(
-        state * np.array([0.8, 1.1, 1.2, 0.9]), physics
-    )
+    reference = shared_trap_occupancy(state * np.array([0.8, 1.1, 1.2, 0.9]), physics)
     charge = EquilibriumReferencedSheetCharge(reference, 2.5e16)
     coordinates = np.concatenate(([0.013, 0.024], np.log(state)))
     balance = equilibrium_referenced_electrostatic_trace_balance(
@@ -540,8 +654,7 @@ def test_charged_gauss_law_closes_across_dielectric_jump(
     effective_geometry = replace(
         geometry,
         fixed_sheet_charge_C_m2=(
-            geometry.fixed_sheet_charge_C_m2
-            + probe.incremental_sheet_charge_C_m2
+            geometry.fixed_sheet_charge_C_m2 + probe.incremental_sheet_charge_C_m2
         ),
     )
     traces = solve_electrostatic_traces(effective_geometry, bulk)
@@ -555,15 +668,12 @@ def test_charged_gauss_law_closes_across_dielectric_jump(
     capacitance_left = EPS_0 * geometry.eps_r_left / geometry.left_distance_m
     capacitance_right = EPS_0 * geometry.eps_r_right / geometry.right_distance_m
     total_sheet_charge = (
-        geometry.fixed_sheet_charge_C_m2
-        + balance.incremental_sheet_charge_C_m2
+        geometry.fixed_sheet_charge_C_m2 + balance.incremental_sheet_charge_C_m2
     )
     displacement_jump = capacitance_left * (
         traces.phi_left_V - bulk.phi_left_V
     ) + capacitance_right * (traces.phi_right_V - bulk.phi_right_V)
-    scale = np.array(
-        [physics.thermal_voltage_V, max(abs(total_sheet_charge), 1.0e-30)]
-    )
+    scale = np.array([physics.thermal_voltage_V, max(abs(total_sheet_charge), 1.0e-30)])
 
     assert np.sign(balance.incremental_sheet_charge_C_m2) == expected_sign
     assert displacement_jump == pytest.approx(total_sheet_charge, abs=2.0e-18)
@@ -632,9 +742,7 @@ def test_coupled_charged_local_and_bulk_jacobians_match_central_difference():
     row_scale = np.maximum(
         np.max(
             np.abs(
-                np.concatenate(
-                    (balance.jacobian_local, balance.jacobian_bulk), axis=1
-                )
+                np.concatenate((balance.jacobian_local, balance.jacobian_bulk), axis=1)
             ),
             axis=1,
         ),

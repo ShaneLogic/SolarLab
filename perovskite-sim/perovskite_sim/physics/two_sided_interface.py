@@ -11,9 +11,10 @@ and CBO paths. The default deduplicated grid remains unchanged. Its local
 carrier state is statically eliminated on every outer residual evaluation, so
 no duplicate Scharfetter-Gummel bypass remains at the material boundary.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 import numpy as np
@@ -254,6 +255,31 @@ class EquilibriumReferencedMaterialQSSResult:
     scaled_local_jacobian_condition: np.ndarray
 
 
+@dataclass(frozen=True)
+class FixedOccupancyTwoSidedInterfaceResult:
+    """Locally eliminated trace state at one externally supplied occupancy."""
+
+    qss: TwoSidedInterfaceResult
+    equilibrium_occupancy: float
+    occupancy: float
+    incremental_sheet_charge_C_m2: float
+    trace_potential_shift_V: np.ndarray
+    normalized_gauss_residual: float
+
+
+@dataclass(frozen=True)
+class FixedOccupancyMaterialInterfaceResult:
+    """Multi-interface fixed-occupancy result using right-first state blocks."""
+
+    qss: TwoSidedMaterialQSSResult
+    equilibrium_occupancy: np.ndarray
+    occupancy: np.ndarray
+    trap_density_m2: np.ndarray
+    incremental_sheet_charge_C_m2: np.ndarray
+    trace_potential_shift_V: np.ndarray
+    normalized_gauss_residual: np.ndarray
+
+
 def validate_interface_topology(topology: str) -> str:
     """Return a normalized, supported interface topology name."""
     normalized = str(topology).strip().lower()
@@ -266,11 +292,15 @@ def validate_interface_topology(topology: str) -> str:
 
 
 def _coordinate_tolerance(grid: np.ndarray) -> float:
-    return 32.0 * np.finfo(float).eps * max(
-        1.0,
-        abs(float(grid[0])),
-        abs(float(grid[-1])),
-        abs(float(grid[-1] - grid[0])),
+    return (
+        32.0
+        * np.finfo(float).eps
+        * max(
+            1.0,
+            abs(float(grid[0])),
+            abs(float(grid[-1])),
+            abs(float(grid[-1] - grid[0])),
+        )
     )
 
 
@@ -348,9 +378,7 @@ def build_two_sided_interface_stencils(
         if not float(grid[0]) < position < float(grid[-1]):
             raise ValueError("each interface position must lie inside grid_m")
         nearest = int(np.argmin(np.abs(grid - position)))
-        shared = (
-            nearest if abs(float(grid[nearest]) - position) <= tolerance else None
-        )
+        shared = nearest if abs(float(grid[nearest]) - position) <= tolerance else None
         if shared is None:
             right = int(np.searchsorted(grid, position, side="right"))
             left = right - 1
@@ -469,9 +497,7 @@ def electrostatic_trace_residual_and_jacobian(
     )
     residual = np.array(
         [
-            phi_right
-            - phi_left
-            - float(geometry.potential_jump_right_minus_left_V),
+            phi_right - phi_left - float(geometry.potential_jump_right_minus_left_V),
             capacitance_left * (phi_left - float(bulk.phi_left_V))
             + capacitance_right * (phi_right - float(bulk.phi_right_V))
             - float(geometry.fixed_sheet_charge_C_m2),
@@ -534,26 +560,18 @@ def _bulk_flux_and_log_jacobian(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_left, p_left, n_right, p_right = state
     thermal_voltage = float(physics.thermal_voltage_V)
-    xi_left = (
-        float(traces.phi_left_V) - float(bulk.phi_left_V)
-    ) / thermal_voltage
-    xi_right = (
-        float(bulk.phi_right_V) - float(traces.phi_right_V)
-    ) / thermal_voltage
-    b_left, b_minus_left, db_left, db_minus_left = (
-        _bernoulli_pair_with_derivative(xi_left)
+    xi_left = (float(traces.phi_left_V) - float(bulk.phi_left_V)) / thermal_voltage
+    xi_right = (float(bulk.phi_right_V) - float(traces.phi_right_V)) / thermal_voltage
+    b_left, b_minus_left, db_left, db_minus_left = _bernoulli_pair_with_derivative(
+        xi_left
     )
-    b_right, b_minus_right, db_right, db_minus_right = (
-        _bernoulli_pair_with_derivative(xi_right)
+    b_right, b_minus_right, db_right, db_minus_right = _bernoulli_pair_with_derivative(
+        xi_right
     )
     k_n_left = float(physics.D_n_left_m2_s) / float(geometry.left_distance_m)
-    k_n_right = float(physics.D_n_right_m2_s) / float(
-        geometry.right_distance_m
-    )
+    k_n_right = float(physics.D_n_right_m2_s) / float(geometry.right_distance_m)
     k_p_left = float(physics.D_p_left_m2_s) / float(geometry.left_distance_m)
-    k_p_right = float(physics.D_p_right_m2_s) / float(
-        geometry.right_distance_m
-    )
+    k_p_right = float(physics.D_p_right_m2_s) / float(geometry.right_distance_m)
 
     # Convert conventional SG currents to particle fluxes into each trace.
     flux = np.array(
@@ -574,17 +592,23 @@ def _bulk_flux_and_log_jacobian(
         ]
     )
     trace_jacobian = np.zeros((_STATE_SIZE, 2), dtype=float)
-    trace_jacobian[_N_LEFT, 0] = k_n_left / thermal_voltage * (
-        -db_minus_left * bulk.n_left_m3 - db_left * n_left
+    trace_jacobian[_N_LEFT, 0] = (
+        k_n_left
+        / thermal_voltage
+        * (-db_minus_left * bulk.n_left_m3 - db_left * n_left)
     )
-    trace_jacobian[_P_LEFT, 0] = k_p_left / thermal_voltage * (
-        db_left * bulk.p_left_m3 + db_minus_left * p_left
+    trace_jacobian[_P_LEFT, 0] = (
+        k_p_left / thermal_voltage * (db_left * bulk.p_left_m3 + db_minus_left * p_left)
     )
-    trace_jacobian[_N_RIGHT, 1] = -k_n_right / thermal_voltage * (
-        db_right * bulk.n_right_m3 + db_minus_right * n_right
+    trace_jacobian[_N_RIGHT, 1] = (
+        -k_n_right
+        / thermal_voltage
+        * (db_right * bulk.n_right_m3 + db_minus_right * n_right)
     )
-    trace_jacobian[_P_RIGHT, 1] = k_p_right / thermal_voltage * (
-        db_minus_right * bulk.p_right_m3 + db_right * p_right
+    trace_jacobian[_P_RIGHT, 1] = (
+        k_p_right
+        / thermal_voltage
+        * (db_minus_right * bulk.p_right_m3 + db_right * p_right)
     )
 
     # Bulk columns are (phi_L, phi_R, log n_L, log p_L, log n_R, log p_R).
@@ -593,18 +617,10 @@ def _bulk_flux_and_log_jacobian(
     bulk_jacobian[_P_LEFT, 0] = -trace_jacobian[_P_LEFT, 0]
     bulk_jacobian[_N_RIGHT, 1] = -trace_jacobian[_N_RIGHT, 1]
     bulk_jacobian[_P_RIGHT, 1] = -trace_jacobian[_P_RIGHT, 1]
-    bulk_jacobian[_N_LEFT, 2 + _N_LEFT] = (
-        k_n_left * b_minus_left * bulk.n_left_m3
-    )
-    bulk_jacobian[_P_LEFT, 2 + _P_LEFT] = (
-        k_p_left * b_left * bulk.p_left_m3
-    )
-    bulk_jacobian[_N_RIGHT, 2 + _N_RIGHT] = (
-        k_n_right * b_right * bulk.n_right_m3
-    )
-    bulk_jacobian[_P_RIGHT, 2 + _P_RIGHT] = (
-        k_p_right * b_minus_right * bulk.p_right_m3
-    )
+    bulk_jacobian[_N_LEFT, 2 + _N_LEFT] = k_n_left * b_minus_left * bulk.n_left_m3
+    bulk_jacobian[_P_LEFT, 2 + _P_LEFT] = k_p_left * b_left * bulk.p_left_m3
+    bulk_jacobian[_N_RIGHT, 2 + _N_RIGHT] = k_n_right * b_right * bulk.n_right_m3
+    bulk_jacobian[_P_RIGHT, 2 + _P_RIGHT] = k_p_right * b_minus_right * bulk.p_right_m3
     return flux, jacobian, trace_jacobian, bulk_jacobian
 
 
@@ -816,8 +832,8 @@ def _capture_flux_and_log_jacobian(
 
     n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
     p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
-    occupancy, derivative_occupancy = (
-        _shared_trap_occupancy_and_linear_jacobian(state, physics)
+    occupancy, derivative_occupancy = _shared_trap_occupancy_and_linear_jacobian(
+        state, physics
     )
 
     capture = np.empty(_STATE_SIZE, dtype=float)
@@ -839,17 +855,119 @@ def _capture_flux_and_log_jacobian(
         for column in range(_STATE_SIZE):
             direct = 1.0 - occupancy if column == row else 0.0
             jacobian_linear[row, column] = velocity_n * (
-                direct
-                - (state[row] + trap_density) * derivative_occupancy[column]
+                direct - (state[row] + trap_density) * derivative_occupancy[column]
             )
     for row, trap_density in ((_P_LEFT, p1[0]), (_P_RIGHT, p1[1])):
         for column in range(_STATE_SIZE):
             direct = occupancy if column == row else 0.0
             jacobian_linear[row, column] = velocity_p * (
-                direct
-                + (state[row] + trap_density) * derivative_occupancy[column]
+                direct + (state[row] + trap_density) * derivative_occupancy[column]
             )
     return capture, jacobian_linear * state[np.newaxis, :]
+
+
+def fixed_occupancy_trap_capture_flux_and_log_jacobian(
+    state_m3: np.ndarray,
+    physics: TwoSidedInterfacePhysics,
+    occupancy: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return trap captures and their log-density tangent at fixed occupancy.
+
+    The occupancy is an independent dynamic state. Consequently this tangent
+    contains only the direct carrier derivatives; occupancy derivatives belong
+    to the separate trap-state column of the device small-signal operator.
+    """
+    state = np.asarray(state_m3, dtype=float)
+    fixed = float(occupancy)
+    if state.shape != (_STATE_SIZE,) or not np.all(np.isfinite(state)):
+        raise ValueError("state_m3 must contain four finite values")
+    if np.any(state < 0.0):
+        raise ValueError("state_m3 must be non-negative")
+    if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
+        raise ValueError("occupancy must lie in [0, 1]")
+    velocity_n = float(physics.surface_recombination_velocity_n_m_s)
+    velocity_p = float(physics.surface_recombination_velocity_p_m_s)
+    n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
+    p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
+    capture = np.array(
+        [
+            velocity_n * (state[_N_LEFT] * (1.0 - fixed) - n1[0] * fixed),
+            velocity_p * (state[_P_LEFT] * fixed - p1[0] * (1.0 - fixed)),
+            velocity_n * (state[_N_RIGHT] * (1.0 - fixed) - n1[1] * fixed),
+            velocity_p * (state[_P_RIGHT] * fixed - p1[1] * (1.0 - fixed)),
+        ],
+        dtype=float,
+    )
+    jacobian = np.diag(
+        [
+            velocity_n * (1.0 - fixed) * state[_N_LEFT],
+            velocity_p * fixed * state[_P_LEFT],
+            velocity_n * (1.0 - fixed) * state[_N_RIGHT],
+            velocity_p * fixed * state[_P_RIGHT],
+        ]
+    )
+    return capture, jacobian
+
+
+def fixed_occupancy_carrier_balance_and_jacobian(
+    log_state: np.ndarray,
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    occupancy: float,
+    traces: InterfaceTracePotentials | None = None,
+) -> TwoSidedCarrierBalance:
+    """Evaluate local carrier balance while holding trap occupancy explicit."""
+    values = np.asarray(log_state, dtype=float)
+    if values.shape != (_STATE_SIZE,) or not np.all(np.isfinite(values)):
+        raise ValueError("log_state must contain four finite values")
+    fixed = float(occupancy)
+    if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
+        raise ValueError("occupancy must lie in [0, 1]")
+    trace_values = traces or solve_electrostatic_traces(geometry, bulk)
+    state = np.exp(values)
+    if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
+        raise FloatingPointError("interface trace densities left finite range")
+    (
+        bulk_flux,
+        bulk_jacobian,
+        bulk_trace_jacobian,
+        bulk_coordinate_jacobian,
+    ) = _bulk_flux_and_log_jacobian(state, trace_values, geometry, physics, bulk)
+    cross_pair, cross_derivative, cross_trace_derivative, one_way_scale = (
+        _cross_flux_and_log_derivatives(state, trace_values, physics)
+    )
+    cross_flux = np.array(
+        [-cross_pair[0], -cross_pair[1], cross_pair[0], cross_pair[1]],
+        dtype=float,
+    )
+    cross_jacobian = np.zeros((_STATE_SIZE, _STATE_SIZE), dtype=float)
+    cross_jacobian[_N_LEFT] = -cross_derivative[0]
+    cross_jacobian[_N_RIGHT] = cross_derivative[0]
+    cross_jacobian[_P_LEFT] = -cross_derivative[1]
+    cross_jacobian[_P_RIGHT] = cross_derivative[1]
+    cross_trace_jacobian = np.zeros((_STATE_SIZE, 2), dtype=float)
+    cross_trace_jacobian[_N_LEFT] = -cross_trace_derivative[0]
+    cross_trace_jacobian[_N_RIGHT] = cross_trace_derivative[0]
+    cross_trace_jacobian[_P_LEFT] = -cross_trace_derivative[1]
+    cross_trace_jacobian[_P_RIGHT] = cross_trace_derivative[1]
+    capture_flux, capture_jacobian = fixed_occupancy_trap_capture_flux_and_log_jacobian(
+        state,
+        physics,
+        fixed,
+    )
+    residual = bulk_flux + cross_flux - capture_flux
+    return TwoSidedCarrierBalance(
+        state_m3=state,
+        bulk_flux_m2_s=bulk_flux,
+        cross_flux_m2_s=cross_flux,
+        capture_flux_m2_s=capture_flux,
+        residual_m2_s=residual,
+        jacobian_log_state_m2_s=(bulk_jacobian + cross_jacobian - capture_jacobian),
+        jacobian_trace_potential_m2_s_V=(bulk_trace_jacobian + cross_trace_jacobian),
+        jacobian_bulk_coordinates=bulk_coordinate_jacobian,
+        one_way_cross_scale_m2_s=one_way_scale,
+    )
 
 
 def equilibrium_referenced_electrostatic_trace_balance(
@@ -939,9 +1057,7 @@ def carrier_balance_and_jacobian(
     cross_trace_jacobian[_N_RIGHT] = cross_trace_derivative[0]
     cross_trace_jacobian[_P_LEFT] = -cross_trace_derivative[1]
     cross_trace_jacobian[_P_RIGHT] = cross_trace_derivative[1]
-    capture_flux, capture_jacobian = _capture_flux_and_log_jacobian(
-        state, physics
-    )
+    capture_flux, capture_jacobian = _capture_flux_and_log_jacobian(state, physics)
     residual = bulk_flux + cross_flux - capture_flux
     jacobian = bulk_jacobian + cross_jacobian - capture_jacobian
     return TwoSidedCarrierBalance(
@@ -951,9 +1067,7 @@ def carrier_balance_and_jacobian(
         capture_flux_m2_s=capture_flux,
         residual_m2_s=residual,
         jacobian_log_state_m2_s=jacobian,
-        jacobian_trace_potential_m2_s_V=(
-            bulk_trace_jacobian + cross_trace_jacobian
-        ),
+        jacobian_trace_potential_m2_s_V=(bulk_trace_jacobian + cross_trace_jacobian),
         jacobian_bulk_coordinates=bulk_coordinate_jacobian,
         one_way_cross_scale_m2_s=one_way_scale,
     )
@@ -972,9 +1086,7 @@ def equilibrium_referenced_two_sided_balance(
         values, geometry, physics, bulk, charge
     )
     traces = InterfaceTracePotentials(float(values[0]), float(values[1]))
-    carrier = carrier_balance_and_jacobian(
-        values[2:], geometry, physics, bulk, traces
-    )
+    carrier = carrier_balance_and_jacobian(values[2:], geometry, physics, bulk, traces)
     residual = np.concatenate((electrostatic.residual, carrier.residual_m2_s))
     jacobian_local = np.zeros((2 + _STATE_SIZE, 2 + _STATE_SIZE), dtype=float)
     jacobian_local[:2] = electrostatic.jacobian_trace_and_log_state
@@ -1135,15 +1247,14 @@ def solve_equilibrium_referenced_two_sided_interface(
         -scaled_bulk_jacobian,
     )
     sheet_charge_gradient_local = np.zeros(2 + _STATE_SIZE, dtype=float)
-    sheet_charge_gradient_local[2:] = (
-        -balance.electrostatic.jacobian_trace_and_log_state[1, 2:]
-    )
+    sheet_charge_gradient_local[
+        2:
+    ] = -balance.electrostatic.jacobian_trace_and_log_state[1, 2:]
     sheet_charge_jacobian_bulk = sheet_charge_gradient_local @ sensitivity
     condition = float(np.linalg.cond(scaled_local_jacobian))
     converged = bool(
         solution.success
-        and max(normalized_electrostatic, normalized_carrier)
-        <= residual_tolerance
+        and max(normalized_electrostatic, normalized_carrier) <= residual_tolerance
         and np.all(np.isfinite(sensitivity))
         and np.all(np.isfinite(sheet_charge_jacobian_bulk))
         and math.isfinite(condition)
@@ -1276,12 +1387,8 @@ def solve_two_sided_interface(
         gtol=1.0e-13,
         max_nfev=int(max_evaluations),
     )
-    balance = carrier_balance_and_jacobian(
-        solution.x, geometry, physics, bulk, traces
-    )
-    normalized_residual = float(
-        np.max(np.abs(balance.residual_m2_s / row_scale))
-    )
+    balance = carrier_balance_and_jacobian(solution.x, geometry, physics, bulk, traces)
+    normalized_residual = float(np.max(np.abs(balance.residual_m2_s / row_scale)))
     converged = bool(solution.success and normalized_residual <= residual_tolerance)
     if fail_on_residual and not converged:
         raise RuntimeError(
@@ -1304,6 +1411,200 @@ def solve_two_sided_interface(
     )
 
 
+def solve_fixed_occupancy_two_sided_interface(
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    occupancy: float,
+    charge: EquilibriumReferencedSheetCharge,
+    *,
+    initial_state_m3: np.ndarray | None = None,
+    residual_tolerance: float = 1.0e-9,
+    max_evaluations: int = 200,
+    fail_on_residual: bool = True,
+) -> FixedOccupancyTwoSidedInterfaceResult:
+    """Eliminate local traces at an externally supplied dynamic occupancy."""
+    _validate_inputs(geometry, physics, bulk)
+    _require_positive("residual_tolerance", residual_tolerance)
+    if int(max_evaluations) <= 0:
+        raise ValueError("max_evaluations must be positive")
+    fixed = float(occupancy)
+    if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
+        raise ValueError("occupancy must lie in [0, 1]")
+    incremental_charge = (
+        -Q
+        * float(charge.trap_density_m2)
+        * (fixed - float(charge.equilibrium_occupancy))
+    )
+    charged_geometry = replace(
+        geometry,
+        fixed_sheet_charge_C_m2=(
+            float(geometry.fixed_sheet_charge_C_m2) + incremental_charge
+        ),
+    )
+    off_traces = solve_electrostatic_traces(geometry, bulk)
+    traces = solve_electrostatic_traces(charged_geometry, bulk)
+    seed = (
+        _zero_bulk_flux_seed(traces, physics, bulk)
+        if initial_state_m3 is None
+        else np.asarray(initial_state_m3, dtype=float)
+    )
+    if seed.shape != (_STATE_SIZE,) or not np.all(np.isfinite(seed)):
+        raise ValueError("initial_state_m3 must contain four finite values")
+    if np.any(seed <= 0.0):
+        raise ValueError("initial_state_m3 must be strictly positive")
+    density_reference = max(
+        float(np.max(seed)),
+        physics.N_C_left_m3,
+        physics.N_C_right_m3,
+        physics.N_V_left_m3,
+        physics.N_V_right_m3,
+        physics.n1_left_m3,
+        physics.n1_right_m3,
+        physics.p1_left_m3,
+        physics.p1_right_m3,
+        1.0,
+    )
+    lower = math.log(1.0e-100)
+    upper = math.log(density_reference) + math.log(1.0e12)
+    log_seed = np.clip(np.log(seed), lower + 1.0, upper - 1.0)
+    seed_balance = fixed_occupancy_carrier_balance_and_jacobian(
+        log_seed,
+        charged_geometry,
+        physics,
+        bulk,
+        fixed,
+        traces,
+    )
+    electron_scale = max(
+        abs(seed_balance.bulk_flux_m2_s[_N_LEFT]),
+        abs(seed_balance.bulk_flux_m2_s[_N_RIGHT]),
+        abs(seed_balance.capture_flux_m2_s[_N_LEFT]),
+        abs(seed_balance.capture_flux_m2_s[_N_RIGHT]),
+        seed_balance.one_way_cross_scale_m2_s[0],
+        1.0,
+    )
+    hole_scale = max(
+        abs(seed_balance.bulk_flux_m2_s[_P_LEFT]),
+        abs(seed_balance.bulk_flux_m2_s[_P_RIGHT]),
+        abs(seed_balance.capture_flux_m2_s[_P_LEFT]),
+        abs(seed_balance.capture_flux_m2_s[_P_RIGHT]),
+        seed_balance.one_way_cross_scale_m2_s[1],
+        1.0,
+    )
+    row_scale = np.array(
+        [electron_scale, hole_scale, electron_scale, hole_scale],
+        dtype=float,
+    )
+
+    def residual(log_state: np.ndarray) -> np.ndarray:
+        return (
+            fixed_occupancy_carrier_balance_and_jacobian(
+                log_state,
+                charged_geometry,
+                physics,
+                bulk,
+                fixed,
+                traces,
+            ).residual_m2_s
+            / row_scale
+        )
+
+    def jacobian(log_state: np.ndarray) -> np.ndarray:
+        return (
+            fixed_occupancy_carrier_balance_and_jacobian(
+                log_state,
+                charged_geometry,
+                physics,
+                bulk,
+                fixed,
+                traces,
+            ).jacobian_log_state_m2_s
+            / row_scale[:, np.newaxis]
+        )
+
+    solution = least_squares(
+        residual,
+        log_seed,
+        jac=jacobian,
+        bounds=(lower, upper),
+        x_scale="jac",
+        ftol=1.0e-13,
+        xtol=1.0e-13,
+        gtol=1.0e-13,
+        max_nfev=int(max_evaluations),
+    )
+    balance = fixed_occupancy_carrier_balance_and_jacobian(
+        solution.x,
+        charged_geometry,
+        physics,
+        bulk,
+        fixed,
+        traces,
+    )
+    normalized_carrier = float(np.max(np.abs(balance.residual_m2_s / row_scale)))
+    trace_values = np.array([traces.phi_left_V, traces.phi_right_V])
+    gauss_raw, _ = electrostatic_trace_residual_and_jacobian(
+        trace_values,
+        charged_geometry,
+        bulk,
+    )
+    capacitance_scale = (
+        EPS_0
+        * (
+            float(geometry.eps_r_left) / float(geometry.left_distance_m)
+            + float(geometry.eps_r_right) / float(geometry.right_distance_m)
+        )
+        * float(physics.thermal_voltage_V)
+    )
+    gauss_scale = max(
+        capacitance_scale,
+        abs(float(charged_geometry.fixed_sheet_charge_C_m2)),
+        Q * float(charge.trap_density_m2),
+        np.finfo(float).tiny,
+    )
+    normalized_gauss = float(abs(gauss_raw[1]) / gauss_scale)
+    converged = bool(
+        solution.success
+        and normalized_carrier <= residual_tolerance
+        and normalized_gauss <= residual_tolerance
+    )
+    if fail_on_residual and not converged:
+        raise RuntimeError(
+            "fixed-occupancy two-sided interface did not certify: "
+            f"solver_success={solution.success}, "
+            f"carrier_residual={normalized_carrier:.6g}, "
+            f"gauss_residual={normalized_gauss:.6g}, "
+            f"evaluations={solution.nfev}"
+        )
+    qss = TwoSidedInterfaceResult(
+        potentials=traces,
+        state_m3=balance.state_m3,
+        bulk_flux_m2_s=balance.bulk_flux_m2_s,
+        cross_flux_m2_s=balance.cross_flux_m2_s,
+        capture_flux_m2_s=balance.capture_flux_m2_s,
+        residual_m2_s=balance.residual_m2_s,
+        jacobian_log_state_m2_s=balance.jacobian_log_state_m2_s,
+        normalized_residual=normalized_carrier,
+        evaluations=int(solution.nfev),
+        converged=converged,
+    )
+    return FixedOccupancyTwoSidedInterfaceResult(
+        qss=qss,
+        equilibrium_occupancy=float(charge.equilibrium_occupancy),
+        occupancy=fixed,
+        incremental_sheet_charge_C_m2=incremental_charge,
+        trace_potential_shift_V=np.array(
+            [
+                traces.phi_left_V - off_traces.phi_left_V,
+                traces.phi_right_V - off_traces.phi_right_V,
+            ],
+            dtype=float,
+        ),
+        normalized_gauss_residual=normalized_gauss,
+    )
+
+
 def _material_two_sided_interface_problem(
     mat,
     stack,
@@ -1319,12 +1620,8 @@ def _material_two_sided_interface_problem(
     left_nodes = tuple(int(value) for value in mat.iface_qss_left_nodes)
     right_nodes = tuple(int(value) for value in mat.iface_qss_right_nodes)
     faces = tuple(int(value) for value in mat.iface_qss_interface_faces)
-    left_distances = tuple(
-        float(value) for value in mat.iface_qss_left_distances_m
-    )
-    right_distances = tuple(
-        float(value) for value in mat.iface_qss_right_distances_m
-    )
+    left_distances = tuple(float(value) for value in mat.iface_qss_left_distances_m)
+    right_distances = tuple(float(value) for value in mat.iface_qss_right_distances_m)
     if not 0 <= int(index) < len(left_nodes):
         raise IndexError("two-sided interface index is out of range")
     left = left_nodes[index]
@@ -1334,9 +1631,7 @@ def _material_two_sided_interface_problem(
     velocity_n = velocity_p = 0.0
     interface_velocities = electrical_interfaces(stack)
     if index < len(interface_velocities):
-        velocity_n, velocity_p = (
-            float(value) for value in interface_velocities[index]
-        )
+        velocity_n, velocity_p = (float(value) for value in interface_velocities[index])
     if index < len(mat.interface_calibration_factor):
         calibration = float(mat.interface_calibration_factor[index])
         velocity_n *= calibration
@@ -1365,16 +1660,10 @@ def _material_two_sided_interface_problem(
         N_C_right_m3=float(mat.N_C_physical[right]),
         N_V_left_m3=float(mat.N_V_physical[left]),
         N_V_right_m3=float(mat.N_V_physical[right]),
-        richardson_n_A_m2_K2=min(
-            float(mat.A_star_n[left]), float(mat.A_star_n[right])
-        ),
-        richardson_p_A_m2_K2=min(
-            float(mat.A_star_p[left]), float(mat.A_star_p[right])
-        ),
+        richardson_n_A_m2_K2=min(float(mat.A_star_n[left]), float(mat.A_star_n[right])),
+        richardson_p_A_m2_K2=min(float(mat.A_star_p[left]), float(mat.A_star_p[right])),
         conduction_band_step_eV=float(chi[left] - chi[right]),
-        hole_transport_step_eV=float(
-            chi[right] + Eg[right] - chi[left] - Eg[left]
-        ),
+        hole_transport_step_eV=float(chi[right] + Eg[right] - chi[left] - Eg[left]),
         transmission=float(cross_transmission),
         surface_recombination_velocity_n_m_s=velocity_n,
         surface_recombination_velocity_p_m_s=velocity_p,
@@ -1426,12 +1715,8 @@ def solve_material_two_sided_interfaces_qss(
     right_nodes = tuple(int(value) for value in mat.iface_qss_right_nodes)
     faces = tuple(int(value) for value in mat.iface_qss_interface_faces)
     positions = tuple(float(value) for value in mat.iface_qss_interface_positions_m)
-    left_distances = tuple(
-        float(value) for value in mat.iface_qss_left_distances_m
-    )
-    right_distances = tuple(
-        float(value) for value in mat.iface_qss_right_distances_m
-    )
+    left_distances = tuple(float(value) for value in mat.iface_qss_left_distances_m)
+    right_distances = tuple(float(value) for value in mat.iface_qss_right_distances_m)
     interface_count = len(left_nodes)
     aligned = (
         right_nodes,
@@ -1549,12 +1834,8 @@ def solve_material_equilibrium_referenced_two_sided_interfaces_qss(
     right_nodes = tuple(int(value) for value in mat.iface_qss_right_nodes)
     faces = tuple(int(value) for value in mat.iface_qss_interface_faces)
     positions = tuple(float(value) for value in mat.iface_qss_interface_positions_m)
-    left_distances = tuple(
-        float(value) for value in mat.iface_qss_left_distances_m
-    )
-    right_distances = tuple(
-        float(value) for value in mat.iface_qss_right_distances_m
-    )
+    left_distances = tuple(float(value) for value in mat.iface_qss_left_distances_m)
+    right_distances = tuple(float(value) for value in mat.iface_qss_right_distances_m)
     interface_count = len(left_nodes)
     aligned = (
         right_nodes,
@@ -1567,9 +1848,7 @@ def solve_material_equilibrium_referenced_two_sided_interfaces_qss(
         raise ValueError("two-sided interface topology arrays are not aligned")
     references = np.asarray(equilibrium_occupancy, dtype=float)
     densities = np.asarray(trap_density_m2, dtype=float)
-    if references.shape != (interface_count,) or not np.all(
-        np.isfinite(references)
-    ):
+    if references.shape != (interface_count,) or not np.all(np.isfinite(references)):
         raise ValueError("equilibrium_occupancy must match physical interfaces")
     if np.any((references < 0.0) | (references > 1.0)):
         raise ValueError("equilibrium_occupancy must lie in [0, 1]")
@@ -1594,7 +1873,9 @@ def solve_material_equilibrium_referenced_two_sided_interfaces_qss(
         or len(shape) != 1
     ):
         raise ValueError("n, p, and phi must be aligned one-dimensional arrays")
-    seed = None if initial_state_m3 is None else np.asarray(initial_state_m3, dtype=float)
+    seed = (
+        None if initial_state_m3 is None else np.asarray(initial_state_m3, dtype=float)
+    )
     expected_state_size = 4 * interface_count
     if seed is not None and (
         seed.shape != (expected_state_size,)
@@ -1650,16 +1931,12 @@ def solve_material_equilibrium_referenced_two_sided_interfaces_qss(
         capture_flux[base : base + 4] = carrier.capture_flux_m2_s[right_first]
         residual[base : base + 4] = carrier.residual_m2_s[right_first]
         occupancy[index] = local.balance.electrostatic.occupancy
-        sheet_charge[index] = (
-            local.balance.electrostatic.incremental_sheet_charge_C_m2
-        )
+        sheet_charge[index] = local.balance.electrostatic.incremental_sheet_charge_C_m2
         sensitivity = local.sheet_charge_jacobian_bulk
         thermal_voltage = float(physics.thermal_voltage_V)
         sheet_jacobian_phi[index] = (
-            sensitivity[0]
-            + (sensitivity[2] - sensitivity[3]) / thermal_voltage,
-            sensitivity[1]
-            + (sensitivity[4] - sensitivity[5]) / thermal_voltage,
+            sensitivity[0] + (sensitivity[2] - sensitivity[3]) / thermal_voltage,
+            sensitivity[1] + (sensitivity[4] - sensitivity[5]) / thermal_voltage,
         )
         off_traces = solve_electrostatic_traces(geometry, bulk)
         trace_shift[index] = (
@@ -1695,6 +1972,153 @@ def solve_material_equilibrium_referenced_two_sided_interfaces_qss(
     )
 
 
+def solve_material_fixed_occupancy_two_sided_interfaces(
+    mat,
+    stack,
+    n: np.ndarray,
+    p: np.ndarray,
+    phi: np.ndarray,
+    *,
+    occupancy: np.ndarray,
+    equilibrium_occupancy: np.ndarray,
+    trap_density_m2: np.ndarray,
+    cross_transmission: float,
+    interface_transport_model: str,
+    initial_state_m3: np.ndarray | None = None,
+    residual_tolerance: float = 1.0e-7,
+    max_evaluations: int = 200,
+    fail_on_residual: bool = True,
+) -> FixedOccupancyMaterialInterfaceResult:
+    """Eliminate all local traces at explicit shared interface occupancies."""
+    from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
+
+    model = str(interface_transport_model).strip().lower()
+    if model != FERMI_DIRAC_RICHARDSON:
+        raise ValueError(
+            "fixed-occupancy two_sided_trace requires "
+            f"interface_transport_model={FERMI_DIRAC_RICHARDSON!r}"
+        )
+    left_nodes = tuple(int(value) for value in mat.iface_qss_left_nodes)
+    topology_arrays = (
+        tuple(int(value) for value in mat.iface_qss_right_nodes),
+        tuple(int(value) for value in mat.iface_qss_interface_faces),
+        tuple(float(value) for value in mat.iface_qss_interface_positions_m),
+        tuple(float(value) for value in mat.iface_qss_left_distances_m),
+        tuple(float(value) for value in mat.iface_qss_right_distances_m),
+    )
+    interface_count = len(left_nodes)
+    if any(len(values) != interface_count for values in topology_arrays):
+        raise ValueError("two-sided interface topology arrays are not aligned")
+    fixed = np.asarray(occupancy, dtype=float)
+    references = np.asarray(equilibrium_occupancy, dtype=float)
+    densities = np.asarray(trap_density_m2, dtype=float)
+    for name, values in (
+        ("occupancy", fixed),
+        ("equilibrium_occupancy", references),
+        ("trap_density_m2", densities),
+    ):
+        if values.shape != (interface_count,) or not np.all(np.isfinite(values)):
+            raise ValueError(f"{name} must match physical interfaces")
+    if np.any((fixed < 0.0) | (fixed > 1.0)):
+        raise ValueError("occupancy must lie in [0, 1]")
+    if np.any((references < 0.0) | (references > 1.0)):
+        raise ValueError("equilibrium_occupancy must lie in [0, 1]")
+    if np.any(densities < 0.0):
+        raise ValueError("trap_density_m2 must be non-negative")
+    if mat.D_n_node is None or mat.D_p_node is None:
+        raise ValueError("two-sided interface transport requires nodal diffusivity")
+    required_arrays = (
+        mat.N_C_physical,
+        mat.N_V_physical,
+        mat.A_star_n,
+        mat.A_star_p,
+    )
+    if any(values is None for values in required_arrays):
+        raise ValueError("two-sided interface transport requires DOS and A-star data")
+    shape = np.asarray(phi, dtype=float).shape
+    if (
+        shape != np.asarray(n, dtype=float).shape
+        or shape != np.asarray(p, dtype=float).shape
+        or len(shape) != 1
+    ):
+        raise ValueError("n, p, and phi must be aligned one-dimensional arrays")
+    size = 4 * interface_count
+    seed = (
+        None if initial_state_m3 is None else np.asarray(initial_state_m3, dtype=float)
+    )
+    if seed is not None and (
+        seed.shape != (size,) or not np.all(np.isfinite(seed)) or np.any(seed <= 0.0)
+    ):
+        raise ValueError(
+            "initial_state_m3 must contain positive right-first interface blocks"
+        )
+    state = np.empty(size, dtype=float)
+    bulk_flux = np.empty(size, dtype=float)
+    cross_flux = np.empty(size, dtype=float)
+    capture_flux = np.empty(size, dtype=float)
+    residual = np.empty(size, dtype=float)
+    sheet_charge = np.empty(interface_count, dtype=float)
+    trace_shift = np.empty((interface_count, 2), dtype=float)
+    gauss_residual = np.empty(interface_count, dtype=float)
+    maximum_residual = 0.0
+    evaluations = 0
+    right_first = np.array([2, 3, 0, 1])
+    for index in range(interface_count):
+        geometry, physics, bulk = _material_two_sided_interface_problem(
+            mat,
+            stack,
+            n,
+            p,
+            phi,
+            index,
+            cross_transmission=cross_transmission,
+        )
+        base = 4 * index
+        initial_local = None if seed is None else seed[base : base + 4][right_first]
+        local = solve_fixed_occupancy_two_sided_interface(
+            geometry,
+            physics,
+            bulk,
+            fixed[index],
+            EquilibriumReferencedSheetCharge(references[index], densities[index]),
+            initial_state_m3=initial_local,
+            residual_tolerance=residual_tolerance,
+            max_evaluations=max_evaluations,
+            fail_on_residual=fail_on_residual,
+        )
+        qss = local.qss
+        state[base : base + 4] = qss.state_m3[right_first]
+        bulk_flux[base : base + 4] = qss.bulk_flux_m2_s[right_first]
+        cross_flux[base : base + 4] = qss.cross_flux_m2_s[right_first]
+        capture_flux[base : base + 4] = qss.capture_flux_m2_s[right_first]
+        residual[base : base + 4] = qss.residual_m2_s[right_first]
+        sheet_charge[index] = local.incremental_sheet_charge_C_m2
+        trace_shift[index] = local.trace_potential_shift_V
+        gauss_residual[index] = local.normalized_gauss_residual
+        maximum_residual = max(maximum_residual, qss.normalized_residual)
+        evaluations += qss.evaluations
+    qss = TwoSidedMaterialQSSResult(
+        state_m3=state,
+        bulk_flux_m2_s=bulk_flux,
+        cross_flux_m2_s=cross_flux,
+        state_flux_m2_s=residual,
+        normalized_residual=maximum_residual,
+        evaluations=evaluations,
+        transport_model=model,
+        capture_flux_m2_s=capture_flux,
+        occupancy=fixed.copy(),
+    )
+    return FixedOccupancyMaterialInterfaceResult(
+        qss=qss,
+        equilibrium_occupancy=references.copy(),
+        occupancy=fixed.copy(),
+        trap_density_m2=densities.copy(),
+        incremental_sheet_charge_C_m2=sheet_charge,
+        trace_potential_shift_V=trace_shift,
+        normalized_gauss_residual=gauss_residual,
+    )
+
+
 __all__ = [
     "ChargedElectrostaticTraceBalance",
     "CoupledChargedInterfaceBalance",
@@ -1702,6 +2126,8 @@ __all__ = [
     "EquilibriumReferencedSheetCharge",
     "EquilibriumReferencedMaterialQSSResult",
     "EquilibriumReferencedTwoSidedInterfaceResult",
+    "FixedOccupancyMaterialInterfaceResult",
+    "FixedOccupancyTwoSidedInterfaceResult",
     "INTERFACE_TOPOLOGIES",
     "InterfaceTracePotentials",
     "TWO_SIDED_TRACE",
@@ -1717,6 +2143,8 @@ __all__ = [
     "electrostatic_trace_residual_and_jacobian",
     "equilibrium_referenced_electrostatic_trace_balance",
     "equilibrium_referenced_two_sided_balance",
+    "fixed_occupancy_carrier_balance_and_jacobian",
+    "fixed_occupancy_trap_capture_flux_and_log_jacobian",
     "remove_shared_interface_nodes",
     "shared_trap_capture_flux",
     "shared_trap_occupancy",
@@ -1725,6 +2153,8 @@ __all__ = [
     "solve_equilibrium_referenced_two_sided_interface",
     "solve_material_two_sided_interfaces_qss",
     "solve_material_equilibrium_referenced_two_sided_interfaces_qss",
+    "solve_material_fixed_occupancy_two_sided_interfaces",
+    "solve_fixed_occupancy_two_sided_interface",
     "solve_two_sided_interface",
     "validate_interface_topology",
 ]

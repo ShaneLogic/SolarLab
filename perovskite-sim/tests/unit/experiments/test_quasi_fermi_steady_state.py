@@ -1,4 +1,5 @@
 """Focused contracts for the opt-in quasi-Fermi steady-state solver."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -205,8 +206,7 @@ def test_uniform_dark_equilibrium_is_certified():
     )
     np.testing.assert_allclose(
         result.hole_quasi_fermi_potential_V,
-        result.hole_quasi_fermi_reference_V
-        + result.hole_quasi_fermi_increment_V,
+        result.hole_quasi_fermi_reference_V + result.hole_quasi_fermi_increment_V,
         rtol=0.0,
         atol=0.0,
     )
@@ -214,14 +214,10 @@ def test_uniform_dark_equilibrium_is_certified():
     node_count = len(x)
     mat = build_material_arrays(x, stack)
     log_n = (
-        result.electron_quasi_fermi_potential_V + result.phi
-        + mat.chi
+        result.electron_quasi_fermi_potential_V + result.phi + mat.chi
     ) / mat.V_T_device
     log_p = (
-        result.hole_quasi_fermi_potential_V
-        - result.phi
-        - mat.chi
-        - mat.Eg
+        result.hole_quasi_fermi_potential_V - result.phi - mat.chi - mat.Eg
     ) / mat.V_T_device
     assert np.log(result.y[:node_count]) == pytest.approx(log_n, abs=1.0e-12)
     assert np.log(result.y[node_count : 2 * node_count]) == pytest.approx(
@@ -275,8 +271,20 @@ def test_certified_state_warm_starts_a_voltage_sweep():
     assert len(sweep.points) == len(voltages)
     assert all(point.certified for point in sweep.points)
     assert sweep.points[0].illumination_steps == pytest.approx(
-        (0.0, 1.0e-14, 1.0e-12, 1.0e-10, 1.0e-8, 1.0e-6,
-         1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1, 1.0)
+        (
+            0.0,
+            1.0e-14,
+            1.0e-12,
+            1.0e-10,
+            1.0e-8,
+            1.0e-6,
+            1.0e-5,
+            1.0e-4,
+            1.0e-3,
+            1.0e-2,
+            1.0e-1,
+            1.0,
+        )
     )
     assert sweep.points[1].illumination_steps == (1.0,)
 
@@ -343,10 +351,7 @@ def test_voltage_bisection_is_explicit_and_retains_only_requested_points(
     assert sweep.continuation_bridge_count == 3
     assert sweep.minimum_voltage_step_V == pytest.approx(0.025)
     for expected in ((0.05, 0.0), (0.15, 0.1), (0.25, 0.2)):
-        assert any(
-            actual == pytest.approx(expected, abs=1.0e-15)
-            for actual in calls
-        )
+        assert any(actual == pytest.approx(expected, abs=1.0e-15) for actual in calls)
 
 
 def test_voltage_bisection_remains_default_off(monkeypatch):
@@ -385,10 +390,7 @@ def test_interface_voltage_sweep_records_nodal_predictor_fallback(monkeypatch):
         force_nodal_coordinate_predictor=False,
         **kwargs,
     ):
-        if (
-            initial_state is not None
-            and not force_nodal_coordinate_predictor
-        ):
+        if initial_state is not None and not force_nodal_coordinate_predictor:
             raise QuasiFermiSteadyStateError("direct edge seed missed basin")
         return SimpleNamespace(
             V_app=float(V_app),
@@ -512,9 +514,7 @@ def test_edge_coordinates_preserve_sub_ulp_face_drop_and_contact_pins():
     coordinates[0] = 80.0
     coordinates[1] = 1.0e-16
 
-    z_n, z_p, edge_n, edge_p = system.edge_coordinates_to_increments(
-        coordinates
-    )
+    z_n, z_p, edge_n, edge_p = system.edge_coordinates_to_increments(coordinates)
 
     assert z_n[[0, -1]] == pytest.approx((0.0, 0.0), abs=0.0)
     assert z_p[[0, -1]] == pytest.approx((0.0, 0.0), abs=0.0)
@@ -555,9 +555,7 @@ def test_edge_and_nodal_coordinates_agree_when_drops_are_resolvable():
         np.linspace(1.0e-4, 5.0e-4, per_carrier),
         np.linspace(-2.0e-4, -6.0e-4, per_carrier),
     ]
-    z_n, z_p, _edge_n, _edge_p = (
-        system.edge_coordinates_to_increments(coordinates)
-    )
+    z_n, z_p, _edge_n, _edge_p = system.edge_coordinates_to_increments(coordinates)
 
     edge = system.evaluate_edge_coordinates(
         coordinates,
@@ -731,10 +729,7 @@ def test_two_sided_trace_grid_has_exact_interface_control_volumes():
     right = prepared.iface_qss_right_nodes[0]
     h_left = prepared.iface_qss_left_distances_m[0]
     h_right = prepared.iface_qss_right_distances_m[0]
-    expected = EPS_0 / (
-        h_left / prepared.eps_r[left]
-        + h_right / prepared.eps_r[right]
-    )
+    expected = EPS_0 / (h_left / prepared.eps_r[left] + h_right / prepared.eps_r[right])
     assert prepared.poisson_factor is not None
     assert prepared.poisson_factor.C[face] == pytest.approx(expected)
 
@@ -822,22 +817,16 @@ def test_charged_outer_poisson_jacobian_matches_resolved_central_difference():
     dqfp = np.linspace(0.0, -0.002, len(grid))
     phi = charged_system.phi0.copy()
     phi[1:-1] += np.linspace(-0.002, 0.003, len(grid) - 2)
-    raw, banded, _n, _p, charged_qss = (
-        charged_system._evaluate_charged_poisson_system(
-            phi,
-            dqfn,
-            dqfp,
-        )
+    raw, banded, _n, _p, charged_qss = charged_system._evaluate_charged_poisson_system(
+        phi,
+        dqfn,
+        dqfp,
     )
     interior_size = len(grid) - 2
     analytic = np.zeros((interior_size, interior_size))
     analytic[np.arange(interior_size), np.arange(interior_size)] = banded[1]
-    analytic[np.arange(interior_size - 1), np.arange(1, interior_size)] = (
-        banded[0, 1:]
-    )
-    analytic[np.arange(1, interior_size), np.arange(interior_size - 1)] = (
-        banded[2, :-1]
-    )
+    analytic[np.arange(interior_size - 1), np.arange(1, interior_size)] = banded[0, 1:]
+    analytic[np.arange(1, interior_size), np.arange(interior_size - 1)] = banded[2, :-1]
     finite_difference = np.empty_like(analytic)
     step = 1.0e-7
     for column in range(interior_size):
@@ -908,21 +897,146 @@ def test_charged_outer_poisson_closes_and_reference_state_has_zero_charge():
         poisson_max_iterations=100,
     )
     zeros = np.zeros(len(grid))
-    _phi, _n, _p, poisson_residual, _raw, reference = (
-        charged_system._solve_poisson(zeros, zeros)
+    _phi, _n, _p, poisson_residual, _raw, reference = charged_system._solve_poisson(
+        zeros, zeros
     )
     assert poisson_residual < 1.0e-8
     assert abs(reference.incremental_sheet_charge_C_m2[0]) < 1.0e-18
 
     dqfn = np.linspace(0.0, 0.004, len(grid))
     dqfp = np.linspace(0.0, -0.003, len(grid))
-    _phi, _n, _p, poisson_residual, _raw, biased = (
-        charged_system._solve_poisson(dqfn, dqfp)
+    _phi, _n, _p, poisson_residual, _raw, biased = charged_system._solve_poisson(
+        dqfn, dqfp
     )
     assert poisson_residual < 1.0e-8
     assert abs(biased.incremental_sheet_charge_C_m2[0]) > 1.0e-12
     assert abs(biased.incremental_sheet_charge_C_m2[0]) <= Q * 5.0e14
     assert np.max(biased.normalized_gauss_residual) < 1.0e-7
+
+
+def test_dynamic_interface_fixed_occupancy_embeds_charged_qss_operator():
+    stack, grid, material = _prepared_charged_interface_system_inputs()
+    off_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    reference_qss = solve_material_two_sided_interfaces_qss(
+        material,
+        stack,
+        off_system.base[: len(grid)],
+        off_system.base[len(grid) : 2 * len(grid)],
+        off_system.phi0,
+        cross_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        fail_on_residual=True,
+    )
+    charged_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        interface_charge_reference_occupancy=reference_qss.occupancy,
+        interface_charge_trap_density_m2=np.array([5.0e14]),
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    dqfn = np.linspace(0.0, 0.003, len(grid))
+    dqfp = np.linspace(0.0, -0.002, len(grid))
+    qss = charged_system.evaluate_quasi_fermi_increments(
+        dqfn,
+        dqfp,
+        0.0,
+    )
+    assert qss.interface_charge_qss is not None
+    occupancy = qss.interface_charge_qss.qss.occupancy
+    dynamic = charged_system.evaluate_quasi_fermi_increments_dynamic_interface(
+        dqfn,
+        dqfp,
+        occupancy,
+        0.0,
+    )
+
+    assert dynamic.interface_charge_qss is None
+    assert dynamic.interface_charge_dynamic is not None
+    np.testing.assert_allclose(dynamic.phi, qss.phi, rtol=0.0, atol=2.0e-13)
+    np.testing.assert_allclose(dynamic.y, qss.y, rtol=2.0e-10)
+    np.testing.assert_allclose(dynamic.rate_n, qss.rate_n, rtol=2.0e-8, atol=1.0)
+    np.testing.assert_allclose(dynamic.rate_p, qss.rate_p, rtol=2.0e-8, atol=1.0)
+    np.testing.assert_allclose(
+        dynamic.current_n, qss.current_n, rtol=2.0e-9, atol=1.0e-8
+    )
+    np.testing.assert_allclose(
+        dynamic.current_p, qss.current_p, rtol=2.0e-9, atol=1.0e-8
+    )
+
+
+def test_dynamic_interface_occupancy_drives_sheet_charge_and_trap_storage_rate():
+    stack, grid, material = _prepared_charged_interface_system_inputs()
+    off_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    reference_qss = solve_material_two_sided_interfaces_qss(
+        material,
+        stack,
+        off_system.base[: len(grid)],
+        off_system.base[len(grid) : 2 * len(grid)],
+        off_system.phi0,
+        cross_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        fail_on_residual=True,
+    )
+    charged_system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        interface_boundary=True,
+        interface_topology=TWO_SIDED_TRACE,
+        interface_transmission=1.0,
+        interface_transport_model=FERMI_DIRAC_RICHARDSON,
+        interface_charge_reference_occupancy=reference_qss.occupancy,
+        interface_charge_trap_density_m2=np.array([5.0e14]),
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    shifted_occupancy = np.minimum(reference_qss.occupancy + 0.05, 0.95)
+    dynamic = charged_system.evaluate_quasi_fermi_increments_dynamic_interface(
+        np.zeros(len(grid)),
+        np.zeros(len(grid)),
+        shifted_occupancy,
+        0.0,
+    )
+
+    interface = dynamic.interface_charge_dynamic
+    assert interface is not None
+    expected_charge = -Q * 5.0e14 * (shifted_occupancy[0] - reference_qss.occupancy[0])
+    assert interface.incremental_sheet_charge_C_m2[0] == pytest.approx(expected_charge)
+    assert interface.normalized_gauss_residual[0] < 1.0e-7
+    capture = interface.qss.capture_flux_m2_s
+    trap_storage_rate = capture[[0, 2]].sum() - capture[[1, 3]].sum()
+    assert abs(trap_storage_rate) > 0.0
+    assert dynamic.poisson_residual < 1.0e-8
 
 
 def test_charged_poisson_defers_local_residual_gate_until_outer_certificate(
@@ -966,8 +1080,7 @@ def test_charged_poisson_defers_local_residual_gate_until_outer_certificate(
         poisson_max_iterations=100,
     )
     original = (
-        two_sided_module.
-        solve_material_equilibrium_referenced_two_sided_interfaces_qss
+        two_sided_module.solve_material_equilibrium_referenced_two_sided_interfaces_qss
     )
     fail_flags = []
 
@@ -1201,7 +1314,10 @@ def test_csi_small_grid_has_a_physical_short_circuit_solution():
 
     mat = build_material_arrays(x, stack)
     actual = np.diff(result.total_face_current_A_m2)
-    expected = -mat.junction_polarity * 1.602176634e-19 * mat.dx_cell[1:-1] * (
-        result.electron_rate_per_s[1:-1] - result.hole_rate_per_s[1:-1]
+    expected = (
+        -mat.junction_polarity
+        * 1.602176634e-19
+        * mat.dx_cell[1:-1]
+        * (result.electron_rate_per_s[1:-1] - result.hole_rate_per_s[1:-1])
     )
     assert actual == pytest.approx(expected, abs=1.0e-10)
