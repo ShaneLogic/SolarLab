@@ -4,6 +4,13 @@ Status: internally certified research-only steady-state Python lane and
 fail-closed research endpoint; production experiment routes remain `PARKED`
 (2026-08-23).
 
+D4-E0 (2026-08-28) adds the canonical per-area microscopic document described
+in `docs/explicit-interface-defect-schema-v1.md`. Existing charged certificates
+predate that schema and are inherited baselines only. D4-E1 must require the
+document and rebuild uncalibrated capture velocities from it; D4-E2 must then
+mint new source/config/protocol identities and rerun the complete matrices
+before any production unlock decision.
+
 SolarLab's production interface-state paths remain recombination-only. The
 explicit research API below provides a self-consistent occupancy-dependent
 sheet charge in the QF outer Poisson system. Its purpose-built grid/tolerance

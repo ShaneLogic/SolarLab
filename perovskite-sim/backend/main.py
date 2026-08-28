@@ -347,14 +347,21 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         if defect is None:
             interface_defects.append(None)
             continue
-        N_t_cm2 = defect.N_t_cm2 if defect.N_t_cm2 > 0.0 else 1.0
-        v_th_cm_s = 1.0e7
+        document = defect.microscopic_document
+        if document is None:
+            N_t_cm2 = defect.N_t_cm2 if defect.N_t_cm2 > 0.0 else 1.0
+            v_th_cm_s = 1.0e7
+            microscopic_fields = {
+                "sigma_n_cm2": pair[0] / (v_th_cm_s * N_t_cm2 * 1.0e-2),
+                "sigma_p_cm2": pair[1] / (v_th_cm_s * N_t_cm2 * 1.0e-2),
+                "N_t_cm2": N_t_cm2,
+                "v_th_cm_s": v_th_cm_s,
+                "E_t_eV_below_cb": defect.E_t_eV,
+            }
+        else:
+            microscopic_fields = document.to_scaps_cgs_fields()
         interface_defects.append({
-            "sigma_n_cm2": pair[0] / (v_th_cm_s * N_t_cm2 * 1.0e-2),
-            "sigma_p_cm2": pair[1] / (v_th_cm_s * N_t_cm2 * 1.0e-2),
-            "N_t_cm2": N_t_cm2,
-            "v_th_cm_s": v_th_cm_s,
-            "E_t_eV_below_cb": defect.E_t_eV,
+            **microscopic_fields,
             "calibration_factor": defect.calibration_factor,
             "iface_state_calibration_factor": (
                 defect.iface_state_calibration_factor

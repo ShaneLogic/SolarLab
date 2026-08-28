@@ -123,6 +123,11 @@ def test_populated_pvk_etl_defect_sets_interfaces_srv_and_defect():
     assert stack.interface_defects[0] is None
     assert isinstance(stack.interface_defects[1], InterfaceDefect)
     assert stack.interface_defects[1].E_t_eV == pytest.approx(0.6)
+    assert stack.interface_defects[1].microscopic_document is not None
+    assert stack.interface_defects[1].microscopic_capture_velocities_m_s == (
+        pytest.approx(expected_srv),
+        pytest.approx(expected_srv),
+    )
 
 
 def test_legacy_interfaces_array_still_works_when_interface_defects_absent():
@@ -182,3 +187,33 @@ def test_asymmetric_sigma_n_vs_sigma_p_uses_each_for_its_carrier():
     v_p = 5.0e-16 * 1.0e7 * 1.0e9 * 1.0e-2
     assert stack.interfaces[1][0] == pytest.approx(v_n, rel=1e-12)
     assert stack.interfaces[1][1] == pytest.approx(v_p, rel=1e-12)
+
+
+def test_backend_serializer_preserves_nondefault_microscopic_thermal_velocity():
+    from backend.main import _stack_to_config_dict, stack_from_dict
+
+    defect = {
+        "sigma_n_cm2": 3.0e-20,
+        "sigma_p_cm2": 5.0e-20,
+        "N_t_cm2": 4.0e12,
+        "v_th_cm_s": 2.0e7,
+        "E_t_eV_below_cb": 0.55,
+    }
+    stack = stack_from_dict(
+        _three_layer_cfg({"interface_defects": [None, defect]})
+    )
+
+    serialized = _stack_to_config_dict(stack)
+    rebuilt = stack_from_dict(serialized)
+
+    assert serialized["device"]["interface_defects"][1] == pytest.approx(
+        {
+            **defect,
+            "calibration_factor": 1.0,
+            "iface_state_calibration_factor": 1.0,
+        }
+    )
+    assert rebuilt.interface_defects[1].microscopic_document == (
+        stack.interface_defects[1].microscopic_document
+    )
+    assert rebuilt.interfaces[1] == pytest.approx(stack.interfaces[1])

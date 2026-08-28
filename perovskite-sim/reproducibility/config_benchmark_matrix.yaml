@@ -1419,7 +1419,7 @@ configs:
       - interface-charge-off-qf-reference
   - path: configs/interface_charge_research.yaml
     sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
-    semantic_sha256: 1298a3257d96c0fb4660c979a4ade76d97f9d92c427d4c78bb2e00d493e6c5a8
+    semantic_sha256: 2362b220db8d3aae26a2f91f4231871200066ce742e621e6424fed13b206b747
     schema: standard-device-v1
     status: partial
     benchmarks:

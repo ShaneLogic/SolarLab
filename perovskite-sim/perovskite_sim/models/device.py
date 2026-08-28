@@ -3,6 +3,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 from perovskite_sim.constants import V_T
+from perovskite_sim.models.interface_defects import InterfaceDefectDocument
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.twod.microstructure import Microstructure
 
@@ -79,6 +80,40 @@ class InterfaceDefect:
     # base SRV by the N_t ratio (σ-consistent) instead of re-deriving with a
     # hardcoded σ. 0.0 = not set (sweep falls back to legacy σ=1e-15 path).
     N_t_cm2: float = 0.0
+    # D4 canonical microscopic identity. Legacy programmatic constructors may
+    # omit it and retain the historical recombination-only behaviour. Flat
+    # SCAPS/standard config adapters populate it from sigma, v_th, Nt and Et so
+    # charged closures can bind kinetics and sheet charge to one population.
+    microscopic_document: InterfaceDefectDocument | None = None
+
+    def __post_init__(self) -> None:
+        document = self.microscopic_document
+        if document is None:
+            return
+        if not isinstance(document, InterfaceDefectDocument):
+            raise ValueError(
+                "microscopic_document must be an InterfaceDefectDocument"
+            )
+        if float(self.E_t_eV) != document.trap_depth_eV:
+            raise ValueError(
+                "InterfaceDefect E_t_eV must match microscopic trap_depth_eV"
+            )
+        density_m2 = float(self.N_t_cm2) * 1.0e4
+        if not math.isclose(
+            density_m2,
+            document.total_density_m2,
+            rel_tol=1.0e-15,
+            abs_tol=0.0,
+        ):
+            raise ValueError(
+                "InterfaceDefect N_t_cm2 must match microscopic total_density_m2"
+            )
+
+    @property
+    def microscopic_capture_velocities_m_s(self) -> tuple[float, float]:
+        if self.microscopic_document is None:
+            raise ValueError("InterfaceDefect has no microscopic kinetics")
+        return self.microscopic_document.capture_velocities_m_s
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ import yaml
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.models.defects import bulk_defect_document_from_layer_mapping
+from perovskite_sim.models.interface_defects import InterfaceDefectDocument
 from perovskite_sim.physics.doping import validate_doping_profile_params
 from perovskite_sim.physics.bulk_traps import (
     bulk_trap_distribution_from_mapping,
@@ -136,20 +137,42 @@ def interfaces_from_device_dict(
             if defect_list is not None:
                 defect_list.append(None)
             continue
-        v_th = float(block["v_th_cm_s"])
+        if not isinstance(block, Mapping):
+            raise ValueError(f"device.interface_defects[{k}] must be a mapping")
+        required = {
+            "sigma_n_cm2",
+            "sigma_p_cm2",
+            "v_th_cm_s",
+            "N_t_cm2",
+            "E_t_eV_below_cb",
+        }
+        optional = {"calibration_factor", "iface_state_calibration_factor"}
+        keys = set(block)
+        missing = sorted(required - keys)
+        unknown = sorted(keys - required - optional)
+        if missing or unknown:
+            raise ValueError(
+                f"device.interface_defects[{k}] requires the exact flat "
+                f"SCAPS adapter schema; missing={missing}, unknown={unknown}"
+            )
+        document = InterfaceDefectDocument.from_scaps_cgs(
+            sigma_n_cm2=block["sigma_n_cm2"],
+            sigma_p_cm2=block["sigma_p_cm2"],
+            thermal_velocity_cm_s=block["v_th_cm_s"],
+            total_density_cm2=block["N_t_cm2"],
+            trap_depth_eV_below_cb=block["E_t_eV_below_cb"],
+        )
         N_t = float(block["N_t_cm2"])
-        iface_list.append((
-            float(block["sigma_n_cm2"]) * v_th * N_t * 1.0e-2,
-            float(block["sigma_p_cm2"]) * v_th * N_t * 1.0e-2,
-        ))
+        iface_list.append(document.capture_velocities_m_s)
         assert defect_list is not None
         defect_list.append(InterfaceDefect(
-            E_t_eV=float(block["E_t_eV_below_cb"]),
+            E_t_eV=document.trap_depth_eV,
             calibration_factor=float(block.get("calibration_factor", 1.0)),
             iface_state_calibration_factor=float(
                 block.get("iface_state_calibration_factor", 1.0)
             ),
             N_t_cm2=N_t,
+            microscopic_document=document,
         ))
     return (
         tuple(iface_list),

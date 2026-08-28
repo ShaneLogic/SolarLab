@@ -78,6 +78,7 @@ from perovskite_sim.models.config_loader import (
     electrical_grid_from_config_dict,
     interface_charge_fields_from_device_dict,
 )
+from perovskite_sim.models.interface_defects import InterfaceDefectDocument
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.scaps_compat.materials import ni_from_dos
 from perovskite_sim.sweeps.device_parameter_sweep import (
@@ -284,15 +285,26 @@ def _parse_interfaces_block(
             optional=_OPTIONAL_INTERFACE_KEYS,
             where=where,
         )
-        _resolve_distribution(entry, where)
+        distribution = _resolve_distribution(entry, where)
         depth, _ref = _resolve_trap_depth(entry, where, Eg_eV=0.0)
         k = _resolve_interface_index(target, layers)
-        sigma_n_si = float(entry["sigma_n_cm2"]) * 1.0e-4
-        sigma_p_si = float(entry["sigma_p_cm2"]) * 1.0e-4
-        v_th_si = cms_to_ms(float(entry["v_th_cm_s"]))
-        N_t_areal_si = float(entry["N_t_cm2"]) * 1.0e4
-        v_n = sigma_n_si * v_th_si * N_t_areal_si
-        v_p = sigma_p_si * v_th_si * N_t_areal_si
+        microscopic_document = None
+        if distribution == "single" and _ref == "below_cb":
+            microscopic_document = InterfaceDefectDocument.from_scaps_cgs(
+                sigma_n_cm2=entry["sigma_n_cm2"],
+                sigma_p_cm2=entry["sigma_p_cm2"],
+                thermal_velocity_cm_s=entry["v_th_cm_s"],
+                total_density_cm2=entry["N_t_cm2"],
+                trap_depth_eV_below_cb=depth,
+            )
+            v_n, v_p = microscopic_document.capture_velocities_m_s
+        else:
+            sigma_n_si = float(entry["sigma_n_cm2"]) * 1.0e-4
+            sigma_p_si = float(entry["sigma_p_cm2"]) * 1.0e-4
+            v_th_si = cms_to_ms(float(entry["v_th_cm_s"]))
+            N_t_areal_si = float(entry["N_t_cm2"]) * 1.0e4
+            v_n = sigma_n_si * v_th_si * N_t_areal_si
+            v_p = sigma_p_si * v_th_si * N_t_areal_si
         interfaces[k] = (v_n, v_p)
         # Phase E1.6 — optional calibration_factor (default 1.0 = legacy).
         # Mirrors the schema accepted by ``backend/main.py:stack_from_dict``
@@ -310,6 +322,7 @@ def _parse_interfaces_block(
             calibration_factor=calibration_factor,
             iface_state_calibration_factor=iface_state_calibration_factor,
             N_t_cm2=float(entry["N_t_cm2"]),
+            microscopic_document=microscopic_document,
         )
     return tuple(interfaces), tuple(defects)
 

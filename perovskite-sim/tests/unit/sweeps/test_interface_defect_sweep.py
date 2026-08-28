@@ -82,6 +82,12 @@ def test_interface_defect_N_t_cm2_updates_charge_capacity_and_preserves_srv_rati
     swept = apply_sweep_point(stack, pt)
 
     assert swept.interface_defects[-1].N_t_cm2 == pytest.approx(target_density)
+    assert swept.interface_defects[-1].microscopic_document.total_density_m2 == (
+        pytest.approx(target_density * 1.0e4)
+    )
+    assert swept.interface_defects[-1].microscopic_capture_velocities_m_s == (
+        pytest.approx(swept.interfaces[-1])
+    )
     assert swept.interfaces[-1][0] == pytest.approx(base_pair[0] * 2.5)
     assert swept.interfaces[-1][1] == pytest.approx(base_pair[1] * 2.5)
     assert swept.interfaces[-1][1] / swept.interfaces[-1][0] == pytest.approx(
@@ -127,6 +133,37 @@ def test_interface_defect_N_t_cm2_rejects_nonpositive_or_nonfinite(density):
     )
 
     with pytest.raises(ValueError, match="finite and positive"):
+        apply_sweep_point(stack, point)
+
+
+def test_interface_defect_energy_sweep_updates_microscopic_document_atomically():
+    stack = _baseline_scaps_stack()
+    point = SweepPoint(
+        "energy",
+        "e",
+        "0.45",
+        {"interface_defect_E_t_eV": 0.45},
+    )
+
+    swept = apply_sweep_point(stack, point)
+
+    assert swept.interface_defects[-1].E_t_eV == pytest.approx(0.45)
+    assert swept.interface_defects[-1].microscopic_document.trap_depth_eV == (
+        pytest.approx(0.45)
+    )
+
+
+@pytest.mark.parametrize("energy", [-1.0, float("nan"), float("inf")])
+def test_interface_defect_energy_sweep_rejects_nonphysical_values(energy):
+    stack = _baseline_scaps_stack()
+    point = SweepPoint(
+        "invalid",
+        "e",
+        "invalid",
+        {"interface_defect_E_t_eV": energy},
+    )
+
+    with pytest.raises(ValueError, match="finite and non-negative"):
         apply_sweep_point(stack, point)
 
 

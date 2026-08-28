@@ -57,10 +57,13 @@ class TestParser:
         ifaces, defects = interfaces_from_device_dict(dev, n_layers=4)
         assert ifaces[1] == pytest.approx((V_N_EXPECTED, V_P_EXPECTED))
         assert ifaces[0] == (0.0, 0.0) and ifaces[2] == (0.0, 0.0)
-        assert defects[1] == InterfaceDefect(
-            E_t_eV=0.8,
-            calibration_factor=1.0,
-            N_t_cm2=1.0e12,
+        assert isinstance(defects[1], InterfaceDefect)
+        assert defects[1].E_t_eV == pytest.approx(0.8)
+        assert defects[1].calibration_factor == pytest.approx(1.0)
+        assert defects[1].N_t_cm2 == pytest.approx(1.0e12)
+        assert defects[1].microscopic_document is not None
+        assert defects[1].microscopic_capture_velocities_m_s == pytest.approx(
+            (V_N_EXPECTED, V_P_EXPECTED)
         )
         assert defects[0] is None and defects[2] is None
 
@@ -78,6 +81,14 @@ class TestParser:
         dev = {"interface_defects": [dict(DEFECT, calibration_factor=0.02)]}
         _, defects = interfaces_from_device_dict(dev, n_layers=2)
         assert defects[0].calibration_factor == pytest.approx(0.02)
+
+    def test_unknown_flat_defect_key_fails_closed(self):
+        dev = {
+            "interface_defects": [dict(DEFECT, sigma_n_cm_2=1.0e-19)]
+        }
+
+        with pytest.raises(ValueError, match="unknown=.*sigma_n_cm_2"):
+            interfaces_from_device_dict(dev, n_layers=2)
 
     def test_short_lists_pad_to_the_interface_count(self):
         dev = {"interfaces": [[0.1, 0.1]]}

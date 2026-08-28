@@ -743,16 +743,27 @@ def _apply_interface_defect_N_t_cm2(
     # the base N_t / base SRV are unavailable.
     defect = defects[k]
     assert defect is not None
+    microscopic_document = defect.microscopic_document
     base_N_t = float(getattr(defect, "N_t_cm2", 0.0) or 0.0)
     base_pair = tuple(float(value) for value in interfaces[k])
-    if base_N_t > 0.0 and any(value > 0.0 for value in base_pair):
+    if microscopic_document is not None:
+        microscopic_document = dataclasses.replace(
+            microscopic_document,
+            total_density_m2=float(N_t_cm2_areal) * 1.0e4,
+        )
+        swept_pair = microscopic_document.capture_velocities_m_s
+    elif base_N_t > 0.0 and any(value > 0.0 for value in base_pair):
         ratio = float(N_t_cm2_areal) / base_N_t
         swept_pair = tuple(value * ratio for value in base_pair)
     else:
         srv_m_s = 1.0e-15 * 1.0e7 * float(N_t_cm2_areal) * 1.0e-2
         swept_pair = (srv_m_s, srv_m_s)
     interfaces[k] = swept_pair
-    defects[k] = dataclasses.replace(defect, N_t_cm2=float(N_t_cm2_areal))
+    defects[k] = dataclasses.replace(
+        defect,
+        N_t_cm2=float(N_t_cm2_areal),
+        microscopic_document=microscopic_document,
+    )
     return dataclasses.replace(
         stack,
         interfaces=tuple(interfaces),
@@ -776,6 +787,8 @@ def _apply_interface_defect_E_t_eV(
     left untouched. Raises ``ValueError`` if the target has no declared
     ``InterfaceDefect`` — the YAML must declare the defect first.
     """
+    if not math.isfinite(E_t_eV) or E_t_eV < 0.0:
+        raise ValueError("interface defect E_t_eV must be finite and non-negative")
     n_interfaces = max(0, len(stack.layers) - 1)
     if n_interfaces == 0:
         raise ValueError("DeviceStack has no interior interfaces")
@@ -787,7 +800,19 @@ def _apply_interface_defect_E_t_eV(
             "InterfaceDefect entry in DeviceStack.interface_defects — "
             "declare one in the YAML interfaces: block before sweeping"
         )
-    defects[k] = dataclasses.replace(defects[k], E_t_eV=float(E_t_eV))
+    defect = defects[k]
+    assert defect is not None
+    microscopic_document = defect.microscopic_document
+    if microscopic_document is not None:
+        microscopic_document = dataclasses.replace(
+            microscopic_document,
+            trap_depth_eV=float(E_t_eV),
+        )
+    defects[k] = dataclasses.replace(
+        defect,
+        E_t_eV=float(E_t_eV),
+        microscopic_document=microscopic_document,
+    )
     return dataclasses.replace(stack, interface_defects=tuple(defects))
 
 
