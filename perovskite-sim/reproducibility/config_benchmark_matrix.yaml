@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: e12c59707222693760f867b363928cbd08c677fffdfc5ac9c4acf0b045124e06
+  sha256: 9d3ca1c83d3174345a59e7773b818a3829c7397b128c55da7b1f11400f260995
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -79,6 +79,7 @@ benchmarks:
       - configs/driftfusion_benchmark_tmm.yaml
       - configs/driftfusion_calado2016_repro.yaml
       - configs/distributed_defect_qf_dc_pn.yaml
+      - configs/dynamic_defect_ion_impedance.yaml
       - configs/graded_distributed_defect_qf_dc_pn.yaml
       - configs/field_mobility_demo.yaml
       - configs/interface_charge_jv_research.yaml
@@ -132,6 +133,7 @@ benchmarks:
       - configs/csi_vannijen2025_pn_cv.yaml
       - configs/cigs_graded_optics.yaml
       - configs/distributed_defect_qf_dc_pn.yaml
+      - configs/dynamic_defect_ion_impedance.yaml
       - configs/graded_distributed_defect_qf_dc_pn.yaml
       - configs/interface_charge_jv_research.yaml
       - configs/interface_charge_reference.yaml
@@ -1227,6 +1229,32 @@ benchmarks:
       - the source-clean 3x3 matrix is internally certified at commit d336e45 with certificate SHA-256 bd385f0a01db4ad769f6fc1591c5cd79acafef5663d60f81ddee6cb9987991fc
       - the lane is restricted to a dark homogeneous Maxwell-Boltzmann equilibrium with one Gaussian acceptor-like distribution and fully ionized dopants
       - legacy SCAPS Gaussian metadata remains parked, and external TCAD or experimental validation is absent
+  dynamic-defect-ion-impedance-production-closure:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/experiments/test_dynamic_defect_impedance.py
+      tests/integration/test_dynamic_defect_impedance.py
+      tests/integration/test_dynamic_defect_impedance_api.py
+    tests:
+      - tests/unit/experiments/test_dynamic_defect_impedance.py
+      - tests/integration/test_dynamic_defect_impedance.py
+      - tests/integration/test_dynamic_defect_impedance_api.py
+    node_ids:
+      - tests/unit/experiments/test_dynamic_defect_impedance.py::test_capability_classifier_routes_every_certified_combination
+      - tests/unit/experiments/test_dynamic_defect_impedance.py::test_effective_lifetime_only_stack_has_no_dynamic_defect_capability
+      - tests/integration/test_dynamic_defect_impedance.py::test_public_bulk_dynamic_defect_impedance_is_protocol_bound_and_certified
+      - tests/integration/test_dynamic_defect_impedance.py::test_public_interface_dynamic_defect_impedance_uses_two_sided_faces
+      - tests/integration/test_dynamic_defect_impedance.py::test_public_triple_coupled_defect_ion_impedance_is_certified
+      - tests/integration/test_dynamic_defect_impedance.py::test_registered_production_executor_emits_exact_metrics_and_protocol
+      - tests/integration/test_dynamic_defect_impedance_api.py::test_real_dynamic_defect_impedance_api_serializes_protocol_and_evidence
+    configs: [configs/dynamic_defect_ion_impedance.yaml]
+    limitations:
+      - the source-bound 3x3 production matrix certifies grid, finite-difference, frequency-sampling, conservation, decomposition, DC-state, contact, and frequency-window gates; its current certificate identity is tracked in the explicit-defect development roadmap
+      - the synthetic fixture contains one single-level acceptor plus one positive mobile-ion species; bulk-only and two-sided interface dispatch are covered by dedicated real integration tests
+      - this is internal numerical evidence, not SCAPS parity, measured impedance validation, or unique defect-parameter identification
   charged-explicit-defect-internal-closure:
     kind: numerical
     status: pass
@@ -1417,6 +1445,15 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - distributed-explicit-defect-internal-closure
+  - path: configs/dynamic_defect_ion_impedance.yaml
+    sha256: 0b7424e4170d7d3792f40f97361edee3a881a04a39ad3a549fb7de621798422a
+    semantic_sha256: 15389dcd77db70c22fa6b4a6430d52a303c64ae3fcbabce58dabd4c7d2364ef1
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - dynamic-defect-ion-impedance-production-closure
   - path: configs/graded_distributed_defect_qf_dc_pn.yaml
     sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
     semantic_sha256: f502dd9f6350e6c32a64f75686f17492acc0a64803df1939851777646c93486a

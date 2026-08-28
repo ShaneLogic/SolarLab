@@ -22,13 +22,22 @@ export function collectImpedanceEvidenceWarnings(result: ISResult): string[] {
   const requiresIonAwareEvidence = (
     result.protocol?.method === 'ion_aware_frequency_certified'
   )
-  const completeEvidence = Boolean(
-    result.protocol
-      && result.operating_point
-      && hasFrequencyWindowCertificate(result)
-      && result.grid_assessment
-      && (!requiresIonAwareEvidence || result.ion_aware_evidence),
+  const requiresDynamicDefectEvidence = (
+    result.protocol?.method === 'dynamic_defect_frequency_certified'
   )
+  const completeEvidence = requiresDynamicDefectEvidence
+    ? Boolean(
+      result.protocol?.dynamic_defect_protocol
+        && result.grid_assessment
+        && result.dynamic_defect_evidence,
+    )
+    : Boolean(
+      result.protocol
+        && result.operating_point
+        && hasFrequencyWindowCertificate(result)
+        && result.grid_assessment
+        && (!requiresIonAwareEvidence || result.ion_aware_evidence),
+    )
 
   if (!completeEvidence) warnings.push(LEGACY_IMPEDANCE_EVIDENCE_WARNING)
   warnings.push(...(result.frequency_window?.warnings ?? []))
@@ -74,6 +83,21 @@ export function collectImpedanceEvidenceWarnings(result: ISResult): string[] {
     }
   }
 
+  const dynamicDefect = result.dynamic_defect_evidence
+  if (dynamicDefect && !dynamicDefect.certified) {
+    warnings.push(
+      dynamicDefect.reasons.length > 0
+        ? `Dynamic-defect impedance uncertified: ${dynamicDefect.reasons.join(', ')}`
+        : 'Dynamic-defect impedance uncertified: no failure reasons were returned.',
+    )
+  }
+  if (dynamicDefect && !dynamicDefect.frequency_window_certified) {
+    warnings.push('Dynamic-defect frequency window is not certified.')
+  }
+  if (dynamicDefect && !dynamicDefect.thermodynamically_certified) {
+    warnings.push('Dynamic-defect contact thermodynamics are not certified.')
+  }
+
   return [...new Set(warnings.filter(Boolean))]
 }
 
@@ -104,21 +128,52 @@ export function summarizeImpedanceEvidence(result: ISResult): string[] {
   const frequencyWindow = result.frequency_window
   const grid = result.grid_assessment
   const ionAware = result.ion_aware_evidence
+  const dynamicDefect = result.dynamic_defect_evidence
 
   const protocolSummary = protocol
     ? `Protocol: ${protocol.method}${
       typeof protocol.points_per_cycle === 'number'
         ? `; ${protocol.points_per_cycle} points/cycle`
         : ''
+    }${
+      protocol.dynamic_defect_protocol
+        ? `; energy order ${protocol.dynamic_defect_protocol.defect_energy_quadrature_order}`
+        : ''
     }`
     : 'Protocol: unclassified'
 
-  const operatingPointSummary = operatingPoint
-    ? `Operating point: ${operatingPoint.certified ? 'certified' : 'uncertified'}`
-    : 'Operating point: unclassified'
+  const operatingPointSummary = dynamicDefect
+    ? `Operating point: ${
+      dynamicDefect.dc_operating_point_certified ? 'certified' : 'uncertified'
+    }; contacts ${
+      dynamicDefect.thermodynamically_certified ? 'certified' : 'uncertified'
+    }`
+    : operatingPoint
+      ? `Operating point: ${operatingPoint.certified ? 'certified' : 'uncertified'}`
+      : 'Operating point: unclassified'
 
-  const frequencySummary = frequencyWindow
-    ? `Frequency window: blocking-charge frequency ${triState(
+  const frequencySummary = dynamicDefect
+    ? `Frequency window: ${
+      dynamicDefect.frequency_window.certified ? 'certified' : 'uncertified'
+    }; trap limits ${
+      dynamicDefect.frequency_window.trap_low_frequency_limit_covered
+        ? 'low covered'
+        : 'low not covered'
+    }, ${
+      dynamicDefect.frequency_window.trap_high_frequency_limit_covered
+        ? 'high covered'
+        : 'high not covered'
+    }; relaxation frequencies ${
+      dynamicDefect.frequency_window.every_trap_relaxation_frequency_bracketed
+        ? 'bracketed'
+        : 'not bracketed'
+    }; range [${compactNumber(
+      dynamicDefect.frequency_window.requested_minimum_frequency_Hz,
+    )}, ${compactNumber(
+      dynamicDefect.frequency_window.requested_maximum_frequency_Hz,
+    )}] Hz`
+    : frequencyWindow
+      ? `Frequency window: blocking-charge frequency ${triState(
       frequencyWindow.characteristic_frequency_bracketed,
       'bracketed',
       'not bracketed',
@@ -133,7 +188,7 @@ export function summarizeImpedanceEvidence(result: ISResult): string[] {
     )}; recommended range: [${compactNumber(
       frequencyWindow.recommended_f_min_Hz,
     )}, ${compactNumber(frequencyWindow.recommended_f_max_Hz)}] Hz`
-    : 'Frequency window: unclassified'
+      : 'Frequency window: unclassified'
 
   const gridSummary = grid
     ? `Grid: ${grid.certified ? 'certified' : 'uncertified'}; guarded cells: ${
@@ -156,11 +211,29 @@ export function summarizeImpedanceEvidence(result: ISResult): string[] {
       ? 'Ion-aware engine: unclassified'
       : null
 
+  const dynamicDefectSummary = dynamicDefect
+    ? `Dynamic-defect engine: ${
+      dynamicDefect.certified ? 'certified' : 'uncertified'
+    }; ${dynamicDefect.capability}; ${
+      dynamicDefect.interface_current_observation
+    }; max face spread ${compactNumber(
+      dynamicDefect.maximum_all_face_admittance_spread,
+    )}; FD refinement ${compactNumber(
+      dynamicDefect.maximum_refinement_relative_change,
+    )}; trap balance ${compactNumber(Math.max(
+      dynamicDefect.maximum_bulk_trap_balance_relative_error ?? 0,
+      dynamicDefect.maximum_interface_trap_balance_relative_error ?? 0,
+    ))}`
+    : protocol?.method === 'dynamic_defect_frequency_certified'
+      ? 'Dynamic-defect engine: unclassified'
+      : null
+
   return [
     protocolSummary,
     operatingPointSummary,
     frequencySummary,
     gridSummary,
     ...(ionAwareSummary ? [ionAwareSummary] : []),
+    ...(dynamicDefectSummary ? [dynamicDefectSummary] : []),
   ]
 }

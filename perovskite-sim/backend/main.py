@@ -1649,6 +1649,55 @@ def _preflight_job_experiment_protocol(
     resolve_experiment_protocol(supplied, expected, mode=mode)
 
 
+def _resolve_dynamic_defect_impedance_protocol(
+    stack: DeviceStack,
+    frequencies: np.ndarray,
+    *,
+    method: str,
+    N_grid: int,
+    V_dc: float,
+    delta_V: float,
+    illuminated: bool,
+    defect_energy_quadrature_order: int,
+    state_step: float,
+    voltage_step: float,
+    supplied: object | None,
+) -> impedance.DynamicDefectImpedanceProtocol | None:
+    dynamic_methods = {
+        "dynamic_defect_frequency",
+        impedance.DYNAMIC_DEFECT_IMPEDANCE_METHOD,
+    }
+    if method not in dynamic_methods:
+        if supplied is not None:
+            raise impedance.DynamicDefectImpedanceProtocolError(
+                "dynamic_defect_protocol is valid only with the certified "
+                "dynamic-defect frequency method"
+            )
+        return None
+    parsed = (
+        None
+        if supplied is None
+        else impedance.DynamicDefectImpedanceProtocol.from_dict(supplied)
+    )
+    grid = jv_sweep.build_electrical_grid(stack, N_grid)
+    capability = impedance.classify_dynamic_defect_capability(stack)
+    if "interface" in capability:
+        grid = build_two_sided_trace_grid(grid, stack)
+    expected = impedance.build_dynamic_defect_impedance_protocol(
+        stack,
+        grid,
+        frequencies,
+        requested_grid_intervals=N_grid,
+        V_dc=V_dc,
+        delta_V=delta_V,
+        illuminated=illuminated,
+        defect_energy_quadrature_order=defect_energy_quadrature_order,
+        state_step=state_step,
+        voltage_step=voltage_step,
+    )
+    return impedance.resolve_dynamic_defect_impedance_protocol(parsed, expected)
+
+
 def _summarize_qf_bulk_defect_evidence(points):
     """Collapse pointwise constitutive diagnostics without losing identity."""
 
@@ -2420,6 +2469,8 @@ def run_tandem(req: TandemRequest):
 
 
 class ISRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     config_path: Optional[str] = None
     device: Optional[dict] = None
     N_grid: int = 40
@@ -2440,11 +2491,17 @@ class ISRequest(BaseModel):
         "qf_frequency_ion_free",
         "ion_aware_frequency",
         "ion_aware_frequency_certified",
+        "dynamic_defect_frequency",
+        "dynamic_defect_frequency_certified",
     ] = "transient_ion_aware"
     require_operating_point_certificate: bool = False
     require_frequency_window_certificate: bool = False
     protocol_mode: ProtocolMode = "compatibility"
     experiment_protocol: Optional[dict[str, Any]] = None
+    defect_energy_quadrature_order: int = 32
+    dynamic_defect_state_step: float = 1.0e-5
+    dynamic_defect_voltage_step: float = 1.0e-5
+    dynamic_defect_protocol: Optional[dict[str, Any]] = None
 
 
 @app.post("/api/impedance")
@@ -2456,6 +2513,31 @@ def run_impedance_api(req: ISRequest):
         )
         stack = build_stack(req.config_path, req.device)
         frequencies = np.logspace(np.log10(req.f_min), np.log10(req.f_max), req.n_freq)
+        dynamic_defect_protocol = _resolve_dynamic_defect_impedance_protocol(
+            stack,
+            frequencies,
+            method=req.method,
+            N_grid=req.N_grid,
+            V_dc=req.V_dc,
+            delta_V=req.delta_V,
+            illuminated=req.illuminated,
+            defect_energy_quadrature_order=req.defect_energy_quadrature_order,
+            state_step=req.dynamic_defect_state_step,
+            voltage_step=req.dynamic_defect_voltage_step,
+            supplied=req.dynamic_defect_protocol,
+        )
+        dynamic_kwargs = (
+            {}
+            if dynamic_defect_protocol is None
+            else {
+                "dynamic_defect_protocol": dynamic_defect_protocol,
+                "defect_energy_quadrature_order": (
+                    req.defect_energy_quadrature_order
+                ),
+                "dynamic_defect_state_step": req.dynamic_defect_state_step,
+                "dynamic_defect_voltage_step": req.dynamic_defect_voltage_step,
+            }
+        )
         result = impedance.run_impedance(
             stack,
             frequencies,
@@ -2476,6 +2558,7 @@ def run_impedance_api(req: ISRequest):
             ),
             experiment_protocol=experiment_protocol,
             protocol_mode=protocol_mode,
+            **dynamic_kwargs,
         )
         out = to_serializable(result)
         if "Z" in out:
@@ -2489,9 +2572,13 @@ def run_impedance_api(req: ISRequest):
     except (
         ExperimentProtocolError,
         GridResolutionError,
+        impedance.DynamicDefectImpedanceCapabilityError,
+        impedance.DynamicDefectImpedanceProtocolError,
         impedance.ImpedanceCapabilityError,
         impedance.ImpedanceCertificationError,
         QuasiFermiSteadyStateError,
+        TypeError,
+        ValueError,
     ) as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
@@ -2534,6 +2621,9 @@ def start_job(req: JobRequest):
     protocol_mode: ProtocolMode = "compatibility"
     interface_charge_jv_protocol: (
         interface_charge_jv_exp.InterfaceChargeJVProtocol | None
+    ) = None
+    dynamic_defect_protocol: (
+        impedance.DynamicDefectImpedanceProtocol | None
     ) = None
     if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
         try:
@@ -2593,9 +2683,46 @@ def start_job(req: JobRequest):
                     experiment_protocol,
                     protocol_mode,
                 )
+            if kind == "impedance":
+                raw_illuminated = p.get("illuminated", True)
+                illuminated = (
+                    bool(raw_illuminated)
+                    if not isinstance(raw_illuminated, str)
+                    else raw_illuminated.lower() != "false"
+                )
+                frequencies = np.logspace(
+                    np.log10(float(p.get("f_min", 10.0))),
+                    np.log10(float(p.get("f_max", 1e5))),
+                    int(p.get("n_freq", 15)),
+                )
+                dynamic_defect_protocol = (
+                    _resolve_dynamic_defect_impedance_protocol(
+                        stack,
+                        frequencies,
+                        method=str(
+                            p.get("method", "transient_ion_aware")
+                        ),
+                        N_grid=int(p.get("N_grid", 40)),
+                        V_dc=float(p.get("V_dc", 0.9)),
+                        delta_V=float(p.get("delta_V", 0.01)),
+                        illuminated=illuminated,
+                        defect_energy_quadrature_order=int(
+                            p.get("defect_energy_quadrature_order", 32)
+                        ),
+                        state_step=float(
+                            p.get("dynamic_defect_state_step", 1.0e-5)
+                        ),
+                        voltage_step=float(
+                            p.get("dynamic_defect_voltage_step", 1.0e-5)
+                        ),
+                        supplied=p.get("dynamic_defect_protocol"),
+                    )
+                )
         except (
             ExperimentProtocolError,
             interface_charge_jv_exp.InterfaceChargeJVProtocolError,
+            impedance.DynamicDefectImpedanceCapabilityError,
+            impedance.DynamicDefectImpedanceProtocolError,
             TypeError,
             ValueError,
         ) as exc:
@@ -2654,6 +2781,22 @@ def start_job(req: JobRequest):
                 np.log10(float(p.get("f_max", 1e5))),
                 int(p.get("n_freq", 15)),
             )
+            dynamic_kwargs = (
+                {}
+                if dynamic_defect_protocol is None
+                else {
+                    "dynamic_defect_protocol": dynamic_defect_protocol,
+                    "defect_energy_quadrature_order": int(
+                        p.get("defect_energy_quadrature_order", 32)
+                    ),
+                    "dynamic_defect_state_step": float(
+                        p.get("dynamic_defect_state_step", 1.0e-5)
+                    ),
+                    "dynamic_defect_voltage_step": float(
+                        p.get("dynamic_defect_voltage_step", 1.0e-5)
+                    ),
+                }
+            )
             result = impedance.run_impedance(
                 stack, frequencies=freqs,
                 V_dc=float(p.get("V_dc", 0.9)),
@@ -2672,6 +2815,7 @@ def start_job(req: JobRequest):
                 experiment_protocol=experiment_protocol,
                 protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
+                **dynamic_kwargs,
             )
             out = to_serializable(result)
             if "Z" in out:

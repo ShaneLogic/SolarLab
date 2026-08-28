@@ -7,6 +7,11 @@ from fastapi.testclient import TestClient
 import backend.main as backend
 from backend.progress import ProgressReporter
 from perovskite_sim.experiments.impedance import ImpedanceResult
+from perovskite_sim.experiments.jv_sweep import build_electrical_grid
+from perovskite_sim.experiments.dynamic_defect_impedance import (
+    build_dynamic_defect_impedance_protocol,
+)
+from tests.integration.test_charged_explicit_defects_qf import _stack as _bulk_stack
 
 
 def test_complex_diagnostic_serialization_preserves_array_shape():
@@ -187,3 +192,162 @@ def test_impedance_job_forwards_full_protocol(monkeypatch):
         "experiment_protocol": None,
         "protocol_mode": "compatibility",
     }
+
+
+def test_dynamic_defect_api_builds_and_forwards_exact_protocol(monkeypatch):
+    captured: dict[str, object] = {}
+    stack = _bulk_stack()
+    monkeypatch.setattr(backend, "build_stack", lambda *args: stack)
+
+    def fake_run(_stack, frequencies, **kwargs):
+        captured.update(kwargs)
+        return ImpedanceResult(
+            frequencies=np.asarray(frequencies),
+            Z=np.ones(len(frequencies), dtype=complex),
+        )
+
+    monkeypatch.setattr(backend.impedance, "run_impedance", fake_run)
+    response = backend.run_impedance_api(
+        backend.ISRequest(
+            device={"device": {}, "layers": []},
+            N_grid=4,
+            V_dc=0.0,
+            n_freq=3,
+            f_min=1.0e-4,
+            f_max=1.0e12,
+            illuminated=False,
+            method="dynamic_defect_frequency_certified",
+            defect_energy_quadrature_order=16,
+            dynamic_defect_state_step=2.0e-5,
+            dynamic_defect_voltage_step=3.0e-5,
+        )
+    )
+
+    protocol = captured["dynamic_defect_protocol"]
+    assert isinstance(protocol, backend.impedance.DynamicDefectImpedanceProtocol)
+    assert protocol.capability == "bulk_dynamic_defect"
+    assert protocol.requested_grid_intervals == 4
+    assert protocol.defect_energy_quadrature_order == 16
+    assert protocol.state_step == 2.0e-5
+    assert protocol.voltage_step == 3.0e-5
+    assert captured["defect_energy_quadrature_order"] == 16
+    assert response["result"]["Z_real"] == [1.0, 1.0, 1.0]
+
+
+def test_dynamic_defect_job_rejects_mismatched_protocol_before_submit(monkeypatch):
+    stack = _bulk_stack()
+    frequencies = np.logspace(-4.0, 12.0, 3)
+    protocol = build_dynamic_defect_impedance_protocol(
+        stack,
+        build_electrical_grid(stack, 4),
+        frequencies,
+        requested_grid_intervals=4,
+        V_dc=0.0,
+        delta_V=0.01,
+        illuminated=False,
+    )
+    payload = protocol.to_dict()
+    payload["frequencies_Hz"] = [1.0e-4, 1.0, 1.0e10]
+
+    class RejectSubmitRegistry:
+        def submit(self, _fn):
+            raise AssertionError("mismatched job must fail before submit")
+
+    monkeypatch.setattr(backend, "_JOB_REGISTRY", RejectSubmitRegistry())
+    monkeypatch.setattr(backend, "build_stack", lambda *args: stack)
+
+    with pytest.raises(backend.HTTPException) as exc_info:
+        backend.start_job(
+            backend.JobRequest(
+                kind="impedance",
+                device={"device": {}, "layers": []},
+                params={
+                    "N_grid": 4,
+                    "V_dc": 0.0,
+                    "n_freq": 3,
+                    "f_min": 1.0e-4,
+                    "f_max": 1.0e12,
+                    "illuminated": False,
+                    "method": "dynamic_defect_frequency_certified",
+                    "dynamic_defect_protocol": payload,
+                },
+            )
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "does not match" in str(exc_info.value.detail)
+
+
+def test_dynamic_defect_job_forwards_preflighted_protocol_to_worker(monkeypatch):
+    submitted: dict[str, object] = {}
+    captured: dict[str, object] = {}
+    stack = _bulk_stack()
+
+    class CaptureRegistry:
+        def submit(self, fn):
+            submitted["fn"] = fn
+            return "dynamic-defect-job"
+
+    def fake_run(_stack, frequencies, **kwargs):
+        captured.update(kwargs)
+        return ImpedanceResult(
+            frequencies=np.asarray(frequencies),
+            Z=np.ones(len(frequencies), dtype=complex),
+        )
+
+    monkeypatch.setattr(backend, "_JOB_REGISTRY", CaptureRegistry())
+    monkeypatch.setattr(backend, "build_stack", lambda *args: stack)
+    monkeypatch.setattr(backend.impedance, "run_impedance", fake_run)
+    response = backend.start_job(
+        backend.JobRequest(
+            kind="impedance",
+            device={"device": {}, "layers": []},
+            params={
+                "N_grid": 4,
+                "V_dc": 0.0,
+                "n_freq": 3,
+                "f_min": 1.0e-4,
+                "f_max": 1.0e12,
+                "illuminated": False,
+                "method": "dynamic_defect_frequency_certified",
+                "defect_energy_quadrature_order": 24,
+            },
+        )
+    )
+
+    assert response == {"status": "ok", "job_id": "dynamic-defect-job"}
+    submitted["fn"](ProgressReporter())
+    protocol = captured["dynamic_defect_protocol"]
+    assert isinstance(protocol, backend.impedance.DynamicDefectImpedanceProtocol)
+    assert protocol.defect_energy_quadrature_order == 24
+    assert captured["defect_energy_quadrature_order"] == 24
+
+
+def test_dynamic_defect_protocol_is_rejected_for_legacy_method(monkeypatch):
+    monkeypatch.setattr(backend, "build_stack", lambda *args: _bulk_stack())
+
+    with TestClient(backend.app) as client:
+        response = client.post(
+            "/api/impedance",
+            json={
+                "device": {"device": {}, "layers": []},
+                "method": "transient_ion_aware",
+                "dynamic_defect_protocol": {"claim": "certified"},
+            },
+        )
+
+    assert response.status_code == 422
+    assert "valid only" in response.json()["detail"]
+
+
+def test_impedance_request_rejects_unknown_fields():
+    with TestClient(backend.app) as client:
+        response = client.post(
+            "/api/impedance",
+            json={
+                "device": {"device": {}, "layers": []},
+                "dynamic_defect_energy_order": 32,
+            },
+        )
+
+    assert response.status_code == 422

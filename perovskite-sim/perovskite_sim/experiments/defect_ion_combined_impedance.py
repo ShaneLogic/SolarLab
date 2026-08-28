@@ -35,7 +35,7 @@ from perovskite_sim.experiments.quasi_fermi_steady_state import (
     _research_charge_off_stack,
 )
 from perovskite_sim.models.defects import NEUTRAL
-from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.device import DeviceStack, electrical_interface_defects
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     validate_defect_energy_quadrature_order,
@@ -987,7 +987,9 @@ def run_defect_ion_combined_impedance(
         defect_energy_quadrature_order
     )
 
-    has_interface = bool(stack.interface_defects)
+    has_interface = any(
+        defect is not None for defect in electrical_interface_defects(stack)
+    )
     microscopic_contract = None
     working_stack = stack
     if has_interface:

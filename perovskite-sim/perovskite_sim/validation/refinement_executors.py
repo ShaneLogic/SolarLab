@@ -28,7 +28,10 @@ from perovskite_sim.experiments.jv_sweep import (
     compute_metrics,
     run_jv_sweep,
 )
-from perovskite_sim.experiments.impedance import build_impedance_experiment_protocol
+from perovskite_sim.experiments.impedance import (
+    build_impedance_experiment_protocol,
+    run_impedance,
+)
 from perovskite_sim.experiments.ion_aware_dc import (
     build_ion_aware_dc_protocol,
     ion_aware_dc_state_sha256,
@@ -1115,6 +1118,232 @@ def run_ion_aware_impedance_frequency_domain(
                 "thermodynamically_certified": (
                     certificate.thermodynamically_certified
                 ),
+            },
+        }
+    )
+
+
+def _nested_log_frequency_interpolation_error(
+    frequencies: np.ndarray,
+    values: np.ndarray,
+) -> float:
+    frequency = np.asarray(frequencies, dtype=float)
+    response = np.asarray(values, dtype=complex)
+    if (
+        frequency.ndim != 1
+        or response.shape != frequency.shape
+        or frequency.size < 5
+        or frequency.size % 2 != 1
+    ):
+        raise ValueError(
+            "frequency interpolation evidence requires aligned odd-length vectors"
+        )
+    coarse = np.arange(0, frequency.size, 2)
+    log_frequency = np.log10(frequency)
+    interpolated = np.interp(
+        log_frequency,
+        log_frequency[coarse],
+        response.real[coarse],
+    ) + 1j * np.interp(
+        log_frequency,
+        log_frequency[coarse],
+        response.imag[coarse],
+    )
+    scale = max(float(np.max(np.abs(response))), np.finfo(float).tiny)
+    return float(np.max(np.abs(interpolated - response)) / scale)
+
+
+def _normalized_complex_magnitude(values: np.ndarray) -> np.ndarray:
+    magnitude = np.abs(np.asarray(values, dtype=complex))
+    scale = max(float(np.max(magnitude)), np.finfo(float).tiny)
+    return magnitude / scale
+
+
+def run_dynamic_defect_impedance_production(
+    lane: LaneDefinition,
+    point: MatrixPoint,
+    project_root: Path,
+) -> CellMeasurement:
+    """Certify the production dynamic-defect route over grid and FD scale."""
+    options = lane.options
+    stack = _load_stack(lane, project_root)
+    grid = build_electrical_grid(stack, point.grid)
+    frequency_min = _option(options, "frequency_min_Hz", float, 1.0e-3)
+    frequency_max = _option(options, "frequency_max_Hz", float, 1.0e6)
+    frequency_count = _option(options, "frequency_count", int, 145)
+    spacing = _option(options, "frequency_spacing", str, "logspace")
+    if frequency_min <= 0.0 or frequency_max <= frequency_min:
+        raise ValueError("frequency bounds must be positive and increasing")
+    if frequency_count < 5 or frequency_count % 2 != 1:
+        raise ValueError("frequency_count must be an odd integer >= 5")
+    if spacing != "logspace":
+        raise ValueError("dynamic-defect impedance requires logspace frequencies")
+    frequencies = np.logspace(
+        np.log10(frequency_min),
+        np.log10(frequency_max),
+        frequency_count,
+    )
+    voltage = _option(options, "V_dc_V", float, 0.0)
+    delta_voltage = _option(options, "delta_V", float, 0.01)
+    illuminated = _option(options, "illuminated", bool, False)
+    energy_order = _option(options, "defect_energy_quadrature_order", int, 32)
+    base_state_step = _option(options, "base_state_step", float, 1.0e-5)
+    base_voltage_step = _option(options, "base_voltage_step", float, 1.0e-5)
+    state_step = base_state_step * point.tolerance_factor
+    voltage_step = base_voltage_step * point.tolerance_factor
+
+    result = run_impedance(
+        stack,
+        frequencies,
+        V_dc=voltage,
+        delta_V=delta_voltage,
+        N_grid=point.grid,
+        illuminated=illuminated,
+        method="dynamic_defect_frequency_certified",
+        require_operating_point_certificate=True,
+        require_frequency_window_certificate=True,
+        defect_energy_quadrature_order=energy_order,
+        dynamic_defect_state_step=state_step,
+        dynamic_defect_voltage_step=voltage_step,
+    )
+    evidence = result.dynamic_defect_evidence
+    diagnostics = result.diagnostics
+    outer_protocol = result.protocol
+    if evidence is None or diagnostics is None or outer_protocol is None:
+        raise RuntimeError("dynamic-defect production evidence is incomplete")
+    dynamic_protocol = outer_protocol.dynamic_defect_protocol
+    if dynamic_protocol is None:
+        raise RuntimeError("dynamic-defect production protocol is missing")
+    bulk_storage = diagnostics.bulk_trap_charge_storage_response_F_m2
+    ion_storage = diagnostics.positive_ion_storage_response_F_m2
+    if bulk_storage is None or ion_storage is None:
+        raise RuntimeError(
+            "registered defect-plus-ion lane requires bulk-trap and ion storage"
+        )
+
+    interpolation_errors = (
+        _nested_log_frequency_interpolation_error(frequencies, result.Z),
+        _nested_log_frequency_interpolation_error(frequencies, bulk_storage),
+    )
+    maximum_limit_error = max(
+        evidence.low_frequency_qss_relative_error,
+        evidence.high_frequency_frozen_relative_error,
+    )
+    protocol_identity_verified = (
+        dynamic_protocol == evidence.protocol
+        and dynamic_protocol.protocol_hash == evidence.protocol_sha256
+    )
+    numerical_protocol = {
+        "acceptance": {
+            "matrix_observables": {
+                gate.metric: gate.to_dict() for gate in lane.observables
+            },
+            "per_cell_quality": {
+                gate.metric: gate.to_dict() for gate in lane.quality_gates
+            },
+        },
+        "adapter": "dynamic-defect-impedance-production-grid-fd-frequency",
+        "frequency_sampling": {
+            "coarse_count": (frequency_count + 1) // 2,
+            "fine_count": frequency_count,
+            "maximum_Hz": frequency_max,
+            "minimum_Hz": frequency_min,
+            "nested_coarse_indices": list(range(0, frequency_count, 2)),
+            "spacing": spacing,
+        },
+        "numerical_controls": {
+            "base_state_step": base_state_step,
+            "base_voltage_step": base_voltage_step,
+            "defect_energy_quadrature_order": energy_order,
+            "finite_difference_factor_source": "matrix.tolerance_factor",
+            "grid_source": "matrix.grid",
+        },
+        "production_contract": {
+            "capability": dynamic_protocol.capability,
+            "method": dynamic_protocol.method,
+            "protocol_schema": dynamic_protocol.schema_version,
+        },
+        "schema_version": (
+            "dynamic-defect-impedance-refinement-execution-protocol-v1"
+        ),
+    }
+    return CellMeasurement.from_mapping(
+        {
+            "observables": {
+                "impedance_magnitude_ohm_m2": np.abs(result.Z),
+                "impedance_phase_deg": np.angle(result.Z, deg=True),
+                "normalized_bulk_trap_storage": (
+                    _normalized_complex_magnitude(bulk_storage)
+                ),
+                "positive_ion_inventory_storage_F_m2": np.abs(ion_storage),
+            },
+            "quality": {
+                "contact_thermodynamics_certified": float(
+                    evidence.thermodynamically_certified
+                ),
+                "dc_operating_point_certified": float(
+                    evidence.dc_operating_point_certified
+                ),
+                "dynamic_defect_certificate_verified": float(evidence.certified),
+                "frequency_window_certified": float(
+                    evidence.frequency_window_certified
+                ),
+                "max_all_face_admittance_spread": (
+                    evidence.maximum_all_face_admittance_spread
+                ),
+                "max_bulk_trap_balance_relative_error": (
+                    evidence.maximum_bulk_trap_balance_relative_error
+                    if evidence.maximum_bulk_trap_balance_relative_error is not None
+                    else np.finfo(float).max
+                ),
+                "max_current_decomposition_relative_error": (
+                    evidence.maximum_current_decomposition_relative_error
+                    if evidence.maximum_current_decomposition_relative_error is not None
+                    else np.finfo(float).max
+                ),
+                "max_frequency_interpolation_relative_error": max(
+                    interpolation_errors
+                ),
+                "max_ion_inventory_response_relative": (
+                    evidence.maximum_ion_inventory_response_relative
+                    if evidence.maximum_ion_inventory_response_relative is not None
+                    else np.finfo(float).max
+                ),
+                "max_limit_relative_error": maximum_limit_error,
+                "max_linear_solve_backward_error": (
+                    evidence.maximum_linear_solve_backward_error
+                ),
+                "max_qss_embedding_error": evidence.qss_embedding_error,
+                "max_refinement_relative_change": (
+                    evidence.maximum_refinement_relative_change
+                ),
+                "numerically_certified": float(evidence.numerically_certified),
+                "protocol_identity_verified": float(protocol_identity_verified),
+            },
+            "units": {
+                "impedance_magnitude_ohm_m2": "ohm m2",
+                "impedance_phase_deg": "deg",
+                "normalized_bulk_trap_storage": "1",
+                "positive_ion_inventory_storage_F_m2": "F m-2",
+            },
+            "metadata": {
+                **_protocol_metadata(numerical_protocol),
+                "actual_intervals": len(grid) - 1,
+                "actual_nodes": len(grid),
+                "dynamic_defect_evidence": dataclasses.asdict(evidence),
+                "dynamic_defect_protocol_hash": evidence.protocol_sha256,
+                "external_finite_difference_step_factor": (
+                    point.tolerance_factor
+                ),
+                "frequency_interpolation_relative_errors": {
+                    "bulk_trap_storage": interpolation_errors[1],
+                    "impedance": interpolation_errors[0],
+                },
+                "grid_sha256": dynamic_protocol.grid_sha256,
+                "raw_bulk_trap_storage_F_m2": _complex_metadata(bulk_storage),
+                "raw_impedance_ohm_m2": _complex_metadata(result.Z),
+                "raw_positive_ion_storage_F_m2": _complex_metadata(ion_storage),
+                "source_grid_intervals": point.grid,
             },
         }
     )

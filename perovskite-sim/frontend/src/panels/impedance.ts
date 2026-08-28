@@ -8,6 +8,7 @@ import {
   collectImpedanceEvidenceWarnings,
   summarizeImpedanceEvidence,
 } from '../impedance-evidence'
+import { dynamicDefectImpedancePreset } from '../explicit-defect-capability'
 import type { ISResult } from '../types'
 
 export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
@@ -26,12 +27,14 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
         ${numField('is-extract', 'Extract cycles', 2, '1')}
         ${numField('is-ppc', 'Points/cycle', 40, '1')}
         ${numField('is-dc-settle', 'DC settle (s)', 1e-3, 'any')}
+        ${numField('is-defect-order', 'Defect energy order', 32, '1')}
         <label class="form-group">
           <span>Engine</span>
           <select id="is-method">
             <option value="transient_ion_aware">Transient, ion-aware</option>
             <option value="ion_aware_frequency_certified">Certified frequency, ion-aware</option>
             <option value="qf_frequency_ion_free">QF frequency, ion-free</option>
+            <option value="dynamic_defect_frequency_certified">Certified dynamic defects</option>
           </select>
         </label>
         ${checkField('is-illuminated', 'Illuminated', true)}
@@ -58,20 +61,40 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
   const methodSelect = root.querySelector<HTMLSelectElement>('#is-method')!
   const syncMethodControls = (): void => {
     const transient = methodSelect.value === 'transient_ion_aware'
+    const dynamic = methodSelect.value === 'dynamic_defect_frequency_certified'
     for (const id of ['is-cycles', 'is-extract', 'is-ppc', 'is-dc-settle']) {
       const input = root.querySelector<HTMLInputElement>(`#${id}`)
       if (input) input.disabled = !transient
     }
+    const defectOrder = root.querySelector<HTMLInputElement>('#is-defect-order')
+    if (defectOrder) defectOrder.disabled = !dynamic
     const windowStrict = root.querySelector<HTMLInputElement>('#is-window-strict')
     if (windowStrict) {
-      windowStrict.disabled = methodSelect.value !== 'ion_aware_frequency_certified'
+      if (dynamic) windowStrict.checked = true
+      windowStrict.disabled = (
+        dynamic || methodSelect.value !== 'ion_aware_frequency_certified'
+      )
+    }
+    const contactStrict = root.querySelector<HTMLInputElement>('#is-strict')
+    if (contactStrict) {
+      if (dynamic) contactStrict.checked = true
+      contactStrict.disabled = dynamic
     }
   }
   methodSelect.addEventListener('change', () => {
     const certified = methodSelect.value === 'ion_aware_frequency_certified'
-    const presets: Record<string, number> = certified
-      ? { 'is-N': 60, 'is-nf': 29, 'is-fmin': 1e-6, 'is-fmax': 10 }
-      : { 'is-N': 40, 'is-nf': 15, 'is-fmin': 10, 'is-fmax': 1e5 }
+    const dynamic = methodSelect.value === 'dynamic_defect_frequency_certified'
+    const dynamicPreset = dynamicDefectImpedancePreset(devicePanel.getConfig())
+    const presets: Record<string, number> = dynamic
+      ? {
+          'is-N': dynamicPreset.N_grid,
+          'is-nf': dynamicPreset.n_freq,
+          'is-fmin': dynamicPreset.f_min,
+          'is-fmax': dynamicPreset.f_max,
+        }
+      : certified
+        ? { 'is-N': 60, 'is-nf': 29, 'is-fmin': 1e-6, 'is-fmax': 10 }
+        : { 'is-N': 40, 'is-nf': 15, 'is-fmin': 10, 'is-fmax': 1e5 }
     for (const [id, value] of Object.entries(presets)) {
       const input = root.querySelector<HTMLInputElement>(`#${id}`)
       if (input) input.value = String(value)
@@ -95,11 +118,14 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
         ? 'qf_frequency_ion_free' as const
         : selectedMethod === 'transient_ion_aware'
           ? 'transient_ion_aware' as const
-          : 'ion_aware_frequency_certified' as const
+          : selectedMethod === 'dynamic_defect_frequency_certified'
+            ? 'dynamic_defect_frequency_certified' as const
+            : 'ion_aware_frequency_certified' as const
+      const dynamic = method === 'dynamic_defect_frequency_certified'
       const params = {
         N_grid: Math.max(3, Math.round(readNum('is-N', 40))),
         V_dc: readNum('is-Vdc', 0.9),
-        n_freq: Math.max(2, Math.round(readNum('is-nf', 15))),
+        n_freq: Math.max(dynamic ? 3 : 2, Math.round(readNum('is-nf', 15))),
         f_min: readNum('is-fmin', 10),
         f_max: readNum('is-fmax', 1e5),
         delta_V: readNum('is-dv', 10) * 1e-3,
@@ -112,11 +138,21 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
         dc_settle_time: readNum('is-dc-settle', 1e-3),
         illuminated: readCheck('is-illuminated', true),
         method,
-        require_operating_point_certificate: readCheck('is-strict', false),
+        require_operating_point_certificate: (
+          dynamic || readCheck('is-strict', false)
+        ),
         require_frequency_window_certificate: (
-          method === 'ion_aware_frequency_certified'
+          (method === 'ion_aware_frequency_certified' || dynamic)
           && readCheck('is-window-strict', true)
         ),
+        ...(dynamic
+          ? {
+              defect_energy_quadrature_order: Math.max(
+                1,
+                Math.round(readNum('is-defect-order', 32)),
+              ),
+            }
+          : {}),
       }
       const jobId = await startJob('impedance', device, params)
       setStatus('status-is', 'Running impedance spectroscopy…')

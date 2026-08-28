@@ -269,6 +269,57 @@ lanes:
       - The source deck lacks endpoint effective-DOS data, so contact thermodynamics remains compatible_unverified even when numerical and frequency-window axes pass.
       - Dynamic interface-state blocks and transient lock-in agreement remain separate, fail-closed deliverables.
 
+  dynamic-defect-ion-impedance-production-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/dynamic_defect_ion_impedance.yaml
+    config_sha256: 0b7424e4170d7d3792f40f97361edee3a881a04a39ad3a549fb7de621798422a
+    executor: perovskite_sim.validation.refinement_executors:run_dynamic_defect_impedance_production
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [8, 12, 16]
+    tolerance:
+      parameter: finite_difference_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      impedance_magnitude_ohm_m2: {comparison: pointwise_relative_linf, limit: 0.02, units: ohm m2}
+      impedance_phase_deg: {comparison: absolute_linf, limit: 1.0, units: deg}
+      normalized_bulk_trap_storage: {comparison: absolute_linf, limit: 0.02, units: "1"}
+      positive_ion_inventory_storage_F_m2: {comparison: absolute_linf, limit: 1.0e-12, units: F m-2}
+    quality_gates:
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      dc_operating_point_certified: {operator: eq, limit: 1.0, units: "1"}
+      dynamic_defect_certificate_verified: {operator: eq, limit: 1.0, units: "1"}
+      frequency_window_certified: {operator: eq, limit: 1.0, units: "1"}
+      max_all_face_admittance_spread: {operator: le, limit: 5.0e-4, units: "1"}
+      max_bulk_trap_balance_relative_error: {operator: le, limit: 1.0e-3, units: "1"}
+      max_current_decomposition_relative_error: {operator: le, limit: 1.0e-7, units: "1"}
+      max_frequency_interpolation_relative_error: {operator: le, limit: 0.01, units: "1"}
+      max_ion_inventory_response_relative: {operator: le, limit: 1.0e-8, units: "1"}
+      max_limit_relative_error: {operator: le, limit: 0.03, units: "1"}
+      max_linear_solve_backward_error: {operator: le, limit: 1.0e-10, units: "1"}
+      max_qss_embedding_error: {operator: le, limit: 1.0e-8, units: "1"}
+      max_refinement_relative_change: {operator: le, limit: 2.0e-3, units: "1"}
+      numerically_certified: {operator: eq, limit: 1.0, units: "1"}
+      protocol_identity_verified: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_dc_V: 0.1
+      illuminated: false
+      frequency_min_Hz: 1.0e-3
+      frequency_max_Hz: 1000000.0
+      frequency_count: 145
+      frequency_spacing: logspace
+      delta_V: 0.01
+      defect_energy_quadrature_order: 32
+      base_state_step: 1.0e-5
+      base_voltage_step: 1.0e-5
+    limitations:
+      - This lane certifies the production dynamic-defect method on one synthetic single-level acceptor plus positive-ion slab; bulk-only and two-sided interface branches remain covered by their dedicated adapter and public-dispatch integration tests.
+      - Each cell executes the full production certificate and also compares the retained 145-point response with its nested 73-point log-frequency sub-grid for impedance and trap-storage interpolation error; conserved ionic inventory storage is checked against an absolute SI floor instead of normalizing near-zero noise.
+      - This is internal grid, finite-difference, and frequency-sampling convergence evidence, not external SCAPS parity, measured impedance validation, or unique defect-parameter identification.
+
   csi-qf-frequency-domain:
     claim_level: internal-numerical-candidate
     config: configs/cSi_homojunction.yaml

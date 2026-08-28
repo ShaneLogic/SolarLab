@@ -422,6 +422,7 @@ export interface ImpedanceProtocol {
     | 'transient_ion_aware'
     | 'qf_frequency_ion_free'
     | 'ion_aware_frequency_certified'
+    | 'dynamic_defect_frequency_certified'
   V_dc: number
   delta_V: number
   illuminated: boolean
@@ -429,6 +430,108 @@ export interface ImpedanceProtocol {
   n_cycles: number | null
   n_extract: number | null
   points_per_cycle: number | null
+  dynamic_defect_protocol?: DynamicDefectImpedanceProtocol | null
+}
+
+export type DynamicDefectCapability =
+  | 'bulk_dynamic_defect'
+  | 'interface_dynamic_defect'
+  | 'bulk_defect_plus_ions'
+  | 'interface_defect_plus_ions'
+  | 'bulk_interface_defect_plus_ions'
+
+export interface DynamicDefectImpedanceGates {
+  frequency_branch_margin_decades: number
+  maximum_frequency_sampling_gap_decades: number
+  maximum_dc_operator_match_error: number
+  maximum_dc_normalized_residual: number
+  maximum_dc_continuity_bound_A_m2: number
+  maximum_dc_ionic_face_current_A_m2: number
+  maximum_dc_inventory_error: number
+  maximum_dc_poisson_residual: number
+  maximum_dc_face_current_spread_A_m2: number
+  maximum_qss_embedding_error: number
+  maximum_local_interface_residual: number
+  maximum_local_gauss_residual: number
+  maximum_trap_balance_relative_error: number
+  maximum_all_face_admittance_spread: number
+  maximum_linear_solve_backward_error: number
+  maximum_refinement_relative_change: number
+  maximum_ion_inventory_response_relative: number
+  maximum_current_decomposition_relative_error: number
+  maximum_limit_relative_error: number
+  dc_max_nfev: number
+}
+
+export interface DynamicDefectImpedanceProtocol {
+  schema_version: 'dynamic-defect-impedance-protocol-v1'
+  method: 'dynamic_defect_frequency_certified'
+  capability: DynamicDefectCapability
+  V_dc_V: number
+  delta_V: number
+  illuminated: boolean
+  frequencies_Hz: number[]
+  requested_grid_intervals: number
+  actual_grid_nodes: number
+  grid_sha256: string
+  stack_sha256: string
+  bulk_defect_document_sha256: string[]
+  interface_defect_document_sha256: string[]
+  defect_energy_quadrature_order: number
+  state_step: number
+  voltage_step: number
+  refinement_factors: number[]
+  interface_current_observation:
+    | 'ordinary_finite_volume_faces'
+    | 'symmetric_adjacent_physical_faces'
+  gates: DynamicDefectImpedanceGates
+}
+
+export interface DynamicDefectFrequencyWindowEvidence {
+  requested_minimum_frequency_Hz: number
+  requested_maximum_frequency_Hz: number
+  maximum_sampling_gap_decades: number
+  minimum_trap_relaxation_frequency_Hz: number | null
+  maximum_trap_relaxation_frequency_Hz: number | null
+  trap_low_frequency_limit_covered: boolean
+  trap_high_frequency_limit_covered: boolean
+  every_trap_relaxation_frequency_bracketed: boolean
+  ionic_frequency_window: Record<string, unknown> | null
+  certified: boolean
+}
+
+export interface DynamicDefectImpedanceEvidence {
+  model: 'dynamic-defect-impedance-evidence-v1'
+  protocol: DynamicDefectImpedanceProtocol
+  protocol_sha256: string
+  capability: DynamicDefectCapability
+  engine_scope: string
+  engine_version: string
+  interface_current_observation:
+    | 'ordinary_finite_volume_faces'
+    | 'symmetric_adjacent_physical_faces'
+  dc_state_sha256: string
+  contact_thermodynamics: ContactThermodynamicCertificate
+  dc_certificate: Record<string, unknown>
+  engine_certificate: Record<string, unknown>
+  dc_operating_point_certified: boolean
+  thermodynamically_certified: boolean
+  frequency_window_certified: boolean
+  numerically_certified: boolean
+  certified: boolean
+  qss_embedding_error: number
+  maximum_bulk_trap_balance_relative_error: number | null
+  maximum_interface_trap_balance_relative_error: number | null
+  maximum_all_face_admittance_spread: number
+  maximum_linear_solve_backward_error: number
+  minimum_reciprocal_condition: number
+  maximum_refinement_relative_change: number
+  maximum_ion_inventory_response_relative: number | null
+  maximum_current_decomposition_relative_error: number | null
+  low_frequency_qss_relative_error: number
+  high_frequency_frozen_relative_error: number
+  frequency_window: DynamicDefectFrequencyWindowEvidence
+  reasons: string[]
 }
 
 export interface ContactThermodynamicCertificate {
@@ -539,6 +642,10 @@ export interface ImpedanceDiagnostics {
   positive_ion_storage_response_F_m2?: ComplexNumber[] | null
   negative_ion_storage_response_F_m2?: ComplexNumber[] | null
   net_charge_storage_response_F_m2?: ComplexNumber[] | null
+  bulk_trap_charge_storage_response_F_m2?: ComplexNumber[] | null
+  interface_sheet_charge_storage_response_F_m2?: ComplexNumber[] | null
+  bulk_trap_occupancy_response_per_V?: ComplexNumber[] | null
+  interface_occupancy_response_per_V?: ComplexNumber[] | null
 }
 
 export interface IonAwareFrequencyPerturbationAssessment {
@@ -614,6 +721,7 @@ export interface ISResult {
   grid_assessment?: GridAssessment | null
   diagnostics?: ImpedanceDiagnostics | null
   ion_aware_evidence?: IonAwareImpedanceEvidence | null
+  dynamic_defect_evidence?: DynamicDefectImpedanceEvidence | null
 }
 
 export interface DegResult {
@@ -830,8 +938,14 @@ export interface ISParams {
     | 'qf_frequency_ion_free'
     | 'ion_aware_frequency'
     | 'ion_aware_frequency_certified'
+    | 'dynamic_defect_frequency'
+    | 'dynamic_defect_frequency_certified'
   require_operating_point_certificate?: boolean
   require_frequency_window_certificate?: boolean
+  defect_energy_quadrature_order?: number
+  dynamic_defect_state_step?: number
+  dynamic_defect_voltage_step?: number
+  dynamic_defect_protocol?: DynamicDefectImpedanceProtocol
 }
 
 export interface DegParams {

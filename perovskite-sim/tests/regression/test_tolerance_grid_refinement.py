@@ -107,6 +107,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "ionmonger-ion-aware-dc-v1",
         "ionmonger-ion-aware-dc-resolved-v2",
         "ionmonger-ion-aware-impedance-resolved-v1",
+        "dynamic-defect-ion-impedance-production-v1",
         "csi-qf-frequency-domain",
         "csi-qf-frequency-domain-resolved-v2",
         "twod-uniform-limit",

@@ -160,6 +160,64 @@ describe('impedance points-per-cycle controls', () => {
     )
   })
 
+  it('panel applies and forwards the dynamic-defect production contract', async () => {
+    await mountImpedancePanel(container)
+    const method = document.getElementById('is-method') as HTMLSelectElement
+    method.value = 'dynamic_defect_frequency_certified'
+    method.dispatchEvent(new Event('change'))
+
+    expect((document.getElementById('is-N') as HTMLInputElement).value).toBe('12')
+    expect((document.getElementById('is-nf') as HTMLInputElement).value).toBe('33')
+    expect((document.getElementById('is-fmin') as HTMLInputElement).value).toBe('0.0001')
+    expect((document.getElementById('is-fmax') as HTMLInputElement).value).toBe('1000000000000')
+    expect((document.getElementById('is-ppc') as HTMLInputElement).disabled).toBe(true)
+    expect((document.getElementById('is-defect-order') as HTMLInputElement).disabled).toBe(false)
+    expect((document.getElementById('is-strict') as HTMLInputElement).checked).toBe(true)
+
+    ;(document.getElementById('btn-is') as HTMLButtonElement).click()
+    await Promise.resolve()
+
+    expect(mocks.startJob).toHaveBeenCalledWith(
+      'impedance',
+      device,
+      expect.objectContaining({
+        method: 'dynamic_defect_frequency_certified',
+        N_grid: 12,
+        n_freq: 33,
+        f_min: 1e-4,
+        f_max: 1e12,
+        defect_energy_quadrature_order: 32,
+        require_operating_point_certificate: true,
+        require_frequency_window_certificate: true,
+      }),
+    )
+  })
+
+  it('workstation pane forwards the same dynamic-defect controls', async () => {
+    mountImpedancePane(container, {
+      getActiveDevice: () => ({ id: 'device-1', config: device }),
+      onRunComplete: vi.fn(),
+    })
+    const method = document.getElementById('imp-method') as HTMLSelectElement
+    method.value = 'dynamic_defect_frequency_certified'
+    method.dispatchEvent(new Event('change'))
+    ;(document.getElementById('imp-defect-order') as HTMLInputElement).value = '48'
+
+    ;(document.getElementById('btn-imp') as HTMLButtonElement).click()
+    await Promise.resolve()
+
+    expect(mocks.startJob).toHaveBeenCalledWith(
+      'impedance',
+      device,
+      expect.objectContaining({
+        method: 'dynamic_defect_frequency_certified',
+        defect_energy_quadrature_order: 48,
+        require_operating_point_certificate: true,
+        require_frequency_window_certificate: true,
+      }),
+    )
+  })
+
   it('legacy panel marks a result without certificate blocks as unclassified', async () => {
     await mountImpedancePanel(container)
     ;(document.getElementById('btn-is') as HTMLButtonElement).click()
@@ -321,5 +379,65 @@ describe('ion-aware impedance evidence', () => {
     const warnings = collectImpedanceEvidenceWarnings(result).join(' ')
     expect(warnings).toContain('componentwise_backward_error_exceeds_limit')
     expect(warnings).toContain('1 of 2 frequency points')
+  })
+})
+
+describe('dynamic-defect impedance evidence', () => {
+  it('classifies a complete dynamic certificate without a legacy warning', () => {
+    const result = {
+      frequencies: [1e-4, 1, 1e12],
+      Z_real: [1, 2, 3],
+      Z_imag: [-1, -2, -3],
+      protocol: {
+        method: 'dynamic_defect_frequency_certified',
+        V_dc: 0,
+        delta_V: 0.01,
+        illuminated: false,
+        dc_settle_time: null,
+        n_cycles: null,
+        n_extract: null,
+        points_per_cycle: null,
+        dynamic_defect_protocol: {
+          defect_energy_quadrature_order: 32,
+        },
+      },
+      grid_assessment: {
+        certified: true,
+        override_used: false,
+        guarded_cell_count: 2,
+        offender_count: 0,
+        max_guarded_cell_debye_ratio: 0.2,
+        max_cell_debye_ratio_limit: 0.5,
+        warnings: [],
+      },
+      dynamic_defect_evidence: {
+        certified: true,
+        numerically_certified: true,
+        thermodynamically_certified: true,
+        dc_operating_point_certified: true,
+        frequency_window_certified: true,
+        capability: 'bulk_dynamic_defect',
+        interface_current_observation: 'ordinary_finite_volume_faces',
+        maximum_all_face_admittance_spread: 1e-10,
+        maximum_refinement_relative_change: 2e-5,
+        maximum_bulk_trap_balance_relative_error: 3e-8,
+        maximum_interface_trap_balance_relative_error: null,
+        frequency_window: {
+          certified: true,
+          trap_low_frequency_limit_covered: true,
+          trap_high_frequency_limit_covered: true,
+          every_trap_relaxation_frequency_bracketed: true,
+          requested_minimum_frequency_Hz: 1e-4,
+          requested_maximum_frequency_Hz: 1e12,
+        },
+        reasons: [],
+      },
+    } as unknown as ISResult
+
+    expect(collectImpedanceEvidenceWarnings(result)).toEqual([])
+    const summary = summarizeImpedanceEvidence(result).join(' ')
+    expect(summary).toContain('energy order 32')
+    expect(summary).toContain('bulk_dynamic_defect')
+    expect(summary).toContain('relaxation frequencies bracketed')
   })
 })

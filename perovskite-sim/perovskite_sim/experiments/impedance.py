@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Literal
 
 import numpy as np
@@ -41,6 +41,26 @@ from perovskite_sim.experiments.jv_sweep import (
     build_electrical_grid,
     compute_current_components,
 )
+from perovskite_sim.experiments.dynamic_defect_impedance import (
+    DYNAMIC_DEFECT_IMPEDANCE_METHOD,
+    DEFAULT_REFINEMENT_FACTORS as DEFAULT_DYNAMIC_DEFECT_REFINEMENT_FACTORS,
+    DynamicDefectImpedanceCapabilityError,
+    DynamicDefectImpedanceCertificationError,
+    DynamicDefectImpedanceEvidence,
+    DynamicDefectImpedanceGates,
+    DynamicDefectImpedanceProtocol,
+    DynamicDefectImpedanceProtocolError,
+    build_dynamic_defect_impedance_protocol,
+    classify_dynamic_defect_capability,
+    resolve_dynamic_defect_impedance_protocol,
+    run_dynamic_defect_impedance,
+)
+from perovskite_sim.experiments.quasi_fermi_steady_state import (
+    build_two_sided_trace_grid,
+)
+from perovskite_sim.physics.defect_distributions import (
+    DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+)
 
 
 # Callback signature: stage, current, total, message.
@@ -58,6 +78,8 @@ _IMPEDANCE_METHOD_ALIASES = {
     "qf_frequency_ion_free": "qf_frequency_ion_free",
     "ion_aware_frequency": "ion_aware_frequency_certified",
     "ion_aware_frequency_certified": "ion_aware_frequency_certified",
+    "dynamic_defect_frequency": DYNAMIC_DEFECT_IMPEDANCE_METHOD,
+    DYNAMIC_DEFECT_IMPEDANCE_METHOD: DYNAMIC_DEFECT_IMPEDANCE_METHOD,
 }
 
 # Backward-compatible public exports; implementation lives in the shared
@@ -65,9 +87,7 @@ _IMPEDANCE_METHOD_ALIASES = {
 FrequencyWindowAssessment = _frequency.FrequencyWindowAssessment
 IonicBranchCoverage = _frequency.IonicBranchCoverage
 IonicTimescale = _frequency.IonicTimescale
-assess_impedance_frequency_window = (
-    _frequency.assess_impedance_frequency_window
-)
+assess_impedance_frequency_window = _frequency.assess_impedance_frequency_window
 
 
 @dataclass(frozen=True)
@@ -78,6 +98,7 @@ class ImpedanceProtocol:
         "transient_ion_aware",
         "qf_frequency_ion_free",
         "ion_aware_frequency_certified",
+        "dynamic_defect_frequency_certified",
     ]
     V_dc: float
     delta_V: float
@@ -87,6 +108,7 @@ class ImpedanceProtocol:
     n_extract: int | None
     points_per_cycle: int | None = None
     experiment_protocol: ExperimentProtocol | None = None
+    dynamic_defect_protocol: DynamicDefectImpedanceProtocol | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +169,10 @@ class ImpedanceDiagnostics:
     positive_ion_storage_response_F_m2: np.ndarray | None = None
     negative_ion_storage_response_F_m2: np.ndarray | None = None
     net_charge_storage_response_F_m2: np.ndarray | None = None
+    bulk_trap_charge_storage_response_F_m2: np.ndarray | None = None
+    interface_sheet_charge_storage_response_F_m2: np.ndarray | None = None
+    bulk_trap_occupancy_response_per_V: np.ndarray | None = None
+    interface_occupancy_response_per_V: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -190,13 +216,14 @@ class ImpedanceCapabilityError(RuntimeError):
 @dataclass(frozen=True)
 class ImpedanceResult:
     frequencies: np.ndarray
-    Z: np.ndarray           # complex impedance [Ω m²]
+    Z: np.ndarray  # complex impedance [Ω m²]
     protocol: ImpedanceProtocol | None = None
     operating_point: OperatingPointCertificate | None = None
     frequency_window: FrequencyWindowAssessment | None = None
     grid_assessment: GridAssessment | None = None
     diagnostics: ImpedanceDiagnostics | None = None
     ion_aware_evidence: IonAwareImpedanceEvidence | None = None
+    dynamic_defect_evidence: DynamicDefectImpedanceEvidence | None = None
 
 
 def extract_impedance(
@@ -293,12 +320,14 @@ def _lockin_extract(
     t_scale = t_arr[-1] - t_arr[0]
     if t_scale <= 0.0:
         t_scale = 1.0
-    A = np.column_stack([
-        np.ones_like(t_arr),
-        (t_arr - t_arr[0]) / t_scale,
-        np.sin(omega * t_arr),
-        np.cos(omega * t_arr),
-    ])
+    A = np.column_stack(
+        [
+            np.ones_like(t_arr),
+            (t_arr - t_arr[0]) / t_scale,
+            np.sin(omega * t_arr),
+            np.cos(omega * t_arr),
+        ]
+    )
     coeffs, *_ = np.linalg.lstsq(A, y, rcond=None)
     I_in = float(coeffs[2])
     I_quad = float(coeffs[3])
@@ -315,11 +344,13 @@ def _assess_impedance_grid(
 ) -> GridAssessment:
     """Classify the same guarded cells used by the pre-integration mesh gate."""
     guarded = tuple(
-        item for item in diagnostics
+        item
+        for item in diagnostics
         if item.layer_debye_span >= MIN_GUARDED_LAYER_DEBYE_SPAN
     )
     offenders = tuple(
-        item for item in guarded
+        item
+        for item in guarded
         if (
             not np.isfinite(item.cell_debye_ratio)
             or item.cell_debye_ratio > MAX_INTERFACE_CELL_DEBYE_RATIO
@@ -333,10 +364,14 @@ def _assess_impedance_grid(
     )
     warnings = (
         (
-            "underresolved_grid_override_used; this impedance result lacks "
-            "the necessary interface Debye-resolution certificate"
-        ),
-    ) if offenders else ()
+            (
+                "underresolved_grid_override_used; this impedance result lacks "
+                "the necessary interface Debye-resolution certificate"
+            ),
+        )
+        if offenders
+        else ()
+    )
     return GridAssessment(
         certified=not offenders,
         override_used=bool(offenders and allow_underresolved_grid),
@@ -374,20 +409,27 @@ def _transient_operating_point_certificate(
         V_app=V_dc,
     )
     state_rate = StateVec.unpack(
-        rate, len(x), N_iface_state=mat.N_iface_state,
+        rate,
+        len(x),
+        N_iface_state=mat.N_iface_state,
     )
     widths = np.asarray(mat.dx_cell, dtype=float)
-    carrier_area_rate = float(Q * max(
-        np.sum(np.abs(state_rate.n) * widths),
-        np.sum(np.abs(state_rate.p) * widths),
-    ))
+    carrier_area_rate = float(
+        Q
+        * max(
+            np.sum(np.abs(state_rate.n) * widths),
+            np.sum(np.abs(state_rate.p) * widths),
+        )
+    )
     ion_area_rate = float(Q * np.sum(np.abs(state_rate.P) * widths))
     if state_rate.P_neg is not None:
-        ion_area_rate += float(
-            Q * np.sum(np.abs(state_rate.P_neg) * widths)
-        )
+        ion_area_rate += float(Q * np.sum(np.abs(state_rate.P_neg) * widths))
     current = compute_current_components(
-        x, y, stack, V_dc, mat=mat,
+        x,
+        y,
+        stack,
+        V_dc,
+        mat=mat,
     )
     max_ionic_current = float(np.max(np.abs(current.J_ion)))
     face_spread = float(np.ptp(current.J_total))
@@ -400,16 +442,19 @@ def _transient_operating_point_certificate(
         reasons.append("state_rate_nonfinite")
     for name, value, limit in (
         (
-            "carrier_area_rate", carrier_area_rate,
+            "carrier_area_rate",
+            carrier_area_rate,
             max_carrier_area_rate_A_m2,
         ),
         ("ion_area_rate", ion_area_rate, max_ion_area_rate_A_m2),
         (
-            "ionic_face_current", max_ionic_current,
+            "ionic_face_current",
+            max_ionic_current,
             max_ionic_face_current_A_m2,
         ),
         (
-            "dc_face_current_spread", face_spread,
+            "dc_face_current_spread",
+            face_spread,
             max_dc_face_spread_A_m2,
         ),
     ):
@@ -491,13 +536,9 @@ def _ion_aware_operating_point_certificate(
     return OperatingPointCertificate(
         certified=bool(state_certificate.certified),
         numerically_certified=bool(state_certificate.numerically_certified),
-        thermodynamically_certified=bool(
-            state_certificate.thermodynamically_certified
-        ),
+        thermodynamically_certified=bool(state_certificate.thermodynamically_certified),
         source="ion_aware_residual_certified",
-        carrier_area_rate_A_m2=float(
-            state_certificate.carrier_area_rate_A_m2
-        ),
+        carrier_area_rate_A_m2=float(state_certificate.carrier_area_rate_A_m2),
         ion_area_rate_A_m2=float(state_certificate.ion_area_rate_A_m2),
         max_ionic_face_current_A_m2=float(
             state_certificate.max_ionic_face_current_A_m2
@@ -505,13 +546,9 @@ def _ion_aware_operating_point_certificate(
         dc_face_current_spread_A_m2=float(
             state_certificate.dc_face_current_spread_A_m2
         ),
-        carrier_area_rate_limit_A_m2=float(
-            dc_protocol.max_carrier_area_rate_A_m2
-        ),
+        carrier_area_rate_limit_A_m2=float(dc_protocol.max_carrier_area_rate_A_m2),
         ion_area_rate_limit_A_m2=float(dc_protocol.max_ion_area_rate_A_m2),
-        ionic_face_current_limit_A_m2=float(
-            dc_protocol.max_ionic_face_current_A_m2
-        ),
+        ionic_face_current_limit_A_m2=float(dc_protocol.max_ionic_face_current_A_m2),
         dc_face_current_spread_limit_A_m2=float(
             dc_protocol.max_dc_face_current_spread_A_m2
         ),
@@ -623,17 +660,36 @@ def build_impedance_experiment_protocol(
                 phase="residual_dc_operating_point",
                 condition=condition,
                 intensity_suns=1.0 if illuminated else None,
-                source_reference=(
-                    "stack_baseline_generation" if illuminated else None
-                ),
+                source_reference=("stack_baseline_generation" if illuminated else None),
             ),
             IlluminationStep(
                 phase="frequency_domain_linear_response",
                 condition=condition,
                 intensity_suns=1.0 if illuminated else None,
-                source_reference=(
-                    "stack_baseline_generation" if illuminated else None
-                ),
+                source_reference=("stack_baseline_generation" if illuminated else None),
+            ),
+        )
+        settle = DCSettleCriterion(kind="residual_certified")
+        ac = ACExcitation(
+            dc_bias_V=float(V_dc),
+            amplitude_V=float(delta_V),
+        )
+    elif canonical_method == DYNAMIC_DEFECT_IMPEDANCE_METHOD:
+        initial_state = "qf_dc_candidate"
+        soak = None
+        condition = "baseline" if illuminated else "dark"
+        history = (
+            IlluminationStep(
+                phase="residual_certified_dynamic_defect_dc",
+                condition=condition,
+                intensity_suns=1.0 if illuminated else None,
+                source_reference=("stack_baseline_generation" if illuminated else None),
+            ),
+            IlluminationStep(
+                phase="frequency_domain_dynamic_defect_linear_response",
+                condition=condition,
+                intensity_suns=1.0 if illuminated else None,
+                source_reference=("stack_baseline_generation" if illuminated else None),
             ),
         )
         settle = DCSettleCriterion(kind="residual_certified")
@@ -650,17 +706,13 @@ def build_impedance_experiment_protocol(
                 phase="residual_certified_ion_aware_dc",
                 condition=condition,
                 intensity_suns=1.0 if illuminated else None,
-                source_reference=(
-                    "stack_baseline_generation" if illuminated else None
-                ),
+                source_reference=("stack_baseline_generation" if illuminated else None),
             ),
             IlluminationStep(
                 phase="frequency_domain_ion_aware_linear_response",
                 condition=condition,
                 intensity_suns=1.0 if illuminated else None,
-                source_reference=(
-                    "stack_baseline_generation" if illuminated else None
-                ),
+                source_reference=("stack_baseline_generation" if illuminated else None),
             ),
         )
         settle = DCSettleCriterion(
@@ -724,6 +776,14 @@ def run_impedance(
     experiment_protocol: ExperimentProtocol | None = None,
     protocol_mode: ProtocolMode = "compatibility",
     ion_aware_dc_atol: AbsoluteTolerance | None = None,
+    dynamic_defect_protocol: DynamicDefectImpedanceProtocol | None = None,
+    defect_energy_quadrature_order: int = DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    dynamic_defect_state_step: float = 1.0e-5,
+    dynamic_defect_voltage_step: float = 1.0e-5,
+    dynamic_defect_refinement_factors: object = (
+        DEFAULT_DYNAMIC_DEFECT_REFINEMENT_FACTORS
+    ),
+    dynamic_defect_gates: DynamicDefectImpedanceGates | None = None,
 ) -> ImpedanceResult:
     """Run small-signal impedance at each frequency.
 
@@ -751,10 +811,13 @@ def run_impedance(
         certifiable.
     method : {"transient", "transient_ion_aware",
               "quasi_fermi_frequency", "qf_frequency_ion_free",
-              "ion_aware_frequency", "ion_aware_frequency_certified"}
+              "ion_aware_frequency", "ion_aware_frequency_certified",
+              "dynamic_defect_frequency",
+              "dynamic_defect_frequency_certified"}
         The aliases resolve to an explicit ion-aware transient protocol, an
         ion-free residual-certified QF frequency-domain protocol, or the
-        residual-certified mobile-ion frequency-domain reference engine.
+        residual-certified mobile-ion frequency-domain reference engine, or
+        the protocol-bound dynamic explicit-defect frequency engine.
     dc_settle_time : float, default 1e-3
         Finite DC preconditioning interval used by the transient engine. It is
         part of the returned protocol and is not itself a steady-state proof.
@@ -778,13 +841,9 @@ def run_impedance(
         raise ValueError(f"N_grid must be >= 3, got {N_grid}")
     if not np.isfinite(V_dc):
         raise ValueError("V_dc must be finite")
-    if (
-        not np.isfinite(delta_V)
-        or not 0.0 < delta_V < MAX_LINEAR_PERTURBATION_V
-    ):
+    if not np.isfinite(delta_V) or not 0.0 < delta_V < MAX_LINEAR_PERTURBATION_V:
         raise ValueError(
-            "delta_V must be finite, positive, and below the 20 mV "
-            "small-signal limit"
+            "delta_V must be finite, positive, and below the 20 mV small-signal limit"
         )
     if isinstance(n_cycles, bool) or int(n_cycles) != n_cycles or n_cycles < 1:
         raise ValueError(f"n_cycles must be >= 1, got {n_cycles}")
@@ -795,8 +854,7 @@ def run_impedance(
         or points_per_cycle < 8
     ):
         raise ValueError(
-            "points_per_cycle must be an integer >= 8, got "
-            f"{points_per_cycle}"
+            f"points_per_cycle must be an integer >= 8, got {points_per_cycle}"
         )
     points_per_cycle = int(points_per_cycle)
     if isinstance(n_extract, bool) or int(n_extract) != n_extract:
@@ -809,6 +867,14 @@ def run_impedance(
             f"{method!r}"
         )
     canonical_method = _IMPEDANCE_METHOD_ALIASES[method]
+    if (
+        dynamic_defect_protocol is not None
+        and canonical_method != DYNAMIC_DEFECT_IMPEDANCE_METHOD
+    ):
+        raise ValueError(
+            "dynamic_defect_protocol is valid only with "
+            f"method={DYNAMIC_DEFECT_IMPEDANCE_METHOD!r}"
+        )
     if not np.isfinite(dc_settle_time) or dc_settle_time <= 0.0:
         raise ValueError("dc_settle_time must be finite and positive")
     for name, value in (
@@ -847,22 +913,17 @@ def run_impedance(
         delta_V=float(delta_V),
         illuminated=bool(illuminated),
         dc_settle_time=(
-            float(dc_settle_time)
-            if canonical_method == "transient_ion_aware"
-            else None
+            float(dc_settle_time) if canonical_method == "transient_ion_aware" else None
         ),
-        n_cycles=(
-            int(n_cycles) if canonical_method == "transient_ion_aware" else None
-        ),
+        n_cycles=(int(n_cycles) if canonical_method == "transient_ion_aware" else None),
         n_extract=(
             int(n_extract) if canonical_method == "transient_ion_aware" else None
         ),
         points_per_cycle=(
-            int(points_per_cycle)
-            if canonical_method == "transient_ion_aware"
-            else None
+            int(points_per_cycle) if canonical_method == "transient_ion_aware" else None
         ),
         experiment_protocol=resolved_experiment_protocol,
+        dynamic_defect_protocol=None,
     )
 
     # Use the same executable electrical-grid contract as J-V and steady-state
@@ -871,6 +932,12 @@ def run_impedance(
     # incomparable with the rest of the solver and can collapse a resolved
     # depletion region into the geometric-capacitance limit.
     x = build_electrical_grid(stack, N_grid)
+    dynamic_capability = None
+    if canonical_method == DYNAMIC_DEFECT_IMPEDANCE_METHOD:
+        try:
+            dynamic_capability = classify_dynamic_defect_capability(stack)
+        except DynamicDefectImpedanceCapabilityError as exc:
+            raise ImpedanceCapabilityError(str(exc)) from exc
     grid_diagnostics = require_thick_layer_interface_resolution(
         x,
         stack,
@@ -881,10 +948,104 @@ def run_impedance(
         grid_diagnostics,
         allow_underresolved_grid=allow_underresolved_grid,
     )
-    if require_operating_point_certificate and not grid_assessment.certified:
+    if (
+        require_operating_point_certificate
+        or canonical_method == DYNAMIC_DEFECT_IMPEDANCE_METHOD
+    ) and not grid_assessment.certified:
         raise ImpedanceCertificationError(
             "impedance electrical grid is uncertified: "
             + ", ".join(grid_assessment.warnings)
+        )
+    if dynamic_capability is not None and "interface" in dynamic_capability:
+        x = build_two_sided_trace_grid(x, stack)
+    if canonical_method == DYNAMIC_DEFECT_IMPEDANCE_METHOD:
+        try:
+            expected_dynamic_protocol = build_dynamic_defect_impedance_protocol(
+                stack,
+                x,
+                np.asarray(frequencies, dtype=float),
+                requested_grid_intervals=N_grid,
+                V_dc=V_dc,
+                delta_V=delta_V,
+                illuminated=illuminated,
+                defect_energy_quadrature_order=(defect_energy_quadrature_order),
+                state_step=dynamic_defect_state_step,
+                voltage_step=dynamic_defect_voltage_step,
+                refinement_factors=dynamic_defect_refinement_factors,
+                gates=dynamic_defect_gates,
+            )
+            resolved_dynamic_protocol = resolve_dynamic_defect_impedance_protocol(
+                dynamic_defect_protocol,
+                expected_dynamic_protocol,
+            )
+            protocol = replace(
+                protocol,
+                dynamic_defect_protocol=resolved_dynamic_protocol,
+            )
+            dynamic_result = run_dynamic_defect_impedance(
+                x,
+                stack,
+                resolved_dynamic_protocol,
+                progress=progress,
+            )
+        except DynamicDefectImpedanceCapabilityError as exc:
+            raise ImpedanceCapabilityError(str(exc)) from exc
+        except (
+            DynamicDefectImpedanceCertificationError,
+            DynamicDefectImpedanceProtocolError,
+        ) as exc:
+            raise ImpedanceCertificationError(str(exc)) from exc
+        return ImpedanceResult(
+            frequencies=dynamic_result.frequencies_Hz,
+            Z=dynamic_result.impedance_ohm_m2,
+            protocol=protocol,
+            operating_point=None,
+            frequency_window=None,
+            grid_assessment=grid_assessment,
+            diagnostics=ImpedanceDiagnostics(
+                admittance_S_m2=dynamic_result.admittance_S_m2,
+                admittance_faces_S_m2=dynamic_result.admittance_faces_S_m2,
+                electron_storage_response_F_m2=(
+                    dynamic_result.electron_storage_response_F_m2
+                ),
+                hole_storage_response_F_m2=(dynamic_result.hole_storage_response_F_m2),
+                conduction_admittance_faces_S_m2=(
+                    dynamic_result.electron_admittance_faces_S_m2
+                    + dynamic_result.hole_admittance_faces_S_m2
+                ),
+                displacement_admittance_faces_S_m2=(
+                    dynamic_result.displacement_admittance_faces_S_m2
+                ),
+                electron_admittance_faces_S_m2=(
+                    dynamic_result.electron_admittance_faces_S_m2
+                ),
+                hole_admittance_faces_S_m2=(dynamic_result.hole_admittance_faces_S_m2),
+                positive_ion_admittance_faces_S_m2=(
+                    dynamic_result.positive_ion_admittance_faces_S_m2
+                ),
+                negative_ion_admittance_faces_S_m2=(
+                    dynamic_result.negative_ion_admittance_faces_S_m2
+                ),
+                positive_ion_storage_response_F_m2=(
+                    dynamic_result.positive_ion_storage_response_F_m2
+                ),
+                negative_ion_storage_response_F_m2=(
+                    dynamic_result.negative_ion_storage_response_F_m2
+                ),
+                bulk_trap_charge_storage_response_F_m2=(
+                    dynamic_result.bulk_trap_charge_storage_response_F_m2
+                ),
+                interface_sheet_charge_storage_response_F_m2=(
+                    dynamic_result.interface_sheet_charge_storage_response_F_m2
+                ),
+                bulk_trap_occupancy_response_per_V=(
+                    dynamic_result.bulk_trap_occupancy_response_per_V
+                ),
+                interface_occupancy_response_per_V=(
+                    dynamic_result.interface_occupancy_response_per_V
+                ),
+            ),
+            dynamic_defect_evidence=dynamic_result.evidence,
         )
     dx_faces = np.diff(x)
     L_total = float(x[-1] - x[0])
@@ -897,7 +1058,9 @@ def run_impedance(
             "their residual and electrostatic charge are jointly certified"
         )
     frequency_window = assess_impedance_frequency_window(
-        x, mat, np.asarray(frequencies, dtype=float),
+        x,
+        mat,
+        np.asarray(frequencies, dtype=float),
     )
     if canonical_method == "ion_aware_frequency_certified":
         from perovskite_sim.experiments.ion_aware_dc import (
@@ -925,9 +1088,7 @@ def run_impedance(
             max_dc_face_current_spread_A_m2=max_dc_face_spread_A_m2,
         )
         effective_dc_atol = (
-            ComponentwiseAtol()
-            if ion_aware_dc_atol is None
-            else ion_aware_dc_atol
+            ComponentwiseAtol() if ion_aware_dc_atol is None else ion_aware_dc_atol
         )
         try:
             dc_state = solve_ion_aware_dc(
@@ -998,9 +1159,7 @@ def run_impedance(
                 electron_storage_response_F_m2=(
                     ion_result.electron_storage_response_F_m2
                 ),
-                hole_storage_response_F_m2=(
-                    ion_result.hole_storage_response_F_m2
-                ),
+                hole_storage_response_F_m2=(ion_result.hole_storage_response_F_m2),
                 conduction_admittance_faces_S_m2=(
                     ion_result.conduction_admittance_faces_S_m2
                 ),
@@ -1010,9 +1169,7 @@ def run_impedance(
                 electron_admittance_faces_S_m2=(
                     ion_result.electron_admittance_faces_S_m2
                 ),
-                hole_admittance_faces_S_m2=(
-                    ion_result.hole_admittance_faces_S_m2
-                ),
+                hole_admittance_faces_S_m2=(ion_result.hole_admittance_faces_S_m2),
                 positive_ion_admittance_faces_S_m2=(
                     ion_result.positive_ion_admittance_faces_S_m2
                 ),
@@ -1046,13 +1203,9 @@ def run_impedance(
                 thermodynamically_certified=bool(
                     certificate.thermodynamically_certified
                 ),
-                frequency_window_certified=bool(
-                    certificate.frequency_window_certified
-                ),
+                frequency_window_certified=bool(certificate.frequency_window_certified),
                 certified=bool(certificate.certified),
-                max_relative_face_spread=float(
-                    certificate.max_relative_face_spread
-                ),
+                max_relative_face_spread=float(certificate.max_relative_face_spread),
                 max_backward_error=float(certificate.max_backward_error),
                 minimum_reciprocal_condition=float(
                     certificate.minimum_reciprocal_condition
@@ -1070,9 +1223,7 @@ def run_impedance(
                     certificate.max_current_decomposition_relative_error
                 ),
                 perturbation_assessments=certificate.perturbation_assessments,
-                frequency_point_certificates=(
-                    certificate.frequency_point_certificates
-                ),
+                frequency_point_certificates=(certificate.frequency_point_certificates),
                 reasons=tuple(certificate.reasons),
             ),
         )
@@ -1092,7 +1243,9 @@ def run_impedance(
             progress=progress,
         )
         operating_point = _qf_operating_point_certificate(
-            stack, mat, result.dc_state,
+            stack,
+            mat,
+            result.dc_state,
         )
         if any(reason.endswith("_nonfinite") for reason in operating_point.reasons):
             raise ImpedanceCertificationError(
@@ -1117,9 +1270,7 @@ def run_impedance(
                 max_relative_face_spread=result.max_relative_face_spread,
                 reciprocal_condition=result.reciprocal_condition,
                 backward_error=result.backward_error,
-                electron_storage_response_F_m2=(
-                    result.electron_storage_response_F_m2
-                ),
+                electron_storage_response_F_m2=(result.electron_storage_response_F_m2),
                 hole_storage_response_F_m2=result.hole_storage_response_F_m2,
             ),
         )
@@ -1146,9 +1297,16 @@ def run_impedance(
             dc_source = "dark_equilibrium"
         else:
             sol_dc = run_transient(
-                x, y_eq, (0.0, dc_settle_time), np.array([dc_settle_time]),
-                stack, illuminated=False, V_app=V_dc,
-                rtol=rtol, atol=atol, mat=mat,
+                x,
+                y_eq,
+                (0.0, dc_settle_time),
+                np.array([dc_settle_time]),
+                stack,
+                illuminated=False,
+                V_app=V_dc,
+                rtol=rtol,
+                atol=atol,
+                mat=mat,
             )
             if not sol_dc.success:
                 detail = getattr(sol_dc, "message", "no solver diagnostic")
@@ -1216,9 +1374,7 @@ def run_impedance(
         )
         if not sol.success:
             detail = getattr(sol, "message", "no solver diagnostic")
-            raise RuntimeError(
-                f"impedance transient failed at f={f:.3e} Hz: {detail}"
-            )
+            raise RuntimeError(f"impedance transient failed at f={f:.3e} Hz: {detail}")
         y_edges = sol.y[:, 0::2]
         y_mid = sol.y[:, 1::2]
         J_t = np.zeros(n_intervals, dtype=float)
@@ -1237,14 +1393,20 @@ def run_impedance(
                 V_app_prev=V_lo,
             )
             conduction_at_edge = compute_current_components(
-                x, y_edges[:, i + 1], stack, V_hi, mat=mat,
+                x,
+                y_edges[:, i + 1],
+                stack,
+                V_hi,
+                mat=mat,
             ).J_total
             conduction_at_mid = compute_current_components(
-                x, y_mid[:, i], stack, V_mid, mat=mat,
+                x,
+                y_mid[:, i],
+                stack,
+                V_mid,
+                mat=mat,
             ).J_total
-            J_face_mid = (
-                conduction_at_mid + total_at_edge - conduction_at_edge
-            )
+            J_face_mid = conduction_at_mid + total_at_edge - conduction_at_edge
             J_t[i] = float(np.sum(J_face_mid * dx_faces) / L_total)
 
         # Lock-in over the last n_extract cycles. Using multiple cycles

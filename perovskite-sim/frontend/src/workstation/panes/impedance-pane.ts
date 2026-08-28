@@ -8,6 +8,7 @@ import {
   setStatus,
 } from '../../ui-helpers'
 import type { DeviceConfig, ISResult } from '../../types'
+import { dynamicDefectImpedancePreset } from '../../explicit-defect-capability'
 import type { Run, RunResult } from '../types'
 
 export interface ImpedancePaneOptions {
@@ -30,12 +31,14 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
         ${numField('imp-extract', 'Extract cycles', 2, '1')}
         ${numField('imp-ppc', 'Points/cycle', 40, '1')}
         ${numField('imp-dc-settle', 'DC settle (s)', 1e-3, 'any')}
+        ${numField('imp-defect-order', 'Defect energy order', 32, '1')}
         <label class="form-group">
           <span>Engine</span>
           <select id="imp-method">
             <option value="transient_ion_aware">Transient, ion-aware</option>
             <option value="ion_aware_frequency_certified">Certified frequency, ion-aware</option>
             <option value="qf_frequency_ion_free">QF frequency, ion-free</option>
+            <option value="dynamic_defect_frequency_certified">Certified dynamic defects</option>
           </select>
         </label>
         ${checkField('imp-illuminated', 'Illuminated', true)}
@@ -57,22 +60,46 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
   const methodSelect = container.querySelector<HTMLSelectElement>('#imp-method')!
   const syncMethodControls = (): void => {
     const transient = methodSelect.value === 'transient_ion_aware'
+    const dynamic = methodSelect.value === 'dynamic_defect_frequency_certified'
     for (const id of ['imp-cycles', 'imp-extract', 'imp-ppc', 'imp-dc-settle']) {
       const input = container.querySelector<HTMLInputElement>(`#${id}`)
       if (input) input.disabled = !transient
     }
+    const defectOrder = container.querySelector<HTMLInputElement>('#imp-defect-order')
+    if (defectOrder) defectOrder.disabled = !dynamic
     const windowStrict = container.querySelector<HTMLInputElement>(
       '#imp-window-strict',
     )
     if (windowStrict) {
-      windowStrict.disabled = methodSelect.value !== 'ion_aware_frequency_certified'
+      if (dynamic) windowStrict.checked = true
+      windowStrict.disabled = (
+        dynamic || methodSelect.value !== 'ion_aware_frequency_certified'
+      )
+    }
+    const contactStrict = container.querySelector<HTMLInputElement>('#imp-strict')
+    if (contactStrict) {
+      if (dynamic) contactStrict.checked = true
+      contactStrict.disabled = dynamic
     }
   }
   methodSelect.addEventListener('change', () => {
     const certified = methodSelect.value === 'ion_aware_frequency_certified'
-    const presets: Record<string, number> = certified
-      ? { 'imp-N': 60, 'imp-nfreq': 29, 'imp-fmin': 1e-6, 'imp-fmax': 10 }
-      : { 'imp-N': 40, 'imp-nfreq': 15, 'imp-fmin': 10, 'imp-fmax': 1e5 }
+    const dynamic = methodSelect.value === 'dynamic_defect_frequency_certified'
+    const active = opts.getActiveDevice()
+    const dynamicPreset = dynamicDefectImpedancePreset(active?.config ?? {
+      device: { Phi: 0 },
+      layers: [],
+    })
+    const presets: Record<string, number> = dynamic
+      ? {
+          'imp-N': dynamicPreset.N_grid,
+          'imp-nfreq': dynamicPreset.n_freq,
+          'imp-fmin': dynamicPreset.f_min,
+          'imp-fmax': dynamicPreset.f_max,
+        }
+      : certified
+        ? { 'imp-N': 60, 'imp-nfreq': 29, 'imp-fmin': 1e-6, 'imp-fmax': 10 }
+        : { 'imp-N': 40, 'imp-nfreq': 15, 'imp-fmin': 10, 'imp-fmax': 1e5 }
     for (const [id, value] of Object.entries(presets)) {
       const input = container.querySelector<HTMLInputElement>(`#${id}`)
       if (input) input.value = String(value)
@@ -100,11 +127,14 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
       ? 'qf_frequency_ion_free' as const
       : selectedMethod === 'transient_ion_aware'
         ? 'transient_ion_aware' as const
-        : 'ion_aware_frequency_certified' as const
+        : selectedMethod === 'dynamic_defect_frequency_certified'
+          ? 'dynamic_defect_frequency_certified' as const
+          : 'ion_aware_frequency_certified' as const
+    const dynamic = method === 'dynamic_defect_frequency_certified'
     const params = {
       N_grid: Math.max(3, Math.round(readNum('imp-N', 40))),
       V_dc: readNum('imp-Vdc', 0.9),
-      n_freq: Math.max(2, Math.round(readNum('imp-nfreq', 15))),
+      n_freq: Math.max(dynamic ? 3 : 2, Math.round(readNum('imp-nfreq', 15))),
       f_min: readNum('imp-fmin', 10),
       f_max: readNum('imp-fmax', 1e5),
       delta_V: readNum('imp-dv', 10) * 1e-3,
@@ -117,11 +147,21 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
       dc_settle_time: readNum('imp-dc-settle', 1e-3),
       illuminated: readCheck('imp-illuminated', true),
       method,
-      require_operating_point_certificate: readCheck('imp-strict', false),
+      require_operating_point_certificate: (
+        dynamic || readCheck('imp-strict', false)
+      ),
       require_frequency_window_certificate: (
-        method === 'ion_aware_frequency_certified'
+        (method === 'ion_aware_frequency_certified' || dynamic)
         && readCheck('imp-window-strict', true)
       ),
+      ...(dynamic
+        ? {
+            defect_energy_quadrature_order: Math.max(
+              1,
+              Math.round(readNum('imp-defect-order', 32)),
+            ),
+          }
+        : {}),
     }
     const t0 = performance.now()
     const snapshot: DeviceConfig = JSON.parse(JSON.stringify(active.config))
