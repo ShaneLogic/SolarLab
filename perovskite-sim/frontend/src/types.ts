@@ -273,6 +273,12 @@ export interface JVBulkDefectEvidence {
   minimum_kinetic_denominator_s1: number
   maximum_absolute_charge_density_C_m3: number
   maximum_absolute_recombination_rate_m3_s: number
+  distribution_kinds?: string[]
+  source_energy_orders?: number[]
+  spatial_closure?: 'layer-density-profile-v1' | null
+  spatial_profile_sha256s?: Array<string | null>
+  minimum_density_multipliers?: number[]
+  maximum_density_multipliers?: number[]
 }
 
 export interface ComplexNumber {

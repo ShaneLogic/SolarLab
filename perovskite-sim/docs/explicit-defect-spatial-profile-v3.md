@@ -1,9 +1,10 @@
 # Explicit Bulk-Defect Spatial Profile Contract v3
 
-Status: D3-E4a canonical input contract. Parsing, round-trip, hashing,
-conservative interpolation, endpoint localization, and standard backend
-serialization are implemented. Production QF/DC execution remains fail closed
-until D3-E4b.
+Status: D3-E4b production implementation and regression verification complete.
+The
+canonical D3-E4a input contract is now compiled into the guarded QF/DC material,
+contact, Poisson, continuity, analytic-tangent, and J-V paths. Independent
+three-axis certification remains a D3-E4c requirement.
 
 ## Version boundary
 
@@ -66,9 +67,9 @@ bulk_defects:
 
 ## Energy reference
 
-Every v3 energy remains measured above the local valence-band edge. D3-E4a
-does not introduce a spatial energy-shift field. When band grading is enabled
-in D3-E4b, the absolute trap energy moves with the local valence band while
+Every v3 energy remains measured above the local valence-band edge. The schema
+does not introduce a spatial energy-shift field. When band grading is enabled,
+the absolute trap energy moves with the local valence band while
 `center_eV_above_vb`, width, support, capture kinetics, degeneracy, and charge
 convention remain source constants. The complete support must fit inside the
 local band gap at every active node.
@@ -85,9 +86,31 @@ At a contact face, localization resolves the endpoint density
 closure is evaluated. The source object and its canonical v3 document remain
 unchanged.
 
+## Production closure
+
+The guarded `qf_dc` material compiler evaluates the profile at each owned grid
+node and binds the local band gap and effective densities of states to the same
+region. One carrier-independent energy quadrature is retained per physical
+source; the local density weights are its normalized weights multiplied by
+`m(s)`. Occupancy, SRH recombination, defect charge, carrier derivatives, and
+the fixed-quasi-Fermi Poisson tangent are then evaluated from the same local
+energy nodes and local band edges.
+
+The front and back reservoirs use the exact endpoint-localized source document.
+Thus contact neutrality, built-in potential, interior Poisson charge, continuity
+recombination, and J-V diagnostics all share the same source density and neutral
+reference. A distributed support that leaves the smallest local band gap is
+rejected while building the material cache, before a nonlinear solve begins.
+
+Point diagnostics retain the profile SHA-256 values, nodewise density
+multipliers, and per-source multiplier bounds. The J-V/backend summary retains
+the hashes and bounds and rejects a sweep whose spatial identity changes across
+voltage points. The frontend evidence strip displays how many species are
+profiled and the aggregate multiplier range.
+
 ## Current capability boundary
 
-Implemented in D3-E4a:
+Implemented through D3-E4b:
 
 - immutable knot/profile dataclasses and strict mapping parser;
 - canonical JSON and SHA-256 for the profile and enclosing v3 document;
@@ -95,18 +118,37 @@ Implemented in D3-E4a:
 - scalar endpoint/interior localization without changing energy metadata;
 - standard YAML/backend round-trip and v3 device semantic hashing;
 - frozen v1/v2 document and shipped-config semantic hashes.
+- local-band-edge material compilation and endpoint contact localization;
+- spatial single-level and distributed-source occupancy, charge,
+  recombination, and analytic tangents;
+- dark equilibrium and illuminated QF J-V execution on the guarded QF/DC path;
+- profile identity and multiplier evidence in point, J-V, backend, and frontend
+  results;
+- uniform v3 limits for both single-level and Gaussian v2 sources, local-band
+  support rejection, and compiled layer-average density checks.
 
-Still fail closed until later D3-E4 checkpoints:
+Still outside the D3-E4b capability label:
 
-- production material, contact, Poisson, continuity, analytic-tangent, and J-V
-  execution of v3 profiles;
+- a source-clean independent energy x space x solver-tolerance certificate;
+- any claim that the graded model has SCAPS parity or experimental validation;
 - zero-density knots or discontinuous step profiles;
 - spatial changes to energy center, width, support, kinetics, degeneracy, or
   charge transition;
 - mobile ions, Fermi-Dirac statistics, AC, dynamic occupancy, interface
   defects, tunnelling, and multivalent charge states;
-- external SCAPS parity or experimental validation.
 
-D3-E4b will compile this contract onto the local material arrays. D3-E4c will
-use a new frozen graded configuration and independent energy x space x solver-
-tolerance certificate; the D3-E3 uniform-layer certificate cannot be reused.
+## Verification
+
+- spatial constitutive/device/QF/backend focused domain: 93 passed;
+- default Python suite: 3059 passed, 2 skipped, 264 deselected;
+- frontend suite: 428 passed across 32 files;
+- TypeScript, Vite production build, compileall, scoped Ruff, critical Ruff,
+  and `git diff --check`: passed;
+- all 12 Python warnings are pre-existing NumPy `trapz` compatibility/MMS
+  warnings, and the Vite build retains its pre-existing large-chunk warning.
+
+D3-E4c will use a new frozen graded configuration and an independent energy x
+space x solver-tolerance certificate. The D3-E3 uniform-layer certificate
+cannot be reused. D3-E4b establishes production execution and compatibility;
+it does not establish three-axis convergence, SCAPS parity, or experimental
+validation.

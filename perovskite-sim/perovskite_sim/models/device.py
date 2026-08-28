@@ -730,6 +730,11 @@ def _edge_params(layer: "LayerSpec", side: str, band_grading: bool) -> "Material
     contact sees the profile value at that physical face.
     """
     import dataclasses
+    from perovskite_sim.models.defects import (
+        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+        EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION,
+        bulk_defect_species_at_layer_position,
+    )
     from perovskite_sim.physics.grading import has_grading_params
     from perovskite_sim.physics.doping import doping_at_position
 
@@ -748,6 +753,15 @@ def _edge_params(layer: "LayerSpec", side: str, band_grading: bool) -> "Material
     )
     if N_A_edge != p.N_A or N_D_edge != p.N_D:
         updates.update(N_A=N_A_edge, N_D=N_D_edge)
+    if p.defect_schema_version == EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION:
+        position_fraction = 0.0 if side == "front" else 1.0
+        updates.update(
+            defect_schema_version=EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+            bulk_defects=bulk_defect_species_at_layer_position(
+                p.bulk_defects,
+                position_fraction,
+            ),
+        )
     return dataclasses.replace(p, **updates) if updates else p
 
 

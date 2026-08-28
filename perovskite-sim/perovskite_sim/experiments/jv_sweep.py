@@ -217,6 +217,10 @@ class JVBulkDefectEvidence:
     maximum_absolute_recombination_rate_m3_s: float
     distribution_kinds: tuple[str, ...] = ()
     source_energy_orders: tuple[int, ...] = ()
+    spatial_closure: Literal["layer-density-profile-v1"] | None = None
+    spatial_profile_sha256s: tuple[str | None, ...] = ()
+    minimum_density_multipliers: tuple[float, ...] = ()
+    maximum_density_multipliers: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         if self.model != "monovalent-device-mb-qf-dc-v1":
@@ -271,6 +275,49 @@ class JVBulkDefectEvidence:
                 )
         elif orders:
             raise ValueError("partial distributed bulk-defect evidence is invalid")
+        profile_sha256s = tuple(self.spatial_profile_sha256s)
+        minimum_multipliers = tuple(
+            float(value) for value in self.minimum_density_multipliers
+        )
+        maximum_multipliers = tuple(
+            float(value) for value in self.maximum_density_multipliers
+        )
+        if self.spatial_closure is not None:
+            if self.spatial_closure != "layer-density-profile-v1":
+                raise ValueError("unsupported spatial bulk-defect closure")
+            if (
+                len(profile_sha256s) != len(identifiers)
+                or len(minimum_multipliers) != len(identifiers)
+                or len(maximum_multipliers) != len(identifiers)
+                or not any(value is not None for value in profile_sha256s)
+            ):
+                raise ValueError("spatial bulk-defect evidence is inconsistent")
+            for digest_value in profile_sha256s:
+                if digest_value is None:
+                    continue
+                normalized = str(digest_value).lower()
+                if len(normalized) != 64 or any(
+                    c not in "0123456789abcdef" for c in normalized
+                ):
+                    raise ValueError(
+                        "spatial_profile_sha256s must contain SHA-256 hex values"
+                    )
+            if any(
+                not np.isfinite(lower)
+                or not np.isfinite(upper)
+                or lower <= 0.0
+                or upper < lower
+                for lower, upper in zip(
+                    minimum_multipliers,
+                    maximum_multipliers,
+                    strict=True,
+                )
+            ):
+                raise ValueError(
+                    "spatial density multiplier bounds must be finite and positive"
+                )
+        elif profile_sha256s or minimum_multipliers or maximum_multipliers:
+            raise ValueError("partial spatial bulk-defect evidence is invalid")
         object.__setattr__(self, "model_identity_sha256", digest)
         object.__setattr__(self, "species_identifiers", identifiers)
         object.__setattr__(self, "charge_transitions", transitions)
@@ -279,6 +326,17 @@ class JVBulkDefectEvidence:
             self,
             "source_energy_orders",
             tuple(int(order) for order in orders),
+        )
+        object.__setattr__(self, "spatial_profile_sha256s", profile_sha256s)
+        object.__setattr__(
+            self,
+            "minimum_density_multipliers",
+            minimum_multipliers,
+        )
+        object.__setattr__(
+            self,
+            "maximum_density_multipliers",
+            maximum_multipliers,
         )
 
 

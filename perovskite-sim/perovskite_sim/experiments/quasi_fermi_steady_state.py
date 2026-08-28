@@ -54,6 +54,7 @@ from perovskite_sim.physics.defect_closure import (
 )
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    expand_bulk_defect_species_energy,
     validate_defect_energy_quadrature_order,
 )
 from perovskite_sim.physics.interface_plane import (
@@ -218,6 +219,8 @@ class QuasiFermiJVSweepResult:
     nodal_predictor_fallback_failures: int = 0
     defect_energy_quadrature_order: int | None = None
     defect_distribution_kinds: tuple[str, ...] = ()
+    defect_spatial_profile_sha256s: tuple[str | None, ...] = ()
+    defect_density_multiplier_bounds: tuple[tuple[float, float], ...] = ()
 
     @property
     def certified(self) -> bool:
@@ -470,10 +473,19 @@ def _stack_has_distributed_explicit_defects(stack: DeviceStack) -> bool:
     )
 
 
+def _stack_has_spatial_explicit_defects(stack: DeviceStack) -> bool:
+    return any(
+        species.spatial_profile is not None
+        for layer in electrical_layers(stack)
+        for species in layer.params.bulk_defects
+    )
+
+
 def _stack_requires_monovalent_qf_dc(stack: DeviceStack) -> bool:
     return (
         _stack_has_charged_explicit_defects(stack)
         or _stack_has_distributed_explicit_defects(stack)
+        or _stack_has_spatial_explicit_defects(stack)
     )
 
 
@@ -515,10 +527,12 @@ def _require_material_defect_contract(
     model = mat.monovalent_bulk_defects
     requires_monovalent = _stack_requires_monovalent_qf_dc(stack)
     has_distributed = _stack_has_distributed_explicit_defects(stack)
+    has_spatial = _stack_has_spatial_explicit_defects(stack)
     if requires_monovalent:
         if model is None:
             raise QuasiFermiSteadyStateError(
-                "charged or energy-distributed explicit-defect stack requires "
+                "charged, energy-distributed, or spatially graded "
+                "explicit-defect stack requires "
                 "a qf_dc material cache"
             )
         actual = tuple(
@@ -549,10 +563,14 @@ def _require_material_defect_contract(
                 "single-level qf_dc material cache carries unexpected "
                 "distributed quadrature provenance"
             )
+        if model.has_spatial_profiles != has_spatial:
+            raise QuasiFermiSteadyStateError(
+                "qf_dc material cache does not match spatial defect profiles"
+            )
     elif model is not None:
         raise QuasiFermiSteadyStateError(
-            "qf_dc material cache supplied for a stack without charged or "
-            "energy-distributed defects"
+            "qf_dc material cache supplied for a stack without charged, "
+            "energy-distributed, or spatially graded defects"
         )
 
 
@@ -682,6 +700,40 @@ def _defect_aware_neutral_carriers(
     if model is not None:
         for region in model.regions:
             node_indices = np.flatnonzero(region.active_nodes)
+            if region.has_spatial_profiles:
+                local_gap = np.asarray(region.local_band_gap_eV)
+                local_nc = np.asarray(
+                    region.local_effective_conduction_dos_m3
+                )
+                local_nv = np.asarray(region.local_effective_valence_dos_m3)
+                for local_index, node_index in enumerate(node_indices):
+                    local_species = region.species_at_local_node(local_index)
+                    local_expansions = tuple(
+                        expand_bulk_defect_species_energy(
+                            source,
+                            band_gap_eV=float(local_gap[local_index]),
+                            order=region.energy_quadrature_order,
+                        )
+                        for source in local_species
+                    )
+                    closure = solve_monovalent_defect_charge_neutrality(
+                        temperature_K=region.temperature_K,
+                        band_gap_eV=float(local_gap[local_index]),
+                        effective_conduction_dos_m3=float(
+                            local_nc[local_index]
+                        ),
+                        effective_valence_dos_m3=float(local_nv[local_index]),
+                        acceptor_density_m3=float(mat.N_A[node_index]),
+                        donor_density_m3=float(mat.N_D[node_index]),
+                        species=local_species,
+                        energy_quadrature_order=(
+                            region.energy_quadrature_order
+                        ),
+                        energy_expansions=local_expansions,
+                    ).neutrality
+                    electron[node_index] = closure.electron_density_m3
+                    hole[node_index] = closure.hole_density_m3
+                continue
             doping_pairs = np.column_stack(
                 (mat.N_A[node_indices], mat.N_D[node_indices])
             )
@@ -3123,6 +3175,18 @@ def solve_quasi_fermi_jv_sweep(
             material.monovalent_bulk_defects.distribution_kinds
             if material.monovalent_bulk_defects is not None
             and material.monovalent_bulk_defects.has_distributed_species
+            else ()
+        ),
+        defect_spatial_profile_sha256s=(
+            material.monovalent_bulk_defects.spatial_profile_sha256s
+            if material.monovalent_bulk_defects is not None
+            and material.monovalent_bulk_defects.has_spatial_profiles
+            else ()
+        ),
+        defect_density_multiplier_bounds=(
+            material.monovalent_bulk_defects.source_density_multiplier_bounds
+            if material.monovalent_bulk_defects is not None
+            and material.monovalent_bulk_defects.has_spatial_profiles
             else ()
         ),
     )

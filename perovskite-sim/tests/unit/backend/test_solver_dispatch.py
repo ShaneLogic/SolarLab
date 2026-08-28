@@ -431,6 +431,9 @@ def _defect_diagnostics(
     recombination=(-5.0, 7.0),
     distribution_kinds=(),
     source_energy_orders=(),
+    spatial_profile_sha256s=(),
+    minimum_density_multipliers=(),
+    maximum_density_multipliers=(),
 ):
     return SimpleNamespace(
         model_identity_sha256=digest,
@@ -443,6 +446,9 @@ def _defect_diagnostics(
         total_recombination_rate_m3_s=np.asarray(recombination),
         distribution_kinds=distribution_kinds,
         source_energy_orders=source_energy_orders,
+        spatial_profile_sha256s=spatial_profile_sha256s,
+        minimum_density_multipliers=minimum_density_multipliers,
+        maximum_density_multipliers=maximum_density_multipliers,
     )
 
 
@@ -486,6 +492,22 @@ def test_qf_bulk_defect_evidence_preserves_distributed_source_protocol():
     assert evidence.source_energy_orders == (16, 16)
 
 
+def test_qf_bulk_defect_evidence_preserves_spatial_profile_identity():
+    diagnostics = _defect_diagnostics(
+        spatial_profile_sha256s=("c" * 64, None),
+        minimum_density_multipliers=(0.5, 1.0),
+        maximum_density_multipliers=(1.5, 1.0),
+    )
+    evidence = bm._summarize_qf_bulk_defect_evidence(
+        (SimpleNamespace(bulk_defect_diagnostics=diagnostics),)
+    )
+
+    assert evidence.spatial_closure == "layer-density-profile-v1"
+    assert evidence.spatial_profile_sha256s == ("c" * 64, None)
+    assert evidence.minimum_density_multipliers == (0.5, 1.0)
+    assert evidence.maximum_density_multipliers == (1.5, 1.0)
+
+
 @pytest.mark.parametrize(
     "points, message",
     [
@@ -500,6 +522,25 @@ def test_qf_bulk_defect_evidence_preserves_distributed_source_protocol():
             (
                 SimpleNamespace(bulk_defect_diagnostics=_defect_diagnostics()),
                 SimpleNamespace(bulk_defect_diagnostics=_defect_diagnostics(digest="b" * 64)),
+            ),
+            "identity changed",
+        ),
+        (
+            (
+                SimpleNamespace(
+                    bulk_defect_diagnostics=_defect_diagnostics(
+                        spatial_profile_sha256s=("c" * 64, None),
+                        minimum_density_multipliers=(0.5, 1.0),
+                        maximum_density_multipliers=(1.5, 1.0),
+                    )
+                ),
+                SimpleNamespace(
+                    bulk_defect_diagnostics=_defect_diagnostics(
+                        spatial_profile_sha256s=("d" * 64, None),
+                        minimum_density_multipliers=(0.5, 1.0),
+                        maximum_density_multipliers=(1.5, 1.0),
+                    )
+                ),
             ),
             "identity changed",
         ),

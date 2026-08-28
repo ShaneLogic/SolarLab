@@ -22,12 +22,14 @@ from perovskite_sim.models.defects import (
     ACCEPTOR,
     DONOR,
     EXPLICIT_DEFECT_SCHEMA_VERSION,
+    EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION,
     EXPLICIT_QUASI_STEADY,
     NEUTRAL,
     SINGLE_LEVEL,
     BulkDefectDocument,
     BulkDefectSpecies,
     ExplicitDefectCapabilityError,
+    bulk_defect_species_at_layer_position,
 )
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
@@ -298,6 +300,11 @@ class MonovalentDefectRegion:
     species: tuple[BulkDefectSpecies, ...]
     schema_version: str = EXPLICIT_DEFECT_SCHEMA_VERSION
     energy_quadrature_order: int = DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
+    normalized_layer_coordinates: np.ndarray | None = None
+    local_band_gap_eV: np.ndarray | None = None
+    local_effective_conduction_dos_m3: np.ndarray | None = None
+    local_effective_valence_dos_m3: np.ndarray | None = None
+    source_density_multipliers: np.ndarray | None = None
     source_expansions: tuple[DefectSpeciesEnergyExpansion, ...] = field(
         init=False,
         repr=False,
@@ -339,7 +346,110 @@ class MonovalentDefectRegion:
             "effective_valence_dos_m3",
         )
         temperature = _finite_positive(self.temperature_K, "temperature_K")
-        species = _validate_source_species(self.species, band_gap_eV=gap)
+        spatial = self.schema_version == EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION
+        spatial_values = (
+            self.normalized_layer_coordinates,
+            self.local_band_gap_eV,
+            self.local_effective_conduction_dos_m3,
+            self.local_effective_valence_dos_m3,
+            self.source_density_multipliers,
+        )
+        if spatial and any(value is None for value in spatial_values):
+            raise ValueError(
+                "v3 defect regions require coordinates, local band data, and "
+                "source density multipliers"
+            )
+        if not spatial and any(value is not None for value in spatial_values):
+            raise ValueError("spatial defect region arrays require the v3 schema")
+        coordinates = None
+        local_gap = None
+        local_nc = None
+        local_nv = None
+        density_multipliers = None
+        if spatial:
+            active_count = int(np.count_nonzero(active))
+            coordinates = np.asarray(
+                self.normalized_layer_coordinates,
+                dtype=float,
+            )
+            local_gap = np.asarray(self.local_band_gap_eV, dtype=float)
+            local_nc = np.asarray(
+                self.local_effective_conduction_dos_m3,
+                dtype=float,
+            )
+            local_nv = np.asarray(
+                self.local_effective_valence_dos_m3,
+                dtype=float,
+            )
+            density_multipliers = np.asarray(
+                self.source_density_multipliers,
+                dtype=float,
+            )
+            for name, values in (
+                ("normalized_layer_coordinates", coordinates),
+                ("local_band_gap_eV", local_gap),
+                ("local_effective_conduction_dos_m3", local_nc),
+                ("local_effective_valence_dos_m3", local_nv),
+            ):
+                if values.shape != (active_count,) or not np.all(
+                    np.isfinite(values)
+                ):
+                    raise ValueError(f"{name} must be finite and match active nodes")
+            if (
+                np.any(coordinates < 0.0)
+                or np.any(coordinates > 1.0)
+                or np.any(np.diff(coordinates) <= 0.0)
+            ):
+                raise ValueError(
+                    "normalized layer coordinates must increase within [0, 1]"
+                )
+            if (
+                np.any(local_gap <= 0.0)
+                or np.any(local_nc <= 0.0)
+                or np.any(local_nv <= 0.0)
+            ):
+                raise ValueError("local band data must be strictly positive")
+            if density_multipliers.shape != (
+                len(self.species),
+                active_count,
+            ) or not np.all(np.isfinite(density_multipliers)):
+                raise ValueError(
+                    "source density multipliers must match species and active nodes"
+                )
+            if np.any(density_multipliers <= 0.0):
+                raise ValueError("source density multipliers must be positive")
+            expected_multipliers = np.asarray(
+                [
+                    [
+                        1.0
+                        if source.spatial_profile is None
+                        else source.spatial_profile.density_multiplier_at(position)
+                        for position in coordinates
+                    ]
+                    for source in self.species
+                ],
+                dtype=float,
+            )
+            if not np.array_equal(density_multipliers, expected_multipliers):
+                raise ValueError(
+                    "source density multipliers do not match spatial profiles"
+                )
+            if (
+                gap != float(local_gap[0])
+                or conduction_dos != float(local_nc[0])
+                or valence_dos != float(local_nv[0])
+            ):
+                raise ValueError(
+                    "v3 scalar band references must equal the first local node"
+                )
+            validation_gap = float(np.min(local_gap))
+        else:
+            validation_gap = gap
+        species = _validate_source_species(
+            self.species,
+            band_gap_eV=validation_gap,
+            allow_spatial_profiles=spatial,
+        )
         energy_order = validate_defect_energy_quadrature_order(
             self.energy_quadrature_order
         )
@@ -359,7 +469,7 @@ class MonovalentDefectRegion:
         for source in species:
             expansion = expand_bulk_defect_species_energy(
                 source,
-                band_gap_eV=gap,
+                band_gap_eV=validation_gap,
                 order=energy_order,
             )
             expansions.append(expansion)
@@ -392,11 +502,67 @@ class MonovalentDefectRegion:
             "source_node_ranges",
             tuple(source_node_ranges),
         )
+        if spatial:
+            object.__setattr__(
+                self,
+                "normalized_layer_coordinates",
+                _readonly(coordinates),
+            )
+            object.__setattr__(self, "local_band_gap_eV", _readonly(local_gap))
+            object.__setattr__(
+                self,
+                "local_effective_conduction_dos_m3",
+                _readonly(local_nc),
+            )
+            object.__setattr__(
+                self,
+                "local_effective_valence_dos_m3",
+                _readonly(local_nv),
+            )
+            object.__setattr__(
+                self,
+                "source_density_multipliers",
+                _readonly(density_multipliers),
+            )
 
     @property
     def has_distributed_species(self) -> bool:
         return any(
             item.distribution.kind != SINGLE_LEVEL for item in self.species
+        )
+
+    @property
+    def has_spatial_profiles(self) -> bool:
+        return self.schema_version == EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION
+
+    @property
+    def spatial_profile_sha256s(self) -> tuple[str | None, ...]:
+        return tuple(
+            None if item.spatial_profile is None else item.spatial_profile.sha256
+            for item in self.species
+        )
+
+    @property
+    def source_density_multiplier_bounds(
+        self,
+    ) -> tuple[tuple[float, float], ...]:
+        if not self.has_spatial_profiles:
+            return tuple((1.0, 1.0) for _ in self.species)
+        multipliers = np.asarray(self.source_density_multipliers)
+        return tuple(
+            (float(np.min(values)), float(np.max(values)))
+            for values in multipliers
+        )
+
+    def species_at_local_node(self, index: int) -> tuple[BulkDefectSpecies, ...]:
+        if not self.has_spatial_profiles:
+            return self.species
+        coordinates = np.asarray(self.normalized_layer_coordinates)
+        if index < 0 or index >= coordinates.size:
+            raise IndexError("local defect node index is outside the region")
+        return bulk_defect_species_at_layer_position(
+            self.species,
+            float(coordinates[index]),
         )
 
     @property
@@ -481,6 +647,28 @@ class MonovalentBulkDefectModel:
         return any(region.has_distributed_species for region in self.regions)
 
     @property
+    def has_spatial_profiles(self) -> bool:
+        return any(region.has_spatial_profiles for region in self.regions)
+
+    @property
+    def spatial_profile_sha256s(self) -> tuple[str | None, ...]:
+        return tuple(
+            digest
+            for region in self.regions
+            for digest in region.spatial_profile_sha256s
+        )
+
+    @property
+    def source_density_multiplier_bounds(
+        self,
+    ) -> tuple[tuple[float, float], ...]:
+        return tuple(
+            bounds
+            for region in self.regions
+            for bounds in region.source_density_multiplier_bounds
+        )
+
+    @property
     def distribution_kinds(self) -> tuple[str, ...]:
         return tuple(
             kind
@@ -532,6 +720,29 @@ class MonovalentBulkDefectModel:
                         if region.has_distributed_species
                         else {}
                     ),
+                    **(
+                        {
+                            "spatial_closure": "layer-density-profile-v1",
+                            "normalized_layer_coordinates": (
+                                region.normalized_layer_coordinates.tolist()
+                            ),
+                            "local_band_gap_eV": region.local_band_gap_eV.tolist(),
+                            "local_effective_conduction_dos_m3": (
+                                region.local_effective_conduction_dos_m3.tolist()
+                            ),
+                            "local_effective_valence_dos_m3": (
+                                region.local_effective_valence_dos_m3.tolist()
+                            ),
+                            "source_density_multipliers": (
+                                region.source_density_multipliers.tolist()
+                            ),
+                            "spatial_profile_sha256s": list(
+                                region.spatial_profile_sha256s
+                            ),
+                        }
+                        if region.has_spatial_profiles
+                        else {}
+                    ),
                 }
                 for region in self.regions
             ],
@@ -573,6 +784,10 @@ class MonovalentBulkDefectEvaluation:
     distribution_kinds: tuple[str, ...] = ()
     source_energy_orders: tuple[int, ...] = ()
     source_node_identifiers: tuple[tuple[str, ...], ...] = ()
+    source_density_multiplier: np.ndarray | None = None
+    spatial_profile_sha256s: tuple[str | None, ...] = ()
+    minimum_density_multipliers: tuple[float, ...] = ()
+    maximum_density_multipliers: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         digest = str(self.model_identity_sha256).lower()
@@ -649,6 +864,61 @@ class MonovalentBulkDefectEvaluation:
                 )
         elif orders or node_identifiers:
             raise ValueError("partial distributed bulk-defect metadata is invalid")
+        profile_sha256s = tuple(self.spatial_profile_sha256s)
+        minimum_multipliers = tuple(
+            float(value) for value in self.minimum_density_multipliers
+        )
+        maximum_multipliers = tuple(
+            float(value) for value in self.maximum_density_multipliers
+        )
+        multiplier = self.source_density_multiplier
+        spatial_metadata = bool(profile_sha256s)
+        if spatial_metadata:
+            if (
+                multiplier is None
+                or len(profile_sha256s) != len(identifiers)
+                or len(minimum_multipliers) != len(identifiers)
+                or len(maximum_multipliers) != len(identifiers)
+                or any(
+                    value is not None
+                    and (
+                        len(str(value)) != 64
+                        or any(c not in "0123456789abcdef" for c in str(value))
+                    )
+                    for value in profile_sha256s
+                )
+            ):
+                raise ValueError("spatial bulk-defect metadata is inconsistent")
+            multiplier_array = np.asarray(multiplier, dtype=float)
+            if (
+                multiplier_array.shape != active.shape
+                or not np.all(np.isfinite(multiplier_array))
+                or np.any(multiplier_array[active] <= 0.0)
+                or np.any(multiplier_array[~active] != 0.0)
+            ):
+                raise ValueError(
+                    "source_density_multiplier must be positive on active nodes"
+                )
+            for index, row_active in enumerate(active):
+                values = multiplier_array[index, row_active]
+                if (
+                    minimum_multipliers[index] != float(np.min(values))
+                    or maximum_multipliers[index] != float(np.max(values))
+                ):
+                    raise ValueError(
+                        "spatial density multiplier bounds are inconsistent"
+                    )
+            object.__setattr__(
+                self,
+                "source_density_multiplier",
+                _readonly(multiplier_array),
+            )
+        elif (
+            multiplier is not None
+            or minimum_multipliers
+            or maximum_multipliers
+        ):
+            raise ValueError("partial spatial bulk-defect metadata is invalid")
         active_occupancy = np.asarray(self.occupancy)[active]
         active_denominator = np.asarray(self.kinetic_denominator_s1)[active]
         minimum = float(self.minimum_occupancy)
@@ -683,6 +953,17 @@ class MonovalentBulkDefectEvaluation:
         object.__setattr__(self, "distribution_kinds", kinds)
         object.__setattr__(self, "source_energy_orders", orders)
         object.__setattr__(self, "source_node_identifiers", node_identifiers)
+        object.__setattr__(self, "spatial_profile_sha256s", profile_sha256s)
+        object.__setattr__(
+            self,
+            "minimum_density_multipliers",
+            minimum_multipliers,
+        )
+        object.__setattr__(
+            self,
+            "maximum_density_multipliers",
+            maximum_multipliers,
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible constitutive evidence payload."""
@@ -732,6 +1013,20 @@ class MonovalentBulkDefectEvaluation:
             payload["source_node_identifiers"] = [
                 list(values) for values in self.source_node_identifiers
             ]
+        if self.spatial_profile_sha256s:
+            payload["spatial_closure"] = "layer-density-profile-v1"
+            payload["spatial_profile_sha256s"] = list(
+                self.spatial_profile_sha256s
+            )
+            payload["source_density_multiplier"] = (
+                self.source_density_multiplier.tolist()
+            )
+            payload["minimum_density_multipliers"] = list(
+                self.minimum_density_multipliers
+            )
+            payload["maximum_density_multipliers"] = list(
+                self.maximum_density_multipliers
+            )
         return payload
 
 
@@ -739,6 +1034,7 @@ def _validate_source_species(
     species: Sequence[BulkDefectSpecies],
     *,
     band_gap_eV: float,
+    allow_spatial_profiles: bool = False,
 ) -> tuple[BulkDefectSpecies, ...]:
     resolved = tuple(species)
     if not resolved:
@@ -752,6 +1048,10 @@ def _validate_source_species(
         )
     for item in resolved:
         item.validate_band_gap(band_gap_eV)
+        if item.spatial_profile is not None and not allow_spatial_profiles:
+            raise MonovalentDefectClosureCapabilityError(
+                "spatial profiles require the compiled v3 device closure"
+            )
         if item.charge_transition not in {NEUTRAL, ACCEPTOR, DONOR}:
             raise MonovalentDefectClosureCapabilityError(
                 "DEF-2 requires neutral, acceptor, or donor transitions"
@@ -768,7 +1068,10 @@ def _validate_source_species(
             )
         if (
             item.distribution.kind != SINGLE_LEVEL
-            and not item.distributed_explicit_ready
+            and not (
+                item.distributed_explicit_ready
+                or (allow_spatial_profiles and item.spatial_explicit_ready)
+            )
         ):
             raise MonovalentDefectClosureCapabilityError(
                 "distributed production requires a complete normalized v2 "
@@ -1082,6 +1385,196 @@ def evaluate_monovalent_source_defect_closure(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _SpatialDefectRegionEvaluation:
+    kinetic_denominator_s1: np.ndarray
+    occupancy: np.ndarray
+    occupied_density_m3: np.ndarray
+    charge_density_C_m3: np.ndarray
+    recombination_rate_m3_s: np.ndarray
+    recombination_derivative_n_s1: np.ndarray
+    recombination_derivative_p_s1: np.ndarray
+    charge_derivative_fixed_qf_C_m3_V: np.ndarray
+    minimum_occupancy: float
+    maximum_occupancy: float
+    minimum_kinetic_denominator_s1: float
+
+
+def _evaluate_spatial_defect_region(
+    electron_density_m3: np.ndarray,
+    hole_density_m3: np.ndarray,
+    region: MonovalentDefectRegion,
+) -> _SpatialDefectRegionEvaluation:
+    """Evaluate a v3 region across energy and physical position in one pass."""
+
+    if not region.has_spatial_profiles:
+        raise ValueError("spatial region evaluation requires a v3 region")
+    n = np.asarray(electron_density_m3, dtype=float)
+    p = np.asarray(hole_density_m3, dtype=float)
+    local_gap = np.asarray(region.local_band_gap_eV, dtype=float)
+    local_nc = np.asarray(region.local_effective_conduction_dos_m3, dtype=float)
+    local_nv = np.asarray(region.local_effective_valence_dos_m3, dtype=float)
+    multipliers = np.asarray(region.source_density_multipliers, dtype=float)
+    if (
+        n.shape != local_gap.shape
+        or p.shape != local_gap.shape
+        or not np.all(np.isfinite(n))
+        or not np.all(np.isfinite(p))
+        or np.any(n < 0.0)
+        or np.any(p < 0.0)
+    ):
+        raise ValueError(
+            "spatial defect closure carrier densities must be finite, "
+            "non-negative, and match the region"
+        )
+
+    source_count = len(region.species)
+    local_count = n.size
+    shape = (source_count, local_count)
+    kinetic_denominator = np.empty(shape, dtype=float)
+    mean_occupancy = np.empty(shape, dtype=float)
+    occupied_density = np.empty(shape, dtype=float)
+    charge_density = np.empty(shape, dtype=float)
+    recombination_rate = np.empty(shape, dtype=float)
+    derivative_n = np.empty(shape, dtype=float)
+    derivative_p = np.empty(shape, dtype=float)
+    charge_derivative_fixed_qf = np.empty(shape, dtype=float)
+    thermal = thermal_voltage(region.temperature_K)
+    intrinsic_product = local_nc * local_nv * np.exp(-local_gap / thermal)
+    minimum_occupancies: list[float] = []
+    maximum_occupancies: list[float] = []
+
+    for source_index, (source, quadrature) in enumerate(
+        zip(region.species, region.source_quadratures, strict=True)
+    ):
+        energies = np.asarray(
+            quadrature.energy_levels_eV_above_vb,
+            dtype=float,
+        )[:, None]
+        base_density = np.asarray(
+            quadrature.density_weights_m3,
+            dtype=float,
+        )[:, None]
+        density = base_density * multipliers[source_index][None, :]
+        capture_n = (
+            float(source.kinetics.sigma_n_m2)
+            * float(source.kinetics.thermal_velocity_n_m_s)
+        )
+        capture_p = (
+            float(source.kinetics.sigma_p_m2)
+            * float(source.kinetics.thermal_velocity_p_m_s)
+        )
+        n1 = local_nc[None, :] * np.exp(
+            -(local_gap[None, :] - energies) / thermal
+        )
+        p1 = local_nv[None, :] * np.exp(-energies / thermal)
+        n_e = n[None, :]
+        p_e = p[None, :]
+        filled_numerator = capture_n * n_e + capture_p * p1
+        empty_numerator = capture_n * n1 + capture_p * p_e
+        denominator = filled_numerator + empty_numerator
+        if not np.all(np.isfinite(denominator)) or np.any(denominator <= 0.0):
+            raise FloatingPointError(
+                f"spatial defect kinetic denominator is invalid: {source.name}"
+            )
+        node_occupancy = filled_numerator / denominator
+        occupancy_derivative_n = (
+            capture_n * (1.0 - node_occupancy) / denominator
+        )
+        occupancy_derivative_p = (
+            -capture_p * node_occupancy / denominator
+        )
+        node_occupied_density = density * node_occupancy
+        excess_product = n_e * p_e - intrinsic_product[None, :]
+        rate_prefactor = density * capture_n * capture_p
+        node_rate = rate_prefactor * excess_product / denominator
+        node_derivative_n = (
+            rate_prefactor
+            * (p_e * denominator - excess_product * capture_n)
+            / denominator**2
+        )
+        node_derivative_p = (
+            rate_prefactor
+            * (n_e * denominator - excess_product * capture_p)
+            / denominator**2
+        )
+        if source.charge_transition == ACCEPTOR:
+            signed_charge_number = -node_occupied_density
+            charge_factor = -Q * density
+        elif source.charge_transition == DONOR:
+            signed_charge_number = density - node_occupied_density
+            charge_factor = -Q * density
+        else:
+            signed_charge_number = np.zeros_like(node_occupied_density)
+            charge_factor = np.zeros_like(density)
+        node_charge = Q * signed_charge_number
+        node_charge_derivative_n = charge_factor * occupancy_derivative_n
+        node_charge_derivative_p = charge_factor * occupancy_derivative_p
+        node_charge_derivative_fixed_qf = (
+            node_charge_derivative_n * n_e
+            - node_charge_derivative_p * p_e
+        ) / thermal
+
+        def integrate(values: np.ndarray) -> np.ndarray:
+            if quadrature.order == 1:
+                return values[0]
+            return np.sum(values, axis=0)
+
+        kinetic_denominator[source_index] = np.min(denominator, axis=0)
+        integrated_occupied = integrate(node_occupied_density)
+        mean_occupancy[source_index] = (
+            node_occupancy[0]
+            if quadrature.order == 1
+            else integrated_occupied
+            / (
+                float(source.distribution.total_density_m3)
+                * multipliers[source_index]
+            )
+        )
+        occupied_density[source_index] = integrated_occupied
+        charge_density[source_index] = integrate(node_charge)
+        recombination_rate[source_index] = integrate(node_rate)
+        derivative_n[source_index] = integrate(node_derivative_n)
+        derivative_p[source_index] = integrate(node_derivative_p)
+        charge_derivative_fixed_qf[source_index] = integrate(
+            node_charge_derivative_fixed_qf
+        )
+        minimum_occupancies.append(float(np.min(node_occupancy)))
+        maximum_occupancies.append(float(np.max(node_occupancy)))
+
+    finite_outputs = (
+        kinetic_denominator,
+        mean_occupancy,
+        occupied_density,
+        charge_density,
+        recombination_rate,
+        derivative_n,
+        derivative_p,
+        charge_derivative_fixed_qf,
+    )
+    if not all(np.all(np.isfinite(value)) for value in finite_outputs):
+        raise FloatingPointError("spatial defect closure produced non-finite output")
+    minimum = min(minimum_occupancies)
+    maximum = max(maximum_occupancies)
+    if minimum < 0.0 or maximum > 1.0:
+        raise FloatingPointError(
+            "spatial defect occupancy left [0, 1] without clipping"
+        )
+    return _SpatialDefectRegionEvaluation(
+        kinetic_denominator_s1=kinetic_denominator,
+        occupancy=mean_occupancy,
+        occupied_density_m3=occupied_density,
+        charge_density_C_m3=charge_density,
+        recombination_rate_m3_s=recombination_rate,
+        recombination_derivative_n_s1=derivative_n,
+        recombination_derivative_p_s1=derivative_p,
+        charge_derivative_fixed_qf_C_m3_V=charge_derivative_fixed_qf,
+        minimum_occupancy=minimum,
+        maximum_occupancy=maximum,
+        minimum_kinetic_denominator_s1=float(np.min(kinetic_denominator)),
+    )
+
+
 def evaluate_monovalent_bulk_defects(
     electron_density_m3: np.ndarray,
     hole_density_m3: np.ndarray,
@@ -1108,6 +1601,9 @@ def evaluate_monovalent_bulk_defects(
     recombination_derivative_n = np.zeros(shape, dtype=float)
     recombination_derivative_p = np.zeros(shape, dtype=float)
     charge_derivative_fixed_qf = np.zeros(shape, dtype=float)
+    source_density_multiplier = (
+        np.zeros(shape, dtype=float) if model.has_spatial_profiles else None
+    )
     total_charge_density = np.zeros(model.node_count, dtype=float)
     total_recombination_rate = np.zeros(model.node_count, dtype=float)
     total_recombination_derivative_n = np.zeros(
@@ -1128,23 +1624,47 @@ def evaluate_monovalent_bulk_defects(
     offset = 0
     for region in model.regions:
         mask = region.active_nodes
-        local = evaluate_monovalent_source_defect_closure(
-            n[mask],
-            p[mask],
-            region.species,
-            band_gap_eV=region.band_gap_eV,
-            effective_conduction_dos_m3=(
-                region.effective_conduction_dos_m3
-            ),
-            effective_valence_dos_m3=region.effective_valence_dos_m3,
-            temperature_K=region.temperature_K,
-            energy_quadrature_order=region.energy_quadrature_order,
-            energy_expansions=region.source_expansions,
-        )
+        if region.has_spatial_profiles:
+            local = _evaluate_spatial_defect_region(n[mask], p[mask], region)
+        else:
+            local = evaluate_monovalent_source_defect_closure(
+                n[mask],
+                p[mask],
+                region.species,
+                band_gap_eV=region.band_gap_eV,
+                effective_conduction_dos_m3=(
+                    region.effective_conduction_dos_m3
+                ),
+                effective_valence_dos_m3=region.effective_valence_dos_m3,
+                temperature_K=region.temperature_K,
+                energy_quadrature_order=region.energy_quadrature_order,
+                energy_expansions=region.source_expansions,
+            )
         count = len(region.species)
         rows = slice(offset, offset + count)
         active_nodes[rows, mask] = True
-        if isinstance(local, MonovalentDefectClosureResult):
+        if source_density_multiplier is not None:
+            source_density_multiplier[rows, mask] = (
+                region.source_density_multipliers
+                if region.has_spatial_profiles
+                else 1.0
+            )
+        if isinstance(local, _SpatialDefectRegionEvaluation):
+            kinetic_denominator[rows, mask] = local.kinetic_denominator_s1
+            occupancy[rows, mask] = local.occupancy
+            occupied_density[rows, mask] = local.occupied_density_m3
+            charge_density[rows, mask] = local.charge_density_C_m3
+            recombination_rate[rows, mask] = local.recombination_rate_m3_s
+            recombination_derivative_n[rows, mask] = (
+                local.recombination_derivative_n_s1
+            )
+            recombination_derivative_p[rows, mask] = (
+                local.recombination_derivative_p_s1
+            )
+            charge_derivative_fixed_qf[rows, mask] = (
+                local.charge_derivative_fixed_qf_C_m3_V
+            )
+        elif isinstance(local, MonovalentDefectClosureResult):
             kinetic_denominator[rows, mask] = local.kinetic_denominator_s1
             occupancy[rows, mask] = local.occupancy
             occupied_density[rows, mask] = local.occupied_density_m3
@@ -1181,19 +1701,41 @@ def evaluate_monovalent_bulk_defects(
                 charge_derivative_fixed_qf[row, mask] = (
                     source.charge_derivative_fixed_qf_C_m3_V
                 )
-        total_charge_density[mask] = local.total_charge_density_C_m3
-        total_recombination_rate[mask] = (
-            local.total_recombination_rate_m3_s
-        )
-        total_recombination_derivative_n[mask] = (
-            local.total_recombination_derivative_n_s1
-        )
-        total_recombination_derivative_p[mask] = (
-            local.total_recombination_derivative_p_s1
-        )
-        total_charge_derivative_fixed_qf[mask] = (
-            local.total_charge_derivative_fixed_qf_C_m3_V
-        )
+        if isinstance(local, _SpatialDefectRegionEvaluation):
+            total_charge_density[mask] = np.sum(
+                local.charge_density_C_m3,
+                axis=0,
+            )
+            total_recombination_rate[mask] = np.sum(
+                local.recombination_rate_m3_s,
+                axis=0,
+            )
+            total_recombination_derivative_n[mask] = np.sum(
+                local.recombination_derivative_n_s1,
+                axis=0,
+            )
+            total_recombination_derivative_p[mask] = np.sum(
+                local.recombination_derivative_p_s1,
+                axis=0,
+            )
+            total_charge_derivative_fixed_qf[mask] = np.sum(
+                local.charge_derivative_fixed_qf_C_m3_V,
+                axis=0,
+            )
+        else:
+            total_charge_density[mask] = local.total_charge_density_C_m3
+            total_recombination_rate[mask] = (
+                local.total_recombination_rate_m3_s
+            )
+            total_recombination_derivative_n[mask] = (
+                local.total_recombination_derivative_n_s1
+            )
+            total_recombination_derivative_p[mask] = (
+                local.total_recombination_derivative_p_s1
+            )
+            total_charge_derivative_fixed_qf[mask] = (
+                local.total_charge_derivative_fixed_qf_C_m3_V
+            )
         minimum_occupancies.append(local.minimum_occupancy)
         maximum_occupancies.append(local.maximum_occupancy)
         if isinstance(local, MonovalentDefectClosureResult):
@@ -1241,6 +1783,20 @@ def evaluate_monovalent_bulk_defects(
         ),
         source_node_identifiers=(
             model.source_node_identifiers if distributed_metadata else ()
+        ),
+        source_density_multiplier=source_density_multiplier,
+        spatial_profile_sha256s=(
+            model.spatial_profile_sha256s if model.has_spatial_profiles else ()
+        ),
+        minimum_density_multipliers=(
+            tuple(item[0] for item in model.source_density_multiplier_bounds)
+            if model.has_spatial_profiles
+            else ()
+        ),
+        maximum_density_multipliers=(
+            tuple(item[1] for item in model.source_density_multiplier_bounds)
+            if model.has_spatial_profiles
+            else ()
         ),
     )
 

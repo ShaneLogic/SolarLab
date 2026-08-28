@@ -1441,6 +1441,9 @@ def _summarize_qf_bulk_defect_evidence(points):
         tuple(first.charge_transitions),
         tuple(getattr(first, "distribution_kinds", ())),
         tuple(getattr(first, "source_energy_orders", ())),
+        tuple(getattr(first, "spatial_profile_sha256s", ())),
+        tuple(getattr(first, "minimum_density_multipliers", ())),
+        tuple(getattr(first, "maximum_density_multipliers", ())),
     )
     for item in diagnostics[1:]:
         candidate = (
@@ -1449,6 +1452,9 @@ def _summarize_qf_bulk_defect_evidence(points):
             tuple(item.charge_transitions),
             tuple(getattr(item, "distribution_kinds", ())),
             tuple(getattr(item, "source_energy_orders", ())),
+            tuple(getattr(item, "spatial_profile_sha256s", ())),
+            tuple(getattr(item, "minimum_density_multipliers", ())),
+            tuple(getattr(item, "maximum_density_multipliers", ())),
         )
         if candidate != identity:
             raise ValueError(
@@ -1488,6 +1494,12 @@ def _summarize_qf_bulk_defect_evidence(points):
         maximum_absolute_recombination_rate_m3_s=max(recombination_maxima),
         distribution_kinds=identity[3],
         source_energy_orders=identity[4],
+        spatial_closure=(
+            "layer-density-profile-v1" if identity[5] else None
+        ),
+        spatial_profile_sha256s=identity[5],
+        minimum_density_multipliers=identity[6],
+        maximum_density_multipliers=identity[7],
     )
 
 

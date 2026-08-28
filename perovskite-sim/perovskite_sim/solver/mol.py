@@ -31,6 +31,7 @@ from perovskite_sim.models.defects import (
     ACCEPTOR,
     DONOR,
     EFFECTIVE_LIFETIME,
+    EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION,
     EXPLICIT_QUASI_STEADY,
     NEUTRAL,
     SINGLE_LEVEL,
@@ -944,6 +945,7 @@ def _compile_monovalent_bulk_defects(
     layers: tuple,
     layer_masks: tuple[np.ndarray, ...],
     *,
+    grid_m: np.ndarray,
     physical_band_gap_eV: np.ndarray,
     effective_conduction_dos_m3: np.ndarray,
     effective_valence_dos_m3: np.ndarray,
@@ -974,6 +976,9 @@ def _compile_monovalent_bulk_defects(
         local_nc = np.asarray(effective_conduction_dos_m3[mask], dtype=float)
         local_nv = np.asarray(effective_valence_dos_m3[mask], dtype=float)
         local_ni_sq = np.asarray(intrinsic_product_m6[mask], dtype=float)
+        spatial = (
+            document.schema_version == EXPLICIT_DEFECT_SPATIAL_SCHEMA_VERSION
+        )
         arrays = {
             "band gap": local_gap,
             "conduction DOS": local_nc,
@@ -986,22 +991,39 @@ def _compile_monovalent_bulk_defects(
                 values.size == 0
                 or not np.all(np.isfinite(values))
                 or np.any(values <= 0.0)
-                or not np.all(values == values[0])
+                or (not spatial and not np.all(values == values[0]))
             )
         ]
         if invalid:
-            raise ExplicitDefectCapabilityError(
-                "DEF-3 QF/DC explicit defects require uniform finite positive "
-                f"{', '.join(invalid)} in {layer_id}; spatial grading starts "
-                "at D3-E4"
+            requirement = (
+                "finite positive"
+                if spatial
+                else "uniform finite positive"
             )
-        physical_ni_sq = float(local_nc[0] * local_nv[0]) * math.exp(
-            -float(local_gap[0]) / thermal_voltage(float(temperature_K))
-        )
-        relative_intrinsic_mismatch = float(
-            np.max(np.abs(local_ni_sq - physical_ni_sq))
-            / max(physical_ni_sq, np.finfo(float).tiny)
-        )
+            grading_hint = (
+                "" if spatial else "; spatial grading requires the v3 schema"
+            )
+            raise ExplicitDefectCapabilityError(
+                f"QF/DC explicit defects require {requirement} "
+                f"{', '.join(invalid)} in {layer_id}{grading_hint}"
+            )
+        thermal = thermal_voltage(float(temperature_K))
+        if spatial:
+            physical_ni_sq = local_nc * local_nv * np.exp(-local_gap / thermal)
+            relative_intrinsic_mismatch = float(
+                np.max(
+                    np.abs(local_ni_sq - physical_ni_sq)
+                    / np.maximum(physical_ni_sq, np.finfo(float).tiny)
+                )
+            )
+        else:
+            physical_ni_sq = float(local_nc[0] * local_nv[0]) * math.exp(
+                -float(local_gap[0]) / thermal
+            )
+            relative_intrinsic_mismatch = float(
+                np.max(np.abs(local_ni_sq - physical_ni_sq))
+                / max(physical_ni_sq, np.finfo(float).tiny)
+            )
         if (
             not np.all(np.isfinite(local_ni_sq))
             or np.any(local_ni_sq <= 0.0)
@@ -1012,6 +1034,46 @@ def _compile_monovalent_bulk_defects(
                 f"explicit node in {layer_id}; maximum relative mismatch="
                 f"{relative_intrinsic_mismatch:.6g}"
             )
+        spatial_kwargs = {}
+        if spatial:
+            layer_offset = math.fsum(
+                float(item.thickness) for item in layers[:layer_index]
+            )
+            thickness = float(layer.thickness)
+            raw_coordinates = (
+                np.asarray(grid_m, dtype=float)[mask] - layer_offset
+            ) / thickness
+            coordinate_tolerance = _LAYER_EDGE_PAD / thickness
+            if (
+                np.any(raw_coordinates < -coordinate_tolerance)
+                or np.any(raw_coordinates > 1.0 + coordinate_tolerance)
+                or np.any(np.diff(raw_coordinates) <= 0.0)
+            ):
+                raise ExplicitDefectCapabilityError(
+                    f"v3 defect coordinates are invalid in {layer_id}"
+                )
+            coordinates = np.clip(raw_coordinates, 0.0, 1.0)
+            density_multipliers = np.asarray(
+                [
+                    [
+                        1.0
+                        if species.spatial_profile is None
+                        else species.spatial_profile.density_multiplier_at(
+                            float(position)
+                        )
+                        for position in coordinates
+                    ]
+                    for species in document.bulk_defects
+                ],
+                dtype=float,
+            )
+            spatial_kwargs = {
+                "normalized_layer_coordinates": coordinates,
+                "local_band_gap_eV": local_gap,
+                "local_effective_conduction_dos_m3": local_nc,
+                "local_effective_valence_dos_m3": local_nv,
+                "source_density_multipliers": density_multipliers,
+            }
         regions.append(
             MonovalentDefectRegion(
                 identifier=layer_id,
@@ -1024,6 +1086,7 @@ def _compile_monovalent_bulk_defects(
                 species=document.bulk_defects,
                 schema_version=document.schema_version,
                 energy_quadrature_order=defect_energy_quadrature_order,
+                **spatial_kwargs,
             )
         )
     return MonovalentBulkDefectModel(regions=tuple(regions))
@@ -1226,12 +1289,23 @@ def build_material_arrays(
             for species in layer.params.bulk_defects
         )
     )
+    spatial_explicit_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.params is not None
+        and layer.params.defect_model == EXPLICIT_QUASI_STEADY
+        and any(
+            species.spatial_profile is not None
+            for species in layer.params.bulk_defects
+        )
+    )
     monovalent_qf_layers = tuple(
         layer.name
         for layer in elec_layers
         if layer.name in {
             *charged_explicit_layers,
             *distributed_explicit_layers,
+            *spatial_explicit_layers,
         }
     )
     research_monovalent_qf_dc = (
@@ -1241,7 +1315,8 @@ def build_material_arrays(
         raise ExplicitDefectCapabilityError(
             "DEF-1 explicit execution accepts neutral species only in its "
             "single-level form; "
-            "charged or energy-distributed execution requires the guarded "
+            "charged, energy-distributed, or spatially graded execution "
+            "requires the guarded "
             "QF/DC closure. "
             "Activated layers: "
             + ", ".join(monovalent_qf_layers)
@@ -1249,7 +1324,7 @@ def build_material_arrays(
     if research_monovalent_qf_dc and not monovalent_qf_layers:
         raise ExplicitDefectCapabilityError(
             "qf_dc explicit-defect charge closure requires at least one "
-            "acceptor, donor, or energy-distributed species"
+            "acceptor, donor, energy-distributed, or spatially graded species"
         )
     if research_monovalent_qf_dc and (
         stack.built_in_potential_mode != "semiconductor_work_function"
@@ -2312,6 +2387,11 @@ def build_material_arrays(
         or research_bulk_trap_equilibrium
         or research_monovalent_qf_dc
     ):
+        if research_monovalent_qf_dc:
+            from perovskite_sim.models.device import _edge_params
+
+            first = _edge_params(elec_layers[0], "front", _band_grading)
+            last = _edge_params(elec_layers[-1], "back", _band_grading)
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,
         )
@@ -2533,6 +2613,7 @@ def build_material_arrays(
         _compile_monovalent_bulk_defects(
             tuple(elec_layers),
             tuple(layer_masks),
+            grid_m=x,
             physical_band_gap_eV=Eg_phys,
             effective_conduction_dos_m3=N_C_node_arr,
             effective_valence_dos_m3=N_V_node_arr,

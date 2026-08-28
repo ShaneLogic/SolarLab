@@ -132,6 +132,10 @@ describe('renderJV — toolbar + style mode', () => {
         minimum_kinetic_denominator_s1: 2.5e5,
         maximum_absolute_charge_density_C_m3: 4.2e3,
         maximum_absolute_recombination_rate_m3_s: 8.1e27,
+        spatial_closure: 'layer-density-profile-v1',
+        spatial_profile_sha256s: ['b'.repeat(64), null],
+        minimum_density_multipliers: [0.5, 1.0],
+        maximum_density_multipliers: [1.5, 1.0],
       },
     }))
     const summary = el.querySelector<HTMLElement>('[data-test="jv-defect-evidence-summary"]')!
@@ -140,6 +144,8 @@ describe('renderJV — toolbar + style mode', () => {
     expect(summary.textContent).toContain('aaaaaaaaaaaa...')
     expect(summary.textContent).toContain('Occupancy: [0.0123, 0.9876]')
     expect(summary.textContent).toContain('4.200e+3 C m^-3')
+    expect(summary.textContent).toContain('1/2 profiled species')
+    expect(summary.textContent).toContain('m(x) [0.500, 1.500]')
     expect(summary.title).toContain(digest)
     expect(_lastNewPlotTraces()).toHaveLength(2)
   })
