@@ -1035,7 +1035,7 @@ lanes:
     options:
       config_loader: standard
       require_protocol: true
-      base_finite_difference_step: 1.0e-5
+      base_finite_difference_step: 7.0e-6
       base_newton_residual_tolerance: 4.0e-7
       max_newton_iterations: 60
       base_poisson_tolerance_V: 1.0e-12

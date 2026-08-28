@@ -277,3 +277,37 @@ def test_stress_protocol_rejects_duplicate_point_ids():
 
     with pytest.raises(ValueError, match="point IDs must be unique"):
         stress._stress_points({"stress_points": raw})
+
+
+def test_resolved_stress_contract_tightens_only_the_jacobian_probe_step():
+    registry = load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    )
+    historical = registry.lane("interface-charge-device-stress-v1")
+    resolved = registry.lane("interface-charge-device-stress-resolved-v2")
+
+    historical_base, _ = stress._solver_controls(historical.options, 1.0)
+    resolved_base, resolved_coarse = stress._solver_controls(resolved.options, 1.0)
+    _, resolved_refined = stress._solver_controls(resolved.options, 0.5)
+
+    assert historical_base["finite_difference_step"] == pytest.approx(1.0e-5)
+    assert resolved_base["finite_difference_step"] == pytest.approx(7.0e-6)
+    assert resolved_coarse["finite_difference_step"] == pytest.approx(7.0e-6)
+    assert resolved_refined["finite_difference_step"] == pytest.approx(
+        7.0e-6 * np.sqrt(0.5)
+    )
+    assert {
+        key: value
+        for key, value in resolved_base.items()
+        if key != "finite_difference_step"
+    } == {
+        key: value
+        for key, value in historical_base.items()
+        if key != "finite_difference_step"
+    }
+    protocol = stress._protocol(
+        stress._stress_points(resolved.options),
+        resolved_base,
+    )
+    assert protocol["solver"]["base_controls"] == resolved_base
