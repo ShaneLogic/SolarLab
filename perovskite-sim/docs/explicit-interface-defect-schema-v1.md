@@ -1,8 +1,10 @@
 # Explicit Interface-Defect Input Contract v1
 
-Status: D4-E0 canonical microscopic identity. The document is populated by
-the standard and SCAPS-shaped config adapters, but production interface-charge
-routes remain parked until D4-E1/E2 complete.
+Status: D4-E1 canonical microscopic identity and charged-research wiring. The
+standard and SCAPS-shaped config adapters populate the document, and every
+charged steady-state research entry point now requires it. Production
+interface-charge routes remain parked pending D4-E2 recertification and the
+D4-E3 production decision.
 
 ## Purpose
 
@@ -13,10 +15,11 @@ for recombination-only compatibility, but it could not prove that trap
 occupancy, recombination, and sheet charge belonged to the same microscopic
 population.
 
-D4-E0 adds an immutable `InterfaceDefectDocument` in canonical SI units. The
+D4-E0 added an immutable `InterfaceDefectDocument` in canonical SI units. The
 legacy `DeviceStack.interfaces` tuple remains present, so default solver
-arithmetic is unchanged. Charged D4 paths will require the document and verify
-the resolved compatibility velocity before they can run.
+arithmetic is unchanged. D4-E1 makes the charged QF dark-reference, backend,
+refinement, and stress paths require the document and verify the resolved
+compatibility velocity before they can run.
 
 ## Canonical SI document
 
@@ -93,6 +96,28 @@ traps. The document does not claim an absolute trap charge, fixed countercharge,
 or whole-device charge-neutrality convention. Those require a separate schema
 and physical reference.
 
+## D4-E1 execution contract
+
+`require_uncalibrated_microscopic_interface_defects()` applies one shared,
+fail-closed contract to every electrical interface in a charged research
+stack. It requires:
+
+- exactly one v1 canonical document per electrical interface;
+- `calibration_factor == iface_state_calibration_factor == 1`;
+- `degeneracy == 1`, because the v1 occupancy closure does not consume a
+  separate degeneracy term;
+- a trap depth inside the selected reference-side band gap; and
+- exact identity between the compatibility SRV pair and
+  `sigma * v_th * N_t` reconstructed from the document.
+
+The charged QF adapter then rebuilds its compatibility SRV tuple from the
+validated documents. `N_t` for sheet charge is taken directly from
+`total_density_m2`, never from the duplicate cgs compatibility field. The dark
+reference stores each document SHA-256 and capture-velocity pair; its content
+hash additionally binds the trap densities, interface transmission, and dark
+state. A modified density, SRV, document hash, transmission, grid, stack, or
+dark-state array fails before a charged solve.
+
 ## Compatibility and execution boundary
 
 - `InterfaceDefect(E_t_eV=...)` remains valid for legacy programmatic and
@@ -104,5 +129,9 @@ and physical reference.
   canonical document raises at construction.
 - Content identity is the SHA-256 of strict canonical JSON. Unknown nested
   fields are rejected rather than dropped.
-- D4-E0 alone does not unlock production interface charge, J-V, transient, AC,
-  2D, tunnelling, multivalent, or metastable execution.
+- The research backend returns the document hashes and reconstructed capture
+  velocities as evidence; the charged refinement executors gate
+  `microscopic_defect_contract_verified == 1`.
+- D4-E1 does not unlock production interface charge, J-V, transient, AC, 2D,
+  tunnelling, multivalent, or metastable execution. D4-E2 must mint complete
+  certificates under the v2 protocol/executor identity first.

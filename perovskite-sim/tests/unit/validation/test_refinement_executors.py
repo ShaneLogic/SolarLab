@@ -23,6 +23,7 @@ from perovskite_sim.experiments.ion_aware_impedance import (
     PerturbationStepAssessment,
 )
 from perovskite_sim.discretization.grid import GridResolutionError
+from perovskite_sim.models.interface_defects import InterfaceDefectDocument
 from perovskite_sim.physics.contacts import ContactThermodynamicCertificate
 from perovskite_sim.solver.numerical_diagnostics import (
     NumericalDiagnosticsMonitor,
@@ -1013,11 +1014,19 @@ def test_equilibrium_referenced_interface_charge_executor_smoke(monkeypatch):
             "illuminated_voltage_V": 0.0,
         }
     )
+    document = InterfaceDefectDocument.from_scaps_cgs(
+        sigma_n_cm2=3.0e-19,
+        sigma_p_cm2=5.0e-19,
+        thermal_velocity_cm_s=1.0e7,
+        total_density_cm2=1.0e12,
+        trap_depth_eV_below_cb=0.55,
+    )
     defect = SimpleNamespace(
         E_t_eV=0.55,
         N_t_cm2=1.0e12,
         calibration_factor=1.0,
         iface_state_calibration_factor=1.0,
+        microscopic_document=document,
     )
 
     @dataclass(frozen=True)
@@ -1031,15 +1040,21 @@ def test_equilibrium_referenced_interface_charge_executor_smoke(monkeypatch):
 
     stack = ChargedStack()
     monkeypatch.setattr(executors, "_load_stack", lambda *_: stack)
+    microscopic_contract = SimpleNamespace(
+        documents=(document,),
+        document_sha256=(document.sha256,),
+        capture_velocities_m_s=(document.capture_velocities_m_s,),
+        trap_density_m2=(document.total_density_m2,),
+    )
+    monkeypatch.setattr(
+        executors,
+        "bind_uncalibrated_microscopic_interface_defects",
+        lambda value, **_kwargs: (value, microscopic_contract),
+    )
     monkeypatch.setattr(
         executors,
         "electrical_interface_defects",
         lambda *_: (defect,),
-    )
-    monkeypatch.setattr(
-        executors,
-        "electrical_interfaces",
-        lambda *_: ((0.03, 0.05),),
     )
     monkeypatch.setattr(
         executors,
@@ -1129,6 +1144,8 @@ def test_equilibrium_referenced_interface_charge_executor_smoke(monkeypatch):
         dark_state=dark,
         equilibrium_occupancy=(0.25,),
         trap_density_m2=(trap_density,),
+        interface_defect_document_sha256=(document.sha256,),
+        capture_velocities_m_s=(document.capture_velocities_m_s,),
         interface_transmission=1.0,
         grid_sha256="1" * 64,
         stack_sha256="2" * 64,
@@ -1172,6 +1189,10 @@ def test_equilibrium_referenced_interface_charge_executor_smoke(monkeypatch):
     assert quality["charge_law_consistent"].values == (1.0,)
     metadata = json.loads(measurement.metadata_json)
     assert metadata["dark_reference"]["dark_state_sha256"] == "3" * 64
+    assert metadata["dark_reference"]["interface_defect_document_sha256"] == [
+        document.sha256
+    ]
+    assert quality["microscopic_defect_contract_verified"].values == (1.0,)
     assert [item["target"] for item in metadata["target_evidence"]] == [
         "dark_bias",
         "illuminated_operating_point",

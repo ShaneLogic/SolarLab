@@ -828,7 +828,7 @@ lanes:
     config: configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.refinement_executors:run_equilibrium_referenced_interface_charge
-    executor_version: v1
+    executor_version: v2
     grid:
       parameter: N_grid
       values: [30, 60, 120]
@@ -851,6 +851,7 @@ lanes:
       dark_reference_hash_verified: {operator: eq, limit: 1.0, units: "1"}
       dark_trace_shift_zero_V: {operator: le, limit: 0.0, units: V}
       interface_evidence_aligned: {operator: eq, limit: 1.0, units: "1"}
+      microscopic_defect_contract_verified: {operator: eq, limit: 1.0, units: "1"}
       max_charge_fraction_of_one_electron: {operator: le, limit: 1.0, units: "1"}
       max_continuity_bound_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
       max_current_spread_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
@@ -880,13 +881,14 @@ lanes:
       - This lane certifies equilibrium-referenced incremental charge, not absolute trap charge, fixed countercharge, or whole-device neutrality.
       - The purpose-built two-layer stack is an internal numerical reference and makes no SCAPS or experimental-validation claim.
       - Only the QF steady-state research API is in scope; transient, impedance, 2-D, and production experiment routes remain parked.
+      - Executor v2 requires one uncalibrated canonical microscopic v1 document per interface and exact sigma*v_th*N_t identity with the compatibility SRV; v1 certificates predate this contract.
 
   interface-charge-device-stress-v1:
     claim_level: internal-numerical-candidate
     config: configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.interface_charge_stress:run_equilibrium_referenced_interface_charge_stress
-    executor_version: v1
+    executor_version: v2
     grid:
       parameter: N_grid
       values: [30, 60]
@@ -912,6 +914,7 @@ lanes:
       dark_trace_shift_zero_V: {operator: le, limit: 0.0, units: V}
       grid_geometry_aligned: {operator: eq, limit: 1.0, units: "1"}
       interface_evidence_aligned: {operator: eq, limit: 1.0, units: "1"}
+      microscopic_defect_contract_verified: {operator: eq, limit: 1.0, units: "1"}
       max_charge_fraction_of_one_electron: {operator: le, limit: 1.0, units: "1"}
       max_continuity_bound_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
       max_current_spread_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
@@ -980,13 +983,14 @@ lanes:
       - Charge-barrier sign consistency is an internal electrostatic law check, not an experimental trend validation.
       - The lane remains limited to the purpose-built two-layer stack and equilibrium-referenced incremental charge.
       - Transient, impedance, 2-D, production experiment routes, absolute trap charge, and whole-device neutrality remain out of scope.
+      - Executor v2 binds every stress variant to an uncalibrated canonical microscopic v1 document; prior certificates are inherited evidence only.
 
   interface-charge-device-stress-resolved-v2:
     claim_level: internal-numerical-candidate
     config: configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.interface_charge_stress:run_equilibrium_referenced_interface_charge_stress
-    executor_version: v1
+    executor_version: v2
     grid:
       parameter: N_grid
       values: [30, 60, 90]
@@ -1012,6 +1016,7 @@ lanes:
       dark_trace_shift_zero_V: {operator: le, limit: 0.0, units: V}
       grid_geometry_aligned: {operator: eq, limit: 1.0, units: "1"}
       interface_evidence_aligned: {operator: eq, limit: 1.0, units: "1"}
+      microscopic_defect_contract_verified: {operator: eq, limit: 1.0, units: "1"}
       max_charge_fraction_of_one_electron: {operator: le, limit: 1.0, units: "1"}
       max_continuity_bound_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
       max_current_spread_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}

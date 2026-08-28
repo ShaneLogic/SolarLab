@@ -73,7 +73,8 @@ from perovskite_sim.models.device import (
     DeviceStack,
     InterfaceChargeClosureParkedError,
     LayerSpec,
-    electrical_interface_defects,
+    MicroscopicInterfaceDefectContractError,
+    require_uncalibrated_microscopic_interface_defects,
 )
 from perovskite_sim.models.mode import resolve_mode
 from perovskite_sim.physics.contacts import (
@@ -513,21 +514,13 @@ def build_interface_charge_research_stack(
         violations.append("the calibrated contact barrier must be zero")
     if stack.autoloop_generated_lever:
         violations.append("autoloop-generated calibration levers are not accepted")
-    defects = electrical_interface_defects(stack)
-    if not defects or any(defect is None for defect in defects):
-        violations.append(
-            "one explicit InterfaceDefect is required per electrical interface"
+    try:
+        require_uncalibrated_microscopic_interface_defects(
+            stack,
+            consumer="interface-charge research endpoint",
         )
-    elif any(
-        defect.N_t_cm2 <= 0.0
-        or defect.calibration_factor != 1.0
-        or defect.iface_state_calibration_factor != 1.0
-        for defect in defects
-        if defect is not None
-    ):
-        violations.append(
-            "interface traps require positive Nt and unity calibration factors"
-        )
+    except MicroscopicInterfaceDefectContractError as exc:
+        violations.append(str(exc))
     if violations:
         raise HTTPException(status_code=422, detail="; ".join(violations))
     return stack
@@ -826,6 +819,8 @@ class InterfaceChargeDarkReferenceEvidence(BaseModel):
     grid_sha256: str
     stack_sha256: str
     dark_state_sha256: str
+    interface_defect_document_sha256: tuple[str, ...]
+    capture_velocities_m_s: tuple[tuple[float, float], ...]
     equilibrium_occupancy: tuple[float, ...]
     trap_density_m2: tuple[float, ...]
     incremental_sheet_charge_C_m2: tuple[float, ...]
@@ -1009,6 +1004,11 @@ def _build_interface_charge_research_result(
 
     equilibrium = np.asarray(dark_reference.equilibrium_occupancy, dtype=float)
     trap_density = np.asarray(dark_reference.trap_density_m2, dtype=float)
+    document_hashes = tuple(dark_reference.interface_defect_document_sha256)
+    capture_velocities = np.asarray(
+        dark_reference.capture_velocities_m_s,
+        dtype=float,
+    )
     result_equilibrium = np.asarray(
         result.interface_equilibrium_occupancy,
         dtype=float,
@@ -1044,11 +1044,20 @@ def _build_interface_charge_research_result(
         raise ValueError("interface evidence arrays are misaligned")
     if trace_shift.shape != (interface_count, 2):
         raise ValueError("interface trace-shift evidence is misaligned")
+    if len(document_hashes) != interface_count or capture_velocities.shape != (
+        interface_count,
+        2,
+    ):
+        raise ValueError("microscopic interface-defect evidence is misaligned")
     if any(
         not np.all(np.isfinite(value))
-        for value in (equilibrium, *vectors, trace_shift)
+        for value in (equilibrium, *vectors, trace_shift, capture_velocities)
     ):
         raise ValueError("interface evidence contains non-finite values")
+    if np.any(capture_velocities < 0.0):
+        raise ValueError(
+            "microscopic interface capture velocities must be non-negative"
+        )
     if np.any(trap_density <= 0.0):
         raise ValueError("interface trap densities must be positive")
     if np.any((equilibrium < 0.0) | (equilibrium > 1.0)) or np.any(
@@ -1228,6 +1237,17 @@ def _build_interface_charge_research_result(
             ),
             dark_state_sha256=_require_research_sha256(
                 "dark_state_sha256", dark_reference.dark_state_sha256
+            ),
+            interface_defect_document_sha256=tuple(
+                _require_research_sha256(
+                    f"interface_defect_document_sha256[{index}]",
+                    value,
+                )
+                for index, value in enumerate(document_hashes)
+            ),
+            capture_velocities_m_s=tuple(
+                (float(values[0]), float(values[1]))
+                for values in capture_velocities
             ),
             equilibrium_occupancy=tuple(float(v) for v in equilibrium),
             trap_density_m2=tuple(float(v) for v in trap_density),

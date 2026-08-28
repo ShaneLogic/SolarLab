@@ -19,7 +19,12 @@ from perovskite_sim.experiments.quasi_fermi_steady_state import (
     solve_equilibrium_referenced_interface_charge_steady_state,
 )
 from perovskite_sim.models.device import (
+    MicroscopicInterfaceDefectContractError,
+    bind_uncalibrated_microscopic_interface_defects,
     electrical_interface_defects,
+)
+from perovskite_sim.models.interface_defects import (
+    EXPLICIT_INTERFACE_DEFECT_SCHEMA_VERSION,
 )
 from perovskite_sim.physics.contacts import (
     require_contact_thermodynamic_certificate,
@@ -161,20 +166,21 @@ def _require_research_stack(stack: object):
         violations.append("the calibrated contact barrier must be zero")
     if getattr(stack, "autoloop_generated_lever", False):
         violations.append("autoloop-generated calibration is forbidden")
-    defects = electrical_interface_defects(stack)
-    if not defects or any(defect is None for defect in defects):
-        violations.append("one InterfaceDefect is required per electrical interface")
-    elif any(
-        defect.N_t_cm2 <= 0.0
-        or defect.calibration_factor != 1.0
-        or defect.iface_state_calibration_factor != 1.0
-        for defect in defects
-        if defect is not None
-    ):
-        violations.append("positive Nt and unity calibration factors are required")
+    bound_stack = None
+    microscopic_contract = None
+    try:
+        bound_stack, microscopic_contract = (
+            bind_uncalibrated_microscopic_interface_defects(
+                stack,
+                consumer="equilibrium-referenced interface-charge stress",
+            )
+        )
+    except MicroscopicInterfaceDefectContractError as exc:
+        violations.append(str(exc))
     if violations:
         raise RuntimeError("; ".join(violations))
-    return defects
+    assert bound_stack is not None and microscopic_contract is not None
+    return electrical_interface_defects(stack), bound_stack, microscopic_contract
 
 
 def _solver_controls(
@@ -254,11 +260,17 @@ def _protocol(
         "interface": {
             "cross_transmission": 1.0,
             "energy_reference": "below_local_conduction_band",
+            "kinetics_source": "canonical_microscopic_interface_defect_document",
+            "microscopic_schema_version": (
+                EXPLICIT_INTERFACE_DEFECT_SCHEMA_VERSION
+            ),
+            "require_exact_compatibility_srv_identity": True,
+            "require_unity_calibration": True,
             "topology": TWO_SIDED_TRACE,
             "transport_model": FERMI_DIRAC_RICHARDSON,
         },
         "measurement": "one_factor_at_a_time_device_stress",
-        "schema_version": "interface-charge-device-stress-protocol-v1",
+        "schema_version": "interface-charge-device-stress-protocol-v2",
         "solver": {
             "base_controls": dict(base_controls),
             "illumination_steps": list(DEFAULT_ILLUMINATION_STEPS),
@@ -312,10 +324,10 @@ def _solve_variant(
     grid_intervals: int,
     controls: dict[str, float | int],
 ) -> dict[str, Any]:
-    defects = _require_research_stack(stack)
+    defects, bound_stack, microscopic_contract = _require_research_stack(stack)
     shared_grid = build_electrical_grid(stack, grid_intervals)
     grid = build_two_sided_trace_grid(shared_grid, stack)
-    charge_off_stack = replace(stack, interface_charge_closure="off")
+    charge_off_stack = replace(bound_stack, interface_charge_closure="off")
     material = build_material_arrays(grid, charge_off_stack)
     if material.iface_state_charge != 0.0:
         raise RuntimeError("legacy shared-node interface charge must remain zero")
@@ -436,12 +448,25 @@ def _solve_variant(
         "metadata": {
             "contact_thermodynamics": dataclasses.asdict(contact),
             "dark_reference": {
+                "capture_velocities_m_s": [
+                    list(values) for values in reference.capture_velocities_m_s
+                ],
                 "dark_state_sha256": reference.dark_state_sha256,
                 "equilibrium_occupancy": list(reference.equilibrium_occupancy),
                 "grid_sha256": reference.grid_sha256,
+                "interface_defect_document_sha256": list(
+                    reference.interface_defect_document_sha256
+                ),
                 "stack_sha256": reference.stack_sha256,
                 "trap_density_m2": list(reference.trap_density_m2),
             },
+            "microscopic_interface_defects": [
+                {
+                    "canonical_document": document.to_dict(),
+                    "canonical_document_sha256": document.sha256,
+                }
+                for document in microscopic_contract.documents
+            ],
             "derived": describe_stack(stack),
             "point": {
                 "axis": point.axis,
@@ -475,9 +500,11 @@ def _solve_variant(
                     reference.grid_sha256,
                     reference.stack_sha256,
                     reference.dark_state_sha256,
+                    *reference.interface_defect_document_sha256,
                 )
             ),
             "interface_evidence_aligned": True,
+            "microscopic_defect_contract_verified": True,
             "max_charge_fraction_of_one_electron": float(
                 np.max(np.abs(charge) / (Q * density[np.newaxis, :]))
             ),
@@ -566,6 +593,7 @@ def run_equilibrium_referenced_interface_charge_stress(
         "dark_reference_certified",
         "dark_reference_hash_verified",
         "interface_evidence_aligned",
+        "microscopic_defect_contract_verified",
         "occupancy_bounded",
         "parameter_values_applied",
         "rebaseline_acknowledged",

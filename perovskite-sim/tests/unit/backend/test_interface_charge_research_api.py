@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as backend
 from perovskite_sim.constants import Q
+from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.physics.contacts import ContactThermodynamicCertificate
 
 
@@ -65,6 +66,8 @@ def _install_fake_research_lane(monkeypatch, *, corrupt_charge: bool = False):
         dark_state=dark_state,
         equilibrium_occupancy=equilibrium,
         trap_density_m2=trap_density,
+        interface_defect_document_sha256=("d" * 64,),
+        capture_velocities_m_s=((0.03, 0.05),),
         grid_sha256="a" * 64,
         stack_sha256="b" * 64,
         dark_state_sha256="c" * 64,
@@ -193,6 +196,22 @@ def test_research_endpoint_requires_explicit_acknowledgement(monkeypatch):
     assert "research_acknowledged=true" in response.json()["detail"]
 
 
+def test_research_stack_rejects_missing_microscopic_interface_document(monkeypatch):
+    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    defect = stack.interface_defects[0]
+    missing = replace(
+        stack,
+        interface_defects=(replace(defect, microscopic_document=None),),
+    )
+    monkeypatch.setattr(backend, "_load_stack", lambda *_args: missing)
+
+    with pytest.raises(backend.HTTPException) as exc_info:
+        backend.build_interface_charge_research_stack("ignored.yaml", None)
+
+    assert exc_info.value.status_code == 422
+    assert "canonical microscopic defect document" in str(exc_info.value.detail)
+
+
 def test_research_endpoint_returns_aligned_evidence(monkeypatch):
     captured = _install_fake_research_lane(monkeypatch)
 
@@ -221,6 +240,12 @@ def test_research_endpoint_returns_aligned_evidence(monkeypatch):
         "research_acknowledged": True,
     }
     assert payload["dark_reference"]["dark_state_sha256"] == "c" * 64
+    assert payload["dark_reference"]["interface_defect_document_sha256"] == [
+        "d" * 64
+    ]
+    assert payload["dark_reference"]["capture_velocities_m_s"] == [
+        [0.03, 0.05]
+    ]
     assert payload["dark_reference"]["charge_on_off_bit_identical"] is True
     assert payload["dark_reference"]["incremental_sheet_charge_C_m2"] == [0.0]
     assert payload["operating_point"]["certified"] is True

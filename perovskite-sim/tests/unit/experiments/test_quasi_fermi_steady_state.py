@@ -32,6 +32,7 @@ from perovskite_sim.models.device import (
     InterfaceDefect,
     LayerSpec,
 )
+from perovskite_sim.models.interface_defects import InterfaceDefectDocument
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
 from perovskite_sim.physics.two_sided_interface import (
@@ -142,6 +143,13 @@ def _prepared_charged_interface_system_inputs():
 
 def _research_interface_charge_stack() -> DeviceStack:
     base = _two_layer_interface_stack()
+    document = InterfaceDefectDocument.from_scaps_cgs(
+        sigma_n_cm2=6.0e-18,
+        sigma_p_cm2=1.0e-17,
+        thermal_velocity_cm_s=1.0e7,
+        total_density_cm2=5.0e10,
+        trap_depth_eV_below_cb=0.55,
+    )
     illuminated_left = replace(
         base.layers[0],
         params=replace(base.layers[0].params, alpha=1.0e6),
@@ -149,9 +157,13 @@ def _research_interface_charge_stack() -> DeviceStack:
     return replace(
         base,
         layers=(illuminated_left, base.layers[1]),
-        interfaces=((0.03, 0.05),),
+        interfaces=(document.capture_velocities_m_s,),
         interface_defects=(
-            InterfaceDefect(E_t_eV=0.55, N_t_cm2=5.0e10),
+            InterfaceDefect(
+                E_t_eV=0.55,
+                N_t_cm2=5.0e10,
+                microscopic_document=document,
+            ),
         ),
         interface_charge_closure="equilibrium_referenced",
         interface_charge_rebaseline_acknowledged=True,
@@ -1006,6 +1018,10 @@ def test_research_api_binds_dark_reference_and_keeps_production_gate_parked(
     assert len(reference.grid_sha256) == 64
     assert len(reference.stack_sha256) == 64
     assert len(reference.dark_state_sha256) == 64
+    assert reference.interface_defect_document_sha256 == (
+        stack.interface_defects[0].microscopic_document.sha256,
+    )
+    assert reference.capture_velocities_m_s[0] == pytest.approx((0.03, 0.05))
     assert reference.trap_density_m2 == pytest.approx((5.0e14,))
     np.testing.assert_array_equal(dark.y, reference.dark_state.y)
     np.testing.assert_array_equal(dark.phi, reference.dark_state.phi)
@@ -1064,12 +1080,7 @@ def test_research_api_rejects_reference_from_a_different_stack():
         grid,
         stack,
     )
-    changed = replace(
-        stack,
-        interface_defects=(
-            replace(stack.interface_defects[0], N_t_cm2=6.0e10),
-        ),
-    )
+    changed = replace(stack, Phi=2.0 * stack.Phi)
 
     with pytest.raises(ValueError, match="stack does not match"):
         solve_equilibrium_referenced_interface_charge_steady_state(
@@ -1122,6 +1133,46 @@ def test_research_api_rejects_tampered_dark_reference_state_hash():
             stack,
             0.005,
             dark_reference=tampered,
+            illuminated=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        ({"trap_density_m2": (6.0e14,)}, "trap densities do not match"),
+        (
+            {"capture_velocities_m_s": ((0.031, 0.05),)},
+            "capture velocities do not match",
+        ),
+        (
+            {"interface_defect_document_sha256": ("0" * 64,)},
+            "documents do not match",
+        ),
+        ({"interface_transmission": 0.5}, "state content hash"),
+    ],
+)
+def test_research_api_rejects_tampered_microscopic_dark_reference(
+    replacement,
+    message,
+):
+    stack = _research_interface_charge_stack()
+    shared_grid = multilayer_grid(
+        [Layer(1.0e-7, 3), Layer(1.0e-7, 3)],
+        alpha=(2.0, 2.0),
+    )
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+    reference = build_equilibrium_referenced_interface_charge_dark_reference(
+        grid,
+        stack,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        solve_equilibrium_referenced_interface_charge_steady_state(
+            grid,
+            stack,
+            0.005,
+            dark_reference=replace(reference, **replacement),
             illuminated=False,
         )
 

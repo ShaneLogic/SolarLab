@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 from perovskite_sim.constants import V_T
 from perovskite_sim.models.interface_defects import InterfaceDefectDocument
@@ -29,6 +29,10 @@ INTERFACE_CHARGE_UNLOCK_REQUIREMENTS = (
 
 class InterfaceChargeClosureParkedError(ValueError):
     """A production path attempted to activate the parked charge closure."""
+
+
+class MicroscopicInterfaceDefectContractError(ValueError):
+    """A charged research path received ambiguous interface-defect physics."""
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,16 @@ class InterfaceDefect:
         if self.microscopic_document is None:
             raise ValueError("InterfaceDefect has no microscopic kinetics")
         return self.microscopic_document.capture_velocities_m_s
+
+
+@dataclass(frozen=True, slots=True)
+class UncalibratedMicroscopicInterfaceDefectContract:
+    """Canonical interface populations bound to their resolved SI kinetics."""
+
+    documents: tuple[InterfaceDefectDocument, ...]
+    document_sha256: tuple[str, ...]
+    capture_velocities_m_s: tuple[tuple[float, float], ...]
+    trap_density_m2: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -754,6 +768,127 @@ def electrical_interface_defects(
     out = list(defects[substrate_prefix : substrate_prefix + desired])
     out.extend([None] * (desired - len(out)))
     return tuple(out)
+
+
+def require_uncalibrated_microscopic_interface_defects(
+    stack: "DeviceStack",
+    *,
+    consumer: str,
+) -> UncalibratedMicroscopicInterfaceDefectContract:
+    """Require one uncalibrated canonical defect population per interface.
+
+    Charged interface physics must not take its areal inventory from one field
+    while taking capture kinetics from an independently edited compatibility
+    SRV.  This contract therefore checks the duplicated legacy fields and
+    returns the canonical documents that own both quantities.
+    """
+
+    layers = electrical_layers(stack)
+    interface_count = max(0, len(layers) - 1)
+    if interface_count == 0:
+        raise MicroscopicInterfaceDefectContractError(
+            f"{consumer} requires at least one electrical interface"
+        )
+    pairs = electrical_interfaces(stack)
+    defects = electrical_interface_defects(stack)
+    if len(pairs) != interface_count or len(defects) != interface_count:
+        raise MicroscopicInterfaceDefectContractError(
+            f"{consumer} requires interface kinetics and defects aligned to "
+            f"all {interface_count} electrical interfaces"
+        )
+
+    documents: list[InterfaceDefectDocument] = []
+    hashes: list[str] = []
+    capture_velocities: list[tuple[float, float]] = []
+    trap_densities: list[float] = []
+    for index, (left_layer, right_layer, pair, defect) in enumerate(
+        zip(layers, layers[1:], pairs, defects)
+    ):
+        label = f"{consumer} electrical interface {index}"
+        if defect is None or defect.microscopic_document is None:
+            raise MicroscopicInterfaceDefectContractError(
+                f"{label} requires a canonical microscopic defect document"
+            )
+        if (
+            float(defect.calibration_factor) != 1.0
+            or float(defect.iface_state_calibration_factor) != 1.0
+        ):
+            raise MicroscopicInterfaceDefectContractError(
+                f"{label} forbids empirical interface calibration factors"
+            )
+
+        document = defect.microscopic_document
+        if document.degeneracy != 1.0:
+            raise MicroscopicInterfaceDefectContractError(
+                f"{label} requires degeneracy=1.0 because the v1 occupancy "
+                "closure does not consume a degeneracy factor"
+            )
+        left = left_layer.params
+        right = right_layer.params
+        if left is None or right is None:
+            raise MicroscopicInterfaceDefectContractError(
+                f"{label} requires material parameters on both adjacent layers"
+            )
+        left_is_absorber = left_layer.role == "absorber"
+        right_is_absorber = right_layer.role == "absorber"
+        if left_is_absorber and not right_is_absorber:
+            reference = left
+        elif right_is_absorber and not left_is_absorber:
+            reference = right
+        else:
+            reference = left if float(left.Eg) <= float(right.Eg) else right
+        reference_gap = float(reference.Eg)
+        if (
+            not math.isfinite(reference_gap)
+            or reference_gap <= 0.0
+            or document.trap_depth_eV > reference_gap
+        ):
+            raise MicroscopicInterfaceDefectContractError(
+                f"{label} trap depth must lie within the selected reference "
+                f"band gap [0, {reference_gap!r}] eV"
+            )
+
+        actual_pair = tuple(float(value) for value in pair)
+        expected_pair = document.capture_velocities_m_s
+        if actual_pair != expected_pair:
+            raise MicroscopicInterfaceDefectContractError(
+                f"{label} compatibility SRV {actual_pair!r} does not exactly "
+                f"match sigma*v_th*N_t {expected_pair!r} from the canonical "
+                "microscopic document"
+            )
+        documents.append(document)
+        hashes.append(document.sha256)
+        capture_velocities.append(expected_pair)
+        trap_densities.append(document.total_density_m2)
+
+    return UncalibratedMicroscopicInterfaceDefectContract(
+        documents=tuple(documents),
+        document_sha256=tuple(hashes),
+        capture_velocities_m_s=tuple(capture_velocities),
+        trap_density_m2=tuple(trap_densities),
+    )
+
+
+def bind_uncalibrated_microscopic_interface_defects(
+    stack: "DeviceStack",
+    *,
+    consumer: str,
+) -> tuple["DeviceStack", UncalibratedMicroscopicInterfaceDefectContract]:
+    """Rebuild the electrical compatibility SRVs from canonical documents."""
+
+    contract = require_uncalibrated_microscopic_interface_defects(
+        stack,
+        consumer=consumer,
+    )
+    substrate_prefix = 0
+    for layer in stack.layers:
+        if layer.role != "substrate":
+            break
+        substrate_prefix += 1
+    pairs = list(stack.interfaces)
+    stop = substrate_prefix + len(contract.capture_velocities_m_s)
+    pairs[substrate_prefix:stop] = contract.capture_velocities_m_s
+    return replace(stack, interfaces=tuple(pairs)), contract
 
 
 def _edge_params(layer: "LayerSpec", side: str, band_grading: bool) -> "MaterialParams":

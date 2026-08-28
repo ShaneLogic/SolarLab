@@ -58,9 +58,12 @@ from perovskite_sim.experiments.steady_state import (
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import (
+    bind_uncalibrated_microscopic_interface_defects,
     electrical_interface_defects,
-    electrical_interfaces,
     electrical_layers,
+)
+from perovskite_sim.models.interface_defects import (
+    EXPLICIT_INTERFACE_DEFECT_SCHEMA_VERSION,
 )
 from perovskite_sim.physics.contacts import (
     require_contact_thermodynamic_certificate,
@@ -2380,11 +2383,17 @@ def _interface_charge_research_protocol(
             "charge_closure": "equilibrium_referenced",
             "charge_law": "-q*N_t*(f-f_eq)",
             "cross_transmission": 1.0,
+            "kinetics_source": "canonical_microscopic_interface_defect_document",
+            "microscopic_schema_version": (
+                EXPLICIT_INTERFACE_DEFECT_SCHEMA_VERSION
+            ),
+            "require_exact_compatibility_srv_identity": True,
+            "require_unity_calibration": True,
             "topology": TWO_SIDED_TRACE,
             "transport_model": FERMI_DIRAC_RICHARDSON,
         },
         "measurement": "charged_steady_state_bias_and_light",
-        "schema_version": "interface-charge-research-protocol-v1",
+        "schema_version": "interface-charge-research-protocol-v2",
         "solver": {
             "base_finite_difference_step": base_finite_difference_step,
             "base_newton_residual_tolerance": base_newton_residual_tolerance,
@@ -2453,25 +2462,17 @@ def run_equilibrium_referenced_interface_charge(
         raise RuntimeError("charged reference forbids calibrated contact floors")
     if stack.contact_phi_B_eV != 0.0:
         raise RuntimeError("charged reference forbids a calibrated contact barrier")
+    bound_stack, microscopic_contract = (
+        bind_uncalibrated_microscopic_interface_defects(
+            stack,
+            consumer="equilibrium-referenced interface-charge refinement",
+        )
+    )
     defects = electrical_interface_defects(stack)
-    if not defects or any(defect is None for defect in defects):
-        raise RuntimeError(
-            "charged reference requires one interface defect per physical interface"
-        )
-    if any(
-        defect.N_t_cm2 <= 0.0
-        or defect.calibration_factor != 1.0
-        or defect.iface_state_calibration_factor != 1.0
-        for defect in defects
-        if defect is not None
-    ):
-        raise RuntimeError(
-            "charged reference requires positive trap densities and unity calibration"
-        )
 
     shared_grid = build_electrical_grid(stack, point.grid)
     grid = build_two_sided_trace_grid(shared_grid, stack)
-    charge_off_stack = replace(stack, interface_charge_closure="off")
+    charge_off_stack = replace(bound_stack, interface_charge_closure="off")
     base_material = build_material_arrays(grid, charge_off_stack)
     if base_material.iface_state_charge != 0.0:
         raise RuntimeError("legacy shared-node interface charge must remain zero")
@@ -2633,7 +2634,7 @@ def run_equilibrium_referenced_interface_charge(
         charged_dark.interface_trace_potential_shift_V,
         dtype=float,
     )
-    interface_pairs = electrical_interfaces(stack)
+    interface_pairs = microscopic_contract.capture_velocities_m_s
     target_evidence = []
     for (label, voltage, illuminated), result in zip(
         target_specs,
@@ -2692,6 +2693,7 @@ def run_equilibrium_referenced_interface_charge(
                         for defect in defects
                     )
                 ),
+                "microscopic_defect_contract_verified": 1.0,
                 "charge_law_consistent": float(charge_law_consistent),
                 "contact_thermodynamics_certified": float(
                     contact_certificate.certified
@@ -2701,7 +2703,17 @@ def run_equilibrium_referenced_interface_charge(
                     np.max(np.abs(dark_charge))
                 ),
                 "dark_reference_certified": float(reference.dark_state.certified),
-                "dark_reference_hash_verified": 1.0,
+                "dark_reference_hash_verified": float(
+                    all(
+                        isinstance(value, str) and len(value) == 64
+                        for value in (
+                            reference.grid_sha256,
+                            reference.stack_sha256,
+                            reference.dark_state_sha256,
+                            *reference.interface_defect_document_sha256,
+                        )
+                    )
+                ),
                 "dark_trace_shift_zero_V": float(
                     np.max(np.abs(dark_trace_shift))
                 ),
@@ -2780,23 +2792,34 @@ def run_equilibrium_referenced_interface_charge(
                 "actual_intervals": len(grid) - 1,
                 "contact_thermodynamics": dataclasses.asdict(contact_certificate),
                 "dark_reference": {
+                    "capture_velocities_m_s": [
+                        list(values)
+                        for values in reference.capture_velocities_m_s
+                    ],
                     "dark_state_sha256": reference.dark_state_sha256,
                     "equilibrium_occupancy": list(reference.equilibrium_occupancy),
                     "grid_sha256": reference.grid_sha256,
+                    "interface_defect_document_sha256": list(
+                        reference.interface_defect_document_sha256
+                    ),
                     "stack_sha256": reference.stack_sha256,
                     "trap_density_m2": list(reference.trap_density_m2),
                 },
                 "interfaces": [
                     {
+                        "canonical_document": document.to_dict(),
+                        "canonical_document_sha256": document.sha256,
                         "capture_velocity_n_m_s": pair[0],
                         "capture_velocity_p_m_s": pair[1],
                         "charge_character": "equilibrium_increment_character_independent",
-                        "energy_reference": "below_local_conduction_band",
-                        "trap_energy_eV": defect.E_t_eV,
-                        "trap_density_m2": defect.N_t_cm2 * 1.0e4,
+                        "energy_reference": document.energy_reference,
+                        "trap_energy_eV": document.trap_depth_eV,
+                        "trap_density_m2": document.total_density_m2,
                     }
-                    for pair, defect in zip(interface_pairs, defects)
-                    if defect is not None
+                    for pair, document in zip(
+                        interface_pairs,
+                        microscopic_contract.documents,
+                    )
                 ],
                 "source_grid_intervals": point.grid,
                 "target_evidence": target_evidence,

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from perovskite_sim.constants import Q
+from perovskite_sim.models.interface_defects import InterfaceDefectDocument
 from perovskite_sim.physics.contacts import ContactThermodynamicCertificate
 from perovskite_sim.validation import interface_charge_stress as stress
 from perovskite_sim.validation.numerical_certificate import (
@@ -94,17 +95,42 @@ def test_interface_charge_stress_executor_smoke(monkeypatch):
 
     def defect_for(stack):
         updates = {} if stack.point is None else dict(stack.point.updates)
+        trap_depth = float(updates.get("interface_defect_E_t_eV", 0.55))
+        trap_density = float(updates.get("interface_defect_N_t_cm2", 1.0e13))
+        document = InterfaceDefectDocument.from_scaps_cgs(
+            sigma_n_cm2=3.0e-20,
+            sigma_p_cm2=5.0e-20,
+            thermal_velocity_cm_s=1.0e7,
+            total_density_cm2=trap_density,
+            trap_depth_eV_below_cb=trap_depth,
+        )
         return SimpleNamespace(
-            E_t_eV=float(updates.get("interface_defect_E_t_eV", 0.55)),
-            N_t_cm2=float(updates.get("interface_defect_N_t_cm2", 1.0e13)),
+            E_t_eV=trap_depth,
+            N_t_cm2=trap_density,
             calibration_factor=1.0,
             iface_state_calibration_factor=1.0,
+            microscopic_document=document,
         )
 
     monkeypatch.setattr(
         stress,
         "electrical_interface_defects",
         lambda stack: (defect_for(stack),),
+    )
+
+    def bind_microscopic(stack, **_kwargs):
+        document = defect_for(stack).microscopic_document
+        return stack, SimpleNamespace(
+            documents=(document,),
+            document_sha256=(document.sha256,),
+            capture_velocities_m_s=(document.capture_velocities_m_s,),
+            trap_density_m2=(document.total_density_m2,),
+        )
+
+    monkeypatch.setattr(
+        stress,
+        "bind_uncalibrated_microscopic_interface_defects",
+        bind_microscopic,
     )
     monkeypatch.setattr(
         stress,
@@ -149,6 +175,12 @@ def test_interface_charge_stress_executor_smoke(monkeypatch):
             dark_state=dark,
             equilibrium_occupancy=(0.25,),
             trap_density_m2=(density,),
+            interface_defect_document_sha256=(
+                defect.microscopic_document.sha256,
+            ),
+            capture_velocities_m_s=(
+                defect.microscopic_document.capture_velocities_m_s,
+            ),
             interface_transmission=1.0,
             grid_sha256="1" * 64,
             stack_sha256=hashlib.sha256(token.encode()).hexdigest(),
@@ -228,7 +260,7 @@ def test_interface_charge_stress_executor_smoke(monkeypatch):
     metadata = json.loads(measurement.metadata_json)
     assert content_sha256(metadata["protocol"]) == metadata["protocol_hash"]
     assert metadata["protocol_schema"] == (
-        "interface-charge-device-stress-protocol-v1"
+        "interface-charge-device-stress-protocol-v2"
     )
     assert [record["point"]["point_id"] for record in metadata["stress_records"]] == [
         point["point_id"] for point in lane.options["stress_points"]

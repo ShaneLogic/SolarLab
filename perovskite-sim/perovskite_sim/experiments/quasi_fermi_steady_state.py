@@ -35,7 +35,12 @@ from perovskite_sim.experiments.jv_sweep import (
     compute_metrics,
     thermodynamic_voc_ceiling,
 )
-from perovskite_sim.models.device import DeviceStack, electrical_layers
+from perovskite_sim.models.device import (
+    DeviceStack,
+    UncalibratedMicroscopicInterfaceDefectContract,
+    bind_uncalibrated_microscopic_interface_defects,
+    electrical_layers,
+)
 from perovskite_sim.models.defects import (
     ACCEPTOR,
     DONOR,
@@ -198,6 +203,8 @@ class EquilibriumReferencedInterfaceChargeDarkReference:
     dark_state: QuasiFermiSteadyStateResult
     equilibrium_occupancy: tuple[float, ...]
     trap_density_m2: tuple[float, ...]
+    interface_defect_document_sha256: tuple[str, ...]
+    capture_velocities_m_s: tuple[tuple[float, float], ...]
     interface_transmission: float
     grid_sha256: str
     stack_sha256: str
@@ -2676,9 +2683,15 @@ def _require_equilibrium_referenced_research_stack(stack: DeviceStack) -> None:
         )
 
 
-def _research_charge_off_stack(stack: DeviceStack) -> DeviceStack:
+def _research_charge_off_stack(
+    stack: DeviceStack,
+) -> tuple[DeviceStack, UncalibratedMicroscopicInterfaceDefectContract]:
     _require_equilibrium_referenced_research_stack(stack)
-    return replace(stack, interface_charge_closure="off")
+    bound_stack, contract = bind_uncalibrated_microscopic_interface_defects(
+        stack,
+        consumer="equilibrium-referenced interface-charge research",
+    )
+    return replace(bound_stack, interface_charge_closure="off"), contract
 
 
 def build_equilibrium_referenced_interface_charge_dark_reference(
@@ -2689,8 +2702,6 @@ def build_equilibrium_referenced_interface_charge_dark_reference(
     **solver_controls,
 ) -> EquilibriumReferencedInterfaceChargeDarkReference:
     """Build the certified charge-off dark reference for the research lane."""
-    from perovskite_sim.models.device import electrical_interface_defects
-
     reserved = {
         "V_app",
         "illuminated",
@@ -2712,7 +2723,7 @@ def build_equilibrium_referenced_interface_charge_dark_reference(
             + ", ".join(sorted(overlap))
         )
     grid = np.asarray(x, dtype=float)
-    charge_off_stack = _research_charge_off_stack(stack)
+    charge_off_stack, microscopic_contract = _research_charge_off_stack(stack)
     dark = solve_quasi_fermi_steady_state(
         grid,
         charge_off_stack,
@@ -2728,33 +2739,32 @@ def build_equilibrium_referenced_interface_charge_dark_reference(
         raise QuasiFermiSteadyStateError(
             "charge-off dark reference lacks interface occupancy evidence"
         )
-    defects = electrical_interface_defects(stack)
-    if len(defects) != len(dark.interface_occupancy):
+    if len(microscopic_contract.documents) != len(dark.interface_occupancy):
         raise QuasiFermiSteadyStateError(
             "interface defects are not aligned with the dark reference"
         )
-    if any(defect is None or float(defect.N_t_cm2) <= 0.0 for defect in defects):
-        raise QuasiFermiSteadyStateError(
-            "equilibrium-referenced charge requires one positive-Nt "
-            "InterfaceDefect per physical interface"
-        )
-    trap_density = tuple(float(defect.N_t_cm2) * 1.0e4 for defect in defects)
+    trap_density = microscopic_contract.trap_density_m2
     equilibrium_occupancy = tuple(float(value) for value in dark.interface_occupancy)
     grid_sha256 = _research_array_sha256("interface-charge-grid-v1", grid)
     stack_sha256 = hashlib.sha256(repr(stack).encode("utf-8")).hexdigest()
     dark_state_sha256 = _research_array_sha256(
-        "interface-charge-dark-state-v1",
+        "interface-charge-dark-state-v2",
         grid,
         dark.y,
         dark.phi,
         dark.electron_quasi_fermi_potential_V,
         dark.hole_quasi_fermi_potential_V,
         np.asarray(equilibrium_occupancy),
+        np.asarray(trap_density),
+        np.asarray(microscopic_contract.capture_velocities_m_s),
+        np.asarray([float(interface_transmission)]),
     )
     return EquilibriumReferencedInterfaceChargeDarkReference(
         dark_state=dark,
         equilibrium_occupancy=equilibrium_occupancy,
         trap_density_m2=trap_density,
+        interface_defect_document_sha256=microscopic_contract.document_sha256,
+        capture_velocities_m_s=microscopic_contract.capture_velocities_m_s,
         interface_transmission=float(interface_transmission),
         grid_sha256=grid_sha256,
         stack_sha256=stack_sha256,
@@ -2791,7 +2801,7 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
             + ", ".join(sorted(overlap))
         )
     grid = np.asarray(x, dtype=float)
-    charge_off_stack = _research_charge_off_stack(stack)
+    charge_off_stack, microscopic_contract = _research_charge_off_stack(stack)
     if _research_array_sha256("interface-charge-grid-v1", grid) != (
         dark_reference.grid_sha256
     ):
@@ -2799,16 +2809,37 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
     stack_sha256 = hashlib.sha256(repr(stack).encode("utf-8")).hexdigest()
     if stack_sha256 != dark_reference.stack_sha256:
         raise ValueError("dark reference stack does not match the charged solve")
+    if (
+        dark_reference.interface_defect_document_sha256
+        != microscopic_contract.document_sha256
+    ):
+        raise ValueError(
+            "dark reference microscopic interface-defect documents do not match"
+        )
+    if (
+        dark_reference.capture_velocities_m_s
+        != microscopic_contract.capture_velocities_m_s
+    ):
+        raise ValueError(
+            "dark reference microscopic interface capture velocities do not match"
+        )
+    if dark_reference.trap_density_m2 != microscopic_contract.trap_density_m2:
+        raise ValueError(
+            "dark reference microscopic interface trap densities do not match"
+        )
     if not dark_reference.dark_state.certified:
         raise ValueError("dark reference state must remain certified")
     current_dark_state_sha256 = _research_array_sha256(
-        "interface-charge-dark-state-v1",
+        "interface-charge-dark-state-v2",
         grid,
         dark_reference.dark_state.y,
         dark_reference.dark_state.phi,
         dark_reference.dark_state.electron_quasi_fermi_potential_V,
         dark_reference.dark_state.hole_quasi_fermi_potential_V,
         np.asarray(dark_reference.equilibrium_occupancy),
+        np.asarray(microscopic_contract.trap_density_m2),
+        np.asarray(microscopic_contract.capture_velocities_m_s),
+        np.asarray([float(dark_reference.interface_transmission)]),
     )
     if current_dark_state_sha256 != dark_reference.dark_state_sha256:
         raise ValueError("dark reference state content hash does not match")

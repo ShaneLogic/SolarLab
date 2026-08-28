@@ -1,20 +1,22 @@
 # Interface-charge closure policy
 
-Status: internally certified research-only steady-state Python lane and
-fail-closed research endpoint; production experiment routes remain `PARKED`
-(2026-08-23).
+Status: D4-E1 research-only microscopic wiring implemented and fail closed;
+new D4-E2 numerical certificates are pending. Production experiment routes
+remain `PARKED` (2026-08-28).
 
-D4-E0 (2026-08-28) adds the canonical per-area microscopic document described
-in `docs/explicit-interface-defect-schema-v1.md`. Existing charged certificates
-predate that schema and are inherited baselines only. D4-E1 must require the
-document and rebuild uncalibrated capture velocities from it; D4-E2 must then
-mint new source/config/protocol identities and rerun the complete matrices
+D4-E0 (2026-08-28) added the canonical per-area microscopic document described
+in `docs/explicit-interface-defect-schema-v1.md`. D4-E1 now requires that
+document and rebuilds uncalibrated capture velocities from it in the QF dark
+reference, backend endpoint, charged refinement, and stress adapters. Existing
+charged certificates predate this contract and are inherited baselines only.
+D4-E2 must mint new source/protocol identities and rerun the complete matrices
 before any production unlock decision.
 
 SolarLab's production interface-state paths remain recombination-only. The
 explicit research API below provides a self-consistent occupancy-dependent
-sheet charge in the QF outer Poisson system. Its purpose-built grid/tolerance
-lane is internally certified; this does not promote the closure to a
+sheet charge in the QF outer Poisson system. Historical grid/tolerance results
+showed convergence before the microscopic contract, but the current v2 lane is
+not certified until D4-E2 completes. Neither status promotes the closure to a
 production or externally validated model.
 
 ## Configuration contract
@@ -96,10 +98,14 @@ match central differences; the latter uses the roadmap relative threshold
 
 `build_equilibrium_referenced_interface_charge_dark_reference()` first solves
 and certifies a charge-off, zero-bias dark state in the same two-sided topology.
-It requires one positive-`N_t` `InterfaceDefect` per physical interface and
-stores SHA-256 identities for the grid, stack, and dark state together with
-`f_eq` and `N_t`. A changed grid, stack, defect density, or uncertified dark
-state is rejected before the charged solve.
+It requires one uncalibrated canonical microscopic document per physical
+interface, rebuilds `sigma * v_th * N_t` from that document, and takes the
+sheet-charge inventory from its SI `total_density_m2`. It stores SHA-256
+identities for every document, the grid, stack, and dark state together with
+`f_eq`, `N_t`, and the reconstructed capture velocities. The dark-state hash
+also binds interface transmission. A changed document, SRV, density,
+transmission, grid, stack, or uncertified dark state is rejected before the
+charged solve.
 
 `solve_equilibrium_referenced_interface_charge_steady_state()` is the only
 Python activation API. At each inner Poisson Newton iteration it jointly
@@ -127,8 +133,9 @@ It constructs and hashes the charge-off dark reference inside the request,
 verifies contact thermodynamics on the same two-sided grid, then returns an
 explicit evidence schema containing `f_eq`, `f`, `N_t`, `Delta sigma`, both
 trace shifts, normalized Gauss residual, scaled local Jacobian condition,
-continuity/current/Poisson bounds, contact evidence, and all three reference
-hashes. Response assembly independently rechecks array alignment,
+continuity/current/Poisson bounds, contact evidence, all three state/reference
+hashes, every microscopic document hash, and the reconstructed capture
+velocities. Response assembly independently rechecks array alignment,
 `Delta sigma = -q Nt (f-f_eq)`, the one-electron-per-trap bound, and finite
 certificate fields.
 
@@ -175,17 +182,20 @@ share the `semiconductor_work_function` gauge, its asymmetric grid clustering
 is fixed at `(2, 3)`, and its `N_t=1e13 cm^-2` interface samples the upper end
 of the registered trap-density law without carrying any SCAPS calibration.
 
-The registered `interface-charge-equilibrium-referenced-v1` lane evaluates
-N30/N60/N120 and QF residual factors 1/0.5/0.25. Every cell rebuilds a
+The registered `interface-charge-equilibrium-referenced-v1` lane retains its
+physical claim identifier and evaluates N30/N60/N120 and QF residual factors
+1/0.5/0.25. Every cell rebuilds a
 content-addressed charge-off dark reference, verifies exact charge-on/off dark
 array identity, then independently solves a dark biased state and an
 illuminated operating point through the charged public Python API. Artifacts
 store contact, grid, stack, dark-state and target-state identities together
-with `f_eq`, `f`, `Delta sigma`, trace shifts, Gauss residual, local residual
-and IFT condition evidence.
+with the canonical documents and hashes, reconstructed capture velocities,
+`f_eq`, `f`, `Delta sigma`, trace shifts, Gauss residual, local residual and
+IFT condition evidence. D4-E1 raises the executor and protocol schemas to v2
+and adds the `microscopic_defect_contract_verified` quality gate.
 
-The source-clean single-threaded matrix at commit `23783a3` is internally
-`certified`: run
+The source-clean single-threaded matrix at commit `23783a3` was internally
+`certified` under the pre-D4-E1 v1 contract: run
 `f94831ce5f26b6d4aafa702313846aaf717a6d91b58b99ade72481e77f1ae5c4`,
 certificate
 `1691eaee87208f2494207c94a6f8c484299e34c4ac99c952b6c8df7915cf1921`,
@@ -198,12 +208,16 @@ largest tolerance difference was `3.256e-10` for sheet charge. Across the
 matrix, the worst normalized Gauss residual was `1.743e-16`, local interface
 residual `1.866e-12`, continuity bound `4.571e-9 A/m2`, current spread
 `4.554e-9 A/m2`, and scaled local Jacobian condition `4.874e4`.
+These values are retained only as historical regression context. The v1
+certificate cannot certify the current v2 executable contract; D4-E2 must
+rerun all nine cells.
 
 ## Unlock conditions
 
 Production and backend unlock remain unavailable until all of these are
-content-addressed or executable certificates under one frozen
-source/config/protocol identity:
+content-addressed or executable certificates under one frozen current
+source/config/protocol identity. The physical mechanisms below exist, but the
+current D4-E1 source does not yet have the required D4-E2 matrix certificates:
 
 - contact-consistent residual-certified dark reference (completed in the
   charge-off certificate above);
@@ -220,14 +234,16 @@ source/config/protocol identity:
 - dark reference identity and charge/grid conservation gates (completed for
   the purpose-built research config).
 
-The backend research endpoint and its explicit evidence schema are completed.
+The backend research endpoint and its explicit evidence schema are completed
+for D4-E1, including microscopic document identity and reconstructed kinetics.
 The broader `E_t`/CBO/`N_D`/`N_t` work is registered as
 `interface-charge-device-stress-v1`: nine one-factor device variants evaluated
 on N30/N60 and residual factors 1/0.5. Its source-clean four-cell matrix has no
 failed or missing cell, but remains `partial`: the N30-to-N60 pointwise sheet-
 charge difference is `1.4735%`, above the fixed `1%` gate. The resolved-v2
 companion retains every physical point and gate and adds N90 as the terminal
-grid. Its source-clean six-cell matrix is internally `certified`: run
+grid. Its source-clean six-cell matrix was internally `certified` under the
+pre-D4-E1 executor contract: run
 `30b146b7f95934fd4353890916d8318f8847e3bb8cb7f556f61afa02223a7b55`,
 certificate
 `f6e214307fe73fbc9d866d5e2537658cdb563134df78a419ecb6f4f873bd0844`,
@@ -246,6 +262,8 @@ For the terminal N60-to-N90 pair, current changes by `0.1006%`, sheet charge
 by `0.1548%`, and the largest absolute trace-potential shift is `42.7 uV`.
 All six cells retain exact dark charge-off identity, contact certification,
 the signed charge law, occupancy bounds, and charge/barrier sign consistency.
+Those results are historical regression evidence only; the v2 stress executor
+must be rerun in D4-E2 before the resolved claim is current.
 The historical three-layer SCAPS-derived reference also remains an unresolved
 illuminated stress case. Transient, impedance and 2D require the later unified
 algebraic-state topology. None of these gaps may be hidden by enabling the

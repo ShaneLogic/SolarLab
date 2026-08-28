@@ -5,7 +5,12 @@ from dataclasses import replace
 
 import pytest
 
-from perovskite_sim.models.device import InterfaceDefect
+from perovskite_sim.models.device import (
+    InterfaceDefect,
+    MicroscopicInterfaceDefectContractError,
+    bind_uncalibrated_microscopic_interface_defects,
+    require_uncalibrated_microscopic_interface_defects,
+)
 from perovskite_sim.models.interface_defects import (
     ENERGY_BELOW_REFERENCE_CONDUCTION_BAND,
     EQUILIBRIUM_REFERENCED_ELECTRON_OCCUPANCY,
@@ -169,3 +174,110 @@ def test_scaps_loader_promotes_only_resolved_single_level_interface_species():
 
     assert stack.interface_defects[1].microscopic_document is not None
     assert stack.interface_defects[2].microscopic_document is None
+
+
+def test_charged_contract_binds_density_kinetics_and_document_identity():
+    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+
+    contract = require_uncalibrated_microscopic_interface_defects(
+        stack,
+        consumer="unit test",
+    )
+    bound, rebuilt = bind_uncalibrated_microscopic_interface_defects(
+        stack,
+        consumer="unit test",
+    )
+
+    document = stack.interface_defects[0].microscopic_document
+    assert document is not None
+    assert contract == rebuilt
+    assert contract.documents == (document,)
+    assert contract.document_sha256 == (document.sha256,)
+    assert contract.trap_density_m2 == (document.total_density_m2,)
+    assert contract.capture_velocities_m_s == (document.capture_velocities_m_s,)
+    assert bound.interfaces == contract.capture_velocities_m_s
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("calibration_factor", 0.5),
+        ("iface_state_calibration_factor", 0.5),
+    ],
+)
+def test_charged_contract_rejects_empirical_calibration(field, value):
+    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    defect = stack.interface_defects[0]
+    changed = replace(
+        stack,
+        interface_defects=(replace(defect, **{field: value}),),
+    )
+
+    with pytest.raises(
+        MicroscopicInterfaceDefectContractError,
+        match="forbids empirical interface calibration",
+    ):
+        require_uncalibrated_microscopic_interface_defects(
+            changed,
+            consumer="unit test",
+        )
+
+
+def test_charged_contract_rejects_missing_document_or_duplicate_srv_drift():
+    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    defect = stack.interface_defects[0]
+    missing = replace(
+        stack,
+        interface_defects=(replace(defect, microscopic_document=None),),
+    )
+    drifted = replace(
+        stack,
+        interfaces=((stack.interfaces[0][0] * 1.000001, stack.interfaces[0][1]),),
+    )
+
+    with pytest.raises(
+        MicroscopicInterfaceDefectContractError,
+        match="canonical microscopic defect document",
+    ):
+        require_uncalibrated_microscopic_interface_defects(
+            missing,
+            consumer="unit test",
+        )
+    with pytest.raises(
+        MicroscopicInterfaceDefectContractError,
+        match=r"does not exactly match sigma\*v_th\*N_t",
+    ):
+        require_uncalibrated_microscopic_interface_defects(
+            drifted,
+            consumer="unit test",
+        )
+
+
+@pytest.mark.parametrize(
+    ("document_update", "message"),
+    [
+        ({"degeneracy": 2.0}, "requires degeneracy=1.0"),
+        ({"trap_depth_eV": 2.0}, "trap depth must lie within"),
+    ],
+)
+def test_charged_contract_rejects_unconsumed_or_out_of_gap_document_fields(
+    document_update,
+    message,
+):
+    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    defect = stack.interface_defects[0]
+    document = InterfaceDefectDocument.from_dict(
+        {**defect.microscopic_document.to_dict(), **document_update}
+    )
+    changed_defect = replace(
+        defect,
+        E_t_eV=document.trap_depth_eV,
+        microscopic_document=document,
+    )
+    changed = replace(stack, interface_defects=(changed_defect,))
+
+    with pytest.raises(MicroscopicInterfaceDefectContractError, match=message):
+        require_uncalibrated_microscopic_interface_defects(
+            changed,
+            consumer="unit test",
+        )
