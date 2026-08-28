@@ -226,7 +226,7 @@ benchmarks:
     configs: [configs/interface_charge_jv_research.yaml]
     limitations:
       - this benchmark binds the exact illuminated ion-free zero-scan-rate QF protocol and its sync/async API evidence route
-      - the D4-E3c source-clean grid by tolerance matrix is not yet complete, so the config remains partial rather than certified
+      - the D4-E3c source-clean N30/N60/N90 by tolerance 1/0.5/0.25 matrix at commit 3fa71d6 completed 9/9 cells and 293/293 checks with certificate SHA-256 b08bd323e50c8efb9ee7f51428c35a480960c0c39edc65b8500831c4eee5a52d
       - the fixture is an uncalibrated synthetic numerical reference with no SCAPS, experimental, or device-performance claim
   courtier2019-ionmonger:
     kind: external
@@ -1445,7 +1445,7 @@ configs:
     sha256: 5f4bbf89cf2d95fb020cdc9ade111d838ed38cc1c14a722e5fd800e30c6590c1
     semantic_sha256: 7dae78ac306b881971d54c4857ca72d3394332096af21eeb482b7bbd0a062029
     schema: standard-device-v1
-    status: partial
+    status: certified
     benchmarks:
       - loader-contract
       - phase1-refinement-contract
