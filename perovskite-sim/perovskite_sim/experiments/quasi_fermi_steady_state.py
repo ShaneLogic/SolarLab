@@ -189,6 +189,9 @@ class QuasiFermiSteadyStateResult:
     interface_trace_potential_shift_V: tuple[tuple[float, float], ...] = ()
     interface_normalized_gauss_residual: tuple[float, ...] = ()
     interface_scaled_local_jacobian_condition: tuple[float, ...] = ()
+    interface_charge_reference_grid_sha256: str | None = None
+    interface_charge_reference_stack_sha256: str | None = None
+    interface_charge_reference_dark_state_sha256: str | None = None
     bulk_defect_diagnostics: MonovalentBulkDefectEvaluation | None = None
     defect_energy_quadrature_order: int | None = None
     defect_distribution_kinds: tuple[str, ...] = ()
@@ -1756,6 +1759,7 @@ def solve_quasi_fermi_steady_state(
     continuity_tolerance_A_m2: float = 1.0e-4,
     current_spread_tolerance_A_m2: float = 1.0e-4,
     poisson_residual_tolerance: float = 1.0e-8,
+    require_contact_certificate: bool = False,
     defect_energy_quadrature_order: int = (
         DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
     ),
@@ -1792,6 +1796,8 @@ def solve_quasi_fermi_steady_state(
     )
     if not isinstance(force_nodal_coordinate_predictor, (bool, np.bool_)):
         raise TypeError("force_nodal_coordinate_predictor must be boolean")
+    if not isinstance(require_contact_certificate, (bool, np.bool_)):
+        raise TypeError("require_contact_certificate must be boolean")
     positive_controls = {
         "finite_difference_step": finite_difference_step,
         "newton_residual_tolerance": newton_residual_tolerance,
@@ -1885,15 +1891,20 @@ def solve_quasi_fermi_steady_state(
         allow_charged_bulk_defects=True,
     )
     contact_certificate: ContactThermodynamicCertificate | None = None
-    if material.monovalent_bulk_defects is not None:
+    if require_contact_certificate or material.monovalent_bulk_defects is not None:
         try:
             contact_certificate = require_contact_thermodynamic_certificate(
                 stack,
                 material,
             )
         except ContactThermodynamicError as exc:
+            subject = (
+                "charged explicit defects"
+                if material.monovalent_bulk_defects is not None
+                else "the requested quasi-Fermi solve"
+            )
             raise QuasiFermiSteadyStateError(
-                "charged explicit defects require a certified contact "
+                f"{subject} requires a certified contact "
                 f"thermodynamic reference: {exc}"
             ) from exc
     system = _QuasiFermiSystem(
@@ -2779,6 +2790,7 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
     *,
     dark_reference: EquilibriumReferencedInterfaceChargeDarkReference,
     illuminated: bool = True,
+    initial_state: QuasiFermiSteadyStateResult | None = None,
     **solver_controls,
 ) -> QuasiFermiSteadyStateResult:
     """Solve one self-consistent charged QF state from a certified dark anchor."""
@@ -2788,7 +2800,6 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
         "interface_topology",
         "interface_transmission",
         "interface_transport_model",
-        "initial_state",
         "initial_state_grid",
         "_research_interface_charge_reference_occupancy",
         "_research_interface_charge_trap_density_m2",
@@ -2846,6 +2857,98 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
     interface_count = len(dark_reference.equilibrium_occupancy)
     if interface_count == 0 or len(dark_reference.trap_density_m2) != interface_count:
         raise ValueError("dark reference interface arrays are empty or misaligned")
+    if initial_state is not None:
+        if not initial_state.certified:
+            raise ValueError("charged continuation state must remain certified")
+        if (
+            initial_state.interface_charge_closure != "equilibrium_referenced"
+            or not initial_state.interface_boundary
+            or initial_state.interface_topology != TWO_SIDED_TRACE
+            or initial_state.interface_transport_model != FERMI_DIRAC_RICHARDSON
+        ):
+            raise ValueError(
+                "charged continuation state has an incompatible interface contract"
+            )
+        if not np.array_equal(
+            np.asarray(initial_state.interface_equilibrium_occupancy, dtype=float),
+            np.asarray(dark_reference.equilibrium_occupancy, dtype=float),
+        ):
+            raise ValueError(
+                "charged continuation state does not share the dark reference"
+            )
+        reference_hashes = {
+            "grid": (
+                initial_state.interface_charge_reference_grid_sha256,
+                dark_reference.grid_sha256,
+            ),
+            "stack": (
+                initial_state.interface_charge_reference_stack_sha256,
+                dark_reference.stack_sha256,
+            ),
+            "dark state": (
+                initial_state.interface_charge_reference_dark_state_sha256,
+                dark_reference.dark_state_sha256,
+            ),
+        }
+        mismatched_hashes = [
+            name
+            for name, (actual, expected) in reference_hashes.items()
+            if actual != expected
+        ]
+        if mismatched_hashes:
+            raise ValueError(
+                "charged continuation state provenance does not match the "
+                "dark reference: " + ", ".join(mismatched_hashes)
+            )
+        state_arrays = (
+            np.asarray(initial_state.phi, dtype=float),
+            np.asarray(initial_state.electron_quasi_fermi_potential_V, dtype=float),
+            np.asarray(initial_state.hole_quasi_fermi_potential_V, dtype=float),
+        )
+        state_y = np.asarray(initial_state.y, dtype=float)
+        if any(
+            values.shape != grid.shape or not np.all(np.isfinite(values))
+            for values in state_arrays
+        ) or (
+            state_y.shape != np.asarray(dark_reference.dark_state.y).shape
+            or not np.all(np.isfinite(state_y))
+        ):
+            raise ValueError(
+                "charged continuation state is non-finite or grid-incompatible"
+            )
+        state_occupancy = np.asarray(initial_state.interface_occupancy, dtype=float)
+        state_charge = np.asarray(
+            initial_state.interface_incremental_sheet_charge_C_m2,
+            dtype=float,
+        )
+        trap_density = np.asarray(dark_reference.trap_density_m2, dtype=float)
+        equilibrium = np.asarray(
+            dark_reference.equilibrium_occupancy,
+            dtype=float,
+        )
+        expected_charge = -Q * trap_density * (state_occupancy - equilibrium)
+        charge_scale = np.maximum(Q * trap_density, np.finfo(float).tiny)
+        if (
+            state_occupancy.shape != (interface_count,)
+            or state_charge.shape != (interface_count,)
+            or not np.all(np.isfinite(state_occupancy))
+            or not np.all(np.isfinite(state_charge))
+            or np.any(state_occupancy < 0.0)
+            or np.any(state_occupancy > 1.0)
+            or np.any(
+                np.abs(state_charge - expected_charge) > 1.0e-11 * charge_scale
+            )
+        ):
+            raise ValueError(
+                "charged continuation state violates the interface charge law"
+            )
+        if (
+            bool(solver_controls.get("require_contact_certificate", False))
+            and initial_state.contact_thermodynamic_status != "certified"
+        ):
+            raise ValueError(
+                "charged continuation state lacks contact certification"
+            )
     if float(V_app) == 0.0 and not illuminated:
         zeros = tuple(0.0 for _ in range(interface_count))
         trace_zeros = tuple((0.0, 0.0) for _ in range(interface_count))
@@ -2858,6 +2961,11 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
             interface_trace_potential_shift_V=trace_zeros,
             interface_normalized_gauss_residual=zeros,
             interface_scaled_local_jacobian_condition=zeros,
+            interface_charge_reference_grid_sha256=dark_reference.grid_sha256,
+            interface_charge_reference_stack_sha256=dark_reference.stack_sha256,
+            interface_charge_reference_dark_state_sha256=(
+                dark_reference.dark_state_sha256
+            ),
         )
     result = solve_quasi_fermi_steady_state(
         grid,
@@ -2868,7 +2976,9 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
         interface_topology=TWO_SIDED_TRACE,
         interface_transmission=dark_reference.interface_transmission,
         interface_transport_model=FERMI_DIRAC_RICHARDSON,
-        initial_state=dark_reference.dark_state,
+        initial_state=(
+            dark_reference.dark_state if initial_state is None else initial_state
+        ),
         _research_interface_charge_reference_occupancy=np.asarray(
             dark_reference.equilibrium_occupancy,
             dtype=float,
@@ -2890,7 +3000,14 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
         raise QuasiFermiSteadyStateError(
             "charged solve violated the one-electron-per-trap bound"
         )
-    return result
+    return replace(
+        result,
+        interface_charge_reference_grid_sha256=dark_reference.grid_sha256,
+        interface_charge_reference_stack_sha256=dark_reference.stack_sha256,
+        interface_charge_reference_dark_state_sha256=(
+            dark_reference.dark_state_sha256
+        ),
+    )
 
 
 def solve_quasi_fermi_jv_sweep(

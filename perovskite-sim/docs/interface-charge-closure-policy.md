@@ -1,8 +1,9 @@
 # Interface-charge closure policy
 
-Status: D4-E2 research-only microscopic wiring and current-source numerical
-recertification complete. Production experiment routes remain `PARKED` pending
-the separate D4-E3 integration decision (2026-08-28).
+Status: D4-E3a protocol-bound charged quasi-Fermi J-V core implemented and
+tested. Production backend/frontend routes remain `PARKED`, and the capability
+is not certified until D4-E3b integration and the D4-E3c source-clean matrix
+complete (2026-08-28).
 
 D4-E0 (2026-08-28) added the canonical per-area microscopic document described
 in `docs/explicit-interface-defect-schema-v1.md`. D4-E1 now requires that
@@ -141,6 +142,52 @@ This endpoint is labelled `internal_numerical_research` and always reports
 `production_unlocked=false`. It is not part of `/api/jv` or `/api/jobs`, and
 there is no frontend control for it. Production J-V, transient, QF impedance,
 and 2D routes continue to fail through the material-assembly capability gate.
+
+## Protocol-bound charged J-V core (D4-E3a)
+
+`build_interface_charge_jv_protocol()` and `solve_interface_charge_jv()` add a
+narrow Python execution core without removing the production material gate.
+The canonical `interface-charge-jv-protocol-v1` represents an illuminated,
+ion-free, ascending, zero-scan-rate quasi-Fermi branch. It starts at 0 V, uses
+the two-sided Fermi-Dirac Richardson interface with unit transmission, applies
+the equilibrium-referenced `-q N_t (f-f_eq)` law, and stops after the first
+sampled open-circuit bracket. It contains no invented transient dwell or scan
+rate. Unknown, missing, or duplicate JSON fields fail closed, and every
+physical, numerical, and acceptance field contributes to its SHA-256.
+
+One charge-off dark reference anchors the complete branch. Every charged state
+records the dark-state, grid, and stack hashes; a continuation seed is rejected
+before Newton when those identities, the equilibrium occupancy, charge law,
+finite state arrays, interface topology, or contact certificate differ. Direct
+voltage continuation is attempted first. Failed intervals may be bisected only
+within the frozen minimum-step and bridge-count limits; bridge states are
+audited but are not reported as requested voltage samples.
+
+The acceptance contract retains per-point occupancy, sheet charge, trace
+shift, Gauss residual, local Jacobian condition, interface/cell residual,
+electron and hole continuity bounds, face-current spread, Poisson residual,
+and contact QFL span. The contact certificate is an explicit opt-in to the QF
+solver; its default remains off and does not change historical charge-off
+numerics. The protocol fixes the maximum contact span at 5 meV and cannot
+relax that repository gate.
+
+The current real test is deliberately an uncalibrated synthetic fixture, not a
+device-performance or SCAPS-parity reference. It reuses the D4-E2-supported
+ETL-only `N_D=2e15 cm^-3`, N30 slice. Requested points from 0 to 0.2 V stop at
+the first bracket, retaining `[0, 0.025, 0.05, 0.075, 0.1] V`; the corresponding
+current changes from `1.3330e-2` to `-1.1643e-2 A/m2`, with
+`V_oc=0.078835 V`. The worst normalized cell residual is `3.121e-7`, continuity
+bound `3.121e-7 A/m2`, normalized Gauss residual `3.16e-16`, and scaled local
+Jacobian condition `1.186e4`. These values demonstrate an internally closed
+execution path only.
+
+D4-E3a does not expose `/api/jv`, `/api/jobs`, or a frontend control. Dark J-V,
+finite-rate hysteresis, current decomposition, spatial snapshots, external
+circuits, TPV, Suns-Voc, EQE, EL, impedance, 2-D, and degradation remain
+unsupported for charged interface defects. D4-E3b must preserve those
+fail-closed boundaries, and D4-E3c must run a newly registered source-clean
+grid/tolerance certificate before this slice can be called production
+certified.
 
 ## Charge-off reference lane
 
