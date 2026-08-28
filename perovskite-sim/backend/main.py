@@ -1439,12 +1439,16 @@ def _summarize_qf_bulk_defect_evidence(points):
         first.model_identity_sha256,
         tuple(first.species_identifiers),
         tuple(first.charge_transitions),
+        tuple(getattr(first, "distribution_kinds", ())),
+        tuple(getattr(first, "source_energy_orders", ())),
     )
     for item in diagnostics[1:]:
         candidate = (
             item.model_identity_sha256,
             tuple(item.species_identifiers),
             tuple(item.charge_transitions),
+            tuple(getattr(item, "distribution_kinds", ())),
+            tuple(getattr(item, "source_energy_orders", ())),
         )
         if candidate != identity:
             raise ValueError(
@@ -1482,6 +1486,8 @@ def _summarize_qf_bulk_defect_evidence(points):
         ),
         maximum_absolute_charge_density_C_m3=max(charge_maxima),
         maximum_absolute_recombination_rate_m3_s=max(recombination_maxima),
+        distribution_kinds=identity[3],
+        source_energy_orders=identity[4],
     )
 
 

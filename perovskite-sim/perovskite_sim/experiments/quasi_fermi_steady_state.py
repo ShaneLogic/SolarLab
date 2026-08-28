@@ -36,7 +36,12 @@ from perovskite_sim.experiments.jv_sweep import (
     thermodynamic_voc_ceiling,
 )
 from perovskite_sim.models.device import DeviceStack, electrical_layers
-from perovskite_sim.models.defects import ACCEPTOR, DONOR, EXPLICIT_QUASI_STEADY
+from perovskite_sim.models.defects import (
+    ACCEPTOR,
+    DONOR,
+    EXPLICIT_QUASI_STEADY,
+    SINGLE_LEVEL,
+)
 from perovskite_sim.physics.contacts import (
     ContactThermodynamicCertificate,
     ContactThermodynamicError,
@@ -46,6 +51,10 @@ from perovskite_sim.physics.defect_closure import (
     MonovalentBulkDefectEvaluation,
     evaluate_monovalent_bulk_defects,
     solve_monovalent_defect_charge_neutrality,
+)
+from perovskite_sim.physics.defect_distributions import (
+    DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    validate_defect_energy_quadrature_order,
 )
 from perovskite_sim.physics.interface_plane import (
     FERMI_DIRAC_RICHARDSON,
@@ -175,6 +184,8 @@ class QuasiFermiSteadyStateResult:
     interface_normalized_gauss_residual: tuple[float, ...] = ()
     interface_scaled_local_jacobian_condition: tuple[float, ...] = ()
     bulk_defect_diagnostics: MonovalentBulkDefectEvaluation | None = None
+    defect_energy_quadrature_order: int | None = None
+    defect_distribution_kinds: tuple[str, ...] = ()
     contact_thermodynamic_status: str | None = None
     contact_fermi_level_span_eV: float | None = None
 
@@ -205,6 +216,8 @@ class QuasiFermiJVSweepResult:
     mpp_interpolation: str = "sampled"
     nodal_predictor_fallback_attempts: int = 0
     nodal_predictor_fallback_failures: int = 0
+    defect_energy_quadrature_order: int | None = None
+    defect_distribution_kinds: tuple[str, ...] = ()
 
     @property
     def certified(self) -> bool:
@@ -449,22 +462,46 @@ def _stack_has_charged_explicit_defects(stack: DeviceStack) -> bool:
     )
 
 
+def _stack_has_distributed_explicit_defects(stack: DeviceStack) -> bool:
+    return any(
+        species.distribution.kind != SINGLE_LEVEL
+        for layer in electrical_layers(stack)
+        for species in layer.params.bulk_defects
+    )
+
+
+def _stack_requires_monovalent_qf_dc(stack: DeviceStack) -> bool:
+    return (
+        _stack_has_charged_explicit_defects(stack)
+        or _stack_has_distributed_explicit_defects(stack)
+    )
+
+
 def _build_qf_material(
     grid: np.ndarray,
     stack: DeviceStack,
+    *,
+    defect_energy_quadrature_order: int,
 ) -> MaterialArrays:
-    if _stack_has_charged_explicit_defects(stack):
+    if _stack_requires_monovalent_qf_dc(stack):
         return build_material_arrays(
             grid,
             stack,
             explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+            defect_energy_quadrature_order=defect_energy_quadrature_order,
         )
-    return build_material_arrays(grid, stack)
+    return build_material_arrays(
+        grid,
+        stack,
+        defect_energy_quadrature_order=defect_energy_quadrature_order,
+    )
 
 
 def _require_material_defect_contract(
     stack: DeviceStack,
     mat: MaterialArrays,
+    *,
+    defect_energy_quadrature_order: int,
 ) -> None:
     expected = tuple(
         (
@@ -476,10 +513,13 @@ def _require_material_defect_contract(
         and layer.params.defect_model == EXPLICIT_QUASI_STEADY
     )
     model = mat.monovalent_bulk_defects
-    if _stack_has_charged_explicit_defects(stack):
+    requires_monovalent = _stack_requires_monovalent_qf_dc(stack)
+    has_distributed = _stack_has_distributed_explicit_defects(stack)
+    if requires_monovalent:
         if model is None:
             raise QuasiFermiSteadyStateError(
-                "charged explicit-defect stack requires a qf_dc material cache"
+                "charged or energy-distributed explicit-defect stack requires "
+                "a qf_dc material cache"
             )
         actual = tuple(
             (region.identifier, region.document_sha256)
@@ -489,9 +529,30 @@ def _require_material_defect_contract(
             raise QuasiFermiSteadyStateError(
                 "qf_dc material cache does not match the stack defect documents"
             )
+        material_order = mat.explicit_defect_energy_quadrature_order
+        if has_distributed and (
+            material_order != defect_energy_quadrature_order
+            or not model.has_distributed_species
+            or any(
+                region.energy_quadrature_order
+                != defect_energy_quadrature_order
+                for region in model.regions
+                if region.has_distributed_species
+            )
+        ):
+            raise QuasiFermiSteadyStateError(
+                "qf_dc distributed material cache does not match the requested "
+                "defect energy quadrature order"
+            )
+        if not has_distributed and material_order is not None:
+            raise QuasiFermiSteadyStateError(
+                "single-level qf_dc material cache carries unexpected "
+                "distributed quadrature provenance"
+            )
     elif model is not None:
         raise QuasiFermiSteadyStateError(
-            "qf_dc material cache supplied for a stack without charged defects"
+            "qf_dc material cache supplied for a stack without charged or "
+            "energy-distributed defects"
         )
 
 
@@ -644,6 +705,10 @@ def _defect_aware_neutral_carriers(
                     acceptor_density_m3=float(acceptors),
                     donor_density_m3=float(donors),
                     species=region.species,
+                    energy_quadrature_order=(
+                        region.energy_quadrature_order
+                    ),
+                    energy_expansions=region.source_expansions,
                 ).neutrality
                 selected = inverse == pair_index
                 local_n[selected] = closure.electron_density_m3
@@ -1632,6 +1697,9 @@ def solve_quasi_fermi_steady_state(
     continuity_tolerance_A_m2: float = 1.0e-4,
     current_spread_tolerance_A_m2: float = 1.0e-4,
     poisson_residual_tolerance: float = 1.0e-8,
+    defect_energy_quadrature_order: int = (
+        DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
+    ),
     _research_interface_charge_reference_occupancy: np.ndarray | None = None,
     _research_interface_charge_trap_density_m2: np.ndarray | None = None,
     _research_interface_charge_token: object | None = None,
@@ -1658,6 +1726,11 @@ def solve_quasi_fermi_steady_state(
         raise ValueError("x must be a strictly increasing one-dimensional grid")
     if not np.isfinite(V_app):
         raise ValueError("V_app must be finite")
+    resolved_defect_energy_order = (
+        validate_defect_energy_quadrature_order(
+            defect_energy_quadrature_order
+        )
+    )
     if not isinstance(force_nodal_coordinate_predictor, (bool, np.bool_)):
         raise TypeError("force_nodal_coordinate_predictor must be boolean")
     positive_controls = {
@@ -1714,10 +1787,22 @@ def solve_quasi_fermi_steady_state(
         )
 
     stages = _validate_illumination_steps(illuminated, illumination_steps)
-    input_material = _build_qf_material(grid, stack) if mat is None else mat
+    input_material = (
+        _build_qf_material(
+            grid,
+            stack,
+            defect_energy_quadrature_order=resolved_defect_energy_order,
+        )
+        if mat is None
+        else mat
+    )
     if len(input_material.eps_r) != len(grid):
         raise ValueError("mat arrays must match the supplied electrical grid")
-    _require_material_defect_contract(stack, input_material)
+    _require_material_defect_contract(
+        stack,
+        input_material,
+        defect_energy_quadrature_order=resolved_defect_energy_order,
+    )
     material = input_material
     if topology == TWO_SIDED_TRACE:
         material = _prepare_two_sided_material(grid, stack, material)
@@ -2497,6 +2582,15 @@ def solve_quasi_fermi_steady_state(
             )
         ),
         bulk_defect_diagnostics=bulk_defect_diagnostics,
+        defect_energy_quadrature_order=(
+            material.explicit_defect_energy_quadrature_order
+        ),
+        defect_distribution_kinds=(
+            material.monovalent_bulk_defects.distribution_kinds
+            if material.monovalent_bulk_defects is not None
+            and material.monovalent_bulk_defects.has_distributed_species
+            else ()
+        ),
         contact_thermodynamic_status=(
             None if contact_certificate is None else contact_certificate.status
         ),
@@ -2742,6 +2836,9 @@ def solve_quasi_fermi_jv_sweep(
     minimum_voltage_step_V: float | None = None,
     max_voltage_bridge_points: int = 256,
     mpp_interpolation: Literal["sampled", "local_quadratic"] = "sampled",
+    defect_energy_quadrature_order: int = (
+        DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
+    ),
 ) -> QuasiFermiJVSweepResult:
     """Solve a strictly increasing illuminated J-V grid by QF continuation.
 
@@ -2821,10 +2918,27 @@ def solve_quasi_fermi_jv_sweep(
         or int(max_voltage_bridge_points) <= 0
     ):
         raise ValueError("max_voltage_bridge_points must be a positive integer")
+    resolved_defect_energy_order = (
+        validate_defect_energy_quadrature_order(
+            defect_energy_quadrature_order
+        )
+    )
 
     grid = np.asarray(x, dtype=float)
-    material = _build_qf_material(grid, stack) if mat is None else mat
-    _require_material_defect_contract(stack, material)
+    material = (
+        _build_qf_material(
+            grid,
+            stack,
+            defect_energy_quadrature_order=resolved_defect_energy_order,
+        )
+        if mat is None
+        else mat
+    )
+    _require_material_defect_contract(
+        stack,
+        material,
+        defect_energy_quadrature_order=resolved_defect_energy_order,
+    )
     common = dict(
         illuminated=True,
         mat=material,
@@ -2840,6 +2954,7 @@ def solve_quasi_fermi_jv_sweep(
         continuity_tolerance_A_m2=continuity_tolerance_A_m2,
         current_spread_tolerance_A_m2=current_spread_tolerance_A_m2,
         poisson_residual_tolerance=poisson_residual_tolerance,
+        defect_energy_quadrature_order=resolved_defect_energy_order,
     )
     if initial_short_circuit_state is not None:
         if not initial_short_circuit_state.certified:
@@ -3001,6 +3116,15 @@ def solve_quasi_fermi_jv_sweep(
             nodal_predictor_fallback_attempts
         ),
         nodal_predictor_fallback_failures=nodal_predictor_fallback_failures,
+        defect_energy_quadrature_order=(
+            material.explicit_defect_energy_quadrature_order
+        ),
+        defect_distribution_kinds=(
+            material.monovalent_bulk_defects.distribution_kinds
+            if material.monovalent_bulk_defects is not None
+            and material.monovalent_bulk_defects.has_distributed_species
+            else ()
+        ),
     )
 
 

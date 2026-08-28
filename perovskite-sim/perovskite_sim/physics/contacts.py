@@ -72,6 +72,9 @@ if TYPE_CHECKING:
     from perovskite_sim.physics.defect_closure import (
         MonovalentDefectClosureResult,
     )
+    from perovskite_sim.physics.distributed_defect_closure import (
+        EnergyDistributedDefectClosureResult,
+    )
     from perovskite_sim.solver.mol import MaterialArrays
 
 
@@ -118,7 +121,10 @@ class SemiconductorContactState:
     conduction_band_shift_eV: float
     valence_band_shift_eV: float
     bulk_trap_state: "BulkTrapState | None" = None
-    explicit_defect_closure: "MonovalentDefectClosureResult | None" = None
+    explicit_defect_closure: (
+        "MonovalentDefectClosureResult | "
+        "EnergyDistributedDefectClosureResult | None"
+    ) = None
 
     @property
     def electron_density_m3(self) -> float:
@@ -143,6 +149,7 @@ def build_semiconductor_contact_state(
     temperature_K: float,
     use_temperature_scaling: bool,
     bulk_trap_quadrature_order: int = 64,
+    defect_energy_quadrature_order: int | None = None,
 ) -> SemiconductorContactState:
     """Build one contact state from one statistics/ionization closure.
 
@@ -213,7 +220,17 @@ def build_semiconductor_contact_state(
         item.charge_transition in {"acceptor", "donor"}
         for item in params.bulk_defects
     )
-    if params.bulk_trap_distribution is None and not has_charged_explicit_defects:
+    has_distributed_explicit_defects = any(
+        item.distribution.kind != "single_level"
+        for item in params.bulk_defects
+    )
+    use_monovalent_explicit_closure = (
+        has_charged_explicit_defects or has_distributed_explicit_defects
+    )
+    if (
+        params.bulk_trap_distribution is None
+        and not use_monovalent_explicit_closure
+    ):
         neutrality = solve_charge_neutrality(
             temperature_K=temperature,
             band_gap_eV=band_edges.effective_band_gap_eV,
@@ -258,6 +275,15 @@ def build_semiconductor_contact_state(
             acceptor_density_m3=float(params.N_A),
             donor_density_m3=float(params.N_D),
             species=params.bulk_defects,
+            **(
+                {}
+                if defect_energy_quadrature_order is None
+                else {
+                    "energy_quadrature_order": (
+                        defect_energy_quadrature_order
+                    )
+                }
+            ),
         )
         neutrality = defect_neutrality.neutrality
         explicit_defect_closure = defect_neutrality.closure
@@ -306,10 +332,18 @@ def assess_contact_thermodynamics(
         )
 
     mode = stack.resolved_built_in_potential_mode()
+    defect_energy_order = getattr(
+        mat,
+        "explicit_defect_energy_quadrature_order",
+        None,
+    )
     potential_mismatch: float | None
     try:
         potential_mismatch = float(
-            mat.V_bi_bc - stack.compute_semiconductor_V_bi()
+            mat.V_bi_bc
+            - stack.compute_semiconductor_V_bi(
+                defect_energy_quadrature_order=defect_energy_order
+            )
         )
         if not np.isfinite(potential_mismatch):
             potential_mismatch = None

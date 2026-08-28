@@ -487,7 +487,11 @@ class DeviceStack:
             return "semiconductor_work_function"
         return "legacy_manual"
 
-    def compute_semiconductor_V_bi(self) -> float:
+    def compute_semiconductor_V_bi(
+        self,
+        *,
+        defect_energy_quadrature_order: int | None = None,
+    ) -> float:
         """Return the signed endpoint-semiconductor work-function difference.
 
         Unlike the historical :meth:`compute_V_bi`, this physical path is
@@ -515,11 +519,13 @@ class DeviceStack:
             left,
             temperature,
             sim_mode.use_temperature_scaling,
+            defect_energy_quadrature_order=defect_energy_quadrature_order,
         )
         W_right = _semiconductor_work_function(
             right,
             temperature,
             sim_mode.use_temperature_scaling,
+            defect_energy_quadrature_order=defect_energy_quadrature_order,
         )
         return W_left - W_right
 
@@ -534,7 +540,11 @@ class DeviceStack:
             )
         return float(self.work_function_left_eV - self.work_function_right_eV)
 
-    def poisson_built_in_potential(self) -> float:
+    def poisson_built_in_potential(
+        self,
+        *,
+        defect_energy_quadrature_order: int | None = None,
+    ) -> float:
         """Resolve the signed built-in potential used by the Poisson BC.
 
         ``built_in_potential_mode=None`` is the compatibility sentinel. It
@@ -553,12 +563,20 @@ class DeviceStack:
             orientation = -1.0 if self.compute_V_bi() < 0.0 else 1.0
             return orientation * abs(float(self.V_bi))
         if mode == "semiconductor_work_function":
-            return self.compute_semiconductor_V_bi()
+            return self.compute_semiconductor_V_bi(
+                defect_energy_quadrature_order=(
+                    defect_energy_quadrature_order
+                )
+            )
         if mode == "metal_work_function":
             return self.compute_metal_V_bi()
         raise AssertionError(f"unvalidated built-in-potential mode {mode!r}")
 
-    def operating_built_in_potential(self) -> float:
+    def operating_built_in_potential(
+        self,
+        *,
+        defect_energy_quadrature_order: int | None = None,
+    ) -> float:
         """Return the signed potential used by physical operating defaults.
 
         Compatibility stacks retain the historical band-derived ``V_bi_eff``
@@ -567,7 +585,9 @@ class DeviceStack:
         """
         if self.built_in_potential_mode is None:
             return self.compute_V_bi()
-        return self.poisson_built_in_potential()
+        return self.poisson_built_in_potential(
+            defect_energy_quadrature_order=defect_energy_quadrature_order
+        )
 
     def compute_V_bi(self) -> float:
         """Derive the built-in potential from the Fermi-level difference
@@ -767,6 +787,8 @@ def _semiconductor_work_function(
     p: MaterialParams,
     temperature: float,
     use_temperature_scaling: bool,
+    *,
+    defect_energy_quadrature_order: int | None = None,
 ) -> float:
     """Semiconductor work function below vacuum [eV]."""
     from perovskite_sim.physics.temperature import eg_at_T, thermal_voltage
@@ -780,12 +802,16 @@ def _semiconductor_work_function(
         item.charge_transition in {"acceptor", "donor"}
         for item in p.bulk_defects
     )
+    has_distributed_explicit_defects = any(
+        item.distribution.kind != "single_level" for item in p.bulk_defects
+    )
     if (
         p.carrier_statistics == "fermi_dirac"
         or p.dopant_ionization_model == "discrete_level"
         or p.band_gap_narrowing_model != "off"
         or p.bulk_trap_distribution is not None
         or has_charged_explicit_defects
+        or has_distributed_explicit_defects
     ):
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,
@@ -795,6 +821,7 @@ def _semiconductor_work_function(
             p,
             temperature_K=temperature,
             use_temperature_scaling=use_temperature_scaling,
+            defect_energy_quadrature_order=defect_energy_quadrature_order,
         ).work_function_eV
     required = {
         "chi": p.chi,

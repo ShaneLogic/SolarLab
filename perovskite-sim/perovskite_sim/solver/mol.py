@@ -48,6 +48,10 @@ from perovskite_sim.physics.defect_closure import (
     MonovalentBulkDefectModel,
     MonovalentDefectRegion,
 )
+from perovskite_sim.physics.defect_distributions import (
+    DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    validate_defect_energy_quadrature_order,
+)
 from perovskite_sim.physics.interface_plane import (
     build_plane_params,
     solve_plane_densities,
@@ -365,6 +369,9 @@ class MaterialArrays:
     # DC lane. Ordinary MoL Poisson assembly rejects this object because that
     # path does not yet include quasi-steady defect charge in its state law.
     monovalent_bulk_defects: MonovalentBulkDefectModel | None = None
+    # D3-E3 energy-node protocol bound into distributed QF/DC materials.
+    # None preserves the exact D2 single-level material contract.
+    explicit_defect_energy_quadrature_order: int | None = None
     # Explicit P4.3 research slice. Production MoL rejects any non-off value;
     # the dedicated equilibrium solver consumes the same material cache.
     bulk_trap_charge_closure: str = BULK_TRAP_CHARGE_OFF
@@ -942,6 +949,7 @@ def _compile_monovalent_bulk_defects(
     effective_valence_dos_m3: np.ndarray,
     intrinsic_product_m6: np.ndarray,
     temperature_K: float,
+    defect_energy_quadrature_order: int,
 ) -> MonovalentBulkDefectModel | None:
     """Compile charged/neutral DEF-3 documents onto disjoint grid regions."""
 
@@ -1015,6 +1023,7 @@ def _compile_monovalent_bulk_defects(
                 temperature_K=float(temperature_K),
                 species=document.bulk_defects,
                 schema_version=document.schema_version,
+                energy_quadrature_order=defect_energy_quadrature_order,
             )
         )
     return MonovalentBulkDefectModel(regions=tuple(regions))
@@ -1027,6 +1036,9 @@ def build_material_arrays(
     carrier_statistics_transport: str = DEGENERATE_TRANSPORT_DEFAULT,
     bulk_trap_charge_closure: str = BULK_TRAP_CHARGE_OFF,
     explicit_defect_charge_closure: str = EXPLICIT_DEFECT_CHARGE_OFF,
+    defect_energy_quadrature_order: int = (
+        DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
+    ),
 ) -> MaterialArrays:
     """Construct the immutable per-experiment material array bundle.
 
@@ -1070,6 +1082,11 @@ def build_material_arrays(
         raise ValueError(
             "explicit_defect_charge_closure must be 'off' or 'qf_dc'"
         )
+    resolved_defect_energy_order = (
+        validate_defect_energy_quadrature_order(
+            defect_energy_quadrature_order
+        )
+    )
     N = len(x)
 
     eps_r = np.ones(N)
@@ -1199,20 +1216,40 @@ def build_material_arrays(
             for species in layer.params.bulk_defects
         )
     )
+    distributed_explicit_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.params is not None
+        and layer.params.defect_model == EXPLICIT_QUASI_STEADY
+        and any(
+            species.distribution.kind != SINGLE_LEVEL
+            for species in layer.params.bulk_defects
+        )
+    )
+    monovalent_qf_layers = tuple(
+        layer.name
+        for layer in elec_layers
+        if layer.name in {
+            *charged_explicit_layers,
+            *distributed_explicit_layers,
+        }
+    )
     research_monovalent_qf_dc = (
         explicit_defect_charge_closure == EXPLICIT_DEFECT_CHARGE_QF_DC
     )
-    if charged_explicit_layers and not research_monovalent_qf_dc:
+    if monovalent_qf_layers and not research_monovalent_qf_dc:
         raise ExplicitDefectCapabilityError(
-            "DEF-1 explicit execution accepts neutral species only; charged "
-            "acceptor/donor execution requires the guarded QF/DC closure. "
+            "DEF-1 explicit execution accepts neutral species only in its "
+            "single-level form; "
+            "charged or energy-distributed execution requires the guarded "
+            "QF/DC closure. "
             "Activated layers: "
-            + ", ".join(charged_explicit_layers)
+            + ", ".join(monovalent_qf_layers)
         )
-    if research_monovalent_qf_dc and not charged_explicit_layers:
+    if research_monovalent_qf_dc and not monovalent_qf_layers:
         raise ExplicitDefectCapabilityError(
             "qf_dc explicit-defect charge closure requires at least one "
-            "acceptor or donor species"
+            "acceptor, donor, or energy-distributed species"
         )
     if research_monovalent_qf_dc and (
         stack.built_in_potential_mode != "semiconductor_work_function"
@@ -2283,11 +2320,13 @@ def build_material_arrays(
             first,
             temperature_K=T_dev,
             use_temperature_scaling=sim_mode.use_temperature_scaling,
+            defect_energy_quadrature_order=resolved_defect_energy_order,
         )
         right_contact = build_semiconductor_contact_state(
             last,
             temperature_K=T_dev,
             use_temperature_scaling=sim_mode.use_temperature_scaling,
+            defect_energy_quadrature_order=resolved_defect_energy_order,
         )
         n_L, p_L = (
             left_contact.electron_density_m3,
@@ -2353,8 +2392,12 @@ def build_material_arrays(
     # They differ only for pre-mode compatibility stacks, preserving the
     # historical IonMonger convention. Carrier Robin/Dirichlet kinetics are
     # controlled independently by ``_flat_band`` and the S_* fields above.
-    V_bi_eff = stack.operating_built_in_potential()
-    V_bi_bc = stack.poisson_built_in_potential()
+    V_bi_eff = stack.operating_built_in_potential(
+        defect_energy_quadrature_order=resolved_defect_energy_order
+    )
+    V_bi_bc = stack.poisson_built_in_potential(
+        defect_energy_quadrature_order=resolved_defect_energy_order
+    )
     junction_polarity = -1.0 if V_bi_bc < 0.0 else 1.0
 
     # TMM optical generation: computed when the active mode enables TMM.
@@ -2495,6 +2538,7 @@ def build_material_arrays(
             effective_valence_dos_m3=N_V_node_arr,
             intrinsic_product_m6=ni_sq,
             temperature_K=T_dev,
+            defect_energy_quadrature_order=resolved_defect_energy_order,
         )
         if research_monovalent_qf_dc
         else None
@@ -2609,6 +2653,12 @@ def build_material_arrays(
         ),
         neutral_bulk_defects=neutral_bulk_defects,
         monovalent_bulk_defects=monovalent_bulk_defects,
+        explicit_defect_energy_quadrature_order=(
+            resolved_defect_energy_order
+            if monovalent_bulk_defects is not None
+            and monovalent_bulk_defects.has_distributed_species
+            else None
+        ),
         bulk_trap_charge_closure=bulk_trap_charge_closure,
         bulk_trap_distribution=(
             elec_layers[0].params.bulk_trap_distribution

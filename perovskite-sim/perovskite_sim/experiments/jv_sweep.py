@@ -215,6 +215,8 @@ class JVBulkDefectEvidence:
     minimum_kinetic_denominator_s1: float
     maximum_absolute_charge_density_C_m3: float
     maximum_absolute_recombination_rate_m3_s: float
+    distribution_kinds: tuple[str, ...] = ()
+    source_energy_orders: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if self.model != "monovalent-device-mb-qf-dc-v1":
@@ -251,9 +253,33 @@ class JVBulkDefectEvidence:
             or self.maximum_absolute_recombination_rate_m3_s < 0.0
         ):
             raise ValueError("bulk-defect absolute extrema must be non-negative")
+        kinds = tuple(self.distribution_kinds)
+        orders = tuple(self.source_energy_orders)
+        if kinds:
+            if (
+                len(kinds) != len(identifiers)
+                or len(orders) != len(identifiers)
+                or any(
+                    isinstance(order, bool)
+                    or not isinstance(order, (int, np.integer))
+                    or int(order) <= 0
+                    for order in orders
+                )
+            ):
+                raise ValueError(
+                    "distributed bulk-defect evidence is inconsistent"
+                )
+        elif orders:
+            raise ValueError("partial distributed bulk-defect evidence is invalid")
         object.__setattr__(self, "model_identity_sha256", digest)
         object.__setattr__(self, "species_identifiers", identifiers)
         object.__setattr__(self, "charge_transitions", transitions)
+        object.__setattr__(self, "distribution_kinds", kinds)
+        object.__setattr__(
+            self,
+            "source_energy_orders",
+            tuple(int(order) for order in orders),
+        )
 
 
 @dataclass(frozen=True)

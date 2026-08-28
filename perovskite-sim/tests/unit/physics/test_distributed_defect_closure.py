@@ -223,6 +223,28 @@ def test_source_aggregation_is_the_exact_sum_of_d2_energy_nodes(kind):
     )
 
 
+def test_prepared_energy_expansion_must_match_requested_order():
+    species = _species("source", GAUSSIAN)
+    expansion = expand_bulk_defect_species_energy(
+        species,
+        band_gap_eV=GAP_EV,
+        order=8,
+    )
+
+    with pytest.raises(ValueError, match="source/order protocol"):
+        evaluate_energy_distributed_defect_closure(
+            1.0e20,
+            2.0e20,
+            (species,),
+            band_gap_eV=GAP_EV,
+            effective_conduction_dos_m3=NC_M3,
+            effective_valence_dos_m3=NV_M3,
+            temperature_K=TEMPERATURE_K,
+            energy_quadrature_order=16,
+            energy_expansions=(expansion,),
+        )
+
+
 def test_gaussian_matches_the_preexisting_research_primitive_on_same_support():
     source = _species(
         "gaussian",

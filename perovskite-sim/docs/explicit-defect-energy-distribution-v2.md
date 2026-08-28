@@ -1,9 +1,10 @@
 # Explicit Bulk-Defect Energy Distribution Contract v2
 
-Status: D3-E2 canonical input, carrier-independent quadrature, pure local
-Gaussian/uniform/CB-tail/VB-tail closure, and strict SCAPS-shaped distributed
-conversion. Only `single_level` is enabled in the production QF/DC material
-path; distributed production execution remains fail closed until D3-E3.
+Status: D3-E3 guarded production QF/DC integration is implemented for uniform
+layers, Maxwell-Boltzmann carriers, quasi-steady occupancy, and frozen/no
+mobile ions. The registered energy x space x tolerance device matrix is still
+pending, so this is an implementation candidate rather than a completed
+numerical certificate or an external SCAPS parity claim.
 
 ## Version and compatibility
 
@@ -163,6 +164,49 @@ The terminal `32 -> 64` maximum changes are `4.62e-9` for occupancy,
 and `2.54e-7` for the worst tangent. These results are local constitutive
 quadrature evidence, not a production DC/J-V or external SCAPS comparison.
 
+## D3-E3 guarded production QF/DC integration
+
+The public opt-in QF/DC path can now compile mixed `single_level`, `gaussian`,
+`uniform`, `conduction_band_tail`, and `valence_band_tail` source species. A
+compiled `MonovalentDefectRegion` stores one immutable source expansion per
+species. The material builder, contact-neutrality solve, built-in potential,
+Poisson charge, continuity recombination, fixed-quasi-Fermi analytic tangent,
+J-V diagnostics, and result evidence all consume those same cached nodes and
+the same explicit quadrature order.
+
+This is a numerical contract, not an implementation hint. A cached expansion
+is reconstructed and checked against the canonical source and requested order;
+wrong-order, noncanonical, reordered, or source-mismatched node data fail
+closed. Newton and RHS evaluations reuse the compiled nodes rather than
+quietly rebuilding an energy grid. A single-level-only model retains the exact
+single-node arithmetic and does not acquire distributed-order provenance.
+
+The frozen device input is
+`configs/distributed_defect_qf_dc_pn.yaml` (literal SHA-256
+`7a6b1c16d8ea313177e3a761660bd6b7bbb546b14aa23189f91a9187ff0904f8`,
+semantic SHA-256
+`9a0d5095ffacc2b3be9b0b5b6ead96668e7572ff9b8edbfb1dd3a213f3f8ecd7`).
+It is a uniform two-layer p/n Maxwell-Boltzmann device containing four source
+species: a VB-tail donor and uniform neutral source on the p side, plus a
+Gaussian acceptor and CB-tail neutral source on the n side.
+
+The preregistered lane `distributed-explicit-defect-qf-dc-v1` uses outer
+spatial grids `16/32/64` and nonlinear tolerance factors `1/0.1/0.01`. Every
+outer cell independently executes the inner energy-order ladder `16/32/64`.
+Its observables cover contact reservoirs and built-in potential, dark carrier,
+potential, occupancy and charge profiles, integrated source charges, and a
+three-point illuminated J-V. Its quality gates cover default-path rejection,
+model/topology/order identity, contact thermodynamics, occupancy and kinetic
+denominators, dark equilibrium, Poisson and continuity residuals, terminal
+current, analytic tangents, and all three energy-order comparisons.
+
+One real `grid=16`, `tolerance=1` cell has completed against the exact
+registered contract. The full nine-cell content-addressed matrix has not yet
+run, so no certificate SHA-256 or `certified` status is claimed here. Before
+the implementation checkpoint, the default Python suite completed with
+`3029 passed, 2 skipped, 264 deselected` and 12 pre-existing `np.trapz`
+deprecation warnings in 368.76 seconds.
+
 ## Strict SCAPS-shaped distributed adapter
 
 `scaps_compat.distributed_defects.convert_scaps_distributed_bulk_defect`
@@ -209,7 +253,7 @@ The existing `load_scaps_yaml` and
 `N_t_cm3` remains the direct integrated input and legacy `N_peak_cm3` remains
 informational; ambiguous old YAML never acquires v2 executable meaning.
 
-## Capability boundary after D3-E2
+## Capability boundary after the D3-E3 implementation candidate
 
 Enabled:
 
@@ -223,17 +267,27 @@ Enabled:
 - content-addressed local energy-order refinement independent of space and
   solver tolerance;
 - strict SCAPS-shaped distributed conversion with frozen total/peak, energy
-  reference, support, unit, and SHA-256 fixtures.
+  reference, support, unit, and SHA-256 fixtures;
+- guarded production QF/DC compilation of mixed single/Gaussian/uniform/CB-tail/
+  VB-tail sources in uniform layers;
+- same-order contact neutrality, built-in potential, Poisson charge,
+  continuity recombination, analytic tangent, J-V diagnostics, and result
+  provenance;
+- a preregistered energy x space x tolerance full-device certificate lane.
 
 Still fail closed:
 
-- any distributed closure in the production material/experiment path;
-- distributed contact neutrality, Poisson coupling, J-V, AC, and transient
-  execution;
-- legacy or standard YAML activation of distributed inputs; only the explicit
-  strict adapter can create a normalized SCAPS-shaped v2 species;
+- ordinary density-form MoL/transient execution and any distributed-defect
+  run with mobile ions;
+- Fermi-Dirac carriers, spatially graded source parameters, dynamic occupancy,
+  AC, tunnelling, and multivalent defects;
+- combinations with interface defects, selective-contact research laws, or
+  field-dependent mobility until separately registered;
+- an editable distributed-defect frontend; the current UI remains the
+  single-level experimental editor;
 - spatially graded density or energy reference;
-- dynamic occupancy, non-unit degeneracy, and multivalent defects.
+- external SCAPS parity and experimental validation.
 
-D3-E3 is the first checkpoint allowed to enable distributed defects in
-production QF/DC.
+D3-E3 becomes complete only after the nine-cell matrix, full test suite,
+checkpoint commit, and remote push close. D3-E4 then extends the model to
+spatial grading rather than reusing the uniform-layer certificate.

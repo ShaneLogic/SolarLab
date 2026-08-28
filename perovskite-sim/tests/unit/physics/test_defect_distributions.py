@@ -26,6 +26,7 @@ from perovskite_sim.models.defects import (
     ExplicitDefectSchemaError,
 )
 from perovskite_sim.physics.defect_distributions import (
+    DefectSpeciesEnergyExpansion,
     build_defect_energy_quadrature,
     distribution_shape_integral_eV,
     expand_bulk_defect_species_energy,
@@ -211,6 +212,29 @@ def test_distributed_species_expansion_is_auditable_and_conservative(kind):
         item.distribution.total_density_m3
         for item in expansion.node_species
     ) == pytest.approx(TOTAL_DENSITY_M3, rel=8.0e-16)
+
+
+def test_species_expansion_rejects_noncanonical_cached_nodes():
+    species = _species(_distribution(GAUSSIAN))
+    expansion = expand_bulk_defect_species_energy(
+        species,
+        band_gap_eV=GAP_EV,
+        order=12,
+    )
+    tampered_nodes = (
+        replace(expansion.node_species[0], name="tampered-energy-node"),
+        *expansion.node_species[1:],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="canonical quadrature expansion",
+    ):
+        DefectSpeciesEnergyExpansion(
+            source_species=species,
+            quadrature=expansion.quadrature,
+            node_species=tampered_nodes,
+        )
 
 
 def test_gaussian_delta_limit_concentrates_on_the_exact_single_level():

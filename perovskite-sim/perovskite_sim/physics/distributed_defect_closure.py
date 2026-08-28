@@ -33,7 +33,9 @@ from perovskite_sim.physics.defect_closure import (
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     DefectEnergyQuadrature,
+    DefectSpeciesEnergyExpansion,
     expand_bulk_defect_species_energy,
+    validate_defect_energy_quadrature_order,
 )
 
 
@@ -509,6 +511,7 @@ def evaluate_energy_distributed_defect_closure(
     effective_valence_dos_m3: object,
     temperature_K: object,
     energy_quadrature_order: int = DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    energy_expansions: Sequence[DefectSpeciesEnergyExpansion] | None = None,
 ) -> EnergyDistributedDefectClosureResult:
     """Evaluate and integrate D2 node closures for canonical distributions."""
 
@@ -544,13 +547,51 @@ def evaluate_energy_distributed_defect_closure(
         "effective_valence_dos_m3",
     )
     temperature = _finite_positive(temperature_K, "temperature_K")
+    resolved_order = validate_defect_energy_quadrature_order(
+        energy_quadrature_order
+    )
+    if energy_expansions is None:
+        prepared_expansions: tuple[DefectSpeciesEnergyExpansion | None, ...] = (
+            (None,) * len(resolved)
+        )
+    else:
+        supplied = tuple(energy_expansions)
+        if len(supplied) != len(resolved) or not all(
+            isinstance(item, DefectSpeciesEnergyExpansion)
+            for item in supplied
+        ):
+            raise ValueError(
+                "energy_expansions must align with the source species"
+            )
+        for source, expansion in zip(resolved, supplied, strict=True):
+            expected_order = (
+                1
+                if source.distribution.kind == SINGLE_LEVEL
+                else resolved_order
+            )
+            if (
+                expansion.source_species != source
+                or expansion.quadrature.order != expected_order
+            ):
+                raise ValueError(
+                    "energy_expansions do not match the source/order protocol"
+                )
+        prepared_expansions = supplied
     source_results: list[EnergyResolvedSpeciesClosure] = []
-    for source in resolved:
+    for source, prepared in zip(
+        resolved,
+        prepared_expansions,
+        strict=True,
+    ):
         try:
-            expansion = expand_bulk_defect_species_energy(
-                source,
-                band_gap_eV=gap,
-                order=energy_quadrature_order,
+            expansion = (
+                expand_bulk_defect_species_energy(
+                    source,
+                    band_gap_eV=gap,
+                    order=resolved_order,
+                )
+                if prepared is None
+                else prepared
             )
             node_closure = evaluate_monovalent_defect_closure(
                 electron_density_m3,
@@ -570,7 +611,7 @@ def evaluate_energy_distributed_defect_closure(
             raise EnergyDistributedDefectClosureError(
                 "energy-distributed source evaluation failed for "
                 f"{source.name!r} ({source.distribution.kind}, "
-                f"requested_order={energy_quadrature_order}): {exc}"
+                f"requested_order={resolved_order}): {exc}"
             ) from exc
         source_results.append(
             _integrate_source(source, node_closure, expansion.quadrature)

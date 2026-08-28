@@ -17,6 +17,7 @@ from perovskite_sim.experiments.quasi_fermi_steady_state import (
 )
 from perovskite_sim.models.defects import (
     ACCEPTOR,
+    CONDUCTION_BAND_TAIL,
     DONOR,
     ENERGY_ABOVE_VALENCE_BAND,
     EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
@@ -24,10 +25,16 @@ from perovskite_sim.models.defects import (
     EXPLICIT_QUASI_STEADY,
     GAUSSIAN,
     INTEGRATED_TOTAL,
+    NEUTRAL,
+    NEUTRAL_ALL_OCCUPANCIES,
     NEUTRAL_WHEN_EMPTY,
     NEUTRAL_WHEN_FILLED,
     SINGLE_LEVEL,
+    UNIFORM,
+    VALENCE_BAND_TAIL,
+    WIDTH_GAUSSIAN_SIGMA,
     WIDTH_SCAPS_CHARACTERISTIC,
+    WIDTH_UNIFORM_FULL,
     BulkDefectDistribution,
     BulkDefectKinetics,
     BulkDefectSpecies,
@@ -38,7 +45,10 @@ from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.physics.defect_closure import (
     evaluate_monovalent_bulk_defects,
 )
-from perovskite_sim.physics.recombination import total_recombination
+from perovskite_sim.physics.recombination import (
+    total_recombination,
+    total_recombination_at_node,
+)
 from perovskite_sim.physics.temperature import thermal_voltage
 from perovskite_sim.solver.mol import (
     EXPLICIT_DEFECT_CHARGE_QF_DC,
@@ -123,6 +133,88 @@ def _stack(
         interfaces=(),
         mode="legacy",
         built_in_potential_mode=contact_mode,
+    )
+
+
+def _distributed_species(
+    kind: str,
+    transition: str = ACCEPTOR,
+    *,
+    density_m3: float = 2.0e21,
+) -> BulkDefectSpecies:
+    base = _species(ACCEPTOR if transition == NEUTRAL else transition)
+    values: dict[str, object] = {
+        "kind": kind,
+        "normalization": INTEGRATED_TOTAL,
+        "total_density_m3": density_m3,
+        "center_eV_above_vb": 0.39,
+        "energy_reference": ENERGY_ABOVE_VALENCE_BAND,
+    }
+    if kind == GAUSSIAN:
+        values |= {
+            "width_eV": 0.05,
+            "width_convention": WIDTH_GAUSSIAN_SIGMA,
+            "support_width_multiplier": 6.0,
+        }
+    elif kind == UNIFORM:
+        values |= {
+            "width_eV": 0.30,
+            "width_convention": WIDTH_UNIFORM_FULL,
+        }
+    elif kind == CONDUCTION_BAND_TAIL:
+        values |= {
+            "center_eV_above_vb": 0.75,
+            "width_eV": 0.05,
+            "width_convention": WIDTH_SCAPS_CHARACTERISTIC,
+            "support_width_multiplier": 6.0,
+        }
+    elif kind == VALENCE_BAND_TAIL:
+        values |= {
+            "center_eV_above_vb": 0.05,
+            "width_eV": 0.05,
+            "width_convention": WIDTH_SCAPS_CHARACTERISTIC,
+            "support_width_multiplier": 6.0,
+        }
+    neutral_reference = {
+        ACCEPTOR: NEUTRAL_WHEN_EMPTY,
+        DONOR: NEUTRAL_WHEN_FILLED,
+        NEUTRAL: NEUTRAL_ALL_OCCUPANCIES,
+    }[transition]
+    return replace(
+        base,
+        name=f"{kind}_{transition}",
+        distribution=BulkDefectDistribution(**values),
+        charge_transition=transition,
+        neutral_reference=neutral_reference,
+    )
+
+
+def _distributed_stack(
+    kind: str,
+    transition: str = ACCEPTOR,
+    *,
+    photon_flux_m2_s: float = 0.0,
+) -> DeviceStack:
+    base = _stack(
+        transition=(ACCEPTOR if transition == NEUTRAL else transition),
+        photon_flux_m2_s=photon_flux_m2_s,
+    )
+    params = base.layers[0].params
+    assert params is not None
+    return replace(
+        base,
+        layers=(
+            replace(
+                base.layers[0],
+                params=replace(
+                    params,
+                    defect_schema_version=(
+                        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
+                    ),
+                    bulk_defects=(_distributed_species(kind, transition),),
+                ),
+            ),
+        ),
     )
 
 
@@ -307,45 +399,166 @@ def test_v2_single_level_material_is_exact_to_v1_qf_dc_physics():
         np.testing.assert_array_equal(getattr(v1, name), getattr(v2, name))
 
 
-def test_v2_distributed_material_remains_fail_closed_before_d3_e3():
-    base = _stack()
-    params = base.layers[0].params
-    species = params.bulk_defects[0]
-    distributed = replace(
-        species,
-        distribution=BulkDefectDistribution(
-            kind=GAUSSIAN,
-            normalization=INTEGRATED_TOTAL,
-            total_density_m3=species.distribution.total_density_m3,
-            center_eV_above_vb=species.distribution.center_eV_above_vb,
-            width_eV=0.05,
-            width_convention=WIDTH_SCAPS_CHARACTERISTIC,
-            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
-            support_width_multiplier=6.0,
-        ),
+def test_v2_distributed_material_opens_only_on_the_guarded_qf_dc_lane():
+    stack = _distributed_stack(GAUSSIAN)
+    grid = _grid(stack, 6)
+
+    with pytest.raises(ExplicitDefectCapabilityError, match="guarded QF/DC"):
+        build_material_arrays(grid, stack)
+
+    material = build_material_arrays(
+        grid,
+        stack,
+        explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+        defect_energy_quadrature_order=16,
     )
-    stack = replace(
-        base,
-        layers=(
-            replace(
-                base.layers[0],
-                params=replace(
-                    params,
-                    defect_schema_version=(
-                        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
-                    ),
-                    bulk_defects=(distributed,),
-                ),
-            ),
-        ),
+    model = material.monovalent_bulk_defects
+    assert model is not None
+    assert model.has_distributed_species
+    assert material.explicit_defect_energy_quadrature_order == 16
+    assert model.source_energy_orders == (16,)
+    n = np.geomspace(material.n_L, 2.0 * material.n_R, grid.size)
+    p = material.ni_sq / n
+    evaluation = evaluate_monovalent_bulk_defects(n, p, model)
+    node = grid.size // 2
+    scalar = total_recombination_at_node(
+        float(n[node]),
+        float(p[node]),
+        float(material.ni_sq[node]),
+        float(material.tau_n[node]),
+        float(material.tau_p[node]),
+        float(material.n1[node]),
+        float(material.p1[node]),
+        float(material.B_rad[node]),
+        float(material.C_n[node]),
+        float(material.C_p[node]),
+        node=node,
+        monovalent_bulk_defects=model,
+    )
+    assert scalar == pytest.approx(
+        evaluation.total_recombination_rate_m3_s[node],
+        rel=2.0e-15,
     )
 
-    with pytest.raises(ExplicitDefectCapabilityError, match="single-level"):
-        build_material_arrays(
-            _grid(stack, 6),
+
+@pytest.mark.parametrize(
+    "kind",
+    (GAUSSIAN, UNIFORM, CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL),
+)
+def test_distributed_dark_equilibrium_is_qf_residual_certified(kind):
+    stack = _distributed_stack(kind)
+    result = solve_quasi_fermi_steady_state(
+        _grid(stack, 8),
+        stack,
+        V_app=0.0,
+        illuminated=False,
+        defect_energy_quadrature_order=20,
+    )
+
+    assert result.certified
+    assert result.contact_thermodynamic_status == "certified"
+    assert result.contact_fermi_level_span_eV is not None
+    assert result.contact_fermi_level_span_eV < 1.0e-12
+    assert result.defect_energy_quadrature_order == 20
+    assert result.defect_distribution_kinds == (kind,)
+    diagnostics = result.bulk_defect_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.distribution_kinds == (kind,)
+    assert diagnostics.source_energy_orders == (20,)
+    assert len(diagnostics.source_node_identifiers[0]) == 20
+    assert diagnostics.minimum_kinetic_denominator_s1 > 0.0
+    assert np.max(np.abs(diagnostics.total_recombination_rate_m3_s)) < 1.0e12
+
+
+def test_neutral_distributed_source_uses_the_same_guarded_qf_dc_contract():
+    stack = _distributed_stack(GAUSSIAN, NEUTRAL)
+    result = solve_quasi_fermi_steady_state(
+        _grid(stack, 8),
+        stack,
+        illuminated=False,
+        defect_energy_quadrature_order=16,
+    )
+
+    assert result.certified
+    assert result.defect_energy_quadrature_order == 16
+    diagnostics = result.bulk_defect_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.charge_transitions == (NEUTRAL,)
+    np.testing.assert_array_equal(
+        diagnostics.total_charge_density_C_m3,
+        np.zeros_like(diagnostics.total_charge_density_C_m3),
+    )
+
+
+def test_distributed_energy_order_is_bound_into_material_and_public_result():
+    stack = _distributed_stack(GAUSSIAN)
+    grid = _grid(stack, 6)
+    material_12 = build_material_arrays(
+        grid,
+        stack,
+        explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+        defect_energy_quadrature_order=12,
+    )
+    material_24 = build_material_arrays(
+        grid,
+        stack,
+        explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+        defect_energy_quadrature_order=24,
+    )
+
+    assert material_12.monovalent_bulk_defects is not None
+    assert material_24.monovalent_bulk_defects is not None
+    assert (
+        material_12.monovalent_bulk_defects.identity_sha256
+        != material_24.monovalent_bulk_defects.identity_sha256
+    )
+    with pytest.raises(QuasiFermiSteadyStateError, match="quadrature order"):
+        solve_quasi_fermi_steady_state(
+            grid,
             stack,
-            explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+            illuminated=False,
+            mat=material_12,
+            defect_energy_quadrature_order=24,
         )
+
+
+def test_distributed_bulk_charge_fixed_qf_tangent_matches_centered_difference():
+    stack = _distributed_stack(CONDUCTION_BAND_TAIL)
+    grid = _grid(stack, 6)
+    material = build_material_arrays(
+        grid,
+        stack,
+        explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+        defect_energy_quadrature_order=24,
+    )
+    system = _QuasiFermiSystem(
+        grid,
+        stack,
+        material,
+        0.0,
+        poisson_tolerance_V=1.0e-13,
+        poisson_max_iterations=100,
+    )
+    n = system.base[: grid.size]
+    p = system.base[grid.size : 2 * grid.size]
+    _rho, tangent = system._bulk_space_charge_and_tangent(n, p)
+    step = 1.0e-7
+    factor = np.exp(step / material.V_T_device)
+    rho_plus, _ = system._bulk_space_charge_and_tangent(
+        n * factor,
+        p / factor,
+    )
+    rho_minus, _ = system._bulk_space_charge_and_tangent(
+        n / factor,
+        p * factor,
+    )
+
+    np.testing.assert_allclose(
+        tangent,
+        (rho_plus - rho_minus) / (2.0 * step),
+        rtol=3.0e-8,
+        atol=1.0e-10,
+    )
 
 
 @pytest.mark.parametrize("transition", [ACCEPTOR, DONOR])
@@ -501,6 +714,110 @@ def test_public_qf_jv_sweep_retains_charged_defect_certificates():
         point.contact_thermodynamic_status == "certified"
         for point in sweep.points
     )
+
+
+def test_mixed_distributed_species_close_in_illuminated_qf_jv():
+    base = _distributed_stack(GAUSSIAN, photon_flux_m2_s=2.0e16)
+    params = base.layers[0].params
+    assert params is not None
+    species = (
+        _distributed_species(
+            GAUSSIAN,
+            ACCEPTOR,
+            density_m3=8.0e20,
+        ),
+        _distributed_species(
+            CONDUCTION_BAND_TAIL,
+            DONOR,
+            density_m3=4.0e20,
+        ),
+    )
+    stack = replace(
+        base,
+        layers=(
+            replace(
+                base.layers[0],
+                params=replace(params, bulk_defects=species),
+            ),
+        ),
+    )
+    sweep = solve_quasi_fermi_jv_sweep(
+        _grid(stack, 10),
+        stack,
+        np.asarray([0.0, 0.005, 0.01]),
+        illumination_steps=(0.0, 1.0e-4, 1.0e-2, 1.0),
+        continuity_tolerance_A_m2=2.0e-4,
+        current_spread_tolerance_A_m2=2.0e-4,
+        defect_energy_quadrature_order=16,
+    )
+
+    assert sweep.certified
+    assert sweep.defect_energy_quadrature_order == 16
+    assert sweep.defect_distribution_kinds == (
+        GAUSSIAN,
+        CONDUCTION_BAND_TAIL,
+    )
+    assert all(point.defect_energy_quadrature_order == 16 for point in sweep.points)
+    assert all(
+        point.defect_distribution_kinds
+        == (GAUSSIAN, CONDUCTION_BAND_TAIL)
+        for point in sweep.points
+    )
+    assert all(point.bulk_defect_diagnostics is not None for point in sweep.points)
+
+
+def test_distributed_qf_scope_rejects_mobile_ions_fd_and_spatial_grading():
+    base = _distributed_stack(GAUSSIAN)
+    params = base.layers[0].params
+    assert params is not None
+    mobile = replace(
+        base,
+        layers=(
+            replace(
+                base.layers[0],
+                params=replace(
+                    params,
+                    D_ion=1.0e-14,
+                    P0=1.0e22,
+                    P_lim=2.0e22,
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(QuasiFermiSteadyStateError, match="mobile ions"):
+        solve_quasi_fermi_steady_state(
+            _grid(mobile, 6),
+            mobile,
+            illuminated=False,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="explicit_quasi_steady requires.*maxwell_boltzmann",
+    ):
+        replace(params, carrier_statistics="fermi_dirac")
+
+    graded = replace(
+        base,
+        mode="full",
+        band_grading=True,
+        layers=(
+            replace(
+                base.layers[0],
+                params=replace(
+                    params,
+                    Eg_back=0.82,
+                    chi_back=4.02,
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(ExplicitDefectCapabilityError, match="spatial grading"):
+        solve_quasi_fermi_steady_state(
+            _grid(graded, 6),
+            graded,
+            illuminated=False,
+        )
 
 
 def test_qf_wraps_contact_certificate_failure_in_public_error():

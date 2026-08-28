@@ -429,6 +429,8 @@ def _defect_diagnostics(
     minimum_denominator=4.0,
     charge=(-2.0, 3.0),
     recombination=(-5.0, 7.0),
+    distribution_kinds=(),
+    source_energy_orders=(),
 ):
     return SimpleNamespace(
         model_identity_sha256=digest,
@@ -439,6 +441,8 @@ def _defect_diagnostics(
         minimum_kinetic_denominator_s1=minimum_denominator,
         total_charge_density_C_m3=np.asarray(charge),
         total_recombination_rate_m3_s=np.asarray(recombination),
+        distribution_kinds=distribution_kinds,
+        source_energy_orders=source_energy_orders,
     )
 
 
@@ -464,6 +468,22 @@ def test_qf_bulk_defect_evidence_preserves_identity_and_global_extrema():
     assert evidence.minimum_kinetic_denominator_s1 == pytest.approx(2.0)
     assert evidence.maximum_absolute_charge_density_C_m3 == pytest.approx(11.0)
     assert evidence.maximum_absolute_recombination_rate_m3_s == pytest.approx(13.0)
+
+
+def test_qf_bulk_defect_evidence_preserves_distributed_source_protocol():
+    diagnostics = _defect_diagnostics(
+        distribution_kinds=("gaussian", "conduction_band_tail"),
+        source_energy_orders=(16, 16),
+    )
+    evidence = bm._summarize_qf_bulk_defect_evidence(
+        (SimpleNamespace(bulk_defect_diagnostics=diagnostics),)
+    )
+
+    assert evidence.distribution_kinds == (
+        "gaussian",
+        "conduction_band_tail",
+    )
+    assert evidence.source_energy_orders == (16, 16)
 
 
 @pytest.mark.parametrize(

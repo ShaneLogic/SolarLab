@@ -12,7 +12,7 @@ import numpy as np
 from perovskite_sim.physics.defect_closure import (
     MonovalentBulkDefectModel,
     evaluate_monovalent_bulk_defects,
-    evaluate_monovalent_defect_closure,
+    evaluate_monovalent_source_defect_closure,
 )
 
 
@@ -975,19 +975,23 @@ def total_recombination_at_node(
             srh += (n * p - ni_sq) / denominator
     else:
         assert monovalent_region is not None
-        srh = evaluate_monovalent_defect_closure(
-                n,
-                p,
-                monovalent_region.species,
-                band_gap_eV=monovalent_region.band_gap_eV,
-                effective_conduction_dos_m3=(
-                    monovalent_region.effective_conduction_dos_m3
-                ),
-                effective_valence_dos_m3=(
-                    monovalent_region.effective_valence_dos_m3
-                ),
-                temperature_K=monovalent_region.temperature_K,
-            ).total_recombination_rate_m3_s.item()
+        srh = evaluate_monovalent_source_defect_closure(
+            n,
+            p,
+            monovalent_region.species,
+            band_gap_eV=monovalent_region.band_gap_eV,
+            effective_conduction_dos_m3=(
+                monovalent_region.effective_conduction_dos_m3
+            ),
+            effective_valence_dos_m3=(
+                monovalent_region.effective_valence_dos_m3
+            ),
+            temperature_K=monovalent_region.temperature_K,
+            energy_quadrature_order=(
+                monovalent_region.energy_quadrature_order
+            ),
+            energy_expansions=monovalent_region.source_expansions,
+        ).total_recombination_rate_m3_s.item()
     return float(
         srh
         + radiative_recombination(np.asarray(n), np.asarray(p), ni_sq, B_rad)

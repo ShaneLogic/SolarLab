@@ -9,7 +9,7 @@ one constitutive interpretation of the explicit-defect document.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -29,10 +29,20 @@ from perovskite_sim.models.defects import (
     BulkDefectSpecies,
     ExplicitDefectCapabilityError,
 )
+from perovskite_sim.physics.defect_distributions import (
+    DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    DefectEnergyQuadrature,
+    DefectSpeciesEnergyExpansion,
+    expand_bulk_defect_species_energy,
+    validate_defect_energy_quadrature_order,
+)
 from perovskite_sim.physics.temperature import thermal_voltage
 
 
 if TYPE_CHECKING:
+    from perovskite_sim.physics.distributed_defect_closure import (
+        EnergyDistributedDefectClosureResult,
+    )
     from perovskite_sim.physics.statistics import BulkChargeNeutralityState
 
 
@@ -49,7 +59,7 @@ class MonovalentDefectNeutralityResult:
     """Common-Fermi-level contact state using the same local defect closure."""
 
     neutrality: "BulkChargeNeutralityState"
-    closure: "MonovalentDefectClosureResult"
+    closure: MonovalentDefectClosureResult | EnergyDistributedDefectClosureResult
 
 
 def _finite_positive(value: object, name: str) -> float:
@@ -287,6 +297,27 @@ class MonovalentDefectRegion:
     temperature_K: float
     species: tuple[BulkDefectSpecies, ...]
     schema_version: str = EXPLICIT_DEFECT_SCHEMA_VERSION
+    energy_quadrature_order: int = DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
+    source_expansions: tuple[DefectSpeciesEnergyExpansion, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    source_quadratures: tuple[DefectEnergyQuadrature, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    execution_species: tuple[BulkDefectSpecies, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    source_node_ranges: tuple[tuple[int, int], ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         identifier = str(self.identifier).strip()
@@ -308,7 +339,10 @@ class MonovalentDefectRegion:
             "effective_valence_dos_m3",
         )
         temperature = _finite_positive(self.temperature_K, "temperature_K")
-        species = _validate_species(self.species, band_gap_eV=gap)
+        species = _validate_source_species(self.species, band_gap_eV=gap)
+        energy_order = validate_defect_energy_quadrature_order(
+            self.energy_quadrature_order
+        )
         expected_digest = BulkDefectDocument(
             schema_version=self.schema_version,
             defect_model=EXPLICIT_QUASI_STEADY,
@@ -318,6 +352,21 @@ class MonovalentDefectRegion:
             raise ValueError(
                 "defect region document_sha256 does not match its species"
             )
+        expansions: list[DefectSpeciesEnergyExpansion] = []
+        quadratures: list[DefectEnergyQuadrature] = []
+        execution_species: list[BulkDefectSpecies] = []
+        source_node_ranges: list[tuple[int, int]] = []
+        for source in species:
+            expansion = expand_bulk_defect_species_energy(
+                source,
+                band_gap_eV=gap,
+                order=energy_order,
+            )
+            expansions.append(expansion)
+            start = len(execution_species)
+            execution_species.extend(expansion.node_species)
+            source_node_ranges.append((start, len(execution_species)))
+            quadratures.append(expansion.quadrature)
         object.__setattr__(self, "identifier", identifier)
         object.__setattr__(self, "document_sha256", digest)
         object.__setattr__(self, "active_nodes", _readonly(active, dtype=bool))
@@ -330,6 +379,43 @@ class MonovalentDefectRegion:
         object.__setattr__(self, "effective_valence_dos_m3", valence_dos)
         object.__setattr__(self, "temperature_K", temperature)
         object.__setattr__(self, "species", species)
+        object.__setattr__(self, "energy_quadrature_order", energy_order)
+        object.__setattr__(self, "source_expansions", tuple(expansions))
+        object.__setattr__(self, "source_quadratures", tuple(quadratures))
+        object.__setattr__(
+            self,
+            "execution_species",
+            tuple(execution_species),
+        )
+        object.__setattr__(
+            self,
+            "source_node_ranges",
+            tuple(source_node_ranges),
+        )
+
+    @property
+    def has_distributed_species(self) -> bool:
+        return any(
+            item.distribution.kind != SINGLE_LEVEL for item in self.species
+        )
+
+    @property
+    def distribution_kinds(self) -> tuple[str, ...]:
+        return tuple(item.distribution.kind for item in self.species)
+
+    @property
+    def source_energy_orders(self) -> tuple[int, ...]:
+        return tuple(item.order for item in self.source_quadratures)
+
+    @property
+    def source_node_identifiers(self) -> tuple[tuple[str, ...], ...]:
+        return tuple(
+            tuple(
+                str(item.name)
+                for item in self.execution_species[start:stop]
+            )
+            for start, stop in self.source_node_ranges
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,6 +477,34 @@ class MonovalentBulkDefectModel:
         )
 
     @property
+    def has_distributed_species(self) -> bool:
+        return any(region.has_distributed_species for region in self.regions)
+
+    @property
+    def distribution_kinds(self) -> tuple[str, ...]:
+        return tuple(
+            kind
+            for region in self.regions
+            for kind in region.distribution_kinds
+        )
+
+    @property
+    def source_energy_orders(self) -> tuple[int, ...]:
+        return tuple(
+            order
+            for region in self.regions
+            for order in region.source_energy_orders
+        )
+
+    @property
+    def source_node_identifiers(self) -> tuple[tuple[str, ...], ...]:
+        return tuple(
+            tuple(f"{region.identifier}/{name}" for name in identifiers)
+            for region in self.regions
+            for identifiers in region.source_node_identifiers
+        )
+
+    @property
     def identity_sha256(self) -> str:
         payload = {
             "model": MONOVALENT_BULK_DEFECT_MODEL_VERSION,
@@ -409,6 +523,15 @@ class MonovalentBulkDefectModel:
                         region.effective_valence_dos_m3
                     ),
                     "temperature_K": region.temperature_K,
+                    **(
+                        {
+                            "energy_quadrature_order": (
+                                region.energy_quadrature_order
+                            )
+                        }
+                        if region.has_distributed_species
+                        else {}
+                    ),
                 }
                 for region in self.regions
             ],
@@ -447,6 +570,9 @@ class MonovalentBulkDefectEvaluation:
     minimum_occupancy: float
     maximum_occupancy: float
     minimum_kinetic_denominator_s1: float
+    distribution_kinds: tuple[str, ...] = ()
+    source_energy_orders: tuple[int, ...] = ()
+    source_node_identifiers: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         digest = str(self.model_identity_sha256).lower()
@@ -493,14 +619,56 @@ class MonovalentBulkDefectEvaluation:
             if value.shape != active.shape[1:] or not np.all(np.isfinite(value)):
                 raise ValueError(f"{name} must be finite and match the device grid")
             object.__setattr__(self, name, _readonly(value))
+        kinds = tuple(self.distribution_kinds)
+        orders = tuple(self.source_energy_orders)
+        node_identifiers = tuple(
+            tuple(values) for values in self.source_node_identifiers
+        )
+        distributed_metadata = bool(kinds)
+        if distributed_metadata:
+            if (
+                len(kinds) != len(identifiers)
+                or len(orders) != len(identifiers)
+                or len(node_identifiers) != len(identifiers)
+                or any(order < 1 for order in orders)
+                or any(
+                    len(nodes) != order
+                    for nodes, order in zip(
+                        node_identifiers,
+                        orders,
+                        strict=True,
+                    )
+                )
+                or any(
+                    len(nodes) != len(set(nodes))
+                    for nodes in node_identifiers
+                )
+            ):
+                raise ValueError(
+                    "distributed bulk-defect metadata is inconsistent"
+                )
+        elif orders or node_identifiers:
+            raise ValueError("partial distributed bulk-defect metadata is invalid")
         active_occupancy = np.asarray(self.occupancy)[active]
         active_denominator = np.asarray(self.kinetic_denominator_s1)[active]
         minimum = float(self.minimum_occupancy)
         maximum = float(self.maximum_occupancy)
         minimum_denominator = float(self.minimum_kinetic_denominator_s1)
         if (
-            minimum != float(np.min(active_occupancy))
-            or maximum != float(np.max(active_occupancy))
+            (
+                not distributed_metadata
+                and (
+                    minimum != float(np.min(active_occupancy))
+                    or maximum != float(np.max(active_occupancy))
+                )
+            )
+            or (
+                distributed_metadata
+                and (
+                    minimum > float(np.min(active_occupancy))
+                    or maximum < float(np.max(active_occupancy))
+                )
+            )
             or minimum < 0.0
             or maximum > 1.0
             or not math.isfinite(minimum_denominator)
@@ -512,11 +680,14 @@ class MonovalentBulkDefectEvaluation:
         object.__setattr__(self, "species_identifiers", identifiers)
         object.__setattr__(self, "charge_transitions", transitions)
         object.__setattr__(self, "active_nodes", _readonly(active, dtype=bool))
+        object.__setattr__(self, "distribution_kinds", kinds)
+        object.__setattr__(self, "source_energy_orders", orders)
+        object.__setattr__(self, "source_node_identifiers", node_identifiers)
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible constitutive evidence payload."""
 
-        return {
+        payload = {
             "model": MONOVALENT_BULK_DEFECT_MODEL_VERSION,
             "model_identity_sha256": self.model_identity_sha256,
             "species_identifiers": list(self.species_identifiers),
@@ -555,6 +726,55 @@ class MonovalentBulkDefectEvaluation:
                 self.minimum_kinetic_denominator_s1
             ),
         }
+        if self.distribution_kinds:
+            payload["distribution_kinds"] = list(self.distribution_kinds)
+            payload["source_energy_orders"] = list(self.source_energy_orders)
+            payload["source_node_identifiers"] = [
+                list(values) for values in self.source_node_identifiers
+            ]
+        return payload
+
+
+def _validate_source_species(
+    species: Sequence[BulkDefectSpecies],
+    *,
+    band_gap_eV: float,
+) -> tuple[BulkDefectSpecies, ...]:
+    resolved = tuple(species)
+    if not resolved:
+        raise ValueError("species must not be empty")
+    if not all(isinstance(item, BulkDefectSpecies) for item in resolved):
+        raise TypeError("species must contain BulkDefectSpecies values")
+    names = [item.name for item in resolved]
+    if any(name is None for name in names) or len(names) != len(set(names)):
+        raise MonovalentDefectClosureCapabilityError(
+            "DEF-2 requires unique named defect species"
+        )
+    for item in resolved:
+        item.validate_band_gap(band_gap_eV)
+        if item.charge_transition not in {NEUTRAL, ACCEPTOR, DONOR}:
+            raise MonovalentDefectClosureCapabilityError(
+                "DEF-2 requires neutral, acceptor, or donor transitions"
+            )
+        if item.degeneracy != 1.0:
+            raise MonovalentDefectClosureCapabilityError(
+                "DEF-2 does not silently ignore degeneracy; use degeneracy=1.0"
+            )
+        kinetics = item.kinetics
+        if kinetics.sigma_n_m2 == 0.0 and kinetics.sigma_p_m2 == 0.0:
+            raise MonovalentDefectClosureCapabilityError(
+                "DEF-2 occupancy is undefined when both capture legs are "
+                f"zero: {item.name}"
+            )
+        if (
+            item.distribution.kind != SINGLE_LEVEL
+            and not item.distributed_explicit_ready
+        ):
+            raise MonovalentDefectClosureCapabilityError(
+                "distributed production requires a complete normalized v2 "
+                f"source: {item.name}"
+            )
+    return resolved
 
 
 def _validate_species(
@@ -578,20 +798,7 @@ def _validate_species(
             raise MonovalentDefectClosureCapabilityError(
                 "DEF-2 supports single-level species only"
             )
-        if item.charge_transition not in {NEUTRAL, ACCEPTOR, DONOR}:
-            raise MonovalentDefectClosureCapabilityError(
-                "DEF-2 requires neutral, acceptor, or donor transitions"
-            )
-        if item.degeneracy != 1.0:
-            raise MonovalentDefectClosureCapabilityError(
-                "DEF-2 does not silently ignore degeneracy; use degeneracy=1.0"
-            )
-        kinetics = item.kinetics
-        if kinetics.sigma_n_m2 == 0.0 and kinetics.sigma_p_m2 == 0.0:
-            raise MonovalentDefectClosureCapabilityError(
-                f"DEF-2 occupancy is undefined when both capture legs are zero: {item.name}"
-            )
-    return resolved
+    return _validate_source_species(resolved, band_gap_eV=band_gap_eV)
 
 
 def _closure_identity(
@@ -824,6 +1031,57 @@ def evaluate_monovalent_defect_closure(
     )
 
 
+def evaluate_monovalent_source_defect_closure(
+    electron_density_m3: np.ndarray | float,
+    hole_density_m3: np.ndarray | float,
+    species: Sequence[BulkDefectSpecies],
+    *,
+    band_gap_eV: float,
+    effective_conduction_dos_m3: float,
+    effective_valence_dos_m3: float,
+    temperature_K: float,
+    energy_quadrature_order: int = DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    energy_expansions: Sequence[DefectSpeciesEnergyExpansion] | None = None,
+) -> (
+    MonovalentDefectClosureResult
+    | "EnergyDistributedDefectClosureResult"
+):
+    """Evaluate canonical source species, preserving the exact single lane."""
+
+    resolved = _validate_source_species(
+        species,
+        band_gap_eV=_finite_positive(band_gap_eV, "band_gap_eV"),
+    )
+    order = validate_defect_energy_quadrature_order(
+        energy_quadrature_order
+    )
+    if all(item.distribution.kind == SINGLE_LEVEL for item in resolved):
+        return evaluate_monovalent_defect_closure(
+            electron_density_m3,
+            hole_density_m3,
+            resolved,
+            band_gap_eV=band_gap_eV,
+            effective_conduction_dos_m3=effective_conduction_dos_m3,
+            effective_valence_dos_m3=effective_valence_dos_m3,
+            temperature_K=temperature_K,
+        )
+    from perovskite_sim.physics.distributed_defect_closure import (
+        evaluate_energy_distributed_defect_closure,
+    )
+
+    return evaluate_energy_distributed_defect_closure(
+        electron_density_m3,
+        hole_density_m3,
+        resolved,
+        band_gap_eV=band_gap_eV,
+        effective_conduction_dos_m3=effective_conduction_dos_m3,
+        effective_valence_dos_m3=effective_valence_dos_m3,
+        temperature_K=temperature_K,
+        energy_quadrature_order=order,
+        energy_expansions=energy_expansions,
+    )
+
+
 def evaluate_monovalent_bulk_defects(
     electron_density_m3: np.ndarray,
     hole_density_m3: np.ndarray,
@@ -850,10 +1108,27 @@ def evaluate_monovalent_bulk_defects(
     recombination_derivative_n = np.zeros(shape, dtype=float)
     recombination_derivative_p = np.zeros(shape, dtype=float)
     charge_derivative_fixed_qf = np.zeros(shape, dtype=float)
+    total_charge_density = np.zeros(model.node_count, dtype=float)
+    total_recombination_rate = np.zeros(model.node_count, dtype=float)
+    total_recombination_derivative_n = np.zeros(
+        model.node_count,
+        dtype=float,
+    )
+    total_recombination_derivative_p = np.zeros(
+        model.node_count,
+        dtype=float,
+    )
+    total_charge_derivative_fixed_qf = np.zeros(
+        model.node_count,
+        dtype=float,
+    )
+    minimum_occupancies: list[float] = []
+    maximum_occupancies: list[float] = []
+    minimum_denominators: list[float] = []
     offset = 0
     for region in model.regions:
         mask = region.active_nodes
-        local = evaluate_monovalent_defect_closure(
+        local = evaluate_monovalent_source_defect_closure(
             n[mask],
             p[mask],
             region.species,
@@ -863,25 +1138,74 @@ def evaluate_monovalent_bulk_defects(
             ),
             effective_valence_dos_m3=region.effective_valence_dos_m3,
             temperature_K=region.temperature_K,
+            energy_quadrature_order=region.energy_quadrature_order,
+            energy_expansions=region.source_expansions,
         )
         count = len(region.species)
         rows = slice(offset, offset + count)
         active_nodes[rows, mask] = True
-        kinetic_denominator[rows, mask] = local.kinetic_denominator_s1
-        occupancy[rows, mask] = local.occupancy
-        occupied_density[rows, mask] = local.occupied_density_m3
-        charge_density[rows, mask] = local.charge_density_C_m3
-        recombination_rate[rows, mask] = local.recombination_rate_m3_s
-        recombination_derivative_n[rows, mask] = (
-            local.recombination_derivative_n_s1
+        if isinstance(local, MonovalentDefectClosureResult):
+            kinetic_denominator[rows, mask] = local.kinetic_denominator_s1
+            occupancy[rows, mask] = local.occupancy
+            occupied_density[rows, mask] = local.occupied_density_m3
+            charge_density[rows, mask] = local.charge_density_C_m3
+            recombination_rate[rows, mask] = local.recombination_rate_m3_s
+            recombination_derivative_n[rows, mask] = (
+                local.recombination_derivative_n_s1
+            )
+            recombination_derivative_p[rows, mask] = (
+                local.recombination_derivative_p_s1
+            )
+            charge_derivative_fixed_qf[rows, mask] = (
+                local.charge_derivative_fixed_qf_C_m3_V
+            )
+        else:
+            for source_index, source in enumerate(local.source_closures):
+                row = offset + source_index
+                kinetic_denominator[row, mask] = np.min(
+                    source.node_closure.kinetic_denominator_s1,
+                    axis=0,
+                )
+                occupancy[row, mask] = source.mean_occupancy
+                occupied_density[row, mask] = source.occupied_density_m3
+                charge_density[row, mask] = source.charge_density_C_m3
+                recombination_rate[row, mask] = (
+                    source.recombination_rate_m3_s
+                )
+                recombination_derivative_n[row, mask] = (
+                    source.recombination_derivative_n_s1
+                )
+                recombination_derivative_p[row, mask] = (
+                    source.recombination_derivative_p_s1
+                )
+                charge_derivative_fixed_qf[row, mask] = (
+                    source.charge_derivative_fixed_qf_C_m3_V
+                )
+        total_charge_density[mask] = local.total_charge_density_C_m3
+        total_recombination_rate[mask] = (
+            local.total_recombination_rate_m3_s
         )
-        recombination_derivative_p[rows, mask] = (
-            local.recombination_derivative_p_s1
+        total_recombination_derivative_n[mask] = (
+            local.total_recombination_derivative_n_s1
         )
-        charge_derivative_fixed_qf[rows, mask] = (
-            local.charge_derivative_fixed_qf_C_m3_V
+        total_recombination_derivative_p[mask] = (
+            local.total_recombination_derivative_p_s1
         )
+        total_charge_derivative_fixed_qf[mask] = (
+            local.total_charge_derivative_fixed_qf_C_m3_V
+        )
+        minimum_occupancies.append(local.minimum_occupancy)
+        maximum_occupancies.append(local.maximum_occupancy)
+        if isinstance(local, MonovalentDefectClosureResult):
+            minimum_denominators.append(
+                float(np.min(local.kinetic_denominator_s1))
+            )
+        else:
+            minimum_denominators.append(
+                local.minimum_kinetic_denominator_s1
+            )
         offset += count
+    distributed_metadata = model.has_distributed_species
     return MonovalentBulkDefectEvaluation(
         model_identity_sha256=model.identity_sha256,
         species_identifiers=model.species_identifiers,
@@ -895,24 +1219,28 @@ def evaluate_monovalent_bulk_defects(
         recombination_derivative_n_s1=recombination_derivative_n,
         recombination_derivative_p_s1=recombination_derivative_p,
         charge_derivative_fixed_qf_C_m3_V=charge_derivative_fixed_qf,
-        total_charge_density_C_m3=np.sum(charge_density, axis=0),
-        total_recombination_rate_m3_s=np.sum(recombination_rate, axis=0),
-        total_recombination_derivative_n_s1=np.sum(
-            recombination_derivative_n,
-            axis=0,
+        total_charge_density_C_m3=total_charge_density,
+        total_recombination_rate_m3_s=total_recombination_rate,
+        total_recombination_derivative_n_s1=(
+            total_recombination_derivative_n
         ),
-        total_recombination_derivative_p_s1=np.sum(
-            recombination_derivative_p,
-            axis=0,
+        total_recombination_derivative_p_s1=(
+            total_recombination_derivative_p
         ),
-        total_charge_derivative_fixed_qf_C_m3_V=np.sum(
-            charge_derivative_fixed_qf,
-            axis=0,
+        total_charge_derivative_fixed_qf_C_m3_V=(
+            total_charge_derivative_fixed_qf
         ),
-        minimum_occupancy=float(np.min(occupancy[active_nodes])),
-        maximum_occupancy=float(np.max(occupancy[active_nodes])),
-        minimum_kinetic_denominator_s1=float(
-            np.min(kinetic_denominator[active_nodes])
+        minimum_occupancy=min(minimum_occupancies),
+        maximum_occupancy=max(maximum_occupancies),
+        minimum_kinetic_denominator_s1=min(minimum_denominators),
+        distribution_kinds=(
+            model.distribution_kinds if distributed_metadata else ()
+        ),
+        source_energy_orders=(
+            model.source_energy_orders if distributed_metadata else ()
+        ),
+        source_node_identifiers=(
+            model.source_node_identifiers if distributed_metadata else ()
         ),
     )
 
@@ -926,6 +1254,8 @@ def solve_monovalent_defect_charge_neutrality(
     acceptor_density_m3: float,
     donor_density_m3: float,
     species: Sequence[BulkDefectSpecies],
+    energy_quadrature_order: int = DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
+    energy_expansions: Sequence[DefectSpeciesEnergyExpansion] | None = None,
 ) -> MonovalentDefectNeutralityResult:
     """Solve ``p-n+N_D-N_A+sum(N_defect_charge)=0`` in the MB limit."""
 
@@ -955,7 +1285,25 @@ def solve_monovalent_defect_charge_neutrality(
         or donors < 0.0
     ):
         raise ValueError("contact dopant densities must be finite and non-negative")
-    resolved = _validate_species(species, band_gap_eV=gap)
+    resolved = _validate_source_species(species, band_gap_eV=gap)
+    energy_order = validate_defect_energy_quadrature_order(
+        energy_quadrature_order
+    )
+    if energy_expansions is None and any(
+        item.distribution.kind != SINGLE_LEVEL for item in resolved
+    ):
+        prepared_expansions: tuple[DefectSpeciesEnergyExpansion, ...] | None = tuple(
+            expand_bulk_defect_species_energy(
+                item,
+                band_gap_eV=gap,
+                order=energy_order,
+            )
+            for item in resolved
+        )
+    elif energy_expansions is None:
+        prepared_expansions = None
+    else:
+        prepared_expansions = tuple(energy_expansions)
     thermal = thermal_voltage(temperature)
     reduced_gap = gap / thermal
 
@@ -966,7 +1314,7 @@ def solve_monovalent_defect_charge_neutrality(
         float,
         float,
         float,
-        MonovalentDefectClosureResult,
+        MonovalentDefectClosureResult | EnergyDistributedDefectClosureResult,
     ]:
         eta_p = -reduced_gap - eta_n
         electron = carrier_density_from_reduced_fermi_level(
@@ -979,7 +1327,7 @@ def solve_monovalent_defect_charge_neutrality(
             valence_dos,
             statistics=MAXWELL_BOLTZMANN,
         )
-        closure = evaluate_monovalent_defect_closure(
+        closure = evaluate_monovalent_source_defect_closure(
             electron,
             hole,
             resolved,
@@ -987,10 +1335,17 @@ def solve_monovalent_defect_charge_neutrality(
             effective_conduction_dos_m3=conduction_dos,
             effective_valence_dos_m3=valence_dos,
             temperature_K=temperature,
+            energy_quadrature_order=energy_order,
+            energy_expansions=prepared_expansions,
         )
-        defect_charge_number = float(
-            np.sum(closure.signed_charge_number_density_m3)
-        )
+        if isinstance(closure, MonovalentDefectClosureResult):
+            defect_charge_number = float(
+                np.sum(closure.signed_charge_number_density_m3)
+            )
+        else:
+            defect_charge_number = float(
+                np.asarray(closure.total_charge_density_C_m3) / Q
+            )
         residual = hole - electron + donors - acceptors + defect_charge_number
         return residual, electron, hole, eta_p, closure
 
@@ -1073,5 +1428,6 @@ __all__ = [
     "MonovalentDefectRegion",
     "evaluate_monovalent_bulk_defects",
     "evaluate_monovalent_defect_closure",
+    "evaluate_monovalent_source_defect_closure",
     "solve_monovalent_defect_charge_neutrality",
 ]

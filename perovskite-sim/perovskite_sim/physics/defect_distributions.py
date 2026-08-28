@@ -45,7 +45,9 @@ def _finite_positive(value: object, name: str) -> float:
     return number
 
 
-def _quadrature_order(value: object) -> int:
+def validate_defect_energy_quadrature_order(value: object) -> int:
+    """Return a strict production/local energy quadrature order."""
+
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
         raise ValueError("defect energy quadrature order must be an integer")
     order = int(value)
@@ -150,6 +152,37 @@ class DefectSpeciesEnergyExpansion:
             isinstance(item, BulkDefectSpecies) for item in nodes
         ):
             raise ValueError("node_species must match the energy quadrature")
+        if self.source_species.distribution.kind == SINGLE_LEVEL:
+            expected_nodes = (self.source_species,)
+        else:
+            expected_nodes = tuple(
+                replace(
+                    self.source_species,
+                    name=f"{self.source_species.name}::energy[{index:03d}]",
+                    distribution=BulkDefectDistribution(
+                        kind=SINGLE_LEVEL,
+                        normalization=(
+                            self.source_species.distribution.normalization
+                        ),
+                        total_density_m3=density,
+                        center_eV_above_vb=energy,
+                        energy_reference=(
+                            self.source_species.distribution.energy_reference
+                        ),
+                    ),
+                )
+                for index, (energy, density) in enumerate(
+                    zip(
+                        self.quadrature.energy_levels_eV_above_vb,
+                        self.quadrature.density_weights_m3,
+                        strict=True,
+                    )
+                )
+            )
+        if nodes != expected_nodes:
+            raise ValueError(
+                "node_species are not the canonical quadrature expansion"
+            )
         object.__setattr__(self, "node_species", nodes)
 
 
@@ -248,7 +281,7 @@ def build_defect_energy_quadrature(
             "distributed quadrature requires the complete v2 contract"
         )
 
-    resolved_order = _quadrature_order(order)
+    resolved_order = validate_defect_energy_quadrature_order(order)
     nodes, legendre_weights = np.polynomial.legendre.leggauss(resolved_order)
     probability = 0.5 * (nodes + 1.0)
     probability_weights = 0.5 * legendre_weights
@@ -375,4 +408,5 @@ __all__ = [
     "expand_bulk_defect_species_energy",
     "integrated_density_from_peak_density",
     "peak_density_from_integrated_density",
+    "validate_defect_energy_quadrature_order",
 ]

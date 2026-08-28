@@ -131,6 +131,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "incomplete-ionization-bgn-temperature-equilibrium-v1",
         "bulk-energy-distributed-trap-equilibrium-v1",
         "charged-explicit-defect-qf-dc-v1",
+        "distributed-explicit-defect-qf-dc-v1",
         "cigs-graded-optics-v1",
         "interface-srh-identifiability-synthetic-v1",
     }
@@ -395,6 +396,31 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert resolved_combined_dae.options["newton_residual_tolerance"] == (
         pytest.approx(5.0e-8)
     )
+    distributed_defect = registry.lane(
+        "distributed-explicit-defect-qf-dc-v1"
+    )
+    assert distributed_defect.grid_values == (16, 32, 64)
+    assert distributed_defect.tolerance_factors == (1.0, 0.1, 0.01)
+    assert distributed_defect.options["energy_quadrature_orders"] == [16, 32, 64]
+    distributed_observables = {
+        gate.metric: gate for gate in distributed_defect.observables
+    }
+    assert distributed_observables["jv_current_A_m2"].limit == pytest.approx(
+        0.002
+    )
+    assert distributed_observables[
+        "dark_source_occupancy_profile"
+    ].limit == pytest.approx(0.005)
+    distributed_quality = {
+        gate.metric: gate for gate in distributed_defect.quality_gates
+    }
+    assert distributed_quality["energy_orders_completed"].limit == 3.0
+    assert distributed_quality[
+        "max_energy_tangent_relative_change"
+    ].limit == pytest.approx(0.005)
+    assert distributed_quality[
+        "default_distributed_path_rejected"
+    ].limit == 1.0
     cigs_optics = registry.lane("cigs-graded-optics-v1")
     assert cigs_optics.grid_values == (8, 16, 32)
     assert cigs_optics.tolerance_factors == (1.0, 0.5, 0.25)
