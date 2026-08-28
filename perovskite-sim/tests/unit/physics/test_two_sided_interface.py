@@ -19,6 +19,7 @@ from perovskite_sim.physics.two_sided_interface import (
     equilibrium_referenced_electrostatic_trace_balance,
     equilibrium_referenced_two_sided_balance,
     remove_shared_interface_nodes,
+    shared_trap_capture_flux,
     solve_electrostatic_traces,
     solve_equilibrium_referenced_two_sided_interface,
     shared_trap_occupancy,
@@ -345,6 +346,10 @@ def test_local_qss_certifies_conservation_with_shared_trap_capture():
         result.capture_flux_m2_s,
         rtol=0.0,
         atol=max(1.0, float(np.max(np.abs(result.bulk_flux_m2_s))) * 2.0e-9),
+    )
+    np.testing.assert_array_equal(
+        shared_trap_capture_flux(result.state_m3, physics),
+        result.capture_flux_m2_s,
     )
 
     occupancy = shared_trap_occupancy(result.state_m3, physics)

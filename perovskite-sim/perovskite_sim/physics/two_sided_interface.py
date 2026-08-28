@@ -786,6 +786,25 @@ def shared_trap_occupancy_and_log_jacobian(
     return occupancy, derivative_linear * state
 
 
+def shared_trap_capture_flux(
+    state_m3: np.ndarray,
+    physics: TwoSidedInterfacePhysics,
+) -> np.ndarray:
+    """Return the canonical ``[nL, pL, nR, pR]`` trap capture flux.
+
+    This public constitutive view uses the same implementation as the local
+    carrier-balance residual. It does not solve or modify an interface state.
+    """
+    state = np.asarray(state_m3, dtype=float)
+    if state.shape != (_STATE_SIZE,) or not np.all(np.isfinite(state)):
+        raise ValueError("state_m3 must contain four finite values")
+    if np.any(state < 0.0):
+        raise ValueError("state_m3 must be non-negative")
+    capture, _ = _capture_flux_and_log_jacobian(state, physics)
+    capture.setflags(write=False)
+    return capture
+
+
 def _capture_flux_and_log_jacobian(
     state: np.ndarray,
     physics: TwoSidedInterfacePhysics,
@@ -1699,6 +1718,7 @@ __all__ = [
     "equilibrium_referenced_electrostatic_trace_balance",
     "equilibrium_referenced_two_sided_balance",
     "remove_shared_interface_nodes",
+    "shared_trap_capture_flux",
     "shared_trap_occupancy",
     "shared_trap_occupancy_and_log_jacobian",
     "solve_electrostatic_traces",
