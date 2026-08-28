@@ -985,7 +985,7 @@ def _compile_monovalent_bulk_defects(
             raise ExplicitDefectCapabilityError(
                 "DEF-3 QF/DC explicit defects require uniform finite positive "
                 f"{', '.join(invalid)} in {layer_id}; spatial grading starts "
-                "at DEF-5"
+                "at D3-E4"
             )
         physical_ni_sq = float(local_nc[0] * local_nv[0]) * math.exp(
             -float(local_gap[0]) / thermal_voltage(float(temperature_K))
@@ -1014,6 +1014,7 @@ def _compile_monovalent_bulk_defects(
                 effective_valence_dos_m3=float(local_nv[0]),
                 temperature_K=float(temperature_K),
                 species=document.bulk_defects,
+                schema_version=document.schema_version,
             )
         )
     return MonovalentBulkDefectModel(regions=tuple(regions))

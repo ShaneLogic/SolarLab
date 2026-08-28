@@ -286,6 +286,7 @@ class MonovalentDefectRegion:
     effective_valence_dos_m3: float
     temperature_K: float
     species: tuple[BulkDefectSpecies, ...]
+    schema_version: str = EXPLICIT_DEFECT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         identifier = str(self.identifier).strip()
@@ -309,7 +310,7 @@ class MonovalentDefectRegion:
         temperature = _finite_positive(self.temperature_K, "temperature_K")
         species = _validate_species(self.species, band_gap_eV=gap)
         expected_digest = BulkDefectDocument(
-            schema_version=EXPLICIT_DEFECT_SCHEMA_VERSION,
+            schema_version=self.schema_version,
             defect_model=EXPLICIT_QUASI_STEADY,
             bulk_defects=species,
         ).sha256

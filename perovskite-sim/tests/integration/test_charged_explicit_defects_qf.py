@@ -18,12 +18,16 @@ from perovskite_sim.experiments.quasi_fermi_steady_state import (
 from perovskite_sim.models.defects import (
     ACCEPTOR,
     DONOR,
+    ENERGY_ABOVE_VALENCE_BAND,
+    EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
     EXPLICIT_DEFECT_SCHEMA_VERSION,
     EXPLICIT_QUASI_STEADY,
+    GAUSSIAN,
     INTEGRATED_TOTAL,
     NEUTRAL_WHEN_EMPTY,
     NEUTRAL_WHEN_FILLED,
     SINGLE_LEVEL,
+    WIDTH_SCAPS_CHARACTERISTIC,
     BulkDefectDistribution,
     BulkDefectKinetics,
     BulkDefectSpecies,
@@ -228,6 +232,119 @@ def test_qf_material_compiles_one_shared_charge_and_recombination_model():
             stack,
             material,
             illuminated=False,
+        )
+
+
+def test_v2_single_level_material_is_exact_to_v1_qf_dc_physics():
+    v1_stack = _stack()
+    v1_params = v1_stack.layers[0].params
+    v1_species = v1_params.bulk_defects[0]
+    v2_species = replace(
+        v1_species,
+        distribution=replace(
+            v1_species.distribution,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+        ),
+    )
+    v2_stack = replace(
+        v1_stack,
+        layers=(
+            replace(
+                v1_stack.layers[0],
+                params=replace(
+                    v1_params,
+                    defect_schema_version=(
+                        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
+                    ),
+                    bulk_defects=(v2_species,),
+                ),
+            ),
+        ),
+    )
+    grid = _grid(v1_stack, 8)
+
+    v1_material = build_material_arrays(
+        grid,
+        v1_stack,
+        explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+    )
+    v2_material = build_material_arrays(
+        grid,
+        v2_stack,
+        explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
+    )
+    for name in ("n_L", "p_L", "n_R", "p_R"):
+        assert getattr(v1_material, name) == getattr(v2_material, name)
+    n = np.geomspace(v1_material.n_L, 3.0 * v1_material.n_R, grid.size)
+    p = v1_material.ni_sq / n
+    v1 = evaluate_monovalent_bulk_defects(
+        n,
+        p,
+        v1_material.monovalent_bulk_defects,
+    )
+    v2 = evaluate_monovalent_bulk_defects(
+        n,
+        p,
+        v2_material.monovalent_bulk_defects,
+    )
+
+    assert v1.model_identity_sha256 != v2.model_identity_sha256
+    for name in (
+        "kinetic_denominator_s1",
+        "occupancy",
+        "occupied_density_m3",
+        "charge_density_C_m3",
+        "recombination_rate_m3_s",
+        "recombination_derivative_n_s1",
+        "recombination_derivative_p_s1",
+        "charge_derivative_fixed_qf_C_m3_V",
+        "total_charge_density_C_m3",
+        "total_recombination_rate_m3_s",
+        "total_recombination_derivative_n_s1",
+        "total_recombination_derivative_p_s1",
+        "total_charge_derivative_fixed_qf_C_m3_V",
+    ):
+        np.testing.assert_array_equal(getattr(v1, name), getattr(v2, name))
+
+
+def test_v2_distributed_material_remains_fail_closed_before_d3_e3():
+    base = _stack()
+    params = base.layers[0].params
+    species = params.bulk_defects[0]
+    distributed = replace(
+        species,
+        distribution=BulkDefectDistribution(
+            kind=GAUSSIAN,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=species.distribution.total_density_m3,
+            center_eV_above_vb=species.distribution.center_eV_above_vb,
+            width_eV=0.05,
+            width_convention=WIDTH_SCAPS_CHARACTERISTIC,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+            support_width_multiplier=6.0,
+        ),
+    )
+    stack = replace(
+        base,
+        layers=(
+            replace(
+                base.layers[0],
+                params=replace(
+                    params,
+                    defect_schema_version=(
+                        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
+                    ),
+                    bulk_defects=(distributed,),
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(ExplicitDefectCapabilityError, match="single-level"):
+        build_material_arrays(
+            _grid(stack, 6),
+            stack,
+            explicit_defect_charge_closure=EXPLICIT_DEFECT_CHARGE_QF_DC,
         )
 
 

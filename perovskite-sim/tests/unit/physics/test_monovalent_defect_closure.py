@@ -13,6 +13,8 @@ from perovskite_sim.constants import Q
 from perovskite_sim.models.defects import (
     ACCEPTOR,
     DONOR,
+    ENERGY_ABOVE_VALENCE_BAND,
+    EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
     EXPLICIT_DEFECT_SCHEMA_VERSION,
     EXPLICIT_QUASI_STEADY,
     GAUSSIAN,
@@ -104,9 +106,12 @@ def _evaluate(n, p, *species):
     )
 
 
-def _document_hash(*species: BulkDefectSpecies) -> str:
+def _document_hash(
+    *species: BulkDefectSpecies,
+    schema_version: str = EXPLICIT_DEFECT_SCHEMA_VERSION,
+) -> str:
     return BulkDefectDocument(
-        schema_version=EXPLICIT_DEFECT_SCHEMA_VERSION,
+        schema_version=schema_version,
         defect_model=EXPLICIT_QUASI_STEADY,
         bulk_defects=species,
     ).sha256
@@ -717,6 +722,51 @@ def test_extreme_local_states_remain_finite_bounded_and_sign_consistent(
     assert result.charge_density_C_m3[0].item() <= 0.0
     assert result.charge_density_C_m3[1].item() >= 0.0
     assert result.charge_density_C_m3[2].item() == 0.0
+
+
+def test_v2_single_level_is_numerically_exact_to_the_v1_production_closure():
+    v1_species = _species("acceptor", ACCEPTOR)
+    v2_species = replace(
+        v1_species,
+        distribution=replace(
+            v1_species.distribution,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+        ),
+    )
+    n = np.asarray([2.0e16, 4.0e20, 9.0e23])
+    p = np.asarray([8.0e22, 3.0e19, 7.0e15])
+
+    v1 = _evaluate(n, p, v1_species)
+    v2 = _evaluate(n, p, v2_species)
+
+    assert v1.closure_identity_sha256 != v2.closure_identity_sha256
+    for field in fields(v1):
+        if field.name == "closure_identity_sha256":
+            continue
+        left = getattr(v1, field.name)
+        right = getattr(v2, field.name)
+        if isinstance(left, np.ndarray):
+            assert np.array_equal(left, right), field.name
+        else:
+            assert left == right, field.name
+
+    active = np.asarray([True, True, False])
+    document_sha = _document_hash(
+        v2_species,
+        schema_version=EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+    )
+    region = MonovalentDefectRegion(
+        identifier="absorber",
+        document_sha256=document_sha,
+        active_nodes=active,
+        band_gap_eV=GAP_EV,
+        effective_conduction_dos_m3=NC_M3,
+        effective_valence_dos_m3=NV_M3,
+        temperature_K=TEMPERATURE_K,
+        species=(v2_species,),
+        schema_version=EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+    )
+    assert region.document_sha256 == document_sha
 
 
 def test_unsupported_or_ambiguous_constitutive_inputs_fail_closed():

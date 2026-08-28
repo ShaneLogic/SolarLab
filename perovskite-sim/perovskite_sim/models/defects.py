@@ -17,13 +17,26 @@ from typing import Any, Literal, Self
 
 
 EXPLICIT_DEFECT_SCHEMA_VERSION = "solarlab-explicit-bulk-defects-v1"
+EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION = (
+    "solarlab-explicit-bulk-defects-v2"
+)
+SUPPORTED_EXPLICIT_DEFECT_SCHEMA_VERSIONS = frozenset(
+    {
+        EXPLICIT_DEFECT_SCHEMA_VERSION,
+        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+    }
+)
 EFFECTIVE_LIFETIME = "effective_lifetime"
 EXPLICIT_QUASI_STEADY = "explicit_quasi_steady"
 EXPLICIT_DYNAMIC = "explicit_dynamic"
 
 SINGLE_LEVEL = "single_level"
 GAUSSIAN = "gaussian"
+UNIFORM = "uniform"
+CONDUCTION_BAND_TAIL = "conduction_band_tail"
+VALENCE_BAND_TAIL = "valence_band_tail"
 INTEGRATED_TOTAL = "integrated_total"
+ENERGY_ABOVE_VALENCE_BAND = "above_valence_band"
 
 NEUTRAL = "neutral"
 ACCEPTOR = "acceptor"
@@ -38,10 +51,17 @@ NEUTRAL_REFERENCE_UNRESOLVED = "unresolved"
 WIDTH_NOT_APPLICABLE = "not_applicable"
 WIDTH_GAUSSIAN_SIGMA = "gaussian_standard_deviation"
 WIDTH_SCAPS_CHARACTERISTIC = "scaps_characteristic_energy"
+WIDTH_UNIFORM_FULL = "uniform_full_width"
 WIDTH_UNRESOLVED = "unresolved"
 
 DefectModel = Literal["effective_lifetime", "explicit_quasi_steady"]
-DefectDistributionKind = Literal["single_level", "gaussian"]
+DefectDistributionKind = Literal[
+    "single_level",
+    "gaussian",
+    "uniform",
+    "conduction_band_tail",
+    "valence_band_tail",
+]
 DefectChargeTransition = Literal[
     "neutral", "acceptor", "donor", "unresolved"
 ]
@@ -111,7 +131,14 @@ def _require_exact_keys(
 
 @dataclass(frozen=True, slots=True)
 class BulkDefectDistribution:
-    """One energy distribution with an explicitly integrated density."""
+    """One energy distribution with an explicitly integrated density.
+
+    Version 1 documents leave ``energy_reference`` unset and support only
+    single levels in the explicit solver. Version 2 requires an explicit
+    valence-band reference. Its distributed supports are finite and must lie
+    completely inside the local band gap; no implicit clipping or density
+    renormalization is permitted.
+    """
 
     kind: DefectDistributionKind
     normalization: Literal["integrated_total"]
@@ -119,12 +146,21 @@ class BulkDefectDistribution:
     center_eV_above_vb: float
     width_eV: float | None = None
     width_convention: str = WIDTH_NOT_APPLICABLE
+    energy_reference: str | None = None
+    support_width_multiplier: float | None = None
 
     def __post_init__(self) -> None:
         kind = str(self.kind).strip().lower()
-        if kind not in {SINGLE_LEVEL, GAUSSIAN}:
+        if kind not in {
+            SINGLE_LEVEL,
+            GAUSSIAN,
+            UNIFORM,
+            CONDUCTION_BAND_TAIL,
+            VALENCE_BAND_TAIL,
+        }:
             raise ExplicitDefectSchemaError(
-                "defect distribution kind must be 'single_level' or 'gaussian'"
+                "defect distribution kind must be single_level, gaussian, "
+                "uniform, conduction_band_tail, or valence_band_tail"
             )
         normalization = str(self.normalization).strip().lower()
         if normalization != INTEGRATED_TOTAL:
@@ -146,15 +182,70 @@ class BulkDefectDistribution:
                 "center_eV_above_vb",
             ),
         )
+        if self.energy_reference is None:
+            energy_reference = None
+        else:
+            energy_reference = str(self.energy_reference).strip().lower()
+            if energy_reference != ENERGY_ABOVE_VALENCE_BAND:
+                raise ExplicitDefectSchemaError(
+                    "energy_reference must be 'above_valence_band'"
+                )
+        object.__setattr__(self, "energy_reference", energy_reference)
         convention = str(self.width_convention).strip().lower()
         if kind == SINGLE_LEVEL:
-            if self.width_eV is not None or convention != WIDTH_NOT_APPLICABLE:
+            if (
+                self.width_eV is not None
+                or convention != WIDTH_NOT_APPLICABLE
+                or self.support_width_multiplier is not None
+            ):
                 raise ExplicitDefectSchemaError(
-                    "single_level defects forbid width_eV and require "
-                    "width_convention='not_applicable'"
+                    "single_level defects forbid width/support fields and "
+                    "require width_convention='not_applicable'"
                 )
             object.__setattr__(self, "width_convention", convention)
             return
+
+        if kind == UNIFORM:
+            if convention != WIDTH_UNIFORM_FULL:
+                raise ExplicitDefectSchemaError(
+                    "uniform defects require "
+                    "width_convention='uniform_full_width'"
+                )
+            if self.support_width_multiplier is not None:
+                raise ExplicitDefectSchemaError(
+                    "uniform width_eV already defines the full support; "
+                    "support_width_multiplier is forbidden"
+                )
+            object.__setattr__(
+                self,
+                "width_eV",
+                _finite_positive(self.width_eV, "width_eV"),
+            )
+            object.__setattr__(self, "width_convention", convention)
+            return
+
+        if kind in {CONDUCTION_BAND_TAIL, VALENCE_BAND_TAIL}:
+            if convention != WIDTH_SCAPS_CHARACTERISTIC:
+                raise ExplicitDefectSchemaError(
+                    "band-tail defects require "
+                    "width_convention='scaps_characteristic_energy'"
+                )
+            object.__setattr__(
+                self,
+                "width_eV",
+                _finite_positive(self.width_eV, "width_eV"),
+            )
+            object.__setattr__(
+                self,
+                "support_width_multiplier",
+                _finite_positive(
+                    self.support_width_multiplier,
+                    "support_width_multiplier",
+                ),
+            )
+            object.__setattr__(self, "width_convention", convention)
+            return
+
         if convention not in {
             WIDTH_GAUSSIAN_SIGMA,
             WIDTH_SCAPS_CHARACTERISTIC,
@@ -165,9 +256,12 @@ class BulkDefectDistribution:
                 "SCAPS characteristic energy, or unresolved source metadata"
             )
         if convention == WIDTH_UNRESOLVED:
-            if self.width_eV is not None:
+            if (
+                self.width_eV is not None
+                or self.support_width_multiplier is not None
+            ):
                 raise ExplicitDefectSchemaError(
-                    "an unresolved gaussian width must not carry width_eV"
+                    "an unresolved gaussian must not carry width/support values"
                 )
         else:
             object.__setattr__(
@@ -175,7 +269,67 @@ class BulkDefectDistribution:
                 "width_eV",
                 _finite_positive(self.width_eV, "width_eV"),
             )
+            if self.support_width_multiplier is not None:
+                object.__setattr__(
+                    self,
+                    "support_width_multiplier",
+                    _finite_positive(
+                        self.support_width_multiplier,
+                        "support_width_multiplier",
+                    ),
+                )
         object.__setattr__(self, "width_convention", convention)
+
+    @property
+    def v1_compatible(self) -> bool:
+        """Whether this distribution preserves the frozen v1 representation."""
+
+        return (
+            self.kind in {SINGLE_LEVEL, GAUSSIAN}
+            and self.energy_reference is None
+            and self.support_width_multiplier is None
+        )
+
+    @property
+    def v2_ready(self) -> bool:
+        """Whether all normalized energy-distribution metadata is explicit."""
+
+        if self.energy_reference != ENERGY_ABOVE_VALENCE_BAND:
+            return False
+        if self.kind == SINGLE_LEVEL:
+            return True
+        if self.kind == GAUSSIAN:
+            return (
+                self.width_convention != WIDTH_UNRESOLVED
+                and self.width_eV is not None
+                and self.support_width_multiplier is not None
+            )
+        return True
+
+    def support_bounds_eV(self) -> tuple[float, float] | None:
+        """Return the declared finite energy support above the valence band."""
+
+        center = float(self.center_eV_above_vb)
+        if self.kind == SINGLE_LEVEL:
+            return center, center
+        if self.kind == UNIFORM:
+            half_width = 0.5 * float(self.width_eV)
+            return center - half_width, center + half_width
+        if self.kind == GAUSSIAN:
+            if self.width_eV is None or self.support_width_multiplier is None:
+                return None
+            half_width = (
+                0.5
+                * float(self.support_width_multiplier)
+                * float(self.width_eV)
+            )
+            return center - half_width, center + half_width
+        support_width = (
+            float(self.support_width_multiplier) * float(self.width_eV)
+        )
+        if self.kind == CONDUCTION_BAND_TAIL:
+            return center - support_width, center
+        return center, center + support_width
 
     def validate_band_gap(self, band_gap_eV: object) -> None:
         gap = _finite_positive(band_gap_eV, "band_gap_eV")
@@ -183,6 +337,16 @@ class BulkDefectDistribution:
             raise ExplicitDefectSchemaError(
                 "center_eV_above_vb must lie inside the material band gap"
             )
+        support = self.support_bounds_eV()
+        if support is not None:
+            roundoff = 16.0 * math.ulp(
+                max(gap, abs(support[0]), abs(support[1]), 1.0)
+            )
+            if support[0] < -roundoff or support[1] > gap + roundoff:
+                raise ExplicitDefectSchemaError(
+                    "defect distribution support must lie completely inside "
+                    "the local material band gap"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -191,9 +355,13 @@ class BulkDefectDistribution:
             "total_density_m3": self.total_density_m3,
             "center_eV_above_vb": self.center_eV_above_vb,
         }
-        if self.kind == GAUSSIAN:
+        if self.energy_reference is not None:
+            value["energy_reference"] = self.energy_reference
+        if self.kind != SINGLE_LEVEL:
             value["width_eV"] = self.width_eV
             value["width_convention"] = self.width_convention
+        if self.support_width_multiplier is not None:
+            value["support_width_multiplier"] = self.support_width_multiplier
         return value
 
     @classmethod
@@ -207,8 +375,12 @@ class BulkDefectDistribution:
             "total_density_m3",
             "center_eV_above_vb",
         }
-        if kind == GAUSSIAN:
+        if "energy_reference" in value:
+            expected.add("energy_reference")
+        if kind != SINGLE_LEVEL:
             expected |= {"width_eV", "width_convention"}
+        if "support_width_multiplier" in value:
+            expected.add("support_width_multiplier")
         _require_exact_keys(value, expected, "bulk defect distribution")
         return cls(**dict(value))
 
@@ -316,6 +488,16 @@ class BulkDefectSpecies:
             and self.distribution.kind == SINGLE_LEVEL
         )
 
+    @property
+    def distributed_explicit_ready(self) -> bool:
+        """Whether the species satisfies the v2 explicit input contract."""
+
+        return (
+            self.name is not None
+            and self.charge_transition != UNRESOLVED
+            and self.distribution.v2_ready
+        )
+
     def validate_band_gap(self, band_gap_eV: object) -> None:
         self.distribution.validate_band_gap(band_gap_eV)
 
@@ -361,7 +543,7 @@ class BulkDefectDocument:
     bulk_defects: tuple[BulkDefectSpecies, ...]
 
     def __post_init__(self) -> None:
-        if self.schema_version != EXPLICIT_DEFECT_SCHEMA_VERSION:
+        if self.schema_version not in SUPPORTED_EXPLICIT_DEFECT_SCHEMA_VERSIONS:
             raise ExplicitDefectSchemaError(
                 "unsupported explicit defect schema_version "
                 f"{self.schema_version!r}"
@@ -379,20 +561,56 @@ class BulkDefectDocument:
         names = [item.name for item in species if item.name is not None]
         if len(names) != len(set(names)):
             raise ExplicitDefectSchemaError("bulk defect names must be unique")
+        if self.schema_version == EXPLICIT_DEFECT_SCHEMA_VERSION:
+            incompatible = [
+                item.name or f"species[{index}]"
+                for index, item in enumerate(species)
+                if not item.distribution.v1_compatible
+            ]
+            if incompatible:
+                raise ExplicitDefectSchemaError(
+                    "explicit defect schema v1 forbids v2 energy-reference, "
+                    "support, uniform, and band-tail fields; "
+                    f"invalid={incompatible}"
+                )
+        else:
+            incomplete = [
+                item.name or f"species[{index}]"
+                for index, item in enumerate(species)
+                if not item.distribution.v2_ready
+            ]
+            if incomplete:
+                raise ExplicitDefectSchemaError(
+                    "explicit defect schema v2 requires an explicit "
+                    "above-valence-band reference and complete finite support "
+                    f"metadata; invalid={incomplete}"
+                )
         if model == EXPLICIT_QUASI_STEADY:
             if not species:
                 raise ExplicitDefectSchemaError(
                     "explicit_quasi_steady requires at least one bulk defect"
                 )
-            not_ready = [
-                item.name or f"species[{index}]"
-                for index, item in enumerate(species)
-                if not item.explicit_ready
-            ]
+            if self.schema_version == EXPLICIT_DEFECT_SCHEMA_VERSION:
+                not_ready = [
+                    item.name or f"species[{index}]"
+                    for index, item in enumerate(species)
+                    if not item.explicit_ready
+                ]
+            else:
+                not_ready = [
+                    item.name or f"species[{index}]"
+                    for index, item in enumerate(species)
+                    if not item.distributed_explicit_ready
+                ]
             if not_ready:
+                requirement = (
+                    "named, charge-resolved single-level species"
+                    if self.schema_version == EXPLICIT_DEFECT_SCHEMA_VERSION
+                    else "named, charge-resolved normalized species"
+                )
                 raise ExplicitDefectSchemaError(
-                    "explicit_quasi_steady v1 requires named, charge-resolved "
-                    f"single-level species; invalid={not_ready}"
+                    f"explicit_quasi_steady {self.schema_version!r} requires "
+                    f"{requirement}; invalid={not_ready}"
                 )
         object.__setattr__(self, "defect_model", model)
         object.__setattr__(self, "bulk_defects", species)
@@ -592,8 +810,11 @@ def bulk_defect_species_from_scaps_mapping(
 
 __all__ = [
     "ACCEPTOR",
+    "CONDUCTION_BAND_TAIL",
     "DONOR",
     "EFFECTIVE_LIFETIME",
+    "ENERGY_ABOVE_VALENCE_BAND",
+    "EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION",
     "EXPLICIT_DEFECT_SCHEMA_VERSION",
     "EXPLICIT_DYNAMIC",
     "EXPLICIT_QUASI_STEADY",
@@ -605,7 +826,15 @@ __all__ = [
     "NEUTRAL_WHEN_EMPTY",
     "NEUTRAL_WHEN_FILLED",
     "SINGLE_LEVEL",
+    "SUPPORTED_EXPLICIT_DEFECT_SCHEMA_VERSIONS",
     "UNRESOLVED",
+    "UNIFORM",
+    "VALENCE_BAND_TAIL",
+    "WIDTH_GAUSSIAN_SIGMA",
+    "WIDTH_NOT_APPLICABLE",
+    "WIDTH_SCAPS_CHARACTERISTIC",
+    "WIDTH_UNIFORM_FULL",
+    "WIDTH_UNRESOLVED",
     "BulkDefectDistribution",
     "BulkDefectDocument",
     "BulkDefectKinetics",

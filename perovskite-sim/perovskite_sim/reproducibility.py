@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.models.defects import BulkDefectDistribution
 from perovskite_sim.models.device import DeviceStack
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.tandem_config import load_tandem_from_yaml
@@ -94,6 +95,11 @@ def _canonical(value: Any) -> Any:
                 # Physical modes resolve the Poisson value without V_bi; the
                 # dataclass field is only a constructor compatibility fallback.
                 mapping.pop("V_bi", None)
+        if isinstance(value, BulkDefectDistribution) and value.v1_compatible:
+            # D3-E0 appends opt-in v2 energy-reference/support fields. Their
+            # absent defaults must not churn frozen v1 device identities.
+            mapping.pop("energy_reference", None)
+            mapping.pop("support_width_multiplier", None)
         if isinstance(value, MaterialParams) and not (
             value.N_A_bulk is not None or value.N_D_bulk is not None
         ):

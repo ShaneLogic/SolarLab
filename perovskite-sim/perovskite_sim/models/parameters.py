@@ -228,17 +228,17 @@ class MaterialParams:
         ):
             if statistics != MAXWELL_BOLTZMANN:
                 raise ValueError(
-                    "explicit_quasi_steady v1 requires "
+                    "explicit_quasi_steady requires "
                     "carrier_statistics='maxwell_boltzmann'"
                 )
             if ionization != FULLY_IONIZED:
                 raise ValueError(
-                    "explicit_quasi_steady v1 requires "
+                    "explicit_quasi_steady requires "
                     "dopant_ionization_model='fully_ionized'"
                 )
             if narrowing_model != BAND_GAP_NARROWING_OFF:
                 raise ValueError(
-                    "explicit_quasi_steady v1 excludes band-gap narrowing"
+                    "explicit_quasi_steady excludes band-gap narrowing"
                 )
         if bulk_trap is not None:
             if not isinstance(bulk_trap, BulkTrapDistribution):

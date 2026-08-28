@@ -16,8 +16,11 @@ from perovskite_sim.models.config_loader import (
 )
 from perovskite_sim.models.defects import (
     ACCEPTOR,
+    CONDUCTION_BAND_TAIL,
     DONOR,
     EFFECTIVE_LIFETIME,
+    ENERGY_ABOVE_VALENCE_BAND,
+    EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
     EXPLICIT_DEFECT_SCHEMA_VERSION,
     EXPLICIT_DYNAMIC,
     EXPLICIT_QUASI_STEADY,
@@ -29,6 +32,10 @@ from perovskite_sim.models.defects import (
     NEUTRAL_WHEN_FILLED,
     SINGLE_LEVEL,
     UNRESOLVED,
+    UNIFORM,
+    VALENCE_BAND_TAIL,
+    WIDTH_SCAPS_CHARACTERISTIC,
+    WIDTH_UNIFORM_FULL,
     BulkDefectDistribution,
     BulkDefectDocument,
     BulkDefectKinetics,
@@ -111,6 +118,150 @@ def test_canonical_document_roundtrip_and_hash_are_stable():
             ),
         ),
     ).sha256
+
+
+def test_v1_canonical_json_and_hash_remain_frozen_after_v2_is_added():
+    document = _document()
+
+    assert document.sha256 == (
+        "22a204b0ecf9a1c456aa3de36bfe2d75915b30389af6990038374fc09e163617"
+    )
+    assert "energy_reference" not in document.canonical_json()
+    assert "support_width_multiplier" not in document.canonical_json()
+
+
+@pytest.mark.parametrize(
+    ("config_name", "expected_semantic_sha256"),
+    (
+        (
+            "scaps_defect_s0_neutral.yaml",
+            "a44db13adb9d77e705dec93753a72162569860590f8df4f371caf1ad493e473e",
+        ),
+        (
+            "scaps_defect_s1_acceptor_n.yaml",
+            "513d87b2828a0b372477657b2744a88b434f6501c88566a6fd9b6933f515c3b6",
+        ),
+        (
+            "scaps_defect_s2_donor_p.yaml",
+            "9c5a68947ed42c9c13ab74403b5599785ff1708d7ad7413d4215ef960c90607e",
+        ),
+    ),
+)
+def test_v1_shipped_device_semantic_hashes_remain_frozen(
+    config_name,
+    expected_semantic_sha256,
+):
+    stack = load_device_from_yaml(str(ROOT / "configs" / config_name))
+
+    assert semantic_sha256(stack) == expected_semantic_sha256
+
+
+@pytest.mark.parametrize(
+    "distribution",
+    (
+        BulkDefectDistribution(
+            kind=SINGLE_LEVEL,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=1.0e22,
+            center_eV_above_vb=0.6,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+        ),
+        BulkDefectDistribution(
+            kind=GAUSSIAN,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=1.0e22,
+            center_eV_above_vb=0.6,
+            width_eV=0.08,
+            width_convention=WIDTH_SCAPS_CHARACTERISTIC,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+            support_width_multiplier=6.0,
+        ),
+        BulkDefectDistribution(
+            kind=UNIFORM,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=1.0e22,
+            center_eV_above_vb=0.6,
+            width_eV=0.2,
+            width_convention=WIDTH_UNIFORM_FULL,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+        ),
+        BulkDefectDistribution(
+            kind=CONDUCTION_BAND_TAIL,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=1.0e22,
+            center_eV_above_vb=1.4,
+            width_eV=0.1,
+            width_convention=WIDTH_SCAPS_CHARACTERISTIC,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+            support_width_multiplier=7.0,
+        ),
+        BulkDefectDistribution(
+            kind=VALENCE_BAND_TAIL,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=1.0e22,
+            center_eV_above_vb=0.1,
+            width_eV=0.1,
+            width_convention=WIDTH_SCAPS_CHARACTERISTIC,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+            support_width_multiplier=7.0,
+        ),
+    ),
+)
+def test_v2_roundtrip_supports_all_scaps_distribution_families(distribution):
+    document = BulkDefectDocument(
+        schema_version=EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+        defect_model=EXPLICIT_QUASI_STEADY,
+        bulk_defects=(replace(_species(), distribution=distribution),),
+    )
+
+    document.validate_band_gap(1.5)
+    assert BulkDefectDocument.from_dict(document.to_dict()) == document
+    assert document.sha256 == BulkDefectDocument.from_dict(
+        document.to_dict()
+    ).sha256
+
+
+def test_schema_versions_cannot_silently_exchange_distribution_semantics():
+    explicit_single = replace(
+        _species(),
+        distribution=replace(
+            _species().distribution,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+        ),
+    )
+    with pytest.raises(ExplicitDefectSchemaError, match="v1 forbids"):
+        BulkDefectDocument(
+            schema_version=EXPLICIT_DEFECT_SCHEMA_VERSION,
+            defect_model=EXPLICIT_QUASI_STEADY,
+            bulk_defects=(explicit_single,),
+        )
+
+    legacy_single = _species()
+    with pytest.raises(ExplicitDefectSchemaError, match="v2 requires"):
+        BulkDefectDocument(
+            schema_version=EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+            defect_model=EXPLICIT_QUASI_STEADY,
+            bulk_defects=(legacy_single,),
+        )
+
+    incomplete_gaussian = replace(
+        explicit_single,
+        distribution=BulkDefectDistribution(
+            kind=GAUSSIAN,
+            normalization=INTEGRATED_TOTAL,
+            total_density_m3=1.0e22,
+            center_eV_above_vb=0.6,
+            width_eV=0.08,
+            width_convention=WIDTH_SCAPS_CHARACTERISTIC,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+        ),
+    )
+    with pytest.raises(ExplicitDefectSchemaError, match="finite support"):
+        BulkDefectDocument(
+            schema_version=EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+            defect_model=EXPLICIT_QUASI_STEADY,
+            bulk_defects=(incomplete_gaussian,),
+        )
 
 
 @pytest.mark.parametrize(
@@ -536,3 +687,50 @@ def test_material_parser_consumes_frontend_shaped_canonical_document():
 
     assert isinstance(params, MaterialParams)
     assert params.defect_document == document
+
+
+def test_v2_single_level_roundtrips_through_standard_backend_payload():
+    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    v2_species = replace(
+        _species(),
+        degeneracy=1.0,
+        distribution=replace(
+            _species().distribution,
+            energy_reference=ENERGY_ABOVE_VALENCE_BAND,
+        ),
+    )
+    document = BulkDefectDocument(
+        schema_version=EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION,
+        defect_model=EXPLICIT_QUASI_STEADY,
+        bulk_defects=(v2_species,),
+    )
+    explicit = replace(
+        stack,
+        layers=tuple(
+            replace(
+                layer,
+                params=replace(
+                    layer.params,
+                    defect_schema_version=document.schema_version,
+                    defect_model=document.defect_model,
+                    bulk_defects=document.bulk_defects,
+                ),
+            )
+            if layer.role == "absorber"
+            else layer
+            for layer in stack.layers
+        ),
+    )
+
+    payload = _stack_to_config_dict(explicit)
+    rebuilt = stack_from_dict(payload)
+    restored = next(
+        layer.params.defect_document
+        for layer in rebuilt.layers
+        if layer.role == "absorber"
+    )
+
+    assert restored == document
+    assert restored.sha256 == document.sha256
+    assert semantic_sha256(rebuilt) == semantic_sha256(explicit)
+    assert semantic_sha256(rebuilt) != semantic_sha256(stack)

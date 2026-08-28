@@ -1,5 +1,9 @@
 # Explicit Bulk-Defect Input Contract v1
 
+Version 1 remains frozen for compatibility. D3-E0 introduces the opt-in v2
+energy-distribution contract without changing any v1 canonical JSON or solver
+arithmetic; see `docs/explicit-defect-energy-distribution-v2.md`.
+
 Status: DEF-3 public Python QF/DC contract. The canonical schema is stable; a
 1D `explicit_quasi_steady` document executes exact neutral multi-species SRH,
 and monovalent acceptor/donor species execute on the opt-in QF/DC path. DEF-4

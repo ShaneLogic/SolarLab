@@ -1,5 +1,11 @@
 # Energy-distributed bulk-trap closure
 
+This document describes the older `bulk_trap_distribution` research route.
+D3-E0 now defines the separate canonical explicit-defect v2 input and
+quadrature contract in `docs/explicit-defect-energy-distribution-v2.md`.
+The two schemas remain mutually exclusive, and D3-E0 does not promote this
+restricted equilibrium route into production QF/DC.
+
 ## Scope
 
 P4.3 adds one explicit, research-only Maxwell-Boltzmann bulk-trap closure. It
