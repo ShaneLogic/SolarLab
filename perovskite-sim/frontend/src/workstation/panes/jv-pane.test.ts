@@ -158,6 +158,30 @@ describe('J–V pane interface-plane-states gating', () => {
     expect(boxes().interfaceBoundary.disabled).toBe(false)
   })
 
+  it('keeps the QF lock for charged distributed v3 defects', () => {
+    const charged = explicitDefectConfig('acceptor')
+    const layer = charged.layers[0]
+    layer.defect_schema_version = 'solarlab-explicit-bulk-defects-v3'
+    layer.bulk_defects![0].distribution.energy_reference = 'above_valence_band'
+    layer.bulk_defects![0].spatial_profile = {
+      coordinate: 'normalized_layer_coordinate',
+      interpolation: 'piecewise_linear',
+      density_normalization: 'layer_average_unity',
+      knots: [
+        { position_fraction: 0, density_multiplier: 0.8 },
+        { position_fraction: 1, density_multiplier: 1.2 },
+      ],
+    }
+    mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'charged-v3', config: charged }),
+      onRunComplete: () => {},
+    })
+
+    boxes().solver.focus()
+    expect(boxes().solver.value).toBe('quasi_fermi')
+    expect(boxes().solver.disabled).toBe(true)
+  })
+
   it('keeps the transient solver available for neutral explicit defects', () => {
     const neutral = explicitDefectConfig('neutral')
     mountJVPane(container, {

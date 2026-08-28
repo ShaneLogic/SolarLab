@@ -1,7 +1,8 @@
 # Explicit Bulk-Defect Spatial Profile Contract v3
 
 Status: D3-E4c guarded production implementation and independent internal
-three-axis numerical certification complete. The canonical D3-E4a input
+three-axis numerical certification complete. D3-UI1 exposes the resolved
+canonical v3 document in the FULL-tier editor. The canonical D3-E4a input
 contract is compiled into the QF/DC material, contact, Poisson, continuity,
 analytic-tangent, and J-V paths.
 
@@ -137,11 +138,35 @@ Still outside the D3-E4c capability label:
 - mobile ions, Fermi-Dirac statistics, AC, dynamic occupancy, interface
   defects, tunnelling, and multivalent charge states;
 
+## D3-UI1 frontend editor contract
+
+The FULL-tier layer editor supports canonical resolved v1 single levels, all
+five v2 energy distributions, and v3 spatial density profiles. The schema is
+derived from the edited content rather than entered as free text: existing v1
+single-level documents remain v1, existing v2 documents remain v2, a
+distributed shape promotes to v2, and any enabled profile promotes to v3.
+Removing the last profile from a v3 document emits a complete v2 document.
+
+The profile control fixes the coordinate, interpolation, and normalization to
+the canonical values above. Adding a knot inserts a linearly interpolated node,
+so representation refinement does not change the profile integral. Submission
+rechecks exact endpoints, strict ordering, positive multipliers, layer-average
+unity, and finite support against the minimum active graded band gap. SI and
+SCAPS-cgs are display choices only; serialized values remain canonical SI.
+
+Unknown nested fields, unresolved charge/width metadata, incomplete documents,
+and noncanonical profiles are displayed read-only and preserved unchanged.
+The editor does not reinterpret legacy SCAPS metadata and does not broaden the
+QF/DC solver capability: charged v2/v3 documents still force the guarded
+quasi-Fermi J-V driver.
+
 ## Verification
 
 - spatial constitutive/device/QF/backend focused domain: 93 passed;
 - default Python suite: 3070 passed, 2 skipped, 264 deselected;
-- frontend suite: 428 passed across 32 files;
+- frontend suite after D3-UI1: 444 passed across 32 files;
+- canonical schema/backend/solver-dispatch/reproducibility focused Python:
+  128 passed;
 - D3-E4c v2 source-clean matrix: 9/9 cells, 350/350 checks, internally
   certified;
 - TypeScript, Vite production build, compileall, scoped Ruff, critical Ruff,

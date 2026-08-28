@@ -20,20 +20,46 @@ export function isLayerRole(v: unknown): v is LayerRole {
 }
 
 export type BulkDefectModel = 'effective_lifetime' | 'explicit_quasi_steady'
+export type BulkDefectSchemaVersion =
+  | 'solarlab-explicit-bulk-defects-v1'
+  | 'solarlab-explicit-bulk-defects-v2'
+  | 'solarlab-explicit-bulk-defects-v3'
 export type BulkDefectChargeTransition = 'neutral' | 'acceptor' | 'donor' | 'unresolved'
 export type BulkDefectNeutralReference = 'all_occupancies' | 'empty' | 'filled' | 'unresolved'
+export type BulkDefectDistributionKind =
+  | 'single_level'
+  | 'gaussian'
+  | 'uniform'
+  | 'conduction_band_tail'
+  | 'valence_band_tail'
+export type BulkDefectWidthConvention =
+  | 'not_applicable'
+  | 'gaussian_standard_deviation'
+  | 'scaps_characteristic_energy'
+  | 'uniform_full_width'
+  | 'unresolved'
 
 export interface BulkDefectDistribution {
-  kind: 'single_level' | 'gaussian'
+  kind: BulkDefectDistributionKind
   normalization: 'integrated_total'
   total_density_m3: number
   center_eV_above_vb: number
+  energy_reference?: 'above_valence_band'
   width_eV?: number | null
-  width_convention?:
-    | 'not_applicable'
-    | 'gaussian_standard_deviation'
-    | 'scaps_characteristic_energy'
-    | 'unresolved'
+  width_convention?: BulkDefectWidthConvention
+  support_width_multiplier?: number | null
+}
+
+export interface BulkDefectSpatialKnot {
+  position_fraction: number
+  density_multiplier: number
+}
+
+export interface BulkDefectSpatialProfile {
+  coordinate: 'normalized_layer_coordinate'
+  interpolation: 'piecewise_linear'
+  density_normalization: 'layer_average_unity'
+  knots: BulkDefectSpatialKnot[]
 }
 
 export interface BulkDefectKinetics {
@@ -50,6 +76,7 @@ export interface BulkDefectSpecies {
   neutral_reference: BulkDefectNeutralReference
   kinetics: BulkDefectKinetics
   degeneracy: number
+  spatial_profile?: BulkDefectSpatialProfile
 }
 
 export interface LayerConfig {
@@ -119,7 +146,7 @@ export interface LayerConfig {
   /** Versioned microscopic bulk-defect document. These three keys form one
    * strict contract and must be present or absent together. Values are always
    * canonical SI even when the editor displays SCAPS-style cgs units. */
-  defect_schema_version?: 'solarlab-explicit-bulk-defects-v1'
+  defect_schema_version?: BulkDefectSchemaVersion
   defect_model?: BulkDefectModel
   bulk_defects?: BulkDefectSpecies[]
 }

@@ -2,7 +2,8 @@
 
 Status: D3-E3 guarded production QF/DC integration is internally numerically
 certified for uniform layers, Maxwell-Boltzmann carriers, quasi-steady
-occupancy, and frozen/no mobile ions. This is not an external SCAPS parity or
+occupancy, and frozen/no mobile ions. D3-UI1 exposes the resolved canonical
+v2 fields in the FULL-tier editor. This is not an external SCAPS parity or
 experimental-validation claim.
 
 ## Version and compatibility
@@ -264,7 +265,7 @@ The existing `load_scaps_yaml` and
 `N_t_cm3` remains the direct integrated input and legacy `N_peak_cm3` remains
 informational; ambiguous old YAML never acquires v2 executable meaning.
 
-## Capability boundary after D3-E3 internal certification
+## Capability boundary through D3-UI1
 
 Enabled:
 
@@ -285,18 +286,23 @@ Enabled:
   continuity recombination, analytic tangent, J-V diagnostics, and result
   provenance;
 - a preregistered energy x space x tolerance full-device certificate lane.
+- a FULL-tier editor for resolved single/Gaussian/uniform/CB-tail/VB-tail
+  documents, explicit width/support conventions, and canonical SI or
+  SCAPS-cgs display units.
 
 Still fail closed:
 
 - ordinary density-form MoL/transient execution and any distributed-defect
   run with mobile ions;
-- Fermi-Dirac carriers, spatially graded source parameters, dynamic occupancy,
-  AC, tunnelling, and multivalent defects;
+- Fermi-Dirac carriers, spatial changes to energy/kinetics/charge convention,
+  dynamic occupancy, AC, tunnelling, and multivalent defects;
 - combinations with interface defects, selective-contact research laws, or
   field-dependent mobility until separately registered;
-- an editable distributed-defect frontend; the current UI remains the
-  single-level experimental editor;
-- spatially graded density or energy reference;
+- unresolved/legacy distributed metadata remains read-only and is never
+  promoted by the editor; canonical v3 density profiles are documented in
+  `explicit-defect-spatial-profile-v3.md`;
+- explicit spatial variation of center, width, support, kinetics, degeneracy,
+  or charge convention beyond the local-band-edge rule;
 - external SCAPS parity and experimental validation.
 
 D3-E4 extends the model to spatial grading and must mint a separate
