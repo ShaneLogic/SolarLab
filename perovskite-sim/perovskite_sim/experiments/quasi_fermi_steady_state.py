@@ -16,6 +16,7 @@ The solver is available through the explicit ``quasi_fermi`` J-V driver.
 Unsupported non-local or contact models fail before Newton starts; the
 interface-plane boundary remains default-off.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -62,12 +63,19 @@ from perovskite_sim.physics.defect_distributions import (
     expand_bulk_defect_species_energy,
     validate_defect_energy_quadrature_order,
 )
+from perovskite_sim.physics.dynamic_defect_state import (
+    DynamicBulkTrapLayout,
+    bulk_trap_charge_density,
+    evaluate_dynamic_bulk_traps,
+    evaluate_dynamic_bulk_traps_about_qss,
+)
 from perovskite_sim.physics.interface_plane import (
     FERMI_DIRAC_RICHARDSON,
     FERMI_RICHARDSON,
     validate_interface_transport_model,
 )
 from perovskite_sim.physics.poisson import factor_poisson_from_finite_volume
+from perovskite_sim.physics.recombination import srh_recombination
 from perovskite_sim.physics.two_sided_interface import (
     DEDUPLICATED_QSS,
     EquilibriumReferencedMaterialQSSResult,
@@ -277,10 +285,7 @@ def _pin_mask(node_count: int) -> np.ndarray:
 def _density_from_log(log_density: np.ndarray, *, context: str) -> np.ndarray:
     """Exponentiate only inside the audited, unclipped density domain."""
     values = np.asarray(log_density, dtype=float)
-    if (
-        not np.all(np.isfinite(values))
-        or np.any(np.abs(values) > _MAX_ABS_LOG_DENSITY)
-    ):
+    if not np.all(np.isfinite(values)) or np.any(np.abs(values) > _MAX_ABS_LOG_DENSITY):
         raise QuasiFermiSteadyStateError(
             f"{context} log-density is outside the audited exponential range "
             f"[-{_MAX_ABS_LOG_DENSITY:g}, {_MAX_ABS_LOG_DENSITY:g}]"
@@ -306,9 +311,7 @@ def _regrid_edge_drops(
         ):
             raise ValueError(f"{name} must be finite and strictly increasing")
     if drops.shape != (source.size - 1,) or not np.all(np.isfinite(drops)):
-        raise ValueError(
-            "source_edge_drops must be finite and match source-grid faces"
-        )
+        raise ValueError("source_edge_drops must be finite and match source-grid faces")
     endpoint_tolerance = 1.0e-12 * max(
         1.0,
         abs(float(target[-1] - target[0])),
@@ -321,19 +324,21 @@ def _regrid_edge_drops(
     if np.array_equal(source, target):
         return drops.copy()
 
-    coordinate_tolerance = 32.0 * np.finfo(float).eps * max(
-        abs(float(source[0])),
-        abs(float(source[-1])),
-        abs(float(target[0])),
-        abs(float(target[-1])),
-        abs(float(target[-1] - target[0])),
-        np.finfo(float).tiny,
+    coordinate_tolerance = (
+        32.0
+        * np.finfo(float).eps
+        * max(
+            abs(float(source[0])),
+            abs(float(source[-1])),
+            abs(float(target[0])),
+            abs(float(target[-1])),
+            abs(float(target[-1] - target[0])),
+            np.finfo(float).tiny,
+        )
     )
     mapped = np.zeros(target.size - 1, dtype=float)
     source_face = 0
-    for target_face, (left, right) in enumerate(
-        zip(target[:-1], target[1:])
-    ):
+    for target_face, (left, right) in enumerate(zip(target[:-1], target[1:])):
         while (
             source_face < source.size - 2
             and source[source_face + 1] <= left + coordinate_tolerance
@@ -349,8 +354,7 @@ def _regrid_edge_drops(
                 face += 1
                 continue
             mapped[target_face] += drops[face] * (
-                (overlap_right - cursor)
-                / (source[face + 1] - source[face])
+                (overlap_right - cursor) / (source[face + 1] - source[face])
             )
             cursor = overlap_right
             if cursor >= source[face + 1] - coordinate_tolerance:
@@ -546,8 +550,7 @@ def _require_material_defect_contract(
                 "a qf_dc material cache"
             )
         actual = tuple(
-            (region.identifier, region.document_sha256)
-            for region in model.regions
+            (region.identifier, region.document_sha256) for region in model.regions
         )
         if actual != expected:
             raise QuasiFermiSteadyStateError(
@@ -558,8 +561,7 @@ def _require_material_defect_contract(
             material_order != defect_energy_quadrature_order
             or not model.has_distributed_species
             or any(
-                region.energy_quadrature_order
-                != defect_energy_quadrature_order
+                region.energy_quadrature_order != defect_energy_quadrature_order
                 for region in model.regions
                 if region.has_distributed_species
             )
@@ -612,11 +614,9 @@ def _require_supported(
     if mat.interface_faces and not interface_boundary:
         unsupported.append("thermionic interface flux")
     has_cross_node_recombination = any(
-        (mat.interface_eval_node_n[k] != node)
-        or (mat.interface_eval_node_p[k] != node)
+        (mat.interface_eval_node_n[k] != node) or (mat.interface_eval_node_p[k] != node)
         for k, node in enumerate(mat.interface_nodes)
-        if k < len(mat.interface_eval_node_n)
-        and k < len(mat.interface_eval_node_p)
+        if k < len(mat.interface_eval_node_n) and k < len(mat.interface_eval_node_p)
     )
     if has_cross_node_recombination and not interface_boundary:
         unsupported.append("cross-node interface recombination")
@@ -653,9 +653,7 @@ def _require_supported(
                 ],
                 dtype=float,
             )
-            if np.any(~np.isfinite(endpoint_values)) or np.any(
-                endpoint_values <= 0.0
-            ):
+            if np.any(~np.isfinite(endpoint_values)) or np.any(endpoint_values <= 0.0):
                 unsupported.append("finite positive interface Nc/Nv values")
         if interface_topology == TWO_SIDED_TRACE:
             if not mat.iface_qss_two_sided_trace:
@@ -664,8 +662,7 @@ def _require_supported(
                 unsupported.append("two-sided topology with recombination de-spike")
     if unsupported:
         raise QuasiFermiSteadyStateError(
-            "quasi-Fermi steady-state solver does not support "
-            + ", ".join(unsupported)
+            "quasi-Fermi steady-state solver does not support " + ", ".join(unsupported)
         )
 
 
@@ -712,9 +709,7 @@ def _defect_aware_neutral_carriers(
             node_indices = np.flatnonzero(region.active_nodes)
             if region.has_spatial_profiles:
                 local_gap = np.asarray(region.local_band_gap_eV)
-                local_nc = np.asarray(
-                    region.local_effective_conduction_dos_m3
-                )
+                local_nc = np.asarray(region.local_effective_conduction_dos_m3)
                 local_nv = np.asarray(region.local_effective_valence_dos_m3)
                 for local_index, node_index in enumerate(node_indices):
                     local_species = region.species_at_local_node(local_index)
@@ -729,16 +724,12 @@ def _defect_aware_neutral_carriers(
                     closure = solve_monovalent_defect_charge_neutrality(
                         temperature_K=region.temperature_K,
                         band_gap_eV=float(local_gap[local_index]),
-                        effective_conduction_dos_m3=float(
-                            local_nc[local_index]
-                        ),
+                        effective_conduction_dos_m3=float(local_nc[local_index]),
                         effective_valence_dos_m3=float(local_nv[local_index]),
                         acceptor_density_m3=float(mat.N_A[node_index]),
                         donor_density_m3=float(mat.N_D[node_index]),
                         species=local_species,
-                        energy_quadrature_order=(
-                            region.energy_quadrature_order
-                        ),
+                        energy_quadrature_order=(region.energy_quadrature_order),
                         energy_expansions=local_expansions,
                     ).neutrality
                     electron[node_index] = closure.electron_density_m3
@@ -758,18 +749,12 @@ def _defect_aware_neutral_carriers(
                 closure = solve_monovalent_defect_charge_neutrality(
                     temperature_K=region.temperature_K,
                     band_gap_eV=region.band_gap_eV,
-                    effective_conduction_dos_m3=(
-                        region.effective_conduction_dos_m3
-                    ),
-                    effective_valence_dos_m3=(
-                        region.effective_valence_dos_m3
-                    ),
+                    effective_conduction_dos_m3=(region.effective_conduction_dos_m3),
+                    effective_valence_dos_m3=(region.effective_valence_dos_m3),
                     acceptor_density_m3=float(acceptors),
                     donor_density_m3=float(donors),
                     species=region.species,
-                    energy_quadrature_order=(
-                        region.energy_quadrature_order
-                    ),
+                    energy_quadrature_order=(region.energy_quadrature_order),
                     energy_expansions=region.source_expansions,
                 ).neutrality
                 selected = inverse == pair_index
@@ -824,15 +809,13 @@ def _transport_balanced_seed(
         n_neutral,
         mat.D_n_face,
         np.log(mat.n_L) - mat.chi[0] / thermal_voltage,
-        np.log(mat.n_R)
-        - (phi_right + mat.chi[-1]) / thermal_voltage,
+        np.log(mat.n_R) - (phi_right + mat.chi[-1]) / thermal_voltage,
     )
     u_p = invariant_profile(
         p_neutral,
         mat.D_p_face,
         np.log(mat.p_L) + (mat.chi[0] + mat.Eg[0]) / thermal_voltage,
-        np.log(mat.p_R)
-        + (phi_right + mat.chi[-1] + mat.Eg[-1]) / thermal_voltage,
+        np.log(mat.p_R) + (phi_right + mat.chi[-1] + mat.Eg[-1]) / thermal_voltage,
     )
 
     phi = np.linspace(0.0, phi_right, node_count)
@@ -865,15 +848,19 @@ def _transport_balanced_seed(
         )
         banded = np.zeros((3, node_count - 2), dtype=float)
         banded[0, 1:] = factor.C[1:-1]
-        banded[1] = -(
-            factor.C[:-1] + factor.C[1:]
-        ) + (
-            -Q * (n[1:-1] + p[1:-1]) / thermal_voltage
-            + defect_charge_derivative[1:-1]
-        ) * factor.h_cell
+        banded[1] = (
+            -(factor.C[:-1] + factor.C[1:])
+            + (
+                -Q * (n[1:-1] + p[1:-1]) / thermal_voltage
+                + defect_charge_derivative[1:-1]
+            )
+            * factor.h_cell
+        )
         banded[2, :-1] = factor.C[1:-1]
         step = solve_banded((1, 1), banded, -residual)
-        damping = min(1.0, 0.05 / max(float(np.max(np.abs(step))), np.finfo(float).tiny))
+        damping = min(
+            1.0, 0.05 / max(float(np.max(np.abs(step))), np.finfo(float).tiny)
+        )
         phi[1:-1] += damping * step
         if float(np.max(np.abs(damping * step))) < poisson_tolerance_V:
             break
@@ -950,7 +937,10 @@ class _QuasiFermiSystem:
                 "must be supplied together"
             )
         if references is not None:
-            if not self.interface_boundary or self.interface_topology != TWO_SIDED_TRACE:
+            if (
+                not self.interface_boundary
+                or self.interface_topology != TWO_SIDED_TRACE
+            ):
                 raise ValueError(
                     "equilibrium-referenced interface charge requires the "
                     "two-sided interface boundary"
@@ -985,9 +975,7 @@ class _QuasiFermiSystem:
         self.log_p0 = np.log(p0)
         self.thermal_voltage = mat.V_T_device
         self.qfn0 = self.thermal_voltage * self.log_n0 - (self.phi0 + mat.chi)
-        self.qfp0 = self.thermal_voltage * self.log_p0 + (
-            self.phi0 + mat.chi + mat.Eg
-        )
+        self.qfp0 = self.thermal_voltage * self.log_p0 + (self.phi0 + mat.chi + mat.Eg)
         self.reference_edge_drop_n = np.diff(self.qfn0) / self.thermal_voltage
         self.reference_edge_drop_p = np.diff(self.qfp0) / self.thermal_voltage
         self.dx = np.diff(x)
@@ -1003,6 +991,10 @@ class _QuasiFermiSystem:
             mat,
             D_n_face=np.zeros_like(mat.D_n_face),
             D_p_face=np.zeros_like(mat.D_p_face),
+        )
+        self.dynamic_bulk_source_mat = replace(
+            self.source_mat,
+            monovalent_bulk_defects=None,
         )
 
         dark = assemble_rhs(
@@ -1049,6 +1041,8 @@ class _QuasiFermiSystem:
         self,
         n: np.ndarray,
         p: np.ndarray,
+        *,
+        dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Evaluate carrier/dopant/ion and explicit-defect Poisson terms."""
 
@@ -1062,13 +1056,26 @@ class _QuasiFermiSystem:
         )
         derivative = -Q * (n + p) / self.thermal_voltage
         model = self.mat.monovalent_bulk_defects
-        if model is not None:
+        if dynamic_bulk_charge_density_C_m3 is not None:
+            dynamic_charge = np.asarray(
+                dynamic_bulk_charge_density_C_m3,
+                dtype=float,
+            )
+            if model is None:
+                raise QuasiFermiSteadyStateError(
+                    "dynamic bulk charge requires a compiled defect model"
+                )
+            if dynamic_charge.shape != (self.node_count,) or not np.all(
+                np.isfinite(dynamic_charge)
+            ):
+                raise QuasiFermiSteadyStateError(
+                    "dynamic bulk charge must be finite and match the grid"
+                )
+            rho = rho + dynamic_charge
+        elif model is not None:
             defect = evaluate_monovalent_bulk_defects(n, p, model)
             rho = rho + defect.total_charge_density_C_m3
-            derivative = (
-                derivative
-                + defect.total_charge_derivative_fixed_qf_C_m3_V
-            )
+            derivative = derivative + defect.total_charge_derivative_fixed_qf_C_m3_V
         return rho, derivative
 
     def _add_interface_sheet_charge_to_poisson(
@@ -1091,14 +1098,10 @@ class _QuasiFermiSystem:
                     "charged two-sided interfaces require adjacent interior nodes"
                 )
             capacitance_left = (
-                EPS_0
-                * float(self.mat.eps_r[left])
-                / left_distances[index]
+                EPS_0 * float(self.mat.eps_r[left]) / left_distances[index]
             )
             capacitance_right = (
-                EPS_0
-                * float(self.mat.eps_r[right])
-                / right_distances[index]
+                EPS_0 * float(self.mat.eps_r[right]) / right_distances[index]
             )
             capacitance_sum = capacitance_left + capacitance_right
             weight_left = capacitance_left / capacitance_sum
@@ -1176,9 +1179,9 @@ class _QuasiFermiSystem:
         )
         banded = np.zeros((3, self.node_count - 2), dtype=float)
         banded[0, 1:] = factor.C[1:-1]
-        banded[1] = -(
-            factor.C[:-1] + factor.C[1:]
-        ) + charge_derivative[1:-1] * factor.h_cell
+        banded[1] = (
+            -(factor.C[:-1] + factor.C[1:]) + charge_derivative[1:-1] * factor.h_cell
+        )
         banded[2, :-1] = factor.C[1:-1]
         self._add_interface_sheet_charge_to_poisson(raw, charged_qss, banded)
         return raw, banded, n, p, charged_qss
@@ -1212,13 +1215,11 @@ class _QuasiFermiSystem:
         interface_seed: np.ndarray | None = None
         charged_qss: EquilibriumReferencedMaterialQSSResult | None = None
         for _ in range(self.poisson_max_iterations):
-            raw, banded, _n, _p, charged_qss = (
-                self._evaluate_charged_poisson_system(
-                    phi,
-                    dqfn,
-                    dqfp,
-                    interface_seed=interface_seed,
-                )
+            raw, banded, _n, _p, charged_qss = self._evaluate_charged_poisson_system(
+                phi,
+                dqfn,
+                dqfp,
+                interface_seed=interface_seed,
             )
             interface_seed = charged_qss.qss.state_m3
             step = solve_banded((1, 1), banded, -raw)
@@ -1234,13 +1235,11 @@ class _QuasiFermiSystem:
                 "charged eliminated Poisson-Boltzmann solve did not converge"
             )
 
-        raw, _banded, n, p, charged_qss = (
-            self._evaluate_charged_poisson_system(
-                phi,
-                dqfn,
-                dqfp,
-                interface_seed=interface_seed,
-            )
+        raw, _banded, n, p, charged_qss = self._evaluate_charged_poisson_system(
+            phi,
+            dqfn,
+            dqfp,
+            interface_seed=interface_seed,
         )
         scale = (factor.C[:-1] + factor.C[1:]) * self.thermal_voltage
         return (
@@ -1258,6 +1257,7 @@ class _QuasiFermiSystem:
         dqfp: np.ndarray,
         *,
         V_app: float | None = None,
+        dynamic_bulk_charge_density_C_m3: np.ndarray | None = None,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
@@ -1266,6 +1266,13 @@ class _QuasiFermiSystem:
         float,
         EquilibriumReferencedMaterialQSSResult | None,
     ]:
+        if (
+            self.interface_charge_reference_occupancy is not None
+            and dynamic_bulk_charge_density_C_m3 is not None
+        ):
+            raise QuasiFermiSteadyStateError(
+                "combined dynamic bulk and interface charge is not yet supported"
+            )
         if self.interface_charge_reference_occupancy is not None:
             return self._solve_charged_poisson(dqfn, dqfp, V_app=V_app)
         phi = self.phi0.copy()
@@ -1283,7 +1290,11 @@ class _QuasiFermiSystem:
                 self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
                 context="hole Poisson-Boltzmann iterate",
             )
-            rho, charge_derivative = self._bulk_space_charge_and_tangent(n, p)
+            rho, charge_derivative = self._bulk_space_charge_and_tangent(
+                n,
+                p,
+                dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+            )
             raw = (
                 factor.C[:-1] * (phi[:-2] - phi[1:-1])
                 + factor.C[1:] * (phi[2:] - phi[1:-1])
@@ -1291,9 +1302,10 @@ class _QuasiFermiSystem:
             )
             banded = np.zeros((3, self.node_count - 2), dtype=float)
             banded[0, 1:] = factor.C[1:-1]
-            banded[1] = -(
-                factor.C[:-1] + factor.C[1:]
-            ) + charge_derivative[1:-1] * factor.h_cell
+            banded[1] = (
+                -(factor.C[:-1] + factor.C[1:])
+                + charge_derivative[1:-1] * factor.h_cell
+            )
             banded[2, :-1] = factor.C[1:-1]
             step = solve_banded((1, 1), banded, -raw)
             damping = min(
@@ -1317,7 +1329,11 @@ class _QuasiFermiSystem:
             self.log_p0 + (dqfp - dphi) / self.thermal_voltage,
             context="hole Poisson-Boltzmann solution",
         )
-        rho, _charge_derivative = self._bulk_space_charge_and_tangent(n, p)
+        rho, _charge_derivative = self._bulk_space_charge_and_tangent(
+            n,
+            p,
+            dynamic_bulk_charge_density_C_m3=(dynamic_bulk_charge_density_C_m3),
+        )
         raw = (
             factor.C[:-1] * (phi[:-2] - phi[1:-1])
             + factor.C[1:] * (phi[2:] - phi[1:-1])
@@ -1342,13 +1358,16 @@ class _QuasiFermiSystem:
         V_app: float | None = None,
         edge_increment_n: np.ndarray | None = None,
         edge_increment_p: np.ndarray | None = None,
+        dynamic_bulk_layout: DynamicBulkTrapLayout | None = None,
+        dynamic_bulk_occupancy: np.ndarray | None = None,
+        dynamic_bulk_reference_n: np.ndarray | None = None,
+        dynamic_bulk_reference_p: np.ndarray | None = None,
+        dynamic_bulk_reference_occupancy: np.ndarray | None = None,
     ) -> _Evaluation:
         self.evaluation_count += 1
         dqfn_arr = np.asarray(dqfn, dtype=float)
         dqfp_arr = np.asarray(dqfp, dtype=float)
-        if dqfn_arr.shape != (self.node_count,) or dqfp_arr.shape != (
-            self.node_count,
-        ):
+        if dqfn_arr.shape != (self.node_count,) or dqfp_arr.shape != (self.node_count,):
             raise ValueError(
                 "quasi-Fermi increment arrays must match the electrical grid"
             )
@@ -1368,10 +1387,57 @@ class _QuasiFermiSystem:
             if not np.all(np.isfinite(edge_n)) or not np.all(np.isfinite(edge_p)):
                 raise ValueError("quasi-Fermi edge increments must be finite")
         voltage = self.V_app if V_app is None else float(V_app)
+        dynamic_bulk = (
+            dynamic_bulk_layout is not None or dynamic_bulk_occupancy is not None
+        )
+        if dynamic_bulk_layout is None or dynamic_bulk_occupancy is None:
+            if dynamic_bulk:
+                raise ValueError(
+                    "dynamic bulk layout and occupancy must be supplied together"
+                )
+            dynamic_charge = None
+        else:
+            model = self.mat.monovalent_bulk_defects
+            if model is None:
+                raise QuasiFermiSteadyStateError(
+                    "dynamic bulk occupancy requires a compiled defect model"
+                )
+            if dynamic_bulk_layout.model_identity_sha256 != model.identity_sha256:
+                raise QuasiFermiSteadyStateError(
+                    "dynamic bulk layout does not match the material defect model"
+                )
+            dynamic_nodes = np.zeros(self.node_count, dtype=bool)
+            dynamic_nodes[dynamic_bulk_layout.device_node_indices] = True
+            expected_nodes = np.asarray(model.explicit_node_mask, dtype=bool).copy()
+            expected_nodes[[0, -1]] = False
+            if not np.array_equal(dynamic_nodes, expected_nodes):
+                raise QuasiFermiSteadyStateError(
+                    "dynamic bulk layout must cover every interior explicit-defect node"
+                )
+            dynamic_charge = bulk_trap_charge_density(
+                dynamic_bulk_occupancy,
+                dynamic_bulk_layout,
+            )
+        reference_values = (
+            dynamic_bulk_reference_n,
+            dynamic_bulk_reference_p,
+            dynamic_bulk_reference_occupancy,
+        )
+        if any(value is not None for value in reference_values) and not all(
+            value is not None for value in reference_values
+        ):
+            raise ValueError(
+                "dynamic bulk reference n, p, and occupancy must be supplied together"
+            )
+        if not dynamic_bulk and any(value is not None for value in reference_values):
+            raise ValueError(
+                "dynamic bulk reference values require a layout and occupancy"
+            )
         phi, n, p, poisson_scaled, poisson_raw, charged_qss = self._solve_poisson(
             dqfn_arr,
             dqfp_arr,
             V_app=voltage,
+            dynamic_bulk_charge_density_C_m3=dynamic_charge,
         )
 
         y = self.base.copy()
@@ -1419,12 +1485,48 @@ class _QuasiFermiSystem:
             y,
             self.x,
             self.stack,
-            self.source_mat,
+            self.dynamic_bulk_source_mat if dynamic_bulk else self.source_mat,
             illuminated=False,
             V_app=voltage,
             phi_frozen=phi,
             interface_qss_result=interface_qss,
         )[: 2 * self.node_count]
+        if dynamic_bulk_layout is not None and dynamic_bulk_occupancy is not None:
+            dynamic_evaluation = (
+                evaluate_dynamic_bulk_traps_about_qss(
+                    n,
+                    p,
+                    dynamic_bulk_occupancy,
+                    dynamic_bulk_layout,
+                    reference_electron_density_m3=dynamic_bulk_reference_n,
+                    reference_hole_density_m3=dynamic_bulk_reference_p,
+                    reference_occupancy=dynamic_bulk_reference_occupancy,
+                )
+                if all(value is not None for value in reference_values)
+                else evaluate_dynamic_bulk_traps(
+                    n,
+                    p,
+                    dynamic_bulk_occupancy,
+                    dynamic_bulk_layout,
+                )
+            )
+            legacy_srh = srh_recombination(
+                n,
+                p,
+                self.mat.ni_sq,
+                self.mat.tau_n,
+                self.mat.tau_p,
+                self.mat.n1,
+                self.mat.p1,
+            )
+            dynamic_nodes = np.zeros(self.node_count, dtype=bool)
+            dynamic_nodes[dynamic_bulk_layout.device_node_indices] = True
+            source_n = source[: self.node_count]
+            source_p = source[self.node_count :]
+            source_n[dynamic_nodes] += legacy_srh[dynamic_nodes]
+            source_p[dynamic_nodes] += legacy_srh[dynamic_nodes]
+            source_n -= dynamic_evaluation.total_electron_capture_rate_m3_s
+            source_p -= dynamic_evaluation.total_hole_capture_rate_m3_s
         source += float(illumination_fraction) * self.generation
 
         psi_n = phi + self.mat.chi
@@ -1442,15 +1544,25 @@ class _QuasiFermiSystem:
             increment_p = np.diff(dqfp_arr) / self.thermal_voltage
         delta_n = self.reference_edge_drop_n + increment_n
         delta_p = -(self.reference_edge_drop_p + increment_p)
-        current_n = Q * self.mat.D_n_face / self.dx * self._stable_difference(
-            bernoulli(xi_n) * n[1:],
-            bernoulli(-xi_n) * n[:-1],
-            delta_n,
+        current_n = (
+            Q
+            * self.mat.D_n_face
+            / self.dx
+            * self._stable_difference(
+                bernoulli(xi_n) * n[1:],
+                bernoulli(-xi_n) * n[:-1],
+                delta_n,
+            )
         )
-        current_p = Q * self.mat.D_p_face / self.dx * self._stable_difference(
-            bernoulli(xi_p) * p[:-1],
-            bernoulli(-xi_p) * p[1:],
-            delta_p,
+        current_p = (
+            Q
+            * self.mat.D_p_face
+            / self.dx
+            * self._stable_difference(
+                bernoulli(xi_p) * p[:-1],
+                bernoulli(-xi_p) * p[1:],
+                delta_p,
+            )
         )
 
         interface_face_currents: list[tuple[int, float, float]] = []
@@ -1483,12 +1595,12 @@ class _QuasiFermiSystem:
                 current_n[face] = 0.0
                 current_p[face] = 0.0
 
-        rate_n = source[: self.node_count] + np.diff(
-            np.r_[0.0, current_n, 0.0]
-        ) / (Q * self.mat.dx_cell)
-        rate_p = source[self.node_count :] - np.diff(
-            np.r_[0.0, current_p, 0.0]
-        ) / (Q * self.mat.dx_cell)
+        rate_n = source[: self.node_count] + np.diff(np.r_[0.0, current_n, 0.0]) / (
+            Q * self.mat.dx_cell
+        )
+        rate_p = source[self.node_count :] - np.diff(np.r_[0.0, current_p, 0.0]) / (
+            Q * self.mat.dx_cell
+        )
         residual = np.r_[
             Q * rate_n * self.mat.dx_cell / self.current_scale,
             Q * rate_p * self.mat.dx_cell / self.current_scale,
@@ -1531,9 +1643,7 @@ class _QuasiFermiSystem:
         """
         qfn_arr = np.asarray(qfn, dtype=float)
         qfp_arr = np.asarray(qfp, dtype=float)
-        if qfn_arr.shape != (self.node_count,) or qfp_arr.shape != (
-            self.node_count,
-        ):
+        if qfn_arr.shape != (self.node_count,) or qfp_arr.shape != (self.node_count,):
             raise ValueError("quasi-Fermi arrays must match the electrical grid")
         return self._evaluate_increments(
             qfn_arr - self.qfn0,
@@ -1556,6 +1666,32 @@ class _QuasiFermiSystem:
             dqfp,
             illumination_fraction,
             V_app=V_app,
+        )
+
+    def evaluate_quasi_fermi_increments_dynamic_bulk(
+        self,
+        dqfn: np.ndarray,
+        dqfp: np.ndarray,
+        dynamic_bulk_layout: DynamicBulkTrapLayout,
+        dynamic_bulk_occupancy: np.ndarray,
+        illumination_fraction: float,
+        *,
+        V_app: float | None = None,
+        reference_electron_density_m3: np.ndarray | None = None,
+        reference_hole_density_m3: np.ndarray | None = None,
+        reference_occupancy: np.ndarray | None = None,
+    ) -> _Evaluation:
+        """Evaluate QF transport with explicit, non-QSS bulk occupancies."""
+        return self._evaluate_increments(
+            dqfn,
+            dqfp,
+            illumination_fraction,
+            V_app=V_app,
+            dynamic_bulk_layout=dynamic_bulk_layout,
+            dynamic_bulk_occupancy=dynamic_bulk_occupancy,
+            dynamic_bulk_reference_n=reference_electron_density_m3,
+            dynamic_bulk_reference_p=reference_hole_density_m3,
+            dynamic_bulk_reference_occupancy=reference_occupancy,
         )
 
     def evaluate(self, z: np.ndarray, illumination_fraction: float) -> _Evaluation:
@@ -1597,12 +1733,8 @@ class _QuasiFermiSystem:
             raise ValueError(
                 "edge-coordinate vector must contain N-2 drops per carrier"
             )
-        edge_n = self._expand_independent_edge_drops(
-            coordinates[:per_carrier]
-        )
-        edge_p = self._expand_independent_edge_drops(
-            coordinates[per_carrier:]
-        )
+        edge_n = self._expand_independent_edge_drops(coordinates[:per_carrier])
+        edge_p = self._expand_independent_edge_drops(coordinates[per_carrier:])
         z_n = np.r_[0.0, np.cumsum(edge_n[:-1]), 0.0]
         z_p = np.r_[0.0, np.cumsum(edge_p[:-1]), 0.0]
         return z_n, z_p, edge_n, edge_p
@@ -1615,9 +1747,7 @@ class _QuasiFermiSystem:
         physical_residual: bool = False,
     ) -> _Evaluation:
         """Evaluate the interface solve in cancellation-safe face coordinates."""
-        z_n, z_p, edge_n, edge_p = self.edge_coordinates_to_increments(
-            edge_coordinates
-        )
+        z_n, z_p, edge_n, edge_p = self.edge_coordinates_to_increments(edge_coordinates)
         physical = self._evaluate_increments(
             self.thermal_voltage * z_n,
             self.thermal_voltage * z_p,
@@ -1630,9 +1760,7 @@ class _QuasiFermiSystem:
             return physical
         interior_residual = np.r_[
             physical.residual[1 : self.node_count - 1],
-            physical.residual[
-                self.node_count + 1 : 2 * self.node_count - 1
-            ],
+            physical.residual[self.node_count + 1 : 2 * self.node_count - 1],
         ]
         return replace(physical, residual=interior_residual)
 
@@ -1651,11 +1779,7 @@ def _solve_newton_stage(
 ) -> tuple[np.ndarray, int]:
     z = np.asarray(z0, dtype=float).copy()
     size = z.size
-    evaluate = (
-        system.evaluate_edge_coordinates
-        if edge_coordinates
-        else system.evaluate
-    )
+    evaluate = system.evaluate_edge_coordinates if edge_coordinates else system.evaluate
 
     for iteration in range(max_iterations + 1):
         residual = evaluate(z, illumination_fraction).residual
@@ -1706,9 +1830,7 @@ def _solve_newton_stage(
             candidate = z + damping * step
             try:
                 candidate_norm = float(
-                    np.linalg.norm(
-                        evaluate(candidate, illumination_fraction).residual
-                    )
+                    np.linalg.norm(evaluate(candidate, illumination_fraction).residual)
                 )
             except (RuntimeError, QuasiFermiSteadyStateError, ValueError):
                 if rank_deficient:
@@ -1760,9 +1882,7 @@ def solve_quasi_fermi_steady_state(
     current_spread_tolerance_A_m2: float = 1.0e-4,
     poisson_residual_tolerance: float = 1.0e-8,
     require_contact_certificate: bool = False,
-    defect_energy_quadrature_order: int = (
-        DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
-    ),
+    defect_energy_quadrature_order: int = (DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER),
     _research_interface_charge_reference_occupancy: np.ndarray | None = None,
     _research_interface_charge_trap_density_m2: np.ndarray | None = None,
     _research_interface_charge_token: object | None = None,
@@ -1789,10 +1909,8 @@ def solve_quasi_fermi_steady_state(
         raise ValueError("x must be a strictly increasing one-dimensional grid")
     if not np.isfinite(V_app):
         raise ValueError("V_app must be finite")
-    resolved_defect_energy_order = (
-        validate_defect_energy_quadrature_order(
-            defect_energy_quadrature_order
-        )
+    resolved_defect_energy_order = validate_defect_energy_quadrature_order(
+        defect_energy_quadrature_order
     )
     if not isinstance(force_nodal_coordinate_predictor, (bool, np.bool_)):
         raise TypeError("force_nodal_coordinate_predictor must be boolean")
@@ -1817,9 +1935,7 @@ def solve_quasi_fermi_steady_state(
         or interface_transmission > 1.0
     ):
         raise ValueError("interface_transmission must lie in (0, 1]")
-    transport_model = validate_interface_transport_model(
-        interface_transport_model
-    )
+    transport_model = validate_interface_transport_model(interface_transport_model)
     topology = validate_interface_topology(interface_topology)
     if topology == TWO_SIDED_TRACE:
         if not interface_boundary:
@@ -1843,9 +1959,7 @@ def solve_quasi_fermi_steady_state(
         )
     if not research_charge and _research_interface_charge_token is not None:
         raise ValueError("research interface-charge token has no charge payload")
-    if research_charge and (
-        not interface_boundary or topology != TWO_SIDED_TRACE
-    ):
+    if research_charge and (not interface_boundary or topology != TWO_SIDED_TRACE):
         raise ValueError(
             "research interface charge requires interface_boundary=True and "
             "interface_topology='two_sided_trace'"
@@ -1904,8 +2018,7 @@ def solve_quasi_fermi_steady_state(
                 else "the requested quasi-Fermi solve"
             )
             raise QuasiFermiSteadyStateError(
-                f"{subject} requires a certified contact "
-                f"thermodynamic reference: {exc}"
+                f"{subject} requires a certified contact thermodynamic reference: {exc}"
             ) from exc
     system = _QuasiFermiSystem(
         grid,
@@ -1919,9 +2032,7 @@ def solve_quasi_fermi_steady_state(
         interface_charge_reference_occupancy=(
             _research_interface_charge_reference_occupancy
         ),
-        interface_charge_trap_density_m2=(
-            _research_interface_charge_trap_density_m2
-        ),
+        interface_charge_trap_density_m2=(_research_interface_charge_trap_density_m2),
         poisson_tolerance_V=poisson_tolerance_V,
         poisson_max_iterations=poisson_max_iterations,
     )
@@ -1934,25 +2045,16 @@ def solve_quasi_fermi_steady_state(
         if not initial_state.certified:
             raise ValueError("initial_state must carry a physical certificate")
         if initial_state.interface_boundary != bool(interface_boundary):
-            raise ValueError(
-                "initial_state must use the same interface-boundary model"
-            )
-        if (
-            interface_boundary
-            and initial_state.interface_topology != topology
-        ):
-            raise ValueError(
-                "initial_state must use the same interface topology"
-            )
+            raise ValueError("initial_state must use the same interface-boundary model")
+        if interface_boundary and initial_state.interface_topology != topology:
+            raise ValueError("initial_state must use the same interface topology")
         if interface_boundary and not np.isclose(
             initial_state.interface_transmission,
             interface_transmission,
             rtol=0.0,
             atol=0.0,
         ):
-            raise ValueError(
-                "initial_state must use the same interface transmission"
-            )
+            raise ValueError("initial_state must use the same interface transmission")
         if (
             interface_boundary
             and initial_state.interface_transport_model != transport_model
@@ -2047,10 +2149,8 @@ def solve_quasi_fermi_steady_state(
                 dqfn_arr = np.interp(grid, warm_grid, dqfn_arr)
                 dqfp_arr = np.interp(grid, warm_grid, dqfp_arr)
             z = np.r_[
-                (qfn_reference_arr - system.qfn0 + dqfn_arr)
-                / system.thermal_voltage,
-                (qfp_reference_arr - system.qfp0 + dqfp_arr)
-                / system.thermal_voltage,
+                (qfn_reference_arr - system.qfn0 + dqfn_arr) / system.thermal_voltage,
+                (qfp_reference_arr - system.qfp0 + dqfp_arr) / system.thermal_voltage,
             ]
         else:
             z = np.r_[
@@ -2070,9 +2170,7 @@ def solve_quasi_fermi_steady_state(
                 None,
             ),
         )
-        exact_edge_present = tuple(
-            value is not None for value in exact_edge_drops
-        )
+        exact_edge_present = tuple(value is not None for value in exact_edge_drops)
         if any(exact_edge_present) and not all(exact_edge_present):
             raise ValueError(
                 "initial_state must provide both electron and hole exact "
@@ -2169,9 +2267,7 @@ def solve_quasi_fermi_steady_state(
             )
         except (RuntimeError, ValueError):
             interface_basin_predictor_failures = 1
-            configured_alphas = tuple(
-                float(value) for value in stack.grid_alphas
-            )
+            configured_alphas = tuple(float(value) for value in stack.grid_alphas)
             if configured_alphas and max(configured_alphas) > 3.0:
                 layers = electrical_layers(stack)
                 boundaries = np.cumsum(
@@ -2179,8 +2275,7 @@ def solve_quasi_fermi_steady_state(
                     dtype=float,
                 )
                 interface_indices = [
-                    int(np.argmin(np.abs(grid - boundary)))
-                    for boundary in boundaries
+                    int(np.argmin(np.abs(grid - boundary))) for boundary in boundaries
                 ]
                 edge_indices = [0, *interface_indices, len(grid) - 1]
                 interval_counts = [
@@ -2304,12 +2399,8 @@ def solve_quasi_fermi_steady_state(
         # always solved and certified again in edge-drop coordinates.
         edge_coordinate_seed = None
     for stage_index, fraction in enumerate(stages):
-        use_edge_coordinates = (
-            interface_boundary
-            and (
-                charged_edge_continuation
-                or stage_index == len(stages) - 1
-            )
+        use_edge_coordinates = interface_boundary and (
+            charged_edge_continuation or stage_index == len(stages) - 1
         )
         if use_edge_coordinates and not using_edge_coordinates:
             per_carrier = len(grid) - 2
@@ -2317,12 +2408,8 @@ def solve_quasi_fermi_steady_state(
                 nonlinear_coordinates = edge_coordinate_seed
             else:
                 nonlinear_coordinates = np.r_[
-                    np.diff(nonlinear_coordinates[: len(grid)])[
-                        :per_carrier
-                    ],
-                    np.diff(nonlinear_coordinates[len(grid) :])[
-                        :per_carrier
-                    ],
+                    np.diff(nonlinear_coordinates[: len(grid)])[:per_carrier],
+                    np.diff(nonlinear_coordinates[len(grid) :])[:per_carrier],
                 ]
             using_edge_coordinates = True
         stage_tolerance = numerical_residual_limit
@@ -2335,9 +2422,7 @@ def solve_quasi_fermi_steady_state(
             max_iterations=max_newton_iterations,
             rank_deficient=interface_boundary,
             near_tolerance_stagnation_factor=(
-                2.0
-                if interface_boundary and stage_index < len(stages) - 1
-                else 1.0
+                2.0 if interface_boundary and stage_index < len(stages) - 1 else 1.0
             ),
             edge_coordinates=use_edge_coordinates,
         )
@@ -2431,10 +2516,7 @@ def solve_quasi_fermi_steady_state(
                 )
             )
         interface_max_state_to_dos = float(
-            np.max(
-                interface_certificate.state_m3
-                / np.asarray(capacities, dtype=float)
-            )
+            np.max(interface_certificate.state_m3 / np.asarray(capacities, dtype=float))
         )
     interior = np.ones(len(grid), dtype=bool)
     interior[[0, -1]] = False
@@ -2565,14 +2647,12 @@ def solve_quasi_fermi_steady_state(
         electron_quasi_fermi_edge_drop_V=(
             None
             if edge_n is None
-            else system.thermal_voltage
-            * (system.reference_edge_drop_n + edge_n)
+            else system.thermal_voltage * (system.reference_edge_drop_n + edge_n)
         ),
         hole_quasi_fermi_edge_drop_V=(
             None
             if edge_p is None
-            else system.thermal_voltage
-            * (system.reference_edge_drop_p + edge_p)
+            else system.thermal_voltage * (system.reference_edge_drop_p + edge_p)
         ),
         interface_boundary=bool(interface_boundary),
         interface_transmission=float(interface_transmission),
@@ -2583,13 +2663,9 @@ def solve_quasi_fermi_steady_state(
         interface_basin_predictor_failures=interface_basin_predictor_failures,
         interface_basin_predictor_regrids=interface_basin_predictor_regrids,
         initial_state_regrids=initial_state_regrids,
-        qf_coordinate_system=(
-            "edge_drop" if interface_boundary else "nodal_increment"
-        ),
+        qf_coordinate_system=("edge_drop" if interface_boundary else "nodal_increment"),
         edge_coordinate_predictor_used=edge_coordinate_predictor_required,
-        edge_coordinate_predictor_iterations=(
-            edge_coordinate_predictor_iterations
-        ),
+        edge_coordinate_predictor_iterations=(edge_coordinate_predictor_iterations),
         interface_local_residual=interface_local_residual,
         interface_max_state_to_dos=interface_max_state_to_dos,
         numerical_residual_limit=numerical_residual_limit,
@@ -2611,8 +2687,7 @@ def solve_quasi_fermi_steady_state(
             if interface_certificate is None
             or getattr(interface_certificate, "occupancy", None) is None
             else tuple(
-                float(value)
-                for value in getattr(interface_certificate, "occupancy")
+                float(value) for value in getattr(interface_certificate, "occupancy")
             )
         ),
         interface_incremental_sheet_charge_C_m2=(
@@ -2620,9 +2695,7 @@ def solve_quasi_fermi_steady_state(
             if final.interface_charge_qss is None
             else tuple(
                 float(value)
-                for value in (
-                    final.interface_charge_qss.incremental_sheet_charge_C_m2
-                )
+                for value in (final.interface_charge_qss.incremental_sheet_charge_C_m2)
             )
         ),
         interface_trace_potential_shift_V=(
@@ -2730,8 +2803,7 @@ def build_equilibrium_referenced_interface_charge_dark_reference(
     overlap = reserved.intersection(solver_controls)
     if overlap:
         raise ValueError(
-            "dark-reference builder owns solver controls: "
-            + ", ".join(sorted(overlap))
+            "dark-reference builder owns solver controls: " + ", ".join(sorted(overlap))
         )
     grid = np.asarray(x, dtype=float)
     charge_off_stack, microscopic_contract = _research_charge_off_stack(stack)
@@ -2935,9 +3007,7 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
             or not np.all(np.isfinite(state_charge))
             or np.any(state_occupancy < 0.0)
             or np.any(state_occupancy > 1.0)
-            or np.any(
-                np.abs(state_charge - expected_charge) > 1.0e-11 * charge_scale
-            )
+            or np.any(np.abs(state_charge - expected_charge) > 1.0e-11 * charge_scale)
         ):
             raise ValueError(
                 "charged continuation state violates the interface charge law"
@@ -2946,9 +3016,7 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
             bool(solver_controls.get("require_contact_certificate", False))
             and initial_state.contact_thermodynamic_status != "certified"
         ):
-            raise ValueError(
-                "charged continuation state lacks contact certification"
-            )
+            raise ValueError("charged continuation state lacks contact certification")
     if float(V_app) == 0.0 and not illuminated:
         zeros = tuple(0.0 for _ in range(interface_count))
         trace_zeros = tuple((0.0, 0.0) for _ in range(interface_count))
@@ -3004,9 +3072,7 @@ def solve_equilibrium_referenced_interface_charge_steady_state(
         result,
         interface_charge_reference_grid_sha256=dark_reference.grid_sha256,
         interface_charge_reference_stack_sha256=dark_reference.stack_sha256,
-        interface_charge_reference_dark_state_sha256=(
-            dark_reference.dark_state_sha256
-        ),
+        interface_charge_reference_dark_state_sha256=(dark_reference.dark_state_sha256),
     )
 
 
@@ -3036,9 +3102,7 @@ def solve_quasi_fermi_jv_sweep(
     minimum_voltage_step_V: float | None = None,
     max_voltage_bridge_points: int = 256,
     mpp_interpolation: Literal["sampled", "local_quadratic"] = "sampled",
-    defect_energy_quadrature_order: int = (
-        DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER
-    ),
+    defect_energy_quadrature_order: int = (DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER),
 ) -> QuasiFermiJVSweepResult:
     """Solve a strictly increasing illuminated J-V grid by QF continuation.
 
@@ -3076,9 +3140,7 @@ def solve_quasi_fermi_jv_sweep(
     if not np.isfinite(P_in_W_m2) or P_in_W_m2 <= 0.0:
         raise ValueError("P_in_W_m2 must be finite and positive")
     if mpp_interpolation not in ("sampled", "local_quadratic"):
-        raise ValueError(
-            "mpp_interpolation must be 'sampled' or 'local_quadratic'"
-        )
+        raise ValueError("mpp_interpolation must be 'sampled' or 'local_quadratic'")
     stop_grid = None
     if voc_stop_grid_V is not None:
         if not stop_after_voc:
@@ -3090,9 +3152,7 @@ def solve_quasi_fermi_jv_sweep(
             or not np.all(np.isfinite(stop_grid))
             or np.any(np.diff(stop_grid) <= 0.0)
         ):
-            raise ValueError(
-                "voc_stop_grid_V must be finite and strictly increasing"
-            )
+            raise ValueError("voc_stop_grid_V must be finite and strictly increasing")
         for stop_voltage in stop_grid:
             if not np.any(
                 np.isclose(
@@ -3102,12 +3162,9 @@ def solve_quasi_fermi_jv_sweep(
                     atol=1.0e-12,
                 )
             ):
-                raise ValueError(
-                    "voc_stop_grid_V must be a subset of voltages_V"
-                )
+                raise ValueError("voc_stop_grid_V must be a subset of voltages_V")
     if minimum_voltage_step_V is not None and (
-        not np.isfinite(minimum_voltage_step_V)
-        or minimum_voltage_step_V <= 0.0
+        not np.isfinite(minimum_voltage_step_V) or minimum_voltage_step_V <= 0.0
     ):
         raise ValueError(
             "minimum_voltage_step_V must be finite and positive when enabled"
@@ -3118,10 +3175,8 @@ def solve_quasi_fermi_jv_sweep(
         or int(max_voltage_bridge_points) <= 0
     ):
         raise ValueError("max_voltage_bridge_points must be a positive integer")
-    resolved_defect_energy_order = (
-        validate_defect_energy_quadrature_order(
-            defect_energy_quadrature_order
-        )
+    resolved_defect_energy_order = validate_defect_energy_quadrature_order(
+        defect_energy_quadrature_order
     )
 
     grid = np.asarray(x, dtype=float)
@@ -3253,9 +3308,7 @@ def solve_quasi_fermi_jv_sweep(
 
     for index, voltage in enumerate(voltages):
         first_stages = (
-            (1.0,)
-            if initial_short_circuit_state is not None
-            else illumination_steps
+            (1.0,) if initial_short_circuit_state is not None else illumination_steps
         )
         if index == 0:
             point = solve_at_voltage(
@@ -3273,10 +3326,7 @@ def solve_quasi_fermi_jv_sweep(
         points.append(point)
         previous = point
         previous_voltage = float(voltage)
-        if (
-            len(points) >= 2
-            and points[-2].current_A_m2 > 0.0 >= point.current_A_m2
-        ):
+        if len(points) >= 2 and points[-2].current_A_m2 > 0.0 >= point.current_A_m2:
             voc_crossed = True
         if stop_after_voc and voc_crossed:
             on_stop_grid = stop_grid is None or np.any(
@@ -3307,14 +3357,10 @@ def solve_quasi_fermi_jv_sweep(
         metrics=metrics,
         continuation_bridge_count=bridge_count,
         minimum_voltage_step_V=(
-            None
-            if minimum_voltage_step_V is None
-            else float(minimum_voltage_step_V)
+            None if minimum_voltage_step_V is None else float(minimum_voltage_step_V)
         ),
         mpp_interpolation=mpp_interpolation,
-        nodal_predictor_fallback_attempts=(
-            nodal_predictor_fallback_attempts
-        ),
+        nodal_predictor_fallback_attempts=(nodal_predictor_fallback_attempts),
         nodal_predictor_fallback_failures=nodal_predictor_fallback_failures,
         defect_energy_quadrature_order=(
             material.explicit_defect_energy_quadrature_order

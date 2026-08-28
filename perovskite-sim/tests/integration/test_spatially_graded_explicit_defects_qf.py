@@ -9,6 +9,9 @@ import numpy as np
 import pytest
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
+from perovskite_sim.experiments.defect_aware_impedance import (
+    run_bulk_defect_device_impedance,
+)
 from perovskite_sim.experiments.quasi_fermi_steady_state import (
     solve_quasi_fermi_jv_sweep,
     solve_quasi_fermi_steady_state,
@@ -87,11 +90,7 @@ def _stack(*, photon_flux_m2_s: float = 0.0) -> DeviceStack:
         spatial_profile=profile,
     )
     intrinsic = math.sqrt(
-        NC_M3
-        * NV_M3
-        * math.exp(
-            -FRONT_GAP_EV / thermal_voltage(TEMPERATURE_K)
-        )
+        NC_M3 * NV_M3 * math.exp(-FRONT_GAP_EV / thermal_voltage(TEMPERATURE_K))
     )
     params = MaterialParams(
         eps_r=20.0,
@@ -172,12 +171,8 @@ def test_material_compiler_binds_local_bands_profile_and_contact_endpoints():
 
     front = _edge_params(stack.layers[0], "front", True)
     back = _edge_params(stack.layers[0], "back", True)
-    assert front.defect_schema_version == (
-        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
-    )
-    assert back.defect_schema_version == (
-        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
-    )
+    assert front.defect_schema_version == (EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION)
+    assert back.defect_schema_version == (EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION)
     assert front.bulk_defects[0].distribution.total_density_m3 == 4.0e20
     assert back.bulk_defects[0].distribution.total_density_m3 == 1.2e21
     front_state = build_semiconductor_contact_state(
@@ -210,9 +205,7 @@ def test_compiled_profile_preserves_layer_average_density_on_the_grid():
     model = material.monovalent_bulk_defects
     assert model is not None
     region = model.regions[0]
-    source_density = float(
-        region.species[0].distribution.total_density_m3
-    )
+    source_density = float(region.species[0].distribution.total_density_m3)
     compiled_density = source_density * region.source_density_multipliers[0]
 
     assert np.trapezoid(compiled_density, grid) == pytest.approx(
@@ -276,3 +269,21 @@ def test_spatially_graded_dark_qf_state_and_small_jv_are_certified():
         and point.bulk_defect_diagnostics.spatial_profile_sha256s[0] is not None
         for point in sweep.points
     )
+
+
+def test_spatially_graded_distributed_defect_device_ac_is_certified():
+    stack = _stack()
+    grid = _grid(stack, intervals=4)
+    order = 6
+    result = run_bulk_defect_device_impedance(
+        grid,
+        stack,
+        np.geomspace(1.0e-5, 1.0e12, 35),
+        illuminated=False,
+        defect_energy_quadrature_order=order,
+    )
+
+    assert result.certificate.certified
+    assert result.layout.size == (grid.size - 2) * order
+    assert np.ptp(result.layout.population_density_m3) > 0.0
+    assert set(result.layout.energy_indices) == set(range(order))

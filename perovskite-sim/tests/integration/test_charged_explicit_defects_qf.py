@@ -9,6 +9,12 @@ import numpy as np
 import pytest
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
+from perovskite_sim.experiments.defect_aware_impedance import (
+    BULK_DEFECT_DEVICE_AC_SCOPE,
+    BulkDefectDeviceACCertificationError,
+    BulkDefectDeviceACError,
+    run_bulk_defect_device_impedance,
+)
 from perovskite_sim.experiments.quasi_fermi_steady_state import (
     QuasiFermiSteadyStateError,
     _QuasiFermiSystem,
@@ -75,9 +81,7 @@ def _species(transition: str) -> BulkDefectSpecies:
         ),
         charge_transition=transition,
         neutral_reference=(
-            NEUTRAL_WHEN_EMPTY
-            if transition == ACCEPTOR
-            else NEUTRAL_WHEN_FILLED
+            NEUTRAL_WHEN_EMPTY if transition == ACCEPTOR else NEUTRAL_WHEN_FILLED
         ),
         kinetics=BulkDefectKinetics(
             sigma_n_m2=2.0e-19,
@@ -96,9 +100,7 @@ def _stack(
     contact_mode: str = "semiconductor_work_function",
 ) -> DeviceStack:
     intrinsic = math.sqrt(
-        NC_M3
-        * NV_M3
-        * math.exp(-GAP_EV / thermal_voltage(TEMPERATURE_K))
+        NC_M3 * NV_M3 * math.exp(-GAP_EV / thermal_voltage(TEMPERATURE_K))
     )
     params = MaterialParams(
         eps_r=20.0,
@@ -208,9 +210,7 @@ def _distributed_stack(
                 base.layers[0],
                 params=replace(
                     params,
-                    defect_schema_version=(
-                        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
-                    ),
+                    defect_schema_version=(EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION),
                     bulk_defects=(_distributed_species(kind, transition),),
                 ),
             ),
@@ -227,9 +227,7 @@ def _heterojunction_stack(*, photon_flux_m2_s: float = 0.0) -> DeviceStack:
     assert left is not None
     right_gap_eV = 0.90
     right_intrinsic = math.sqrt(
-        NC_M3
-        * NV_M3
-        * math.exp(-right_gap_eV / thermal_voltage(TEMPERATURE_K))
+        NC_M3 * NV_M3 * math.exp(-right_gap_eV / thermal_voltage(TEMPERATURE_K))
     )
     right = replace(
         left,
@@ -345,9 +343,7 @@ def test_v2_single_level_material_is_exact_to_v1_qf_dc_physics():
                 v1_stack.layers[0],
                 params=replace(
                     v1_params,
-                    defect_schema_version=(
-                        EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION
-                    ),
+                    defect_schema_version=(EXPLICIT_DEFECT_DISTRIBUTION_SCHEMA_VERSION),
                     bulk_defects=(v2_species,),
                 ),
             ),
@@ -688,8 +684,7 @@ def test_charged_defect_and_heterojunction_close_in_one_qf_dc_residual():
     assert illuminated.bulk_defect_diagnostics is not None
     assert illuminated.interface_basin_initializations == 0
     assert (
-        illuminated.max_normalized_cell_residual
-        < illuminated.numerical_residual_limit
+        illuminated.max_normalized_cell_residual < illuminated.numerical_residual_limit
     )
     assert illuminated.poisson_residual < 1.0e-8
 
@@ -711,8 +706,7 @@ def test_public_qf_jv_sweep_retains_charged_defect_certificates():
     assert len(sweep.points) == 3
     assert all(point.bulk_defect_diagnostics is not None for point in sweep.points)
     assert all(
-        point.contact_thermodynamic_status == "certified"
-        for point in sweep.points
+        point.contact_thermodynamic_status == "certified" for point in sweep.points
     )
 
 
@@ -759,8 +753,7 @@ def test_mixed_distributed_species_close_in_illuminated_qf_jv():
     )
     assert all(point.defect_energy_quadrature_order == 16 for point in sweep.points)
     assert all(
-        point.defect_distribution_kinds
-        == (GAUSSIAN, CONDUCTION_BAND_TAIL)
+        point.defect_distribution_kinds == (GAUSSIAN, CONDUCTION_BAND_TAIL)
         for point in sweep.points
     )
     assert all(point.bulk_defect_diagnostics is not None for point in sweep.points)
@@ -879,3 +872,161 @@ def test_intrinsic_product_mismatch_is_rejected_before_qf_newton():
             inconsistent,
             illuminated=False,
         )
+
+
+def test_dynamic_bulk_defect_device_ac_certifies_both_limits_and_currents():
+    stack = _stack()
+    grid = _grid(stack, 4)
+    result = run_bulk_defect_device_impedance(
+        grid,
+        stack,
+        np.geomspace(1.0e-4, 1.0e12, 33),
+        illuminated=False,
+    )
+
+    certificate = result.certificate
+    assert certificate.certified
+    assert certificate.reasons == ()
+    assert certificate.scope == BULK_DEFECT_DEVICE_AC_SCOPE
+    assert certificate.frequency_window.certified
+    assert certificate.dc_maximum_normalized_residual < 1.0e-10
+    assert certificate.dc_electron_continuity_bound_A_m2 < 1.0e-4
+    assert certificate.dc_hole_continuity_bound_A_m2 < 1.0e-4
+    assert certificate.dc_face_current_spread_A_m2 < 1.0e-4
+    assert certificate.dc_poisson_residual < 1.0e-8
+    assert certificate.qss_embedding_normalized_error < 1.0e-18
+    assert certificate.maximum_local_trap_balance_relative_error < 1.0e-4
+    assert certificate.maximum_all_face_admittance_spread < 1.0e-8
+    assert certificate.maximum_refinement_relative_change < 1.0e-6
+    assert certificate.low_frequency_qss_relative_error < 1.0e-6
+    assert certificate.high_frequency_frozen_relative_error < 1.0e-6
+    assert result.layout.size == grid.size - 2
+    np.testing.assert_allclose(
+        result.admittance_faces_S_m2,
+        result.electron_conduction_admittance_faces_S_m2
+        + result.hole_conduction_admittance_faces_S_m2
+        + result.displacement_admittance_faces_S_m2,
+        rtol=2.0e-15,
+        atol=1.0e-12,
+    )
+    assert abs(result.trap_charge_storage_response_F_m2[0]) > 1.0e6 * abs(
+        result.trap_charge_storage_response_F_m2[-1]
+    )
+    assert not result.admittance_S_m2.flags.writeable
+
+
+def test_dynamic_bulk_defect_device_ac_requires_an_explicit_defect_model():
+    stack = _stack()
+    params = stack.layers[0].params
+    assert params is not None
+    lifetime_stack = replace(
+        stack,
+        layers=(
+            replace(
+                stack.layers[0],
+                params=replace(
+                    params,
+                    defect_schema_version=None,
+                    defect_model="effective_lifetime",
+                    bulk_defects=(),
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(BulkDefectDeviceACError, match="explicit-defect model"):
+        run_bulk_defect_device_impedance(
+            _grid(lifetime_stack, 4),
+            lifetime_stack,
+            np.geomspace(1.0e-4, 1.0e4, 17),
+            illuminated=False,
+        )
+
+
+def test_dynamic_bulk_defect_device_ac_rejects_dc_state_from_another_model():
+    acceptor_stack = _stack(ACCEPTOR)
+    donor_stack = _stack(DONOR)
+    grid = _grid(acceptor_stack, 4)
+    donor_state = solve_quasi_fermi_steady_state(
+        grid,
+        donor_stack,
+        illuminated=False,
+    )
+
+    with pytest.raises(BulkDefectDeviceACError, match="model identity"):
+        run_bulk_defect_device_impedance(
+            grid,
+            acceptor_stack,
+            np.geomspace(1.0e-4, 1.0e12, 33),
+            illuminated=False,
+            dc_state=donor_state,
+        )
+
+
+def test_dynamic_bulk_defect_device_ac_recertifies_supplied_dc_state():
+    stack = _stack()
+    grid = _grid(stack, 4)
+    state = solve_quasi_fermi_steady_state(grid, stack, illuminated=False)
+    tampered_increment = np.array(
+        state.electron_quasi_fermi_increment_V,
+        dtype=float,
+        copy=True,
+    )
+    tampered_increment[1:-1] += 0.05
+    tampered = replace(
+        state,
+        electron_quasi_fermi_increment_V=tampered_increment,
+    )
+
+    with pytest.raises(BulkDefectDeviceACError, match="not certified"):
+        run_bulk_defect_device_impedance(
+            grid,
+            stack,
+            np.geomspace(1.0e-4, 1.0e12, 33),
+            illuminated=False,
+            dc_state=tampered,
+        )
+
+
+def test_dynamic_bulk_defect_device_ac_incomplete_window_is_partial_or_raises():
+    stack = _stack()
+    grid = _grid(stack, 4)
+    frequencies = np.geomspace(1.0e4, 1.0e6, 5)
+    partial = run_bulk_defect_device_impedance(
+        grid,
+        stack,
+        frequencies,
+        illuminated=False,
+        require_certificate=False,
+    )
+    assert not partial.certificate.certified
+    assert "trap_frequency_window_incomplete" in partial.certificate.reasons
+    with pytest.raises(BulkDefectDeviceACCertificationError) as exc_info:
+        run_bulk_defect_device_impedance(
+            grid,
+            stack,
+            frequencies,
+            illuminated=False,
+        )
+    assert exc_info.value.result.certificate.reasons == partial.certificate.reasons
+
+
+def test_distributed_dynamic_device_ac_uses_every_energy_node():
+    stack = _distributed_stack(GAUSSIAN)
+    grid = _grid(stack, 3)
+    order = 6
+    result = run_bulk_defect_device_impedance(
+        grid,
+        stack,
+        np.geomspace(1.0e-5, 1.0e12, 35),
+        illuminated=False,
+        defect_energy_quadrature_order=order,
+    )
+
+    assert result.certificate.certified
+    assert result.layout.size == (grid.size - 2) * order
+    assert set(result.layout.energy_indices) == set(range(order))
+    assert result.trap_occupancy_response_per_V.shape == (
+        result.frequencies_Hz.size,
+        result.layout.size,
+    )
