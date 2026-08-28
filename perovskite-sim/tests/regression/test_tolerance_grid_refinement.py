@@ -334,14 +334,22 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert resolved_stress.options["base_finite_difference_step"] == pytest.approx(
         7.0e-6
     )
+    assert stress.options.get("refine_finite_difference_step", True) is True
+    assert resolved_stress.options["refine_finite_difference_step"] is False
     assert {
         key: value
         for key, value in resolved_stress.options.items()
-        if key != "base_finite_difference_step"
+        if key not in {
+            "base_finite_difference_step",
+            "refine_finite_difference_step",
+        }
     } == {
         key: value
         for key, value in stress.options.items()
-        if key != "base_finite_difference_step"
+        if key not in {
+            "base_finite_difference_step",
+            "refine_finite_difference_step",
+        }
     }
     combined_dae = registry.lane(
         "single-ion-algebraic-interface-dae-transient-v1"

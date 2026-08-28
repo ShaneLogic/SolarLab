@@ -92,6 +92,13 @@ def _integer_option(
     return int(value)
 
 
+def _refine_finite_difference_step(options: dict[str, Any]) -> bool:
+    value = options.get("refine_finite_difference_step", True)
+    if not isinstance(value, bool):
+        raise ValueError("refine_finite_difference_step must be boolean")
+    return value
+
+
 def _stress_points(options: dict[str, Any]) -> tuple[SweepPoint, ...]:
     raw_points = options.get("stress_points")
     if not isinstance(raw_points, list) or len(raw_points) != 9:
@@ -217,9 +224,10 @@ def _solver_controls(
     if any(not math.isfinite(value) or value <= 0.0 for value in positive):
         raise ValueError("all interface-charge solver controls must be positive")
     controls = dict(base)
-    controls["finite_difference_step"] = float(
-        base["finite_difference_step"]
-    ) * math.sqrt(tolerance_factor)
+    if _refine_finite_difference_step(options):
+        controls["finite_difference_step"] = float(
+            base["finite_difference_step"]
+        ) * math.sqrt(tolerance_factor)
     controls["newton_residual_tolerance"] = float(
         base["newton_residual_tolerance"]
     ) * tolerance_factor
@@ -232,6 +240,8 @@ def _solver_controls(
 def _protocol(
     points: tuple[SweepPoint, ...],
     base_controls: dict[str, float | int],
+    *,
+    refine_finite_difference_step: bool,
 ) -> dict[str, Any]:
     return {
         "acceptance": {
@@ -270,13 +280,21 @@ def _protocol(
             "transport_model": FERMI_DIRAC_RICHARDSON,
         },
         "measurement": "one_factor_at_a_time_device_stress",
-        "schema_version": "interface-charge-device-stress-protocol-v2",
+        "schema_version": (
+            "interface-charge-device-stress-protocol-v2"
+            if refine_finite_difference_step
+            else "interface-charge-device-stress-protocol-v3"
+        ),
         "solver": {
             "base_controls": dict(base_controls),
             "illumination_steps": list(DEFAULT_ILLUMINATION_STEPS),
             "refinement_factor_source": "matrix.tolerance_factor",
             "refinement_mapping": {
-                "finite_difference_step": "base*sqrt(factor)",
+                "finite_difference_step": (
+                    "base*sqrt(factor)"
+                    if refine_finite_difference_step
+                    else "fixed_base"
+                ),
                 "newton_residual_tolerance": "base*factor",
                 "poisson_tolerance_V": "base*factor",
             },
@@ -558,7 +576,11 @@ def run_equilibrium_referenced_interface_charge_stress(
     baseline = _load_stack(lane, project_root)
     _require_research_stack(baseline)
     base_controls, controls = _solver_controls(options, point.tolerance_factor)
-    protocol = _protocol(points, base_controls)
+    protocol = _protocol(
+        points,
+        base_controls,
+        refine_finite_difference_step=_refine_finite_difference_step(options),
+    )
     records_list: list[dict[str, Any]] = []
     for stress_point in points:
         try:

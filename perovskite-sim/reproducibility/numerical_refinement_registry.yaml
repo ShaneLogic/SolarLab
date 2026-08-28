@@ -990,7 +990,7 @@ lanes:
     config: configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.interface_charge_stress:run_equilibrium_referenced_interface_charge_stress
-    executor_version: v2
+    executor_version: v3
     grid:
       parameter: N_grid
       values: [30, 60, 90]
@@ -1036,6 +1036,7 @@ lanes:
       config_loader: standard
       require_protocol: true
       base_finite_difference_step: 7.0e-6
+      refine_finite_difference_step: false
       base_newton_residual_tolerance: 4.0e-7
       max_newton_iterations: 60
       base_poisson_tolerance_V: 1.0e-12
@@ -1082,6 +1083,7 @@ lanes:
           updates: {interface_defect_N_t_cm2: 1.0e10, interface_defect_target: pvk/etl}
     limitations:
       - This resolved companion retains every v1 stress point and acceptance gate while adding N90 as the terminal grid.
+      - The finite-difference Jacobian probe is fixed at 7e-6 across tolerance factors; residual and Poisson tolerances remain refined by the matrix factor.
       - The v1 N30/N60 matrix is partial because the Nd=2e15 illuminated sheet charge changes by 1.4735 percent; it is not overwritten by this lane.
       - N120 at tolerance factor 0.5 fails closed for the Nd=2e15 dark-bias target and remains outside the supported solver basin.
       - This one-factor-at-a-time stress matrix does not establish interaction effects between Et, CBO, Nd, and Nt.

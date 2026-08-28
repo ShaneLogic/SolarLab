@@ -295,7 +295,13 @@ def test_resolved_stress_contract_tightens_only_the_jacobian_probe_step():
     assert resolved_base["finite_difference_step"] == pytest.approx(7.0e-6)
     assert resolved_coarse["finite_difference_step"] == pytest.approx(7.0e-6)
     assert resolved_refined["finite_difference_step"] == pytest.approx(
-        7.0e-6 * np.sqrt(0.5)
+        7.0e-6
+    )
+    assert resolved_refined["newton_residual_tolerance"] == pytest.approx(
+        0.5 * resolved_base["newton_residual_tolerance"]
+    )
+    assert resolved_refined["poisson_tolerance_V"] == pytest.approx(
+        0.5 * resolved_base["poisson_tolerance_V"]
     )
     assert {
         key: value
@@ -309,5 +315,23 @@ def test_resolved_stress_contract_tightens_only_the_jacobian_probe_step():
     protocol = stress._protocol(
         stress._stress_points(resolved.options),
         resolved_base,
+        refine_finite_difference_step=False,
     )
     assert protocol["solver"]["base_controls"] == resolved_base
+    assert protocol["schema_version"] == (
+        "interface-charge-device-stress-protocol-v3"
+    )
+    assert protocol["solver"]["refinement_mapping"][
+        "finite_difference_step"
+    ] == "fixed_base"
+
+
+def test_stress_contract_rejects_non_boolean_jacobian_probe_mapping():
+    with pytest.raises(ValueError, match="must be boolean"):
+        stress._solver_controls(
+            {
+                "base_finite_difference_step": 7.0e-6,
+                "refine_finite_difference_step": 0,
+            },
+            0.5,
+        )
