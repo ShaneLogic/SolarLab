@@ -1091,6 +1091,69 @@ lanes:
       - The lane remains limited to the purpose-built two-layer stack and equilibrium-referenced incremental charge.
       - Transient, impedance, 2-D, production experiment routes, absolute trap charge, and whole-device neutrality remain out of scope.
 
+  interface-charge-qf-dc-jv-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/interface_charge_jv_research.yaml
+    config_sha256: 5f4bbf89cf2d95fb020cdc9ade111d838ed38cc1c14a722e5fd800e30c6590c1
+    executor: perovskite_sim.validation.refinement_executors:run_equilibrium_referenced_interface_charge_jv
+    executor_version: v1
+    grid:
+      parameter: N_grid
+      values: [30, 60, 90]
+    tolerance:
+      parameter: qf_residual_tolerance_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      ff: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      interface_occupancy: {comparison: absolute_linf, limit: 1.0e-4, units: "1"}
+      interface_sheet_charge_C_m2: {comparison: pointwise_relative_linf, limit: 0.005, units: C m-2}
+      interface_trace_potential_shift_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      jsc_A_m2: {comparison: relative_linf, limit: 0.005, units: A m-2}
+      jv_normalized: {comparison: absolute_linf, limit: 0.005, units: "1"}
+      voc_V: {comparison: absolute_linf, limit: 0.001, units: V}
+    quality_gates:
+      all_points_certified: {operator: eq, limit: 1.0, units: "1"}
+      calibration_factors_unity: {operator: eq, limit: 1.0, units: "1"}
+      charge_law_consistent: {operator: eq, limit: 1.0, units: "1"}
+      contact_thermodynamics_certified: {operator: eq, limit: 1.0, units: "1"}
+      continuation_bridge_count: {operator: le, limit: 8.0, units: "1"}
+      dark_charge_off_bit_identical: {operator: eq, limit: 1.0, units: "1"}
+      dark_incremental_charge_zero_C_m2: {operator: le, limit: 0.0, units: C m-2}
+      dark_reference_certified: {operator: eq, limit: 1.0, units: "1"}
+      dark_reference_hash_verified: {operator: eq, limit: 1.0, units: "1"}
+      dark_trace_shift_zero_V: {operator: le, limit: 0.0, units: V}
+      grid_identity_verified: {operator: eq, limit: 1.0, units: "1"}
+      interface_evidence_aligned: {operator: eq, limit: 1.0, units: "1"}
+      max_charge_fraction_of_one_electron: {operator: le, limit: 1.0, units: "1"}
+      max_contact_fermi_level_span_eV: {operator: le, limit: 0.005, units: eV}
+      max_continuity_bound_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
+      max_current_spread_A_m2: {operator: le, limit: 1.0e-4, units: A m-2}
+      max_interface_local_residual: {operator: le, limit: 1.0e-7, units: "1"}
+      max_normalized_cell_residual: {operator: le, limit: 4.0e-7, units: "1"}
+      max_normalized_gauss_residual: {operator: le, limit: 1.0e-10, units: "1"}
+      max_poisson_residual: {operator: le, limit: 1.0e-8, units: "1"}
+      max_scaled_local_jacobian_condition: {operator: le, limit: 1.0e8, units: "1"}
+      microscopic_defect_contract_verified: {operator: eq, limit: 1.0, units: "1"}
+      occupancy_bounded: {operator: eq, limit: 1.0, units: "1"}
+      protocol_identity_verified: {operator: eq, limit: 1.0, units: "1"}
+      rebaseline_acknowledged: {operator: eq, limit: 1.0, units: "1"}
+      reported_point_count: {operator: eq, limit: 5.0, units: "1"}
+      research_charge_closure_active: {operator: eq, limit: 1.0, units: "1"}
+      stack_identity_verified: {operator: eq, limit: 1.0, units: "1"}
+      two_sided_topology_active: {operator: eq, limit: 1.0, units: "1"}
+      voc_bracketed: {operator: eq, limit: 1.0, units: "1"}
+      voltage_sampling_aligned: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      V_max_V: 0.1
+      voltage_points: 5
+    limitations:
+      - This lane recertifies the exact illuminated, ion-free, zero-scan-rate QF/DC J-V path admitted by the public charged-interface API.
+      - It certifies the frozen 0.0 to 0.1 V five-point protocol on an uncalibrated synthetic two-layer reference; it does not establish device performance, SCAPS parity, external-solver validity, or experimental validity.
+      - The charge law is equilibrium-referenced incremental sheet charge, not absolute trap charge, fixed countercharge, or whole-device neutrality.
+      - Transient hysteresis, mobile ions, explicit bulk-defect composition, impedance, 2-D, degradation, external circuits, and electrothermal coupling remain outside this lane.
+
   no-ion-dae-transient-v1:
     claim_level: internal-numerical-candidate
     config: configs/csi_vannijen2025_pn_cv.yaml

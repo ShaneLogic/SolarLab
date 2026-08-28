@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from perovskite_sim.constants import Q
+from perovskite_sim.experiments import interface_charge_jv as interface_charge_jv_exp
 from perovskite_sim.discretization.grid import (
     Layer,
     require_thick_layer_interface_resolution,
@@ -2836,6 +2837,426 @@ def run_equilibrium_referenced_interface_charge(
                     ],
                 },
                 "trace_shift_layout": "target_major_interface_minor_side_minor",
+            },
+        }
+    )
+
+
+def _require_interface_charge_jv_lane_stack(stack):
+    """Apply the public charged J-V composition contract inside the adapter."""
+
+    violations: list[str] = []
+    if stack.interface_charge_closure != "equilibrium_referenced":
+        violations.append(
+            "interface_charge_closure must be 'equilibrium_referenced'"
+        )
+    if not stack.interface_charge_rebaseline_acknowledged:
+        violations.append("interface-charge rebaseline must be acknowledged")
+    if stack.het_recomb_despike != 0.0:
+        violations.append("recombination de-spiking must be disabled")
+    if stack.flat_band_contacts or stack.flat_band_metal_contacts:
+        violations.append("calibrated flat-band contact floors must be disabled")
+    if stack.contact_phi_B_eV != 0.0:
+        violations.append("the calibrated contact barrier must be zero")
+    if stack.autoloop_generated_lever:
+        violations.append("autoloop-generated calibration levers are not accepted")
+
+    active_ions: list[str] = []
+    explicit_bulk_defects: list[str] = []
+    for layer in stack.layers:
+        params = layer.params
+        if params is None:
+            continue
+        if any(
+            float(getattr(params, name)) != 0.0
+            for name in ("D_ion", "P0", "D_ion_neg", "P0_neg")
+        ):
+            active_ions.append(layer.name)
+        if (
+            params.defect_model != "effective_lifetime"
+            or bool(params.bulk_defects)
+            or params.bulk_trap_distribution is not None
+        ):
+            explicit_bulk_defects.append(layer.name)
+    if active_ions:
+        violations.append(
+            "charged interface J-V v1 is ion-free; active ion fields in "
+            + ", ".join(active_ions)
+        )
+    if explicit_bulk_defects:
+        violations.append(
+            "charged interface J-V v1 excludes explicit bulk-defect "
+            "composition; active layers: "
+            + ", ".join(explicit_bulk_defects)
+        )
+    if violations:
+        raise RuntimeError("; ".join(violations))
+
+    _bound_stack, contract = bind_uncalibrated_microscopic_interface_defects(
+        stack,
+        consumer="production interface-charge J-V refinement",
+    )
+    return contract
+
+
+def run_equilibrium_referenced_interface_charge_jv(
+    lane: LaneDefinition,
+    point: MatrixPoint,
+    project_root: Path,
+) -> CellMeasurement:
+    """Recertify the protocol-bound charged QF/DC production J-V slice."""
+
+    options = lane.options
+    stack = _load_stack(lane, project_root)
+    microscopic_contract = _require_interface_charge_jv_lane_stack(stack)
+    defects = electrical_interface_defects(stack)
+
+    voltage_max = _option(options, "V_max_V", float, 0.1)
+    voltage_points = _option(options, "voltage_points", int, 5)
+    if voltage_max <= 0.0:
+        raise ValueError("V_max_V must be positive")
+    if voltage_points < 2:
+        raise ValueError("voltage_points must be at least two")
+    requested_voltages = np.linspace(0.0, voltage_max, voltage_points)
+    protocol = interface_charge_jv_exp.build_interface_charge_jv_protocol(
+        stack,
+        requested_voltages,
+    )
+
+    shared_grid = build_electrical_grid(stack, point.grid)
+    grid_assessment = require_thick_layer_interface_resolution(
+        shared_grid,
+        stack,
+        N_grid=point.grid,
+        allow_underresolved_grid=False,
+    )
+    grid = build_two_sided_trace_grid(shared_grid, stack)
+    execution = interface_charge_jv_exp.solve_interface_charge_jv(
+        grid,
+        stack,
+        protocol,
+        tolerance_factor=point.tolerance_factor,
+    )
+    sweep = execution.sweep
+    evidence = execution.evidence
+    reference = execution.dark_reference
+    charged_dark = execution.charged_dark
+
+    voltages = np.asarray(sweep.voltages_V, dtype=float)
+    currents = np.asarray(sweep.currents_A_m2, dtype=float)
+    if (
+        voltages.shape != requested_voltages.shape
+        or currents.shape != requested_voltages.shape
+        or len(sweep.points) != voltage_points
+        or len(evidence.points) != voltage_points
+        or not np.array_equal(voltages, requested_voltages)
+    ):
+        raise RuntimeError(
+            "charged J-V refinement must retain every registered voltage point"
+        )
+
+    interface_count = len(reference.equilibrium_occupancy)
+    if (
+        interface_count == 0
+        or interface_count != len(defects)
+        or interface_count != len(microscopic_contract.documents)
+    ):
+        raise RuntimeError("charged J-V evidence is not defect-aligned")
+    point_occupancy = np.asarray(
+        [item.occupancy for item in evidence.points],
+        dtype=float,
+    )
+    point_charge = np.asarray(
+        [item.incremental_sheet_charge_C_m2 for item in evidence.points],
+        dtype=float,
+    )
+    point_trace_shift = np.asarray(
+        [item.trace_potential_shift_V for item in evidence.points],
+        dtype=float,
+    )
+    if (
+        point_occupancy.shape != (voltage_points, interface_count)
+        or point_charge.shape != (voltage_points, interface_count)
+        or point_trace_shift.shape != (voltage_points, interface_count, 2)
+    ):
+        raise RuntimeError("charged J-V evidence arrays have inconsistent shapes")
+
+    equilibrium = np.asarray(reference.equilibrium_occupancy, dtype=float)
+    trap_density = np.asarray(reference.trap_density_m2, dtype=float)
+    audited_evidence = evidence.points + evidence.continuation_bridges
+    audited_occupancy = np.asarray(
+        [item.occupancy for item in audited_evidence],
+        dtype=float,
+    )
+    audited_charge = np.asarray(
+        [item.incremental_sheet_charge_C_m2 for item in audited_evidence],
+        dtype=float,
+    )
+    expected_charge = -Q * trap_density[np.newaxis, :] * (
+        audited_occupancy - equilibrium[np.newaxis, :]
+    )
+    charge_law_consistent = bool(
+        np.allclose(audited_charge, expected_charge, rtol=1.0e-12, atol=0.0)
+    )
+    charge_fraction = np.abs(audited_charge) / (
+        Q * trap_density[np.newaxis, :]
+    )
+    dark_charge = np.asarray(
+        charged_dark.interface_incremental_sheet_charge_C_m2,
+        dtype=float,
+    )
+    dark_trace_shift = np.asarray(
+        charged_dark.interface_trace_potential_shift_V,
+        dtype=float,
+    )
+    all_states = (
+        reference.dark_state,
+        charged_dark,
+        *sweep.points,
+    )
+    point_hashes_aligned = all(
+        state.interface_charge_reference_grid_sha256 == reference.grid_sha256
+        and state.interface_charge_reference_stack_sha256 == reference.stack_sha256
+        and state.interface_charge_reference_dark_state_sha256
+        == reference.dark_state_sha256
+        for state in (charged_dark, *sweep.points)
+    )
+    interface_evidence_aligned = bool(
+        all(
+            np.isclose(
+                item.voltage_V,
+                voltage,
+                rtol=0.0,
+                atol=1.0e-14,
+            )
+            and np.isclose(
+                item.current_A_m2,
+                current,
+                rtol=0.0,
+                atol=0.0,
+            )
+            and item.certified
+            for item, voltage, current in zip(
+                evidence.points,
+                voltages,
+                currents,
+                strict=True,
+            )
+        )
+    )
+    microscopic_contract_verified = bool(
+        tuple(reference.interface_defect_document_sha256)
+        == tuple(microscopic_contract.document_sha256)
+        and tuple(reference.capture_velocities_m_s)
+        == tuple(microscopic_contract.capture_velocities_m_s)
+        and tuple(reference.trap_density_m2)
+        == tuple(microscopic_contract.trap_density_m2)
+    )
+    calibration_unity = all(
+        defect is not None
+        and defect.calibration_factor == 1.0
+        and defect.iface_state_calibration_factor == 1.0
+        for defect in defects
+    )
+    contact_certified = bool(
+        evidence.dark_contact_thermodynamic_status == "certified"
+        and all(
+            item.contact_thermodynamic_status == "certified"
+            for item in audited_evidence
+        )
+    )
+    protocol_identity_verified = bool(
+        evidence.protocol == protocol
+        and evidence.protocol_sha256 == protocol.protocol_sha256
+        and execution.protocol == protocol
+    )
+    dark_reference_hash_verified = bool(
+        evidence.grid_sha256 == reference.grid_sha256
+        and evidence.stack_sha256 == reference.stack_sha256
+        and evidence.dark_state_sha256 == reference.dark_state_sha256
+        and all(
+            isinstance(value, str) and len(value) == 64
+            for value in (
+                reference.grid_sha256,
+                reference.stack_sha256,
+                reference.dark_state_sha256,
+                *reference.interface_defect_document_sha256,
+            )
+        )
+    )
+    max_contact_span = max(
+        evidence.maximum_contact_fermi_level_span_eV,
+        evidence.dark_contact_fermi_level_span_eV,
+        *(float(state.contact_fermi_level_span_eV) for state in all_states),
+    )
+    metrics = sweep.metrics
+    current_scale = max(abs(float(metrics.J_sc)), 1.0e-30)
+    refined_controls = protocol.solver_controls.refined(point.tolerance_factor)
+
+    return CellMeasurement.from_mapping(
+        {
+            "observables": {
+                "ff": metrics.FF,
+                "interface_occupancy": point_occupancy.ravel(),
+                "interface_sheet_charge_C_m2": point_charge.ravel(),
+                "interface_trace_potential_shift_V": point_trace_shift.ravel(),
+                "jsc_A_m2": metrics.J_sc,
+                "jv_normalized": currents / current_scale,
+                "voc_V": metrics.V_oc,
+            },
+            "quality": {
+                "all_points_certified": float(
+                    sweep.certified
+                    and all(state.certified for state in all_states)
+                    and all(item.certified for item in audited_evidence)
+                ),
+                "calibration_factors_unity": float(calibration_unity),
+                "charge_law_consistent": float(charge_law_consistent),
+                "contact_thermodynamics_certified": float(contact_certified),
+                "continuation_bridge_count": float(
+                    evidence.continuation_bridge_count
+                ),
+                "dark_charge_off_bit_identical": float(
+                    evidence.dark_charge_off_bit_identity_verified
+                ),
+                "dark_incremental_charge_zero_C_m2": float(
+                    np.max(np.abs(dark_charge))
+                ),
+                "dark_reference_certified": float(
+                    reference.dark_state.certified and charged_dark.certified
+                ),
+                "dark_reference_hash_verified": float(
+                    dark_reference_hash_verified
+                ),
+                "dark_trace_shift_zero_V": float(
+                    np.max(np.abs(dark_trace_shift))
+                ),
+                "grid_identity_verified": float(
+                    evidence.grid_sha256 == reference.grid_sha256
+                    and point_hashes_aligned
+                ),
+                "interface_evidence_aligned": float(
+                    interface_evidence_aligned
+                ),
+                "max_charge_fraction_of_one_electron": float(
+                    np.max(charge_fraction)
+                ),
+                "max_contact_fermi_level_span_eV": max_contact_span,
+                "max_continuity_bound_A_m2": max(
+                    evidence.maximum_continuity_bound_A_m2,
+                    *(
+                        max(
+                            state.electron_continuity_bound_A_m2,
+                            state.hole_continuity_bound_A_m2,
+                        )
+                        for state in all_states
+                    ),
+                ),
+                "max_current_spread_A_m2": max(
+                    evidence.maximum_face_current_spread_A_m2,
+                    *(state.face_current_spread_A_m2 for state in all_states),
+                ),
+                "max_interface_local_residual": max(
+                    evidence.maximum_interface_local_residual,
+                    *(state.interface_local_residual for state in all_states),
+                ),
+                "max_normalized_cell_residual": max(
+                    evidence.maximum_normalized_cell_residual,
+                    *(state.max_normalized_cell_residual for state in all_states),
+                ),
+                "max_normalized_gauss_residual": (
+                    evidence.maximum_normalized_gauss_residual
+                ),
+                "max_poisson_residual": max(
+                    evidence.maximum_poisson_residual,
+                    *(state.poisson_residual for state in all_states),
+                ),
+                "max_scaled_local_jacobian_condition": (
+                    evidence.maximum_scaled_local_jacobian_condition
+                ),
+                "microscopic_defect_contract_verified": float(
+                    microscopic_contract_verified
+                ),
+                "occupancy_bounded": float(
+                    np.all(
+                        (np.r_[equilibrium, audited_occupancy.ravel()] >= 0.0)
+                        & (np.r_[equilibrium, audited_occupancy.ravel()] <= 1.0)
+                    )
+                ),
+                "protocol_identity_verified": float(protocol_identity_verified),
+                "rebaseline_acknowledged": float(
+                    stack.interface_charge_rebaseline_acknowledged
+                ),
+                "reported_point_count": float(len(evidence.points)),
+                "research_charge_closure_active": float(
+                    all(
+                        state.interface_charge_closure
+                        == "equilibrium_referenced"
+                        for state in (charged_dark, *sweep.points)
+                    )
+                ),
+                "stack_identity_verified": float(
+                    evidence.stack_sha256 == reference.stack_sha256
+                    and point_hashes_aligned
+                ),
+                "two_sided_topology_active": float(
+                    all(
+                        state.interface_topology == TWO_SIDED_TRACE
+                        for state in all_states
+                    )
+                ),
+                "voc_bracketed": float(metrics.voc_bracketed),
+                "voltage_sampling_aligned": float(
+                    np.array_equal(voltages, requested_voltages)
+                ),
+            },
+            "units": {
+                "interface_sheet_charge_C_m2": "C m-2",
+                "interface_trace_potential_shift_V": "V",
+                "jsc_A_m2": "A m-2",
+                "voc_V": "V",
+                "dark_incremental_charge_zero_C_m2": "C m-2",
+                "dark_trace_shift_zero_V": "V",
+                "max_contact_fermi_level_span_eV": "eV",
+                "max_continuity_bound_A_m2": "A m-2",
+                "max_current_spread_A_m2": "A m-2",
+            },
+            "metadata": {
+                **_protocol_metadata(protocol.to_dict()),
+                "actual_intervals": len(grid) - 1,
+                "actual_nodes": len(grid),
+                "evidence": dataclasses.asdict(evidence),
+                "grid_assessment": [
+                    dataclasses.asdict(item) for item in grid_assessment
+                ],
+                "interface_count": interface_count,
+                "interfaces": [
+                    {
+                        "canonical_document": document.to_dict(),
+                        "canonical_document_sha256": document.sha256,
+                        "capture_velocities_m_s": list(pair),
+                        "trap_density_m2": density,
+                    }
+                    for document, pair, density in zip(
+                        microscopic_contract.documents,
+                        microscopic_contract.capture_velocities_m_s,
+                        microscopic_contract.trap_density_m2,
+                        strict=True,
+                    )
+                ],
+                "observable_layout": {
+                    "interface_occupancy": "voltage_major_interface_minor",
+                    "interface_sheet_charge_C_m2": (
+                        "voltage_major_interface_minor"
+                    ),
+                    "interface_trace_potential_shift_V": (
+                        "voltage_major_interface_minor_side_minor"
+                    ),
+                },
+                "retained_voltage_grid_V": voltages.tolist(),
+                "source_grid_intervals": point.grid,
+                "tolerance_controls": refined_controls,
+                "tolerance_factor": point.tolerance_factor,
             },
         }
     )

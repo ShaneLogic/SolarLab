@@ -1226,3 +1226,230 @@ def test_two_sided_interface_evidence_rejects_unbounded_occupancy():
 
     with pytest.raises(RuntimeError, match="occupancy left"):
         executors._two_sided_interface_evidence(result, interface_count=1)
+
+
+def test_equilibrium_referenced_interface_charge_jv_executor_smoke(monkeypatch):
+    lane = _lane(options={"V_max_V": 0.1, "voltage_points": 5})
+    document = InterfaceDefectDocument.from_scaps_cgs(
+        sigma_n_cm2=3.0e-20,
+        sigma_p_cm2=5.0e-20,
+        thermal_velocity_cm_s=1.0e7,
+        total_density_cm2=1.0e13,
+        trap_depth_eV_below_cb=0.55,
+    )
+    contract = SimpleNamespace(
+        documents=(document,),
+        document_sha256=(document.sha256,),
+        capture_velocities_m_s=(document.capture_velocities_m_s,),
+        trap_density_m2=(document.total_density_m2,),
+    )
+    defect = SimpleNamespace(
+        calibration_factor=1.0,
+        iface_state_calibration_factor=1.0,
+    )
+    stack = SimpleNamespace(
+        T=300.0,
+        interface_charge_closure="equilibrium_referenced",
+        interface_charge_rebaseline_acknowledged=True,
+    )
+    monkeypatch.setattr(executors, "_load_stack", lambda *_: stack)
+    monkeypatch.setattr(
+        executors,
+        "_require_interface_charge_jv_lane_stack",
+        lambda *_: contract,
+    )
+    monkeypatch.setattr(
+        executors,
+        "electrical_interface_defects",
+        lambda *_: (defect,),
+    )
+    monkeypatch.setattr(
+        executors,
+        "build_electrical_grid",
+        lambda *_: np.linspace(0.0, 2.0e-7, 5),
+    )
+    resolution_calls = []
+
+    def require_resolution(grid, _stack, **kwargs):
+        resolution_calls.append((grid.copy(), kwargs))
+        return ()
+
+    monkeypatch.setattr(
+        executors,
+        "require_thick_layer_interface_resolution",
+        require_resolution,
+    )
+    monkeypatch.setattr(
+        executors,
+        "build_two_sided_trace_grid",
+        lambda grid, _stack: grid,
+    )
+
+    grid_hash = "1" * 64
+    stack_hash = "2" * 64
+    dark_hash = "3" * 64
+    trap_density = document.total_density_m2
+
+    def state(*, closure, occupancy, current=0.0):
+        return SimpleNamespace(
+            certified=True,
+            current_A_m2=current,
+            electron_continuity_bound_A_m2=1.0e-9,
+            hole_continuity_bound_A_m2=2.0e-9,
+            face_current_spread_A_m2=3.0e-9,
+            interface_local_residual=4.0e-11,
+            max_normalized_cell_residual=5.0e-10,
+            poisson_residual=6.0e-12,
+            contact_thermodynamic_status="certified",
+            contact_fermi_level_span_eV=0.0,
+            interface_topology=executors.TWO_SIDED_TRACE,
+            interface_charge_closure=closure,
+            interface_incremental_sheet_charge_C_m2=(0.0,),
+            interface_trace_potential_shift_V=((0.0, 0.0),),
+            interface_charge_reference_grid_sha256=grid_hash,
+            interface_charge_reference_stack_sha256=stack_hash,
+            interface_charge_reference_dark_state_sha256=dark_hash,
+            interface_occupancy=(occupancy,),
+        )
+
+    captured = {}
+
+    def solve(_grid, _stack, protocol, *, tolerance_factor):
+        captured["protocol"] = protocol
+        captured["tolerance_factor"] = tolerance_factor
+        voltages = np.asarray(protocol.voltages_V)
+        currents = np.array([10.0, 8.0, 6.0, 2.0, -1.0])
+        occupancies = 0.5 + np.arange(5) * 0.01
+        states = tuple(
+            state(
+                closure="equilibrium_referenced",
+                occupancy=float(occupancy),
+                current=float(current),
+            )
+            for occupancy, current in zip(occupancies, currents, strict=True)
+        )
+        dark = state(closure="off", occupancy=0.5)
+        charged_dark = state(
+            closure="equilibrium_referenced",
+            occupancy=0.5,
+        )
+        reference = SimpleNamespace(
+            dark_state=dark,
+            equilibrium_occupancy=(0.5,),
+            trap_density_m2=(trap_density,),
+            interface_defect_document_sha256=(document.sha256,),
+            capture_velocities_m_s=(document.capture_velocities_m_s,),
+            grid_sha256=grid_hash,
+            stack_sha256=stack_hash,
+            dark_state_sha256=dark_hash,
+        )
+        point_evidence = tuple(
+            executors.interface_charge_jv_exp.InterfaceChargeJVPointEvidence(
+                voltage_V=float(voltage),
+                current_A_m2=float(current),
+                occupancy=(float(occupancy),),
+                incremental_sheet_charge_C_m2=(
+                    -executors.Q * trap_density * (float(occupancy) - 0.5),
+                ),
+                trace_potential_shift_V=((1.0e-5, -1.0e-5),),
+                normalized_gauss_residual=(1.0e-12,),
+                scaled_local_jacobian_condition=(100.0,),
+                interface_local_residual=4.0e-11,
+                max_normalized_cell_residual=5.0e-10,
+                electron_continuity_bound_A_m2=1.0e-9,
+                hole_continuity_bound_A_m2=2.0e-9,
+                face_current_spread_A_m2=3.0e-9,
+                poisson_residual=6.0e-12,
+                contact_thermodynamic_status="certified",
+                contact_fermi_level_span_eV=0.0,
+            )
+            for voltage, current, occupancy in zip(
+                voltages,
+                currents,
+                occupancies,
+                strict=True,
+            )
+        )
+        evidence = executors.interface_charge_jv_exp.InterfaceChargeJVEvidence(
+            model=executors.interface_charge_jv_exp.INTERFACE_CHARGE_JV_EVIDENCE_MODEL,
+            capability=executors.interface_charge_jv_exp.INTERFACE_CHARGE_JV_CAPABILITY,
+            protocol=protocol,
+            protocol_sha256=protocol.protocol_sha256,
+            grid_sha256=grid_hash,
+            stack_sha256=stack_hash,
+            dark_state_sha256=dark_hash,
+            dark_contact_thermodynamic_status="certified",
+            dark_contact_fermi_level_span_eV=0.0,
+            interface_defect_document_sha256=(document.sha256,),
+            capture_velocities_m_s=(document.capture_velocities_m_s,),
+            trap_density_m2=(trap_density,),
+            equilibrium_occupancy=(0.5,),
+            dark_charge_off_bit_identity_verified=True,
+            points=point_evidence,
+            continuation_bridges=(),
+            continuation_bridge_count=0,
+            tolerance_factor=tolerance_factor,
+            minimum_occupancy=float(np.min(occupancies)),
+            maximum_occupancy=float(np.max(occupancies)),
+            maximum_absolute_sheet_charge_C_m2=max(
+                abs(item.incremental_sheet_charge_C_m2[0])
+                for item in point_evidence
+            ),
+            maximum_absolute_trace_potential_shift_V=1.0e-5,
+            maximum_normalized_gauss_residual=1.0e-12,
+            maximum_scaled_local_jacobian_condition=100.0,
+            maximum_interface_local_residual=4.0e-11,
+            maximum_normalized_cell_residual=5.0e-10,
+            maximum_continuity_bound_A_m2=2.0e-9,
+            maximum_face_current_spread_A_m2=3.0e-9,
+            maximum_poisson_residual=6.0e-12,
+            maximum_contact_fermi_level_span_eV=0.0,
+        )
+        sweep = SimpleNamespace(
+            voltages_V=voltages,
+            currents_A_m2=currents,
+            points=states,
+            metrics=JVMetrics(
+                V_oc=0.09,
+                J_sc=10.0,
+                FF=0.5,
+                PCE=0.045,
+                voc_bracketed=True,
+            ),
+            certified=True,
+        )
+        return SimpleNamespace(
+            protocol=protocol,
+            dark_reference=reference,
+            charged_dark=charged_dark,
+            sweep=sweep,
+            evidence=evidence,
+        )
+
+    monkeypatch.setattr(
+        executors.interface_charge_jv_exp,
+        "solve_interface_charge_jv",
+        solve,
+    )
+    measurement = executors.run_equilibrium_referenced_interface_charge_jv(
+        lane,
+        MatrixPoint(30, 0.5),
+        Path("."),
+    )
+
+    _assert_protocol(measurement)
+    _assert_registry_contract(measurement, "interface-charge-qf-dc-jv-v1")
+    observables = _metric_dict(measurement)
+    quality = _metric_dict(measurement, quality=True)
+    assert observables["jv_normalized"].shape == (5,)
+    assert observables["interface_trace_potential_shift_V"].shape == (10,)
+    assert quality["reported_point_count"].values == (5.0,)
+    assert quality["protocol_identity_verified"].values == (1.0,)
+    assert captured["tolerance_factor"] == pytest.approx(0.5)
+    assert captured["protocol"].protocol_sha256 == json.loads(
+        measurement.metadata_json
+    )["protocol_hash"]
+    assert resolution_calls[0][1] == {
+        "N_grid": 30,
+        "allow_underresolved_grid": False,
+    }

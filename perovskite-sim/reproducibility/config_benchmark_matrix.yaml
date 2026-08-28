@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 305f8ce7149e8eca223c40ecdd4eb302d0037ca8cc966c17af49de10f4422af9
+  sha256: e12c59707222693760f867b363928cbd08c677fffdfc5ac9c4acf0b045124e06
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -133,6 +133,7 @@ benchmarks:
       - configs/cigs_graded_optics.yaml
       - configs/distributed_defect_qf_dc_pn.yaml
       - configs/graded_distributed_defect_qf_dc_pn.yaml
+      - configs/interface_charge_jv_research.yaml
       - configs/interface_charge_reference.yaml
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
@@ -1447,6 +1448,7 @@ configs:
     status: partial
     benchmarks:
       - loader-contract
+      - phase1-refinement-contract
       - interface-charge-jv-api-integration
   - path: configs/interface_charge_research.yaml
     sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54

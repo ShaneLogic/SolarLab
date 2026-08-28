@@ -120,6 +120,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "interface-charge-equilibrium-referenced-v1",
         "interface-charge-device-stress-v1",
         "interface-charge-device-stress-resolved-v2",
+        "interface-charge-qf-dc-jv-v1",
         "no-ion-dae-transient-v1",
         "single-positive-ion-dae-transient-v1",
         "dual-mobile-ion-dae-transient-v1",
@@ -300,6 +301,28 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         pytest.approx(1.0e-10)
     )
     assert charged_quality["dark_incremental_charge_zero_C_m2"].limit == 0.0
+    charged_jv = registry.lane("interface-charge-qf-dc-jv-v1")
+    assert charged_jv.grid_values == (30, 60, 90)
+    assert charged_jv.tolerance_factors == (1.0, 0.5, 0.25)
+    assert charged_jv.options["V_max_V"] == pytest.approx(0.1)
+    assert charged_jv.options["voltage_points"] == 5
+    charged_jv_observables = {
+        gate.metric: gate for gate in charged_jv.observables
+    }
+    assert charged_jv_observables["jv_normalized"].limit == pytest.approx(
+        0.005
+    )
+    assert charged_jv_observables[
+        "interface_sheet_charge_C_m2"
+    ].comparison == "pointwise_relative_linf"
+    charged_jv_quality = {
+        gate.metric: gate for gate in charged_jv.quality_gates
+    }
+    assert charged_jv_quality["reported_point_count"].limit == 5.0
+    assert charged_jv_quality[
+        "max_contact_fermi_level_span_eV"
+    ].limit == pytest.approx(0.005)
+    assert charged_jv_quality["continuation_bridge_count"].limit == 8.0
     stress = registry.lane("interface-charge-device-stress-v1")
     assert stress.grid_values == (30, 60)
     assert stress.tolerance_factors == (1.0, 0.5)
