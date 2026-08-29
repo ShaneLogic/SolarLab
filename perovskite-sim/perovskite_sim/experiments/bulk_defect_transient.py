@@ -54,6 +54,10 @@ from perovskite_sim.physics.dynamic_defect_state import (
     occupancy_logit,
     quasi_steady_bulk_trap_occupancy,
 )
+from perovskite_sim.physics.dynamic_storage import (
+    log_density_increment,
+    logit_occupancy_increment,
+)
 from perovskite_sim.physics.recombination import (
     srh_recombination,
     srh_recombination_derivatives,
@@ -71,6 +75,7 @@ from perovskite_sim.solver.mol import (
 
 BULK_DEFECT_TRANSIENT_SCOPE = "research_bulk_dynamic_defect_device_transient_only"
 BULK_DEFECT_TRANSIENT_VERSION = "bulk-dynamic-defect-device-transient-v1"
+_DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR = 1.0e-10
 
 
 class BulkDefectTransientError(RuntimeError):
@@ -137,7 +142,9 @@ class BulkDefectTransientPolicy:
     refinement_substeps: tuple[int, ...] = (1, 2, 4)
     maximum_refinement_state_change: float = 2.0e-2
     maximum_refinement_current_relative_change: float = 5.0e-2
-    maximum_charge_balance_relative_error: float = 1.0e-10
+    maximum_charge_balance_relative_error: float = (
+        _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR
+    )
     maximum_all_face_current_spread_relative: float = 1.0e-6
     maximum_eliminated_operator_relative_error: float = 2.0e-7
 
@@ -817,13 +824,15 @@ class _BulkTransientSystem:
         self,
         coordinate: np.ndarray,
         voltage: float,
-        previous_storage: np.ndarray,
+        previous_state: _DeviceState,
         dt: float,
         storage_scale: np.ndarray,
         poisson_scale: np.ndarray,
     ) -> tuple[np.ndarray, sparse.csr_matrix, _DeviceState]:
         state = self.evaluate(coordinate, voltage)
-        storage_residual = state.storage - previous_storage - dt * state.rate
+        storage_residual = (
+            self.storage_increment(state, previous_state) - dt * state.rate
+        )
         residual = np.r_[
             storage_residual / storage_scale,
             state.poisson_residual / poisson_scale,
@@ -837,6 +846,45 @@ class _BulkTransientSystem:
             format="csr",
         )
         return residual, jacobian, state
+
+    def storage_increment(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+    ) -> np.ndarray:
+        coordinate_increment = state.coordinate - previous.coordinate
+        potential_increment = coordinate_increment[self.potential_slice]
+        electron_increment = log_density_increment(
+            previous.n[1:-1],
+            coordinate_increment[self.electron_slice] + potential_increment,
+        )
+        hole_increment = log_density_increment(
+            previous.p[1:-1],
+            coordinate_increment[self.hole_slice] - potential_increment,
+        )
+        occupancy_increment = logit_occupancy_increment(
+            previous.occupancy,
+            coordinate_increment[self.trap_slice],
+        )
+        return np.r_[
+            electron_increment,
+            hole_increment,
+            self.layout.population_density_m3 * occupancy_increment,
+        ]
+
+    def potential_increment(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+    ) -> np.ndarray:
+        result = np.zeros(self.node_count, dtype=float)
+        result[0] = state.phi[0] - previous.phi[0]
+        result[-1] = state.phi[-1] - previous.phi[-1]
+        result[1:-1] = self.thermal_voltage * (
+            state.coordinate[self.potential_slice]
+            - previous.coordinate[self.potential_slice]
+        )
+        return result
 
     def storage_scale(
         self,
@@ -889,6 +937,55 @@ class _BulkTransientSystem:
     def integrated_charge(self, state: _DeviceState) -> float:
         rho = Q * (state.p - state.n) + state.trap_charge
         return float(np.sum(rho[1:-1] * self.widths[1:-1]))
+
+    def integrated_charge_increment(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+    ) -> float:
+        storage = self.storage_increment(state, previous)
+        electron = storage[: self.interior_count]
+        hole = storage[self.interior_count : 2 * self.interior_count]
+        occupancy_storage = storage[
+            2 * self.interior_count : 2 * self.interior_count + self.trap_count
+        ]
+        trap_charge = np.zeros(self.node_count, dtype=float)
+        charged = np.asarray(
+            [transition != NEUTRAL for transition in self.layout.charge_transitions]
+        )
+        np.add.at(
+            trap_charge,
+            self.layout.device_node_indices[charged],
+            -Q * occupancy_storage[charged],
+        )
+        return float(
+            np.sum(Q * (hole - electron) * self.widths[1:-1])
+            + np.sum(trap_charge[1:-1] * self.widths[1:-1])
+        )
+
+    def charge_balance_metrics(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+        dt: float,
+    ) -> tuple[float, float]:
+        storage_rate = (
+            self.polarity
+            * self.integrated_charge_increment(
+                state,
+                previous,
+            )
+            / float(dt)
+        )
+        boundary_rate = float(state.conduction[0] - state.conduction[-1])
+        scale = max(
+            abs(storage_rate),
+            abs(boundary_rate),
+            float(np.max(np.abs(state.conduction))),
+            1.0,
+        )
+        absolute = abs(storage_rate - boundary_rate)
+        return absolute, absolute / scale
 
     def eliminated_operator_error(
         self,
@@ -980,7 +1077,7 @@ def _jacobian_error(
     system: _BulkTransientSystem,
     coordinate: np.ndarray,
     voltage: float,
-    previous_storage: np.ndarray,
+    previous_state: _DeviceState,
     dt: float,
     storage_scale: np.ndarray,
     poisson_scale: np.ndarray,
@@ -997,7 +1094,7 @@ def _jacobian_error(
         plus_residual, _, _ = system.residual_and_jacobian(
             plus,
             voltage,
-            previous_storage,
+            previous_state,
             dt,
             storage_scale,
             poisson_scale,
@@ -1005,7 +1102,7 @@ def _jacobian_error(
         minus_residual, _, _ = system.residual_and_jacobian(
             minus,
             voltage,
-            previous_storage,
+            previous_state,
             dt,
             storage_scale,
             poisson_scale,
@@ -1037,24 +1134,32 @@ def _solve_step(
     trial = np.asarray(coordinate, dtype=float).copy()
     maximum_jacobian_error = 0.0
     maximum_nnz = 0
+    solver_charge_limit = max(
+        policy.maximum_charge_balance_relative_error,
+        _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR,
+    )
     for iteration in range(1, policy.maximum_newton_iterations + 1):
         residual, jacobian, state = system.residual_and_jacobian(
             trial,
             voltage,
-            previous.storage,
+            previous,
             dt,
             storage_scale,
             poisson_scale,
         )
         norm = float(np.max(np.abs(residual)))
         maximum_nnz = max(maximum_nnz, int(jacobian.nnz))
-        if norm <= policy.maximum_scaled_nonlinear_residual:
+        charge_error = system.charge_balance_metrics(state, previous, dt)[1]
+        if (
+            norm <= policy.maximum_scaled_nonlinear_residual
+            and charge_error <= solver_charge_limit
+        ):
             if check_jacobian:
                 maximum_jacobian_error = _jacobian_error(
                     system,
                     trial,
                     voltage,
-                    previous.storage,
+                    previous,
                     dt,
                     storage_scale,
                     poisson_scale,
@@ -1079,10 +1184,10 @@ def _solve_step(
         for _ in range(policy.maximum_line_search_steps):
             candidate = trial + damping * step
             try:
-                candidate_residual, _, _ = system.residual_and_jacobian(
+                candidate_residual, _, candidate_state = system.residual_and_jacobian(
                     candidate,
                     voltage,
-                    previous.storage,
+                    previous,
                     dt,
                     storage_scale,
                     poisson_scale,
@@ -1091,14 +1196,29 @@ def _solve_step(
                 damping *= 0.5
                 continue
             candidate_norm = float(np.max(np.abs(candidate_residual)))
-            if candidate_norm < norm * (1.0 - 1.0e-4 * damping):
+            candidate_charge_error = system.charge_balance_metrics(
+                candidate_state,
+                previous,
+                dt,
+            )[1]
+            residual_improved = candidate_norm < norm * (1.0 - 1.0e-4 * damping)
+            charge_improved = (
+                norm <= policy.maximum_scaled_nonlinear_residual
+                and candidate_norm <= policy.maximum_scaled_nonlinear_residual
+                and (
+                    candidate_charge_error <= solver_charge_limit
+                    or candidate_charge_error < charge_error * (1.0 - 1.0e-4 * damping)
+                )
+            )
+            if residual_improved or charge_improved:
                 trial = candidate
                 accepted = True
                 break
             damping *= 0.5
         if not accepted:
             raise BulkDefectTransientError(
-                f"analytic sparse Newton line search stalled at residual {norm:.6g}"
+                "analytic sparse Newton line search stalled at iteration "
+                f"{iteration} with residual {norm:.6g}"
             )
     raise BulkDefectTransientError(
         f"analytic sparse Newton exceeded {policy.maximum_newton_iterations} iterations"
@@ -1132,11 +1252,11 @@ def _integrate_trace(
     )
     maximum_nnz = 0
     previous = initial
-    previous_phi = initial.phi
     for point in range(1, times.size):
         interval = float(times[point] - times[point - 1])
         dt = interval / substeps
         target_voltage = float(voltage[point])
+        current_charge = integrated_charge[-1]
         final_displacement = np.zeros(system.node_count - 1, dtype=float)
         final_total = previous.conduction.copy()
         point_iterations = 0
@@ -1152,28 +1272,19 @@ def _integrate_trace(
             )
             point_iterations += count
             coordinate = state.coordinate.copy()
-            field_increment = -np.diff(state.phi - previous_phi) / np.diff(system.grid)
+            charge_increment = system.integrated_charge_increment(state, previous)
+            field_increment = -np.diff(
+                system.potential_increment(state, previous)
+            ) / np.diff(system.grid)
             final_displacement = (
                 system.polarity * system.eps_face * field_increment / dt
             )
             final_total = state.conduction + final_displacement
-            charge = system.integrated_charge(state)
-            storage_rate = (
-                system.polarity * (charge - integrated_charge[-1]) / dt
-                if local_step == 0
-                else system.polarity
-                * (charge - system.integrated_charge(previous))
-                / dt
+            charge_absolute_error, charge_error = system.charge_balance_metrics(
+                state,
+                previous,
+                dt,
             )
-            boundary_rate = state.conduction[0] - state.conduction[-1]
-            charge_scale = max(
-                abs(storage_rate),
-                abs(boundary_rate),
-                float(np.max(np.abs(state.conduction))),
-                1.0,
-            )
-            charge_absolute_error = abs(storage_rate - boundary_rate)
-            charge_error = charge_absolute_error / charge_scale
             face_scale = max(float(np.max(np.abs(final_total))), 1.0e-20)
             face_spread = float(np.ptp(final_total)) / face_scale
             maximum_scaled_residual = max(maximum_scaled_residual, residual)
@@ -1197,12 +1308,12 @@ def _integrate_trace(
             )
             maximum_nnz = max(maximum_nnz, nnz)
             previous = state
-            previous_phi = state.phi
+            current_charge += charge_increment
         states.append(previous)
         coordinates.append(coordinate.copy())
         displacement.append(final_displacement)
         total_current.append(final_total)
-        integrated_charge.append(system.integrated_charge(previous))
+        integrated_charge.append(current_charge)
         iterations.append(point_iterations)
     return _Trace(
         times=times,

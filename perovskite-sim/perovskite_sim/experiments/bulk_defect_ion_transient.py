@@ -58,6 +58,7 @@ from perovskite_sim.physics.dynamic_defect_state import (
     quasi_steady_bulk_trap_occupancy,
 )
 from perovskite_sim.physics.ion_migration import ion_face_flux_jacobian
+from perovskite_sim.physics.dynamic_storage import log_density_increment
 from perovskite_sim.solver.mol import MaterialArrays
 
 
@@ -782,6 +783,32 @@ class _BulkIonTransientSystem(_BulkTransientSystem):
                 )
         return scale
 
+    def storage_increment(
+        self,
+        state: _BulkIonDeviceState,
+        previous: _BulkIonDeviceState,
+    ) -> np.ndarray:
+        base = super().storage_increment(state, previous)
+        coordinate_increment = state.coordinate - previous.coordinate
+        blocks = [base]
+        if self.positive_nodes.size:
+            blocks.append(
+                log_density_increment(
+                    previous.positive[self.positive_nodes],
+                    coordinate_increment[self.positive_slice],
+                )
+            )
+        if self.negative_nodes.size:
+            if previous.negative is None:
+                raise BulkDefectIonTransientError("negative-ion block is missing")
+            blocks.append(
+                log_density_increment(
+                    previous.negative[self.negative_nodes],
+                    coordinate_increment[self.negative_slice],
+                )
+            )
+        return np.concatenate(blocks)
+
     def integrated_charge(self, state: _BulkIonDeviceState) -> float:
         carrier_trap = Q * (state.p - state.n) + state.trap_charge
         charge = float(np.sum(carrier_trap[1:-1] * self.widths[1:-1]))
@@ -796,6 +823,39 @@ class _BulkIonTransientSystem(_BulkTransientSystem):
                     (state.negative[1:-1] - self.material.P_ion0_neg[1:-1])
                     * self.widths[1:-1]
                 )
+            )
+        return charge
+
+    def integrated_charge_increment(
+        self,
+        state: _BulkIonDeviceState,
+        previous: _BulkIonDeviceState,
+    ) -> float:
+        charge = super().integrated_charge_increment(state, previous)
+        coordinate_increment = state.coordinate - previous.coordinate
+        if self.positive_nodes.size:
+            values = log_density_increment(
+                previous.positive[self.positive_nodes],
+                coordinate_increment[self.positive_slice],
+            )
+            interior = (self.positive_nodes > 0) & (
+                self.positive_nodes < self.node_count - 1
+            )
+            charge += Q * float(
+                np.sum(values[interior] * self.widths[self.positive_nodes[interior]])
+            )
+        if self.negative_nodes.size:
+            if previous.negative is None:
+                raise BulkDefectIonTransientError("negative-ion block is missing")
+            values = log_density_increment(
+                previous.negative[self.negative_nodes],
+                coordinate_increment[self.negative_slice],
+            )
+            interior = (self.negative_nodes > 0) & (
+                self.negative_nodes < self.node_count - 1
+            )
+            charge -= Q * float(
+                np.sum(values[interior] * self.widths[self.negative_nodes[interior]])
             )
         return charge
 

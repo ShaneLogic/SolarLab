@@ -54,6 +54,7 @@ from perovskite_sim.physics.defect_distributions import (
 )
 from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
 from perovskite_sim.physics.ion_migration import ion_face_flux_jacobian
+from perovskite_sim.physics.dynamic_storage import log_density_increment
 from perovskite_sim.physics.two_sided_interface import (
     TWO_SIDED_TRACE,
     _material_two_sided_interface_problem,
@@ -66,7 +67,7 @@ from perovskite_sim.solver.mol import MaterialArrays
 INTERFACE_DEFECT_ION_TRANSIENT_SCOPE = (
     "research_two_sided_interface_defect_mobile_ion_transient_only"
 )
-INTERFACE_DEFECT_ION_TRANSIENT_VERSION = "interface-defect-ion-transient-v1"
+INTERFACE_DEFECT_ION_TRANSIENT_VERSION = "interface-defect-ion-transient-v2"
 
 
 class InterfaceDefectIonTransientError(InterfaceDefectTransientError):
@@ -208,6 +209,7 @@ class InterfaceDefectIonTransientCertificate:
     maximum_current_decomposition_relative_error: float
     maximum_refinement_state_change: float
     maximum_refinement_current_relative_change: float
+    near_acceptance_nonmonotone_step_count: int
     analytic_jacobian_nnz: int
     dense_jacobian_entries: int
     sparse_linear_solver_used: bool
@@ -886,6 +888,32 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             )
         return scale
 
+    def storage_increment(
+        self,
+        state: _InterfaceIonDeviceState,
+        previous: _InterfaceIonDeviceState,
+    ) -> np.ndarray:
+        base = super().storage_increment(state, previous)
+        coordinate_increment = state.coordinate - previous.coordinate
+        blocks = [base]
+        if self.positive_nodes.size:
+            blocks.append(
+                log_density_increment(
+                    previous.positive[self.positive_nodes],
+                    coordinate_increment[self.positive_slice],
+                )
+            )
+        if self.negative_nodes.size:
+            if previous.negative is None:
+                raise InterfaceDefectIonTransientError("negative-ion block is missing")
+            blocks.append(
+                log_density_increment(
+                    previous.negative[self.negative_nodes],
+                    coordinate_increment[self.negative_slice],
+                )
+            )
+        return np.concatenate(blocks)
+
     def integrated_charge(self, state: _InterfaceIonDeviceState) -> float:
         charge = float(
             np.sum(Q * (state.p[1:-1] - state.n[1:-1]) * self.widths[1:-1])
@@ -902,6 +930,39 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
                     (state.negative[1:-1] - self.material.P_ion0_neg[1:-1])
                     * self.widths[1:-1]
                 )
+            )
+        return charge
+
+    def integrated_charge_increment(
+        self,
+        state: _InterfaceIonDeviceState,
+        previous: _InterfaceIonDeviceState,
+    ) -> float:
+        charge = super().integrated_charge_increment(state, previous)
+        coordinate_increment = state.coordinate - previous.coordinate
+        if self.positive_nodes.size:
+            values = log_density_increment(
+                previous.positive[self.positive_nodes],
+                coordinate_increment[self.positive_slice],
+            )
+            interior = (self.positive_nodes > 0) & (
+                self.positive_nodes < self.node_count - 1
+            )
+            charge += Q * float(
+                np.sum(values[interior] * self.widths[self.positive_nodes[interior]])
+            )
+        if self.negative_nodes.size:
+            if previous.negative is None:
+                raise InterfaceDefectIonTransientError("negative-ion block is missing")
+            values = log_density_increment(
+                previous.negative[self.negative_nodes],
+                coordinate_increment[self.negative_slice],
+            )
+            interior = (self.negative_nodes > 0) & (
+                self.negative_nodes < self.node_count - 1
+            )
+            charge -= Q * float(
+                np.sum(values[interior] * self.widths[self.negative_nodes[interior]])
             )
         return charge
 
@@ -1559,6 +1620,9 @@ def run_interface_defect_ion_device_transient(
         maximum_current_decomposition_relative_error=decomposition_error,
         maximum_refinement_state_change=refinement_state,
         maximum_refinement_current_relative_change=refinement_current,
+        near_acceptance_nonmonotone_step_count=sum(
+            level.near_acceptance_nonmonotone_step_count for level in levels
+        ),
         analytic_jacobian_nnz=final.maximum_nnz,
         dense_jacobian_entries=dense_entries,
         sparse_linear_solver_used=True,

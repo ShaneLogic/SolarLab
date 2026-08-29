@@ -45,6 +45,10 @@ from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
 )
 from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
+from perovskite_sim.physics.dynamic_storage import (
+    log_density_increment,
+    logit_occupancy_increment,
+)
 from perovskite_sim.physics.recombination import total_recombination_derivatives
 from perovskite_sim.physics.two_sided_interface import (
     TWO_SIDED_TRACE,
@@ -70,8 +74,11 @@ from perovskite_sim.solver.mol import (
 INTERFACE_DEFECT_TRANSIENT_SCOPE = (
     "research_two_sided_dynamic_interface_defect_device_transient_only"
 )
-INTERFACE_DEFECT_TRANSIENT_VERSION = "two-sided-dynamic-interface-transient-v1"
+INTERFACE_DEFECT_TRANSIENT_VERSION = "two-sided-dynamic-interface-transient-v2"
 _RIGHT_FIRST = np.array([2, 3, 0, 1])
+_DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR = 1.0e-10
+_DEFAULT_MAXIMUM_ALL_FACE_CURRENT_SPREAD_RELATIVE = 2.0e-6
+_DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR = 2.0e-6
 
 
 class InterfaceDefectTransientError(RuntimeError):
@@ -198,14 +205,21 @@ class InterfaceDefectTransientPolicy:
     maximum_scaled_nonlinear_residual: float = 5.0e-2
     maximum_newton_iterations: int = 35
     maximum_line_search_steps: int = 20
+    maximum_near_acceptance_nonmonotone_steps: int = 0
     jacobian_check_step: float = 1.0e-6
     maximum_jacobian_column_relative_error: float = 3.0e-4
     refinement_substeps: tuple[int, ...] = (1, 2, 4)
     maximum_refinement_state_change: float = 2.0e-2
     maximum_refinement_current_relative_change: float = 5.0e-2
-    maximum_charge_balance_relative_error: float = 1.0e-10
-    maximum_all_face_current_spread_relative: float = 2.0e-6
-    maximum_two_sided_interface_total_current_relative_error: float = 2.0e-6
+    maximum_charge_balance_relative_error: float = (
+        _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR
+    )
+    maximum_all_face_current_spread_relative: float = (
+        _DEFAULT_MAXIMUM_ALL_FACE_CURRENT_SPREAD_RELATIVE
+    )
+    maximum_two_sided_interface_total_current_relative_error: float = (
+        _DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR
+    )
     maximum_eliminated_operator_relative_error: float = 3.0e-7
     maximum_local_carrier_normalized_residual: float = 1.0e-7
     maximum_local_gauss_normalized_residual: float = 1.0e-7
@@ -239,6 +253,24 @@ class InterfaceDefectTransientPolicy:
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
             object.__setattr__(self, name, value)
+        raw_nonmonotone_steps = self.maximum_near_acceptance_nonmonotone_steps
+        if isinstance(raw_nonmonotone_steps, (bool, np.bool_)) or not isinstance(
+            raw_nonmonotone_steps,
+            (int, np.integer),
+        ):
+            raise TypeError(
+                "maximum_near_acceptance_nonmonotone_steps must be an integer"
+            )
+        nonmonotone_steps = int(raw_nonmonotone_steps)
+        if nonmonotone_steps < 0:
+            raise ValueError(
+                "maximum_near_acceptance_nonmonotone_steps must be non-negative"
+            )
+        object.__setattr__(
+            self,
+            "maximum_near_acceptance_nonmonotone_steps",
+            nonmonotone_steps,
+        )
         object.__setattr__(
             self,
             "refinement_substeps",
@@ -266,6 +298,7 @@ class InterfaceDefectTransientCertificate:
     maximum_eliminated_operator_relative_error: float
     maximum_refinement_state_change: float
     maximum_refinement_current_relative_change: float
+    near_acceptance_nonmonotone_step_count: int
     analytic_jacobian_nnz: int
     dense_jacobian_entries: int
     sparse_linear_solver_used: bool
@@ -456,6 +489,7 @@ class _Trace:
     maximum_interface_current_error: float
     maximum_operator_error: float
     maximum_nnz: int
+    near_acceptance_nonmonotone_step_count: int
 
 
 class _InterfaceTransientSystem:
@@ -1028,15 +1062,13 @@ class _InterfaceTransientSystem:
                     * float(self.material.eps_r[right])
                     / float(self.material.iface_qss_right_distances_m[index])
                 )
+                coordinate_increment = state.coordinate - previous.coordinate
                 trace_increment = (
-                    item.trace_potential - previous.local[index].trace_potential
+                    self.thermal_voltage
+                    * coordinate_increment[self._local_block_slice(index)][:2]
                 )
-                bulk_increment = np.array(
-                    [
-                        state.phi[left] - previous.phi[left],
-                        state.phi[right] - previous.phi[right],
-                    ]
-                )
+                potential_increment = self.potential_increment(state, previous)
+                bulk_increment = potential_increment[[left, right]]
                 drop_increment = trace_increment - bulk_increment
                 displacement[index] = self.polarity * np.array(
                     [
@@ -1404,14 +1436,16 @@ class _InterfaceTransientSystem:
         self,
         coordinate: np.ndarray,
         voltage: float,
-        previous_storage: np.ndarray,
+        previous_state: _DeviceState,
         dt: float,
         storage_scale: np.ndarray,
         poisson_scale: np.ndarray,
         local_scale: np.ndarray,
     ) -> tuple[np.ndarray, sparse.csr_matrix, _DeviceState]:
         state = self.evaluate(coordinate, voltage)
-        storage_residual = state.storage - previous_storage - dt * state.rate
+        storage_residual = (
+            self.storage_increment(state, previous_state) - dt * state.rate
+        )
         residual = np.r_[
             storage_residual / storage_scale,
             state.poisson_residual / poisson_scale,
@@ -1427,6 +1461,43 @@ class _InterfaceTransientSystem:
             format="csr",
         )
         return residual, jacobian, state
+
+    def storage_increment(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+    ) -> np.ndarray:
+        coordinate_increment = state.coordinate - previous.coordinate
+        potential_increment = coordinate_increment[self.potential_slice]
+        return np.r_[
+            log_density_increment(
+                previous.n[1:-1],
+                coordinate_increment[self.electron_slice] + potential_increment,
+            ),
+            log_density_increment(
+                previous.p[1:-1],
+                coordinate_increment[self.hole_slice] - potential_increment,
+            ),
+            self.trap_density
+            * logit_occupancy_increment(
+                previous.occupancy,
+                coordinate_increment[self.trap_slice],
+            ),
+        ]
+
+    def potential_increment(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+    ) -> np.ndarray:
+        result = np.zeros(self.node_count, dtype=float)
+        result[0] = state.phi[0] - previous.phi[0]
+        result[-1] = state.phi[-1] - previous.phi[-1]
+        result[1:-1] = self.thermal_voltage * (
+            state.coordinate[self.potential_slice]
+            - previous.coordinate[self.potential_slice]
+        )
+        return result
 
     def storage_scale(
         self,
@@ -1504,6 +1575,83 @@ class _InterfaceTransientSystem:
         free = Q * (state.p - state.n)
         return float(
             np.sum(free[1:-1] * self.widths[1:-1]) + np.sum(state.sheet_charge)
+        )
+
+    def integrated_charge_increment(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+    ) -> float:
+        storage = self.storage_increment(state, previous)
+        electron = storage[: self.interior_count]
+        hole = storage[self.interior_count : 2 * self.interior_count]
+        occupied_areal = storage[
+            2 * self.interior_count : 2 * self.interior_count + self.interface_count
+        ]
+        return float(
+            np.sum(Q * (hole - electron) * self.widths[1:-1])
+            - Q * np.sum(occupied_areal)
+        )
+
+    def charge_balance_metrics(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+        dt: float,
+    ) -> tuple[float, float]:
+        storage_rate = (
+            self.polarity
+            * self.integrated_charge_increment(
+                state,
+                previous,
+            )
+            / float(dt)
+        )
+        boundary_rate = float(state.conduction[0] - state.conduction[-1])
+        scale = max(
+            abs(storage_rate),
+            abs(boundary_rate),
+            float(np.max(np.abs(state.conduction))),
+            1.0,
+        )
+        absolute = abs(storage_rate - boundary_rate)
+        return absolute, absolute / scale
+
+    def transient_current_metrics(
+        self,
+        state: _DeviceState,
+        previous: _DeviceState,
+        dt: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+        """Return the exact currents and relative closure used by certification."""
+        field_increment = -np.diff(self.potential_increment(state, previous)) / np.diff(
+            self.grid
+        )
+        displacement = self.polarity * self.eps_face * field_increment / dt
+        interface_conduction, interface_displacement, interface_total = (
+            self.interface_current_sides(state, previous, dt)
+        )
+        for index, face in enumerate(self.interface_faces):
+            displacement[face] = interface_displacement[index, 0]
+        total = state.conduction + displacement
+        face_scale = max(float(np.max(np.abs(total))), 1.0e-20)
+        face_spread = float(np.ptp(total)) / face_scale
+        interface_scale = np.maximum(
+            np.max(np.abs(interface_total), axis=1),
+            1.0e-20,
+        )
+        interface_error = float(
+            np.max(
+                np.abs(interface_total[:, 0] - interface_total[:, 1]) / interface_scale
+            )
+        )
+        return (
+            displacement,
+            total,
+            interface_conduction,
+            interface_displacement,
+            face_spread,
+            interface_error,
         )
 
     def eliminated_operator_error(
@@ -1615,7 +1763,7 @@ def _jacobian_error(
     system: _InterfaceTransientSystem,
     coordinate: np.ndarray,
     voltage: float,
-    previous_storage: np.ndarray,
+    previous_state: _DeviceState,
     dt: float,
     storage_scale: np.ndarray,
     poisson_scale: np.ndarray,
@@ -1633,7 +1781,7 @@ def _jacobian_error(
         plus_residual, _, _ = system.residual_and_jacobian(
             plus,
             voltage,
-            previous_storage,
+            previous_state,
             dt,
             storage_scale,
             poisson_scale,
@@ -1642,7 +1790,7 @@ def _jacobian_error(
         minus_residual, _, _ = system.residual_and_jacobian(
             minus,
             voltage,
-            previous_storage,
+            previous_state,
             dt,
             storage_scale,
             poisson_scale,
@@ -1664,7 +1812,7 @@ def _solve_step(
     policy: InterfaceDefectTransientPolicy,
     *,
     check_jacobian: bool,
-) -> tuple[_DeviceState, int, float, float, int]:
+) -> tuple[_DeviceState, int, float, float, int, int]:
     storage_scale = system.storage_scale(
         previous.storage,
         previous,
@@ -1676,11 +1824,24 @@ def _solve_step(
     trial = np.asarray(coordinate, dtype=float).copy()
     maximum_jacobian_error = 0.0
     maximum_nnz = 0
+    nonmonotone_step_count = 0
+    solver_charge_limit = max(
+        policy.maximum_charge_balance_relative_error,
+        _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR,
+    )
+    solver_face_limit = max(
+        policy.maximum_all_face_current_spread_relative,
+        _DEFAULT_MAXIMUM_ALL_FACE_CURRENT_SPREAD_RELATIVE,
+    )
+    solver_interface_limit = max(
+        policy.maximum_two_sided_interface_total_current_relative_error,
+        _DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR,
+    )
     for iteration in range(1, policy.maximum_newton_iterations + 1):
         residual, jacobian, state = system.residual_and_jacobian(
             trial,
             voltage,
-            previous.storage,
+            previous,
             dt,
             storage_scale,
             poisson_scale,
@@ -1688,13 +1849,24 @@ def _solve_step(
         )
         norm = float(np.max(np.abs(residual)))
         maximum_nnz = max(maximum_nnz, int(jacobian.nnz))
-        if norm <= policy.maximum_scaled_nonlinear_residual:
+        charge_error = system.charge_balance_metrics(state, previous, dt)[1]
+        _, _, _, _, face_error, interface_error = system.transient_current_metrics(
+            state,
+            previous,
+            dt,
+        )
+        if (
+            norm <= policy.maximum_scaled_nonlinear_residual
+            and charge_error <= solver_charge_limit
+            and face_error <= solver_face_limit
+            and interface_error <= solver_interface_limit
+        ):
             if check_jacobian:
                 maximum_jacobian_error = _jacobian_error(
                     system,
                     trial,
                     voltage,
-                    previous.storage,
+                    previous,
                     dt,
                     storage_scale,
                     poisson_scale,
@@ -1702,7 +1874,14 @@ def _solve_step(
                     jacobian,
                     policy.jacobian_check_step,
                 )
-            return state, iteration - 1, norm, maximum_jacobian_error, maximum_nnz
+            return (
+                state,
+                iteration - 1,
+                norm,
+                maximum_jacobian_error,
+                maximum_nnz,
+                nonmonotone_step_count,
+            )
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
             try:
@@ -1715,15 +1894,27 @@ def _solve_step(
             raise InterfaceDefectTransientError(
                 "analytic sparse Newton solve returned a non-finite step"
             )
+        linear_residual = np.asarray(jacobian @ step + residual, dtype=float)
+        linear_scale = max(
+            float(np.max(np.abs(residual))),
+            float(np.max(np.asarray(abs(jacobian) @ np.abs(step)))),
+            np.finfo(float).tiny,
+        )
+        linear_backward_error = float(np.max(np.abs(linear_residual)) / linear_scale)
         accepted = False
         damping = 1.0
+        closure_error = max(
+            charge_error / solver_charge_limit,
+            face_error / solver_face_limit,
+            interface_error / solver_interface_limit,
+        )
         for _ in range(policy.maximum_line_search_steps):
             candidate = trial + damping * step
             try:
-                candidate_residual, _, _ = system.residual_and_jacobian(
+                candidate_residual, _, candidate_state = system.residual_and_jacobian(
                     candidate,
                     voltage,
-                    previous.storage,
+                    previous,
                     dt,
                     storage_scale,
                     poisson_scale,
@@ -1733,17 +1924,83 @@ def _solve_step(
                 damping *= 0.5
                 continue
             candidate_norm = float(np.max(np.abs(candidate_residual)))
-            if candidate_norm < norm * (1.0 - 1.0e-4 * damping):
+            candidate_charge_error = system.charge_balance_metrics(
+                candidate_state,
+                previous,
+                dt,
+            )[1]
+            (
+                _,
+                _,
+                _,
+                _,
+                candidate_face_error,
+                candidate_interface_error,
+            ) = system.transient_current_metrics(candidate_state, previous, dt)
+            residual_improved = candidate_norm < norm * (1.0 - 1.0e-4 * damping)
+            candidate_closure_error = max(
+                candidate_charge_error / solver_charge_limit,
+                candidate_face_error / solver_face_limit,
+                candidate_interface_error / solver_interface_limit,
+            )
+            closure_improved = (
+                norm <= policy.maximum_scaled_nonlinear_residual
+                and candidate_norm <= policy.maximum_scaled_nonlinear_residual
+                and (
+                    candidate_closure_error <= 1.0
+                    or candidate_closure_error
+                    < closure_error * (1.0 - 1.0e-4 * damping)
+                )
+            )
+            if residual_improved or closure_improved:
                 trial = candidate
                 accepted = True
                 break
             damping *= 0.5
         if not accepted:
+            if (
+                nonmonotone_step_count
+                < policy.maximum_near_acceptance_nonmonotone_steps
+                and norm <= policy.maximum_scaled_nonlinear_residual
+                and closure_error <= 2.0
+            ):
+                full_candidate = trial + step
+                try:
+                    full_residual, _, _ = system.residual_and_jacobian(
+                        full_candidate,
+                        voltage,
+                        previous,
+                        dt,
+                        storage_scale,
+                        poisson_scale,
+                        local_scale,
+                    )
+                except (
+                    InterfaceDefectTransientError,
+                    ValueError,
+                    FloatingPointError,
+                ):
+                    pass
+                else:
+                    full_norm = float(np.max(np.abs(full_residual)))
+                    if full_norm <= 10.0 * policy.maximum_scaled_nonlinear_residual:
+                        trial = full_candidate
+                        nonmonotone_step_count += 1
+                        continue
             raise InterfaceDefectTransientError(
-                f"analytic sparse Newton line search stalled at residual {norm:.6g}"
+                "analytic sparse Newton line search stalled at iteration "
+                f"{iteration} with residual {norm:.6g}, charge closure "
+                f"{charge_error:.6g}, all-face current closure "
+                f"{face_error:.6g}, interface current closure "
+                f"{interface_error:.6g}, linear backward error "
+                f"{linear_backward_error:.6g}"
             )
     raise InterfaceDefectTransientError(
-        f"analytic sparse Newton exceeded {policy.maximum_newton_iterations} iterations"
+        "analytic sparse Newton exceeded "
+        f"{policy.maximum_newton_iterations} iterations with residual {norm:.6g}, "
+        f"charge closure {charge_error:.6g}, all-face current closure "
+        f"{face_error:.6g}, interface current closure {interface_error:.6g}, "
+        f"linear backward error {linear_backward_error:.6g}"
     )
 
 
@@ -1785,12 +2042,13 @@ def _integrate_trace(
         float(voltage[0]),
     )
     maximum_nnz = 0
+    nonmonotone_step_count = 0
     previous = initial
-    previous_phi = initial.phi
     for point in range(1, times.size):
         interval = float(times[point] - times[point - 1])
         dt = interval / substeps
         target_voltage = float(voltage[point])
+        current_charge = integrated_charge[-1]
         final_displacement = np.zeros(system.node_count - 1, dtype=float)
         final_total = previous.conduction.copy()
         final_interface_conduction = initial_interface_conduction
@@ -1798,56 +2056,36 @@ def _integrate_trace(
         final_interface_total = initial_interface_total
         point_iterations = 0
         for local_step in range(substeps):
-            state, count, residual, jacobian_error, nnz = _solve_step(
-                system,
-                coordinate,
-                previous,
-                target_voltage,
-                dt,
-                policy,
-                check_jacobian=(point == 1 and local_step == 0),
+            state, count, residual, jacobian_error, nnz, nonmonotone_count = (
+                _solve_step(
+                    system,
+                    coordinate,
+                    previous,
+                    target_voltage,
+                    dt,
+                    policy,
+                    check_jacobian=(point == 1 and local_step == 0),
+                )
             )
             point_iterations += count
+            nonmonotone_step_count += nonmonotone_count
             coordinate = state.coordinate.copy()
-            field_increment = -np.diff(state.phi - previous_phi) / np.diff(system.grid)
-            final_displacement = (
-                system.polarity * system.eps_face * field_increment / dt
-            )
+            charge_increment = system.integrated_charge_increment(state, previous)
             (
+                final_displacement,
+                final_total,
                 final_interface_conduction,
                 final_interface_displacement,
-                final_interface_total,
-            ) = system.interface_current_sides(state, previous, dt)
-            for index, face in enumerate(system.interface_faces):
-                final_displacement[face] = final_interface_displacement[index, 0]
-            final_total = state.conduction + final_displacement
-            charge = system.integrated_charge(state)
-            previous_charge = (
-                integrated_charge[-1]
-                if local_step == 0
-                else system.integrated_charge(previous)
+                face_spread,
+                interface_current_error,
+            ) = system.transient_current_metrics(state, previous, dt)
+            final_interface_total = (
+                final_interface_conduction + final_interface_displacement
             )
-            storage_rate = system.polarity * (charge - previous_charge) / dt
-            boundary_rate = state.conduction[0] - state.conduction[-1]
-            charge_scale = max(
-                abs(storage_rate),
-                abs(boundary_rate),
-                float(np.max(np.abs(state.conduction))),
-                1.0,
-            )
-            charge_absolute_error = abs(storage_rate - boundary_rate)
-            charge_error = charge_absolute_error / charge_scale
-            face_scale = max(float(np.max(np.abs(final_total))), 1.0e-20)
-            face_spread = float(np.ptp(final_total)) / face_scale
-            interface_scale = np.maximum(
-                np.max(np.abs(final_interface_total), axis=1),
-                1.0e-20,
-            )
-            interface_current_error = float(
-                np.max(
-                    np.abs(final_interface_total[:, 0] - final_interface_total[:, 1])
-                    / interface_scale
-                )
+            charge_absolute_error, charge_error = system.charge_balance_metrics(
+                state,
+                previous,
+                dt,
             )
             carrier_residual, gauss_residual = system.local_normalized_residuals(state)
             maximum_scaled_residual = max(maximum_scaled_residual, residual)
@@ -1880,7 +2118,7 @@ def _integrate_trace(
             )
             maximum_nnz = max(maximum_nnz, nnz)
             previous = state
-            previous_phi = state.phi
+            current_charge += charge_increment
         states.append(previous)
         coordinates.append(coordinate.copy())
         displacement.append(final_displacement)
@@ -1888,7 +2126,7 @@ def _integrate_trace(
         interface_conduction.append(final_interface_conduction)
         interface_displacement.append(final_interface_displacement)
         interface_total_current.append(final_interface_total)
-        integrated_charge.append(system.integrated_charge(previous))
+        integrated_charge.append(current_charge)
         iterations.append(point_iterations)
     return _Trace(
         times=times,
@@ -1913,6 +2151,7 @@ def _integrate_trace(
         maximum_interface_current_error=maximum_interface_current_error,
         maximum_operator_error=maximum_operator_error,
         maximum_nnz=maximum_nnz,
+        near_acceptance_nonmonotone_step_count=nonmonotone_step_count,
     )
 
 
@@ -2385,6 +2624,9 @@ def run_interface_defect_device_transient(
         maximum_eliminated_operator_relative_error=final.maximum_operator_error,
         maximum_refinement_state_change=refinement_state,
         maximum_refinement_current_relative_change=refinement_current,
+        near_acceptance_nonmonotone_step_count=sum(
+            level.near_acceptance_nonmonotone_step_count for level in levels
+        ),
         analytic_jacobian_nnz=final.maximum_nnz,
         dense_jacobian_entries=dense_entries,
         sparse_linear_solver_used=True,

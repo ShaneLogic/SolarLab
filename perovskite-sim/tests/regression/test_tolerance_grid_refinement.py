@@ -108,6 +108,11 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "ionmonger-ion-aware-dc-resolved-v2",
         "ionmonger-ion-aware-impedance-resolved-v1",
         "dynamic-defect-ion-impedance-production-v1",
+        "dynamic-defect-ion-transient-timescale-v1",
+        "dynamic-defect-ion-transient-timescale-resolved-v2",
+        "dynamic-defect-ion-transient-timescale-nonlinear-resolved-v3",
+        "dynamic-defect-ion-transient-timescale-absorber-resolved-v4",
+        "dynamic-defect-ion-transient-timescale-reference-resolved-v5",
         "csi-qf-frequency-domain",
         "csi-qf-frequency-domain-resolved-v2",
         "twod-uniform-limit",
@@ -142,7 +147,8 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert all(
         len(lane.matrix_points) == 9
         for lane in registry.lanes
-        if lane.lane_id not in {
+        if lane.lane_id
+        not in {
             "interface-charge-device-stress-v1",
             "interface-charge-device-stress-resolved-v2",
         }
@@ -153,6 +159,100 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert all(lane.executor is not None for lane in registry.lanes)
     assert all(lane.options["require_protocol"] for lane in registry.lanes)
     assert all(load_executor(lane.executor) for lane in registry.lanes)
+    dynamic_transient = registry.lane(
+        "dynamic-defect-ion-transient-timescale-reference-resolved-v5"
+    )
+    assert dynamic_transient.grid_values == (4, 6, 8)
+    assert dynamic_transient.tolerance_factors == (1.0, 0.5, 0.25)
+    assert dynamic_transient.grid_parameter == "intervals_per_layer"
+    assert dynamic_transient.tolerance_parameter == ("backward_euler_time_step_factor")
+    assert len(dynamic_transient.observables) == 12
+    dynamic_transient_quality = {
+        gate.metric: gate for gate in dynamic_transient.quality_gates
+    }
+    assert dynamic_transient_quality[
+        "combined_interface_occupancy_motion"
+    ].limit == pytest.approx(1.0e-9)
+    assert dynamic_transient_quality[
+        "defect_dominated_positive_ion_motion"
+    ].limit == pytest.approx(1.0e-7)
+    assert dynamic_transient_quality[
+        "ion_dominated_interface_occupancy_motion"
+    ].limit == pytest.approx(1.0e-12)
+    assert dynamic_transient_quality["fast_ion_failure_iteration_reported"].limit == 1.0
+    assert (
+        dynamic_transient_quality["fast_ion_failure_residual_above_acceptance"].limit
+        == 1.0
+    )
+    legacy_dynamic_transient = registry.lane(
+        "dynamic-defect-ion-transient-timescale-v1"
+    )
+    resolved_dynamic_transient = registry.lane(
+        "dynamic-defect-ion-transient-timescale-resolved-v2"
+    )
+    nonlinear_dynamic_transient = registry.lane(
+        "dynamic-defect-ion-transient-timescale-nonlinear-resolved-v3"
+    )
+    absorber_dynamic_transient = registry.lane(
+        "dynamic-defect-ion-transient-timescale-absorber-resolved-v4"
+    )
+    assert (
+        absorber_dynamic_transient.quality_gates
+        == nonlinear_dynamic_transient.quality_gates
+    )
+    assert absorber_dynamic_transient.options == nonlinear_dynamic_transient.options
+    assert (
+        absorber_dynamic_transient.config_sha256
+        != nonlinear_dynamic_transient.config_sha256
+    )
+    assert dynamic_transient.options == absorber_dynamic_transient.options
+    assert dynamic_transient.config_sha256 == absorber_dynamic_transient.config_sha256
+    assert (
+        nonlinear_dynamic_transient.observables
+        == resolved_dynamic_transient.observables
+    )
+    assert (
+        resolved_dynamic_transient.observables == legacy_dynamic_transient.observables
+    )
+    resolved_quality = {
+        gate.metric: gate for gate in resolved_dynamic_transient.quality_gates
+    }
+    active_quality = {
+        gate.metric: gate for gate in nonlinear_dynamic_transient.quality_gates
+    }
+    nonmonotone_gate = active_quality.pop("max_near_acceptance_nonmonotone_step_count")
+    assert active_quality == resolved_quality
+    assert resolved_dynamic_transient.quality_gates == (
+        legacy_dynamic_transient.quality_gates
+    )
+    assert nonmonotone_gate.limit == 12.0
+    assert dynamic_transient.options["grid_alpha"] == 1.5
+    assert resolved_dynamic_transient.options["grid_alpha"] == 1.5
+    assert legacy_dynamic_transient.options["grid_alpha"] == 2.0
+    assert dynamic_transient.options["maximum_newton_iterations"] == 100
+    assert dynamic_transient.options["maximum_line_search_steps"] == 40
+    assert dynamic_transient.options["maximum_near_acceptance_nonmonotone_steps"] == 2
+    assert (
+        nonlinear_dynamic_transient.options["maximum_near_acceptance_nonmonotone_steps"]
+        == 2
+    )
+    assert {
+        key: value
+        for key, value in nonlinear_dynamic_transient.options.items()
+        if key != "maximum_near_acceptance_nonmonotone_steps"
+    } == resolved_dynamic_transient.options
+    active_observable_names = {gate.metric for gate in dynamic_transient.observables}
+    assert "combined_interface_occupancy_change" in active_observable_names
+    assert "combined_interface_occupancy" not in active_observable_names
+    assert "combined_positive_ion_centroid_shift_m" in active_observable_names
+    assert "combined_integrated_charge_change_C_m2" in active_observable_names
+    assert "combined_positive_ion_centroid_m" not in active_observable_names
+    assert "combined_integrated_charge_C_m2" not in active_observable_names
+    absorber_observable_names = {
+        gate.metric for gate in absorber_dynamic_transient.observables
+    }
+    assert "combined_interface_occupancy" in absorber_observable_names
+    assert "combined_interface_occupancy_change" not in absorber_observable_names
     assert registry.lane("twod-uniform-limit").grid_values == (1, 2, 4)
     combined_2d = registry.lane("twod-mobile-ion-interface-srh-v1")
     assert combined_2d.grid_values == (4, 6, 8)
@@ -160,45 +260,28 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     external_circuit = registry.lane("external-series-shunt-dc-v1")
     assert external_circuit.grid_values == (20, 30, 40)
     assert external_circuit.tolerance_factors == (1.0, 0.1, 0.01)
-    external_observables = {
-        gate.metric: gate for gate in external_circuit.observables
-    }
+    external_observables = {gate.metric: gate for gate in external_circuit.observables}
     assert external_observables[
         "terminal_current_normalized_trace"
     ].limit == pytest.approx(0.01)
-    assert external_observables[
-        "terminal_voc_V"
-    ].limit == pytest.approx(0.005)
-    external_quality = {
-        gate.metric: gate for gate in external_circuit.quality_gates
-    }
+    assert external_observables["terminal_voc_V"].limit == pytest.approx(0.005)
+    external_quality = {gate.metric: gate for gate in external_circuit.quality_gates}
     assert external_quality["max_current_balance_error_A_m2"].limit == 0.0
-    assert external_quality[
-        "min_pce_loss_fraction"
-    ].limit == pytest.approx(0.01)
-    external_resolved = registry.lane(
-        "external-series-shunt-dc-operating-quadrant-v2"
-    )
+    assert external_quality["min_pce_loss_fraction"].limit == pytest.approx(0.01)
+    external_resolved = registry.lane("external-series-shunt-dc-operating-quadrant-v2")
     assert external_resolved.grid_values == external_circuit.grid_values
-    assert (
-        external_resolved.tolerance_factors
-        == external_circuit.tolerance_factors
-    )
+    assert external_resolved.tolerance_factors == external_circuit.tolerance_factors
     resolved_external_observables = {
         gate.metric: gate for gate in external_resolved.observables
     }
     assert resolved_external_observables[
         "terminal_power_quadrant_normalized_trace"
     ].limit == pytest.approx(0.005)
-    assert "terminal_current_normalized_trace" not in (
-        resolved_external_observables
-    )
+    assert "terminal_current_normalized_trace" not in (resolved_external_observables)
     resolved_external_quality = {
         gate.metric: gate for gate in external_resolved.quality_gates
     }
-    assert resolved_external_quality[
-        "terminal_quadrant_points_completed"
-    ].limit == 42.0
+    assert resolved_external_quality["terminal_quadrant_points_completed"].limit == 42.0
     electrothermal = registry.lane("electrothermal-terminal-mpp-v1")
     assert electrothermal.grid_values == (10, 15, 20)
     assert electrothermal.tolerance_factors == (1.0, 0.1, 0.01)
@@ -220,14 +303,9 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert electrothermal_quality["temperature_response_active_W_m2"].limit == (
         pytest.approx(1.0)
     )
-    electrothermal_resolved = registry.lane(
-        "electrothermal-terminal-mpp-resolved-v2"
-    )
+    electrothermal_resolved = registry.lane("electrothermal-terminal-mpp-resolved-v2")
     assert electrothermal_resolved.grid_values == (20, 30, 40)
-    assert (
-        electrothermal_resolved.tolerance_factors
-        == electrothermal.tolerance_factors
-    )
+    assert electrothermal_resolved.tolerance_factors == electrothermal.tolerance_factors
     assert electrothermal_resolved.observables == electrothermal.observables
     assert electrothermal_resolved.quality_gates == electrothermal.quality_gates
     assert electrothermal_resolved.options == electrothermal.options
@@ -240,10 +318,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         == electrothermal.tolerance_factors
     )
     assert electrothermal_grid_resolved.observables == electrothermal.observables
-    assert (
-        electrothermal_grid_resolved.quality_gates
-        == electrothermal.quality_gates
-    )
+    assert electrothermal_grid_resolved.quality_gates == electrothermal.quality_gates
     assert electrothermal_grid_resolved.options == electrothermal.options
     ion_dc = registry.lane("ionmonger-ion-aware-dc-v1")
     ion_dc_resolved = registry.lane("ionmonger-ion-aware-dc-resolved-v2")
@@ -254,14 +329,10 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert ion_dc_resolved.observables == ion_dc.observables
     assert ion_dc_resolved.quality_gates == ion_dc.quality_gates
     assert ion_dc_resolved.options == ion_dc.options
-    ion_impedance = registry.lane(
-        "ionmonger-ion-aware-impedance-resolved-v1"
-    )
+    ion_impedance = registry.lane("ionmonger-ion-aware-impedance-resolved-v1")
     assert ion_impedance.grid_values == (60, 90, 120)
     assert ion_impedance.tolerance_factors == (1.0, 0.5, 0.25)
-    assert ion_impedance.observables[0].comparison == (
-        "pointwise_relative_linf"
-    )
+    assert ion_impedance.observables[0].comparison == ("pointwise_relative_linf")
     csi_minimum = registry.lane("csi-qf-frequency-domain")
     csi_resolved = registry.lane("csi-qf-frequency-domain-resolved-v2")
     assert csi_minimum.grid_values == (100, 200, 300)
@@ -278,26 +349,23 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     interface_quality = {
         gate.metric: gate for gate in interface_charge_off.quality_gates
     }
-    assert interface_quality["max_interface_state_residual_A_m2"].limit == (
-        interface_quality["max_continuity_bound_A_m2"].limit
-    ) == pytest.approx(1.0e-4)
-    interface_charge = registry.lane(
-        "interface-charge-equilibrium-referenced-v1"
+    assert (
+        interface_quality["max_interface_state_residual_A_m2"].limit
+        == (interface_quality["max_continuity_bound_A_m2"].limit)
+        == pytest.approx(1.0e-4)
     )
+    interface_charge = registry.lane("interface-charge-equilibrium-referenced-v1")
     assert interface_charge.grid_values == (30, 60, 120)
     assert interface_charge.tolerance_factors == (1.0, 0.5, 0.25)
-    charged_observables = {
-        gate.metric: gate for gate in interface_charge.observables
-    }
+    charged_observables = {gate.metric: gate for gate in interface_charge.observables}
     assert charged_observables[
         "interface_trace_potential_shift_V"
     ].limit == pytest.approx(1.0e-3)
-    assert charged_observables[
-        "interface_sheet_charge_C_m2"
-    ].comparison == "pointwise_relative_linf"
-    charged_quality = {
-        gate.metric: gate for gate in interface_charge.quality_gates
-    }
+    assert (
+        charged_observables["interface_sheet_charge_C_m2"].comparison
+        == "pointwise_relative_linf"
+    )
+    charged_quality = {gate.metric: gate for gate in interface_charge.quality_gates}
     assert charged_quality["max_normalized_gauss_residual"].limit == (
         pytest.approx(1.0e-10)
     )
@@ -307,31 +375,24 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert charged_jv.tolerance_factors == (1.0, 0.5, 0.25)
     assert charged_jv.options["V_max_V"] == pytest.approx(0.1)
     assert charged_jv.options["voltage_points"] == 5
-    charged_jv_observables = {
-        gate.metric: gate for gate in charged_jv.observables
-    }
-    assert charged_jv_observables["jv_normalized"].limit == pytest.approx(
+    charged_jv_observables = {gate.metric: gate for gate in charged_jv.observables}
+    assert charged_jv_observables["jv_normalized"].limit == pytest.approx(0.005)
+    assert (
+        charged_jv_observables["interface_sheet_charge_C_m2"].comparison
+        == "pointwise_relative_linf"
+    )
+    charged_jv_quality = {gate.metric: gate for gate in charged_jv.quality_gates}
+    assert charged_jv_quality["reported_point_count"].limit == 5.0
+    assert charged_jv_quality["max_contact_fermi_level_span_eV"].limit == pytest.approx(
         0.005
     )
-    assert charged_jv_observables[
-        "interface_sheet_charge_C_m2"
-    ].comparison == "pointwise_relative_linf"
-    charged_jv_quality = {
-        gate.metric: gate for gate in charged_jv.quality_gates
-    }
-    assert charged_jv_quality["reported_point_count"].limit == 5.0
-    assert charged_jv_quality[
-        "max_contact_fermi_level_span_eV"
-    ].limit == pytest.approx(0.005)
     assert charged_jv_quality["continuation_bridge_count"].limit == 8.0
     stress = registry.lane("interface-charge-device-stress-v1")
     assert stress.grid_values == (30, 60)
     assert stress.tolerance_factors == (1.0, 0.5)
     assert len(stress.matrix_points) == 4
     assert len(stress.options["stress_points"]) == 9
-    assert {
-        point["axis"] for point in stress.options["stress_points"]
-    } == {
+    assert {point["axis"] for point in stress.options["stress_points"]} == {
         "baseline",
         "trap_energy",
         "conduction_band_offset",
@@ -340,15 +401,11 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     }
     stress_quality = {gate.metric: gate for gate in stress.quality_gates}
     assert stress_quality["stress_point_count"].limit == 9.0
-    assert stress_quality[
-        "barrier_shift_charge_sign_consistent"
-    ].limit == 1.0
+    assert stress_quality["barrier_shift_charge_sign_consistent"].limit == 1.0
     assert stress_quality["max_normalized_gauss_residual"].limit == (
         pytest.approx(1.0e-10)
     )
-    resolved_stress = registry.lane(
-        "interface-charge-device-stress-resolved-v2"
-    )
+    resolved_stress = registry.lane("interface-charge-device-stress-resolved-v2")
     assert resolved_stress.grid_values == (30, 60, 90)
     assert resolved_stress.tolerance_factors == stress.tolerance_factors
     assert len(resolved_stress.matrix_points) == 6
@@ -363,67 +420,54 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert {
         key: value
         for key, value in resolved_stress.options.items()
-        if key not in {
+        if key
+        not in {
             "base_finite_difference_step",
             "refine_finite_difference_step",
         }
     } == {
         key: value
         for key, value in stress.options.items()
-        if key not in {
+        if key
+        not in {
             "base_finite_difference_step",
             "refine_finite_difference_step",
         }
     }
-    combined_dae = registry.lane(
-        "single-ion-algebraic-interface-dae-transient-v1"
-    )
+    combined_dae = registry.lane("single-ion-algebraic-interface-dae-transient-v1")
     assert combined_dae.grid_values == (4, 8, 16)
     assert combined_dae.tolerance_factors == (1.0, 0.5, 0.25)
-    combined_observables = {
-        gate.metric: gate for gate in combined_dae.observables
-    }
+    combined_observables = {gate.metric: gate for gate in combined_dae.observables}
     assert combined_observables[
         "structured_dense_terminal_log_density_difference"
     ].limit == pytest.approx(1.0e-9)
     assert combined_observables[
         "terminal_positive_ion_relative_error"
     ].limit == pytest.approx(1.0e-6)
-    combined_quality = {
-        gate.metric: gate for gate in combined_dae.quality_gates
-    }
+    combined_quality = {gate.metric: gate for gate in combined_dae.quality_gates}
     assert combined_quality[
         "max_positive_ion_inventory_relative_drift"
     ].limit == pytest.approx(1.0e-12)
     assert combined_quality[
         "max_terminal_interface_state_relative_error"
     ].limit == pytest.approx(5.0e-7)
-    assert combined_quality[
-        "structured_csr_nonzeros_per_node"
-    ].limit == pytest.approx(27.0)
+    assert combined_quality["structured_csr_nonzeros_per_node"].limit == pytest.approx(
+        27.0
+    )
     assert combined_quality["structured_rhs_work_fraction"].limit == (
         pytest.approx(0.1)
     )
     assert combined_dae.options["positive_ion_diffusion_m2_s"] == (
         pytest.approx(1.0e-16)
     )
-    assert combined_dae.options["positive_ion_reference_m3"] == (
-        pytest.approx(1.0e22)
-    )
-    assert combined_dae.options["positive_ion_site_limit_m3"] == (
-        pytest.approx(1.0e24)
-    )
-    assert combined_dae.options["newton_residual_tolerance"] == (
-        pytest.approx(1.0e-8)
-    )
+    assert combined_dae.options["positive_ion_reference_m3"] == (pytest.approx(1.0e22))
+    assert combined_dae.options["positive_ion_site_limit_m3"] == (pytest.approx(1.0e24))
+    assert combined_dae.options["newton_residual_tolerance"] == (pytest.approx(1.0e-8))
     resolved_combined_dae = registry.lane(
         "single-ion-algebraic-interface-dae-transient-resolved-v2"
     )
     assert resolved_combined_dae.grid_values == combined_dae.grid_values
-    assert (
-        resolved_combined_dae.tolerance_factors
-        == combined_dae.tolerance_factors
-    )
+    assert resolved_combined_dae.tolerance_factors == combined_dae.tolerance_factors
     resolved_observables = {
         gate.metric: gate for gate in resolved_combined_dae.observables
     }
@@ -433,27 +477,23 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     resolved_quality = {
         gate.metric: gate for gate in resolved_combined_dae.quality_gates
     }
-    assert resolved_quality[
-        "max_normalized_carrier_residual"
-    ].limit == pytest.approx(5.0e-8)
+    assert resolved_quality["max_normalized_carrier_residual"].limit == pytest.approx(
+        5.0e-8
+    )
     assert resolved_quality[
         "max_terminal_positive_ion_relative_error"
     ].limit == pytest.approx(1.0e-5)
     assert resolved_combined_dae.options["newton_residual_tolerance"] == (
         pytest.approx(5.0e-8)
     )
-    distributed_defect = registry.lane(
-        "distributed-explicit-defect-qf-dc-v1"
-    )
+    distributed_defect = registry.lane("distributed-explicit-defect-qf-dc-v1")
     assert distributed_defect.grid_values == (16, 32, 64)
     assert distributed_defect.tolerance_factors == (1.0, 0.1, 0.01)
     assert distributed_defect.options["energy_quadrature_orders"] == [16, 32, 64]
     distributed_observables = {
         gate.metric: gate for gate in distributed_defect.observables
     }
-    assert distributed_observables["jv_current_A_m2"].limit == pytest.approx(
-        0.002
-    )
+    assert distributed_observables["jv_current_A_m2"].limit == pytest.approx(0.002)
     assert distributed_observables[
         "dark_source_occupancy_profile"
     ].limit == pytest.approx(0.005)
@@ -464,40 +504,24 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert distributed_quality[
         "max_energy_tangent_relative_change"
     ].limit == pytest.approx(0.005)
-    assert distributed_quality[
-        "default_distributed_path_rejected"
-    ].limit == 1.0
-    spatial_defect = registry.lane(
-        "spatially-graded-explicit-defect-qf-dc-v1"
-    )
+    assert distributed_quality["default_distributed_path_rejected"].limit == 1.0
+    spatial_defect = registry.lane("spatially-graded-explicit-defect-qf-dc-v1")
     assert spatial_defect.grid_values == (16, 32, 64)
     assert spatial_defect.tolerance_factors == (1.0, 0.1, 0.01)
     assert spatial_defect.options["energy_quadrature_orders"] == [16, 32, 64]
-    spatial_observables = {
-        gate.metric: gate for gate in spatial_defect.observables
-    }
+    spatial_observables = {gate.metric: gate for gate in spatial_defect.observables}
     assert spatial_observables[
         "dark_source_density_multiplier_profile"
     ].limit == pytest.approx(1.0e-12)
-    assert spatial_observables["jv_current_A_m2"].limit == pytest.approx(
-        0.002
-    )
-    spatial_quality = {
-        gate.metric: gate for gate in spatial_defect.quality_gates
-    }
+    assert spatial_observables["jv_current_A_m2"].limit == pytest.approx(0.002)
+    spatial_quality = {gate.metric: gate for gate in spatial_defect.quality_gates}
     assert spatial_quality["profiled_species_count"].limit == 3.0
-    assert spatial_quality[
-        "minimum_support_margin_eV"
-    ].limit == pytest.approx(0.04)
-    assert spatial_quality[
-        "graded_profiles_compiled_verified"
-    ].limit == 1.0
+    assert spatial_quality["minimum_support_margin_eV"].limit == pytest.approx(0.04)
+    assert spatial_quality["graded_profiles_compiled_verified"].limit == 1.0
     cigs_optics = registry.lane("cigs-graded-optics-v1")
     assert cigs_optics.grid_values == (8, 16, 32)
     assert cigs_optics.tolerance_factors == (1.0, 0.5, 0.25)
-    cigs_observables = {
-        gate.metric: gate for gate in cigs_optics.observables
-    }
+    cigs_observables = {gate.metric: gate for gate in cigs_optics.observables}
     assert cigs_observables["normalized_generation_profile"].limit == (
         pytest.approx(0.005)
     )
@@ -505,9 +529,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert cigs_quality[
         "max_electrical_optical_gap_mismatch_eV"
     ].limit == pytest.approx(0.01)
-    assert cigs_quality[
-        "independent_carron_energy_points_completed"
-    ].limit == 453.0
+    assert cigs_quality["independent_carron_energy_points_completed"].limit == 453.0
     with pytest.raises(FrozenInstanceError):
         registry.lanes[0].grid_values = (1, 2)  # type: ignore[misc]
 
@@ -516,9 +538,7 @@ def test_pointwise_relative_linf_does_not_hide_small_frequency_bins():
     coarse = MetricValue.from_value("spectrum", [1000.0, 1.0])
     fine = MetricValue.from_value("spectrum", [1000.0, 1.1])
     global_gate = ObservableGate("spectrum", "relative_linf", 0.01)
-    pointwise_gate = ObservableGate(
-        "spectrum", "pointwise_relative_linf", 0.01
-    )
+    pointwise_gate = ObservableGate("spectrum", "pointwise_relative_linf", 0.01)
 
     assert _observable_delta(coarse, fine, global_gate) < global_gate.limit
     assert _observable_delta(coarse, fine, pointwise_gate) > pointwise_gate.limit
@@ -972,9 +992,9 @@ def test_certificate_and_registry_reject_unknown_or_malformed_fields(tmp_path):
             encoding="utf-8"
         )
     )
-    malformed_raw["lanes"]["scaps-mirror-frozen-ion-ss"]["observables"][
-        "voc_V"
-    ] = "not-a-mapping"
+    malformed_raw["lanes"]["scaps-mirror-frozen-ion-ss"]["observables"]["voc_V"] = (
+        "not-a-mapping"
+    )
     malformed_path = tmp_path / "malformed-registry.yaml"
     malformed_path.write_text(yaml.safe_dump(malformed_raw), encoding="utf-8")
     with pytest.raises(NumericalCertificateError, match="must be a mapping"):

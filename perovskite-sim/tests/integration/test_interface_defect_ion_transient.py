@@ -83,6 +83,7 @@ def test_positive_ion_and_shared_interface_trap_certify_one_sparse_dae(
     assert certificate.microscopic_binding_certified
     assert certificate.sparse_linear_solver_used
     assert not certificate.clipping_used
+    assert certificate.near_acceptance_nonmonotone_step_count == 0
     assert certificate.analytic_jacobian_nnz < certificate.dense_jacobian_entries
     assert certificate.maximum_analytic_jacobian_column_relative_error < 1.0e-5
     assert certificate.maximum_charge_balance_relative_error < 1.0e-10
@@ -173,12 +174,33 @@ def test_dynamic_charge_uses_same_interior_control_volume_as_terminal_faces(
         result.integrated_free_interface_ion_charge_C_m2
         - result.integrated_free_interface_ion_charge_C_m2[0]
     )
+    physical_array_roundoff = (
+        8.0
+        * np.finfo(float).eps
+        * float(
+            np.max(
+                np.sum(
+                    Q
+                    * (
+                        np.abs(result.hole_density_m3[:, 1:-1])
+                        + np.abs(result.electron_density_m3[:, 1:-1])
+                        + np.abs(result.positive_ion_density_m3[:, 1:-1])
+                    )
+                    * widths[None, 1:-1],
+                    axis=1,
+                )
+                + np.sum(np.abs(result.interface_sheet_charge_C_m2), axis=1)
+            )
+        )
+    )
 
     np.testing.assert_allclose(
         measured_increment,
         expected_increment,
         rtol=2.0e-8,
-        atol=1.0e-20,
+        # Public density arrays have already rounded away sub-ULP coordinate
+        # motion; the certified charge trace retains it through stable increments.
+        atol=physical_array_roundoff,
     )
 
 
@@ -241,6 +263,28 @@ def test_slow_ion_limit_freezes_ions_without_freezing_interface_traps():
         np.max(np.abs(slow.interface_occupancy[-1] - slow.interface_occupancy[0]))
         > 1.0e-9
     )
+
+
+def test_deep_time_refinement_retains_charge_and_all_face_current_closure():
+    stack = _stack()
+    policy = replace(
+        InterfaceDefectIonTransientPolicy(),
+        refinement_substeps=(4, 8, 16),
+    )
+
+    result = run_interface_defect_ion_device_transient(
+        _interface_grid(stack),
+        stack,
+        TIMES_S,
+        np.array([0.0, 0.05, 0.05, 0.05]),
+        policy=policy,
+    )
+
+    assert result.certificate.certified
+    assert result.certificate.maximum_charge_balance_relative_error < 1.0e-10
+    assert result.certificate.maximum_all_face_current_spread_relative < 2.0e-6
+    assert result.certificate.maximum_refinement_state_change < 2.0e-5
+    assert result.certificate.maximum_refinement_current_relative_change < 1.0e-7
 
 
 def test_overstrict_interface_current_gate_fails_closed():

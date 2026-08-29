@@ -138,12 +138,35 @@ def test_bulk_terminal_charge_uses_the_interior_face_control_volume():
         result.integrated_free_trap_ion_charge_C_m2
         - result.integrated_free_trap_ion_charge_C_m2[0]
     )
+    physical_array_roundoff = (
+        8.0
+        * np.finfo(float).eps
+        * float(
+            np.max(
+                np.sum(
+                    (
+                        Q
+                        * (
+                            np.abs(result.hole_density_m3[:, 1:-1])
+                            + np.abs(result.electron_density_m3[:, 1:-1])
+                            + np.abs(result.positive_ion_density_m3[:, 1:-1])
+                        )
+                        + np.abs(result.trap_charge_density_C_m3[:, 1:-1])
+                    )
+                    * widths[None, 1:-1],
+                    axis=1,
+                )
+            )
+        )
+    )
 
     np.testing.assert_allclose(
         measured_increment,
         bulk_increment + ion_increment,
         rtol=2.0e-8,
-        atol=1.0e-20,
+        # Public density arrays have already rounded away sub-ULP coordinate
+        # motion; the certified charge trace retains it through stable increments.
+        atol=physical_array_roundoff,
     )
 
 

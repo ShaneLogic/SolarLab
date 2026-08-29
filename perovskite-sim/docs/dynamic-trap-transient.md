@@ -307,6 +307,57 @@ fail-closed on relative charge/current gates because the displacement-current
 difference approaches the double-precision subtraction floor. That low-signal
 case is an E3c numerical-range item, not a reason to relax the declared gates.
 
+## D6-E3c source-bound timescale refinement
+
+The source-bound E3c adapter executes the same E3b index-1 DAE in three frozen
+timescale cases. The combined case uses the source ion diffusivity and capture
+kinetics. The defect-dominated case changes only active-source-layer ion
+diffusivity from `1e-14` to `1e-20 m2/s`. The ion-dominated case changes only
+the microscopic electron and hole capture cross sections by a factor of
+`1e-12`. Every override, source identity, time/voltage history, grid axis,
+time-step axis, solver policy, observable gate, and quality gate is included in
+one canonical protocol hash shared by all nine matrix cells.
+
+The production candidate fixture confines mobile ions to the absorber. An
+ion-inactive ETL retains its structural site density but has `D_ion=0`; this
+avoids introducing a zero-density steric boundary as a differentiable state.
+Ion diffusivity overrides apply only to source layers that are already mobile.
+The positive-ion centroid integrates only the active component with the same
+endpoint-inclusive dual-cell widths used by the finite-volume inventory.
+
+Cross-grid transient comparisons are reference relative:
+
+```text
+Delta f(t)     = f(t) - f(0),
+Delta x_ion(t) = x_ion(t) - x_ion(0),
+Delta Q(t)     = Q(t) - Q(0).
+```
+
+Each `t=0` state must still be residual-, contact-, and operating-point
+certified. Comparing these changes prevents grid-dependent coarse DC baselines
+from being misclassified as transient nonconvergence. Terminal current remains
+an absolute observable. Earlier v3 and v4 lanes are retained as immutable
+partial evidence: v3 used absolute DC-sensitive centroid and charge, while v4
+still used absolute interface occupancy and required an unnecessarily narrow
+line-search-only stiffness outcome.
+
+The accelerated `D_ion=1e-12 m2/s` probe is a fail-closed stiffness boundary,
+not a physical solution. Protocol v2 accepts only a typed line-search stall or
+a typed Newton iteration limit. Both outcomes must report a machine-readable
+iteration and finite residual above the registered nonlinear acceptance.
+Iteration-limit errors also report charge, all-face current, interface current,
+and linear backward errors. Unknown or unstructured failures fail the quality
+contract.
+
+The dirty-source v5 provisional matrix completed all nine cells without reuse,
+failure, or missing artifacts and passed 339 of 339 certificate checks. Its
+largest terminal grid/tolerance comparisons included `4.57e-10 C/m2` integrated
+charge change against a `1e-9 C/m2` limit, `3.82e-13 m` centroid shift against a
+`5e-11 m` limit, and `2.02e-6 A/m2` terminal current against a `1e-5 A/m2`
+limit. This is source-bound internal numerical evidence. A checkpoint commit,
+new-commit source-clean matrix, and full Python suite remain required before
+E3c is complete.
+
 ## Evidence and remaining boundary
 
 Unit tests cover strict boundedness, endpoint/non-finite rejection, one- and
@@ -336,27 +387,25 @@ current; full-column analytic-Jacobian comparison; nested time refinement;
 the slow-ion frozen limit; immutable output; pre-clipping rejection; and
 over-strict partial/fail-closed behavior.
 
-The D6-E3b integration tests cover the corresponding three ion
-layouts with one microscopic two-sided interface, exact sheet charge and
+The D6-E3b integration tests cover the corresponding three ion layouts with
+one microscopic two-sided interface, exact sheet charge and
 carrier/ion/displacement decomposition, left/right interface totals, the
 interior terminal-charge control volume, endpoint-inclusive component
 inventories, full-column analytic Jacobian comparison, slow-ion separation,
 immutable output, pre-clipping rejection, and over-strict fail-closed behavior.
-The focused file has 12 passing tests; the related E2/E3a/E3b/D5/ion/two-sided
-set has 83 passing tests. The pinned single-thread default Python suite has
-3327 passing tests, 2 skips, 267 deselections, and 12 pre-existing `np.trapz`
-deprecation warnings. The checkpoint commit and source-clean E3c evidence
-remain pending.
+That checkpoint is committed and pushed with 12 focused tests, 83 related
+tests, and a pinned default suite of 3327 passes, 2 skips, and 267 deselections.
 
-The E3a focused integration file has 13 passing tests. The combined D5 AC,
-D6-E1, ion-migration, dynamic-state, and structured-Jacobian regression set has
-70 passing tests. The pinned single-thread default Python suite has 3314
-passing tests, 2 skips, 267 deselections, and 12 pre-existing `np.trapz`
-deprecation warnings.
+E3c adds cancellation-safe coordinate-to-storage increments, strict
+source/case/protocol identity, the three timescale cases, and the 3 by 3
+space/time refinement matrix. The current v5 contract/registry set has 32
+passing tests. Dynamic-storage and bulk/interface trap/ion transient related
+tests have 76 passes. The provisional certificate has no failed checks, while
+v3 and v4 partial certificates remain preserved. The full-suite count and
+source-clean v5 certificate must be recorded after the implementation commit.
 
-This is internal numerical and physical-logic evidence, not external SCAPS or
-experimental validation. D6-E3b is not complete until its documentation/diff
-audit, checkpoint commit, and push close. Even then, the overall combined lane
-still requires the explicit stiffness/timescale and source-bound matrix in
-D6-E3c. Protocol hashes, backend preflight, frontend controls, and source-clean
-production matrices belong to D6-E4.
+This remains internal numerical and physical-logic evidence, not external
+SCAPS or experimental validation. D6-E3c is incomplete until the checkpoint
+commit, source-clean matrix, full Python suite, documentation audit, and push
+close. Protocol-bound public experiment results, backend preflight, and
+frontend controls belong to D6-E4.

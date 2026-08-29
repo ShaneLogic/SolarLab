@@ -341,6 +341,10 @@ def test_unsupported_physics_fails_closed_before_transient(case, message):
     (
         ({"storage_relative_tolerance": 0.0}, "finite and positive"),
         ({"maximum_newton_iterations": 0}, "must be positive"),
+        (
+            {"maximum_near_acceptance_nonmonotone_steps": -1},
+            "must be non-negative",
+        ),
         ({"refinement_substeps": (1,)}, "at least two"),
         ({"refinement_substeps": (1, 3, 4)}, "nested"),
     ),
@@ -348,3 +352,9 @@ def test_unsupported_physics_fails_closed_before_transient(case, message):
 def test_policy_rejects_incomplete_numerical_contract(updates, message):
     with pytest.raises(ValueError, match=message):
         InterfaceDefectTransientPolicy(**updates)
+
+
+@pytest.mark.parametrize("value", (True, 1.5, "2"))
+def test_nonmonotone_budget_requires_an_explicit_integer(value):
+    with pytest.raises(TypeError, match="must be an integer"):
+        InterfaceDefectTransientPolicy(maximum_near_acceptance_nonmonotone_steps=value)
