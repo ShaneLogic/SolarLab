@@ -3,9 +3,11 @@
 ## Scope
 
 D6-E0 establishes the local time-domain contract for one single-level,
-monovalent trap. D6-E1 adds a separate research-only bulk-device transient,
-and D6-E2 adds a research-only two-sided-interface device transient. None of
-these checkpoints modifies the historical method-of-lines state vector.
+monovalent trap. D6-E1 and D6-E2 add separate research-only bulk and
+two-sided-interface device transients. D6-E3a adds bulk-defect/mobile-ion
+coupling, and D6-E3b adds the corresponding two-sided-interface/mobile-ion
+coupling. None of these checkpoints modifies the historical method-of-lines
+state vector.
 
 The supported charge transitions are acceptor and donor. Neutral transitions
 are rejected on this charge-coupled path because a changing neutral occupancy
@@ -35,8 +37,8 @@ u = log(f / (1 - f)),     0 < f < 1.
 No accepted-step clipping or endpoint repair is allowed. A non-finite
 coordinate or a coordinate whose floating-point reconstruction saturates at
 zero or one fails closed. The bulk-device route appends these coordinates to
-its own opt-in DAE layout; D6-E2 will do the same for shared interface
-occupancies rather than changing the legacy layout.
+its own opt-in DAE layout; the two-sided routes do the same for shared
+interface occupancies rather than changing the legacy layout.
 
 ## Local equations
 
@@ -92,6 +94,11 @@ The absolute trap charge differs: `Q_acceptor = -q f` and
   advances one shared areal occupancy per physical interface together with
   bulk carriers, bulk electrostatic potential, and retained two-sided trace
   variables.
+- `experiments.bulk_defect_ion_transient.run_bulk_defect_ion_device_transient`
+  adds positive/negative mobile-ion log-density storage to the bulk-defect DAE.
+- `experiments.interface_defect_ion_transient.run_interface_defect_ion_device_transient`
+  adds the same ion storage and analytic face-flux tangent to the retained
+  two-sided-interface DAE.
 
 ## D6-E1 device closure
 
@@ -230,10 +237,12 @@ J_conduction = Jn + Jp + q*F_positive - q*F_negative,
 J_total = J_conduction + polarity*eps*(E[k] - E[k-1])/dt.
 ```
 
-There is no synthetic trap- or ion-storage terminal channel. Global charge
-balance includes free carriers, absolute trap charge, and both ion species.
-Each contiguous mobile region also has a separate inventory certificate using
-the solver's endpoint-inclusive dual-cell widths; positive and negative
+There is no synthetic trap- or ion-storage terminal channel. Terminal charge
+balance integrates free carriers, absolute trap charge, and ion charge over
+the interior control volume bounded by the first and last reported transport
+faces. Each contiguous mobile region separately has a full inventory
+certificate using the solver's endpoint-inclusive dual-cell widths. The two
+integrals intentionally have different boundaries, and positive and negative
 inventories cannot cancel one another into a false pass.
 
 The ion part of the sparse Jacobian uses `ion_face_flux_jacobian()`, including
@@ -249,6 +258,54 @@ and `1e-14 m2/s` certify, including the slow-ion frozen limit. Deliberately
 accelerated `1e-12` and `1e-10 m2/s` probes currently stall the line search at
 a scaled residual near `1.86e6`; this is a recorded D6-E3c stiffness-solver
 entry condition, not a certified range and not silently recovered.
+
+## D6-E3b two-sided-interface/mobile-ion closure
+
+The second combined lane retains all D6-E2 variables and appends one
+reference-relative log-density coordinate per active positive or negative ion
+node. For `N` nodes, `K` interfaces, and `M_ion` active ion coordinates, the
+coordinate dimension is
+
+```text
+3 * (N - 2) + 7 * K + M_ion.
+```
+
+The shared storage and algebraic rows are
+
+```text
+S = [n_interior, p_interior, Nt_area*f, P_positive, P_negative],
+P_bulk(phi, n, p, sigma_if, P_positive, P_negative) = 0,
+G_trace(phi_Ls, phi_Rs, sigma_if) = 0,
+B_carrier(n_Ls, p_Ls, n_Rs, p_Rs, f) = 0.
+```
+
+The same microscopic four-leg capture law drives carrier continuity and the
+shared occupancy. The same ion densities drive Poisson, ion continuity, and
+the analytic `ion_face_flux_jacobian()`. At the physical interface, the ionic
+face current crosses the same geometrical face and is added identically to the
+left and right carrier observations; it is not assigned to the trap storage.
+The certificate independently checks the two interface totals, every ordinary
+face total, the interior carrier/interface/ion charge balance, and full
+per-component ion inventories.
+
+Electrostatic displacement is evaluated from the potential increment before
+the spatial difference,
+
+```text
+Delta E = -diff(phi[k] - phi[k-1]) / diff(x),
+```
+
+rather than subtracting two separately formed large electric fields. The local
+interface capacitive drops use the same increment-first form. This is
+algebraically identical but avoids unnecessary floating-point cancellation.
+No current-closure value is projected or repaired after the solve.
+
+The implementation is currently at an intermediate checkpoint. Positive-only,
+dual-ion, and negative-only 10 mV traces certify, including full-column
+Jacobian comparison and nested time refinement. A 0.1 mV probe remains
+fail-closed on relative charge/current gates because the displacement-current
+difference approaches the double-precision subtraction floor. That low-signal
+case is an E3c numerical-range item, not a reason to relax the declared gates.
 
 ## Evidence and remaining boundary
 
@@ -279,6 +336,18 @@ current; full-column analytic-Jacobian comparison; nested time refinement;
 the slow-ion frozen limit; immutable output; pre-clipping rejection; and
 over-strict partial/fail-closed behavior.
 
+The D6-E3b integration tests cover the corresponding three ion
+layouts with one microscopic two-sided interface, exact sheet charge and
+carrier/ion/displacement decomposition, left/right interface totals, the
+interior terminal-charge control volume, endpoint-inclusive component
+inventories, full-column analytic Jacobian comparison, slow-ion separation,
+immutable output, pre-clipping rejection, and over-strict fail-closed behavior.
+The focused file has 12 passing tests; the related E2/E3a/E3b/D5/ion/two-sided
+set has 83 passing tests. The pinned single-thread default Python suite has
+3327 passing tests, 2 skips, 267 deselections, and 12 pre-existing `np.trapz`
+deprecation warnings. The checkpoint commit and source-clean E3c evidence
+remain pending.
+
 The E3a focused integration file has 13 passing tests. The combined D5 AC,
 D6-E1, ion-migration, dynamic-state, and structured-Jacobian regression set has
 70 passing tests. The pinned single-thread default Python suite has 3314
@@ -286,8 +355,8 @@ passing tests, 2 skips, 267 deselections, and 12 pre-existing `np.trapz`
 deprecation warnings.
 
 This is internal numerical and physical-logic evidence, not external SCAPS or
-experimental validation. D6-E3a does not complete the overall combined lane:
-two-sided interface defects plus ions remain D6-E3b, while the explicit
-stiffness/timescale and source-bound matrix remains D6-E3c. Protocol hashes,
-backend preflight, frontend controls, and source-clean production matrices
-belong to D6-E4.
+experimental validation. D6-E3b is not complete until its documentation/diff
+audit, checkpoint commit, and push close. Even then, the overall combined lane
+still requires the explicit stiffness/timescale and source-bound matrix in
+D6-E3c. Protocol hashes, backend preflight, frontend controls, and source-clean
+production matrices belong to D6-E4.

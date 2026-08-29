@@ -1028,18 +1028,20 @@ class _InterfaceTransientSystem:
                     * float(self.material.eps_r[right])
                     / float(self.material.iface_qss_right_distances_m[index])
                 )
-                left_drop = item.trace_potential[0] - state.phi[left]
-                old_left_drop = (
-                    previous.local[index].trace_potential[0] - previous.phi[left]
+                trace_increment = (
+                    item.trace_potential - previous.local[index].trace_potential
                 )
-                right_drop = item.trace_potential[1] - state.phi[right]
-                old_right_drop = (
-                    previous.local[index].trace_potential[1] - previous.phi[right]
+                bulk_increment = np.array(
+                    [
+                        state.phi[left] - previous.phi[left],
+                        state.phi[right] - previous.phi[right],
+                    ]
                 )
+                drop_increment = trace_increment - bulk_increment
                 displacement[index] = self.polarity * np.array(
                     [
-                        -capacitance_left * (left_drop - old_left_drop) / dt,
-                        capacitance_right * (right_drop - old_right_drop) / dt,
+                        -capacitance_left * drop_increment[0] / dt,
+                        capacitance_right * drop_increment[1] / dt,
                     ],
                     dtype=float,
                 )
@@ -1807,10 +1809,9 @@ def _integrate_trace(
             )
             point_iterations += count
             coordinate = state.coordinate.copy()
-            field = -np.diff(state.phi) / np.diff(system.grid)
-            previous_field = -np.diff(previous_phi) / np.diff(system.grid)
+            field_increment = -np.diff(state.phi - previous_phi) / np.diff(system.grid)
             final_displacement = (
-                system.polarity * system.eps_face * (field - previous_field) / dt
+                system.polarity * system.eps_face * field_increment / dt
             )
             (
                 final_interface_conduction,

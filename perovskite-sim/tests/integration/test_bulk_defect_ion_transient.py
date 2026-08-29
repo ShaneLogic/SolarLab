@@ -7,6 +7,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from perovskite_sim.constants import Q
 from perovskite_sim.experiments.bulk_defect_ion_transient import (
     BULK_DEFECT_ION_TRANSIENT_SCOPE,
     BulkDefectIonTransientCertificationError,
@@ -15,6 +16,7 @@ from perovskite_sim.experiments.bulk_defect_ion_transient import (
     run_bulk_defect_ion_device_transient,
 )
 from perovskite_sim.models.defects import EFFECTIVE_LIFETIME
+from perovskite_sim.physics.generation import dual_cell_widths
 from tests.integration.test_defect_ion_combined_impedance import (
     _bulk_defect_stack,
     _bulk_grid,
@@ -103,6 +105,46 @@ def test_positive_ion_and_bulk_trap_share_one_certified_sparse_dae():
     )
     assert np.all(result.displacement_current_faces_A_m2[0] == 0.0)
     assert np.any(result.newton_iterations[1:] > 0)
+
+
+def test_bulk_terminal_charge_uses_the_interior_face_control_volume():
+    stack = _stack()
+    grid = _bulk_grid(stack, 4)
+    result = run_bulk_defect_ion_device_transient(
+        grid,
+        stack,
+        TIMES_S,
+        VOLTAGE_V,
+    )
+    widths = dual_cell_widths(grid)
+    carrier_trap_charge = (
+        Q * (result.hole_density_m3 - result.electron_density_m3)
+        + result.trap_charge_density_C_m3
+    )
+    bulk_increment = np.sum(
+        (carrier_trap_charge[:, 1:-1] - carrier_trap_charge[0, 1:-1])
+        * widths[None, 1:-1],
+        axis=1,
+    )
+    ion_increment = Q * np.sum(
+        (
+            result.positive_ion_density_m3[:, 1:-1]
+            - result.positive_ion_density_m3[0, 1:-1]
+        )
+        * widths[None, 1:-1],
+        axis=1,
+    )
+    measured_increment = (
+        result.integrated_free_trap_ion_charge_C_m2
+        - result.integrated_free_trap_ion_charge_C_m2[0]
+    )
+
+    np.testing.assert_allclose(
+        measured_increment,
+        bulk_increment + ion_increment,
+        rtol=2.0e-8,
+        atol=1.0e-20,
+    )
 
 
 @pytest.mark.parametrize(

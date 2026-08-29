@@ -1152,10 +1152,9 @@ def _integrate_trace(
             )
             point_iterations += count
             coordinate = state.coordinate.copy()
-            field = -np.diff(state.phi) / np.diff(system.grid)
-            previous_field = -np.diff(previous_phi) / np.diff(system.grid)
+            field_increment = -np.diff(state.phi - previous_phi) / np.diff(system.grid)
             final_displacement = (
-                system.polarity * system.eps_face * (field - previous_field) / dt
+                system.polarity * system.eps_face * field_increment / dt
             )
             final_total = state.conduction + final_displacement
             charge = system.integrated_charge(state)
