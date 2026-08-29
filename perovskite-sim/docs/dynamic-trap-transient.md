@@ -3,8 +3,8 @@
 ## Scope
 
 D6-E0 establishes the local time-domain contract for one single-level,
-monovalent trap. It does not expose a device transient method and does not
-modify the historical method-of-lines state vector.
+monovalent trap. D6-E1 adds a separate research-only bulk-device transient.
+Neither checkpoint modifies the historical method-of-lines state vector.
 
 The supported charge transitions are acceptor and donor. Neutral transitions
 are rejected on this charge-coupled path because a changing neutral occupancy
@@ -33,8 +33,9 @@ u = log(f / (1 - f)),     0 < f < 1.
 
 No accepted-step clipping or endpoint repair is allowed. A non-finite
 coordinate or a coordinate whose floating-point reconstruction saturates at
-zero or one fails closed. Device coupling will append these coordinates to a
-new, opt-in transient layout in D6-E1/E2 rather than changing the legacy layout.
+zero or one fails closed. The bulk-device route appends these coordinates to
+its own opt-in DAE layout; D6-E2 will do the same for shared interface
+occupancies rather than changing the legacy layout.
 
 ## Local equations
 
@@ -82,6 +83,57 @@ The absolute trap charge differs: `Q_acceptor = -q f` and
 - `solver.trap_transient.solve_local_trap_transient` integrates the logit ODE
   with Radau or BDF and an analytic 1-by-1 Jacobian, then certifies every output
   sample against the oracle and local charge balance.
+- `experiments.bulk_defect_transient.run_bulk_defect_device_transient` advances
+  carrier storage and occupied-trap storage with a backward-Euler index-1 DAE.
+  Its coordinates are interior electron/hole quasi-Fermi increments, trap
+  logit increments, and interior electrostatic-potential increments.
+
+## D6-E1 device closure
+
+Poisson remains an algebraic row instead of being eliminated from the time
+step. This preserves a sparse analytic Jacobian with four block types:
+
+- local carrier storage derivatives;
+- nearest-neighbour Scharfetter-Gummel current derivatives;
+- separate electron/hole capture and local recombination derivatives;
+- local trap-charge and electrostatic Poisson derivatives.
+
+Each implicit step solves
+
+```text
+S(z[k]) - S(z[k-1]) - dt R(z[k]) = 0,
+P(z[k], V[k]) = 0,
+```
+
+where `S = [n, p, Nt*f]`. The implementation uses a sparse direct Newton
+solve and a non-clipping line search. A centered-difference audit of every
+Jacobian column is retained in the result certificate. Componentwise storage
+scales are separate for carriers and occupied traps; carrier rows also include
+an explicitly derived floating-point floor for subtracting adjacent large face
+currents at a DC root.
+
+The terminal current is not augmented by a synthetic trap-current term:
+
+```text
+J_total[k] = Jn[k] + Jp[k]
+             + polarity * eps * (E[k] - E[k-1]) / dt.
+```
+
+Trap charge changes Poisson and therefore the displacement term. Independently,
+the solver compares the integrated change of `q(p-n) + rho_trap` against the
+left/right conduction-current difference. It also reconstructs every returned
+state with the eliminated-Poisson QF operator and requires the two operators to
+agree.
+
+The voltage history is right-continuous step-and-hold. Nested substeps are run
+inside every requested output interval, and the last two levels must agree in
+carrier/trap/potential state and terminal current. The initial state must be a
+residual- and contact-thermodynamically-certified QF/DC state from the same
+defect model.
+
+D6-E1 deliberately accepts only non-spatial, single-level acceptor/donor bulk
+species, no interface states, no mobile ions, no selective contacts, and no
+non-local photon recycling. Unsupported physics fails before integration.
 
 ## Evidence and remaining boundary
 
@@ -90,9 +142,14 @@ two-sided reservoirs, donor/acceptor charge signs, detailed balance, analytic
 centered differences, exact relaxation, tolerance refinement, fast-QSS and
 slow-frozen limits, immutable evidence, and fail-closed certification gates.
 
-This evidence is local only. D6-E1 must still prove, in one device solve, that
-bulk capture enters the separate electron/hole continuity equations, trap
-charge enters Poisson, trap storage contributes to displacement/terminal
-current, componentwise tolerances include occupancy coordinates, and the
-structured Jacobian outperforms a dense finite-difference baseline. D6-E2 and
-D6-E3 separately close two-sided interface traps and mobile-ion coupling.
+The D6-E1 integration tests use real acceptor and donor devices and cover
+bounded occupancy, charge sign, exact current decomposition, all-face current
+closure, carrier-plus-trap charge balance, analytic-Jacobian comparison,
+sparse-versus-dense matrix cardinality, nested time refinement, fast-QSS and
+slow-frozen limits, immutable output, and over-strict fail-closed gates.
+
+This is internal numerical and physical-logic evidence, not external SCAPS or
+experimental validation. D6-E2 and D6-E3 must separately close shared
+two-sided interface traps and mobile-ion coupling. Protocol hashes, backend
+preflight, frontend controls, and source-clean production matrices belong to
+D6-E4.
