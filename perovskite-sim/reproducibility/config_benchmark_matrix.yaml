@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 7f8b17ee78c98c80be7db6463b88175530a5bd441ec06ac7f8eb72dd85cf3c7b
+  sha256: c43524cce06243f2d18e5bd0d92bb1f8ecfb3ad347ced597fcb45acb488cb654
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -1285,6 +1285,36 @@ benchmarks:
       - v3 and v4 partial artifacts remain immutable evidence for absolute-DC-baseline and overly narrow stiffness-outcome failures; they are not reclassified by v5
       - the certified range is one absorber-mobile-ion, single-level two-sided-interface fixture and three registered timescale cases; the accelerated-ion probe is only a typed fail-closed stiffness boundary
       - this is internal numerical evidence, not SCAPS transient parity, experimental validation, production API certification, or unique parameter identification
+  dynamic-defect-ion-transient-production-closure:
+    kind: numerical
+    status: partial
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/experiments/test_dynamic_defect_transient.py
+      tests/integration/test_dynamic_defect_transient.py
+      tests/unit/backend/test_dynamic_defect_transient_api.py
+      tests/integration/test_dynamic_defect_transient_api.py
+      tests/unit/validation/test_dynamic_defect_transient_refinement.py
+    tests:
+      - tests/unit/experiments/test_dynamic_defect_transient.py
+      - tests/integration/test_dynamic_defect_transient.py
+      - tests/unit/backend/test_dynamic_defect_transient_api.py
+      - tests/integration/test_dynamic_defect_transient_api.py
+      - tests/unit/validation/test_dynamic_defect_transient_refinement.py
+    node_ids:
+      - tests/unit/experiments/test_dynamic_defect_transient.py::test_protocol_round_trip_is_strict_canonical_and_content_addressed
+      - tests/integration/test_dynamic_defect_transient.py::test_public_dynamic_defect_transient_is_protocol_bound_and_certified
+      - tests/unit/backend/test_dynamic_defect_transient_api.py::test_job_rejects_invalid_contract_before_submit
+      - tests/integration/test_dynamic_defect_transient_api.py::test_real_dynamic_defect_transient_api_serializes_protocol_and_evidence
+      - tests/unit/validation/test_dynamic_defect_transient_refinement.py::test_production_v1_adds_only_public_wrapper_identity_gates
+      - tests/unit/validation/test_dynamic_defect_transient_refinement.py::test_production_executor_cell_runs_public_protocol_and_projection
+    configs:
+      - configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
+    limitations:
+      - the public protocol, direct/async API, frontend control/evidence path, and one real v6 executor cell are implemented and focused-tested; the full source-clean 3x3 production matrix has not yet run, so this benchmark remains partial
+      - the v6 lane must execute the public wrapper independently for combined, defect-dominated, and ion-dominated cases and cannot inherit production certification from the E3c v5 internal adapter certificate
+      - this is dark two-layer, one microscopic interface defect, absorber-positive-ion internal numerical evidence; it is not SCAPS transient parity, experimental validation, bulk-plus-ion or dual-ion production coverage
   charged-explicit-defect-internal-closure:
     kind: numerical
     status: pass
@@ -1502,6 +1532,7 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - dynamic-defect-ion-transient-timescale-closure
+      - dynamic-defect-ion-transient-production-closure
   - path: configs/graded_distributed_defect_qf_dc_pn.yaml
     sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
     semantic_sha256: f502dd9f6350e6c32a64f75686f17492acc0a64803df1939851777646c93486a

@@ -34,6 +34,7 @@ function experimentLabelHTML(kind: Experiment['kind']): string {
   switch (kind) {
     case 'jv': return 'J–V Sweep'
     case 'impedance': return 'Impedance'
+    case 'dynamic_defect_transient': return 'Defect–Ion Transient'
     case 'degradation': return 'Degradation'
     case 'tpv': return 'TPV'
     case 'current_decomp': return 'Current Decomp.'

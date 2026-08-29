@@ -9,6 +9,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from perovskite_sim.experiments.dynamic_defect_transient import (
+    DYNAMIC_DEFECT_TRANSIENT_METHOD,
+    DYNAMIC_DEFECT_TRANSIENT_REFERENCE_CERTIFICATE_SHA256,
+    DYNAMIC_DEFECT_TRANSIENT_REFERENCE_LANE,
+    default_dynamic_defect_transient_policy,
+)
 from perovskite_sim.experiments.interface_defect_ion_transient import (
     InterfaceDefectIonTransientError,
     InterfaceDefectIonTransientPolicy,
@@ -28,8 +34,10 @@ from perovskite_sim.validation.dynamic_defect_transient_refinement import (
     _nonlinear_failure_residual,
     _source_case_identity_verified,
     _validate_lane_contract,
+    run_dynamic_defect_ion_transient_refinement,
 )
 from perovskite_sim.validation.numerical_certificate import (
+    MatrixPoint,
     content_sha256,
     load_refinement_registry,
 )
@@ -37,6 +45,7 @@ from perovskite_sim.validation.numerical_certificate import (
 
 ROOT = Path(__file__).resolve().parents[3]
 LANE_ID = "dynamic-defect-ion-transient-timescale-reference-resolved-v5"
+PRODUCTION_LANE_ID = "dynamic-defect-ion-transient-production-v1"
 ABSORBER_V4_LANE_ID = "dynamic-defect-ion-transient-timescale-absorber-resolved-v4"
 NONLINEAR_V3_LANE_ID = "dynamic-defect-ion-transient-timescale-nonlinear-resolved-v3"
 RESOLVED_V2_LANE_ID = "dynamic-defect-ion-transient-timescale-resolved-v2"
@@ -48,6 +57,13 @@ def _lane():
         ROOT / "reproducibility/numerical_refinement_registry.yaml",
         project_root=ROOT,
     ).lane(LANE_ID)
+
+
+def _production_lane():
+    return load_refinement_registry(
+        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        project_root=ROOT,
+    ).lane(PRODUCTION_LANE_ID)
 
 
 def _source_and_cases():
@@ -224,6 +240,124 @@ def test_reference_resolved_v5_changes_only_reference_and_stiffness_contract():
     assert declared.operator == "eq" and declared.limit == 1.0
     assert residual.operator == "eq" and residual.limit == 1.0
     assert active_quality == previous_quality
+
+
+def test_production_v1_adds_only_public_wrapper_identity_gates():
+    active = _production_lane()
+    previous = _lane()
+
+    assert active.executor_version == "v6"
+    assert active.config_path == previous.config_path
+    assert active.config_sha256 == previous.config_sha256
+    assert active.executor == previous.executor
+    assert active.grid_parameter == previous.grid_parameter
+    assert active.grid_values == previous.grid_values
+    assert active.tolerance_parameter == previous.tolerance_parameter
+    assert active.tolerance_factors == previous.tolerance_factors
+    assert active.observables == previous.observables
+    active_options = dict(active.options)
+    assert active_options.pop("production_method") == DYNAMIC_DEFECT_TRANSIENT_METHOD
+    assert active_options == previous.options
+    active_quality = {gate.metric: gate for gate in active.quality_gates}
+    previous_quality = {gate.metric: gate for gate in previous.quality_gates}
+    for metric in (
+        "public_projection_certified",
+        "public_protocol_identity_verified",
+        "reference_certificate_bound",
+    ):
+        gate = active_quality.pop(metric)
+        assert gate.operator == "eq"
+        assert gate.limit == 1.0
+        assert gate.units == "1"
+    assert active_quality == previous_quality
+    _validate_lane_contract(active)
+
+
+def test_production_execution_protocol_binds_public_contract_without_cell_hashes():
+    lane = _production_lane()
+    source = load_device_from_yaml(ROOT / lane.config_path)
+    cases = _case_stacks(
+        source,
+        slow_ion_diffusivity_m2_s=1.0e-20,
+        slow_capture_scale=1.0e-12,
+    )
+    identities = {name: _case_identity(stack) for name, stack in cases.items()}
+    protocol = _execution_protocol(
+        lane,
+        times_s=np.asarray(lane.options["times_s"]),
+        voltage_V=np.asarray(lane.options["voltage_V"]),
+        policy=default_dynamic_defect_transient_policy(1.0),
+        base_nested_substeps=(1, 2, 4),
+        case_identities=identities,
+        slow_ion_diffusivity_m2_s=1.0e-20,
+        slow_capture_scale=1.0e-12,
+        fast_ion_diffusivity_m2_s=1.0e-12,
+    )
+
+    assert protocol["adapter"] == (
+        "production-dynamic-defect-transient-public-wrapper-refinement"
+    )
+    assert protocol["schema_version"] == (
+        "dynamic-defect-ion-transient-production-refinement-protocol-v1"
+    )
+    assert protocol["production_public_contract"] == {
+        "allowed_time_step_refinement_factors": [1.0, 0.5, 0.25],
+        "evidence_schema": "dynamic-defect-transient-evidence-v1",
+        "method": DYNAMIC_DEFECT_TRANSIENT_METHOD,
+        "protocol_schema": "dynamic-defect-transient-protocol-v1",
+        "reference_certificate_sha256": (
+            DYNAMIC_DEFECT_TRANSIENT_REFERENCE_CERTIFICATE_SHA256
+        ),
+        "reference_lane_id": DYNAMIC_DEFECT_TRANSIENT_REFERENCE_LANE,
+        "required_projection": (
+            "terminal/interface current, occupancy, positive-ion centroid, "
+            "integrated charge, and physical state"
+        ),
+    }
+    assert "public_protocol_hashes" not in protocol
+
+
+def test_production_executor_cell_runs_public_protocol_and_projection():
+    measurement = run_dynamic_defect_ion_transient_refinement(
+        _production_lane(),
+        MatrixPoint(grid=4, tolerance_factor=1.0),
+        ROOT,
+    )
+    quality = {metric.name: metric.values[0] for metric in measurement.quality}
+    metadata = json.loads(measurement.metadata_json)
+    lane = _production_lane()
+
+    assert {metric.name for metric in measurement.observables} == {
+        gate.metric for gate in lane.observables
+    }
+    assert {metric.name: metric.units for metric in measurement.observables} == {
+        gate.metric: gate.units for gate in lane.observables
+    }
+    assert set(quality) == {gate.metric for gate in lane.quality_gates}
+    for gate in lane.quality_gates:
+        if gate.operator == "eq":
+            assert quality[gate.metric] == gate.limit
+        elif gate.operator == "le":
+            assert quality[gate.metric] <= gate.limit
+        else:
+            assert quality[gate.metric] >= gate.limit
+    assert quality["public_protocol_identity_verified"] == 1.0
+    assert quality["public_projection_certified"] == 1.0
+    assert quality["reference_certificate_bound"] == 1.0
+    assert set(metadata["public_protocols"]) == {
+        "combined",
+        "defect_dominated",
+        "ion_dominated",
+    }
+    assert set(metadata["public_evidence"]) == set(metadata["public_protocols"])
+    assert all(
+        item["method"] == DYNAMIC_DEFECT_TRANSIENT_METHOD
+        and item["time_step_refinement_factor"] == 1.0
+        for item in metadata["public_protocols"].values()
+    )
+    assert metadata["fast_ion_stiffness_boundary"]["error_type"] == (
+        "DynamicDefectTransientCertificationError"
+    )
 
 
 def test_nested_substeps_bind_each_outer_time_step_factor():

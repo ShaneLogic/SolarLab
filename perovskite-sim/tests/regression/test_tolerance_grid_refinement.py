@@ -113,6 +113,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "dynamic-defect-ion-transient-timescale-nonlinear-resolved-v3",
         "dynamic-defect-ion-transient-timescale-absorber-resolved-v4",
         "dynamic-defect-ion-transient-timescale-reference-resolved-v5",
+        "dynamic-defect-ion-transient-production-v1",
         "csi-qf-frequency-domain",
         "csi-qf-frequency-domain-resolved-v2",
         "twod-uniform-limit",
@@ -207,6 +208,31 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     )
     assert dynamic_transient.options == absorber_dynamic_transient.options
     assert dynamic_transient.config_sha256 == absorber_dynamic_transient.config_sha256
+    production_dynamic_transient = registry.lane(
+        "dynamic-defect-ion-transient-production-v1"
+    )
+    assert production_dynamic_transient.executor_version == "v6"
+    assert production_dynamic_transient.grid_values == dynamic_transient.grid_values
+    assert (
+        production_dynamic_transient.tolerance_factors
+        == dynamic_transient.tolerance_factors
+    )
+    assert production_dynamic_transient.observables == dynamic_transient.observables
+    production_options = dict(production_dynamic_transient.options)
+    assert production_options.pop("production_method") == (
+        "dynamic_defect_transient_certified"
+    )
+    assert production_options == dynamic_transient.options
+    production_quality = {
+        gate.metric: gate for gate in production_dynamic_transient.quality_gates
+    }
+    for metric in (
+        "public_projection_certified",
+        "public_protocol_identity_verified",
+        "reference_certificate_bound",
+    ):
+        assert production_quality.pop(metric).limit == 1.0
+    assert production_quality == dynamic_transient_quality
     assert (
         nonlinear_dynamic_transient.observables
         == resolved_dynamic_transient.observables

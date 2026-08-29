@@ -32,6 +32,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 
 from perovskite_sim.experiments import degradation, impedance, jv_sweep
+from perovskite_sim.experiments import (
+    dynamic_defect_transient as dynamic_defect_transient_exp,
+)
 from perovskite_sim.experiments import interface_charge_jv as interface_charge_jv_exp
 from perovskite_sim.experiments import external_circuit as external_circuit_exp
 from perovskite_sim.experiments import electrothermal as electrothermal_exp
@@ -563,6 +566,26 @@ def build_interface_charge_research_stack(
     return _require_interface_charge_research_stack(
         _load_stack(config_path, device),
         consumer="interface-charge research endpoint",
+    )
+
+
+def build_dynamic_defect_transient_stack(
+    config_path: Optional[str],
+    device: Optional[dict],
+) -> DeviceStack:
+    """Load only charged stacks eligible for the certified D6 transient."""
+
+    if (config_path is None) == (device is None):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "dynamic-defect transient requires exactly one of 'device' "
+                "or 'config_path'"
+            ),
+        )
+    return _require_interface_charge_research_stack(
+        _load_stack(config_path, device),
+        consumer="production dynamic-defect transient",
     )
 
 
@@ -1698,6 +1721,65 @@ def _resolve_dynamic_defect_impedance_protocol(
     return impedance.resolve_dynamic_defect_impedance_protocol(parsed, expected)
 
 
+_DYNAMIC_DEFECT_TRANSIENT_JOB_PARAM_KEYS = frozenset(
+    {
+        "N_grid",
+        "times_s",
+        "voltage_V",
+        "illuminated",
+        "method",
+        "dynamic_defect_transient_protocol",
+    }
+)
+
+
+def _resolve_dynamic_defect_transient_protocol(
+    stack: DeviceStack,
+    *,
+    method: object,
+    N_grid: object,
+    times_s: object,
+    voltage_V: object,
+    illuminated: object,
+    supplied: object | None,
+) -> tuple[np.ndarray, dynamic_defect_transient_exp.DynamicDefectTransientProtocol]:
+    if method != dynamic_defect_transient_exp.DYNAMIC_DEFECT_TRANSIENT_METHOD:
+        raise dynamic_defect_transient_exp.DynamicDefectTransientProtocolError(
+            "dynamic_defect_transient_protocol requires method="
+            f"{dynamic_defect_transient_exp.DYNAMIC_DEFECT_TRANSIENT_METHOD!r}"
+        )
+    if isinstance(N_grid, bool) or not isinstance(N_grid, int):
+        raise TypeError("N_grid must be an integer")
+    if N_grid < 4:
+        raise ValueError("N_grid must be >= 4")
+    if not isinstance(illuminated, bool):
+        raise TypeError("illuminated must be boolean")
+    parsed = (
+        None
+        if supplied is None
+        else dynamic_defect_transient_exp.DynamicDefectTransientProtocol.from_dict(
+            supplied
+        )
+    )
+    grid = jv_sweep.build_electrical_grid(stack, N_grid)
+    grid = build_two_sided_trace_grid(grid, stack)
+    expected = dynamic_defect_transient_exp.build_dynamic_defect_transient_protocol(
+        stack,
+        grid,
+        times_s,
+        voltage_V,
+        requested_grid_intervals=N_grid,
+        illuminated=illuminated,
+    )
+    return (
+        grid,
+        dynamic_defect_transient_exp.resolve_dynamic_defect_transient_protocol(
+            parsed,
+            expected,
+        ),
+    )
+
+
 def _summarize_qf_bulk_defect_evidence(points):
     """Collapse pointwise constitutive diagnostics without losing identity."""
 
@@ -2587,6 +2669,55 @@ def run_impedance_api(req: ISRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class DynamicDefectTransientRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    config_path: Optional[str] = None
+    device: Optional[dict] = None
+    N_grid: StrictInt = 4
+    times_s: tuple[float, ...] = (0.0, 1.0e-8, 1.0e-6, 1.0e-4)
+    voltage_V: tuple[float, ...] = (0.0, 0.05, 0.05, 0.05)
+    illuminated: StrictBool = False
+    method: Literal["dynamic_defect_transient_certified"] = (
+        "dynamic_defect_transient_certified"
+    )
+    dynamic_defect_transient_protocol: Optional[dict[str, Any]] = None
+
+
+@app.post("/api/dynamic-defect-transient")
+def run_dynamic_defect_transient_api(req: DynamicDefectTransientRequest):
+    try:
+        stack = build_dynamic_defect_transient_stack(req.config_path, req.device)
+        grid, protocol = _resolve_dynamic_defect_transient_protocol(
+            stack,
+            method=req.method,
+            N_grid=req.N_grid,
+            times_s=req.times_s,
+            voltage_V=req.voltage_V,
+            illuminated=req.illuminated,
+            supplied=req.dynamic_defect_transient_protocol,
+        )
+        result = dynamic_defect_transient_exp.run_dynamic_defect_transient(
+            grid,
+            stack,
+            protocol,
+        )
+        out = to_serializable(result)
+        out["active_physics"] = _describe_active_physics(stack)
+        return {"status": "ok", "result": out}
+    except HTTPException:
+        raise
+    except (
+        dynamic_defect_transient_exp.DynamicDefectTransientCapabilityError,
+        dynamic_defect_transient_exp.DynamicDefectTransientCertificationError,
+        dynamic_defect_transient_exp.DynamicDefectTransientProtocolError,
+        GridResolutionError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 class DegRequest(BaseModel):
     config_path: Optional[str] = None
     device: Optional[dict] = None
@@ -2601,7 +2732,7 @@ class DegRequest(BaseModel):
 class JobRequest(BaseModel):
     kind: str  # "jv" | "impedance" | "degradation" | "tpv" | "current_decomp" | "spatial"
                # | "dark_jv" | "suns_voc" | "voc_t" | "eqe" | "el" | "mott_schottky"
-               # | "tandem"
+               # | "tandem" | "dynamic_defect_transient"
     config_path: Optional[str] = None
     device: Optional[dict] = None
     params: dict = {}
@@ -2625,6 +2756,10 @@ def start_job(req: JobRequest):
     dynamic_defect_protocol: (
         impedance.DynamicDefectImpedanceProtocol | None
     ) = None
+    dynamic_defect_transient_grid: np.ndarray | None = None
+    dynamic_defect_transient_protocol: (
+        dynamic_defect_transient_exp.DynamicDefectTransientProtocol | None
+    ) = None
     if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
         try:
             experiment_protocol, protocol_mode = _parse_protocol_inputs(
@@ -2637,11 +2772,15 @@ def start_job(req: JobRequest):
     # Tandem is config-only (no single DeviceStack), so it skips build_stack.
     if kind != "tandem":
         try:
-            stack = (
-                build_jv_stack(req.config_path, req.device)
-                if kind == "jv"
-                else build_stack(req.config_path, req.device)
-            )
+            if kind == "jv":
+                stack = build_jv_stack(req.config_path, req.device)
+            elif kind == "dynamic_defect_transient":
+                stack = build_dynamic_defect_transient_stack(
+                    req.config_path,
+                    req.device,
+                )
+            else:
+                stack = build_stack(req.config_path, req.device)
         except HTTPException:
             raise
         except Exception as e:
@@ -2723,6 +2862,37 @@ def start_job(req: JobRequest):
             interface_charge_jv_exp.InterfaceChargeJVProtocolError,
             impedance.DynamicDefectImpedanceCapabilityError,
             impedance.DynamicDefectImpedanceProtocolError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if kind == "dynamic_defect_transient":
+        try:
+            extra = set(p) - _DYNAMIC_DEFECT_TRANSIENT_JOB_PARAM_KEYS
+            if extra:
+                raise dynamic_defect_transient_exp.DynamicDefectTransientProtocolError(
+                    "dynamic_defect_transient job parameters do not match schema; "
+                    f"extra={sorted(extra)}"
+                )
+            dynamic_defect_transient_grid, dynamic_defect_transient_protocol = (
+                _resolve_dynamic_defect_transient_protocol(
+                    stack,
+                    method=p.get(
+                        "method",
+                        dynamic_defect_transient_exp.DYNAMIC_DEFECT_TRANSIENT_METHOD,
+                    ),
+                    N_grid=p.get("N_grid", 4),
+                    times_s=p.get("times_s", (0.0, 1.0e-8, 1.0e-6, 1.0e-4)),
+                    voltage_V=p.get("voltage_V", (0.0, 0.05, 0.05, 0.05)),
+                    illuminated=p.get("illuminated", False),
+                    supplied=p.get("dynamic_defect_transient_protocol"),
+                )
+            )
+        except (
+            dynamic_defect_transient_exp.DynamicDefectTransientCapabilityError,
+            dynamic_defect_transient_exp.DynamicDefectTransientProtocolError,
+            GridResolutionError,
             TypeError,
             ValueError,
         ) as exc:
@@ -2823,6 +2993,31 @@ def start_job(req: JobRequest):
                 out["Z_real"] = Z.real.tolist()
                 out["Z_imag"] = Z.imag.tolist()
                 del out["Z"]
+            out["active_physics"] = _describe_active_physics(stack)
+            return out
+    elif kind == "dynamic_defect_transient":
+        if (
+            dynamic_defect_transient_grid is None
+            or dynamic_defect_transient_protocol is None
+        ):  # pragma: no cover - guarded by preflight above
+            raise HTTPException(
+                status_code=500,
+                detail="dynamic-defect transient preflight state is missing",
+            )
+
+        def _run(reporter: ProgressReporter) -> dict:
+            result = dynamic_defect_transient_exp.run_dynamic_defect_transient(
+                dynamic_defect_transient_grid,
+                stack,
+                dynamic_defect_transient_protocol,
+                progress=lambda stage, cur, tot, msg: reporter.report(
+                    stage,
+                    cur,
+                    tot,
+                    msg,
+                ),
+            )
+            out = to_serializable(result)
             out["active_physics"] = _describe_active_physics(stack)
             return out
     elif kind == "degradation":

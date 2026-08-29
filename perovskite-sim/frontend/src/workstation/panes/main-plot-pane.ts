@@ -15,6 +15,10 @@ import {
   collectImpedanceEvidenceWarnings,
   summarizeImpedanceEvidence,
 } from '../../impedance-evidence'
+import {
+  collectDynamicDefectTransientEvidenceWarnings,
+  summarizeDynamicDefectTransientEvidence,
+} from '../../dynamic-defect-transient-evidence'
 import { summarizeJVBulkDefectEvidence } from '../../jv-defect-evidence'
 import {
   interfaceChargeJVEvidenceTitle,
@@ -23,6 +27,7 @@ import {
 import type {
   JVResult,
   ISResult,
+  DynamicDefectTransientResult,
   DegResult,
   TPVResult,
   CurrentDecompResult,
@@ -77,6 +82,9 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           return
         case 'impedance':
           renderImpedance(plotEl, run.result.data)
+          return
+        case 'dynamic_defect_transient':
+          renderDynamicDefectTransient(plotEl, run.result.data)
           return
         case 'degradation':
           renderDegradation(plotEl, run.result.data)
@@ -976,6 +984,153 @@ export function renderImpedance(el: HTMLElement, r: ISResult): void {
         yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('−Im(Z)  (Ω·m²)'), scaleanchor: 'x' },
       }),
       plotConfig('impedance'),
+    )
+  }
+}
+
+export function renderDynamicDefectTransient(
+  el: HTMLElement,
+  result: DynamicDefectTransientResult,
+): void {
+  Plotly.purge(el)
+  while (el.firstChild) el.removeChild(el.firstChild)
+  el.classList.add('dynamic-defect-transient-render')
+
+  const style = readPlotStyleMode(el)
+  const toolbar = document.createElement('div')
+  toolbar.className = 'plot-toolbar'
+  toolbar.setAttribute('data-test', 'dynamic-defect-transient-toolbar')
+  const styleLabel = document.createElement('label')
+  styleLabel.className = 'plot-style-label'
+  styleLabel.htmlFor = 'dynamic-defect-transient-style-mode'
+  styleLabel.textContent = 'Style:'
+  const styleSelect = document.createElement('select')
+  styleSelect.id = 'dynamic-defect-transient-style-mode'
+  styleSelect.className = 'plot-style-select'
+  styleSelect.setAttribute('data-test', 'dynamic-defect-transient-style-mode')
+  for (const [value, label] of [
+    ['engineering', 'Engineering'],
+    ['publication', 'Publication'],
+  ] as const) {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = label
+    styleSelect.appendChild(option)
+  }
+  styleSelect.value = style
+  styleSelect.addEventListener('change', () => {
+    el.dataset.plotStyleMode = (
+      styleSelect.value === 'publication' ? 'publication' : 'engineering'
+    )
+    renderDynamicDefectTransient(el, result)
+  })
+  toolbar.appendChild(styleLabel)
+  toolbar.appendChild(styleSelect)
+  el.appendChild(toolbar)
+
+  const evidenceSummary = document.createElement('div')
+  evidenceSummary.className = 'impedance-evidence-summary dynamic-defect-transient-evidence-summary'
+  evidenceSummary.setAttribute(
+    'data-test',
+    'dynamic-defect-transient-evidence-summary',
+  )
+  for (const line of summarizeDynamicDefectTransientEvidence(result)) {
+    const item = document.createElement('span')
+    item.textContent = line
+    evidenceSummary.appendChild(item)
+  }
+  el.appendChild(evidenceSummary)
+
+  const warnings = collectDynamicDefectTransientEvidenceWarnings(result)
+  if (warnings.length > 0) {
+    const warning = document.createElement('div')
+    warning.className = 'jv2d-warning'
+    warning.setAttribute('role', 'alert')
+    warning.setAttribute('data-test', 'dynamic-defect-transient-evidence-warning')
+    warning.textContent = warnings.join(' | ')
+    el.appendChild(warning)
+  }
+
+  const plotDiv = document.createElement('div')
+  plotDiv.className = 'dynamic-defect-transient-plot'
+  plotDiv.id = 'dynamic-defect-transient-plot-inner'
+  el.appendChild(plotDiv)
+
+  const timeMicroseconds = result.times_s.map(value => value * 1e6)
+  const currentMilliampCm2 = result.terminal_total_current_A_m2.map(value => value / 10)
+  const occupancyChange = result.interface_occupancy_change.map(row => row[0] ?? 0)
+  const currentTrace = style === 'publication'
+    ? {
+        x: timeMicroseconds,
+        y: currentMilliampCm2,
+        name: 'Terminal current',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({ color: PUBLICATION_PALETTE.forward }),
+      }
+    : {
+        x: timeMicroseconds,
+        y: currentMilliampCm2,
+        name: 'Terminal current',
+        mode: 'lines+markers',
+        line: { color: PALETTE.forward, width: LINE.width },
+        marker: { ...MARKER, color: PALETTE.forward },
+      }
+  const occupancyTrace = style === 'publication'
+    ? {
+        x: timeMicroseconds,
+        y: occupancyChange,
+        name: 'Interface Δf',
+        mode: 'lines+markers',
+        yaxis: 'y2',
+        ...publicationTraceStyle({ color: PUBLICATION_PALETTE.reverse, hollow: true }),
+      }
+    : {
+        x: timeMicroseconds,
+        y: occupancyChange,
+        name: 'Interface Δf',
+        mode: 'lines+markers',
+        yaxis: 'y2',
+        line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
+        marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
+      }
+
+  if (style === 'publication') {
+    Plotly.newPlot(
+      plotDiv,
+      [currentTrace, occupancyTrace],
+      publicationLayout({
+        xaxis: publicationAxis({ title: '<i>t</i> (μs)' }),
+        yaxis: publicationAxis({ title: '<i>J</i><sub>term</sub> (mA·cm⁻²)' }),
+        yaxis2: {
+          ...publicationAxis({ title: 'Interface Δ<i>f</i>' }),
+          overlaying: 'y',
+          side: 'right',
+        },
+      }),
+      publicationConfig('dynamic_defect_transient'),
+    )
+  } else {
+    Plotly.newPlot(
+      plotDiv,
+      [currentTrace, occupancyTrace],
+      baseLayout({
+        xaxis: {
+          ...(baseLayout().xaxis as object),
+          title: axisTitle('Time, <i>t</i> (μs)'),
+        },
+        yaxis: {
+          ...(baseLayout().yaxis as object),
+          title: axisTitle('Terminal current, <i>J</i> (mA·cm⁻²)'),
+        },
+        yaxis2: {
+          ...(baseLayout().yaxis as object),
+          title: axisTitle('Interface occupancy change, Δ<i>f</i>'),
+          overlaying: 'y',
+          side: 'right',
+          showgrid: false,
+        },
+      }),
+      plotConfig('dynamic_defect_transient'),
     )
   }
 }

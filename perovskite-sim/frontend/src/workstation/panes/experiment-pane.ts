@@ -20,6 +20,7 @@ import type { DeviceConfig } from '../../types'
 import type { Run, ExperimentKind } from '../types'
 import { mountJVPane } from './jv-pane'
 import { mountImpedancePane } from './impedance-pane'
+import { mountDynamicDefectTransientPane } from './dynamic-defect-transient-pane'
 import { mountDegradationPane } from './degradation-pane'
 import { mountTPVPane } from './tpv-pane'
 import { mountDarkJVPane } from './dark-jv-pane'
@@ -109,6 +110,11 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
         {
           kind: 'impedance', labelHTML: 'Impedance',
           mount: (el) => mountImpedancePane(el, paneOpts()),
+        },
+        {
+          kind: 'dynamic_defect_transient',
+          labelHTML: 'Defect–Ion Transient',
+          mount: (el) => mountDynamicDefectTransientPane(el, paneOpts()),
         },
         {
           kind: 'tpv', labelHTML: 'Transient Photovoltage (TPV)',

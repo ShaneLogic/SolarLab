@@ -5,6 +5,7 @@ export async function startJob(
   kind:
     | 'jv'
     | 'impedance'
+    | 'dynamic_defect_transient'
     | 'degradation'
     | 'tpv'
     | 'current_decomp'

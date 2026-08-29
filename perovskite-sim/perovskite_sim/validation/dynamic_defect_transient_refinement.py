@@ -13,6 +13,19 @@ from typing import Any
 import numpy as np
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
+from perovskite_sim.experiments.dynamic_defect_transient import (
+    ALLOWED_TIME_STEP_REFINEMENT_FACTORS,
+    DYNAMIC_DEFECT_TRANSIENT_EVIDENCE,
+    DYNAMIC_DEFECT_TRANSIENT_METHOD,
+    DYNAMIC_DEFECT_TRANSIENT_REFERENCE_CERTIFICATE_SHA256,
+    DYNAMIC_DEFECT_TRANSIENT_REFERENCE_LANE,
+    DYNAMIC_DEFECT_TRANSIENT_SCHEMA,
+    DynamicDefectTransientCertificationError,
+    DynamicDefectTransientProtocol,
+    build_dynamic_defect_transient_protocol,
+    default_dynamic_defect_transient_policy,
+    run_dynamic_defect_transient,
+)
 from perovskite_sim.experiments.interface_defect_ion_transient import (
     InterfaceDefectIonTransientError,
     InterfaceDefectIonTransientPolicy,
@@ -42,6 +55,7 @@ _RESOLVED_V2_LANE_ID = "dynamic-defect-ion-transient-timescale-resolved-v2"
 _NONLINEAR_V3_LANE_ID = "dynamic-defect-ion-transient-timescale-nonlinear-resolved-v3"
 _ABSORBER_V4_LANE_ID = "dynamic-defect-ion-transient-timescale-absorber-resolved-v4"
 _LANE_ID = "dynamic-defect-ion-transient-timescale-reference-resolved-v5"
+_PRODUCTION_LANE_ID = "dynamic-defect-ion-transient-production-v1"
 _GRID_PARAMETER = "intervals_per_layer"
 _TOLERANCE_PARAMETER = "backward_euler_time_step_factor"
 _GRID_VALUES = (4, 6, 8)
@@ -66,12 +80,14 @@ _V2_OPTION_KEYS = _COMMON_OPTION_KEYS | {
 _V3_OPTION_KEYS = _V2_OPTION_KEYS | {
     "maximum_near_acceptance_nonmonotone_steps",
 }
+_PRODUCTION_OPTION_KEYS = _V3_OPTION_KEYS | {"production_method"}
 _LANE_CONTRACTS = {
     _LEGACY_LANE_ID: ("v1", _COMMON_OPTION_KEYS),
     _RESOLVED_V2_LANE_ID: ("v2", _V2_OPTION_KEYS),
     _NONLINEAR_V3_LANE_ID: ("v3", _V3_OPTION_KEYS),
     _ABSORBER_V4_LANE_ID: ("v4", _V3_OPTION_KEYS),
     _LANE_ID: ("v5", _V3_OPTION_KEYS),
+    _PRODUCTION_LANE_ID: ("v6", _PRODUCTION_OPTION_KEYS),
 }
 _LINE_SEARCH_ITERATION = re.compile(
     r"line search stalled at iteration ([1-9][0-9]*) with residual"
@@ -90,8 +106,8 @@ def _validate_lane_contract(lane: LaneDefinition) -> None:
     if contract is None:
         raise ValueError(
             "D6-E3c executor requires a registered v1, resolved-v2, or "
-            "nonlinear-resolved-v3, absorber-resolved-v4, or "
-            "reference-resolved-v5 lane"
+            "nonlinear-resolved-v3, absorber-resolved-v4, "
+            "reference-resolved-v5, or production-v1 lane"
         )
     expected_version, expected_options = contract
     if lane.executor_version != expected_version:
@@ -122,6 +138,13 @@ def _validate_lane_contract(lane: LaneDefinition) -> None:
         raise ValueError("D6-E3c requires config_loader='standard'")
     if options.get("require_protocol") is not True:
         raise ValueError("D6-E3c requires protocol provenance")
+    if (
+        lane.lane_id == _PRODUCTION_LANE_ID
+        and options.get("production_method") != DYNAMIC_DEFECT_TRANSIENT_METHOD
+    ):
+        raise ValueError(
+            "D6-E4 production lane requires the certified public transient method"
+        )
 
 
 def _option(
@@ -436,8 +459,12 @@ def _execution_protocol(
 ) -> dict[str, Any]:
     common_policy = dataclasses.asdict(policy)
     common_policy.pop("refinement_substeps")
-    if lane.lane_id == _LANE_ID:
-        schema_version = "dynamic-defect-ion-transient-refinement-protocol-v2"
+    if lane.lane_id in {_LANE_ID, _PRODUCTION_LANE_ID}:
+        schema_version = (
+            "dynamic-defect-ion-transient-production-refinement-protocol-v1"
+            if lane.lane_id == _PRODUCTION_LANE_ID
+            else "dynamic-defect-ion-transient-refinement-protocol-v2"
+        )
         stiffness_boundary = {
             "accepted_outcomes": [
                 "typed_line_search_stall",
@@ -454,7 +481,7 @@ def _execution_protocol(
             "ion_diffusivity_m2_s": fast_ion_diffusivity_m2_s,
             "not_a_certified_physical_solution": True,
         }
-    return {
+    protocol = {
         "acceptance": {
             "matrix_observables": {
                 gate.metric: gate.to_dict() for gate in lane.observables
@@ -463,7 +490,11 @@ def _execution_protocol(
                 gate.metric: gate.to_dict() for gate in lane.quality_gates
             },
         },
-        "adapter": "two-sided-interface-defect-ion-transient-timescale-refinement",
+        "adapter": (
+            "production-dynamic-defect-transient-public-wrapper-refinement"
+            if lane.lane_id == _PRODUCTION_LANE_ID
+            else "two-sided-interface-defect-ion-transient-timescale-refinement"
+        ),
         "cases": {
             _CASE_COMBINED: {
                 "capture_scale": 1.0,
@@ -509,6 +540,24 @@ def _execution_protocol(
         "solver_policy_common": common_policy,
         "stiffness_boundary": stiffness_boundary,
     }
+    if lane.lane_id == _PRODUCTION_LANE_ID:
+        protocol["production_public_contract"] = {
+            "allowed_time_step_refinement_factors": list(
+                ALLOWED_TIME_STEP_REFINEMENT_FACTORS
+            ),
+            "evidence_schema": DYNAMIC_DEFECT_TRANSIENT_EVIDENCE,
+            "method": DYNAMIC_DEFECT_TRANSIENT_METHOD,
+            "protocol_schema": DYNAMIC_DEFECT_TRANSIENT_SCHEMA,
+            "reference_certificate_sha256": (
+                DYNAMIC_DEFECT_TRANSIENT_REFERENCE_CERTIFICATE_SHA256
+            ),
+            "reference_lane_id": DYNAMIC_DEFECT_TRANSIENT_REFERENCE_LANE,
+            "required_projection": (
+                "terminal/interface current, occupancy, positive-ion centroid, "
+                "integrated charge, and physical state"
+            ),
+        }
+    return protocol
 
 
 def run_dynamic_defect_ion_transient_refinement(
@@ -552,6 +601,7 @@ def run_dynamic_defect_ion_transient_refinement(
         _NONLINEAR_V3_LANE_ID,
         _ABSORBER_V4_LANE_ID,
         _LANE_ID,
+        _PRODUCTION_LANE_ID,
     }:
         policy_overrides.update(
             maximum_line_search_steps=_option(
@@ -571,6 +621,7 @@ def run_dynamic_defect_ion_transient_refinement(
         _NONLINEAR_V3_LANE_ID,
         _ABSORBER_V4_LANE_ID,
         _LANE_ID,
+        _PRODUCTION_LANE_ID,
     }:
         policy_overrides["maximum_near_acceptance_nonmonotone_steps"] = _option(
             options,
@@ -579,6 +630,13 @@ def run_dynamic_defect_ion_transient_refinement(
             2,
         )
     policy = replace(InterfaceDefectIonTransientPolicy(), **policy_overrides)
+    if lane.lane_id == _PRODUCTION_LANE_ID:
+        public_policy = default_dynamic_defect_transient_policy(point.tolerance_factor)
+        if policy != public_policy:
+            raise ValueError(
+                "D6-E4 registered solver controls do not match the public policy"
+            )
+        policy = public_policy
     grid = _build_grid(source, point.grid, grid_alpha)
     cases = _case_stacks(
         source,
@@ -586,17 +644,39 @@ def run_dynamic_defect_ion_transient_refinement(
         slow_capture_scale=slow_capture,
     )
     identities = {name: _case_identity(stack) for name, stack in cases.items()}
-    results = {
-        name: run_interface_defect_ion_device_transient(
-            grid,
-            stack,
-            times,
-            voltage,
-            policy=policy,
-            require_certificate=True,
-        )
-        for name, stack in cases.items()
-    }
+    public_protocols: dict[str, DynamicDefectTransientProtocol] = {}
+    if lane.lane_id == _PRODUCTION_LANE_ID:
+        public_protocols = {
+            name: build_dynamic_defect_transient_protocol(
+                stack,
+                grid,
+                times,
+                voltage,
+                requested_grid_intervals=point.grid,
+                time_step_refinement_factor=point.tolerance_factor,
+            )
+            for name, stack in cases.items()
+        }
+        results = {
+            name: run_dynamic_defect_transient(
+                grid,
+                stack,
+                public_protocols[name],
+            )
+            for name, stack in cases.items()
+        }
+    else:
+        results = {
+            name: run_interface_defect_ion_device_transient(
+                grid,
+                stack,
+                times,
+                voltage,
+                policy=policy,
+                require_certificate=True,
+            )
+            for name, stack in cases.items()
+        }
 
     fast_stack = _with_ion_diffusivity(source, fast_ion)
     fast_failure_type = ""
@@ -607,16 +687,43 @@ def run_dynamic_defect_ion_transient_refinement(
     fast_nonlinear_outcome: str | None = None
     fast_nonlinear_iteration: int | None = None
     fast_nonlinear_residual: float | None = None
+    fast_public_protocol: DynamicDefectTransientProtocol | None = None
     try:
-        run_interface_defect_ion_device_transient(
-            grid,
-            fast_stack,
-            times,
-            voltage,
-            policy=policy,
-            require_certificate=True,
-        )
-    except InterfaceDefectIonTransientError as exc:
+        if lane.lane_id == _PRODUCTION_LANE_ID:
+            fast_public_protocol = build_dynamic_defect_transient_protocol(
+                fast_stack,
+                grid,
+                times,
+                voltage,
+                requested_grid_intervals=point.grid,
+                time_step_refinement_factor=point.tolerance_factor,
+            )
+            run_dynamic_defect_transient(
+                grid,
+                fast_stack,
+                fast_public_protocol,
+            )
+        else:
+            run_interface_defect_ion_device_transient(
+                grid,
+                fast_stack,
+                times,
+                voltage,
+                policy=policy,
+                require_certificate=True,
+            )
+    except (
+        DynamicDefectTransientCertificationError,
+        InterfaceDefectIonTransientError,
+    ) as exc:
+        if lane.lane_id == _PRODUCTION_LANE_ID and not isinstance(
+            exc, DynamicDefectTransientCertificationError
+        ):
+            raise
+        if lane.lane_id != _PRODUCTION_LANE_ID and not isinstance(
+            exc, InterfaceDefectIonTransientError
+        ):
+            raise
         fast_failure_type = type(exc).__name__
         fast_failure_message = str(exc)
         fast_failure_typed = True
@@ -631,18 +738,41 @@ def run_dynamic_defect_ion_transient_refinement(
     certificates = []
     for name in _CASE_NAMES:
         result = results[name]
-        traces[name] = {
-            "integrated_charge_C_m2": np.asarray(
-                result.integrated_free_interface_ion_charge_C_m2,
-            ),
-            "interface_occupancy": np.asarray(result.interface_occupancy).reshape(-1),
-            "left_terminal_current_A_m2": np.asarray(
-                result.total_current_faces_A_m2[:, 0],
-            ),
-            "positive_ion_centroid_m": _ion_centroid_trace(result, grid),
-        }
-        motion[name] = _motion_metrics(result)
-        certificates.append(result.certificate)
+        if lane.lane_id == _PRODUCTION_LANE_ID:
+            traces[name] = {
+                "integrated_charge_C_m2": np.asarray(
+                    result.integrated_charge_change_C_m2,
+                ),
+                "interface_occupancy": np.asarray(result.interface_occupancy).reshape(
+                    -1
+                ),
+                "left_terminal_current_A_m2": np.asarray(
+                    result.terminal_total_current_A_m2,
+                ),
+                "positive_ion_centroid_m": np.asarray(
+                    result.positive_ion_centroid_m,
+                ),
+            }
+            motion[name] = (
+                result.evidence.maximum_interface_occupancy_motion,
+                result.evidence.maximum_positive_ion_relative_motion,
+            )
+            certificates.append(result.evidence.engine_certificate)
+        else:
+            traces[name] = {
+                "integrated_charge_C_m2": np.asarray(
+                    result.integrated_free_interface_ion_charge_C_m2,
+                ),
+                "interface_occupancy": np.asarray(result.interface_occupancy).reshape(
+                    -1
+                ),
+                "left_terminal_current_A_m2": np.asarray(
+                    result.total_current_faces_A_m2[:, 0],
+                ),
+                "positive_ion_centroid_m": _ion_centroid_trace(result, grid),
+            }
+            motion[name] = _motion_metrics(result)
+            certificates.append(result.certificate)
 
     protocol = _execution_protocol(
         lane,
@@ -656,12 +786,23 @@ def run_dynamic_defect_ion_transient_refinement(
         fast_ion_diffusivity_m2_s=fast_ion,
     )
     protocol_hash = content_sha256(protocol)
-    protocol_identity_verified = all(
-        result.policy == policy
-        and np.array_equal(result.times_s, times)
-        and np.array_equal(result.voltage_V, voltage)
-        for result in results.values()
-    )
+    if lane.lane_id == _PRODUCTION_LANE_ID:
+        protocol_identity_verified = all(
+            result.protocol == public_protocols[name]
+            and result.evidence.protocol == result.protocol
+            and result.evidence.protocol_sha256 == result.protocol.protocol_hash
+            and result.protocol.solver_policy == policy
+            and np.array_equal(result.times_s, times)
+            and np.array_equal(result.voltage_V, voltage)
+            for name, result in results.items()
+        )
+    else:
+        protocol_identity_verified = all(
+            result.policy == policy
+            and np.array_equal(result.times_s, times)
+            and np.array_equal(result.voltage_V, voltage)
+            for result in results.values()
+        )
     source_identity_verified = _source_case_identity_verified(
         source,
         cases,
@@ -669,11 +810,41 @@ def run_dynamic_defect_ion_transient_refinement(
         slow_ion_diffusivity_m2_s=slow_ion,
         slow_capture_scale=slow_capture,
     )
+    public_protocol_identity_verified = False
+    public_projection_certified = False
+    reference_certificate_bound = False
+    if lane.lane_id == _PRODUCTION_LANE_ID:
+        public_protocol_identity_verified = all(
+            DynamicDefectTransientProtocol.from_json(protocol.canonical_json())
+            == protocol
+            and results[name].protocol == protocol
+            and results[name].evidence.protocol_sha256 == protocol.protocol_hash
+            for name, protocol in public_protocols.items()
+        )
+        public_projection_certified = all(
+            result.evidence.public_projection_certified and result.evidence.certified
+            for result in results.values()
+        )
+        reference_certificate_bound = all(
+            result.evidence.reference_lane_id == DYNAMIC_DEFECT_TRANSIENT_REFERENCE_LANE
+            and result.evidence.reference_certificate_sha256
+            == DYNAMIC_DEFECT_TRANSIENT_REFERENCE_CERTIFICATE_SHA256
+            for result in results.values()
+        )
 
     observables: dict[str, np.ndarray] = {}
     units: dict[str, str] = {}
+    reference_relative_occupancy = lane.lane_id in {
+        _LANE_ID,
+        _PRODUCTION_LANE_ID,
+    }
+    reference_relative_ion_charge = lane.lane_id in {
+        _ABSORBER_V4_LANE_ID,
+        _LANE_ID,
+        _PRODUCTION_LANE_ID,
+    }
     for name in _CASE_NAMES:
-        if lane.lane_id == _LANE_ID:
+        if reference_relative_occupancy:
             observables[f"{name}_interface_occupancy_change"] = (
                 traces[name]["interface_occupancy"]
                 - traces[name]["interface_occupancy"][0]
@@ -685,7 +856,7 @@ def run_dynamic_defect_ion_transient_refinement(
         observables[f"{name}_left_terminal_current_A_m2"] = traces[name][
             "left_terminal_current_A_m2"
         ]
-        if lane.lane_id in {_ABSORBER_V4_LANE_ID, _LANE_ID}:
+        if reference_relative_ion_charge:
             observables[f"{name}_positive_ion_centroid_shift_m"] = (
                 traces[name]["positive_ion_centroid_m"]
                 - traces[name]["positive_ion_centroid_m"][0]
@@ -703,7 +874,7 @@ def run_dynamic_defect_ion_transient_refinement(
             ]
         occupancy_metric = (
             f"{name}_interface_occupancy_change"
-            if lane.lane_id == _LANE_ID
+            if reference_relative_occupancy
             else f"{name}_interface_occupancy"
         )
         units.update(
@@ -712,7 +883,7 @@ def run_dynamic_defect_ion_transient_refinement(
                 f"{name}_left_terminal_current_A_m2": "A m-2",
             }
         )
-        if lane.lane_id in {_ABSORBER_V4_LANE_ID, _LANE_ID}:
+        if reference_relative_ion_charge:
             units[f"{name}_positive_ion_centroid_shift_m"] = "m"
             units[f"{name}_integrated_charge_change_C_m2"] = "C m-2"
         else:
@@ -796,7 +967,7 @@ def run_dynamic_defect_ion_transient_refinement(
         "protocol_identity_verified": float(protocol_identity_verified),
         "source_case_identity_verified": float(source_identity_verified),
     }
-    if lane.lane_id == _LANE_ID:
+    if lane.lane_id in {_LANE_ID, _PRODUCTION_LANE_ID}:
         quality.update(
             {
                 "fast_ion_failure_is_declared_nonlinear_stall": float(
@@ -835,56 +1006,93 @@ def run_dynamic_defect_ion_transient_refinement(
         _NONLINEAR_V3_LANE_ID,
         _ABSORBER_V4_LANE_ID,
         _LANE_ID,
+        _PRODUCTION_LANE_ID,
     }:
         quality["max_near_acceptance_nonmonotone_step_count"] = float(
             max(item.near_acceptance_nonmonotone_step_count for item in certificates)
+        )
+    if lane.lane_id == _PRODUCTION_LANE_ID:
+        quality.update(
+            {
+                "public_projection_certified": float(public_projection_certified),
+                "public_protocol_identity_verified": float(
+                    public_protocol_identity_verified
+                ),
+                "reference_certificate_bound": float(reference_certificate_bound),
+            }
         )
     units.update(
         {
             "max_poisson_residual_C_m2": "C m-2",
         }
     )
+    fast_boundary_metadata = {
+        "error_message": fast_failure_message,
+        "error_type": fast_failure_type,
+        "ion_diffusivity_m2_s": fast_ion,
+        "newton_iteration": fast_failure_iteration,
+        "nonlinear_iteration": fast_nonlinear_iteration,
+        "nonlinear_outcome": fast_nonlinear_outcome,
+        "nonlinear_residual": fast_nonlinear_residual,
+    }
+    metadata = {
+        "actual_intervals_per_layer": point.grid,
+        "actual_nodes": int(grid.size),
+        "case_certificates": {
+            name: dataclasses.asdict(
+                results[name].evidence.engine_certificate
+                if lane.lane_id == _PRODUCTION_LANE_ID
+                else results[name].certificate
+            )
+            for name in _CASE_NAMES
+        },
+        "case_identities": identities,
+        "fast_ion_stiffness_boundary": fast_boundary_metadata,
+        "grid_m": grid.tolist(),
+        "matrix_tolerance_factor": point.tolerance_factor,
+        "motion": {
+            name: {
+                "interface_occupancy": values[0],
+                "positive_ion": values[1],
+            }
+            for name, values in motion.items()
+        },
+        "policy": dataclasses.asdict(policy),
+        "protocol": protocol,
+        "protocol_hash": protocol_hash,
+        "protocol_schema": protocol["schema_version"],
+        "source_config_sha256": lane.config_sha256,
+        "traces": {
+            name: {key: value.tolist() for key, value in values.items()}
+            for name, values in traces.items()
+        },
+    }
+    if lane.lane_id == _PRODUCTION_LANE_ID:
+        if fast_public_protocol is None:  # pragma: no cover - guarded by build above
+            raise RuntimeError(
+                "D6-E4 production stiffness probe did not bind a public protocol"
+            )
+        fast_boundary_metadata.update(
+            public_protocol=fast_public_protocol.to_dict(),
+            public_protocol_sha256=fast_public_protocol.protocol_hash,
+        )
+        metadata.update(
+            public_evidence={
+                name: dataclasses.asdict(results[name].evidence) for name in _CASE_NAMES
+            },
+            public_protocol_hashes={
+                name: public_protocols[name].protocol_hash for name in _CASE_NAMES
+            },
+            public_protocols={
+                name: public_protocols[name].to_dict() for name in _CASE_NAMES
+            },
+        )
     return CellMeasurement.from_mapping(
         {
             "observables": observables,
             "quality": quality,
             "units": units,
-            "metadata": {
-                "actual_intervals_per_layer": point.grid,
-                "actual_nodes": int(grid.size),
-                "case_certificates": {
-                    name: dataclasses.asdict(results[name].certificate)
-                    for name in _CASE_NAMES
-                },
-                "case_identities": identities,
-                "fast_ion_stiffness_boundary": {
-                    "error_message": fast_failure_message,
-                    "error_type": fast_failure_type,
-                    "ion_diffusivity_m2_s": fast_ion,
-                    "newton_iteration": fast_failure_iteration,
-                    "nonlinear_iteration": fast_nonlinear_iteration,
-                    "nonlinear_outcome": fast_nonlinear_outcome,
-                    "nonlinear_residual": fast_nonlinear_residual,
-                },
-                "grid_m": grid.tolist(),
-                "matrix_tolerance_factor": point.tolerance_factor,
-                "motion": {
-                    name: {
-                        "interface_occupancy": values[0],
-                        "positive_ion": values[1],
-                    }
-                    for name, values in motion.items()
-                },
-                "policy": dataclasses.asdict(policy),
-                "protocol": protocol,
-                "protocol_hash": protocol_hash,
-                "protocol_schema": protocol["schema_version"],
-                "source_config_sha256": lane.config_sha256,
-                "traces": {
-                    name: {key: value.tolist() for key, value in values.items()}
-                    for name, values in traces.items()
-                },
-            },
+            "metadata": metadata,
         }
     )
 

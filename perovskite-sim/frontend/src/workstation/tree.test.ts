@@ -13,7 +13,7 @@ function makeDevice(id: string, name: string, tier: 'legacy' | 'fast' | 'full' =
   }
 }
 
-function makeExperiment(id: string, kind: 'jv' | 'impedance' | 'degradation' = 'jv'): Experiment {
+function makeExperiment(id: string, kind: Experiment['kind'] = 'jv'): Experiment {
   return { id, kind, params: {}, runs: [] }
 }
 
@@ -104,6 +104,20 @@ describe('hierarchical rendering', () => {
     expect(html).toContain('data-device-id="d1"')
     expect(html).toContain('data-experiment-id="e1"')
     expect(html).toMatch(/J.V/i)
+  })
+
+  it('renders the certified defect-ion transient experiment label', () => {
+    let ws = createEmptyWorkspace('W')
+    ws = addDevice(ws, makeDevice('d1', 'Alpha'))
+    ws = addExperiment(
+      ws,
+      'd1',
+      makeExperiment('e-dit', 'dynamic_defect_transient'),
+    )
+
+    const html = renderTreeHTML(ws)
+
+    expect(html).toContain('Defect–Ion Transient')
   })
 
   it('renders run nodes under their experiment with timestamp', () => {

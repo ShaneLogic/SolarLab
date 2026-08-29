@@ -625,6 +625,7 @@ input[type="number"] {
 .dark-jv-plot,
 .mott-schottky-plot,
 .impedance-plot,
+.dynamic-defect-transient-plot,
 .degradation-plot,
 .tpv-plot,
 .voc-grain-sweep-plot { flex: 1 1 auto; min-height: 0; }
@@ -665,6 +666,12 @@ input[type="number"] {
 .impedance-evidence-summary span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.dynamic-defect-transient-evidence-summary {
+  border-left: 3px solid #0f766e;
+  background: #f0fdfa;
+  color: #134e4a;
+  padding: 0.375rem 0.5rem;
 }
 
 /* Plot-level toolbar shared across experiment panes. Hosts the

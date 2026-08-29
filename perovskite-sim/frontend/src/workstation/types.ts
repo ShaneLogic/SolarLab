@@ -3,6 +3,7 @@ import type {
   SimulationModeName,
   JVResult,
   ISResult,
+  DynamicDefectTransientResult,
   DegResult,
   TPVResult,
   CurrentDecompResult,
@@ -50,6 +51,7 @@ export interface Device {
 export type ExperimentKind =
   | 'jv'
   | 'impedance'
+  | 'dynamic_defect_transient'
   | 'degradation'
   | 'tpv'
   | 'current_decomp'
@@ -66,6 +68,7 @@ export type ExperimentKind =
 export type RunResult =
   | { kind: 'jv'; data: JVResult }
   | { kind: 'impedance'; data: ISResult }
+  | { kind: 'dynamic_defect_transient'; data: DynamicDefectTransientResult }
   | { kind: 'degradation'; data: DegResult }
   | { kind: 'tpv'; data: TPVResult }
   | { kind: 'current_decomp'; data: CurrentDecompResult }

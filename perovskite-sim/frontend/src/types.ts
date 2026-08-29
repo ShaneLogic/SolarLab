@@ -724,6 +724,106 @@ export interface ISResult {
   dynamic_defect_evidence?: DynamicDefectImpedanceEvidence | null
 }
 
+export interface DynamicDefectTransientSolverPolicy {
+  refinement_substeps: number[]
+  maximum_newton_iterations: number
+  maximum_line_search_steps: number
+  maximum_near_acceptance_nonmonotone_steps: number
+  maximum_scaled_nonlinear_residual: number
+  maximum_refinement_state_change: number
+  maximum_refinement_current_relative_change: number
+  maximum_charge_balance_relative_error: number
+  maximum_all_face_current_spread_relative: number
+  maximum_two_sided_interface_total_current_relative_error: number
+  maximum_ion_inventory_relative_drift: number
+  site_occupancy_ceiling: number
+  [key: string]: number | number[]
+}
+
+export interface DynamicDefectTransientProtocol {
+  schema_version: 'dynamic-defect-transient-protocol-v1'
+  method: 'dynamic_defect_transient_certified'
+  capability: 'interface_defect_plus_positive_ions'
+  illuminated: false
+  times_s: number[]
+  voltage_V: number[]
+  voltage_interpolation: 'right_continuous_step_and_hold'
+  requested_grid_intervals: number
+  actual_grid_nodes: number
+  grid_sha256: string
+  stack_sha256: string
+  interface_defect_document_sha256: string[]
+  active_positive_ion_layer_indices: number[]
+  defect_energy_quadrature_order: number
+  interface_current_observation: 'symmetric_adjacent_physical_faces'
+  time_step_refinement_factor: number
+  solver_policy: DynamicDefectTransientSolverPolicy
+  reference_lane_id: string
+  reference_certificate_sha256: string
+}
+
+export interface DynamicDefectTransientEngineCertificate {
+  dc_operating_point_certified: boolean
+  dark_reference_certified: boolean
+  microscopic_binding_certified: boolean
+  maximum_scaled_nonlinear_residual: number
+  maximum_charge_balance_relative_error: number
+  maximum_all_face_current_spread_relative: number
+  maximum_two_sided_interface_total_current_relative_error: number
+  maximum_ion_inventory_relative_drift: number
+  maximum_refinement_state_change: number
+  maximum_refinement_current_relative_change: number
+  certified: boolean
+  reasons: string[]
+  [key: string]: unknown
+}
+
+export interface DynamicDefectTransientEvidence {
+  model: 'dynamic-defect-transient-evidence-v1'
+  protocol: DynamicDefectTransientProtocol
+  protocol_sha256: string
+  capability: 'interface_defect_plus_positive_ions'
+  engine_scope: string
+  engine_version: string
+  state_sha256: string
+  reference_lane_id: string
+  reference_certificate_sha256: string
+  engine_certificate: DynamicDefectTransientEngineCertificate
+  dc_operating_point_certified: boolean
+  dark_reference_certified: boolean
+  microscopic_binding_certified: boolean
+  numerically_certified: boolean
+  public_projection_certified: boolean
+  certified: boolean
+  maximum_interface_occupancy_motion: number
+  maximum_positive_ion_relative_motion: number
+  maximum_positive_ion_centroid_shift_m: number
+  maximum_integrated_charge_change_C_m2: number
+  maximum_terminal_current_A_m2: number
+  reasons: string[]
+  limitations: string[]
+}
+
+export interface DynamicDefectTransientResult {
+  grid_m: number[]
+  times_s: number[]
+  voltage_V: number[]
+  terminal_total_current_A_m2: number[]
+  total_current_faces_A_m2: number[][]
+  interface_total_current_A_m2: number[][][]
+  interface_occupancy: number[][]
+  interface_occupancy_change: number[][]
+  positive_ion_centroid_m: number[]
+  positive_ion_centroid_shift_m: number[]
+  integrated_charge_change_C_m2: number[]
+  electron_density_m3: number[][]
+  hole_density_m3: number[][]
+  positive_ion_density_m3: number[][]
+  electrostatic_potential_V: number[][]
+  protocol: DynamicDefectTransientProtocol
+  evidence: DynamicDefectTransientEvidence
+}
+
 export interface DegResult {
   times: number[]
   PCE: number[]

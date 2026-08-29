@@ -710,6 +710,90 @@ lanes:
       - Version 4 remains immutable partial evidence: all 9 cells executed, but absolute interface occupancy failed three terminal grid checks and two cells reached the declared Newton iteration limit rather than the narrower line-search-only outcome. Version 3 remains partial and versions 1-2 retain their recorded execution failures.
       - This lane is internal SolarLab numerical convergence evidence, not SCAPS parity, experimental validation, production API certification, or unique parameter identification.
 
+  dynamic-defect-ion-transient-production-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
+    config_sha256: f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24
+    executor: perovskite_sim.validation.dynamic_defect_transient_refinement:run_dynamic_defect_ion_transient_refinement
+    executor_version: v6
+    grid:
+      parameter: intervals_per_layer
+      values: [4, 6, 8]
+    tolerance:
+      parameter: backward_euler_time_step_factor
+      factors: [1.0, 0.5, 0.25]
+    observables:
+      combined_interface_occupancy_change: {comparison: absolute_linf, limit: 1.0e-8, units: "1"}
+      combined_positive_ion_centroid_shift_m: {comparison: absolute_linf, limit: 5.0e-11, units: m}
+      combined_left_terminal_current_A_m2: {comparison: absolute_linf, limit: 1.0e-5, units: A m-2}
+      combined_integrated_charge_change_C_m2: {comparison: absolute_linf, limit: 1.0e-9, units: C m-2}
+      defect_dominated_interface_occupancy_change: {comparison: absolute_linf, limit: 1.0e-8, units: "1"}
+      defect_dominated_positive_ion_centroid_shift_m: {comparison: absolute_linf, limit: 5.0e-11, units: m}
+      defect_dominated_left_terminal_current_A_m2: {comparison: absolute_linf, limit: 1.0e-5, units: A m-2}
+      defect_dominated_integrated_charge_change_C_m2: {comparison: absolute_linf, limit: 1.0e-9, units: C m-2}
+      ion_dominated_interface_occupancy_change: {comparison: absolute_linf, limit: 1.0e-8, units: "1"}
+      ion_dominated_positive_ion_centroid_shift_m: {comparison: absolute_linf, limit: 5.0e-11, units: m}
+      ion_dominated_left_terminal_current_A_m2: {comparison: absolute_linf, limit: 1.0e-5, units: A m-2}
+      ion_dominated_integrated_charge_change_C_m2: {comparison: absolute_linf, limit: 1.0e-9, units: C m-2}
+    quality_gates:
+      all_cases_certified: {operator: eq, limit: 1.0, units: "1"}
+      analytic_sparse_jacobian_verified: {operator: eq, limit: 1.0, units: "1"}
+      case_count: {operator: eq, limit: 3.0, units: "1"}
+      clipping_used: {operator: eq, limit: 0.0, units: "1"}
+      combined_interface_occupancy_motion: {operator: ge, limit: 1.0e-9, units: "1"}
+      combined_positive_ion_motion: {operator: ge, limit: 1.0e-5, units: "1"}
+      defect_dominated_interface_occupancy_motion: {operator: ge, limit: 1.0e-9, units: "1"}
+      defect_dominated_positive_ion_motion: {operator: le, limit: 1.0e-7, units: "1"}
+      fast_ion_failure_is_declared_nonlinear_stall: {operator: eq, limit: 1.0, units: "1"}
+      fast_ion_failure_iteration_reported: {operator: eq, limit: 1.0, units: "1"}
+      fast_ion_failure_iteration_within_policy: {operator: eq, limit: 1.0, units: "1"}
+      fast_ion_failure_residual_above_acceptance: {operator: eq, limit: 1.0, units: "1"}
+      fast_ion_stiffness_failed_closed: {operator: eq, limit: 1.0, units: "1"}
+      fast_ion_stiffness_failure_typed: {operator: eq, limit: 1.0, units: "1"}
+      ion_dominated_interface_occupancy_motion: {operator: le, limit: 1.0e-12, units: "1"}
+      ion_dominated_positive_ion_motion: {operator: ge, limit: 1.0e-5, units: "1"}
+      max_all_face_current_spread_relative: {operator: le, limit: 2.0e-6, units: "1"}
+      max_analytic_jacobian_column_relative_error: {operator: le, limit: 3.0e-4, units: "1"}
+      max_charge_balance_relative_error: {operator: le, limit: 1.0e-10, units: "1"}
+      max_current_decomposition_relative_error: {operator: le, limit: 1.0e-14, units: "1"}
+      max_eliminated_operator_relative_error: {operator: le, limit: 1.0e-6, units: "1"}
+      max_interface_total_current_relative_error: {operator: le, limit: 2.0e-6, units: "1"}
+      max_ion_inventory_relative_drift: {operator: le, limit: 1.0e-9, units: "1"}
+      max_local_carrier_normalized_residual: {operator: le, limit: 1.0e-7, units: "1"}
+      max_local_gauss_normalized_residual: {operator: le, limit: 1.0e-7, units: "1"}
+      max_near_acceptance_nonmonotone_step_count: {operator: le, limit: 12.0, units: "1"}
+      max_poisson_residual_C_m2: {operator: le, limit: 1.0e-8, units: C m-2}
+      max_refinement_current_relative_change: {operator: le, limit: 5.0e-2, units: "1"}
+      max_refinement_state_change: {operator: le, limit: 2.0e-2, units: "1"}
+      max_scaled_nonlinear_residual: {operator: le, limit: 5.0e-2, units: "1"}
+      max_site_occupancy_fraction: {operator: le, limit: 0.999, units: "1"}
+      microscopic_binding_certified: {operator: eq, limit: 1.0, units: "1"}
+      operating_points_certified: {operator: eq, limit: 1.0, units: "1"}
+      protocol_identity_verified: {operator: eq, limit: 1.0, units: "1"}
+      public_projection_certified: {operator: eq, limit: 1.0, units: "1"}
+      public_protocol_identity_verified: {operator: eq, limit: 1.0, units: "1"}
+      reference_certificate_bound: {operator: eq, limit: 1.0, units: "1"}
+      source_case_identity_verified: {operator: eq, limit: 1.0, units: "1"}
+    options:
+      config_loader: standard
+      require_protocol: true
+      production_method: dynamic_defect_transient_certified
+      times_s: [0.0, 1.0e-8, 1.0e-6, 1.0e-4]
+      voltage_V: [0.0, 0.05, 0.05, 0.05]
+      base_nested_substeps: [1, 2, 4]
+      grid_alpha: 1.5
+      slow_ion_diffusivity_m2_s: 1.0e-20
+      slow_capture_scale: 1.0e-12
+      fast_ion_diffusivity_m2_s: 1.0e-12
+      maximum_newton_iterations: 100
+      maximum_line_search_steps: 40
+      maximum_near_acceptance_nonmonotone_steps: 2
+    limitations:
+      - Version 6 is the first lane that executes the production DynamicDefectTransientProtocol and run_dynamic_defect_transient public wrapper for all three physical cases and the typed fast-ion stiffness boundary; it does not inherit production status from the v5 internal adapter certificate.
+      - The public capability remains dark, exactly two electrical layers, one canonical two-sided microscopic interface defect, exactly one absorber positive-ion layer, no active negative ions, and no explicit bulk defects. Each cell binds the E3c v5 reference certificate but must independently pass runtime projection and engine gates.
+      - Observables and physical thresholds intentionally match v5 reference-relative convergence evidence; three additional per-cell gates verify public protocol round-trip/content identity, public projection certification, and exact reference-certificate binding.
+      - This lane is internal SolarLab production-path numerical certification, not SCAPS transient parity, experimental validation, bulk-plus-ion coverage, dual-ion coverage, distributed dynamic defects, metastability, tunnelling, or unique parameter identification.
+
   csi-qf-frequency-domain:
     claim_level: internal-numerical-candidate
     config: configs/cSi_homojunction.yaml
