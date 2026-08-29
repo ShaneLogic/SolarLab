@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 9d3ca1c83d3174345a59e7773b818a3829c7397b128c55da7b1f11400f260995
+  sha256: 7f8b17ee78c98c80be7db6463b88175530a5bd441ec06ac7f8eb72dd85cf3c7b
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -80,6 +80,8 @@ benchmarks:
       - configs/driftfusion_calado2016_repro.yaml
       - configs/distributed_defect_qf_dc_pn.yaml
       - configs/dynamic_defect_ion_impedance.yaml
+      - configs/dynamic_interface_defect_ion_transient.yaml
+      - configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
       - configs/graded_distributed_defect_qf_dc_pn.yaml
       - configs/field_mobility_demo.yaml
       - configs/interface_charge_jv_research.yaml
@@ -134,6 +136,8 @@ benchmarks:
       - configs/cigs_graded_optics.yaml
       - configs/distributed_defect_qf_dc_pn.yaml
       - configs/dynamic_defect_ion_impedance.yaml
+      - configs/dynamic_interface_defect_ion_transient.yaml
+      - configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
       - configs/graded_distributed_defect_qf_dc_pn.yaml
       - configs/interface_charge_jv_research.yaml
       - configs/interface_charge_reference.yaml
@@ -1255,6 +1259,32 @@ benchmarks:
       - the source-bound 3x3 production matrix certifies grid, finite-difference, frequency-sampling, conservation, decomposition, DC-state, contact, and frequency-window gates; its current certificate identity is tracked in the explicit-defect development roadmap
       - the synthetic fixture contains one single-level acceptor plus one positive mobile-ion species; bulk-only and two-sided interface dispatch are covered by dedicated real integration tests
       - this is internal numerical evidence, not SCAPS parity, measured impedance validation, or unique defect-parameter identification
+  dynamic-defect-ion-transient-timescale-closure:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: >-
+      pytest -q
+      tests/unit/physics/test_dynamic_storage.py
+      tests/unit/validation/test_dynamic_defect_transient_refinement.py
+      tests/integration/test_interface_defect_ion_transient.py
+    tests:
+      - tests/unit/physics/test_dynamic_storage.py
+      - tests/unit/validation/test_dynamic_defect_transient_refinement.py
+      - tests/integration/test_interface_defect_ion_transient.py
+    node_ids:
+      - tests/unit/physics/test_dynamic_storage.py::test_log_density_increment_resolves_sub_ulp_relative_motion
+      - tests/unit/validation/test_dynamic_defect_transient_refinement.py::test_registered_lane_freezes_three_by_three_timescale_contract
+      - tests/unit/validation/test_dynamic_defect_transient_refinement.py::test_reference_resolved_v5_changes_only_reference_and_stiffness_contract
+      - tests/integration/test_interface_defect_ion_transient.py::test_deep_time_refinement_retains_charge_and_all_face_current_closure
+    configs:
+      - configs/dynamic_interface_defect_ion_transient.yaml
+      - configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
+    limitations:
+      - the source-clean v5 3x3 matrix at commit ba54ce2 completed 9/9 cells and 339/339 checks with certificate SHA-256 9eab2f9e251b8d4c0f7f3f07e0baeea9bb6497126ef8d8111eba1803947e5beb
+      - v3 and v4 partial artifacts remain immutable evidence for absolute-DC-baseline and overly narrow stiffness-outcome failures; they are not reclassified by v5
+      - the certified range is one absorber-mobile-ion, single-level two-sided-interface fixture and three registered timescale cases; the accelerated-ion probe is only a typed fail-closed stiffness boundary
+      - this is internal numerical evidence, not SCAPS transient parity, experimental validation, production API certification, or unique parameter identification
   charged-explicit-defect-internal-closure:
     kind: numerical
     status: pass
@@ -1454,6 +1484,24 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - dynamic-defect-ion-impedance-production-closure
+  - path: configs/dynamic_interface_defect_ion_transient.yaml
+    sha256: 7aa464bc4772030318ebfa5fa7eb293e346ddf33f70f74083ba120f4240fd7c8
+    semantic_sha256: 904f44df9c0527aad7aa61b1f1b71b5f9477ac5f2f1a004299fffab0345f9d52
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - dynamic-defect-ion-transient-timescale-closure
+  - path: configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
+    sha256: f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24
+    semantic_sha256: c0b3adc20eff5b8fdba66b44ff045c447564b1f23c4990fa5471aef29b7904c4
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - dynamic-defect-ion-transient-timescale-closure
   - path: configs/graded_distributed_defect_qf_dc_pn.yaml
     sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
     semantic_sha256: f502dd9f6350e6c32a64f75686f17492acc0a64803df1939851777646c93486a

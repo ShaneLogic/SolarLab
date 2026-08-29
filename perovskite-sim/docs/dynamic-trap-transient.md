@@ -349,14 +349,15 @@ Iteration-limit errors also report charge, all-face current, interface current,
 and linear backward errors. Unknown or unstructured failures fail the quality
 contract.
 
-The dirty-source v5 provisional matrix completed all nine cells without reuse,
-failure, or missing artifacts and passed 339 of 339 certificate checks. Its
-largest terminal grid/tolerance comparisons included `4.57e-10 C/m2` integrated
-charge change against a `1e-9 C/m2` limit, `3.82e-13 m` centroid shift against a
-`5e-11 m` limit, and `2.02e-6 A/m2` terminal current against a `1e-5 A/m2`
-limit. This is source-bound internal numerical evidence. A checkpoint commit,
-new-commit source-clean matrix, and full Python suite remain required before
-E3c is complete.
+The v5 source-clean matrix at commit `ba54ce2` completed all nine cells without
+reuse, failure, or missing artifacts and passed 339 of 339 certificate checks.
+Certificate SHA-256 is
+`9eab2f9e251b8d4c0f7f3f07e0baeea9bb6497126ef8d8111eba1803947e5beb`.
+Its largest terminal grid/tolerance comparisons included `4.57e-10 C/m2`
+integrated charge change against a `1e-9 C/m2` limit, `3.82e-13 m` centroid
+shift against a `5e-11 m` limit, and `2.02e-6 A/m2` terminal current against a
+`1e-5 A/m2` limit. The canonical protocol SHA-256 is
+`7db9bc5d8a166d3f928bcb0810bfbfdce26de1741085771a511ece9144ee1438`.
 
 ## Evidence and remaining boundary
 
@@ -398,14 +399,15 @@ tests, and a pinned default suite of 3327 passes, 2 skips, and 267 deselections.
 
 E3c adds cancellation-safe coordinate-to-storage increments, strict
 source/case/protocol identity, the three timescale cases, and the 3 by 3
-space/time refinement matrix. The current v5 contract/registry set has 32
-passing tests. Dynamic-storage and bulk/interface trap/ion transient related
-tests have 76 passes. The provisional certificate has no failed checks, while
-v3 and v4 partial certificates remain preserved. The full-suite count and
-source-clean v5 certificate must be recorded after the implementation commit.
+space/time refinement matrix. The v5 contract/registry set has 32 passing
+tests. Dynamic-storage and bulk/interface trap/ion transient related tests have
+76 passes. The first full-suite run correctly found that the new configs and
+registry SHA were absent from the reproducibility matrix; after adding file and
+semantic hashes plus bidirectional benchmark mappings, the focused provenance
+set has 74 passes. The final fixed-thread full suite has 3358 passes, 2 skips,
+267 deselections, and 12 pre-existing `np.trapz` deprecation warnings. The v3
+and v4 partial certificates remain preserved.
 
-This remains internal numerical and physical-logic evidence, not external
-SCAPS or experimental validation. D6-E3c is incomplete until the checkpoint
-commit, source-clean matrix, full Python suite, documentation audit, and push
-close. Protocol-bound public experiment results, backend preflight, and
-frontend controls belong to D6-E4.
+This closes the internal D6-E3c numerical and physical-logic evidence. It is
+not external SCAPS or experimental validation. Protocol-bound public experiment
+results, backend preflight, and frontend controls belong to D6-E4.
