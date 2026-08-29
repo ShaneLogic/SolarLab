@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   streamJobEvents: vi.fn(),
   newPlot: vi.fn(),
   purge: vi.fn(),
+  resize: vi.fn(),
 }))
 
 vi.mock('../../job-stream', () => ({
@@ -16,6 +17,7 @@ vi.mock('plotly.js-basic-dist-min', () => ({
   default: {
     newPlot: mocks.newPlot,
     purge: mocks.purge,
+    Plots: { resize: mocks.resize },
   },
 }))
 
@@ -185,9 +187,11 @@ beforeEach(() => {
   mocks.streamJobEvents.mockReset()
   mocks.newPlot.mockReset()
   mocks.purge.mockReset()
+  mocks.resize.mockReset()
 })
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   document.body.replaceChildren()
 })
 
@@ -340,5 +344,33 @@ describe('dynamic-defect transient plot evidence', () => {
         '[data-test="dynamic-defect-transient-evidence-warning"]',
       )?.textContent,
     ).toContain('time_refinement_state_not_converged')
+  })
+
+  it('resizes the Plotly canvas when its docked pane changes size', () => {
+    const callbacks: ResizeObserverCallback[] = []
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback)
+      }
+
+      observe = observe
+      disconnect = disconnect
+      unobserve = vi.fn()
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+
+    renderDynamicDefectTransient(container, result())
+    const plot = container.querySelector<HTMLElement>(
+      '#dynamic-defect-transient-plot-inner',
+    )!
+
+    expect(observe).toHaveBeenCalledWith(plot)
+    callbacks[0]([], {} as ResizeObserver)
+    expect(mocks.resize).toHaveBeenCalledWith(plot)
+
+    renderDynamicDefectTransient(container, result())
+    expect(disconnect).toHaveBeenCalled()
   })
 })

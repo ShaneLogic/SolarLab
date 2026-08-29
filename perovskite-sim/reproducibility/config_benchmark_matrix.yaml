@@ -1287,7 +1287,7 @@ benchmarks:
       - this is internal numerical evidence, not SCAPS transient parity, experimental validation, production API certification, or unique parameter identification
   dynamic-defect-ion-transient-production-closure:
     kind: numerical
-    status: partial
+    status: pass
     claim_level: internal-numerical-candidate
     command: >-
       pytest -q
@@ -1312,7 +1312,7 @@ benchmarks:
     configs:
       - configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
     limitations:
-      - the public protocol, direct/async API, frontend control/evidence path, and one real v6 executor cell are implemented and focused-tested; the full source-clean 3x3 production matrix has not yet run, so this benchmark remains partial
+      - the source-clean v6 3x3 matrix at commit 4f13a4bebfc71275bb83394e184144965d1359a6 completed 9/9 cells without failure, missing cells, or reuse and passed 366/366 checks; run ID 464da3ec6e0bb94fbd40a82bdc9325b29eabbb6622dc8fcad699b505a4434f5f and certificate SHA-256 52c63f74e5e139487aebce1e3ebe576d4861fb566788261e40d594e8f76f703b
       - the v6 lane must execute the public wrapper independently for combined, defect-dominated, and ion-dominated cases and cannot inherit production certification from the E3c v5 internal adapter certificate
       - this is dark two-layer, one microscopic interface defect, absorber-positive-ion internal numerical evidence; it is not SCAPS transient parity, experimental validation, bulk-plus-ion or dual-ion production coverage
   charged-explicit-defect-internal-closure:
@@ -1527,7 +1527,7 @@ configs:
     sha256: f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24
     semantic_sha256: c0b3adc20eff5b8fdba66b44ff045c447564b1f23c4990fa5471aef29b7904c4
     schema: standard-device-v1
-    status: partial
+    status: certified
     benchmarks:
       - loader-contract
       - phase1-refinement-contract

@@ -6,8 +6,9 @@ D6-E0 establishes the local time-domain contract for one single-level,
 monovalent trap. D6-E1 and D6-E2 add separate research-only bulk and
 two-sided-interface device transients. D6-E3a adds bulk-defect/mobile-ion
 coupling, and D6-E3b adds the corresponding two-sided-interface/mobile-ion
-coupling. None of these checkpoints modifies the historical method-of-lines
-state vector.
+coupling. D6-E4 exposes one source-bound, narrow production protocol through
+Python, direct and asynchronous HTTP APIs, and the workstation. None of these
+checkpoints modifies the historical method-of-lines state vector.
 
 The supported charge transitions are acceptor and donor. Neutral transitions
 are rejected on this charge-coupled path because a changing neutral occupancy
@@ -99,6 +100,10 @@ The absolute trap charge differs: `Q_acceptor = -q f` and
 - `experiments.interface_defect_ion_transient.run_interface_defect_ion_device_transient`
   adds the same ion storage and analytic face-flux tangent to the retained
   two-sided-interface DAE.
+- `experiments.dynamic_defect_transient.run_dynamic_defect_transient` is the
+  strict D6-E4 public wrapper. It requires a canonical
+  `DynamicDefectTransientProtocol`, executes the certified E3b engine, and
+  returns immutable physical arrays plus `DynamicDefectTransientEvidence`.
 
 ## D6-E1 device closure
 
@@ -359,6 +364,87 @@ shift against a `5e-11 m` limit, and `2.02e-6 A/m2` terminal current against a
 `1e-5 A/m2` limit. The canonical protocol SHA-256 is
 `7db9bc5d8a166d3f928bcb0810bfbfdce26de1741085771a511ece9144ee1438`.
 
+## D6-E4 production protocol, API, and workstation
+
+The first production transient capability deliberately matches the physical
+envelope demonstrated by E3c instead of treating all research adapters as
+certified. `DynamicDefectTransientProtocol` binds the complete numerical
+execution identity:
+
+- exact dark, right-continuous step-and-hold time and voltage arrays;
+- requested intervals, actual grid nodes, and grid SHA-256;
+- stack and microscopic interface-defect document SHA-256 values;
+- active positive-ion layer indices and defect quadrature order;
+- time-step refinement factor and the full nonlinear solver policy;
+- two-sided interface-current observation convention; and
+- the E3c v5 reference lane and certificate SHA-256.
+
+Protocol JSON uses exact keys, finite values, and a canonical SHA-256. A
+caller-supplied protocol must equal the protocol rebuilt from the requested
+stack, grid, history, solver policy, and reference certificate. A mismatch
+fails before device integration.
+
+The v1 capability classifier requires exactly two electrical layers, exactly
+one canonical uncalibrated microscopic two-sided interface defect,
+equilibrium-referenced interface charge with rebaseline acknowledgement, and
+exactly one active positive-ion layer whose role is `absorber`. It rejects
+illumination, explicit bulk defects, active negative ions, multiple interface
+defects, and unsupported topology before solving. The public result retains
+terminal and all-face total current, both physical-interface observations,
+occupancy and reference-relative occupancy change, positive-ion density and
+centroid shift, reference-relative integrated charge, carrier densities, and
+electrostatic potential. Certification requires both the inherited engine
+certificate and a finite public projection.
+
+The backend exposes the same contract at
+`POST /api/dynamic-defect-transient` and through async job kind
+`dynamic_defect_transient`. Both paths rebuild and resolve the expected
+protocol before dispatch; malformed, mismatched, or out-of-capability requests
+fail closed rather than becoming queued numerical jobs. The workstation adds a
+`Defect-Ion Transient` experiment, eligibility assessment, strict async
+submission, protocol/evidence summary, engineering and publication plots, and
+terminal-current/interface-occupancy traces.
+
+The source-bound production lane is
+`dynamic-defect-ion-transient-production-v1`, executor v6. It independently
+calls the public wrapper for combined, defect-dominated, and ion-dominated
+cases, plus the typed fast-ion fail-closed boundary. Its axes are grid
+`(4, 6, 8)` by time-step factor `(1, 0.5, 0.25)`. Every completed cell returns
+12 observables and 38 quality gates, including public protocol identity,
+projection certification, engine scope/version, and exact E3c reference
+binding.
+
+At implementation commit
+`4f13a4bebfc71275bb83394e184144965d1359a6`, source-clean run
+`464da3ec6e0bb94fbd40a82bdc9325b29eabbb6622dc8fcad699b505a4434f5f`
+completed 9 of 9 cells with zero failed, missing, or reused cells and passed
+366 of 366 checks. Certificate SHA-256 is
+`52c63f74e5e139487aebce1e3ebe576d4861fb566788261e40d594e8f76f703b`;
+manifest canonical SHA-256 is
+`f46e4e13d463d044b4c8c06e4402f40e84acf190a91146eb989af0dd2546f808`.
+
+The fixed-thread full Python suite passed 3389 tests, with 2 skipped, 267
+deselected, and 12 pre-existing `np.trapz` deprecation warnings. Production
+benchmark provenance tests passed 59 tests. The final workstation tree passed
+39 files and 475 tests, and the TypeScript/Vite production build passed with
+only the pre-existing large-chunk warning.
+
+Real browser QA used the frozen absorber-only preset and a current-source async
+backend. The job reached 100 percent and returned the certified protocol and
+evidence. A docked plot expanded from 283 px to 1014 px with its pane and SVG;
+saved maximised layouts reload through the resolved-layout conversion without
+console errors. At a 390 by 844 px viewport, the project tree becomes an
+accessible overlay, while the maximised result pane is 388 px and the Plotly
+container and SVG are 364 px without horizontal overflow. Engineering and
+publication views remain readable and the post-load console reports zero
+errors and warnings.
+
+This evidence is internal numerical and public-interface certification for the
+frozen narrow device. It is not SCAPS transient parity, experimental transient
+validation, unique parameter identification, or coverage for bulk-defect plus
+ion, negative/dual ions, distributed dynamic defects, multivalent/metastable
+states, or tunnelling.
+
 ## Evidence and remaining boundary
 
 Unit tests cover strict boundedness, endpoint/non-finite rejection, one- and
@@ -408,6 +494,9 @@ set has 74 passes. The final fixed-thread full suite has 3358 passes, 2 skips,
 267 deselections, and 12 pre-existing `np.trapz` deprecation warnings. The v3
 and v4 partial certificates remain preserved.
 
-This closes the internal D6-E3c numerical and physical-logic evidence. It is
-not external SCAPS or experimental validation. Protocol-bound public experiment
-results, backend preflight, and frontend controls belong to D6-E4.
+E4 adds the protocol-bound production wrapper, direct/async preflight,
+workstation controls and evidence, and an independent v6 public-wrapper
+matrix. D6 is therefore internally closed for the explicitly declared narrow
+capability. External SCAPS and experimental validation remain separate work;
+multivalent and metastable physics begins at D7 rather than inheriting a
+single-level D6 certificate.

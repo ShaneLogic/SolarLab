@@ -58,6 +58,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
 
   function clear(msg: string): void {
     header.textContent = msg
+    disconnectDynamicDefectTransientResizeObserver(plotEl)
     Plotly.purge(plotEl)
     plotEl.innerHTML = '<div class="plot-empty">Run an experiment to see results here.</div>'
   }
@@ -76,6 +77,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
         return
       }
       header.textContent = `${run.activePhysics}  ·  ${new Date(run.timestamp).toLocaleString()}`
+      disconnectDynamicDefectTransientResizeObserver(plotEl)
       switch (run.result.kind) {
         case 'jv':
           renderJV(plotEl, run.result.data)
@@ -988,10 +990,32 @@ export function renderImpedance(el: HTMLElement, r: ISResult): void {
   }
 }
 
+const dynamicDefectTransientResizeObservers = new WeakMap<HTMLElement, ResizeObserver>()
+
+function disconnectDynamicDefectTransientResizeObserver(container: HTMLElement): void {
+  dynamicDefectTransientResizeObservers.get(container)?.disconnect()
+  dynamicDefectTransientResizeObservers.delete(container)
+}
+
+function observeDynamicDefectTransientPlot(
+  container: HTMLElement,
+  plot: HTMLElement,
+): void {
+  disconnectDynamicDefectTransientResizeObserver(container)
+  if (typeof ResizeObserver === 'undefined') return
+
+  const observer = new ResizeObserver(() => {
+    if (plot.isConnected) void Plotly.Plots.resize(plot)
+  })
+  observer.observe(plot)
+  dynamicDefectTransientResizeObservers.set(container, observer)
+}
+
 export function renderDynamicDefectTransient(
   el: HTMLElement,
   result: DynamicDefectTransientResult,
 ): void {
+  disconnectDynamicDefectTransientResizeObserver(el)
   Plotly.purge(el)
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('dynamic-defect-transient-render')
@@ -1133,6 +1157,7 @@ export function renderDynamicDefectTransient(
       plotConfig('dynamic_defect_transient'),
     )
   }
+  observeDynamicDefectTransientPlot(el, plotDiv)
 }
 
 export function renderDegradation(el: HTMLElement, r: DegResult): void {

@@ -25,6 +25,8 @@ import { mountTandemPane } from './panes/tandem-pane'
 import { mountMainPlotPane } from './panes/main-plot-pane'
 import type { MainPlotHandle } from './panes/main-plot-pane'
 import { presetsFromEntries, showWizard } from './wizard'
+import { restoreLayoutConfig } from './layout-persistence'
+import { bindMobileSidebarToggle } from './mobile-sidebar'
 
 const DEFAULT_LAYOUT: LayoutConfig = {
   root: {
@@ -85,6 +87,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         <p class="subtitle">1D Drift-Diffusion + Poisson + Mobile Ions · Perovskite · CIGS · c-Si</p>
       </div>
       <div class="workstation-header-actions">
+        <button type="button" class="btn btn-ghost workstation-sidebar-toggle" id="ws-sidebar-toggle" aria-controls="ws-tree" aria-expanded="false" aria-label="Show workspace tree" title="Show workspace tree">☰</button>
         <button type="button" class="btn btn-ghost" id="ws-reset-layout" title="Restore all panes to the default dock layout">Reset Layout</button>
         <button type="button" class="btn btn-ghost btn-danger-ghost" id="ws-clear-workspace" title="Clear all devices, experiments, and runs (resets localStorage)">Clear Workspace</button>
       </div>
@@ -98,6 +101,8 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   const treeEl = root.querySelector<HTMLElement>('#ws-tree')!
   const dockEl = root.querySelector<HTMLElement>('#ws-dock')!
   const consoleEl = root.querySelector<HTMLElement>('#ws-console')!
+  const sidebarToggle = root.querySelector<HTMLButtonElement>('#ws-sidebar-toggle')!
+  bindMobileSidebarToggle(sidebarToggle, treeEl)
 
   const consoleHandle: ConsoleHandle = mountConsole(consoleEl)
 
@@ -251,8 +256,8 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     mainPlot.update(workspace)
   })
 
-  const initialLayout: LayoutConfig = (workspace.layout as LayoutConfig | null) ?? DEFAULT_LAYOUT
   try {
+    const initialLayout = restoreLayoutConfig(workspace.layout, DEFAULT_LAYOUT)
     layout.loadLayout(initialLayout)
   } catch (e) {
     console.error('loadLayout failed, falling back to default:', e)

@@ -274,6 +274,29 @@ def test_partial_status_always_has_physical_benchmark_evidence():
         assert kinds.intersection(physical_kinds), entry["path"]
 
 
+def test_dynamic_defect_transient_production_evidence_is_source_bound():
+    matrix = _matrix()
+    benchmark = matrix["benchmarks"][
+        "dynamic-defect-ion-transient-production-closure"
+    ]
+    config = next(
+        entry
+        for entry in matrix["configs"]
+        if entry["path"]
+        == "configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
+    )
+    evidence = " ".join(benchmark["limitations"])
+
+    assert benchmark["status"] == "pass"
+    assert benchmark["claim_level"] == "internal-numerical-candidate"
+    assert config["status"] == "certified"
+    assert "4f13a4bebfc71275bb83394e184144965d1359a6" in evidence
+    assert "464da3ec6e0bb94fbd40a82bdc9325b29eabbb6622dc8fcad699b505a4434f5f" in evidence
+    assert "52c63f74e5e139487aebce1e3ebe576d4861fb566788261e40d594e8f76f703b" in evidence
+    assert "366/366" in evidence
+    assert "not SCAPS transient parity" in evidence
+
+
 def test_nk_manifest_covers_every_csv_stem_exactly():
     manifest = yaml.safe_load(
         (ROOT / "perovskite_sim/data/nk/manifest.yaml").read_text()
