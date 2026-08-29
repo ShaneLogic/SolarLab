@@ -204,6 +204,52 @@ exactly on the piecewise clamp switching boundary fail before time integration.
 The last restriction makes the analytic clamp-inactive-slice contract explicit
 instead of assigning an arbitrary derivative at a non-differentiable point.
 
+## D6-E3a bulk-defect/mobile-ion closure
+
+The first combined transient lane keeps the D6-E1 carrier/trap/potential DAE
+and adds one reference-relative log-density coordinate for every active node
+of each mobile-ion species. Its differential and algebraic rows are
+
+```text
+S = [n_interior, p_interior, Nt*f, P_positive, P_negative],
+P(phi, n, p, rho_trap, P_positive, P_negative) = 0.
+```
+
+Positive and negative ions share the same blocking-boundary finite-volume
+operator used by the legacy MoL and D5 AC paths. The Poisson contribution is
+
+```text
+rho_ion = q * [(P_positive - P_positive,0)
+               - (P_negative - P_negative,0)].
+```
+
+The conduction-current decomposition is evaluated from the same state:
+
+```text
+J_conduction = Jn + Jp + q*F_positive - q*F_negative,
+J_total = J_conduction + polarity*eps*(E[k] - E[k-1])/dt.
+```
+
+There is no synthetic trap- or ion-storage terminal channel. Global charge
+balance includes free carriers, absolute trap charge, and both ion species.
+Each contiguous mobile region also has a separate inventory certificate using
+the solver's endpoint-inclusive dual-cell widths; positive and negative
+inventories cannot cancel one another into a false pass.
+
+The ion part of the sparse Jacobian uses `ion_face_flux_jacobian()`, including
+shared-site cross derivatives. Trap occupancy remains a logit and active ions
+remain log densities. A declared site ceiling below the implemented steric
+clip is checked before flux evaluation; a clipping kink or coordinate
+overflow fails closed. Positive-only, dual-ion, and negative-only layouts use
+the same public adapter.
+
+The current E3a nonlinear solver is the inherited sparse-direct Newton with a
+non-clipping line search. On the five-node reference device, `D_ion=1e-20`
+and `1e-14 m2/s` certify, including the slow-ion frozen limit. Deliberately
+accelerated `1e-12` and `1e-10 m2/s` probes currently stall the line search at
+a scaled residual near `1.86e6`; this is a recorded D6-E3c stiffness-solver
+entry condition, not a certified range and not silently recovered.
+
 ## Evidence and remaining boundary
 
 Unit tests cover strict boundedness, endpoint/non-finite rejection, one- and
@@ -225,7 +271,23 @@ full-column Jacobian finite differences, nested time refinement, fast-QSS and
 slow-frozen limits, immutable output, provenance rejection, and over-strict
 partial/fail-closed behavior.
 
+The D6-E3a integration tests use one residual-certified combined defect/ion DC
+state and cover positive-only, dual-ion, and negative-only layouts; exact
+carrier/ionic/displacement current decomposition; endpoint-inclusive
+component inventories; global carrier/trap/ion charge balance; all-face total
+current; full-column analytic-Jacobian comparison; nested time refinement;
+the slow-ion frozen limit; immutable output; pre-clipping rejection; and
+over-strict partial/fail-closed behavior.
+
+The E3a focused integration file has 13 passing tests. The combined D5 AC,
+D6-E1, ion-migration, dynamic-state, and structured-Jacobian regression set has
+70 passing tests. The pinned single-thread default Python suite has 3314
+passing tests, 2 skips, 267 deselections, and 12 pre-existing `np.trapz`
+deprecation warnings.
+
 This is internal numerical and physical-logic evidence, not external SCAPS or
-experimental validation. D6-E3 must separately close simultaneous dynamic
-defects and mobile ions. Protocol hashes, backend preflight, frontend controls,
-and source-clean production matrices belong to D6-E4.
+experimental validation. D6-E3a does not complete the overall combined lane:
+two-sided interface defects plus ions remain D6-E3b, while the explicit
+stiffness/timescale and source-bound matrix remains D6-E3c. Protocol hashes,
+backend preflight, frontend controls, and source-clean production matrices
+belong to D6-E4.
