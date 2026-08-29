@@ -164,6 +164,26 @@ class TwoSidedCarrierBalance:
 
 
 @dataclass(frozen=True)
+class FixedOccupancyCarrierTangent:
+    """Direct tangents needed by a device DAE with explicit occupancy.
+
+    Local state and flux vectors use ``(n_L, p_L, n_R, p_R)`` ordering. Bulk
+    coordinate columns are ``(phi_L, phi_R, log n_L, log p_L, log n_R,
+    log p_R)``. The trace potentials and four log densities remain independent
+    algebraic coordinates; consequently the occupancy column contains only the
+    direct capture derivative.
+    """
+
+    balance: TwoSidedCarrierBalance
+    bulk_flux_jacobian_log_state_m2_s: np.ndarray
+    bulk_flux_jacobian_trace_potential_m2_s_V: np.ndarray
+    bulk_flux_jacobian_bulk_coordinates: np.ndarray
+    capture_flux_jacobian_log_state_m2_s: np.ndarray
+    capture_flux_occupancy_derivative_m2_s: np.ndarray
+    residual_occupancy_derivative_m2_s: np.ndarray
+
+
+@dataclass(frozen=True)
 class ChargedElectrostaticTraceBalance:
     """Potential-jump/Gauss balance with occupancy-dependent sheet charge.
 
@@ -967,6 +987,81 @@ def fixed_occupancy_carrier_balance_and_jacobian(
         jacobian_trace_potential_m2_s_V=(bulk_trace_jacobian + cross_trace_jacobian),
         jacobian_bulk_coordinates=bulk_coordinate_jacobian,
         one_way_cross_scale_m2_s=one_way_scale,
+    )
+
+
+def fixed_occupancy_carrier_tangent(
+    log_state: np.ndarray,
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    occupancy: float,
+    traces: InterfaceTracePotentials | None = None,
+) -> FixedOccupancyCarrierTangent:
+    """Return the full direct tangent for an explicit-occupancy DAE block.
+
+    This does not eliminate the local trace variables. It exposes the exact
+    partial derivatives used when the two trace potentials and four carrier
+    log densities are retained as algebraic unknowns in a larger sparse DAE.
+    """
+    values = np.asarray(log_state, dtype=float)
+    fixed = float(occupancy)
+    if values.shape != (_STATE_SIZE,) or not np.all(np.isfinite(values)):
+        raise ValueError("log_state must contain four finite values")
+    if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
+        raise ValueError("occupancy must lie in [0, 1]")
+    trace_values = traces or solve_electrostatic_traces(geometry, bulk)
+    state = np.exp(values)
+    if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
+        raise FloatingPointError("interface trace densities left finite range")
+    (
+        _bulk_flux,
+        bulk_log_jacobian,
+        bulk_trace_jacobian,
+        bulk_coordinate_jacobian,
+    ) = _bulk_flux_and_log_jacobian(
+        state,
+        trace_values,
+        geometry,
+        physics,
+        bulk,
+    )
+    _capture_flux, capture_log_jacobian = (
+        fixed_occupancy_trap_capture_flux_and_log_jacobian(
+            state,
+            physics,
+            fixed,
+        )
+    )
+    capture_occupancy_derivative = np.array(
+        [
+            -physics.surface_recombination_velocity_n_m_s
+            * (state[_N_LEFT] + physics.n1_left_m3),
+            physics.surface_recombination_velocity_p_m_s
+            * (state[_P_LEFT] + physics.p1_left_m3),
+            -physics.surface_recombination_velocity_n_m_s
+            * (state[_N_RIGHT] + physics.n1_right_m3),
+            physics.surface_recombination_velocity_p_m_s
+            * (state[_P_RIGHT] + physics.p1_right_m3),
+        ],
+        dtype=float,
+    )
+    balance = fixed_occupancy_carrier_balance_and_jacobian(
+        values,
+        geometry,
+        physics,
+        bulk,
+        fixed,
+        trace_values,
+    )
+    return FixedOccupancyCarrierTangent(
+        balance=balance,
+        bulk_flux_jacobian_log_state_m2_s=bulk_log_jacobian,
+        bulk_flux_jacobian_trace_potential_m2_s_V=bulk_trace_jacobian,
+        bulk_flux_jacobian_bulk_coordinates=bulk_coordinate_jacobian,
+        capture_flux_jacobian_log_state_m2_s=capture_log_jacobian,
+        capture_flux_occupancy_derivative_m2_s=capture_occupancy_derivative,
+        residual_occupancy_derivative_m2_s=-capture_occupancy_derivative,
     )
 
 
@@ -2127,6 +2222,7 @@ __all__ = [
     "EquilibriumReferencedMaterialQSSResult",
     "EquilibriumReferencedTwoSidedInterfaceResult",
     "FixedOccupancyMaterialInterfaceResult",
+    "FixedOccupancyCarrierTangent",
     "FixedOccupancyTwoSidedInterfaceResult",
     "INTERFACE_TOPOLOGIES",
     "InterfaceTracePotentials",
@@ -2144,6 +2240,7 @@ __all__ = [
     "equilibrium_referenced_electrostatic_trace_balance",
     "equilibrium_referenced_two_sided_balance",
     "fixed_occupancy_carrier_balance_and_jacobian",
+    "fixed_occupancy_carrier_tangent",
     "fixed_occupancy_trap_capture_flux_and_log_jacobian",
     "remove_shared_interface_nodes",
     "shared_trap_capture_flux",

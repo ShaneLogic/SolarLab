@@ -3,8 +3,9 @@
 ## Scope
 
 D6-E0 establishes the local time-domain contract for one single-level,
-monovalent trap. D6-E1 adds a separate research-only bulk-device transient.
-Neither checkpoint modifies the historical method-of-lines state vector.
+monovalent trap. D6-E1 adds a separate research-only bulk-device transient,
+and D6-E2 adds a research-only two-sided-interface device transient. None of
+these checkpoints modifies the historical method-of-lines state vector.
 
 The supported charge transitions are acceptor and donor. Neutral transitions
 are rejected on this charge-coupled path because a changing neutral occupancy
@@ -87,6 +88,10 @@ The absolute trap charge differs: `Q_acceptor = -q f` and
   carrier storage and occupied-trap storage with a backward-Euler index-1 DAE.
   Its coordinates are interior electron/hole quasi-Fermi increments, trap
   logit increments, and interior electrostatic-potential increments.
+- `experiments.interface_defect_transient.run_interface_defect_device_transient`
+  advances one shared areal occupancy per physical interface together with
+  bulk carriers, bulk electrostatic potential, and retained two-sided trace
+  variables.
 
 ## D6-E1 device closure
 
@@ -135,6 +140,70 @@ D6-E1 deliberately accepts only non-spatial, single-level acceptor/donor bulk
 species, no interface states, no mobile ions, no selective contacts, and no
 non-local photon recycling. Unsupported physics fails before integration.
 
+## D6-E2 two-sided-interface closure
+
+The interface route retains six zero-volume algebraic variables per physical
+interface: two electrostatic trace potentials and the four carrier trace log
+densities `(n_Ls, p_Ls, n_Rs, p_Rs)`. One shared trap logit is differential.
+For `N` device nodes and `K` interfaces, the sparse coordinate dimension is
+
+```text
+3 * (N - 2) + 7 * K.
+```
+
+The differential storage and algebraic rows are
+
+```text
+S = [n_interior, p_interior, Nt_area * f],
+P_bulk(phi, n, p, sigma_if) = 0,
+G_trace(phi_Ls, phi_Rs, sigma_if) = 0,
+B_carrier(n_Ls, p_Ls, n_Rs, p_Rs, f) = 0.
+```
+
+The same four microscopic capture legs determine the electron source, hole
+source, and `Nt_area * df/dt`. The incremental sheet charge is always
+
+```text
+sigma_if = -q * Nt_area * (f - f_eq),
+```
+
+and enters both the outer finite-volume Poisson rows and the local two-sided
+Gauss law. No lumped shared-node interface charge is introduced.
+
+The analytic sparse Jacobian covers bulk quasi-Fermi and potential columns,
+both trace-potential columns, all four trace log-density columns, and the
+explicit occupancy column. Newton uses a sparse direct solve and a non-clipping
+line search. Local carrier scaling includes the one-way Fermi-Dirac supplies;
+storage scaling includes a sparse coordinate-resolution bound for stiff rate
+rows. These are residual scales only and do not alter the physical equations.
+
+The interface face reported in the ordinary device face array is the left
+bulk-to-left-trace observation. Its displacement current uses
+
+```text
+D_L = -eps_L * (phi_Ls - phi_L) / d_L.
+```
+
+The result also reports both interface sides independently. On the right,
+
+```text
+D_R = eps_R * (phi_Rs - phi_R) / d_R,
+J_total,L = J_conduction,L + dD_L/dt,
+J_total,R = J_conduction,R + dD_R/dt.
+```
+
+The certificate requires `J_total,L = J_total,R`, all ordinary face totals to
+agree, and the integrated free-carrier plus sheet-charge change to match the
+terminal conduction-current difference. Every returned state is also rebuilt
+with the existing locally eliminated fixed-occupancy QF operator.
+
+The initial dark reference and DC state must carry the same microscopic defect
+document hashes and a contact-thermodynamic certificate. Missing microscopic
+documents, mobile ions, simultaneous bulk defects, and a cross-node barrier
+exactly on the piecewise clamp switching boundary fail before time integration.
+The last restriction makes the analytic clamp-inactive-slice contract explicit
+instead of assigning an arbitrary derivative at a non-differentiable point.
+
 ## Evidence and remaining boundary
 
 Unit tests cover strict boundedness, endpoint/non-finite rejection, one- and
@@ -148,8 +217,15 @@ closure, carrier-plus-trap charge balance, analytic-Jacobian comparison,
 sparse-versus-dense matrix cardinality, nested time refinement, fast-QSS and
 slow-frozen limits, immutable output, and over-strict fail-closed gates.
 
+The D6-E2 integration tests use a contact-consistent two-layer heterojunction
+with nonzero conduction- and valence-band steps. They cover shared bounded
+occupancy, the exact sheet-charge law, four capture and bulk-flux legs,
+left/right conduction and displacement currents, global charge balance,
+full-column Jacobian finite differences, nested time refinement, fast-QSS and
+slow-frozen limits, immutable output, provenance rejection, and over-strict
+partial/fail-closed behavior.
+
 This is internal numerical and physical-logic evidence, not external SCAPS or
-experimental validation. D6-E2 and D6-E3 must separately close shared
-two-sided interface traps and mobile-ion coupling. Protocol hashes, backend
-preflight, frontend controls, and source-clean production matrices belong to
-D6-E4.
+experimental validation. D6-E3 must separately close simultaneous dynamic
+defects and mobile ions. Protocol hashes, backend preflight, frontend controls,
+and source-clean production matrices belong to D6-E4.

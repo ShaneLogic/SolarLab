@@ -11,6 +11,7 @@ from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.physics.fermi_dirac import fermi_dirac_half
 from perovskite_sim.physics.two_sided_interface import (
     EquilibriumReferencedSheetCharge,
+    InterfaceTracePotentials,
     TwoSidedBulkState,
     TwoSidedInterfaceGeometry,
     TwoSidedInterfacePhysics,
@@ -20,6 +21,7 @@ from perovskite_sim.physics.two_sided_interface import (
     equilibrium_referenced_electrostatic_trace_balance,
     equilibrium_referenced_two_sided_balance,
     fixed_occupancy_carrier_balance_and_jacobian,
+    fixed_occupancy_carrier_tangent,
     fixed_occupancy_trap_capture_flux_and_log_jacobian,
     remove_shared_interface_nodes,
     shared_trap_capture_flux,
@@ -336,6 +338,167 @@ def test_fixed_occupancy_capture_and_carrier_tangents_match_central_difference()
             finite_difference / scale,
             rtol=3.0e-5,
             atol=2.0e-10,
+        )
+
+
+def test_fixed_occupancy_device_tangent_covers_bulk_trace_and_occupancy_columns():
+    geometry = _geometry(
+        potential_jump_right_minus_left_V=0.01,
+        fixed_sheet_charge_C_m2=1.0e-5,
+    )
+    physics = _physics(
+        conduction_band_step_eV=0.12,
+        hole_transport_step_eV=-0.07,
+        surface_recombination_velocity_n_m_s=0.03,
+        surface_recombination_velocity_p_m_s=0.05,
+        n1_left_m3=2.0e17,
+        n1_right_m3=5.0e17,
+        p1_left_m3=8.0e16,
+        p1_right_m3=3.0e17,
+    )
+    bulk = _bulk()
+    occupancy = 0.37
+    log_state = np.log(np.array([3.0e20, 7.0e19, 5.0e19, 4.0e20]))
+    traces = solve_electrostatic_traces(geometry, bulk)
+    tangent = fixed_occupancy_carrier_tangent(
+        log_state,
+        geometry,
+        physics,
+        bulk,
+        occupancy,
+        traces,
+    )
+
+    state_step = 1.0e-6
+    state_fd = np.empty((4, 4))
+    residual_state_fd = np.empty((4, 4))
+    capture_state_fd = np.empty((4, 4))
+    for column in range(4):
+        plus = log_state.copy()
+        minus = log_state.copy()
+        plus[column] += state_step
+        minus[column] -= state_step
+        plus_tangent = fixed_occupancy_carrier_tangent(
+            plus, geometry, physics, bulk, occupancy, traces
+        )
+        minus_tangent = fixed_occupancy_carrier_tangent(
+            minus, geometry, physics, bulk, occupancy, traces
+        )
+        state_fd[:, column] = (
+            plus_tangent.balance.bulk_flux_m2_s - minus_tangent.balance.bulk_flux_m2_s
+        ) / (2.0 * state_step)
+        residual_state_fd[:, column] = (
+            plus_tangent.balance.residual_m2_s - minus_tangent.balance.residual_m2_s
+        ) / (2.0 * state_step)
+        capture_state_fd[:, column] = (
+            plus_tangent.balance.capture_flux_m2_s
+            - minus_tangent.balance.capture_flux_m2_s
+        ) / (2.0 * state_step)
+
+    trace_values = np.array([traces.phi_left_V, traces.phi_right_V])
+    trace_step = 1.0e-7
+    trace_fd = np.empty((4, 2))
+    residual_trace_fd = np.empty((4, 2))
+    for column in range(2):
+        plus = trace_values.copy()
+        minus = trace_values.copy()
+        plus[column] += trace_step
+        minus[column] -= trace_step
+        plus_tangent = fixed_occupancy_carrier_tangent(
+            log_state,
+            geometry,
+            physics,
+            bulk,
+            occupancy,
+            InterfaceTracePotentials(*plus),
+        )
+        minus_tangent = fixed_occupancy_carrier_tangent(
+            log_state,
+            geometry,
+            physics,
+            bulk,
+            occupancy,
+            InterfaceTracePotentials(*minus),
+        )
+        trace_fd[:, column] = (
+            plus_tangent.balance.bulk_flux_m2_s - minus_tangent.balance.bulk_flux_m2_s
+        ) / (2.0 * trace_step)
+        residual_trace_fd[:, column] = (
+            plus_tangent.balance.residual_m2_s - minus_tangent.balance.residual_m2_s
+        ) / (2.0 * trace_step)
+
+    bulk_values = _bulk_coordinates(bulk)
+    bulk_fd = np.empty((4, 6))
+    for column in range(6):
+        step = trace_step if column < 2 else state_step
+        plus = bulk_values.copy()
+        minus = bulk_values.copy()
+        plus[column] += step
+        minus[column] -= step
+        bulk_fd[:, column] = (
+            fixed_occupancy_carrier_tangent(
+                log_state,
+                geometry,
+                physics,
+                _bulk_from_coordinates(plus),
+                occupancy,
+                traces,
+            ).balance.bulk_flux_m2_s
+            - fixed_occupancy_carrier_tangent(
+                log_state,
+                geometry,
+                physics,
+                _bulk_from_coordinates(minus),
+                occupancy,
+                traces,
+            ).balance.bulk_flux_m2_s
+        ) / (2.0 * step)
+
+    occupancy_step = 1.0e-5
+    plus = fixed_occupancy_carrier_balance_and_jacobian(
+        log_state,
+        geometry,
+        physics,
+        bulk,
+        occupancy + occupancy_step,
+        traces,
+    )
+    minus = fixed_occupancy_carrier_balance_and_jacobian(
+        log_state,
+        geometry,
+        physics,
+        bulk,
+        occupancy - occupancy_step,
+        traces,
+    )
+    occupancy_fd = (plus.residual_m2_s - minus.residual_m2_s) / (2.0 * occupancy_step)
+    capture_occupancy_fd = (plus.capture_flux_m2_s - minus.capture_flux_m2_s) / (
+        2.0 * occupancy_step
+    )
+
+    comparisons = (
+        (tangent.bulk_flux_jacobian_log_state_m2_s, state_fd),
+        (tangent.bulk_flux_jacobian_trace_potential_m2_s_V, trace_fd),
+        (tangent.bulk_flux_jacobian_bulk_coordinates, bulk_fd),
+        (tangent.balance.jacobian_log_state_m2_s, residual_state_fd),
+        (
+            tangent.balance.jacobian_trace_potential_m2_s_V,
+            residual_trace_fd,
+        ),
+        (tangent.capture_flux_jacobian_log_state_m2_s, capture_state_fd),
+        (
+            tangent.capture_flux_occupancy_derivative_m2_s,
+            capture_occupancy_fd,
+        ),
+        (tangent.residual_occupancy_derivative_m2_s, occupancy_fd),
+    )
+    for analytic, finite_difference in comparisons:
+        scale = max(float(np.max(np.abs(analytic))), 1.0)
+        np.testing.assert_allclose(
+            analytic / scale,
+            finite_difference / scale,
+            rtol=3.0e-5,
+            atol=2.0e-9,
         )
 
 
