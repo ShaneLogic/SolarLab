@@ -48,6 +48,9 @@ from perovskite_sim.models.defects import (
     EXPLICIT_QUASI_STEADY,
     SINGLE_LEVEL,
 )
+from perovskite_sim.models.multivalent_defects import (
+    MULTIVALENT_DEFECT_SCHEMA_VERSION,
+)
 from perovskite_sim.physics.contacts import (
     ContactThermodynamicCertificate,
     ContactThermodynamicError,
@@ -57,6 +60,11 @@ from perovskite_sim.physics.defect_closure import (
     MonovalentBulkDefectEvaluation,
     evaluate_monovalent_bulk_defects,
     solve_monovalent_defect_charge_neutrality,
+)
+from perovskite_sim.physics.multivalent_defect_device import (
+    MultivalentBulkDefectEvaluation,
+    evaluate_multivalent_bulk_defects,
+    solve_multivalent_defect_charge_neutrality,
 )
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
@@ -202,6 +210,7 @@ class QuasiFermiSteadyStateResult:
     interface_charge_reference_stack_sha256: str | None = None
     interface_charge_reference_dark_state_sha256: str | None = None
     bulk_defect_diagnostics: MonovalentBulkDefectEvaluation | None = None
+    multivalent_bulk_defect_diagnostics: MultivalentBulkDefectEvaluation | None = None
     defect_energy_quadrature_order: int | None = None
     defect_distribution_kinds: tuple[str, ...] = ()
     contact_thermodynamic_status: str | None = None
@@ -240,6 +249,8 @@ class QuasiFermiJVSweepResult:
     defect_distribution_kinds: tuple[str, ...] = ()
     defect_spatial_profile_sha256s: tuple[str | None, ...] = ()
     defect_density_multiplier_bounds: tuple[tuple[float, float], ...] = ()
+    multivalent_species_identifiers: tuple[str, ...] = ()
+    multivalent_state_counts: tuple[int, ...] = ()
 
     @property
     def certified(self) -> bool:
@@ -473,10 +484,22 @@ def _prepare_two_sided_material(
     )
 
 
+def _layer_is_multivalent(layer) -> bool:
+    return (
+        layer.params is not None
+        and layer.params.defect_schema_version == MULTIVALENT_DEFECT_SCHEMA_VERSION
+    )
+
+
+def _stack_has_multivalent_explicit_defects(stack: DeviceStack) -> bool:
+    return any(_layer_is_multivalent(layer) for layer in electrical_layers(stack))
+
+
 def _stack_has_charged_explicit_defects(stack: DeviceStack) -> bool:
     return any(
         species.charge_transition in {ACCEPTOR, DONOR}
         for layer in electrical_layers(stack)
+        if not _layer_is_multivalent(layer)
         for species in layer.params.bulk_defects
     )
 
@@ -485,6 +508,7 @@ def _stack_has_distributed_explicit_defects(stack: DeviceStack) -> bool:
     return any(
         species.distribution.kind != SINGLE_LEVEL
         for layer in electrical_layers(stack)
+        if not _layer_is_multivalent(layer)
         for species in layer.params.bulk_defects
     )
 
@@ -493,6 +517,7 @@ def _stack_has_spatial_explicit_defects(stack: DeviceStack) -> bool:
     return any(
         species.spatial_profile is not None
         for layer in electrical_layers(stack)
+        if not _layer_is_multivalent(layer)
         for species in layer.params.bulk_defects
     )
 
@@ -511,7 +536,9 @@ def _build_qf_material(
     *,
     defect_energy_quadrature_order: int,
 ) -> MaterialArrays:
-    if _stack_requires_monovalent_qf_dc(stack):
+    if _stack_requires_monovalent_qf_dc(stack) or (
+        _stack_has_multivalent_explicit_defects(stack)
+    ):
         return build_material_arrays(
             grid,
             stack,
@@ -539,7 +566,37 @@ def _require_material_defect_contract(
         for index, layer in enumerate(electrical_layers(stack))
         if layer.params.defect_document is not None
         and layer.params.defect_model == EXPLICIT_QUASI_STEADY
+        and not _layer_is_multivalent(layer)
     )
+    expected_multivalent = tuple(
+        (
+            f"layer[{index}]/{layer.name}",
+            layer.params.defect_document.sha256,
+        )
+        for index, layer in enumerate(electrical_layers(stack))
+        if _layer_is_multivalent(layer)
+    )
+    multivalent_model = mat.multivalent_bulk_defects
+    requires_multivalent = _stack_has_multivalent_explicit_defects(stack)
+    if requires_multivalent:
+        if multivalent_model is None:
+            raise QuasiFermiSteadyStateError(
+                "multivalent explicit-defect stack requires a qf_dc material "
+                "cache with a compiled multivalent model"
+            )
+        actual_multivalent = tuple(
+            (region.identifier, region.document_sha256)
+            for region in multivalent_model.regions
+        )
+        if actual_multivalent != expected_multivalent:
+            raise QuasiFermiSteadyStateError(
+                "qf_dc material cache does not match the stack multivalent "
+                "defect documents"
+            )
+    elif multivalent_model is not None:
+        raise QuasiFermiSteadyStateError(
+            "qf_dc material cache supplied for a stack without multivalent defects"
+        )
     model = mat.monovalent_bulk_defects
     requires_monovalent = _stack_requires_monovalent_qf_dc(stack)
     has_distributed = _stack_has_distributed_explicit_defects(stack)
@@ -595,11 +652,21 @@ def _require_supported(
     interface_topology: str = DEDUPLICATED_QSS,
     allow_charged_bulk_defects: bool = False,
     allow_mobile_ions: bool = False,
+    allow_multivalent_bulk_defects: bool = False,
 ) -> None:
     unsupported: list[str] = []
     if mat.monovalent_bulk_defects is not None:
         if not allow_charged_bulk_defects:
             unsupported.append("charged explicit bulk defects outside QF/DC")
+    if mat.multivalent_bulk_defects is not None:
+        if not allow_multivalent_bulk_defects:
+            unsupported.append(
+                "multivalent bulk defects outside the stationary QF/DC closure"
+            )
+        elif interface_boundary:
+            unsupported.append(
+                "multivalent bulk defects with the interface-plane boundary"
+            )
     if getattr(mat, "has_dual_ions", False) and not allow_mobile_ions:
         unsupported.append("dual ions")
     if np.any(np.asarray(mat.D_ion_face, dtype=float) != 0.0) and not allow_mobile_ions:
@@ -765,6 +832,35 @@ def _defect_aware_neutral_carriers(
                 local_p[selected] = closure.hole_density_m3
             electron[node_indices] = local_n
             hole[node_indices] = local_p
+    multivalent_model = mat.multivalent_bulk_defects
+    if multivalent_model is not None:
+        for region in multivalent_model.regions:
+            node_indices = np.flatnonzero(region.active_nodes)
+            doping_pairs = np.column_stack(
+                (mat.N_A[node_indices], mat.N_D[node_indices])
+            )
+            unique_pairs, inverse = np.unique(
+                doping_pairs,
+                axis=0,
+                return_inverse=True,
+            )
+            local_n = np.empty(node_indices.size, dtype=float)
+            local_p = np.empty(node_indices.size, dtype=float)
+            for pair_index, (acceptors, donors) in enumerate(unique_pairs):
+                closure = solve_multivalent_defect_charge_neutrality(
+                    temperature_K=region.temperature_K,
+                    band_gap_eV=region.band_gap_eV,
+                    effective_conduction_dos_m3=(region.effective_conduction_dos_m3),
+                    effective_valence_dos_m3=region.effective_valence_dos_m3,
+                    acceptor_density_m3=float(acceptors),
+                    donor_density_m3=float(donors),
+                    species=region.species,
+                ).neutrality
+                selected = inverse == pair_index
+                local_n[selected] = closure.electron_density_m3
+                local_p[selected] = closure.hole_density_m3
+            electron[node_indices] = local_n
+            hole[node_indices] = local_p
     electron = np.maximum(electron, 1.0)
     hole = np.maximum(hole, 1.0)
     electron[[0, -1]] = (mat.n_L, mat.n_R)
@@ -783,7 +879,7 @@ def _transport_balanced_seed(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build a Poisson-consistent seed with resistance-weighted QF drops."""
     node_count = len(x)
-    if mat.monovalent_bulk_defects is None:
+    if mat.monovalent_bulk_defects is None and mat.multivalent_bulk_defects is None:
         y_neutral = solve_equilibrium(x, stack)
         n_neutral = np.maximum(y_neutral[:node_count], 1.0)
         p_neutral = np.maximum(y_neutral[node_count : 2 * node_count], 1.0)
@@ -843,6 +939,17 @@ def _transport_balanced_seed(
             rho = rho + defect_evaluation.total_charge_density_C_m3
             defect_charge_derivative = (
                 defect_evaluation.total_charge_derivative_fixed_qf_C_m3_V
+            )
+        if mat.multivalent_bulk_defects is not None:
+            multivalent_evaluation = evaluate_multivalent_bulk_defects(
+                n,
+                p,
+                mat.multivalent_bulk_defects,
+            )
+            rho = rho + multivalent_evaluation.total_charge_density_C_m3
+            defect_charge_derivative = (
+                defect_charge_derivative
+                + multivalent_evaluation.total_charge_derivative_fixed_qf_C_m3_V
             )
         residual = (
             factor.C[:-1] * (phi[:-2] - phi[1:-1])
@@ -1123,6 +1230,21 @@ class _QuasiFermiSystem:
             defect = evaluate_monovalent_bulk_defects(n, p, model)
             rho = rho + defect.total_charge_density_C_m3
             derivative = derivative + defect.total_charge_derivative_fixed_qf_C_m3_V
+        multivalent_model = self.mat.multivalent_bulk_defects
+        if multivalent_model is not None:
+            if dynamic_bulk_charge_density_C_m3 is not None:
+                raise QuasiFermiSteadyStateError(
+                    "dynamic bulk charge is not certified with multivalent bulk defects"
+                )
+            multivalent_defect = evaluate_multivalent_bulk_defects(
+                n,
+                p,
+                multivalent_model,
+            )
+            rho = rho + multivalent_defect.total_charge_density_C_m3
+            derivative = (
+                derivative + multivalent_defect.total_charge_derivative_fixed_qf_C_m3_V
+            )
         return rho, derivative
 
     def _add_interface_sheet_charge_to_poisson(
@@ -1642,6 +1764,17 @@ class _QuasiFermiSystem:
             dynamic_bulk_layout is not None or dynamic_bulk_occupancy is not None
         )
         dynamic_interface = dynamic_interface_occupancy is not None
+        if self.mat.multivalent_bulk_defects is not None and (
+            dynamic_bulk
+            or dynamic_interface
+            or positive_ion_density_m3 is not None
+            or negative_ion_density_m3 is not None
+        ):
+            raise QuasiFermiSteadyStateError(
+                "multivalent bulk defects support only the stationary QF/DC "
+                "closure; dynamic occupancy and mobile-ion device states are "
+                "not certified"
+            )
         if dynamic_interface and (
             not self.interface_boundary or self.interface_topology != TWO_SIDED_TRACE
         ):
@@ -2348,9 +2481,14 @@ def solve_quasi_fermi_steady_state(
         interface_boundary=interface_boundary,
         interface_topology=topology,
         allow_charged_bulk_defects=True,
+        allow_multivalent_bulk_defects=True,
     )
     contact_certificate: ContactThermodynamicCertificate | None = None
-    if require_contact_certificate or material.monovalent_bulk_defects is not None:
+    if (
+        require_contact_certificate
+        or material.monovalent_bulk_defects is not None
+        or material.multivalent_bulk_defects is not None
+    ):
         try:
             contact_certificate = require_contact_thermodynamic_certificate(
                 stack,
@@ -2360,6 +2498,7 @@ def solve_quasi_fermi_steady_state(
             subject = (
                 "charged explicit defects"
                 if material.monovalent_bulk_defects is not None
+                or material.multivalent_bulk_defects is not None
                 else "the requested quasi-Fermi solve"
             )
             raise QuasiFermiSteadyStateError(
@@ -2795,6 +2934,13 @@ def solve_quasi_fermi_steady_state(
             final.y[len(grid) : 2 * len(grid)],
             material.monovalent_bulk_defects,
         )
+    multivalent_defect_diagnostics = None
+    if material.multivalent_bulk_defects is not None:
+        multivalent_defect_diagnostics = evaluate_multivalent_bulk_defects(
+            final.y[: len(grid)],
+            final.y[len(grid) : 2 * len(grid)],
+            material.multivalent_bulk_defects,
+        )
     interface_local_residual = 0.0
     interface_max_state_to_dos = 0.0
     interface_certificate = None
@@ -2955,6 +3101,62 @@ def solve_quasi_fermi_steady_state(
             or bulk_defect_diagnostics.minimum_kinetic_denominator_s1 <= 0.0
         ):
             failures.append("bulk-defect occupancy or kinetic denominator is invalid")
+    if multivalent_defect_diagnostics is not None:
+        # State probabilities are NaN off their own species' region (they are
+        # undefined there), so the finiteness scan is restricted to the nodes
+        # each species actually owns. Every other published array is
+        # zero-padded and is scanned whole.
+        multivalent_arrays = (
+            *(
+                probabilities[
+                    :, multivalent_defect_diagnostics.active_nodes[index]
+                ]
+                for index, probabilities in enumerate(
+                    multivalent_defect_diagnostics.state_probability
+                )
+            ),
+            multivalent_defect_diagnostics.charge_density_C_m3,
+            multivalent_defect_diagnostics.recombination_rate_m3_s,
+            multivalent_defect_diagnostics.total_charge_density_C_m3,
+            multivalent_defect_diagnostics.total_recombination_rate_m3_s,
+            multivalent_defect_diagnostics.total_charge_derivative_fixed_qf_C_m3_V,
+        )
+        if any(not np.all(np.isfinite(value)) for value in multivalent_arrays):
+            failures.append("multivalent-defect evidence contains non-finite values")
+        owned_probability_sum_error = max(
+            (
+                float(
+                    np.max(
+                        np.abs(
+                            np.sum(
+                                probabilities[
+                                    :,
+                                    multivalent_defect_diagnostics.active_nodes[
+                                        index
+                                    ],
+                                ],
+                                axis=0,
+                            )
+                            - 1.0
+                        )
+                    )
+                )
+                for index, probabilities in enumerate(
+                    multivalent_defect_diagnostics.state_probability
+                )
+            ),
+            default=0.0,
+        )
+        if (
+            multivalent_defect_diagnostics.minimum_state_probability < 0.0
+            or multivalent_defect_diagnostics.maximum_state_probability > 1.0
+            or multivalent_defect_diagnostics.maximum_probability_sum_error > 1.0e-12
+            or owned_probability_sum_error > 1.0e-12
+            or multivalent_defect_diagnostics.minimum_transition_rate_s1 <= 0.0
+        ):
+            failures.append(
+                "multivalent-defect state probabilities or transition rates are invalid"
+            )
     if failures:
         raise QuasiFermiSteadyStateError(
             "QF Newton terminated without a physical certificate: "
@@ -3070,6 +3272,7 @@ def solve_quasi_fermi_steady_state(
             )
         ),
         bulk_defect_diagnostics=bulk_defect_diagnostics,
+        multivalent_bulk_defect_diagnostics=multivalent_defect_diagnostics,
         defect_energy_quadrature_order=(
             material.explicit_defect_energy_quadrature_order
         ),
@@ -3726,6 +3929,16 @@ def solve_quasi_fermi_jv_sweep(
             material.monovalent_bulk_defects.source_density_multiplier_bounds
             if material.monovalent_bulk_defects is not None
             and material.monovalent_bulk_defects.has_spatial_profiles
+            else ()
+        ),
+        multivalent_species_identifiers=(
+            material.multivalent_bulk_defects.species_identifiers
+            if material.multivalent_bulk_defects is not None
+            else ()
+        ),
+        multivalent_state_counts=(
+            material.multivalent_bulk_defects.state_counts
+            if material.multivalent_bulk_defects is not None
             else ()
         ),
     )

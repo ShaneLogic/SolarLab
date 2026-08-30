@@ -37,6 +37,10 @@ from perovskite_sim.models.defects import (
     SINGLE_LEVEL,
     ExplicitDefectCapabilityError,
 )
+from perovskite_sim.models.multivalent_defects import (
+    MULTIVALENT_DEFECT_SCHEMA_VERSION,
+    MultivalentBulkDefectDocument,
+)
 
 from perovskite_sim.physics.recombination import (
     CompiledNeutralDefectSpecies,
@@ -48,6 +52,10 @@ from perovskite_sim.physics.recombination import (
 from perovskite_sim.physics.defect_closure import (
     MonovalentBulkDefectModel,
     MonovalentDefectRegion,
+)
+from perovskite_sim.physics.multivalent_defect_device import (
+    MultivalentBulkDefectModel,
+    MultivalentDefectRegion,
 )
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
@@ -370,6 +378,10 @@ class MaterialArrays:
     # DC lane. Ordinary MoL Poisson assembly rejects this object because that
     # path does not yet include quasi-steady defect charge in its state law.
     monovalent_bulk_defects: MonovalentBulkDefectModel | None = None
+    # D7-E1 stationary multivalent inventory. It remains a distinct runtime
+    # object so one shared charge-state population cannot masquerade as several
+    # independent monovalent centers.
+    multivalent_bulk_defects: MultivalentBulkDefectModel | None = None
     # D3-E3 energy-node protocol bound into distributed QF/DC materials.
     # None preserves the exact D2 single-level material contract.
     explicit_defect_energy_quadrature_order: int | None = None
@@ -543,6 +555,8 @@ class MaterialArrays:
             d["neutral_bulk_defects"] = self.neutral_bulk_defects
         if self.monovalent_bulk_defects is not None:
             d["monovalent_bulk_defects"] = self.monovalent_bulk_defects
+        if self.multivalent_bulk_defects is not None:
+            d["multivalent_bulk_defects"] = self.multivalent_bulk_defects
         if self.interface_faces:
             d["interface_faces"] = list(self.interface_faces)
             d["A_star_n"] = self.A_star_n
@@ -856,6 +870,7 @@ def _compile_neutral_bulk_defects(
         (index, layer, mask)
         for index, (layer, mask) in enumerate(zip(layers, layer_masks, strict=True))
         if layer.params.defect_model == EXPLICIT_QUASI_STEADY
+        and layer.params.defect_schema_version != MULTIVALENT_DEFECT_SCHEMA_VERSION
     ]
     if not explicit:
         return None
@@ -961,6 +976,7 @@ def _compile_monovalent_bulk_defects(
             zip(layers, layer_masks, strict=True)
         )
         if layer.params.defect_model == EXPLICIT_QUASI_STEADY
+        and layer.params.defect_schema_version != MULTIVALENT_DEFECT_SCHEMA_VERSION
     ]
     if not explicit:
         return None
@@ -1090,6 +1106,103 @@ def _compile_monovalent_bulk_defects(
             )
         )
     return MonovalentBulkDefectModel(regions=tuple(regions))
+
+
+def _compile_multivalent_bulk_defects(
+    layers: tuple,
+    layer_masks: tuple[np.ndarray, ...],
+    *,
+    physical_band_gap_eV: np.ndarray,
+    physical_electron_affinity_eV: np.ndarray,
+    effective_conduction_dos_m3: np.ndarray,
+    effective_valence_dos_m3: np.ndarray,
+    intrinsic_product_m6: np.ndarray,
+    temperature_K: float,
+) -> MultivalentBulkDefectModel | None:
+    """Compile canonical v4 documents onto disjoint uniform layer regions."""
+
+    explicit = [
+        (index, layer, mask)
+        for index, (layer, mask) in enumerate(zip(layers, layer_masks, strict=True))
+        if layer.params.defect_schema_version == MULTIVALENT_DEFECT_SCHEMA_VERSION
+    ]
+    if not explicit:
+        return None
+    regions: list[MultivalentDefectRegion] = []
+    for layer_index, layer, mask in explicit:
+        document = layer.params.defect_document
+        if not isinstance(document, MultivalentBulkDefectDocument):
+            raise ExplicitDefectCapabilityError(
+                f"v4 layer {layer.name!r} has no canonical multivalent document"
+            )
+        layer_id = f"layer[{layer_index}]/{layer.name}"
+        local_gap = np.asarray(physical_band_gap_eV[mask], dtype=float)
+        local_nc = np.asarray(effective_conduction_dos_m3[mask], dtype=float)
+        local_nv = np.asarray(effective_valence_dos_m3[mask], dtype=float)
+        local_ni_sq = np.asarray(intrinsic_product_m6[mask], dtype=float)
+        arrays = {
+            "band gap": local_gap,
+            "conduction DOS": local_nc,
+            "valence DOS": local_nv,
+            "intrinsic product": local_ni_sq,
+        }
+        invalid = [
+            name
+            for name, values in arrays.items()
+            if (
+                values.size == 0
+                or not np.all(np.isfinite(values))
+                or np.any(values <= 0.0)
+                or not np.all(values == values[0])
+            )
+        ]
+        if invalid:
+            raise ExplicitDefectCapabilityError(
+                "D7-E1 multivalent QF/DC requires uniform finite positive "
+                f"{', '.join(invalid)} in {layer_id}; graded v4 regions require "
+                "a separately certified node-local compiler"
+            )
+        # Electron affinity is checked separately: it may legitimately be zero
+        # on a homojunction stack, so only finiteness and uniformity apply. A
+        # chi-graded v4 layer is refused because the stated D7-E1 contract is
+        # uniform-layer-first, not because the local closure depends on chi.
+        local_chi = np.asarray(physical_electron_affinity_eV[mask], dtype=float)
+        if (
+            local_chi.size == 0
+            or not np.all(np.isfinite(local_chi))
+            or not np.all(local_chi == local_chi[0])
+        ):
+            raise ExplicitDefectCapabilityError(
+                "D7-E1 multivalent QF/DC requires a uniform finite electron "
+                f"affinity in {layer_id}; graded v4 regions require a "
+                "separately certified node-local compiler"
+            )
+        thermal = thermal_voltage(float(temperature_K))
+        physical_ni_sq = float(local_nc[0] * local_nv[0]) * math.exp(
+            -float(local_gap[0]) / thermal
+        )
+        relative_intrinsic_mismatch = float(
+            np.max(np.abs(local_ni_sq - physical_ni_sq))
+            / max(physical_ni_sq, np.finfo(float).tiny)
+        )
+        if relative_intrinsic_mismatch > 1.0e-10:
+            raise ExplicitDefectCapabilityError(
+                "multivalent QF/DC requires ni^2=Nc*Nv*exp(-Eg/Vt); "
+                f"relative mismatch={relative_intrinsic_mismatch:.6g} in {layer_id}"
+            )
+        regions.append(
+            MultivalentDefectRegion(
+                identifier=layer_id,
+                document_sha256=document.sha256,
+                active_nodes=np.asarray(mask, dtype=bool),
+                band_gap_eV=float(local_gap[0]),
+                effective_conduction_dos_m3=float(local_nc[0]),
+                effective_valence_dos_m3=float(local_nv[0]),
+                temperature_K=float(temperature_K),
+                species=document.bulk_defects,
+            )
+        )
+    return MultivalentBulkDefectModel(regions=tuple(regions))
 
 
 def build_material_arrays(
@@ -1269,32 +1382,39 @@ def build_material_arrays(
         bulk_trap_charge_closure
         == BULK_TRAP_CHARGE_RESEARCH_EQUILIBRIUM
     )
-    charged_explicit_layers = tuple(
+    multivalent_explicit_layers = tuple(
         layer.name
         for layer in elec_layers
         if layer.params is not None
+        and layer.params.defect_schema_version == MULTIVALENT_DEFECT_SCHEMA_VERSION
+    )
+    monovalent_explicit_layers = tuple(
+        layer
+        for layer in elec_layers
+        if layer.params is not None
         and layer.params.defect_model == EXPLICIT_QUASI_STEADY
-        and any(
+        and layer.params.defect_schema_version != MULTIVALENT_DEFECT_SCHEMA_VERSION
+    )
+    charged_explicit_layers = tuple(
+        layer.name
+        for layer in monovalent_explicit_layers
+        if any(
             species.charge_transition in {ACCEPTOR, DONOR}
             for species in layer.params.bulk_defects
         )
     )
     distributed_explicit_layers = tuple(
         layer.name
-        for layer in elec_layers
-        if layer.params is not None
-        and layer.params.defect_model == EXPLICIT_QUASI_STEADY
-        and any(
+        for layer in monovalent_explicit_layers
+        if any(
             species.distribution.kind != SINGLE_LEVEL
             for species in layer.params.bulk_defects
         )
     )
     spatial_explicit_layers = tuple(
         layer.name
-        for layer in elec_layers
-        if layer.params is not None
-        and layer.params.defect_model == EXPLICIT_QUASI_STEADY
-        and any(
+        for layer in monovalent_explicit_layers
+        if any(
             species.spatial_profile is not None
             for species in layer.params.bulk_defects
         )
@@ -1308,30 +1428,69 @@ def build_material_arrays(
             *spatial_explicit_layers,
         }
     )
-    research_monovalent_qf_dc = (
+    research_explicit_qf_dc = (
         explicit_defect_charge_closure == EXPLICIT_DEFECT_CHARGE_QF_DC
     )
-    if monovalent_qf_layers and not research_monovalent_qf_dc:
+    explicit_qf_layers = tuple(
+        dict.fromkeys((*monovalent_qf_layers, *multivalent_explicit_layers))
+    )
+    if explicit_qf_layers and not research_explicit_qf_dc:
         raise ExplicitDefectCapabilityError(
             "DEF-1 explicit execution accepts neutral species only in its "
             "single-level form; "
-            "charged, energy-distributed, or spatially graded execution "
+            "charged, energy-distributed, spatially graded, or multivalent "
+            "execution "
             "requires the guarded "
             "QF/DC closure. "
             "Activated layers: "
-            + ", ".join(monovalent_qf_layers)
+            + ", ".join(explicit_qf_layers)
         )
-    if research_monovalent_qf_dc and not monovalent_qf_layers:
+    if research_explicit_qf_dc and not explicit_qf_layers:
         raise ExplicitDefectCapabilityError(
             "qf_dc explicit-defect charge closure requires at least one "
-            "acceptor, donor, energy-distributed, or spatially graded species"
+            "acceptor, donor, energy-distributed, spatially graded, or "
+            "multivalent species"
         )
-    if research_monovalent_qf_dc and (
+    if research_explicit_qf_dc and (
         stack.built_in_potential_mode != "semiconductor_work_function"
     ):
         raise ExplicitDefectCapabilityError(
             "charged explicit defects require "
             "built_in_potential_mode='semiconductor_work_function'"
+        )
+    if research_explicit_qf_dc and getattr(
+        stack, "flat_band_metal_contacts", False
+    ):
+        # The qf_dc contact reservoirs ARE the root of the explicit-defect
+        # charge-neutrality closure. The flat-band metal floor below replaces
+        # the majority reservoir with a work-function density and never
+        # re-solves neutrality, so the boundary node would be pinned to a
+        # state the same closure reports as strongly non-neutral while the
+        # Poisson charge at that node is still evaluated from it.
+        raise ExplicitDefectCapabilityError(
+            "explicit-defect QF/DC contact reservoirs are the charge-neutrality "
+            "root; flat_band_metal_contacts would overwrite them without "
+            "re-solving the defect closure"
+        )
+    if research_explicit_qf_dc and float(
+        getattr(stack, "het_recomb_despike", 0.0)
+    ) > 0.0:
+        # The de-spike blends the interface-node densities fed to bulk
+        # recombination only. One physical defect would then carry a
+        # recombination state population from the blended densities and a
+        # charge population from the true ones.
+        raise ExplicitDefectCapabilityError(
+            "explicit-defect QF/DC requires one carrier state per node; "
+            "het_recomb_despike feeds recombination different densities than "
+            "the Poisson charge closure"
+        )
+    if research_explicit_qf_dc and research_degenerate_transport:
+        # Recombination would be zeroed inside carrier_continuity_rhs while
+        # the defect charge and its tangent stay in the Poisson operator.
+        raise ExplicitDefectCapabilityError(
+            "explicit-defect QF/DC cannot compose with "
+            "carrier_statistics_transport='research_recombination_off'; the "
+            "defect charge would be kept while its recombination is discarded"
         )
     if bulk_trap_layers and not research_bulk_trap_equilibrium:
         raise BulkTrapChargeCapabilityError(
@@ -2385,9 +2544,9 @@ def build_material_arrays(
     if (
         research_degenerate_transport
         or research_bulk_trap_equilibrium
-        or research_monovalent_qf_dc
+        or research_explicit_qf_dc
     ):
-        if research_monovalent_qf_dc:
+        if research_explicit_qf_dc:
             from perovskite_sim.models.device import _edge_params
 
             first = _edge_params(elec_layers[0], "front", _band_grading)
@@ -2621,7 +2780,21 @@ def build_material_arrays(
             temperature_K=T_dev,
             defect_energy_quadrature_order=resolved_defect_energy_order,
         )
-        if research_monovalent_qf_dc
+        if research_explicit_qf_dc and monovalent_qf_layers
+        else None
+    )
+    multivalent_bulk_defects = (
+        _compile_multivalent_bulk_defects(
+            tuple(elec_layers),
+            tuple(layer_masks),
+            physical_band_gap_eV=Eg_phys,
+            physical_electron_affinity_eV=chi_phys,
+            effective_conduction_dos_m3=N_C_node_arr,
+            effective_valence_dos_m3=N_V_node_arr,
+            intrinsic_product_m6=ni_sq,
+            temperature_K=T_dev,
+        )
+        if research_explicit_qf_dc and multivalent_explicit_layers
         else None
     )
     neutral_bulk_defects = (
@@ -2734,6 +2907,7 @@ def build_material_arrays(
         ),
         neutral_bulk_defects=neutral_bulk_defects,
         monovalent_bulk_defects=monovalent_bulk_defects,
+        multivalent_bulk_defects=multivalent_bulk_defects,
         explicit_defect_energy_quadrature_order=(
             resolved_defect_energy_order
             if monovalent_bulk_defects is not None
@@ -3120,7 +3294,10 @@ def assemble_rhs(
             "production MoL does not include energy-resolved bulk trap charge; "
             "use solve_bulk_trap_pn_equilibrium for the restricted research slice"
         )
-    if mat.monovalent_bulk_defects is not None and phi_frozen is None:
+    if (
+        mat.monovalent_bulk_defects is not None
+        or mat.multivalent_bulk_defects is not None
+    ) and phi_frozen is None:
         raise ExplicitDefectCapabilityError(
             "charged explicit defects are closed only by the guarded QF/DC "
             "solver; ordinary MoL Poisson assembly would omit their charge"

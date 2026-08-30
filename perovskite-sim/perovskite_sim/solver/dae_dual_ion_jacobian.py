@@ -21,6 +21,7 @@ from perovskite_sim.solver.dae_dual_ions import DualIonDAE
 from perovskite_sim.solver.dae_jacobian import (
     DAEStructuredJacobianCapabilityError,
     build_carrier_face_jacobians,
+    require_neutral_only_defect_inventory,
 )
 
 
@@ -131,6 +132,7 @@ def _assemble_dual_ion_structured_jacobian(
                 f"{label}-ion steric law is non-differentiable on faces {faces}"
             )
 
+    require_neutral_only_defect_inventory(material)
     denominator = bulk_recombination_denominators(
         n,
         p,

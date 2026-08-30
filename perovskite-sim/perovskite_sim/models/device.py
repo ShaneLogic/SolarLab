@@ -982,11 +982,18 @@ def _semiconductor_work_function(
             "semiconductor_work_function requires material parameters on both "
             "electrical contact layers"
         )
-    has_charged_explicit_defects = any(
+    from perovskite_sim.models.multivalent_defects import (
+        MULTIVALENT_DEFECT_SCHEMA_VERSION,
+    )
+
+    has_multivalent_explicit_defects = (
+        p.defect_schema_version == MULTIVALENT_DEFECT_SCHEMA_VERSION
+    )
+    has_charged_explicit_defects = not has_multivalent_explicit_defects and any(
         item.charge_transition in {"acceptor", "donor"}
         for item in p.bulk_defects
     )
-    has_distributed_explicit_defects = any(
+    has_distributed_explicit_defects = not has_multivalent_explicit_defects and any(
         item.distribution.kind != "single_level" for item in p.bulk_defects
     )
     if (
@@ -996,6 +1003,7 @@ def _semiconductor_work_function(
         or p.bulk_trap_distribution is not None
         or has_charged_explicit_defects
         or has_distributed_explicit_defects
+        or has_multivalent_explicit_defects
     ):
         from perovskite_sim.physics.contacts import (
             build_semiconductor_contact_state,

@@ -2,7 +2,10 @@
 
 ## Status and capability boundary
 
-This document describes the first D7 checkpoint. It adds:
+This document describes the D7-E0 contract checkpoint and the D7-E1
+production wiring checkpoint.
+
+D7-E0 added:
 
 - a canonical version-4 bulk-defect document for one physical defect with
   coupled charge states;
@@ -11,17 +14,42 @@ This document describes the first D7 checkpoint. It adds:
 - a canonical metastable donor/acceptor configuration definition;
 - a replayable initial-working-point and frozen-measurement protocol.
 
-This checkpoint does **not** connect version 4 to `MaterialParams`, Poisson,
-continuity, contacts, QF/DC, AC, transient solvers, backend, or frontend. It
-does not claim SCAPS numerical parity. Existing v1-v3 explicit-defect and
-default effective-lifetime paths are unchanged.
+D7-E1 (2026-08-30) wires version 4 into the guarded QF/DC production lane:
+
+- generic v4 layer parsing in `models/config_loader.material_params_from_dict`
+  (shared by YAML and backend inline devices) and v4 document dispatch inside
+  `MaterialParams`;
+- `physics/multivalent_defect_device.py`: disjoint uniform-layer region
+  compilation (`MultivalentBulkDefectModel`), multi-species aggregation that
+  keeps one shared total density and one normalized charge-state probability
+  per physical defect, full-grid evaluation, and MB contact charge neutrality
+  solved on the same master-equation closure;
+- `solver/mol.py`: `_compile_multivalent_bulk_defects` under the
+  `EXPLICIT_DEFECT_CHARGE_QF_DC` closure only, with a uniform-layer gate and
+  the `ni^2 = Nc*Nv*exp(-Eg/Vt)` consistency gate; ordinary MoL assembly
+  keeps failing closed without `phi_frozen`;
+- one closure for every consumer: contact work functions
+  (`physics/contacts.build_semiconductor_contact_state`), bulk Poisson charge
+  and the fixed-QF tangent (`_bulk_space_charge_and_tangent`, transport
+  seed), the continuity recombination source
+  (`physics/continuity.py` -> `physics/recombination.py` mixed dispatch), and
+  the certified diagnostics on `QuasiFermiSteadyStateResult`
+  (`multivalent_bulk_defect_diagnostics`).
 
 The current capability label is:
 
 ```text
-multivalent/metastable canonical contract and pure-local stationary closure;
-production execution fail-closed and not yet wired
+multivalent stationary uniform-layer bulk QF/DC (dark/illuminated point and
+J-V sweep) internally certified; metastable, dynamic occupancy, AC/transient,
+interface-plane, mobile-ion combination, graded v4 layers, backend/frontend,
+numerical-refinement certificate, and SCAPS parity all fail closed / open
 ```
+
+Fail-closed routes verified by tests: ordinary `build_material_arrays`
+without the QF/DC closure, `assemble_rhs` without `phi_frozen`,
+`interface_boundary=True`, mobile ions in a v4 layer, the dynamic/ion
+`_QuasiFermiSystem` entry points, and the D5/D6 device AC / transient lanes
+(via `_require_supported(allow_multivalent_bulk_defects=False)`).
 
 ## Primary model sources
 
@@ -275,16 +303,77 @@ Ruff format/check, compileall, and git diff --check: passed
 ```
 
 The 12 complete-suite warnings are the pre-existing NumPy `trapz`
-deprecations. No production module imports version 4 at this checkpoint, so
-the 29 added tests account for the increase from the D6-E4 full-suite baseline
-of 3389 passing tests.
+deprecations. No production module imported version 4 at the D7-E0
+checkpoint, so the 29 added tests account for the increase from the D6-E4
+full-suite baseline of 3389 passing tests.
+
+## D7-E1 verification evidence (2026-08-30)
+
+New tests: `tests/unit/physics/test_multivalent_defect_device.py` (8),
+`tests/unit/models/test_multivalent_defect_loader.py` (6), and
+`tests/integration/test_multivalent_explicit_defects_qf.py` (24). The
+integration file pins, on the certified QF/DC lane: fail-closed default
+build and contact modes, one shared compiled model with recombination
+dispatch equality, the fixed-QF Poisson tangent against a centered
+difference (pure v4, multi-species, and mixed v1+v4 stacks), certified dark
+equilibria for double-donor / double-acceptor / amphoteric families with
+charge-sign checks, certified illuminated biased points and J-V sweeps
+carrying the new aggregate diagnostics, doped and dopant-profiled v4 layers
+(the per-doping-pair neutrality seed loop), a neutral-v1-beside-v4 stack
+(the only partition that reaches the neutral branch of the mixed
+multivalent recombination dispatch), SCAPS-binomial degeneracies propagated
+through contact neutrality and the QF solve, graded-v4 fail-closed,
+document-mismatch and intrinsic-product rejections, the converse guard that
+a v1-v3 qf_dc build leaves the new cache `None`, the neutral/monovalent
+exclusivity invariant under a multivalent model, and the interface / ion /
+dynamic / AC / transient / QF-impedance fail-closed routes. The unit device
+file additionally pins multi-region row-offset bookkeeping against
+independent single-region evaluations.
+
+The physically decisive gate is the device-level single-transition limit:
+a v4 `single_donor` / `single_acceptor` species solved through the full
+QF/DC route matches the certified v1 monovalent route to 2.3e-14 relative
+in terminal current and carrier state. The assertion is pinned two orders
+looser (1e-10) than the measured agreement because the two sides are
+independent Newton solves each certified only to a ~1e-10 residual; a lane
+that dropped the shared master equation moves these by O(1).
+
+Verified on the D7-E1 worktree:
+
+```text
+focused v4 schema + closure + device + loader + QF integration: 69 passed
+related monovalent/QF defect suites:      178 passed, 1 deselected
+D5/D6 dynamic AC + transient lanes:        58 passed
+complete default Python suite:           3456 passed, 2 skipped,
+                                          267 deselected, 12 warnings (551 s)
+Ruff format/check (owned files), compileall, git diff --check: passed
+```
+
+3456 = the 3418 D7-E0 baseline + the 38 new D7-E1 tests, with zero
+failures. The complete-suite run uses an off-OneDrive copy of the working
+tree; that copy must include `.git` and keep the directory name
+`perovskite-sim`, or `test_p0_patch_and_frozen_files_match_manifest` and
+`test_run_l0_runs_from_package_root` fail on the copy environment rather
+than on any code defect.
+
+An adversarial review round over the D7-E1 diff produced one real code
+defect and a set of coverage gaps, all closed here: the neutral/monovalent
+exclusivity invariant was silently dropped on the new multivalent dispatch
+(restored in `_multivalent_mixed_inputs` and the scalar node path), and the
+binomial-degeneracy, multi-species, multi-region, doped-layer,
+neutral-plus-v4, graded-fail-closed, converse-guard and QF-impedance cases
+listed above were previously untested.
 
 ## Required next checkpoints
 
-1. Compile version 4 into a node-local production model and aggregate multiple
-   multivalent species without losing one-density-per-physical-defect ownership.
-2. Couple the same charge/recombination/tangent closure to contact neutrality,
-   Poisson, continuity, and QF/DC, then certify grid/energy/tolerance refinement.
+1. ~~Compile version 4 into a node-local production model and aggregate
+   multiple multivalent species without losing one-density-per-physical-defect
+   ownership.~~ Done at D7-E1 for uniform layers; graded v4 layers still fail
+   closed pending a separately certified node-local compiler.
+2. ~~Couple the same charge/recombination/tangent closure to contact
+   neutrality, Poisson, continuity, and QF/DC~~ (done at D7-E1), then certify
+   grid/energy/tolerance refinement and a real SCAPS charge-state profile
+   export (D7-E2).
 3. Add the initial-working-point stationary metastable outer solve, immutable
    frozen configuration densities, and protocol-bound measurement replay.
 4. Add AC and fully dynamic metastable state only after DC conservation and

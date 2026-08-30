@@ -441,6 +441,19 @@ def _validate_single_positive_ion_capability(
         violations.append("selective contacts are not supported")
     if material.has_dual_ions:
         violations.append("dual mobile ions are not supported")
+    # The structured-DAE residual/tangent builders forward only
+    # neutral_bulk_defects, so a charged (monovalent) or multivalent explicit
+    # inventory would be silently replaced by the effective-lifetime SRH law
+    # instead of failing closed. Those closures are certified only on the
+    # guarded QF/DC lane.
+    if material.monovalent_bulk_defects is not None:
+        violations.append(
+            "charged explicit bulk defects are closed only by the QF/DC lane"
+        )
+    if material.multivalent_bulk_defects is not None:
+        violations.append(
+            "multivalent bulk defects are closed only by the QF/DC lane"
+        )
     if np.any(material.D_ion_node <= 0.0):
         violations.append("one positive mobile ion must be active at every node")
     if (

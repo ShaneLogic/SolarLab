@@ -7,6 +7,10 @@ import yaml
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.models.device import DeviceStack, InterfaceDefect, LayerSpec
 from perovskite_sim.models.defects import bulk_defect_document_from_layer_mapping
+from perovskite_sim.models.multivalent_defects import (
+    MULTIVALENT_DEFECT_SCHEMA_VERSION,
+    multivalent_bulk_defect_document_from_layer_mapping,
+)
 from perovskite_sim.models.interface_defects import InterfaceDefectDocument
 from perovskite_sim.physics.doping import validate_doping_profile_params
 from perovskite_sim.physics.bulk_traps import (
@@ -337,7 +341,11 @@ def material_params_from_dict(layer_cfg: dict) -> MaterialParams:
     DOS, trap profiles, dual-ion, temperature scaling) the loader carried, which
     silently disabled that physics for UI-built devices.
     """
-    defect_document = bulk_defect_document_from_layer_mapping(layer_cfg)
+    defect_document = (
+        multivalent_bulk_defect_document_from_layer_mapping(layer_cfg)
+        if layer_cfg.get("defect_schema_version") == MULTIVALENT_DEFECT_SCHEMA_VERSION
+        else bulk_defect_document_from_layer_mapping(layer_cfg)
+    )
     params = MaterialParams(
         eps_r=_f(layer_cfg["eps_r"]),
         mu_n=_f(layer_cfg["mu_n"]),

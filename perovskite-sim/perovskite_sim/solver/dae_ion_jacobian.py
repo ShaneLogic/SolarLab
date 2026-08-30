@@ -21,6 +21,7 @@ from perovskite_sim.solver.dae_ions import SinglePositiveIonDAE
 from perovskite_sim.solver.dae_jacobian import (
     DAEStructuredJacobianCapabilityError,
     build_carrier_face_jacobians,
+    require_neutral_only_defect_inventory,
 )
 
 
@@ -87,6 +88,7 @@ def build_single_ion_structured_state_jacobian(
             f"{faces}"
         )
 
+    require_neutral_only_defect_inventory(material)
     denominator = bulk_recombination_denominators(
         n,
         p,

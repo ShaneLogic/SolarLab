@@ -21,7 +21,10 @@ from perovskite_sim.physics.recombination import (
     total_recombination_derivatives,
 )
 from perovskite_sim.solver.dae_interface_states import AlgebraicInterfaceStateDAE
-from perovskite_sim.solver.dae_jacobian import build_carrier_face_jacobians
+from perovskite_sim.solver.dae_jacobian import (
+    build_carrier_face_jacobians,
+    require_neutral_only_defect_inventory,
+)
 
 
 _PLANE_EXPONENT_LIMIT = 30.0
@@ -533,6 +536,7 @@ def _assemble_algebraic_interface_structured_jacobian(
     electron_current[interface_face] = 0.0
     hole_current[interface_face] = 0.0
 
+    require_neutral_only_defect_inventory(material)
     denominator = bulk_recombination_denominators(
         n,
         p,

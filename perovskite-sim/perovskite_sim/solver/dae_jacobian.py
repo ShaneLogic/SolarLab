@@ -37,6 +37,25 @@ class DAEStructuredStateJacobian:
     hole_current_faces_A_m2: np.ndarray
 
 
+def require_neutral_only_defect_inventory(material) -> None:
+    """Refuse charged/multivalent inventories on the structured-DAE lanes.
+
+    These builders forward only ``neutral_bulk_defects`` into the SRH rate and
+    tangent, so a compiled monovalent or multivalent model would be silently
+    replaced by the effective-lifetime law. Both closures are certified only
+    on the guarded QF/DC lane, so fail closed instead of substituting physics.
+    """
+
+    if getattr(material, "monovalent_bulk_defects", None) is not None:
+        raise DAEStructuredJacobianCapabilityError(
+            "charged explicit bulk defects are closed only by the QF/DC lane"
+        )
+    if getattr(material, "multivalent_bulk_defects", None) is not None:
+        raise DAEStructuredJacobianCapabilityError(
+            "multivalent bulk defects are closed only by the QF/DC lane"
+        )
+
+
 def _with_field_mobility_tangent(
     local: ScharfetterGummelFaceJacobian,
     mobility: np.ndarray,
@@ -199,6 +218,7 @@ def build_structured_state_jacobian(
     p[[0, -1]] = (material.p_L, material.p_R)
     electron_face, hole_face = build_carrier_face_jacobians(model, n, p, phi)
 
+    require_neutral_only_defect_inventory(material)
     denominator = bulk_recombination_denominators(
         n,
         p,

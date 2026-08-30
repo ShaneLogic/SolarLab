@@ -334,6 +334,18 @@ def _node_recombination_rate(
     n: float,
     p: float,
 ) -> float:
+    # This lane forwards only the neutral inventory, so a charged or
+    # multivalent explicit model would be silently replaced by the
+    # effective-lifetime law. Those closures are certified only on the guarded
+    # QF/DC lane; refuse rather than substitute different physics.
+    if material.monovalent_bulk_defects is not None:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "charged explicit bulk defects are closed only by the QF/DC lane"
+        )
+    if material.multivalent_bulk_defects is not None:
+        raise IonAwareAnalyticReactionCapabilityError(
+            "multivalent bulk defects are closed only by the QF/DC lane"
+        )
     return total_recombination_at_node(
         n,
         p,

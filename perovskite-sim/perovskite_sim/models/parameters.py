@@ -19,6 +19,11 @@ from perovskite_sim.models.defects import (
     BulkDefectDocument,
     BulkDefectSpecies,
 )
+from perovskite_sim.models.multivalent_defects import (
+    MULTIVALENT_DEFECT_SCHEMA_VERSION,
+    MultivalentBulkDefectDocument,
+    MultivalentBulkDefectSpecies,
+)
 from perovskite_sim.physics.statistics import (
     CarrierStatistics,
     DISCRETE_LEVEL,
@@ -181,7 +186,7 @@ class MaterialParams:
     # remains execution-gated until its solver closure is enabled.
     defect_schema_version: str | None = None
     defect_model: str = EFFECTIVE_LIFETIME
-    bulk_defects: tuple[BulkDefectSpecies, ...] = ()
+    bulk_defects: tuple[BulkDefectSpecies | MultivalentBulkDefectSpecies, ...] = ()
 
     def __post_init__(self) -> None:
         statistics = normalize_carrier_statistics(self.carrier_statistics)
@@ -198,7 +203,9 @@ class MaterialParams:
         )
         raw_bulk_defects = tuple(self.bulk_defects)
         object.__setattr__(self, "bulk_defects", raw_bulk_defects)
-        defect_document: BulkDefectDocument | None = None
+        defect_document: BulkDefectDocument | MultivalentBulkDefectDocument | None = (
+            None
+        )
         if self.defect_schema_version is None:
             if self.defect_model != EFFECTIVE_LIFETIME or raw_bulk_defects:
                 raise ValueError(
@@ -207,11 +214,18 @@ class MaterialParams:
                 )
             object.__setattr__(self, "defect_model", EFFECTIVE_LIFETIME)
         else:
-            defect_document = BulkDefectDocument(
-                schema_version=self.defect_schema_version,
-                defect_model=self.defect_model,
-                bulk_defects=raw_bulk_defects,
-            )
+            if self.defect_schema_version == MULTIVALENT_DEFECT_SCHEMA_VERSION:
+                defect_document = MultivalentBulkDefectDocument(
+                    schema_version=self.defect_schema_version,
+                    defect_model=self.defect_model,
+                    bulk_defects=raw_bulk_defects,
+                )
+            else:
+                defect_document = BulkDefectDocument(
+                    schema_version=self.defect_schema_version,
+                    defect_model=self.defect_model,
+                    bulk_defects=raw_bulk_defects,
+                )
             defect_document.validate_band_gap(self.Eg)
             object.__setattr__(self, "defect_model", defect_document.defect_model)
             object.__setattr__(
@@ -435,9 +449,17 @@ class MaterialParams:
         return self.ni ** 2
 
     @property
-    def defect_document(self) -> BulkDefectDocument | None:
+    def defect_document(
+        self,
+    ) -> BulkDefectDocument | MultivalentBulkDefectDocument | None:
         if self.defect_schema_version is None:
             return None
+        if self.defect_schema_version == MULTIVALENT_DEFECT_SCHEMA_VERSION:
+            return MultivalentBulkDefectDocument(
+                schema_version=self.defect_schema_version,
+                defect_model=self.defect_model,
+                bulk_defects=self.bulk_defects,
+            )
         return BulkDefectDocument(
             schema_version=self.defect_schema_version,
             defect_model=self.defect_model,

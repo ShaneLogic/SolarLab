@@ -506,6 +506,33 @@ class MultivalentBulkDefectDocument:
         )
 
 
+def multivalent_bulk_defect_document_from_layer_mapping(
+    layer: Mapping[str, Any],
+) -> MultivalentBulkDefectDocument | None:
+    """Parse the flat standard-layer representation of a canonical v4 document."""
+
+    keys = {"defect_schema_version", "defect_model", "bulk_defects"}
+    present = keys.intersection(layer)
+    if not present:
+        return None
+    if present != keys:
+        raise ExplicitDefectSchemaError(
+            "explicit defect metadata must declare defect_schema_version, "
+            f"defect_model, and bulk_defects together; missing={sorted(keys - present)}"
+        )
+    if layer["defect_schema_version"] != MULTIVALENT_DEFECT_SCHEMA_VERSION:
+        raise ExplicitDefectSchemaError(
+            "multivalent layer parser requires the canonical v4 schema"
+        )
+    return MultivalentBulkDefectDocument.from_dict(
+        {
+            "schema_version": layer["defect_schema_version"],
+            "defect_model": layer["defect_model"],
+            "bulk_defects": layer["bulk_defects"],
+        }
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MetastableConversionKinetics:
     """Resolved double-carrier conversion barriers and rate prefactors."""
@@ -1039,4 +1066,5 @@ __all__ = [
     "MultivalentBulkDefectSpecies",
     "MultivalentDefectConfiguration",
     "MultivalentEnergyLevels",
+    "multivalent_bulk_defect_document_from_layer_mapping",
 ]

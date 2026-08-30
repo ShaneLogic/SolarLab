@@ -75,6 +75,9 @@ if TYPE_CHECKING:
     from perovskite_sim.physics.distributed_defect_closure import (
         EnergyDistributedDefectClosureResult,
     )
+    from perovskite_sim.physics.multivalent_defect_device import (
+        MultivalentSourceDefectClosureResult,
+    )
     from perovskite_sim.solver.mol import MaterialArrays
 
 
@@ -123,7 +126,8 @@ class SemiconductorContactState:
     bulk_trap_state: "BulkTrapState | None" = None
     explicit_defect_closure: (
         "MonovalentDefectClosureResult | "
-        "EnergyDistributedDefectClosureResult | None"
+        "EnergyDistributedDefectClosureResult | "
+        "MultivalentSourceDefectClosureResult | None"
     ) = None
 
     @property
@@ -216,11 +220,18 @@ def build_semiconductor_contact_state(
     )
     trap_state = None
     explicit_defect_closure = None
-    has_charged_explicit_defects = any(
+    from perovskite_sim.models.multivalent_defects import (
+        MULTIVALENT_DEFECT_SCHEMA_VERSION,
+    )
+
+    use_multivalent_explicit_closure = (
+        params.defect_schema_version == MULTIVALENT_DEFECT_SCHEMA_VERSION
+    )
+    has_charged_explicit_defects = not use_multivalent_explicit_closure and any(
         item.charge_transition in {"acceptor", "donor"}
         for item in params.bulk_defects
     )
-    has_distributed_explicit_defects = any(
+    has_distributed_explicit_defects = not use_multivalent_explicit_closure and any(
         item.distribution.kind != "single_level"
         for item in params.bulk_defects
     )
@@ -230,6 +241,7 @@ def build_semiconductor_contact_state(
     if (
         params.bulk_trap_distribution is None
         and not use_monovalent_explicit_closure
+        and not use_multivalent_explicit_closure
     ):
         neutrality = solve_charge_neutrality(
             temperature_K=temperature,
@@ -262,7 +274,7 @@ def build_semiconductor_contact_state(
         )
         neutrality = trap_neutrality.neutrality
         trap_state = trap_neutrality.trap_state
-    else:
+    elif use_monovalent_explicit_closure:
         from perovskite_sim.physics.defect_closure import (
             solve_monovalent_defect_charge_neutrality,
         )
@@ -284,6 +296,22 @@ def build_semiconductor_contact_state(
                     )
                 }
             ),
+        )
+        neutrality = defect_neutrality.neutrality
+        explicit_defect_closure = defect_neutrality.closure
+    else:
+        from perovskite_sim.physics.multivalent_defect_device import (
+            solve_multivalent_defect_charge_neutrality,
+        )
+
+        defect_neutrality = solve_multivalent_defect_charge_neutrality(
+            temperature_K=temperature,
+            band_gap_eV=band_edges.effective_band_gap_eV,
+            effective_conduction_dos_m3=float(params.Nc300) * dos_scale,
+            effective_valence_dos_m3=float(params.Nv300) * dos_scale,
+            acceptor_density_m3=float(params.N_A),
+            donor_density_m3=float(params.N_D),
+            species=params.bulk_defects,
         )
         neutrality = defect_neutrality.neutrality
         explicit_defect_closure = defect_neutrality.closure
