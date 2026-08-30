@@ -14,7 +14,8 @@ D7-E0 added:
 - a canonical metastable donor/acceptor configuration definition;
 - a replayable initial-working-point and frozen-measurement protocol.
 
-D7-E1 (2026-08-30) wires version 4 into the guarded QF/DC production lane:
+D7-E1 (2026-08-31, commit `f158cdd`) wires version 4 into the guarded
+QF/DC production lane:
 
 - generic v4 layer parsing in `models/config_loader.material_params_from_dict`
   (shared by YAML and backend inline devices) and v4 document dispatch inside
@@ -310,8 +311,8 @@ full-suite baseline of 3389 passing tests.
 ## D7-E1 verification evidence (2026-08-30)
 
 New tests: `tests/unit/physics/test_multivalent_defect_device.py` (8),
-`tests/unit/models/test_multivalent_defect_loader.py` (6), and
-`tests/integration/test_multivalent_explicit_defects_qf.py` (24). The
+`tests/unit/models/test_multivalent_defect_loader.py` (7), and
+`tests/integration/test_multivalent_explicit_defects_qf.py` (29). The
 integration file pins, on the certified QF/DC lane: fail-closed default
 build and contact modes, one shared compiled model with recombination
 dispatch equality, the fixed-QF Poisson tangent against a centered
@@ -341,28 +342,53 @@ that dropped the shared master equation moves these by O(1).
 Verified on the D7-E1 worktree:
 
 ```text
-focused v4 schema + closure + device + loader + QF integration: 69 passed
-related monovalent/QF defect suites:      178 passed, 1 deselected
-D5/D6 dynamic AC + transient lanes:        58 passed
-complete default Python suite:           3456 passed, 2 skipped,
-                                          267 deselected, 12 warnings (551 s)
-Ruff format/check (owned files), compileall, git diff --check: passed
+focused v4 schema + closure + device + loader + QF integration: 75 passed
+unit physics + unit solver suites:       1373 passed, 1 skipped
+complete default Python suite:           3462 passed, 2 skipped,
+                                          267 deselected, 12 warnings (555 s)
+Ruff (owned files) identical to the HEAD baseline, compileall,
+git diff --check: passed
 ```
 
-3456 = the 3418 D7-E0 baseline + the 38 new D7-E1 tests, with zero
+3462 = the 3418 D7-E0 baseline + the 44 new D7-E1 tests, with zero
 failures. The complete-suite run uses an off-OneDrive copy of the working
 tree; that copy must include `.git` and keep the directory name
 `perovskite-sim`, or `test_p0_patch_and_frozen_files_match_manifest` and
 `test_run_l0_runs_from_package_root` fail on the copy environment rather
 than on any code defect.
 
-An adversarial review round over the D7-E1 diff produced one real code
-defect and a set of coverage gaps, all closed here: the neutral/monovalent
-exclusivity invariant was silently dropped on the new multivalent dispatch
-(restored in `_multivalent_mixed_inputs` and the scalar node path), and the
-binomial-degeneracy, multi-species, multi-region, doped-layer,
-neutral-plus-v4, graded-fail-closed, converse-guard and QF-impedance cases
-listed above were previously untested.
+Two adversarial review rounds over the D7-E1 diff (4 reviewer dimensions,
+18 independent refutation passes) confirmed nine findings, all closed here.
+Five were composition holes that would have given one physical defect two
+different carrier states, or run different physics silently:
+
+- `flat_band_metal_contacts` overwrote the contact reservoirs that ARE the
+  root of the defect charge-neutrality closure, without re-solving it; the
+  measured normalized neutrality residual went from 6e-15 to 1.0037 while the
+  solve still reported `certified=True`. Now refused on this lane (which also
+  closes the same latent hole on the monovalent lane).
+- `het_recomb_despike` fed the closure blended interface densities for
+  recombination while Poisson used the true ones; now refused.
+- `carrier_statistics_transport='research_recombination_off'` zeroed the
+  multivalent recombination while keeping its charge and tangent; the pair is
+  now refused.
+- The structured-DAE and analytic-reaction lanes forwarded only the neutral
+  inventory, substituting effective-lifetime SRH for a compiled v4 model
+  instead of failing closed; `require_neutral_only_defect_inventory` now
+  guards all four Jacobian builders, the DAE capability validator, and the
+  analytic-reaction node rate.
+- The neutral/monovalent exclusivity invariant was bypassed by the new
+  multivalent dispatch; restored in `_multivalent_mixed_inputs` and the
+  scalar node path.
+
+The remainder were coverage and reporting defects: the multivalent
+derivative dispatch was unreachable and had never executed (now pinned by a
+finite-difference test), `chi_back`-graded layers slipped the uniform-layer
+gate (electron affinity added to it), off-region state probabilities were
+published as zeros (now NaN, with the certificate re-deriving normalization
+from the published array on owned nodes), and the binomial-degeneracy,
+multi-species, multi-region, doped-layer, neutral-plus-v4,
+graded-fail-closed, converse-guard and QF-impedance cases were untested.
 
 ## Required next checkpoints
 
