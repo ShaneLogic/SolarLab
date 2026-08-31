@@ -37,20 +37,84 @@ QF/DC production lane:
   the certified diagnostics on `QuasiFermiSteadyStateResult`
   (`multivalent_bulk_defect_diagnostics`).
 
+D7-E2 registers the multivalent grid/tolerance refinement lane
+`multivalent-explicit-defect-qf-dc-v1` (three SCAPS families plus a derived
+multivalent p-n junction; 9/9 cells, 239 checks, certificate
+`db51b61d...`). The device-level D2 reduction is a gated certificate metric
+there, not only a test.
+
+D7-E3 adds the metastable configuration split: a local stationary closure
+(`physics/metastable_defect_closure.py`), a frozen-configuration device model
+(`physics/metastable_defect_device.py`), and a preparation solve with
+protocol-bound replay (`experiments/metastable_preparation.py`).
+
+D7-E4 lets that split evolve (`physics/metastable_dynamic_state.py`,
+`experiments/metastable_transient.py`) under an explicitly operator-split
+scheme whose splitting error is measured by time-grid refinement rather than
+assumed.
+
 The current capability label is:
 
 ```text
 multivalent stationary uniform-layer bulk QF/DC (dark/illuminated point and
-J-V sweep) internally certified; metastable, dynamic occupancy, AC/transient,
-interface-plane, mobile-ion combination, graded v4 layers, backend/frontend,
-numerical-refinement certificate, and SCAPS parity all fail closed / open
+J-V sweep) internally certified, with a registered grid/tolerance refinement
+lane; metastable preparation, frozen measurement and operator-split dynamic
+conversion internally certified on that same lane; AC/frequency-domain
+metastable response, interface-plane, mobile-ion combination, graded v4
+layers, YAML/backend/frontend exposure of metastable documents, and every
+SCAPS or experimental comparison remain fail closed / open
 ```
 
 Fail-closed routes verified by tests: ordinary `build_material_arrays`
 without the QF/DC closure, `assemble_rhs` without `phi_frozen`,
 `interface_boundary=True`, mobile ions in a v4 layer, the dynamic/ion
 `_QuasiFermiSystem` entry points, and the D5/D6 device AC / transient lanes
-(via `_require_supported(allow_multivalent_bulk_defects=False)`).
+(via `_require_supported(allow_multivalent_bulk_defects=False)`). The frozen
+metastable inventory takes the same treatment through
+`allow_frozen_metastable_defects`, and is additionally exclusive with the
+neutral, monovalent and multivalent inventories.
+
+## Metastable physics (D7-E3 / D7-E4)
+
+The configuration change moves two elementary charges, so at equilibrium
+
+$$
+\frac{k_\mathrm{forward}}{k_\mathrm{backward}}=\exp\!\left[\frac{2(F-E_t)}{V_T}\right].
+$$
+
+Writing each pathway as `prefactor * activity * exp(-barrier / V_T)` and its
+reverse as `prefactor * exp(-reverse_barrier / V_T)`, that requirement fixes
+every pathway's carrier activity uniquely:
+
+| pathway | activity |
+|---|---|
+| `double_electron_capture` | `(n/N_C)^2` |
+| `electron_capture_plus_hole_emission` | `(n/N_C)(N_V/p)` |
+| `double_hole_capture` | `(p/N_V)^2` |
+| `hole_capture_plus_electron_emission` | `(p/N_V)(N_C/n)` |
+
+These are exactly the factors for which the barrier relations already frozen
+by `MetastableConversionKinetics.validate_detailed_balance` *are* detailed
+balance, so the schema and the closure agree by derivation rather than by
+convention. Measured: every pathway pair reproduces the two-state Boltzmann
+law to `atol 1e-14`, and the analytic configuration tangent matches 60-digit
+arithmetic to 12 significant figures.
+
+The preparation solves the outer fixed point `y = Y(n(y), p(y))` at the
+protocol's working point, clamped by the protocol's own numerics, and
+finishes with an unclamped refinement that must itself be inside tolerance —
+a clamped iterate is never accepted. Across a bias sweep the frozen fraction
+then changes by exactly `0.0` while the carriers move.
+
+D7-E4 integrates the same fraction with the closed-form two-state solution
+`y* + (y - y*) exp(-(k_DA + k_AD) dt)`, which is a convex combination of
+interior points, so boundedness is structural and nothing is clipped. The
+driver is **operator-split**, not a fully implicit coupled DAE, and says so:
+each run repeats on a halved time grid and the certificate gates that
+difference. Measured limits: `dt/tau = 1e-4` moves the configuration by
+2.7e-5 while staying 9.2e-2 from stationary; `dt/tau = 52` lands on the
+stationary configuration exactly. The two-charges-per-conversion identity
+holds to 2e-16 relative to the defect charge scale.
 
 ## Primary model sources
 
