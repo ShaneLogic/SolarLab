@@ -66,6 +66,10 @@ from perovskite_sim.physics.multivalent_defect_device import (
     evaluate_multivalent_bulk_defects,
     solve_multivalent_defect_charge_neutrality,
 )
+from perovskite_sim.physics.metastable_defect_device import (
+    FrozenMetastableEvaluation,
+    evaluate_frozen_metastable_bulk_defects,
+)
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     expand_bulk_defect_species_energy,
@@ -211,6 +215,7 @@ class QuasiFermiSteadyStateResult:
     interface_charge_reference_dark_state_sha256: str | None = None
     bulk_defect_diagnostics: MonovalentBulkDefectEvaluation | None = None
     multivalent_bulk_defect_diagnostics: MultivalentBulkDefectEvaluation | None = None
+    frozen_metastable_diagnostics: FrozenMetastableEvaluation | None = None
     defect_energy_quadrature_order: int | None = None
     defect_distribution_kinds: tuple[str, ...] = ()
     contact_thermodynamic_status: str | None = None
@@ -653,8 +658,20 @@ def _require_supported(
     allow_charged_bulk_defects: bool = False,
     allow_mobile_ions: bool = False,
     allow_multivalent_bulk_defects: bool = False,
+    allow_frozen_metastable_defects: bool = False,
 ) -> None:
     unsupported: list[str] = []
+    if mat.frozen_metastable_defects is not None:
+        if not allow_frozen_metastable_defects:
+            unsupported.append(
+                "frozen metastable configurations outside the prepared QF/DC "
+                "measurement"
+            )
+        elif interface_boundary:
+            unsupported.append(
+                "frozen metastable configurations with the interface-plane "
+                "boundary"
+            )
     if mat.monovalent_bulk_defects is not None:
         if not allow_charged_bulk_defects:
             unsupported.append("charged explicit bulk defects outside QF/DC")
@@ -1230,6 +1247,23 @@ class _QuasiFermiSystem:
             defect = evaluate_monovalent_bulk_defects(n, p, model)
             rho = rho + defect.total_charge_density_C_m3
             derivative = derivative + defect.total_charge_derivative_fixed_qf_C_m3_V
+        metastable_model = self.mat.frozen_metastable_defects
+        if metastable_model is not None:
+            if dynamic_bulk_charge_density_C_m3 is not None:
+                raise QuasiFermiSteadyStateError(
+                    "dynamic bulk charge is not certified with frozen "
+                    "metastable configurations"
+                )
+            metastable = evaluate_frozen_metastable_bulk_defects(
+                n,
+                p,
+                metastable_model,
+            )
+            rho = rho + metastable.total_charge_density_C_m3
+            derivative = (
+                derivative
+                + metastable.total_charge_derivative_fixed_qf_C_m3_V
+            )
         multivalent_model = self.mat.multivalent_bulk_defects
         if multivalent_model is not None:
             if dynamic_bulk_charge_density_C_m3 is not None:
@@ -1774,6 +1808,17 @@ class _QuasiFermiSystem:
                 "multivalent bulk defects support only the stationary QF/DC "
                 "closure; dynamic occupancy and mobile-ion device states are "
                 "not certified"
+            )
+        if self.mat.frozen_metastable_defects is not None and (
+            dynamic_bulk
+            or dynamic_interface
+            or positive_ion_density_m3 is not None
+            or negative_ion_density_m3 is not None
+        ):
+            raise QuasiFermiSteadyStateError(
+                "frozen metastable configurations support only the prepared "
+                "stationary measurement; dynamic occupancy and mobile-ion "
+                "device states are not certified"
             )
         if dynamic_interface and (
             not self.interface_boundary or self.interface_topology != TWO_SIDED_TRACE
@@ -2482,12 +2527,14 @@ def solve_quasi_fermi_steady_state(
         interface_topology=topology,
         allow_charged_bulk_defects=True,
         allow_multivalent_bulk_defects=True,
+        allow_frozen_metastable_defects=True,
     )
     contact_certificate: ContactThermodynamicCertificate | None = None
     if (
         require_contact_certificate
         or material.monovalent_bulk_defects is not None
         or material.multivalent_bulk_defects is not None
+        or material.frozen_metastable_defects is not None
     ):
         try:
             contact_certificate = require_contact_thermodynamic_certificate(
@@ -2934,6 +2981,13 @@ def solve_quasi_fermi_steady_state(
             final.y[len(grid) : 2 * len(grid)],
             material.monovalent_bulk_defects,
         )
+    metastable_diagnostics = None
+    if material.frozen_metastable_defects is not None:
+        metastable_diagnostics = evaluate_frozen_metastable_bulk_defects(
+            final.y[: len(grid)],
+            final.y[len(grid) : 2 * len(grid)],
+            material.frozen_metastable_defects,
+        )
     multivalent_defect_diagnostics = None
     if material.multivalent_bulk_defects is not None:
         multivalent_defect_diagnostics = evaluate_multivalent_bulk_defects(
@@ -3157,6 +3211,31 @@ def solve_quasi_fermi_steady_state(
             failures.append(
                 "multivalent-defect state probabilities or transition rates are invalid"
             )
+    if metastable_diagnostics is not None:
+        metastable_arrays = (
+            metastable_diagnostics.total_charge_density_C_m3,
+            metastable_diagnostics.total_recombination_rate_m3_s,
+            metastable_diagnostics.total_charge_derivative_fixed_qf_C_m3_V,
+        )
+        if any(not np.all(np.isfinite(value)) for value in metastable_arrays):
+            failures.append("metastable evidence contains non-finite values")
+        owned = np.asarray(
+            metastable_diagnostics.active_nodes, dtype=bool
+        ).any(axis=0)
+        fraction = np.asarray(metastable_diagnostics.donor_fraction, dtype=float)
+        if (
+            not np.all(np.isfinite(fraction[owned]))
+            or np.any(fraction[owned] < 0.0)
+            or np.any(fraction[owned] > 1.0)
+            or metastable_diagnostics.minimum_state_probability < 0.0
+            or metastable_diagnostics.maximum_state_probability > 1.0
+            or metastable_diagnostics.maximum_probability_sum_error > 1.0e-12
+            or metastable_diagnostics.minimum_transition_rate_s1 <= 0.0
+        ):
+            failures.append(
+                "metastable configuration fractions or state probabilities "
+                "are invalid"
+            )
     if failures:
         raise QuasiFermiSteadyStateError(
             "QF Newton terminated without a physical certificate: "
@@ -3273,6 +3352,7 @@ def solve_quasi_fermi_steady_state(
         ),
         bulk_defect_diagnostics=bulk_defect_diagnostics,
         multivalent_bulk_defect_diagnostics=multivalent_defect_diagnostics,
+        frozen_metastable_diagnostics=metastable_diagnostics,
         defect_energy_quadrature_order=(
             material.explicit_defect_energy_quadrature_order
         ),

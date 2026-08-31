@@ -57,6 +57,9 @@ from perovskite_sim.physics.multivalent_defect_device import (
     MultivalentBulkDefectModel,
     MultivalentDefectRegion,
 )
+from perovskite_sim.physics.metastable_defect_device import (
+    FrozenMetastableBulkDefectModel,
+)
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     validate_defect_energy_quadrature_order,
@@ -382,6 +385,11 @@ class MaterialArrays:
     # object so one shared charge-state population cannot masquerade as several
     # independent monovalent centers.
     multivalent_bulk_defects: MultivalentBulkDefectModel | None = None
+    # D7-E3 frozen metastable configuration inventory. It is never compiled
+    # from a config: a preparation solve produces it and the measurement
+    # attaches it, so the configuration split cannot silently re-prepare
+    # itself mid-sweep.
+    frozen_metastable_defects: FrozenMetastableBulkDefectModel | None = None
     # D3-E3 energy-node protocol bound into distributed QF/DC materials.
     # None preserves the exact D2 single-level material contract.
     explicit_defect_energy_quadrature_order: int | None = None
@@ -557,6 +565,8 @@ class MaterialArrays:
             d["monovalent_bulk_defects"] = self.monovalent_bulk_defects
         if self.multivalent_bulk_defects is not None:
             d["multivalent_bulk_defects"] = self.multivalent_bulk_defects
+        if self.frozen_metastable_defects is not None:
+            d["frozen_metastable_defects"] = self.frozen_metastable_defects
         if self.interface_faces:
             d["interface_faces"] = list(self.interface_faces)
             d["A_star_n"] = self.A_star_n
@@ -3297,6 +3307,7 @@ def assemble_rhs(
     if (
         mat.monovalent_bulk_defects is not None
         or mat.multivalent_bulk_defects is not None
+        or mat.frozen_metastable_defects is not None
     ) and phi_frozen is None:
         raise ExplicitDefectCapabilityError(
             "charged explicit defects are closed only by the guarded QF/DC "

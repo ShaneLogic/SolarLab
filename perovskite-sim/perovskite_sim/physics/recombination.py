@@ -19,6 +19,10 @@ from perovskite_sim.physics.multivalent_defect_device import (
     evaluate_multivalent_bulk_defects,
     evaluate_multivalent_source_defect_closure,
 )
+from perovskite_sim.physics.metastable_defect_device import (
+    FrozenMetastableBulkDefectModel,
+    evaluate_frozen_metastable_bulk_defects,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,8 +341,26 @@ def srh_recombination(
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
     monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
     multivalent_bulk_defects: MultivalentBulkDefectModel | None = None,
+    frozen_metastable_defects: FrozenMetastableBulkDefectModel | None = None,
 ) -> np.ndarray:
     """Shockley-Read-Hall recombination rate [m⁻³ s⁻¹]."""
+    if frozen_metastable_defects is not None:
+        _require_metastable_exclusivity(
+            neutral_bulk_defects,
+            monovalent_bulk_defects,
+            multivalent_bulk_defects,
+        )
+        return _frozen_metastable_srh_recombination(
+            n,
+            p,
+            ni_sq,
+            tau_n,
+            tau_p,
+            n1,
+            p1,
+            frozen_metastable_defects=frozen_metastable_defects,
+            derivatives=False,
+        )
     if multivalent_bulk_defects is not None:
         return _mixed_multivalent_srh_recombination(
             n,
@@ -393,9 +415,27 @@ def srh_recombination_derivatives(
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
     monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
     multivalent_bulk_defects: MultivalentBulkDefectModel | None = None,
+    frozen_metastable_defects: FrozenMetastableBulkDefectModel | None = None,
 ) -> RecombinationDerivatives:
     """Return bulk SRH and exact local derivatives with respect to n and p."""
 
+    if frozen_metastable_defects is not None:
+        _require_metastable_exclusivity(
+            neutral_bulk_defects,
+            monovalent_bulk_defects,
+            multivalent_bulk_defects,
+        )
+        return _frozen_metastable_srh_recombination(
+            n,
+            p,
+            ni_sq,
+            tau_n,
+            tau_p,
+            n1,
+            p1,
+            frozen_metastable_defects=frozen_metastable_defects,
+            derivatives=True,
+        )
     if multivalent_bulk_defects is not None:
         return _mixed_multivalent_srh_recombination_derivatives(
             n,
@@ -969,6 +1009,99 @@ def _mixed_multivalent_srh_recombination_derivatives(
     )
 
 
+
+def _frozen_metastable_srh_recombination(
+    n: np.ndarray,
+    p: np.ndarray,
+    ni_sq: float,
+    tau_n: float,
+    tau_p: float,
+    n1: float,
+    p1: float,
+    *,
+    frozen_metastable_defects: FrozenMetastableBulkDefectModel,
+    derivatives: bool,
+):
+    """Frozen metastable nodes use the configuration-weighted closure.
+
+    D7-E3 keeps this inventory exclusive: a prepared metastable region may not
+    share a device with a compiled monovalent or multivalent model, because
+    the preparation solve certifies only the metastable partition. Nodes the
+    metastable model does not own keep the effective-lifetime law.
+    """
+
+    values = np.broadcast_arrays(
+        np.asarray(n, dtype=float),
+        np.asarray(p, dtype=float),
+        np.asarray(ni_sq, dtype=float),
+        np.asarray(tau_n, dtype=float),
+        np.asarray(tau_p, dtype=float),
+        np.asarray(n1, dtype=float),
+        np.asarray(p1, dtype=float),
+    )
+    n_a, p_a, ni_a, tau_n_a, tau_p_a, n1_a, p1_a = values
+    if n_a.shape != (frozen_metastable_defects.node_count,):
+        raise ValueError("frozen metastable inputs must match the grid")
+    mask = np.asarray(frozen_metastable_defects.explicit_node_mask, dtype=bool)
+    legacy = ~mask
+    rate = np.zeros_like(n_a, dtype=float)
+    derivative_n = np.zeros_like(n_a, dtype=float)
+    derivative_p = np.zeros_like(n_a, dtype=float)
+    if np.any(legacy):
+        denominator = bulk_srh_denominator(
+            n_a[legacy],
+            p_a[legacy],
+            tau_n_a[legacy],
+            tau_p_a[legacy],
+            n1_a[legacy],
+            p1_a[legacy],
+        )
+        _record_srh_denominator("bulk", denominator)
+        local = (n_a[legacy] * p_a[legacy] - ni_a[legacy]) / denominator
+        rate[legacy] = local
+        if derivatives:
+            derivative_n[legacy] = (
+                p_a[legacy] - local * tau_p_a[legacy]
+            ) / denominator
+            derivative_p[legacy] = (
+                n_a[legacy] - local * tau_n_a[legacy]
+            ) / denominator
+    evaluation = evaluate_frozen_metastable_bulk_defects(
+        n_a,
+        p_a,
+        frozen_metastable_defects,
+    )
+    rate[mask] = evaluation.total_recombination_rate_m3_s[mask]
+    if not derivatives:
+        return rate
+    derivative_n[mask] = evaluation.total_recombination_derivative_n_s1[mask]
+    derivative_p[mask] = evaluation.total_recombination_derivative_p_s1[mask]
+    return RecombinationDerivatives(
+        rate=rate,
+        electron_density_derivative=derivative_n,
+        hole_density_derivative=derivative_p,
+    )
+
+
+def _require_metastable_exclusivity(
+    neutral_bulk_defects: object,
+    monovalent_bulk_defects: object,
+    multivalent_bulk_defects: object,
+) -> None:
+    if any(
+        value is not None
+        for value in (
+            neutral_bulk_defects,
+            monovalent_bulk_defects,
+            multivalent_bulk_defects,
+        )
+    ):
+        raise ValueError(
+            "frozen metastable defects are exclusive with neutral, monovalent "
+            "and multivalent bulk-defect models"
+        )
+
+
 def radiative_recombination(
     n: np.ndarray, p: np.ndarray, ni_sq: float, B_rad: float,
 ) -> np.ndarray:
@@ -1084,6 +1217,7 @@ def total_recombination(
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
     monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
     multivalent_bulk_defects: MultivalentBulkDefectModel | None = None,
+    frozen_metastable_defects: FrozenMetastableBulkDefectModel | None = None,
 ) -> np.ndarray:
     """Sum of SRH + radiative + Auger [m⁻³ s⁻¹]."""
     return (
@@ -1098,6 +1232,7 @@ def total_recombination(
             neutral_bulk_defects=neutral_bulk_defects,
             monovalent_bulk_defects=monovalent_bulk_defects,
             multivalent_bulk_defects=multivalent_bulk_defects,
+            frozen_metastable_defects=frozen_metastable_defects,
         )
         + radiative_recombination(n, p, ni_sq, B_rad)
         + auger_recombination(n, p, ni_sq, C_n, C_p)
@@ -1119,6 +1254,7 @@ def total_recombination_derivatives(
     neutral_bulk_defects: NeutralBulkDefectModel | None = None,
     monovalent_bulk_defects: MonovalentBulkDefectModel | None = None,
     multivalent_bulk_defects: MultivalentBulkDefectModel | None = None,
+    frozen_metastable_defects: FrozenMetastableBulkDefectModel | None = None,
 ) -> RecombinationDerivatives:
     """Return SRH + radiative + Auger and exact local derivatives."""
 
@@ -1133,6 +1269,7 @@ def total_recombination_derivatives(
         neutral_bulk_defects=neutral_bulk_defects,
         monovalent_bulk_defects=monovalent_bulk_defects,
         multivalent_bulk_defects=multivalent_bulk_defects,
+        frozen_metastable_defects=frozen_metastable_defects,
     )
     radiative = radiative_recombination_derivatives(n, p, ni_sq, B_rad)
     auger = auger_recombination_derivatives(n, p, ni_sq, C_n, C_p)
