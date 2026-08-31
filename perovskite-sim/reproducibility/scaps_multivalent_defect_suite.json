@@ -1,0 +1,54 @@
+{
+ "derived_pn_device": {
+  "illumination_photon_flux_m2_s": 2e+21,
+  "interfaces": "homojunction_zero_recombination",
+  "left_scenario": "M1",
+  "right_scenario": "M2"
+ },
+ "external_reference_contract": {
+  "independent_export_attestation_required": true,
+  "interpolation_allowed": false,
+  "raw_profile_columns": [
+   "position_um",
+   "electron_density_cm3",
+   "hole_density_cm3",
+   "electrostatic_potential_V",
+   "conduction_band_eV",
+   "valence_band_eV",
+   "defect_charge_number_cm3",
+   "recombination_rate_cm3_s",
+   "charge_state_occupation_fraction_per_state"
+  ],
+  "required_solver": "SCAPS-1D",
+  "source_deck_required_per_scenario": true,
+  "status": "not_supplied"
+ },
+ "scenarios": [
+  {
+   "config_path": "configs/scaps_defect_m1_double_donor_p.yaml",
+   "config_sha256": "43516a15f6ceeb6ba5fb4381c789e1c073ead4b101081d583da60c4bf9407290",
+   "doping_polarity": "p_type",
+   "family": "double_donor",
+   "id": "M1",
+   "purpose": "double donor charge and compensation in a p-type slab"
+  },
+  {
+   "config_path": "configs/scaps_defect_m2_double_acceptor_n.yaml",
+   "config_sha256": "32c7828624f482259d681aeca4d148d882483719de43dc72ce0b117d4f27d223",
+   "doping_polarity": "n_type",
+   "family": "double_acceptor",
+   "id": "M2",
+   "purpose": "double acceptor charge and compensation in an n-type slab"
+  },
+  {
+   "config_path": "configs/scaps_defect_m3_amphoteric_i.yaml",
+   "config_sha256": "7e772e2e92a5d862ac8b54f0b5cd684829bbe9ae34eb3aee607ab78a3586915c",
+   "doping_polarity": "intrinsic",
+   "family": "amphoteric",
+   "id": "M3",
+   "purpose": "amphoteric three-state population without dopant compensation"
+  }
+ ],
+ "schema": "solarlab.scaps_multivalent_defect_reference_suite",
+ "schema_version": "1.0"
+}

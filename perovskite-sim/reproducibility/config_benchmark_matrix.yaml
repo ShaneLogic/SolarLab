@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: c43524cce06243f2d18e5bd0d92bb1f8ecfb3ad347ced597fcb45acb488cb654
+  sha256: c96865b747c3bb440e3ec7815ee6e940adb4aa026bd009bf04ef03cc6018ba29
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -97,6 +97,9 @@ benchmarks:
       - configs/pin_MAPbI3.yaml
       - configs/pin_MAPbI3_tmm.yaml
       - configs/radiative_limit.yaml
+      - configs/scaps_defect_m1_double_donor_p.yaml
+      - configs/scaps_defect_m2_double_acceptor_n.yaml
+      - configs/scaps_defect_m3_amphoteric_i.yaml
       - configs/scaps_defect_s0_neutral.yaml
       - configs/scaps_defect_s1_acceptor_n.yaml
       - configs/scaps_defect_s2_donor_p.yaml
@@ -144,6 +147,7 @@ benchmarks:
       - configs/interface_charge_research.yaml
       - configs/ionmonger_benchmark.yaml
       - configs/nip_MAPbI3.yaml
+      - configs/scaps_defect_m1_double_donor_p.yaml
       - configs/scaps_defect_s1_acceptor_n.yaml
       - configs/scaps_mirror.yaml
       - configs/scaps_mirror_v2.yaml
@@ -1315,6 +1319,37 @@ benchmarks:
       - the source-clean v6 3x3 matrix at commit 4f13a4bebfc71275bb83394e184144965d1359a6 completed 9/9 cells without failure, missing cells, or reuse and passed 366/366 checks; run ID 464da3ec6e0bb94fbd40a82bdc9325b29eabbb6622dc8fcad699b505a4434f5f and certificate SHA-256 52c63f74e5e139487aebce1e3ebe576d4861fb566788261e40d594e8f76f703b
       - the v6 lane must execute the public wrapper independently for combined, defect-dominated, and ion-dominated cases and cannot inherit production certification from the E3c v5 internal adapter certificate
       - this is dark two-layer, one microscopic interface defect, absorber-positive-ion internal numerical evidence; it is not SCAPS transient parity, experimental validation, bulk-plus-ion or dual-ion production coverage
+  multivalent-explicit-defect-internal-closure:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q tests/unit/models/test_multivalent_defect_schema.py tests/unit/models/test_multivalent_defect_loader.py
+      tests/unit/physics/test_multivalent_defect_closure.py tests/unit/physics/test_multivalent_defect_device.py
+      tests/integration/test_multivalent_explicit_defects_qf.py tests/unit/validation/test_multivalent_defect_refinement.py
+    tests:
+    - tests/unit/models/test_multivalent_defect_schema.py
+    - tests/unit/models/test_multivalent_defect_loader.py
+    - tests/unit/physics/test_multivalent_defect_closure.py
+    - tests/unit/physics/test_multivalent_defect_device.py
+    - tests/integration/test_multivalent_explicit_defects_qf.py
+    - tests/unit/validation/test_multivalent_defect_refinement.py
+    node_ids:
+    - tests/unit/models/test_multivalent_defect_schema.py::test_v4_document_roundtrip_hash_and_shared_density_are_stable
+    - tests/unit/models/test_multivalent_defect_loader.py::test_layer_parser_builds_the_canonical_v4_document
+    - tests/unit/physics/test_multivalent_defect_closure.py::test_single_transition_unity_limit_recovers_d2_exact_local_closure
+    - tests/unit/physics/test_multivalent_defect_device.py::test_full_grid_evaluation_matches_the_region_source_closure
+    - tests/integration/test_multivalent_explicit_defects_qf.py::test_single_transition_v4_device_recovers_the_monovalent_qf_dc_route
+    - tests/unit/validation/test_multivalent_defect_refinement.py::test_registered_executor_real_cell_matches_exact_contract
+    configs:
+    - configs/scaps_defect_m1_double_donor_p.yaml
+    - configs/scaps_defect_m2_double_acceptor_n.yaml
+    - configs/scaps_defect_m3_amphoteric_i.yaml
+    limitations:
+    - the source-clean 3x3 lane is internal SolarLab grid and tolerance evidence, not SCAPS parity or
+      experimental validation
+    - multivalent defects execute only through the opt-in QF/DC path on uniform layers; graded, dynamic,
+      AC, transient, interface, mobile-ion and structured-DAE routes remain fail-closed
+    - metastable configurations are contract-only at this checkpoint and are not executed by this lane
   charged-explicit-defect-internal-closure:
     kind: numerical
     status: pass
@@ -1644,6 +1679,24 @@ configs:
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, twod-radiative-reabsorption]
+  - path: configs/scaps_defect_m1_double_donor_p.yaml
+    sha256: 43516a15f6ceeb6ba5fb4381c789e1c073ead4b101081d583da60c4bf9407290
+    semantic_sha256: d01233628d86e1ba715bc1ff32fc55c9c2df29d80b219c734e7a6bebdf6faeee
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, multivalent-explicit-defect-internal-closure, phase1-refinement-contract]
+  - path: configs/scaps_defect_m2_double_acceptor_n.yaml
+    sha256: 32c7828624f482259d681aeca4d148d882483719de43dc72ce0b117d4f27d223
+    semantic_sha256: bdf32b29906a8f9d52b8bce227865e80e20430f16c63b7666201dfa3ccd2840a
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, multivalent-explicit-defect-internal-closure]
+  - path: configs/scaps_defect_m3_amphoteric_i.yaml
+    sha256: 7e772e2e92a5d862ac8b54f0b5cd684829bbe9ae34eb3aee607ab78a3586915c
+    semantic_sha256: 07086a198f34348f4f28a04de548c846cd8b85cd1586f90ab1b761fd06259e59
+    schema: standard-device-v1
+    status: partial
+    benchmarks: [loader-contract, multivalent-explicit-defect-internal-closure]
   - path: configs/scaps_defect_s0_neutral.yaml
     sha256: 77b89e16c365cd5c4cf9f7aa439f0200ec9ad9b814e60bbe81895afef65025c7
     semantic_sha256: a44db13adb9d77e705dec93753a72162569860590f8df4f371caf1ad493e473e

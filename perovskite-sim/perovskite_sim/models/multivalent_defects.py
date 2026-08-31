@@ -506,6 +506,30 @@ class MultivalentBulkDefectDocument:
         )
 
 
+def _coerce_yaml_scalars(value: Any) -> Any:
+    """Normalize YAML 1.1 numeric scalars at the layer-mapping boundary.
+
+    PyYAML's 1.1 resolver leaves ``2.0e21`` (no exponent sign) as a string, so
+    every standard config in this repository relies on the loader coercing
+    such scalars. The canonical dataclasses stay strict for API callers; the
+    coercion belongs here, at the text boundary, so a v4 layer does not have
+    to be written in a different numeric style than every other layer.
+    """
+
+    if isinstance(value, Mapping):
+        return {key: _coerce_yaml_scalars(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        return [_coerce_yaml_scalars(item) for item in value]
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return value
+
+
 def multivalent_bulk_defect_document_from_layer_mapping(
     layer: Mapping[str, Any],
 ) -> MultivalentBulkDefectDocument | None:
@@ -528,7 +552,7 @@ def multivalent_bulk_defect_document_from_layer_mapping(
         {
             "schema_version": layer["defect_schema_version"],
             "defect_model": layer["defect_model"],
-            "bulk_defects": layer["bulk_defects"],
+            "bulk_defects": _coerce_yaml_scalars(layer["bulk_defects"]),
         }
     )
 

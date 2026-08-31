@@ -2641,6 +2641,211 @@ lanes:
       - Mobile ions, interfaces, selective contacts, field mobility, dynamic occupancy, Fermi-Dirac statistics, AC, transient defects, tunnelling, multivalent defects, hard-zero profiles, and discontinuous profile steps remain excluded.
       - This is internal SolarLab convergence evidence, not external SCAPS parity, experimental validation, or unique microscopic parameter identification.
 
+  multivalent-explicit-defect-qf-dc-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/scaps_defect_m1_double_donor_p.yaml
+    config_sha256: 43516a15f6ceeb6ba5fb4381c789e1c073ead4b101081d583da60c4bf9407290
+    executor: perovskite_sim.validation.multivalent_defect_refinement:run_multivalent_defect_qf_dc_refinement
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values:
+      - 24
+      - 48
+      - 96
+    tolerance:
+      parameter: qf_dc_residual_tolerance_factor
+      factors:
+      - 1.0
+      - 0.1
+      - 0.01
+    limitations:
+    - Internal numerical convergence only; no SCAPS charge-state export is compared.
+    - Uniform-layer stationary multivalent bulk defects; graded, metastable, dynamic,
+      AC and mobile-ion routes are refused by the solver rather than certified here.
+    observables:
+      m1_integrated_defect_charge_C_m2:
+        comparison: relative_linf
+        limit: 0.001
+        units: C m-2
+      m1_neutral_state_probability_profile:
+        comparison: absolute_linf
+        limit: 0.0005
+        units: '1'
+      m1_normalized_charge_profile:
+        comparison: absolute_linf
+        limit: 0.0005
+        units: '1'
+      m2_integrated_defect_charge_C_m2:
+        comparison: relative_linf
+        limit: 0.001
+        units: C m-2
+      m2_neutral_state_probability_profile:
+        comparison: absolute_linf
+        limit: 0.0005
+        units: '1'
+      m2_normalized_charge_profile:
+        comparison: absolute_linf
+        limit: 0.0005
+        units: '1'
+      m3_integrated_defect_charge_C_m2:
+        comparison: relative_linf
+        limit: 0.005
+        units: C m-2
+      m3_neutral_state_probability_profile:
+        comparison: absolute_linf
+        limit: 0.0005
+        units: '1'
+      m3_normalized_charge_profile:
+        comparison: absolute_linf
+        limit: 0.0005
+        units: '1'
+      pn_dark_electron_log10_profile:
+        comparison: absolute_linf
+        limit: 0.005
+        units: log10(m-3)
+      pn_dark_hole_log10_profile:
+        comparison: absolute_linf
+        limit: 0.005
+        units: log10(m-3)
+      pn_dark_potential_V:
+        comparison: absolute_linf
+        limit: 0.0005
+        units: V
+      pn_ff:
+        comparison: relative_linf
+        limit: 0.005
+        units: '1'
+      pn_jsc_A_m2:
+        comparison: relative_linf
+        limit: 0.002
+        units: A m-2
+      pn_jv_current_A_m2:
+        comparison: relative_linf
+        limit: 0.005
+        units: A m-2
+      pn_voc_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+    options:
+      base_finite_difference_step: 1.0e-05
+      base_newton_residual_tolerance: 1.0e-08
+      base_poisson_tolerance_V: 1.0e-10
+      config_loader: scaps_multivalent_defect_suite_v1
+      continuity_tolerance_A_m2: 0.0002
+      current_spread_tolerance_A_m2: 0.0002
+      grid_alpha: 2.0
+      illumination_steps:
+      - 0.0
+      - 0.0001
+      - 0.01
+      - 1.0
+      profile_points: 17
+      require_protocol: true
+      suite_manifest: reproducibility/scaps_multivalent_defect_suite.json
+      suite_manifest_sha256: 5443624569ca35279a04feb9dff018bdc42c44c85d96e7d5fe19fe68c4b643e1
+      voltage_grid_V:
+      - 0.0
+      - 0.05
+      - 0.1
+      - 0.15
+      - 0.2
+      - 0.25
+      - 0.3
+    quality_gates:
+      all_states_certified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      charge_signs_verified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      contact_thermodynamics_certified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      default_multivalent_path_rejected:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      max_continuity_bound_A_m2:
+        operator: le
+        limit: 0.0002
+        units: A m-2
+      max_current_spread_A_m2:
+        operator: le
+        limit: 0.0002
+        units: A m-2
+      max_dark_current_A_m2:
+        operator: le
+        limit: 1.0e-08
+        units: A m-2
+      max_dark_qf_span_V:
+        operator: le
+        limit: 1.0e-10
+        units: V
+      max_mass_action_relative_error:
+        operator: le
+        limit: 1.0e-10
+        units: '1'
+      max_master_equation_residual_s1:
+        operator: le
+        limit: 1.0e-06
+        units: s-1
+      max_normalized_cell_residual:
+        operator: le
+        limit: 1.0e-07
+        units: '1'
+      max_owned_probability_sum_error:
+        operator: le
+        limit: 1.0e-12
+        units: '1'
+      max_poisson_residual:
+        operator: le
+        limit: 1.0e-08
+        units: '1'
+      min_transition_rate_s1:
+        operator: ge
+        limit: 0.0
+        units: s-1
+      multivalent_model_hashes_verified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      multivalent_topology_verified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      probability_bounded_without_clipping:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      scenario_count:
+        operator: eq
+        limit: 3.0
+        units: '1'
+      single_transition_d2_potential_error_V:
+        operator: le
+        limit: 1.0e-09
+        units: V
+      single_transition_d2_state_relative_error:
+        operator: le
+        limit: 1.0e-08
+        units: '1'
+      terminal_densities_positive:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      voc_bracketed:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      voltage_points_completed:
+        operator: eq
+        limit: 7.0
+        units: '1'
   cigs-graded-optics-v1:
     claim_level: internal-numerical-candidate
     config: configs/cigs_graded_optics.yaml

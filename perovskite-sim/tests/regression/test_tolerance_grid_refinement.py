@@ -142,6 +142,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "distributed-explicit-defect-qf-dc-v1",
         "spatially-graded-explicit-defect-qf-dc-v1",
         "spatially-graded-explicit-defect-qf-dc-v2",
+        "multivalent-explicit-defect-qf-dc-v1",
         "cigs-graded-optics-v1",
         "interface-srh-identifiability-synthetic-v1",
     }
