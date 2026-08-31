@@ -12,6 +12,9 @@ from perovskite_sim.models.multivalent_defects import (
     multivalent_bulk_defect_document_from_layer_mapping,
 )
 from perovskite_sim.models.interface_defects import InterfaceDefectDocument
+from perovskite_sim.models.tunneling_channels import (
+    tunnelling_channel_document_from_mapping,
+)
 from perovskite_sim.physics.doping import validate_doping_profile_params
 from perovskite_sim.physics.bulk_traps import (
     bulk_trap_distribution_from_mapping,
@@ -587,6 +590,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             in ("true", "1", "yes", "on")
         ),
         tunnel_mass_eff=_f(dev.get("tunnel_mass_eff", 0.2)),
+        tunnelling_channels=tunnelling_channel_document_from_mapping(dev),
         S_n_left=S_n_left,
         S_p_left=S_p_left,
         S_n_right=S_n_right,

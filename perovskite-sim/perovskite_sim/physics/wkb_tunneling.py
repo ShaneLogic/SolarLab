@@ -135,6 +135,224 @@ def wkb_action(
     return float(np.trapezoid(kappa, x))
 
 
+def forbidden_run(
+    barrier_eV: np.ndarray,
+    energy_eV: float,
+    anchor_face: int,
+) -> tuple[int, int] | None:
+    """Return the connected forbidden interval that contains a given face.
+
+    A device grid generally holds several barriers — a heterojunction spike,
+    the band bending at each contact — and the classically forbidden set at a
+    given energy is therefore disconnected. Integrating all of it would merge
+    unrelated barriers into one fictitious path, which is both wrong and
+    silently plausible. A channel bound to one interface must integrate only
+    the run bracketing that interface, which is what this returns as an
+    inclusive ``(low, high)`` node pair. ``None`` means neither node of the
+    face is forbidden at this energy: the carrier is not blocked there.
+    """
+
+    barrier = np.asarray(barrier_eV, dtype=float)
+    if barrier.ndim != 1 or barrier.size < 2:
+        raise WKBTunnellingError("barrier profile must be a 1-D grid")
+    face = int(anchor_face)
+    if face < 0 or face >= barrier.size - 1:
+        raise WKBTunnellingError("anchor_face is outside the transport faces")
+    forbidden = barrier > float(energy_eV)
+    if not (forbidden[face] or forbidden[face + 1]):
+        return None
+    start = face if forbidden[face] else face + 1
+    low = start
+    while low - 1 >= 0 and forbidden[low - 1]:
+        low -= 1
+    high = start
+    while high + 1 < barrier.size and forbidden[high + 1]:
+        high += 1
+    return low, high
+
+
+def windowed_wkb_action(
+    positions_m: np.ndarray,
+    barrier_eV: np.ndarray,
+    energy_eV: float,
+    effective_mass_rel: float,
+    anchor_face: int,
+) -> float:
+    """WKB action over the forbidden run containing ``anchor_face`` only."""
+
+    bounds = forbidden_run(barrier_eV, energy_eV, anchor_face)
+    if bounds is None:
+        return 0.0
+    low, high = bounds
+    x = np.asarray(positions_m, dtype=float)
+    if high - low < 1:
+        # A single forbidden node carries no width on this grid.
+        return 0.0
+    return wkb_action(
+        x[low : high + 1],
+        np.asarray(barrier_eV, dtype=float)[low : high + 1],
+        energy_eV,
+        effective_mass_rel,
+    )
+
+
+def two_band_decay_constant_per_m(
+    conduction_edge_eV: np.ndarray,
+    valence_edge_eV: np.ndarray,
+    energy_eV: float,
+    reduced_effective_mass_rel: float,
+) -> np.ndarray:
+    """Kane two-band decay constant for a carrier inside the forbidden gap.
+
+    The single-band form ``sqrt(2 m (U - E))`` has no meaning for band-to-band
+    tunnelling: the particle is not blocked by one band edge but by the gap,
+    and its turning points are set by *different* bands (it leaves the valence
+    band where ``E = E_V`` and enters the conduction band where ``E = E_C``).
+    Using ``E_C`` alone as the barrier would place both turning points on the
+    same edge and integrate the wrong region entirely.
+
+    The two-band dispersion gives
+
+    ``kappa(x) = sqrt(2 m_r (E_C - E)(E - E_V) / E_g) / h_bar``
+
+    which vanishes at *both* turning points, as a decay constant must. Under a
+    uniform field this integrates in closed form to the textbook Zener result
+    ``T = exp(-pi sqrt(m_r) E_g^{3/2} / (2 sqrt(2) h_bar q F))`` — the identity
+    the tests check, so the prefactor here is pinned rather than asserted.
+    """
+
+    conduction = np.asarray(conduction_edge_eV, dtype=float)
+    valence = np.asarray(valence_edge_eV, dtype=float)
+    if conduction.shape != valence.shape:
+        raise WKBTunnellingError("band edges must share one grid")
+    mass = _positive(reduced_effective_mass_rel, "reduced_effective_mass_rel")
+    gap = conduction - valence
+    if np.any(gap <= 0.0):
+        raise WKBTunnellingError("the gap must be positive on the whole grid")
+    energy = float(energy_eV)
+    inside = (conduction > energy) & (valence < energy)
+    kappa = np.zeros_like(conduction)
+    if not np.any(inside):
+        return kappa
+    numerator = (
+        (conduction[inside] - energy) * (energy - valence[inside]) / gap[inside]
+    )
+    kappa[inside] = (
+        np.sqrt(2.0 * mass * ELECTRON_MASS_KG * numerator * Q)
+        / HBAR_J_S
+    )
+    return kappa
+
+
+def two_band_action(
+    positions_m: np.ndarray,
+    conduction_edge_eV: np.ndarray,
+    valence_edge_eV: np.ndarray,
+    energy_eV: float,
+    reduced_effective_mass_rel: float,
+    anchor_face: int,
+) -> float:
+    """Kane action over the in-gap run that contains ``anchor_face``.
+
+    The forbidden set here is "inside the gap", not "above one band edge", so
+    the run is bracketed by the two turning points on opposite bands.
+    """
+
+    conduction = np.asarray(conduction_edge_eV, dtype=float)
+    valence = np.asarray(valence_edge_eV, dtype=float)
+    x = np.asarray(positions_m, dtype=float)
+    if conduction.shape != x.shape or valence.shape != x.shape:
+        raise WKBTunnellingError("band edges must match positions_m")
+    if x.ndim != 1 or x.size < 2:
+        raise WKBTunnellingError("positions_m must be a 1-D grid")
+    if np.any(np.diff(x) <= 0.0):
+        raise WKBTunnellingError("positions_m must strictly increase")
+    face = int(anchor_face)
+    if face < 0 or face >= x.size - 1:
+        raise WKBTunnellingError("anchor_face is outside the transport faces")
+    energy = float(energy_eV)
+    inside = (conduction > energy) & (valence < energy)
+    if not (inside[face] or inside[face + 1]):
+        return 0.0
+    start = face if inside[face] else face + 1
+    low = start
+    while low - 1 >= 0 and inside[low - 1]:
+        low -= 1
+    high = start
+    while high + 1 < x.size and inside[high + 1]:
+        high += 1
+    if high - low < 1:
+        return 0.0
+    kappa = two_band_decay_constant_per_m(
+        conduction[low : high + 1],
+        valence[low : high + 1],
+        energy,
+        reduced_effective_mass_rel,
+    )
+    return float(np.trapezoid(kappa, x[low : high + 1]))
+
+
+def two_band_transmission(
+    positions_m: np.ndarray,
+    conduction_edge_eV: np.ndarray,
+    valence_edge_eV: np.ndarray,
+    energy_eV: float,
+    reduced_effective_mass_rel: float,
+    anchor_face: int,
+) -> float:
+    """Two-band transmission ``exp(-2 S)`` for band-to-band tunnelling."""
+
+    return math.exp(
+        -2.0
+        * two_band_action(
+            positions_m,
+            conduction_edge_eV,
+            valence_edge_eV,
+            energy_eV,
+            reduced_effective_mass_rel,
+            anchor_face,
+        )
+    )
+
+
+def kane_uniform_field_action(
+    band_gap_eV: float,
+    field_V_m: float,
+    reduced_effective_mass_rel: float,
+) -> float:
+    """Closed-form Kane action for a uniform field, used to check the quadrature.
+
+    ``S = pi sqrt(2 m_r) E_g^{3/2} / (8 h_bar q F)``, so ``exp(-2 S)`` is the
+    textbook Zener exponent.
+    """
+
+    gap = _positive(band_gap_eV, "band_gap_eV")
+    field = _positive(field_V_m, "field_V_m")
+    mass = _positive(reduced_effective_mass_rel, "reduced_effective_mass_rel")
+    gap_J = gap * Q
+    return (
+        math.pi
+        * math.sqrt(2.0 * mass * ELECTRON_MASS_KG)
+        * gap_J**1.5
+        / (8.0 * HBAR_J_S * Q * field)
+    )
+
+
+def windowed_wkb_transmission(
+    positions_m: np.ndarray,
+    barrier_eV: np.ndarray,
+    energy_eV: float,
+    effective_mass_rel: float,
+    anchor_face: int,
+) -> float:
+    """Transmission through the forbidden run containing ``anchor_face``."""
+
+    action = windowed_wkb_action(
+        positions_m, barrier_eV, energy_eV, effective_mass_rel, anchor_face
+    )
+    return math.exp(-2.0 * action)
+
+
 def wkb_transmission(
     positions_m: np.ndarray,
     barrier_eV: np.ndarray,
@@ -234,9 +452,32 @@ def wkb_validity(
     physical barrier as invalid and the diagnostic would carry no information.
     """
 
-    x = np.asarray(positions_m, dtype=float)
     kappa = decay_constant_per_m(barrier_eV, energy_eV, effective_mass_rel)
     action = wkb_action(positions_m, barrier_eV, energy_eV, effective_mass_rel)
+    return _validity_from_kappa(
+        positions_m,
+        kappa,
+        action,
+        maximum_wavelength_gradient=maximum_wavelength_gradient,
+        turning_point_fraction=turning_point_fraction,
+    )
+
+
+def _validity_from_kappa(
+    positions_m: np.ndarray,
+    kappa: np.ndarray,
+    action: float,
+    *,
+    maximum_wavelength_gradient: float,
+    turning_point_fraction: float,
+) -> WKBValidity:
+    """Assemble the diagnostics from an already-computed decay constant.
+
+    Shared by the single-band and two-band reports so the two cannot drift:
+    only the decay constant differs between them, never the criteria.
+    """
+
+    x = np.asarray(positions_m, dtype=float)
     forbidden = kappa > 0.0
     width = float(np.sum(np.diff(x)[forbidden[:-1] & forbidden[1:]]))
     gradient = 0.0
@@ -255,12 +496,54 @@ def wkb_validity(
                 np.max(np.abs(np.diff(wavelength)[interior] / np.diff(x)[interior]))
             )
     return WKBValidity(
-        action=action,
-        transmission=math.exp(-2.0 * action),
+        action=float(action),
+        transmission=math.exp(-2.0 * float(action)),
         maximum_wavelength_gradient=gradient,
         forbidden_width_m=width,
         meaningful_barrier=bool(action >= MINIMUM_MEANINGFUL_ACTION),
         slowly_varying=bool(gradient <= float(maximum_wavelength_gradient)),
+    )
+
+
+def two_band_validity(
+    positions_m: np.ndarray,
+    conduction_edge_eV: np.ndarray,
+    valence_edge_eV: np.ndarray,
+    energy_eV: float,
+    reduced_effective_mass_rel: float,
+    anchor_face: int,
+    *,
+    maximum_wavelength_gradient: float = 1.0,
+    turning_point_fraction: float = 0.1,
+) -> WKBValidity:
+    """The same diagnostics for the two-band (band-to-band) decay constant.
+
+    Reporting the single-band validity for a Zener channel would describe a
+    barrier that channel never crosses, so the action and the forbidden width
+    would both be wrong — hence a separate entry point rather than a shared
+    one with a different barrier argument.
+    """
+
+    kappa = two_band_decay_constant_per_m(
+        conduction_edge_eV,
+        valence_edge_eV,
+        energy_eV,
+        reduced_effective_mass_rel,
+    )
+    action = two_band_action(
+        positions_m,
+        conduction_edge_eV,
+        valence_edge_eV,
+        energy_eV,
+        reduced_effective_mass_rel,
+        anchor_face,
+    )
+    return _validity_from_kappa(
+        positions_m,
+        kappa,
+        action,
+        maximum_wavelength_gradient=maximum_wavelength_gradient,
+        turning_point_fraction=turning_point_fraction,
     )
 
 
@@ -334,6 +617,11 @@ def reciprocal_net_flux(
 
 
 __all__ = [
+    "two_band_validity",
+    "kane_uniform_field_action",
+    "two_band_action",
+    "two_band_decay_constant_per_m",
+    "two_band_transmission",
     "ELECTRON_MASS_KG",
     "HBAR_J_S",
     "MINIMUM_MEANINGFUL_ACTION",
@@ -341,9 +629,12 @@ __all__ = [
     "WKBTunnellingError",
     "WKBValidity",
     "decay_constant_per_m",
+    "forbidden_run",
     "reciprocal_net_flux",
     "triangular_barrier_action",
     "wkb_action",
     "wkb_transmission",
     "wkb_validity",
+    "windowed_wkb_action",
+    "windowed_wkb_transmission",
 ]

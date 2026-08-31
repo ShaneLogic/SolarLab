@@ -2,20 +2,25 @@
 
 ## Status and capability boundary
 
-This document covers **D8-P0** (audit of the existing tunnelling surface) and
-**D8-E0** (canonical four-channel contract plus the local WKB physics).
+This document covers **D8-P0** (audit of the existing tunnelling surface),
+**D8-E0** (canonical four-channel contract plus the local WKB physics) and
+**D8-E1** (production wiring into the guarded QF/DC lane).
 
 The current capability label is:
 
 ```text
-four independently switchable WKB tunnelling channels with transmission,
-reciprocity, validity diagnostics and unit tests, all LOCAL; no channel is
-wired into any solver, no device-level current is produced, and no SCAPS
-comparison has been made
+four independently switchable WKB tunnelling channels, each anchored to its
+own barrier, wired into the guarded QF/DC lane so an enabled channel adds a
+face current to the certified residual; every other solver route fails
+closed; no SCAPS comparison has been made and no channel magnitude is
+validated against any reference
 ```
 
 Nothing in this checkpoint changes a shipped number: the canonical document
-defaults every channel to disabled, and no solver imports the channels yet.
+defaults every channel to disabled, `DeviceStack.tunnelling_channels` defaults
+to `None`, and no shipped config sets the key — so every existing result is
+bit-identical, pinned by
+`test_an_all_disabled_document_is_bit_identical_to_no_document`.
 
 ## What already existed, and why it is not enough (D8-P0)
 
@@ -133,25 +138,135 @@ not physics.
 Tests: 29 (`tests/unit/physics/test_wkb_tunneling.py`,
 `tests/unit/physics/test_tunneling_channels.py`).
 
+## Device wiring (D8-E1)
+
+`DeviceStack.tunnelling_channels` carries the document; `config_loader` parses
+it; `build_material_arrays` compiles only the **static** part (which faces,
+which contacts, the masses, the quadrature orders). The transmission itself
+cannot be cached — a tunnelling barrier is `E_C(x) = -(phi(x) + chi(x))` and
+`phi` is solved for — so `physics/tunneling_channel_device.py` evaluates every
+enabled channel per residual call from the live potential.
+
+### Two corrections the wiring forced
+
+Both were found by running the channels on a real device grid, and both are
+cases where the D8-E0 local formulation was not wrong so much as **not yet a
+device statement**.
+
+**1. A channel integrates its own barrier, not the forbidden set.** A device
+grid holds several barriers at once — each heterojunction spike, the band
+bending at each contact — so the classically forbidden set at a given energy
+is disconnected. Integrating all of it merges unrelated barriers into one
+fictitious path: wrong, and silently plausible. `forbidden_run` /
+`windowed_wkb_action` extract the connected run containing the channel's own
+face, and `local_barrier_window` takes the energy window from the local
+feature rather than the device endpoints. Measured on two separated barriers
+on one grid: `T = 3.137e-1` at the first face and `1.000` at the second, where
+a whole-grid integral would have reported one merged barrier at both.
+
+**2. The driving force is the local quasi-Fermi drop, not the applied bias.**
+A channel is one conduction path across one barrier, so it is driven by the
+quasi-Fermi drop across *that* barrier — the same drop the Scharfetter-Gummel
+flux on the same face sees, which is what makes the two additive rather than
+double-counted. Reading the contact levels instead inflated the flux by orders
+of magnitude and made it *grow* with bias. The corrected behaviour is the
+opposite and is pinned as such: raising the bias flattens the junction, the
+local drop shrinks, and the tunnelling flux falls by more than 10× between
+0.2 V and 0.5 V.
+
+### The band-to-band channel uses the two-band exponent
+
+The single-band exponent has no meaning for Zener tunnelling: the particle
+leaves the valence band where `E = E_V` and enters the conduction band where
+`E = E_C`, so its two turning points sit on **different bands**. Using `E_C`
+alone puts both turning points on the same edge and integrates the wrong
+region. `two_band_decay_constant_per_m` implements the Kane form
+
+```text
+kappa(x) = sqrt(2 m_r (E_C - E)(E - E_V) / E_g) / h_bar
+```
+
+which vanishes at both turning points. Under a uniform field it integrates in
+closed form to `S = pi sqrt(2 m_r) Eg^{3/2} / (8 h_bar q F)`, i.e. the textbook
+`T = exp(-pi sqrt(m_r) Eg^{3/2} / (2 sqrt(2) h_bar q F))` — verified
+symbolically, and the quadrature reproduces it to **1.4e-6**. So the D8-E0
+limitation "the Kane prefactor is not applied and is not claimed" is now
+retired: it is applied, and pinned against its closed form.
+
+### Fail-closed surface
+
+| route | behaviour |
+|---|---|
+| ordinary MoL `assemble_rhs` | raises — the guard is **unconditional**, not gated on `phi_frozen`; a frozen potential excuses a missing Poisson charge, never a missing current |
+| QF/DC source assembly | the source mat is transport-free by construction and has the channels **stripped**, so the unconditional guard above holds without an exemption |
+| interface-bound channel, no heterointerface | raises |
+| defect-assisted channel, no explicit occupancy | raises — the schema flag cannot be waived |
+| zero contact barrier height | raises at document construction |
+
+### Where the injection goes, and why the order matters
+
+The interface plane zeroes its own face current so its reservoir transfer is
+not double-counted in the divergence. Tunnelling is a separate physical path
+**through** the barrier rather than into the trap plane, so it is injected
+*after* that zeroing. Injecting before it silently deletes the whole channel
+on any interface-bound stack — the diagnostics still report a perfectly good
+flux and the terminal current does not move at all. That is exactly why
+`test_an_enabled_channel_changes_the_certified_terminal_current` asserts on
+the solved current rather than on the diagnostics.
+
+### The inert family must not re-address the tree
+
+Introducing `DeviceStack.tunnelling_channels` moved the frozen semantic
+SHA-256 of **every** shipped config, including ones with nothing to do with
+tunnelling — caught by `test_v1_shipped_device_semantic_hashes_remain_frozen`
+and `test_matrix_covers_and_loads_every_shipped_config`. `reproducibility.py`
+now drops the field from the digest, following the same rule the existing
+inert-capability exclusions use.
+
+The rule is on whether a channel is **enabled**, not on whether the key is
+present. An all-disabled document compiles away entirely and is measurably
+bit-identical to omitting it, so hashing it differently would content-address
+a distinction the solver cannot make. An enabled family stays recursively
+content-addressed in full, and the invariant is pinned both ways by
+`test_an_inert_family_does_not_move_a_configs_semantic_hash`.
+
+### Measured evidence (D8-E1)
+
+| property | result |
+|---|---|
+| Kane quadrature vs closed-form Zener exponent | **1.4e-6** relative |
+| disabled family vs no document | state arrays **bit-identical**, current identical |
+| zero bias, wired lane | net flux **exactly 0.0**, face currents all exactly zero |
+| enabled channel at 0.2 V dark | net flux `-1.086e9 m^-2 s^-1` = `-1.74e-10 A/m^2`, shifts the certified terminal current by 6.9e-7 relative |
+| local vs contact driving | flux **falls** >10x from 0.2 V to 0.5 V |
+| injected face current vs reported flux | agree to **1e-12** |
+| inert family vs no family | identical semantic SHA-256; an enabled family differs |
+
+Tests: 35 added (`tests/unit/physics/test_wkb_local_windows.py` 12,
+`tests/integration/test_tunnelling_channels_device.py` 23); the 19 D8-E0
+channel tests were re-anchored to `anchor_face` and still pass.
+
 ## Declared limitations
 
-- The band-to-band channel uses the single-band (parabolic) WKB exponent with
-  a reduced effective mass. The two-band Kane dispersion differs in the
-  numerical prefactor; that correction is **not** applied and is not claimed.
 - Channel prefactors are supply-function estimates, not fitted to any
-  reference. The tests assert transmission behaviour and reciprocity;
-  **absolute channel magnitudes are not validated** here.
-- Every channel is local to the structure handed to it. **No solver wiring
-  exists at this checkpoint**, so no device J-V is affected.
+  reference. The tests assert transmission behaviour, reciprocity and the
+  Kane exponent; **absolute channel magnitudes are not validated** against any
+  external solver or measurement.
+- The wiring is on the **guarded QF/DC lane only**. The transient MoL driver,
+  the algebraic lanes and the 2D solver all fail closed rather than carrying
+  the channels, so no shipped J-V is affected in either direction.
+- Interface-bound channels bind to `interface_faces[0]`. A stack with several
+  heterointerfaces runs the channel on the first one only; the other
+  interfaces are not covered, and this is a scope limit rather than a physical
+  statement about them.
+- No refinement certificate exists yet, so grid, tolerance and
+  energy-quadrature-order convergence of the channel currents is **unmeasured**
+  (that is D8-E2).
 
 ## Required next checkpoints
 
-1. **D8-E1** — wire the channels into the guarded QF/DC lane: barrier
-   extraction from `chi_phys` / `Eg_phys` and the live `phi`, per-interface
-   geometry from the two-sided trace, and the defect-assisted channel bound to
-   the explicit interface occupancy. Every other route fails closed.
-2. **D8-E2** — a registered grid/tolerance/energy-order refinement lane for
+1. **D8-E2** — a registered grid/tolerance/energy-order refinement lane for
    the channels, in the shape of the D7-E2 lane.
-3. **D8-E3** — the frozen channel-by-channel SCAPS comparison the roadmap
+2. **D8-E3** — the frozen channel-by-channel SCAPS comparison the roadmap
    asks for, which needs a real SCAPS deck and raw export that the repository
    still does not have.

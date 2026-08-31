@@ -70,6 +70,10 @@ from perovskite_sim.physics.metastable_defect_device import (
     FrozenMetastableEvaluation,
     evaluate_frozen_metastable_bulk_defects,
 )
+from perovskite_sim.physics.tunneling_channel_device import (
+    TunnellingChannelEvaluation,
+    evaluate_tunnelling_channels,
+)
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     expand_bulk_defect_species_energy,
@@ -216,6 +220,7 @@ class QuasiFermiSteadyStateResult:
     bulk_defect_diagnostics: MonovalentBulkDefectEvaluation | None = None
     multivalent_bulk_defect_diagnostics: MultivalentBulkDefectEvaluation | None = None
     frozen_metastable_diagnostics: FrozenMetastableEvaluation | None = None
+    tunnelling_channel_diagnostics: TunnellingChannelEvaluation | None = None
     defect_energy_quadrature_order: int | None = None
     defect_distribution_kinds: tuple[str, ...] = ()
     contact_thermodynamic_status: str | None = None
@@ -292,6 +297,7 @@ class _Evaluation:
     poisson_residual_C_m2: float
     interface_charge_qss: EquilibriumReferencedMaterialQSSResult | None = None
     interface_charge_dynamic: FixedOccupancyMaterialInterfaceResult | None = None
+    tunnelling: TunnellingChannelEvaluation | None = None
 
 
 def _pin_mask(node_count: int) -> np.ndarray:
@@ -659,8 +665,11 @@ def _require_supported(
     allow_mobile_ions: bool = False,
     allow_multivalent_bulk_defects: bool = False,
     allow_frozen_metastable_defects: bool = False,
+    allow_tunnelling_channels: bool = False,
 ) -> None:
     unsupported: list[str] = []
+    if mat.tunnelling_channels is not None and not allow_tunnelling_channels:
+        unsupported.append("WKB tunnelling channels outside the QF/DC lane")
     if mat.frozen_metastable_defects is not None:
         if not allow_frozen_metastable_defects:
             unsupported.append(
@@ -1127,6 +1136,13 @@ class _QuasiFermiSystem:
             mat,
             D_n_face=np.zeros_like(mat.D_n_face),
             D_p_face=np.zeros_like(mat.D_p_face),
+            # Transport-free by construction, so the tunnelling family is
+            # stripped here rather than excused inside the RHS. The lane
+            # assembles the tunnelling face currents itself, next to the QF
+            # currents; leaving them attached to this mat would either add
+            # them twice or force the RHS guard to be conditional, and a
+            # conditional guard is one a future caller can walk through.
+            tunnelling_channels=None,
         )
         self.dynamic_bulk_source_mat = replace(
             self.source_mat,
@@ -2048,6 +2064,64 @@ class _QuasiFermiSystem:
                 current_n[face] = 0.0
                 current_p[face] = 0.0
 
+        # The interface plane above zeroes its own face so its reservoir
+        # transfer is not counted twice in the divergence. Tunnelling is a
+        # separate physical path THROUGH the barrier rather than into the trap
+        # plane, so it is injected after that zeroing — injecting before it
+        # would silently delete the whole channel on any interface-bound
+        # stack, leaving a correct-looking diagnostic and no current.
+        # D8-E1: WKB tunnelling channels add their own face currents from the
+        # live potential. They are additive to the SG transport flux and are
+        # never a rescaling of it, so a disabled family leaves both arrays
+        # untouched and the whole lane bit-identical.
+        tunnelling = None
+        if self.mat.tunnelling_channels is not None:
+            occupancy = None
+            trap_energy = None
+            trap_density = None
+            electron_velocity = None
+            hole_velocity = None
+            if (
+                self.mat.tunnelling_channels.document.interface_defect_assisted.enabled
+                and interface_qss is not None
+                and getattr(interface_qss, "occupancy", None) is not None
+            ):
+                occupancy_values = np.asarray(interface_qss.occupancy, dtype=float)
+                if occupancy_values.size:
+                    occupancy = float(occupancy_values[0])
+                    trap_energy = float(
+                        self.mat.chi_phys[
+                            self.mat.tunnelling_channels.interface_faces[0]
+                        ]
+                    )
+                    trap_energy = -trap_energy
+                    trap_density = float(
+                        self.mat.iface_qss_trap_density_m2[0]
+                        if getattr(self.mat, "iface_qss_trap_density_m2", None)
+                        else 1.0e16
+                    )
+                    electron_velocity = float(self.mat.iface_state_v_th)
+                    hole_velocity = float(self.mat.iface_state_v_th)
+            tunnelling = evaluate_tunnelling_channels(
+                self.mat.tunnelling_channels,
+                positions_m=self.x,
+                potential_V=phi,
+                affinity_eV=self.mat.chi_phys,
+                band_gap_eV=self.mat.Eg_phys,
+                electron_quasi_fermi_eV=self.qfn0 + dqfn_arr,
+                hole_quasi_fermi_eV=self.qfp0 + dqfp_arr,
+                thermal_voltage_V=self.thermal_voltage,
+                interface_occupancy=occupancy,
+                interface_trap_energy_eV=trap_energy,
+                interface_trap_density_m2=trap_density,
+                interface_electron_velocity_m_s=electron_velocity,
+                interface_hole_velocity_m_s=hole_velocity,
+                electron_density_m3=n,
+                hole_density_m3=p,
+            )
+            current_n = current_n + tunnelling.electron_face_current_A_m2
+            current_p = current_p + tunnelling.hole_face_current_A_m2
+
         rate_n = source[: self.node_count] + np.diff(np.r_[0.0, current_n, 0.0]) / (
             Q * self.mat.dx_cell
         )
@@ -2090,6 +2164,7 @@ class _QuasiFermiSystem:
                 if isinstance(interface_charge, FixedOccupancyMaterialInterfaceResult)
                 else None
             ),
+            tunnelling=tunnelling,
         )
 
     def evaluate_quasi_fermi(
@@ -2528,6 +2603,7 @@ def solve_quasi_fermi_steady_state(
         allow_charged_bulk_defects=True,
         allow_multivalent_bulk_defects=True,
         allow_frozen_metastable_defects=True,
+        allow_tunnelling_channels=True,
     )
     contact_certificate: ContactThermodynamicCertificate | None = None
     if (
@@ -3353,6 +3429,7 @@ def solve_quasi_fermi_steady_state(
         bulk_defect_diagnostics=bulk_defect_diagnostics,
         multivalent_bulk_defect_diagnostics=multivalent_defect_diagnostics,
         frozen_metastable_diagnostics=metastable_diagnostics,
+        tunnelling_channel_diagnostics=final.tunnelling,
         defect_energy_quadrature_order=(
             material.explicit_defect_energy_quadrature_order
         ),

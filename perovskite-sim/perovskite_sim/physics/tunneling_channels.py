@@ -18,15 +18,17 @@ shared WKB machinery is applied.
 
 Declared limitations
 --------------------
-* The band-to-band channel uses the single-band (parabolic) WKB exponent with
-  a reduced effective mass. The two-band Kane dispersion differs in the
-  numerical prefactor of the exponent; that correction is NOT applied and is
-  not claimed.
-* Prefactors are supply-function estimates, not fitted to any reference. Only
-  the transmission and the reciprocity are asserted by tests; absolute channel
-  magnitudes are explicitly not validated against SCAPS here.
-* Every channel is local to the structure handed to it. None of them is wired
-  into the solver at this checkpoint.
+* Prefactors are supply-function estimates, not fitted to any reference. The
+  transmission, the reciprocity and the band-to-band exponent are asserted by
+  tests; absolute channel magnitudes are explicitly not validated against
+  SCAPS here.
+* Every channel is anchored to one face and integrates only the connected
+  forbidden run containing it, because a device grid holds several barriers at
+  once and merging them would be wrong in a way that still looks plausible.
+* The band-to-band channel uses the two-band (Kane) exponent, not the
+  single-band one: its two turning points sit on different bands, which the
+  single-band form cannot express at any prefactor. Pinned against the
+  closed-form uniform-field Zener result.
 """
 
 from __future__ import annotations
@@ -45,8 +47,10 @@ from perovskite_sim.models.tunneling_channels import (
 from perovskite_sim.physics.wkb_tunneling import (
     WKBTunnellingError,
     reciprocal_net_flux,
-    wkb_transmission,
+    two_band_transmission,
+    two_band_validity,
     wkb_validity,
+    windowed_wkb_transmission,
 )
 
 
@@ -91,6 +95,57 @@ def valence_band_eV(
     )
 
 
+
+def local_barrier_window(
+    barrier_eV: np.ndarray,
+    anchor_face: int,
+    *,
+    one_sided: bool = False,
+) -> tuple[float, float]:
+    """Peak and base of the barrier feature that sits on ``anchor_face``.
+
+    Walking downhill from the face in both directions finds the local minima
+    that bound the feature; the higher of those two minima is the energy above
+    which a carrier is no longer blocked. Using the *local* feature rather
+    than the whole profile is what keeps a heterojunction spike from being
+    confused with the device-wide band bending between the contacts.
+
+    ``one_sided`` is for a barrier whose peak sits at a grid endpoint, which
+    is what a Schottky contact looks like: the barrier is highest *at* the
+    metal and decays into the semiconductor. There is no second minimum to
+    take the higher of, so the base is the one on the interior side. Applying
+    the two-sided rule to that shape would return ``peak == base`` and reject
+    every real contact barrier, so the caller must say which shape it has
+    rather than have this function guess from the data.
+    """
+
+    barrier = np.asarray(barrier_eV, dtype=float)
+    face = int(anchor_face)
+    if face < 0 or face >= barrier.size - 1:
+        raise WKBTunnellingError("anchor_face is outside the transport faces")
+    peak_index = face if barrier[face] >= barrier[face + 1] else face + 1
+    # Climb to the local maximum first: the face may sit on the flank.
+    while (
+        peak_index + 1 < barrier.size and barrier[peak_index + 1] > barrier[peak_index]
+    ):
+        peak_index += 1
+    while peak_index - 1 >= 0 and barrier[peak_index - 1] > barrier[peak_index]:
+        peak_index -= 1
+    left = peak_index
+    while left - 1 >= 0 and barrier[left - 1] < barrier[left]:
+        left -= 1
+    right = peak_index
+    while right + 1 < barrier.size and barrier[right + 1] < barrier[right]:
+        right += 1
+    peak = float(barrier[peak_index])
+    if not one_sided:
+        return peak, float(max(barrier[left], barrier[right]))
+    # The interior side is whichever direction actually descends; if the peak
+    # is interior after all, both do, and the deeper minimum is the reach of
+    # the barrier the carrier has to cross.
+    return peak, float(min(barrier[left], barrier[right]))
+
+
 @dataclass(frozen=True, slots=True)
 class ChannelFlux:
     """One channel's net flux plus everything needed to audit it."""
@@ -102,7 +157,8 @@ class ChannelFlux:
     energies_eV: np.ndarray
     transmission: np.ndarray
     maximum_transmission: float
-    minimum_action: float
+    minimum_transmission: float
+    maximum_action: float
     valid: bool
     notes: tuple[str, ...]
 
@@ -117,9 +173,18 @@ def _channel_flux(
     *,
     valid: bool,
     notes: tuple[str, ...],
-    minimum_action: float,
 ) -> ChannelFlux:
+    """Turn a transmission spectrum into a reciprocal net flux plus its audit.
+
+    The audit pair is taken at the *opaque* end of the window. The transparent
+    end is worthless as a diagnostic: every window here runs up to the barrier
+    top, where ``T`` is 1 and the action is 0 by construction, so reporting
+    those would look like a measurement while carrying no information about
+    the barrier at all.
+    """
+
     flux = reciprocal_net_flux(energies, transmission, left, right, prefactor)
+    least = float(np.min(flux.transmission))
     return ChannelFlux(
         channel=channel,
         net_flux_m2_s=flux.net_flux_m2_s,
@@ -128,7 +193,8 @@ def _channel_flux(
         energies_eV=flux.energies_eV,
         transmission=flux.transmission,
         maximum_transmission=float(np.max(flux.transmission)),
-        minimum_action=minimum_action,
+        minimum_transmission=least,
+        maximum_action=float("inf") if least <= 0.0 else -0.5 * math.log(least),
         valid=valid,
         notes=notes,
     )
@@ -140,6 +206,7 @@ def band_to_band_flux(
     valence_edge_eV: np.ndarray,
     channel: BandToBandTunnellingChannel,
     *,
+    anchor_face: int,
     left_fermi_eV: float,
     right_fermi_eV: float,
     thermal_voltage_V: float,
@@ -147,11 +214,13 @@ def band_to_band_flux(
 ) -> ChannelFlux:
     """Zener tunnelling from the valence band to the conduction band.
 
-    The tunnelling particle inside the gap sees the *gap* as its barrier: at
-    energy ``E`` the forbidden region is where ``E_V(x) < E < E_C(x)``. The
-    barrier profile handed to the WKB integrator is therefore ``E_C`` for the
-    electron-like branch, evaluated only on the energies that lie inside the
-    local gap somewhere along the path.
+    The particle inside the gap is not blocked by one band edge: it leaves the
+    valence band where ``E = E_V`` and enters the conduction band where
+    ``E = E_C``, so its two turning points sit on *different* bands. The
+    single-band exponent cannot express that — it would put both turning
+    points on the same edge — so this channel uses the two-band (Kane) decay
+    constant, which vanishes at both. Under a uniform field the quadrature
+    reproduces the closed-form Zener exponent, which is what the tests pin.
     """
 
     if not channel.enabled:
@@ -174,27 +243,34 @@ def band_to_band_flux(
     if field_V_m < channel.minimum_field_V_m:
         notes.append("field_below_channel_minimum")
 
-    # Energies that are inside the gap somewhere: between the highest valence
-    # edge and the lowest conduction edge is the fully forbidden window.
-    lower = float(np.max(valence))
-    upper = float(np.min(conduction))
-    if not upper > lower:
-        raise TunnellingChannelError(
-            "no energy is inside the gap along the whole path; the structure "
-            "does not support band-to-band tunnelling"
-        )
-    energies = np.linspace(lower, upper, channel.energy_quadrature_order)
+    # The tunnelling window is the gap straddling the anchor: an energy inside
+    # it is in the valence band on one side of the junction and in the
+    # conduction band on the other, which is exactly the Zener channel. The
+    # endpoints are excluded because kappa vanishes there (T = 1, no barrier).
+    lower = float(valence[anchor_face])
+    upper = float(conduction[anchor_face])
+    energies = np.linspace(lower, upper, channel.energy_quadrature_order + 2)[1:-1]
     transmission = np.array(
         [
-            wkb_transmission(x, conduction, energy, channel.reduced_effective_mass_rel)
+            two_band_transmission(
+                x,
+                conduction,
+                valence,
+                energy,
+                channel.reduced_effective_mass_rel,
+                anchor_face,
+            )
             for energy in energies
         ]
     )
-    validity = wkb_validity(
+    mid = float(energies[len(energies) // 2])
+    validity = two_band_validity(
         x,
         conduction,
-        float(energies[len(energies) // 2]),
+        valence,
+        mid,
         channel.reduced_effective_mass_rel,
+        anchor_face,
     )
     left = _fermi(energies, left_fermi_eV, thermal_voltage_V)
     right = _fermi(energies, right_fermi_eV, thermal_voltage_V)
@@ -209,7 +285,6 @@ def band_to_band_flux(
         supply_prefactor_m2_s_eV,
         valid=validity.valid and not notes,
         notes=tuple(notes),
-        minimum_action=float(-0.5 * np.log(np.max(transmission))),
     )
 
 
@@ -218,6 +293,7 @@ def intraband_flux(
     band_edge_eV: np.ndarray,
     channel: IntrabandTunnellingChannel,
     *,
+    anchor_face: int,
     carrier: str,
     left_fermi_eV: float,
     right_fermi_eV: float,
@@ -248,16 +324,18 @@ def intraband_flux(
         raise WKBTunnellingError("band edge must match positions_m")
     # The spike is what the carrier tunnels through: energies from the higher
     # of the two asymptotes up to the peak.
-    base = max(float(barrier[0]), float(barrier[-1]))
-    peak = float(np.max(barrier))
+    peak, base = local_barrier_window(barrier, anchor_face)
     notes: list[str] = []
     if not peak > base:
         raise TunnellingChannelError(
-            "intraband tunnelling requires a barrier spike above both sides"
+            "intraband tunnelling requires a local barrier spike at this face"
         )
     energies = np.linspace(base, peak, channel.energy_quadrature_order)
     transmission = np.array(
-        [wkb_transmission(x, barrier, energy, mass) for energy in energies]
+        [
+            windowed_wkb_transmission(x, barrier, energy, mass, anchor_face)
+            for energy in energies
+        ]
     )
     validity = wkb_validity(x, barrier, float(energies[0]), mass)
     if not validity.valid:
@@ -273,7 +351,6 @@ def intraband_flux(
         supply_prefactor_m2_s_eV,
         valid=validity.valid,
         notes=tuple(notes),
-        minimum_action=float(-0.5 * np.log(np.max(transmission))),
     )
 
 
@@ -301,6 +378,7 @@ def interface_defect_assisted_rate(
     valence_edge_eV: np.ndarray,
     channel: InterfaceDefectAssistedTunnellingChannel,
     *,
+    anchor_face: int,
     trap_energy_eV: float,
     occupancy: float,
     trap_density_m2: float,
@@ -331,11 +409,19 @@ def interface_defect_assisted_rate(
     x = np.asarray(positions_m, dtype=float)
     conduction = np.asarray(conduction_edge_eV, dtype=float)
     valence = np.asarray(valence_edge_eV, dtype=float)
-    electron_transmission = wkb_transmission(
-        x, conduction, float(trap_energy_eV), channel.electron_effective_mass_rel
+    electron_transmission = windowed_wkb_transmission(
+        x,
+        conduction,
+        float(trap_energy_eV),
+        channel.electron_effective_mass_rel,
+        anchor_face,
     )
-    hole_transmission = wkb_transmission(
-        x, -valence, -float(trap_energy_eV), channel.hole_effective_mass_rel
+    hole_transmission = windowed_wkb_transmission(
+        x,
+        -valence,
+        -float(trap_energy_eV),
+        channel.hole_effective_mass_rel,
+        anchor_face,
     )
     notes: list[str] = []
     electron_validity = wkb_validity(
@@ -412,6 +498,7 @@ def contact_tunnelling_flux(
     barrier_eV: np.ndarray,
     channel: ContactTunnellingChannel,
     *,
+    anchor_face: int,
     carrier: str,
     metal_fermi_eV: float,
     semiconductor_fermi_eV: float,
@@ -436,15 +523,17 @@ def contact_tunnelling_flux(
     barrier = np.asarray(barrier_eV, dtype=float)
     if barrier.shape != x.shape:
         raise WKBTunnellingError("barrier profile must match positions_m")
-    peak = float(np.max(barrier))
-    base = min(float(barrier[0]), float(barrier[-1]))
+    peak, base = local_barrier_window(barrier, anchor_face, one_sided=True)
     if not peak > base:
         raise TunnellingChannelError(
             "contact tunnelling requires a barrier above the contact level"
         )
     energies = np.linspace(base, peak, channel.energy_quadrature_order)
     transmission = np.array(
-        [wkb_transmission(x, barrier, energy, mass) for energy in energies]
+        [
+            windowed_wkb_transmission(x, barrier, energy, mass, anchor_face)
+            for energy in energies
+        ]
     )
     validity = wkb_validity(x, barrier, float(energies[0]), mass)
     notes: list[str] = []
@@ -461,7 +550,6 @@ def contact_tunnelling_flux(
         richardson_prefactor_m2_s_eV,
         valid=validity.valid,
         notes=tuple(notes),
-        minimum_action=float(-0.5 * np.log(np.max(transmission))),
     )
 
 
@@ -470,6 +558,7 @@ __all__ = [
     "InterfaceDefectAssistedFlux",
     "TunnellingChannelError",
     "band_to_band_flux",
+    "local_barrier_window",
     "conduction_band_eV",
     "contact_tunnelling_flux",
     "interface_defect_assisted_rate",

@@ -4,6 +4,9 @@ from dataclasses import dataclass, field, replace
 from typing import Optional
 from perovskite_sim.constants import V_T
 from perovskite_sim.models.interface_defects import InterfaceDefectDocument
+from perovskite_sim.models.tunneling_channels import (
+    TunnellingChannelDocument,
+)
 from perovskite_sim.models.parameters import MaterialParams
 from perovskite_sim.twod.microstructure import Microstructure
 
@@ -349,6 +352,13 @@ class DeviceStack:
     # ``interface_tunneling`` is on. See physics/tunneling.py.
     interface_tunneling: bool = False
     tunnel_mass_eff: float = 0.2
+    # D8 WKB tunnelling family. This is a SEPARATE contract from the scalar
+    # ``interface_tunneling`` factor above: four independently switchable
+    # channels, each computing a transmission from an actual barrier profile.
+    # None (default) means the family is absent, which is bit-identical to
+    # pre-D8 behaviour; a document with every channel disabled is equally
+    # inert. See docs/wkb-tunnelling-family-contract.md.
+    tunnelling_channels: "TunnellingChannelDocument | None" = None
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0
     # Simulation mode name; resolved to a SimulationMode by resolve_mode().

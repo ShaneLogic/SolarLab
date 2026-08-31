@@ -121,6 +121,7 @@ def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
             "interface_charge_closure",
             "interface_charge_rebaseline_acknowledged",
             "graded_optics",
+            "tunnelling_channels",
         }
     }
 
@@ -155,6 +156,7 @@ def test_parked_interface_charge_defaults_preserve_historical_hash():
             "interface_charge_closure",
             "interface_charge_rebaseline_acknowledged",
             "graded_optics",
+            "tunnelling_channels",
         }
     }
     research_intent = replace(

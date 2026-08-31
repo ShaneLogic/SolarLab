@@ -60,6 +60,10 @@ from perovskite_sim.physics.multivalent_defect_device import (
 from perovskite_sim.physics.metastable_defect_device import (
     FrozenMetastableBulkDefectModel,
 )
+from perovskite_sim.physics.tunneling_channel_device import (
+    CompiledTunnellingChannels,
+    compile_tunnelling_channels,
+)
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
     validate_defect_energy_quadrature_order,
@@ -390,6 +394,10 @@ class MaterialArrays:
     # attaches it, so the configuration split cannot silently re-prepare
     # itself mid-sweep.
     frozen_metastable_defects: FrozenMetastableBulkDefectModel | None = None
+    # D8 WKB tunnelling family. Only the STATIC part is cached here: a
+    # tunnelling barrier depends on the solved potential, so the transmission
+    # itself is evaluated per residual call on the guarded QF/DC lane.
+    tunnelling_channels: CompiledTunnellingChannels | None = None
     # D3-E3 energy-node protocol bound into distributed QF/DC materials.
     # None preserves the exact D2 single-level material contract.
     explicit_defect_energy_quadrature_order: int | None = None
@@ -2918,6 +2926,11 @@ def build_material_arrays(
         neutral_bulk_defects=neutral_bulk_defects,
         monovalent_bulk_defects=monovalent_bulk_defects,
         multivalent_bulk_defects=multivalent_bulk_defects,
+        tunnelling_channels=compile_tunnelling_channels(
+            getattr(stack, "tunnelling_channels", None),
+            node_count=len(x),
+            interface_nodes=tuple(iface_list),
+        ),
         explicit_defect_energy_quadrature_order=(
             resolved_defect_energy_order
             if monovalent_bulk_defects is not None
@@ -3303,6 +3316,16 @@ def assemble_rhs(
         raise BulkTrapChargeCapabilityError(
             "production MoL does not include energy-resolved bulk trap charge; "
             "use solve_bulk_trap_pn_equilibrium for the restricted research slice"
+        )
+    if mat.tunnelling_channels is not None:
+        # Deliberately NOT gated on `phi_frozen`, unlike the charged-defect
+        # guard below. A frozen potential excuses a missing Poisson charge
+        # because Poisson is not being assembled; it excuses nothing here,
+        # because the tunnelling face currents are omitted from the continuity
+        # divergence either way.
+        raise ExplicitDefectCapabilityError(
+            "WKB tunnelling channels are certified only on the guarded QF/DC "
+            "lane; ordinary MoL assembly would omit their face currents"
         )
     if (
         mat.monovalent_bulk_defects is not None

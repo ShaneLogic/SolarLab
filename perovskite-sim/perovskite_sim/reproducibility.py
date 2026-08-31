@@ -214,6 +214,17 @@ def _canonical(value: Any) -> Any:
             # An absent composition-optics block is behaviorally inert. An
             # active block remains recursively content-addressed in full.
             mapping.pop("cigs_graded_optics", None)
+        if isinstance(value, DeviceStack) and not (
+            value.tunnelling_channels is not None
+            and value.tunnelling_channels.any_enabled
+        ):
+            # D8 tunnelling family. The test is on whether any channel is
+            # ENABLED, not on whether the key is present: an all-disabled
+            # document compiles away entirely and is measurably bit-identical
+            # to omitting it, so hashing it differently would content-address
+            # a distinction the solver cannot make. An enabled family remains
+            # recursively content-addressed in full.
+            mapping.pop("tunnelling_channels", None)
         return _canonical(mapping)
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}
