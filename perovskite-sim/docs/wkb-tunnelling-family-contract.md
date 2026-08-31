@@ -160,9 +160,11 @@ is disconnected. Integrating all of it merges unrelated barriers into one
 fictitious path: wrong, and silently plausible. `forbidden_run` /
 `windowed_wkb_action` extract the connected run containing the channel's own
 face, and `local_barrier_window` takes the energy window from the local
-feature rather than the device endpoints. Measured on two separated barriers
-on one grid: `T = 3.137e-1` at the first face and `1.000` at the second, where
-a whole-grid integral would have reported one merged barrier at both.
+feature rather than the device endpoints. Measured on the two separated barriers
+of the test's own `_two_barriers()` fixture at `E = 0.20`: `T = 1.2509e-1` at
+the first face and `1.0442e-2` at the second, where a whole-grid integral
+would have reported one merged barrier at both. The test pins the *ordering*
+(`0 < T_high < T_low < 1`) rather than these values.
 
 **2. The driving force is the local quasi-Fermi drop, not the applied bias.**
 A channel is one conduction path across one barrier, so it is driven by the
