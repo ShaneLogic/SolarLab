@@ -191,13 +191,13 @@ def evaluate_tunnelling_channels(
     # Quasi-Fermi levels on the two sides of the tunnelling path set the
     # occupation difference; equal levels give exactly zero net flux.
     #
-    # These are read at the two nodes bracketing the channel's own face, NOT
-    # at the device contacts. A channel is a conduction path across ONE
-    # barrier and is driven by the quasi-Fermi drop across THAT barrier — the
-    # same driving force the Scharfetter-Gummel flux on the same face sees, so
-    # the two are additive rather than double-counting the whole device bias.
-    # Using the contact levels instead would drive every interface channel
-    # with the full applied bias and inflate its flux by orders of magnitude.
+    # The whole profile goes in; each channel reads it at each energy's own
+    # turning points. A channel is a conduction path across ONE barrier and is
+    # driven by the quasi-Fermi drop across THAT barrier — not across the whole
+    # device (which would inflate every interface channel by the full applied
+    # bias), and not across one grid cell (which would make the flux
+    # proportional to dx so that it vanishes under refinement — measured as a
+    # factor of ~2 per grid doubling before this was corrected).
     qfn = np.asarray(electron_quasi_fermi_eV, dtype=float)
     qfp = np.asarray(hole_quasi_fermi_eV, dtype=float)
     if qfn.shape != x.shape or qfp.shape != x.shape:
@@ -226,8 +226,7 @@ def evaluate_tunnelling_channels(
                 valence,
                 document.band_to_band,
                 anchor_face=face,
-                left_fermi_eV=float(qfn[face]),
-                right_fermi_eV=float(qfn[face + 1]),
+                quasi_fermi_eV=qfn,
                 thermal_voltage_V=thermal_voltage_V,
             )
         except TunnellingChannelError as exc:
@@ -247,12 +246,7 @@ def evaluate_tunnelling_channels(
             barrier = conduction if carrier == "electron" else -valence
             # The hole barrier and hole levels are both negated, so a hole
             # moving down in energy is a particle moving up its own barrier.
-            level_left = (
-                float(qfn[face]) if carrier == "electron" else -float(qfp[face])
-            )
-            level_right = (
-                float(qfn[face + 1]) if carrier == "electron" else -float(qfp[face + 1])
-            )
+            profile = qfn if carrier == "electron" else -qfp
             try:
                 flux = intraband_flux(
                     x,
@@ -260,8 +254,7 @@ def evaluate_tunnelling_channels(
                     document.intraband,
                     anchor_face=face,
                     carrier=carrier,
-                    left_fermi_eV=level_left,
-                    right_fermi_eV=level_right,
+                    quasi_fermi_eV=profile,
                     thermal_voltage_V=thermal_voltage_V,
                 )
             except TunnellingChannelError as exc:
@@ -336,10 +329,9 @@ def evaluate_tunnelling_channels(
             reference = float(conduction[0] if side == "left" else conduction[-1])
             barrier = conduction - reference + document.contact.barrier_height_eV
             metal = reference - document.contact.barrier_height_eV
-            # The semiconductor side of a contact barrier is the node the
-            # carrier actually arrives at, which is the outermost node on that
-            # side — not the opposite contact.
-            semiconductor = float(qfn[0] if side == "left" else qfn[-1])
+            # The semiconductor side is read at each energy's own turning
+            # point inside contact_tunnelling_flux, so the whole profile goes
+            # in rather than one endpoint.
             try:
                 flux = contact_tunnelling_flux(
                     x,
@@ -348,7 +340,7 @@ def evaluate_tunnelling_channels(
                     anchor_face=face,
                     carrier="electron",
                     metal_fermi_eV=metal,
-                    semiconductor_fermi_eV=semiconductor,
+                    quasi_fermi_eV=qfn,
                     thermal_voltage_V=thermal_voltage_V,
                 )
             except TunnellingChannelError as exc:

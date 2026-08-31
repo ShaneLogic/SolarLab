@@ -4,7 +4,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: c96865b747c3bb440e3ec7815ee6e940adb4aa026bd009bf04ef03cc6018ba29
+  sha256: 09d2f36d11f9ac49b25ae6d1f374475d8096b575b13fbc60bc82219a274c7f33
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -111,6 +111,7 @@ benchmarks:
       - configs/solarscale_nip_band_aligned.yaml
       - configs/solarscale_nip_band_aligned_iface.yaml
       - configs/tandem_lin2019.yaml
+      - configs/wkb_tunnelling_intraband_spike.yaml
       - configs/twod/bcx_combined_demo.yaml
       - configs/twod/combined_mobile_interface_research.yaml
       - configs/twod/nip_MAPbI3_singleGB.yaml
@@ -151,6 +152,7 @@ benchmarks:
       - configs/scaps_defect_s1_acceptor_n.yaml
       - configs/scaps_mirror.yaml
       - configs/scaps_mirror_v2.yaml
+      - configs/wkb_tunnelling_intraband_spike.yaml
       - configs/twod/combined_mobile_interface_research.yaml
       - configs/twod/nip_MAPbI3_uniform.yaml
     limitations:
@@ -1319,6 +1321,38 @@ benchmarks:
       - the source-clean v6 3x3 matrix at commit 4f13a4bebfc71275bb83394e184144965d1359a6 completed 9/9 cells without failure, missing cells, or reuse and passed 366/366 checks; run ID 464da3ec6e0bb94fbd40a82bdc9325b29eabbb6622dc8fcad699b505a4434f5f and certificate SHA-256 52c63f74e5e139487aebce1e3ebe576d4861fb566788261e40d594e8f76f703b
       - the v6 lane must execute the public wrapper independently for combined, defect-dominated, and ion-dominated cases and cannot inherit production certification from the E3c v5 internal adapter certificate
       - this is dark two-layer, one microscopic interface defect, absorber-positive-ion internal numerical evidence; it is not SCAPS transient parity, experimental validation, bulk-plus-ion or dual-ion production coverage
+  wkb-tunnelling-channel-internal-closure:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q tests/unit/physics/test_wkb_tunneling.py tests/unit/physics/test_wkb_local_windows.py
+      tests/unit/physics/test_tunneling_channels.py tests/integration/test_tunnelling_channels_device.py
+      tests/unit/validation/test_tunnelling_channel_refinement.py
+    tests:
+      - tests/unit/physics/test_wkb_tunneling.py
+      - tests/unit/physics/test_wkb_local_windows.py
+      - tests/unit/physics/test_tunneling_channels.py
+      - tests/integration/test_tunnelling_channels_device.py
+      - tests/unit/validation/test_tunnelling_channel_refinement.py
+    node_ids:
+      - tests/unit/physics/test_wkb_tunneling.py::test_equal_occupations_give_an_exactly_zero_net_flux
+      - tests/unit/physics/test_wkb_local_windows.py::test_two_band_action_matches_the_closed_form_zener_exponent
+      - tests/unit/physics/test_wkb_local_windows.py::test_forbidden_run_isolates_the_barrier_containing_the_face
+      - tests/unit/physics/test_tunneling_channels.py::test_a_disabled_channel_refuses_rather_than_returning_zero
+      - tests/integration/test_tunnelling_channels_device.py::test_an_enabled_channel_changes_the_certified_terminal_current
+      - tests/integration/test_tunnelling_channels_device.py::test_equilibrium_net_flux_is_exactly_zero_through_the_device_wiring
+      - tests/integration/test_tunnelling_channels_device.py::test_the_channel_is_driven_by_the_local_drop_not_the_contact_split
+      - tests/unit/validation/test_tunnelling_channel_refinement.py::test_lane_declares_a_three_by_three_matrix_and_an_energy_ladder
+      - tests/unit/validation/test_tunnelling_channel_refinement.py::test_the_channel_flux_is_an_observable_not_only_the_terminal_current
+    configs:
+      - configs/wkb_tunnelling_intraband_spike.yaml
+    limitations:
+      - Internal numerical convergence and structural identities only. No SCAPS
+        tunnelling deck is compared and no channel magnitude is validated against
+        any reference; the supply prefactor is an unfitted estimate.
+      - One intraband electron channel on one heterointerface. The other three
+        channels, the hole branch, multi-interface stacks, illumination, AC and
+        transient routes fail closed rather than being certified.
   multivalent-explicit-defect-internal-closure:
     kind: numerical
     status: pass
@@ -1504,6 +1538,15 @@ configs:
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, cigs-internal-validation]
+  - path: configs/wkb_tunnelling_intraband_spike.yaml
+    sha256: 545067cfedc8598b62fd1991aeaf3cd13d3153151e427452d1b78f6d523df20b
+    semantic_sha256: ee18c3fb508216cd10861bb3dbf23c6f3907a3fa031fd2e93b4c9e1f0db5098b
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - wkb-tunnelling-channel-internal-closure
   - path: configs/cigs_graded_optics.yaml
     sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
     semantic_sha256: a78884b0074063e50076ac6f2382bd199375e034d263ad76261fd4f83a7a185f

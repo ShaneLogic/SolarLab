@@ -232,6 +232,15 @@ def test_an_enabled_channel_changes_the_certified_terminal_current():
     # The shift must be of the order the channel itself reports, not noise.
     shift = abs(with_channel.current_A_m2 - without.current_A_m2)
     assert shift <= abs(Q * net) * 10.0
+    # Two different magnitudes, both worth pinning, and they are NOT the same
+    # number. The channel's own flux is a large fraction of the terminal
+    # current, because it is a real parallel conduction path across the
+    # barrier. The CHANGE in terminal current is far smaller, because that
+    # path is in parallel with the drift-diffusion flux on the same face and
+    # the rest of the device sets the operating point. Conflating the two
+    # would either overstate the channel or make it look inert.
+    assert abs(Q * net) > 0.05 * abs(without.current_A_m2)
+    assert shift > 1.0e-6 * abs(without.current_A_m2)
 
 
 def test_the_injected_face_current_matches_the_reported_flux():
@@ -286,19 +295,29 @@ def test_the_channel_is_driven_by_the_local_drop_not_the_contact_split():
     assert high_flux < 0.1 * low_flux
 
 
-def test_states_far_below_both_quasi_fermi_levels_carry_no_net_flux():
-    """Full on both sides means no net current, however opaque the barrier.
+def test_states_far_below_both_quasi_fermi_levels_carry_negligible_net_flux():
+    """Full on both sides means essentially no net current.
 
     Under strong illumination the electron quasi-Fermi level here sits about
     an eV above the spike, so every energy in the tunnelling window is
-    occupied on both sides. A channel that reported current in that regime
-    would be double-counting carriers the drift-diffusion flux already carries
-    over the barrier.
+    occupied on both sides. A channel that reported real current in that
+    regime would be double-counting carriers the drift-diffusion flux already
+    carries over the barrier.
+
+    "Negligible" and not "exactly zero": the two turning points are far apart,
+    so their quasi-Fermi levels genuinely differ a little and the occupations
+    differ in the last couple of digits. Exact cancellation here would only
+    happen if both levels were read at the same place — which is what the
+    superseded adjacent-node drive did, and that drive made the flux vanish
+    under mesh refinement. Equilibrium exactness is a separate and stronger
+    claim that still holds structurally; see
+    `test_equilibrium_net_flux_is_exactly_zero_through_the_device_wiring`.
     """
     result = _solve(_intraband(), V_app=0.2, illuminated=True)
+    net = result.tunnelling_channel_diagnostics.channel_net_flux_m2_s[0]
 
     assert result.certified is True
-    assert result.tunnelling_channel_diagnostics.channel_net_flux_m2_s[0] == 0.0
+    assert abs(Q * net) < 1.0e-9 * abs(result.current_A_m2)
 
 
 def test_the_transmission_audit_reports_the_opaque_end_of_the_window():

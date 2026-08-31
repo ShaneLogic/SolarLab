@@ -81,8 +81,7 @@ def test_band_to_band_is_exactly_zero_at_equal_fermi_levels():
         valence,
         channel,
         anchor_face=100,
-        left_fermi_eV=-4.5,
-        right_fermi_eV=-4.5,
+        quasi_fermi_eV=np.linspace(-4.5, -4.5, 201),
         thermal_voltage_V=THERMAL_V,
     )
 
@@ -100,8 +99,7 @@ def test_intraband_is_exactly_zero_at_equal_fermi_levels():
         channel,
         anchor_face=100,
         carrier="electron",
-        left_fermi_eV=-4.0,
-        right_fermi_eV=-4.0,
+        quasi_fermi_eV=np.linspace(-4.0, -4.0, 201),
         thermal_voltage_V=THERMAL_V,
     )
 
@@ -121,7 +119,7 @@ def test_contact_is_exactly_zero_when_the_metal_and_semiconductor_align():
         anchor_face=100,
         carrier="electron",
         metal_fermi_eV=-4.0,
-        semiconductor_fermi_eV=-4.0,
+        quasi_fermi_eV=np.full(201, -4.0),
         thermal_voltage_V=THERMAL_V,
     )
 
@@ -172,8 +170,7 @@ def test_every_channel_carries_current_once_the_levels_split():
         valence,
         BandToBandTunnellingChannel(enabled=True),
         anchor_face=100,
-        left_fermi_eV=-4.4,
-        right_fermi_eV=-4.6,
+        quasi_fermi_eV=np.linspace(-4.4, -4.6, 201),
         thermal_voltage_V=THERMAL_V,
     )
     xs, spike = _spike()
@@ -183,8 +180,7 @@ def test_every_channel_carries_current_once_the_levels_split():
         IntrabandTunnellingChannel(enabled=True),
         anchor_face=100,
         carrier="electron",
-        left_fermi_eV=-3.95,
-        right_fermi_eV=-4.05,
+        quasi_fermi_eV=np.linspace(-3.95, -4.05, 201),
         thermal_voltage_V=THERMAL_V,
     )
     xc, barrier = _contact_barrier()
@@ -195,7 +191,7 @@ def test_every_channel_carries_current_once_the_levels_split():
         anchor_face=100,
         carrier="electron",
         metal_fermi_eV=-3.9,
-        semiconductor_fermi_eV=-4.1,
+        quasi_fermi_eV=np.full(201, -4.1),
         thermal_voltage_V=THERMAL_V,
     )
 
@@ -221,8 +217,7 @@ def test_a_disabled_channel_refuses_rather_than_returning_zero(channel_name):
                 valence,
                 BandToBandTunnellingChannel(),
                 anchor_face=100,
-                left_fermi_eV=-4.4,
-                right_fermi_eV=-4.6,
+                quasi_fermi_eV=np.linspace(-4.4, -4.6, 201),
                 thermal_voltage_V=THERMAL_V,
             )
         elif channel_name == "intraband":
@@ -232,8 +227,7 @@ def test_a_disabled_channel_refuses_rather_than_returning_zero(channel_name):
                 IntrabandTunnellingChannel(),
                 anchor_face=100,
                 carrier="electron",
-                left_fermi_eV=-3.9,
-                right_fermi_eV=-4.1,
+                quasi_fermi_eV=np.linspace(-3.9, -4.1, 201),
                 thermal_voltage_V=THERMAL_V,
             )
         elif channel_name == "interface_defect_assisted":
@@ -254,7 +248,7 @@ def test_a_disabled_channel_refuses_rather_than_returning_zero(channel_name):
                 anchor_face=100,
                 carrier="electron",
                 metal_fermi_eV=-3.9,
-                semiconductor_fermi_eV=-4.1,
+                quasi_fermi_eV=np.full(201, -4.1),
                 thermal_voltage_V=THERMAL_V,
             )
 
@@ -270,8 +264,7 @@ def test_intraband_refuses_a_carrier_the_channel_was_not_configured_for():
             electrons_only,
             anchor_face=100,
             carrier="hole",
-            left_fermi_eV=-3.9,
-            right_fermi_eV=-4.1,
+            quasi_fermi_eV=np.linspace(-3.9, -4.1, 201),
             thermal_voltage_V=THERMAL_V,
         )
 
@@ -287,8 +280,7 @@ def test_channels_refuse_structures_that_cannot_support_them():
             IntrabandTunnellingChannel(enabled=True),
             anchor_face=25,
             carrier="electron",
-            left_fermi_eV=-3.9,
-            right_fermi_eV=-4.1,
+            quasi_fermi_eV=np.linspace(-3.9, -4.1, 201),
             thermal_voltage_V=THERMAL_V,
         )
     with pytest.raises(TunnellingChannelError, match="positive gap"):
@@ -298,8 +290,7 @@ def test_channels_refuse_structures_that_cannot_support_them():
             flat,
             BandToBandTunnellingChannel(enabled=True),
             anchor_face=25,
-            left_fermi_eV=-4.0,
-            right_fermi_eV=-4.1,
+            quasi_fermi_eV=np.linspace(-4.0, -4.1, 201),
             thermal_voltage_V=THERMAL_V,
         )
 
@@ -314,8 +305,7 @@ def test_band_to_band_flags_a_field_below_its_declared_minimum():
         valence,
         channel,
         anchor_face=100,
-        left_fermi_eV=-4.4,
-        right_fermi_eV=-4.6,
+        quasi_fermi_eV=np.linspace(-4.4, -4.6, 201),
         thermal_voltage_V=THERMAL_V,
     )
 
@@ -334,8 +324,7 @@ def test_transmission_falls_as_the_barrier_grows_in_every_channel():
                 IntrabandTunnellingChannel(enabled=True),
                 anchor_face=100,
                 carrier="electron",
-                left_fermi_eV=-3.9,
-                right_fermi_eV=-4.1,
+                quasi_fermi_eV=np.linspace(-3.9, -4.1, 201),
                 thermal_voltage_V=THERMAL_V,
             ).net_flux_m2_s
         )

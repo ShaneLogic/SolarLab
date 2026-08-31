@@ -171,6 +171,171 @@ def forbidden_run(
     return low, high
 
 
+def turning_point_nodes(
+    barrier_eV: np.ndarray,
+    energy_eV: float,
+    anchor_face: int,
+) -> tuple[int, int]:
+    """The allowed nodes flanking the forbidden run that contains a face.
+
+    These are the two places a tunnelling carrier actually is: it leaves the
+    allowed region at one turning point and arrives at the other. Their
+    occupations are what drive the channel.
+
+    Why not the two nodes of the anchor face: that difference is taken across
+    ONE grid cell, so it shrinks with the mesh and the resulting flux vanishes
+    as ``dx -> 0`` — a measured factor of ~2 per grid doubling, i.e. the
+    channel current would be an artifact of the discretisation rather than a
+    property of the barrier. Turning points converge to fixed physical
+    positions instead, which is what makes the flux mesh-convergent.
+
+    When the energy is above the barrier the carrier is not blocked; the two
+    nodes of the face are returned so the caller still gets a well-defined
+    pair, and the transmission is 1 there anyway.
+    """
+
+    barrier = np.asarray(barrier_eV, dtype=float)
+    face = int(anchor_face)
+    bounds = forbidden_run(barrier, energy_eV, face)
+    if bounds is None:
+        return face, face + 1
+    low, high = bounds
+    return max(low - 1, 0), min(high + 1, barrier.size - 1)
+
+
+def two_band_turning_point_nodes(
+    conduction_edge_eV: np.ndarray,
+    valence_edge_eV: np.ndarray,
+    energy_eV: float,
+    anchor_face: int,
+) -> tuple[int, int]:
+    """The same, for the in-gap run a band-to-band carrier crosses.
+
+    The forbidden set here is "inside the gap" rather than "above one band
+    edge", so the run is bracketed by turning points on opposite bands.
+    """
+
+    conduction = np.asarray(conduction_edge_eV, dtype=float)
+    valence = np.asarray(valence_edge_eV, dtype=float)
+    if conduction.shape != valence.shape:
+        raise WKBTunnellingError("band edges must share one grid")
+    face = int(anchor_face)
+    if face < 0 or face >= conduction.size - 1:
+        raise WKBTunnellingError("anchor_face is outside the transport faces")
+    energy = float(energy_eV)
+    inside = (conduction > energy) & (valence < energy)
+    if not (inside[face] or inside[face + 1]):
+        return face, face + 1
+    start = face if inside[face] else face + 1
+    low = start
+    while low - 1 >= 0 and inside[low - 1]:
+        low -= 1
+    high = start
+    while high + 1 < conduction.size and inside[high + 1]:
+        high += 1
+    return max(low - 1, 0), min(high + 1, conduction.size - 1)
+
+
+def _interpolate_at_crossing(
+    barrier: np.ndarray,
+    profile: np.ndarray,
+    energy: float,
+    allowed: int,
+    forbidden: int,
+) -> float:
+    """Read ``profile`` where the barrier actually crosses ``energy``.
+
+    The turning point is defined by ``U(x) = E`` and generally falls BETWEEN
+    two nodes. Snapping it to the nearer node costs O(h) in position and
+    therefore O(h) in whatever is read there, which drags the whole channel
+    flux down to first-order convergence. Linear interpolation restores the
+    second order the rest of the discretisation has.
+    """
+
+    low_value = float(barrier[allowed])
+    high_value = float(barrier[forbidden])
+    span = high_value - low_value
+    if not np.isfinite(span) or span == 0.0:
+        return float(profile[allowed])
+    fraction = (float(energy) - low_value) / span
+    fraction = min(max(fraction, 0.0), 1.0)
+    return float(
+        profile[allowed] + fraction * (profile[forbidden] - profile[allowed])
+    )
+
+
+def turning_point_levels(
+    barrier_eV: np.ndarray,
+    profile_eV: np.ndarray,
+    energy_eV: float,
+    anchor_face: int,
+) -> tuple[float, float]:
+    """``profile_eV`` evaluated at the two true turning points of the run.
+
+    Interpolated rather than snapped to nodes; see
+    :func:`_interpolate_at_crossing` for why that matters.
+    """
+
+    barrier = np.asarray(barrier_eV, dtype=float)
+    profile = np.asarray(profile_eV, dtype=float)
+    if barrier.shape != profile.shape:
+        raise WKBTunnellingError("profile must share the barrier grid")
+    face = int(anchor_face)
+    bounds = forbidden_run(barrier, energy_eV, face)
+    if bounds is None:
+        return float(profile[face]), float(profile[face + 1])
+    low, high = bounds
+    energy = float(energy_eV)
+    left = (
+        _interpolate_at_crossing(barrier, profile, energy, low - 1, low)
+        if low - 1 >= 0
+        else float(profile[low])
+    )
+    right = (
+        _interpolate_at_crossing(barrier, profile, energy, high + 1, high)
+        if high + 1 < barrier.size
+        else float(profile[high])
+    )
+    return left, right
+
+
+def two_band_turning_point_levels(
+    conduction_edge_eV: np.ndarray,
+    valence_edge_eV: np.ndarray,
+    profile_eV: np.ndarray,
+    energy_eV: float,
+    anchor_face: int,
+) -> tuple[float, float]:
+    """The same for the in-gap run, whose turning points sit on opposite bands.
+
+    The left crossing is where the carrier leaves the conduction band
+    (``E_C = E``) and the right is where it enters the valence band
+    (``E_V = E``), so each side interpolates against its own edge.
+    """
+
+    conduction = np.asarray(conduction_edge_eV, dtype=float)
+    valence = np.asarray(valence_edge_eV, dtype=float)
+    profile = np.asarray(profile_eV, dtype=float)
+    if not (conduction.shape == valence.shape == profile.shape):
+        raise WKBTunnellingError("band edges and profile must share one grid")
+    low, high = two_band_turning_point_nodes(
+        conduction, valence, energy_eV, anchor_face
+    )
+    energy = float(energy_eV)
+    # `low`/`high` are already the allowed nodes flanking the in-gap run.
+    left = (
+        _interpolate_at_crossing(conduction, profile, energy, low, min(low + 1, conduction.size - 1))
+        if low + 1 < conduction.size
+        else float(profile[low])
+    )
+    right = (
+        _interpolate_at_crossing(valence, profile, energy, high, max(high - 1, 0))
+        if high - 1 >= 0
+        else float(profile[high])
+    )
+    return left, right
+
+
 def windowed_wkb_action(
     positions_m: np.ndarray,
     barrier_eV: np.ndarray,
@@ -617,6 +782,10 @@ def reciprocal_net_flux(
 
 
 __all__ = [
+    "turning_point_levels",
+    "two_band_turning_point_levels",
+    "turning_point_nodes",
+    "two_band_turning_point_nodes",
     "two_band_validity",
     "kane_uniform_field_action",
     "two_band_action",

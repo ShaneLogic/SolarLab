@@ -145,6 +145,7 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "multivalent-explicit-defect-qf-dc-v1",
         "cigs-graded-optics-v1",
         "interface-srh-identifiability-synthetic-v1",
+        "wkb-tunnelling-channel-qf-dc-v1",
     }
     assert all(
         len(lane.matrix_points) == 9
@@ -161,6 +162,22 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     assert all(lane.executor is not None for lane in registry.lanes)
     assert all(lane.options["require_protocol"] for lane in registry.lanes)
     assert all(load_executor(lane.executor) for lane in registry.lanes)
+    tunnelling = registry.lane("wkb-tunnelling-channel-qf-dc-v1")
+    assert tunnelling.grid_values == (24, 48, 96)
+    assert tunnelling.tolerance_factors == (1.0, 0.1, 0.01)
+    assert tunnelling.grid_parameter == "intervals_per_electrical_layer"
+    assert tunnelling.tolerance_parameter == "qf_dc_residual_tolerance_factor"
+    # The energy quadrature order is this family's third refinement axis. The
+    # shared MatrixPoint carries only (grid, tolerance), so the ladder is swept
+    # inside each cell and reported as quality metrics — the same shape the
+    # energy-distributed trap lanes use.
+    assert tunnelling.options["energy_quadrature_orders"] == [96, 192, 384]
+    observable_names = {gate.metric for gate in tunnelling.observables}
+    # The channel's own flux must be an observable. A terminal-current-only
+    # lane would certify nothing here: enabling the channel moves the terminal
+    # current by ~1e-5 relative while the channel carries ~20% of it.
+    assert "intraband_electron_net_flux_m2_s" in observable_names
+
     dynamic_transient = registry.lane(
         "dynamic-defect-ion-transient-timescale-reference-resolved-v5"
     )

@@ -2943,3 +2943,138 @@ lanes:
       - The equilibrium-referenced sheet-charge observable is a research closure, not a production absolute interface-defect charge model, and the source YAML values are formula inputs rather than measured or material-truth claims.
       - The rank-deficient scenario must withhold a parameter claim for the exact capture-scale/calibration-factor product degeneracy; the full-rank recovery scenario fixes capture scale and estimates only trap density and calibration factor.
       - InterfaceDefect, het_recomb_despike, mobile ions, measured data, external solver validation, experimental validation, Bayesian inference, and uncertainty quantification remain excluded.
+  wkb-tunnelling-channel-qf-dc-v1:
+    claim_level: internal-numerical-candidate
+    config: configs/wkb_tunnelling_intraband_spike.yaml
+    config_sha256: 545067cfedc8598b62fd1991aeaf3cd13d3153151e427452d1b78f6d523df20b
+    executor: perovskite_sim.validation.tunnelling_channel_refinement:run_tunnelling_channel_qf_dc_refinement
+    executor_version: v1
+    grid:
+      parameter: intervals_per_electrical_layer
+      values:
+      - 24
+      - 48
+      - 96
+    tolerance:
+      parameter: qf_dc_residual_tolerance_factor
+      factors:
+      - 1.0
+      - 0.1
+      - 0.01
+    limitations:
+    - Internal numerical convergence only. No SCAPS tunnelling deck is compared, and
+      the channel's absolute magnitude is not validated against anything - the supply
+      prefactor remains an unfitted estimate.
+    - One intraband electron channel on one heterointerface of one synthetic spike
+      stack. Band-to-band, defect-assisted and contact channels, the hole branch,
+      multi-interface stacks, illumination, mobile ions, AC and transient routes are
+      out of scope here rather than certified.
+    - The terminal current is deliberately NOT the convergence observable. Enabling
+      the channel moves it by only ~1e-5 relative while the channel carries ~19% of
+      it, so a terminal-current gate would pass whether or not the channel worked.
+    observables:
+      dark_electron_quasi_fermi_V:
+        comparison: absolute_linf
+        limit: 0.002
+        units: V
+      dark_potential_V:
+        comparison: absolute_linf
+        limit: 0.002
+        units: V
+      dark_terminal_current_A_m2:
+        comparison: relative_linf
+        limit: 0.02
+        units: A m-2
+      intraband_electron_face_current_A_m2:
+        comparison: relative_linf
+        limit: 0.1
+        units: A m-2
+      intraband_electron_maximum_action:
+        comparison: relative_linf
+        limit: 0.05
+        units: '1'
+      intraband_electron_net_flux_m2_s:
+        comparison: relative_linf
+        limit: 0.1
+        units: m-2 s-1
+    quality_gates:
+      certified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      channel_flux_fraction_of_terminal_current:
+        operator: ge
+        limit: 0.01
+        units: '1'
+      disabled_family_reports_nothing:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      energy_quadrature_orders_completed:
+        operator: eq
+        limit: 3.0
+        units: '1'
+      equilibrium_certified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      equilibrium_face_current_A_m2:
+        operator: le
+        limit: 0.0
+        units: A m-2
+      equilibrium_net_flux_m2_s:
+        operator: le
+        limit: 0.0
+        units: m-2 s-1
+      face_current_injection_relative_error:
+        operator: le
+        limit: 1.0e-12
+        units: '1'
+      face_current_spread_A_m2:
+        operator: le
+        limit: 0.0002
+        units: A m-2
+      injected_face_count:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      max_energy_flux_relative_change:
+        operator: le
+        limit: 0.05
+        units: '1'
+      max_normalized_cell_residual:
+        operator: le
+        limit: 1.0e-07
+        units: '1'
+      minimum_transmission_below_unity:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      newton_iterations:
+        operator: le
+        limit: 30.0
+        units: '1'
+      poisson_residual_C_m2:
+        operator: le
+        limit: 1.0e-12
+        units: C m-2
+      residual_over_solver_limit:
+        operator: le
+        limit: 1.0
+        units: '1'
+    options:
+      base_finite_difference_step: 1.0e-05
+      base_newton_residual_tolerance: 1.0e-08
+      base_poisson_tolerance_V: 1.0e-10
+      bias_V: 0.2
+      config_loader: standard
+      continuity_tolerance_A_m2: 0.0002
+      current_spread_tolerance_A_m2: 0.0002
+      energy_quadrature_orders:
+      - 96
+      - 192
+      - 384
+      grid_alpha: 2.0
+      max_newton_iterations: 30
+      profile_points: 17
+      require_protocol: true

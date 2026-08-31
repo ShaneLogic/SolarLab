@@ -45,6 +45,8 @@ from perovskite_sim.models.tunneling_channels import (
     IntrabandTunnellingChannel,
 )
 from perovskite_sim.physics.wkb_tunneling import (
+    turning_point_levels,
+    two_band_turning_point_levels,
     WKBTunnellingError,
     reciprocal_net_flux,
     two_band_transmission,
@@ -59,13 +61,18 @@ class TunnellingChannelError(RuntimeError):
 
 
 def _fermi(
-    energy_eV: np.ndarray, level_eV: float, thermal_voltage_V: float
+    energy_eV: np.ndarray, level_eV: object, thermal_voltage_V: float
 ) -> np.ndarray:
-    """Fermi-Dirac occupation, written to avoid overflow on either tail."""
+    """Fermi-Dirac occupation, written to avoid overflow on either tail.
 
-    reduced = (np.asarray(energy_eV, dtype=float) - float(level_eV)) / float(
-        thermal_voltage_V
-    )
+    ``level_eV`` may be a scalar or one level per energy. The per-energy form
+    is what the turning-point drive needs: each energy has its own pair of
+    turning points, so its own pair of levels.
+    """
+
+    reduced = (
+        np.asarray(energy_eV, dtype=float) - np.asarray(level_eV, dtype=float)
+    ) / float(thermal_voltage_V)
     out = np.empty_like(reduced)
     positive = reduced >= 0.0
     out[positive] = np.exp(-reduced[positive]) / (1.0 + np.exp(-reduced[positive]))
@@ -146,6 +153,52 @@ def local_barrier_window(
     return peak, float(min(barrier[left], barrier[right]))
 
 
+def _turning_point_levels(
+    barrier_eV: np.ndarray,
+    energies_eV: np.ndarray,
+    anchor_face: int,
+    level_profile_eV: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-energy level pair, read at each energy's own turning points.
+
+    The occupation difference that drives a channel is between the two places
+    the carrier actually is — the allowed regions on either side of the
+    barrier — not between two adjacent grid nodes. Taking it across one cell
+    makes the flux proportional to ``dx`` and it vanishes under refinement;
+    turning points sit at fixed physical positions, so the flux converges.
+    """
+
+    profile = np.asarray(level_profile_eV, dtype=float)
+    energies = np.asarray(energies_eV, dtype=float)
+    left = np.empty_like(energies)
+    right = np.empty_like(energies)
+    for index, energy in enumerate(energies):
+        left[index], right[index] = turning_point_levels(
+            barrier_eV, profile, float(energy), anchor_face
+        )
+    return left, right
+
+
+def _two_band_turning_point_levels(
+    conduction_eV: np.ndarray,
+    valence_eV: np.ndarray,
+    energies_eV: np.ndarray,
+    anchor_face: int,
+    level_profile_eV: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The same for the in-gap run a band-to-band carrier crosses."""
+
+    profile = np.asarray(level_profile_eV, dtype=float)
+    energies = np.asarray(energies_eV, dtype=float)
+    left = np.empty_like(energies)
+    right = np.empty_like(energies)
+    for index, energy in enumerate(energies):
+        left[index], right[index] = two_band_turning_point_levels(
+            conduction_eV, valence_eV, profile, float(energy), anchor_face
+        )
+    return left, right
+
+
 @dataclass(frozen=True, slots=True)
 class ChannelFlux:
     """One channel's net flux plus everything needed to audit it."""
@@ -207,8 +260,7 @@ def band_to_band_flux(
     channel: BandToBandTunnellingChannel,
     *,
     anchor_face: int,
-    left_fermi_eV: float,
-    right_fermi_eV: float,
+    quasi_fermi_eV: np.ndarray,
     thermal_voltage_V: float,
     supply_prefactor_m2_s_eV: float = 1.0e24,
 ) -> ChannelFlux:
@@ -272,8 +324,11 @@ def band_to_band_flux(
         channel.reduced_effective_mass_rel,
         anchor_face,
     )
-    left = _fermi(energies, left_fermi_eV, thermal_voltage_V)
-    right = _fermi(energies, right_fermi_eV, thermal_voltage_V)
+    left_levels, right_levels = _two_band_turning_point_levels(
+        conduction, valence, energies, anchor_face, quasi_fermi_eV
+    )
+    left = _fermi(energies, left_levels, thermal_voltage_V)
+    right = _fermi(energies, right_levels, thermal_voltage_V)
     if not validity.valid:
         notes.append("wkb_action_below_meaningful_barrier")
     return _channel_flux(
@@ -295,8 +350,7 @@ def intraband_flux(
     *,
     anchor_face: int,
     carrier: str,
-    left_fermi_eV: float,
-    right_fermi_eV: float,
+    quasi_fermi_eV: np.ndarray,
     thermal_voltage_V: float,
     supply_prefactor_m2_s_eV: float = 1.0e24,
 ) -> ChannelFlux:
@@ -340,8 +394,11 @@ def intraband_flux(
     validity = wkb_validity(x, barrier, float(energies[0]), mass)
     if not validity.valid:
         notes.append("wkb_action_below_meaningful_barrier")
-    left = _fermi(energies, left_fermi_eV, thermal_voltage_V)
-    right = _fermi(energies, right_fermi_eV, thermal_voltage_V)
+    left_levels, right_levels = _turning_point_levels(
+        barrier, energies, anchor_face, quasi_fermi_eV
+    )
+    left = _fermi(energies, left_levels, thermal_voltage_V)
+    right = _fermi(energies, right_levels, thermal_voltage_V)
     return _channel_flux(
         f"intraband_{carrier}",
         energies,
@@ -501,7 +558,7 @@ def contact_tunnelling_flux(
     anchor_face: int,
     carrier: str,
     metal_fermi_eV: float,
-    semiconductor_fermi_eV: float,
+    quasi_fermi_eV: np.ndarray,
     thermal_voltage_V: float,
     richardson_prefactor_m2_s_eV: float = 1.0e24,
 ) -> ChannelFlux:
@@ -540,7 +597,12 @@ def contact_tunnelling_flux(
     if not validity.valid:
         notes.append("wkb_action_below_meaningful_barrier")
     metal = _fermi(energies, metal_fermi_eV, thermal_voltage_V)
-    semiconductor = _fermi(energies, semiconductor_fermi_eV, thermal_voltage_V)
+    # The metal is a reservoir at one level; the semiconductor side is read at
+    # each energy's turning point, which is where the carrier arrives.
+    _, semiconductor_levels = _turning_point_levels(
+        barrier, energies, anchor_face, quasi_fermi_eV
+    )
+    semiconductor = _fermi(energies, semiconductor_levels, thermal_voltage_V)
     return _channel_flux(
         f"contact_{carrier}",
         energies,

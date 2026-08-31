@@ -81,6 +81,9 @@ from perovskite_sim.models.device import (
     require_uncalibrated_microscopic_interface_defects,
 )
 from perovskite_sim.models.mode import resolve_mode
+from perovskite_sim.models.tunneling_channels import (
+    tunnelling_channel_document_from_mapping,
+)
 from perovskite_sim.physics.contacts import (
     ContactThermodynamicError,
     require_contact_thermodynamic_certificate,
@@ -294,6 +297,11 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         graded_optics=_flag(dev.get("graded_optics")),
         interface_tunneling=_flag(dev.get("interface_tunneling")),
         tunnel_mass_eff=float(dev.get("tunnel_mass_eff", 0.2)),
+        # D8 WKB tunnelling family. Shares one parser with the YAML loader so
+        # the file and inline paths cannot drift — the failure mode is silent
+        # (an inline run just loses the channel), which is why the semantic
+        # hash of every shipped config is compared across both paths.
+        tunnelling_channels=tunnelling_channel_document_from_mapping(dev),
         # Stage B(c.1) Robin / selective contacts. None = ohmic Dirichlet
         # (the pre-3.3 default); 0 = Neumann blocking; positive finite =
         # Robin. The frontend distinguishes these three states via
@@ -400,6 +408,11 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         "graded_optics": stack.graded_optics,
         "interface_tunneling": stack.interface_tunneling,
         "tunnel_mass_eff": stack.tunnel_mass_eff,
+        "tunnelling_channels": (
+            stack.tunnelling_channels.to_dict()
+            if stack.tunnelling_channels is not None
+            else None
+        ),
         "jv_solver_policy": stack.jv_solver_policy,
         "interface_charge_closure": stack.interface_charge_closure,
         "interface_charge_rebaseline_acknowledged": (

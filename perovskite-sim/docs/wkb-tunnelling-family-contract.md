@@ -3,17 +3,19 @@
 ## Status and capability boundary
 
 This document covers **D8-P0** (audit of the existing tunnelling surface),
-**D8-E0** (canonical four-channel contract plus the local WKB physics) and
-**D8-E1** (production wiring into the guarded QF/DC lane).
+**D8-E0** (canonical four-channel contract plus the local WKB physics),
+**D8-E1** (production wiring into the guarded QF/DC lane) and
+**D8-E2** (the registered refinement certificate).
 
 The current capability label is:
 
 ```text
 four independently switchable WKB tunnelling channels, each anchored to its
 own barrier, wired into the guarded QF/DC lane so an enabled channel adds a
-face current to the certified residual; every other solver route fails
-closed; no SCAPS comparison has been made and no channel magnitude is
-validated against any reference
+face current to the certified residual, with the intraband electron channel
+carrying a registered 3x3x3 grid/tolerance/energy-order refinement
+certificate; every other solver route fails closed; no SCAPS comparison has
+been made and no channel magnitude is validated against any reference
 ```
 
 Nothing in this checkpoint changes a shipped number: the canonical document
@@ -172,9 +174,25 @@ quasi-Fermi drop across *that* barrier — the same drop the Scharfetter-Gummel
 flux on the same face sees, which is what makes the two additive rather than
 double-counted. Reading the contact levels instead inflated the flux by orders
 of magnitude and made it *grow* with bias. The corrected behaviour is the
-opposite and is pinned as such: raising the bias flattens the junction, the
-local drop shrinks, and the tunnelling flux falls by more than 10× between
-0.2 V and 0.5 V.
+opposite: raising the bias flattens the junction, the local drop shrinks, and
+the tunnelling flux falls.
+
+**Superseded during D8-E2 — "local" means across the BARRIER, not across one
+grid cell.** D8-E1 first read the drop between the two nodes of the anchor
+face. That is a difference taken across a single cell, so it shrinks with the
+mesh: the convergence sweep measured the channel flux **halving on every grid
+doubling** (`-1.09e9 -> -3.52e8 -> -1.44e8 m^-2 s^-1` at 35 / 69 / 137 nodes),
+i.e. the current was an artifact of the discretisation rather than a property
+of the barrier. The drop across the barrier converges over the same ladder
+(`2.44e-4 -> 2.22e-4 -> 2.18e-4 eV`).
+
+The occupations are therefore read at each energy's own **turning points** —
+where `U(x) = E`, which is where the carrier actually leaves and re-enters the
+allowed region. Those sit at fixed physical positions, so the flux converges.
+Reading them at the nearest *node* still costs `O(h)` in position and dragged
+the whole channel to first-order convergence; interpolating the crossing
+recovers order **1.5**, which is the O(h^3/2) the square-root turning point
+imposes and exactly the order D8-E0 already measured for the action itself.
 
 ### The band-to-band channel uses the two-band exponent
 
@@ -239,8 +257,10 @@ content-addressed in full, and the invariant is pinned both ways by
 | Kane quadrature vs closed-form Zener exponent | **1.4e-6** relative |
 | disabled family vs no document | state arrays **bit-identical**, current identical |
 | zero bias, wired lane | net flux **exactly 0.0**, face currents all exactly zero |
-| enabled channel at 0.2 V dark | net flux `-1.086e9 m^-2 s^-1` = `-1.74e-10 A/m^2`, shifts the certified terminal current by 6.9e-7 relative |
+| enabled channel at 0.2 V dark | net flux `-1.95e10 m^-2 s^-1` = `-3.13e-9 A/m^2`, **19 % of the terminal current**; the terminal current itself shifts by 1.2e-5 relative |
 | local vs contact driving | flux **falls** >10x from 0.2 V to 0.5 V |
+| mesh convergence of the flux | order **1.5**, 2.5 % change over the last doubling (273 nodes, energy order 384) |
+| energy-quadrature convergence | 3.4e-3 relative change from order 192 to 384 |
 | injected face current vs reported flux | agree to **1e-12** |
 | inert family vs no family | identical semantic SHA-256; an enabled family differs |
 
@@ -261,14 +281,106 @@ channel tests were re-anchored to `anchor_face` and still pass.
   heterointerfaces runs the channel on the first one only; the other
   interfaces are not covered, and this is a scope limit rather than a physical
   statement about them.
-- No refinement certificate exists yet, so grid, tolerance and
-  energy-quadrature-order convergence of the channel currents is **unmeasured**
-  (that is D8-E2).
+- The channel flux converges at order 1.5 in the mesh and needs an energy
+  quadrature order of ~192 to reach a 1e-2 relative change. Both are measured
+  here but a **registered** refinement lane with frozen gates is D8-E2.
+
+## Numerical certificate (D8-E2)
+
+Lane `wkb-tunnelling-channel-qf-dc-v1`, config
+`configs/wkb_tunnelling_intraband_spike.yaml`, executor
+`perovskite_sim/validation/tunnelling_channel_refinement.py`.
+
+### Three axes on a two-axis runner
+
+`MatrixPoint` carries exactly `(grid, tolerance_factor)` and
+`ConvergenceCheck.dimension` is a closed literal, enforced at five sites that
+43 other lanes depend on. The energy quadrature order is therefore swept
+**inside** each cell and reported as quality metrics — the same shape the four
+existing energy-distributed lanes use. Grid `[24, 48, 96]` intervals per
+electrical layer, tolerance `[1.0, 0.1, 0.01]`, energy order
+`[96, 192, 384]`.
+
+### The observable is the channel, not the terminal current
+
+Enabling the channel moves the terminal current by ~1.2e-5 relative while the
+channel itself carries ~20 % of it: the tunnelling path is in parallel with
+the drift-diffusion flux on the same face, and the rest of the device sets the
+operating point. A terminal-current gate would therefore pass whether or not
+the channel worked, so the registered observables are the channel's own net
+flux and minimum transmission. Both are grid-dependent, so the shared
+grid/tolerance convergence check has something real to measure.
+
+### What the gates are, and where their numbers come from
+
+The exact identities are gated as **exact**, not with a tolerance — a
+threshold there would hide a sign or bookkeeping error:
+
+| gate | value | meaning |
+|---|---|---|
+| `equilibrium_net_flux_m2_s` | `le 0.0` | reciprocity survives the device wiring |
+| `equilibrium_face_current_A_m2` | `le 0.0` | and reaches the face array as zero |
+| `face_current_injection_relative_error` | `le 1e-12` | the injected current IS the reported flux |
+| `injected_face_count` | `eq 1` | on exactly one face |
+| `disabled_family_reports_nothing` | `eq 1` | a disabled family produces no diagnostics |
+| `minimum_transmission_below_unity` | `eq 1` | the barrier actually blocks something |
+
+The convergence gates are sized from the measured order rather than fitted:
+`max_energy_flux_relative_change le 0.05` against a measured 2.3e-2, and the
+observable limits at 0.1 against a measured 2.5e-2 over the last grid pair at
+order 1.5. `residual_over_solver_limit le 1.0` is deliberately expressed as a
+ratio against the solver's **own** accepted limit rather than a number chosen
+here, so the gate cannot drift away from what `certified` means.
+
+### Measured evidence (D8-E2)
+
+Certificate `12f3a50cb9a6501a5551210ba97653fa0fb33dc52d2a086911883931007932cd`,
+run `c983b07f8ec83e4d395edbbb472bc707b37b4e6a20c96b68a0dc436bf41bdce8`,
+**status `certified`** — 9/9 cells, 156 checks, zero failed, zero unconverged
+dimensions, 359 s.
+
+| convergence (last pair) | grid | tolerance | limit |
+|---|---|---|---|
+| channel net flux | 4.11e-3 | 0.0 | 0.1 |
+| channel face current | 4.11e-3 | 0.0 | 0.1 |
+| channel maximum action | 3.84e-3 | 0.0 | 0.05 |
+| dark terminal current | 1.93e-4 | 2.66e-10 | 0.02 |
+| dark potential profile | 8.58e-5 | 0.0 | 0.002 |
+
+The exact identities hold **exactly in all nine cells**: equilibrium net flux
+0.0, equilibrium face current 0.0, injection relative error 0.0, injected face
+count 1. Channel flux stays at 20.1-20.5 % of the terminal current across the
+matrix; energy-order convergence spans 9.4e-3 to 2.3e-2 against the 0.05 gate.
+
+### Why the action and not the transmission
+
+The first certified run reported `intraband_electron_minimum_transmission` at
+**0.1039 against a 0.1 limit** — the one failure. That is not a tolerance to
+loosen: `T = exp(-2S)` with `S ~ 14` here, so a relative error in the exponent
+is amplified by `2S ~ 28` in `T`. The action's own convergence is 3.84e-3, and
+`28 x 3.84e-3 = 0.107`, which reproduces the observed 0.1039. Gating the raw
+transmission would therefore have measured the exponential's amplification of
+a converged exponent. The registered observable is the action; `T` is kept in
+the cell provenance.
+
+### Two defects this checkpoint surfaced
+
+Registering the lane is what found both; neither was visible from D8-E1's own
+tests.
+
+1. **The mesh divergence** described above — the channel flux halved on every
+   grid doubling because the drive was read across one grid cell. A
+   convergence lane is exactly the instrument that catches this, and it would
+   have certified a meaningless number had it been registered first.
+2. **The backend inline path dropped the channel document.**
+   `backend/main.py:stack_from_dict` did not carry `tunnelling_channels`, so
+   an inline run from the editor silently lost the physics the YAML path
+   applies — the drift class this repository has hit repeatedly. Caught by
+   `test_standard_yaml_and_inline_backend_have_identical_semantics`, which
+   compares the semantic hash across both paths for every shipped config.
 
 ## Required next checkpoints
 
-1. **D8-E2** — a registered grid/tolerance/energy-order refinement lane for
-   the channels, in the shape of the D7-E2 lane.
-2. **D8-E3** — the frozen channel-by-channel SCAPS comparison the roadmap
+1. **D8-E3** — the frozen channel-by-channel SCAPS comparison the roadmap
    asks for, which needs a real SCAPS deck and raw export that the repository
-   still does not have.
+   still does not have. **Blocked on external input**, not on work here.
