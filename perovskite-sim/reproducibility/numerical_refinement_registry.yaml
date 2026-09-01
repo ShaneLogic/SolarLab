@@ -2970,8 +2970,19 @@ lanes:
       multi-interface stacks, illumination, mobile ions, AC and transient routes are
       out of scope here rather than certified.
     - The terminal current is deliberately NOT the convergence observable. Enabling
-      the channel moves it by only ~1e-5 relative while the channel carries ~19% of
-      it, so a terminal-current gate would pass whether or not the channel worked.
+      the channel moves it by only ~1e-5 relative, so a terminal-current gate would
+      pass whether or not the channel worked.
+    - RETRACTED 2026-09-01 (D8-E2R). Two magnitudes this lane reports are artifacts of
+      a level-vs-potential convention error - the QF lane hands the channel
+      `V_T*ln(n) - (phi+chi)` = `E_Fn + V_T*ln(N_C)`, a +1.4286 eV offset. The channel
+      flux fraction of terminal current (~0.20 here) is 6.2e-7 with the true level,
+      and `equilibrium_net_flux_m2_s` passes its exact-zero gate by float64
+      Fermi-factor saturation rather than by reciprocity, so that gate cannot
+      currently fail. Convergence orders, the injection identity and the fail-closed
+      routes are unaffected. Correcting the level fails three gates in this lane at
+      once and needs a v2 lane whose entry condition - a config where the corrected
+      channel clears `ge 0.01` - does not yet exist. See
+      docs/wkb-tunnelling-family-contract.md section "Retraction (D8-E2R)".
     observables:
       dark_electron_quasi_fermi_V:
         comparison: absolute_linf

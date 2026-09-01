@@ -4,8 +4,17 @@
 
 This document covers **D8-P0** (audit of the existing tunnelling surface),
 **D8-E0** (canonical four-channel contract plus the local WKB physics),
-**D8-E1** (production wiring into the guarded QF/DC lane) and
-**D8-E2** (the registered refinement certificate).
+**D8-E1** (production wiring into the guarded QF/DC lane),
+**D8-E2** (the registered refinement certificate) and **D8-E2R** (the drive
+convention audit, which retracts two of D8-E1/E2's headline claims).
+
+> **RETRACTED, 2026-09-01 — read this before quoting any magnitude below.**
+> Two claims in the D8-E1/E2 sections are artifacts of a level-vs-potential
+> convention error and are **withdrawn**: "the channel carries ~19-20 % of the
+> terminal current", and "equilibrium net flux is exactly zero by
+> reciprocity". See [Retraction (D8-E2R)](#retraction-d8-e2r). The convergence
+> results, the mesh order, the injection identity and the D8-E0 unit-level
+> reciprocity claim are unaffected.
 
 The current capability label is:
 
@@ -256,8 +265,8 @@ content-addressed in full, and the invariant is pinned both ways by
 |---|---|
 | Kane quadrature vs closed-form Zener exponent | **1.4e-6** relative |
 | disabled family vs no document | state arrays **bit-identical**, current identical |
-| zero bias, wired lane | net flux **exactly 0.0**, face currents all exactly zero |
-| enabled channel at 0.2 V dark | net flux `-1.95e10 m^-2 s^-1` = `-3.13e-9 A/m^2`, **19 % of the terminal current**; the terminal current itself shifts by 1.2e-5 relative |
+| zero bias, wired lane | net flux exactly 0.0 — ~~by reciprocity~~ **RETRACTED: by float64 saturation; see D8-E2R** |
+| enabled channel at 0.2 V dark | net flux `-1.95e10 m^-2 s^-1` = `-3.13e-9 A/m^2`. ~~19 % of the terminal current~~ **RETRACTED — 6.2e-7 with the true level; see D8-E2R.** The terminal current shifts by 1.2e-5 relative |
 | local vs contact driving | flux **falls** >10x from 0.2 V to 0.5 V |
 | mesh convergence of the flux | order **1.5**, 2.5 % change over the last doubling (273 nodes, energy order 384) |
 | energy-quadrature convergence | 3.4e-3 relative change from order 192 to 384 |
@@ -304,11 +313,13 @@ electrical layer, tolerance `[1.0, 0.1, 0.01]`, energy order
 ### The observable is the channel, not the terminal current
 
 Enabling the channel moves the terminal current by ~1.2e-5 relative while the
-channel itself carries ~20 % of it: the tunnelling path is in parallel with
-the drift-diffusion flux on the same face, and the rest of the device sets the
-operating point. A terminal-current gate would therefore pass whether or not
-the channel worked, so the registered observables are the channel's own net
-flux and minimum transmission. Both are grid-dependent, so the shared
+channel itself reports ~20 % of it — **that 20 % is retracted (D8-E2R): with
+the true quasi-Fermi level it is 6.2e-7**. The reason for choosing the channel
+over the terminal current is unaffected and if anything strengthened: the
+tunnelling path is in parallel with the drift-diffusion flux on the same face,
+so the terminal current barely moves either way. A terminal-current gate would
+therefore pass whether or not the channel worked, and the registered
+observables are the channel's own net flux and maximum action. Both are grid-dependent, so the shared
 grid/tolerance convergence check has something real to measure.
 
 ### What the gates are, and where their numbers come from
@@ -378,6 +389,96 @@ tests.
    applies — the drift class this repository has hit repeatedly. Caught by
    `test_standard_yaml_and_inline_backend_have_identical_semantics`, which
    compares the semantic hash across both paths for every shipped config.
+
+## Retraction (D8-E2R)
+
+### What was wrong
+
+`experiments/quasi_fermi_steady_state.py` builds its solver variable as
+
+```text
+qfn0 = V_T*ln(n0) - (phi0 + chi)
+```
+
+Since `E_C = -(phi + chi)` and `E_Fn = E_C + V_T*ln(n/N_C)`, that is
+
+```text
+qfn0 = E_Fn + V_T*ln(N_C)
+```
+
+This is correct **for the solver**, which only ever uses `diff(qfn0)/V_T`
+where the constant cancels. The channel wiring misread it: the channels feed
+it to a Fermi-Dirac occupation as an absolute level. Measured on the lane
+config, the offset is `V_T*ln(N_C)` = **1.428634 eV**, reproduced to twelve
+decimals, and it puts the level **0.83 eV above** `E_C` where the true
+quasi-Fermi level sits **0.60 eV below** it.
+
+### Why it is not a defensible convention
+
+Under Maxwell-Boltzmann the offset multiplies the occupation by exactly `N_C`
+at every level, so "DOS folded into the level" would cancel against a `1/N_C`
+supply prefactor and the scheme would be self-consistent. Measured ratios at
+three levels: `1.000000e+24` each time. Under Fermi-Dirac the same offset
+saturates the occupation at 1, so the ratio is `3.5e11 / 5.2e6 / 48.9` at
+those same three levels — level-dependent, and nothing can cancel it. The
+channels use Fermi-Dirac. Pinned by
+`test_the_offset_is_only_a_constant_factor_under_boltzmann`.
+
+### What the two retracted claims should have said
+
+| retracted | measured with the true level |
+|---|---|
+| "channel carries ~19-20 % of the terminal current" | **6.2e-7** of it |
+| "equilibrium net flux exactly 0.0 by reciprocity" | exactly 0.0 **by float64 saturation** |
+
+The second is the more serious. The registered gate
+`equilibrium_net_flux_m2_s: le 0.0` was documented here as "gated as exact,
+not with a tolerance — a threshold there would hide a sign or bookkeeping
+error." Measured, it passes because both Fermi factors round to the **same
+double** near 1.0: the residual equilibrium quasi-Fermi gradient is 3.96e-13
+eV, which perturbs an occupation of ~1 by ~1e-20, below the ~2.2e-16 ulp
+there. Read at the true level the occupation is ~3e-12, the ulp is ~1e-27,
+and the same gradient resolves to `max|f_L - f_R| = 9.37e-26` — non-zero.
+
+So the gate could not fail, and **a gate that cannot fail is not evidence**.
+It hid precisely the class of error its own docstring named. The negative
+control that proves it discriminates is
+`test_the_equilibrium_zero_is_saturation_not_reciprocity`.
+
+### What survives
+
+- The D8-E0 **unit-level** reciprocity claim. That test passes one occupation
+  array as both sides, so the integrand is identically zero by construction —
+  a property of `reciprocal_net_flux`, not of any device state.
+- Mesh convergence at order 1.5, the energy-order convergence, and the
+  injection identity (`face current == -Q * flux` to 1e-12, on one face).
+  Those hold for any consistent level.
+- Every fail-closed route and the disabled-family bit-identity.
+
+### Why the convention was not simply flipped here
+
+Correcting the level fails three registered gates at once
+(`channel_flux_fraction_of_terminal_current: ge 0.01` against a corrected
+6.2e-7; `equilibrium_net_flux_m2_s: le 0.0`; and the flux observables' own
+limits), which flips the lane `certified -> failed` and cascades: the
+benchmark `wkb-tunnelling-channel-internal-closure` loses `status: pass`, and
+`configs/wkb_tunnelling_intraband_spike.yaml` (`status: partial`) then has no
+physical benchmark evidence. Re-registering is a v2-lane project whose entry
+condition is a config where the **corrected** channel clears `ge 0.01` — no
+such config exists yet, and finding one is physics design rather than
+plumbing. Publishing the envelope and leaving the failure visible is what
+§13 of the roadmap prescribes, and is what this checkpoint does.
+
+### One free fix that was in scope
+
+The hole branch negated `qfp` before handing it over. `qfp0` is already in the
+hole particle-energy convention that matches the `-E_V` barrier
+(`V_T*ln(p) + (phi + chi + Eg)` = `-E_V + V_T*ln(p)`), so negating it put the
+drive **12.9 eV below** its own barrier instead of 0.72 eV above, and the flux
+underflowed to ~1e-204. Removing the negation moves it to 7.32e8 m^-2 s^-1.
+The electron branch — and therefore the certified lane — is unchanged. This
+makes the two branches consistent with each other; it does not make either
+correct, since both still carry the level offset above.
 
 ## Required next checkpoints
 

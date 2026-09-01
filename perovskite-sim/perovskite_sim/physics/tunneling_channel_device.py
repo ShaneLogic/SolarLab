@@ -244,9 +244,14 @@ def evaluate_tunnelling_channels(
         )
         for carrier in carriers:
             barrier = conduction if carrier == "electron" else -valence
-            # The hole barrier and hole levels are both negated, so a hole
-            # moving down in energy is a particle moving up its own barrier.
-            profile = qfn if carrier == "electron" else -qfp
+            # `qfp` is ALREADY in the hole particle-energy convention that
+            # matches the `-valence` barrier: the solver builds it as
+            # `V_T*ln(p) + (phi + chi + Eg)`, i.e. `-E_V + V_T*ln(p)`.
+            # Negating it here put the hole drive 12.9 eV BELOW its barrier
+            # instead of 0.72 eV above, which made the hole flux underflow by
+            # ~212 orders. The only device test that touched this branch
+            # asserted channel names and tuple lengths, so it could not see it.
+            profile = qfn if carrier == "electron" else qfp
             try:
                 flux = intraband_flux(
                     x,

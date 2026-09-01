@@ -4,10 +4,18 @@ What this lane certifies, and what it deliberately does not
 -----------------------------------------------------------
 The observable is the **channel's own flux**, not the terminal current. That
 distinction is load-bearing: enabling the channel on this stack moves the
-terminal current by ~1e-5 relative while the channel itself carries ~19 % of
-it, because the tunnelling path sits in parallel with the drift-diffusion flux
-on the same face and the rest of the device sets the operating point. A gate
-on terminal current would therefore pass whether or not the channel worked.
+terminal current by only ~1e-5 relative, because the tunnelling path sits in
+parallel with the drift-diffusion flux on the same face and the rest of the
+device sets the operating point. A gate on terminal current would therefore
+pass whether or not the channel worked.
+
+RETRACTED 2026-09-01 (D8-E2R): the companion claim that the channel "carries
+~19 % of the terminal current" is an artifact. The QF lane hands the channel
+`V_T*ln(n) - (phi+chi)` = `E_Fn + V_T*ln(N_C)`, a +1.4286 eV offset that
+saturates the Fermi factors; with the true level the fraction is 6.2e-7, and
+this lane's `equilibrium_net_flux_m2_s` gate passes by float64 saturation
+rather than by reciprocity. Convergence orders and the injection identity are
+unaffected. See docs/wkb-tunnelling-family-contract.md.
 
 Three refinement axes, two of which are the registry's
 -----------------------------------------------------

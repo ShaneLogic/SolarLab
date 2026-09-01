@@ -380,6 +380,42 @@ def test_each_channel_reports_under_its_own_name_and_only_when_enabled():
     assert len(names) == len(set(names))
 
 
+def test_the_hole_branch_carries_a_real_flux_not_an_underflowed_one():
+    """Names and tuple lengths cannot see a 212-order sign error.
+
+    `qfp` is already in the hole particle-energy convention that matches the
+    `-E_V` barrier (`V_T*ln(p) + (phi + chi + Eg)` = `-E_V + V_T*ln(p)`).
+    Negating it — which the wiring did until D8-E2R — put the hole drive
+    12.9 eV BELOW its own barrier instead of 0.72 eV above, and the flux
+    underflowed to ~1e-204. The only test covering this branch asserted the
+    channel names and the tuple lengths, both of which were perfectly correct
+    while the physics was not, so the assertion here is on magnitude and sign.
+
+    This does NOT make the hole branch correct: both branches still carry the
+    level-vs-potential convention error that D8-E2R retracts rather than
+    fixes. It makes the two branches consistent with each other.
+    """
+    document = TunnellingChannelDocument(
+        intraband=IntrabandTunnellingChannel(
+            enabled=True, carrier="both", energy_quadrature_order=24
+        )
+    )
+    diagnostics = _solve(document).tunnelling_channel_diagnostics
+    fluxes = dict(zip(diagnostics.channel_names, diagnostics.channel_net_flux_m2_s))
+    hole = fluxes["intraband_hole"]
+
+    # An underflowed branch reports something like 1e-204; a live one does not.
+    assert abs(hole) > 1.0
+    # Electrons and holes drift in opposite directions under the same field,
+    # so their particle fluxes carry opposite signs here.
+    assert hole * fluxes["intraband_electron"] < 0.0
+    # The hole barrier must actually block, or the branch measures nothing.
+    transmissions = dict(
+        zip(diagnostics.channel_names, diagnostics.channel_minimum_transmission)
+    )
+    assert 0.0 < transmissions["intraband_hole"] < 1.0
+
+
 def test_the_two_carrier_intraband_channel_reports_both_carriers():
     document = TunnellingChannelDocument(
         intraband=IntrabandTunnellingChannel(
