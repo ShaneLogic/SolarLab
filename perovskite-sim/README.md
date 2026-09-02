@@ -25,8 +25,6 @@ perovskite-sim/
 ├── scripts/          CLI, validation, plotting, import, and probe tools
 ├── tests/            Unit, integration, regression, and validation suites
 ├── notebooks/        Exploratory benchmarks
-├── band_diagram.png  Retained root-level sample plot
-├── charge_distribution.png  Retained root-level sample plot
 ├── Dockerfile.backend  Backend container definition
 ├── pyproject.toml    Package metadata and pytest configuration
 ├── .gitignore        Package-local generated-output rules
