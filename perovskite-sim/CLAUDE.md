@@ -8,15 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-```
-perovskite-sim/
-├── perovskite_sim/      Python simulation library (installable package)
-├── backend/             FastAPI HTTP wrapper around perovskite_sim
-├── frontend/            Vite + TS + Plotly single-page UI
-├── configs/             YAML device presets consumed by both CLI and UI
-├── tests/               pytest suite (unit + integration + regression)
-└── notebooks/           exploratory notebooks / benchmarks
-```
+`perovskite_sim/` is the installable Python simulation library, `backend/` the FastAPI wrapper around it, `frontend/` the Vite + TS + Plotly single-page UI, `configs/` the YAML device presets consumed by both CLI and UI, `tests/` the pytest suite, and `notebooks/` exploratory benchmarks.
 
 Every layer talks to the next one through `DeviceStack` + `MaterialParams` (immutable frozen dataclasses); there is no shared mutable state.
 
@@ -47,6 +39,15 @@ The frontend expects the backend at `http://127.0.0.1:8000` (see `frontend/src/a
 
 ## Simulator Architecture (`perovskite_sim/`)
 
+**Evidence wording (2026-08-14 audit).** SCAPS, IonMonger, and Driftfusion
+agreements that use fitted contact potentials, de-spike factors, interface
+calibration factors, or other disclosed scaffolds are calibrated reproduction
+or trend-aligned regression anchors. Historical phrases such as "matched by
+physics", "root cause of the gap", or "reproduced" in the notes below do not
+promote those lanes to independent no-fit validation. Internal numerical
+certification, external-solver validation, and experimental validation remain
+separate evidence levels.
+
 **Core method.** Method of Lines: Scharfetter–Gummel finite elements on a tanh-clustered multilayer grid for space; `scipy.integrate.solve_ivp(Radau)` for time. Poisson is a tridiagonal solve with harmonic-mean face permittivity, evaluated once per RHS call (no inner Newton loop). State vector is `y = (n, p, P)` per grid node.
 
 **MaterialArrays cache (hot path).** `solver/mol.py:build_material_arrays(x, stack)` returns an immutable `MaterialArrays` bundle holding every per-node / per-face array the RHS needs (`D_n_face`, `D_p_face`, `eps_r`, `N_A`, `N_D`, `P_ion0`, interface masks, boundary concentrations) plus a pre-factored Poisson operator. Every experiment builds this once per run and threads it through `assemble_rhs`, `run_transient`, `split_step`, `_compute_current`, and `_integrate_step` via the `mat=` kwarg. Rebuilding it per RHS call was the dominant cost before the cache landed — do not reintroduce a code path that calls `build_material_arrays` inside the inner loop. Degradation is the one exception: it rebuilds `mat` only when the absorber-damage state actually changes (`mat_active` in `run_degradation`).
@@ -59,17 +60,15 @@ The frontend expects the backend at `http://127.0.0.1:8000` (see `frontend/src/a
 
 **Finite-rate outer contacts (renamed contract 2026-08-11; historical flag `DeviceStack.flat_band_contacts`, default OFF).** The flag now has one physical responsibility: it activates the Phase-3.3 Robin carrier path on all four carrier/side channels **regardless of tier** (`S = 1e5 m/s` unless explicit `S_*` fields are set), referenced to the doping-derived contact equilibria. With an explicit `built_in_potential_mode`, it does **not** select the Poisson contact potential. All electrostatic consumers read the independently resolved signed `MaterialArrays.V_bi_bc`; 2D extrudes that same value and `junction_polarity`. The only retained coupling is the compatibility sentinel (`built_in_potential_mode is None`): an old YAML with `V_bi` and `flat_band_contacts: true` continues to use historical `compute_V_bi()` so shipped baselines do not move. Tests: `tests/unit/solver/test_flat_band_contacts.py`, `tests/unit/models/test_built_in_potential_modes.py`. **Robin contacts + the density steady-state driver remain incompatible in the diagnosed near-insulating-contact spike (2026-06-22; won't-fix without the QF engine).** Newton stalls around residual 2.6e3 and its certified transient fallback can diverge to non-finite carrier/potential values even with ions frozen; changing the grid, seed, or ion state did not repair it. Do not reintroduce the old electrostatic coupling as a workaround or retry this as a tolerance fix.
 
-**Two-sided interface capture (2026-06, `DeviceStack.interface_two_sided`, default OFF, env `SOLARLAB_IFACE_TWOSIDED=1`) — experimental, measured no-op.** Adds the mirror cross-carrier pair (electrons from the left slab × holes from the right slab, detailed-balance reference `n_L_eq·p_R_eq` from the Phase-E3 caches, densities floored at zero — unfloored minority overshoots at heterojunction nodes destabilise Radau) to `_apply_interface_recombination`, approximating SCAPS's two-sided trap coupling as a SUM of one-sided rates. **Measured on scaps_mirror_v2 with `dos_band_potentials`: zero effect — every sweep range and the base point are bit-level unchanged across the full 10-sweep regression** (the mirror pair is minority-limited, ~µA/m² at every probed operating point). Falsifies the sum-of-pairs hypothesis for the SolarLab-vs-SCAPS interface residual: the difference lives in the SHARED trap occupancy (one occupancy balancing all four capture rates) and/or per-side n1/p1 referenced to each layer's own bands — implement that next, do NOT re-try additive mirror channels. Tests: `tests/unit/solver/test_interface_two_sided.py`.
+**Interface-formulation campaign — four FALSIFIED attempts, one net-positive. Full measured evidence: `.claude/skills/scaps-interface-formulations/SKILL.md` — read it before re-attempting any of these or proposing a new interface formulation.**
 
-**Shared-occupancy interface recombination (2026-06, `DeviceStack.interface_shared_occupancy`, default OFF, env `SOLARLAB_IFACE_SHARED_OCC=1`) — experimental, FALSIFIED for SCAPS parity.** Replaces the one-sided cross-pair rate at defect interfaces with the coupled single-occupancy closed form: `R = (nΣ·pΣ − refΣ)/((nΣ+n1Σ)/v_p + (pΣ+p1Σ)/v_n)` with both layers feeding one trap level, per-side n1/p1 referenced to each side's own band edge + effective DOS (`depth_i = E_t + (χ_ref − χ_i)`, cached as `MaterialArrays.interface_n1_L/p1_L/n1_R/p1_R`), densities floored at zero, and the discrete-equilibrium-consistent numerator reference. Converges cleanly (8 tests). **Measured with `dos_band_potentials` on the full 10-sweep regression: base bit-identical, every sweep unchanged EXCEPT the CBO trend, which COLLAPSES 734→203 mV (80%→22%)** — as the swept ETL conduction band approaches the trap, the per-side emission term `n1_R = N_C·exp(−depth_R/V_T)` explodes and suppresses the cliff response that SCAPS still shows. Together with the two-sided no-op this falsifies the whole class of *algebraic occupancy reformulations on bulk-node samples*: SCAPS's interface responses require the TE-coupled interface-plane carrier magnitudes (pileup), i.e. the dormant interface-plane-state machinery, not a different rate formula. Do NOT enable this flag for parity work; do NOT re-try occupancy algebra on bulk-node densities. The same probe lineage also pre-falsified **Gaussian E_t integration** (2026-06): at the V_oc operating point the sampled bulk-node densities (n 1.3e24, p 2.5e22 m^-3 at PVK/ETL) exceed n1/p1 by 6-13 orders across the whole swept E_t range 0.4-0.8 eV, so the SRH rate is flat in E_t to 4 decimals whether single-level or Gauss-Hermite-integrated — trap-level algebra of ANY kind is invisible under bulk-node sampling. Tests: `tests/unit/solver/test_interface_shared_occupancy.py`.
-
-**QSS interface-plane closure (2026-06, `DeviceStack.interface_plane_closure`, default OFF, env `SOLARLAB_IFACE_PLANE=1`) — the first net-positive interface formulation (5th attempt).** Evaluates defect-interface recombination on TRUE plane densities `(n_s, p_s)` solved per RHS call from a local implicit 2×2 flux balance (`physics/interface_plane.py:solve_plane_densities`, damped log-space Newton, fail-bounded): `S·(supply − 2n_s) = R(n_s,p_s)` with `S = v_th/4`, supplies = adjacent node densities φ-projected to the plane and Boltzmann-penalised onto the FAVOURABLE band edges (electron: lower E_C; hole: higher E_V → the plane gap is the reduced interface gap `Eg_s`, carrying the SCAPS cliff mechanism `V_oc ≈ (Eg − |ΔE_C|)/q − 0.20`). Detailed balance is analytic (SG zero-flux ⇒ exact Boltzmann node ratios ⇒ `n_s·p_s = ni_s² = N_C·N_V·e^(−Eg_s/V_T)` at eq). The trap level is **clamped to the plane gap** (`depth = clip(E_t − (χ_s − χ_ref), 0, Eg_s)`) — without the clamp a deep cliff puts the trap above the plane E_C, `n1_s` explodes, and the CBO arm collapses 734→284 mV (measured, diagnosed at ΔE_C=−1.0: R 8 orders low). Activation requires the parity configuration (`dos_band_potentials` + reference DOS); takes precedence over all other interface formulations; constants cached as `MaterialArrays.interface_plane_prm` from the POST-fold chi/Eg arrays. **Measured (full 10-sweep, DOS+closure): HTL/PVK N_t UNLOCKED 0→3.6 mV (70% of SCAPS, PARTIAL — flat under every bulk-node formulation incl. six SRV decades), CBO 77% (verdict preserved), PVK/ETL N_t 45% (preserved), base ≈unchanged, six sweeps byte-stable.** Costs: CBO −3pp, PVK/ETL N_t −8pp closure. Still open on this platform: Nd_ETL, PVK/ETL E_t, bulk-CB magnitude. Tests: `tests/unit/solver/test_interface_plane_closure.py`.
+- `interface_two_sided` (default OFF) — measured **exact no-op** on every sweep. Do NOT re-try additive mirror channels.
+- `interface_shared_occupancy` (default OFF) — **FALSIFIED**: collapses the CBO trend 734→203 mV. Do NOT re-try occupancy algebra on bulk-node densities; Gaussian E_t integration is pre-falsified by the same probe lineage (bulk-node sampling is E_t-blind by 6–13 orders).
+- `interface_plane_closure` (default OFF, env `SOLARLAB_IFACE_PLANE=1`) — the first net-positive formulation (true plane densities from a per-RHS 2×2 flux balance, `physics/interface_plane.py`). Requires the parity configuration (`dos_band_potentials` + reference DOS) and takes precedence over all other interface formulations. The trap-level clamp to the plane gap is load-bearing — without it the CBO arm collapses 734→284 mV.
+- SS interface-plane carrier states (`iface_states=True`, calibrated per interface via `InterfaceDefect.iface_state_calibration_factor`) — first formulation to flip the ETL-doping direction. Calibrated HTL/PVK 0.02, PVK/ETL 0.10 on `scaps_mirror_v2`. The residual sweep-magnitude errors are **STRUCTURAL, not a further-tuning target**; three independent falsifications say no density-product rate algebra fixes E_t in this regime.
+- `het_recomb_despike` (default 0.0 = OFF; `0.53` on `scaps_mirror_v2`) — the base V_oc gap is bulk **Auger** over-counting a band-offset hole spike, NOT interface recombination.
 
 **Direct steady-state driver (2026-06, `experiments/steady_state.py`) — second structural piece of the parity architecture.** SCAPS is an ion-free steady-state solver, so parity quantities are defined at the ion-free steady state; this driver solves `F(y)=0` on the SAME `assemble_rhs` the transient integrates (one physics, two drivers; ions byte-frozen from the seed). `solve_steady_state` (damped log-space Newton, FD Jacobian, peak-density residual scaling — density-relative rates floor at cancellation noise ~1e6 1/s at dark depletion nodes — dual convergence criteria + J-error-bounded stall acceptance), `run_jv_sweep_ss` (voltage continuation), `solve_voc_ss` (direct J=0 bisection, no grid artifact). Where Newton cannot finish (the V*≈0.858 interface-switch region and the V_oc knee), a **certified transient point-fallback** computes the point (escalating 6.4–100 ms Radau settles, max_step-capped, residual-guarded against the measured chattering attractor at res≈14); clean fallback states keep the continuation un-poisoned. The TE cap gets a **smooth magnitude-min blend** via `MaterialArrays.te_softness` (default 0.0 = bit-identical hard cap; the SS driver sets 0.02 on its own mats only — transient experiments never see it). No silent fallback anywhere: non-convergence raises `SteadyStateError`. **Measured: SS J-V matches the frozen-ion transient within 5 mV V_oc / 1% J_sc; direct V_oc within 2 mV of the sweep.** **Modified-Newton Jacobian/LU reuse (2026-06):** the dominant cost is the dense FD Jacobian (~n_unk full `assemble_rhs` evals per iteration); the Newton loop now reuses the cached `scipy.linalg.lu_factor` across **chord** iterations, rebuilding only on the first iteration, a stale-factor line-search rejection (rebuild + retry before declaring a stall), or heavy backtracking (`lam<0.5`). A freshly built+solved step is **bit-identical** to the original full-Newton `np.linalg.solve` path (the `lu_factor` is just additionally cached); only reused iterations differ, and they converge to the same residual tol — **measured V_oc identical to 5 decimals, ~1.4× faster on warm-started solves** (the bigger SS-harness speedup is the calibrated config being far better-conditioned: a Nd_ETL=1e15 point that took ~705 s uncalibrated solves in ~3 s). Kill-switch env `SOLARLAB_SS_JAC_REUSE=0` forces a fresh Jacobian every iteration (legacy path). **`run_jv_sweep_ss(stop_after_voc=True)` (2026-06, default False = legacy full-`V_max` sweep):** stops the continuation the moment J crosses zero (V_oc bracketed). Continuing past V_oc into deep forward injection (V ≫ V_oc) reaches non-convergent points whose certified transient fallback grinds for minutes — the diagnosed cause of full-FOM SS-sweep hangs when a fixed `V_max` overshoots a sweep point's V_oc (e.g. `V_max=1.35` on a point with V_oc≈1.0). The 0→V_oc arc fully determines V_oc/J_sc/FF/PCE, so for figure/FOM sweeps either set `stop_after_voc=True` (robust at any `V_max`) or bound `V_max ≈ V_oc + margin` — both make full-FOM SS fast (~1-5 s/point) and complete. The interior knee (V*≈0.858) is NOT the bottleneck — it solves in <0.1 s; only V ≫ V_oc grinds. Known limit (documented engine boundary): two deep-tail regimes fail honestly and a Gummel fallback does **not** help. (a) Near-insulating contacts (Nd_ETL ≤ 1e10) find no J=0 crossing below 1.6 V — a physics absence, not a solver miss (the transient agrees; xfail'd gate carries the diagnosis). (b) Deep CBO (ΔE_C ≤ −0.2) is pathological for **any** algebraic Newton: measured at ΔE_C=−1.0, V=0.3 (peak-relative residual, tol 1e-6) the **coupled Newton best 4.2e4 and raises cleanly in 0.6 s**, decoupled Gummel 1e9, **Anderson 3e9**, **PTC (pseudo-transient continuation) 2e8–2e9** — four Newton-family methods, all 10–15 orders above tol; only a long transient damps the stiff modes (plain iface-stripped settle reaches res ~1e-2 in 0.6 s). CBO is a band-offset effect (SS ≈ transient), interface states inactive in the collapsed regime. **The CHI_ETL validation figure now shows the full-range SS curve**: genuine SS-Newton over the flat-band arm (filled) + the SS driver's certified transient fallback over deep-CBO (hollow, = the f=0.53 transient). The dormant `_gummel_point` scaffold + `phi_frozen` seam stay in-tree (env `SOLARLAB_SS_GUMMEL`, bit-identical); **the Gummel/M4 leg is closed won't-fix** (verdict + table: `docs/superpowers/specs/2026-06-22-gummel-ss-solver-scope.md` §0). Tests: `tests/unit/experiments/test_steady_state.py`.
-
-**Interface-plane carrier states in the SS Newton (2026-06, P1 of scaps_mode) — first formulation to flip the ETL-doping direction.** The dormant Phase-E3 state block (4 plane densities per interface, TE-coupled, two-sided P-V recombination — parked because full thermal velocity made the Radau ODE block too stiff) becomes feasible as ALGEBRAIC unknowns in the steady-state Newton: `solve_steady_state/run_jv_sweep_ss/solve_voc_ss(iface_states=True)` extends the unknown vector with the trailing block (`_enable_iface_states`: `N_iface_state` + `MaterialArrays.iface_state_v_th = 1e5` full thermal velocity + `iface_state_live_proj=True`), converging in 2-7 iterations where Radau diverged. **Critical fix (measured)**: the E3 fill-fluxes project state targets from EQUILIBRIUM-cache densities (`interface_n/p_X_eq` × V-partition) — under illumination this pins the plane states at equilibrium scale (ETL-side eq holes ~1e-4 m^-3 vs 1e22 live; state-SRH ~1e-15 A/m^2; V_oc insensitive to EVERY interface parameter, all sweeps identical to 4 decimals). `compute_interface_te_fluxes_live` (physics/interface_plane.py) replaces the targets with LIVE adjacent-node densities phi-projected to the plane (the QSS-closure supply construction); `assemble_rhs` dispatches on `mat.iface_state_live_proj`. **Measured (v2+DOS, frozen ions, direct V_oc)**: Nd_ETL 1e13→1e17 flips to +101 mV RISING (SCAPS +48; flat/falling under every prior formulation — the campaign's longest-standing DIR MISMATCH); PVK/ETL N_t closure 149→182 mV (53→64% of SCAPS 282); base V_oc 1.106 (channel ~60 mV too strong — calibration scope); PVK/ETL E_t still flat (the state-SRH pairs majority-side densities n_1s·p_2s, so trap levels never compete — the E_t mechanism needs minority-side pairing/occupancy on the states — TESTED AND FALSIFIED, see below). **Shared-occupancy-on-states (`MaterialArrays.iface_state_shared_occ`, set by the SS driver): measured no-op** — every gate identical to the cross-pair form to 4 decimals. The arithmetic closes the question: at the live-projected states one side dominates each carrier sum (nS≈n_1s~1e24, pS≈p_2s~1e22), so the shared-occupancy closed form reduces exactly to the dominant cross-pair, and trap levels (1e13-1e18) stay invisible under both. THIRD independent falsification of "rate algebra fixes E_t" (bulk densities, cross-pairs on states, shared occupancy on states — same root each time: any density-product formula on QFL-consistent interface densities is E_t-blind in this regime). **Trapped-charge electrostatics (`MaterialArrays.iface_state_charge`, built then FALSIFIED for E_t, default 0.0/off, code kept):** occupancy-derived q·N_t·(f−f_eq) at the interface node's rho. Two findings: (1) the f_eq gauge MUST match the live-state gauge — the E3 partition projections explode their accumulation factors to ~1e33, forcing f_eq=1 and a full-sheet artifact charge (measured −1.6e-3 C/m² at every bias, J reversed); fixed with plain bulk-eq sums. (2) With the gauge fixed, the acceptor charge INVERTS the E_t shape and donor diverges — while **charge=0 already reproduces SCAPS's E_t shape**: the E_t mechanism is pure state recombination (shallow-trap deactivation by re-emission, n1 competing with the state densities), and every earlier "E_t dead" verdict was a probe-region artifact (measured at E_t 0.4-0.8 where SCAPS is ALSO flat — its entire 35 mV lives at 0.01-0.2). **Resolved E_t verdict (states, charge off): monotonic falling ✓, 18.4 mV range (53% of SCAPS 34.5), knee shifted deeper.** Also falsified: V-partition×live merge for the state targets (`iface_state_partition`, kept off) — the full partition double-counts grid-resolved bending, diverges at V=0. P1 standing (N=30, charge off): ALL interface trends directionally correct (E_t shape ✓ first time); magnitudes E_t 53% / N_t 64% / Nd 2.1x over / base −61 mV = the remaining calibration surface. **RESOLVED 2026-06 — SS interface-channel calibration (`InterfaceDefect.iface_state_calibration_factor`, per-interface, default 1.0).** The over-strong interface-plane channel is attenuated by a per-interface scalar that multiplies (v_n, v_p) for the state-SRH rate ONLY: `_enable_iface_states` folds `MaterialArrays.iface_state_calibration` into `interface_calibration_factor` on the SS mat, so `compute_interface_srh_on_state` (the only consumer active when `iface_states` is on) sees it while the transient bulk-node path is untouched (verified Δ0.0 mV; default 1.0 = bit-identical). R is homogeneous degree-1 in (v_n,v_p), so the scalar is an exact linear rate knob. Calibrated on `scaps_mirror_v2`: **HTL/PVK 0.02, PVK/ETL 0.10 → base 1.1675 (−0.1 mV, was −61), HTL/PVK N_t 1.0x (was 12x over); all interface directions match incl. Nd_ETL flat→rising.** R is homogeneous degree-1 in (v_n,v_p), so the scalar is a pure **rate knob**: it sets the absolutes/base, NOT the sweep amplitudes. **Therefore the residual MAGNITUDE errors are STRUCTURAL, not a further-tuning target** (verified 2026-06-22): the Nd_ETL V_oc range is cf-insensitive AND window-sensitive — measured 52% closure over N_D=1e13–1e18 vs the figure's 189% over the wider SCAPS doping window, i.e. NOT pinned (the earlier "Nd_ETL 0.84×" claim was a mis-statement — three artifacts gave 52/115/189%, all window-dependent); PVK/ETL N_t holds 63%. Reaching those magnitudes needs a change to the interface-state RESPONSE MODEL, not the scalar. Tests: `tests/unit/solver/test_iface_state_calibration.py`. Defaults (`N_iface_state=0`, both formulation flags False) leave transient + bulk-sampled paths bit-identical. **Campaign capstone (2026-06-23; report since removed from docs/reference):** the honest parity verdict + canonical SCAPS-comparison config (`scaps_mirror_v2` + `dos_band_potentials` + `het_recomb_despike: 0.53` + SS `iface_states=True`): directions 11/11 and base matched **by physics**; sweep magnitudes a documented STRUCTURAL boundary (root = the doping-swung V_bi contact BC vs SCAPS's fixed-work-function flat-band contacts, + a bulk-Auger V_oc floor — closing it needs a quasi-Fermi contact engine, the abandoned `scaps_engine` territory); deep-CBO cliff + the +0.5 eV spike are separate documented engine boundaries. SCAPS parity is at its physics-bounded plateau — the recommended next phase is the dynamics SCAPS cannot model (hysteresis/impedance/degradation/TPV) and 2D/tandem/design studies.
-
-**Heterointerface bulk-recombination de-spike (2026-06, `DeviceStack.het_recomb_despike`, default 0.0 = OFF/bit-identical) — RESOLVES the base-absolute V_oc gap (Auger, not interface recombination).** The campaign attributed the −47 mV SolarLab-vs-SCAPS base V_oc gap to interface recombination for months; it is actually **bulk Auger over-counting a band-offset hole spike**. At HTL/PVK the 0.18 eV VB offset produces a Boltzmann hole spike `exp(0.18/kT)≈1000×` on the single junction NODE (measured p[idx]/p[idx−1]=996-1048×); since Auger ∝ p²·n, that one node dominates the absorber's Auger loss — and the SAME interface loss is also counted by the interface SRH channel (a partial double-count, amplified ~4× by the correct effective-DOS fold which SCAPS lacks). Recomb breakdown at the operating point: Auger 105 A/m² DOMINATES, interface 26, bulk-SRH 0.07. Transient Auger-off lifts base +79 mV (1.121→1.199), SCAPS 1.168 sits between → SolarLab's lower base is arguably MORE faithful (DOS-fold present). The flag blends the heterointerface-node density toward the geometric mean of neighbours by fraction `f` in the BULK recombination rate ONLY (transport/SG flux untouched, so the spike still drives current correctly); `f=0` keeps the spike, `f=1` removes it. Calibrated `f=0.53` lands base at SCAPS 1.168 EXACTLY and — because the over-counted Auger was also compressing every sweep's dynamic range — IMPROVES the trends: CBO 80→85%, bulk-N_t-CB 11→69%, interface-N_t 53→72%, E_t-PVK/ETL 6→23%. Set on `configs/scaps_mirror_v2.yaml` (the parity config); falsified non-fixes en route: Blakemore FD-cap +5 mV (degeneracy mild), accumulation-width weight +0 mV (Debye≈cell at N=30), full de-spike +84 mV (overshoots, removes physical accumulation). Tests: standard-path regression. Root-cause chain in `project_scaps_root_cause_reanalysis` memory.
 
 **Built-in-potential source contract (2026-08-11).** New configurations select one of three explicit modes. `semiconductor_work_function` evaluates each outer electrical layer at its physical contact face using positive `chi`, `Eg`, `Nc300`, `Nv300`, charge-neutrality doping, active-tier temperature/DOS scaling, optional Varshni shift, and enabled grading; it fails closed if those inputs are missing. `metal_work_function` requires positive `work_function_left_eV` and `work_function_right_eV`. Both return the signed contact potential `φ(right)-φ(left) = W_left-W_right`. `legacy_manual` consumes the positive `V_bi_override` magnitude and takes orientation from the historical endpoint estimate. `built_in_potential_mode=None` is not a public fourth mode: it is the old-YAML compatibility sentinel, preserving manual `V_bi` and the former `flat_band_contacts -> compute_V_bi()` implication. The deprecated `compute_V_bi()` implementation remains unchanged for that compatibility path; the strict DOS/T implementation is `compute_semiconductor_V_bi()`. `poisson_built_in_potential()` feeds `MaterialArrays.V_bi_bc`; `operating_built_in_potential()` feeds J-V/degradation/TPV/Suns-Voc defaults and preserves the historical `V_bi_eff` only for compatibility stacks. `junction_polarity` maps positive `V_app` to a reduction in `|V_bi_bc|` for either orientation and must not be removed or wrapped into an unconditional `abs()`. The 2D material builder reuses the resolved 1D value and polarity. `config_loader.built_in_potential_fields_from_device_dict` is shared by file, SCAPS-shape, and inline backend loading; `_stack_to_config_dict` and the frontend editor preserve an old payload until the user deliberately changes its selector. Tests: `tests/unit/models/test_built_in_potential_modes.py`, `tests/unit/backend/test_built_in_potential_config.py`, `frontend/src/config-editor-built-in-potential.test.ts`. The existing CIGS and c-Si orientation/grid evidence remains qualified exactly as before; external validation is still separate.
 
@@ -187,24 +186,7 @@ Three small behavioral corrections from the external manual review (tests: `test
 
 Deliberately NOT changed (documented formulation limitations in the manual, Ch17): the full-flux per-species steric factor (F05) — calibrated-result-shifting, needs a re-baselining campaign before revision.
 
-- **F02 physical TE normalization — IMPLEMENTED opt-in, `te_physical_norm: bool = False`, and STAYING that way (four flip attempts, all reverted; the pattern is recorded at the end of this bullet — read it before attempting a fifth).** The legacy TE cap `thermionic_emission_flux = A*T²·(n_L·e^()−n_R·e^())` is dimensionally A/m⁵ (density-weighted), so **its threshold is tied to the unit system rather than to the interface** — re-expressing densities in cm⁻³ moves the bound by 10⁶. It was also MEASURED near-inert: on ionmonger `|J_TE|` median 9e28 / max 3e35 ≫ any physical current, so the `min(|J_SG|,|J_TE|)` cap almost never bound. `DeviceStack.te_physical_norm` (env `SOLARLAB_TE_PHYSICAL=1`, forced off in LEGACY) divides the TE flux by the band-edge DOS at each capped face (`N_dos` param on the primitive; geometric-mean of the two face nodes so both legs scale equally → equilibrium J=0 preserved exactly), giving the dimensionally-correct emission-velocity current `J = q·v_R·(...)`, `v_R = A*T²/(q·N_C)`. Per-node `N_C_node`/`N_V_node` from Nc300/Nv300; NaN (no DOS) → that face keeps legacy form → **ionmonger + all DOS-free configs bit-identical either way** (pinned by `tests/unit/physics/test_te_physical_norm.py`, which also pins that the emission-velocity form is invariant under a density-unit change while the legacy bound scales linearly with it).
-
-  **PATH SCOPE (critical):** the flag ONLY affects the bulk-node continuity TE cap (`carrier_continuity_rhs`), used on TRANSIENT + SS-**no**-iface_states paths. It is **INERT on the SCAPS-parity path** (SS + `iface_states=True`, which uses the interface-plane states' own `compute_interface_te_fluxes`), so the flip needed no parity re-calibration.
-
-  **FOUR FLIP ATTEMPTS, FOUR DISTINCT FAILURES (d0b5267 — the pattern is the finding, not any single reason).** Each individual blocker below has already been superseded once, so do not cite one in isolation:
-
-  1. *V_oc above the detailed-balance ceiling* (+314.5 mV, 1.4829 on a 1.55 eV gap) — **two cap defects, both fixed**: the cap returned `J_TE` complete with its own sign, so a sign disagreement REVERSED the flux instead of limiting it (3ad3760); and the barrier came from the DOS-folded transport potentials rather than the physical band edges, +0.097 vs +0.180 eV (5e15a26).
-  2. *Divergence to non-finite on a near-insulating contact* — **fixed**: `A*` and `N_C` did not share an effective mass, so `v_R` was a ratio of unrelated constants, measured 4.63× / 0.54× / 2.17× adrift on the HTL / absorber / ETL of the SCAPS mirror stack, in DIFFERENT directions per layer (4cdb96f; `physics/thermionic_constants.py` now derives `A*` from the layer's own DOS, giving the exact identity `v_R = A*T²/(qN) = sqrt(k_BT / 2π m*)`).
-  3. *Fine-mesh cost cliff* — 1.21 s vs >200 s for an illuminated settle at `N_grid=90` — **a PROTOCOL artefact, not a cost**: splitting the same 0 → 0.9 V rise into three warm-started steps gives 2.92 s vs 2.54 s, i.e. the normalized bound is FASTER, and production sweeps step.
-  4. *Divergence in deep forward injection* — `V_max` 1.5 and 2.1 agree **exactly** between the two forms (V_oc = 1.42500 V); `V_max` 3.0 completes with the superseded bound and fails to a non-finite solve with the normalized one. **Open.**
-
-  **Why every characterisation kept missing it — the reusable lesson.** Each attempt was preceded by a characterisation reporting "no change", and each was broken by a regime that characterisation had not covered. That is *not* four instances of measuring too little. The superseded bound is ~1e28–1e35 and therefore almost never binds, so **ANY measurement that does not place the cap in a binding regime reports no change** — and the binding regimes are scattered (near-insulating contacts, cold starts at large bias, fine meshes, deep injection) rather than forming a region that can be enumerated in advance. Where the solve completes the two forms agree, often to all printed digits; the fragility is in the coupled solve, not the physics.
-
-  **So promoting this is a solver-robustness task** — conditioning of the capped face under strong binding — **not another round of measurement.** A fifth attempt that leads with more characterisation will reproduce the pattern.
-
-  **Kept because they are correct independently of the default:** the cap sign contract, the physical barrier, and the DOS-derived Richardson constants. **Also reverted with the flip:** the three-step ramp in `test_interface_flux_balance.py` — the more representative protocol, and it does remove failure 3, but it costs 253 s against 54 s with the flag off, which buys nothing at the current default.
-
-  **Caveat if it is ever promoted (2026-07-29 review):** because `A*` is derived from the config's DOS, a config whose `Nc300`/`Nv300` come from a fitted parameter set rather than a real effective mass propagates that into `v_R`. The SCAPS mirror stack implies `m* = 4.63 mₑ` (HTL) / 0.542 (absorber) / 2.166 (ETL) against a physical band-edge range of roughly 0.05–3, so the HTL emission velocity is ~2.9× smaller than a physical mass would give. The derivation is self-consistent; the input is not necessarily physical. 1D-scoped (2D `continuity_2d.py` keeps the legacy form).
+- **F02 physical TE normalization — IMPLEMENTED opt-in, `te_physical_norm: bool = False`, and STAYING that way.** The legacy TE cap is density-weighted (dimensionally A/m⁵, so its threshold is tied to the unit system) and measured near-inert; the normalized emission-velocity form is dimensionally correct, and DOS-free configs are bit-identical either way. **Four default-flip attempts each broke in a different regime** — the surviving blocker is a non-finite solve in deep forward injection at `V_max` 3.0. **Promotion is a solver-conditioning problem, not a measurement problem: a fifth attempt that leads with more characterisation will reproduce the pattern.** The cap sign contract, the physical barrier, and the DOS-derived Richardson constants are kept because they are correct independently of the default. Full four-attempt record, the reusable lesson on why every characterisation missed it, and the effective-mass caveat: `.claude/skills/te-physical-norm-history/SKILL.md`. Tests: `tests/unit/physics/test_te_physical_norm.py`.
 
 - **F05 physical steric flux — DEFAULT SINCE commit 7cc5ea2** (implemented opt-in 2026-07-23, promoted after the high-θ campaign; this bullet's original "default OFF" text described the pre-flip state and the polarity below was backwards in it). **`DeviceStack.ion_steric_diffusion_only` is now `True`; LEGACY tier still forces the legacy whole-flux form, so IonMonger reproduction is untouched.** What the campaign found: the legacy factor `s = 1/(1−θ)` multiplies **drift** as well as diffusion, so filling the lattice *accelerates* ion transport instead of impeding it. Sweeping θ₀ = P₀/P_lim on ionmonger_benchmark (full J-V per point):
 
@@ -394,7 +376,13 @@ The frontend does not flag the difference: `config-editor.ts:328` (and `:676` on
 
 So the defect carries ~95 % of the effect. Do not compensate for a missing defect by inflating the bare SRV — it is a different, much weaker channel, and matching a number that way fabricates the agreement.
 
-**3. 2D CANNOT USE THIS CHANNEL AT ALL — a solver gap, not a config choice (found 2026-07-29).** `twod/solver_2d.py:assemble_rhs_2d` computes recombination with `total_recombination(...)` only: bulk SRH + radiative + Auger. **None** of the 1D interface machinery (`stack.interfaces` SRVs, `InterfaceDefect`, the QSS interface-plane closure, the SS interface-plane states) reaches the 2D solver, **including on vertical interfaces** — declaring the block does not help, because nothing consumes it. Consequences: any 2D result on a config that declares `device.interfaces` is silently missing the channel, and since that set includes all four `scaps_mirror*` presets (the 1D calibration baselines), **1D↔2D quantitative comparison on an interface-carrying config is not meaningful today**. The Stage-A validation gate cannot catch this because it runs on `nip_MAPbI3`, which declares no interfaces — so the gap is invisible to the suite as well. Closing it is a prerequisite for any 2D interface study; see `docs/superpowers/plans/2026-07-29-2d-lateral-heterogeneity.md` Task 6.
+**3. 2D HAS the channel but it is OFF BY DEFAULT — corrected 2026-09-02 (TWOD-E1); the 2026-07-29 text below it said "cannot use it at all", which is now false.** `twod/interface_recombination_2d.py` implements a two-sided cross-node interface SRH sheet, selected by `build_material_arrays_2d(..., interface_srh="two_sided_cross_node")` and applied in `assemble_rhs_2d`; it **imports `interface_recombination` from the 1D `physics/recombination.py`**, so there is one rate law and two assemblies of it. It has its own registered lane (`twod-mobile-ion-interface-srh-v1`) and four test files.
+
+What survives from the old warning is the **default**: `interface_srh` defaults to `"off"`, and the 2D builder accepts an interface-carrying stack without complaint, so a 2D run on a config that declares `device.interfaces` silently drops the channel. Measured at the interface node on a two-layer defect stack: `-4.49e24` (1D, and 2D with the channel on) versus `-5.0e-13` (2D default) — **24 orders of magnitude, silently**. The Stage-A gate cannot catch it because it runs on `nip_MAPbI3`, which declares no interfaces.
+
+**Where the channel IS enabled, 1D and 2D agree EXACTLY** — relative difference `0.0` across six decades of carrier density including deep depletion, pinned by `tests/regression/test_twod_interface_srh_parity.py`. That is safe because 2D **fails closed on every configuration where the two formulations would diverge**, rather than approximating: 2D floors both SRH pairs unconditionally while 1D clamps pair A only when the escape hatch is unset AND a defect is declared AND the rate is negative, so 2D refuses a defect-free interface ("requires an InterfaceDefect") and refuses `SOLARLAB_IFACE_ALLOW_GEN=1` ("interface-generation escape hatch"). It also requires `lateral_bc="neumann"`, which is why no existing periodic parity baseline can be reused for the comparison.
+
+Still genuinely absent from 2D: the QSS interface-plane closure and the SS interface-plane carrier states. See `docs/superpowers/plans/2026-07-29-2d-lateral-heterogeneity.md` Task 6.
 
 **Both schemas now share one parser (2026-07-26).** `config_loader.interfaces_from_device_dict(dev, n_layers)` is the single source of truth for `device.interfaces` (legacy `[v_n, v_p]` pairs, m/s) **and** `device.interface_defects` (SCAPS-style `{sigma_n_cm2, sigma_p_cm2, v_th_cm_s, N_t_cm2, E_t_eV_below_cb, calibration_factor?} | None` per slot, SRV derived as `sigma·v_th·N_t`). Both `load_device_from_yaml` and `backend/main.py:stack_from_dict` call it, so a plain YAML can now express a trap level and the UI and file paths cannot drift — they had drifted repeatedly before, which is the same reason `material_params_from_dict` is shared. Where both schemas fill a slot the defect wins and the legacy pair survives only on `None` slots; absent keys still return `((), ())`, so every config that does not opt in is byte-identical. Tests: `tests/unit/models/test_config_loader_interface_defects.py` (includes a YAML-vs-inline parity case).
 
@@ -412,12 +400,7 @@ That caveat is executable, not just prose: `tests/regression/test_interface_srv_
 
 ## Test Structure
 
-```
-tests/
-├── unit/          per-module physics + solver + experiments tests
-├── integration/   end-to-end experiment runs on preset configs
-└── regression/    physical sanity checks (V_oc range, J_sc bounds, ...)
-```
+`tests/unit/` holds per-module physics/solver/experiment tests, `tests/integration/` end-to-end runs on preset configs, and `tests/regression/` physical sanity checks (V_oc range, J_sc bounds, ...).
 
 `pytest` defaults (from `pyproject.toml`) exclude `-m slow`. Coverage is **opt-in** — pass `--cov=perovskite_sim --cov-report=term-missing` explicitly when you want a report. The regression suite is where to add new "result should look physically reasonable" checks.
 
@@ -476,166 +459,14 @@ cd frontend && npm ci && npx vitest run && npm run build   # 393 tests, tsc clea
 
 The permanent fix is Finder → *Always Keep on This Device* on the whole repo **including the hidden `.git`**, or moving the repo off OneDrive entirely.
 
-## Autoloop (Stage 1 — guardian)
+## Autoloop
 
-`perovskite_sim/autoloop/` is the deterministic spine of the continuous
-research-loop orchestrator (design: `docs/superpowers/specs/2026-06-16-autoloop-research-pipeline-design.md`).
-Stage 1 ships the guardian only — no agents, no auto-implementation.
-
-- `scorecard.py` scores SolarLab vs the SCAPS reference (`tests/integration/scaps_reference.json`)
-  by V_oc trend closure per sweep + base-point absolute deltas → `ParityScore`.
-- `ladder.py` runs L0 (pytest subset) → L1 (limiting cases) → L2 (scorecard), fail-fast.
-- `gates.py` G1–G3 are deterministic regression barriers; G0/G4/G5 are deferred
-  stubs (need a proposed flag-gated change + cognition, Stage 3) and raise if called.
-- `ledger.py` persists gap / hypothesis / negative-result ledgers under
-  `docs/autoloop/ledger/`; the negative-results ledger is seeded from known-refuted
-  approaches (`seeds.py`) so the loop never re-tries them.
-
-Run one guardian cycle (exits non-zero if the gate stack fails):
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --once
-
-Scoreable sweeps are the four with a SolarLab axis mapping (`scorecard.SHEET_TO_AXIS`);
-unmapped reference sheets are skipped and logged. Stages 2–4 (cognition attribution,
-auto-implement, continuous boulder) are not built yet.
-
-### Stage 2 — attribution leg (deterministic)
-
-`autoloop/ablation.py` + `autoloop/attribution.py` diagnose the top open gap
-(read-only). `run_ablation` toggles candidate `SOLARLAB_*` flags + a grid
-(n_points→80) + a dark-J probe through a `ProbeRunner` (real =
-`SubprocessProbeRunner` → `_probe_worker`, env-set fresh interpreter; fake for
-tests), recording a badness scalar (lower = closer to SCAPS). `HeuristicAttributor`
-classifies: grid-sensitive→numerics, flag-improves→physics, dark-J≠0→bug, else
-uncertain — with a negatives-guard (never confirms a refuted mechanism). Writes a
-`Hypothesis` to the ledger; the LLM adapter + multi-skeptic verify are deferred.
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --once        # populate the gap ledger
-    python scripts/autoloop_run.py --attribute   # diagnose the top open gap
-
-### Stage 3 — auto-implement leg (deterministic flag-promotion)
-
-`autoloop/promote.py` + `autoloop/gates_impl.py` turn a CONFIRMED Hypothesis into a
-config flag-promotion (set `device.<key>: true` in `configs/scaps_mirror_v2.yaml`)
-— the lever is an existing device flag, so no solver code changes and legacy tier
-forces it off (G0 holds by construction). `implement_top_confirmed` proposes →
-applies → runs the gate stack (G1–G3 reuse + G4 realized-reconciles-predicted +
-G0 regression-suite green; G5 deferred) → reverts (dry-run) or commits to the
-current branch (`--apply`, refuses main/dirty, never pushes). A failed gate reverts
-+ records a negative result (anti-thrash).
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --once          # populate gaps
-    python scripts/autoloop_run.py --attribute     # diagnose -> confirmed Hypothesis
-    python scripts/autoloop_run.py --implement     # dry-run: diff + gate verdicts
-    python scripts/autoloop_run.py --implement --apply   # commit to current branch
-
-### Stage 4a — boulder driver (continuous loop)
-
-`autoloop/orchestrator.run_boulder` chains guardian->attribute->implement.
-**Sweep** (default) drains current open gaps into a batch proposal report (dry-run,
-no commits), advancing via a new `attempted` gap status. **`--converge`** auto-applies
-each landable fix, re-senses the evolved config (guardian_once preserves
-attempted/refuted statuses so it terminates), and loops until parity-target / drained /
-max-cycles / reject-streak. Converge refuses to start on main/master and commits via
-Stage 3 commit_promotion on the current branch (never pushes).
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --boulder            # sweep: drain -> report, no commits
-    git checkout -b autoloop/$(date +%F)
-    python scripts/autoloop_run.py --boulder --converge --max-cycles 5   # auto-apply loop
-
-### Stage 4b — L3 real-lab-data ingest seam
-
-`autoloop/reference.py` makes ground truth pluggable: `build_reference_source(path)`
-returns a `ScapsReferenceSource` for a `scaps_reference.json`, or a
-`TieredReferenceSource` (LabReferenceSource base + SCAPS sweeps) for a reference
-**descriptor** `{"scaps": "...json", "lab": {"jv_csv": "...", "units", "sign", "aggregate"}}`.
-`LabReferenceSource` ingests measured J-V CSV(s) → base {Voc,Jsc,FF,PCE} via the
-simulator's own `compute_metrics` (skips V_oc-unbracketed devices; median/champion/mean
-aggregate). `scorecard` + `_probe_worker` read through the factory — guardian/ladder/
-boulder are untouched. To anchor absolutes to hardware, point `--reference` at a descriptor:
-
-    python scripts/autoloop_run.py --once --reference tests/integration/scaps_lab_tiered.json
-
-Default `--reference` stays scaps_reference.json (pure SCAPS, bit-identical). Real lab
-CSVs replace the synthetic `tests/integration/lab_data_example/*.csv` fixtures.
-
-### Stage 4c — L4 design-search (advisory)
-
-`autoloop/search.py` searches the device-design space (band offsets / doping /
-defects via `apply_sweep_point`) to maximize PCE, via a pluggable `Optimizer` seam
-(ships a no-dep seeded `RandomSearchOptimizer`; optuna/pymoo adapters plug in later).
-`run_design_search` REFUSES unless `score_parity().overall >= parity_target` (don't
-optimize an untrusted model), then reports the best design + top trials **advisorily**
-— nothing is applied to any config. Each design eval = a real J-V sweep, so use a
-modest `--budget`.
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --search --budget 50 --parity-target 0.9
-
-Note: the model's current parity (~0.69) is below 0.9, so search refuses by default
-until the boulder/converge loop improves parity — the correct trust coupling.
-
-### Stage 5.1 — LLM attributor (cognition leg 1)
-
-`autoloop/cognition.py` is the pluggable `CognitionRuntime` seam (`ClaudeCliRuntime`
-runs `claude -p --output-format json`, schema-validated, timeout + 1 retry; `FakeRuntime`
-for tests). `autoloop/llm_attribution.py:LLMAttributor` composes over `HeuristicAttributor`:
-the heuristic runs first, and the LLM is called ONLY on `uncertain` gaps to propose a
-NOVEL cause beyond the flag menu. The LLM result is ALWAYS `verdict="uncertain"` (a lead —
-confirmation is the deferred G5 / human review); any runtime failure degrades to the
-heuristic's uncertain (the LLM never confirms, never blocks the loop). Opt-in:
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --attribute --llm --llm-model sonnet
-    python scripts/autoloop_run.py --boulder --llm
-
-Default (no `--llm`) stays fully deterministic, no LLM, no cost. G5 multi-skeptic verify
-(5.2) and LLM codegen (5.3) are deferred behind this runtime seam.
-
-### Stage 5.2 — G5 multi-skeptic verify (cognition leg 2)
-
-`autoloop/verify.py:MultiSkepticVerifier` adjudicates an LLM novel-cause lead (5.1):
-N=3 diverse-lens skeptics (physical-plausibility / numerical-artifact / data-support),
-each prompted via the `CognitionRuntime` to REFUTE the mechanism (default refuted if no
-solid support). Strict majority of a quorum (≥2 skeptics that ran) decides: survives →
-`verdict="confirmed"` (now Stage-3-actionable); majority-refute → `verdict="refuted"` +
-`add_negative` (5.1's LLM never re-proposes it). An errored skeptic is EXCLUDED (never a
-false refute); below quorum the lead stays `uncertain` (re-verify later). Wired into
-`attribute_top_gap` (verifies LLM leads only — `cause != "uncertain"`) and fills the
-`gate_g5` stub via `gate_g5_verify`. Opt-in, with `--llm`:
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --attribute --llm --verify
-    python scripts/autoloop_run.py --boulder --llm --verify
-
-5.3 (LLM codegen) is the last deferred leg.
-
-### Stage 5.3 — LLM codegen for non-promotable levers (cognition leg 3, last)
-
-When G5 (5.2) confirms a cause whose mechanism has no existing promotable flag,
-`implement_top_confirmed` dead-ends at `not_promotable`. Stage 5.3 routes that gap
-to `orchestrator.codegen_top_not_promotable`: `autoloop/codegen.py:ClaudeCodegen`
-(over the 5.1 `CognitionRuntime`) writes ONLY the body of `adjust_material_arrays`
-into the sandboxed `autoloop/generated/lever.py`. A pre-wired, default-OFF flag
-(`autoloop_generated_lever` / env `SOLARLAB_AUTOLOOP_GEN`) gates a single hook at the
-end of `solver/mol.build_material_arrays` (import-inside-guard → with the flag off the
-generated module is never imported → structurally bit-identical). The codegen gate stack
-is G6 build (AST-validated body + fresh-subprocess import/compile + flag-OFF bit-identical
-via G0 + flag-ON parity sweep runs finite) → G2 limiting → G3 (flag-ON badness improves).
-On `--apply`, `commit_generated_lever` commits
-the lever to a **fresh `feat/autoloop-gen-<gapslug>` branch** off HEAD (refuses main/current,
-never pushes) and restores the identity body on the working branch; a human merges. Opt-in:
-
-    cd perovskite-sim
-    python scripts/autoloop_run.py --codegen --llm            # dry-run: candidate lever + gate report
-    python scripts/autoloop_run.py --codegen --llm --apply    # commit to a fresh feat/autoloop-gen-* branch
-
-Default OFF (no flag, no LLM, no cost). This is the last cognition leg — the full
-sense → attribute → verify → implement/codegen → land loop is now complete.
+`perovskite_sim/autoloop/` is the deterministic spine of the continuous research-loop orchestrator
+(design: `docs/superpowers/specs/2026-06-16-autoloop-research-pipeline-design.md`). The full
+stage-by-stage runbook — Stage 1 guardian, Stage 2 attribution, Stage 3 auto-implement, Stages
+4a/4b/4c drivers, and the Stage 5.1/5.2/5.3 cognition legs — lives in
+`.claude/skills/autoloop-pipeline/SKILL.md`. Read it before touching anything under
+`perovskite_sim/autoloop/` or running a cycle.
 
 ## P1 Reproducibility Corrections (2026-08-01)
 
