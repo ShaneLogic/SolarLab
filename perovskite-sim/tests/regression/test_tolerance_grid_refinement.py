@@ -870,6 +870,69 @@ def test_source_fingerprint_includes_staged_only_changes(tmp_path):
     ]
 
 
+def test_source_fingerprint_covers_the_scaps_reference_importers(tmp_path):
+    """D9.4a: the code that reads external reference data is hashed too.
+
+    The reproducibility payload hashes configs, raw exports, decks and
+    manifests. The importers that turn a SCAPS export into those artifacts
+    were the one link in that chain with no hash of their own, so an
+    UNCOMMITTED edit to one left the fingerprint — and therefore the run id —
+    unchanged, and a resumed lane would replay cached cells produced by a
+    different transform.
+
+    This pins WHICH transform ran. It closes no part of the external
+    validation gap, which needs a real SCAPS deck the repository does not have.
+    """
+    repository = tmp_path / "repository"
+    project = repository / "perovskite-sim"
+    importer = project / "scripts/import_scaps_defect_reference.py"
+    importer.parent.mkdir(parents=True)
+    importer.write_text("SCALE = 1.0\n", encoding="utf-8")
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "tests@example.invalid")
+    _git(repository, "config", "user.name", "SolarLab tests")
+    _git(repository, "add", "perovskite-sim/scripts/import_scaps_defect_reference.py")
+    _git(repository, "commit", "-m", "baseline")
+
+    clean = source_provenance(project)
+    # A unit change in an importer is exactly the silent-corruption case.
+    importer.write_text("SCALE = 100.0\n", encoding="utf-8")
+    edited = source_provenance(project)
+
+    assert edited["fingerprint_sha256"] != clean["fingerprint_sha256"]
+    assert edited["source_changes"] == [
+        {
+            "path": "scripts/import_scaps_defect_reference.py",
+            "sha256": hashlib.sha256(importer.read_bytes()).hexdigest(),
+        }
+    ]
+
+
+def test_source_fingerprint_ignores_scripts_that_cannot_affect_a_lane(tmp_path):
+    """The scope is deliberately narrow, so it stays meaningful.
+
+    Hashing all of `scripts/` would fork every run directory on an unrelated
+    plotting tweak, which trains readers to ignore fingerprint changes.
+    """
+    repository = tmp_path / "repository"
+    project = repository / "perovskite-sim"
+    plotter = project / "scripts/plot_band_diagram.py"
+    plotter.parent.mkdir(parents=True)
+    plotter.write_text("DPI = 100\n", encoding="utf-8")
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "tests@example.invalid")
+    _git(repository, "config", "user.name", "SolarLab tests")
+    _git(repository, "add", "perovskite-sim/scripts/plot_band_diagram.py")
+    _git(repository, "commit", "-m", "baseline")
+
+    clean = source_provenance(project)
+    plotter.write_text("DPI = 300\n", encoding="utf-8")
+
+    assert source_provenance(project)["fingerprint_sha256"] == clean[
+        "fingerprint_sha256"
+    ]
+
+
 def test_behavior_environment_changes_run_identity(tmp_path, monkeypatch):
     project = tmp_path / "project"
     project.mkdir()

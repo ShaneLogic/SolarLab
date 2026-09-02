@@ -214,7 +214,15 @@ def evaluate_tunnelling_channels(
             "quasi-Fermi levels must share the electrical grid"
         )
 
-    def _record(flux: ChannelFlux, face: int, carrier: str) -> None:
+    def _record(
+        flux: ChannelFlux, face: int, carrier: str, *, also_record: bool = True
+    ) -> None:
+        """Log one channel and add its charge to the carrier it moves.
+
+        ``also_record`` is False for band-to-band, which moves TWO carriers
+        from one event and adds the second leg at the call site; the
+        diagnostics stay one entry per channel either way.
+        """
         names.append(flux.channel)
         fluxes.append(flux.net_flux_m2_s)
         transmissions.append(flux.maximum_transmission)
@@ -242,7 +250,12 @@ def evaluate_tunnelling_channels(
             raise TunnellingChannelCapabilityError(
                 f"band-to-band channel cannot run on this structure: {exc}"
             ) from exc
-        _record(flux, face, "electron")
+        # A Zener transition takes one electron from the valence band to the
+        # conduction band, so it creates an electron AND a hole. Recording
+        # only the electron leg was a flat charge-conservation violation: the
+        # hole array was never touched by this channel.
+        _record(flux, face, "electron", also_record=False)
+        hole_current[face] += Q * flux.net_flux_m2_s
 
     if document.intraband.enabled:
         face = compiled.interface_faces[0]
@@ -340,8 +353,25 @@ def evaluate_tunnelling_channels(
                 if side == "left"
                 else compiled.right_contact_face
             )
+            # ONE energy frame for all three inputs. The barrier profile an
+            # electron sees at a Schottky contact is the conduction band
+            # itself, in the same absolute frame as the metal level and the
+            # quasi-Fermi profile.
+            #
+            # The previous form built `conduction - reference + phi_B`, a
+            # BARRIER-RELATIVE profile (values around +0.3), and compared its
+            # energies against an absolute `metal` (around -4.3) and an
+            # absolute quasi-Fermi profile. Measured, that mismatch moved the
+            # flux by ~47 orders of magnitude and made the channel a
+            # structural no-op in every configuration. It also meant
+            # `barrier_height_eV` shifted the whole profile by a constant,
+            # which cannot change a barrier's SHAPE and so never affected the
+            # WKB action at all.
+            #
+            # `barrier_height_eV` now does only its physical job: it places
+            # the metal Fermi level below the contact conduction edge.
             reference = float(conduction[0] if side == "left" else conduction[-1])
-            barrier = conduction - reference + document.contact.barrier_height_eV
+            barrier = conduction
             metal = reference - document.contact.barrier_height_eV
             # The semiconductor side is read at each energy's own turning
             # point inside contact_tunnelling_flux, so the whole profile goes

@@ -348,6 +348,19 @@ def source_provenance(project_root: Path) -> dict[str, Any]:
         "perovskite_sim",
         "scripts/run_numerical_refinement.py",
         "pyproject.toml",
+        # D9.4a: the SCAPS reference importers. A lane whose config or suite
+        # manifest was produced by one of these is only as reproducible as the
+        # transform that produced it, and an UNCOMMITTED edit to an importer
+        # would otherwise leave the fingerprint — and therefore the run id —
+        # unchanged. The reproducibility payload hashes configs, raw exports,
+        # decks and manifests; the code that reads them was the one artifact
+        # in that chain with no hash of its own.
+        #
+        # This pins WHICH transform ran, not that it is correct. It closes no
+        # part of the external-validation gap, which needs a real SCAPS deck.
+        "scripts/extract_scaps_reference.py",
+        "scripts/import_scaps_cbo_reference.py",
+        "scripts/import_scaps_defect_reference.py",
     )
     try:
         commit = _run_git(root, ["rev-parse", "HEAD"])

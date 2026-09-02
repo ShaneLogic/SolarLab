@@ -359,6 +359,65 @@ def test_every_diagnostic_tuple_has_one_entry_per_channel():
         assert len(field) == count
 
 
+def test_band_to_band_creates_both_carriers_not_just_the_electron():
+    """A Zener event moves one electron VB -> CB, so it makes a hole too.
+
+    The wiring recorded only the electron leg until D8-E4a — a flat
+    charge-conservation violation that no test could see, because the
+    diagnostics tuples (names, lengths) were perfectly correct while the hole
+    face-current array was never touched by this channel.
+    """
+    document = TunnellingChannelDocument(
+        band_to_band=BandToBandTunnellingChannel(
+            enabled=True, energy_quadrature_order=16
+        )
+    )
+    diagnostics = _solve(document).tunnelling_channel_diagnostics
+    electron = np.asarray(diagnostics.electron_face_current_A_m2)
+    hole = np.asarray(diagnostics.hole_face_current_A_m2)
+    net = diagnostics.channel_net_flux_m2_s[0]
+
+    # Both legs present, on exactly one face each.
+    assert np.count_nonzero(electron) == 1
+    assert np.count_nonzero(hole) == 1
+    # Equal and opposite, and each equal to its own carrier's charge times the
+    # single reported flux — one event, two carriers, one rate.
+    assert float(electron.sum()) == pytest.approx(-Q * net, rel=1.0e-12)
+    assert float(hole.sum()) == pytest.approx(Q * net, rel=1.0e-12)
+    assert float(electron.sum() + hole.sum()) == pytest.approx(0.0, abs=1.0e-30)
+    # Still ONE diagnostics entry: two carriers, one channel.
+    assert diagnostics.channel_names == ("band_to_band",)
+
+
+def test_the_contact_channel_needs_a_stack_that_has_a_contact_barrier():
+    """Recorded as a scope limit, because the failure mode is not obvious.
+
+    D8-E4a put the contact channel's three inputs into one energy frame (the
+    barrier profile was barrier-relative while the metal level and the
+    quasi-Fermi profile were absolute, which made the channel a structural
+    no-op). On a profile that actually has a Schottky barrier the corrected
+    channel behaves: the window height equals `barrier_height_eV` exactly and
+    the action is finite.
+
+    This test stack is a p-n junction with an interlayer spike and NO contact
+    barrier, so the one-sided window walks past the contact into the
+    device-wide band bending and the resulting magnitude breaks the solve. It
+    fails loudly rather than returning a number, which is the right behaviour
+    for a channel asked to run where its barrier does not exist — but the
+    diagnosis is worth pinning so the next reader does not chase the solver.
+    """
+    document = TunnellingChannelDocument(
+        contact=ContactTunnellingChannel(
+            enabled=True,
+            side="left",
+            barrier_height_eV=0.3,
+            energy_quadrature_order=16,
+        )
+    )
+    with pytest.raises((QuasiFermiSteadyStateError, TunnellingChannelCapabilityError)):
+        _solve(document)
+
+
 # --------------------------------------------------------------------------
 # Each channel switches independently at device level.
 # --------------------------------------------------------------------------
