@@ -16,14 +16,23 @@ radiative-reabsorption hook already integrates over space per call.
 Declared scope for D8-E1
 ------------------------
 * Interface-bound channels (band-to-band, intraband, defect-assisted) are
-  anchored to their own interface face and integrate only the *connected*
-  classically forbidden run containing it. That matters: a device grid holds
-  several barriers at once (each heterojunction spike, the band bending at
-  each contact), so integrating the whole forbidden set would merge unrelated
-  barriers into one fictitious path — wrong, and silently plausible. The
-  energy window likewise comes from the local barrier feature rather than the
-  device endpoints, which is what separates a junction spike from the
-  device-wide bending between contacts.
+  handed an interface face and integrate only the *connected* classically
+  forbidden run containing it. That matters: a device grid holds several
+  barriers at once (each heterojunction spike, the band bending at each
+  contact), so integrating the whole forbidden set would merge unrelated
+  barriers into one fictitious path — wrong, and silently plausible.
+* **D8 defines no barrier IDENTITY, and `anchor_face` is not validated
+  against the stack's interfaces (D8-P1).** `local_barrier_window` walks to a
+  local maximum and then to the bounding minima, so on a device profile it
+  returns the same window from a large basin of faces — measured, 49 of 72 on
+  the registered lane config. The flux is correspondingly a smooth function of
+  where the anchor is dropped: a plain interior face seven cells from the
+  interface reproduces 99.5 % of the interface-anchored flux, while the other
+  real heterointerface reports 0.19 %. Anchors that lie *inside* a forbidden
+  run at a given energy do all agree; the qualifier is the limitation. Pinned
+  by `tests/unit/physics/test_barrier_anchor_locality.py`. Any per-interface
+  loop must supply that missing primitive first, or it will report N smoothly
+  varying numbers rather than N barriers.
 * The defect-assisted channel additionally requires an explicit interface
   occupancy, which exists only on the two-sided-trace interface lane.
 * Every channel adds its net flux to the carrier face current at its own face.

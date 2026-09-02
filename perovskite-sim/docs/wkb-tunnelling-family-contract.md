@@ -177,6 +177,19 @@ the first face and `1.0442e-2` at the second, where a whole-grid integral
 would have reported one merged barrier at both. The test pins the *ordering*
 (`0 < T_high < T_low < 1`) rather than these values.
 
+**The second half of that heading is RETRACTED (D8-P1).** "Its own barrier"
+overstates what the anchor identifies. Measured on the registered lane config
+(`tests/unit/physics/test_barrier_anchor_locality.py`): `local_barrier_window`
+returns the **same** window for **49 of the 72 faces**, so it cannot serve as a
+barrier key; and the flux is a smooth function of anchor position rather than
+a property of an interface — a plain interior face seven cells away reproduces
+**99.5 %** of the interface-anchored flux, while the *other* real
+heterointerface reports **0.19 %** of it. What is real is the narrower claim:
+two *separated* barriers are no longer merged, and among anchors that lie
+inside a forbidden run at a given energy every one returns the same run and
+the same transmission. **D8 defines no barrier identity.** See
+[Anchor locality (D8-P1)](#anchor-locality-d8-p1).
+
 **2. The driving force is the local quasi-Fermi drop, not the applied bias.**
 A channel is one conduction path across one barrier, so it is driven by the
 quasi-Fermi drop across *that* barrier — the same drop the Scharfetter-Gummel
@@ -480,8 +493,82 @@ The electron branch — and therefore the certified lane — is unchanged. This
 makes the two branches consistent with each other; it does not make either
 correct, since both still carry the level offset above.
 
+## Anchor locality (D8-P1)
+
+A measurement checkpoint. Nothing is fixed here; the point is to make a
+standing claim falsifiable and to record what a per-interface loop would have
+to solve first. Probe and gates:
+`tests/unit/physics/test_barrier_anchor_locality.py` (7 tests).
+
+### What `anchor_face` actually selects
+
+| measurement | result |
+|---|---|
+| distinct energy windows over 72 faces | **2** |
+| faces sharing the interface's window | **49 of 72** |
+| flux at a plain interior face 7 cells away | **99.5 %** of the interface-anchored flux |
+| flux at the *other* real heterointerface | **0.19 %** of it |
+| faces where the channel refuses outright | 23 (a degenerate `peak == base` window) |
+
+So the anchor identifies a **basin**, not a barrier, and the answer varies
+smoothly with position inside it. `anchor_face` is never checked against
+`stack.interfaces`, so a face with no physical significance produces a
+confidently-reported flux.
+
+### What is genuinely correct, stated so the limitation is bounded
+
+Among anchors that lie **inside** the forbidden run at a given energy, every
+one returns the same connected run and the same transmission — measured
+identical to the last bit. The two-separated-barriers fix is therefore real:
+what D8-E1 removed (merging unrelated barriers into one path) stays removed.
+The limitation is the qualifier — *whether* a given anchor is inside at a
+given energy is a property of the anchor.
+
+### The fourth defect this exposed
+
+`turning_point_levels` falls back to the anchor face's two **nodes** when the
+anchor is not inside a forbidden run. That is exactly the one-cell drive
+D8-E2R measured as mesh-divergent and replaced everywhere else; it survives on
+this branch. Measured on the lane config at the second interface: the
+across-barrier drive is `2.179e-4 eV` while the fallback is `3.82e-8 eV` — a
+factor of 5700. Those energies therefore lose the barrier **and** the driving
+force at once, which is what makes the flux fall away as the anchor moves.
+
+The sign of the effect differs between the lane config and the synthetic
+profile — falling in one, rising in the other — because it depends on whether
+the occupations at the unblocked energies are saturated. Under the current
+level convention (D8-E2R) they are, so those energies contribute ~nothing;
+with a true level they contribute a great deal. Same defect, two faces of it.
+
+### Why nothing is fixed here
+
+Correcting the fallback moves magnitudes, exactly as the level-convention fix
+does, and the registered lane's gates are anchored to current behaviour. Both
+belong to the same deferred v2 lane, whose entry condition remains a config
+where the corrected channel clears `ge 0.01`. Fixing one and not the other
+would produce a third set of numbers that is neither the published one nor the
+corrected one.
+
+### Consequences for the two blocked checkpoints
+
+- **The multi-interface lift** (`interface_faces[0]`) needs a barrier-identity
+  primitive as a **prerequisite**, not as part of the work. Without one, a
+  per-face loop returns N smoothly varying numbers rather than N barriers, and
+  the two dedup keys that suggest themselves (the window, the run) are both
+  measurably degenerate here.
+- **D8-E3** is now blocked three ways: no SCAPS deck, the unresolved level
+  convention, and no barrier identity. A channel-by-channel magnitude
+  comparison presupposes that "this channel at this interface" names something
+  the code can compute, and today it does not.
+
 ## Required next checkpoints
 
-1. **D8-E3** — the frozen channel-by-channel SCAPS comparison the roadmap
-   asks for, which needs a real SCAPS deck and raw export that the repository
-   still does not have. **Blocked on external input**, not on work here.
+1. **D8-E2F / v2 lane** — resolve the drive convention (D8-E2R) and the
+   unblocked-branch fallback (D8-P1) together, and re-register. Entry
+   condition: a device configuration in which the *corrected* channel clears
+   the lane's `ge 0.01` gate. That is physics design, not plumbing, and no
+   such config exists yet.
+2. **A barrier-identity primitive** — a prerequisite for the multi-interface
+   lift and for D8-E3, not a part of either.
+3. **D8-E3** — the frozen channel-by-channel SCAPS comparison, blocked on a
+   real SCAPS deck AND on the two items above.
