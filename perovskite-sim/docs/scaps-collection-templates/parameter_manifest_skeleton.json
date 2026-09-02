@@ -1,0 +1,156 @@
+{
+  "schema": "solarlab.scaps_explicit_defect_parameter_manifest",
+  "schema_version": "1.0",
+  "solver": {
+    "name": "SCAPS-1D",
+    "version": "__FILL__ exact SCAPS version string, e.g. 3.3.10"
+  },
+  "numerics": {
+    "mesh_points": "__FILL__ number of grid points SCAPS used",
+    "mesh_mode": "__FILL__ automatic | manual",
+    "convergence_criterion": "__FILL__ value from the SCAPS numerical settings panel",
+    "max_iterations": "__FILL__",
+    "contact_surface_recombination_velocity_cm_s": "__FILL__ Sn and Sp at both contacts (irrelevant at equilibrium; recorded for provenance)",
+    "front_reflection": "__FILL__",
+    "back_reflection": "__FILL__"
+  },
+  "unit_conventions": {
+    "conduction_band_eV": "eV",
+    "defect_charge_number_cm3": "cm-3",
+    "defect_occupancy": "1",
+    "electron_density_cm3": "cm-3",
+    "electrostatic_potential_V": "V",
+    "hole_density_cm3": "cm-3",
+    "position_um": "um",
+    "recombination_rate_cm3_s": "cm-3 s-1",
+    "valence_band_eV": "eV"
+  },
+  "sign_conventions": {
+    "position_origin": "left_contact",
+    "defect_charge": "negative_acceptor_positive_donor",
+    "recombination_rate": "positive_net_recombination",
+    "electrostatic_potential": "__FILL__ state the SCAPS zero reference explicitly, e.g. 'zero at the left contact, positive toward vacuum level lowering'"
+  },
+  "comparison_protocol": {
+    "operating_point": "dark_equilibrium_zero_bias",
+    "row_policy": "direct_export_rows_only",
+    "interpolation_allowed": false,
+    "position_tolerance_um": 1e-06
+  },
+  "scenarios": {
+    "S0": {
+      "canonical_config_sha256": "77b89e16c365cd5c4cf9f7aa439f0200ec9ad9b814e60bbe81895afef65025c7",
+      "charge_transition": "neutral",
+      "doping_polarity": "intrinsic",
+      "thickness_um": 0.3,
+      "source_deck_format": "SCAPS-1D .def",
+      "scaps_parameters": {
+        "temperature_K": 300.0,
+        "layer_thickness_um": 0.3,
+        "relative_permittivity": 20.0,
+        "electron_mobility_cm2_Vs": 20.0,
+        "hole_mobility_cm2_Vs": 20.0,
+        "electron_affinity_eV": 4.0,
+        "band_gap_eV": 0.8,
+        "Nc_cm3": 1.0e18,
+        "Nv_cm3": 8.0e17,
+        "shallow_donor_Nd_cm3": 0.0,
+        "shallow_acceptor_Na_cm3": 0.0,
+        "absorption_coefficient_cm1": 4000.0,
+        "radiative_recombination_coefficient_cm3_s": 0.0,
+        "auger_electron_cm6_s": 0.0,
+        "auger_hole_cm6_s": 0.0,
+        "electron_thermal_velocity_cm_s": 1.0e7,
+        "hole_thermal_velocity_cm_s": 8.0e6,
+        "defect": {
+          "type": "neutral",
+          "energy_distribution": "single_level",
+          "energy_level_eV_above_Ev": 0.39,
+          "total_density_cm3": 2.0e15,
+          "sigma_n_cm2": 2.0e-15,
+          "sigma_p_cm2": 7.0e-16,
+          "degeneracy": 1.0
+        },
+        "front_contact": "flat_band",
+        "back_contact": "flat_band",
+        "illumination": "dark"
+      }
+    },
+    "S1": {
+      "canonical_config_sha256": "f49900b296a2bfb3c5a28d9135b24dcf8f0d6c409f105a70d4dd27100ebcb681",
+      "charge_transition": "acceptor",
+      "doping_polarity": "n_type",
+      "thickness_um": 0.3,
+      "source_deck_format": "SCAPS-1D .def",
+      "scaps_parameters": {
+        "temperature_K": 300.0,
+        "layer_thickness_um": 0.3,
+        "relative_permittivity": 20.0,
+        "electron_mobility_cm2_Vs": 20.0,
+        "hole_mobility_cm2_Vs": 20.0,
+        "electron_affinity_eV": 4.0,
+        "band_gap_eV": 0.8,
+        "Nc_cm3": 1.0e18,
+        "Nv_cm3": 8.0e17,
+        "shallow_donor_Nd_cm3": 5.0e15,
+        "shallow_acceptor_Na_cm3": 0.0,
+        "absorption_coefficient_cm1": 4000.0,
+        "radiative_recombination_coefficient_cm3_s": 0.0,
+        "auger_electron_cm6_s": 0.0,
+        "auger_hole_cm6_s": 0.0,
+        "electron_thermal_velocity_cm_s": 1.0e7,
+        "hole_thermal_velocity_cm_s": 8.0e6,
+        "defect": {
+          "type": "single_acceptor",
+          "energy_distribution": "single_level",
+          "energy_level_eV_above_Ev": 0.39,
+          "total_density_cm3": 2.0e15,
+          "sigma_n_cm2": 2.0e-15,
+          "sigma_p_cm2": 7.0e-16,
+          "degeneracy": 1.0
+        },
+        "front_contact": "flat_band",
+        "back_contact": "flat_band",
+        "illumination": "dark"
+      }
+    },
+    "S2": {
+      "canonical_config_sha256": "7fff245d23a99cb1128124d073269a3b3f1d8ee9a9f07730ce558ab4eb3d8066",
+      "charge_transition": "donor",
+      "doping_polarity": "p_type",
+      "thickness_um": 0.3,
+      "source_deck_format": "SCAPS-1D .def",
+      "scaps_parameters": {
+        "temperature_K": 300.0,
+        "layer_thickness_um": 0.3,
+        "relative_permittivity": 20.0,
+        "electron_mobility_cm2_Vs": 20.0,
+        "hole_mobility_cm2_Vs": 20.0,
+        "electron_affinity_eV": 4.0,
+        "band_gap_eV": 0.8,
+        "Nc_cm3": 1.0e18,
+        "Nv_cm3": 8.0e17,
+        "shallow_donor_Nd_cm3": 0.0,
+        "shallow_acceptor_Na_cm3": 5.0e15,
+        "absorption_coefficient_cm1": 4000.0,
+        "radiative_recombination_coefficient_cm3_s": 0.0,
+        "auger_electron_cm6_s": 0.0,
+        "auger_hole_cm6_s": 0.0,
+        "electron_thermal_velocity_cm_s": 1.0e7,
+        "hole_thermal_velocity_cm_s": 8.0e6,
+        "defect": {
+          "type": "single_donor",
+          "energy_distribution": "single_level",
+          "energy_level_eV_above_Ev": 0.39,
+          "total_density_cm3": 2.0e15,
+          "sigma_n_cm2": 2.0e-15,
+          "sigma_p_cm2": 7.0e-16,
+          "degeneracy": 1.0
+        },
+        "front_contact": "flat_band",
+        "back_contact": "flat_band",
+        "illumination": "dark"
+      }
+    }
+  }
+}
