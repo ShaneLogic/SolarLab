@@ -81,6 +81,7 @@ SCAPS 常用的 cm 制之后的形式。左列是仓库里的 SI 值，右列是
 | 浅施主 Nd | `0` | `5.0e15` cm⁻³ | `0` |
 | 浅受主 Na | `0` | `0` | `5.0e15` cm⁻³ |
 | 缺陷类型 | **neutral** | **single acceptor (A/−)** | **single donor (D/+)** |
+| SCAPS script 名 | `layer.defect.neutral` | `layer.defect.singleacceptor` | `layer.defect.singledonor` |
 | 掺杂极性 | intrinsic | n 型 | p 型 |
 | config SHA-256 | `77b89e16…5025c7` | `f49900b2…bcb681` | `7fff245d…3d8066` |
 
@@ -95,10 +96,12 @@ SCAPS 常用的 cm 制之后的形式。左列是仓库里的 SI 值，右列是
 | 总密度 Nt | 2.0e21 m⁻³ | `2.0e15` cm⁻³（`integrated_total`，即总量非峰值） |
 | 电子俘获截面 σn | 2.0e-19 m² | `2.0e-15` cm² |
 | 空穴俘获截面 σp | 7.0e-20 m² | `7.0e-16` cm² |
-| 简并度 | 1.0 | `1`（SCAPS 若不暴露此项，跳过并在 manifest 的 `numerics` 里注明） |
+| 简并度 | 1.0 | **无此输入项，跳过**（已对照手册确认：单能级缺陷面板不暴露简并度；仓库值 1.0 与 SCAPS 单能级 SRH 统计一致） |
 
-**能级参考点选错方向是最容易犯的错**：0.39 eV 是从**价带顶**往上量。若 SCAPS
-面板默认「below E_C」，请填 `0.8 − 0.39 = 0.41` eV，并在 manifest 里注明你用了哪一种。
+**能级参考点选错方向是最容易犯的错**：0.39 eV 是从**价带顶**往上量。已对照
+手册（§3.6.3）：SCAPS 提供 `above EV` / `below EC` / `above Ei` 三个参考选项，
+**请直接选 `above EV`** 填 `0.39`；若用 `below E_C` 则填 `0.8 − 0.39 = 0.41` eV。
+无论选哪种都在 manifest 里注明。
 
 ### 3.4 接触
 
@@ -110,6 +113,11 @@ SCAPS 常用的 cm 制之后的形式。左列是仓库里的 SI 值，右列是
 - 表面复合速度 Sn / Sp：平衡态下不影响解，用 SCAPS 默认值即可，但**必须在
   manifest 的 `numerics` 里如实记录你用的值**。
 - 前/后反射率：暗态无关，同样记录。
+
+⚠ 手册（§3.3）注明：**2014-01-01 之前**的 SCAPS 用只看浅掺杂的简化公式算平带
+金属功函数，缺陷带电时（S1/S2 正是）它不真产生平带；**2014 之后**的版本解
+包含深缺陷电荷的完整电中性方程。请用 ≥2014 的版本，并把精确版本串记入
+manifest。两端接同一均匀层 → 内建电势恒为零，这点不受版本影响。
 
 ### 3.5 **不要输入**的量（派生量）
 
@@ -219,9 +227,12 @@ position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,cond
 `sign_conventions` 的另外三项、`comparison_protocol` 整块、每个场景的
 `canonical_config_sha256` / `charge_transition` / `doping_polarity`。
 
-`scaps_parameters` 已按 §3 预填。**逐项与你实际输进 SCAPS 的值核对**；若某项
-SCAPS 界面里叫别的名字或不接受该值，改成实际值并在 `numerics` 里说明原因。
-这一块的作用是「记录你实际输了什么」，不是「记录应该输什么」。
+`scaps_parameters` 已按 §3 预填，字段名已对照 `docs/manual/SCAPSManual2016.pdf`
+校准（缺陷类型/能级参考/截面/密度对应 script 名 `layer.defect.*`，热速度对应
+`layer.vthn`/`.vthp`，接触对应 `contact.flatband`）。**仍要逐项与你实际输进
+SCAPS 的值核对**；若某项与你的 SCAPS 版本不符或不接受该值，改成实际值并在
+`numerics` 里说明原因。这一块的作用是「记录你实际输了什么」，不是「记录应该
+输什么」。
 
 顶层键必须**恰好**是这八个，多一个少一个都拒：
 

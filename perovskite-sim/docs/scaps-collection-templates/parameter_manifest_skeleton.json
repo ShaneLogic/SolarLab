@@ -69,7 +69,7 @@
           "total_density_cm3": 2.0e15,
           "sigma_n_cm2": 2.0e-15,
           "sigma_p_cm2": 7.0e-16,
-          "degeneracy": 1.0
+          "degeneracy_note": "not a SCAPS input for single-level defects (manual 3.6.2.3 exposes degeneracy on the multilevel panel only); repo value 1.0 is consistent with SCAPS single-level SRH statistics"
         },
         "front_contact": "flat_band",
         "back_contact": "flat_band",
@@ -107,7 +107,7 @@
           "total_density_cm3": 2.0e15,
           "sigma_n_cm2": 2.0e-15,
           "sigma_p_cm2": 7.0e-16,
-          "degeneracy": 1.0
+          "degeneracy_note": "not a SCAPS input for single-level defects (manual 3.6.2.3 exposes degeneracy on the multilevel panel only); repo value 1.0 is consistent with SCAPS single-level SRH statistics"
         },
         "front_contact": "flat_band",
         "back_contact": "flat_band",
@@ -145,7 +145,7 @@
           "total_density_cm3": 2.0e15,
           "sigma_n_cm2": 2.0e-15,
           "sigma_p_cm2": 7.0e-16,
-          "degeneracy": 1.0
+          "degeneracy_note": "not a SCAPS input for single-level defects (manual 3.6.2.3 exposes degeneracy on the multilevel panel only); repo value 1.0 is consistent with SCAPS single-level SRH statistics"
         },
         "front_contact": "flat_band",
         "back_contact": "flat_band",
