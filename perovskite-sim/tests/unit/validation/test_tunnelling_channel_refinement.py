@@ -63,9 +63,14 @@ def test_lane_declares_a_three_by_three_matrix_and_an_energy_ladder():
 def test_the_channel_flux_is_an_observable_not_only_the_terminal_current():
     """A terminal-current lane would certify nothing about this channel.
 
-    Enabling the channel moves the terminal current by ~1e-5 relative while
-    the channel itself carries ~20 % of it, because the tunnelling path is in
-    parallel with the drift-diffusion flux on the same face.
+    Enabling the channel moves the terminal current by only ~1e-5 relative,
+    because the tunnelling path is in parallel with the drift-diffusion flux
+    on the same face and the rest of the device sets the operating point.
+
+    (The companion "~20 % of the terminal current" figure that used to appear
+    here is RETRACTED — D8-E2R measured it as an artifact of a +1.4286 eV
+    level-vs-potential offset; with the true level it is 6.2e-7. The reason
+    for observing the channel rather than the terminal current is unaffected.)
     """
     metrics = {gate.metric for gate in _lane().observables}
 
@@ -176,12 +181,15 @@ def test_with_order_rewrites_only_the_quadrature_order_and_enable_flag():
 
 @pytest.mark.slow
 def test_a_coarse_cell_certifies_the_structural_channel_claims():
-    """The exact-zero claims are the ones worth a real solve.
+    """The structural claims are the ones worth a real solve.
 
-    Equilibrium reciprocity and the flux-to-face-current identity are exact
-    statements, so they are asserted as exact rather than with a tolerance;
-    anything else here would hide a sign or bookkeeping error behind a
-    threshold.
+    The flux-to-face-current injection identity IS exact and is asserted as
+    exact. The equilibrium zero is asserted too, but D8-E2R showed it holds
+    here by float64 Fermi-factor saturation rather than by reciprocity, so it
+    is NOT evidence of the latter — see
+    `tests/unit/physics/test_tunnelling_drive_convention.py`. The rationale
+    this docstring used to carry ("a tolerance would hide a sign or
+    bookkeeping error") is retracted: the exact gate is what hid one.
     """
     measurement = run_tunnelling_channel_qf_dc_refinement(
         _lane(), MatrixPoint(24, 1.0), ROOT

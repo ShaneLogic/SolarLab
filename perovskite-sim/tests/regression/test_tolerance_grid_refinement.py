@@ -175,7 +175,10 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     observable_names = {gate.metric for gate in tunnelling.observables}
     # The channel's own flux must be an observable. A terminal-current-only
     # lane would certify nothing here: enabling the channel moves the terminal
-    # current by ~1e-5 relative while the channel carries ~20% of it.
+    # current by only ~1e-5 relative, because the tunnelling path is in
+    # parallel with the SG flux on the same face. (The "~20% of it" figure
+    # that used to justify this is retracted — see D8-E2R; the reasoning for
+    # observing the channel instead is unaffected.)
     assert "intraband_electron_net_flux_m2_s" in observable_names
 
     dynamic_transient = registry.lane(
