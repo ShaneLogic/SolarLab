@@ -264,6 +264,12 @@ export interface DeviceConfig {
     jv_solver_policy?: 'general' | 'cancellation_safe_qf_required'
     interface_charge_closure?: 'off' | 'equilibrium_referenced'
     interface_charge_rebaseline_acknowledged?: boolean
+    // D8 WKB tunnelling family. The editor renders no control for it; it is
+    // carried verbatim so a preset that declares it is not silently stripped
+    // on a round-trip. Typed as an opaque record because the canonical schema
+    // lives in Python (`solarlab-wkb-tunnelling-channels-v1`) and the editor
+    // must not partially validate it - a partial mirror would drift.
+    tunnelling_channels?: Record<string, unknown>
   }
   layers: LayerConfig[]
 }

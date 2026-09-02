@@ -1976,6 +1976,24 @@ export function readDeviceEditor(
     const value = original.device[key]
     if (value !== undefined) hiddenPhysicsField[key] = value
   }
+  // Structured device-level physics the editor renders no control for. Kept
+  // separate from `hiddenPhysicsField` because that map is deliberately typed
+  // to scalars, and widening it to admit a nested object would let any future
+  // key through unchecked.
+  //
+  // Dropping this one is not cosmetic: `wkb_tunnelling_intraband_spike.yaml`
+  // is offered in the preset dropdown, and without the passthrough a Run on
+  // it silently produced a tunnelling-free J-V. With it, the backend's
+  // capability guard refuses instead - the channels are certified only on the
+  // guarded QF/DC lane, not on the driver this pane runs - which is the
+  // honest answer.
+  const structuredPhysicsField: Pick<
+    DeviceConfig['device'], 'tunnelling_channels'
+  > = {}
+  if (original.device.tunnelling_channels !== undefined) {
+    structuredPhysicsField.tunnelling_channels =
+      original.device.tunnelling_channels
+  }
   return {
     ...(original.simulation_hints === undefined
       ? {}
@@ -2004,6 +2022,7 @@ export function readDeviceEditor(
       // where the panel is hidden).
       ...interfaceDefectsField,
       ...hiddenPhysicsField,
+      ...structuredPhysicsField,
       ...scapsPhysicsField,
     },
     layers,

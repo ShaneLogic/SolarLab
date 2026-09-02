@@ -314,7 +314,16 @@ Plain TypeScript (no framework). `main.ts` wires five tabs — `J–V Sweep`, `I
 
 Plotly is pulled from `plotly.js-dist-min` which is why `vite build` emits a chunk-size warning; that warning is expected and not a bug. Measured 2026-07-29: `tsc && vite build` is clean in ~0.3 s and produces `dist/assets/index-*.js` at **1.40 MB (437 kB gzip)** plus 35 kB CSS, against Vite's 500 kB advisory threshold.
 
-**Frontend test suite — known local blocker (2026-07-29).** `npm test` / `vitest run` does not complete on this machine: with the default `threads` pool every one of the 27 `*.test.ts` files times out individually at 60 s, and `--pool=forks` is non-deterministic (one single-file run exited 0, repeats of the same command timed out; `--reporter=json` never wrote its output file). The production build is unaffected, so this looks like a worker-spawn problem in this environment (OneDrive path containing spaces and parentheses is the prime suspect) rather than a defect in the tests. Consequence to state honestly: **the 27 frontend test files are currently unverified**, and no CLAUDE.md-documented invocation exists for them. Confirm on another machine or in CI before trusting any claim that the frontend layer is green.
+**Frontend test suite — the 2026-07-29 "local blocker" no longer reproduces (re-measured 2026-09-02).** The suite runs clean on this machine with the **default** pool, no workaround needed:
+
+```bash
+cd perovskite-sim/frontend && npx vitest run
+# 40 test files, 480 tests, all passed, 2.28 s
+```
+
+`--pool=forks` also works (4.67 s). The old note recorded 27 files timing out individually at 60 s under the default `threads` pool and non-deterministic behaviour under forks; none of that reproduces, and the file count has since grown 27 → 40. Whatever the 2026-07 environment problem was, it is gone — so **the frontend layer is verified, and "the 27 frontend test files are currently unverified" should no longer be quoted as a limitation.**
+
+`npm run build` (tsc + vite) is clean in ~0.3 s. The only output is Vite's chunk-size advisory for the Plotly bundle, which is expected and not a defect.
 
 **Custom stacks (Phase 2b — Apr 2026):** In full tier the Device pane renders a vertical layer visualizer with add/remove/reorder, a template library, structural validation, and a Save-As path that lands user presets in `configs/user/`. The accordion editor is preserved for fast/legacy tiers. New backend endpoints: `GET /api/layer-templates`, `POST /api/configs/user`. `GET /api/configs` now returns `{name, namespace}` entries.
 
