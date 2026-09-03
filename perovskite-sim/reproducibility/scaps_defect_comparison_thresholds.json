@@ -1,0 +1,50 @@
+{
+  "schema": "solarlab.scaps_defect_comparison_thresholds",
+  "schema_version": "1.0",
+  "preregistered_at": "2026-09-02",
+  "rationale": "docs/scaps-defect-comparison-preregistration.md",
+  "grid": {
+    "s0s2": {
+      "intervals_per_layer": 128,
+      "sensitivity_intervals_per_layer": 64,
+      "grid_alpha": 2.0
+    },
+    "multivalent": {
+      "intervals_per_layer": 96,
+      "sensitivity_intervals_per_layer": 48,
+      "grid_alpha": 2.0
+    }
+  },
+  "grid_sensitivity_fraction_of_threshold": 0.25,
+  "solve_controls": {
+    "finite_difference_step": 1e-05,
+    "newton_residual_tolerance": 1e-08,
+    "poisson_tolerance_V": 1e-10,
+    "continuity_tolerance_A_m2": 0.0002,
+    "current_spread_tolerance_A_m2": 0.0002
+  },
+  "columns": {
+    "s0s2": {
+      "electron_density_log10_linf": 0.02,
+      "hole_density_log10_linf": 0.02,
+      "electrostatic_potential_left_anchored_linf_V": 0.005,
+      "conduction_band_left_anchored_linf_eV": 0.005,
+      "valence_band_left_anchored_linf_eV": 0.005,
+      "band_gap_linf_eV": 0.002,
+      "defect_occupancy_linf": 0.02,
+      "normalized_defect_charge_linf": 0.02,
+      "recombination_rate_near_zero_cm3_s": 1000000.0
+    },
+    "multivalent": {
+      "electron_density_log10_linf": 0.02,
+      "hole_density_log10_linf": 0.02,
+      "electrostatic_potential_left_anchored_linf_V": 0.005,
+      "conduction_band_left_anchored_linf_eV": 0.005,
+      "valence_band_left_anchored_linf_eV": 0.005,
+      "band_gap_linf_eV": 0.002,
+      "charge_state_occupation_fraction_linf": 0.02,
+      "normalized_defect_charge_linf": 0.02,
+      "recombination_rate_near_zero_cm3_s": 1000000.0
+    }
+  }
+}

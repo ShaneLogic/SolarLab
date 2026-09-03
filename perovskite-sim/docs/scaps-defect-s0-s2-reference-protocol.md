@@ -88,5 +88,22 @@ python scripts/import_scaps_defect_reference.py \
 The importer embeds every raw profile, hashes every CSV/deck/manifest/suite,
 and adds a canonical `reference_content_sha256`. It refuses to overwrite an
 existing output. The resulting artifact supports later cross-code comparison;
-its existence alone does not establish parity. Grid-aligned differences and
-pre-registered acceptance thresholds must still be evaluated and reported.
+its existence alone does not establish parity.
+
+## Comparison (pre-registered)
+
+The grid-aligned comparison and its acceptance thresholds are pre-registered
+in `docs/scaps-defect-comparison-preregistration.md` +
+`reproducibility/scaps_defect_comparison_thresholds.json`, frozen before any
+external export existed. Run:
+
+```bash
+python scripts/compare_scaps_defect_reference.py \
+  --project-root . \
+  --reference /path/to/scaps-defect-s0-s2-reference.json \
+  --out /path/to/scaps-defect-s0-s2-comparison-report.json
+```
+
+Verdicts are per column (`PASS` / `FAIL` / `INDECISIVE_GRID`, fail-closed
+grid-sensitivity gate); do not adjust thresholds, configs, or data to reach
+PASS.

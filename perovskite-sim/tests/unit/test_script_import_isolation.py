@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize(
     "script",
     (
+        "scripts/compare_scaps_defect_reference.py",
         "scripts/run_numerical_refinement.py",
         "scripts/verify_reproducibility.py",
     ),

@@ -294,6 +294,9 @@ python scripts/import_scaps_defect_reference.py \
 ## 9. 这份数据打开什么
 
 交回后可解锁：`DEF-4` 的外部半边，以及 D9 依赖 S0–S2 的部分。
+比对判定不需要另行设计：验收阈值已**预注册**
+（`docs/scaps-defect-comparison-preregistration.md`），importer 落盘后跑
+`scripts/compare_scaps_defect_reference.py` 当天出 PASS / FAIL 结论。
 
 **不能**解锁的：
 

@@ -370,7 +370,9 @@ config 哈希漂移 -> ValueError: parameter scenario M2 config hash mismatch
 ## 7. 这份数据打开什么
 
 importer 已就位，交回即可落盘并解锁：`D7-E2` 的外部半边 —— 多价缺陷的 SCAPS
-charge-state / recombination profile 比对。
+charge-state / recombination profile 比对。验收阈值已**预注册**
+（`docs/scaps-defect-comparison-preregistration.md`），落盘后跑
+`scripts/compare_scaps_defect_reference.py` 当天出 PASS / FAIL 结论。
 
 **不能**解锁的，与 S0–S2 交付单所列相同：`D9.6`（需要与标定数据不相交的第三方
 deck）、`D8-E3`（三重阻塞，缺数据只是其中一重）。
