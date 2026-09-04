@@ -14,6 +14,7 @@ import {
   setActiveExperiment,
   setActiveRun,
 } from './state'
+import { tierPhysicsSummary } from '../active-physics'
 import { attachTreeHandlers, renderTreeHTML } from './tree'
 import { mountConsole } from './console'
 import type { ConsoleHandle } from './console'
@@ -62,14 +63,6 @@ function tierLabel(tier: 'legacy' | 'fast' | 'full'): string {
   return tier.toUpperCase()
 }
 
-// Keep in sync with backend/main.py:_describe_active_physics. FAST today has
-// identical physics flags to LEGACY (see perovskite_sim/models/mode.py), so
-// both tiers advertise the same feature string — do not reintroduce
-// "T-scaling" for FAST until SimulationMode.FAST actually enables it.
-function physicsSummary(tier: 'legacy' | 'fast' | 'full'): string {
-  if (tier === 'full') return 'band offsets · TE · TMM · dual ions · T-scaling'
-  return 'flat bands · Beer-Lambert · single ion · uniform τ · T=300K'
-}
 
 function randomDeviceId(): string {
   return 'd-' + Math.random().toString(36).slice(2, 10)
@@ -190,7 +183,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       const active = workspace.devices.find(d => d.id === id)
       if (active) {
         devicePanel?.setConfig(active.config)
-        consoleHandle.setPhysics(tierLabel(active.tier), physicsSummary(active.tier))
+        consoleHandle.setPhysics(tierLabel(active.tier), tierPhysicsSummary(active.tier))
       }
     },
     onSelectExperiment: (deviceId, experimentId) => {
@@ -211,7 +204,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   // --- physics indicator for the initially-active device ---
   const initialActive = workspace.devices.find(d => d.id === workspace.activeDeviceId)
   if (initialActive) {
-    consoleHandle.setPhysics(tierLabel(initialActive.tier), physicsSummary(initialActive.tier))
+    consoleHandle.setPhysics(tierLabel(initialActive.tier), tierPhysicsSummary(initialActive.tier))
   }
 
   // --- Golden Layout ---

@@ -32,6 +32,12 @@ import type { DeviceConfig, SimulationModeName } from './types'
 interface TierFlags {
   use_thermionic_emission: boolean
   use_tmm_optics: boolean
+  // The three flags below complete the mode.py matrix. They were missing, so
+  // nothing in the frontend could state what FAST actually runs — which is how
+  // shell.ts came to advertise FAST using LEGACY's feature string.
+  use_dual_ions: boolean
+  use_trap_profile: boolean
+  use_temperature_scaling: boolean
   use_photon_recycling: boolean
   use_radiative_reabsorption: boolean
   use_field_dependent_mobility: boolean
@@ -42,6 +48,9 @@ const TIER_FLAGS: Record<SimulationModeName, TierFlags> = {
   legacy: {
     use_thermionic_emission: false,
     use_tmm_optics: false,
+    use_dual_ions: false,
+    use_trap_profile: false,
+    use_temperature_scaling: false,
     use_photon_recycling: false,
     use_radiative_reabsorption: false,
     use_field_dependent_mobility: false,
@@ -50,6 +59,9 @@ const TIER_FLAGS: Record<SimulationModeName, TierFlags> = {
   fast: {
     use_thermionic_emission: true,
     use_tmm_optics: true,
+    use_dual_ions: true,
+    use_trap_profile: true,
+    use_temperature_scaling: true,
     use_photon_recycling: true,
     use_radiative_reabsorption: false,
     use_field_dependent_mobility: false,
@@ -58,6 +70,9 @@ const TIER_FLAGS: Record<SimulationModeName, TierFlags> = {
   full: {
     use_thermionic_emission: true,
     use_tmm_optics: true,
+    use_dual_ions: true,
+    use_trap_profile: true,
+    use_temperature_scaling: true,
     use_photon_recycling: true,
     use_radiative_reabsorption: true,
     use_field_dependent_mobility: true,
@@ -67,6 +82,38 @@ const TIER_FLAGS: Record<SimulationModeName, TierFlags> = {
 
 export function resolveTierFlags(tier: SimulationModeName): TierFlags {
   return TIER_FLAGS[tier]
+}
+
+/**
+ * Tier-level physics summary for the pre-run console header.
+ *
+ * Mirrors ``backend/main.py:_describe_active_physics`` fragment for fragment
+ * and in the same order, so the pre-run preview and the post-run receipt agree.
+ * Like the backend, every fragment is derived from a flag rather than written
+ * out per tier — shell.ts previously hardcoded FAST to LEGACY's string on the
+ * belief that the two tiers had identical flags, and told FAST users they were
+ * getting "flat bands · Beer-Lambert · single ion · uniform τ · T=300K" while
+ * the solver ran TE, TMM, dual ions, trap profiles and temperature scaling.
+ *
+ * This is the tier ceiling, not the per-device result: it says what the tier
+ * permits, whereas ``describeActivePhysics`` additionally requires the config
+ * to supply each feature's parameters.
+ */
+export function tierPhysicsSummary(tier: SimulationModeName): string {
+  const f = resolveTierFlags(tier)
+  const parts: string[] = [
+    f.use_thermionic_emission ? 'band offsets · TE' : 'flat bands',
+    f.use_tmm_optics ? 'TMM' : 'Beer-Lambert',
+    f.use_dual_ions ? 'dual ions' : 'single ion',
+    f.use_trap_profile ? 'trap profile' : 'uniform τ',
+    f.use_temperature_scaling ? 'T-scaling' : 'T=300K',
+  ]
+  // Extras appended only when on, so the string stays short for LEGACY.
+  if (f.use_photon_recycling) parts.push('photon recycling')
+  if (f.use_radiative_reabsorption) parts.push('PR reabsorption')
+  if (f.use_field_dependent_mobility) parts.push('μ(E)')
+  if (f.use_selective_contacts) parts.push('Robin contacts')
+  return parts.join(' · ')
 }
 
 /**

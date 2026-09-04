@@ -55,9 +55,13 @@ describe('grading group rendering + tier gating', () => {
     }
   })
 
-  it('hides grading fields in FAST tier', () => {
+  // Corrected 2026-09-04: FAST runs grading. device.py:574 gates it as
+  // ``bool(band_grading) and sim_mode.name != "legacy"``, so only LEGACY is
+  // excluded; this previously pinned the fields as hidden from a tier that
+  // executes them.
+  it('renders grading fields in FAST tier, which runs grading', () => {
     renderDeviceEditor(container, cfg(), 'fast', 1)
-    expect(document.getElementById('layer-1-Eg_back')).toBeNull()
+    expect(document.getElementById('layer-1-Eg_back')).not.toBeNull()
   })
 
   it('hides grading fields in LEGACY tier', () => {
