@@ -1512,6 +1512,30 @@ def _integrate_step(
         sol = _solver_attempt(mat_step)
         if sol is not None and sol.success:
             return _commit(sol.y[:, -1], sol)
+    if t_lo != 0.0:
+        # Defect-scoped time-origin reset (2026-09-04). The RHS is autonomous
+        # (assemble_rhs never reads its t argument), but Radau's minimum
+        # internal step scales with eps*|t|, so a step whose absolute origin
+        # has accumulated to tens of seconds can die with "Required step size
+        # is less than spacing between numbers" on stiff-sink stacks (measured
+        # on the Calado 2016 Fig 1f toy stack, contact SRH tau=2e-15 s: every
+        # such failure sat at t_lo = 21-66 s and the identical interval
+        # integrated cleanly from t=0). Retry in the shifted frame ONLY after
+        # the in-place attempt failed: healthy steps never reach this branch,
+        # so every existing trajectory stays bit-identical. Do NOT replace the
+        # absolute spans wholesale instead — that was measured to RELOCATE
+        # the near-flat-band wrong-branch landing to a combination the branch
+        # rejector does not cover (ionmonger_benchmark steric-off
+        # N_grid=40/n_points=22: FF_rev 0.779 -> 1.126, guard blind to it).
+        try:
+            return _integrate_step(
+                x, y, stack, mat, V_app, 0.0, t_hi - t_lo, rtol, atol,
+                max_bisect=max_bisect, illuminated=illuminated,
+                n_legs=n_legs, regularization=regularization,
+                _accepted_diagnostics=_accepted_diagnostics,
+            )
+        except RuntimeError:
+            pass  # fall through to the historical bisection/BDF ladder
     if max_bisect == 0:
         # Last-chance BDF fallback. When Radau bisection is exhausted on
         # a near-flat-band / deep-injection state, scipy's BDF (variable-
