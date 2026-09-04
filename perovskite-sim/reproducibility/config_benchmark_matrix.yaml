@@ -67,6 +67,7 @@ benchmarks:
       - tests/reproducibility/test_matrix.py::test_matrix_covers_and_loads_every_shipped_config
     configs:
       - configs/cSi_homojunction.yaml
+      - configs/calado2016_fig1f.yaml
       - configs/csi_gaussian_bulk_trap_pn_research.yaml
       - configs/csi_degenerate_pn_research.yaml
       - configs/csi_incomplete_ionization_bgn_pn_research.yaml
@@ -1574,6 +1575,12 @@ configs:
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, calado2016-driftfusion]
+  - path: configs/calado2016_fig1f.yaml
+    sha256: a7a0e0f16ecae939e4f276df8f345cad1f48168899abcf5fd7f1c36dfb1e0c12
+    semantic_sha256: 03df72ff9c6fe66711b213678dac1a754d500363e9d8c7c43f581d883c200f72
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
   - path: configs/distributed_defect_qf_dc_pn.yaml
     sha256: 7a6b1c16d8ea313177e3a761660bd6b7bbb546b14aa23189f91a9187ff0904f8
     semantic_sha256: 9a0d5095ffacc2b3be9b0b5b6ead96668e7572ff9b8edbfb1dd3a213f3f8ecd7

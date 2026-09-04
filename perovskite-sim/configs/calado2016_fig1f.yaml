@@ -1,0 +1,115 @@
+# Calado 2016 Fig 1f paper-faithful toy stack (bottom-cathode, hysteretic).
+#
+# Source: Calado et al., Nat. Commun. 7, 13831 (2016), Supplementary Table 1
+# and Supplementary Note 2 — the p-i-n toy model behind the simulated J-V of
+# Fig 1f (HI = 1.84 at 40 mV/s in the paper's P_max,rev/P_max,fwd - 1 metric).
+#
+# This preset is DYNAMICS-faithful, unlike driftfusion_calado2016_repro.yaml
+# which is a V_oc/J_sc metrics calibration only. The two differ where it
+# matters for hysteresis:
+#   - D_ion here is the paper's own simulation value 2.585e-18 m^2/s
+#     (mu_ion = 1e-12 cm^2/Vs, deliberately slowed by the authors to match
+#     their ~40 s transients); the repro preset carries a literature-scale
+#     2.57e-16 — 100x faster, which closes the loop at 40 mV/s.
+#   - Contacts share the absorber transport (mu = 20 cm^2/Vs everywhere,
+#     identical flat bands) so minority carriers actually reach the
+#     contact-volume SRH sink that generates the hysteresis; the repro
+#     preset's realistic blocking mobilities starve that channel.
+#   - Contact SRH tau = 2e-15 s (paper value, "while unrealistic" — an
+#     intentional near-perfect sink), traps at -0.2 eV (n-side) / -1.4 eV
+#     (p-side) below the conduction band, expressed through n1/p1 with
+#     N0 = 1e20 cm^-3 and ni = N0 exp(-Eg/2kT), Eg = 1.6 eV.
+#
+# Known deviations from the paper's setup, both documented and bounded:
+#   - The paper drives a uniform G = 2.5e21 cm^-3 s^-1 in the i-layer; this
+#     preset approximates it with weak Beer-Lambert absorption
+#     (alpha*L = 0.04 => <= 4% front-to-back G variation, absorbed
+#     photocurrent ~ 16 mA/cm^2). For the exact uniform profile pass
+#     fixed_generation to run_jv_sweep.
+#   - run_jv_sweep scans 0 -> V_max -> 0; the paper scans -1 -> +1.2 V with
+#     a few seconds' hold at +1.2 V. Under the paper's protocol (external
+#     driver) this stack measures HI(paper def) = 0.44 vs the paper's 1.84 —
+#     reverse branch quantitative (P_max,rev 81 vs ~85 W/m^2), forward
+#     collapse ~2x shallower, cause unresolved (2026-09-04 study).
+#
+# Measured with the built-in sweep at v_rate=0.04, V_max=1.2: the reverse
+# scan collects better than the forward scan and the loop opens in the
+# ionic-hysteresis direction; grid-converged N100=N200=N300.
+
+device:
+  mode: legacy
+  V_bi: 1.3
+  Phi: 2.5e22
+  interfaces:
+    - [0.0, 0.0]
+    - [0.0, 0.0]
+
+layers:
+  - name: p_contact
+    role: HTL
+    thickness: 200e-9
+    eps_r: 20.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 3.62e12
+    N_D: 0.0
+    N_A: 3e23
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 2e-15
+    tau_p: 2e-15
+    n1: 3.05e2      # N0 exp(-1.4 eV / kT): deep trap referenced to the CB
+    p1: 4.36e22     # ni^2 / n1
+    B_rad: 1e-16
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 0.0
+    Eg: 0.0
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 20.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 3.62e12
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 2.585e-18
+    P_lim: 1e30
+    P0: 1e25
+    tau_n: 1.0      # no SRH in the perovskite in the paper's model
+    tau_p: 1.0
+    n1: 3.62e12
+    p1: 3.62e12
+    B_rad: 1e-16
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1e5      # alpha*L = 0.04: quasi-uniform G, ~16 mA/cm^2 absorbed
+    chi: 0.0
+    Eg: 0.0
+
+  - name: n_contact
+    role: ETL
+    thickness: 200e-9
+    eps_r: 20.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 3.62e12
+    N_D: 3e23
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 2e-15
+    tau_p: 2e-15
+    n1: 4.36e22     # N0 exp(-0.2 eV / kT): shallow trap below the CB
+    p1: 3.05e2      # ni^2 / n1
+    B_rad: 1e-16
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 0.0
+    Eg: 0.0
