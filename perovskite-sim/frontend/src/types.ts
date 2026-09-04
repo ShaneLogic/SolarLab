@@ -101,6 +101,12 @@ export interface LayerConfig {
   D_ion: number
   P_lim: number
   P0: number
+  // Second (negative) mobile ionic species. Absent = single species; the
+  // backend defaults are D_ion_neg = 0, P0_neg = 0, P_lim_neg = 1e30, so a
+  // written 0 for P_lim_neg would NOT mean "no limit" — keep them optional.
+  D_ion_neg?: number
+  P0_neg?: number
+  P_lim_neg?: number
   tau_n: number
   tau_p: number
   n1: number

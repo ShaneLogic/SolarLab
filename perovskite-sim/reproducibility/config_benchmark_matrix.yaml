@@ -76,6 +76,7 @@ benchmarks:
       - configs/cigs_baseline.yaml
       - configs/cigs_graded_optics.yaml
       - configs/cigs_graded_notch.yaml
+      - configs/dual_ion_demo.yaml
       - configs/driftfusion_benchmark.yaml
       - configs/driftfusion_benchmark_tmm.yaml
       - configs/driftfusion_calado2016_repro.yaml
@@ -1557,6 +1558,12 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - cigs-graded-optics-internal-closure
+  - path: configs/dual_ion_demo.yaml
+    sha256: c15eda54f449413728b40010822086b7aaf35c1c8d0af6d75bebeec80733bcca
+    semantic_sha256: 3e405b504fe303909b4f75e1a2178ebcd261a5ec281a53f0d41b8f1f7a9a4249
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
   - path: configs/driftfusion_benchmark.yaml
     sha256: 3e4cea0244bcb71072194d24ff5a31e50eb780d8d93dc8bc2343a8032de3fbf7
     semantic_sha256: 3def7117f3a49f1a7b99b6a1f49f646a1d57c193143320ce1c06fdfbdf5ba38c

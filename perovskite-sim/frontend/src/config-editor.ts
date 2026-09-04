@@ -157,6 +157,21 @@ const LAYER_GROUPS: ParamGroup[] = [
       { key: 'D_ion', label: '<i>D</i><sub>ion</sub>', kind: 'numeric', unit: 'm²/s' },
       { key: 'P_lim', label: '<i>P</i><sub>lim</sub>', kind: 'numeric', unit: 'm⁻³' },
       { key: 'P0', label: '<i>P</i><sub>0</sub>', kind: 'numeric', unit: 'm⁻³' },
+      {
+        key: 'D_ion_neg', label: '<i>D</i><sub>ion,−</sub>',
+        kind: 'numeric-optional', unit: 'm²/s', placeholder: 'empty — single species',
+        tooltip: 'Diffusion coefficient of a second, negatively charged mobile ionic species. Its drift is reversed relative to the positive species. Leave empty for single-species transport. Runs in Fast and Full tiers; Legacy forces it off.',
+      },
+      {
+        key: 'P0_neg', label: '<i>P</i><sub>0,−</sub>',
+        kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — none',
+        tooltip: 'Equilibrium density of the negative species. Enters Poisson as −(P₋ − P₀,₋), so setting it equal to the positive background keeps the stack neutral at rest.',
+      },
+      {
+        key: 'P_lim_neg', label: '<i>P</i><sub>lim,−</sub>',
+        kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — 1e30 (no limit)',
+        tooltip: 'Steric site limit for the negative species, used in both sublattice modes — sharing changes the numerator of the occupancy, not this denominator. Leaving it empty gives 1e30, which switches this species’ crowding off even with sharing on, so a shared-sublattice stack should set it equal to P_lim.',
+      },
       { key: 'alpha', label: '<i>α</i>', kind: 'numeric', unit: 'm⁻¹' },
       { key: 'optical_material', label: 'Optical material', kind: 'select-optical-material' },
       { key: 'incoherent', label: 'Incoherent layer', kind: 'boolean' },
@@ -1009,6 +1024,7 @@ function renderScapsPhysics(config: DeviceConfig): string {
             <span class="param-label"><span class="sym">de-spike <i>f</i></span></span>
             ${numAttr('dev-despike', d.het_recomb_despike, { placeholder: '0 — off', title: 'het_recomb_despike (0 = off, 0.53 = SCAPS-emulation)' })}
           </label>
+          ${cb('dev-ion-shared-site', 'Ions share one lattice site', d.ion_steric_shared_site ?? true, 'With two mobile species, whether each species’ crowding potential −ln(1−θ) counts the total occupancy θ = (P₊+P₋)/P_lim of that species — the two competing for one reservoir — or only its own density. Either way each species divides by its own P_lim (YAML ion_steric_shared_site; backend default true).')}
           ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Electrical chi/Eg grading. An explicit graded_optics CIGS block may use the same composition coordinate for n,k (YAML band_grading).')}
           ${cb('dev-iface-tunnel', 'Interface tunnelling (TFE)', !!d.interface_tunneling, 'Intra-band thermionic-field-emission through CB/VB spikes — static Padovani-Stratton enhancement of A* at TE-capped faces (YAML interface_tunneling).')}
           <label class="param" title="Tunnelling effective mass relative to the free-electron mass (YAML tunnel_mass_eff). Only used when Interface tunnelling is on.">
@@ -1911,6 +1927,17 @@ export function readDeviceEditor(
   const despike = parseNumOrNull('dev-despike', original.device.het_recomb_despike ?? null)
   if (typeof despike === 'number' && despike !== 0)
     scapsPhysicsField.het_recomb_despike = despike
+  // Shared-site is a physical assumption with a backend default of TRUE, so —
+  // like dos_band_potentials — an unchecked box has to serialise an explicit
+  // false rather than simply being omitted.
+  const sharedSite = parseCheckbox(
+    'dev-ion-shared-site', original.device.ion_steric_shared_site ?? true,
+  )
+  if (!sharedSite) {
+    scapsPhysicsField.ion_steric_shared_site = false
+  } else if (original.device.ion_steric_shared_site !== undefined) {
+    scapsPhysicsField.ion_steric_shared_site = true
+  }
   if (parseCheckbox('dev-band-grading', !!original.device.band_grading))
     scapsPhysicsField.band_grading = true
   if (parseCheckbox('dev-iface-tunnel', !!original.device.interface_tunneling)) {
@@ -1959,7 +1986,6 @@ export function readDeviceEditor(
   const hiddenPhysicsKeys = [
     'te_physical_norm',
     'ion_steric_diffusion_only',
-    'ion_steric_shared_site',
     'autoloop_generated_lever',
     'flat_band_metal_contacts',
     'contact_phi_B_eV',

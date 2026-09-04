@@ -1,0 +1,113 @@
+# Dual-ion demo — two mobile ionic species in the absorber.
+#
+# The solver has carried a symmetric second (negative) species since the 2026-07
+# closed-loop work: reversed drift sign, shared-site crowding on the total
+# occupancy (P_+ + P_-)/P_lim, and a 4N state vector y = (n, p, P_+, P_-).
+# No shipped preset exercised it, and the editor had no fields for it, so this
+# file is the reference configuration for that path.
+#
+# Base: ionmonger_benchmark.yaml (Courtier 2019 set b), changed in exactly
+# three ways on the absorber:
+#   - D_ion_neg = 1.01e-18  (anions ~10x slower than the cations, a common
+#     assumption for iodide interstitials against MA/FA vacancies)
+#   - P0_neg    = 1.6e25    (equal to P0, so the net ionic charge is zero at
+#     rest and the equilibrium electrostatics are unchanged)
+#   - P_lim_neg = 1.6e27    (equal to P_lim). Sharing a sublattice changes the
+#     NUMERATOR of the occupancy, not the denominator: with shared_site on,
+#     each species still divides the total (P_+ + P_-) by its OWN P_lim. The
+#     default P_lim_neg = 1e30 would therefore leave theta_- ~ 0, so the anion
+#     would feel no crowding while the cation felt the anion. Matching the two
+#     limits is what actually puts both species on one reservoir.
+#
+# NOT a benchmark: the anion parameters are illustrative, not fitted to any
+# measurement. Use it to exercise and inspect the dual-ion path, not to claim
+# agreement with data.
+#
+# mode is left at the default (full); LEGACY would force use_dual_ions off and
+# silently reduce this file to the single-species benchmark.
+
+device:
+  V_bi: 1.1
+  Phi: 1.4e21
+  # Interface recombination velocities (v_n, v_p) at internal heterointerfaces.
+  # Courtier 2019 set (b): minority-carrier SRV high, majority-carrier SRV low.
+  #   [0] HTL/perovskite: electrons are minority in HTL (blocked) → high v_n
+  #   [1] perovskite/ETL: holes are minority in ETL (blocked) → high v_p
+  interfaces:
+    - [3.0e5, 1.0e-1]   # HTL/pero: v_n high (electron loss), v_p low
+    - [1.0e-1, 3.0e5]   # pero/ETL: v_n low, v_p high (hole loss)
+
+layers:
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 3.89e-5
+    ni: 1e0
+    N_D: 0.0
+    N_A: 1e24
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    # Courtier 2019 Table S1: spiro-OMeTAD
+    chi: 2.1    # electron affinity [eV] — high CB → blocks electrons
+    Eg: 3.0     # band gap [eV]
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 6.62e-3
+    mu_p: 6.62e-3
+    ni: 2.89e10
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1.01e-17
+    P_lim: 1.6e27
+    P0: 1.6e25
+    # second, negatively charged mobile species (see the header)
+    D_ion_neg: 1.01e-18
+    P0_neg: 1.6e25
+    P_lim_neg: 1.6e27
+    tau_n: 3e-9
+    tau_p: 3e-7
+    n1: 2.89e10
+    p1: 2.89e10
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1.3e7
+    chi: 3.7    # electron affinity [eV]
+    Eg: 1.6     # band gap [eV] — MAPbI3
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 3.89e-4
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 4.0    # electron affinity [eV]
+    Eg: 3.2     # band gap [eV] — TiO2; high VB → blocks holes

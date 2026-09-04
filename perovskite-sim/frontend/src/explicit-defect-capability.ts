@@ -25,16 +25,10 @@ export function hasExplicitInterfaceDefects(config: DeviceConfig): boolean {
 }
 
 export function hasActiveMobileIons(config: DeviceConfig): boolean {
-  return config.layers.some(layer => {
-    const extended = layer as typeof layer & {
-      D_ion_neg?: number
-      P0_neg?: number
-    }
-    return (
-      (layer.D_ion > 0 && layer.P0 > 0)
-      || ((extended.D_ion_neg ?? 0) > 0 && (extended.P0_neg ?? 0) > 0)
-    )
-  })
+  return config.layers.some(layer => (
+    (layer.D_ion > 0 && layer.P0 > 0)
+    || ((layer.D_ion_neg ?? 0) > 0 && (layer.P0_neg ?? 0) > 0)
+  ))
 }
 
 export function dynamicDefectImpedancePreset(
@@ -126,13 +120,9 @@ export function dynamicDefectTransientEligibility(
   } else if (activePositive[0].layer.role !== 'absorber') {
     reasons.push('the active positive-ion layer must be the absorber')
   }
-  const activeNegative = layers.some(layer => {
-    const extended = layer as typeof layer & {
-      D_ion_neg?: number
-      P0_neg?: number
-    }
-    return (extended.D_ion_neg ?? 0) > 0 && (extended.P0_neg ?? 0) > 0
-  })
+  const activeNegative = layers.some(
+    layer => (layer.D_ion_neg ?? 0) > 0 && (layer.P0_neg ?? 0) > 0,
+  )
   if (activeNegative) {
     reasons.push('active negative ions are outside the v1 transient capability')
   }
