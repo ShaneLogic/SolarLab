@@ -80,6 +80,29 @@ def test_legacy_tier_disables_the_second_species():
     assert resolve_mode("full").use_dual_ions is True
 
 
+def test_one_activation_energy_scales_both_species(stack):
+    """E_a_ion is shared, which is why there is no E_a_ion_neg.
+
+    mol.py passes the same ``p.E_a_ion`` to ``D_ion_at_T`` for D_ion (1819) and
+    D_ion_neg (1823). The editor exposes a single field on that basis, so pin
+    it: at a temperature off 300 K both species must pick up the SAME Arrhenius
+    factor, and an explicit 0 must flatten both.
+    """
+    from perovskite_sim.physics.temperature import D_ion_at_T
+
+    absorber = stack.layers[1].params
+    T = 320.0
+    factor = D_ion_at_T(1.0, T, absorber.E_a_ion)
+    assert D_ion_at_T(absorber.D_ion, T, absorber.E_a_ion) == pytest.approx(
+        absorber.D_ion * factor
+    )
+    assert D_ion_at_T(absorber.D_ion_neg, T, absorber.E_a_ion) == pytest.approx(
+        absorber.D_ion_neg * factor
+    )
+    assert factor > 1.0, "a 20 K rise must speed the ions up at the default E_a"
+    assert D_ion_at_T(absorber.D_ion, T, 0.0) == pytest.approx(absorber.D_ion)
+
+
 def test_backend_inline_path_carries_the_neg_fields():
     """The frontend posts an inline device dict, never a file path."""
     from backend.main import stack_from_dict

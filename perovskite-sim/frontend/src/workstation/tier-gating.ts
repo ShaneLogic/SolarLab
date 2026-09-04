@@ -51,6 +51,15 @@ const GRADING_KEYS = [
  */
 const DUAL_ION_KEYS = ['D_ion_neg', 'P0_neg', 'P_lim_neg'] as const
 
+/**
+ * Per-layer ionic Arrhenius activation energy. Gated by
+ * ``use_temperature_scaling``, which mode.py also runs off/on/on, so it
+ * belongs with the dual-ion keys rather than with the device-level ``T``.
+ * Note this is deliberately NOT in TEMPERATURE_KEYS: ``T`` is the device
+ * operating point, this is layer material data.
+ */
+const ION_ACTIVATION_KEYS = ['E_a_ion'] as const
+
 /** Keys hidden in FAST mode: no TMM, no trap profile, no T, no per-RHS hooks
  *  (B(c.1) / B(c.2) parameter fields), no grading. Dual ions run in FAST. */
 const FAST_HIDDEN = new Set<string>([
@@ -62,8 +71,11 @@ const FAST_HIDDEN = new Set<string>([
 ])
 
 /** Keys hidden in LEGACY mode — everything FAST hides, plus the dual-ion
- *  fields, because LEGACY forces ``use_dual_ions`` off. */
-const LEGACY_HIDDEN = new Set<string>([...FAST_HIDDEN, ...DUAL_ION_KEYS])
+ *  fields and the ionic activation energy, because LEGACY forces
+ *  ``use_dual_ions`` and ``use_temperature_scaling`` off. */
+const LEGACY_HIDDEN = new Set<string>([
+  ...FAST_HIDDEN, ...DUAL_ION_KEYS, ...ION_ACTIVATION_KEYS,
+])
 
 const HIDDEN_BY_TIER: Record<SimulationModeName, Set<string>> = {
   legacy: LEGACY_HIDDEN,

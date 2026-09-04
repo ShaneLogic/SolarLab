@@ -172,6 +172,11 @@ const LAYER_GROUPS: ParamGroup[] = [
         kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — 1e30 (no limit)',
         tooltip: 'Steric site limit for the negative species, used in both sublattice modes — sharing changes the numerator of the occupancy, not this denominator. Leaving it empty gives 1e30, which switches this species’ crowding off even with sharing on, so a shared-sublattice stack should set it equal to P_lim.',
       },
+      {
+        key: 'E_a_ion', label: '<i>E</i><sub>a,ion</sub>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: 'empty — 0.58',
+        tooltip: 'Arrhenius activation energy for the ionic diffusivity: D_ion(T) = D_ion,300·exp[−E_a/k_B·(1/T − 1/300)]. One value covers both species — the same E_a_ion scales D_ion and D_ion,−. An explicit 0 removes the temperature dependence. Applies in Fast and Full, where temperature scaling runs; Legacy pins T to 300 K and ignores it.',
+      },
       { key: 'alpha', label: '<i>α</i>', kind: 'numeric', unit: 'm⁻¹' },
       { key: 'optical_material', label: 'Optical material', kind: 'select-optical-material' },
       { key: 'incoherent', label: 'Incoherent layer', kind: 'boolean' },
@@ -1006,11 +1011,22 @@ function renderRobinContacts(config: DeviceConfig): string {
 function renderScapsPhysics(config: DeviceConfig): string {
   const d = config.device
   const help = '<p class="param-help">SCAPS-validation physics (device-level). <strong>DOS band potentials</strong> adds the V<sub>T</sub>·ln(N<sub>C</sub>/N<sub>V</sub>) quasi-Fermi step at DOS-contrast heterojunctions (closes the V<sub>oc</sub> gap; needs per-layer N<sub>C</sub>/N<sub>V</sub>). <strong>Flat-band contacts</strong> uses SCAPS finite-S metal contacts. <strong>Interface-plane closure / projection</strong> evaluate interface recombination on the band-bending-suppressed plane. <strong>De-spike f</strong> blends the heterointerface-node density toward the neighbour geometric mean in the bulk Auger rate (0 = off, 0.53 = SCAPS-emulation).</p>'
-  const cb = (id: string, label: string, on: boolean, title: string): string => `
+  const cb = (
+    id: string, label: string, on: boolean, title: string, disabled = false,
+  ): string => `
           <label class="param" title="${title}">
             <span class="param-label">${label}</span>
-            <input type="checkbox" id="${id}"${on ? ' checked' : ''}>
+            <input type="checkbox" id="${id}"${on ? ' checked' : ''}${disabled ? ' disabled' : ''}>
           </label>`
+  // jv_sweep.py:940 gates shared-site behind the diffusion-only steric form:
+  //   shared = ion_steric_diffusion_only and ion_steric_shared_site and ...
+  // With the whole-flux form selected the box has no effect, so it is disabled
+  // and says so rather than silently doing nothing. The backend default is
+  // true, so only an explicit false disables it.
+  const stericDiffusionOnly = d.ion_steric_diffusion_only ?? true
+  const sharedSiteTitle = stericDiffusionOnly
+    ? 'With two mobile species, whether each species’ crowding potential −ln(1−θ) counts the total occupancy θ = (P₊+P₋)/P_lim of that species — the two competing for one reservoir — or only its own density. Either way each species divides by its own P_lim (YAML ion_steric_shared_site; backend default true).'
+    : 'No effect while ion_steric_diffusion_only is off: the whole-flux steric form does not consult the shared-site assumption (jv_sweep.py). Re-enable ion_steric_diffusion_only in the YAML to use this. The stored value is preserved.'
   return `
       <details class="param-group">
         <summary><h5>SCAPS comparison controls</h5></summary>
@@ -1024,7 +1040,7 @@ function renderScapsPhysics(config: DeviceConfig): string {
             <span class="param-label"><span class="sym">de-spike <i>f</i></span></span>
             ${numAttr('dev-despike', d.het_recomb_despike, { placeholder: '0 — off', title: 'het_recomb_despike (0 = off, 0.53 = SCAPS-emulation)' })}
           </label>
-          ${cb('dev-ion-shared-site', 'Ions share one lattice site', d.ion_steric_shared_site ?? true, 'With two mobile species, whether each species’ crowding potential −ln(1−θ) counts the total occupancy θ = (P₊+P₋)/P_lim of that species — the two competing for one reservoir — or only its own density. Either way each species divides by its own P_lim (YAML ion_steric_shared_site; backend default true).')}
+          ${cb('dev-ion-shared-site', 'Ions share one lattice site', d.ion_steric_shared_site ?? true, sharedSiteTitle, !stericDiffusionOnly)}
           ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Electrical chi/Eg grading. An explicit graded_optics CIGS block may use the same composition coordinate for n,k (YAML band_grading).')}
           ${cb('dev-iface-tunnel', 'Interface tunnelling (TFE)', !!d.interface_tunneling, 'Intra-band thermionic-field-emission through CB/VB spikes — static Padovani-Stratton enhancement of A* at TE-capped faces (YAML interface_tunneling).')}
           <label class="param" title="Tunnelling effective mass relative to the free-electron mass (YAML tunnel_mass_eff). Only used when Interface tunnelling is on.">
@@ -1930,9 +1946,13 @@ export function readDeviceEditor(
   // Shared-site is a physical assumption with a backend default of TRUE, so —
   // like dos_band_potentials — an unchecked box has to serialise an explicit
   // false rather than simply being omitted.
-  const sharedSite = parseCheckbox(
-    'dev-ion-shared-site', original.device.ion_steric_shared_site ?? true,
-  )
+  // When the box is disabled (diffusion-only steric form off) it carries no
+  // user intent, so the stored value wins — reading the DOM there would let a
+  // rendered default overwrite what the config actually said.
+  const sharedSiteBox = document.getElementById('dev-ion-shared-site')
+  const sharedSite = (sharedSiteBox instanceof HTMLInputElement && sharedSiteBox.disabled)
+    ? (original.device.ion_steric_shared_site ?? true)
+    : parseCheckbox('dev-ion-shared-site', original.device.ion_steric_shared_site ?? true)
   if (!sharedSite) {
     scapsPhysicsField.ion_steric_shared_site = false
   } else if (original.device.ion_steric_shared_site !== undefined) {

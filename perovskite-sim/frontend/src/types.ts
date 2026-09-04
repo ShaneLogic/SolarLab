@@ -107,6 +107,11 @@ export interface LayerConfig {
   D_ion_neg?: number
   P0_neg?: number
   P_lim_neg?: number
+  // Arrhenius activation energy for D_ion(T). Absent = the backend's 0.58 eV;
+  // an explicit 0 is a real choice (no temperature dependence), which is why
+  // this is optional rather than defaulted. One value covers both species —
+  // mol.py passes the same E_a_ion to D_ion and D_ion_neg.
+  E_a_ion?: number
   tau_n: number
   tau_p: number
   n1: number
