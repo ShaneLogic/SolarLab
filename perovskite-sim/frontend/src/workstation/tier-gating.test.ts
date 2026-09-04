@@ -22,11 +22,16 @@ describe('isFieldVisible', () => {
     expect(isFieldVisible('incoherent', 'full')).toBe(true)
   })
 
-  it('hides dual-ion fields in legacy and fast', () => {
-    expect(isFieldVisible('D_ion_neg', 'legacy')).toBe(false)
-    expect(isFieldVisible('D_ion_neg', 'fast')).toBe(false)
-    expect(isFieldVisible('D_ion_neg', 'full')).toBe(true)
-    expect(isFieldVisible('P_lim_neg', 'legacy')).toBe(false)
+  // Corrected 2026-09-04: this previously pinned the dual-ion fields as hidden
+  // in FAST as well, which contradicted mode.py — ``use_dual_ions`` is off only
+  // in LEGACY and on in both FAST and FULL. The editor was hiding fields from a
+  // tier whose physics runs them.
+  it('hides dual-ion fields in legacy only — FAST runs use_dual_ions', () => {
+    for (const key of ['D_ion_neg', 'P0_neg', 'P_lim_neg'] as const) {
+      expect(isFieldVisible(key, 'legacy')).toBe(false)
+      expect(isFieldVisible(key, 'fast')).toBe(true)
+      expect(isFieldVisible(key, 'full')).toBe(true)
+    }
   })
 
   it('hides trap-profile fields in legacy and fast', () => {

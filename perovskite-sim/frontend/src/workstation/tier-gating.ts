@@ -10,7 +10,6 @@ import type { SimulationModeName } from '../types'
 const TMM_KEYS = [
   'optical_material', 'n_optical', 'incoherent', 'cigs_graded_optics',
 ] as const
-const DUAL_ION_KEYS = ['D_ion_neg', 'P_lim_neg', 'E_a_ion_neg'] as const
 const TRAP_PROFILE_KEYS = ['trap_N_t_interface', 'trap_N_t_bulk', 'trap_decay_length'] as const
 const TEMPERATURE_KEYS = ['T'] as const
 
@@ -43,19 +42,28 @@ const GRADING_KEYS = [
   'grading_bowing', 'grading_char_length', 'grading_N_mult',
 ] as const
 
-/** Keys hidden in FAST mode: no TMM, no dual ions, no trap profile, no T,
- *  no per-RHS hooks (B(c.1) / B(c.2) parameter fields), no grading. */
+/**
+ * The second mobile ionic species. ``use_dual_ions`` is OFF in LEGACY and ON
+ * in FAST and FULL (mode.py), so these belong to the FAST surface as well —
+ * they were previously in FAST_HIDDEN, which hid them from a tier whose
+ * physics runs them. There is no per-species activation energy: parameters.py
+ * defines a single ``E_a_ion``, so no such key is listed here.
+ */
+const DUAL_ION_KEYS = ['D_ion_neg', 'P0_neg', 'P_lim_neg'] as const
+
+/** Keys hidden in FAST mode: no TMM, no trap profile, no T, no per-RHS hooks
+ *  (B(c.1) / B(c.2) parameter fields), no grading. Dual ions run in FAST. */
 const FAST_HIDDEN = new Set<string>([
   ...TMM_KEYS,
-  ...DUAL_ION_KEYS,
   ...TRAP_PROFILE_KEYS,
   ...TEMPERATURE_KEYS,
   ...PER_RHS_KEYS,
   ...GRADING_KEYS,
 ])
 
-/** Keys hidden in LEGACY mode — identical to FAST today (mode.py:54-86). */
-const LEGACY_HIDDEN = new Set<string>(FAST_HIDDEN)
+/** Keys hidden in LEGACY mode — everything FAST hides, plus the dual-ion
+ *  fields, because LEGACY forces ``use_dual_ions`` off. */
+const LEGACY_HIDDEN = new Set<string>([...FAST_HIDDEN, ...DUAL_ION_KEYS])
 
 const HIDDEN_BY_TIER: Record<SimulationModeName, Set<string>> = {
   legacy: LEGACY_HIDDEN,
