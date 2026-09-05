@@ -359,6 +359,7 @@ Presets shipped with the repo:
 - **TMM-enabled:** `nip_MAPbI3_tmm`, `pin_MAPbI3_tmm`, `ionmonger_benchmark_tmm`, `driftfusion_benchmark_tmm`
 - **Tandem sub-cells:** `nip_wideGap_FACs_1p77` (1.77 eV top), `nip_SnPb_1p22` (1.22 eV bottom)
 - **Tandem config:** `tandem_lin2019` (2T monolithic, uses `TandemConfig` not `DeviceStack`)
+- **Paper reproductions:** `ionmonger_courtier2019_repro`; `driftfusion_calado2016_repro` (V<sub>oc</sub>/J<sub>sc</sub> metrics calibration only: V<sub>bi</sub> 1.42, literature-scale D<sub>ion</sub> 2.57e-16 m<sup>2</sup> s<sup>−1</sup>, blocking transport-layer mobilities — **not** dynamics-faithful, so contact-SRH / scan-rate hysteresis studies on it over-claim); `calado2016_fig1f` (the paper's SI Table 1 toy stack, dynamics-faithful, registered `load_only`). `scripts/plot_calado_fig1f.py` drives the latter through the paper's −1 → +1.2 V / 3 s hold protocol at 40 mV s<sup>−1</sup> and writes `docs/manual/figures/Calado16Fig1fJV260905.png` + a metrics JSON: control HI 0.007 (paper 0.00), hysteretic reverse branch quantitative (J<sub>sc</sub> 16.0, P<sub>max</sub> 81 vs ≈ 85 W m<sup>−2</sup>, V<sub>oc</sub> 0.78 vs ≈ 0.73 V) but HI 0.44 vs the paper's 1.84 (P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1; SolarLab's own HI is (P<sub>rev</sub> − P<sub>fwd</sub>)/P<sub>rev</sub>, not comparable). Forward collapse ~2× too shallow, cause open. ~7 min per run at N=100; `--replot` reuses the cached `.npz`.
 - **Band-alignment screening:** `solarscale_nip_band_aligned` (fixed spiro-OMeTAD / TiO<sub>2</sub> contacts, **no interface recombination** — see the config gotcha below) and `solarscale_nip_band_aligned_iface` (same stack **with** hetero-interface SRH declared; V<sub>oc</sub> 1.0830 → 0.9382 on the shipped baseline). Use the `_iface` variant for any band-alignment study.
 
 The YAML schema mirrors `MaterialParams` + `DeviceStack.interfaces`; see any existing file for the field list. Non-perovskite stacks must set `D_ion = 0` in every layer — the ion equations still integrate but contribute zero flux. Tandem configs use a separate `TandemConfig` schema (`models/tandem_config.py`) that references two sub-cell configs plus junction layers.
@@ -488,6 +489,7 @@ expectation gap rather than establishing independent external validation.
 
 The authoritative current evidence levels are in
 `reproducibility/config_benchmark_matrix.yaml`. In particular, the Courtier and
-Calado lanes are calibrated reproductions, Lin2019 is only a partial external
-comparison, and the old finite-time mesh test is not a steady-state residual
-certificate. Open and closed P1 contracts are in `reproducibility/p1_gaps.yaml`.
+Calado lanes are calibrated reproductions (the `calado2016_fig1f` lane is the
+dynamics-faithful exception, registered `load_only`; see Configs), Lin2019 is
+only a partial external comparison, and the old finite-time mesh test is not a
+steady-state residual certificate. Open and closed P1 contracts are in `reproducibility/p1_gaps.yaml`.

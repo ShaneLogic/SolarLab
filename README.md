@@ -553,6 +553,21 @@ The registered 1D/2D comparison uses matched vertical grids, periodic lateral
 boundaries, frozen ions, and an interface-free preset. Mobile-ion dynamics and
 the 1D interface-SRH/physical-QF machinery are outside that parity claim.
 
+<p align="center">
+  <img src="docs/manual/figures/Calado16Fig1fJV260905.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
+</p>
+
+The Calado 2016 Fig 1e/1f lane (`configs/calado2016_fig1f.yaml`, the paper's
+SI Table 1 toy stack; `scripts/plot_calado_fig1f.py`, the paper's
+−1 → +1.2 V / 3 s hold protocol at 40 mV s<sup>−1</sup>) is a partial
+external comparison. The no-contact-SRH control loop closes (HI 0.007 vs
+0.00) and the hysteretic reverse branch is quantitative (J<sub>sc</sub> 16.0
+vs ≈ 16 mA cm<sup>−2</sup>, P<sub>max</sub> 81 vs ≈ 85 W m<sup>−2</sup>,
+V<sub>oc</sub> 0.78 vs ≈ 0.73 V), but the forward-scan collapse is about
+2× too shallow: HI 0.44 against the paper's 1.84 in its
+P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1 definition. The cause is open;
+the preset header records the study.
+
 <br>
 
 ---
