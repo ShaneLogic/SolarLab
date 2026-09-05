@@ -99,3 +99,29 @@ def test_uniform_generation_fills_absorber_only(mod, stack):
     assert np.all(G[~inside] == 0.0)
     # SI Table 1: 2.5e21 cm^-3 s^-1 over 400 nm -> ~16 mA/cm^2 (160 A/m^2)
     assert Q_E * mod.G_UNIFORM * 400e-9 == pytest.approx(160.0, rel=0.01)
+
+
+def test_despike_removes_isolated_spikes_but_keeps_s_shapes(mod):
+    V = np.linspace(-1.0, 1.2, 221)
+    J = _diode(V)
+    J[V > 0.3] -= 60.0 * (1.0 / (1.0 + np.exp(-(V[V > 0.3] - 0.5) / 0.03)))  # smooth S-shape step
+    clean, n = mod.despike_current(J, scale=160.0)
+    assert n == 0 and np.array_equal(clean, J)
+    spiked = J.copy()
+    spiked[60] += 220.0          # one wrong-branch point
+    spiked[150] -= 250.0
+    clean, n = mod.despike_current(spiked, scale=160.0)
+    assert n == 2
+    assert np.isnan(clean[60]) and np.isnan(clean[150])
+    assert np.array_equal(np.delete(clean, [60, 150]), np.delete(J, [60, 150]))
+
+
+def test_summarise_reports_spike_counts(mod):
+    V = np.linspace(-1.0, 1.2, 221)
+    J = _diode(V)
+    J_rev = J.copy()
+    J_rev[40] += 200.0
+    res = mod.ProtocolResult(V, J, V[::-1], J_rev[::-1], ())
+    out = mod.summarise(res)
+    assert out["spikes_removed"] == {"forward": 0, "reverse": 1}
+    assert out["reverse"]["P_max"] == pytest.approx(out["forward"]["P_max"])

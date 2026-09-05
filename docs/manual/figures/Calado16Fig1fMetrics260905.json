@@ -35,7 +35,11 @@
       },
       "HI_paper": 0.007408798607493106,
       "HI_solarlab": 0.007354311991054711,
-      "failed_steps": []
+      "failed_steps": [],
+      "spikes_removed": {
+        "forward": 0,
+        "reverse": 0
+      }
     },
     "hysteretic": {
       "forward": {
@@ -54,7 +58,11 @@
       },
       "HI_paper": 0.437088081146485,
       "HI_solarlab": 0.30414842825624394,
-      "failed_steps": []
+      "failed_steps": [],
+      "spikes_removed": {
+        "forward": 0,
+        "reverse": 0
+      }
     }
   }
 }

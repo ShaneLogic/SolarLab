@@ -940,6 +940,18 @@ V<sub>oc</sub> 0.78 vs ≈ 0.73 V), but the forward-scan collapse is about
 P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1 definition. The cause is open;
 the preset header records the study.
 
+<p align="center">
+  <img src="../docs/manual/figures/Calado16Fig1fScanRate260905.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
+</p>
+
+A nine-rate ladder on the same preset (`scripts/plot_calado_fig1f_scan_rate.py`,
+same protocol without the +1.2 V hold) gives the scan-rate bell: HI 0.001 at
+1 mV s<sup>−1</sup>, a peak of 39 at 0.3 V s<sup>−1</sup>, and 0.06 at
+100 V s<sup>−1</sup>, where ions stay frozen in the short-circuit state and
+both branches collapse together. The paper's 1.84 at 40 mV s<sup>−1</sup>
+falls between the 0.03 (0.28) and 0.1 V s<sup>−1</sup> (5.8) rungs, so the
+residual gap reads as a ≈2× shift of the ionic time scale; it stays open.
+
 Separately, `twod-mobile-ion-interface-srh-v1` certifies one synthetic,
 research-only Neumann-x slice combining a finite-width grain boundary, one
 blocking positive ion, clamp-inactive cross-node `InterfaceDefect` SRH, and

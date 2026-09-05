@@ -141,6 +141,25 @@ def branch_metrics(V: np.ndarray, J: np.ndarray) -> BranchMetrics:
     return BranchMetrics(J_sc=J_sc, V_oc=V_oc, P_max=P_max, V_mp=V_mp, FF=FF)
 
 
+def despike_current(J: np.ndarray, scale: float, window: int = 5,
+                    threshold: float = 0.3) -> tuple[np.ndarray, int]:
+    """Blank isolated single-step spikes: |J - running median| > threshold*scale.
+
+    The external staircase bypasses run_jv_sweep's wrong-branch rejection, so a
+    Radau step that lands on the injection branch shows up as one or two
+    points off the curve (measured at 10 V/s on the Fig 1f ladder). A 5-point
+    running median is blind to smooth S-shapes and plateaus; only isolated
+    outliers are set to NaN. Returns the cleaned copy and the count removed.
+    """
+    J = np.asarray(J, dtype=float)
+    half = window // 2
+    padded = np.pad(J, half, mode="edge")
+    median = np.array([np.nanmedian(padded[i:i + window]) for i in range(J.size)])
+    spike = np.isfinite(J) & (np.abs(J - median) > threshold * abs(scale))
+    cleaned = np.where(spike, np.nan, J)
+    return cleaned, int(spike.sum())
+
+
 def hysteresis_index_paper(p_fwd: float, p_rev: float) -> float:
     """Calado 2016 definition: P_max,rev / P_max,fwd - 1."""
     return p_rev / p_fwd - 1.0
@@ -187,10 +206,10 @@ def _integrate(x, y, stack, mat, V, dwell, illuminated=True):
     )
 
 
-def _staircase(x, y, stack, mat, V_from, V_to, failures):
+def _staircase(x, y, stack, mat, V_from, V_to, failures, scan_rate=SCAN_RATE_V_S):
     n = int(round(abs(V_to - V_from) / DV)) + 1
     Vs = np.linspace(V_from, V_to, n)
-    dwell = abs(V_to - V_from) / (SCAN_RATE_V_S * (n - 1))
+    dwell = abs(V_to - V_from) / (scan_rate * (n - 1))
     Js = np.full(n, np.nan)
     V_prev = None
     for i, V in enumerate(Vs):
@@ -209,7 +228,15 @@ def _staircase(x, y, stack, mat, V_from, V_to, failures):
     return Vs, Js, y
 
 
-def run_protocol(stack: DeviceStack, n_grid: int, log=print) -> ProtocolResult:
+def run_protocol(
+    stack: DeviceStack,
+    n_grid: int,
+    log=print,
+    *,
+    scan_rate: float = SCAN_RATE_V_S,
+    hold_s: float = HOLD_S,
+) -> ProtocolResult:
+    """Paper protocol at ``scan_rate`` [V/s]; ``hold_s`` = 0 skips the +V_TOP dwell."""
     x = jv.build_electrical_grid(stack, n_grid)
     mat = dataclasses.replace(
         jv.build_material_arrays(x, stack), G_optical=uniform_generation(x, stack)
@@ -224,27 +251,46 @@ def run_protocol(stack: DeviceStack, n_grid: int, log=print) -> ProtocolResult:
         y = _integrate(x, y, stack, mat_frac, 0.0, SOFT_START_S)
     for V_pre in np.linspace(0.0, V_START, WALK_DOWN_STEPS + 1)[1:]:
         y = _integrate(x, y, stack, mat, V_pre, WALK_DOWN_DWELL_S)
-    V_fwd, J_fwd, y = _staircase(x, y, stack, mat, V_START, V_TOP, failures)
+    V_fwd, J_fwd, y = _staircase(
+        x, y, stack, mat, V_START, V_TOP, failures, scan_rate=scan_rate
+    )
     log(f"  forward scan done [{time.time() - t0:.0f} s]")
-    try:
-        y = _integrate(x, y, stack, mat, V_TOP, HOLD_S)
-    except RuntimeError as exc:
-        failures.append((V_TOP, "hold: " + str(exc)[:120]))
-    V_rev, J_rev, _ = _staircase(x, y, stack, mat, V_TOP, V_START, failures)
+    if hold_s > 0.0:
+        try:
+            y = _integrate(x, y, stack, mat, V_TOP, hold_s)
+        except RuntimeError as exc:
+            failures.append((V_TOP, "hold: " + str(exc)[:120]))
+    V_rev, J_rev, _ = _staircase(
+        x, y, stack, mat, V_TOP, V_START, failures, scan_rate=scan_rate
+    )
     log(f"  reverse scan done [{time.time() - t0:.0f} s], "
         f"failed steps {len(failures)}")
     return ProtocolResult(V_fwd, J_fwd, V_rev, J_rev, tuple(failures))
 
 
+def photocurrent_scale(V: np.ndarray, J: np.ndarray) -> float:
+    """|J| at V = 0 on a branch — the spike threshold's reference, not the
+    injection current at +V_TOP, which can be 10-100x larger."""
+    V = np.asarray(V, dtype=float)
+    J = np.asarray(J, dtype=float)
+    ok = np.isfinite(J)
+    order = np.argsort(V[ok])
+    return abs(float(np.interp(0.0, V[ok][order], J[ok][order])))
+
+
 def summarise(result: ProtocolResult) -> dict:
-    fwd = branch_metrics(result.V_fwd, result.J_fwd)
-    rev = branch_metrics(result.V_rev, result.J_rev)
+    scale = photocurrent_scale(result.V_fwd, result.J_fwd)
+    J_fwd, n_fwd = despike_current(result.J_fwd, scale)
+    J_rev, n_rev = despike_current(result.J_rev, scale)
+    fwd = branch_metrics(result.V_fwd, J_fwd)
+    rev = branch_metrics(result.V_rev, J_rev)
     return {
         "forward": dataclasses.asdict(fwd),
         "reverse": dataclasses.asdict(rev),
         "HI_paper": hysteresis_index_paper(fwd.P_max, rev.P_max),
         "HI_solarlab": hysteresis_index_solarlab(fwd.P_max, rev.P_max),
         "failed_steps": [list(f) for f in result.failures],
+        "spikes_removed": {"forward": n_fwd, "reverse": n_rev},
     }
 
 
