@@ -1559,7 +1559,7 @@ configs:
       - phase1-refinement-contract
       - cigs-graded-optics-internal-closure
   - path: configs/dual_ion_demo.yaml
-    sha256: c15eda54f449413728b40010822086b7aaf35c1c8d0af6d75bebeec80733bcca
+    sha256: a52ded5f1a674dfcd12e20ea51db9bddcfb035a199d4610639569dd797597064
     semantic_sha256: 3e405b504fe303909b4f75e1a2178ebcd261a5ec281a53f0d41b8f1f7a9a4249
     schema: standard-device-v1
     status: load_only

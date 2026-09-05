@@ -176,3 +176,60 @@ def test_each_species_moves_on_its_own_diffusivity(stack):
     absorber = stack.layers[1].params
     expected = absorber.D_ion / absorber.D_ion_neg
     assert displacement(2) / displacement(3) == pytest.approx(expected, rel=0.3)
+
+
+def test_dark_settled_state_is_a_lattice_gas_equilibrium(stack):
+    """The shared-site steric flux must vanish exactly at thermodynamic equilibrium.
+
+    ``_steric_diffusion_only_flux`` writes each face flux as
+    ``D/dx * (B(xi) P_L - B(-xi) P_R)`` with
+    ``xi = s*(phi_R - phi_L)/V_T + (mu_R - mu_L)``, ``mu = -ln(1 - theta)`` and
+    ``theta = (P_+ + P_-)/P_lim`` on the nodes. Since ``B(xi)/B(-xi) = exp(-xi)``,
+    zero flux on every face is equivalent to
+
+        ln P - ln(1 - theta) + s * phi / V_T = const   (s = +1 cation, -1 anion)
+
+    across the ion-conducting region, i.e. the electrochemical potential of a
+    lattice gas is flat. That is the thermodynamic-consistency certificate for
+    the F05 form: a flux that settled to a non-equilibrium profile, or one
+    whose crowding term did not enter through the drift argument, would leave
+    the invariant with a spread comparable to the wrong-sign control below.
+
+    The control swaps the sign of the electrostatic term. It is the same
+    expression evaluated on the same state, so it cannot pass by accident:
+    it measures the band bending across the mobile region (0.26 here, 1.34 on
+    the 61-node grid), and a passing invariant must sit orders of magnitude
+    below it.
+
+    Settling is the whole game. On the 61-node grid the invariant spread was
+    1.9e-3 / 1.9e-2 (cation / anion) after 1.1e3 s, 4.3e-4 / 4.3e-3 after
+    1.1e4 s and 5.3e-9 / 5.3e-8 after 1.1e5 s, tracking the residual face flux
+    one-to-one with the anion lagging by exactly D_ion / D_ion_neg -- a short
+    dwell reports an unsettled state, not a broken flux. The 19-node grid used
+    here reaches 7e-8 / 7e-7 in about 2 s of wall time; the 61-node grid needs
+    minutes because the initial electronic transient is stiffer, not because
+    the physics differs.
+
+    This certifies internal consistency only. The preset's anion parameters
+    remain illustrative and it stays ``load_only``.
+    """
+    x = jv.build_electrical_grid(stack, 20)
+    mat = jv.build_material_arrays(x, stack)
+    y = jv.solve_equilibrium(x, stack)
+    # Dark, 0 V, past the anion's charging time: true equilibrium, no photocurrent.
+    y = jv._integrate_step(x, y, stack, mat, 0.0, 0.0, 1e5, 1e-4, 1e-6, illuminated=False)
+    _, _, phi, sv = jv._state_fields(x, y, stack, 0.0, mat)
+
+    mobile = np.asarray(mat.D_ion_node, dtype=float) > 0
+    assert mobile.sum() >= 5, "need several ion-conducting nodes for a spread to mean anything"
+    total = sv.P + sv.P_neg
+    eta = phi / mat.V_T_device
+    for dens, P_lim, sign in ((sv.P, mat.P_lim_node, +1.0), (sv.P_neg, mat.P_lim_neg_node, -1.0)):
+        theta = total / np.asarray(P_lim, dtype=float)
+        mu_ex = -np.log1p(-theta)
+        invariant = (np.log(dens) + mu_ex + sign * eta)[mobile]
+        wrong_sign = (np.log(dens) + mu_ex - sign * eta)[mobile]
+        assert np.ptp(wrong_sign) > 0.1, "control must see real band bending"
+        assert np.ptp(invariant) < 1e-5, (
+            f"lattice-gas electrochemical potential not flat: spread {np.ptp(invariant):.2e} "
+            f"against control {np.ptp(wrong_sign):.2f}")

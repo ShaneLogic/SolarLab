@@ -23,6 +23,12 @@
 # measurement. Use it to exercise and inspect the dual-ion path, not to claim
 # agreement with data.
 #
+# What IS certified: the settled dark state satisfies the lattice-gas
+# equilibrium ln P - ln(1 - theta) +/- phi/V_T = const for both species
+# (tests/integration/test_dual_ion_demo.py::test_dark_settled_state_is_a_lattice_gas_equilibrium),
+# i.e. the shared-site steric flux is thermodynamically consistent. That is a
+# statement about the flux form, not about the anion parameters.
+#
 # mode is left at the default (full); LEGACY would force use_dual_ions off and
 # silently reduce this file to the single-species benchmark.
 
