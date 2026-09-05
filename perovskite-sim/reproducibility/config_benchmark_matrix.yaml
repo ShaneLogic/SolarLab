@@ -1,3 +1,6 @@
+# Historical 52-preset registry, predating the 2026-09-05 preset deletion.
+# The full validator requires that historical checkout. Current two-preset
+# checks live in tests/reproducibility/test_research_presets.py.
 schema_version: 1
 p0_baseline: p0-certified-2026-08-01
 schema_registry: reproducibility/schema_registry.yaml

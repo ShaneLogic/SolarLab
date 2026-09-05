@@ -176,7 +176,7 @@ SolarLab/
 │   │   └── data/                   Spectra, optical constants, and references
 │   ├── backend/                    FastAPI service and SSE job dispatch
 │   ├── frontend/                   Vite + TypeScript + Plotly workstation
-│   ├── configs/                    Shipped 1D, tandem, and 2D YAML presets
+│   ├── configs/                    SCAPS parity and Calado 2016 research presets
 │   ├── reproducibility/            Evidence registry and frozen P0/P1 records
 │   ├── docs/                       Package-specific technical documentation
 │   ├── scripts/                    CLI, validation, plotting, and import tools
@@ -286,8 +286,8 @@ Open **<http://127.0.0.1:5173>** in your browser. The frontend defaults to
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
-stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-result = run_jv_sweep(stack, N_grid=80, n_points=40, v_rate=1.0)
+stack = load_device_from_yaml("configs/calado2016_fig1f.yaml")
+result = run_jv_sweep(stack, N_grid=100, n_points=61, v_rate=0.04, V_max=1.2)
 
 print(f"PCE:  {result.metrics_fwd.PCE*100:.2f} %")
 print(f"V_oc: {result.metrics_fwd.V_oc:.3f} V")
@@ -694,22 +694,19 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 
 ## Shipped Device Presets
 
-Presets live in `perovskite-sim/configs/`, with 2D examples under `perovskite-sim/configs/twod/`. Drop a new `.yaml` file in either location and it is auto-discovered by `GET /api/configs`. The table below lists representative presets; the reproducibility registry inventories every shipped YAML.
+Only two bundled presets remain in `perovskite-sim/configs/`. The other 50
+YAML files were deleted on 2026-09-05; new validation studies will construct
+new configurations. The API discovers files on disk, while the frontend
+research catalog gives these two entry points explicit names and modes.
 
 | Preset | Material System | Ions | Optics | Notes |
 |:-------|:----------------|:----:|:------:|:------|
-| `nip_MAPbI3` | MAPbI3 n-i-p | Yes | Beer-Lambert | Canonical perovskite reference |
-| `pin_MAPbI3` | MAPbI3 p-i-n | Yes | Beer-Lambert | Inverted-architecture reference |
-| `nip_MAPbI3_tmm` | MAPbI3 n-i-p + glass | Yes | TMM | TMM-enabled with 1 mm substrate |
-| `pin_MAPbI3_tmm` | MAPbI3 p-i-n + glass | Yes | TMM | TMM-enabled |
-| `ionmonger_benchmark` | Courtier 2019 | Yes | Beer-Lambert | IonMonger cross-check |
-| `driftfusion_benchmark` | Driftfusion params | Yes | Beer-Lambert | Driftfusion cross-check |
-| `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert | $D_{\text{ion}}=0$ everywhere |
-| `cSi_homojunction` | n+ / p c-Si | No | Beer-Lambert | Requires the cancellation-safe QF driver for production J-V |
-| `csi_vannijen2025_pn_cv` | Gaussian p+ / n c-Si | No | Dark only | Partial external C-V comparison; not pointwise parity |
-| `twod/nip_MAPbI3_uniform` | MAPbI3 2D lateral-uniform | Frozen in 2D | Beer-Lambert | 2D parity / baseline preset |
-| `twod/nip_MAPbI3_singleGB` | MAPbI3 2D single grain boundary | Frozen in 2D | Beer-Lambert | Microstructure V<sub>oc</sub>-loss preset |
-| `twod/bcx_combined_demo` | MAPbI3 2D combined hooks | Frozen in 2D | Beer-Lambert | Demo for Robin contacts + field mobility + microstructure |
+| `scaps_mirror_v2` | Glass / HTL / PVK / ETL | No | TMM | SCAPS parity study, Fast mode |
+| `calado2016_fig1f` | Calado 2016 Fig. 1f toy device | Yes | Beer-Lambert | Ion migration and hysteresis, Legacy mode |
+
+See [Research Presets](perovskite-sim/configs/README.md) for protocols and
+limitations. Older benchmark figures and records elsewhere in this README
+describe historical configurations, not additional currently shipped presets.
 
 <br>
 
@@ -718,13 +715,14 @@ Presets live in `perovskite-sim/configs/`, with 2D examples under `perovskite-si
 ## Testing
 
 ```bash
-# From perovskite-sim/
-pytest                                                  # default unit + integration (~2-3 min)
-pytest -m validation -W error::RuntimeWarning           # literature-informed lanes
-pytest -m slow -W error::RuntimeWarning                 # heavy physics suite; can exceed 1 h
-python scripts/verify_reproducibility.py --json         # registry and frozen baselines
-pytest --cov=perovskite_sim --cov-report=term-missing   # optional coverage report
+# From perovskite-sim/: current two-preset checks
+python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
 ```
+
+The full historical suite and 52-preset matrix require their old inputs and
+are not runnable unchanged after the preset deletion. The underlying tests
+and records remain as source history; they are not silently skipped or
+relabelled as passing. New validation studies need new fixtures and gates.
 
 | Suite | Scope |
 |:------|:------|

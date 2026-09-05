@@ -16,7 +16,7 @@ import yaml
 import backend.main as bm
 
 SCAPS_CFG = "configs/scaps_mirror_v2.yaml"
-STD_CFG = "configs/nip_MAPbI3_tmm.yaml"
+STD_CFG = "configs/calado2016_fig1f.yaml"
 
 
 def test_detects_scaps_schema():

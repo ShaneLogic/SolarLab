@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Validate the frozen P0 source and config/schema/benchmark matrix."""
+"""Validate the historical P0 source and 52-preset benchmark matrix.
+
+Requires the checkout before the 2026-09-05 preset deletion. For the current
+scope, run tests/reproducibility/test_research_presets.py instead.
+"""
 from __future__ import annotations
 
 import argparse

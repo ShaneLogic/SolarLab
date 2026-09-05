@@ -95,8 +95,10 @@ frontend no longer uses them; they exist for notebook / CLI consumers.
 
 `GET /api/configs` scans `perovskite-sim/configs/` and
 `perovskite-sim/configs/twod/` on every request, so dropping a new YAML file
-in either folder makes it immediately visible to the frontend dropdown with no
-code change. User presets saved via `POST /api/configs/user` land in
+in either folder makes it available through the API. Only
+`scaps_mirror_v2.yaml` and `calado2016_fig1f.yaml` are currently bundled;
+the frontend research catalog names these two studies explicitly. User
+presets saved via `POST /api/configs/user` land in
 `configs/user/` and are returned in a separate `namespace: "user"` group.
 Basename collisions are resolved in favor of top-level shipped/user presets;
 2D presets are returned with namespace `"shipped"` when not shadowed.

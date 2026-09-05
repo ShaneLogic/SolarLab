@@ -154,28 +154,37 @@ const LAYER_GROUPS: ParamGroup[] = [
   {
     title: 'Ions & Optics',
     fields: [
-      { key: 'D_ion', label: '<i>D</i><sub>ion</sub>', kind: 'numeric', unit: 'm²/s' },
-      { key: 'P_lim', label: '<i>P</i><sub>lim</sub>', kind: 'numeric', unit: 'm⁻³' },
-      { key: 'P0', label: '<i>P</i><sub>0</sub>', kind: 'numeric', unit: 'm⁻³' },
       {
-        key: 'D_ion_neg', label: '<i>D</i><sub>ion,−</sub>',
+        key: 'D_ion', label: '<i>D</i><sub>c</sub>', kind: 'numeric', unit: 'm²/s',
+        tooltip: 'Diffusion coefficient of the positive mobile ionic species c at 300 K. Positive-ion migration requires both D_c > 0 and an available positive-ion population. Set to 0 to freeze this species.',
+      },
+      {
+        key: 'P0', label: '<i>c</i><sub>0</sub>', kind: 'numeric', unit: 'm⁻³',
+        tooltip: 'Initial reference concentration of positive mobile ions. The layer starts with c = c₀; its ionic space-charge contribution is +q(c − c₀), including the fixed compensating background. This uniform initial profile need not be ion-relaxed equilibrium. 1e18 cm⁻³ = 1e24 m⁻³.',
+      },
+      {
+        key: 'P_lim', label: '<i>c</i><sub>lim</sub>', kind: 'numeric', unit: 'm⁻³',
+        tooltip: 'Finite-site concentration scale for positive-ion crowding. Single-species occupancy is c/c_lim; shared-site occupancy is (c + a)/c_lim. For a common site reservoir, use c_lim = a_lim and c₀ + a₀ < c_lim. This is a site-density scale, not the initial ion concentration.',
+      },
+      {
+        key: 'D_ion_neg', label: '<i>D</i><sub>a</sub>',
         kind: 'numeric-optional', unit: 'm²/s', placeholder: 'empty — single species',
-        tooltip: 'Diffusion coefficient of a second, negatively charged mobile ionic species. Its drift is reversed relative to the positive species. Leave empty for single-species transport. Runs in Fast and Full tiers; Legacy forces it off.',
+        tooltip: 'Diffusion coefficient of the negative mobile ionic species a at 300 K. Its drift is reversed relative to c. Set D_a > 0 and a₀ > 0 to include mobile negative ions. Leave empty for single-species transport. Runs in Fast and Full tiers; Legacy forces it off.',
       },
       {
-        key: 'P0_neg', label: '<i>P</i><sub>0,−</sub>',
+        key: 'P0_neg', label: '<i>a</i><sub>0</sub>',
         kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — none',
-        tooltip: 'Equilibrium density of the negative species. Enters Poisson as −(P₋ − P₀,₋), so setting it equal to the positive background keeps the stack neutral at rest.',
+        tooltip: 'Initial reference concentration of negative mobile ions. The layer starts with a = a₀; its ionic space-charge contribution is −q(a − a₀), including the fixed compensating background. a₀ need not equal c₀. Also set D_a > 0 in Fast or Full to activate this species. 1e18 cm⁻³ = 1e24 m⁻³.',
       },
       {
-        key: 'P_lim_neg', label: '<i>P</i><sub>lim,−</sub>',
+        key: 'P_lim_neg', label: '<i>a</i><sub>lim</sub>',
         kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — 1e30 (no limit)',
-        tooltip: 'Steric site limit for the negative species, used in both sublattice modes — sharing changes the numerator of the occupancy, not this denominator. Leaving it empty gives 1e30, which switches this species’ crowding off even with sharing on, so a shared-sublattice stack should set it equal to P_lim.',
+        tooltip: 'Finite-site concentration scale for negative-ion crowding. Independent-site occupancy is a/a_lim; shared-site occupancy is (c + a)/a_lim. For a common site reservoir, set a_lim = c_lim. Leaving it empty gives 1e30, making crowding negligible at ordinary ion concentrations.',
       },
       {
         key: 'E_a_ion', label: '<i>E</i><sub>a,ion</sub>',
         kind: 'numeric-optional', unit: 'eV', placeholder: 'empty — 0.58',
-        tooltip: 'Arrhenius activation energy for the ionic diffusivity: D_ion(T) = D_ion,300·exp[−E_a/k_B·(1/T − 1/300)]. One value covers both species — the same E_a_ion scales D_ion and D_ion,−. An explicit 0 removes the temperature dependence. Applies in Fast and Full, where temperature scaling runs; Legacy pins T to 300 K and ignores it.',
+        tooltip: 'Arrhenius activation energy for the ionic diffusivity: D_c(T) = D_c,300·exp[−E_a/k_B·(1/T − 1/300)], with the same scaling for D_a. One activation energy covers both species. An explicit 0 removes the temperature dependence. Applies in Fast and Full; Legacy pins T to 300 K and ignores it.',
       },
       { key: 'alpha', label: '<i>α</i>', kind: 'numeric', unit: 'm⁻¹' },
       { key: 'optical_material', label: 'Optical material', kind: 'select-optical-material' },
@@ -1025,7 +1034,7 @@ function renderScapsPhysics(config: DeviceConfig): string {
   // true, so only an explicit false disables it.
   const stericDiffusionOnly = d.ion_steric_diffusion_only ?? true
   const sharedSiteTitle = stericDiffusionOnly
-    ? 'With two mobile species, whether each species’ crowding potential −ln(1−θ) counts the total occupancy θ = (P₊+P₋)/P_lim of that species — the two competing for one reservoir — or only its own density. Either way each species divides by its own P_lim (YAML ion_steric_shared_site; backend default true).'
+    ? 'With two mobile species, shared-site crowding uses θ_c = (c + a)/c_lim and θ_a = (c + a)/a_lim. For one common reservoir, set c_lim = a_lim. When unchecked, the occupancies are c/c_lim and a/a_lim instead (YAML ion_steric_shared_site; backend default true).'
     : 'No effect while ion_steric_diffusion_only is off: the whole-flux steric form does not consult the shared-site assumption (jv_sweep.py). Re-enable ion_steric_diffusion_only in the YAML to use this. The stored value is preserved.'
   return `
       <details class="param-group">

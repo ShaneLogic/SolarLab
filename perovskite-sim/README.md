@@ -50,12 +50,14 @@ cd frontend && npm install     # frontend dependencies
 ## Tests
 
 ```bash
-pytest                                                  # default unit + integration (~2-3 min)
-pytest -m validation -W error::RuntimeWarning           # literature-informed lanes
-pytest -m slow -W error::RuntimeWarning                 # heavy physics suite; can exceed 1 h
-python scripts/verify_reproducibility.py --json          # P0 + config/schema/resource matrix
-pytest --cov=perovskite_sim --cov-report=term-missing   # with coverage
+python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
 ```
+
+These are the current two-preset checks. The other 50 bundled YAML files were
+deleted on 2026-09-05. The full historical suite and 52-preset matrix require
+their original inputs and cannot run unchanged in this checkout. New studies
+will build new fixtures and acceptance criteria; prior evidence remains
+historical. See [Research Presets](configs/README.md).
 
 Transient solves retain the historical scalar absolute tolerance by default.
 For the opt-in reference-scaled policy and the required three-level tolerance
@@ -144,22 +146,17 @@ unknowns and certification checks. The experiment selects the driver
 explicitly; unsupported combinations fail before the numerical solve. Likewise,
 `legacy`, `fast`, and `full` are feature ceilings rather than accuracy grades.
 
-### Supported Device Architectures
+### Current Research Presets
 
 | Config | Structure | Ions | Optics |
 |:-------|:----------|:----:|:------:|
-| `nip_MAPbI3` | spiro / MAPbI3 / TiO2 | Yes | Beer-Lambert |
-| `nip_MAPbI3_tmm` | Glass / spiro / MAPbI3 / TiO2 | Yes | TMM |
-| `pin_MAPbI3` | TiO2 / MAPbI3 / spiro | Yes | Beer-Lambert |
-| `ionmonger_benchmark` | Courtier 2019 reference | Yes | Beer-Lambert |
-| `cigs_baseline` | ZnO / CdS / CIGS | No | Beer-Lambert |
-| `cigs_graded_optics` | ZnO / CdS / graded CIGS | No | Composition-resolved TMM |
-| `cSi_homojunction` | n+ / p Si wafer | No | Beer-Lambert |
-| `csi_vannijen2025_pn_cv` | Gaussian p+ / n Si C-V cross-check | No | Dark only |
-| `tandem_lin2019` | Wide-gap / narrow-gap tandem | Yes | TMM |
-| `twod/nip_MAPbI3_uniform` | 2D lateral-uniform MAPbI3 | Frozen in 2D | Beer-Lambert |
-| `twod/nip_MAPbI3_singleGB` | 2D MAPbI3 with one vertical grain boundary | Frozen in 2D | Beer-Lambert |
-| `twod/bcx_combined_demo` | 2D combined Robin / field-mobility / microstructure demo | Frozen in 2D | Beer-Lambert |
+| `scaps_mirror_v2` | Glass / HTL / PVK / ETL, SCAPS partner device | No | TMM |
+| `calado2016_fig1f` | Calado 2016 Fig. 1f toy device | Yes | Beer-Lambert |
+
+Use Fast for the SCAPS reference and Legacy for the Calado reference.
+Other configurations discussed below are historical studies whose YAML
+presets have been removed; retained solver capabilities are not additional
+bundled presets.
 
 Continuous `chi/Eg` grading changes electrical transport only by default, so
 the historical CIGS notch studies must not be interpreted as graded-optics
@@ -654,8 +651,8 @@ V/J data are unchanged between the two modes.
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
-stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-result = run_jv_sweep(stack, N_grid=80, n_points=40, v_rate=1.0)
+stack = load_device_from_yaml("configs/calado2016_fig1f.yaml")
+result = run_jv_sweep(stack, N_grid=100, n_points=61, v_rate=0.04, V_max=1.2)
 print(f"PCE: {result.metrics_fwd.PCE*100:.2f} %")
 ```
 

@@ -4,6 +4,23 @@ This directory is the machine-readable boundary between a passing test and a
 scientific claim. A configuration is not externally validated merely because
 it loads or produces a finite J-V curve.
 
+## Current Research Scope
+
+On 2026-09-05, 50 bundled presets were deleted. Only `scaps_mirror_v2.yaml`
+and `calado2016_fig1f.yaml` remain. The 52-preset matrix, numerical refinement
+registry and P1 records below describe the historical checkout. The full
+matrix verifier and old preset-dependent tests require that historical
+checkout; they are not a current passing-suite claim.
+
+Current loading, API and protocol-helper checks are:
+
+```bash
+python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
+```
+
+Future studies must define new inputs and acceptance criteria. Existing
+historical metrics must not be transferred to another preset.
+
 ## Files
 
 - `baselines/p0-certified-2026-08-01/` reconstructs the P0 solver state from
@@ -18,7 +35,7 @@ it loads or produces a finite J-V curve.
 - `P1_CLOSURE_2026-08-07.md` is the P1 phase closeout. Earlier checkpoint
   files remain immutable historical notes.
 
-## Verification
+## Historical Verification
 
 Run from the `perovskite-sim` project root:
 

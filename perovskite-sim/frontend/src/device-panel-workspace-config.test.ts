@@ -77,4 +77,39 @@ describe('DevicePanel workspace-config ownership', () => {
     expect(panel.getConfig()).toEqual(charged)
     expect(mocks.getConfig).not.toHaveBeenCalled()
   })
+
+  it('limits the picker to the two studies and user presets while keeping the workspace snapshot', async () => {
+    mocks.listConfigs.mockResolvedValue([
+      { name: 'cigs_baseline.yaml', namespace: 'shipped' },
+      { name: 'calado2016_fig1f.yaml', namespace: 'shipped' },
+      { name: 'scaps_mirror_v2.yaml', namespace: 'shipped' },
+      { name: 'my_ion_scan.yaml', namespace: 'user' },
+    ])
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const panel = await mountDevicePanel(root, 'device-test', {
+      tier: 'legacy', initialConfig: config('off'),
+    })
+    const options = Array.from(root.querySelectorAll<HTMLOptionElement>('option'))
+    expect(options.map(o => o.value)).toEqual([
+      '__workspace_snapshot__', 'scaps_mirror_v2.yaml', 'calado2016_fig1f.yaml', 'my_ion_scan.yaml',
+    ])
+    expect(options[1].textContent).toBe('SCAPS parity - Reference v2')
+    expect(options[2].textContent).toBe('Calado 2016 - Ion hysteresis')
+    expect(panel.getConfig()).toEqual(config('off'))
+    expect(mocks.getConfig).not.toHaveBeenCalled()
+  })
+
+  it('loads the SCAPS reference as the default when there is no workspace snapshot', async () => {
+    mocks.listConfigs.mockResolvedValue([
+      { name: 'calado2016_fig1f.yaml', namespace: 'shipped' },
+      { name: 'scaps_mirror_v2.yaml', namespace: 'shipped' },
+      { name: 'ionmonger_benchmark.yaml', namespace: 'shipped' },
+    ])
+    mocks.getConfig.mockResolvedValue(config('off'))
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    await mountDevicePanel(root, 'device-test', { tier: 'legacy' })
+    expect(mocks.getConfig).toHaveBeenCalledWith('scaps_mirror_v2.yaml')
+  })
 })

@@ -12,6 +12,7 @@ import { reconcileInterfaces } from './stack/reconcile-interfaces'
 import { openAddLayerDialog } from './stack/add-layer-dialog'
 import { openSaveAsDialog } from './stack/save-as-dialog'
 import { isLayerBuilderEnabled } from './workstation/tier-gating'
+import { presetLabel, researchPresetEntries } from './preset-catalog'
 import type {
   DeviceConfig,
   LayerTemplate,
@@ -107,16 +108,14 @@ export async function mountDevicePanel(
     }
   }
 
-  const entries = (await listConfigs()).filter(
-    e => !(e.device_type ?? '').startsWith('tandem'),
-  )
+  const entries = researchPresetEntries(await listConfigs())
   const shipped = entries.filter(e => e.namespace === 'shipped')
   const user = entries.filter(e => e.namespace === 'user')
   const workspaceSnapshotValue = '__workspace_snapshot__'
   const workspaceSnapshotOption = '<option value="__workspace_snapshot__">Workspace snapshot</option>'
   select.innerHTML = (
     (workspaceSnapshot ? workspaceSnapshotOption : '')
-    + optgroup('Shipped presets', shipped)
+    + optgroup('Research presets', shipped)
     + optgroup('User presets', user)
   )
 
@@ -317,12 +316,10 @@ export async function mountDevicePanel(
   }
 
   async function refreshConfigsDropdown(selectName: string): Promise<void> {
-    const newEntries = (await listConfigs()).filter(
-      e => !(e.device_type ?? '').startsWith('tandem'),
-    )
+    const newEntries = researchPresetEntries(await listConfigs())
     const s = newEntries.filter(e => e.namespace === 'shipped')
     const u = newEntries.filter(e => e.namespace === 'user')
-    select.innerHTML = optgroup('Shipped presets', s) + optgroup('User presets', u)
+    select.innerHTML = optgroup('Research presets', s) + optgroup('User presets', u)
     const target = u.find(e => e.name.startsWith(`${selectName}.`))
       ?? s.find(e => e.name.startsWith(`${selectName}.`))
     if (target) select.value = target.name
@@ -372,7 +369,7 @@ export async function mountDevicePanel(
     select.value = workspaceSnapshotValue
     applyConfig(workspaceSnapshot, false)
   } else {
-    const initial = shipped.find(e => e.name.includes('ionmonger'))?.name ?? shipped[0]?.name ?? entries[0]?.name
+    const initial = shipped[0]?.name ?? entries[0]?.name
     if (!initial) throw new Error('no configs available')
     select.value = initial
     await load(initial)
@@ -439,6 +436,6 @@ function formatYamlScalar(v: unknown): string {
 function optgroup(label: string, items: ReadonlyArray<{ name: string }>): string {
   if (items.length === 0) return ''
   return `<optgroup label="${label}">${items
-    .map(e => `<option value="${e.name}">${e.name.replace(/\.ya?ml$/, '')}</option>`)
+    .map(e => `<option value="${e.name}">${presetLabel(e.name)}</option>`)
     .join('')}</optgroup>`
 }

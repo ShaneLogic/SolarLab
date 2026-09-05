@@ -4,6 +4,7 @@ import {
   buildWizardHTML,
   parseWizardSelection,
   presetsFromEntries,
+  showWizard,
   type WizardPreset,
 } from './wizard'
 import type { ConfigEntry } from '../types'
@@ -115,16 +116,49 @@ describe('applyTierCompat', () => {
 describe('presetsFromEntries', () => {
   it('defaults missing tier_compat to legacy+fast', () => {
     const entries: ConfigEntry[] = [
-      { name: 'old.yaml', namespace: 'shipped' },
+      { name: 'old.yaml', namespace: 'user' },
       {
         name: 'new.yaml',
-        namespace: 'shipped',
+        namespace: 'user',
         tier_compat: ['legacy', 'fast', 'full'],
       },
     ]
     const presets = presetsFromEntries(entries)
     expect(presets[0].tier_compat).toEqual(['legacy', 'fast'])
     expect(presets[1].tier_compat).toEqual(['legacy', 'fast', 'full'])
+  })
+
+  it('uses the focused catalog and preserves each reference mode', () => {
+    const presets = presetsFromEntries([
+      { name: 'calado2016_fig1f.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast'] },
+      { name: 'scaps_mirror_v2.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
+      { name: 'ionmonger_benchmark.yaml', namespace: 'shipped' },
+    ])
+    expect(presets.map(p => p.name)).toEqual(['scaps_mirror_v2.yaml', 'calado2016_fig1f.yaml'])
+    expect(presets.map(p => p.preferred_tier)).toEqual(['fast', 'legacy'])
+  })
+})
+
+describe('research preset selection', () => {
+  it('starts SCAPS in Fast and switches Calado to Legacy without changing the filename payload', async () => {
+    const root = document.createElement('div')
+    const result = showWizard(root, presetsFromEntries([
+      { name: 'scaps_mirror_v2.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
+      { name: 'calado2016_fig1f.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast'] },
+    ]))
+    expect(parseWizardSelection(root)?.tier).toBe('fast')
+    const select = root.querySelector<HTMLSelectElement>('select[name="wizard-preset"]')!
+    expect(select.options[0].textContent).toBe('SCAPS parity - Reference v2')
+    select.value = 'calado2016_fig1f.yaml'
+    select.dispatchEvent(new Event('change'))
+    expect(parseWizardSelection(root)).toEqual({
+      tier: 'legacy', preset: 'calado2016_fig1f.yaml', name: 'New device',
+    })
+    root.querySelector<HTMLButtonElement>('[data-wizard="create"]')!.click()
+    expect(await result).toEqual({
+      cancelled: false,
+      selection: { tier: 'legacy', preset: 'calado2016_fig1f.yaml', name: 'New device' },
+    })
   })
 })
 

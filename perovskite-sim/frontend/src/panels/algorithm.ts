@@ -6,14 +6,16 @@ export function algorithmHTML(): string {
       <h4>Governing equations</h4>
       <p>On each layer the simulator solves Poisson's equation coupled to electron, hole, and mobile-ion continuity:</p>
       <pre class="eqn">
-∂/∂<i>x</i> ( <i>ε</i><sub>0</sub> <i>ε</i><sub>r</sub>(<i>x</i>) · ∂<i>φ</i>/∂<i>x</i> )  =  − <i>q</i> [ <i>p</i> − <i>n</i> + (<i>P</i> − <i>P</i><sub>0</sub>) − <i>N</i><sub>A</sub> + <i>N</i><sub>D</sub> ]
+∂/∂<i>x</i> ( <i>ε</i><sub>0</sub> <i>ε</i><sub>r</sub>(<i>x</i>) · ∂<i>φ</i>/∂<i>x</i> )  =  − <i>q</i> [ <i>p</i> − <i>n</i> + <i>N</i><sub>D</sub> − <i>N</i><sub>A</sub> + (<i>c</i> − <i>c</i><sub>0</sub>) − (<i>a</i> − <i>a</i><sub>0</sub>) ]
 
 ∂<i>n</i>/∂<i>t</i>  =  (1/<i>q</i>) ∂<i>J</i><sub>n</sub>/∂<i>x</i>  +  <i>G</i> − <i>R</i>
 ∂<i>p</i>/∂<i>t</i>  = − (1/<i>q</i>) ∂<i>J</i><sub>p</sub>/∂<i>x</i>  +  <i>G</i> − <i>R</i>
-∂<i>P</i>/∂<i>t</i>  = − ∂<i>F</i><sub>ion</sub>/∂<i>x</i>
+∂<i>c</i>/∂<i>t</i>  = − (1/<i>q</i>) ∂<i>J</i><sub>c</sub>/∂<i>x</i>
+∂<i>a</i>/∂<i>t</i>  =  (1/<i>q</i>) ∂<i>J</i><sub>a</sub>/∂<i>x</i>
 
 <i>J</i><sub>n</sub> =  <i>q</i> <i>μ</i><sub>n</sub> <i>n</i> <i>E</i>  +  <i>q</i> <i>D</i><sub>n</sub> ∂<i>n</i>/∂<i>x</i>
 <i>J</i><sub>p</sub> =  <i>q</i> <i>μ</i><sub>p</sub> <i>p</i> <i>E</i>  −  <i>q</i> <i>D</i><sub>p</sub> ∂<i>p</i>/∂<i>x</i></pre>
+      <p><i>c</i> and <i>a</i> are the positive and negative mobile-ion concentrations. Their initial references are <i>c</i><sub>0</sub> and <i>a</i><sub>0</sub>. Ionic space charge is measured relative to fixed compensating backgrounds, so it vanishes at these initial concentrations without requiring <i>c</i><sub>0</sub> = <i>a</i><sub>0</sub>. Ions have no generation or recombination terms. The conventional ionic currents are <i>J</i><sub>c</sub> = <i>qF</i><sub>c</sub> and <i>J</i><sub>a</sub> = −<i>qF</i><sub>a</sub>. In single-species mode, <i>a</i> = <i>a</i><sub>0</sub> = 0.</p>
 
       <h4>Spatial discretization — Scharfetter–Gummel</h4>
       <p>Each interior face uses the exponential-fit flux that is exact for a piecewise-constant electric field over the cell:</p>
@@ -36,22 +38,23 @@ export function algorithmHTML(): string {
 <i>R</i><sub>iface</sub> =  (<i>n</i><i>p</i> − <i>n</i><sub>i</sub><sup>2</sup>) / [ (<i>p</i> + <i>p</i><sub>1</sub>)/<i>v</i><sub>n</sub>  +  (<i>n</i> + <i>n</i><sub>1</sub>)/<i>v</i><sub>p</sub> ]</pre>
 
       <h4>Ion migration</h4>
-      <p>Mobile ions follow a steric (Blakemore) drift-diffusion flux that saturates at the density-of-site limit <i>P</i><sub>lim</sub>:</p>
+      <p>The default finite-site drift-diffusion model adds a crowding chemical potential to the positive-ion particle flux:</p>
       <pre class="eqn">
-<i>F</i><sub>ion</sub>  =  − <i>D</i><sub>ion</sub> [ ∂<i>P</i>/∂<i>x</i>  +  (<i>q</i> / <i>k</i><sub>B</sub><i>T</i>) <i>P</i> (1 − <i>P</i>/<i>P</i><sub>lim</sub>) ∂<i>φ</i>/∂<i>x</i> ]</pre>
-      <p>Boundary conditions are zero-flux at the contacts (ions are confined to the absorber).</p>
+<i>F</i><sub>c</sub>  =  − <i>D</i><sub>c</sub> [ ∂<i>c</i>/∂<i>x</i>  +  (<i>c</i>/<i>V</i><sub>T</sub>) ∂<i>φ</i>/∂<i>x</i>  +  <i>c</i> ∂<i>u</i><sub>c</sub>/∂<i>x</i> ]
+<i>u</i><sub>c</sub> = −ln(1 − <i>θ</i><sub>c</sub>)    ,    <i>θ</i><sub>c</sub> = <i>c</i>/<i>c</i><sub>lim</sub>    (single species)</pre>
+      <p>The finite-site term enhances diffusion without multiplying electrical drift. The Legacy tier retains its whole-flux steric multiplier for benchmark compatibility. Contacts block ionic particle flux; layers with zero ionic diffusivity also block transport.</p>
 
       <h4>Time integration — Method of Lines</h4>
-      <p>The semi-discretised system is cast as a stiff ODE d<i>y</i>/d<i>t</i> = <i>f</i>(<i>t</i>, <i>y</i>) with state vector <i>y</i> = (<i>n</i>, <i>p</i>, <i>P</i>). We integrate with SciPy's <b>Radau</b> implicit Runge–Kutta method. Near flat-band (<i>V</i> ≈ <i>V</i><sub>bi</sub>) the Jacobian becomes nearly singular and Radau's adaptive estimator can under-report the LTE, so we <b>cap Δ<i>t</i><sub>max</sub> = Δ<i>t</i> / 20</b> on every sub-interval. This eliminates unphysical branch jumps without touching the computed solution values.</p>
+      <p>The semi-discretised system is cast as a stiff ODE d<i>y</i>/d<i>t</i> = <i>f</i>(<i>t</i>, <i>y</i>) with state vector <i>y</i> = (<i>n</i>, <i>p</i>, <i>c</i>), adding <i>a</i> in dual-ion mode. We integrate with SciPy's <b>Radau</b> implicit Runge–Kutta method. Near flat-band (<i>V</i> ≈ <i>V</i><sub>bi</sub>) the Jacobian becomes nearly singular and Radau's adaptive estimator can under-report the LTE, so we <b>cap Δ<i>t</i><sub>max</sub> = Δ<i>t</i> / 20</b> on every sub-interval. This eliminates unphysical branch jumps without touching the computed solution values.</p>
 
       <h4>Measurement protocols</h4>
       <ul>
         <li><b>J–V sweep (illuminated):</b> forward then reverse, using the previous steady state as the next initial condition &mdash; this preserves true ionic memory and produces the hysteresis loop from first principles. Initial state is illuminated steady-state at V = 0.</li>
         <li><b>J–V sweep (dark):</b> same scan protocol but with <i>G</i> = 0 everywhere. Initial state is dark equilibrium (no illuminated settle). Produces the diode injection-current characteristic.</li>
         <li><b>Current decomposition:</b> at every voltage/time point, the total current density <i>J</i><sub>total</sub> is decomposed into four physical contributions: <i>J</i><sub>n</sub> (electron SG flux &times; <i>q</i>), <i>J</i><sub>p</sub> (hole SG flux &times; <i>q</i>), <i>J</i><sub>ion</sub> (vacancy SG flux with steric correction &times; <i>q</i>, both + and &minus; species), and <i>J</i><sub>disp</sub> = <i>&epsilon;</i><sub>0</sub> <i>&epsilon;</i><sub>r</sub> &part;<i>E</i>/&part;<i>t</i>. All four are evaluated at every mesh face.</li>
-        <li><b>Spatial profile export:</b> a <code>SpatialSnapshot</code> captures &phi;(<i>x</i>), <i>E</i>(<i>x</i>), <i>n</i>(<i>x</i>), <i>p</i>(<i>x</i>), <i>P</i>(<i>x</i>), &rho;(<i>x</i>) at a single voltage/time point. Optionally collected at every voltage step in the J&ndash;V sweep via the <code>save_snapshots</code> flag.</li>
+        <li><b>Spatial profile export:</b> a <code>SpatialSnapshot</code> captures &phi;(<i>x</i>), <i>E</i>(<i>x</i>), <i>n</i>(<i>x</i>), <i>p</i>(<i>x</i>), <i>c</i>(<i>x</i>), &rho;(<i>x</i>) at a single voltage/time point. Optionally collected at every voltage step in the J&ndash;V sweep via the <code>save_snapshots</code> flag.</li>
         <li><b>Impedance:</b> at each frequency we integrate three AC cycles, extract <i>V</i>(<i>t</i>) and <i>J</i>(<i>t</i>), and apply a <b>lock-in amplifier</b> (multiply by sin / cos at <i>f</i>, low-pass) to recover amplitude and phase. Displacement current <i>J</i><sub>disp</sub> = <i>&epsilon;</i><sub>0</sub> <i>&epsilon;</i><sub>r</sub> (&part;<i>E</i> / &part;<i>t</i>) is added at the measurement plane.</li>
-        <li><b>Degradation snapshot J–V:</b> at each probe time the stack is <b>frozen</b> (<i>D</i><sub>ion</sub> &rarr; 0 copy) and a short settle integration is run at each <i>V</i><sub>probe</sub>. This measures the instantaneous electronic response under the current ionic configuration, with no averaging over ion drift.</li>
+        <li><b>Degradation snapshot J–V:</b> at each probe time the ionic profile is <b>frozen</b> and a short settle integration is run at each <i>V</i><sub>probe</sub>. This measures the instantaneous electronic response under the current ionic configuration, with no averaging over ion drift.</li>
         <li><b>Transient photovoltage (TPV):</b> the device is equilibrated at <i>V</i><sub>oc</sub> under steady illumination, then the generation rate is boosted by a fraction &delta;<i>G</i> for <i>t</i><sub>pulse</sub> seconds. The solver holds <i>V</i><sub>app</sub> = <i>V</i><sub>oc</sub> and tracks <i>J</i>(<i>t</i>); the voltage perturbation is recovered via the small-signal relation &delta;<i>V</i>(<i>t</i>) &approx; &minus;<i>J</i>(<i>t</i>) &middot; <i>R</i><sub>oc</sub> where <i>R</i><sub>oc</sub> = d<i>V</i>/d<i>J</i> at open circuit. A log-linear fit extracts the mono-exponential decay time &tau;.</li>
       </ul>
 
@@ -68,7 +71,7 @@ export function algorithmHTML(): string {
           <tr><td>Optical generation</td><td>Beer&ndash;Lambert</td><td>TMM (if configured)</td><td>TMM (if configured)</td></tr>
           <tr><td>Mobile ions</td><td>Single species</td><td>Dual species (if configured)</td><td>Dual species (if configured)</td></tr>
           <tr><td>SRH trap density <i>N</i><sub>t</sub>(<i>x</i>)</td><td>Uniform <i>τ</i></td><td>Position-dependent</td><td>Position-dependent</td></tr>
-          <tr><td>Temperature scaling (<i>V</i><sub>T</sub>, <i>μ</i>, <i>n</i><sub>i</sub>, <i>D</i><sub>ion</sub>)</td><td>Fixed 300 K</td><td>Uses device <i>T</i></td><td>Uses device <i>T</i></td></tr>
+          <tr><td>Temperature scaling (<i>V</i><sub>T</sub>, <i>μ</i>, <i>n</i><sub>i</sub>, <i>D</i><sub>c</sub>, <i>D</i><sub>a</sub>)</td><td>Fixed 300 K</td><td>Uses device <i>T</i></td><td>Uses device <i>T</i></td></tr>
           <tr><td>Photon recycling</td><td>&mdash;</td><td>&#10003;</td><td>&#10003;</td></tr>
           <tr><td>Self-consistent radiative reabsorption</td><td>&mdash;</td><td>&mdash;</td><td>&#10003;</td></tr>
           <tr><td>Field-dependent mobility</td><td>&mdash;</td><td>&mdash;</td><td>&#10003;</td></tr>
@@ -110,8 +113,12 @@ export function algorithmHTML(): string {
       <h4>3. Dual-species ion migration (Fast / Full)</h4>
       <p>Perovskites support both positive vacancies (e.g. <i>V</i><sub>I</sub><sup>+</sup>) and negative mobile species (interstitials or methylammonium vacancies). Fast and Full modes integrate a second continuity equation with sign-reversed drift:</p>
       <pre class="eqn">
-<i>F</i><sub>ion, &minus;</sub>  =  &minus; <i>D</i><sub>ion, &minus;</sub> [ &part;<i>P</i><sub>&minus;</sub>/&part;<i>x</i>  &minus;  (<i>q</i> / <i>k</i><sub>B</sub><i>T</i>) <i>P</i><sub>&minus;</sub> (1 &minus; <i>P</i><sub>&minus;</sub>/<i>P</i><sub>lim, &minus;</sub>) &part;<i>&phi;</i>/&part;<i>x</i> ]</pre>
-      <p>The state vector grows from 3<i>N</i> = (<i>n</i>, <i>p</i>, <i>P</i><sub>+</sub>) to 4<i>N</i> = (<i>n</i>, <i>p</i>, <i>P</i><sub>+</sub>, <i>P</i><sub>&minus;</sub>) automatically whenever <i>D</i><sub>ion,&minus;</sub> &gt; 0 in the YAML.</p>
+<i>F</i><sub>a</sub>  =  − <i>D</i><sub>a</sub> [ ∂<i>a</i>/∂<i>x</i>  −  (<i>a</i>/<i>V</i><sub>T</sub>) ∂<i>φ</i>/∂<i>x</i>  +  <i>a</i> ∂<i>u</i><sub>a</sub>/∂<i>x</i> ]
+<i>u</i><sub>a</sub> = −ln(1 − <i>θ</i><sub>a</sub>)
+
+Shared sites:       <i>θ</i><sub>c</sub> = (<i>c</i> + <i>a</i>)/<i>c</i><sub>lim</sub>    ,    <i>θ</i><sub>a</sub> = (<i>c</i> + <i>a</i>)/<i>a</i><sub>lim</sub>
+Independent sites:  <i>θ</i><sub>c</sub> = <i>c</i>/<i>c</i><sub>lim</sub>          ,    <i>θ</i><sub>a</sub> = <i>a</i>/<i>a</i><sub>lim</sub></pre>
+      <p>The default shared-site model uses the total concentration in each crowding term. For one common reservoir, set <i>c</i><sub>lim</sub> = <i>a</i><sub>lim</sub>. The state vector grows from 3<i>N</i> = (<i>n</i>, <i>p</i>, <i>c</i>) to 4<i>N</i> = (<i>n</i>, <i>p</i>, <i>c</i>, <i>a</i>) automatically when a layer has <i>D</i><sub>a</sub> &gt; 0 in Fast or Full. Its initial negative-ion concentration is <i>a</i><sub>0</sub>.</p>
 
       <h4>4. Position-dependent traps &amp; temperature scaling (Fast / Full)</h4>
       <p>When a layer sets <code>trap_N_t_interface</code>, <code>trap_N_t_bulk</code>, and <code>trap_decay_length</code>, the SRH lifetime decays exponentially from both layer boundaries:</p>
@@ -124,7 +131,8 @@ export function algorithmHTML(): string {
 <i>V</i><sub>T</sub>(<i>T</i>)      =  <i>k</i><sub>B</sub><i>T</i> / <i>q</i>
 <i>&mu;</i>(<i>T</i>)        =  <i>&mu;</i><sub>300</sub> &middot; (<i>T</i> / 300)<sup>&gamma;</sup>        ,  &gamma; = &minus;1.5  (acoustic phonons)
 <i>n</i><sub>i</sub>(<i>T</i>)       &prop;  <i>T</i><sup>3/2</sup> &middot; exp(&minus; <i>E</i><sub>g</sub> / 2 <i>k</i><sub>B</sub><i>T</i>)
-<i>D</i><sub>ion</sub>(<i>T</i>)    =  <i>D</i><sub>ion, 300</sub> &middot; exp(&minus; <i>E</i><sub>a</sub> / <i>k</i><sub>B</sub> &middot; (1/<i>T</i> &minus; 1/300))</pre>
+<i>D</i><sub>c</sub>(<i>T</i>)      =  <i>D</i><sub>c,300</sub> &middot; exp(&minus; <i>E</i><sub>a,ion</sub> / <i>k</i><sub>B</sub> &middot; (1/<i>T</i> &minus; 1/300))
+<i>D</i><sub>a</sub>(<i>T</i>)      =  <i>D</i><sub>a,300</sub> &middot; exp(&minus; <i>E</i><sub>a,ion</sub> / <i>k</i><sub>B</sub> &middot; (1/<i>T</i> &minus; 1/300))</pre>
       <p>The resulting dV<sub>oc</sub>/d<i>T</i> is negative on the order of &minus;1 to &minus;3 mV/K on the IonMonger benchmark, consistent with experiment.</p>
 
       <h4>What is <i>not</i> done</h4>

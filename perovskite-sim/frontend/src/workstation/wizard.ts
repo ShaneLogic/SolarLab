@@ -1,4 +1,5 @@
 import type { ConfigEntry, SimulationModeName } from '../types'
+import { presetLabel, presetPreferredMode, researchPresetEntries } from '../preset-catalog'
 
 export interface WizardSelection {
   tier: SimulationModeName
@@ -9,14 +10,16 @@ export interface WizardSelection {
 export interface WizardPreset {
   name: string
   tier_compat: ReadonlyArray<SimulationModeName>
+  preferred_tier?: SimulationModeName
 }
 
 const DEFAULT_TIER_COMPAT: ReadonlyArray<SimulationModeName> = ['legacy', 'fast']
 
 export function presetsFromEntries(entries: ReadonlyArray<ConfigEntry>): WizardPreset[] {
-  return entries.map(e => ({
+  return researchPresetEntries(entries).map(e => ({
     name: e.name,
     tier_compat: (e.tier_compat ?? DEFAULT_TIER_COMPAT) as ReadonlyArray<SimulationModeName>,
+    preferred_tier: presetPreferredMode(e.name),
   }))
 }
 
@@ -34,7 +37,11 @@ const TIER_CARDS: Array<{
     bullets: ['Fast-tier physics', 'Radiative reabsorption', 'Field-dependent mobility', 'Robin contacts'] },
 ]
 
-function pickInitialTier(compat: ReadonlyArray<SimulationModeName>): SimulationModeName {
+function pickInitialTier(
+  compat: ReadonlyArray<SimulationModeName>,
+  preferred?: SimulationModeName,
+): SimulationModeName {
+  if (preferred && compat.includes(preferred)) return preferred
   if (compat.includes('full')) return 'full'
   if (compat.includes('fast')) return 'fast'
   return compat[0] ?? 'legacy'
@@ -43,7 +50,7 @@ function pickInitialTier(compat: ReadonlyArray<SimulationModeName>): SimulationM
 export function buildWizardHTML(presets: ReadonlyArray<WizardPreset>): string {
   const initial = presets[0]
   const initialCompat = initial?.tier_compat ?? DEFAULT_TIER_COMPAT
-  const initialTier = pickInitialTier(initialCompat)
+  const initialTier = pickInitialTier(initialCompat, initial?.preferred_tier)
 
   const cards = TIER_CARDS.map(c => {
     const enabled = initialCompat.includes(c.tier)
@@ -59,7 +66,7 @@ export function buildWizardHTML(presets: ReadonlyArray<WizardPreset>): string {
   }).join('')
 
   const options = presets
-    .map(p => `<option value="${p.name}" data-tier-compat="${p.tier_compat.join(',')}">${p.name}</option>`)
+    .map(p => `<option value="${p.name}" data-tier-compat="${p.tier_compat.join(',')}" data-preferred-tier="${p.preferred_tier ?? ''}">${presetLabel(p.name)}</option>`)
     .join('')
 
   return `
@@ -96,6 +103,7 @@ export function buildWizardHTML(presets: ReadonlyArray<WizardPreset>): string {
 export function applyTierCompat(
   root: HTMLElement,
   compat: ReadonlyArray<SimulationModeName>,
+  preferred?: SimulationModeName,
 ): SimulationModeName {
   const radios = Array.from(
     root.querySelectorAll<HTMLInputElement>('input[name="wizard-tier"]'),
@@ -113,7 +121,9 @@ export function applyTierCompat(
   const currentEl = radios.find(r => r.checked)
   const currentTier = currentEl?.value as SimulationModeName | undefined
   const needsSwitch = !currentTier || !compat.includes(currentTier)
-  const nextTier = needsSwitch ? pickInitialTier(compat) : currentTier
+  const nextTier = preferred && compat.includes(preferred)
+    ? preferred
+    : needsSwitch ? pickInitialTier(compat) : currentTier
   for (const r of radios) {
     r.checked = r.value === nextTier && !r.disabled
   }
@@ -167,9 +177,10 @@ export function showWizard(
     }
 
     const onPresetChange = (): void => {
-      applyTierCompat(modal, compatForSelected())
+      const preferred = presets.find(p => p.name === presetSelect.value)?.preferred_tier
+      applyTierCompat(modal, compatForSelected(), preferred)
     }
-    applyTierCompat(modal, compatForSelected())
+    onPresetChange()
     presetSelect.addEventListener('change', onPresetChange)
 
     function close(result: WizardResult): void {

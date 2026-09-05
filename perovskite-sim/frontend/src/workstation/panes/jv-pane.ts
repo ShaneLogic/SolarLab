@@ -28,7 +28,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         ${numField('jvp-rate', 'Scan rate (V/s)', 1.0, 'any')}
         ${numField('jvp-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
         ${checkField('jvp-decomp', 'Decompose current (J<sub>n</sub> / J<sub>p</sub> / J<sub>ion</sub> / J<sub>disp</sub>)', false)}
-        ${checkField('jvp-spatial', 'Save spatial profiles (φ, E, n, p, P)', false)}
+        ${checkField('jvp-spatial', 'Save spatial profiles (φ, E, n, p, c)', false)}
         <label class="form-group">
           <span>J&ndash;V solver</span>
           <select id="jvp-solver" title="Select the numerical variables and continuation driver">
