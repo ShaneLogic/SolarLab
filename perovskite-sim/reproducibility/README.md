@@ -33,7 +33,7 @@ historical metrics must not be transferred to another preset.
   reproduction command, current evidence, and unchanged acceptance contract.
 - The P1 phase closeout and its checkpoint notes (`P1Closure.md`, `P1Check1`–`4.md`,
   `P1ExternalCv.md`, `P1CsiDriver.md`) are immutable historical records kept outside
-  the repo in the archive folder's `test/p1-checkpoints/` (see the root `CLAUDE.md`,
+  the repo in the archive folder's `test/P1Checkpoints/` (see the root `CLAUDE.md`,
   Archived documents).
 
 ## Historical Verification

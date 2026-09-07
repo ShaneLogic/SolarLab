@@ -23,8 +23,8 @@ the iCloud folder `~/Library/Mobile Documents/com~apple~CloudDocs/projects/solar
 | `plans/autoloop/`, `plans/audit/`, `plans/notes/` | autoloop ledger, physics audit, benchmark + study notes |
 | `develop/manual/` | `docs/manual` (manual source, dated PDFs, figure generator) |
 | `figures/` | `docs/figures/ScapsSolarlabCompare`, `docs/superpowers/figures`, old README images |
-| `results/` | `outputs/` (scan2d, spatial, scaps_analysis, autoloop, 260907 deck figure sets); `perovskite-sim/outputs/` (calado-reproduction, numerical-refinement, interface-cbo, scaps_validation*, regularization-ladders); `notebooks/` |
-| `test/` | `docs/reference` reports (`TwodScan`, `FormalVerify`), `ValidEvidence1/2.md`, `p1-checkpoints/` (reproducibility P1 notes) |
+| `results/` | `outputs/` → `Scan2d`, `Spatial`, `ScapsAnalysis`, `Autoloop`, `IonResults`, `DenseIonResults`; `perovskite-sim/outputs/` → `CaladoRepro`, `NumericalRefinement`, `InterfaceCbo`, `ScapsValid`, `ScapsValidE17`, `RegLadders`; `notebooks/outputs` → `Notebooks`. Run-instance folders inside keep their original parameter names |
+| `test/` | `docs/reference` reports (`TwodScan`, `FormalVerify`), `ValidEvidence1/2.md`, `P1Checkpoints/` (reproducibility P1 notes) |
 | `reference/` | SCAPS manual, Pauwels-Vanhoutte paper, SCAPS reference report + xlsx |
 
 Generated outputs are gitignored (`outputs/`, `perovskite-sim/outputs/`); regenerate
