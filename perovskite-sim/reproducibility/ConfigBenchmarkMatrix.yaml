@@ -3,11 +3,11 @@
 # tests/reproducibility/test_research_presets.py.
 schema_version: 1
 p0_baseline: p0-certified-2026-08-01
-schema_registry: reproducibility/schema_registry.yaml
+schema_registry: reproducibility/SchemaRegistry.yaml
 numerical_refinement_registry:
-  path: reproducibility/numerical_refinement_registry.yaml
+  path: reproducibility/NumericalRefinementRegistry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: e84589f7288d22f9008b72ff829777496205af2a6b2d5ee3080f81fd678f3b20
+  sha256: 02de907d2e6a6e900be965d70a6c017abbb940e801fc0a0b2284682a23fa2a00
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5

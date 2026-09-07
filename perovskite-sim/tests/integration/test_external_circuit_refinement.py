@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_real_registered_external_circuit_cell_returns_all_certificate_axes():
     lane = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("external-series-shunt-dc-v1")
 
@@ -47,7 +47,7 @@ def test_real_registered_external_circuit_cell_returns_all_certificate_axes():
 
 def test_real_resolved_external_circuit_cell_covers_operating_quadrant():
     lane = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("external-series-shunt-dc-operating-quadrant-v2")
 

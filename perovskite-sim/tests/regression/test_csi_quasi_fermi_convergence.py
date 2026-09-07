@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.slow, pytest.mark.regression]
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "configs/cSi_homojunction.yaml"
 MATRIX = yaml.safe_load(
-    (ROOT / "reproducibility/config_benchmark_matrix.yaml").read_text()
+    (ROOT / "reproducibility/ConfigBenchmarkMatrix.yaml").read_text()
 )
 BENCHMARK = MATRIX["benchmarks"]["csi-qf-internal-validation"]
 PROTOCOL = BENCHMARK["protocol"]

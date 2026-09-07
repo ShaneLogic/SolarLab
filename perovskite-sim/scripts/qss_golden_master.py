@@ -27,7 +27,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import SweepPoint, apply_sweep
 
 REPO = Path(__file__).resolve().parents[1]
 CFG = REPO / "configs" / "scaps_mirror_v2.yaml"
-BASELINE = REPO / "tests" / "integration" / "qss_baseline.json"
+BASELINE = REPO / "tests" / "integration" / "QssBaseline.json"
 JV = dict(N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
 SQ_JSC_A_M2 = 275.0  # ~27.5 mA/cm² SQ limit for Eg=1.53 eV
 

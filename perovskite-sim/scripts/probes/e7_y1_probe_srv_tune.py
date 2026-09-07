@@ -33,7 +33,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import (
 )
 
 BASE_CFG = REPO_ROOT / "configs" / "scaps_mirror_v2.yaml"
-REF_PATH = REPO_ROOT / "tests" / "integration" / "scaps_reference.json"
+REF_PATH = REPO_ROOT / "tests" / "integration" / "ScapsReference.json"
 OUT_DIR = REPO_ROOT.parent / "outputs" / "scaps_e7_y1_probe"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 

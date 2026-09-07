@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _lane():
     return load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("external-series-shunt-dc-v1")
 
@@ -136,7 +136,7 @@ def test_study_protocol_is_identical_across_matrix_cells(monkeypatch):
 
 def test_resolved_executor_samples_fixed_terminal_power_quadrant(monkeypatch):
     lane = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("external-series-shunt-dc-operating-quadrant-v2")
 

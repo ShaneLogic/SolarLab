@@ -1,6 +1,6 @@
 # Phase 1 numerical refinement certificates
 
-本文档定义 `reproducibility/numerical_refinement_registry.yaml` 的执行和证据契约。当前 registry 有 30 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform/combined limits、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps、P4.4 CIGS graded optics、外部 Rs/Rsh DC mapping、lumped electrothermal terminal-MPP coupling 与 synthetic interface-SRH identifiability。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
+本文档定义 `reproducibility/NumericalRefinementRegistry.yaml` 的执行和证据契约。当前 registry 有 30 条 `grid x tolerance` lane，覆盖 Phase 1 minimum/resolved、ion-aware DC/impedance、2D uniform/combined limits、Phase 3 interface charge-off/charged research closure、Phase 4.1 DAE slices、c-Si statistics/ionization/BGN/bulk traps、P4.4 CIGS graded optics、外部 Rs/Rsh DC mapping、lumped electrothermal terminal-MPP coupling 与 synthetic interface-SRH identifiability。阈值、配置内容哈希、adapter 和矩阵都在求解前固定；修改阈值必须使用新的 lane ID，不能根据已有结果原地放宽。
 
 ## 状态契约
 

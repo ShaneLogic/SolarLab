@@ -30,7 +30,7 @@ map the old repo-era names to the new ones):
 
 Generated outputs are gitignored (`outputs/`, `perovskite-sim/outputs/`); regenerate
 with the scripts under `perovskite-sim/scripts/` and file the result in `results/`.
-The one input file code still reads, `scaps_1r_parameters.xlsx`, stays at
+The one input file code still reads, `ScapsParams.xlsx`, stays at
 `perovskite-sim/reproducibility/`.
 
 ## Git

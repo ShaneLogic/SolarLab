@@ -1,5 +1,5 @@
 {
-  "source_xlsx": "docs/superpowers/references/scaps_1r_parameters.xlsx",
+  "source_xlsx": "docs/superpowers/references/ScapsParams.xlsx",
   "source_pdf": "docs/superpowers/references/scaps_1d_simulation_report.pdf",
   "extracted_at": "2026-05-28",
   "base_model": {

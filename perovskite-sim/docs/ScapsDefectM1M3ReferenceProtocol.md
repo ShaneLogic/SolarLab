@@ -12,7 +12,7 @@ exactly the multivalent ones.
 ## Frozen scenarios
 
 The source-of-truth suite is
-`reproducibility/scaps_multivalent_defect_suite.json`. It pins the canonical
+`reproducibility/ScapsMultivalentDefectSuite.json`. It pins the canonical
 SolarLab config and SHA-256 for:
 
 - `M1`: double donor (charge states `+2, +1, 0`) in a p-type slab;
@@ -22,7 +22,7 @@ SolarLab config and SHA-256 for:
 The importer re-hashes the suite and all three canonical configs before
 reading external data. The suite file is additionally byte-hash-pinned by the
 `multivalent-explicit-defect-qf-dc-v1` lane in
-`reproducibility/numerical_refinement_registry.yaml`, and its
+`reproducibility/NumericalRefinementRegistry.yaml`, and its
 `external_reference_contract` block is embedded in that lane's frozen protocol
 hash — which is why the per-state occupation encoding below is defined here
 and in the importer, NOT by editing the suite's `raw_profile_columns`.
@@ -137,7 +137,7 @@ manifest solver version must equal the CLI value.
 ```bash
 python scripts/import_scaps_multivalent_defect_reference.py \
   --project-root . \
-  --suite reproducibility/scaps_multivalent_defect_suite.json \
+  --suite reproducibility/ScapsMultivalentDefectSuite.json \
   --parameter-manifest /path/to/scaps-m1-m3-parameters.json \
   --m1-csv /path/to/M1-profile.csv \
   --m1-source-deck /path/to/M1.def \
@@ -163,7 +163,7 @@ later cross-code comparison; its existence alone does not establish parity.
 
 The grid-aligned comparison and its acceptance thresholds are pre-registered
 in `docs/ScapsDefectComparisonPreregistration.md` +
-`reproducibility/scaps_defect_comparison_thresholds.json`, frozen before any
+`reproducibility/ScapsDefectComparisonThresholds.json`, frozen before any
 external export existed. Run `scripts/compare_scaps_defect_reference.py`
 with the imported reference; the schema field selects the multivalent mode
 automatically. Verdicts are per column (`PASS` / `FAIL` /

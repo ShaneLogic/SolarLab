@@ -347,7 +347,7 @@ def test_cigs_observations_match_reproducibility_registry(
     cigs_grading_production_pair,
 ):
     matrix = yaml.safe_load(
-        (ROOT / "reproducibility/config_benchmark_matrix.yaml").read_text()
+        (ROOT / "reproducibility/ConfigBenchmarkMatrix.yaml").read_text()
     )
     benchmark = matrix["benchmarks"]["cigs-internal-validation"]
     tolerance = benchmark["regression_tolerance"]

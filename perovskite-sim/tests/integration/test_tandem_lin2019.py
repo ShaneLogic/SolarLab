@@ -272,7 +272,7 @@ def test_lin2019_observations_match_reproducibility_registry(lin2019):
     """Keep exact local observations live without promoting external evidence."""
     cfg, result = lin2019
     matrix = yaml.safe_load(
-        Path("reproducibility/config_benchmark_matrix.yaml").read_text(
+        Path("reproducibility/ConfigBenchmarkMatrix.yaml").read_text(
             encoding="utf-8"
         )
     )

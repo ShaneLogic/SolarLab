@@ -7,7 +7,7 @@ Energy Environ. Sci., 2019, DOI: 10.1039/C8EE01576G
 
 This is an exploratory paper-informed diagnostic, not a certification lane.
 The machine-readable evidence levels and current commands live in
-``reproducibility/config_benchmark_matrix.yaml``.
+``reproducibility/ConfigBenchmarkMatrix.yaml``.
 """
 import sys, os, time
 import numpy as np

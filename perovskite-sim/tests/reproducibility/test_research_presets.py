@@ -41,7 +41,7 @@ def test_api_lists_research_presets():
 
 @pytest.mark.parametrize("name", PRESETS)
 def test_retained_preset_bytes_and_solver_semantics_are_unchanged(name):
-    with (ROOT / "reproducibility/config_benchmark_matrix.yaml").open() as stream:
+    with (ROOT / "reproducibility/ConfigBenchmarkMatrix.yaml").open() as stream:
         historical = yaml.safe_load(stream)
     entry = next(item for item in historical["configs"] if item["path"] == f"configs/{name}")
     path = ROOT / "configs" / name

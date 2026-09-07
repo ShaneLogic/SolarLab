@@ -1,7 +1,7 @@
 """Phase E8 — full SCAPS-PDF trend regression (all sweeps in 1D-SCAPS 模拟.pdf).
 
 Extends run_scaps_v2_regression.py from the 4 marquee sweeps to every
-single-variable sweep present in tests/integration/scaps_reference.json,
+single-variable sweep present in tests/integration/ScapsReference.json,
 and reports per-sweep trend fidelity (direction + range closure) so we can
 see at a glance which PDF tests SolarLab already matches.
 
@@ -27,7 +27,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import SweepPoint, apply_sweep
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CFG_PATH = REPO_ROOT / "configs" / "scaps_mirror_v2.yaml"
-REF_PATH = REPO_ROOT / "tests" / "integration" / "scaps_reference.json"
+REF_PATH = REPO_ROOT / "tests" / "integration" / "ScapsReference.json"
 
 # Map each reference sheet → the updates dict passed to apply_sweep_point.
 # `value_to_updates(x)` returns the updates for sweep value x.

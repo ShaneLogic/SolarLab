@@ -104,7 +104,7 @@ def test_prolonged_fine_grid_current_changes_contract(certified_ladder):
 def test_observations_match_reproducibility_registry(certified_ladder):
     """Keep reported local values executable without widening physics gates."""
     matrix = yaml.safe_load(
-        Path("reproducibility/config_benchmark_matrix.yaml").read_text(
+        Path("reproducibility/ConfigBenchmarkMatrix.yaml").read_text(
             encoding="utf-8"
         )
     )

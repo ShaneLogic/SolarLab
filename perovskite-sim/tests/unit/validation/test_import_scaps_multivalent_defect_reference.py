@@ -11,7 +11,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SUITE_PATH = ROOT / "reproducibility/scaps_multivalent_defect_suite.json"
+SUITE_PATH = ROOT / "reproducibility/ScapsMultivalentDefectSuite.json"
 
 _TOTAL_DENSITY_CM3 = 2.0e15
 _CHARGE_STATES = {

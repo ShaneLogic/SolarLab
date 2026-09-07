@@ -10,7 +10,7 @@ external evidence.
 ## Frozen scenarios
 
 The source-of-truth suite is
-`reproducibility/scaps_defect_s0_s2_suite.json`. It pins the canonical SolarLab
+`reproducibility/ScapsDefectS0S2Suite.json`. It pins the canonical SolarLab
 config and SHA-256 for:
 
 - `S0`: neutral single-level defect in an intrinsic slab;
@@ -69,7 +69,7 @@ than guessed by the importer.
 ```bash
 python scripts/import_scaps_defect_reference.py \
   --project-root . \
-  --suite reproducibility/scaps_defect_s0_s2_suite.json \
+  --suite reproducibility/ScapsDefectS0S2Suite.json \
   --parameter-manifest /path/to/scaps-s0-s2-parameters.json \
   --s0-csv /path/to/S0-profile.csv \
   --s0-source-deck /path/to/S0.def \
@@ -94,7 +94,7 @@ its existence alone does not establish parity.
 
 The grid-aligned comparison and its acceptance thresholds are pre-registered
 in `docs/ScapsDefectComparisonPreregistration.md` +
-`reproducibility/scaps_defect_comparison_thresholds.json`, frozen before any
+`reproducibility/ScapsDefectComparisonThresholds.json`, frozen before any
 external export existed. Run:
 
 ```bash

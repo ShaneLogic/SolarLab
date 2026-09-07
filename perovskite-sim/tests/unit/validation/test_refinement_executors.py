@@ -73,7 +73,7 @@ def _assert_protocol(measurement):
 
 def _assert_registry_contract(measurement, lane_id):
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     lane = registry.lane(lane_id)
@@ -389,7 +389,7 @@ def test_ion_aware_dc_executor_smoke(monkeypatch):
 
 def test_ion_aware_impedance_executor_smoke(monkeypatch):
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     lane = registry.lane("ionmonger-ion-aware-impedance-resolved-v1")
@@ -693,7 +693,7 @@ def test_csi_qf_frequency_executor_rejects_invalid_capacitance(
 
 def test_csi_minimum_roadmap_lane_fails_at_the_registered_grid_guard():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     lane = registry.lane("csi-qf-frequency-domain")
@@ -862,7 +862,7 @@ def test_twod_absolute_parity_preserves_a_stable_offset():
         scale=1.0,
     )
     lane = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("twod-uniform-limit")
     parity_gate = next(

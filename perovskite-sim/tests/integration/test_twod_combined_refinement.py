@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_real_registered_combined_twod_cell_returns_all_certificate_axes():
     lane = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("twod-mobile-ion-interface-srh-v1")
 

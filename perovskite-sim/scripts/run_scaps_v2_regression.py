@@ -1,4 +1,4 @@
-"""Phase E6.4 — scaps_mirror_v2.yaml regression vs scaps_reference.json.
+"""Phase E6.4 — scaps_mirror_v2.yaml regression vs ScapsReference.json.
 
 Runs the marquee SCAPS sweeps (CBO, ETL doping, PVK/ETL interface N_t,
 PVK bulk N_t) through the Phase E6.3 loader extension and compares the
@@ -30,7 +30,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CFG_PATH = REPO_ROOT / "configs" / "scaps_mirror_v2.yaml"
-REF_PATH = REPO_ROOT / "tests" / "integration" / "scaps_reference.json"
+REF_PATH = REPO_ROOT / "tests" / "integration" / "ScapsReference.json"
 
 # Map ground-truth sheet name → apply_sweep_point axis key.
 _SHEET_TO_AXIS = {

@@ -94,7 +94,7 @@ def _assert_registered_reproduction(
 ) -> None:
     """Tie the executable result to the matrix artifact and photon budget."""
     registry = yaml.safe_load(
-        Path("reproducibility/config_benchmark_matrix.yaml").read_text(
+        Path("reproducibility/ConfigBenchmarkMatrix.yaml").read_text(
             encoding="utf-8"
         )
     )

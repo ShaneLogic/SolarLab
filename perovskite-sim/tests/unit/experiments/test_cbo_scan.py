@@ -1057,7 +1057,7 @@ def test_external_scaps_certificate_checks_normalized_trend_and_hash(
             }
         },
     }
-    path = tmp_path / "scaps_reference.json"
+    path = tmp_path / "ScapsReference.json"
     path.write_text(json.dumps(reference), encoding="utf-8")
 
     validation = cbo.compare_cbo_scan_to_scaps_reference(result, path)

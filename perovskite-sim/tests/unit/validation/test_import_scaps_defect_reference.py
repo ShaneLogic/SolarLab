@@ -27,7 +27,7 @@ def _load_module():
 
 def _suite() -> dict:
     return json.loads(
-        (ROOT / "reproducibility/scaps_defect_s0_s2_suite.json").read_text()
+        (ROOT / "reproducibility/ScapsDefectS0S2Suite.json").read_text()
     )
 
 
@@ -120,7 +120,7 @@ def _arguments(tmp_path: Path, files: dict[str, Path]) -> list[str]:
         "--project-root",
         str(ROOT),
         "--suite",
-        str(ROOT / "reproducibility/scaps_defect_s0_s2_suite.json"),
+        str(ROOT / "reproducibility/ScapsDefectS0S2Suite.json"),
         "--parameter-manifest",
         str(files["manifest"]),
     ]
@@ -168,7 +168,7 @@ def test_importer_hashes_all_raw_exports_decks_manifest_and_suite(tmp_path):
     digest = unsigned.pop("reference_content_sha256")
     assert digest == module._content_sha256(unsigned)
     assert payload["suite"]["sha256"] == hashlib.sha256(
-        (ROOT / "reproducibility/scaps_defect_s0_s2_suite.json").read_bytes()
+        (ROOT / "reproducibility/ScapsDefectS0S2Suite.json").read_bytes()
     ).hexdigest()
     for identifier in ("S0", "S1", "S2"):
         scenario = payload["scenarios"][identifier]

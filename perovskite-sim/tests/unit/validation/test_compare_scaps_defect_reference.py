@@ -11,9 +11,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
-S_SUITE = "reproducibility/scaps_defect_s0_s2_suite.json"
-M_SUITE = "reproducibility/scaps_multivalent_defect_suite.json"
-THRESHOLDS = ROOT / "reproducibility/scaps_defect_comparison_thresholds.json"
+S_SUITE = "reproducibility/ScapsDefectS0S2Suite.json"
+M_SUITE = "reproducibility/ScapsMultivalentDefectSuite.json"
+THRESHOLDS = ROOT / "reproducibility/ScapsDefectComparisonThresholds.json"
 POSITIONS_UM = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
 
 

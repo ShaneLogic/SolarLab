@@ -34,7 +34,7 @@ class _Protocol:
 
 def _registered_lane():
     return load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("twod-mobile-ion-interface-srh-v1")
 

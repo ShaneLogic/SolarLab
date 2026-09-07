@@ -1,7 +1,7 @@
 # SCAPS-1D M1–M3 多价缺陷 参数录入与导出交付单
 
 面向执行 SCAPS 仿真的操作者。配套契约：`docs/MultivalentMetastableDefectContract.md`。
-冻结 suite：`reproducibility/scaps_multivalent_defect_suite.json`。
+冻结 suite：`reproducibility/ScapsMultivalentDefectSuite.json`。
 
 与 S0–S2 交付单（`docs/ScapsS0S2CollectionSheet.md`）结构平行；两份可对照阅读。
 
@@ -300,7 +300,7 @@ fractions (derived ...); report this back instead of editing
   锁定为它）。
 
 **为什么不拆三列（原提案 B）**：suite JSON 的 `raw_profile_columns` 被
-`reproducibility/numerical_refinement_registry.yaml` 按字节哈希钉死，且整个
+`reproducibility/NumericalRefinementRegistry.yaml` 按字节哈希钉死，且整个
 `external_reference_contract` 块被嵌进 D7 认证 lane 的 protocol hash —— 改列声明
 会作废已认证的 refinement 输出。单列编码让 suite 一个字节不动。
 
@@ -396,7 +396,7 @@ deck）、`D8-E3`（三重阻塞，缺数据只是其中一重）。
 ```bash
 python scripts/import_scaps_multivalent_defect_reference.py \
   --project-root . \
-  --suite reproducibility/scaps_multivalent_defect_suite.json \
+  --suite reproducibility/ScapsMultivalentDefectSuite.json \
   --parameter-manifest /path/to/parameter_manifest.json \
   --m1-csv /path/to/M1.csv --m1-source-deck /path/to/M1.def \
   --m2-csv /path/to/M2.csv --m2-source-deck /path/to/M2.def \

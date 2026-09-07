@@ -56,7 +56,7 @@ from perovskite_sim.solver.mol import build_material_arrays
 Q = 1.602176634e-19
 
 _CONFIGS = ("configs/scaps_mirror.yaml", "configs/scaps_mirror_v2.yaml")
-_REFERENCE = Path("tests/integration/scaps_reference.json")
+_REFERENCE = Path("tests/integration/ScapsReference.json")
 
 
 @pytest.fixture(scope="module")

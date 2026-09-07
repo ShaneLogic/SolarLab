@@ -1,7 +1,7 @@
 # SCAPS-1D S0–S2 参数录入与导出交付单
 
 面向执行 SCAPS 仿真的操作者。配套契约：`docs/ScapsDefectS0S2ReferenceProtocol.md`。
-冻结 suite：`reproducibility/scaps_defect_s0_s2_suite.json`。
+冻结 suite：`reproducibility/ScapsDefectS0S2Suite.json`。
 导入器：`scripts/import_scaps_defect_reference.py`。
 
 模板文件在 `docs/ScapsCollectionTemplates/`：
@@ -269,7 +269,7 @@ sign_conventions, solver, unit_conventions
 ```bash
 python scripts/import_scaps_defect_reference.py \
   --project-root . \
-  --suite reproducibility/scaps_defect_s0_s2_suite.json \
+  --suite reproducibility/ScapsDefectS0S2Suite.json \
   --parameter-manifest <parameter_manifest.json> \
   --s0-csv <S0.csv> --s0-source-deck <S0.def> \
   --s1-csv <S1.csv> --s1-source-deck <S1.def> \
@@ -301,7 +301,7 @@ python scripts/import_scaps_defect_reference.py \
 **不能**解锁的：
 
 - `D9.6`（calibration / validation 分离）—— 那需要一个与标定数据**不相交**的
-  第二独立 deck，不是这三个。现状是 `scaps_reference.json` 的 `Nd_ETL` 扫描既是
+  第二独立 deck，不是这三个。现状是 `ScapsReference.json` 的 `Nd_ETL` 扫描既是
   `contact_phi_B_eV` 的拟合目标又是比较目标，同一批数据自证。
 - `D7-E2`（多价缺陷 M1–M3）—— 另一套 deck，列名差一列
   （末列是 `charge_state_occupation_fraction_per_state`）。

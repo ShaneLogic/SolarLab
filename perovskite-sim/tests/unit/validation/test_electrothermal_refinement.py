@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _lane():
     return load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane("electrothermal-terminal-mpp-v1")
 

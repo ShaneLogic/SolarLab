@@ -78,7 +78,7 @@ def _result(
 
 def test_interface_charge_stress_executor_smoke(monkeypatch):
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     lane = registry.lane("interface-charge-device-stress-v1")
@@ -268,7 +268,7 @@ def test_interface_charge_stress_executor_smoke(monkeypatch):
 
 def test_stress_protocol_rejects_duplicate_point_ids():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     raw = list(registry.lane("interface-charge-device-stress-v1").options["stress_points"])
@@ -280,7 +280,7 @@ def test_stress_protocol_rejects_duplicate_point_ids():
 
 def test_resolved_stress_contract_tightens_only_the_jacobian_probe_step():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     historical = registry.lane("interface-charge-device-stress-v1")

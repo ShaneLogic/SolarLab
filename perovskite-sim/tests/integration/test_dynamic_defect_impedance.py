@@ -110,7 +110,7 @@ def test_public_triple_coupled_defect_ion_impedance_is_certified():
 def test_registered_production_executor_emits_exact_metrics_and_protocol():
     root = Path(__file__).resolve().parents[2]
     lane = load_refinement_registry(
-        root / "reproducibility/numerical_refinement_registry.yaml",
+        root / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=root,
     ).lane("dynamic-defect-ion-impedance-production-v1")
 

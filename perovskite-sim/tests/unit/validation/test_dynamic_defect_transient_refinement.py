@@ -54,14 +54,14 @@ LEGACY_LANE_ID = "dynamic-defect-ion-transient-timescale-v1"
 
 def _lane():
     return load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane(LANE_ID)
 
 
 def _production_lane():
     return load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane(PRODUCTION_LANE_ID)
 
@@ -107,7 +107,7 @@ def test_registered_lane_freezes_three_by_three_timescale_contract():
 
 def test_resolved_v2_changes_only_registered_mesh_and_iteration_controls():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     resolved = registry.lane(RESOLVED_V2_LANE_ID)
@@ -135,7 +135,7 @@ def test_resolved_v2_changes_only_registered_mesh_and_iteration_controls():
 
 def test_nonlinear_resolved_v3_changes_only_registered_globalization_control():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     active = registry.lane(NONLINEAR_V3_LANE_ID)
@@ -163,7 +163,7 @@ def test_nonlinear_resolved_v3_changes_only_registered_globalization_control():
 
 def test_absorber_resolved_v4_changes_fixture_and_transient_observable_reference():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     active = registry.lane(ABSORBER_V4_LANE_ID)
@@ -207,7 +207,7 @@ def test_absorber_resolved_v4_changes_fixture_and_transient_observable_reference
 
 def test_reference_resolved_v5_changes_only_reference_and_stiffness_contract():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
     active = registry.lane(LANE_ID)

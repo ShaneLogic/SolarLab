@@ -35,7 +35,7 @@ LEGACY_PARTIAL_LANE_ID = "spatially-graded-explicit-defect-qf-dc-v1"
 
 def _lane(lane_id: str = LANE_ID):
     return load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane(lane_id)
 

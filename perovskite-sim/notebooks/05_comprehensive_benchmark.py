@@ -9,7 +9,7 @@ This exploratory script checks:
 5. Ion migration dynamics
 
 It is not a certification lane. Current evidence levels and reproducible
-commands live in ``reproducibility/config_benchmark_matrix.yaml``.
+commands live in ``reproducibility/ConfigBenchmarkMatrix.yaml``.
 """
 import sys, os, time
 import numpy as np

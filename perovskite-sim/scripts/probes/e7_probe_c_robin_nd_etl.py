@@ -8,7 +8,7 @@ Compares:
   - V_oc upper bound: any point above 1.53 V (E_g/q) is unphysical
   - V_oc bracketing success across the sweep
   - V_oc range across the working (bracketed AND physical) regime
-  - SCAPS reference range from scaps_reference.json
+  - SCAPS reference range from ScapsReference.json
 
 Per spec Probe C: partner PDF specifies no contact workfunction, so
 this is a sensitivity probe rather than a SCAPS-exact match. Decides
@@ -32,7 +32,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import (
     apply_sweep_point,
 )
 
-REF_PATH = REPO_ROOT / "tests" / "integration" / "scaps_reference.json"
+REF_PATH = REPO_ROOT / "tests" / "integration" / "ScapsReference.json"
 OUT_DIR = REPO_ROOT.parent / "outputs" / "scaps_e7_probe_c"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 

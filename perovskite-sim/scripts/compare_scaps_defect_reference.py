@@ -5,7 +5,7 @@ Consumes the artifact written by ``import_scaps_defect_reference.py`` or
 ``import_scaps_multivalent_defect_reference.py``, re-solves the frozen
 scenarios on the pre-registered QF/DC configuration, and issues per-column
 PASS / FAIL / INDECISIVE_GRID verdicts against the thresholds frozen in
-``reproducibility/scaps_defect_comparison_thresholds.json`` BEFORE any
+``reproducibility/ScapsDefectComparisonThresholds.json`` BEFORE any
 external data existed. Rationale and alignment policy:
 ``docs/ScapsDefectComparisonPreregistration.md``.
 """
@@ -50,8 +50,8 @@ from perovskite_sim.validation.numerical_certificate import (  # noqa: E402
 
 _REPORT_SCHEMA = "solarlab.scaps_defect_comparison_report"
 _THRESHOLDS_SCHEMA = "solarlab.scaps_defect_comparison_thresholds"
-_THRESHOLDS_RELATIVE = "reproducibility/scaps_defect_comparison_thresholds.json"
-_REGISTRY_RELATIVE = "reproducibility/numerical_refinement_registry.yaml"
+_THRESHOLDS_RELATIVE = "reproducibility/ScapsDefectComparisonThresholds.json"
+_REGISTRY_RELATIVE = "reproducibility/NumericalRefinementRegistry.yaml"
 _MODES = {
     "solarlab.scaps_explicit_defect_reference": "s0s2",
     "solarlab.scaps_multivalent_defect_reference": "multivalent",
@@ -61,8 +61,8 @@ _LANES = {
     "multivalent": "multivalent-explicit-defect-qf-dc-v1",
 }
 _SUITES = {
-    "s0s2": "reproducibility/scaps_defect_s0_s2_suite.json",
-    "multivalent": "reproducibility/scaps_multivalent_defect_suite.json",
+    "s0s2": "reproducibility/ScapsDefectS0S2Suite.json",
+    "multivalent": "reproducibility/ScapsMultivalentDefectSuite.json",
 }
 _SCENARIO_IDS = {
     "s0s2": ("S0", "S1", "S2"),

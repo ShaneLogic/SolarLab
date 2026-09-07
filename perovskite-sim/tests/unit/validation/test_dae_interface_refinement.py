@@ -23,7 +23,7 @@ LANE_ID = "algebraic-interface-state-dae-transient-v1"
 
 def _lane():
     return load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     ).lane(LANE_ID)
 

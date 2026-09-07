@@ -3,7 +3,7 @@
 Status: frozen 2026-09-02, BEFORE any external SCAPS export existed (both
 suites carry `status: "not_supplied"` at the freezing commit — the git
 history is the pre-registration timestamp). Machine-readable half:
-`reproducibility/scaps_defect_comparison_thresholds.json`. Executable half:
+`reproducibility/ScapsDefectComparisonThresholds.json`. Executable half:
 `scripts/compare_scaps_defect_reference.py`. Changing a threshold after data
 arrives requires a new `schema_version` and an explicit note that the change
 is post-hoc.

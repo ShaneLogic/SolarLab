@@ -22,7 +22,7 @@ ROOT = project_root()
 
 def _matrix():
     return yaml.safe_load(
-        (ROOT / "reproducibility/config_benchmark_matrix.yaml").read_text()
+        (ROOT / "reproducibility/ConfigBenchmarkMatrix.yaml").read_text()
     )
 
 
@@ -177,7 +177,7 @@ def test_parked_interface_charge_defaults_preserve_historical_hash():
 
 def test_standard_schema_registers_spatial_doping_profile_contract():
     registry = yaml.safe_load(
-        (ROOT / "reproducibility/schema_registry.yaml").read_text()
+        (ROOT / "reproducibility/SchemaRegistry.yaml").read_text()
     )
     profile = registry["schemas"]["standard-device-v1"][
         "optional_layer_groups"
@@ -196,7 +196,7 @@ def test_standard_schema_registers_spatial_doping_profile_contract():
 
 def test_standard_schema_registers_bulk_carrier_statistics_contract():
     registry = yaml.safe_load(
-        (ROOT / "reproducibility/schema_registry.yaml").read_text()
+        (ROOT / "reproducibility/SchemaRegistry.yaml").read_text()
     )
     statistics = registry["schemas"]["standard-device-v1"][
         "optional_layer_groups"
@@ -391,7 +391,7 @@ def test_calibrated_external_reproductions_are_not_certified():
 
 
 def test_every_p1_gap_has_a_reproduction_and_acceptance_contract():
-    data = yaml.safe_load((ROOT / "reproducibility/p1_gaps.yaml").read_text())
+    data = yaml.safe_load((ROOT / "reproducibility/P1Gaps.yaml").read_text())
     gaps = {gap["id"]: gap for gap in data["gaps"]}
     assert set(gaps) == {
         "cigs-2um-graded-notch",

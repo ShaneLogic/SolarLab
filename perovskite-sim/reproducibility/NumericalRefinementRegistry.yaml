@@ -2389,7 +2389,7 @@ lanes:
     options:
       config_loader: scaps_explicit_defect_suite_v1
       require_protocol: true
-      suite_manifest: reproducibility/scaps_defect_s0_s2_suite.json
+      suite_manifest: reproducibility/ScapsDefectS0S2Suite.json
       suite_manifest_sha256: 5ac82fb9826741efacef3f2219b07f9b3bf8bd87a4888b24cf1464eeee60d2ef
       grid_alpha: 2.0
       profile_points: 17
@@ -2743,7 +2743,7 @@ lanes:
       - 1.0
       profile_points: 17
       require_protocol: true
-      suite_manifest: reproducibility/scaps_multivalent_defect_suite.json
+      suite_manifest: reproducibility/ScapsMultivalentDefectSuite.json
       suite_manifest_sha256: 5443624569ca35279a04feb9dff018bdc42c44c85d96e7d5fe19fe68c4b643e1
       voltage_grid_V:
       - 0.0

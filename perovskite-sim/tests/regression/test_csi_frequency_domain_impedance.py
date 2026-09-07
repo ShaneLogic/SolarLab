@@ -29,7 +29,7 @@ from perovskite_sim.solver.mol import build_material_arrays
 pytestmark = [pytest.mark.slow, pytest.mark.regression]
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX = yaml.safe_load(
-    (ROOT / "reproducibility/config_benchmark_matrix.yaml").read_text()
+    (ROOT / "reproducibility/ConfigBenchmarkMatrix.yaml").read_text()
 )
 BENCHMARK = MATRIX["benchmarks"]["csi-qf-frequency-domain-cv"]
 PROTOCOL = BENCHMARK["protocol"]

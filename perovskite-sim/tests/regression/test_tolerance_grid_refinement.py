@@ -95,7 +95,7 @@ def _certificate(lane: LaneDefinition, cells: list[CellResult]):
 
 def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
     registry = load_refinement_registry(
-        ROOT / "reproducibility/numerical_refinement_registry.yaml",
+        ROOT / "reproducibility/NumericalRefinementRegistry.yaml",
         project_root=ROOT,
     )
 
@@ -1086,7 +1086,7 @@ def test_certificate_and_registry_reject_unknown_or_malformed_fields(tmp_path):
         NumericalCertificate.from_dict(extra_check_field)
 
     registry_raw = yaml.safe_load(
-        (ROOT / "reproducibility/numerical_refinement_registry.yaml").read_text(
+        (ROOT / "reproducibility/NumericalRefinementRegistry.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -1097,7 +1097,7 @@ def test_certificate_and_registry_reject_unknown_or_malformed_fields(tmp_path):
         load_refinement_registry(registry_path, verify_config_hashes=False)
 
     malformed_raw = yaml.safe_load(
-        (ROOT / "reproducibility/numerical_refinement_registry.yaml").read_text(
+        (ROOT / "reproducibility/NumericalRefinementRegistry.yaml").read_text(
             encoding="utf-8"
         )
     )

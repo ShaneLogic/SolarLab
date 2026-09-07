@@ -12,7 +12,10 @@ resolves there; every file and non-root folder there was renamed to multi-word C
 no dates (versions as V1, V2, ...) on 2026-09-07; `RenameMap.md` + `RenameMapFull.md` map old names to new. The root `CLAUDE.md` has the full folder map.
 
 The same naming rule applies to the non-code files that stay in this repo: `docs/*.md`,
-`docs/ScapsCollectionTemplates/*`, and the root `docs/figures/*.png` are multi-word CamelCase
+`docs/ScapsCollectionTemplates/*`, the `reproducibility/` registries and data files
+(`ConfigBenchmarkMatrix.yaml`, `NumericalRefinementRegistry.yaml`, `ScapsParams.xlsx`),
+the two `tests/integration/*.json` fixtures, the tutorial notebooks, and the root
+`docs/figures/*.png` are multi-word CamelCase
 with versions as V1, V2 (e.g. `TwodTransportContract.md`, `ExplicitDefectSchemaV1.md`,
 `Calado16Fig1fJVV1.png`; the plot scripts' `STAMP` is `"V1"`). Code, tests, configs, tooling
 files and the frozen reproducibility baseline keep their language/tool conventions.
@@ -379,7 +382,7 @@ Presets shipped with the repo:
 
 The YAML schema mirrors `MaterialParams` + `DeviceStack.interfaces`; see any existing file for the field list. Non-perovskite stacks must set `D_ion = 0` in every layer — the ion equations still integrate but contribute zero flux. Tandem configs use a separate `TandemConfig` schema (`models/tandem_config.py`) that references two sub-cell configs plus junction layers.
 
-Practical solver envelope: the Radau transient handles sub-micron perovskite stacks comfortably (ionmonger reference ≈ 25 s for a full J–V). Thick inorganic absorbers require stack-specific protocols. CIGS now has an internal residual-certified illuminated J–V/grid/trend branch, with its external-material limits recorded in the reproducibility matrix. For 180 µm c-Si, the opt-in quasi-Fermi solver certifies a common 42-point N=200/300/400 J-V ladder, including Jsc, Voc, FF, PCE, all-face current conservation, and nested MPP voltage resolution. This does not certify the default transient/algebraic J–V drivers or external agreement; those gaps remain open. Thinner/coarser variants may be used only as explicitly labelled diagnostics, not as physical validation; use the acceptance contracts in `reproducibility/p1_gaps.yaml` before promotion.
+Practical solver envelope: the Radau transient handles sub-micron perovskite stacks comfortably (ionmonger reference ≈ 25 s for a full J–V). Thick inorganic absorbers require stack-specific protocols. CIGS now has an internal residual-certified illuminated J–V/grid/trend branch, with its external-material limits recorded in the reproducibility matrix. For 180 µm c-Si, the opt-in quasi-Fermi solver certifies a common 42-point N=200/300/400 J-V ladder, including Jsc, Voc, FF, PCE, all-face current conservation, and nested MPP voltage resolution. This does not certify the default transient/algebraic J–V drivers or external agreement; those gaps remain open. Thinner/coarser variants may be used only as explicitly labelled diagnostics, not as physical validation; use the acceptance contracts in `reproducibility/P1Gaps.yaml` before promotion.
 
 ### Config gotcha — interface recombination is opt-in, silent when absent, and the YAML path is strictly weaker than the UI path
 
@@ -494,8 +497,8 @@ no-crossing. The contact barrier remains calibrated, so this closes a numerical
 expectation gap rather than establishing independent external validation.
 
 The authoritative current evidence levels are in
-`reproducibility/config_benchmark_matrix.yaml`. In particular, the Courtier and
+`reproducibility/ConfigBenchmarkMatrix.yaml`. In particular, the Courtier and
 Calado lanes are calibrated reproductions (the `calado2016_fig1f` lane is the
 dynamics-faithful exception, registered `load_only`; see Configs), Lin2019 is
 only a partial external comparison, and the old finite-time mesh test is not a
-steady-state residual certificate. Open and closed P1 contracts are in `reproducibility/p1_gaps.yaml`.
+steady-state residual certificate. Open and closed P1 contracts are in `reproducibility/P1Gaps.yaml`.

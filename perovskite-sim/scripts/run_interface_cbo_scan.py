@@ -399,7 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--scaps-reference",
         type=Path,
-        help="content-addressed scaps_reference.json used for external comparison",
+        help="content-addressed ScapsReference.json used for external comparison",
     )
     parser.add_argument(
         "--maximum-reference-critical-interval-width-eV",

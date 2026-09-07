@@ -25,11 +25,11 @@ historical metrics must not be transferred to another preset.
 - `baselines/p0-certified-2026-08-01/` reconstructs the P0 solver state from
   Git commit `c23e5b9beb3c356250ea32dcb09c78dc45ba28ec` and a SHA-256 pinned
   patch.
-- `schema_registry.yaml` assigns every shipped YAML to one explicit loader and
+- `SchemaRegistry.yaml` assigns every shipped YAML to one explicit loader and
   unit convention.
-- `config_benchmark_matrix.yaml` covers every shipped config, runtime optical
+- `ConfigBenchmarkMatrix.yaml` covers every shipped config, runtime optical
   resource, benchmark command, evidence level, and known limitation.
-- `p1_gaps.yaml` gives each closed or explicitly P2-deferred P1 item a
+- `P1Gaps.yaml` gives each closed or explicitly P2-deferred P1 item a
   reproduction command, current evidence, and unchanged acceptance contract.
 - The P1 phase closeout and its checkpoint notes (`P1Closure.md`, `P1Check1`–`4.md`,
   `P1ExternalCv.md`, `P1CsiDriver.md`) are immutable historical records kept outside

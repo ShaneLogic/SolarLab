@@ -359,7 +359,7 @@ def _optical_materials(value: Any) -> set[str]:
 
 def validate_matrix(root: Path | None = None) -> dict[str, Any]:
     root = (root or project_root()).resolve()
-    matrix = _load_mapping(root / "reproducibility/config_benchmark_matrix.yaml")
+    matrix = _load_mapping(root / "reproducibility/ConfigBenchmarkMatrix.yaml")
     registry_path = root / str(matrix.get("schema_registry", ""))
     registry = _load_mapping(registry_path)
     schemas = registry.get("schemas") or {}

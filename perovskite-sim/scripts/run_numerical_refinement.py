@@ -24,7 +24,7 @@ from perovskite_sim.validation.refinement_runner import (  # noqa: E402
 )
 
 
-DEFAULT_REGISTRY = ROOT / "reproducibility/numerical_refinement_registry.yaml"
+DEFAULT_REGISTRY = ROOT / "reproducibility/NumericalRefinementRegistry.yaml"
 
 
 def _parser() -> argparse.ArgumentParser:
