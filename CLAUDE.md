@@ -22,8 +22,8 @@ the iCloud folder `~/Library/Mobile Documents/com~apple~CloudDocs/projects/solar
 | `plans/autoloop/`, `plans/audit/`, `plans/notes/` | autoloop ledger, physics audit, benchmark + study notes |
 | `develop/manual/` | `docs/manual` (manual source, dated PDFs, figure generator) |
 | `figures/` | `docs/figures/ScapsSolarlabCompare`, `docs/superpowers/figures`, old README images |
-| `results/` | `outputs/` (scan2d, spatial, scaps_analysis, autoloop, 260907 deck figure sets) |
-| `test/` | `docs/reference` reports, `valEvidence*.md` |
+| `results/` | `outputs/` (scan2d, spatial, scaps_analysis, autoloop, 260907 deck figure sets); `perovskite-sim/outputs/` (calado-reproduction, numerical-refinement, interface-cbo, scaps_validation*, regularization-ladders); `notebooks/` |
+| `test/` | `docs/reference` reports, `valEvidence*.md`, `p1-checkpoints/` (reproducibility P1_*.md) |
 | `reference/` | SCAPS manual, Pauwels-Vanhoutte paper, SCAPS reference report + xlsx |
 
 Generated outputs are gitignored (`outputs/`, `perovskite-sim/outputs/`); regenerate
