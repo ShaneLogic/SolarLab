@@ -102,9 +102,9 @@ for the authoritative status and limitations of every shipped config.
 
 | Script | Topic |
 |:-------|:------|
-| `04_ionmonger_benchmark.py` | Exploratory IonMonger paper-informed diagnostic |
-| `05_comprehensive_benchmark.py` | Exploratory multi-physics diagnostic |
-| `06_e2e_notebook_vs_api.py` | Notebook vs API parity check |
+| `IonmongerBenchmark.py` | Exploratory IonMonger paper-informed diagnostic |
+| `ComprehensiveBenchmark.py` | Exploratory multi-physics diagnostic |
+| `E2eNotebookVsApi.py` | Notebook vs API parity check |
 
 <br>
 
