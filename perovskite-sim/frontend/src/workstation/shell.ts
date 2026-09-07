@@ -225,10 +225,15 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         if (!devId) return
         const idx = workspace.devices.findIndex(d => d.id === devId)
         if (idx < 0) return
-        const updated = { ...workspace.devices[idx], config: cfg }
+        const updated = {
+          ...workspace.devices[idx], config: cfg,
+          tier: cfg.device.mode ?? workspace.devices[idx].tier,
+        }
         const devices = workspace.devices.map((d, i) => (i === idx ? updated : d))
         workspace = { ...workspace, devices }
         saveWorkspace(workspace)
+        refreshTree()
+        consoleHandle.setPhysics(tierLabel(updated.tier), tierPhysicsSummary(updated.tier))
       })
     })
   })

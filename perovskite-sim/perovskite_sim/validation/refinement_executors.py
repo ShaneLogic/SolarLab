@@ -3087,8 +3087,6 @@ def _require_interface_charge_jv_lane_stack(stack):
         violations.append("calibrated flat-band contact floors must be disabled")
     if stack.contact_phi_B_eV != 0.0:
         violations.append("the calibrated contact barrier must be zero")
-    if stack.autoloop_generated_lever:
-        violations.append("autoloop-generated calibration levers are not accepted")
 
     active_ions: list[str] = []
     explicit_bulk_defects: list[str] = []

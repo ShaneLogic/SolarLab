@@ -240,12 +240,6 @@ class DeviceStack:
     # own P_lim — declare this only when the defects genuinely occupy
     # different sites. No effect on single-species runs.
     ion_steric_shared_site: bool = True
-    # Autoloop Stage 5.3 codegen lever (2026-06). When True (or env
-    # ``SOLARLAB_AUTOLOOP_GEN=1``), build_material_arrays calls the sandboxed
-    # ``autoloop.generated.lever.adjust_material_arrays`` once on the assembled
-    # MaterialArrays. Default False = the generated module is never imported →
-    # bit-identical. The autoloop writes the lever body; a human merges the branch.
-    autoloop_generated_lever: bool = False
     # SCAPS-style finite-rate carrier contacts (2026-06). When True, the
     # Phase-3.3 Robin path is activated on all four carrier/side channels
     # (S = 1e5 m/s, the SCAPS 1e7 cm/s default, unless explicit ``S_*`` fields

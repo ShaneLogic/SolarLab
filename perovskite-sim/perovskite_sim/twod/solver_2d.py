@@ -126,8 +126,8 @@ class MaterialArrays2D:
     S_p_bot: float = 0.0   # hole    SRV at y=Ny-1 (ETL); from DeviceStack.S_p_right
     # --- Stage B(c.2): Field-dependent mobility μ(E) ----------------------------
     # Face-normal formulation: x-faces use only |E_x_face|, y-faces use only
-    # |E_y_face|.  See docs/superpowers/specs/2026-04-29-2d-stage-b-c2-field-
-    # mobility-design.md.  All eighteen face arrays are None by default; they
+    # |E_y_face|. See docs/twod-transport-contract.md#field-dependent-mobility.
+    # All eighteen face arrays are None by default; they
     # are populated by build_material_arrays_2d when sim_mode.
     # use_field_dependent_mobility AND any layer sets v_sat>0 or pf_gamma>0.
     # The disabled path (has_field_mobility=False) is bit-identical to the
@@ -156,10 +156,10 @@ class MaterialArrays2D:
     pf_gamma_p_wrap: np.ndarray | None = None
     # --- Stage B(c.3): Self-consistent radiative reabsorption ------------------
     # When mat.has_radiative_reabsorption_2d is True, assemble_rhs_2d augments
-    # G_optical per RHS call by summing R_tot_2D = ∬ B·n·p dy dx per absorber
+    # G_optical per RHS call by summing R_tot_2D = ∬ B·(n·p - ni^2) dy dx
     # and adding the non-escaping fraction back as a uniform G_rad over the
-    # absorber 2D area. See docs/superpowers/specs/2026-04-30-2d-stage-b-c3-
-    # radiative-reabsorption-design.md. The disabled path (flag=False) is
+    # absorber 2D area. See docs/twod-transport-contract.md#radiative-reabsorption.
+    # The disabled path (flag=False) is
     # bit-identical to current Stage B(c.2).
     has_radiative_reabsorption_2d:  bool                               = False
     absorber_y_ranges_2d:           tuple[tuple[int, int], ...]        = ()

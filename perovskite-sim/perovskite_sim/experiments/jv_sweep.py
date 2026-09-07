@@ -833,6 +833,7 @@ def extract_spatial_snapshot(
     )
     return SpatialSnapshot(
         x=x.copy(), phi=phi, E=E, n=n, p=p, P=sv.P.copy(), rho=rho, V_app=V_app,
+        P_neg=sv.P_neg.copy() if sv.P_neg is not None else None,
     )
 
 
@@ -1370,6 +1371,7 @@ def _integrate_step(
     n_legs: int = 1,
     regularization: RHSRegularization | None = None,
     _accepted_diagnostics: list[JVAcceptedSolveDiagnostics] | None = None,
+    jacobian=None,
 ) -> np.ndarray:
     """Advance the coupled MOL state from t_lo to t_hi at fixed V_app.
 
@@ -1456,6 +1458,7 @@ def _integrate_step(
                     if _accepted_diagnostics is not None
                     else None
                 ),
+                **({"jacobian": jacobian} if jacobian is not None else {}),
             )
         return _commit(y_k)
 
@@ -1487,6 +1490,8 @@ def _integrate_step(
                 )
                 if regularization is not None:
                     solver_kwargs["regularization"] = regularization
+                if jacobian is not None:
+                    solver_kwargs["jacobian"] = jacobian
                 sol_attempt = run_transient(
                     x,
                     y,
@@ -1533,6 +1538,7 @@ def _integrate_step(
                 max_bisect=max_bisect, illuminated=illuminated,
                 n_legs=n_legs, regularization=regularization,
                 _accepted_diagnostics=_accepted_diagnostics,
+                **({"jacobian": jacobian} if jacobian is not None else {}),
             )
         except RuntimeError:
             pass  # fall through to the historical bisection/BDF ladder
@@ -1558,7 +1564,8 @@ def _integrate_step(
                                  accepted_here
                                  if _accepted_diagnostics is not None
                                  else None
-                             ))
+                             ),
+                             **({"jacobian": jacobian} if jacobian is not None else {}))
     y_final = _integrate_step(
         x, y_mid, stack, mat, V_app, t_mid, t_hi, rtol, atol,
         max_bisect - 1, illuminated,
@@ -1566,6 +1573,7 @@ def _integrate_step(
         _accepted_diagnostics=(
             accepted_here if _accepted_diagnostics is not None else None
         ),
+        **({"jacobian": jacobian} if jacobian is not None else {}),
     )
     return _commit(y_final)
 

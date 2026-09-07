@@ -6,7 +6,7 @@ device). Asserts the 2D solver matches the 1D reference within tight
 tolerances on V_oc, J_sc, and FF, and that the 2D state remains laterally
 uniform (the lateral-uniformity invariant of an extruded 1D problem).
 
-Spec section 7 of `docs/superpowers/specs/2026-04-27-2d-microstructural-extension-design.md`.
+Contract: `docs/twod-transport-contract.md#uniform-device-parity`.
 """
 from __future__ import annotations
 from dataclasses import replace
@@ -52,7 +52,7 @@ def _maybe_flip_sign(V: np.ndarray, J: np.ndarray) -> np.ndarray:
 @pytest.mark.regression
 @pytest.mark.slow
 def test_twod_uniform_matches_1d_within_tolerance():
-    """Stage-A validation gate. Six checks per spec §7."""
+    """Historical frozen-ion parity gate; six checks in the transport contract."""
     stack = _freeze_ions(load_device_from_yaml(PRESET))
 
     # 1D reference run. Forward+reverse is mandatory in the 1D API; we

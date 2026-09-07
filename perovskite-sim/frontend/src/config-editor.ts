@@ -160,7 +160,7 @@ const LAYER_GROUPS: ParamGroup[] = [
       },
       {
         key: 'P0', label: '<i>c</i><sub>0</sub>', kind: 'numeric', unit: 'm⁻³',
-        tooltip: 'Initial reference concentration of positive mobile ions. The layer starts with c = c₀; its ionic space-charge contribution is +q(c − c₀), including the fixed compensating background. This uniform initial profile need not be ion-relaxed equilibrium. 1e18 cm⁻³ = 1e24 m⁻³.',
+        tooltip: 'Fixed negative countercharge density, expressed as an equivalent number concentration. Its Poisson contribution is -q*c0. Neutral initialization separately sets c_init = c0 before preconditioning; later c evolves while c0 stays fixed. Changing this input changes both the background and the initial mobile population. 1e18 cm^-3 = 1e24 m^-3.',
       },
       {
         key: 'P_lim', label: '<i>c</i><sub>lim</sub>', kind: 'numeric', unit: 'm⁻³',
@@ -174,7 +174,7 @@ const LAYER_GROUPS: ParamGroup[] = [
       {
         key: 'P0_neg', label: '<i>a</i><sub>0</sub>',
         kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — none',
-        tooltip: 'Initial reference concentration of negative mobile ions. The layer starts with a = a₀; its ionic space-charge contribution is −q(a − a₀), including the fixed compensating background. a₀ need not equal c₀. Also set D_a > 0 in Fast or Full to activate this species. 1e18 cm⁻³ = 1e24 m⁻³.',
+        tooltip: 'Fixed positive countercharge density for the negative-ion species, expressed as an equivalent number concentration. Its Poisson contribution is +q*a0. Neutral initialization separately sets a_init = a0 before preconditioning; later a evolves while a0 stays fixed. Changing this input changes both values. a0 need not equal c0; negative-ion transport also requires D_a > 0 in Fast or Full.',
       },
       {
         key: 'P_lim_neg', label: '<i>a</i><sub>lim</sub>',
@@ -1145,8 +1145,10 @@ export function renderDeviceEditor(
   config: DeviceConfig,
   tier?: SimulationModeName,
   selectedLayerIdx?: number,
+  includeDeviceSettings = false,
 ): void {
   const singleLayer = selectedLayerIdx != null && tier === 'full'
+  const showDeviceSettings = !singleLayer || includeDeviceSettings
   const layerHtml = singleLayer
     ? renderLayer(
       config.layers[selectedLayerIdx!], selectedLayerIdx!, tier, true, !!config.device.band_grading,
@@ -1164,7 +1166,7 @@ export function renderDeviceEditor(
             <span class="param-label"><span class="sym"><i>T</i></span><span class="unit">K</span></span>
             ${numAttr('dev-T', currentT)}
           </label>` : ''
-  const deviceGroup = singleLayer ? '' : `
+  const deviceGroup = !showDeviceSettings ? '' : `
       <div class="param-group">
         <h5>Device</h5>
         <div class="param-grid">
@@ -1197,9 +1199,9 @@ export function renderDeviceEditor(
   const interfacesHtml = singleLayer ? '' : renderInterfaces(config)
   // Stage B(c.1) Robin contacts panel — FULL-tier-only because the
   // ``use_selective_contacts`` flag is off in LEGACY/FAST (mode.py:54-86).
-  // Hidden in the single-layer drill-down too, where the panel would lose
-  // context (it is a device-level setting, not a per-layer one).
-  const robinHtml = !singleLayer && tier === 'full' ? renderRobinContacts(config) : ''
+  // The full device pane provides an explicitly device-wide disclosure even
+  // while its layer editor is focused on one selected layer.
+  const robinHtml = showDeviceSettings && tier === 'full' ? renderRobinContacts(config) : ''
   // Phase E1.8 — interface defects panel placed below Robin contacts.
   // FULL-tier-gated (matches the underlying ``InterfaceDefect`` solver
   // hook from Phase E1.5). Hidden in single-layer drill-down because
@@ -1211,13 +1213,12 @@ export function renderDeviceEditor(
   // readDeviceEditor falls back to original.device.* when the inputs are
   // absent (and single-layer drill-down returns original.device verbatim).
   const scapsHtml = !singleLayer && tier === 'full' ? renderScapsPhysics(config) : ''
+  const deviceHtml = `${deviceGroup}${robinHtml}${scapsHtml}${interfaceDefectsHtml}${interfacesHtml}`
   container.innerHTML = `
     <div class="editor">
-      ${deviceGroup}
-      ${robinHtml}
-      ${scapsHtml}
-      ${interfaceDefectsHtml}
-      ${interfacesHtml}
+      ${singleLayer && includeDeviceSettings
+        ? `<details class="device-settings"><summary>Device settings</summary>${deviceHtml}</details>`
+        : deviceHtml}
       <div class="layer-list">${layerHtml}</div>
     </div>`
   const potentialSelect = container.querySelector<HTMLSelectElement>('#dev-vbi-mode')
@@ -1878,8 +1879,8 @@ export function readDeviceEditor(
     return readBulkDefectEditor(next, idx, bandGradingActive)
   })
 
-  if (singleLayer) {
-    return { device: original.device, layers }
+  if (singleLayer && !document.getElementById('dev-mode')) {
+    return { ...original, layers }
   }
 
   const interfaces: Array<[number, number]> = []
@@ -2015,7 +2016,6 @@ export function readDeviceEditor(
   const hiddenPhysicsKeys = [
     'te_physical_norm',
     'ion_steric_diffusion_only',
-    'autoloop_generated_lever',
     'flat_band_metal_contacts',
     'contact_phi_B_eV',
     'interface_two_sided',

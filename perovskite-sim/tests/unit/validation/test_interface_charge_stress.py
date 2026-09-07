@@ -32,7 +32,6 @@ class _FakeStack:
     flat_band_contacts: bool = False
     flat_band_metal_contacts: bool = False
     contact_phi_B_eV: float = 0.0
-    autoloop_generated_lever: bool = False
 
 
 def _result(

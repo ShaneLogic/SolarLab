@@ -266,7 +266,6 @@ export interface DeviceConfig {
     te_physical_norm?: boolean
     ion_steric_diffusion_only?: boolean
     ion_steric_shared_site?: boolean
-    autoloop_generated_lever?: boolean
     flat_band_metal_contacts?: boolean
     contact_phi_B_eV?: number
     interface_two_sided?: boolean
@@ -297,7 +296,29 @@ export interface JVMetrics {
   voc_bracketed?: boolean
 }
 
-export interface JVResult {
+export interface JVWaveform {
+  schema_version: 1
+  start_voltage_V: number
+  dark_seed_s: number
+  dark_prep_s: number
+  branch_dwell_s: number
+  turnaround_s: number
+  turnaround_dark: boolean
+  uniform_generation_rate_m3_s: number | null
+}
+
+export interface JVWaveformEvidence {
+  jacobian_evaluator?: string
+  jacobian_fallback_reason?: string | null
+  waveform?: JVWaveform
+  hysteresis_index_paper?: number | null
+  numerical_scope?: 'finite_time_diagnostic'
+  waveform_protocol_sha256?: string
+  generation_budget_A_m2?: number
+  inventory_relative_drift?: number[]
+}
+
+export interface JVResult extends JVWaveformEvidence {
   V_fwd: number[]
   J_fwd: number[]
   V_rev: number[]
@@ -919,7 +940,7 @@ export interface MottSchottkyResult {
   eps_r_used: number
 }
 
-export interface CurrentDecompResult {
+export interface CurrentDecompResult extends JVWaveformEvidence {
   V_fwd: number[]
   V_rev: number[]
   Jn_fwd: number[]
@@ -941,11 +962,12 @@ export interface SpatialSnapshot {
   n: number[]       // m^-3
   p: number[]       // m^-3
   P: number[]       // m^-3
+  P_neg?: number[] | null // m^-3, negative mobile species when enabled
   rho: number[]     // C/m^3
   V_app: number
 }
 
-export interface SpatialProfileResult {
+export interface SpatialProfileResult extends JVWaveformEvidence {
   V_fwd: number[]
   V_rev: number[]
   snapshots_fwd: SpatialSnapshot[]

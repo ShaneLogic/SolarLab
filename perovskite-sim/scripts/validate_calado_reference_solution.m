@@ -1,0 +1,16 @@
+function diagnostics = validate_calado_reference_solution(sol)
+% Reject incomplete, nonfinite, or materially negative reference solutions.
+arguments
+    sol (1,1) struct
+end
+assert(size(sol.u, 1) == numel(sol.t) && size(sol.u, 2) == numel(sol.x) ...
+    && size(sol.u, 3) == sol.par.N_ionic_species + 3 && all(isfinite(sol.u), 'all'), ...
+    'SolarLab:InvalidReferenceSolution', 'Reference solution is truncated or nonfinite.');
+minimums = reshape(min(sol.u(:, :, 2:end), [], [1 2]), 1, []);
+tolerance = 10 * sol.par.AbsTol;
+assert(all(minimums >= -tolerance), 'SolarLab:NegativeReferenceDensity', ...
+    'Reference density minimum %.6g cm^-3 is below the numerical limit -%.6g cm^-3.', ...
+    min(minimums), tolerance);
+diagnostics = struct('density_minima_cm3', minimums, ...
+    'negative_density_tolerance_cm3', tolerance, 'all_requested_times_returned', true);
+end

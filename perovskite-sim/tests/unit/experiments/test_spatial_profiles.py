@@ -16,8 +16,8 @@ from perovskite_sim.experiments.jv_sweep import (
 
 @pytest.fixture
 def setup():
-    """Build grid, mat, and illuminated SS for nip_MAPbI3."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    """Structural export checks on the retained Calado parameter anchor."""
+    stack = load_device_from_yaml("configs/calado2016_fig1f.yaml")
     N_grid = 40
     elec = electrical_layers(stack)
     layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
@@ -59,12 +59,7 @@ def test_carrier_densities_nonnegative(setup):
     """n and p should be non-negative (may be ~0 in transport layers)."""
     stack, x, mat, y_ss = setup
     snap = extract_spatial_snapshot(x, y_ss, stack, V_app=0.0, mat=mat)
-    # Carrier densities can be near-zero in wide-gap transport layers
-    # (ni = 1 m^-3 in the TiO2 ETL, so equilibrium p ~ 1e-24 m^-3 in the
-    # ETL and equilibrium n ~ 1e-24 m^-3 in the HTL). Residual solver
-    # noise in those regions is of order 1e-18 m^-3 absolute, which is
-    # 42 orders of magnitude below any physical carrier density; we gate
-    # the non-negativity invariant at that floor.
+    # Retain an absolute roundoff floor for the exported carrier arrays.
     assert np.all(snap.n >= -1e-18), "Electron density should be non-negative"
     assert np.all(snap.p >= -1e-18), "Hole density should be non-negative"
 
@@ -118,9 +113,9 @@ def test_snapshot_is_frozen(setup):
 
 def test_save_snapshots_in_jv_sweep():
     """run_jv_sweep with save_snapshots=True should populate snapshot fields."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("configs/calado2016_fig1f.yaml")
     result = run_jv_sweep(
-        stack, N_grid=40, n_points=10, v_rate=1.0, save_snapshots=True,
+        stack, N_grid=40, n_points=10, v_rate=1.0, V_max=1.2, save_snapshots=True,
     )
     assert result.snapshots_fwd is not None
     assert result.snapshots_rev is not None
@@ -132,9 +127,9 @@ def test_save_snapshots_in_jv_sweep():
 
 def test_save_snapshots_default_none():
     """By default, snapshot fields should be None."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("configs/calado2016_fig1f.yaml")
     result = run_jv_sweep(
-        stack, N_grid=40, n_points=10, v_rate=1.0,
+        stack, N_grid=40, n_points=10, v_rate=1.0, V_max=1.2,
     )
     assert result.snapshots_fwd is None
     assert result.snapshots_rev is None

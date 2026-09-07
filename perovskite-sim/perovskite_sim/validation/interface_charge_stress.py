@@ -171,8 +171,6 @@ def _require_research_stack(stack: object):
         violations.append("calibrated flat-band contacts must be disabled")
     if stack.contact_phi_B_eV != 0.0:
         violations.append("the calibrated contact barrier must be zero")
-    if getattr(stack, "autoloop_generated_lever", False):
-        violations.append("autoloop-generated calibration is forbidden")
     bound_stack = None
     microscopic_contract = None
     try:

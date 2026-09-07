@@ -23,3 +23,4 @@ class SpatialSnapshot:
     P: np.ndarray        # ion (vacancy) density [m^-3]
     rho: np.ndarray      # space charge density [C/m^3]
     V_app: float         # applied voltage [V]
+    P_neg: np.ndarray | None = None  # negative mobile species [m^-3]

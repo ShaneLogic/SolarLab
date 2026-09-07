@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ion parameter flow verification</title>
+  </head>
+  <body>
+    <details><summary>Run trace</summary>
+      <button id="read-snapshot" type="button">Read snapshot</button>
+      <pre id="snapshot" aria-label="Editor snapshot"></pre>
+      <pre id="request" aria-label="Submitted request"></pre>
+      <pre id="job" aria-label="Submitted job ID"></pre>
+      <pre id="result" aria-label="Completed result"></pre>
+    </details>
+    <section id="device"></section>
+    <section id="experiment"></section>
+    <section id="plot"></section>
+    <script type="module">
+      import '../src/style.css'
+      import { getConfig } from '../src/api.ts'
+      import { mountDevicePanel } from '../src/device-panel.ts'
+      import { mountJVPane } from '../src/workstation/panes/jv-pane.ts'
+      import { renderJV, renderSpatialProfiles } from '../src/workstation/panes/main-plot-pane.ts'
+      const config = await getConfig('calado2016_fig1f.yaml')
+      const panel = await mountDevicePanel(document.querySelector('#device'), 'ion-flow', {
+        tier: 'full', initialConfig: config,
+      })
+      const summarize = config => ({
+        mode: config.device.mode,
+        layers: config.layers.map(layer => ({
+          name: layer.name, D_ion: layer.D_ion, P0: layer.P0,
+          D_ion_neg: layer.D_ion_neg, P0_neg: layer.P0_neg,
+        })),
+      })
+      document.querySelector('#read-snapshot').addEventListener('click', () => {
+        document.querySelector('#snapshot').textContent = JSON.stringify(summarize(panel.getConfig()))
+      })
+      const send = window.fetch.bind(window)
+      window.fetch = (url, options) => {
+        if (String(url).endsWith('/api/jobs') && options?.body) {
+          const request = JSON.parse(options.body)
+          document.querySelector('#request').textContent = JSON.stringify(request)
+          return send(url, options).then(async response => {
+            const payload = await response.clone().json()
+            document.querySelector('#job').textContent = payload.job_id ?? JSON.stringify(payload)
+            return response
+          })
+        }
+        return send(url, options)
+      }
+      mountJVPane(document.querySelector('#experiment'), {
+        getActiveDevice: () => ({ id: 'ion-flow-verification', config: panel.getConfig() }),
+        onRunComplete: (_deviceId, run) => {
+          document.querySelector('#result').textContent = JSON.stringify({
+            kind: run.result.kind,
+            data: run.result.data, device: run.deviceSnapshot,
+          })
+          if (run.result.kind === 'jv') renderJV(document.querySelector('#plot'), run.result.data)
+          if (run.result.kind === 'spatial') renderSpatialProfiles(document.querySelector('#plot'), run.result.data)
+        },
+      })
+      if (new URLSearchParams(location.search).has('waveform')) {
+        const select = document.querySelector('#jvp-waveform-mode')
+        select.value = 'continuous'
+        select.dispatchEvent(new Event('change'))
+      }
+      if (location.hash === '#jvp-waveform') document.querySelector('#jvp-waveform').scrollIntoView()
+    </script>
+  </body>
+</html>

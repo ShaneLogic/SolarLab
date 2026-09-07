@@ -36,6 +36,7 @@ from perovskite_sim.experiments import (
     dynamic_defect_transient as dynamic_defect_transient_exp,
 )
 from perovskite_sim.experiments import interface_charge_jv as interface_charge_jv_exp
+from perovskite_sim.experiments import waveform_jv as waveform_jv_exp
 from perovskite_sim.experiments import external_circuit as external_circuit_exp
 from perovskite_sim.experiments import electrothermal as electrothermal_exp
 from perovskite_sim.experiments import identifiability as identifiability_exp
@@ -310,7 +311,6 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         S_p_left=_opt_S(dev.get("S_p_left", left_cfg.get("S_p"))),
         S_n_right=_opt_S(dev.get("S_n_right", right_cfg.get("S_n"))),
         S_p_right=_opt_S(dev.get("S_p_right", right_cfg.get("S_p"))),
-        autoloop_generated_lever=_flag(dev.get("autoloop_generated_lever")),
         microstructure=microstructure,
     )
 
@@ -394,7 +394,6 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
         "te_physical_norm": stack.te_physical_norm,
         "ion_steric_diffusion_only": stack.ion_steric_diffusion_only,
         "ion_steric_shared_site": stack.ion_steric_shared_site,
-        "autoloop_generated_lever": stack.autoloop_generated_lever,
         "flat_band_contacts": stack.flat_band_contacts,
         "flat_band_metal_contacts": stack.flat_band_metal_contacts,
         "contact_phi_B_eV": stack.contact_phi_B_eV,
@@ -529,8 +528,6 @@ def _require_interface_charge_research_stack(
         violations.append("calibrated flat-band contact floors must be disabled")
     if stack.contact_phi_B_eV != 0.0:
         violations.append("the calibrated contact barrier must be zero")
-    if stack.autoloop_generated_lever:
-        violations.append("autoloop-generated calibration levers are not accepted")
     try:
         require_uncalibrated_microscopic_interface_defects(
             stack,
@@ -982,6 +979,8 @@ class JVRequest(BaseModel):
     protocol_mode: ProtocolMode = "compatibility"
     experiment_protocol: Optional[dict[str, Any]] = None
     interface_charge_jv_protocol: Optional[dict[str, Any]] = None
+    waveform: Optional[dict[str, Any]] = None
+    waveform_controls: Optional[dict[str, Any]] = None
 
 
 class ExternalCircuitJVRequest(JVRequest):
@@ -1579,6 +1578,38 @@ def _resolve_interface_charge_jv_protocol(
     return resolved
 
 
+def _parse_jv_waveform(stack, params):
+    raw = params.get("waveform")
+    controls = params.get("waveform_controls")
+    if raw is None:
+        if controls is not None:
+            raise ValueError("waveform_controls requires waveform")
+        return None, {}
+    if params.get("solver", "transient") != "transient" or params.get("iface_states", False) or params.get("interface_boundary", False):
+        raise ValueError("continuous waveforms require the transient driver without algebraic interface options")
+    jv_sweep.require_jv_driver_capability(stack, requested_driver="transient")
+    if stack.interface_charge_closure != "off":
+        raise ValueError("charged interfaces require their dedicated J-V driver")
+    waveform = waveform_jv_exp.JVWaveform.from_dict(raw)
+    if controls is None:
+        controls = {"rtol": 1e-4, "atol_m3": waveform_jv_exp.DEFAULT_DENSITY_ATOL_M3}
+    if not isinstance(controls, dict) or set(controls) != {"rtol", "atol_m3"}:
+        raise ValueError("waveform_controls must contain exactly rtol and atol_m3")
+    for key, value in controls.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
+            raise ValueError(f"waveform_controls.{key} must be finite and positive")
+    return waveform, controls
+
+
+def _waveform_result_metadata(result):
+    return {key: to_serializable(getattr(result, key)) for key in (
+        "waveform", "protocol", "numerical_scope", "numerical_controls",
+        "hysteresis_index", "hysteresis_index_paper", "inventory_relative_drift",
+        "generation_budget_A_m2", "waveform_protocol_sha256",
+        "jacobian_evaluator", "jacobian_fallback_reason",
+    )}
+
+
 def _preflight_job_experiment_protocol(
     kind: str,
     params: dict[str, Any],
@@ -1587,6 +1618,21 @@ def _preflight_job_experiment_protocol(
     mode: ProtocolMode,
 ) -> None:
     """Reject protocol/execution mismatches before a worker is submitted."""
+
+    if params.get("waveform") is not None or params.get("waveform_controls") is not None:
+        if kind not in {"jv", "current_decomp", "spatial"}:
+            raise ValueError("waveforms are supported only for J-V experiments")
+        waveform, _ = _parse_jv_waveform(stack, params)
+        if params.get("V_max") is None:
+            raise ValueError("a continuous waveform requires an explicit V_max")
+        expected = waveform_jv_exp.build_waveform_protocol(
+            stack, waveform, n_points=params.get("n_points", 30),
+            v_rate=params.get("v_rate", 1.0), V_max=params["V_max"],
+            illuminated=params.get("illuminated", True),
+        )
+        resolve_experiment_protocol(supplied or expected,
+            replace(expected, implicit_legacy_protocol=True), mode=mode)
+        return
 
     if kind == "jv":
         solver = str(params.get("solver", "transient"))
@@ -1887,6 +1933,10 @@ def _run_jv_dispatch(
     interface_transport_model: str = "fermi_richardson",
     experiment_protocol: ExperimentProtocol | None = None,
     protocol_mode: ProtocolMode = "compatibility",
+    waveform: dict[str, Any] | None = None,
+    waveform_controls: dict[str, float] | None = None,
+    save_snapshots: bool = False,
+    decompose_currents: bool = False,
     interface_charge_jv_protocol: (
         interface_charge_jv_exp.InterfaceChargeJVProtocol | None
     ) = None,
@@ -1900,6 +1950,20 @@ def _run_jv_dispatch(
     hysteresis. Stack policy is enforced inside each driver; no implicit
     solver substitution is permitted.
     """
+    if waveform is not None or waveform_controls is not None:
+        settings, controls = _parse_jv_waveform(stack, {
+            "waveform": waveform, "waveform_controls": waveform_controls,
+            "solver": solver, "iface_states": iface_states,
+            "interface_boundary": interface_boundary,
+        })
+        if V_max is None:
+            raise ValueError("a continuous waveform requires an explicit V_max")
+        return waveform_jv_exp.run_waveform_jv(
+            stack, settings, N_grid=N_grid, n_points=n_points, v_rate=v_rate, V_max=V_max,
+            illuminated=illuminated, progress=progress, rtol=controls["rtol"], atol=controls["atol_m3"],
+            save_snapshots=save_snapshots, decompose_currents=decompose_currents,
+            experiment_protocol=experiment_protocol, protocol_mode=protocol_mode,
+        )
     interface_charge_closure = getattr(stack, "interface_charge_closure", "off")
     if interface_charge_closure == "equilibrium_referenced":
         if interface_charge_jv_protocol is None:
@@ -2188,6 +2252,8 @@ def _run_jv_dispatch(
         stack, N_grid=N_grid, n_points=n_points, v_rate=v_rate,
         V_max=V_max, illuminated=illuminated, progress=progress,
         experiment_protocol=experiment_protocol, protocol_mode=protocol_mode,
+        **({"save_snapshots": True} if save_snapshots else {}),
+        **({"decompose_currents": True} if decompose_currents else {}),
     )
 
 
@@ -2223,6 +2289,7 @@ def run_jv(req: JVRequest):
             experiment_protocol=experiment_protocol,
             protocol_mode=protocol_mode,
             interface_charge_jv_protocol=charged_protocol,
+            waveform=req.waveform, waveform_controls=req.waveform_controls,
         )
         return {"status": "ok", "result": to_serializable(result)}
     except HTTPException:
@@ -2249,6 +2316,8 @@ def run_external_circuit_jv(req: ExternalCircuitJVRequest):
     """Run an intrinsic J-V experiment, then map it to terminal coordinates."""
 
     try:
+        if req.waveform is not None or req.waveform_controls is not None:
+            raise ValueError("continuous waveforms are not supported by the DC external-circuit endpoint")
         circuit = external_circuit_exp.ExternalCircuitProtocol.from_dict(
             req.external_circuit_protocol
         )
@@ -2760,6 +2829,9 @@ def start_job(req: JobRequest):
     """
     kind = req.kind
     p = req.params
+    has_waveform = p.get("waveform") is not None or p.get("waveform_controls") is not None
+    if has_waveform and kind not in {"jv", "current_decomp", "spatial"}:
+        raise HTTPException(status_code=422, detail="waveforms are supported only for J-V experiments")
 
     experiment_protocol: ExperimentProtocol | None = None
     protocol_mode: ProtocolMode = "compatibility"
@@ -2773,7 +2845,7 @@ def start_job(req: JobRequest):
     dynamic_defect_transient_protocol: (
         dynamic_defect_transient_exp.DynamicDefectTransientProtocol | None
     ) = None
-    if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
+    if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"} or has_waveform:
         try:
             experiment_protocol, protocol_mode = _parse_protocol_inputs(
                 p.get("experiment_protocol"),
@@ -2799,7 +2871,7 @@ def start_job(req: JobRequest):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"stack build failed: {e}")
 
-    if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"}:
+    if kind in {"jv", "impedance", "tpv", "suns_voc", "eqe"} or has_waveform:
         try:
             if kind == "jv":
                 interface_charge_jv_protocol = (
@@ -2872,6 +2944,7 @@ def start_job(req: JobRequest):
                 )
         except (
             ExperimentProtocolError,
+            jv_sweep.JVDriverCapabilityError,
             interface_charge_jv_exp.InterfaceChargeJVProtocolError,
             impedance.DynamicDefectImpedanceCapabilityError,
             impedance.DynamicDefectImpedanceProtocolError,
@@ -2932,6 +3005,7 @@ def start_job(req: JobRequest):
                 experiment_protocol=experiment_protocol,
                 protocol_mode=protocol_mode,
                 interface_charge_jv_protocol=interface_charge_jv_protocol,
+                waveform=p.get("waveform"), waveform_controls=p.get("waveform_controls"),
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = to_serializable(result)
@@ -3054,7 +3128,7 @@ def start_job(req: JobRequest):
         def _run(reporter: ProgressReporter) -> dict:
             _illum = p.get("illuminated", True)
             illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
-            result = jv_sweep.run_jv_sweep(
+            result = _run_jv_dispatch(
                 stack,
                 N_grid=int(p.get("N_grid", 60)),
                 n_points=int(p.get("n_points", 30)),
@@ -3062,6 +3136,8 @@ def start_job(req: JobRequest):
                 V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
                 illuminated=illuminated,
                 decompose_currents=True,
+                waveform=p.get("waveform"), waveform_controls=p.get("waveform_controls"),
+                experiment_protocol=experiment_protocol, protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             out = {}
@@ -3080,12 +3156,14 @@ def start_job(req: JobRequest):
                 out["Jdisp_rev"] = result.decomp_rev.J_disp.tolist()
                 out["Jtotal_rev"] = result.decomp_rev.J_total.tolist()
             out["active_physics"] = _describe_active_physics(stack)
+            if has_waveform:
+                out.update(_waveform_result_metadata(result))
             return out
     elif kind == "spatial":
         def _run(reporter: ProgressReporter) -> dict:
             _illum = p.get("illuminated", True)
             illuminated = bool(_illum) if not isinstance(_illum, str) else _illum.lower() != "false"
-            result = jv_sweep.run_jv_sweep(
+            result = _run_jv_dispatch(
                 stack,
                 N_grid=int(p.get("N_grid", 60)),
                 n_points=int(p.get("n_points", 15)),
@@ -3093,6 +3171,8 @@ def start_job(req: JobRequest):
                 V_max=float(p["V_max"]) if p.get("V_max") is not None else None,
                 illuminated=illuminated,
                 save_snapshots=True,
+                waveform=p.get("waveform"), waveform_controls=p.get("waveform_controls"),
+                experiment_protocol=experiment_protocol, protocol_mode=protocol_mode,
                 progress=lambda stage, cur, tot, msg: reporter.report(stage, cur, tot, msg),
             )
             # Convert snapshots to serialisable dicts with x in nm for readability
@@ -3104,6 +3184,7 @@ def start_job(req: JobRequest):
                     "n": s.n.tolist(),                  # m^-3
                     "p": s.p.tolist(),                  # m^-3
                     "P": s.P.tolist(),                  # m^-3
+                    **({"P_neg": s.P_neg.tolist()} if s.P_neg is not None else {}),
                     "rho": s.rho.tolist(),              # C/m^3 (charge density * q)
                     "V_app": s.V_app,
                 }
@@ -3114,6 +3195,8 @@ def start_job(req: JobRequest):
                 "snapshots_rev": [snap_to_dict(s) for s in (result.snapshots_rev or [])],
             }
             out["active_physics"] = _describe_active_physics(stack)
+            if has_waveform:
+                out.update(_waveform_result_metadata(result))
             return out
     elif kind == "tpv":
         from perovskite_sim.experiments.tpv import run_tpv

@@ -1,5 +1,6 @@
 import { startJob, streamJobEvents } from '../../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
+import { mountJVWaveformControls } from '../../jv-waveform-controls'
 import { setStatus, numField, readNum, checkField, readCheck } from '../../ui-helpers'
 import {
   requiresChargedInterfaceJVSolver,
@@ -49,6 +50,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
           </select>
         </label>
       </div>
+      <div id="jvp-waveform"></div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-jvp">Run J–V Sweep</button>
         <span class="status" id="status-jvp"></span>
@@ -76,9 +78,14 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
   const rateInput = container.querySelector<HTMLInputElement>('#jvp-rate')!
   const decompBox = container.querySelector<HTMLInputElement>('#jvp-decomp')!
   const spatialBox = container.querySelector<HTMLInputElement>('#jvp-spatial')!
+  const waveformControls = mountJVWaveformControls(container.querySelector('#jvp-waveform')!, 'jvp', {
+    rate: rateInput, maximum: container.querySelector<HTMLInputElement>('#jvp-vmax')!,
+    points: container.querySelector<HTMLInputElement>('#jvp-np')!,
+  })
   let chargedClosureActive = false
   let lastGeneralRate = rateInput.value
   const syncIfaceEnabled = (): void => {
+    waveformControls.setEnabled(solverSelect.value === 'transient' && !chargedClosureActive)
     if (chargedClosureActive) {
       ifaceBox.checked = false
       ifaceBox.disabled = true
@@ -172,7 +179,17 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
       btn.disabled = false
       return
     }
+    let waveformParams: ReturnType<typeof waveformControls.read>
+    try {
+      waveformParams = waveformControls.read()
+    } catch (error) {
+      progressBar.error((error as Error).message)
+      setStatus('status-jvp', (error as Error).message, true)
+      btn.disabled = false
+      return
+    }
     const params = {
+      ...waveformParams,
       N_grid: requestedGrid,
       n_points: Math.max(2, Math.round(readNum('jvp-np', 30))),
       v_rate: chargedInterface ? 0 : readNum('jvp-rate', 1.0),

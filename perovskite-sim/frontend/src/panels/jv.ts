@@ -2,6 +2,7 @@ import Plotly from 'plotly.js-basic-dist-min'
 import { mountDevicePanel, type DevicePanel } from '../device-panel'
 import { startJob, streamJobEvents } from '../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../progress'
+import { appendWaveformEvidence, mountJVWaveformControls } from '../jv-waveform-controls'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'
 import { setStatus, metricCard, numField, readNum, checkField, readCheck } from '../ui-helpers'
 import { summarizeJVBulkDefectEvidence } from '../jv-defect-evidence'
@@ -35,6 +36,7 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
         </label>
         ${checkField('jv-dark', 'Dark J–V (no illumination)', false)}
       </div>
+      <div id="jv-waveform"></div>
       <p>
         <b>V<sub>max</sub></b> is the upper voltage of the forward sweep.
         Leave it at the default (1.4&nbsp;V) unless V<sub>oc</sub> on your
@@ -63,9 +65,14 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
   const solverSelect = root.querySelector<HTMLSelectElement>('#jv-solver')!
   const darkBox = root.querySelector<HTMLInputElement>('#jv-dark')!
   const rateInput = root.querySelector<HTMLInputElement>('#jv-rate')!
+  const waveformControls = mountJVWaveformControls(root.querySelector('#jv-waveform')!, 'jv', {
+    rate: rateInput, maximum: root.querySelector<HTMLInputElement>('#jv-vmax')!,
+    points: root.querySelector<HTMLInputElement>('#jv-np')!,
+  })
   let chargedClosureActive = false
   let lastGeneralRate = rateInput.value
   const syncDarkEnabled = (): void => {
+    waveformControls.setEnabled(solverSelect.value === 'transient')
     darkBox.disabled = solverSelect.value === 'quasi_fermi'
     if (darkBox.disabled) darkBox.checked = false
   }
@@ -77,9 +84,9 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
     chargedClosureActive = charged
     solverSelect.disabled = required
     if (required) solverSelect.value = 'quasi_fermi'
+    syncDarkEnabled()
     rateInput.disabled = charged
     if (charged) rateInput.value = '0'
-    syncDarkEnabled()
   }
   solverSelect.addEventListener('change', syncDarkEnabled)
   devicePanel.onChange(syncSolverRequirement)
@@ -105,6 +112,7 @@ export async function mountJVPanel(root: HTMLElement): Promise<void> {
         )
       }
       const params = {
+        ...waveformControls.read(),
         N_grid: requestedGrid,
         n_points: Math.max(2, Math.round(readNum('jv-np', 30))),
         v_rate: chargedInterface ? 0 : readNum('jv-rate', 1.0),
@@ -192,6 +200,7 @@ export function renderJVResults(container: HTMLElement, r: JVResult): void {
     </div>`
 
   const defectEvidenceLines = summarizeJVBulkDefectEvidence(r.bulk_defect_evidence)
+  appendWaveformEvidence(container, r)
   if (defectEvidenceLines.length > 0 && r.bulk_defect_evidence) {
     const summary = document.createElement('div')
     summary.className = 'jv-defect-evidence-summary'

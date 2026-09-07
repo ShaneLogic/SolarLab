@@ -1599,8 +1599,6 @@ def build_material_arrays(
             disallowed.append("spatial doping profiles")
         if stack.flat_band_contacts or stack.flat_band_metal_contacts:
             disallowed.append("calibrated contact floors")
-        if stack.autoloop_generated_lever:
-            disallowed.append("generated material lever")
         if any(
             value is not None
             for value in (
@@ -2980,10 +2978,6 @@ def build_material_arrays(
         has_trap_profile=_has_trap_profile,
     )
 
-    if getattr(stack, "autoloop_generated_lever", False) or os.environ.get("SOLARLAB_AUTOLOOP_GEN") == "1":
-        from perovskite_sim.autoloop.generated.lever import adjust_material_arrays
-        from perovskite_sim.autoloop.generated._ctx import _LeverContext
-        arrays = adjust_material_arrays(arrays, _LeverContext(x=x, stack=stack))
     return arrays
 
 
@@ -3766,6 +3760,7 @@ def run_transient(
     numerical_diagnostics: NumericalDiagnosticsPolicy | None = None,
     regularization: RHSRegularization | None = None,
     state_coordinates: StateCoordinateMode = "density",
+    jacobian: Callable[[float, np.ndarray], np.ndarray] | None = None,
 ):
     """Integrate MOL system from t_span[0] to t_span[1].
 
@@ -3792,6 +3787,11 @@ def run_transient(
     :class:`~perovskite_sim.solver.numerical_diagnostics.NumericalDiagnosticsPolicy`
     in ``research_strict`` mode to fail closed; no policy clips a state or
     changes the RHS equations.
+
+    ``jacobian`` optionally supplies the derivative of this same physical
+    density RHS. The caller owns its capability checks. It is incompatible
+    with log coordinates or RHS regularization; the default still uses
+    SciPy's finite-difference Jacobian.
 
     ``state_coordinates="research_log_density"`` is a separate opt-in
     prototype. It integrates each physically active density as
@@ -3821,6 +3821,11 @@ def run_transient(
         raise ValueError(
             "state_coordinates must be 'density' or 'research_log_density'"
         )
+    if jacobian is not None:
+        if not callable(jacobian):
+            raise TypeError("jacobian must be callable or None")
+        if state_coordinates != "density" or regularization is not None:
+            raise ValueError("supplied density Jacobian requires density coordinates and no RHS regularization")
 
     if callable(V_app):
         def bias_at(t: float) -> float:
@@ -3942,6 +3947,7 @@ def run_transient(
             atol=solver_atol,
             dense_output=False,
             max_step=max_step,
+            **({"jac": jacobian} if jacobian is not None else {}),
         )
     except _NfevExceeded:
         from types import SimpleNamespace

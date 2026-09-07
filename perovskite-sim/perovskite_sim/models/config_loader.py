@@ -547,10 +547,6 @@ def load_device_from_yaml(path: str) -> DeviceStack:
             str(dev.get("ion_steric_shared_site", True)).strip().lower()
             in ("true", "1", "yes", "on")
         ),
-        autoloop_generated_lever=(
-            str(dev.get("autoloop_generated_lever", False)).strip().lower()
-            in ("true", "1", "yes", "on")
-        ),
         flat_band_contacts=(
             str(dev.get("flat_band_contacts", False)).strip().lower()
             in ("true", "1", "yes", "on")

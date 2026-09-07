@@ -1,40 +1,40 @@
-# Calado 2016 Fig 1f paper-faithful toy stack (bottom-cathode, hysteretic).
+# Calado 2016 Fig 1f parameter anchor (bottom-cathode, contact SRH enabled).
 #
 # Source: Calado et al., Nat. Commun. 7, 13831 (2016), Supplementary Table 1
 # and Supplementary Note 2 — the p-i-n toy model behind the simulated J-V of
 # Fig 1f (HI = 1.84 at 40 mV/s in the paper's P_max,rev/P_max,fwd - 1 metric).
 #
-# This preset is DYNAMICS-faithful, unlike driftfusion_calado2016_repro.yaml
-# which is a V_oc/J_sc metrics calibration only. The two differ where it
-# matters for hysteresis:
+# This is an investigation baseline, not a completed paper reproduction.
+# See docs/calado2016-reproduction-checkpoint.md for current evidence.
+# The parameters important for the ionic-hysteresis comparison are:
 #   - D_ion here is the paper's own simulation value 2.585e-18 m^2/s
 #     (mu_ion = 1e-12 cm^2/Vs, deliberately slowed by the authors to match
-#     their ~40 s transients); the repro preset carries a literature-scale
-#     2.57e-16 — 100x faster, which closes the loop at 40 mV/s.
+#     their ~40 s transients).
 #   - Contacts share the absorber transport (mu = 20 cm^2/Vs everywhere,
 #     identical flat bands) so minority carriers actually reach the
-#     contact-volume SRH sink that generates the hysteresis; the repro
-#     preset's realistic blocking mobilities starve that channel.
+#     contact-volume SRH sink that generates the hysteresis.
 #   - Contact SRH tau = 2e-15 s (paper value, "while unrealistic" — an
 #     intentional near-perfect sink), traps at -0.2 eV (n-side) / -1.4 eV
 #     (p-side) below the conduction band, expressed through n1/p1 with
 #     N0 = 1e20 cm^-3 and ni = N0 exp(-Eg/2kT), Eg = 1.6 eV.
 #
-# Known deviations from the paper's setup, both documented and bounded:
+# Known deviations and unresolved comparisons:
 #   - The paper drives a uniform G = 2.5e21 cm^-3 s^-1 in the i-layer; this
 #     preset approximates it with weak Beer-Lambert absorption
 #     (alpha*L = 0.04 => <= 4% front-to-back G variation, absorbed
 #     photocurrent ~ 16 mA/cm^2). For the exact uniform profile pass
 #     fixed_generation to run_jv_sweep.
 #   - run_jv_sweep scans 0 -> V_max -> 0; the paper scans -1 -> +1.2 V with
-#     a few seconds' hold at +1.2 V. Under the paper's protocol (external
-#     driver) this stack measures HI(paper def) = 0.44 vs the paper's 1.84 —
-#     reverse branch quantitative (P_max,rev 81 vs ~85 W/m^2), forward
-#     collapse ~2x shallower, cause unresolved (2026-09-04 study).
-#
-# Measured with the built-in sweep at v_rate=0.04, V_max=1.2: the reverse
-# scan collects better than the forward scan and the loop opens in the
-# ionic-hysteresis direction; grid-converged N100=N200=N300.
+#     an initial dark preparation. Experimental and simulated high-bias
+#     holds must be distinguished; the simulation Methods specify that
+#     reverse inherits the final forward state.
+#   - This Legacy preset uses all-carrier Dirichlet outer contacts. The SI
+#     instead blocks minority carriers; diagnostics select existing Full
+#     mode with S_n_left=0 and S_p_right=0 to test those boundaries.
+#   - With mixed contacts, uniform G, continuous 40 mV/s ramps, dark -1 V
+#     preparation and a 3 s dark high-bias hold, diagnostic HI is 0.482
+#     at N=100, versus extracted paper HI=1.839. N=60 gives 0.479.
+#     This pair is not a full spatial/time/tolerance convergence certificate.
 
 device:
   mode: legacy

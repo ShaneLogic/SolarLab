@@ -1,4 +1,0 @@
-{
-  "scaps": "scaps_reference.json",
-  "lab": {"jv_csv": "lab_data_example/", "units": "mA/cm2", "sign": "positive", "aggregate": "median"}
-}

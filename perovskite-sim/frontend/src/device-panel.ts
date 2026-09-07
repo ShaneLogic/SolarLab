@@ -60,8 +60,9 @@ export async function mountDevicePanel(
   tabId: string,
   options: MountDevicePanelOptions = {},
 ): Promise<DevicePanel> {
-  const { tier } = options
-  const builderOn = isLayerBuilderEnabled(tier ?? 'full')
+  const fallbackTier = options.tier ?? 'full'
+  let tier = options.initialConfig?.device.mode ?? fallbackTier
+  let builderOn = isLayerBuilderEnabled(tier)
 
   root.innerHTML = `
     <div class="card">
@@ -72,9 +73,7 @@ export async function mountDevicePanel(
           <button class="btn btn-ghost" id="${tabId}-reset">Reset</button>
         </div>
       </div>
-      ${builderOn
-        ? `<div id="${tabId}-visualizer"></div><div id="${tabId}-editor"></div>`
-        : `<div id="${tabId}-editor"></div>`}
+      <div id="${tabId}-visualizer"></div><div id="${tabId}-editor"></div>
     </div>`
 
   const select = root.querySelector<HTMLSelectElement>(`#${tabId}-config-select`)!
@@ -100,12 +99,10 @@ export async function mountDevicePanel(
     setOpticalMaterialOptions([])
   }
 
-  if (builderOn) {
-    try {
-      templates = await fetchLayerTemplates()
-    } catch (err) {
-      console.warn('fetchLayerTemplates failed', err)
-    }
+  try {
+    templates = await fetchLayerTemplates()
+  } catch (err) {
+    console.warn('fetchLayerTemplates failed', err)
   }
 
   const entries = researchPresetEntries(await listConfigs())
@@ -131,83 +128,80 @@ export async function mountDevicePanel(
     badgeSlot.innerHTML = computeTmmBadge(cfg, tier)
   }
 
-  let visualizerHandle: ReturnType<typeof mountStackVisualizer> | null = null
-  if (builderOn) {
-    const visualizerEl = root.querySelector<HTMLElement>(`#${tabId}-visualizer`)!
-    visualizerHandle = mountStackVisualizer(visualizerEl, action => handleStackAction(action))
+  const visualizerEl = root.querySelector<HTMLElement>(`#${tabId}-visualizer`)!
+  const visualizerHandle = mountStackVisualizer(visualizerEl, action => handleStackAction(action))
 
-    visualizerEl.addEventListener('stack-insert-request', async (ev: Event) => {
-      const detail = (ev as CustomEvent<{ atIdx: number }>).detail
+  visualizerEl.addEventListener('stack-insert-request', async (ev: Event) => {
+    const detail = (ev as CustomEvent<{ atIdx: number }>).detail
+    const layer = await openAddLayerDialog(templates)
+    if (layer && current) {
+      const newLayers = [...current.layers]
+      newLayers.splice(detail.atIdx, 0, layer)
+      const newInterfaces = reconcileInterfaces(
+        current.layers,
+        newLayers,
+        current.device.interfaces ?? [],
+      )
+      current = {
+        ...current,
+        layers: newLayers,
+        device: { ...current.device, interfaces: newInterfaces },
+      }
+      selectedLayerIdx = detail.atIdx
+      rerender()
+    }
+  })
+
+  visualizerEl.addEventListener('stack-edit-iface', (ev: Event) => {
+    const detail = (ev as CustomEvent<{ ifaceIdx: number }>).detail
+    if (!current) return
+    const existing = (current.device.interfaces?.[detail.ifaceIdx] ?? [0, 0]) as readonly [number, number]
+    const vn = window.prompt('v_n (m/s)', String(existing[0]))
+    if (vn == null) return
+    const vp = window.prompt('v_p (m/s)', String(existing[1]))
+    if (vp == null) return
+    const newPair: [number, number] = [Number(vn) || 0, Number(vp) || 0]
+    const newIfaces = [...(current.device.interfaces ?? [])]
+    while (newIfaces.length < current.layers.length - 1) newIfaces.push([0, 0])
+    newIfaces[detail.ifaceIdx] = newPair
+    current = {
+      ...current,
+      device: { ...current.device, interfaces: newIfaces },
+    }
+    rerender()
+  })
+
+  visualizerEl.addEventListener('click', async ev => {
+    const target = ev.target as HTMLElement
+    const stackAction = target.closest<HTMLElement>('[data-stack-action]')
+    if (!stackAction) return
+    const action = stackAction.dataset.stackAction!
+    if (action === 'add' && current) {
       const layer = await openAddLayerDialog(templates)
-      if (layer && current) {
-        const newLayers = [...current.layers]
-        newLayers.splice(detail.atIdx, 0, layer)
+      if (layer) {
+        const newLayers = [...current.layers, layer]
         const newInterfaces = reconcileInterfaces(
-          current.layers,
-          newLayers,
-          current.device.interfaces ?? [],
+          current.layers, newLayers, current.device.interfaces ?? [],
         )
         current = {
           ...current,
           layers: newLayers,
           device: { ...current.device, interfaces: newInterfaces },
         }
-        selectedLayerIdx = detail.atIdx
+        selectedLayerIdx = current.layers.length - 1
         rerender()
       }
-    })
-
-    visualizerEl.addEventListener('stack-edit-iface', (ev: Event) => {
-      const detail = (ev as CustomEvent<{ ifaceIdx: number }>).detail
-      if (!current) return
-      const existing = (current.device.interfaces?.[detail.ifaceIdx] ?? [0, 0]) as readonly [number, number]
-      const vn = window.prompt('v_n (m/s)', String(existing[0]))
-      if (vn == null) return
-      const vp = window.prompt('v_p (m/s)', String(existing[1]))
-      if (vp == null) return
-      const newPair: [number, number] = [Number(vn) || 0, Number(vp) || 0]
-      const newIfaces = [...(current.device.interfaces ?? [])]
-      while (newIfaces.length < current.layers.length - 1) newIfaces.push([0, 0])
-      newIfaces[detail.ifaceIdx] = newPair
-      current = {
-        ...current,
-        device: { ...current.device, interfaces: newIfaces },
+    } else if (action === 'save-as' && current) {
+      const result = await openSaveAsDialog(current)
+      if (result) {
+        loaded = current
+        refreshDirtyPill()
+        await refreshConfigsDropdown(result.saved)
       }
-      rerender()
-    })
-
-    visualizerEl.addEventListener('click', async ev => {
-      const target = ev.target as HTMLElement
-      const stackAction = target.closest<HTMLElement>('[data-stack-action]')
-      if (!stackAction) return
-      const action = stackAction.dataset.stackAction!
-      if (action === 'add' && current) {
-        const layer = await openAddLayerDialog(templates)
-        if (layer) {
-          const newLayers = [...current.layers, layer]
-          const newInterfaces = reconcileInterfaces(
-            current.layers, newLayers, current.device.interfaces ?? [],
-          )
-          current = {
-            ...current,
-            layers: newLayers,
-            device: { ...current.device, interfaces: newInterfaces },
-          }
-          selectedLayerIdx = current.layers.length - 1
-          rerender()
-        }
-      } else if (action === 'save-as' && current) {
-        const result = await openSaveAsDialog(current)
-        if (result) {
-          loaded = current
-          refreshDirtyPill()
-          await refreshConfigsDropdown(result.saved)
-        }
-      } else if (action === 'download-yaml' && current) {
-        downloadYaml(current)
-      }
-    })
-  }
+    } else if (action === 'download-yaml' && current) {
+      downloadYaml(current)
+    }
+  })
 
   function handleStackAction(action: StackAction): void {
     if (!current) return
@@ -283,10 +277,14 @@ export async function mountDevicePanel(
 
   function rerender(): void {
     if (!current) return
-    if (builderOn && visualizerHandle) {
+    tier = current.device.mode ?? fallbackTier
+    builderOn = isLayerBuilderEnabled(tier)
+    visualizerEl.hidden = !builderOn
+    root.classList.toggle('device-pane-grid', builderOn)
+    if (builderOn) {
       const report = validate(current)
       visualizerHandle.render(current, selectedLayerIdx, report)
-      renderDeviceEditor(editor, current, tier, selectedLayerIdx)
+      renderDeviceEditor(editor, current, tier, selectedLayerIdx, true)
     } else {
       renderDeviceEditor(editor, current, tier)
     }
@@ -294,14 +292,17 @@ export async function mountDevicePanel(
     refreshDirtyPill()
   }
 
-  // Incremental update on input/change from the detail editor. Must NOT
-  // rebuild the editor DOM — doing so would destroy focus + cursor position
-  // mid-typing. Only the visualizer, badge, and dirty pill refresh.
-  function syncFromEditor(): void {
-    if (!current || !builderOn) return
-    const updated = readDeviceEditor(current, selectedLayerIdx)
+  // Numeric edits preserve focus and cursor position. Only mode changes
+  // rebuild the editor to apply the new physics gates.
+  function syncFromEditor(event: Event): void {
+    if (!current) return
+    // A mode change rebuilds the controls once, after the select's input event.
+    if (event.type === 'input' && (event.target as HTMLElement)?.id === 'dev-mode') return
+    const updated = readDeviceEditor(current, builderOn ? selectedLayerIdx : undefined)
     current = updated
-    if (visualizerHandle) {
+    if ((current.device.mode ?? fallbackTier) !== tier) {
+      rerender()
+    } else if (builderOn) {
       const report = validate(current)
       visualizerHandle.render(current, selectedLayerIdx, report)
     }
@@ -310,10 +311,8 @@ export async function mountDevicePanel(
     listeners.forEach(l => l(current!))
   }
 
-  if (builderOn) {
-    editor.addEventListener('input', syncFromEditor)
-    editor.addEventListener('change', syncFromEditor)
-  }
+  editor.addEventListener('input', syncFromEditor)
+  editor.addEventListener('change', syncFromEditor)
 
   async function refreshConfigsDropdown(selectName: string): Promise<void> {
     const newEntries = researchPresetEntries(await listConfigs())

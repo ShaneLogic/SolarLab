@@ -8,7 +8,7 @@ Stage B(c.2) uses **face-normal** μ(E):
   - D_eff is recovered via the Einstein relation D = μ V_T
 
 Option B (total-|E| with cross-axis interpolation) is explicitly deferred —
-see docs/superpowers/specs/2026-04-29-2d-stage-b-c2-field-mobility-design.md.
+see docs/twod-transport-contract.md#field-dependent-mobility.
 
 Mean choices:
   - D_n / D_p face averaging: HARMONIC mean (matches sg_fluxes_2d_* and the

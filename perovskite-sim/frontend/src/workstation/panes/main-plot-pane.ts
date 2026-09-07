@@ -10,6 +10,7 @@ import {
   PUBLICATION_PALETTE, PUBLICATION_FONT_FAMILY, PUBLICATION_LINE_WIDTH,
 } from '../../plot-theme'
 import { metricCard } from '../../ui-helpers'
+import { appendWaveformEvidence } from '../../jv-waveform-controls'
 import { smoothEQE } from '../../signal-smooth'
 import {
   collectImpedanceEvidenceWarnings,
@@ -725,6 +726,7 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   el.appendChild(toolbar)
 
   const defectEvidenceLines = summarizeJVBulkDefectEvidence(r.bulk_defect_evidence)
+  appendWaveformEvidence(el, r)
   if (defectEvidenceLines.length > 0 && r.bulk_defect_evidence) {
     const summary = document.createElement('div')
     summary.className = 'jv-defect-evidence-summary'
@@ -1514,6 +1516,18 @@ const DECOMP_COLORS = {
 function renderCurrentDecomp(el: HTMLElement, r: CurrentDecompResult): void {
   Plotly.purge(el)
   el.innerHTML = ''
+  appendWaveformEvidence(el, r)
+  const branch = document.createElement('select')
+  branch.setAttribute('aria-label', 'Current branch')
+  branch.innerHTML = '<option value="fwd">Forward</option><option value="rev">Reverse</option>'
+  const toolbar = document.createElement('div')
+  toolbar.className = 'plot-toolbar'
+  toolbar.appendChild(branch)
+  const plot = document.createElement('div')
+  el.append(toolbar, plot)
+  const draw = () => {
+  const reverse = branch.value === 'rev'
+  const voltage = reverse ? r.V_rev : r.V_fwd
 
   // Convert A/m² → mA/cm² with sign flip to physics convention
   // (photocurrent negative, injection positive — matches Driftfusion / literature)
@@ -1521,29 +1535,29 @@ function renderCurrentDecomp(el: HTMLElement, r: CurrentDecompResult): void {
 
   const traces = [
     {
-      x: r.V_fwd, y: toMA(r.Jn_fwd), name: 'J<sub>n</sub>',
+      x: voltage, y: toMA(reverse ? r.Jn_rev : r.Jn_fwd), name: 'J<sub>n</sub>',
       mode: 'lines', line: { color: DECOMP_COLORS.Jn, width: LINE.width },
     },
     {
-      x: r.V_fwd, y: toMA(r.Jp_fwd), name: 'J<sub>p</sub>',
+      x: voltage, y: toMA(reverse ? r.Jp_rev : r.Jp_fwd), name: 'J<sub>p</sub>',
       mode: 'lines', line: { color: DECOMP_COLORS.Jp, width: LINE.width },
     },
     {
-      x: r.V_fwd, y: toMA(r.Jion_fwd), name: 'J<sub>ion</sub>',
+      x: voltage, y: toMA(reverse ? r.Jion_rev : r.Jion_fwd), name: 'J<sub>ion</sub>',
       mode: 'lines', line: { color: DECOMP_COLORS.Jion, width: LINE.width },
     },
     {
-      x: r.V_fwd, y: toMA(r.Jdisp_fwd), name: 'J<sub>disp</sub>',
+      x: voltage, y: toMA(reverse ? r.Jdisp_rev : r.Jdisp_fwd), name: 'J<sub>disp</sub>',
       mode: 'lines', line: { color: DECOMP_COLORS.Jdisp, width: LINE.width, dash: 'dash' },
     },
     {
-      x: r.V_fwd, y: toMA(r.Jtotal_fwd), name: 'J<sub>total</sub>',
+      x: voltage, y: toMA(reverse ? r.Jtotal_rev : r.Jtotal_fwd), name: 'J<sub>total</sub>',
       mode: 'lines', line: { color: DECOMP_COLORS.Jtotal, width: LINE.width + 0.5 },
     },
   ]
 
   Plotly.newPlot(
-    el,
+    plot,
     traces,
     baseLayout({
       xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
@@ -1552,6 +1566,9 @@ function renderCurrentDecomp(el: HTMLElement, r: CurrentDecompResult): void {
     }),
     plotConfig('current_decomposition'),
   )
+  }
+  branch.addEventListener('change', draw)
+  draw()
 }
 
 // ── Spatial Profiles ────────────────────────────────────────────────────────
@@ -1562,45 +1579,71 @@ const SPATIAL_COLORS = [
   '#ea580c', '#6366f1', '#0891b2', '#dc2626', '#4f46e5',
 ]
 
-function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
+export function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
   Plotly.purge(el)
   el.innerHTML = ''
 
-  const snaps = r.snapshots_fwd
-  if (!snaps || snaps.length === 0) {
+  if (!r.snapshots_fwd?.length && !r.snapshots_rev?.length) {
     el.innerHTML = '<div class="plot-empty">No spatial snapshots available.</div>'
     return
   }
 
-  // Build three vertically-stacked subplots: potential, carrier densities, charge density
-  const traces: Record<string, unknown>[] = []
-
-  snaps.forEach((snap, i) => {
-    const color = SPATIAL_COLORS[i % SPATIAL_COLORS.length]
+  appendWaveformEvidence(el, r)
+  const toolbar = document.createElement('div')
+  toolbar.className = 'plot-toolbar spatial-profile-controls'
+  toolbar.innerHTML = `
+    <label>Branch <select aria-label="Profile branch"><option value="fwd">Forward</option><option value="rev">Reverse</option></select></label>
+    <input type="range" min="0" step="1" value="0" aria-label="Profile sample">
+    <output></output>`
+  const branch = toolbar.querySelector('select')!
+  const slider = toolbar.querySelector('input')!
+  const output = toolbar.querySelector('output')!
+  branch.options[0].disabled = !r.snapshots_fwd?.length
+  branch.options[1].disabled = !r.snapshots_rev?.length
+  branch.value = r.snapshots_fwd?.length ? 'fwd' : 'rev'
+  const plot = document.createElement('div')
+  el.append(toolbar, plot)
+  const draw = () => {
+    const snaps = branch.value === 'fwd' ? r.snapshots_fwd : r.snapshots_rev
+    slider.max = String(snaps.length - 1)
+    slider.value = String(Math.min(Number(slider.value), snaps.length - 1))
+    const snap = snaps[Number(slider.value)]
+    output.textContent = `${snap.V_app.toFixed(3)} V`
+    const traces: Record<string, unknown>[] = []
+    const color = SPATIAL_COLORS[0]
     const label = `${snap.V_app.toFixed(2)} V`
-    const showlegend = true
 
     // Potential φ(x) — top subplot (yaxis)
     traces.push({
       x: snap.x, y: snap.phi, name: label,
       mode: 'lines', line: { color, width: 1.8 },
       xaxis: 'x', yaxis: 'y',
-      legendgroup: label, showlegend,
+      legendgroup: label, showlegend: false,
     })
 
     // Carrier densities n(x), p(x) — middle subplot (yaxis2), log scale
     traces.push({
-      x: snap.x, y: snap.n.map(v => Math.max(v, 1e-10)), name: `n @ ${label}`,
-      mode: 'lines', line: { color, width: 1.5 },
+      x: snap.x, y: snap.n.map(v => v > 0 ? v : null), name: 'n',
+      mode: 'lines', line: { color: '#2563eb', width: 1.5 },
       xaxis: 'x2', yaxis: 'y2',
-      legendgroup: label, showlegend: false,
+      legendgroup: 'n', showlegend: true,
     })
     traces.push({
-      x: snap.x, y: snap.p.map(v => Math.max(v, 1e-10)), name: `p @ ${label}`,
-      mode: 'lines', line: { color, width: 1.5, dash: 'dash' },
+      x: snap.x, y: snap.p.map(v => v > 0 ? v : null), name: 'p',
+      mode: 'lines', line: { color: '#b2182b', width: 1.5, dash: 'dash' },
       xaxis: 'x2', yaxis: 'y2',
-      legendgroup: label, showlegend: false,
+      legendgroup: 'p', showlegend: true,
     })
+    for (const [name, values, dash] of [
+      ['c', snap.P, 'dot'], ['a', snap.P_neg, 'dashdot'],
+    ] as const) {
+      if (!values || !values.some(value => value > 0)) continue
+      traces.push({
+        x: snap.x, y: values.map(value => value > 0 ? value : null), name,
+        mode: 'lines', line: { color: name === 'c' ? '#17805b' : '#a94761', width: 1.8, dash },
+        xaxis: 'x2', yaxis: 'y2', legendgroup: name, showlegend: true,
+      })
+    }
 
     // Electric field E(x) — bottom subplot (yaxis3)
     // E has N-1 faces; use midpoints of x for plotting
@@ -1611,13 +1654,11 @@ function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
       xaxis: 'x3', yaxis: 'y3',
       legendgroup: label, showlegend: false,
     })
-  })
-
   const axBase = baseLayout().xaxis as object
   const ayBase = baseLayout().yaxis as object
 
   Plotly.newPlot(
-    el,
+    plot,
     traces,
     {
       ...baseLayout(),
@@ -1626,7 +1667,7 @@ function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
       xaxis: { ...axBase, title: '', showticklabels: false, anchor: 'y' },
       yaxis: { ...ayBase, title: axisTitle('\u03C6 (V)'), anchor: 'x' },
       xaxis2: { ...axBase, title: '', showticklabels: false, anchor: 'y2' },
-      yaxis2: { ...ayBase, title: axisTitle('n, p (m\u207B\u00B3)'), type: 'log', dtick: 1, anchor: 'x2' },
+      yaxis2: { ...ayBase, title: axisTitle('n, p, c, a (m\u207B\u00B3)'), type: 'log', anchor: 'x2' },
       xaxis3: { ...axBase, title: axisTitle('Position (nm)'), anchor: 'y3' },
       yaxis3: { ...ayBase, title: axisTitle('E (10\u2074 V/m)'), anchor: 'x3' },
       legend: { x: 1.02, y: 1, xanchor: 'left', yanchor: 'top', ...(baseLayout().legend as object) },
@@ -1634,6 +1675,10 @@ function renderSpatialProfiles(el: HTMLElement, r: SpatialProfileResult): void {
     },
     plotConfig('spatial_profiles'),
   )
+  }
+  branch.addEventListener('change', draw)
+  slider.addEventListener('input', draw)
+  draw()
 }
 
 // ── Dark J-V ────────────────────────────────────────────────────────────────

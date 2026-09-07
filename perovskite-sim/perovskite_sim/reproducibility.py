@@ -59,6 +59,10 @@ def _canonical(value: Any) -> Any:
             field.name: getattr(value, field.name)
             for field in dataclasses.fields(value)
         }
+        if isinstance(value, DeviceStack):
+            # Retain the retired, inactive field only in historical semantic
+            # fingerprints. It is no longer a device option or solver hook.
+            mapping["autoloop_generated_lever"] = False
         # Optional fields added after the P0 freeze must not churn every
         # historical semantic hash when they are jointly absent and therefore
         # behaviorally inert. Populated grid tuples remain part of the hash.

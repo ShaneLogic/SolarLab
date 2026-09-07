@@ -139,6 +139,15 @@ header p { color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.125rem;
   gap: 0.75rem 1rem;
 }
 
+.jv-waveform-controls { margin-top: 16px; }
+.device-settings { margin-bottom: 12px; }
+.device-settings > summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.jv-waveform-fields { margin-top: 12px; }
+.jv-waveform-fields[hidden] { display: none; }
+.spatial-profile-controls { flex-wrap: wrap; }
+.spatial-profile-controls input[type="range"] { flex: 1 1 120px; max-width: 320px; min-width: 0; }
+.spatial-profile-controls output { min-width: 80px; font-variant-numeric: tabular-nums; }
+
 .form-group {
   display: flex;
   flex-direction: column;

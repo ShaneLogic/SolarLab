@@ -72,6 +72,27 @@ describe('dual-ion tier gate matches mode.py use_dual_ions', () => {
 })
 
 describe('per-layer negative-ion fields', () => {
+  it('distinguishes fixed countercharges from neutral initialization', () => {
+    renderDeviceEditor(container, cfg(), 'full')
+    const positive = container.querySelector<HTMLInputElement>('#layer-1-P0')!
+    const negative = container.querySelector<HTMLInputElement>('#layer-1-P0_neg')!
+    expect(positive.closest('label')?.title).toContain('Fixed negative countercharge')
+    expect(positive.closest('label')?.title).toContain('c_init = c0')
+    expect(negative.closest('label')?.title).toContain('Fixed positive countercharge')
+    expect(negative.closest('label')?.title).toContain('a_init = a0')
+  })
+
+  it('keeps the existing background parameter payload unchanged', () => {
+    const original = cfg({}, { P0: 1e25, P0_neg: 1e24, D_ion_neg: 1e-18 })
+    renderDeviceEditor(container, original, 'full')
+    container.querySelector<HTMLInputElement>('#layer-1-P0')!.value = '2e25'
+    container.querySelector<HTMLInputElement>('#layer-1-P0_neg')!.value = '3e24'
+    const output = readDeviceEditor(original)
+    expect(output.layers[1].P0).toBe(2e25)
+    expect(output.layers[1].P0_neg).toBe(3e24)
+    expect(output.layers[1].D_ion_neg).toBe(1e-18)
+  })
+
   it('renders the three inputs on every layer in FULL', () => {
     renderDeviceEditor(container, cfg(), 'full')
     for (const key of ['D_ion_neg', 'P0_neg', 'P_lim_neg']) {

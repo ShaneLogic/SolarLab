@@ -965,7 +965,6 @@ def test_behavior_environment_changes_run_identity(tmp_path, monkeypatch):
 
     expected_behavior_variables = {
         "PEROVSKITE_RHS_FINITE_CHECK",
-        "SOLARLAB_AUTOLOOP_GEN",
         "SOLARLAB_BAND_GRADING",
         "SOLARLAB_DOS_BAND",
         "SOLARLAB_IFACE_ALLOW_GEN",

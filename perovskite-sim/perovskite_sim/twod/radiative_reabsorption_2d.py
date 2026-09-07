@@ -2,14 +2,14 @@
 (Stage B(c.3)).
 
 On every RHS call, for each absorber layer:
-  R_tot_2D = ∬ B(y,x) · n(y,x) · p(y,x) dy dx     over absorber rows × all x
+  R_tot_2D = ∬ B(y,x) · (n(y,x) · p(y,x) - ni_sq(y,x)) dy dx
   area     = thickness × lateral_length            (precomputed at build time)
   G_rad    = R_tot_2D · (1 − P_esc) / area         (uniform over absorber 2D area)
   G[absorber_y_range, :] += G_rad
 
 Bit-equivalent to 1D Phase 3.1b in the lateral-uniform limit. Optical-profile-
 weighted redistribution is explicitly deferred — see
-docs/superpowers/specs/2026-04-30-2d-stage-b-c3-radiative-reabsorption-design.md.
+docs/twod-transport-contract.md#radiative-reabsorption.
 
 The cached G_optical is never mutated. The helper returns a NEW (Ny, Nx)
 array equal to G_optical augmented per absorber.
@@ -45,8 +45,8 @@ def recompute_g_with_rad_2d(
     self-consistent radiative reabsorption source per absorber.
 
     Per-absorber operations:
-      1. Slice (n, p, B_rad) along the absorber's y-range.
-      2. Integrate B·n·p over y first (axis=0), then over x → scalar R_tot.
+      1. Slice (n, p, ni_sq, B_rad) along the absorber's y-range.
+      2. Integrate B·(n·p - ni_sq) over y first, then over x → scalar R_tot.
       3. Skip if R_tot ≤ 0, area ≤ 0, P_esc ≥ 1, or fewer than 2 nodes
          on either axis (matches 1D mol.py:874-895 safety guards).
       4. G_rad = R_tot · (1 − P_esc) / area   (uniform over absorber area).
