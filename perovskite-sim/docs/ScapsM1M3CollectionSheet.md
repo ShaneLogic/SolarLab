@@ -18,7 +18,7 @@
 - `charge_state_occupation_fraction_per_state` 编码已定案（§5.4，不再是提案）；
 - 按 family 的符号规则已实现（M1 非负非零 / M2 非正非零 / M3 不设约束）。
 
-配套模板：`docs/ScapsCollectionTemplates/M{1,2,3}_profile_template.csv`
+配套模板：`docs/scaps_collection_templates/M{1,2,3}_profile_template.csv`
 （表头逐字符即契约）与 `MultivalentParameterManifestSkeleton.json`
 （填完 `__FILL__` 即可通过 importer —— 已实测端到端验证）。
 
@@ -234,7 +234,7 @@ panel 打开 **recalculate mesh**（手册 Fig. 5.2/5.3 正是用 amphoteric 缺
 position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,conduction_band_eV,valence_band_eV,defect_charge_number_cm3,recombination_rate_cm3_s,charge_state_occupation_fraction_per_state
 ```
 
-模板：`docs/ScapsCollectionTemplates/M{1,2,3}_profile_template.csv`
+模板：`docs/scaps_collection_templates/M{1,2,3}_profile_template.csv`
 （仅表头，逐字符即契约；importer 连**列序**都校验）。
 
 ### 5.2 每列取自 SCAPS 的哪个量

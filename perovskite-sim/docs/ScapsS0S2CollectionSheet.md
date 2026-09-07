@@ -4,7 +4,7 @@
 冻结 suite：`reproducibility/ScapsDefectS0S2Suite.json`。
 导入器：`scripts/import_scaps_defect_reference.py`。
 
-模板文件在 `docs/ScapsCollectionTemplates/`：
+模板文件在 `docs/scaps_collection_templates/`：
 `S0ProfileTemplate.csv`、`S1ProfileTemplate.csv`、`S2ProfileTemplate.csv`、
 `ParameterManifestSkeleton.json`。
 
@@ -165,7 +165,7 @@ manifest。两端接同一均匀层 → 内建电势恒为零，这点不受版�
 position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,conduction_band_eV,valence_band_eV,defect_occupancy,defect_charge_number_cm3,recombination_rate_cm3_s
 ```
 
-直接用 `docs/ScapsCollectionTemplates/S{0,1,2}_profile_template.csv`（已含表头），
+直接用 `docs/scaps_collection_templates/S{0,1,2}_profile_template.csv`（已含表头），
 把 SCAPS 的数据行追加在后面。
 
 ### 5.2 每列取自 SCAPS 的哪个量
@@ -212,7 +212,7 @@ position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,cond
 
 ## 6. manifest 填空
 
-拷贝 `docs/ScapsCollectionTemplates/ParameterManifestSkeleton.json`，
+拷贝 `docs/scaps_collection_templates/ParameterManifestSkeleton.json`，
 把所有 `__FILL__` 替换掉。骨架已实测可通过导入器。
 
 必须自己填的：

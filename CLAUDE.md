@@ -13,6 +13,14 @@ Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR
 
 Decide placement first, then the name.
 
+**Folder names.** Inside the repo every folder is lowercase `snake_case` or a single
+lowercase word, like the code tree (`perovskite_sim/`, `tests/fixtures/configs/`,
+`docs/figures/`, `docs/scaps_collection_templates/`); never CamelCase, never hyphens.
+In the archive the root-level folders keep the user's lowercase scheme (`present/`,
+`develop/`, `plans/`, `figures/`, `results/`, `test/`, `reference/`, `deck-src/`) and
+every folder below them is multi-word CamelCase with no dates (`plans/Specs/`,
+`develop/Manual/Figures/`, `results/CaladoRepro/Alignment/`, run folders `RunV7`).
+
 **Repo (`SolarLab/`, pushed to GitHub)** — only what the simulator needs to run,
 test, and be understood:
 

@@ -15,7 +15,7 @@ resolves there; every file and non-root folder there was renamed to multi-word C
 no dates (versions as V1, V2, ...) on 2026-09-07; `RenameMap.md` + `RenameMapFull.md` map old names to new. The root `CLAUDE.md` has the full folder map.
 
 The same naming rule applies to the non-code files that stay in this repo: `docs/*.md`,
-`docs/ScapsCollectionTemplates/*`, the `reproducibility/` registries and data files
+`docs/scaps_collection_templates/*`, the `reproducibility/` registries and data files
 (`ConfigBenchmarkMatrix.yaml`, `NumericalRefinementRegistry.yaml`, `ScapsParams.xlsx`),
 the two `tests/integration/*.json` fixtures, the tutorial notebooks, and the root
 `docs/figures/*.png` are multi-word CamelCase
