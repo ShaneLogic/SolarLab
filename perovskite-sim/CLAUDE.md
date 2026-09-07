@@ -4,6 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Archived documents
 
+For where a NEW file goes and how it is named, follow "New files: where they go and
+what they are called" in the root `CLAUDE.md`; this section is the history.
+
 Plans, specs, the manual, generated figures and sweep outputs were moved out of the
 repo on 2026-09-07 to the iCloud folder `projects/solarlab/` (`plans/Specs`, `plans/Impl`,
 `develop/Manual`, `figures`, `results`, `reference`; index in its `README.md`). Any

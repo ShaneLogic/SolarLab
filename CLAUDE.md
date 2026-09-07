@@ -9,6 +9,40 @@ Single project tree: `perovskite-sim/` (the whole simulator) plus `docs/figures/
 
 Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR #11) and Phase 2b Layer Builder UI (PR #2) merged into `main`. Short-lived feature isolation now uses `.worktrees/<name>/` (gitignored).
 
+## New files: where they go and what they are called
+
+Decide placement first, then the name.
+
+**Repo (`SolarLab/`, pushed to GitHub)** — only what the simulator needs to run,
+test, and be understood:
+
+| What | Where | Name |
+|---|---|---|
+| Python / TypeScript / MATLAB code, tests, backend, frontend | language folders | language convention (`snake_case.py`, `test_*.py`, kebab-case `.ts`) — never CamelCase |
+| Device presets, package data, tooling files | `configs/`, `perovskite_sim/data/`, tool-fixed names | as the tool or existing scheme requires |
+| Physics contract / policy / protocol / schema / certificate docs that code, tests or configs cite | `perovskite-sim/docs/` | multi-word CamelCase, versions as `V1`, `V2` (`TwodTransportContract.md`, `ExplicitDefectSchemaV2.md`) |
+| Registries and data the reproducibility chain reads | `perovskite-sim/reproducibility/` | CamelCase (`ConfigBenchmarkMatrix.yaml`); re-pin the sha256 in the matrix after any edit |
+| Figures the root README embeds | `docs/figures/` | CamelCase, no date; regenerate under a new `V<n>` and update the README link |
+| Tutorial notebooks and run-by-path benchmark scripts | `perovskite-sim/notebooks/` | CamelCase (`JvHysteresis.ipynb`, `IonmongerBenchmark.py`) |
+
+**Archive (iCloud `projects/solarlab/`, never in git)** — everything else:
+
+| What | Folder |
+|---|---|
+| Design specs / implementation plans / audits / study notes | `plans/Specs`, `plans/Impl`, `plans/Audit`, `plans/Notes` |
+| Manual source, built PDFs, manual figures | `develop/Manual` (`ManualV<n>.pdf`, bump `n` per edition) |
+| Technical reviews, comparison reports, explorers | `develop/` |
+| Decks | folder root while being edited, then `present/`; old versions `present/Archive/` |
+| Validation reports, evidence, certification notes | `test/` |
+| Third-party papers, manuals, reference data | `reference/` |
+| Sweep / run outputs, figure sets, notebook outputs | `results/<Study>/` (scripts write to the gitignored `outputs/` first; move the finished run over) |
+| Explanatory figures not embedded in the README | `figures/<Set>/` |
+
+Archive names: multi-word CamelCase for every file and non-root folder, no dates,
+timestamps or hashes — chronology is `V1`, `V2`, …; decimals as `0p4`; index files stay
+`README.md`. Add a row to the archive's `README.md` when you add a folder. Do not rewrite
+references inside text files with bare-word patterns (see `RenameMapFull.md` for why).
+
 ## Archived documents (outside the repo)
 
 Since 2026-09-07 the repo holds only code, tests, configs, the physics contract
