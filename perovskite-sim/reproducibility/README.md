@@ -31,8 +31,10 @@ historical metrics must not be transferred to another preset.
   resource, benchmark command, evidence level, and known limitation.
 - `p1_gaps.yaml` gives each closed or explicitly P2-deferred P1 item a
   reproduction command, current evidence, and unchanged acceptance contract.
-- `P1_CLOSURE_2026-08-07.md` is the P1 phase closeout. Earlier checkpoint
-  files remain immutable historical notes.
+- The P1 phase closeout and its dated checkpoint notes (`P1_CLOSURE_2026-08-07.md`,
+  `P1_CHECKPOINT_*.md`) are immutable historical records kept outside the repo
+  in the archive folder's `test/p1-checkpoints/` (see the root `CLAUDE.md`,
+  Archived documents).
 
 ## Historical Verification
 
