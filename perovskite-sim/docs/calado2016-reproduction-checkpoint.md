@@ -1575,6 +1575,6 @@ The updated PPT changes only slides 39/40 figures and their directly affected
 scientific copy. Each contains 21 loops (42 branches) and 21 HI bars with
 Arial text and editable data. Other 43 slide XML parts and the shared design
 remain unchanged. Repository-root output:
-`results/DenseIonResults/output/260907-SolarLab-dense-ion-results-v4.pptx` (archive folder, see `CLAUDE.md` → Archived documents).
+`results/DenseIonResults/Output/SolarLabDenseIonResultsV4.pptx` (archive folder, see `CLAUDE.md` → Archived documents).
 SHA-256: `bb9a11ba4cbcb690c189059f5a5d4c0b04e1baa280425c70884addb96d441c9c`.
 The previous PPT is preserved. No commit or remote push was made.

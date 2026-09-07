@@ -14,16 +14,17 @@ Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR
 Since 2026-09-07 the repo holds only code, tests, configs, the physics contract
 docs under `perovskite-sim/docs/`, and the README figures. Everything else lives in
 the iCloud folder `~/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/`
-(its `README.md` is the index; files there use two-word CamelCase names, and
-`RenameMap.md` maps the old repo-era names to the new ones):
+(its `README.md` is the index; every file and non-root folder there uses multi-word
+CamelCase with no dates — versions are V1, V2, ... — and `RenameMap.md` + `RenameMapFull.md`
+map the old repo-era names to the new ones):
 
 | iCloud folder | Was in the repo |
 |---|---|
-| `plans/specs/`, `plans/impl/` | `docs/superpowers/{specs,plans}`, `docs/plans`, `perovskite-sim/docs/{plans,superpowers}` |
-| `plans/autoloop/`, `plans/audit/`, `plans/notes/` | autoloop ledger, physics audit, benchmark + study notes |
-| `develop/manual/` | `docs/manual` (manual source, dated PDFs, figure generator) |
+| `plans/Specs/`, `plans/Impl/` | `docs/superpowers/{specs,plans}`, `docs/plans`, `perovskite-sim/docs/{plans,superpowers}` |
+| `plans/Autoloop/`, `plans/Audit/`, `plans/Notes/` | autoloop ledger, physics audit, benchmark + study notes |
+| `develop/Manual/` | `docs/manual` (manual source, PDFs as ManualV1–V5, figure generator) |
 | `figures/` | `docs/figures/ScapsSolarlabCompare`, `docs/superpowers/figures`, old README images |
-| `results/` | `outputs/` → `Scan2d`, `Spatial`, `ScapsAnalysis`, `Autoloop`, `IonResults`, `DenseIonResults`; `perovskite-sim/outputs/` → `CaladoRepro`, `NumericalRefinement`, `InterfaceCbo`, `ScapsValid`, `ScapsValidE17`, `RegLadders`; `notebooks/outputs` → `Notebooks`. Run-instance folders inside keep their original parameter names |
+| `results/` | `outputs/` → `Scan2d`, `Spatial`, `ScapsAnalysis`, `Autoloop`, `IonResults`, `DenseIonResults`; `perovskite-sim/outputs/` → `CaladoRepro`, `NumericalRefinement`, `InterfaceCbo`, `ScapsValid`, `ScapsValidE17`, `RegLadders`; `notebooks/outputs` → `Notebooks`. Run-instance folders inside are CamelCase too, e.g. `CaladoRepro/Alignment/PaperContactsAtol1N60`, `Driftfusion/RunV7` |
 | `test/` | `docs/reference` reports (`TwodScan`, `FormalVerify`), `ValidEvidence1/2.md`, `P1Checkpoints/` (reproducibility P1 notes) |
 | `reference/` | SCAPS manual, Pauwels-Vanhoutte paper, SCAPS reference report + xlsx |
 
