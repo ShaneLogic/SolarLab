@@ -14,7 +14,8 @@ Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR
 Since 2026-09-07 the repo holds only code, tests, configs, the physics contract
 docs under `perovskite-sim/docs/`, and the README figures. Everything else lives in
 the iCloud folder `~/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/`
-(its `README.md` is the index):
+(its `README.md` is the index; files there use two-word CamelCase names, and
+`RenameMap.md` maps the old repo-era names to the new ones):
 
 | iCloud folder | Was in the repo |
 |---|---|
@@ -23,7 +24,7 @@ the iCloud folder `~/Library/Mobile Documents/com~apple~CloudDocs/projects/solar
 | `develop/manual/` | `docs/manual` (manual source, dated PDFs, figure generator) |
 | `figures/` | `docs/figures/ScapsSolarlabCompare`, `docs/superpowers/figures`, old README images |
 | `results/` | `outputs/` (scan2d, spatial, scaps_analysis, autoloop, 260907 deck figure sets); `perovskite-sim/outputs/` (calado-reproduction, numerical-refinement, interface-cbo, scaps_validation*, regularization-ladders); `notebooks/` |
-| `test/` | `docs/reference` reports, `valEvidence*.md`, `p1-checkpoints/` (reproducibility P1_*.md) |
+| `test/` | `docs/reference` reports (`TwodScan`, `FormalVerify`), `ValidEvidence1/2.md`, `p1-checkpoints/` (reproducibility P1 notes) |
 | `reference/` | SCAPS manual, Pauwels-Vanhoutte paper, SCAPS reference report + xlsx |
 
 Generated outputs are gitignored (`outputs/`, `perovskite-sim/outputs/`); regenerate
