@@ -94,11 +94,11 @@ physical gate. Long-time 2D mobile-ion work will need a positivity-preserving
 coordinate or a dedicated DAE integrator.
 
 The independent two-sided cross-node interface-SRH sheet closure is documented
-in `docs/twod-two-sided-interface-srh.md` and can compose with this state
+in `docs/TwodTwoSidedInterfaceSrh.md` and can compose with this state
 topology. The complete instantaneous current is documented in
-`docs/twod-mobile-ion-current.md`. Strict public experiment/protocol wiring is
-documented in `docs/twod-jv-execution-protocol.md`. A new content-addressed
+`docs/TwodMobileIonCurrent.md`. Strict public experiment/protocol wiring is
+documented in `docs/TwodJvExecutionProtocol.md`. A new content-addressed
 combined grid/tolerance lane now certifies one short, synthetic stress slice;
-see `docs/twod-combined-numerical-certificate.md`. The default 2D J-V remains
+see `docs/TwodCombinedNumericalCertificate.md`. The default 2D J-V remains
 frozen-ion, and long-time, dual-ion, selective-contact, or general
 microstructure claims remain outside that certificate.

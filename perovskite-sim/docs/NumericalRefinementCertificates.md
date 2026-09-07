@@ -126,7 +126,7 @@ finite-width grain boundary 与一个 clamp-inactive cross-node `InterfaceDefect
 sheet，并为每个 cell 构造完全匹配的 explicit `jv-2d-execution-protocol-v1`。
 外层 numerical protocol 固定 4/6/8 matched x/y intervals、0.0/0.05/0.10 V、
 每点 10 ns dwell 及 tolerance ladder；完整边界见
-`docs/twod-combined-numerical-certificate.md`。
+`docs/TwodCombinedNumericalCertificate.md`。
 
 degenerate-PN protocol 固定 symmetric high-doping c-Si p+/n+、dark equilibrium、
 fully-ionized FD charge、semiconductor-work-function ohmic contacts 和
@@ -669,7 +669,7 @@ blocking single-positive-ion、finite-width GB、clamp-inactive cross-node
 `InterfaceDefect` slice。它不覆盖 dual ions、selective contacts、interface
 charge/state、field mobility、long-time hysteresis、一般 2D microstructure、
 外部 solver 或实验验证。完整边界见
-`docs/twod-combined-numerical-certificate.md`。
+`docs/TwodCombinedNumericalCertificate.md`。
 
 ### 2026-08-24 electrothermal terminal-MPP certificates
 
@@ -743,7 +743,7 @@ source changes 为空且 BLAS/OpenMP 单线程环境下完成 5/7/9 carrier cond
 problem。它不认证 full-device J-V/TPV/impedance identifiability、有噪 recovery
 coverage、`InterfaceDefect`/`het_recomb_despike`/ion parameters、实测数据、材料
 参数、Bayesian/UQ、外部 solver 或实验验证。详细边界见
-`docs/interface-srh-identifiability.md`。
+`docs/InterfaceSrhIdentifiability.md`。
 
 ### 2026-08-28 D4-E2 current-source interface-charge certificates
 

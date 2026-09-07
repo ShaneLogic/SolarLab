@@ -7,7 +7,7 @@ routes remain `PARKED`. The capability is not production-certified until the
 D4-E3c source-clean matrix completes (2026-08-29).
 
 D4-E0 (2026-08-28) added the canonical per-area microscopic document described
-in `docs/explicit-interface-defect-schema-v1.md`. D4-E1 now requires that
+in `docs/ExplicitInterfaceDefectSchemaV1.md`. D4-E1 now requires that
 document and rebuilds uncalibrated capture velocities from it in the QF dark
 reference, backend endpoint, charged refinement, and stress adapters. D4-E2
 minted complete charge-off, charged, and resolved device-stress certificates at

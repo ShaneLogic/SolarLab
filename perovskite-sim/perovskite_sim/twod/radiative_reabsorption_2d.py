@@ -9,7 +9,7 @@ On every RHS call, for each absorber layer:
 
 Bit-equivalent to 1D Phase 3.1b in the lateral-uniform limit. Optical-profile-
 weighted redistribution is explicitly deferred — see
-docs/twod-transport-contract.md#radiative-reabsorption.
+docs/TwodTransportContract.md#radiative-reabsorption.
 
 The cached G_optical is never mutated. The helper returns a NEW (Ny, Nx)
 array equal to G_optical augmented per absorber.

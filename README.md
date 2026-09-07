@@ -68,7 +68,7 @@ The simulator works for perovskite cells (with mobile ions), inorganic thin film
 The current technical reference is the **SolarLab Technical and User Manual (2026-08-11)**, distributed separately from this repository. It records the solver-specific variable sets, validation gates, and limitations that do not fit in this overview.
 
 <p align="center">
-  <img src="docs/figures/architecture_flow.png" alt="SolarLab architecture and data flow" width="900">
+  <img src="docs/figures/ArchitectureFlow.png" alt="SolarLab architecture and data flow" width="900">
 </p>
 
 <br>
@@ -304,11 +304,11 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 ### Physical Model Overview
 
 <p align="center">
-  <img src="docs/figures/device_contact_boundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
+  <img src="docs/figures/DeviceContactBoundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
 </p>
 
 <p align="center">
-  <img src="docs/figures/band_interface_convention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
+  <img src="docs/figures/BandInterfaceConvention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
 </p>
 
 ### Governing Equations
@@ -511,7 +511,7 @@ The 2D solver is an experimental extension for lateral microstructure effects, n
 All physical data is held in **immutable frozen dataclasses** (`MaterialParams`, `LayerSpec`, `DeviceStack`, `SolverConfig`). In-place mutation is forbidden — updates use `dataclasses.replace(...)`.
 
 <p align="center">
-  <img src="docs/figures/solver_topology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
+  <img src="docs/figures/SolverTopology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
 </p>
 
 <br>
@@ -528,7 +528,7 @@ the full interpretation is in the
 2026-08-11 manual (distributed separately).
 
 <p align="center">
-  <img src="docs/figures/csi_qf_convergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
+  <img src="docs/figures/CsiQfConvergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
 </p>
 
 The c-Si panels are internal numerical evidence for the restricted local QF
@@ -536,7 +536,7 @@ model. They do not certify the general transient driver or fit an external
 c-Si device.
 
 <p align="center">
-  <img src="docs/figures/cbo_interface_validation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
+  <img src="docs/figures/CboInterfaceValidation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
 </p>
 
 The physical-interface CBO scan passes its registered N=40/50/60 numerical
@@ -545,7 +545,7 @@ gate. Its result is `numerical_certified=true` and top-level
 `certified=false`.
 
 <p align="center">
-  <img src="docs/figures/twod_scope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
+  <img src="docs/figures/TwodScope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
 </p>
 
 The registered 1D/2D comparison uses matched vertical grids, periodic lateral
@@ -553,7 +553,7 @@ boundaries, frozen ions, and an interface-free preset. Mobile-ion dynamics and
 the 1D interface-SRH/physical-QF machinery are outside that parity claim.
 
 <p align="center">
-  <img src="docs/figures/Calado16Fig1fJV260905.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
+  <img src="docs/figures/Calado16Fig1fJVV1.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
 </p>
 
 The Calado 2016 Fig 1e/1f lane (`configs/calado2016_fig1f.yaml`, the paper's
@@ -568,7 +568,7 @@ P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1 definition. The cause is open;
 the preset header records the study.
 
 <p align="center">
-  <img src="docs/figures/Calado16Fig1fScanRate260905.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
+  <img src="docs/figures/Calado16Fig1fScanRateV1.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
 </p>
 
 A nine-rate ladder on the same preset (`scripts/plot_calado_fig1f_scan_rate.py`,

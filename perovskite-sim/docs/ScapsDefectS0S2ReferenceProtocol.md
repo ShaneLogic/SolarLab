@@ -93,7 +93,7 @@ its existence alone does not establish parity.
 ## Comparison (pre-registered)
 
 The grid-aligned comparison and its acceptance thresholds are pre-registered
-in `docs/scaps-defect-comparison-preregistration.md` +
+in `docs/ScapsDefectComparisonPreregistration.md` +
 `reproducibility/scaps_defect_comparison_thresholds.json`, frozen before any
 external export existed. Run:
 

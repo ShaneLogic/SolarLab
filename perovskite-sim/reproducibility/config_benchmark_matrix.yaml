@@ -7,7 +7,7 @@ schema_registry: reproducibility/schema_registry.yaml
 numerical_refinement_registry:
   path: reproducibility/numerical_refinement_registry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: 1aa9e9f46c56a1060ef9c2a53edada65b769b1a977a7e61ce8836a8f6f91f976
+  sha256: e84589f7288d22f9008b72ff829777496205af2a6b2d5ee3080f81fd678f3b20
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -1586,7 +1586,7 @@ configs:
     status: partial
     benchmarks: [loader-contract, calado2016-driftfusion]
   - path: configs/calado2016_fig1f.yaml
-    sha256: 75fa39bb6abbc57d0f408290d705e206e0065045f30f1504bb1796e2d0064a43
+    sha256: 825d77f15bcfb3e550cc601231a9b6ce07ca11fe185a3eb7d7ef121d54c0ec2a
     semantic_sha256: 03df72ff9c6fe66711b213678dac1a754d500363e9d8c7c43f581d883c200f72
     schema: standard-device-v1
     status: load_only

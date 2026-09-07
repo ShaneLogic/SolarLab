@@ -1,12 +1,12 @@
 # SCAPS-1D S0–S2 参数录入与导出交付单
 
-面向执行 SCAPS 仿真的操作者。配套契约：`docs/scaps-defect-s0-s2-reference-protocol.md`。
+面向执行 SCAPS 仿真的操作者。配套契约：`docs/ScapsDefectS0S2ReferenceProtocol.md`。
 冻结 suite：`reproducibility/scaps_defect_s0_s2_suite.json`。
 导入器：`scripts/import_scaps_defect_reference.py`。
 
-模板文件在 `docs/scaps-collection-templates/`：
-`S0_profile_template.csv`、`S1_profile_template.csv`、`S2_profile_template.csv`、
-`parameter_manifest_skeleton.json`。
+模板文件在 `docs/ScapsCollectionTemplates/`：
+`S0ProfileTemplate.csv`、`S1ProfileTemplate.csv`、`S2ProfileTemplate.csv`、
+`ParameterManifestSkeleton.json`。
 
 ---
 
@@ -27,7 +27,7 @@
 |---|---|---|
 | 1–3 | `S0.def` `S1.def` `S2.def` | SCAPS 的输入定义文件，原样保存 |
 | 4–6 | `S0.csv` `S1.csv` `S2.csv` | 逐位置剖面，列名见 §5.1 |
-| 7 | `parameter_manifest.json` | 由 `parameter_manifest_skeleton.json` 填空得到 |
+| 7 | `parameter_manifest.json` | 由 `ParameterManifestSkeleton.json` 填空得到 |
 | 8 | SCAPS 版本号 | 精确版本串，例 `3.3.10` |
 | 9 | 操作者真实姓名 | 用于署名声明，不能匿名 |
 | 10 | 导出日期 | ISO 格式，例 `2026-09-02` |
@@ -165,7 +165,7 @@ manifest。两端接同一均匀层 → 内建电势恒为零，这点不受版�
 position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,conduction_band_eV,valence_band_eV,defect_occupancy,defect_charge_number_cm3,recombination_rate_cm3_s
 ```
 
-直接用 `docs/scaps-collection-templates/S{0,1,2}_profile_template.csv`（已含表头），
+直接用 `docs/ScapsCollectionTemplates/S{0,1,2}_profile_template.csv`（已含表头），
 把 SCAPS 的数据行追加在后面。
 
 ### 5.2 每列取自 SCAPS 的哪个量
@@ -212,7 +212,7 @@ position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,cond
 
 ## 6. manifest 填空
 
-拷贝 `docs/scaps-collection-templates/parameter_manifest_skeleton.json`，
+拷贝 `docs/ScapsCollectionTemplates/ParameterManifestSkeleton.json`，
 把所有 `__FILL__` 替换掉。骨架已实测可通过导入器。
 
 必须自己填的：
@@ -295,7 +295,7 @@ python scripts/import_scaps_defect_reference.py \
 
 交回后可解锁：`DEF-4` 的外部半边，以及 D9 依赖 S0–S2 的部分。
 比对判定不需要另行设计：验收阈值已**预注册**
-（`docs/scaps-defect-comparison-preregistration.md`），importer 落盘后跑
+（`docs/ScapsDefectComparisonPreregistration.md`），importer 落盘后跑
 `scripts/compare_scaps_defect_reference.py` 当天出 PASS / FAIL 结论。
 
 **不能**解锁的：

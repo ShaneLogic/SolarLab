@@ -22,15 +22,15 @@ physical width is mapped by control-volume overlap, and the SRH rates are
 mixed as `R_bulk + f * (R_GB - R_bulk)`. Averaging lifetimes first is not an
 equivalent operation. The thin-band estimate `S_GB ~ width / tau_GB` is only
 a dimensional conversion, not a microscopic surface-defect closure. The
-[grain-boundary area contract](twod-grain-boundary-area-closure.md) defines
+[grain-boundary area contract](TwodGrainBoundaryAreaClosure.md) defines
 the geometry, rate mixing, rejection rules, and evidence limits.
 
 Separate opt-in research paths cover
-[one mobile positive ion](twod-mobile-ion-transient.md),
-[complete terminal current](twod-mobile-ion-current.md), and
-[two-sided cross-node interface SRH](twod-two-sided-interface-srh.md).
-Their [explicit J-V protocol](twod-jv-execution-protocol.md) and
-[combined numerical certificate](twod-combined-numerical-certificate.md)
+[one mobile positive ion](TwodMobileIonTransient.md),
+[complete terminal current](TwodMobileIonCurrent.md), and
+[two-sided cross-node interface SRH](TwodTwoSidedInterfaceSrh.md).
+Their [explicit J-V protocol](TwodJvExecutionProtocol.md) and
+[combined numerical certificate](TwodCombinedNumericalCertificate.md)
 have their own restrictions. In particular, that combined certificate does
 not cover field mobility, photon recycling, periodic-x, dual ions, or dynamic
 interface occupancy. It does not establish arbitrary composability of all

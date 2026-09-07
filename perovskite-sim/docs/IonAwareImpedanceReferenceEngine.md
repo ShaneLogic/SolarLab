@@ -285,7 +285,7 @@ change `0.00194%`. External comparison remains a separate deliverable.
    implemented; replace the remaining unsupported interface/nonlocal
    frozen-potential differences.
    See
-   [ion-aware-structured-jacobian-comparison.md](ion-aware-structured-jacobian-comparison.md).
+   [IonAwareStructuredJacobianComparison.md](IonAwareStructuredJacobianComparison.md).
 2. Freeze external IonMonger/Driftfusion comparison artifacts with the same
    DC history, frequency window, area convention, and raw complex spectra.
 

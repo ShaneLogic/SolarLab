@@ -2,7 +2,7 @@
 
 Version 1 remains frozen for compatibility. D3-E0 introduces the opt-in v2
 energy-distribution contract without changing any v1 canonical JSON or solver
-arithmetic; see `docs/explicit-defect-energy-distribution-v2.md`.
+arithmetic; see `docs/ExplicitDefectEnergyDistributionV2.md`.
 
 Status: DEF-3 public Python QF/DC contract. The canonical schema is stable; a
 1D `explicit_quasi_steady` document executes exact neutral multi-species SRH,
@@ -243,7 +243,7 @@ to QF/DC continuity, Poisson charge/tangent, and defect-aware semiconductor
 contact neutrality/work functions. The public steady and J-V results retain
 model identity and per-species diagnostics. Default material/transient,
 impedance, 2D, dynamic occupancy, energy distributions, and charged interface
-defects remain fail closed. See `docs/charged-explicit-defect-qf-dc.md` for the
+defects remain fail closed. See `docs/ChargedExplicitDefectQfDc.md` for the
 exact activation, equations, evidence, and remaining certification boundary.
 
 ## 9. DEF-1 verification record

@@ -2982,7 +2982,7 @@ lanes:
       routes are unaffected. Correcting the level fails three gates in this lane at
       once and needs a v2 lane whose entry condition - a config where the corrected
       channel clears `ge 0.01` - does not yet exist. See
-      docs/wkb-tunnelling-family-contract.md section "Retraction (D8-E2R)".
+      docs/WkbTunnellingFamilyContract.md section "Retraction (D8-E2R)".
     observables:
       dark_electron_quasi_fermi_V:
         comparison: absolute_linf

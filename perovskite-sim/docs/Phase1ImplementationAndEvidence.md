@@ -84,7 +84,7 @@ ID because the platform identity changed. The 26.6.1 artifacts remain the
 frozen evidence cited here; they are not silently resumed into the newer
 environment.
 
-See [numerical-refinement-certificates.md](numerical-refinement-certificates.md)
+See [NumericalRefinementCertificates.md](NumericalRefinementCertificates.md)
 for the registry, state machine, protocol provenance, matrix definitions and
 reproduction commands.
 
@@ -115,7 +115,7 @@ very small dark-equilibrium densities can drive `f/y` beyond the finite
 exponential range, where the implementation fails closed, and the transform
 does not enforce an ion-site upper bound.
 
-See [numerical-health-diagnostics.md](numerical-health-diagnostics.md) for the
+See [NumericalHealthDiagnostics.md](NumericalHealthDiagnostics.md) for the
 coordinate tolerance map, units, split-step contract, measured overhead and
 known limitations.
 

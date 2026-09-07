@@ -1,9 +1,9 @@
 # SCAPS-1D M1–M3 多价缺陷 参数录入与导出交付单
 
-面向执行 SCAPS 仿真的操作者。配套契约：`docs/multivalent-metastable-defect-contract.md`。
+面向执行 SCAPS 仿真的操作者。配套契约：`docs/MultivalentMetastableDefectContract.md`。
 冻结 suite：`reproducibility/scaps_multivalent_defect_suite.json`。
 
-与 S0–S2 交付单（`docs/scaps-s0-s2-collection-sheet.md`）结构平行；两份可对照阅读。
+与 S0–S2 交付单（`docs/ScapsS0S2CollectionSheet.md`）结构平行；两份可对照阅读。
 
 ---
 
@@ -14,12 +14,12 @@
 - importer 已存在：`scripts/import_scaps_multivalent_defect_reference.py`
   （fail-closed，与 S0–S2 的同构；6 个单测 + 10 个拒绝分支实测通过）；
 - manifest schema 已定义：`solarlab.scaps_multivalent_defect_parameter_manifest`
-  （协议文档 `docs/scaps-defect-m1-m3-reference-protocol.md`）；
+  （协议文档 `docs/ScapsDefectM1M3ReferenceProtocol.md`）；
 - `charge_state_occupation_fraction_per_state` 编码已定案（§5.4，不再是提案）；
 - 按 family 的符号规则已实现（M1 非负非零 / M2 非正非零 / M3 不设约束）。
 
-配套模板：`docs/scaps-collection-templates/M{1,2,3}_profile_template.csv`
-（表头逐字符即契约）与 `multivalent_parameter_manifest_skeleton.json`
+配套模板：`docs/ScapsCollectionTemplates/M{1,2,3}_profile_template.csv`
+（表头逐字符即契约）与 `MultivalentParameterManifestSkeleton.json`
 （填完 `__FILL__` 即可通过 importer —— 已实测端到端验证）。
 
 SCAPS 侧字段名已逐页对照 `SCAPSManual2016.pdf`（归档目录 `reference/`，见 `CLAUDE.md` → Archived documents）（§3.6.2 多价缺陷、
@@ -234,7 +234,7 @@ panel 打开 **recalculate mesh**（手册 Fig. 5.2/5.3 正是用 amphoteric 缺
 position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,conduction_band_eV,valence_band_eV,defect_charge_number_cm3,recombination_rate_cm3_s,charge_state_occupation_fraction_per_state
 ```
 
-模板：`docs/scaps-collection-templates/M{1,2,3}_profile_template.csv`
+模板：`docs/ScapsCollectionTemplates/M{1,2,3}_profile_template.csv`
 （仅表头，逐字符即契约；importer 连**列序**都校验）。
 
 ### 5.2 每列取自 SCAPS 的哪个量
@@ -371,7 +371,7 @@ config 哈希漂移 -> ValueError: parameter scenario M2 config hash mismatch
 
 importer 已就位，交回即可落盘并解锁：`D7-E2` 的外部半边 —— 多价缺陷的 SCAPS
 charge-state / recombination profile 比对。验收阈值已**预注册**
-（`docs/scaps-defect-comparison-preregistration.md`），落盘后跑
+（`docs/ScapsDefectComparisonPreregistration.md`），落盘后跑
 `scripts/compare_scaps_defect_reference.py` 当天出 PASS / FAIL 结论。
 
 **不能**解锁的，与 S0–S2 交付单所列相同：`D9.6`（需要与标定数据不相交的第三方
@@ -384,7 +384,7 @@ deck）、`D8-E3`（三重阻塞，缺数据只是其中一重）。
 1. ✅ 编码定案：单列 `|` 分隔（原提案 A，理由见 §5.4）。suite JSON 与测试
    **零改动**（byte-hash 钉死的冻结物保持不动）。
 2. ✅ schema `solarlab.scaps_multivalent_defect_parameter_manifest` 已定义
-   （`docs/scaps-defect-m1-m3-reference-protocol.md`）。
+   （`docs/ScapsDefectM1M3ReferenceProtocol.md`）。
 3. ✅ `scripts/import_scaps_multivalent_defect_reference.py` 已实现，含按
    family 的符号规则与「和为 1」「净电荷一致性」校验。
    测试：`tests/unit/validation/test_import_scaps_multivalent_defect_reference.py`。

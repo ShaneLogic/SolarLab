@@ -351,7 +351,7 @@ class DeviceStack:
     # channels, each computing a transmission from an actual barrier profile.
     # None (default) means the family is absent, which is bit-identical to
     # pre-D8 behaviour; a document with every channel disabled is equally
-    # inert. See docs/wkb-tunnelling-family-contract.md.
+    # inert. See docs/WkbTunnellingFamilyContract.md.
     tunnelling_channels: "TunnellingChannelDocument | None" = None
     # Device temperature [K]. Default 300 K (isothermal).
     T: float = 300.0

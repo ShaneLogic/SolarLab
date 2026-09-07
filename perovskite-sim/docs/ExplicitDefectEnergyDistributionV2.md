@@ -300,7 +300,7 @@ Still fail closed:
   field-dependent mobility until separately registered;
 - unresolved/legacy distributed metadata remains read-only and is never
   promoted by the editor; canonical v3 density profiles are documented in
-  `explicit-defect-spatial-profile-v3.md`;
+  `ExplicitDefectSpatialProfileV3.md`;
 - explicit spatial variation of center, width, support, kinetics, degeneracy,
   or charge convention beyond the local-band-edge rule;
 - external SCAPS parity and experimental validation.

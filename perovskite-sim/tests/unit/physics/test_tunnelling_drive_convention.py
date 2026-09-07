@@ -177,7 +177,7 @@ def test_the_offset_is_only_a_constant_factor_under_boltzmann():
 def test_the_equilibrium_zero_is_saturation_not_reciprocity():
     """The registered exact-zero gate passes for the wrong reason.
 
-    `docs/wkb-tunnelling-family-contract.md` gated equilibrium net flux as
+    `docs/WkbTunnellingFamilyContract.md` gated equilibrium net flux as
     exact "because a threshold there would hide a sign or bookkeeping error".
     Measured, it passes because both Fermi factors round to the SAME double
     near 1.0: the residual equilibrium quasi-Fermi gradient is ~4e-13 eV, which

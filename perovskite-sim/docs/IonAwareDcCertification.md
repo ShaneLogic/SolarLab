@@ -177,4 +177,4 @@ matrix, state/voltage central-finite-difference linearization and decomposed
 frequency-domain solve. It is `INTERNAL_TESTED_REFERENCE`, not a registered
 grid/frequency certificate. Frequency coverage assessment, structured
 Jacobian comparison and transient lock-in remain open. See
-[ion-aware-impedance-reference-engine.md](ion-aware-impedance-reference-engine.md).
+[IonAwareImpedanceReferenceEngine.md](IonAwareImpedanceReferenceEngine.md).

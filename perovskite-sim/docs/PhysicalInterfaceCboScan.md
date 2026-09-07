@@ -156,7 +156,7 @@ mesh is therefore never promoted to a physical CBO threshold.
 
 Start from direct, non-interpolated SCAPS outputs and the exact SCAPS device
 deck used to generate them. Populate
-docs/scaps-cbo-parameter-manifest.template.json with the complete layers,
+docs/ScapsCboParameterManifestTemplate.json with the complete layers,
 contacts, interfaces, illumination, and numerical settings. The importer
 rejects empty sections, reordered CBO values, missing reference CBO, or an
 unattested export, then content-addresses all three source artifacts:

@@ -60,7 +60,7 @@ from perovskite_sim.models.device import DeviceStack  # noqa: E402
 
 CONFIG = ROOT / "configs" / "calado2016_fig1f.yaml"
 OUT_DIR = ROOT.parent / "docs" / "figures"
-STAMP = "260905"
+STAMP = "V1"
 
 # Scan protocol (paper Methods).
 SCAN_RATE_V_S = 0.04

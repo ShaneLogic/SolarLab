@@ -15,7 +15,7 @@ RETRACTED 2026-09-01 (D8-E2R): the companion claim that the channel "carries
 saturates the Fermi factors; with the true level the fraction is 6.2e-7, and
 this lane's `equilibrium_net_flux_m2_s` gate passes by float64 saturation
 rather than by reciprocity. Convergence orders and the injection identity are
-unaffected. See docs/wkb-tunnelling-family-contract.md.
+unaffected. See docs/WkbTunnellingFamilyContract.md.
 
 Three refinement axes, two of which are the registry's
 -----------------------------------------------------

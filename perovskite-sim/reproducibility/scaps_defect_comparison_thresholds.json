@@ -2,7 +2,7 @@
   "schema": "solarlab.scaps_defect_comparison_thresholds",
   "schema_version": "1.0",
   "preregistered_at": "2026-09-02",
-  "rationale": "docs/scaps-defect-comparison-preregistration.md",
+  "rationale": "docs/ScapsDefectComparisonPreregistration.md",
   "grid": {
     "s0s2": {
       "intervals_per_layer": 128,

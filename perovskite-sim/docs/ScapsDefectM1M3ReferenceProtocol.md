@@ -6,7 +6,7 @@ This protocol creates a reference only from independently executed SCAPS-1D
 decks and direct, unmodified profile rows. SolarLab output, fitted curves,
 interpolation, resampling, or reconstructed SCAPS values are not accepted as
 external evidence. It parallels
-`docs/scaps-defect-s0-s2-reference-protocol.md`; the differences below are
+`docs/ScapsDefectS0S2ReferenceProtocol.md`; the differences below are
 exactly the multivalent ones.
 
 ## Frozen scenarios
@@ -162,7 +162,7 @@ later cross-code comparison; its existence alone does not establish parity.
 ## Comparison (pre-registered)
 
 The grid-aligned comparison and its acceptance thresholds are pre-registered
-in `docs/scaps-defect-comparison-preregistration.md` +
+in `docs/ScapsDefectComparisonPreregistration.md` +
 `reproducibility/scaps_defect_comparison_thresholds.json`, frozen before any
 external export existed. Run `scripts/compare_scaps_defect_reference.py`
 with the imported reference; the schema field selects the multivalent mode

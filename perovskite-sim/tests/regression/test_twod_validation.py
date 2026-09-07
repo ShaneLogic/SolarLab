@@ -6,7 +6,7 @@ device). Asserts the 2D solver matches the 1D reference within tight
 tolerances on V_oc, J_sc, and FF, and that the 2D state remains laterally
 uniform (the lateral-uniformity invariant of an extruded 1D problem).
 
-Contract: `docs/twod-transport-contract.md#uniform-device-parity`.
+Contract: `docs/TwodTransportContract.md#uniform-device-parity`.
 """
 from __future__ import annotations
 from dataclasses import replace

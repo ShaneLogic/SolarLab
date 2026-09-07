@@ -98,4 +98,4 @@ explicit, synthetic 0.0/0.05/0.10 V combined slice on a 4/6/8 matched-grid by
 It checks ion inventory and bounds, carrier positivity, inactive clamps,
 current decomposition, all-face Maxwell current, physical grain-boundary
 width, and nontrivial lateral/ionic response. See
-`docs/twod-combined-numerical-certificate.md` for the exact evidence boundary.
+`docs/TwodCombinedNumericalCertificate.md` for the exact evidence boundary.

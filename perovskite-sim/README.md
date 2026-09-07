@@ -59,28 +59,28 @@ regression suite and the 52-preset matrix. See [Research Presets](configs/README
 
 Transient solves retain the historical scalar absolute tolerance by default.
 For the opt-in reference-scaled policy and the required three-level tolerance
-study, see [componentwise-tolerance-policy.md](docs/componentwise-tolerance-policy.md).
+study, see [ComponentwiseTolerancePolicy.md](docs/ComponentwiseTolerancePolicy.md).
 For compact-support Poole-Frenkel, interface-density, and thermionic-cap
 sensitivity ladders, see
-[rhs-regularization-policy.md](docs/rhs-regularization-policy.md).
+[RhsRegularizationPolicy.md](docs/RhsRegularizationPolicy.md).
 The staged implementation, test matrices, promotion gates, and explicitly
 parked physics are tracked in the
 2026-08-14 physics/numerics hardening roadmap (archived plan, see `CLAUDE.md` → Archived documents).
 The corresponding Phase 1 implementation status, immutable certificate IDs,
 failed/partial lanes, and evidence boundaries are recorded in the
-[Phase 1 implementation and evidence report](docs/phase-1-implementation-and-evidence.md).
+[Phase 1 implementation and evidence report](docs/Phase1ImplementationAndEvidence.md).
 The first post-P1 impedance prerequisite, a residual- and conservation-certified
 mobile-ion DC state, is documented in
-[1D ion-aware DC certification closure](docs/ion-aware-dc-certification.md).
+[1D ion-aware DC certification closure](docs/IonAwareDcCertification.md).
 The opt-in Phase 2 mass/storage and central-finite-difference linearization
 slice is documented in
-[ion-aware impedance reference engine](docs/ion-aware-impedance-reference-engine.md).
+[ion-aware impedance reference engine](docs/IonAwareImpedanceReferenceEngine.md).
 The subsequent exact-discrete-Poisson, analytic SG transport, analytic bulk
 recombination, defect-free local and clamp-inactive cross-node/projected
 interface SRH, positive-density shared-occupancy and additive two-sided SRH,
 the residual-resolved interior QSS interface root, selective-contact, analytic
 field-mobility, and adaptive per-column operator check is documented in
-[ion-aware structured Jacobian comparison](docs/ion-aware-structured-jacobian-comparison.md).
+[ion-aware structured Jacobian comparison](docs/IonAwareStructuredJacobianComparison.md).
 
 Evidence labels matter: a passing `load_only` or internal regression is not an
 external validation. See [reproducibility/README.md](reproducibility/README.md)
@@ -118,15 +118,15 @@ generates electron-hole pairs, and the built-in electric field separates them
 to produce current.
 
 <p align="center">
-  <img src="../docs/manual/figures/device_contact_boundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
+  <img src="../docs/manual/figures/DeviceContactBoundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
 </p>
 
 <p align="center">
-  <img src="../docs/manual/figures/band_interface_convention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
+  <img src="../docs/manual/figures/BandInterfaceConvention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
 </p>
 
 <p align="center">
-  <img src="../docs/manual/figures/solver_topology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
+  <img src="../docs/manual/figures/SolverTopology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
 </p>
 
 No single driver contains every optional model. `transient`,
@@ -288,7 +288,7 @@ chemical potential; it is not a numerical projection of every trial state.
 
 ### 2D Extension Boundary Conditions
 
-The [2D transport contract](docs/twod-transport-contract.md) records the
+The [2D transport contract](docs/TwodTransportContract.md) records the
 carrier-transport assumptions, field-mobility and reabsorption closures,
 and the scope of the historical uniform-device parity checks.
 
@@ -318,9 +318,9 @@ semidiscrete RHS and constitutive face laws. A matching explicit
 `jv-2d-execution-protocol-v1` opens the research-only Python/backend J-V path;
 the workstation and historical carrier-only terminal-current API remain on
 the frozen compatibility lane. See
-[`docs/twod-mobile-ion-transient.md`](docs/twod-mobile-ion-transient.md) and
-[`docs/twod-mobile-ion-current.md`](docs/twod-mobile-ion-current.md), plus
-[`docs/twod-jv-execution-protocol.md`](docs/twod-jv-execution-protocol.md).
+[`docs/TwodMobileIonTransient.md`](docs/TwodMobileIonTransient.md) and
+[`docs/TwodMobileIonCurrent.md`](docs/TwodMobileIonCurrent.md), plus
+[`docs/TwodJvExecutionProtocol.md`](docs/TwodJvExecutionProtocol.md).
 
 An independent `interface_srh="two_sided_cross_node"` research opt-in maps
 the 1D two-sided interface-defect surface rate onto a conservative Neumann-x
@@ -328,10 +328,10 @@ the 1D two-sided interface-defect surface rate onto a conservative Neumann-x
 projection, shared occupancy, QSS/dynamic interface states, and interface
 charge. It composes with the mobile-ion state in the same strict public
 research protocol. See
-[`docs/twod-two-sided-interface-srh.md`](docs/twod-two-sided-interface-srh.md).
+[`docs/TwodTwoSidedInterfaceSrh.md`](docs/TwodTwoSidedInterfaceSrh.md).
 The exact combined slice has a source-clean 3x3 grid/tolerance certificate;
 see
-[`docs/twod-combined-numerical-certificate.md`](docs/twod-combined-numerical-certificate.md).
+[`docs/TwodCombinedNumericalCertificate.md`](docs/TwodCombinedNumericalCertificate.md).
 
 The historical `configs/twod/` presets have been removed. The Python and
 backend entry points (`kind="jv_2d"` and `kind="voc_grain_sweep"`) remain
@@ -384,7 +384,7 @@ the two-call Python API and the fail-closed
 production trap-electrostatics capability. D4-E2 has current-source internal
 grid/tolerance certificates for the charge-off, charged, and resolved
 device-stress lanes; the production gate remains closed pending D4-E3. See
-[`docs/interface-charge-closure-policy.md`](docs/interface-charge-closure-policy.md).
+[`docs/InterfaceChargeClosurePolicy.md`](docs/InterfaceChargeClosurePolicy.md).
 
 <br>
 
@@ -516,7 +516,7 @@ Folded terminal curves and uncertified source results fail closed. The separate
 `POST /api/jv/external-circuit` route exposes this opt-in result without
 changing `/api/jv` or the workstation default. This is a DC post-processing
 layer, not yet a terminal-voltage-driven transient circuit DAE. See
-[`docs/external-circuit-dc.md`](docs/external-circuit-dc.md).
+[`docs/ExternalCircuitDc.md`](docs/ExternalCircuitDc.md).
 
 The source-clean `external-series-shunt-dc-operating-quadrant-v2` lane is
 internally certified at commit `2392ba3` with 9/9 grid/tolerance cells and
@@ -553,7 +553,7 @@ thermal balance. It retains every temperature trial, full experiment protocol,
 source/mapping hashes, and first-law residual. This is not yet a joint
 electrical-thermal transient DAE or a spatial heat equation. Absorbed optical
 power remains an explicit input and is not inferred from incident irradiance. See
-[`docs/thermal-energy-balance.md`](docs/thermal-energy-balance.md).
+[`docs/ThermalEnergyBalance.md`](docs/ThermalEnergyBalance.md).
 
 The source-clean `electrothermal-terminal-mpp-grid-resolved-v3` lane is
 internally certified at commit `6afb1a6` with 9/9 grid/tolerance cells and
@@ -585,7 +585,7 @@ deficiency cannot be presented as a precise parameter estimate. The CLI
 `scripts/run_interface_srh_identifiability.py` and strict
 `POST /api/identifiability/interface-srh-synthetic` route expose the same
 canonical result contract. See
-[`docs/interface-srh-identifiability.md`](docs/interface-srh-identifiability.md).
+[`docs/InterfaceSrhIdentifiability.md`](docs/InterfaceSrhIdentifiability.md).
 
 The source-clean `interface-srh-identifiability-synthetic-v1` lane is
 internally certified at commit `12fc7cc` with 9/9 carrier-grid/finite-difference
@@ -895,21 +895,21 @@ The current evidence is intentionally split by claim. See the
 traceability matrix.
 
 <p align="center">
-  <img src="../docs/manual/figures/csi_qf_convergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
+  <img src="../docs/manual/figures/CsiQfConvergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
 </p>
 
 This is internal convergence evidence for the restricted local QF driver, not
 external c-Si device validation and not a transient-driver certificate.
 
 <p align="center">
-  <img src="../docs/manual/figures/cbo_interface_validation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
+  <img src="../docs/manual/figures/CboInterfaceValidation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
 </p>
 
 The physical-interface CBO campaign passes the registered numerical grid gate
 but fails the declared SCAPS-shape gate (`certified=false`).
 
 <p align="center">
-  <img src="../docs/manual/figures/twod_scope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
+  <img src="../docs/manual/figures/TwodScope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
 </p>
 
 The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
@@ -917,7 +917,7 @@ Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
 
 <p align="center">
-  <img src="../docs/manual/figures/Calado16Fig1fJV260905.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
+  <img src="../docs/manual/figures/Calado16Fig1fJVV1.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
 </p>
 
 The Calado 2016 Fig 1e/1f lane (`configs/calado2016_fig1f.yaml`, the paper's
@@ -932,7 +932,7 @@ P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1 definition. The cause is open;
 the preset header records the study.
 
 <p align="center">
-  <img src="../docs/manual/figures/Calado16Fig1fScanRate260905.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
+  <img src="../docs/manual/figures/Calado16Fig1fScanRateV1.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
 </p>
 
 A nine-rate ladder on the same preset (`scripts/plot_calado_fig1f_scan_rate.py`,
@@ -977,7 +977,7 @@ configurable cross-node carrier sampling, dynamic/charged or two-sided
 interface states, dual ions, selective contacts, field mobility, photon
 recycling, clamp-active points, experiments, and backend routes. These are
 internal numerical certificates, not external solver or experimental
-validation; see [the DAE capability boundary](docs/dae-research-backbone.md).
+validation; see [the DAE capability boundary](docs/DaeResearchBackbone.md).
 
 Phase 4.3 adds a separate, research-only energy-distributed bulk-trap
 equilibrium closure. A strict standard-SI schema defines integrated trap
@@ -987,7 +987,7 @@ absolute trap charge share one controlled energy quadrature, and the Poisson
 Newton solve uses the analytic trap-charge tangent. Default MoL and experiment
 routes fail closed when this field is active; historical lifetime profiles and
 SCAPS Gaussian metadata are not reinterpreted. See
-[the P4.3 capability contract](docs/bulk-trap-energy-distribution-closure.md).
+[the P4.3 capability contract](docs/BulkTrapEnergyDistributionClosure.md).
 
 Phase 4.4 adds an opt-in composition-resolved CIGS optical path. Minoura
 Tauc-Lorentz reference spectra and critical-point shifts construct
@@ -996,4 +996,4 @@ three-composition benchmark. The exact electrical grading coordinate drives
 the TMM slice compositions, and the shared adapter is used by build-once
 generation, photon recycling, EQE, EL, and tandem optics. Historical graded
 CIGS presets remain scalar-optics by default. See
-[the P4.4 CIGS optics contract](docs/cigs-graded-optics.md).
+[the P4.4 CIGS optics contract](docs/CigsGradedOptics.md).

@@ -85,8 +85,8 @@ parity, face-uniform Maxwell current, immutable evidence, field-mobility and
 thermionic current-source reuse, and every declared fail-closed boundary.
 
 The public protocol, ion-aware state initialization, dwell history, and
-per-point diagnostics are documented in `docs/twod-jv-execution-protocol.md`.
+per-point diagnostics are documented in `docs/TwodJvExecutionProtocol.md`.
 The source-clean `twod-mobile-ion-interface-srh-v1` matrix now certifies this
 complete-current decomposition inside one explicit short-dwell combined slice;
-see `docs/twod-combined-numerical-certificate.md`. That certificate does not
+see `docs/TwodCombinedNumericalCertificate.md`. That certificate does not
 cover dual ions, selective contacts, long-time scans, or general 2D devices.

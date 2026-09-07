@@ -2,7 +2,7 @@
 
 This document describes the older `bulk_trap_distribution` research route.
 D3-E0 now defines the separate canonical explicit-defect v2 input and
-quadrature contract in `docs/explicit-defect-energy-distribution-v2.md`.
+quadrature contract in `docs/ExplicitDefectEnergyDistributionV2.md`.
 The two schemas remain mutually exclusive, and D3-E0 does not promote this
 restricted equilibrium route into production QF/DC.
 

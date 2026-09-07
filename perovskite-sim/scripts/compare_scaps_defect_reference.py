@@ -7,7 +7,7 @@ scenarios on the pre-registered QF/DC configuration, and issues per-column
 PASS / FAIL / INDECISIVE_GRID verdicts against the thresholds frozen in
 ``reproducibility/scaps_defect_comparison_thresholds.json`` BEFORE any
 external data existed. Rationale and alignment policy:
-``docs/scaps-defect-comparison-preregistration.md``.
+``docs/ScapsDefectComparisonPreregistration.md``.
 """
 
 from __future__ import annotations

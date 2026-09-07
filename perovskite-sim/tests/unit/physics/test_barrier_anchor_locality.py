@@ -15,7 +15,7 @@ This file deliberately does NOT fix any of it. The gates in the registered
 lane `wkb-tunnelling-channel-qf-dc-v1` are anchored to the current behaviour,
 and correcting the drive fallback below would move magnitudes in the same way
 the level-convention fix does — both belong to the same deferred v2 lane
-(see `docs/wkb-tunnelling-family-contract.md`, "Retraction (D8-E2R)"). The
+(see `docs/WkbTunnellingFamilyContract.md`, "Retraction (D8-E2R)"). The
 purpose here is to make the limitation undeniable and executable.
 """
 

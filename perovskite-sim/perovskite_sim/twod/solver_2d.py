@@ -126,7 +126,7 @@ class MaterialArrays2D:
     S_p_bot: float = 0.0   # hole    SRV at y=Ny-1 (ETL); from DeviceStack.S_p_right
     # --- Stage B(c.2): Field-dependent mobility μ(E) ----------------------------
     # Face-normal formulation: x-faces use only |E_x_face|, y-faces use only
-    # |E_y_face|. See docs/twod-transport-contract.md#field-dependent-mobility.
+    # |E_y_face|. See docs/TwodTransportContract.md#field-dependent-mobility.
     # All eighteen face arrays are None by default; they
     # are populated by build_material_arrays_2d when sim_mode.
     # use_field_dependent_mobility AND any layer sets v_sat>0 or pf_gamma>0.
@@ -158,7 +158,7 @@ class MaterialArrays2D:
     # When mat.has_radiative_reabsorption_2d is True, assemble_rhs_2d augments
     # G_optical per RHS call by summing R_tot_2D = ∬ B·(n·p - ni^2) dy dx
     # and adding the non-escaping fraction back as a uniform G_rad over the
-    # absorber 2D area. See docs/twod-transport-contract.md#radiative-reabsorption.
+    # absorber 2D area. See docs/TwodTransportContract.md#radiative-reabsorption.
     # The disabled path (flag=False) is
     # bit-identical to current Stage B(c.2).
     has_radiative_reabsorption_2d:  bool                               = False

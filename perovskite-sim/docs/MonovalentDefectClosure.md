@@ -2,7 +2,7 @@
 
 Status: DEF-2 solver-independent constitutive contract, consumed by the DEF-3
 opt-in QF/DC path. Other charged device paths remain fail closed; see
-`docs/charged-explicit-defect-qf-dc.md` for the integration boundary.
+`docs/ChargedExplicitDefectQfDc.md` for the integration boundary.
 
 ## 1. Scope
 

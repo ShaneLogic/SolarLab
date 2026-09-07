@@ -164,7 +164,7 @@ This is internal numerical DC evidence, not an external IonMonger match. The
 source deck lacks endpoint effective-DOS data, so contact thermodynamics is
 `compatible_unverified` and the combined physical certificate remains false.
 Dynamic interface-state charge is excluded. See
-[ion-aware-dc-certification.md](../docs/ion-aware-dc-certification.md) for the
+[IonAwareDcCertification.md](../docs/IonAwareDcCertification.md) for the
 full contract, values and next-step boundary.
 
 ## Post-P1 Physical-Interface CBO Campaign
@@ -179,7 +179,7 @@ against a 0.05 external gate. The result therefore records
 The source JSON currently lives at
 `outputs/interface-cbo/scan-fermi-edge-qf-grid-40-50-60.json`, inside the
 ignored local-output tree. The README-facing rendered artifact is
-[`cbo_interface_validation.png`](../../docs/manual/figures/cbo_interface_validation.png).
+[`CboInterfaceValidation.png`](../../docs/manual/figures/CboInterfaceValidation.png).
 A clean clone cannot regenerate that panel until the exact machine-readable
 result is restored; a different scan is not an acceptable substitute.
 
@@ -200,4 +200,4 @@ ion and defect parameters are synthetic stress inputs. Dual ions, selective
 contacts, interface charge/state, long-time hysteresis, external simulator
 parity, measured-device validation, and material-parameter validation remain
 outside the certificate. The complete contract and values are in
-[`twod-combined-numerical-certificate.md`](../docs/twod-combined-numerical-certificate.md).
+[`TwodCombinedNumericalCertificate.md`](../docs/TwodCombinedNumericalCertificate.md).

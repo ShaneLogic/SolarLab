@@ -5,7 +5,7 @@
 # Fig 1f (HI = 1.84 at 40 mV/s in the paper's P_max,rev/P_max,fwd - 1 metric).
 #
 # This is an investigation baseline, not a completed paper reproduction.
-# See docs/calado2016-reproduction-checkpoint.md for current evidence.
+# See docs/Calado2016ReproductionCheckpoint.md for current evidence.
 # The parameters important for the ionic-hysteresis comparison are:
 #   - D_ion here is the paper's own simulation value 2.585e-18 m^2/s
 #     (mu_ion = 1e-12 cm^2/Vs, deliberately slowed by the authors to match
