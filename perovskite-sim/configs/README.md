@@ -1,9 +1,11 @@
 # Research Presets
 
-This directory contains only the two current research presets. The other 50
-bundled YAML files were deleted on 2026-09-05, including the 2D and tandem
-examples. Future validation studies will build their configurations afresh.
-Saved workspace snapshots and results are independent of this cleanup.
+The two research presets below are the ones the frontend catalogue exposes
+(`frontend/src/preset-catalog.ts`). The other 50 bundled YAML files, including
+the `twod/` and tandem examples, stay in this directory as inputs for the
+regression suite and the 52-preset reproducibility matrix; the API lists them,
+the frontend does not. They were removed on 2026-09-05 and restored on
+2026-09-07 because roughly 200 test modules load them.
 
 | Frontend name | Configuration | Reference mode | Study |
 | --- | --- | --- | --- |
@@ -52,8 +54,6 @@ These checks cover the exact two-file inventory, loading, API exposure,
 inline-device semantics and the Calado protocol helpers. They do not certify
 full J-V trends or external parity.
 
-The old 52-preset matrix, research scripts and tests remain historical source
-records; those that depend on deleted YAML files cannot run against this
-checkout. Do not replace their inputs with these two presets and reuse their
-old numerical expectations. The old files can be recovered from Git history,
-but new studies should define new inputs and acceptance criteria.
+The 52-preset matrix, research scripts and tests keep their original inputs.
+Do not repoint them at these two presets while reusing their old numerical
+expectations; new studies should define new inputs and acceptance criteria.

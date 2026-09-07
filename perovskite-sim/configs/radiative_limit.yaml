@@ -1,0 +1,123 @@
+# radiative_limit.yaml — radiative-limit preset for photon-recycling regression.
+#
+# Based on nip_MAPbI3_tmm.yaml, but with every non-radiative recombination
+# channel killed in the absorber: SRH lifetime τ → effectively ∞ (1e3 s),
+# Auger coefficients → 0, and interface recombination velocities forced to
+# zero. What remains is bulk radiative recombination controlled by B_rad,
+# so the V_oc is set entirely by B_rad × (electronic prefactor). Comparing
+# this stack with simulation mode "full" (photon recycling ON, B_rad
+# scaled by P_esc) against mode "legacy" (recycling OFF, bare B_rad)
+# isolates the V_oc boost due to photon recycling.
+#
+# The HTL/ETL keep their baseline τ and B_rad so the contacts still act
+# as ohmic selective layers; only the absorber is driven to the radiative
+# limit.
+device:
+  V_bi: 0.79
+  Phi: 2.5e21
+layers:
+  - name: glass
+    role: substrate
+    thickness: 1.0e-3
+    eps_r: 2.25
+    mu_n: 0.0
+    mu_p: 0.0
+    ni: 1.0
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0
+    p1: 1.0
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    optical_material: glass
+    incoherent: true
+
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 1e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 2e23
+    chi: 2.05
+    Eg: 3.05
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+    optical_material: spiro_OMeTAD
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 2e-4
+    mu_p: 2e-4
+    ni: 3.2e13
+    N_D: 0.0
+    N_A: 0.0
+    chi: 3.7
+    Eg: 1.6
+    D_ion: 1e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    # SRH effectively off (1 s is far longer than any transient carrier
+    # dynamics at the radiative-limit injection density).
+    tau_n: 1.0
+    tau_p: 1.0
+    n1: 3.2e13
+    p1: 3.2e13
+    # Detailed-balance radiative coefficient (Staub 2017 / Rehermann
+    # 2018, MAPbI3). The measured IonMonger value of 5e-22 m³/s is the
+    # recycled-device effective rate; photon-recycling in this simulator
+    # reduces the detailed-balance B_rad to B_rad × P_esc ~ 2e-18, which
+    # is on the right order of magnitude for a planar-Yablonovitch
+    # model. B_rad stays O(1e-17) here to keep the radiative-limit
+    # dynamics fast enough for the standard run_transient settling
+    # windows (~ms).
+    B_rad: 4.0e-17
+    # Auger off so the radiative channel is the only carrier loss.
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1.3e7
+    optical_material: MAPbI3
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    chi: 4.0
+    Eg: 3.2
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+    optical_material: TiO2

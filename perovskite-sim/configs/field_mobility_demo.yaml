@@ -1,0 +1,105 @@
+# ============================================================================
+# DEMO PRESET — NOT A PHYSICAL DEFAULT
+# ============================================================================
+# Purpose: visually exercise Stage B(c.2) field-dependent mobility μ(E)
+# (Caughey-Thomas saturation + Poole-Frenkel field-assisted hopping) on a
+# minimally-modified nip MAPbI3 stack so a user can compare a μ(E)-on run
+# against a baseline run side-by-side and see the J-V curve respond.
+#
+# This file is NOT a calibrated physical baseline. The numbers below were
+# chosen to put the μ(E) hook at the centre of its dynamic range on this
+# device — i.e. small enough that the field never saturates everywhere,
+# large enough that the difference vs constant-μ shows up on the plot.
+# Real silicon-electron v_sat is ~1e5 m/s and that is roughly the
+# perovskite-realistic value; here we use the same number but the
+# important property is that ``μ·|E| / v_sat`` lands ~O(1) at the
+# diode-injection knee (~0.7-0.9 V for this stack) where the field is
+# strongest. The HTL Poole-Frenkel γ matches the spiro-OMeTAD literature
+# (~3e-4 (V/m)^-0.5).
+#
+# DO NOT copy these values into a calibration / parameter-extraction
+# study without first verifying them against your own device and
+# confirming you actually need μ(E) (the hook is opt-in per layer and
+# adds per-RHS cost).
+#
+# Tier requirement: device.mode must be "full" for the μ(E) hook to
+# activate. Setting it to legacy or fast leaves the v_sat / γ_PF fields
+# silently inert (mode.py:54-86).
+# ============================================================================
+device:
+  V_bi: 1.1
+  Phi: 2.5e21
+  mode: full
+
+layers:
+  - name: spiro_HTL
+    role: HTL
+    thickness: 200e-9
+    eps_r: 3.0
+    mu_n: 1e-10
+    mu_p: 1e-6
+    ni: 1e0
+    N_D: 0.0
+    N_A: 2e23
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0
+    # Poole-Frenkel field-assisted hopping for holes — matches the
+    # disordered-organic literature for spiro-OMeTAD (~3e-4 (V/m)^-0.5).
+    pf_gamma_p: 3.0e-4
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 24.1
+    mu_n: 2e-4
+    mu_p: 2e-4
+    ni: 3.2e13
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 1e-16
+    P_lim: 1.6e27
+    P0: 1.6e24
+    tau_n: 1e-6
+    tau_p: 1e-6
+    n1: 3.2e13
+    p1: 3.2e13
+    B_rad: 5e-22
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 1.3e7
+    # Caughey-Thomas saturation velocity — same number for n and p so
+    # the demo curve is symmetric in injection direction.
+    v_sat_n: 1.0e5
+    v_sat_p: 1.0e5
+    ct_beta_n: 2.0     # Canali (silicon-electron) form — safe default
+    ct_beta_p: 1.0     # Thornber (silicon-hole) form — softer cap
+
+  - name: TiO2_ETL
+    role: ETL
+    thickness: 100e-9
+    eps_r: 10.0
+    mu_n: 1e-5
+    mu_p: 1e-10
+    ni: 1e0
+    N_D: 1e24
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 1e-9
+    tau_p: 1e-9
+    n1: 1e0
+    p1: 1e0
+    B_rad: 1e-30
+    C_n: 1e-42
+    C_p: 1e-42
+    alpha: 0.0

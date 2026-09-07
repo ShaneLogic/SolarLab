@@ -1,0 +1,81 @@
+schema_version: standard-device-v1
+
+device:
+  phi_left: 0.0
+  built_in_potential_mode: semiconductor_work_function
+  Phi: 0.0
+  mode: full
+  T: 300.0
+
+layers:
+  - name: p_trap
+    role: absorber
+    thickness: 2.0e-6
+    eps_r: 11.7
+    mu_n: 0.14
+    mu_p: 0.045
+    D_ion: 0.0
+    P_lim: 1.0e30
+    P0: 0.0
+    ni: 6.178900733051301e15
+    tau_n: 1.0e-3
+    tau_p: 1.0e-3
+    n1: 1.013849670016967e16
+    p1: 3.7657273457773055e15
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    N_A: 5.0e22
+    N_D: 0.0
+    chi: 4.05
+    Eg: 1.124
+    Nc300: 2.8e25
+    Nv300: 1.04e25
+    carrier_statistics: maxwell_boltzmann
+    dopant_ionization_model: fully_ionized
+    bulk_trap_distribution:
+      distribution: gaussian
+      total_density_m3: 1.0e22
+      center_eV_above_vb: 0.562
+      energy_sigma_eV: 0.08
+      sigma_n_m2: 1.0e-19
+      sigma_p_m2: 1.0e-19
+      thermal_velocity_m_s: 1.0e5
+      charge_transition: acceptor
+
+  - name: n_trap
+    role: ETL
+    thickness: 2.0e-6
+    eps_r: 11.7
+    mu_n: 0.14
+    mu_p: 0.045
+    D_ion: 0.0
+    P_lim: 1.0e30
+    P0: 0.0
+    ni: 6.178900733051301e15
+    tau_n: 1.0e-3
+    tau_p: 1.0e-3
+    n1: 1.013849670016967e16
+    p1: 3.7657273457773055e15
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    N_A: 0.0
+    N_D: 5.0e22
+    chi: 4.05
+    Eg: 1.124
+    Nc300: 2.8e25
+    Nv300: 1.04e25
+    carrier_statistics: maxwell_boltzmann
+    dopant_ionization_model: fully_ionized
+    bulk_trap_distribution:
+      distribution: gaussian
+      total_density_m3: 1.0e22
+      center_eV_above_vb: 0.562
+      energy_sigma_eV: 0.08
+      sigma_n_m2: 1.0e-19
+      sigma_p_m2: 1.0e-19
+      thermal_velocity_m_s: 1.0e5
+      charge_transition: acceptor

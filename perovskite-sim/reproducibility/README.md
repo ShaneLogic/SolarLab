@@ -6,11 +6,10 @@ it loads or produces a finite J-V curve.
 
 ## Current Research Scope
 
-On 2026-09-05, 50 bundled presets were deleted. Only `scaps_mirror_v2.yaml`
-and `calado2016_fig1f.yaml` remain. The 52-preset matrix, numerical refinement
-registry and P1 records below describe the historical checkout. The full
-matrix verifier and old preset-dependent tests require that historical
-checkout; they are not a current passing-suite claim.
+`scaps_mirror_v2.yaml` and `calado2016_fig1f.yaml` are the active research
+presets. The other 50 bundled presets were removed on 2026-09-05 and restored on
+2026-09-07 so that the 52-preset matrix, the numerical refinement registry, the
+P1 records and the preset-dependent tests run against their original inputs.
 
 Current loading, API and protocol-helper checks are:
 

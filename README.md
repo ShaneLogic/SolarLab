@@ -687,10 +687,11 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 
 ## Shipped Device Presets
 
-Only two bundled presets remain in `perovskite-sim/configs/`. The other 50
-YAML files were deleted on 2026-09-05; new validation studies will construct
-new configurations. The API discovers files on disk, while the frontend
-research catalog gives these two entry points explicit names and modes.
+Two research presets are the frontend entry points. The frontend research
+catalog gives them explicit names and modes; the API discovers every file on
+disk. The other 50 bundled YAML files stay in `perovskite-sim/configs/` as inputs
+for the regression suite and the 52-preset reproducibility matrix (they were
+removed on 2026-09-05 and restored on 2026-09-07 for exactly that reason).
 
 | Preset | Material System | Ions | Optics | Notes |
 |:-------|:----------------|:----:|:------:|:------|
@@ -708,14 +709,12 @@ describe historical configurations, not additional currently shipped presets.
 ## Testing
 
 ```bash
-# From perovskite-sim/: current two-preset checks
+# From perovskite-sim/: research-preset checks
 python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
-```
 
-The full historical suite and 52-preset matrix require their old inputs and
-are not runnable unchanged after the preset deletion. The underlying tests
-and records remain as source history; they are not silently skipped or
-relabelled as passing. New validation studies need new fixtures and gates.
+# Full quick lane (unit + integration, excludes -m slow)
+python -m pytest -q
+```
 
 | Suite | Scope |
 |:------|:------|

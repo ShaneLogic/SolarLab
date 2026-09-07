@@ -1,11 +1,14 @@
-"""Current preset inventory and loading checks, without historical lane claims."""
+"""Research preset inventory and loading checks, without historical lane claims.
+
+The two research presets are the ones the frontend catalogue exposes; the other
+bundled YAMLs stay in ``configs/`` as inputs for the historical test lanes.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 import yaml
-from fastapi import HTTPException
 
 from backend.main import get_config, list_configs, stack_from_dict
 from perovskite_sim.models.config_loader import load_device_from_yaml
@@ -20,21 +23,20 @@ PRESETS = {
 }
 
 
-def test_only_two_bundled_presets_remain():
+def test_research_presets_are_bundled():
     paths = {
         path.relative_to(ROOT / "configs").as_posix()
         for pattern in ("*.yaml", "*.yml")
         for path in (ROOT / "configs").rglob(pattern)
         if "user" not in path.relative_to(ROOT / "configs").parts[:-1]
     }
-    assert paths == set(PRESETS)
+    assert set(PRESETS) <= paths
 
 
-def test_api_lists_only_current_bundled_presets():
+def test_api_lists_research_presets():
     entries = list_configs()["configs"]
-    shipped = [entry for entry in entries if entry["namespace"] == "shipped"]
-    assert {entry["name"] for entry in shipped} == set(PRESETS)
-    assert len(shipped) == len(PRESETS)
+    shipped = {entry["name"] for entry in entries if entry["namespace"] == "shipped"}
+    assert set(PRESETS) <= shipped
 
 
 @pytest.mark.parametrize("name", PRESETS)
@@ -77,7 +79,5 @@ def test_research_ion_populations_remain_distinct():
     "nip_MAPbI3_singleGB.yaml",
     "tandem_lin2019.yaml",
 ])
-def test_deleted_presets_are_not_available_through_api(name):
-    with pytest.raises(HTTPException) as caught:
-        get_config(name)
-    assert caught.value.status_code == 404
+def test_historical_presets_remain_loadable_through_api(name):
+    assert get_config(name)["status"] == "ok"

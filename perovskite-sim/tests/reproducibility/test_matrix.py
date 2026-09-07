@@ -124,6 +124,9 @@ def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
             "tunnelling_channels",
         }
     }
+    # semantic_sha256 keeps the retired autoloop lever key in DeviceStack
+    # fingerprints so historical hashes stay valid; mirror it here.
+    historical_payload["autoloop_generated_lever"] = False
 
     assert semantic_sha256(compatibility) == semantic_sha256(historical_payload)
 
@@ -159,6 +162,9 @@ def test_parked_interface_charge_defaults_preserve_historical_hash():
             "tunnelling_channels",
         }
     }
+    # semantic_sha256 keeps the retired autoloop lever key in DeviceStack
+    # fingerprints so historical hashes stay valid; mirror it here.
+    historical_payload["autoloop_generated_lever"] = False
     research_intent = replace(
         compatibility,
         interface_charge_closure="equilibrium_referenced",

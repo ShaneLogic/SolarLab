@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Validate the historical P0 source and 52-preset benchmark matrix.
 
-Requires the checkout before the 2026-09-05 preset deletion. For the current
-scope, run tests/reproducibility/test_research_presets.py instead.
+All 52 presets are bundled under configs/ again since 2026-09-07. The
+research-preset checks live in tests/reproducibility/test_research_presets.py.
 """
 from __future__ import annotations
 

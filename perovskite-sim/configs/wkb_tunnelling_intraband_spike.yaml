@@ -1,0 +1,105 @@
+# D8-E2 registered refinement lane: intraband WKB tunnelling through a
+# conduction-band spike, on the guarded QF/DC lane.
+#
+# NOT a physical device preset. The interlayer exists to put a resolved,
+# several-nodes-wide barrier in front of the channel: a single-node band
+# offset gives the WKB integrator no width, every transmission comes out
+# exactly 1, and the lane would certify nothing. Do not use this stack as a
+# calibration baseline.
+#
+# The interlayer is offset in BOTH bands (chi 0.3 eV lower gives the electron
+# spike; chi + Eg 0.3 eV higher gives the hole spike), so the same config can
+# exercise either carrier. The lane as registered runs the electron branch.
+#
+# The p-n doping across the stack is load-bearing: a flat-band variant of this
+# structure stalls the QF Newton line search at a residual of ~1.4e-10, which
+# is a conditioning property of the near-singular flat-band Jacobian rather
+# than anything to do with tunnelling.
+device:
+  Phi: 1.0e21
+  mode: legacy
+  built_in_potential_mode: semiconductor_work_function
+  interfaces:
+    - [0.0, 0.0]
+    - [0.0, 0.0]
+  tunnelling_channels:
+    schema_version: solarlab-wkb-tunnelling-channels-v1
+    intraband:
+      enabled: true
+      electron_effective_mass_rel: 0.2
+      hole_effective_mass_rel: 0.2
+      carrier: electron
+      energy_quadrature_order: 96
+layers:
+  - name: absorber
+    role: absorber
+    thickness: 1.5e-7
+    eps_r: 20.0
+    mu_n: 2.0e-3
+    mu_p: 2.0e-3
+    D_ion: 0.0
+    P_lim: 1.0e30
+    P0: 0.0
+    ni: 2.2495700957e+11
+    tau_n: 1.0e-6
+    tau_p: 1.0e-6
+    n1: 2.2495700957e+11
+    p1: 2.2495700957e+11
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 4.0e5
+    N_A: 1.0e22
+    N_D: 0.0
+    chi: 4.0
+    Eg: 1.5
+    Nc300: 1.0e24
+    Nv300: 8.0e23
+  - name: spike
+    role: ETL
+    thickness: 1.2e-8
+    eps_r: 20.0
+    mu_n: 2.0e-3
+    mu_p: 2.0e-3
+    D_ion: 0.0
+    P_lim: 1.0e30
+    P0: 0.0
+    ni: 2.0526804442e+06
+    tau_n: 1.0e-6
+    tau_p: 1.0e-6
+    n1: 2.0526804442e+06
+    p1: 2.0526804442e+06
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    N_A: 0.0
+    N_D: 1.0e21
+    chi: 3.7
+    Eg: 2.1
+    Nc300: 1.0e24
+    Nv300: 8.0e23
+  - name: etl
+    role: ETL
+    thickness: 1.0e-7
+    eps_r: 20.0
+    mu_n: 2.0e-3
+    mu_p: 2.0e-3
+    D_ion: 0.0
+    P_lim: 1.0e30
+    P0: 0.0
+    ni: 2.2495700957e+11
+    tau_n: 1.0e-6
+    tau_p: 1.0e-6
+    n1: 2.2495700957e+11
+    p1: 2.2495700957e+11
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    N_A: 0.0
+    N_D: 1.0e22
+    chi: 4.0
+    Eg: 1.5
+    Nc300: 1.0e24
+    Nv300: 8.0e23

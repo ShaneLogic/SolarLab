@@ -53,11 +53,9 @@ cd frontend && npm install     # frontend dependencies
 python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
 ```
 
-These are the current two-preset checks. The other 50 bundled YAML files were
-deleted on 2026-09-05. The full historical suite and 52-preset matrix require
-their original inputs and cannot run unchanged in this checkout. New studies
-will build new fixtures and acceptance criteria; prior evidence remains
-historical. See [Research Presets](configs/README.md).
+These are the research-preset checks; `python -m pytest -q` runs the full quick
+lane. The other 50 bundled YAML files stay in `configs/` as inputs for the
+regression suite and the 52-preset matrix. See [Research Presets](configs/README.md).
 
 Transient solves retain the historical scalar absolute tolerance by default.
 For the opt-in reference-scaled policy and the required three-level tolerance

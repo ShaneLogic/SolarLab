@@ -1,6 +1,6 @@
-# Historical 52-preset registry, predating the 2026-09-05 preset deletion.
-# The full validator requires that historical checkout. Current two-preset
-# checks live in tests/reproducibility/test_research_presets.py.
+# 52-preset registry. All listed presets are bundled under configs/ (removed
+# 2026-09-05, restored 2026-09-07). Research-preset checks live in
+# tests/reproducibility/test_research_presets.py.
 schema_version: 1
 p0_baseline: p0-certified-2026-08-01
 schema_registry: reproducibility/schema_registry.yaml
@@ -1586,7 +1586,7 @@ configs:
     status: partial
     benchmarks: [loader-contract, calado2016-driftfusion]
   - path: configs/calado2016_fig1f.yaml
-    sha256: a7a0e0f16ecae939e4f276df8f345cad1f48168899abcf5fd7f1c36dfb1e0c12
+    sha256: 75fa39bb6abbc57d0f408290d705e206e0065045f30f1504bb1796e2d0064a43
     semantic_sha256: 03df72ff9c6fe66711b213678dac1a754d500363e9d8c7c43f581d883c200f72
     schema: standard-device-v1
     status: load_only
