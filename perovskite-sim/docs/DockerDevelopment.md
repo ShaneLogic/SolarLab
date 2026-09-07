@@ -34,7 +34,7 @@ docker compose --profile notebook up --build notebook
 ```
 
 Then open <http://127.0.0.1:8888/lab?token=solarlab> and start
-`notebooks/08_device_parameter_sweep.ipynb`.
+`notebooks/DeviceParameterSweep.ipynb`.
 
 To run in the background:
 

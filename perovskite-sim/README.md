@@ -94,9 +94,9 @@ for the authoritative status and limitations of every shipped config.
 
 | Notebook | Topic |
 |:---------|:------|
-| `01_jv_hysteresis.ipynb` | J-V sweep with hysteresis |
-| `02_impedance.ipynb` | Impedance spectroscopy (Nyquist plot) |
-| `03_degradation.ipynb` | Long-term degradation simulation |
+| `JvHysteresis.ipynb` | J-V sweep with hysteresis |
+| `Impedance.ipynb` | Impedance spectroscopy (Nyquist plot) |
+| `Degradation.ipynb` | Long-term degradation simulation |
 
 **Benchmark scripts** (`.py`, run with `python`):
 
