@@ -227,7 +227,7 @@ position_um,electron_density_cm3,hole_density_cm3,electrostatic_potential_V,cond
 `sign_conventions` 的另外三项、`comparison_protocol` 整块、每个场景的
 `canonical_config_sha256` / `charge_transition` / `doping_polarity`。
 
-`scaps_parameters` 已按 §3 预填，字段名已对照 `docs/manual/SCAPSManual2016.pdf`
+`scaps_parameters` 已按 §3 预填，字段名已对照 `SCAPSManual2016.pdf`（归档目录 `reference/`，见 `CLAUDE.md` → Archived documents）
 校准（缺陷类型/能级参考/截面/密度对应 script 名 `layer.defect.*`，热速度对应
 `layer.vthn`/`.vthp`，接触对应 `contact.flatband`）。**仍要逐项与你实际输进
 SCAPS 的值核对**；若某项与你的 SCAPS 版本不符或不接受该值，改成实际值并在

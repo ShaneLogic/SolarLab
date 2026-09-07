@@ -22,7 +22,7 @@
 （表头逐字符即契约）与 `multivalent_parameter_manifest_skeleton.json`
 （填完 `__FILL__` 即可通过 importer —— 已实测端到端验证）。
 
-SCAPS 侧字段名已逐页对照 `docs/manual/SCAPSManual2016.pdf`（§3.6.2 多价缺陷、
+SCAPS 侧字段名已逐页对照 `SCAPSManual2016.pdf`（归档目录 `reference/`，见 `CLAUDE.md` → Archived documents）（§3.6.2 多价缺陷、
 §3.6.3 能级参考、§3.3 接触、§5.1.1 网格）校准，见 §3 各处标注。
 
 ---

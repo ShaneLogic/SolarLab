@@ -65,10 +65,10 @@ It reproduces the main thin-film characterisation experiments from a single devi
 
 The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema. A separate **2T monolithic tandem** driver performs a combined TMM over top + junction + bottom, runs independent sub-cell J-V sweeps, and series-matches at a common current grid.
 
-The current technical reference is the **[SolarLab Technical and User Manual (2026-08-11)](docs/manual/SolarLabManual260811.pdf)**. It records the solver-specific variable sets, validation gates, and limitations that do not fit in this overview.
+The current technical reference is the **SolarLab Technical and User Manual (2026-08-11)**, distributed separately from this repository. It records the solver-specific variable sets, validation gates, and limitations that do not fit in this overview.
 
 <p align="center">
-  <img src="docs/manual/figures/architecture_flow.png" alt="SolarLab architecture and data flow" width="900">
+  <img src="docs/figures/architecture_flow.png" alt="SolarLab architecture and data flow" width="900">
 </p>
 
 <br>
@@ -157,7 +157,6 @@ SolarLab/
 │   ├── manual/                     Manual source, dated PDFs, and generated figures
 │   ├── reference/                  Canonical SCAPS comparison reports
 │   ├── figures/                    Stored comparison plots
-│   ├── autoloop/                   Research-loop ledger
 │   ├── plans/                      Cross-tree implementation plans
 │   └── superpowers/                Historical specs, plans, and references
 ├── outputs/                        Tracked example and comparison outputs
@@ -305,11 +304,11 @@ print(f"Hysteresis index: {result.hysteresis_index:.3f}")
 ### Physical Model Overview
 
 <p align="center">
-  <img src="docs/manual/figures/device_contact_boundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
+  <img src="docs/figures/device_contact_boundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
 </p>
 
 <p align="center">
-  <img src="docs/manual/figures/band_interface_convention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
+  <img src="docs/figures/band_interface_convention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
 </p>
 
 ### Governing Equations
@@ -512,7 +511,7 @@ The 2D solver is an experimental extension for lateral microstructure effects, n
 All physical data is held in **immutable frozen dataclasses** (`MaterialParams`, `LayerSpec`, `DeviceStack`, `SolverConfig`). In-place mutation is forbidden — updates use `dataclasses.replace(...)`.
 
 <p align="center">
-  <img src="docs/manual/figures/solver_topology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
+  <img src="docs/figures/solver_topology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
 </p>
 
 <br>
@@ -526,10 +525,10 @@ external physical agreement as separate claims. The machine-readable registry
 and reproduction commands live under
 [`perovskite-sim/reproducibility/`](perovskite-sim/reproducibility/README.md);
 the full interpretation is in the
-[2026-08-11 manual](docs/manual/SolarLabManual260811.pdf).
+2026-08-11 manual (distributed separately).
 
 <p align="center">
-  <img src="docs/manual/figures/csi_qf_convergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
+  <img src="docs/figures/csi_qf_convergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
 </p>
 
 The c-Si panels are internal numerical evidence for the restricted local QF
@@ -537,7 +536,7 @@ model. They do not certify the general transient driver or fit an external
 c-Si device.
 
 <p align="center">
-  <img src="docs/manual/figures/cbo_interface_validation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
+  <img src="docs/figures/cbo_interface_validation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
 </p>
 
 The physical-interface CBO scan passes its registered N=40/50/60 numerical
@@ -546,7 +545,7 @@ gate. Its result is `numerical_certified=true` and top-level
 `certified=false`.
 
 <p align="center">
-  <img src="docs/manual/figures/twod_scope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
+  <img src="docs/figures/twod_scope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
 </p>
 
 The registered 1D/2D comparison uses matched vertical grids, periodic lateral
@@ -554,7 +553,7 @@ boundaries, frozen ions, and an interface-free preset. Mobile-ion dynamics and
 the 1D interface-SRH/physical-QF machinery are outside that parity claim.
 
 <p align="center">
-  <img src="docs/manual/figures/Calado16Fig1fJV260905.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
+  <img src="docs/figures/Calado16Fig1fJV260905.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
 </p>
 
 The Calado 2016 Fig 1e/1f lane (`configs/calado2016_fig1f.yaml`, the paper's
@@ -569,7 +568,7 @@ P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1 definition. The cause is open;
 the preset header records the study.
 
 <p align="center">
-  <img src="docs/manual/figures/Calado16Fig1fScanRate260905.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
+  <img src="docs/figures/Calado16Fig1fScanRate260905.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
 </p>
 
 A nine-rate ladder on the same preset (`scripts/plot_calado_fig1f_scan_rate.py`,
@@ -587,12 +586,6 @@ residual gap reads as a ≈2× shift of the ionic time scale; it stays open.
 ## Using the Web UI
 
 After launching the backend and frontend (see [Running the Application](#running-the-application)), open **<http://127.0.0.1:5173>**. The UI is split into three regions.
-
-### Layout
-
-<p align="center">
-  <img src="perovskite-sim/docs/images/ui_layout.png?v=4" alt="Web UI Layout" width="700">
-</p>
 
 ### Left Rail — Devices / Results
 
@@ -729,34 +722,6 @@ relabelled as passing. New validation studies need new fixtures and gates.
 | **Unit** | Per-module physics + solver coverage |
 | **Integration** | End-to-end experiment runs on shipped presets |
 | **Regression** | Physical sanity envelopes ($V_{\text{oc}}$, $J_{\text{sc}}$, HI bounds); BLAS pinned via `conftest.py` |
-
-**Autoloop guardian** (`python perovskite-sim/scripts/autoloop_run.py --once`) —
-sense-and-record cycle: runs the test ladder, scores SolarLab vs the SCAPS reference,
-and records open gaps to the ledger.
-
-- **Autoloop attribution** (`python perovskite-sim/scripts/autoloop_run.py --attribute`) —
-  diagnoses the top open gap (bug / numerics / physics / uncertain) by ablating
-  physics flags + grid + dark-current probes; records a Hypothesis. Read-only.
-- **Autoloop implement** (`python perovskite-sim/scripts/autoloop_run.py --implement [--apply]`) —
-  promotes a confirmed lever flag in the parity config, runs the full gate stack
-  (legacy-bit-identical + parity-improved + reconciliation), and lands it on the
-  current branch only on `--apply`. Dry-run by default.
-- **Autoloop boulder** (`python perovskite-sim/scripts/autoloop_run.py --boulder [--converge]`) —
-  the continuous driver: sweep drains gaps into a proposal report; --converge auto-applies
-  fixes and loops until the parity target (on an autoloop branch, never main).
-- **Autoloop L3 lab data** — point `--reference` at a tiered descriptor
-  (`scaps_lab_tiered.json`) to score absolutes against measured J-V (LabReferenceSource)
-  while keeping SCAPS trend sweeps. Default stays pure-SCAPS.
-- **Autoloop design-search** (`python perovskite-sim/scripts/autoloop_run.py --search`) —
-  parity-gated, advisory search of the device-design space for max-PCE designs (no-dep
-  random search; pluggable for optuna later). Reports designs; applies nothing.
-- **Autoloop G5 verify** (`--attribute --llm --verify`) — N diverse-lens skeptics
-  adversarially adjudicate an LLM novel-cause lead: survives → confirmed (actionable),
-  majority-refute → refuted + recorded as never-retry. Opt-in.
-- **Autoloop codegen** (`--codegen --llm`) — for a confirmed cause with no existing flag,
-  an LLM writes a flag-gated band-parameter lever; the spine verifies it (build + flag-OFF
-  bit-identical + flag-ON improves) and commits it to a fresh branch for human merge. Opt-in,
-  default OFF.
 
 <br>
 

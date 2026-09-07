@@ -11,7 +11,7 @@ the scan-rate bell of Tress 2015 / Calado 2016. The paper-protocol point
 (40 mV/s with the 3 s hold, from ``Calado16Fig1fMetrics<STAMP>.json``) is
 overlaid as a separate marker.
 
-Outputs (SolarLab root ``docs/manual/figures/``, suffix ``STAMP``):
+Outputs (SolarLab root ``docs/figures/``, suffix ``STAMP``):
 
     Calado16Fig1fScanRate<STAMP>.png        (a) J-V loops at three rates,
                                             (b) HI (paper definition) vs rate

@@ -1,6 +1,6 @@
 """Phase E9 — absolute + trend scorecard vs the partner xlsx (1R-Parameters).
 
-Grades SolarLab against docs/superpowers/references/scaps_1r_parameters.xlsx on
+Grades SolarLab against perovskite-sim/reproducibility/scaps_1r_parameters.xlsx on
 BOTH absolute closeness (per-point V_oc / J_sc / FF / PCE deltas) and trend
 fidelity (sweep direction + range), for the base point and every
 single-variable sweep. Reads the xlsx directly (the authoritative ground
@@ -26,7 +26,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import SweepPoint, apply_sweep
 
 REPO = Path(__file__).resolve().parents[1]
 CFG = REPO / "configs" / "scaps_mirror_v2.yaml"
-XLSX = REPO.parent / "docs" / "superpowers" / "references" / "scaps_1r_parameters.xlsx"
+XLSX = REPO / "reproducibility" / "scaps_1r_parameters.xlsx"
 
 # sheet -> (axis-updates builder). Mirrors run_scaps_full_regression mapping.
 SHEETS = {

@@ -20,7 +20,7 @@ preset's Beer-Lambert stand-in. Every ``_integrate_step`` span is relative
 ([0, dwell]): Radau's minimum step scales with eps*|t|, and absolute-time
 spans fail at tau <= 1e-14 s (2026-09-04 measurement).
 
-Outputs (SolarLab root ``docs/manual/figures/``, suffix ``STAMP``):
+Outputs (SolarLab root ``docs/figures/``, suffix ``STAMP``):
 
     Calado16Fig1fJV<STAMP>.png       forward/reverse J-V, control + hysteretic
     Calado16Fig1fMetrics<STAMP>.json J_sc, V_oc, P_max, FF per branch; HI in
@@ -59,7 +59,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml  # noqa: E
 from perovskite_sim.models.device import DeviceStack  # noqa: E402
 
 CONFIG = ROOT / "configs" / "calado2016_fig1f.yaml"
-OUT_DIR = ROOT.parent / "docs" / "manual" / "figures"
+OUT_DIR = ROOT.parent / "docs" / "figures"
 STAMP = "260905"
 
 # Scan protocol (paper Methods).

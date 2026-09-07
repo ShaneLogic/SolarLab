@@ -33,7 +33,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import SweepPoint, apply_sweep
 
 REPO = Path(__file__).resolve().parents[1]
 CFG = REPO / "configs" / "scaps_mirror_v2.yaml"
-XLSX = REPO.parent / "docs" / "superpowers" / "references" / "scaps_1r_parameters.xlsx"
+XLSX = REPO / "reproducibility" / "scaps_1r_parameters.xlsx"
 # n_points=40: coarser grids under-read V_oc by 10-16 mV at the diode knee.
 JV = dict(N_grid=30, n_points=40, v_rate=5.0, V_max=1.6)
 

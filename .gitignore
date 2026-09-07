@@ -8,6 +8,7 @@
 .worktrees/
 
 # Generated sweep outputs
+outputs/
 perovskite-sim/outputs/
 perovskite-sim/notebooks/outputs/
 

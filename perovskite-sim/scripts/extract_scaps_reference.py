@@ -1,6 +1,6 @@
 """Extract SCAPS reference sweep data from partner xlsx into JSON.
 
-Source: docs/superpowers/references/scaps_1r_parameters.xlsx (12 sheets)
+Source: perovskite-sim/reproducibility/scaps_1r_parameters.xlsx (12 sheets)
 Output: perovskite-sim/tests/integration/scaps_reference.json
 
 Base point anchored from scaps_1d_simulation_report.pdf page 2.
@@ -17,7 +17,7 @@ from pathlib import Path
 import openpyxl
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-XLSX_PATH = REPO_ROOT / "docs" / "superpowers" / "references" / "scaps_1r_parameters.xlsx"
+XLSX_PATH = REPO_ROOT / "perovskite-sim" / "reproducibility" / "scaps_1r_parameters.xlsx"
 JSON_OUT = REPO_ROOT / "perovskite-sim" / "tests" / "integration" / "scaps_reference.json"
 
 BASE_MODEL = {
@@ -118,8 +118,8 @@ def main() -> None:
         pairs[sheet] = {"n_points": len(pts), "points": pts}
 
     payload = {
-        "source_xlsx": "docs/superpowers/references/scaps_1r_parameters.xlsx",
-        "source_pdf": "docs/superpowers/references/scaps_1d_simulation_report.pdf",
+        "source_xlsx": "perovskite-sim/reproducibility/scaps_1r_parameters.xlsx",
+        "source_pdf": "scaps_1d_simulation_report.pdf (archived outside the repo)",
         "extracted_at": "2026-05-28",
         "base_model": BASE_MODEL,
         "sweeps": sweeps,

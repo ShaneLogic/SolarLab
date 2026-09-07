@@ -67,7 +67,7 @@ sensitivity ladders, see
 [rhs-regularization-policy.md](docs/rhs-regularization-policy.md).
 The staged implementation, test matrices, promotion gates, and explicitly
 parked physics are tracked in the
-[2026-08-14 physics/numerics hardening roadmap](docs/plans/2026-08-14-physics-numerics-hardening-plan.md).
+2026-08-14 physics/numerics hardening roadmap (archived plan, see `CLAUDE.md` → Archived documents).
 The corresponding Phase 1 implementation status, immutable certificate IDs,
 failed/partial lanes, and evidence boundaries are recorded in the
 [Phase 1 implementation and evidence report](docs/phase-1-implementation-and-evidence.md).
@@ -107,15 +107,6 @@ for the authoritative status and limitations of every shipped config.
 | `04_ionmonger_benchmark.py` | Exploratory IonMonger paper-informed diagnostic |
 | `05_comprehensive_benchmark.py` | Exploratory multi-physics diagnostic |
 | `06_e2e_notebook_vs_api.py` | Notebook vs API parity check |
-
-- **Autoloop guardian** (`python perovskite-sim/scripts/autoloop_run.py --once`) — runs the
-  L0–L2 ladder, scores SolarLab-vs-SCAPS parity, and records regressions to the gap ledger.
-- **Autoloop L3 lab data** — point `--reference` at a tiered descriptor (`scaps_lab_tiered.json`)
-  to score absolutes against measured J-V (`LabReferenceSource`) while keeping SCAPS trend sweeps.
-  Default stays pure-SCAPS.
-- **Autoloop LLM attributor** (`--attribute --llm`) — when the deterministic heuristic can't
-  diagnose a gap, an LLM proposes a novel root cause (always a `verdict=uncertain` lead; never
-  auto-confirmed). Opt-in; default stays deterministic.
 
 <br>
 
@@ -299,6 +290,10 @@ chemical potential; it is not a numerical projection of every trial state.
 
 ### 2D Extension Boundary Conditions
 
+The [2D transport contract](docs/twod-transport-contract.md) records the
+carrier-transport assumptions, field-mobility and reabsorption closures,
+and the scope of the historical uniform-device parity checks.
+
 The Stage A/B 2D solver uses the same physical stack but extrudes it onto a
 tensor-product grid. The vertical stack direction carries the device-contact
 boundary conditions: top/bottom carrier rows are ohmic by default, or Robin
@@ -340,9 +335,10 @@ The exact combined slice has a source-clean 3x3 grid/tolerance certificate;
 see
 [`docs/twod-combined-numerical-certificate.md`](docs/twod-combined-numerical-certificate.md).
 
-2D presets live in `configs/twod/`; the backend exposes them through
-`GET /api/configs` and runs them with `kind="jv_2d"` or
-`kind="voc_grain_sweep"`.
+The historical `configs/twod/` presets have been removed. The Python and
+backend entry points (`kind="jv_2d"` and `kind="voc_grain_sweep"`) remain
+available for explicitly defined configurations within their supported
+topologies; historical tests still require their original inputs.
 
 *Source:* `perovskite_sim/twod/solver_2d.py`,
 `perovskite_sim/twod/mobile_ion_current_2d.py`,
