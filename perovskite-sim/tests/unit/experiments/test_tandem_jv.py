@@ -100,8 +100,8 @@ def test_run_tandem_jv_smoke(monkeypatch):
 
     monkeypatch.setattr(tandem_optics_mod, "load_nk", _fake_load_nk)
 
-    top_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-    bot_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    top_cell = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
+    bot_cell = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
     cfg = TandemConfig(
         top_cell=top_cell,

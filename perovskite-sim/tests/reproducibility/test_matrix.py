@@ -106,7 +106,7 @@ def test_default_thermal_velocity_preserves_frozen_semantics():
 
 def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
     compatibility = load_device_from_yaml(
-        str(ROOT / "configs/ionmonger_benchmark.yaml")
+        str(ROOT / "tests/fixtures/configs/ionmonger_benchmark.yaml")
     )
     historical_payload = {
         field.name: getattr(compatibility, field.name)
@@ -144,7 +144,7 @@ def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
 
 def test_parked_interface_charge_defaults_preserve_historical_hash():
     compatibility = load_device_from_yaml(
-        str(ROOT / "configs/ionmonger_benchmark.yaml")
+        str(ROOT / "tests/fixtures/configs/ionmonger_benchmark.yaml")
     )
     historical_payload = {
         field.name: getattr(compatibility, field.name)
@@ -291,7 +291,7 @@ def test_dynamic_defect_transient_production_evidence_is_source_bound():
         entry
         for entry in matrix["configs"]
         if entry["path"]
-        == "configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
+        == "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
     )
     evidence = " ".join(benchmark["limitations"])
 

@@ -160,7 +160,7 @@ def test_env_var_force_enables_dos_over_explicit_false(monkeypatch):
 
 def test_flag_noop_without_dos_data():
     """Legacy configs (no Nc300/Nv300) are bit-identical under the flag."""
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x, m_off = _build(base)
     _, m_on = _build(dataclasses.replace(base, dos_band_potentials=True))
     np.testing.assert_array_equal(m_off.chi, m_on.chi)

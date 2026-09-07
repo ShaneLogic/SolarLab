@@ -24,7 +24,7 @@ def test_jv_2d_accepts_microstructure_payload():
         "/api/jobs",
         json={
             "kind": "jv_2d",
-            "config_path": "configs/twod/nip_MAPbI3_uniform.yaml",
+            "config_path": "tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml",
             "params": {
                 "lateral_length": 500e-9,
                 "Nx": 4,
@@ -58,7 +58,7 @@ def test_voc_grain_sweep_kind_dispatches():
         "/api/jobs",
         json={
             "kind": "voc_grain_sweep",
-            "config_path": "configs/twod/nip_MAPbI3_uniform.yaml",
+            "config_path": "tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml",
             "params": {
                 "grain_sizes_nm": [200, 500],
                 "tau_gb_n": 1e-9,
@@ -91,7 +91,7 @@ def test_voc_grain_sweep_rejects_missing_grain_sizes():
         "/api/jobs",
         json={
             "kind": "voc_grain_sweep",
-            "config_path": "configs/twod/nip_MAPbI3_uniform.yaml",
+            "config_path": "tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml",
             "params": {},
         },
     )

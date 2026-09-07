@@ -217,7 +217,7 @@ class TestShippedConfigsUnchanged:
         "solarscale_nip_band_aligned", "cigs_baseline",
     ])
     def test_configs_without_the_key_stay_empty(self, name):
-        stack = load_device_from_yaml(f"configs/{name}.yaml")
+        stack = load_device_from_yaml(f"tests/fixtures/configs/{name}.yaml")
         assert stack.interface_defects == ()
 
 

@@ -19,7 +19,7 @@ from perovskite_sim.solver.mol import build_material_arrays
 
 def _stack_with_all_upgrades():
     """IonMonger benchmark + trap profile + dual ions + T=330 K on absorber."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     absorber = stack.layers[1]
     p_new = dataclasses.replace(
         absorber.params,

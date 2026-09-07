@@ -9,7 +9,7 @@ from perovskite_sim.experiments.tpv import run_tpv, _fit_decay_tau
 
 @pytest.fixture
 def nip_stack():
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 # ---------------------------------------------------------------------------

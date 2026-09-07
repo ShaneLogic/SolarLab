@@ -27,7 +27,7 @@ pytestmark = pytest.mark.slow
 
 def test_material_arrays_temperature_plumbing():
     """DeviceStack.T flows into MaterialArrays.T_device / V_T_device."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack_hot = dataclasses.replace(stack, T=350.0)
 
     x = np.linspace(0.0, stack_hot.total_thickness, 60)
@@ -45,7 +45,7 @@ def test_material_arrays_temperature_plumbing():
 
 def test_material_arrays_trap_profile():
     """trap_N_t_interface > bulk shortens tau near both layer boundaries."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
 
     # Inject a trap profile into the MAPbI3 absorber layer (index 1).
     absorber = stack.layers[1]
@@ -87,13 +87,13 @@ def test_material_arrays_trap_profile():
 
 @pytest.fixture(scope="module")
 def jv_300K():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     return run_jv_sweep(stack, N_grid=40, n_points=15, v_rate=5.0)
 
 
 @pytest.fixture(scope="module")
 def jv_330K():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack_hot = dataclasses.replace(stack, T=330.0)
     return run_jv_sweep(stack_hot, N_grid=40, n_points=15, v_rate=5.0)
 
@@ -118,7 +118,7 @@ def test_voc_temperature_coefficient(jv_300K, jv_330K):
 
 def test_trap_profile_reduces_voc():
     """Concentrating traps near interfaces reduces V_oc vs uniform baseline."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
 
     absorber = stack.layers[1]
     p_trap = dataclasses.replace(

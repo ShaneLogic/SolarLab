@@ -41,9 +41,9 @@ from perovskite_sim.twod.solver_2d import _to_2d_dual_cell
 # Two of these have an absorber touching a contact, so G is non-zero at a
 # boundary node; ionmonger is the control where the defect is invisible.
 _CONFIGS = (
-    "configs/cigs_baseline.yaml",
-    "configs/cSi_homojunction.yaml",
-    "configs/ionmonger_benchmark.yaml",
+    "tests/fixtures/configs/cigs_baseline.yaml",
+    "tests/fixtures/configs/cSi_homojunction.yaml",
+    "tests/fixtures/configs/ionmonger_benchmark.yaml",
 )
 
 
@@ -99,7 +99,7 @@ def test_the_defect_was_real_on_an_absorbing_boundary():
     converged — in both cases the rationale above needs re-deriving rather
     than inheriting.
     """
-    y, G = _profile("configs/cSi_homojunction.yaml")
+    y, G = _profile("tests/fixtures/configs/cSi_homojunction.yaml")
     assert G[0] > 0.0, "cSi no longer absorbs at its first node"
     j_1d = Q * float(np.sum(G * dual_cell_widths(y)))
     j_2d_unfixed = Q * float(np.sum(G * _hy_cell(y)))

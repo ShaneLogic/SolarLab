@@ -31,7 +31,7 @@ from perovskite_sim.solver.illuminated_ss import IlluminatedSteadyStateError
 
 @pytest.fixture(scope="module")
 def nip_stack():
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 def test_material_wrapper_propagates_illuminated_settle_failure(monkeypatch):

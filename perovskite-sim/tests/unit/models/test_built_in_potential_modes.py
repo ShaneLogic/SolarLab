@@ -26,7 +26,7 @@ def _build(stack):
 
 
 def test_existing_vbi_yaml_retains_compatibility_mode_and_boundary():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     mat = _build(stack)
 
     assert stack.built_in_potential_mode is None
@@ -91,7 +91,7 @@ def test_semiconductor_work_function_is_dos_and_temperature_consistent():
 
 
 def test_semiconductor_work_function_fails_closed_without_contact_dos():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack = dataclasses.replace(
         base,
         built_in_potential_mode="semiconductor_work_function",
@@ -111,7 +111,7 @@ def test_semiconductor_work_function_fails_closed_without_contact_dos():
 def test_explicit_metal_work_functions_set_signed_poisson_boundary(
     left, right, expected
 ):
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack = dataclasses.replace(
         base,
         built_in_potential_mode="metal_work_function",
@@ -129,7 +129,7 @@ def test_explicit_metal_work_functions_set_signed_poisson_boundary(
 
 
 def test_metal_work_function_requires_both_contacts():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
 
     with pytest.raises(ValueError, match="requires work_function_left_eV"):
         dataclasses.replace(
@@ -155,7 +155,7 @@ def test_explicit_mode_decouples_robin_kinetics_from_manual_potential():
 
 
 def test_2d_reuses_signed_1d_contact_electrostatics():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack = dataclasses.replace(
         base,
         built_in_potential_mode="metal_work_function",

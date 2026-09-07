@@ -59,7 +59,7 @@ _SCAPS_E_T = 0.6
 
 
 def _scaps_with_pvk_etl_defect():
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     n_iface = max(0, len(stack.layers) - 1)
     interfaces = [(0.0, 0.0)] * n_iface
     defects = [None] * n_iface

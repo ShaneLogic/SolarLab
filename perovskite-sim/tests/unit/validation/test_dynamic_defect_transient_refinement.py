@@ -170,7 +170,7 @@ def test_absorber_resolved_v4_changes_fixture_and_transient_observable_reference
     previous = registry.lane(NONLINEAR_V3_LANE_ID)
 
     assert active.config_path == (
-        "configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
+        "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
     )
     assert active.config_sha256 == (
         "f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24"

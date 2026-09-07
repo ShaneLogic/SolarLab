@@ -8,7 +8,7 @@ from perovskite_sim.solver.mol import StateVec
 
 def test_np_product_at_equilibrium():
     """n*p ≈ ni² throughout device at equilibrium."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 50) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     y_eq = solve_equilibrium(x, stack)
@@ -33,7 +33,7 @@ def test_np_product_at_equilibrium():
 
 def test_ion_profile_within_plim():
     """Ion vacancies must never exceed P_lim."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 50) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     y_eq = solve_equilibrium(x, stack)

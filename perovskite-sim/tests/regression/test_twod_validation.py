@@ -20,7 +20,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import DeviceStack
 
 
-PRESET = "configs/twod/nip_MAPbI3_uniform.yaml"
+PRESET = "tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml"
 
 
 def _freeze_ions(stack: DeviceStack) -> DeviceStack:
@@ -159,7 +159,7 @@ def test_twod_uniform_matches_1d_within_tolerance():
     )
 
 
-ROBIN_PRESET = "configs/selective_contacts_demo.yaml"
+ROBIN_PRESET = "tests/fixtures/configs/selective_contacts_demo.yaml"
 
 
 @pytest.mark.regression
@@ -168,7 +168,7 @@ def test_twod_robin_parity_vs_1d():
     """Stage B(c.1) primary gate: laterally-uniform 2D with Robin contacts matches
     1D Phase 3.3 within sub-mV V_oc / 5×10⁻⁴ J_sc / 10⁻³ FF.
 
-    Uses configs/selective_contacts_demo.yaml (Beer-Lambert nip MAPbI3 with all
+    Uses tests/fixtures/configs/selective_contacts_demo.yaml (Beer-Lambert nip MAPbI3 with all
     four S values set). Ions frozen on both sides for a clean comparison.
     """
     stack = _freeze_ions(load_device_from_yaml(ROBIN_PRESET))
@@ -599,7 +599,7 @@ def test_twod_radiative_reabsorption_disabled_path_bit_identical():
     )
 
 
-RR_TMM_PRESET = "configs/nip_MAPbI3_tmm.yaml"
+RR_TMM_PRESET = "tests/fixtures/configs/nip_MAPbI3_tmm.yaml"
 
 
 def _voc_2d_via_warm_start(
@@ -809,13 +809,13 @@ def test_twod_radiative_reabsorption_voc_boost_in_literature_window(monkeypatch)
     import perovskite_sim.solver.mol as _mol_mod
     from perovskite_sim.models.mode import FULL
 
-    # Use the radiative-limit preset (configs/radiative_limit.yaml): bulk
+    # Use the radiative-limit preset (tests/fixtures/configs/radiative_limit.yaml): bulk
     # radiative recombination dominates because non-radiative channels are
     # killed (τ → 1e3 s, Auger → 0, interface SRV → 0). On this stack the
     # PR-on V_oc boost lands cleanly in the literature [40, 100] mV
     # window; on a regular MAPbI3 stack (RR_TMM_PRESET) non-radiative
     # losses swamp the boost down to sub-mV.
-    rr_limit = _freeze_ions(load_device_from_yaml("configs/radiative_limit.yaml"))
+    rr_limit = _freeze_ions(load_device_from_yaml("tests/fixtures/configs/radiative_limit.yaml"))
     mode_on = FULL                                       # PR + rr ON, all else FULL
     mode_off = replace(
         FULL,

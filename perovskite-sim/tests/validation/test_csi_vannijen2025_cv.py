@@ -67,7 +67,7 @@ def _extract_source_capacitance(row: dict) -> float:
 
 @pytest.fixture(scope="module")
 def local_cv_ladder():
-    stack = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     rows = []
     for requested in GRID_LADDER:
         x = build_electrical_grid(stack, requested)
@@ -132,7 +132,7 @@ def test_vannijen_source_rows_reproduce_frozen_author_extraction():
 
 
 def test_vannijen_config_maps_published_profile_without_curve_calibration():
-    stack = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     source = REFERENCE["source_model"]
     emitter, base = stack.layers
 

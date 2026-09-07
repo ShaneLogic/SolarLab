@@ -19,7 +19,7 @@ from perovskite_sim.validation.grid_convergence import (
 
 
 pytestmark = [pytest.mark.slow, pytest.mark.regression]
-CONFIG = "configs/ionmonger_benchmark.yaml"
+CONFIG = "tests/fixtures/configs/ionmonger_benchmark.yaml"
 COARSE_LADDER = (12, 24, 48)
 PROLONGED_LADDER = (48, 72, 96)
 MAX_RESIDUAL_PER_S = 0.5

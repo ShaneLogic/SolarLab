@@ -21,7 +21,7 @@ from perovskite_sim.experiments.impedance import run_impedance
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 from perovskite_sim.models.config_loader import load_device_from_yaml
 
-_CONFIGS_DIR = Path(__file__).resolve().parents[2] / "configs"
+_CONFIGS_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "configs"
 _IONMONGER = str(_CONFIGS_DIR / "ionmonger_benchmark.yaml")
 
 

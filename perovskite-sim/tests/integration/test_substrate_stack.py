@@ -66,7 +66,7 @@ def _prepend_substrate(stack):
 
 def test_electrical_layers_filters_substrate_prefix():
     """``electrical_layers`` drops the substrate and keeps everything else."""
-    real = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    real = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     wrapped = _prepend_substrate(real)
     elec = electrical_layers(wrapped)
     assert len(elec) == len(real.layers)
@@ -78,7 +78,7 @@ def test_electrical_layers_filters_substrate_prefix():
 
 def test_electrical_interfaces_drops_substrate_prefix_entry():
     """``electrical_interfaces`` must line up with ``electrical_layers``."""
-    real = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    real = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     wrapped = _prepend_substrate(real)
     ifaces = electrical_interfaces(wrapped)
     # One fewer than the number of electrical layers.
@@ -90,7 +90,7 @@ def test_electrical_interfaces_drops_substrate_prefix_entry():
 
 def test_electrical_layers_rejects_mid_stack_substrate():
     """Mid-stack substrate must raise — the prefix invariant is enforced."""
-    real = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    real = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     substrate = _glass_substrate_layer()
     # Insert after the first electrical layer (illegal placement).
     bad_layers = (real.layers[0], substrate) + tuple(real.layers[1:])
@@ -109,7 +109,7 @@ def test_substrate_stack_run_jv_sweep_smoke():
     and the interface-recombination loop zipped the wrong pairs. Either bug
     corrupts ``J_sc`` or crashes before returning.
     """
-    real = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    real = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     wrapped = _prepend_substrate(real)
     result = run_jv_sweep(wrapped, n_points=7, N_grid=60)
     assert result.metrics_fwd.J_sc > 0.0

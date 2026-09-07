@@ -236,7 +236,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
     # Stage B(a) microstructure — mirror load_device_from_yaml's behaviour
     # so the inline-device path round-trips the ``microstructure:`` block
     # the same way the YAML loader does. Without this, loading a preset
-    # like configs/twod/nip_MAPbI3_singleGB.yaml in the workstation and
+    # like tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml in the workstation and
     # submitting via ``device:`` would silently drop the GB block at the
     # backend boundary (the frontend's startJob always sends device: and
     # never config_path:, so the load_device_from_yaml microstructure

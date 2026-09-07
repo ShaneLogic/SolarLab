@@ -10,7 +10,7 @@ from perovskite_sim.scaps_compat import load_scaps_yaml
 
 
 def test_compatibility_stack_roundtrip_keeps_legacy_vbi_shape():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     config = backend_main._stack_to_config_dict(stack)
 
     assert config["device"]["V_bi"] == pytest.approx(stack.V_bi)
@@ -21,7 +21,7 @@ def test_compatibility_stack_roundtrip_keeps_legacy_vbi_shape():
 
 
 def test_explicit_metal_work_functions_roundtrip_without_manual_vbi():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack = dataclasses.replace(
         base,
         built_in_potential_mode="metal_work_function",

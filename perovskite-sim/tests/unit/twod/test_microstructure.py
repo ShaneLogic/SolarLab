@@ -110,7 +110,7 @@ def test_grain_boundary_rejects_invalid_physical_parameters(field, value, match)
 
 
 def test_load_device_from_yaml_attaches_microstructure():
-    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml")
     assert hasattr(stack, "microstructure")
     assert len(stack.microstructure.grain_boundaries) == 1
     gb = stack.microstructure.grain_boundaries[0]
@@ -122,7 +122,7 @@ def test_load_device_from_yaml_attaches_microstructure():
 
 
 def test_load_device_from_yaml_empty_microstructure_default():
-    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_uniform.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml")
     assert hasattr(stack, "microstructure")
     assert stack.microstructure.grain_boundaries == ()
 

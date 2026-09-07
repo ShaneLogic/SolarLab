@@ -22,7 +22,7 @@ def _absorber(stack):
 
 
 def test_wideGap_preset_loads():
-    stack = load_device_from_yaml("configs/nip_wideGap_FACs_1p77.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_wideGap_FACs_1p77.yaml")
     absorber = _absorber(stack)
     assert absorber.role == "absorber"
     # Absorber Eg/chi intentionally left at 0 — see YAML comment block. The
@@ -32,7 +32,7 @@ def test_wideGap_preset_loads():
 
 
 def test_SnPb_preset_loads():
-    stack = load_device_from_yaml("configs/nip_SnPb_1p22.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_SnPb_1p22.yaml")
     absorber = _absorber(stack)
     assert absorber.role == "absorber"
     # Same convention as the wide-gap preset: absorber Eg/chi left at 0; the

@@ -18,8 +18,8 @@ def test_compute_tandem_generation_happy_path(monkeypatch):
     monkeypatch.setattr(tandem_optics_mod, "load_nk", fake_load_nk)
 
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    top_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-    bottom_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    top_cell = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
+    bottom_cell = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
     from perovskite_sim.models.tandem_config import TandemConfig
     cfg = TandemConfig(
@@ -71,8 +71,8 @@ def test_compute_tandem_generation_empty_junction_stack(monkeypatch):
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.models.tandem_config import TandemConfig
 
-    top_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
-    bottom_cell = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    top_cell = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
+    bottom_cell = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
     cfg = TandemConfig(
         top_cell=top_cell,
@@ -117,7 +117,7 @@ def test_tandem_generation_offsets_electrical_grids_after_substrate_prefixes(
     from perovskite_sim.physics.generation import dual_cell_faces
     from perovskite_sim.physics.tandem_optics import compute_tandem_generation
 
-    reference = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    reference = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     top_substrate = LayerSpec(
         "top_glass", 2.0e-6, reference.layers[0].params, "substrate"
     )

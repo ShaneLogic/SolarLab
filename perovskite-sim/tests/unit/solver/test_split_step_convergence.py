@@ -87,7 +87,7 @@ from perovskite_sim.solver.mol import (
 
 pytestmark = pytest.mark.slow
 
-CONFIG = "configs/ionmonger_benchmark.yaml"
+CONFIG = "tests/fixtures/configs/ionmonger_benchmark.yaml"
 NODES_PER_LAYER = 10          # N = 31, matches the split_step tests in test_mol.py
 
 # Total physical time.  Derived from the ionic timescale, NOT from

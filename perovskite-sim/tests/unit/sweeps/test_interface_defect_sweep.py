@@ -43,7 +43,7 @@ def _baseline_scaps_stack():
     """scaps_mirror.yaml on main already declares a PVK/ETL InterfaceDefect
     via the Phase E1.5 ``interfaces:`` block, so the loader returns a
     DeviceStack with interface_defects[1] populated."""
-    return load_scaps_yaml("configs/scaps_mirror.yaml")
+    return load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
 
 
 def test_interface_defect_N_t_cm2_modulates_devicestack_interfaces_srv():

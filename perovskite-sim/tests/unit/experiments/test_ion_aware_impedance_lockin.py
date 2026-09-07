@@ -20,7 +20,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 @pytest.fixture(scope="module")
 def frequency_domain_fixture():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 12)
     dc_state = solve_ion_aware_dc(
         x,

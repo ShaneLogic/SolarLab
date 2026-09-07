@@ -3,17 +3,17 @@ from perovskite_sim.models.device import electrical_layers
 
 
 def test_nip_loads_three_layers():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     assert len(stack.layers) == 3
 
 
 def test_pin_loads_three_layers():
-    stack = load_device_from_yaml("configs/pin_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/pin_MAPbI3.yaml")
     assert len(stack.layers) == 3
 
 
 def test_solarscale_band_aligned_template_loads_with_complete_band_data():
-    stack = load_device_from_yaml("configs/solarscale_nip_band_aligned.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/solarscale_nip_band_aligned.yaml")
     elec = electrical_layers(stack)
 
     assert len(stack.layers) == 4
@@ -24,7 +24,7 @@ def test_solarscale_band_aligned_template_loads_with_complete_band_data():
 
 
 def test_absorber_has_ions():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     absorber = next(l for l in stack.layers if l.role == "absorber")
     assert absorber.params.D_ion > 0
 

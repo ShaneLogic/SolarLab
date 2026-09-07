@@ -39,7 +39,7 @@ def _stack_with_cross_node_defect(stack):
 
 @pytest.fixture(scope="module")
 def comparison_fixture():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 12)
     mat = build_material_arrays(x, stack)
     dc_state = solve_ion_aware_dc(

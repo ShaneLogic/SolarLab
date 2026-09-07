@@ -21,7 +21,7 @@ def _freeze_ions(stack: DeviceStack) -> DeviceStack:
 def test_voc_grain_sweep_monotone_in_Lg():
     """V_oc should grow as L_g grows (more bulk-like behaviour: a single
     centred GB takes a smaller relative fraction of the lateral domain)."""
-    stack = _freeze_ions(load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml"))
+    stack = _freeze_ions(load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml"))
     res = run_voc_grain_sweep(
         stack=stack,
         grain_sizes=(200e-9, 500e-9, 1000e-9),

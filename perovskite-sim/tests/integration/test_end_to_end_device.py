@@ -6,7 +6,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 def test_end_to_end_jv_response_is_finite_and_reasonable():
     """Low-resolution device run should produce physically reasonable J-V output."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     result = run_jv_sweep(stack, N_grid=30, n_points=8, v_rate=5.0)
 
     assert np.all(np.isfinite(result.V_fwd))

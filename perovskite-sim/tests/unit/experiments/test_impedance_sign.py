@@ -12,7 +12,7 @@ import pytest
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.experiments.impedance import run_impedance, extract_impedance
 
-_CONFIGS_DIR = Path(__file__).resolve().parents[3] / "configs"
+_CONFIGS_DIR = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "configs"
 
 
 def test_dummy_rc_has_negative_imaginary_impedance():

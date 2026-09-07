@@ -6,7 +6,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def test_shipped_cigs_optics_round_trips_through_inline_device_path() -> None:
-    loaded = load_device_from_yaml("configs/cigs_graded_optics.yaml")
+    loaded = load_device_from_yaml("tests/fixtures/configs/cigs_graded_optics.yaml")
     serialized = _stack_to_config_dict(loaded)
     rebuilt = stack_from_dict(serialized)
     assert serialized["device"]["graded_optics"] is True
@@ -27,7 +27,7 @@ def test_shipped_cigs_optics_round_trips_through_inline_device_path() -> None:
 
 
 def test_historical_cigs_config_defaults_graded_optics_off() -> None:
-    loaded = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    loaded = load_device_from_yaml("tests/fixtures/configs/cigs_graded_notch.yaml")
     assert loaded.graded_optics is False
     assert all(
         layer.params.cigs_graded_optics is None for layer in loaded.layers

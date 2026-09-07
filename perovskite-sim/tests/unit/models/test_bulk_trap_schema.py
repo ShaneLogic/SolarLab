@@ -21,7 +21,7 @@ from perovskite_sim.solver.mol import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIG = ROOT / "configs/csi_gaussian_bulk_trap_pn_research.yaml"
+CONFIG = ROOT / "tests/fixtures/configs/csi_gaussian_bulk_trap_pn_research.yaml"
 
 
 def _stack():

@@ -145,7 +145,7 @@ def test_electrical_protocol_rejects_invalid_controls(kwargs, message):
 
 def test_linear_temperature_dependent_mpp_has_analytic_coupled_root(monkeypatch):
     calls = _install_temperature_solver(monkeypatch)
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     result = solve_electrothermal_operating_point(
         stack,
         _thermal(),
@@ -179,7 +179,7 @@ def test_linear_temperature_dependent_mpp_has_analytic_coupled_root(monkeypatch)
 
 def test_series_loss_reduces_export_and_increases_temperature(monkeypatch):
     _install_temperature_solver(monkeypatch)
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     arguments = (
         stack,
         _thermal(),
@@ -209,7 +209,7 @@ def test_series_loss_reduces_export_and_increases_temperature(monkeypatch):
 def test_legacy_mode_is_rejected_before_an_electrical_solve(monkeypatch):
     calls = _install_temperature_solver(monkeypatch)
     stack = dataclasses.replace(
-        load_device_from_yaml("configs/nip_MAPbI3.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml"),
         mode="legacy",
     )
 
@@ -244,7 +244,7 @@ def test_invalid_electrical_source_fails_closed(
     )
     with pytest.raises(ElectrothermalSourceError, match=message):
         solve_electrothermal_operating_point(
-            load_device_from_yaml("configs/nip_MAPbI3.yaml"),
+            load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml"),
             _thermal(),
             ExternalCircuitProtocol(),
             _electrical(),
@@ -256,7 +256,7 @@ def test_impossible_temperature_envelope_fails_closed(monkeypatch):
     _install_temperature_solver(monkeypatch)
     with pytest.raises(ElectrothermalConvergenceError, match="no electrothermal root"):
         solve_electrothermal_operating_point(
-            load_device_from_yaml("configs/nip_MAPbI3.yaml"),
+            load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml"),
             _thermal(
                 heat_transfer_coefficient_W_m2_K=1.0,
                 maximum_temperature_K=310.0,
@@ -271,7 +271,7 @@ def test_export_above_declared_absorption_fails_closed(monkeypatch):
     _install_temperature_solver(monkeypatch)
     with pytest.raises(ThermalEnergySourceError, match="exceeds"):
         solve_electrothermal_operating_point(
-            load_device_from_yaml("configs/nip_MAPbI3.yaml"),
+            load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml"),
             _thermal(absorbed_optical_power_W_m2=100.0),
             ExternalCircuitProtocol(),
             _electrical(),
@@ -282,7 +282,7 @@ def test_export_above_declared_absorption_fails_closed(monkeypatch):
 def test_result_recomputes_evaluation_and_certification_evidence(monkeypatch):
     _install_temperature_solver(monkeypatch)
     result = solve_electrothermal_operating_point(
-        load_device_from_yaml("configs/nip_MAPbI3.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml"),
         _thermal(),
         ExternalCircuitProtocol(),
         _electrical(),

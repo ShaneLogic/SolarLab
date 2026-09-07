@@ -50,7 +50,7 @@ def test_physical_form_preserves_equilibrium():
 @pytest.mark.slow
 def test_ionmonger_bit_identical_no_dos():
     # ionmonger_benchmark has no Nc300/Nv300 -> the flag is a no-op.
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     on = dataclasses.replace(base, te_physical_norm=True)
     common = dict(N_grid=30, n_points=12, v_rate=5.0)
     r_off = run_jv_sweep(base, **common)

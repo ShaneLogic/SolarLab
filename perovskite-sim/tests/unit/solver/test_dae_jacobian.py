@@ -21,7 +21,7 @@ from perovskite_sim.solver.newton import solve_equilibrium
 
 
 def _model(*, field_mobility: bool = False):
-    source = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     source_layer = source.layers[1]
     params = source_layer.params
     assert params is not None
@@ -120,7 +120,7 @@ def test_nonlocal_photon_recycling_is_rejected():
 
 
 def test_zero_field_pf_cusp_is_rejected():
-    source = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     source_layer = source.layers[1]
     assert source_layer.params is not None
     layer = replace(

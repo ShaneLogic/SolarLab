@@ -35,7 +35,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.solver.mol import build_material_arrays
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
 
-_CONFIGS = Path(__file__).resolve().parents[2] / "configs"
+_CONFIGS = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "configs"
 _NIP = str(_CONFIGS / "nip_MAPbI3.yaml")
 
 

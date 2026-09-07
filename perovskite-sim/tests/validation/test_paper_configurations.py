@@ -141,14 +141,14 @@ def ionmonger_result() -> JVResult:
     functional). The band offsets alone raise V_oc to ~1.19 V, well above
     IonMonger's published ~1.07 V.
     """
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     return _run_jv(stack)
 
 
 @pytest.fixture(scope="module")
 def ionmonger_legacy_result() -> JVResult:
     """Same config in LEGACY mode — TE off, all post-Phase-1 physics off."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack_legacy = replace(stack, mode="legacy")
     return _run_jv(stack_legacy)
 
@@ -156,7 +156,7 @@ def ionmonger_legacy_result() -> JVResult:
 @pytest.fixture(scope="module")
 def ionmonger_repro_result() -> JVResult:
     """Courtier 2019 reproduction preset with calibrated paper V_bi."""
-    stack = load_device_from_yaml("configs/ionmonger_courtier2019_repro.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_courtier2019_repro.yaml")
     return _run_jv(stack)
 
 
@@ -240,7 +240,7 @@ def test_ionmonger_repro_matches_paper_metrics(
     _assert_registered_reproduction(
         "courtier2019-ionmonger",
         ionmonger_repro_result,
-        load_device_from_yaml("configs/ionmonger_courtier2019_repro.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_courtier2019_repro.yaml"),
     )
 
 
@@ -281,7 +281,7 @@ def test_ionmonger_jsc_near_beer_lambert_limit(
     """
     from perovskite_sim.constants import Q
 
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     absorber = next(l for l in stack.layers if l.role == "absorber")
     alpha = absorber.params.alpha
     L = absorber.thickness
@@ -316,7 +316,7 @@ def _load_driftfusion_flatband() -> DeviceStack:
     mode is set so that TE, TMM, photon recycling, and every other
     post-Phase-1 hook are off — matching Driftfusion's own physics set.
     """
-    stack = load_device_from_yaml("configs/driftfusion_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/driftfusion_benchmark.yaml")
     new_layers = []
     for layer in stack.layers:
         if layer.params is not None:
@@ -337,7 +337,7 @@ def driftfusion_result() -> JVResult:
 @pytest.fixture(scope="module")
 def driftfusion_repro_result() -> JVResult:
     """Calado 2016 reproduction preset with calibrated paper V_bi."""
-    stack = load_device_from_yaml("configs/driftfusion_calado2016_repro.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/driftfusion_calado2016_repro.yaml")
     return _run_jv(stack)
 
 
@@ -393,7 +393,7 @@ def test_driftfusion_repro_matches_paper_metrics(
     _assert_registered_reproduction(
         "calado2016-driftfusion",
         driftfusion_repro_result,
-        load_device_from_yaml("configs/driftfusion_calado2016_repro.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/driftfusion_calado2016_repro.yaml"),
     )
 
 
@@ -499,7 +499,7 @@ def ionmonger_tmm_result() -> JVResult:
     2. TMM optics replace Beer-Lambert generation
     3. Glass substrate layer added for the TMM optical stack
     """
-    stack = load_device_from_yaml("configs/ionmonger_benchmark_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark_tmm.yaml")
     return _run_jv(stack)
 
 

@@ -26,7 +26,7 @@ from perovskite_sim.solver.mol import assemble_rhs, build_material_arrays
 
 pytestmark = [pytest.mark.slow, pytest.mark.regression]
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG = ROOT / "configs/cSi_homojunction.yaml"
+CONFIG = ROOT / "tests/fixtures/configs/cSi_homojunction.yaml"
 
 
 def test_certified_qf_state_exposes_density_sg_cancellation_boundary():

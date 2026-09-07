@@ -113,7 +113,7 @@ def test_stack_flag_matches_env(monkeypatch):
 # --------------------------- config loaders -------------------------
 
 def test_config_loader_reads_projection(tmp_path):
-    cfg = yaml.safe_load(Path("configs/nip_MAPbI3.yaml").read_text())
+    cfg = yaml.safe_load(Path("tests/fixtures/configs/nip_MAPbI3.yaml").read_text())
     cfg.setdefault("device", {})["interface_plane_projection"] = True
     dst = tmp_path / "proj.yaml"
     dst.write_text(yaml.safe_dump(cfg))
@@ -122,7 +122,7 @@ def test_config_loader_reads_projection(tmp_path):
 
 
 def test_config_loader_default_projection_off():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     assert stack.interface_plane_projection is False
 
 

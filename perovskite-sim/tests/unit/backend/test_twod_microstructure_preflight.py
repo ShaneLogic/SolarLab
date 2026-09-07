@@ -154,7 +154,7 @@ def _mobile_protocol(stack):
 
 
 def test_jv_2d_mobile_requires_strict_protocol_before_submit(monkeypatch):
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     registry, _captured = _install_fakes(monkeypatch, stack)
 
     with pytest.raises(HTTPException) as error:
@@ -174,7 +174,7 @@ def test_jv_2d_mobile_requires_strict_protocol_before_submit(monkeypatch):
 
 
 def test_jv_2d_mobile_protocol_mismatch_rejected_before_submit(monkeypatch):
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     registry, _captured = _install_fakes(monkeypatch, stack)
     protocol = replace(
         _mobile_protocol(stack),
@@ -200,7 +200,7 @@ def test_jv_2d_mobile_protocol_mismatch_rejected_before_submit(monkeypatch):
 
 
 def test_jv_2d_matching_mobile_protocol_is_forwarded_and_serialized(monkeypatch):
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     registry, captured = _install_fakes(monkeypatch, stack)
     protocol = _mobile_protocol(stack)
 
@@ -226,7 +226,7 @@ def test_jv_2d_matching_mobile_protocol_is_forwarded_and_serialized(monkeypatch)
 
 
 def test_jv_2d_rejects_ambiguous_absolute_tolerance_before_submit(monkeypatch):
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     registry, _captured = _install_fakes(monkeypatch, stack)
 
     with pytest.raises(HTTPException) as error:

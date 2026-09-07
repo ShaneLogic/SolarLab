@@ -213,7 +213,7 @@ def _prepare_stack(
     project_root: Path,
 ) -> tuple[DeviceStack, str, dict[str, object]]:
     if study_id == "poole-frenkel-device":
-        relative = "configs/nip_MAPbI3.yaml"
+        relative = "tests/fixtures/configs/nip_MAPbI3.yaml"  # historical preset kept as a test fixture
         stack = _with_poole_frenkel(load_device_from_yaml(project_root / relative))
         overrides: dict[str, object] = {
             "absorber_pf_gamma_n_sqrt_m_V": 2.0e-3,

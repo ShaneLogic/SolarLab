@@ -118,7 +118,7 @@ def test_legacy_interfaces_unaffected():
     """Interfaces without an InterfaceDefect (eval nodes == idx) must not
     receive the mirror pair — flag on == flag off on such stacks."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")  # SRVs, no defects
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")  # SRVs, no defects
     x, m_off = _build(base)
     _, m_on = _build(dataclasses.replace(base, interface_two_sided=True))
     np.testing.assert_array_equal(_interface_dn(base, x, m_off),

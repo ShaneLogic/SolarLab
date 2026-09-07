@@ -109,7 +109,7 @@ def gate_stack():
     # consistently follows DeviceStack's steric-diffusion-only default=True,
     # which removes this raw branch landing before the generic rejector fires.
     return dataclasses.replace(
-        load_device_from_yaml("configs/ionmonger_benchmark.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml"),
         ion_steric_diffusion_only=False,
     )
 
@@ -267,7 +267,7 @@ def test_rejector_is_inert_on_a_healthy_sweep(monkeypatch):
     neither recovery can replace a state. The 4-leg diagnostic still executes,
     but its result is discarded just as it must be on the healthy path.
     """
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     kw = dict(N_grid=30, n_points=8, v_rate=5.0)
     r_on = run_jv_sweep(stack, **kw)
     monkeypatch.setattr(JV, "_J_BRANCH_EXCESS", np.inf)
@@ -295,7 +295,7 @@ def test_guard_actually_fires_on_the_gate_config(gate_stack, monkeypatch):
 
 def test_shipped_steric_default_avoids_the_historical_spike(monkeypatch):
     """The production default is stable even with the generic guard disabled."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     assert stack.ion_steric_diffusion_only is True
     monkeypatch.setattr(JV, "_J_BRANCH_EXCESS", np.inf)
     result = run_jv_sweep(stack, **_GATE)

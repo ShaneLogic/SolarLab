@@ -154,7 +154,7 @@ def test_scalar_atol_round_trip_is_exact():
 
 
 def test_mobile_runner_requires_explicit_research_protocol():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
     with pytest.raises(ImplicitProtocolError, match="research_strict"):
         run_jv_sweep_2d(
@@ -177,7 +177,7 @@ def test_mobile_runner_requires_explicit_research_protocol():
 def test_strict_mobile_runner_returns_protocol_current_and_inventory(monkeypatch):
     import perovskite_sim.twod.experiments.jv_sweep_2d as runner
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     common = {
         "lateral_length": 1.0e-7,
         "Nx": 2,
@@ -226,7 +226,7 @@ def test_strict_mobile_runner_returns_protocol_current_and_inventory(monkeypatch
 def test_default_frozen_runner_returns_visible_implicit_protocol(monkeypatch):
     import perovskite_sim.twod.experiments.jv_sweep_2d as runner
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     monkeypatch.setattr(
         runner,
         "_integrate_step_2d",

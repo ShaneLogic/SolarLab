@@ -86,7 +86,7 @@ def _with_absorber_thickness(stack, thickness_um: float):
 
 def _ungraded_continuation_stack(thickness_um: float):
     """Rung zero: no Robin contact, grading, or graded-mesh multiplier."""
-    base = load_device_from_yaml("configs/cigs_baseline.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/cigs_baseline.yaml")
     assert base.S_n_right is None
     assert not base.band_grading
     assert all(
@@ -98,7 +98,7 @@ def _ungraded_continuation_stack(thickness_um: float):
 
 
 def _configured_stacks():
-    base = load_device_from_yaml("configs/cigs_baseline.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/cigs_baseline.yaml")
     base = dataclasses.replace(base, S_n_right=1e3, mode="full")
     graded = _back_graded(base, eg_step=0.25, chi_step=0.15, N_mult=2)
     return base, graded
@@ -141,7 +141,7 @@ def _run_bounded(stack, *, label: str, **kwargs):
 @pytest.fixture(scope="module")
 def cigs_ungraded_grid_ladder():
     """Certified 25 mV protocol on the registered nominal grid ladder."""
-    stack = load_device_from_yaml("configs/cigs_baseline.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cigs_baseline.yaml")
     results = {
         n_grid: _run_bounded(
             stack,
@@ -185,13 +185,13 @@ def cigs_grading_production_pair():
 def test_dynamic_cigs_grading_matches_the_shipped_config():
     """The slow diagnostic must exercise the config registered in the matrix."""
     _, dynamic_graded = _configured_stacks()
-    shipped = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    shipped = load_device_from_yaml("tests/fixtures/configs/cigs_graded_notch.yaml")
     assert dynamic_graded == shipped
 
 
 def test_cigs_n_left_voltage_conventions_are_explicit():
     """Positive V_app reduces the built-in drop for the n-left stack."""
-    base = load_device_from_yaml("configs/cigs_baseline.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/cigs_baseline.yaml")
     x = build_electrical_grid(base, 40)
     mat = build_material_arrays(x, base)
     assert base.compute_V_bi() < 0.0

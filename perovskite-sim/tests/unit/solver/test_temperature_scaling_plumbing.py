@@ -20,7 +20,7 @@ from perovskite_sim.solver.mol import build_material_arrays
 
 @pytest.fixture
 def stack():
-    return load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
 
 
 @pytest.fixture

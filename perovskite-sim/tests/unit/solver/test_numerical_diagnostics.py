@@ -443,7 +443,7 @@ def test_real_dark_transient_reports_exact_terminal_block_minima():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.solver.newton import solve_equilibrium
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x = multilayer_grid([Layer(layer.thickness, 5) for layer in stack.layers])
     mat = mol.build_material_arrays(x, stack)
     initial = solve_equilibrium(x, stack)

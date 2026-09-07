@@ -45,7 +45,7 @@ from perovskite_sim.models.device import InterfaceDefect, electrical_layers
 
 pytestmark = pytest.mark.slow
 
-CFG = "configs/solarscale_nip_band_aligned.yaml"
+CFG = "tests/fixtures/configs/solarscale_nip_band_aligned.yaml"
 #: Stage 2c operating point and numerics.
 EG, TAU, N_GRID = 1.40, 1e-6, 60
 A0 = 0.839              # absorptance anchor (optics-only)

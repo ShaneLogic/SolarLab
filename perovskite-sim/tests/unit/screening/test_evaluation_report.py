@@ -60,7 +60,7 @@ def test_material_evaluation_report_pack_writes_expected_artifacts(tmp_path: Pat
     screening_dir = tmp_path / "screening"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=screening_dir,
         limit=1,
         import_policy="production",
@@ -123,7 +123,7 @@ def test_diagnostic_report_marks_missing_eqe_as_diagnostic_only(tmp_path: Path) 
     screening_dir = tmp_path / "screening"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=screening_dir,
         limit=1,
         import_policy="production",
@@ -152,7 +152,7 @@ def test_production_report_rejects_legacy_template(tmp_path: Path) -> None:
     screening_dir = tmp_path / "screening"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=screening_dir,
         limit=1,
         import_policy="production",
@@ -176,7 +176,7 @@ def test_production_report_rejects_unbracketed_jv(tmp_path: Path) -> None:
     screening_dir = tmp_path / "screening"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/solarscale_nip_band_aligned.yaml",
+        template_path="tests/fixtures/configs/solarscale_nip_band_aligned.yaml",
         out_dir=screening_dir,
         limit=1,
         import_policy="production",
@@ -234,7 +234,7 @@ def test_production_report_blocks_missing_band_alignment_provenance(tmp_path: Pa
     screening_dir = tmp_path / "screening"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/solarscale_nip_band_aligned.yaml",
+        template_path="tests/fixtures/configs/solarscale_nip_band_aligned.yaml",
         out_dir=screening_dir,
         limit=1,
         import_policy="production",
@@ -268,7 +268,7 @@ def test_material_evaluation_report_rejects_missing_material(tmp_path: Path) -> 
     screening_dir = tmp_path / "screening"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=screening_dir,
         limit=1,
         import_policy="production",

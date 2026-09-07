@@ -25,7 +25,7 @@ def _dual_ion_stack(
     shared_site: bool = True,
     negative_limit_m3: float | None = None,
 ):
-    source = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layer = source.layers[1]
     assert layer.params is not None
     limit = layer.params.P_lim if negative_limit_m3 is None else negative_limit_m3
@@ -289,7 +289,7 @@ def test_positive_and_negative_coordinate_charge_responses_are_antisymmetric():
 
 
 def test_capability_rejects_missing_negative_species():
-    source = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layer = source.layers[1]
     stack = replace(
         source,

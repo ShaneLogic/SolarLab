@@ -15,8 +15,8 @@ from perovskite_sim.models.el import ELResult
 
 # ----------------------------- fixtures -------------------------------------
 
-TMM_CONFIG = "configs/nip_MAPbI3_tmm.yaml"
-BEER_LAMBERT_CONFIG = "configs/nip_MAPbI3.yaml"
+TMM_CONFIG = "tests/fixtures/configs/nip_MAPbI3_tmm.yaml"
+BEER_LAMBERT_CONFIG = "tests/fixtures/configs/nip_MAPbI3.yaml"
 
 
 @pytest.fixture(scope="module")

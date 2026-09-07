@@ -14,7 +14,7 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture(scope="module")
 def nip_result():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     return run_jv_sweep(stack, N_grid=60, n_points=20, v_rate=5.0)
 
 
@@ -27,7 +27,7 @@ def ionmonger_result():
     max_step cap. This fixture runs that preset at the tightest grid the
     slow suite uses so the monotonicity test below can guard the cap.
     """
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     return run_jv_sweep(stack, N_grid=60, n_points=20, v_rate=5.0)
 
 
@@ -92,7 +92,7 @@ def test_ionmonger_voc_exceeds_vbi_eff(ionmonger_result):
     test fails loudly.
     """
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     V_bi_eff = stack.compute_V_bi()
     V_oc = ionmonger_result.metrics_fwd.V_oc
     assert V_oc > V_bi_eff + 0.1, (

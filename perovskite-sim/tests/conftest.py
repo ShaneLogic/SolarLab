@@ -76,3 +76,40 @@ def pytest_configure(config):
     # Stored on config so the limits persist for the whole session;
     # pytest keeps config alive until teardown.
     config._blas_thread_limiter = threadpool_limits(limits=1, user_api="blas")
+
+
+# ---------------------------------------------------------------------------
+# Historical presets live in tests/fixtures/configs/ and are not shipped. API
+# tests that exercise them by name get a merged directory (shipped + fixtures)
+# served through the backend for the duration of the test.
+# ---------------------------------------------------------------------------
+import shutil  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def all_presets_dir(tmp_path_factory):
+    root = Path(__file__).resolve().parents[1]
+    merged = tmp_path_factory.mktemp("all-presets")
+    for src in (root / "configs", root / "tests" / "fixtures" / "configs"):
+        for p in src.rglob("*.yaml"):
+            rel = p.relative_to(src)
+            if rel.parts[0] == "user":
+                continue
+            (merged / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, merged / rel)
+    return merged
+
+
+@pytest.fixture
+def serve_all_presets(monkeypatch, all_presets_dir):
+    import backend.main as backend_main
+    import backend.user_configs as user_configs
+
+    monkeypatch.setattr(backend_main, "CONFIGS_DIR", str(all_presets_dir))
+    monkeypatch.setattr(user_configs, "CONFIGS_ROOT", all_presets_dir)
+    monkeypatch.setattr(user_configs, "USER_CONFIGS_ROOT", all_presets_dir / "user")
+    return all_presets_dir
+

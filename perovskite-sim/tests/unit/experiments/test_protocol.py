@@ -44,12 +44,12 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 @pytest.fixture(scope="module")
 def stack():
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 @pytest.fixture(scope="module")
 def tmm_stack():
-    return load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
 
 
 @pytest.fixture

@@ -143,7 +143,7 @@ class _Stack:
 
 
 def _real_etl_stack():
-    stack = load_device_from_yaml(Path("configs/interface_charge_research.yaml"))
+    stack = load_device_from_yaml(Path("tests/fixtures/configs/interface_charge_research.yaml"))
     return apply_sweep_point(
         stack,
         SweepPoint(

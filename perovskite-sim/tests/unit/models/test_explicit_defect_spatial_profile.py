@@ -173,7 +173,7 @@ def test_empty_v3_document_cannot_reserve_spatial_semantics():
 
 def test_v3_roundtrips_through_standard_backend_device_payload():
     baseline = load_device_from_yaml(
-        str(ROOT / "configs" / "distributed_defect_qf_dc_pn.yaml")
+        str(ROOT / "tests/fixtures/configs" / "distributed_defect_qf_dc_pn.yaml")
     )
     document = _document()
     first = baseline.layers[0]

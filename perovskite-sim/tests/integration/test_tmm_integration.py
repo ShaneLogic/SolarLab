@@ -13,7 +13,7 @@ pytestmark = pytest.mark.slow
 @pytest.fixture(scope="module")
 def stack_beer_lambert():
     """IonMonger benchmark stack — no optical_material, uses Beer-Lambert."""
-    return load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +97,7 @@ def test_nip_tmm_preset_jsc_in_band():
     """
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     result = run_jv_sweep(stack, n_points=21)
     J_sc = result.metrics_fwd.J_sc
     print(f"\nnip_MAPbI3_tmm J_sc = {J_sc:.2f} A/m^2")
@@ -114,7 +114,7 @@ def test_tmm_jsc_below_beer_lambert():
     strictly lower than BL J_sc on otherwise-equivalent presets.
 
     Expected window per plan: [0.80, 0.98]. We widen the lower bound to 0.50
-    because `configs/nip_MAPbI3.yaml` uses `Phi = 2.5e21` m^-2 s^-1, which is
+    because `tests/fixtures/configs/nip_MAPbI3.yaml` uses `Phi = 2.5e21` m^-2 s^-1, which is
     ~1.44x the true above-gap AM1.5G photon flux used by TMM (see Task 7.5
     investigation, commit 2dff6ab fixing `am15g.csv`). The inflated BL
     reference pushes BL J_sc to ~400 A/m^2 (above the MAPbI3 SQ limit of
@@ -126,8 +126,8 @@ def test_tmm_jsc_below_beer_lambert():
     """
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
-    bl = run_jv_sweep(load_device_from_yaml("configs/nip_MAPbI3.yaml"), n_points=21)
-    tmm = run_jv_sweep(load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml"), n_points=21)
+    bl = run_jv_sweep(load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml"), n_points=21)
+    tmm = run_jv_sweep(load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml"), n_points=21)
     ratio = tmm.metrics_fwd.J_sc / bl.metrics_fwd.J_sc
     assert 0.50 <= ratio <= 0.98, (
         f"TMM/BL J_sc ratio {ratio:.3f} outside expected 0.50-0.98 window "
@@ -144,7 +144,7 @@ def test_pin_tmm_preset_jsc_in_band():
     """
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
-    stack = load_device_from_yaml("configs/pin_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/pin_MAPbI3_tmm.yaml")
     result = run_jv_sweep(stack, n_points=21)
     J_sc = result.metrics_fwd.J_sc
     print(f"\npin_MAPbI3_tmm J_sc = {J_sc:.2f} A/m^2")

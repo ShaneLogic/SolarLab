@@ -22,8 +22,8 @@ gaps:
   - id: cigs-2um-graded-notch
     status: closed
     classification: contact-orientation-grid-and-grading-contract
-    config: configs/cigs_baseline.yaml
-    related_config: configs/cigs_graded_notch.yaml
+    config: tests/fixtures/configs/cigs_baseline.yaml
+    related_config: tests/fixtures/configs/cigs_graded_notch.yaml
     reproduction: >-
       pytest -q -m 'slow or not slow'
       tests/regression/test_grading_cigs_notch.py
@@ -85,7 +85,7 @@ gaps:
   - id: lin2019-tandem-jsc-pce
     status: closed
     classification: optics-and-current-matching
-    config: configs/tandem_lin2019.yaml
+    config: tests/fixtures/configs/tandem_lin2019.yaml
     reproduction: >-
       pytest -q -m 'slow or not slow'
       tests/integration/test_tandem_lin2019.py
@@ -121,7 +121,7 @@ gaps:
   - id: ionmonger-residual-ss-96
     status: closed
     classification: numerical-steady-state-envelope
-    config: configs/ionmonger_benchmark.yaml
+    config: tests/fixtures/configs/ionmonger_benchmark.yaml
     reproduction: >-
       pytest -q -m slow
       tests/regression/test_p1_steady_state_mesh_convergence.py
@@ -150,7 +150,7 @@ gaps:
   - id: csi-qf-jv-grid-convergence
     status: closed
     classification: qf-terminal-jv-grid-convergence
-    config: configs/cSi_homojunction.yaml
+    config: tests/fixtures/configs/cSi_homojunction.yaml
     reproduction: >-
       pytest -q -m slow
       tests/regression/test_csi_quasi_fermi_convergence.py
@@ -187,7 +187,7 @@ gaps:
   - id: csi-transient-jv-grid-envelope
     status: deferred_to_p2
     classification: default-driver-numerical-runtime-envelope
-    config: configs/cSi_homojunction.yaml
+    config: tests/fixtures/configs/cSi_homojunction.yaml
     reproduction: >-
       pytest -q -m 'slow or not slow'
       tests/regression/test_csi_grid_envelope.py
@@ -244,7 +244,7 @@ gaps:
   - id: csi-mott-schottky-convergence
     status: deferred_to_p2
     classification: cv-internal-closure-and-external-reference
-    config: configs/cSi_homojunction.yaml
+    config: tests/fixtures/configs/cSi_homojunction.yaml
     reproduction: |-
       OPENBLAS_NUM_THREADS=1 pytest -q -m slow tests/regression/test_csi_frequency_domain_impedance.py
       OPENBLAS_NUM_THREADS=1 pytest -q -m slow tests/validation/test_csi_vannijen2025_cv.py
@@ -310,8 +310,8 @@ gaps:
     status: deferred_to_p2
     classification: external-validation-and-provenance
     configs:
-      - configs/ionmonger_courtier2019_repro.yaml
-      - configs/driftfusion_calado2016_repro.yaml
+      - tests/fixtures/configs/ionmonger_courtier2019_repro.yaml
+      - tests/fixtures/configs/driftfusion_calado2016_repro.yaml
     reproduction: >-
       pytest -q tests/reproducibility/test_matrix.py
       -k calibrated_external_reproductions

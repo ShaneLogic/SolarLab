@@ -18,7 +18,7 @@ from perovskite_sim.solver.newton import solve_equilibrium
 
 
 def _stack():
-    source = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     source_layer = source.layers[1]
     assert source_layer.params is not None
     layer = replace(

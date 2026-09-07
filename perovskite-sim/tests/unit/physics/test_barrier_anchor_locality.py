@@ -263,7 +263,7 @@ def test_the_unblocked_branch_restores_the_one_cell_drive_d8_e2r_removed():
 def test_the_registered_lane_config_shows_the_same_anchor_dependence():
     """The real numbers, so the limitation is not only a synthetic artifact.
 
-    Measured on `configs/wkb_tunnelling_intraband_spike.yaml` at the lane's
+    Measured on `tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml` at the lane's
     coarsest grid and its own bias: a plain interior face seven cells from the
     interface reproduces 99.5 % of the interface-anchored flux, while the
     OTHER real heterointerface reports 0.19 % of it. The anchoring therefore
@@ -283,7 +283,7 @@ def test_the_registered_lane_config_shows_the_same_anchor_dependence():
     from perovskite_sim.models.device import electrical_layers
 
     root = Path(__file__).resolve().parents[3]
-    stack = load_device_from_yaml(root / "configs/wkb_tunnelling_intraband_spike.yaml")
+    stack = load_device_from_yaml(root / "tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml")
     grid = multilayer_grid(
         tuple(Layer(layer.thickness, 24) for layer in electrical_layers(stack)),
         alpha=2.0,

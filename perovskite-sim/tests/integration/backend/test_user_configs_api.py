@@ -10,6 +10,15 @@ from backend.main import app
 client = TestClient(app)
 
 
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture(autouse=True)
+def _all_presets(serve_all_presets):
+    """Historical presets are test fixtures; serve them through the API here."""
+    return serve_all_presets
+
+
 class TestLayerTemplatesEndpoint:
     def test_returns_dict_of_templates(self) -> None:
         r = client.get("/api/layer-templates")
@@ -104,17 +113,15 @@ class TestConfigsTierCompat:
                 )
 
 
-CONFIGS_DIR = Path(__file__).resolve().parents[3] / "configs"
-USER_DIR = CONFIGS_DIR / "user"
-
-
 @pytest.fixture
-def clean_user_dir():
-    if USER_DIR.exists():
-        shutil.rmtree(USER_DIR)
-    yield
-    if USER_DIR.exists():
-        shutil.rmtree(USER_DIR)
+def clean_user_dir(serve_all_presets):
+    """Fresh ``user/`` directory under the served (merged) preset directory."""
+    user_dir = serve_all_presets / "user"
+    if user_dir.exists():
+        shutil.rmtree(user_dir)
+    yield user_dir
+    if user_dir.exists():
+        shutil.rmtree(user_dir)
 
 
 class TestListConfigsNamespace:
@@ -130,8 +137,8 @@ class TestListConfigsNamespace:
         assert any(c["name"].startswith("nip_MAPbI3") for c in shipped)
 
     def test_includes_user_presets(self, clean_user_dir) -> None:
-        USER_DIR.mkdir(parents=True, exist_ok=True)
-        (USER_DIR / "my_test.yaml").write_text("device: {V_bi: 1.0}\nlayers: []\n")
+        clean_user_dir.mkdir(parents=True, exist_ok=True)
+        (clean_user_dir / "my_test.yaml").write_text("device: {V_bi: 1.0}\nlayers: []\n")
         r = client.get("/api/configs")
         configs = r.json()["configs"]
         user_entries = [c for c in configs if c["namespace"] == "user"]
@@ -140,7 +147,7 @@ class TestListConfigsNamespace:
     def test_user_dir_missing_does_not_break_listing(
         self, clean_user_dir
     ) -> None:
-        # USER_DIR removed by fixture; endpoint must still 200.
+        # user/ removed by the fixture; endpoint must still 200.
         r = client.get("/api/configs")
         assert r.status_code == 200
 
@@ -154,7 +161,7 @@ class TestPostUserConfig:
         r = client.post("/api/configs/user", json=body)
         assert r.status_code == 200
         assert r.json()["saved"] == "post_test_stack"
-        assert (USER_DIR / "post_test_stack.yaml").exists()
+        assert (clean_user_dir / "post_test_stack.yaml").exists()
 
     def test_collision_with_shipped_returns_409(self, clean_user_dir) -> None:
         body = {"name": "nip_MAPbI3", "config": {"device": {"V_bi": 1.0}, "layers": []}}

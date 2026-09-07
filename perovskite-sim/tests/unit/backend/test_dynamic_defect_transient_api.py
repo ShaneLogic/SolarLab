@@ -17,7 +17,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIG = ROOT / "configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
+CONFIG = ROOT / "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
 TIMES_S = (0.0, 1.0e-8, 1.0e-6, 1.0e-4)
 VOLTAGE_V = (0.0, 0.05, 0.05, 0.05)
 

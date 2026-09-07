@@ -136,7 +136,7 @@ def test_dos_bearing_layers_get_their_own_richardson_constant():
 
 def test_configs_without_dos_keep_the_free_electron_value():
     """No DOS declared, nothing to derive from — must not change."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     _, mat = _mat(stack)
     assert np.allclose(mat.A_star_n, A_STAR_FREE_ELECTRON, rtol=1e-3)
     assert np.allclose(mat.A_star_p, A_STAR_FREE_ELECTRON, rtol=1e-3)

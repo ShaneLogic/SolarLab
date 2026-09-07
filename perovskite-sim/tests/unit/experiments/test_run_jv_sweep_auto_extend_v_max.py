@@ -40,7 +40,7 @@ def _scaps_mirror_robin_low_etl():
 
     This is also the device the collapsed-current V_oc defect was
     diagnosed on; see tests/unit/experiments/test_voc_collapsed_current.py."""
-    base = load_scaps_yaml("configs/scaps_mirror.yaml")
+    base = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     robin = dataclasses.replace(
         base, mode="full",
         S_n_right=1.0e5, S_p_right=1.0e-4,
@@ -127,7 +127,7 @@ def test_auto_extend_v_max_succeeds_on_second_attempt():
 def test_already_bracketed_first_attempt_does_not_retry():
     """When the first sweep already brackets V_oc, ``v_max_max_attempts``
     has no effect — same result whether attempts=1 or attempts=5."""
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     r1 = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
     r2 = run_jv_sweep(
         stack, N_grid=30, n_points=20, v_rate=5.0,

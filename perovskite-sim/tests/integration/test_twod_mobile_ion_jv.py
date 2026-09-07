@@ -55,7 +55,7 @@ def _combined_stack() -> DeviceStack:
 
 
 def test_real_strict_mobile_ion_jv_returns_complete_point_evidence():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     common = {
         "lateral_length": 1.0e-7,
         "Nx": 2,

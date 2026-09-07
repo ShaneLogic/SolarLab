@@ -1292,7 +1292,7 @@ def test_research_api_rejects_tampered_microscopic_dark_reference(
 
 @pytest.mark.slow
 def test_csi_small_grid_has_a_physical_short_circuit_solution():
-    stack = load_device_from_yaml(Path("configs/cSi_homojunction.yaml"))
+    stack = load_device_from_yaml(Path("tests/fixtures/configs/cSi_homojunction.yaml"))
     stack = replace(stack, V_bi=abs(stack.compute_V_bi()))
     electrical = tuple(layer for layer in stack.layers if layer.role != "substrate")
     x = multilayer_grid(

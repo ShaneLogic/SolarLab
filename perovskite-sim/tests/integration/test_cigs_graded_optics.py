@@ -49,7 +49,7 @@ def _electrical_grid(stack, intervals_per_layer: int = 20) -> np.ndarray:
 
 
 def test_shipped_research_config_builds_finite_photon_bounded_generation() -> None:
-    stack = load_device_from_yaml("configs/cigs_graded_optics.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cigs_graded_optics.yaml")
     assert stack.band_grading
     assert stack.graded_optics
     absorber = next(layer for layer in stack.layers if layer.role == "absorber")
@@ -74,7 +74,7 @@ def test_shipped_research_config_builds_finite_photon_bounded_generation() -> No
 
 
 def test_optical_slice_refinement_converges_generation_and_budget() -> None:
-    base = load_device_from_yaml("configs/cigs_graded_optics.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/cigs_graded_optics.yaml")
     x = _electrical_grid(base, intervals_per_layer=20)
     weights = dual_cell_widths(x)
     results = []
@@ -102,7 +102,7 @@ def test_optical_slice_refinement_converges_generation_and_budget() -> None:
 
 
 def test_kk_parameter_quadrature_converges_generation() -> None:
-    base = load_device_from_yaml("configs/cigs_graded_optics.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/cigs_graded_optics.yaml")
     x = _electrical_grid(base, intervals_per_layer=16)
     weights = dual_cell_widths(x)
     generation = []
@@ -126,7 +126,7 @@ def test_kk_parameter_quadrature_converges_generation() -> None:
 
 
 def test_uniform_composition_slice_limit_matches_one_homogeneous_layer() -> None:
-    base = load_device_from_yaml("configs/cigs_graded_optics.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/cigs_graded_optics.yaml")
     layers = list(base.layers)
     absorber_index = next(
         index for index, layer in enumerate(layers) if layer.role == "absorber"

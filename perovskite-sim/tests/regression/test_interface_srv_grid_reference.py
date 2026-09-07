@@ -1,7 +1,7 @@
 """The interface SRV in the shipped screening config is a grid-referenced
 calibration, not a face-value surface-recombination velocity.
 
-``configs/solarscale_nip_band_aligned_iface.yaml`` declares
+``tests/fixtures/configs/solarscale_nip_band_aligned_iface.yaml`` declares
 ``sigma * v_th * N_t`` = 0.1 m/s at both hetero-interfaces. That number was
 not read off a measurement of the interface; it was tuned so the device-level
 penalty lands where perovskite devices actually sit (50-150 mV), at one
@@ -37,8 +37,8 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 pytestmark = pytest.mark.slow
 
-PLAIN = "configs/solarscale_nip_band_aligned.yaml"
-IFACE = "configs/solarscale_nip_band_aligned_iface.yaml"
+PLAIN = "tests/fixtures/configs/solarscale_nip_band_aligned.yaml"
+IFACE = "tests/fixtures/configs/solarscale_nip_band_aligned_iface.yaml"
 
 #: The mesh the SRV was calibrated on, and the one the config header names.
 N_GRID_CALIBRATED = 60

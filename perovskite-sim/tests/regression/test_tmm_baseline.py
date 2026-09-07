@@ -59,14 +59,14 @@ TOLERANCE = 5.0
 
 @pytest.fixture(scope="module")
 def nip_tmm_result():
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     stack = dataclasses.replace(stack, ion_steric_diffusion_only=False)
     return run_jv_sweep(stack, n_points=21)
 
 
 @pytest.fixture(scope="module")
 def pin_tmm_result():
-    stack = load_device_from_yaml("configs/pin_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/pin_MAPbI3_tmm.yaml")
     stack = dataclasses.replace(stack, ion_steric_diffusion_only=False)
     return run_jv_sweep(stack, n_points=21)
 

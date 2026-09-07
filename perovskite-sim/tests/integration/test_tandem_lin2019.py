@@ -67,7 +67,7 @@ from perovskite_sim.physics.tandem_optics import compute_tandem_generation
 @pytest.fixture(scope="module")
 def lin2019():
     """One tandem solve, shared by every figure-of-merit assertion."""
-    cfg = load_tandem_from_yaml("configs/tandem_lin2019.yaml")
+    cfg = load_tandem_from_yaml("tests/fixtures/configs/tandem_lin2019.yaml")
     assert cfg.benchmark is not None, "Lin 2019 preset must declare a benchmark block"
 
     # Span 300-1100 nm so the Sn-Pb 1.22 eV (~1016 nm) absorption tail is
@@ -88,7 +88,7 @@ def lin2019():
 
 def test_lin2019_absorber_thicknesses_follow_paper():
     """Keep the paper-reported ~300/800 nm thickness provenance executable."""
-    cfg = load_tandem_from_yaml("configs/tandem_lin2019.yaml")
+    cfg = load_tandem_from_yaml("tests/fixtures/configs/tandem_lin2019.yaml")
     top_abs = next(layer for layer in cfg.top_cell.layers if layer.role == "absorber")
     bot_abs = next(layer for layer in cfg.bottom_cell.layers if layer.role == "absorber")
     assert top_abs.thickness == pytest.approx(300e-9)
@@ -97,7 +97,7 @@ def test_lin2019_absorber_thicknesses_follow_paper():
 
 def test_lin2019_source_stack_and_reported_thicknesses():
     """Keep the source sequence and every reported contact thickness live."""
-    cfg = load_tandem_from_yaml("configs/tandem_lin2019.yaml")
+    cfg = load_tandem_from_yaml("tests/fixtures/configs/tandem_lin2019.yaml")
 
     assert [layer.name for layer in cfg.top_cell.layers] == [
         "glass",

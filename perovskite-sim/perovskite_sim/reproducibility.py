@@ -475,11 +475,14 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
                 if not provenance.get(required):
                     errors.append(f"n,k manifest {stem}: missing {required}")
 
+    # Shipped presets live under configs/; the historical presets the matrix and
+    # the refinement lanes still certify live under tests/fixtures/configs/.
     actual_paths = {
         path.relative_to(root).as_posix()
+        for config_root in (root / "configs", root / "tests" / "fixtures" / "configs")
         for pattern in ("*.yaml", "*.yml")
-        for path in (root / "configs").rglob(pattern)
-        if "user" not in path.relative_to(root / "configs").parts
+        for path in config_root.rglob(pattern)
+        if "user" not in path.relative_to(config_root).parts
     }
     declared_paths = [str(entry.get("path")) for entry in entries]
     if len(declared_paths) != len(set(declared_paths)):

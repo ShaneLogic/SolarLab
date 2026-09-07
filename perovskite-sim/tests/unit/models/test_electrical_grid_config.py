@@ -20,7 +20,7 @@ from perovskite_sim.models.config_loader import (
 from perovskite_sim.models.device import LayerSpec, electrical_layers
 
 
-CSI_CONFIG = Path("configs/cSi_homojunction.yaml")
+CSI_CONFIG = Path("tests/fixtures/configs/cSi_homojunction.yaml")
 
 
 def _named_layers() -> tuple[LayerSpec, ...]:
@@ -159,7 +159,7 @@ def test_csi_weighted_allocation_uses_exact_total(n_grid, expected):
 
 
 def test_largest_remainder_ties_are_layer_ordered_and_every_layer_gets_one():
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     tie = dataclasses.replace(
         base,
         grid_interval_weights=(1.0, 1.0, 1.0),
@@ -178,7 +178,7 @@ def test_largest_remainder_ties_are_layer_ordered_and_every_layer_gets_one():
 
 
 def test_custom_weights_fail_loudly_with_graded_multiplier():
-    graded = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    graded = load_device_from_yaml("tests/fixtures/configs/cigs_graded_notch.yaml")
     n_layers = len(electrical_layers(graded))
     custom = dataclasses.replace(
         graded,
@@ -195,7 +195,7 @@ def test_custom_weights_fail_loudly_with_graded_multiplier():
 
 
 def test_absent_grid_config_preserves_historical_grid_exactly():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     elec = electrical_layers(stack)
     n_grid = 100
     n_per = n_grid // len(elec)

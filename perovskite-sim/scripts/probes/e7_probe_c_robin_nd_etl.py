@@ -38,8 +38,8 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CONFIGS = {
     "v2_dirichlet": REPO_ROOT / "configs" / "scaps_mirror_v2.yaml",
-    "v2_robin_moderate": REPO_ROOT / "configs" / "scaps_mirror_v2_robin_moderate.yaml",
-    "v2_robin_strong": REPO_ROOT / "configs" / "scaps_mirror_v2_robin_strong.yaml",
+    "v2_robin_moderate": REPO_ROOT / "tests/fixtures/configs" / "scaps_mirror_v2_robin_moderate.yaml",
+    "v2_robin_strong": REPO_ROOT / "tests/fixtures/configs" / "scaps_mirror_v2_robin_strong.yaml",
 }
 
 JV_KWARGS = dict(N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)

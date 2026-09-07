@@ -27,7 +27,7 @@ def _replace_material(stack, layer_index: int, **changes):
 
 
 def _edge_case(name: str):
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     illuminated = False
     biases = (0.0,)
     carrier_scale = 1.0

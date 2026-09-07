@@ -30,7 +30,7 @@ from perovskite_sim.solver.mol import (
     build_material_arrays,
 )
 
-_BASE = "configs/nip_MAPbI3.yaml"
+_BASE = "tests/fixtures/configs/nip_MAPbI3.yaml"
 
 
 def _write_cfg(tmp_path, dev_extra=None, dos_layers=False):

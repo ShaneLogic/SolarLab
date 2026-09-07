@@ -17,7 +17,7 @@ on the streaming path stayed dark.
 
 This test monkeypatches ``run_tandem_jv`` to skip the ~60 s tandem
 sweep AND the stub n,k "Sub-cell J ranges do not overlap" failure
-mode that ships with ``configs/tandem_lin2019.yaml``. The monkeypatched
+mode that ships with ``tests/fixtures/configs/tandem_lin2019.yaml``. The monkeypatched
 function returns a synthetic ``TandemJVResult`` with sensible JVMetrics
 so the test exercises the SSE serialiser path end-to-end without
 running any real physics.
@@ -34,7 +34,7 @@ from backend.main import app
 
 
 _TANDEM_CONFIG = str(
-    (Path(__file__).parent.parent.parent.parent / "configs" / "tandem_lin2019.yaml").resolve()
+    (Path(__file__).parent.parent.parent.parent / "tests/fixtures/configs" / "tandem_lin2019.yaml").resolve()
 )
 
 

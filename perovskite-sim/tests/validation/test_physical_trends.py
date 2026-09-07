@@ -28,7 +28,7 @@ def baseline_stack() -> DeviceStack:
     and need optical generation to respond. TMM n,k data is fixed per
     optical_material key and does not shift with Eg.
     """
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 def _vary_absorber_param(

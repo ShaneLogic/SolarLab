@@ -1,11 +1,11 @@
 # Research Presets
 
-The two research presets below are the ones the frontend catalogue exposes
-(`frontend/src/preset-catalog.ts`). The other 50 bundled YAML files, including
-the `twod/` and tandem examples, stay in this directory as inputs for the
-regression suite and the 52-preset reproducibility matrix; the API lists them,
-the frontend does not. They were removed on 2026-09-05 and restored on
-2026-09-07 because roughly 200 test modules load them.
+This directory ships exactly the two research presets the frontend catalogue
+exposes (`frontend/src/preset-catalog.ts`). The 50 historical presets, including
+the `twod/` and tandem examples, live in `tests/fixtures/configs/` as inputs for
+the regression suite and the 52-preset reproducibility matrix; the API does not
+serve them. (Removed 2026-09-05, restored here 2026-09-07 because ~200 test
+modules load them, moved to the fixture directory the same day.)
 
 | Frontend name | Configuration | Reference mode | Study |
 | --- | --- | --- | --- |
@@ -54,6 +54,8 @@ These checks cover the exact two-file inventory, loading, API exposure,
 inline-device semantics and the Calado protocol helpers. They do not certify
 full J-V trends or external parity.
 
-The 52-preset matrix, research scripts and tests keep their original inputs.
-Do not repoint them at these two presets while reusing their old numerical
-expectations; new studies should define new inputs and acceptance criteria.
+The 52-preset matrix, research scripts and tests keep their original inputs
+under `tests/fixtures/configs/`. Do not repoint them at these two presets while
+reusing their old numerical expectations; new studies should define new inputs
+and acceptance criteria. New shipped presets go here and into the frontend
+catalogue; new test-only devices go to the fixture directory.

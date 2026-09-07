@@ -107,7 +107,7 @@ def _carrier_debye_length(*, eps_r, temperature, ni, net_doping):
 
 
 def test_interface_diagnostic_uses_solver_temperature_mode():
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     layers = list(stack.layers)
     base = layers[1]
     params = dataclasses.replace(base.params, N_A=0.0, N_D=0.0)
@@ -146,7 +146,7 @@ def test_interface_diagnostic_uses_solver_temperature_mode():
 
 
 def test_interface_diagnostic_uses_solver_graded_endpoint_density():
-    stack = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cigs_graded_notch.yaml")
     layers = list(stack.layers)
     absorber_index = next(
         index for index, layer in enumerate(layers) if layer.role == "absorber"

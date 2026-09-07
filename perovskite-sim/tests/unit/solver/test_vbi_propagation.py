@@ -48,7 +48,7 @@ def _build_grid_and_mat(config_path: str):
 
 def test_material_arrays_caches_computed_vbi_on_heterostack():
     """On a config with chi/Eg set, V_bi_eff matches compute_V_bi()."""
-    stack, mat = _build_grid_and_mat("configs/ionmonger_benchmark.yaml")
+    stack, mat = _build_grid_and_mat("tests/fixtures/configs/ionmonger_benchmark.yaml")
     expected = stack.compute_V_bi()
     assert math.isclose(mat.V_bi_eff, expected, rel_tol=1e-12, abs_tol=1e-12), (
         f"V_bi_eff propagation broken: mat.V_bi_eff={mat.V_bi_eff:.6f}, "
@@ -61,7 +61,7 @@ def test_material_arrays_vbi_eff_differs_from_manual_vbi_for_heterostack():
     of the manual ``stack.V_bi`` field — it's a derived quantity that generally
     differs from any configured placeholder.
     """
-    stack, mat = _build_grid_and_mat("configs/ionmonger_benchmark.yaml")
+    stack, mat = _build_grid_and_mat("tests/fixtures/configs/ionmonger_benchmark.yaml")
     # If the two ever happen to coincide for this particular config, the plan
     # intent (V_bi_eff is band-offset-aware) is still satisfied — but it would
     # mean this regression loses its teeth. Guard with an explicit inequality.
@@ -74,7 +74,7 @@ def test_material_arrays_vbi_eff_differs_from_manual_vbi_for_heterostack():
 
 def test_material_arrays_vbi_eff_falls_back_on_legacy_config():
     """On a legacy config (chi=Eg=0), V_bi_eff == stack.V_bi."""
-    stack, mat = _build_grid_and_mat("configs/nip_MAPbI3.yaml")
+    stack, mat = _build_grid_and_mat("tests/fixtures/configs/nip_MAPbI3.yaml")
     assert math.isclose(mat.V_bi_eff, stack.V_bi, rel_tol=1e-12, abs_tol=1e-12), (
         f"V_bi_eff legacy fallback broken: mat.V_bi_eff={mat.V_bi_eff:.6f}, "
         f"stack.V_bi={stack.V_bi:.6f}"
@@ -83,7 +83,7 @@ def test_material_arrays_vbi_eff_falls_back_on_legacy_config():
 
 def test_p_left_forward_bias_reduces_positive_poisson_drop():
     """Existing p-left/n-right stacks retain the original boundary mapping."""
-    stack, mat = _build_grid_and_mat("configs/ionmonger_benchmark.yaml")
+    stack, mat = _build_grid_and_mat("tests/fixtures/configs/ionmonger_benchmark.yaml")
     assert mat.V_bi_eff > 0.0
     assert mat.junction_polarity == 1.0
     assert mat.V_bi_bc == pytest.approx(abs(stack.V_bi))
@@ -93,7 +93,7 @@ def test_p_left_forward_bias_reduces_positive_poisson_drop():
 
 def test_n_left_forward_bias_reduces_negative_poisson_drop():
     """CIGS n-left/p-right order uses the signed coordinate convention."""
-    stack, mat = _build_grid_and_mat("configs/cigs_baseline.yaml")
+    stack, mat = _build_grid_and_mat("tests/fixtures/configs/cigs_baseline.yaml")
     assert mat.V_bi_eff < 0.0
     assert mat.junction_polarity == -1.0
     assert mat.V_bi_bc == pytest.approx(-abs(stack.V_bi))

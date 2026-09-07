@@ -23,7 +23,7 @@ def _grid(stack):
 
 
 def test_interface_charge_defaults_to_explicit_off():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
     assert stack.interface_charge_closure == "off"
     assert stack.interface_charge_rebaseline_acknowledged is False
@@ -54,7 +54,7 @@ def test_parser_recognizes_research_intent_and_acknowledgement():
     ],
 )
 def test_device_stack_rejects_ambiguous_charge_contracts(updates, message):
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
     with pytest.raises(ValueError, match=message):
         dataclasses.replace(base, **updates)
@@ -68,7 +68,7 @@ def test_invalid_acknowledgement_is_not_truthiness_coerced():
 
 
 def test_charge_off_reference_can_acknowledge_a_fresh_rebaseline():
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     reference = dataclasses.replace(
         base,
         interface_charge_rebaseline_acknowledged=True,
@@ -80,7 +80,7 @@ def test_charge_off_reference_can_acknowledge_a_fresh_rebaseline():
 
 
 def test_research_intent_roundtrips_but_is_not_solver_capability():
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     research = dataclasses.replace(
         base,
         interface_charge_closure="equilibrium_referenced",
@@ -96,7 +96,7 @@ def test_research_intent_roundtrips_but_is_not_solver_capability():
 
 
 def test_backend_experiment_entry_rejects_parked_research_intent_as_422():
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     config = backend_main._stack_to_config_dict(base)
     config["device"].update(
         interface_charge_closure="equilibrium_referenced",
@@ -111,7 +111,7 @@ def test_backend_experiment_entry_rejects_parked_research_intent_as_422():
 
 
 def test_explicit_off_material_arrays_are_bit_identical_to_default():
-    default = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    default = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     explicit_off = dataclasses.replace(
         default,
         interface_charge_closure="off",

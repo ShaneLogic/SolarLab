@@ -46,17 +46,18 @@ class TestValidateUserFilename:
 
 class TestIsShippedName:
     def test_known_shipped_names(self) -> None:
-        # These are guaranteed to ship at the top of configs/.
-        assert is_shipped_name("nip_MAPbI3")
-        assert is_shipped_name("pin_MAPbI3")
-        assert is_shipped_name("nip_MAPbI3_tmm")
+        # Only the two research presets ship at the top of configs/; the
+        # historical presets are test fixtures and are not reserved names.
+        assert is_shipped_name("scaps_mirror_v2")
+        assert is_shipped_name("calado2016_fig1f")
+        assert not is_shipped_name("nip_MAPbI3")
 
     def test_unknown_names_are_not_shipped(self) -> None:
         assert not is_shipped_name("definitely_not_a_real_preset_xyz")
 
     def test_does_not_match_extensions(self) -> None:
-        assert is_shipped_name("nip_MAPbI3")
-        assert not is_shipped_name("nip_MAPbI3.yaml")  # caller passes bare names
+        assert is_shipped_name("scaps_mirror_v2")
+        assert not is_shipped_name("scaps_mirror_v2.yaml")  # caller passes bare names
 
 
 @pytest.fixture
@@ -98,9 +99,9 @@ class TestWriteUserConfig:
     def test_rejects_shipped_name_collision(
         self, isolated_user_root: Path
     ) -> None:
-        # nip_MAPbI3 is a shipped preset name (Task 1 verified this).
+        # scaps_mirror_v2 is a shipped preset name.
         with pytest.raises(FileExistsError, match="shipped"):
-            write_user_config("nip_MAPbI3", {})
+            write_user_config("scaps_mirror_v2", {})
 
     def test_creates_user_root_if_missing(
         self, isolated_user_root: Path

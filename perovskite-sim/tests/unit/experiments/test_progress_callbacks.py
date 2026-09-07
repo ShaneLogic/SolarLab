@@ -9,7 +9,7 @@ from perovskite_sim.experiments.impedance import run_impedance
 
 @pytest.mark.slow
 def test_jv_sweep_reports_progress():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     events: list[tuple[str, int, int]] = []
     run_jv_sweep(
         stack, N_grid=30, n_points=5, v_rate=1.0, V_max=1.4,
@@ -27,7 +27,7 @@ def test_jv_sweep_reports_progress():
 
 @pytest.mark.slow
 def test_impedance_reports_progress():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     events: list[tuple[str, int, int]] = []
     freqs = np.array([1e3, 1e4, 1e5])
     run_impedance(

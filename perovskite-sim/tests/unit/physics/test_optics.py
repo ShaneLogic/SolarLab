@@ -390,7 +390,7 @@ def test_tmm_generation_maps_back_to_electrical_grid():
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    real = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    real = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     absorber_params = replace(real.layers[1].params, optical_material="MAPbI3")
 
     glass_p = MaterialParams(

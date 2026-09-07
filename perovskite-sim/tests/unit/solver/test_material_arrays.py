@@ -23,7 +23,7 @@ def _glass_params() -> MaterialParams:
 
 def test_substrate_role_excluded_from_electrical_grid():
     """role: substrate must not appear in the electrical grid x-range."""
-    real = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    real = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     absorber_params = real.layers[1].params  # MAPbI3
 
     stack = DeviceStack(layers=(

@@ -13,7 +13,7 @@ def _write_minimal_cells(tmp_path: Path) -> tuple[Path, Path]:
     top = tmp_path / "top.yaml"
     bot = tmp_path / "bot.yaml"
     repo_root = Path(__file__).resolve().parents[3]
-    src = (repo_root / "configs" / "nip_MAPbI3.yaml").read_text()
+    src = (repo_root / "tests/fixtures/configs" / "nip_MAPbI3.yaml").read_text()
     top.write_text(src)
     bot.write_text(src)
     return top, bot

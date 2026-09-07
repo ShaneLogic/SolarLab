@@ -11,7 +11,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def test_real_mobile_ion_jv_closes_lumped_electrothermal_root():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     thermal = LumpedThermalProtocol(
         absorbed_optical_power_W_m2=800.0,
         ambient_temperature_K=300.0,

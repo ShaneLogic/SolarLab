@@ -5,6 +5,15 @@ from fastapi.testclient import TestClient
 import backend.main as backend
 
 
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture(autouse=True)
+def _all_presets(serve_all_presets):
+    """Historical presets are test fixtures; serve them through the API here."""
+    return serve_all_presets
+
+
 def test_real_dynamic_defect_transient_api_serializes_protocol_and_evidence():
     with TestClient(backend.app) as client:
         response = client.post(

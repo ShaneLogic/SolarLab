@@ -20,7 +20,7 @@ from perovskite_sim.experiments.jv_sweep import (
 @pytest.fixture
 def setup():
     """Build grid, mat, and illuminated SS for nip_MAPbI3."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     N_grid = 40
     elec = electrical_layers(stack)
     layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]

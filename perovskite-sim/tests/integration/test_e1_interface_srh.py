@@ -50,7 +50,7 @@ def _scaps_mirror_with_pvk_etl_defect(E_t_eV: float, srv_m_s: float = 1.0e2):
     solver-side wiring under test.
     """
     from perovskite_sim.models.device import InterfaceDefect  # NEW (E1 API)
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     # Need 2 interfaces (HTL/PVK, PVK/ETL). Pad SRVs zero except PVK/ETL.
     n_interfaces = max(0, len(stack.layers) - 1)
     interfaces = [(0.0, 0.0)] * n_interfaces
@@ -113,7 +113,7 @@ def test_empty_interface_defects_falls_back_to_per_node_bulk_n1_p1():
     ``interface_n1[k]`` mirroring the per-node bulk ``n1[idx]`` exactly —
     bit-identical legacy path. Iterates only the no-defect slots so the
     test survives ``scaps_mirror.yaml`` populating the PVK/ETL slot."""
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     x = _build_grid_for(stack)
     mat = build_material_arrays(x, stack)
 
@@ -184,7 +184,7 @@ _SCAPS_MIRROR_BASELINE_PCE = None
 @pytest.fixture(scope="module")
 def baseline_metrics():
     """Run scaps_mirror baseline (no interface_defects) and return metrics."""
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
     return r.metrics_fwd
 

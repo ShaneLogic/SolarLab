@@ -25,7 +25,7 @@ from perovskite_sim.solver.newton import solve_equilibrium
 
 
 def _single_ion_problem(*, intervals: int = 6, illuminated: bool = False):
-    source = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layer = source.layers[1]
     stack = replace(
         source,

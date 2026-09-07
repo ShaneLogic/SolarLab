@@ -17,7 +17,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def test_ionmonger_certified_dc_drives_reference_frequency_operator():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 12)
     dc_protocol = build_ion_aware_dc_protocol(
         stack,
@@ -66,7 +66,7 @@ def test_ionmonger_certified_dc_drives_reference_frequency_operator():
 
 
 def test_symmetric_dual_ion_state_keeps_both_blocking_inventory_constraints():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layers = []
     for layer in stack.layers:
         params = layer.params

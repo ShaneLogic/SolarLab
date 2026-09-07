@@ -61,7 +61,7 @@ def test_sweep_scales_tau_off_declared_base():
 def test_fallback_reference_for_configs_without_declared_defects():
     """Configs with trap_N_t_bulk=None keep the legacy 1e22 m^-3 reference."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     assert _absorber(base).trap_N_t_bulk is None
     tau0 = _absorber(base).tau_n
     swept = apply_sweep_point(

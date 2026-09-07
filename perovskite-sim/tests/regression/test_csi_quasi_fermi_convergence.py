@@ -28,7 +28,7 @@ from perovskite_sim.solver.mol import build_material_arrays
 
 pytestmark = [pytest.mark.slow, pytest.mark.regression]
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG = ROOT / "configs/cSi_homojunction.yaml"
+CONFIG = ROOT / "tests/fixtures/configs/cSi_homojunction.yaml"
 MATRIX = yaml.safe_load(
     (ROOT / "reproducibility/ConfigBenchmarkMatrix.yaml").read_text()
 )

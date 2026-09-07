@@ -19,7 +19,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def test_exact_dc_transient_lockin_matches_frequency_domain_ionic_points():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 12)
     dc_state = solve_ion_aware_dc(
         x,

@@ -42,7 +42,7 @@ def test_default_V_max_picks_V_bi_eff_branch_on_legacy_mapbi3():
     """Legacy MAPbI3 (chi=Eg=0 ⇒ V_bi_eff = stack.V_bi = 1.1 V):
     1.1 × 1.3 = 1.43 V clears the 1.4 V floor, so the formula picks V_bi_eff*1.3.
     """
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     V_bi_eff = stack.compute_V_bi()
     V_upper = _default_V_max(stack)
     # Defend the assumption that this config actually selects the V_bi_eff*1.3
@@ -64,7 +64,7 @@ def test_default_V_max_honours_floor_on_ionmonger_heterostack():
     """IonMonger heterostack: band-offset V_bi_eff ≈ 0.857 V, so V_bi_eff*1.3 ≈
     1.114 V lies below the 1.4 V floor ⇒ the floor branch wins.
     """
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     V_bi_eff = stack.compute_V_bi()
     V_upper = _default_V_max(stack)
     # Guard the assumption that this config actually needs the floor; without
@@ -86,7 +86,7 @@ def test_default_V_max_is_monotone_in_V_bi_eff():
     Guards against regressions that, e.g., accidentally clamp the upper
     voltage to ``stack.V_bi``.
     """
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     V1 = _default_V_max(stack)
 
     # Build a lightweight shim with doubled compute_V_bi to avoid mutating the

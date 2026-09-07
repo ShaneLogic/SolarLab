@@ -25,7 +25,7 @@
  },
  "scenarios": [
   {
-   "config_path": "configs/scaps_defect_m1_double_donor_p.yaml",
+   "config_path": "tests/fixtures/configs/scaps_defect_m1_double_donor_p.yaml",
    "config_sha256": "43516a15f6ceeb6ba5fb4381c789e1c073ead4b101081d583da60c4bf9407290",
    "doping_polarity": "p_type",
    "family": "double_donor",
@@ -33,7 +33,7 @@
    "purpose": "double donor charge and compensation in a p-type slab"
   },
   {
-   "config_path": "configs/scaps_defect_m2_double_acceptor_n.yaml",
+   "config_path": "tests/fixtures/configs/scaps_defect_m2_double_acceptor_n.yaml",
    "config_sha256": "32c7828624f482259d681aeca4d148d882483719de43dc72ce0b117d4f27d223",
    "doping_polarity": "n_type",
    "family": "double_acceptor",
@@ -41,7 +41,7 @@
    "purpose": "double acceptor charge and compensation in an n-type slab"
   },
   {
-   "config_path": "configs/scaps_defect_m3_amphoteric_i.yaml",
+   "config_path": "tests/fixtures/configs/scaps_defect_m3_amphoteric_i.yaml",
    "config_sha256": "7e772e2e92a5d862ac8b54f0b5cd684829bbe9ae34eb3aee607ab78a3586915c",
    "doping_polarity": "intrinsic",
    "family": "amphoteric",

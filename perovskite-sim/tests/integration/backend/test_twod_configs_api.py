@@ -26,6 +26,15 @@ from backend.main import app
 client = TestClient(app)
 
 
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture(autouse=True)
+def _all_presets(serve_all_presets):
+    """Historical presets are test fixtures; serve them through the API here."""
+    return serve_all_presets
+
+
 # ---------------------------------------------------------------------------
 # /api/configs listing — Phase 6 twod presets must be visible
 # ---------------------------------------------------------------------------
@@ -41,7 +50,7 @@ def _config_names() -> list[str]:
 def test_list_configs_includes_twod_uniform_preset():
     names = _config_names()
     assert "nip_MAPbI3_uniform.yaml" in names, (
-        "Stage A 2D baseline preset (configs/twod/nip_MAPbI3_uniform.yaml) "
+        "Stage A 2D baseline preset (tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml) "
         "is missing from /api/configs — workstation dropdown cannot reach it."
     )
 
@@ -49,7 +58,7 @@ def test_list_configs_includes_twod_uniform_preset():
 def test_list_configs_includes_twod_singleGB_preset():
     names = _config_names()
     assert "nip_MAPbI3_singleGB.yaml" in names, (
-        "Stage B(a) microstructure preset (configs/twod/nip_MAPbI3_singleGB.yaml) "
+        "Stage B(a) microstructure preset (tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml) "
         "is missing from /api/configs."
     )
 
@@ -57,7 +66,7 @@ def test_list_configs_includes_twod_singleGB_preset():
 def test_list_configs_includes_twod_bcx_combined_demo():
     names = _config_names()
     assert "bcx_combined_demo.yaml" in names, (
-        "T7 B(c.x) combined demo (configs/twod/bcx_combined_demo.yaml) is "
+        "T7 B(c.x) combined demo (tests/fixtures/configs/twod/bcx_combined_demo.yaml) is "
         "missing from /api/configs — Phase 6 acceptance-test blocker."
     )
 

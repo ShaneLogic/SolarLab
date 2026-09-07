@@ -13,7 +13,7 @@ pytestmark = pytest.mark.slow
 
 def _make_dual_stack():
     """IonMonger benchmark with negative ions in the absorber."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     new_layers = []
     for layer in stack.layers:
         if layer.role == "absorber":
@@ -63,7 +63,7 @@ class TestDualIonEquilibrium:
 
     def test_single_species_still_3n(self):
         """Without D_ion_neg, state vector should remain 3N."""
-        stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+        stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
         x = _build_grid(stack)
         N = len(x)
         y0 = solve_equilibrium(x, stack)
@@ -85,7 +85,7 @@ class TestDualIonJV:
     def test_jv_dual_vs_single_similar(self):
         """At fast scan rate, dual and single species should give similar results."""
         from perovskite_sim.experiments.jv_sweep import run_jv_sweep
-        stack_single = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+        stack_single = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
         stack_dual = _make_dual_stack()
         r_single = run_jv_sweep(stack_single, N_grid=25, n_points=8, v_rate=5.0)
         r_dual = run_jv_sweep(stack_dual, N_grid=25, n_points=8, v_rate=5.0)

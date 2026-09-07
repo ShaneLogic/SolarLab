@@ -62,7 +62,7 @@ def _solve_comparison(
 
 def test_single_ion_structured_operator_matches_full_poisson_reference():
     result = _solve_comparison(
-        load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     )
     certificate = result.certificate
 
@@ -91,7 +91,7 @@ def test_single_ion_structured_operator_matches_full_poisson_reference():
 
 
 def test_dual_ion_structured_operator_covers_both_charge_signs():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layers = []
     for layer in stack.layers:
         params = layer.params
@@ -127,7 +127,7 @@ def test_dual_ion_structured_operator_covers_both_charge_signs():
 
 def test_n61_adaptive_stencils_resolve_strong_columns_and_bound_weak_ones():
     result = _solve_comparison(
-        load_device_from_yaml("configs/ionmonger_benchmark.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml"),
         grid_points=60,
         frequencies=np.array([1.0e-4, 1.0, 1.0e6]),
     )
@@ -164,7 +164,7 @@ def test_n61_adaptive_stencils_resolve_strong_columns_and_bound_weak_ones():
 
 def test_n91_weak_cross_couplings_pass_the_group_normalized_error_gate():
     result = _solve_comparison(
-        load_device_from_yaml("configs/ionmonger_benchmark.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml"),
         grid_points=90,
         frequencies=np.array([1.0e-4, 1.0, 1.0e6]),
     )
@@ -187,7 +187,7 @@ def test_n91_weak_cross_couplings_pass_the_group_normalized_error_gate():
 
 
 def test_selective_contact_structured_operator_replaces_all_boundary_rate_blocks():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     stack = replace(
         base,
         S_n_left=1.0e-3,
@@ -218,7 +218,7 @@ def test_selective_contact_structured_operator_replaces_all_boundary_rate_blocks
 
 
 def test_field_mobility_structured_operator_closes_ct_and_pf_chain_rule():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layers = []
     for layer in base.layers:
         params = layer.params
@@ -262,7 +262,7 @@ def test_field_mobility_structured_operator_closes_ct_and_pf_chain_rule():
 
 
 def test_cross_node_interface_srh_closes_the_clamp_inactive_tangent():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     defects = list(base.interface_defects)
     defects.extend([None] * (len(base.interfaces) - len(defects)))
     defects[-1] = InterfaceDefect(
@@ -302,7 +302,7 @@ def test_cross_node_interface_srh_closes_the_clamp_inactive_tangent():
 
 
 def test_projected_cross_node_interface_srh_closes_the_smooth_tangent():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     defects = list(base.interface_defects)
     defects.extend([None] * (len(base.interfaces) - len(defects)))
     defects[-1] = InterfaceDefect(
@@ -344,7 +344,7 @@ def test_projected_cross_node_interface_srh_closes_the_smooth_tangent():
 
 
 def test_shared_occupancy_interface_srh_closes_the_positive_density_tangent():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     defects = list(base.interface_defects)
     defects.extend([None] * (len(base.interfaces) - len(defects)))
     defects[-1] = InterfaceDefect(
@@ -387,7 +387,7 @@ def test_shared_occupancy_interface_srh_closes_the_positive_density_tangent():
 
 
 def test_two_sided_projected_interface_srh_closes_both_positive_pairs():
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     defects = list(base.interface_defects)
     defects.extend([None] * (len(base.interfaces) - len(defects)))
     defects[-1] = InterfaceDefect(
@@ -438,7 +438,7 @@ def test_local_qss_interface_srh_closes_the_implicit_root_tangent(
 ):
     monkeypatch.setenv("SOLARLAB_IFACE_QSS", "1")
     result = _solve_comparison(
-        load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     )
     certificate = result.certificate
     reaction = result.analytic_interface_reaction
@@ -464,7 +464,7 @@ def test_local_qss_interface_srh_closes_the_implicit_root_tangent(
 def test_cross_node_qss_interface_srh_closes_projection_and_suppresses_mirror(
     monkeypatch,
 ):
-    base = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     defects = list(base.interface_defects)
     defects.extend([None] * (len(base.interfaces) - len(defects)))
     defects[-1] = InterfaceDefect(

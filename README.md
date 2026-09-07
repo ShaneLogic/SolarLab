@@ -687,11 +687,10 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 
 ## Shipped Device Presets
 
-Two research presets are the frontend entry points. The frontend research
-catalog gives them explicit names and modes; the API discovers every file on
-disk. The other 50 bundled YAML files stay in `perovskite-sim/configs/` as inputs
-for the regression suite and the 52-preset reproducibility matrix (they were
-removed on 2026-09-05 and restored on 2026-09-07 for exactly that reason).
+`perovskite-sim/configs/` ships exactly the two research presets; the frontend
+research catalog gives them explicit names and modes. The 50 historical presets
+live in `perovskite-sim/tests/fixtures/configs/` as inputs for the regression
+suite and the 52-preset reproducibility matrix and are not served by the API.
 
 | Preset | Material System | Ions | Optics | Notes |
 |:-------|:----------------|:----:|:------:|:------|

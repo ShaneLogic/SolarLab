@@ -14,8 +14,17 @@ from perovskite_sim.experiments import jv_sweep
 from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture(autouse=True)
+def _all_presets(serve_all_presets):
+    """Historical presets are test fixtures; serve them through the API here."""
+    return serve_all_presets
+
+
 def _charged_stack():
-    return load_device_from_yaml("configs/interface_charge_jv_research.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/interface_charge_jv_research.yaml")
 
 
 def _charged_params(**overrides):

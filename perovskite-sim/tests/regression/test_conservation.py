@@ -80,7 +80,7 @@ def test_dark_equilibrium_charge_neutrality():
     on the initial condition — a nonzero integrated charge implies the
     equilibrium solver accepted an inconsistent state.
     """
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x, y, mat = _build_state(stack)
     N = len(x)
     sv = StateVec.unpack(y, N)
@@ -122,7 +122,7 @@ def test_dark_transient_ion_and_charge_conservation(_finite_check_on):
     """
     from perovskite_sim.constants import Q
 
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x, y0, mat = _build_state(stack)
     N = len(x)
     t_settle = 1e-3
@@ -163,7 +163,7 @@ def test_rhs_finite_guard_catches_nan_state(_finite_check_on):
     """
     from perovskite_sim.solver.mol import assemble_rhs, _RhsNonFinite
 
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x, y0, mat = _build_state(stack)
     y_bad = y0.copy()
     y_bad[len(x) // 2] = np.nan

@@ -18,7 +18,7 @@ from perovskite_sim.solver.mol import build_material_arrays
 
 @pytest.fixture(scope="module")
 def dc_fixture():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 12)
     mat = build_material_arrays(x, stack)
     protocol = build_ion_aware_dc_protocol(

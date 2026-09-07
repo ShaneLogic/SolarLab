@@ -34,7 +34,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.solver.newton import solve_equilibrium
 
 
-CONFIG = Path("configs/cSi_homojunction.yaml")
+CONFIG = Path("tests/fixtures/configs/cSi_homojunction.yaml")
 LADDER = (200, 300, 400)
 
 
@@ -154,7 +154,7 @@ def test_declared_csi_minimum_meets_debye_guard_and_has_finite_seed():
 
 def test_thin_film_smoke_mesh_is_not_misrepresented_as_globally_certified():
     """The thick-layer guard must remain scoped, not become a mesh certificate."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 12)
     diagnostics = require_thick_layer_interface_resolution(x, stack, N_grid=12)
 

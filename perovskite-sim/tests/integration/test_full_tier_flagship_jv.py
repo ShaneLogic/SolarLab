@@ -25,7 +25,7 @@ import pytest
 from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 from perovskite_sim.models.config_loader import load_device_from_yaml
 
-FLAGSHIP_PRESET = "configs/nip_MAPbI3_tmm.yaml"
+FLAGSHIP_PRESET = "tests/fixtures/configs/nip_MAPbI3_tmm.yaml"
 
 # Physically-reasonable FoM window for MAPbI3 in FULL tier. Bounds are set
 # wider than the current measured values (V_oc ~1.08, J_sc ~210, FF ~0.81,

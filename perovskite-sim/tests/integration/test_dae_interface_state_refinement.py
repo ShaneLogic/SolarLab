@@ -27,7 +27,7 @@ from perovskite_sim.solver.numerical_diagnostics import NumericalDiagnosticsPoli
 
 
 def _charge_off_interface_slice():
-    source = load_device_from_yaml("configs/interface_charge_research.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/interface_charge_research.yaml")
     stack = replace(
         source,
         interface_defects=(),

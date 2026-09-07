@@ -43,7 +43,7 @@ from perovskite_sim.solver.mol import (
 
 
 def _scaps_mirror_mat():
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     elec = electrical_layers(stack)
     layers_grid = [Layer(thickness=L.thickness, N=30 // len(elec)) for L in elec]
     x = multilayer_grid(layers_grid)

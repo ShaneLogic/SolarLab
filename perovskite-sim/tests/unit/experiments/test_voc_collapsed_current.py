@@ -11,7 +11,7 @@ is numerical noise, because past flat band the J-V curve is in the
 near-singular-Jacobian region ``CLAUDE.md`` already documents.  The first
 sign change can then land a volt past the true open-circuit point.
 
-Measured 2026-07-27 on ``configs/scaps_mirror.yaml`` + Robin contacts
+Measured 2026-07-27 on ``tests/fixtures/configs/scaps_mirror.yaml`` + Robin contacts
 (``S_n_right=1e5, S_p_right=1e-4, S_p_left=1e5, S_n_left=1e-4``) with
 ETL ``N_D = 1e18 m^-3``.  Absorber Eg = 1.53 eV, V_bi = 1.300 V, and
 ``D_ion = 0`` in every layer, so this is not ion history.  Forward branch,
@@ -315,7 +315,7 @@ def test_ceiling_none_disables_the_check():
 
 
 def test_ceiling_is_the_absorber_gap_on_a_heterostack():
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     assert thermodynamic_voc_ceiling(stack) == EG_SCAPS_ABSORBER
 
 
@@ -323,7 +323,7 @@ def test_ceiling_is_none_for_legacy_zero_gap_presets():
     """``nip_MAPbI3``/``pin_MAPbI3`` set chi = Eg = 0 on every layer.  A
     ``min()`` over those would be 0 and would refuse every V_oc, so the
     ceiling must be absent, not zero."""
-    for cfg in ("configs/nip_MAPbI3.yaml", "configs/pin_MAPbI3.yaml"):
+    for cfg in ("tests/fixtures/configs/nip_MAPbI3.yaml", "tests/fixtures/configs/pin_MAPbI3.yaml"):
         stack = load_device_from_yaml(cfg)
         assert all(
             layer.params.Eg == 0.0 for layer in electrical_layers(stack)
@@ -334,7 +334,7 @@ def test_ceiling_is_none_for_legacy_zero_gap_presets():
 def test_ceiling_ignores_optical_only_substrate_layers():
     """A ``role: substrate`` layer carries no carriers, so its gap (or lack
     of one) must not enter the bound."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     assert len(stack.layers) == len(electrical_layers(stack)) + 1
     doped = dataclasses.replace(
         stack,
@@ -351,7 +351,8 @@ def test_ceiling_ignores_optical_only_substrate_layers():
 
 def _device_configs():
     paths = sorted(glob.glob("configs/*.yaml")) + sorted(
-        glob.glob("configs/twod/*.yaml"))
+        glob.glob("tests/fixtures/configs/*.yaml")) + sorted(
+        glob.glob("tests/fixtures/configs/twod/*.yaml"))
     out = []
     for p in paths:
         for loader in (load_device_from_yaml, load_scaps_yaml):
@@ -407,7 +408,7 @@ def test_ceiling_equals_the_local_absorber_gap_on_every_shipped_preset():
 
 def test_ceiling_tracks_the_graded_defect_absorber_notch():
     stack = load_device_from_yaml(
-        "configs/graded_distributed_defect_qf_dc_pn.yaml"
+        "tests/fixtures/configs/graded_distributed_defect_qf_dc_pn.yaml"
     )
     assert stack.layers[0].params.Eg == 0.84
     assert stack.layers[0].params.Eg_back == 0.8
@@ -452,7 +453,7 @@ def test_run_jv_sweep_plumbs_the_ceiling_from_the_stack(monkeypatch):
     caller that owns a ``DeviceStack``, so it must derive the ceiling and
     pass it to every metrics call — including the hysteresis index."""
     seen = _spy_on_compute_metrics(monkeypatch)
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     run_jv_sweep(stack, N_grid=6, n_points=3, v_rate=50.0, V_max=1.0)
 
     assert seen, "compute_metrics was never called"
@@ -470,7 +471,7 @@ def test_run_jv_sweep_passes_no_ceiling_for_a_legacy_zero_gap_stack(
     """A legacy chi = Eg = 0 preset declares no gap, so it must get
     ``V_oc_max=None`` — a 0.0 ceiling would refuse every V_oc."""
     seen = _spy_on_compute_metrics(monkeypatch)
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     run_jv_sweep(stack, N_grid=6, n_points=3, v_rate=50.0, V_max=1.0)
     assert seen and set(seen) == {None}, seen
 
@@ -480,7 +481,7 @@ def _collapsed_stack():
     """scaps_mirror + Robin contacts + ETL N_D = 1e18 m^-3 — the device the
     defect was diagnosed on.  Same construction as
     ``test_run_jv_sweep_auto_extend_v_max._scaps_mirror_robin_low_etl``."""
-    base = load_scaps_yaml("configs/scaps_mirror.yaml")
+    base = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     robin = dataclasses.replace(
         base, mode="full",
         S_n_right=1.0e5, S_p_right=1.0e-4,

@@ -35,7 +35,7 @@ from perovskite_sim.solver.mol import (
 from perovskite_sim.solver.newton import solve_equilibrium
 
 
-_CONFIG = "configs/nip_MAPbI3.yaml"
+_CONFIG = "tests/fixtures/configs/nip_MAPbI3.yaml"
 _N_PER_LAYER = 10
 _T_TRANSIENT = 1.0e-6     # 1 µs
 

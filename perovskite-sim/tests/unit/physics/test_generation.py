@@ -27,7 +27,7 @@ carries NO tolerance at all and is asserted as a strict inequality.
 
 The pre-fix point-sampled quadrature violated that bound by +5.881 % at
 N_grid = 30, +1.111 % at N_grid = 60 and +0.064 % at N_grid = 100 on
-``configs/ionmonger_benchmark.yaml``; N_grid = 60 is what the shipped slow
+``tests/fixtures/configs/ionmonger_benchmark.yaml``; N_grid = 60 is what the shipped slow
 regression runs and N_grid = 100 is the ``run_jv_sweep`` default, so the
 coarse meshes below are not strawmen.
 """
@@ -56,10 +56,10 @@ RTOL_FP = 1e-14
 #: absorber, which is exactly the sharply-peaked profile the old rectangle
 #: rule over-counted (1/alpha = 76.9 nm against 400 nm of absorber).
 CONFIGS = (
-    "configs/ionmonger_benchmark.yaml",
-    "configs/nip_MAPbI3.yaml",
-    "configs/pin_MAPbI3.yaml",
-    "configs/driftfusion_benchmark.yaml",
+    "tests/fixtures/configs/ionmonger_benchmark.yaml",
+    "tests/fixtures/configs/nip_MAPbI3.yaml",
+    "tests/fixtures/configs/pin_MAPbI3.yaml",
+    "tests/fixtures/configs/driftfusion_benchmark.yaml",
 )
 
 #: Deliberately spans well below the meshes anyone would ship: 10 and 15 are

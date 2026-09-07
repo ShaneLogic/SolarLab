@@ -122,7 +122,7 @@ def test_back_to_front_direction_flips_profile():
 
 def test_graded_outer_contact_reservoir_uses_endpoint_intrinsic_density():
     """The contact and adjacent node must share the same mass-action law."""
-    stack = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cigs_graded_notch.yaml")
     x = multilayer_grid([
         Layer(layer.thickness, 10) for layer in electrical_layers(stack)
     ])

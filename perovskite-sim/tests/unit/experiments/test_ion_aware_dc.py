@@ -22,7 +22,7 @@ from perovskite_sim.solver.numerical_diagnostics import (
 
 
 def _stack_grid(n_grid: int = 8):
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     return stack, build_electrical_grid(stack, n_grid)
 
 
@@ -276,7 +276,7 @@ def test_solver_rejects_user_state_that_does_not_match_protocol_hash():
 
 
 def test_solver_requires_mobile_ions():
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     x = build_electrical_grid(stack, 200)
     protocol = dc.build_ion_aware_dc_protocol(
         stack,

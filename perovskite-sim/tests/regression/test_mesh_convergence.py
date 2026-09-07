@@ -85,7 +85,7 @@ default sampling density — a real limitation of the reported metrics.
 
 Preset
 ------
-``configs/ionmonger_benchmark.yaml`` — the cheapest shipped preset that has real
+``tests/fixtures/configs/ionmonger_benchmark.yaml`` — the cheapest shipped preset that has real
 heterojunction band offsets (so the thermionic-emission cap is genuinely active
 at both interfaces), a live interface-SRH channel carrying ~5 A/m2 at 0.9 V, and
 **Beer-Lambert** optics.  Beer-Lambert is the point: it is 3-5x cheaper than the
@@ -94,7 +94,7 @@ on top of the transport error, so the transport/interface part is isolated.
 
 Scope limits
 ------------
-Single preset.  On ``configs/nip_MAPbI3.yaml`` (legacy, chi = Eg = 0, no band
+Single preset.  On ``tests/fixtures/configs/nip_MAPbI3.yaml`` (legacy, chi = Eg = 0, no band
 offsets, no interface SRV) the 41-point ladder gives V_oc = 0.919292, 0.914809,
 0.911575 V — differences do shrink but only with rho = 0.72, which would give a
 Richardson residual of 8.3 mV and FAIL the 5 mV bar.  Whether that is real or
@@ -134,7 +134,7 @@ from perovskite_sim.solver.mol import (
 
 pytestmark = pytest.mark.slow
 
-CONFIG = "configs/ionmonger_benchmark.yaml"
+CONFIG = "tests/fixtures/configs/ionmonger_benchmark.yaml"
 
 #: Refinement ladder in actual intervals across the electrical stack.
 #: ``N_grid // 3`` is exact for all three rungs.  Coarser grids are excluded

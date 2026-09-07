@@ -33,7 +33,7 @@ def _model(
     diffusion_only: bool = True,
     shared_site: bool = True,
 ):
-    source = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layer = source.layers[1]
     assert layer.params is not None
     dual_layer = replace(

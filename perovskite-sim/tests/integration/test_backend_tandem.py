@@ -23,7 +23,7 @@ def client() -> TestClient:
 
 # Absolute path so the test is CWD-independent when run from any directory.
 _TANDEM_CONFIG = str(
-    (Path(__file__).parent.parent.parent / "configs" / "tandem_lin2019.yaml").resolve()
+    (Path(__file__).parent.parent.parent / "tests/fixtures/configs" / "tandem_lin2019.yaml").resolve()
 )
 
 

@@ -15,7 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--template",
         type=Path,
-        default=Path("configs/nip_MAPbI3.yaml"),
+        default=Path("tests/fixtures/configs/nip_MAPbI3.yaml"),
         help="SolarLab YAML template used for contacts/transport layers",
     )
     parser.add_argument("--out-dir", required=True, type=Path, help="Output directory")

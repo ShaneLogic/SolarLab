@@ -20,7 +20,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.parameters import MaterialParams
 
 
-CSI_CONFIG = Path("configs/cSi_homojunction.yaml")
+CSI_CONFIG = Path("tests/fixtures/configs/cSi_homojunction.yaml")
 
 
 def _stack(*, policy: str = "general") -> DeviceStack:

@@ -30,7 +30,7 @@ from backend.main import app
 
 
 _PRESET_PATH = str(
-    (Path(__file__).parent.parent.parent.parent / "configs" / "nip_MAPbI3.yaml").resolve()
+    (Path(__file__).parent.parent.parent.parent / "tests/fixtures/configs" / "nip_MAPbI3.yaml").resolve()
 )
 
 

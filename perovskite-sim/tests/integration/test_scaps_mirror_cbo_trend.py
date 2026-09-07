@@ -5,7 +5,7 @@ SCAPS shows V_oc rising ~420 mV from cliff (~0.83 V) through flat band
 (~1.25 V) and plateauing for spike. Phase E1.5 cross-carrier
 Pauwels-Vanhoutte sampling (n at ETL interior, p at PVK interior)
 reproduces the direction with the PVK/ETL ``interfaces:`` block in
-``configs/scaps_mirror.yaml`` (SRV=0.01 m/s, empirically calibrated for
+``tests/fixtures/configs/scaps_mirror.yaml`` (SRV=0.01 m/s, empirically calibrated for
 SolarLab's bulk-interior discretized sampling).
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import (
 
 @pytest.fixture(scope="module")
 def voc_by_delta_ec():
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     out = {}
     for d in [-0.5, -0.16, 0.0, 0.3]:
         pt = SweepPoint("p", "c", f"{d:+.2f}", {"etl_delta_ec_eV": d})

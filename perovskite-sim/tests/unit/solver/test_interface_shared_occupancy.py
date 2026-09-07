@@ -129,7 +129,7 @@ def test_shared_occupancy_changes_interface_rate():
 
 def test_legacy_interfaces_unaffected():
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x, m_off = _build(base)
     _, m_on = _build(dataclasses.replace(base, interface_shared_occupancy=True))
     np.testing.assert_array_equal(_interface_dn(base, x, m_off),

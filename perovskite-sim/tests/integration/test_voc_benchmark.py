@@ -19,12 +19,12 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture(scope="module")
 def ionmonger_result():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     return run_jv_sweep(stack, N_grid=40, n_points=20, v_rate=5.0)
 
 
 # ── Reference metrics (TE-corrected, N_grid=40, n_points=20, v_rate=5.0) ────
-# Captured from a clean run against configs/ionmonger_benchmark.yaml with the
+# Captured from a clean run against tests/fixtures/configs/ionmonger_benchmark.yaml with the
 # band-offset V_bi and thermionic-emission capping landed in Phase 1. These
 # tight bounds (±2% V_oc, ±3% J_sc/FF, ±5% PCE) are the deeper-benchmark gate:
 # if the physics drifts under a future change, these tests fail immediately
@@ -113,7 +113,7 @@ def test_legacy_config_no_regression():
     compute_V_bi falls back to the manual V_bi field. This test guards
     against regressions in the legacy code path.
     """
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     result = run_jv_sweep(stack, N_grid=30, n_points=8, v_rate=5.0)
     m = result.metrics_fwd
     assert 0.7 < m.V_oc < 1.2, f"legacy V_oc = {m.V_oc:.4f} V"

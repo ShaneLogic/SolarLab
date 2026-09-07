@@ -47,7 +47,7 @@ from perovskite_sim.physics.tunneling_channels import (
 )
 
 
-LANE_CONFIG = "configs/wkb_tunnelling_intraband_spike.yaml"
+LANE_CONFIG = "tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml"
 THERMAL_VOLTAGE_V = 0.025851999786187952
 
 

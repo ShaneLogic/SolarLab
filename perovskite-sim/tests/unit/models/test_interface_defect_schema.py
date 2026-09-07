@@ -143,7 +143,7 @@ def test_interface_defect_rejects_duplicate_density_or_energy_drift():
 
 
 def test_charge_on_stack_semantic_identity_includes_microscopic_document():
-    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/interface_charge_research.yaml")
     defect = stack.interface_defects[0]
     assert defect is not None and defect.microscopic_document is not None
     changed_document = InterfaceDefectDocument.from_dict(
@@ -170,14 +170,14 @@ def test_charge_on_stack_semantic_identity_includes_microscopic_document():
 
 
 def test_scaps_loader_promotes_only_resolved_single_level_interface_species():
-    stack = load_scaps_yaml("configs/interface_charge_reference.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/interface_charge_reference.yaml")
 
     assert stack.interface_defects[1].microscopic_document is not None
     assert stack.interface_defects[2].microscopic_document is None
 
 
 def test_charged_contract_binds_density_kinetics_and_document_identity():
-    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/interface_charge_research.yaml")
 
     contract = require_uncalibrated_microscopic_interface_defects(
         stack,
@@ -206,7 +206,7 @@ def test_charged_contract_binds_density_kinetics_and_document_identity():
     ],
 )
 def test_charged_contract_rejects_empirical_calibration(field, value):
-    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/interface_charge_research.yaml")
     defect = stack.interface_defects[0]
     changed = replace(
         stack,
@@ -224,7 +224,7 @@ def test_charged_contract_rejects_empirical_calibration(field, value):
 
 
 def test_charged_contract_rejects_missing_document_or_duplicate_srv_drift():
-    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/interface_charge_research.yaml")
     defect = stack.interface_defects[0]
     missing = replace(
         stack,
@@ -264,7 +264,7 @@ def test_charged_contract_rejects_unconsumed_or_out_of_gap_document_fields(
     document_update,
     message,
 ):
-    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/interface_charge_research.yaml")
     defect = stack.interface_defects[0]
     document = InterfaceDefectDocument.from_dict(
         {**defect.microscopic_document.to_dict(), **document_update}

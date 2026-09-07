@@ -13,6 +13,15 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.physics.contacts import ContactThermodynamicCertificate
 
 
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture(autouse=True)
+def _all_presets(serve_all_presets):
+    """Historical presets are test fixtures; serve them through the API here."""
+    return serve_all_presets
+
+
 @dataclass(frozen=True)
 class _FakeStack:
     interface_charge_closure: str = "equilibrium_referenced"
@@ -197,7 +206,7 @@ def test_research_endpoint_requires_explicit_acknowledgement(monkeypatch):
 
 
 def test_research_stack_rejects_missing_microscopic_interface_document(monkeypatch):
-    stack = load_device_from_yaml("configs/interface_charge_research.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/interface_charge_research.yaml")
     defect = stack.interface_defects[0]
     missing = replace(
         stack,

@@ -48,7 +48,7 @@ GRID_LADDER = tuple(PROTOCOL["N_grid"])
 
 @pytest.fixture(scope="module")
 def csi_frequency_response():
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     x = build_electrical_grid(stack, 200)
     mat = build_material_arrays(x, stack)
     response = run_quasi_fermi_impedance(
@@ -201,7 +201,7 @@ def test_csi_frequency_domain_is_stable_to_steps_and_nominal_amplitude(
 
 @pytest.fixture(scope="module")
 def csi_cv_ladder():
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     rows = []
     for requested in GRID_LADDER:
         x = build_electrical_grid(stack, requested)

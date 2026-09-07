@@ -17,7 +17,7 @@ def test_state_vec_roundtrip():
 
 def test_assemble_rhs_shape():
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
     layers_grid = [Layer(l.thickness, 50) for l in stack.layers]
     x = multilayer_grid(layers_grid)
@@ -34,7 +34,7 @@ def test_split_step_shape_and_success():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
     from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     y0 = solve_illuminated_ss(x, stack, V_app=0.0)
@@ -51,7 +51,7 @@ def test_split_step_warns_on_negative_ions():
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
     from perovskite_sim.solver.mol import StateVec, split_step
     from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     N = len(x)
@@ -73,7 +73,7 @@ def test_interface_d_harmonic_mean():
     """D_face at a layer interface must equal 2·D_a·D_b/(D_a+D_b)."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 20) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     mat = build_material_arrays(x, stack)
@@ -96,7 +96,7 @@ def test_split_step_advances_ions():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
     from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     N = len(x)
@@ -117,7 +117,7 @@ def test_short_dark_transient_keeps_ions_in_absorber():
     from perovskite_sim.solver.newton import solve_equilibrium
     from perovskite_sim.solver.mol import StateVec, run_transient
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     y0 = solve_equilibrium(x, stack)
@@ -144,7 +144,7 @@ def test_split_step_preserves_ion_inventory():
     from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
     from perovskite_sim.solver.mol import StateVec, split_step
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     y0 = solve_illuminated_ss(x, stack, V_app=0.0)

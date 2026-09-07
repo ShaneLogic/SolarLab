@@ -7,7 +7,7 @@ point-sampling the volumetric absorption rate at the nodes is not
 photon-conserving on a mesh that is coarse relative to the absorption
 length, and over-counts the sharply-peaked front-of-absorber generation.
 
-Measured on ``configs/ionmonger_benchmark_tmm.yaml`` before the fix (exact
+Measured on ``tests/fixtures/configs/ionmonger_benchmark_tmm.yaml`` before the fix (exact
 absorbed-photon budget 225.00 A/m^2 equivalent, hard optical ceiling
 q*Phi*(1-R-T) = 226.67):
 
@@ -45,9 +45,9 @@ from perovskite_sim.physics.optics import (
 from perovskite_sim.solver.mol import _compute_tmm_generation
 
 TMM_PRESETS = [
-    "configs/ionmonger_benchmark_tmm.yaml",
-    "configs/nip_MAPbI3_tmm.yaml",
-    "configs/pin_MAPbI3_tmm.yaml",
+    "tests/fixtures/configs/ionmonger_benchmark_tmm.yaml",
+    "tests/fixtures/configs/nip_MAPbI3_tmm.yaml",
+    "tests/fixtures/configs/pin_MAPbI3_tmm.yaml",
 ]
 
 # The wavelength window ``_compute_tmm_generation`` models.
@@ -232,7 +232,7 @@ def test_cumulative_absorptance_is_the_exact_antiderivative():
     actually certifies exactness, since a wrong closed form would leave a
     constant offset that does NOT shrink with refinement.
     """
-    stack = load_device_from_yaml("configs/ionmonger_benchmark_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark_tmm.yaml")
     layers, boundaries, wl_m, _flux, offset = _tmm_stack(stack)
     elec = electrical_layers(stack)
     absorber = next(l for l in elec if l.role == "absorber")

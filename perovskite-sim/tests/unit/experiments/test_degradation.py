@@ -18,7 +18,7 @@ def test_j_sc_constant_and_positive():
     """Degradation snapshots should report finite, physically consistent metrics."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.experiments.degradation import run_degradation
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     result = run_degradation(stack, t_end=5.0, n_snapshots=3,
                              V_bias=0.9, N_grid=20, dt_max=1.0,
                              metric_n_points=6, metric_settle_time=1e-3)
@@ -40,7 +40,7 @@ def test_degradation_metrics_decline_under_bias_stress():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.experiments.degradation import run_degradation
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     result = run_degradation(
         stack,
         t_end=30.0,
@@ -63,7 +63,7 @@ def test_degradation_metrics_decline_under_bias_stress():
 def test_degradation_rejects_small_metric_grid():
     from perovskite_sim.experiments.degradation import run_degradation
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="metric_n_points"):
         run_degradation(stack, metric_n_points=2)
 
@@ -71,7 +71,7 @@ def test_degradation_rejects_small_metric_grid():
 def test_degradation_rejects_nonpositive_metric_settle_time():
     from perovskite_sim.experiments.degradation import run_degradation
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="metric_settle_time"):
         run_degradation(stack, metric_settle_time=0.0)
 
@@ -79,7 +79,7 @@ def test_degradation_rejects_nonpositive_metric_settle_time():
 def test_degradation_rejects_negative_damage_motion_gain():
     from perovskite_sim.experiments.degradation import run_degradation
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="damage_motion_gain"):
         run_degradation(stack, damage_motion_gain=-1.0)
 
@@ -87,7 +87,7 @@ def test_degradation_rejects_negative_damage_motion_gain():
 def test_degradation_rejects_nonpositive_t_end():
     from perovskite_sim.experiments.degradation import run_degradation
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="t_end"):
         run_degradation(stack, t_end=0.0)
 
@@ -95,7 +95,7 @@ def test_degradation_rejects_nonpositive_t_end():
 def test_degradation_rejects_small_n_grid():
     from perovskite_sim.experiments.degradation import run_degradation
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="N_grid"):
         run_degradation(stack, N_grid=2)
 
@@ -103,7 +103,7 @@ def test_degradation_rejects_small_n_grid():
 def test_degradation_rejects_small_n_snapshots():
     from perovskite_sim.experiments.degradation import run_degradation
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="n_snapshots"):
         run_degradation(stack, n_snapshots=0)
 
@@ -114,7 +114,7 @@ def test_dt_max_caps_internal_step():
     Uses tiny grid (N=20) and short run (t_end=5 s, 2 snapshots) for speed."""
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.experiments.degradation import run_degradation
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     result = run_degradation(stack, t_end=5.0, n_snapshots=2,
                              V_bias=0.9, N_grid=20, dt_max=1.0,
                              metric_n_points=6, metric_settle_time=1e-3)

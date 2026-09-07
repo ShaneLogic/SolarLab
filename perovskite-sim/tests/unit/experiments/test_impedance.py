@@ -37,7 +37,7 @@ def test_dummy_rc_phase():
 def test_impedance_rejects_empty_frequencies():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="frequenc"):
         run_impedance(stack, np.array([]))
 
@@ -45,7 +45,7 @@ def test_impedance_rejects_empty_frequencies():
 def test_impedance_rejects_small_n_grid():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="N_grid"):
         run_impedance(stack, np.array([1e3]), N_grid=2)
 
@@ -55,7 +55,7 @@ def test_impedance_rejects_underresolved_csi_grid_before_integration():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     with pytest.raises(GridResolutionError, match="under-resolved"):
         run_impedance(stack, np.array([1e5]), N_grid=30)
 
@@ -65,7 +65,7 @@ def test_impedance_rejects_failed_dark_dc_preconditioning(monkeypatch):
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     monkeypatch.setattr(
         impedance_module,
         "run_transient",
@@ -88,7 +88,7 @@ def test_impedance_rejects_failed_dark_dc_preconditioning(monkeypatch):
 def test_impedance_rejects_zero_delta_v():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="delta_V"):
         run_impedance(stack, np.array([1e3]), delta_V=0.0)
 
@@ -105,7 +105,7 @@ def test_impedance_rejects_noninteger_protocol_counts(field, value):
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match=field):
         run_impedance(stack, np.array([1.0e3]), **{field: value})
 
@@ -114,7 +114,7 @@ def test_transient_impedance_enforces_strict_small_signal_amplitude():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="below the 20 mV"):
         run_impedance(
             stack,
@@ -128,7 +128,7 @@ def test_qf_frequency_impedance_enforces_strict_small_signal_amplitude():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     with pytest.raises(ValueError, match="below the 20 mV"):
         run_impedance(
             stack,
@@ -148,7 +148,7 @@ def test_qf_frequency_impedance_rejects_mobile_ion_model():
     )
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(QuasiFermiSteadyStateError, match="mobile ions"):
         run_impedance(
             stack,
@@ -163,7 +163,7 @@ def test_qf_frequency_impedance_rejects_mobile_ion_model():
 def test_impedance_rejects_nonpositive_frequency():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="positive"):
         run_impedance(stack, np.array([0.0, 1e3]))
 
@@ -176,7 +176,7 @@ def test_frequency_window_reports_omitted_ionmonger_branch():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.solver.mol import build_material_arrays
 
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 30)
     mat = build_material_arrays(x, stack)
 
@@ -203,7 +203,7 @@ def _ionmonger_frequency_fixture():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.solver.mol import build_material_arrays
 
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 30)
     return x, build_material_arrays(x, stack)
 
@@ -277,7 +277,7 @@ def test_strict_transient_impedance_rejects_uncertified_dc_state():
     )
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ImpedanceCertificationError, match="uncertified"):
         run_impedance(
             stack,
@@ -317,7 +317,7 @@ def test_public_qf_result_preserves_frequency_domain_diagnostics(monkeypatch):
     )
 
     result = run_impedance(
-        load_device_from_yaml("configs/cSi_homojunction.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml"),
         frequencies,
         V_dc=-0.2,
         N_grid=200,
@@ -343,7 +343,7 @@ def test_public_ion_aware_frequency_route_preserves_certification_evidence(
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
     frequencies = np.array([1.0e-3, 1.0])
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     contact = SimpleNamespace(status="compatible_unverified", certified=False)
     dc_certificate = SimpleNamespace(
         certified=False,
@@ -491,7 +491,7 @@ def test_ion_aware_frequency_protocol_records_residual_dc_history():
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
     protocol = build_impedance_experiment_protocol(
-        load_device_from_yaml("configs/ionmonger_benchmark.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml"),
         np.array([1.0e-3, 1.0]),
         method="ion_aware_frequency_certified",
     )
@@ -514,7 +514,7 @@ def test_public_ion_aware_frequency_route_rejects_ion_free_device():
 
     with pytest.raises(ImpedanceCapabilityError, match="mobile-ion"):
         run_impedance(
-            load_device_from_yaml("configs/cSi_homojunction.yaml"),
+            load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml"),
             np.array([1.0e3]),
             N_grid=200,
             illuminated=False,
@@ -526,7 +526,7 @@ def test_run_impedance_uses_passive_capacitive_sign_convention():
     from perovskite_sim.experiments.impedance import run_impedance
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     result = run_impedance(
         stack, np.array([1e3, 1e4]), V_dc=0.9, delta_V=0.01, N_grid=20, n_cycles=2
     )
@@ -654,7 +654,7 @@ def test_transient_certificate_fails_closed_on_nonfinite_rhs(monkeypatch):
     from perovskite_sim.solver.mol import build_material_arrays
     from perovskite_sim.solver.newton import solve_equilibrium
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x = build_electrical_grid(stack, 12)
     mat = build_material_arrays(x, stack)
     y = solve_equilibrium(x, stack)
@@ -690,7 +690,7 @@ def test_qf_certificate_fails_closed_on_nonfinite_diagnostics():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.solver.mol import build_material_arrays
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x = build_electrical_grid(stack, 12)
     mat = build_material_arrays(x, stack)
     dc_state = SimpleNamespace(
@@ -718,7 +718,7 @@ def test_public_impedance_stops_before_ac_on_nonfinite_dc_evidence(
     )
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     monkeypatch.setattr(
         impedance_module,
         "solve_illuminated_ss",
@@ -765,7 +765,7 @@ def test_strict_impedance_rejects_an_underresolved_grid_override():
     )
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     with pytest.raises(ImpedanceCertificationError, match="grid is uncertified"):
         run_impedance(
             stack,

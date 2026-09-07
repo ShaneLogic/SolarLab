@@ -13,7 +13,7 @@ def test_jv_sweep_2d_singleGB_runs_to_completion():
     must accept microstructure=None (auto-pickup from stack.microstructure),
     finish without solver blow-up, and exhibit measurable τ heterogeneity at
     the GB column relative to the bulk column at V=0."""
-    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml")
     res = run_jv_sweep_2d(
         stack=stack,
         microstructure=None,           # picks up stack.microstructure

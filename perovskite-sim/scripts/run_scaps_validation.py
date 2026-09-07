@@ -133,7 +133,7 @@ _AXIS_TO_UPDATE_KEY = {
 # Phase E1.6 (2026-05-26) — the per-sweep N_t calibration multiplier
 # moved from this script constant into the data model as
 # ``InterfaceDefect.calibration_factor`` on each interfaces[k] slot in
-# ``configs/scaps_mirror.yaml``. Sweep values pass through unchanged
+# ``tests/fixtures/configs/scaps_mirror.yaml``. Sweep values pass through unchanged
 # here; the solver now applies the calibration via the YAML field.
 # Partner sees the calibration explicitly in the YAML rather than
 # hidden in a script constant.

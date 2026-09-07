@@ -21,7 +21,7 @@ from perovskite_sim.solver.newton import solve_equilibrium
 
 @pytest.fixture
 def homogeneous_problem():
-    source = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     layer = source.layers[1]
     stack = replace(
         source,
@@ -196,7 +196,7 @@ def test_report_separates_differential_and_algebraic_failures(
 
 
 def test_capability_rejects_physical_interfaces():
-    stack = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     grid = multilayer_grid(
         [Layer(layer.thickness, 4) for layer in stack.layers],
         alpha=1.0,
@@ -208,7 +208,7 @@ def test_capability_rejects_physical_interfaces():
 
 
 def test_capability_rejects_mobile_ions():
-    source = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layer = source.layers[1]
     stack = replace(
         source,

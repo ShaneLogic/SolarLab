@@ -28,10 +28,10 @@ SCAPS_PCE = 0.2669
 
 @pytest.fixture(scope="module")
 def mirror_stack():
-    path = Path("configs/scaps_mirror.yaml")
+    path = Path("tests/fixtures/configs/scaps_mirror.yaml")
     if not path.exists():
         pytest.fail(
-            "configs/scaps_mirror.yaml not present — Phase B config missing"
+            "tests/fixtures/configs/scaps_mirror.yaml not present — Phase B config missing"
         )
     return load_scaps_yaml(path)
 

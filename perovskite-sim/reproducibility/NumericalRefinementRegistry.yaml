@@ -13,7 +13,7 @@ policy:
 lanes:
   scaps-mirror-frozen-ion-ss:
     claim_level: internal-numerical-candidate
-    config: configs/scaps_mirror.yaml
+    config: tests/fixtures/configs/scaps_mirror.yaml
     config_sha256: 7ad4968d9c8249b76ca4e649d41c39e26727f6818cb81a15fe75f6b74b11b881
     executor: perovskite_sim.validation.refinement_executors:run_frozen_ion_steady_jv
     executor_version: v2
@@ -52,7 +52,7 @@ lanes:
 
   ionmonger-mobile-ion-transient:
     claim_level: internal-numerical-candidate
-    config: configs/ionmonger_benchmark.yaml
+    config: tests/fixtures/configs/ionmonger_benchmark.yaml
     config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     executor: perovskite_sim.validation.refinement_executors:run_mobile_ion_transient_jv
     executor_version: v1
@@ -95,7 +95,7 @@ lanes:
 
   ionmonger-ion-aware-dc-v1:
     claim_level: internal-numerical-candidate
-    config: configs/ionmonger_benchmark.yaml
+    config: tests/fixtures/configs/ionmonger_benchmark.yaml
     config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     executor: perovskite_sim.validation.refinement_executors:run_ion_aware_dc_operating_point
     executor_version: v1
@@ -148,7 +148,7 @@ lanes:
 
   ionmonger-ion-aware-dc-resolved-v2:
     claim_level: internal-numerical-candidate
-    config: configs/ionmonger_benchmark.yaml
+    config: tests/fixtures/configs/ionmonger_benchmark.yaml
     config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     executor: perovskite_sim.validation.refinement_executors:run_ion_aware_dc_operating_point
     executor_version: v1
@@ -202,7 +202,7 @@ lanes:
 
   ionmonger-ion-aware-impedance-resolved-v1:
     claim_level: internal-numerical-candidate
-    config: configs/ionmonger_benchmark.yaml
+    config: tests/fixtures/configs/ionmonger_benchmark.yaml
     config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     executor: perovskite_sim.validation.refinement_executors:run_ion_aware_impedance_frequency_domain
     executor_version: v1
@@ -271,7 +271,7 @@ lanes:
 
   dynamic-defect-ion-impedance-production-v1:
     claim_level: internal-numerical-candidate
-    config: configs/dynamic_defect_ion_impedance.yaml
+    config: tests/fixtures/configs/dynamic_defect_ion_impedance.yaml
     config_sha256: 0b7424e4170d7d3792f40f97361edee3a881a04a39ad3a549fb7de621798422a
     executor: perovskite_sim.validation.refinement_executors:run_dynamic_defect_impedance_production
     executor_version: v1
@@ -322,7 +322,7 @@ lanes:
 
   dynamic-defect-ion-transient-timescale-v1:
     claim_level: internal-numerical-candidate
-    config: configs/dynamic_interface_defect_ion_transient.yaml
+    config: tests/fixtures/configs/dynamic_interface_defect_ion_transient.yaml
     config_sha256: 7aa464bc4772030318ebfa5fa7eb293e346ddf33f70f74083ba120f4240fd7c8
     executor: perovskite_sim.validation.dynamic_defect_transient_refinement:run_dynamic_defect_ion_transient_refinement
     executor_version: v1
@@ -397,7 +397,7 @@ lanes:
 
   dynamic-defect-ion-transient-timescale-resolved-v2:
     claim_level: internal-numerical-candidate
-    config: configs/dynamic_interface_defect_ion_transient.yaml
+    config: tests/fixtures/configs/dynamic_interface_defect_ion_transient.yaml
     config_sha256: 7aa464bc4772030318ebfa5fa7eb293e346ddf33f70f74083ba120f4240fd7c8
     executor: perovskite_sim.validation.dynamic_defect_transient_refinement:run_dynamic_defect_ion_transient_refinement
     executor_version: v2
@@ -474,7 +474,7 @@ lanes:
 
   dynamic-defect-ion-transient-timescale-nonlinear-resolved-v3:
     claim_level: internal-numerical-candidate
-    config: configs/dynamic_interface_defect_ion_transient.yaml
+    config: tests/fixtures/configs/dynamic_interface_defect_ion_transient.yaml
     config_sha256: 7aa464bc4772030318ebfa5fa7eb293e346ddf33f70f74083ba120f4240fd7c8
     executor: perovskite_sim.validation.dynamic_defect_transient_refinement:run_dynamic_defect_ion_transient_refinement
     executor_version: v3
@@ -553,7 +553,7 @@ lanes:
 
   dynamic-defect-ion-transient-timescale-absorber-resolved-v4:
     claim_level: internal-numerical-candidate
-    config: configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
+    config: tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
     config_sha256: f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24
     executor: perovskite_sim.validation.dynamic_defect_transient_refinement:run_dynamic_defect_ion_transient_refinement
     executor_version: v4
@@ -632,7 +632,7 @@ lanes:
 
   dynamic-defect-ion-transient-timescale-reference-resolved-v5:
     claim_level: internal-numerical-candidate
-    config: configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
+    config: tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
     config_sha256: f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24
     executor: perovskite_sim.validation.dynamic_defect_transient_refinement:run_dynamic_defect_ion_transient_refinement
     executor_version: v5
@@ -712,7 +712,7 @@ lanes:
 
   dynamic-defect-ion-transient-production-v1:
     claim_level: internal-numerical-candidate
-    config: configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
+    config: tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml
     config_sha256: f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24
     executor: perovskite_sim.validation.dynamic_defect_transient_refinement:run_dynamic_defect_ion_transient_refinement
     executor_version: v6
@@ -796,7 +796,7 @@ lanes:
 
   csi-qf-frequency-domain:
     claim_level: internal-numerical-candidate
-    config: configs/cSi_homojunction.yaml
+    config: tests/fixtures/configs/cSi_homojunction.yaml
     config_sha256: c179e087a6623c7d19dfc7f6a3af056e6fcd5a0382e2e2b0e1e26dc08d883c99
     executor: perovskite_sim.validation.refinement_executors:run_csi_qf_frequency_domain
     executor_version: v3
@@ -831,7 +831,7 @@ lanes:
 
   csi-qf-frequency-domain-resolved-v2:
     claim_level: internal-numerical-candidate
-    config: configs/cSi_homojunction.yaml
+    config: tests/fixtures/configs/cSi_homojunction.yaml
     config_sha256: c179e087a6623c7d19dfc7f6a3af056e6fcd5a0382e2e2b0e1e26dc08d883c99
     executor: perovskite_sim.validation.refinement_executors:run_csi_qf_frequency_domain
     executor_version: v3
@@ -865,7 +865,7 @@ lanes:
 
   twod-uniform-limit:
     claim_level: internal-numerical-candidate
-    config: configs/twod/nip_MAPbI3_uniform.yaml
+    config: tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml
     config_sha256: 6a7e0022575e680e3b4348774eb604c3273930b7a0fe210994e6532cd6d59dcb
     executor: perovskite_sim.validation.refinement_executors:run_twod_uniform_limit
     executor_version: v2
@@ -911,7 +911,7 @@ lanes:
 
   twod-mobile-ion-interface-srh-v1:
     claim_level: internal-numerical-candidate
-    config: configs/twod/combined_mobile_interface_research.yaml
+    config: tests/fixtures/configs/twod/combined_mobile_interface_research.yaml
     config_sha256: 08b0593cbd4e1c11d4603b521ddfb2e4590ef4daa41fbfa7fe4eac857eb606d1
     executor: perovskite_sim.validation.refinement_executors:run_twod_mobile_ion_interface_srh
     executor_version: v1
@@ -968,7 +968,7 @@ lanes:
 
   external-series-shunt-dc-v1:
     claim_level: internal-numerical-candidate
-    config: configs/nip_MAPbI3.yaml
+    config: tests/fixtures/configs/nip_MAPbI3.yaml
     config_sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
     executor: perovskite_sim.validation.external_circuit_refinement:run_external_series_shunt_dc_refinement
     executor_version: v1
@@ -1024,7 +1024,7 @@ lanes:
 
   external-series-shunt-dc-operating-quadrant-v2:
     claim_level: internal-numerical-candidate
-    config: configs/nip_MAPbI3.yaml
+    config: tests/fixtures/configs/nip_MAPbI3.yaml
     config_sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
     executor: perovskite_sim.validation.external_circuit_refinement:run_external_series_shunt_dc_operating_quadrant_refinement
     executor_version: v2
@@ -1082,7 +1082,7 @@ lanes:
 
   electrothermal-terminal-mpp-v1:
     claim_level: internal-numerical-candidate
-    config: configs/nip_MAPbI3.yaml
+    config: tests/fixtures/configs/nip_MAPbI3.yaml
     config_sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
     executor: perovskite_sim.validation.electrothermal_refinement:run_electrothermal_terminal_mpp_refinement
     executor_version: v1
@@ -1154,7 +1154,7 @@ lanes:
 
   electrothermal-terminal-mpp-resolved-v2:
     claim_level: internal-numerical-candidate
-    config: configs/nip_MAPbI3.yaml
+    config: tests/fixtures/configs/nip_MAPbI3.yaml
     config_sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
     executor: perovskite_sim.validation.electrothermal_refinement:run_electrothermal_terminal_mpp_refinement
     executor_version: v2
@@ -1226,7 +1226,7 @@ lanes:
 
   electrothermal-terminal-mpp-grid-resolved-v3:
     claim_level: internal-numerical-candidate
-    config: configs/nip_MAPbI3.yaml
+    config: tests/fixtures/configs/nip_MAPbI3.yaml
     config_sha256: 20fa8a8097c965330ce7b0d7e8f9286fc1960585231c360841d24ba7a1845668
     executor: perovskite_sim.validation.electrothermal_refinement:run_electrothermal_terminal_mpp_refinement
     executor_version: v3
@@ -1298,7 +1298,7 @@ lanes:
 
   interface-recombination-charge-off:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_reference.yaml
+    config: tests/fixtures/configs/interface_charge_reference.yaml
     config_sha256: 300f57a256dc764995b916a55b98b642ecd8244eccd2ca456624d9521e0e2705
     executor: perovskite_sim.validation.refinement_executors:run_interface_recombination_charge_off
     executor_version: v3
@@ -1350,7 +1350,7 @@ lanes:
 
   interface-charge-equilibrium-referenced-v1:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_research.yaml
+    config: tests/fixtures/configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.refinement_executors:run_equilibrium_referenced_interface_charge
     executor_version: v2
@@ -1410,7 +1410,7 @@ lanes:
 
   interface-charge-device-stress-v1:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_research.yaml
+    config: tests/fixtures/configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.interface_charge_stress:run_equilibrium_referenced_interface_charge_stress
     executor_version: v2
@@ -1512,7 +1512,7 @@ lanes:
 
   interface-charge-device-stress-resolved-v2:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_research.yaml
+    config: tests/fixtures/configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.interface_charge_stress:run_equilibrium_referenced_interface_charge_stress
     executor_version: v3
@@ -1618,7 +1618,7 @@ lanes:
 
   interface-charge-qf-dc-jv-v1:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_jv_research.yaml
+    config: tests/fixtures/configs/interface_charge_jv_research.yaml
     config_sha256: 5f4bbf89cf2d95fb020cdc9ade111d838ed38cc1c14a722e5fd800e30c6590c1
     executor: perovskite_sim.validation.refinement_executors:run_equilibrium_referenced_interface_charge_jv
     executor_version: v1
@@ -1681,7 +1681,7 @@ lanes:
 
   no-ion-dae-transient-v1:
     claim_level: internal-numerical-candidate
-    config: configs/csi_vannijen2025_pn_cv.yaml
+    config: tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml
     config_sha256: eb4806e7167c258bd6fb5e47fe02ebadc92e8963055c06a73a5775a20178f5ad
     executor: perovskite_sim.validation.dae_refinement:run_no_ion_dae_transient
     executor_version: v1
@@ -1743,7 +1743,7 @@ lanes:
 
   single-positive-ion-dae-transient-v1:
     claim_level: internal-numerical-candidate
-    config: configs/ionmonger_benchmark.yaml
+    config: tests/fixtures/configs/ionmonger_benchmark.yaml
     config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     executor: perovskite_sim.validation.dae_ion_refinement:run_single_ion_dae_transient
     executor_version: v1
@@ -1815,7 +1815,7 @@ lanes:
 
   dual-mobile-ion-dae-transient-v1:
     claim_level: internal-numerical-candidate
-    config: configs/ionmonger_benchmark.yaml
+    config: tests/fixtures/configs/ionmonger_benchmark.yaml
     config_sha256: fbc82c9b85d121c459ab08d07d1c7f886eef36f4db669d354b79d260f43c8750
     executor: perovskite_sim.validation.dae_dual_ion_refinement:run_dual_ion_dae_transient
     executor_version: v1
@@ -1902,7 +1902,7 @@ lanes:
 
   algebraic-interface-state-dae-transient-v1:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_research.yaml
+    config: tests/fixtures/configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.dae_interface_refinement:run_algebraic_interface_dae_transient
     executor_version: v1
@@ -1972,7 +1972,7 @@ lanes:
 
   single-ion-algebraic-interface-dae-transient-v1:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_research.yaml
+    config: tests/fixtures/configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.dae_ion_interface_refinement:run_single_ion_algebraic_interface_dae_transient
     executor_version: v1
@@ -2059,7 +2059,7 @@ lanes:
 
   single-ion-algebraic-interface-dae-transient-resolved-v2:
     claim_level: internal-numerical-candidate
-    config: configs/interface_charge_research.yaml
+    config: tests/fixtures/configs/interface_charge_research.yaml
     config_sha256: 523449448807e4993f999300308096003c3eeaf280924b7af208915a3cf41a54
     executor: perovskite_sim.validation.dae_ion_interface_refinement:run_single_ion_algebraic_interface_dae_transient
     executor_version: v2
@@ -2147,7 +2147,7 @@ lanes:
 
   degenerate-pn-equilibrium-v1:
     claim_level: internal-numerical-candidate
-    config: configs/csi_degenerate_pn_research.yaml
+    config: tests/fixtures/configs/csi_degenerate_pn_research.yaml
     config_sha256: 6d707f97bc1632521b5176f55d6e004cc171636e0264e85aa4f20eadafe2dfcb
     executor: perovskite_sim.validation.degenerate_refinement:run_degenerate_pn_equilibrium_refinement
     executor_version: v1
@@ -2189,7 +2189,7 @@ lanes:
 
   incomplete-ionization-temperature-equilibrium-v1:
     claim_level: internal-numerical-candidate
-    config: configs/csi_incomplete_ionization_pn_research.yaml
+    config: tests/fixtures/configs/csi_incomplete_ionization_pn_research.yaml
     config_sha256: d98b07049abfb17f44404eac91557338dad3a16341b6350d291d940c258abc72
     executor: perovskite_sim.validation.incomplete_ionization_refinement:run_incomplete_ionization_temperature_refinement
     executor_version: v1
@@ -2236,7 +2236,7 @@ lanes:
 
   incomplete-ionization-bgn-temperature-equilibrium-v1:
     claim_level: internal-numerical-candidate
-    config: configs/csi_incomplete_ionization_bgn_pn_research.yaml
+    config: tests/fixtures/configs/csi_incomplete_ionization_bgn_pn_research.yaml
     config_sha256: 2fb63bd79a0f0917083d887e80301712d65b9ca46ace02bedb9cb5c5336e789b
     executor: perovskite_sim.validation.bgn_refinement:run_incomplete_ionization_bgn_temperature_refinement
     executor_version: v1
@@ -2287,7 +2287,7 @@ lanes:
 
   bulk-energy-distributed-trap-equilibrium-v1:
     claim_level: internal-numerical-candidate
-    config: configs/csi_gaussian_bulk_trap_pn_research.yaml
+    config: tests/fixtures/configs/csi_gaussian_bulk_trap_pn_research.yaml
     config_sha256: 7e8bf1ab6669bd8088cd402ef73aca1cd75c9ae1755d3137faf6650569ac481b
     executor: perovskite_sim.validation.bulk_trap_refinement:run_bulk_trap_equilibrium_refinement
     executor_version: v1
@@ -2339,7 +2339,7 @@ lanes:
 
   charged-explicit-defect-qf-dc-v1:
     claim_level: internal-numerical-candidate
-    config: configs/scaps_defect_s1_acceptor_n.yaml
+    config: tests/fixtures/configs/scaps_defect_s1_acceptor_n.yaml
     config_sha256: f49900b296a2bfb3c5a28d9135b24dcf8f0d6c409f105a70d4dd27100ebcb681
     executor: perovskite_sim.validation.charged_defect_refinement:run_charged_defect_qf_dc_refinement
     executor_version: v1
@@ -2390,7 +2390,7 @@ lanes:
       config_loader: scaps_explicit_defect_suite_v1
       require_protocol: true
       suite_manifest: reproducibility/ScapsDefectS0S2Suite.json
-      suite_manifest_sha256: 5ac82fb9826741efacef3f2219b07f9b3bf8bd87a4888b24cf1464eeee60d2ef
+      suite_manifest_sha256: d3a7486bc48f4cee8db309db25d96201d7e429325cbabd16ea6abccf591f6dd8
       grid_alpha: 2.0
       profile_points: 17
       voltage_grid_V: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
@@ -2407,7 +2407,7 @@ lanes:
 
   distributed-explicit-defect-qf-dc-v1:
     claim_level: internal-numerical-candidate
-    config: configs/distributed_defect_qf_dc_pn.yaml
+    config: tests/fixtures/configs/distributed_defect_qf_dc_pn.yaml
     config_sha256: 7a6b1c16d8ea313177e3a761660bd6b7bbb546b14aa23189f91a9187ff0904f8
     executor: perovskite_sim.validation.distributed_defect_refinement:run_distributed_defect_qf_dc_refinement
     executor_version: v1
@@ -2478,7 +2478,7 @@ lanes:
 
   spatially-graded-explicit-defect-qf-dc-v1:
     claim_level: internal-numerical-candidate
-    config: configs/graded_distributed_defect_qf_dc_pn.yaml
+    config: tests/fixtures/configs/graded_distributed_defect_qf_dc_pn.yaml
     config_sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
     executor: perovskite_sim.validation.spatial_defect_refinement:run_spatial_defect_qf_dc_refinement
     executor_version: v1
@@ -2560,7 +2560,7 @@ lanes:
 
   spatially-graded-explicit-defect-qf-dc-v2:
     claim_level: internal-numerical-candidate
-    config: configs/graded_distributed_defect_qf_dc_pn.yaml
+    config: tests/fixtures/configs/graded_distributed_defect_qf_dc_pn.yaml
     config_sha256: b6db3b87c509bafc7dae5e84640b12a0277668d612b4f9933f848a3ad99a715f
     executor: perovskite_sim.validation.spatial_defect_refinement:run_spatial_defect_qf_dc_refinement
     executor_version: v2
@@ -2643,7 +2643,7 @@ lanes:
 
   multivalent-explicit-defect-qf-dc-v1:
     claim_level: internal-numerical-candidate
-    config: configs/scaps_defect_m1_double_donor_p.yaml
+    config: tests/fixtures/configs/scaps_defect_m1_double_donor_p.yaml
     config_sha256: 43516a15f6ceeb6ba5fb4381c789e1c073ead4b101081d583da60c4bf9407290
     executor: perovskite_sim.validation.multivalent_defect_refinement:run_multivalent_defect_qf_dc_refinement
     executor_version: v1
@@ -2744,7 +2744,7 @@ lanes:
       profile_points: 17
       require_protocol: true
       suite_manifest: reproducibility/ScapsMultivalentDefectSuite.json
-      suite_manifest_sha256: 5443624569ca35279a04feb9dff018bdc42c44c85d96e7d5fe19fe68c4b643e1
+      suite_manifest_sha256: 031868a4c3709c280de1e64e88780c8defac6789687e625c5d479ee716291986
       voltage_grid_V:
       - 0.0
       - 0.05
@@ -2848,7 +2848,7 @@ lanes:
         units: '1'
   cigs-graded-optics-v1:
     claim_level: internal-numerical-candidate
-    config: configs/cigs_graded_optics.yaml
+    config: tests/fixtures/configs/cigs_graded_optics.yaml
     config_sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
     executor: perovskite_sim.validation.cigs_optics_refinement:run_cigs_graded_optics_refinement
     executor_version: v1
@@ -2945,7 +2945,7 @@ lanes:
       - InterfaceDefect, het_recomb_despike, mobile ions, measured data, external solver validation, experimental validation, Bayesian inference, and uncertainty quantification remain excluded.
   wkb-tunnelling-channel-qf-dc-v1:
     claim_level: internal-numerical-candidate
-    config: configs/wkb_tunnelling_intraband_spike.yaml
+    config: tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml
     config_sha256: 545067cfedc8598b62fd1991aeaf3cd13d3153151e427452d1b78f6d523df20b
     executor: perovskite_sim.validation.tunnelling_channel_refinement:run_tunnelling_channel_qf_dc_refinement
     executor_version: v1

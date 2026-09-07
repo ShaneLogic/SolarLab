@@ -29,7 +29,7 @@ from perovskite_sim.experiments.suns_voc import run_suns_voc
 
 
 CONFIG = os.path.join(
-    os.path.dirname(__file__), "..", "..", "configs", "radiative_limit.yaml"
+    os.path.dirname(__file__), "..", "..", "tests", "fixtures", "configs", "radiative_limit.yaml"
 )
 
 

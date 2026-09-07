@@ -249,7 +249,7 @@ def test_compute_metrics_rejects_non_boolean_validity_values():
 def test_jv_sweep_rejects_small_n_grid():
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="N_grid"):
         run_jv_sweep(stack, N_grid=2)
 
@@ -257,7 +257,7 @@ def test_jv_sweep_rejects_small_n_grid():
 def test_jv_sweep_rejects_small_n_points():
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="n_points"):
         run_jv_sweep(stack, n_points=1)
 
@@ -265,7 +265,7 @@ def test_jv_sweep_rejects_small_n_points():
 def test_jv_sweep_rejects_nonpositive_v_rate():
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
     from perovskite_sim.models.config_loader import load_device_from_yaml
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="v_rate"):
         run_jv_sweep(stack, v_rate=0.0)
 
@@ -293,7 +293,7 @@ def _make_stack_and_N(n_grid: int = 60):
     from perovskite_sim.models.device import electrical_layers
     from perovskite_sim.discretization.grid import multilayer_grid, Layer
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     elec = electrical_layers(stack)
     layers_grid = [Layer(l.thickness, n_grid // len(elec)) for l in elec]
     x = multilayer_grid(layers_grid)
@@ -321,7 +321,7 @@ def test_fixed_generation_wrong_shape_raises():
     from perovskite_sim.experiments.jv_sweep import run_jv_sweep
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     with pytest.raises(ValueError, match="fixed_generation"):
         run_jv_sweep(stack, N_grid=60, n_points=20,
                      fixed_generation=np.zeros(30))

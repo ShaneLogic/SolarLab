@@ -146,7 +146,7 @@ def test_face_selection_uses_physical_steps(folded):
 
 def test_legacy_preset_without_dos_data_is_unaffected():
     """A config with no Nc300/Nv300 never folds, so nothing changes."""
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     _, mat = _mat(stack)
     np.testing.assert_array_equal(mat.chi, mat.chi_phys)
     np.testing.assert_array_equal(mat.Eg, mat.Eg_phys)

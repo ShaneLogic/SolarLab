@@ -43,7 +43,7 @@ def test_invalid_series_is_rejected(intervals, values):
 
 
 def test_prolongation_preserves_nested_carriers_and_neutral_ion_background():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     source_x = build_electrical_grid(stack, 48)
     target_x = build_electrical_grid(stack, 96)
     source_mat = build_material_arrays(source_x, stack)
@@ -63,7 +63,7 @@ def test_prolongation_preserves_nested_carriers_and_neutral_ion_background():
 
 
 def test_prolongation_rejects_malformed_source_state():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     source_x = build_electrical_grid(stack, 48)
     target_x = build_electrical_grid(stack, 96)
 

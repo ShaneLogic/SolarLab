@@ -58,7 +58,7 @@ def test_n_t_calibration_factor_equivalence_on_scaps_mirror():
     Option B-2: SCAPS direct N_t values become useable as long as the
     calibration factor is supplied."""
     # Current scaps_mirror.yaml: N_t_cm2=1e8, calibration_factor=1.0 (default)
-    baseline_stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    baseline_stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     baseline = run_jv_sweep(
         baseline_stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6,
     )
@@ -100,7 +100,7 @@ def test_scaps_mirror_baseline_unchanged_post_e1_6_migration():
     [1.05, 1.25] V. The two declarations are mathematically equivalent
     via ``SRV_eff = σ · v_th · N_t · 1e-2 · cf``, so the baseline
     physics is unchanged — only the partner-facing data model presentation."""
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     # Post-E1.6 explicit value (was implicit 1.0 default pre-E1.6).
     # Aligned to SCAPS PDF baseline N_t=1e12; cf=1e-4 produces the same
     # effective SRV (1e-2 m/s) as the pre-E1.6 empirical N_t=1e8 + cf=1.0.

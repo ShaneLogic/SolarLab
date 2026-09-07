@@ -28,6 +28,15 @@ from backend.main import app, stack_from_dict
 client = TestClient(app)
 
 
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture(autouse=True)
+def _all_presets(serve_all_presets):
+    """Historical presets are test fixtures; serve them through the API here."""
+    return serve_all_presets
+
+
 # ---------------------------------------------------------------------------
 # unit-level: stack_from_dict round-trip for Stage B(c.x) parameters
 # ---------------------------------------------------------------------------
@@ -161,7 +170,7 @@ def test_stack_from_dict_field_mobility_default_is_zero():
 def test_stack_from_dict_propagates_microstructure_block():
     """Inline-device payloads carrying a top-level ``microstructure:`` block
     must produce a populated DeviceStack.microstructure. Loading the
-    shipped configs/twod/nip_MAPbI3_singleGB.yaml in the workstation and
+    shipped tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml in the workstation and
     submitting via ``device:`` is exactly this code path."""
     cfg = {
         "device": {"V_bi": 1.1, "Phi": 2.5e21, "mode": "full"},
@@ -301,7 +310,7 @@ def test_jv_2d_sse_result_event_carries_metrics_dict():
 
 
 def test_jv_2d_dispatches_inline_device_with_microstructure_from_singleGB():
-    """Frontend-realistic dispatch: load configs/twod/nip_MAPbI3_singleGB.yaml
+    """Frontend-realistic dispatch: load tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml
     via the YAML loader, hand the resulting dict back as the ``device:``
     payload, and confirm the dispatch handshake succeeds. Mirrors the
     workstation flow: GET /api/configs/{name} → device cache → POST
@@ -311,7 +320,7 @@ def test_jv_2d_dispatches_inline_device_with_microstructure_from_singleGB():
     import yaml
     import os
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    cfg_path = os.path.join(repo_root, "configs", "twod", "nip_MAPbI3_singleGB.yaml")
+    cfg_path = os.path.join(repo_root, "tests", "fixtures", "configs", "twod", "nip_MAPbI3_singleGB.yaml")
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
     # Sanity: the bundled preset really does carry a GB block.
@@ -321,7 +330,7 @@ def test_jv_2d_dispatches_inline_device_with_microstructure_from_singleGB():
     # Stack the cfg through stack_from_dict and confirm GB survives.
     stack = stack_from_dict(cfg)
     assert len(stack.microstructure.grain_boundaries) >= 1, (
-        "configs/twod/nip_MAPbI3_singleGB.yaml microstructure dropped "
+        "tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml microstructure dropped "
         "by stack_from_dict — workstation submit would silently lose "
         "Stage B(a) physics."
     )
@@ -361,7 +370,7 @@ def test_jv_2d_dispatches_bcx_combined_demo():
         "/api/jobs",
         json={
             "kind": "jv_2d",
-            "config_path": "configs/twod/bcx_combined_demo.yaml",
+            "config_path": "tests/fixtures/configs/twod/bcx_combined_demo.yaml",
             "params": {
                 "lateral_length": 500e-9,
                 "Nx": 4,

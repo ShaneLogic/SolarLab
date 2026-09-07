@@ -1,7 +1,7 @@
 """Research preset inventory and loading checks, without historical lane claims.
 
-The two research presets are the ones the frontend catalogue exposes; the other
-bundled YAMLs stay in ``configs/`` as inputs for the historical test lanes.
+Only the two research presets ship under ``configs/``; the historical presets
+live in ``tests/fixtures/configs/`` as test inputs and are not served by the API.
 """
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+
+from fastapi import HTTPException
 
 from backend.main import get_config, list_configs, stack_from_dict
 from perovskite_sim.models.config_loader import load_device_from_yaml
@@ -23,20 +25,20 @@ PRESETS = {
 }
 
 
-def test_research_presets_are_bundled():
+def test_only_the_research_presets_are_shipped():
     paths = {
         path.relative_to(ROOT / "configs").as_posix()
         for pattern in ("*.yaml", "*.yml")
         for path in (ROOT / "configs").rglob(pattern)
         if "user" not in path.relative_to(ROOT / "configs").parts[:-1]
     }
-    assert set(PRESETS) <= paths
+    assert paths == set(PRESETS)
 
 
-def test_api_lists_research_presets():
+def test_api_lists_only_the_research_presets():
     entries = list_configs()["configs"]
     shipped = {entry["name"] for entry in entries if entry["namespace"] == "shipped"}
-    assert set(PRESETS) <= shipped
+    assert shipped == set(PRESETS)
 
 
 @pytest.mark.parametrize("name", PRESETS)
@@ -79,5 +81,9 @@ def test_research_ion_populations_remain_distinct():
     "nip_MAPbI3_singleGB.yaml",
     "tandem_lin2019.yaml",
 ])
-def test_historical_presets_remain_loadable_through_api(name):
-    assert get_config(name)["status"] == "ok"
+def test_historical_presets_are_not_served_through_api(name):
+    with pytest.raises(HTTPException) as caught:
+        get_config(name)
+    assert caught.value.status_code == 404
+    assert (ROOT / "tests/fixtures/configs" / name).exists() or (
+        ROOT / "tests/fixtures/configs/twod" / name).exists()

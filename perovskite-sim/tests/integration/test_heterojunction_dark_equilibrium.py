@@ -40,7 +40,7 @@ built-in potential, which is why the synthetic stacks below set
 ``V_bi = compute_V_bi()`` — otherwise the flatness assertions would be measuring
 a YAML contact mismatch rather than heterojunction transport.
 
-Preset: ``configs/scaps_mirror.yaml`` (3 electrical layers, no glass substrate,
+Preset: ``tests/fixtures/configs/scaps_mirror.yaml`` (3 electrical layers, no glass substrate,
 no het_recomb_despike, no flat_band_contacts, D_ion = 0 so J_ion == 0 exactly,
 N_C == N_V in every layer).  ``optical_material`` is stripped because the run is
 dark — TMM would only add build cost.  Cost is ~0.4 s per settled case at
@@ -55,6 +55,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+from tests._presets import preset_path
 
 from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.experiments.band_diagram import (
@@ -74,7 +76,7 @@ from perovskite_sim.scaps_compat.materials import ni_from_dos
 from perovskite_sim.solver.mol import build_material_arrays, run_transient
 from perovskite_sim.solver.newton import solve_equilibrium
 
-CONFIG = str(Path(__file__).resolve().parents[2] / "configs" / "scaps_mirror.yaml")
+CONFIG = str(Path(__file__).resolve().parents[2] / "tests/fixtures/configs" / "scaps_mirror.yaml")
 
 # 10 intervals per electrical layer (the `30 // len(elec)` convention used by
 # tests/unit/solver/test_dos_band_potentials.py). PINNED, not incidental.
@@ -497,7 +499,7 @@ def test_dos_fold_is_applied_exactly_once_per_node(cfg, n_grid):
     on the SHIPPED presets.
     """
     stack = load_scaps_yaml(
-        str(Path(__file__).resolve().parents[2] / "configs" / cfg))
+        str(preset_path(cfg)))
     assert stack.dos_band_potentials
     x = _grid_for(stack, n_grid)
     mat = build_material_arrays(x, stack)
@@ -551,7 +553,7 @@ def test_contact_bc_offset_is_an_algebraic_identity(cfg):
     nothing to do with heterojunction transport.
     """
     stack = load_scaps_yaml(
-        str(Path(__file__).resolve().parents[2] / "configs" / cfg))
+        str(preset_path(cfg)))
     x = _grid_for(stack, N_GRID)
     mat = build_material_arrays(x, stack)
     y = solve_equilibrium(x, stack)  # un-settled seed: the identity is in the BCs

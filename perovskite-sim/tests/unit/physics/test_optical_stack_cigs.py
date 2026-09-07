@@ -17,7 +17,7 @@ from perovskite_sim.physics.optical_stack import (
 
 
 def _stack(*, active: bool, slices: int = 3, direction: str = "front_to_back"):
-    base = load_device_from_yaml("configs/cigs_graded_notch.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/cigs_graded_notch.yaml")
     layers = list(base.layers)
     absorber_index = next(
         index for index, layer in enumerate(layers) if layer.role == "absorber"

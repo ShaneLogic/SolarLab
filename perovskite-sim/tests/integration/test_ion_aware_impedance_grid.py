@@ -16,7 +16,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 @pytest.fixture(scope="module")
 def resolved_grid_ladder():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     dc_protocol = build_ion_aware_dc_protocol(
         stack,
         V_dc=0.9,

@@ -21,7 +21,7 @@ from perovskite_sim.experiments import jv_sweep as jv
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.mode import resolve_mode
 
-CONFIG = "configs/dual_ion_demo.yaml"
+CONFIG = "tests/fixtures/configs/dual_ion_demo.yaml"
 
 
 @pytest.fixture(scope="module")

@@ -11,7 +11,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def test_real_transient_jv_closes_zero_and_nonzero_external_circuit():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     intrinsic = run_jv_sweep(
         stack,
         N_grid=20,

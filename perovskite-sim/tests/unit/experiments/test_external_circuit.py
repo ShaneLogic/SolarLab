@@ -174,7 +174,7 @@ def test_apply_retains_source_hash_and_reports_certified_mapping():
 
 def test_source_experiment_protocol_property_is_bound_into_result():
     source_protocol = build_jv_experiment_protocol(
-        load_device_from_yaml("configs/nip_MAPbI3.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml"),
         n_points=25,
         V_max=1.2,
         v_rate=1.0,

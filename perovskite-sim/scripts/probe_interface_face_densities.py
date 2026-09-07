@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         "--out", type=Path,
         default=Path("outputs/scaps_validation_e1_6a_probe.txt"),
     )
-    parser.add_argument("--config", type=Path, default=Path("configs/scaps_mirror.yaml"))
+    parser.add_argument("--config", type=Path, default=Path("tests/fixtures/configs/scaps_mirror.yaml"))
     parser.add_argument(
         "--robin", action="store_true",
         help=(

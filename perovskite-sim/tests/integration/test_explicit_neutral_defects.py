@@ -72,7 +72,7 @@ def _neutral_species(*, name: str, center_eV: float) -> BulkDefectSpecies:
 def _one_layer_explicit_stack(
     species: tuple[BulkDefectSpecies, ...] | None = None,
 ):
-    source = load_device_from_yaml("configs/csi_vannijen2025_pn_cv.yaml")
+    source = load_device_from_yaml("tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml")
     source_layer = source.layers[1]
     selected_species = species or (
         _neutral_species(name="neutral_low", center_eV=0.35),
@@ -137,7 +137,7 @@ def test_short_transient_attaches_per_species_diagnostics_without_charge():
 
 
 def test_standard_yaml_loader_reaches_explicit_neutral_execution(tmp_path):
-    raw = yaml.safe_load((ROOT / "configs/csi_vannijen2025_pn_cv.yaml").read_text())
+    raw = yaml.safe_load((ROOT / "tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml").read_text())
     document = BulkDefectDocument(
         schema_version=EXPLICIT_DEFECT_SCHEMA_VERSION,
         defect_model=EXPLICIT_QUASI_STEADY,

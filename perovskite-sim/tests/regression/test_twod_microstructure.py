@@ -31,8 +31,8 @@ def _maybe_flip_sign(V: np.ndarray, J: np.ndarray) -> np.ndarray:
 @pytest.mark.slow
 def test_twod_singleGB_lowers_voc():
     """A finite-width absorber GB must lower V_oc versus the bulk baseline."""
-    base = _freeze_ions(load_device_from_yaml("configs/twod/nip_MAPbI3_uniform.yaml"))
-    gb = _freeze_ions(load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml"))
+    base = _freeze_ions(load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml"))
+    gb = _freeze_ions(load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml"))
 
     common = dict(
         lateral_length=500e-9, Nx=10,

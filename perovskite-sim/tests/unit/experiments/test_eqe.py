@@ -24,13 +24,13 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 @pytest.fixture(scope="module")
 def tmm_stack():
     """TMM-enabled nip-MAPbI3 with tabulated n, k optical data."""
-    return load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
 
 
 @pytest.fixture(scope="module")
 def bl_stack():
     """Beer-Lambert-only stack (no optical_material) for rejection test."""
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ def test_eqe_peaks_in_absorption_band(coarse_eqe):
 @pytest.fixture(scope="module")
 def ionmonger_tmm_stack():
     """Ionic-rich TMM stack (D_ion ≈ 1e-17 m²/s, slowest perovskite preset)."""
-    return load_device_from_yaml("configs/ionmonger_benchmark_tmm.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark_tmm.yaml")
 
 
 def test_eqe_in_unit_range_on_ionic_rich_preset(ionmonger_tmm_stack):
@@ -154,7 +154,7 @@ def test_eqe_in_unit_range_on_ionic_rich_preset(ionmonger_tmm_stack):
 
 def test_eqe_drops_above_bandgap():
     """EQE must fall toward zero for λ > MAPbI3 band-gap wavelength (~800 nm)."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     r = compute_eqe(
         stack,
         wavelengths_nm=np.array([500.0, 900.0]),
@@ -201,7 +201,7 @@ def test_integrated_jsc_matches_full_tmm():
     — a tight match here would indicate the wavelength grid isn't
     actually being exercised independently.
     """
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
 
     # 15 wavelengths across 350-850 nm — covers the bulk of the MAPbI3
     # absorption band. Below 350 nm AM1.5G is weak; above 850 nm MAPbI3

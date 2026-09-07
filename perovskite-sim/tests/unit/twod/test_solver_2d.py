@@ -18,7 +18,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def _stack():
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 def _layers_for_stack(stack):
@@ -369,7 +369,7 @@ def test_mobile_ion_transient_rejects_unphysical_terminal_state(
 
 def test_material_arrays_2d_default_no_selective_contacts():
     """Without S values on the stack, has_selective_contacts is False and S fields are 0."""
-    stack = _stack()  # configs/nip_MAPbI3.yaml — no S values
+    stack = _stack()  # tests/fixtures/configs/nip_MAPbI3.yaml — no S values
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure())
@@ -409,7 +409,7 @@ def test_material_arrays_2d_left_maps_to_top():
 def test_material_arrays_2d_builds_area_conservative_single_gb_region():
     """The build retains bulk tau and stores exact GB overlap geometry."""
     from perovskite_sim.twod.solver_2d import _layer_role_at_each_y
-    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=500e-9, Nx=10, lateral_uniform=True)
     mat = build_material_arrays_2d(
@@ -437,7 +437,7 @@ def test_material_arrays_2d_builds_area_conservative_single_gb_region():
 
 
 def test_material_arrays_2d_rejects_gb_on_uncertified_periodic_topology():
-    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml")
     g = build_grid_2d(
         _layers_for_stack(stack),
         lateral_length=500e-9,
@@ -484,7 +484,7 @@ def test_recombination_rate_2d_empty_microstructure_is_bit_identical():
 
 @pytest.mark.parametrize("intervals", [4, 9, 32])
 def test_integrated_gb_srh_correction_is_grid_independent(intervals):
-    stack = load_device_from_yaml("configs/twod/nip_MAPbI3_singleGB.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml")
     g = build_grid_2d(
         _layers_for_stack(stack),
         lateral_length=500e-9,
@@ -889,7 +889,7 @@ def test_material_arrays_2d_tmm_full_mode_activates_radiative_reabsorption():
     """TMM preset with mode='full' → has_radiative_reabsorption_2d=True with
     one entry per absorber. Validates the build-path translation from
     mat1d.absorber_masks to 2D y-ranges."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure())
@@ -905,7 +905,7 @@ def test_material_arrays_2d_tmm_full_mode_activates_radiative_reabsorption():
 def test_material_arrays_2d_absorber_y_ranges_match_layer_role_per_y():
     """absorber_y_ranges_2d indices must match layer_role_per_y == 'absorber'
     indices. This catches a wrong absorber mask."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure())
@@ -923,7 +923,7 @@ def test_material_arrays_2d_absorber_y_ranges_match_layer_role_per_y():
 
 def test_material_arrays_2d_absorber_area_equals_thickness_times_lateral():
     """absorber_areas_2d entries must equal thickness × lateral_length."""
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     lateral = 425e-9
     g = build_grid_2d(layers, lateral_length=lateral, Nx=4, lateral_uniform=True)
@@ -938,7 +938,7 @@ def test_legacy_mode_disables_radiative_reabsorption_in_2d():
     has_radiative_reabsorption_2d=False even on a TMM preset. Mirrors B(c.1)
     Issue I1 reprise pattern."""
     stack = dc_replace(
-        load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml"),
         mode="legacy",
     )
     layers = _layers_for_stack(stack)
@@ -952,7 +952,7 @@ def test_fast_mode_disables_radiative_reabsorption_in_2d():
     """FAST tier excludes per-RHS hooks per CLAUDE.md tier matrix:
     has_radiative_reabsorption_2d=False even on a TMM preset."""
     stack = dc_replace(
-        load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml"),
         mode="fast",
     )
     layers = _layers_for_stack(stack)
@@ -993,7 +993,7 @@ def test_assemble_rhs_2d_radiative_reabsorption_enabled_calls_helper_and_finite(
     recompute_g_with_rad_2d IS called and the resulting RHS is finite even at
     a steep n·p gradient (catches per-RHS integral overflow / mis-shaped trapezoid)."""
     from perovskite_sim.twod.solver_2d import assemble_rhs_2d
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
@@ -1012,7 +1012,7 @@ def test_assemble_rhs_2d_radiative_reabsorption_enabled_helper_is_invoked():
     """When has_radiative_reabsorption_2d=True, recompute_g_with_rad_2d IS called."""
     from unittest.mock import patch
     from perovskite_sim.twod.solver_2d import assemble_rhs_2d
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
@@ -1058,7 +1058,7 @@ def test_bake_radiative_reabsorption_step_2d_clears_flag_and_augments_G():
     augmented per absorber. The retry then takes the disabled path with G
     already pre-baked."""
     from perovskite_sim.twod.experiments.jv_sweep_2d import _bake_radiative_reabsorption_step_2d
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")
@@ -1089,7 +1089,7 @@ def test_bake_radiative_reabsorption_uses_second_block_in_mobile_state():
         _bake_radiative_reabsorption_step_2d,
     )
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     grid = build_grid_2d(
         layers,
@@ -1132,7 +1132,7 @@ def test_bake_radiative_reabsorption_uses_second_block_in_mobile_state():
 def test_bake_radiative_reabsorption_step_2d_no_op_when_dark():
     """When illuminated=False, the bake helper is a no-op (matches 1D)."""
     from perovskite_sim.twod.experiments.jv_sweep_2d import _bake_radiative_reabsorption_step_2d
-    stack = load_device_from_yaml("configs/nip_MAPbI3_tmm.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3_tmm.yaml")
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure(), lateral_bc="periodic")

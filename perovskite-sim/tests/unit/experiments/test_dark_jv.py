@@ -8,7 +8,7 @@ from perovskite_sim.experiments.jv_sweep import run_jv_sweep
 
 @pytest.fixture
 def nip_stack():
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 @pytest.mark.slow

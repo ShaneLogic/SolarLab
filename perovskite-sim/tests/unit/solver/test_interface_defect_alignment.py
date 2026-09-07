@@ -26,7 +26,7 @@ from perovskite_sim.solver.mol import build_material_arrays
 from perovskite_sim.sweeps.device_parameter_sweep import srh_n1_p1_from_trap_depth
 
 _V2 = "configs/scaps_mirror_v2.yaml"   # glass substrate prefix (4 layers)
-_V1 = "configs/scaps_mirror.yaml"      # no substrate (3 layers)
+_V1 = "tests/fixtures/configs/scaps_mirror.yaml"      # no substrate (3 layers)
 
 
 def _build(stack):

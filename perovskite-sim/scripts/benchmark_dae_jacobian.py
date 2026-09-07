@@ -48,7 +48,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _problem(intervals: int):
     source = load_device_from_yaml(
-        ROOT / "configs/csi_vannijen2025_pn_cv.yaml"
+        ROOT / "tests/fixtures/configs/csi_vannijen2025_pn_cv.yaml"
     )
     source_layer = source.layers[1]
     if source_layer.params is None:

@@ -54,8 +54,8 @@ python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/ba
 ```
 
 These are the research-preset checks; `python -m pytest -q` runs the full quick
-lane. The other 50 bundled YAML files stay in `configs/` as inputs for the
-regression suite and the 52-preset matrix. See [Research Presets](configs/README.md).
+lane. The 50 historical presets live in `tests/fixtures/configs/` as inputs for
+the regression suite and the 52-preset matrix. See [Research Presets](configs/README.md).
 
 Transient solves retain the historical scalar absolute tolerance by default.
 For the opt-in reference-scaled policy and the required three-level tolerance

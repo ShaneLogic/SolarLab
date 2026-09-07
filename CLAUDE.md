@@ -19,7 +19,9 @@ test, and be understood:
 | What | Where | Name |
 |---|---|---|
 | Python / TypeScript / MATLAB code, tests, backend, frontend | language folders | language convention (`snake_case.py`, `test_*.py`, kebab-case `.ts`) — never CamelCase |
-| Device presets, package data, tooling files | `configs/`, `perovskite_sim/data/`, tool-fixed names | as the tool or existing scheme requires |
+| Shipped device presets (the research entry points the frontend catalogue lists) | `perovskite-sim/configs/` + `frontend/src/preset-catalog.ts` | existing scheme (`snake_case.yaml`) |
+| Test-only / historical device presets | `perovskite-sim/tests/fixtures/configs/` (never served by the API; API tests use the `serve_all_presets` fixture) | existing scheme |
+| Package data, tooling files | `perovskite_sim/data/`, tool-fixed names | as the tool or existing scheme requires |
 | Physics contract / policy / protocol / schema / certificate docs that code, tests or configs cite | `perovskite-sim/docs/` | multi-word CamelCase, versions as `V1`, `V2` (`TwodTransportContract.md`, `ExplicitDefectSchemaV2.md`) |
 | Registries and data the reproducibility chain reads | `perovskite-sim/reproducibility/` | CamelCase (`ConfigBenchmarkMatrix.yaml`); re-pin the sha256 in the matrix after any edit |
 | Figures the root README embeds | `docs/figures/` | CamelCase, no date; regenerate under a new `V<n>` and update the README link |

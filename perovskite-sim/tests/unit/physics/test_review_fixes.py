@@ -62,7 +62,7 @@ def _mass_action_state(x, mat):
 
 
 def test_reabsorption_source_vanishes_at_mass_action_equilibrium():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     elec = electrical_layers(stack)
     layers_grid = [Layer(l.thickness, 30 // len(elec)) for l in elec]
     x = multilayer_grid(layers_grid)

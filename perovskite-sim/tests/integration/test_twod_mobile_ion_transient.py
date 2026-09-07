@@ -17,7 +17,7 @@ from perovskite_sim.twod.solver_2d import (
 
 
 def test_single_mobile_ion_transient_redistributes_and_conserves_inventory():
-    base = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    base = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers = list(base.layers)
     absorber = layers[1]
     layers[1] = replace(

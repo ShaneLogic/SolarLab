@@ -28,7 +28,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 @pytest.fixture(scope="module")
 def stack():
-    return load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
 
 
 def test_time_origin_reset_retry_rescues_absolute_span_failure(

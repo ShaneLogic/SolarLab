@@ -7,7 +7,7 @@ from perovskite_sim.twod.microstructure import Microstructure
 from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
-PRESET = "configs/nip_MAPbI3_tmm.yaml"
+PRESET = "tests/fixtures/configs/nip_MAPbI3_tmm.yaml"
 
 
 @pytest.mark.slow

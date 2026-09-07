@@ -62,10 +62,10 @@ def _electrical_grid(stack, n_per_layer: int = 60) -> np.ndarray:
 V_BI_ALIGNMENT_TOL = 0.03  # volts
 
 MIGRATED_PRESETS = [
-    "configs/nip_MAPbI3_tmm.yaml",
-    "configs/pin_MAPbI3_tmm.yaml",
-    "configs/ionmonger_benchmark_tmm.yaml",
-    "configs/driftfusion_benchmark_tmm.yaml",
+    "tests/fixtures/configs/nip_MAPbI3_tmm.yaml",
+    "tests/fixtures/configs/pin_MAPbI3_tmm.yaml",
+    "tests/fixtures/configs/ionmonger_benchmark_tmm.yaml",
+    "tests/fixtures/configs/driftfusion_benchmark_tmm.yaml",
 ]
 
 
@@ -119,5 +119,5 @@ def test_legacy_preset_vbi_fallback_still_works():
     the manual V_bi verbatim. This pins the fall-back rule that Stage 1/2
     migration relied on for backward compatibility.
     """
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     assert stack.compute_V_bi() == pytest.approx(stack.V_bi, abs=1e-12)

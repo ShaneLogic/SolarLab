@@ -26,7 +26,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import electrical_layers
 from perovskite_sim.solver.mol import build_material_arrays
 
-_CONFIG = "configs/ionmonger_benchmark.yaml"
+_CONFIG = "tests/fixtures/configs/ionmonger_benchmark.yaml"
 _N_GRID = 30
 
 

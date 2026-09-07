@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-config",
         "--template",
         type=Path,
-        default=Path("configs/nip_MAPbI3.yaml"),
+        default=Path("tests/fixtures/configs/nip_MAPbI3.yaml"),
         dest="base_config",
         help="SolarLab YAML template used for contacts/transport layers",
     )

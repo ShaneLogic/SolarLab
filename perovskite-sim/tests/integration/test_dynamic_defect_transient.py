@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_public_dynamic_defect_transient_is_protocol_bound_and_certified():
     stack = load_device_from_yaml(
-        ROOT / "configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
+        ROOT / "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
     )
     grid = build_two_sided_trace_grid(build_electrical_grid(stack, 4), stack)
     times = (0.0, 1.0e-8, 1.0e-6, 1.0e-4)

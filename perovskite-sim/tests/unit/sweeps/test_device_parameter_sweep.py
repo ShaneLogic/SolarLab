@@ -17,7 +17,7 @@ from perovskite_sim.sweeps.device_parameter_sweep import (
 
 
 def _stack():
-    return load_device_from_yaml("configs/solarscale_nip_band_aligned.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/solarscale_nip_band_aligned.yaml")
 
 
 def _by_role(stack, role):

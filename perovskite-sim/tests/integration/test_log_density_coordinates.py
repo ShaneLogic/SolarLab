@@ -14,7 +14,7 @@ from perovskite_sim.solver.tolerances import ComponentwiseAtol
 
 
 def test_real_device_log_coordinate_observable_is_inside_refinement_envelope():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x = multilayer_grid(
         [Layer(layer.thickness, 3) for layer in electrical_layers(stack)]
     )

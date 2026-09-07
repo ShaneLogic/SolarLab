@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("configs/solarscale_nip_band_aligned.yaml"),
+        default=Path("tests/fixtures/configs/solarscale_nip_band_aligned.yaml"),
         help="Baseline YAML config. Prefer a band-aligned config with chi/Eg on every electrical layer.",
     )
     parser.add_argument(

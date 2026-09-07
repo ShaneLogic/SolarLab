@@ -35,7 +35,7 @@ _LEGACY_V_OC = 1.0694
 
 
 def _setup_scaps_mirror():
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     elec = electrical_layers(stack)
     layers_grid = [Layer(thickness=L.thickness, N=30 // len(elec)) for L in elec]
     x = multilayer_grid(layers_grid)
@@ -79,7 +79,7 @@ def test_legacy_path_bit_identical_when_env_unset(monkeypatch):
     # DOS-band potentials now default on; pin them off so this keeps measuring
     # the pre-DOS legacy reference (the split-path bit-identity, not the DOS fold).
     stack = dataclasses.replace(
-        load_scaps_yaml("configs/scaps_mirror.yaml"), dos_band_potentials=False)
+        load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml"), dos_band_potentials=False)
     r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
     assert r.metrics_fwd.voc_bracketed
     assert r.metrics_fwd.V_oc == pytest.approx(_LEGACY_V_OC, abs=5.0e-3)
@@ -105,7 +105,7 @@ def test_jv_sweep_voc_in_envelope_with_split(monkeypatch):
     this unit test.
     """
     monkeypatch.setenv("SOLARLAB_INTERFACE_PLANE_STATE", "1")
-    stack = load_scaps_yaml("configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml("tests/fixtures/configs/scaps_mirror.yaml")
     r = run_jv_sweep(stack, N_grid=30, n_points=20, v_rate=5.0, V_max=1.6)
     assert r.metrics_fwd.voc_bracketed
     voc = float(r.metrics_fwd.V_oc)

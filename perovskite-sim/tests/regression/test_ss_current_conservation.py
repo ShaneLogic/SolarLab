@@ -160,12 +160,12 @@ _RTOL, _ATOL = 1.0e-4, 1.0e-6      # the shipped suns_voc / eqe tolerances
 _V_APP = 0.0
 
 _IONIC = (
-    "configs/nip_MAPbI3.yaml",
-    "configs/ionmonger_benchmark.yaml",
-    "configs/ionmonger_benchmark_tmm.yaml",
-    "configs/nip_MAPbI3_tmm.yaml",
+    "tests/fixtures/configs/nip_MAPbI3.yaml",
+    "tests/fixtures/configs/ionmonger_benchmark.yaml",
+    "tests/fixtures/configs/ionmonger_benchmark_tmm.yaml",
+    "tests/fixtures/configs/nip_MAPbI3_tmm.yaml",
 )
-_FROZEN = ("configs/nip_MAPbI3.yaml", "configs/ionmonger_benchmark.yaml")
+_FROZEN = ("tests/fixtures/configs/nip_MAPbI3.yaml", "tests/fixtures/configs/ionmonger_benchmark.yaml")
 
 # Case key -> (config, D_ion killed?)
 _CASES = {c: (c, False) for c in _IONIC}
@@ -408,7 +408,7 @@ def test_ss_reader_reports_zero_displacement_by_construction():
     therefore has a structural answer before any physics: in the SS reader it
     is not computed at all.  Costs no solver run.
     """
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x = multilayer_grid([
         GridLayer(lay.thickness, 4) for lay in electrical_layers(stack)
     ])
@@ -536,7 +536,7 @@ def test_residual_detects_a_face_level_inconsistency(state):
     interior face's total by 1 part in 1e9 (the scale of a mis-applied
     per-face coefficient), and dropping the ionic term entirely.
     """
-    s = state("configs/ionmonger_benchmark.yaml")
+    s = state("tests/fixtures/configs/ionmonger_benchmark.yaml")
     k = len(s.J_full) // 2
 
     nudged = s.J_full.copy()
@@ -573,7 +573,7 @@ def test_ion_steric_diffusion_only_conserves_terminal_current():
     """
     """Same invariant, with the F05 physical steric ion flux enabled."""
     stack = dataclasses.replace(
-        load_device_from_yaml("configs/ionmonger_benchmark.yaml"),
+        load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml"),
         ion_steric_diffusion_only=True,
     )
     x = multilayer_grid([

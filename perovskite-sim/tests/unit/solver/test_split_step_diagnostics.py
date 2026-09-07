@@ -527,7 +527,7 @@ def test_real_dual_ion_split_step_passes_strict_inventory_gate():
     from perovskite_sim.models.config_loader import load_device_from_yaml
     from perovskite_sim.solver.newton import solve_equilibrium
 
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     layers = []
     for layer in stack.layers:
         params = layer.params

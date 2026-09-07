@@ -83,7 +83,7 @@ def test_charge_law_rejects_nonphysical_inputs(
 
 
 def test_retired_scalar_sign_path_cannot_reach_poisson():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     x = multilayer_grid([Layer(layer.thickness, 5) for layer in stack.layers])
     material = build_material_arrays(x, stack)
     retired = dataclasses.replace(material, iface_state_charge=1.0)

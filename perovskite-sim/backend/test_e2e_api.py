@@ -6,7 +6,7 @@ client = TestClient(app)
 
 # 示例J-V仿真请求体
 jv_payload = {
-    "config_path": "../configs/nip_MAPbI3.yaml"
+    "config_path": "../tests/fixtures/configs/nip_MAPbI3.yaml"
 }
 
 def test_jv_api():
@@ -23,7 +23,7 @@ def test_jv_api():
 
 # 示例阻抗仿真请求体
 is_payload = {
-    "config_path": "../configs/nip_MAPbI3.yaml"
+    "config_path": "../tests/fixtures/configs/nip_MAPbI3.yaml"
 }
 
 def test_impedance_api():
@@ -36,7 +36,7 @@ def test_impedance_api():
 
 # 示例degradation仿真请求体
 deg_payload = {
-    "config_path": "../configs/nip_MAPbI3.yaml"
+    "config_path": "../tests/fixtures/configs/nip_MAPbI3.yaml"
 }
 
 def test_degradation_api():

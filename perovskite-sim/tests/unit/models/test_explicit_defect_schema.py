@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests._presets import preset_path
+
 from backend.main import _stack_to_config_dict, stack_from_dict
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.models.config_loader import (
@@ -151,7 +153,7 @@ def test_v1_shipped_device_semantic_hashes_remain_frozen(
     config_name,
     expected_semantic_sha256,
 ):
-    stack = load_device_from_yaml(str(ROOT / "configs" / config_name))
+    stack = load_device_from_yaml(str(preset_path(config_name)))
 
     assert semantic_sha256(stack) == expected_semantic_sha256
 
@@ -463,7 +465,7 @@ def test_backend_roundtrip_retains_canonical_scaps_document():
 def test_default_standard_serializer_does_not_invent_defect_species():
     stack = stack_from_dict(
         _stack_to_config_dict(
-            load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+            load_scaps_yaml(ROOT / "tests/fixtures/configs/scaps_mirror.yaml")
         )
     )
     stripped = replace(
@@ -488,7 +490,7 @@ def test_default_standard_serializer_does_not_invent_defect_species():
 
 
 def test_material_params_rejects_old_and_new_bulk_trap_schemas_together():
-    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml(ROOT / "tests/fixtures/configs/scaps_mirror.yaml")
     params = next(layer.params for layer in stack.layers if layer.role == "absorber")
     old_trap = BulkTrapDistribution(
         distribution="single_level",
@@ -505,7 +507,7 @@ def test_material_params_rejects_old_and_new_bulk_trap_schemas_together():
 
 
 def test_charged_explicit_model_remains_fail_closed_in_def1():
-    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml(ROOT / "tests/fixtures/configs/scaps_mirror.yaml")
     layers = []
     for layer in stack.layers:
         if layer.role != "absorber":
@@ -535,7 +537,7 @@ def test_charged_explicit_model_remains_fail_closed_in_def1():
 
 
 def test_neutral_single_level_model_compiles_without_poisson_charge():
-    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml(ROOT / "tests/fixtures/configs/scaps_mirror.yaml")
     neutral = replace(
         _species(
             transition=NEUTRAL,
@@ -579,7 +581,7 @@ def test_neutral_single_level_model_compiles_without_poisson_charge():
 
 
 def test_def1_rejects_nonunit_degeneracy_instead_of_ignoring_it():
-    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml(ROOT / "tests/fixtures/configs/scaps_mirror.yaml")
     neutral = _species(
         transition=NEUTRAL,
         neutral_reference=NEUTRAL_ALL_OCCUPANCIES,
@@ -612,7 +614,7 @@ def test_def1_rejects_nonunit_degeneracy_instead_of_ignoring_it():
 
 
 def test_inactive_species_metadata_is_exactly_rhs_inert():
-    stripped = load_device_from_yaml(str(ROOT / "configs/cigs_baseline.yaml"))
+    stripped = load_device_from_yaml(str(ROOT / "tests/fixtures/configs/cigs_baseline.yaml"))
     legacy_document = _document(
         model=EFFECTIVE_LIFETIME,
         species=(
@@ -673,7 +675,7 @@ def test_inactive_species_metadata_is_exactly_rhs_inert():
 
 def test_material_parser_consumes_frontend_shaped_canonical_document():
     base = _stack_to_config_dict(
-        load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+        load_scaps_yaml(ROOT / "tests/fixtures/configs/scaps_mirror.yaml")
     )["layers"][1]
     document = _document()
     payload = document.to_dict()
@@ -690,7 +692,7 @@ def test_material_parser_consumes_frontend_shaped_canonical_document():
 
 
 def test_v2_single_level_roundtrips_through_standard_backend_payload():
-    stack = load_scaps_yaml(ROOT / "configs/scaps_mirror.yaml")
+    stack = load_scaps_yaml(ROOT / "tests/fixtures/configs/scaps_mirror.yaml")
     v2_species = replace(
         _species(),
         degeneracy=1.0,

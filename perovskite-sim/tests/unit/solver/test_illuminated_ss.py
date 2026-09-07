@@ -29,7 +29,7 @@ def _fake_mat(N=2, *, dual=False, limit=1.0e30):
 
 @pytest.fixture(scope="module")
 def grid_and_stack():
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     layers_grid = [Layer(l.thickness, 10) for l in stack.layers]
     x = multilayer_grid(layers_grid)
     return x, stack

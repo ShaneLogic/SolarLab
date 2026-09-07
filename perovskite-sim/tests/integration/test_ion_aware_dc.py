@@ -9,7 +9,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 
 
 def test_ionmonger_fixed_bias_reaches_two_residual_certified_endpoints():
-    stack = load_device_from_yaml("configs/ionmonger_benchmark.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/ionmonger_benchmark.yaml")
     x = build_electrical_grid(stack, 30)
     protocol = build_ion_aware_dc_protocol(
         stack,

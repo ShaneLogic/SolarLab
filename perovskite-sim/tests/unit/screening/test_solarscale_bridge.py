@@ -137,7 +137,7 @@ def test_plan_sorts_by_final_fom_then_ml_score_and_keeps_scores_as_metadata(tmp_
     records_path = _write_records(tmp_path)
     plan = plan_solarlab_import(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         import_policy="production",
         include_configs=False,
     )
@@ -161,7 +161,7 @@ def test_production_import_requires_promising_and_maps_dft_md_absorber_inputs(tm
     out_dir = tmp_path / "production"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=out_dir,
         limit=1,
         import_policy="production",
@@ -205,7 +205,7 @@ def test_default_generated_yaml_preserves_bandgap_as_metadata_only(tmp_path: Pat
     out_dir = tmp_path / "default-bandgap"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=out_dir,
         limit=1,
         import_policy="production",
@@ -231,7 +231,7 @@ def test_activate_bandgap_rejects_legacy_template(tmp_path: Path):
     with pytest.raises(ValueError, match="fully band-aligned template"):
         generate_solarlab_inputs(
             records_path,
-            template_path="configs/nip_MAPbI3.yaml",
+            template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
             out_dir=tmp_path / "bad-activation",
             limit=1,
             import_policy="production",
@@ -241,7 +241,7 @@ def test_activate_bandgap_rejects_legacy_template(tmp_path: Path):
 
 def test_activate_bandgap_maps_eg_for_band_aligned_template(tmp_path: Path):
     records_path = _write_records(tmp_path)
-    template = yaml.safe_load(Path("configs/nip_MAPbI3.yaml").read_text(encoding="utf-8"))
+    template = yaml.safe_load(Path("tests/fixtures/configs/nip_MAPbI3.yaml").read_text(encoding="utf-8"))
     for layer in template["layers"]:
         if layer["role"] == "HTL":
             layer["chi"] = 2.2
@@ -280,7 +280,7 @@ def test_solarscale_import_maps_candidate_optics_and_band_alignment_metadata(tmp
     records_path = _write_records(tmp_path)
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/solarscale_nip_band_aligned.yaml",
+        template_path="tests/fixtures/configs/solarscale_nip_band_aligned.yaml",
         out_dir=tmp_path / "production-evidence",
         limit=1,
         import_policy="production",
@@ -304,7 +304,7 @@ def test_solarscale_band_aligned_template_keeps_template_eg_by_default(tmp_path:
     records_path = _write_records(tmp_path)
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/solarscale_nip_band_aligned.yaml",
+        template_path="tests/fixtures/configs/solarscale_nip_band_aligned.yaml",
         out_dir=tmp_path / "solarscale-default",
         limit=1,
         import_policy="production",
@@ -325,7 +325,7 @@ def test_activate_bandgap_maps_eg_for_solarscale_band_aligned_template(tmp_path:
     records_path = _write_records(tmp_path)
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/solarscale_nip_band_aligned.yaml",
+        template_path="tests/fixtures/configs/solarscale_nip_band_aligned.yaml",
         out_dir=tmp_path / "solarscale-activated",
         limit=1,
         import_policy="production",
@@ -350,7 +350,7 @@ def test_exploratory_import_accepts_phonon_records_and_uses_template_ion_default
     out_dir = tmp_path / "exploratory"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=out_dir,
         import_policy="exploratory",
     )
@@ -393,7 +393,7 @@ def test_swept_mobility_is_not_mapped_as_fixed_physical_input(tmp_path: Path):
 
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=tmp_path / "out",
         import_policy="production",
     )
@@ -424,7 +424,7 @@ def test_assumed_property_is_not_accepted_as_fixed_dft_md_input(tmp_path: Path):
 
     plan = plan_solarlab_import(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         import_policy="production",
         include_configs=False,
     )
@@ -440,7 +440,7 @@ def test_plan_preserves_gate_evidence_and_adds_auditable_summary(tmp_path: Path)
     records_path = _write_records(tmp_path)
     plan = plan_solarlab_import(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         import_policy="exploratory",
         include_configs=False,
     )
@@ -473,14 +473,14 @@ def test_sweep_policy_controls_recorded_device_unknown_grid(tmp_path: Path):
     records_path = _write_records(tmp_path)
     exploratory = plan_solarlab_import(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         import_policy="exploratory",
         sweep_policy="exploratory",
         include_configs=False,
     )
     production = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=tmp_path / "production-sweep-policy",
         limit=1,
         import_policy="production",
@@ -506,7 +506,7 @@ def test_expand_sweep_manifest_generates_capped_matrix_configs(tmp_path: Path):
     records_path = _write_records(tmp_path)
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=tmp_path / "sweep-expand",
         limit=1,
         import_policy="production",
@@ -555,7 +555,7 @@ def test_sweep_device_results_preserve_sweep_metadata(tmp_path: Path):
     records_path = _write_records(tmp_path)
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=tmp_path / "sweep-results",
         limit=1,
         import_policy="production",
@@ -595,7 +595,7 @@ def test_cli_dry_run_writes_screening_plan(tmp_path: Path):
             "--policy",
             "exploratory",
             "--base-config",
-            "configs/nip_MAPbI3.yaml",
+            "tests/fixtures/configs/nip_MAPbI3.yaml",
             "--top-n",
             "2",
             "--out-dir",
@@ -635,7 +635,7 @@ def test_cli_expand_sweep_writes_sweep_plan(tmp_path: Path):
             "--policy",
             "production",
             "--base-config",
-            "configs/nip_MAPbI3.yaml",
+            "tests/fixtures/configs/nip_MAPbI3.yaml",
             "--top-n",
             "1",
             "--out-dir",
@@ -664,7 +664,7 @@ def test_smoke_device_results_write_json_and_csv(tmp_path: Path):
     out_dir = tmp_path / "device-results"
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=out_dir,
         limit=1,
         import_policy="production",
@@ -688,7 +688,7 @@ def test_smoke_device_results_write_json_and_csv(tmp_path: Path):
     record = loaded["records"][0]
     assert record["material_id"] == "mp-best"
     assert record["simulation_status"] == "completed"
-    assert record["template_path"] == "configs/nip_MAPbI3.yaml"
+    assert record["template_path"] == "tests/fixtures/configs/nip_MAPbI3.yaml"
     assert record["mapped_parameters"]["absorber.eps_r"] == pytest.approx(12.0)
     assert record["screening_evidence"]["gates"]["electronic"]["passed"] is True
     assert record["JV_metrics"]["forward"]["J_sc"] > 0.0
@@ -700,7 +700,7 @@ def test_smoke_device_results_record_failures_without_dropping_metadata(tmp_path
     records_path = _write_records(tmp_path)
     manifest = generate_solarlab_inputs(
         records_path,
-        template_path="configs/nip_MAPbI3.yaml",
+        template_path="tests/fixtures/configs/nip_MAPbI3.yaml",
         out_dir=tmp_path / "broken-device-results",
         limit=1,
         import_policy="production",

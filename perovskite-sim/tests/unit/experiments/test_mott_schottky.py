@@ -135,7 +135,7 @@ def test_window_excludes_smooth_forward_injection_tail():
 
 def test_resolve_eps_r_picks_absorber_layer():
     """With an explicit 'absorber' role, that layer's ε_r must win."""
-    stack = load_device_from_yaml("configs/cSi_homojunction.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
     eps_r = _resolve_eps_r(stack)
     # c-Si homojunction: absorber is p_base with eps_r=11.7.
     assert eps_r == pytest.approx(11.7, rel=1e-3)
@@ -189,7 +189,7 @@ def test_cv_rejects_noncapacitive_admittance(monkeypatch):
     """Do not turn inductive/numerically invalid Im(Y) into C with abs()."""
     import perovskite_sim.experiments.mott_schottky as ms_module
 
-    stack = load_device_from_yaml("configs/nip_MAPbI3.yaml")
+    stack = load_device_from_yaml("tests/fixtures/configs/nip_MAPbI3.yaml")
     monkeypatch.setattr(
         ms_module,
         "run_impedance",
@@ -208,7 +208,7 @@ def test_cv_rejects_noncapacitive_admittance(monkeypatch):
 
 @pytest.fixture(scope="module")
 def csi_stack():
-    return load_device_from_yaml("configs/cSi_homojunction.yaml")
+    return load_device_from_yaml("tests/fixtures/configs/cSi_homojunction.yaml")
 
 
 def test_cv_wrapper_recovers_analytic_capacitive_impedance(
