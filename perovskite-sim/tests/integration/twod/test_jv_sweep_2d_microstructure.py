@@ -20,6 +20,7 @@ def test_jv_sweep_2d_singleGB_runs_to_completion():
         lateral_length=500e-9, Nx=8,
         V_max=0.6, V_step=0.2,
         Ny_per_layer=8, settle_t=1e-3,
+        lateral_bc="neumann",         # grain boundaries require Neumann-x topology (b126ce0)
     )
     assert res.V.shape == (4,)
     assert res.J.shape == (4,)

@@ -77,6 +77,7 @@ from perovskite_sim.experiments.jv_sweep import (
     run_jv_sweep,
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
+from tests._presets import preset_path
 from perovskite_sim.models.device import electrical_layers
 from perovskite_sim.physics.generation import (
     beer_lambert_generation,
@@ -135,7 +136,7 @@ def swept():
     """One default-settings sweep per preset, shared across assertions."""
     out = {}
     for name in PRESETS:
-        stack = load_device_from_yaml(f"configs/{name}.yaml")
+        stack = load_device_from_yaml(str(preset_path(f"{name}.yaml")))
         N_grid = 100          # run_jv_sweep default
         result = run_jv_sweep(stack, N_grid=N_grid)
         metrics = compute_metrics(
