@@ -671,7 +671,7 @@ cc = compute_current_components(x, y_state, stack, V_app=0.5, mat=mat)
 ```python
 result = run_jv_sweep(stack, N_grid=80, n_points=40, v_rate=1.0, save_snapshots=True)
 snap = result.snapshots_fwd[20]  # snapshot at the 20th voltage point
-# snap.phi, snap.E, snap.n, snap.p, snap.P, snap.rho
+# snap.phi, snap.E, snap.n, snap.p, snap.P, snap.P_neg, snap.rho
 ```
 
 ### Transient Photovoltage (TPV)
@@ -680,8 +680,18 @@ snap = result.snapshots_fwd[20]  # snapshot at the 20th voltage point
 from perovskite_sim.experiments.tpv import run_tpv
 
 result = run_tpv(stack, N_grid=80, delta_G_frac=0.05, t_pulse=1e-6, t_decay=50e-6)
-print(f"V_oc: {result.V_oc:.4f} V, tau: {result.tau:.3e} s")
+print(f"V_oc: {result.V_oc:.4f} V")
+if result.tau is not None:
+    print(f"Photovoltage relaxation time: {result.tau:.3e} s")
+else:
+    print(result.fit.status if result.fit is not None else "Fit unavailable")
 ```
+
+The reported pulse is `result.delta_V`, relative to the matched unpulsed
+`result.V_reference`. The open-circuit voltage evolves with terminal charge;
+current continuity and integrated charge are checked throughout the trace.
+A missing or non-single-exponential decay does not acquire a lifetime.
+See [TpvOpenCircuitContract.md](docs/TpvOpenCircuitContract.md).
 
 <br>
 

@@ -60,7 +60,7 @@ It reproduces the main thin-film characterisation experiments from a single devi
 |  | Mott-Schottky (C-V) | Dark C-V + auto-windowed $1/C^2$ fit → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
 | **Spectral** | EQE / IPCE | Wavelength-resolved external quantum efficiency via monochromatic TMM; integrates against AM1.5G for $J_\text{sc}$ |
 | **Transient** | Impedance spectroscopy | Lock-in extraction of $Z(f)$ with displacement current; Nyquist + Bode plots |
-|  | Transient photovoltage (TPV) | Small-signal light-pulse perturbation at open circuit; mono-exponential fit for recombination lifetime $\tau$ |
+|  | Transient photovoltage (TPV) | Charge-conserving open-circuit light pulse with a matched unpulsed reference; a single-exponential relaxation time is reported only when identifiable |
 |  | Degradation | Long-time transient with a **frozen-ion snapshot J-V** at each probe, decoupling slow ionic drift from the instantaneous electronic response |
 
 The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema. A separate **2T monolithic tandem** driver performs a combined TMM over top + junction + bottom, runs independent sub-cell J-V sweeps, and series-matches at a common current grid.
@@ -120,8 +120,8 @@ The tier is a feature ceiling, not an accuracy grade. The selected experiment dr
 | 📊 | **Mott-Schottky** | Dark C-V with $1/C^2$ linearisation → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
 | 🌈 | **EQE / IPCE** | Wavelength-resolved external quantum efficiency via monochromatic TMM; AM1.5G integration yields $J_\text{sc}$ |
 | 🎵 | **Impedance** | Lock-in $Z(f)$ with displacement current; Nyquist + Bode output |
-| ⚡ | **Transient photovoltage** | Small-signal light pulse at open circuit with mono-exponential fit for recombination lifetime $\tau$ |
-| 🧊 | **Frozen-ion degradation** | Long-time transient with snapshot J-V at each probe ($D_\text{ion} \to 0$) — decouples ionic drift from electronic response |
+| ⚡ | **Transient photovoltage** | Open-circuit light pulse with a matched control and a qualified photovoltage relaxation fit |
+| 🧊 | **Frozen-ion degradation** | Snapshot J-V with both ionic species frozen, preserving their populations and backgrounds while solving the electronic steady state |
 | 🔗 | **2T tandem driver** | Combined TMM over top + junction + bottom, independent sub-cell sweeps, series-matched on a common current grid |
 | 🟦 | **2D J-V sweep** | Tensor-product 2D extension for lateral-uniform parity checks and microstructure / grain-boundary studies |
 | 🟪 | **V<sub>oc</sub>(L<sub>g</sub>) grain sweep** | Repeats 2D J-V over grain sizes to quantify microstructure-driven open-circuit-voltage loss |
@@ -653,7 +653,7 @@ At each frequency, the solver integrates several AC cycles, then a lock-in ampli
 | Number of probes | Snapshot count over the simulation |
 | Probe bias | Voltage for snapshot J-V |
 
-At each probe time, the solver takes a **frozen-ion snapshot**: a copy of the stack with $D_{\text{ion}}=0$ measures the instantaneous $J(V)$ response. This decouples slow ionic drift from the electronic response. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ vs aging time.
+At each probe time, the solver takes a **frozen-ion snapshot**: both positive and negative ionic diffusivities are set to zero while their spatial populations, compensating backgrounds and site capacities remain fixed. The same frozen model solves the electronic steady state and reports its $J(V)$ curve only when the residual and current-continuity checks pass. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ versus the declared aging history. This does not independently validate chemical degradation rates. See the [snapshot contract](perovskite-sim/docs/FrozenIonSnapshotContract.md).
 
 #### Transient Photovoltage (TPV)
 
@@ -664,7 +664,7 @@ At each probe time, the solver takes a **frozen-ion snapshot**: a copy of the st
 | Pulse duration | Duration of the light pulse [s] |
 | Observation window | Total time including decay [s] |
 
-The device is equilibrated at open circuit under steady illumination, then a small light pulse is applied. The voltage transient $V(t)$ decays back to $V_\text{oc}$ as excess carriers recombine. A mono-exponential fit extracts the effective recombination lifetime $\tau$. Output: $V(t)$ decay curve, $J(t)$ transient, fitted $\tau$.
+The device is prepared at open circuit under steady illumination, then a small light pulse is applied. Terminal charge and voltage evolve together to preserve the open-circuit total-current condition. The pulse response is measured against an unpulsed trace with the same initial state, allowing slow background drift to remain visible. A single-exponential photovoltage relaxation time is reported only for an identifiable decay; otherwise `tau` is `None` (`null` in JSON) and a fit reason is retained. It is not automatically a microscopic recombination lifetime. See the [TPV contract](perovskite-sim/docs/TpvOpenCircuitContract.md).
 
 #### 2D J-V and Grain Sweep
 
