@@ -1,4 +1,11 @@
-"""Registered D8 WKB tunnelling-channel refinement lane.
+"""Historical D8 v1 refinement definition, retained after claim withdrawal.
+
+The v2 device implementation no longer obeys this lane's single-face
+injection or exact device-equilibrium zero assertions. Its original gates
+are deliberately retained as a record of the withdrawn evidence. Current
+acceptance is implemented in resolved_tunnelling_refinement.py and described
+by docs/ResolvedIntrabandTunnellingContractV2.md. The account below describes
+the historical v1 computation, not the current physical-energy wiring.
 
 What this lane certifies, and what it deliberately does not
 -----------------------------------------------------------
@@ -14,8 +21,8 @@ RETRACTED 2026-09-01 (D8-E2R): the companion claim that the channel "carries
 `V_T*ln(n) - (phi+chi)` = `E_Fn + V_T*ln(N_C)`, a +1.4286 eV offset that
 saturates the Fermi factors; with the true level the fraction is 6.2e-7, and
 this lane's `equilibrium_net_flux_m2_s` gate passes by float64 saturation
-rather than by reciprocity. Convergence orders and the injection identity are
-unaffected. See docs/WkbTunnellingFamilyContract.md.
+rather than by reciprocity. The reported orders and single-face identity
+belong to that old implementation. See docs/WkbTunnellingFamilyContract.md.
 
 Three refinement axes, two of which are the registry's
 -----------------------------------------------------

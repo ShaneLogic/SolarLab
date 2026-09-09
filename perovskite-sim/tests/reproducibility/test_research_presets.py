@@ -1,6 +1,6 @@
 """Research preset inventory and loading checks, without historical lane claims.
 
-Only the two research presets ship under ``configs/``; the historical presets
+Only the declared research presets ship under ``configs/``; historical presets
 live in ``tests/fixtures/configs/`` as test inputs and are not served by the API.
 """
 from __future__ import annotations
@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PRESETS = {
     "scaps_mirror_v2.yaml": ("fast", load_scaps_yaml),
     "calado2016_fig1f.yaml": ("legacy", load_device_from_yaml),
+    "calado2016_ion_sweep.yaml": ("full", load_device_from_yaml),
 }
 
 

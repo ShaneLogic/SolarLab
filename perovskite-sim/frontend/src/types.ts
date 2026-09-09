@@ -194,10 +194,20 @@ export interface InterfaceDefectFields {
   iface_state_calibration_factor?: number
 }
 
+export interface JVSweepDefaults {
+  N_grid: number
+  n_points: number
+  v_rate: number
+  V_max: number
+  waveform: JVWaveform
+  waveform_controls: { rtol: number; atol_m3: number }
+}
+
 export interface DeviceConfig {
   simulation_hints?: {
     min_N_grid?: number
     notes?: string
+    jv_sweep?: JVSweepDefaults
   }
   electrical_grid?: {
     interval_weights?: Record<string, number>
@@ -874,8 +884,22 @@ export interface TPVResult {
   V: number[]
   J: number[]
   V_oc: number
-  tau: number
+  tau: number | null
   delta_V0: number
+  V_reference?: number[] | null
+  delta_V?: number[] | null
+  valid?: boolean[] | null
+  max_face_current_A_m2?: number[] | null
+  interval_current_residual_A_m2?: number[] | null
+  charge_voltage_error_V?: number[] | null
+  fit?: {
+    tau_s: number | null
+    amplitude_V: number
+    status: string
+    points: number
+    r_squared: number | null
+    normalized_max_error: number | null
+  } | null
 }
 
 // ── Phase 2 characterisation experiments ────────────────────────────────────

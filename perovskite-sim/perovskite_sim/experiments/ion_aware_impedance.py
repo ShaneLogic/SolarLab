@@ -32,9 +32,9 @@ from perovskite_sim.experiments.ion_aware_dc import (
 from perovskite_sim.experiments.jv_sweep import (
     compute_current_components,
     compute_ionic_current_components,
-    extract_spatial_snapshot,
 )
 from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.mol import (
     MaterialArrays,
     assemble_rhs,
@@ -717,6 +717,28 @@ def _frequency_point_certificates(
     return tuple(points)
 
 
+def _potential_increment(
+    material: MaterialArrays,
+    layout: IonAwareStateCoordinateLayout,
+    base_state: np.ndarray,
+    coordinate: np.ndarray,
+    voltage_increment: float,
+) -> np.ndarray:
+    """Exact nonlinear Poisson increment about fixed material/background charge."""
+    indices = np.asarray(layout.state_indices, dtype=int)
+    blocks, nodes = np.divmod(indices, layout.n_nodes)
+    charge_signs = np.array([-1.0, 1.0, 1.0, -1.0])
+    density_increment = np.asarray(base_state)[indices] * np.expm1(coordinate)
+    rho_increment = np.zeros(layout.n_nodes)
+    np.add.at(rho_increment, nodes, Q * charge_signs[blocks] * density_increment)
+    return solve_poisson_prefactored(
+        material.poisson_factor,
+        rho_increment,
+        phi_left=0.0,
+        phi_right=-float(material.junction_polarity) * voltage_increment,
+    )
+
+
 def _build_reference_evaluator(
     grid: np.ndarray,
     stack: DeviceStack,
@@ -776,14 +798,13 @@ def _build_reference_evaluator(
             (component.current_faces for component in components),
             start=np.zeros_like(electron),
         )
-        snapshot = extract_spatial_snapshot(
-            grid,
-            physical,
-            stack,
-            voltage,
-            mat=material,
+        # The fixed DC displacement has zero time derivative. Solve its
+        # nonlinear increment directly, avoiding subtraction of large fields.
+        delta_phi = _potential_increment(
+            material, layout, base_state, coordinate,
+            float(voltage) - protocol.V_dc,
         )
-        displacement_charge = polarity * eps_face * snapshot.E
+        displacement_charge = -polarity * eps_face * np.diff(delta_phi) / np.diff(grid)
         return SmallSignalEvaluation(
             storage=physical[physical_indices],
             rate=np.asarray(rate, dtype=float)[physical_indices],

@@ -12,19 +12,19 @@ export interface DarkJVPaneOptions {
 export function mountDarkJVPane(container: HTMLElement, opts: DarkJVPaneOptions): void {
   container.innerHTML = `
     <div class="card">
-      <h3>Dark J\u2013V Parameters</h3>
+      <h3>Sweep settings</h3>
       <div class="form-grid">
         ${numField('djv-N', 'N<sub>grid</sub>', 60, '1')}
-        ${numField('djv-npts', 'n<sub>points</sub>', 60, '1')}
+        ${numField('djv-npts', 'Voltage points', 60, '1')}
         ${numField('djv-vmax', 'V<sub>max</sub> (V)', 1.2, 'any')}
-        ${numField('djv-vrate', 'v<sub>rate</sub> (V/s)', 1.0, 'any')}
+        ${numField('djv-vrate', 'Scan rate (V/s)', 1.0, 'any')}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-djv">Run Dark J\u2013V</button>
         <span class="status" id="status-djv"></span>
       </div>
       <div id="progress-djv"></div>
-      <div class="pane-hint">Forward-bias sweep under dark conditions; fits diode ideality <em>n</em> and saturation current <em>J<sub>0</sub></em> over a linear log(J)&ndash;V window.</div>
+      <div class="pane-hint" title="Fits a linear log(|J|)-V window in the forward-bias dark sweep."><strong>Fit:</strong> ideality factor <i>n</i> and saturation current <i>J</i><sub>0</sub>.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

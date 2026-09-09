@@ -82,6 +82,7 @@ describe('DevicePanel workspace-config ownership', () => {
     mocks.listConfigs.mockResolvedValue([
       { name: 'cigs_baseline.yaml', namespace: 'shipped' },
       { name: 'calado2016_fig1f.yaml', namespace: 'shipped' },
+      { name: 'calado2016_ion_sweep.yaml', namespace: 'shipped' },
       { name: 'scaps_mirror_v2.yaml', namespace: 'shipped' },
       { name: 'my_ion_scan.yaml', namespace: 'user' },
     ])
@@ -92,9 +93,9 @@ describe('DevicePanel workspace-config ownership', () => {
     })
     const options = Array.from(root.querySelectorAll<HTMLOptionElement>('option'))
     expect(options.map(o => o.value)).toEqual([
-      '__workspace_snapshot__', 'scaps_mirror_v2.yaml', 'calado2016_fig1f.yaml', 'my_ion_scan.yaml',
+      '__workspace_snapshot__', 'scaps_mirror_v2.yaml', 'calado2016_ion_sweep.yaml', 'my_ion_scan.yaml',
     ])
-    expect(options[1].textContent).toBe('SCAPS parity - Reference v2')
+    expect(options[1].textContent).toBe('SCAPS reproduction')
     expect(options[2].textContent).toBe('Calado 2016 - Ion hysteresis')
     expect(panel.getConfig()).toEqual(config('off'))
     expect(mocks.getConfig).not.toHaveBeenCalled()
@@ -111,5 +112,19 @@ describe('DevicePanel workspace-config ownership', () => {
     document.body.appendChild(root)
     await mountDevicePanel(root, 'device-test', { tier: 'legacy' })
     expect(mocks.getConfig).toHaveBeenCalledWith('scaps_mirror_v2.yaml')
+  })
+
+  it('identifies an explicit reset separately from a field edit', async () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const panel = await mountDevicePanel(root, 'device-test', {
+      tier: 'legacy', initialConfig: config('off'),
+    })
+    const onChange = vi.fn()
+    panel.onChange(onChange)
+    root.querySelector('#device-test-editor')!.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(onChange).toHaveBeenLastCalledWith(config('off'), 'edit')
+    root.querySelector<HTMLButtonElement>('#device-test-reset')!.click()
+    expect(onChange).toHaveBeenLastCalledWith(config('off'), 'preset')
   })
 })

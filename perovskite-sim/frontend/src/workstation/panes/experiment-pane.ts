@@ -37,11 +37,18 @@ export interface ExperimentPaneOptions {
   onRunComplete: (deviceId: string, kind: ExperimentKind, run: Run) => void
 }
 
+export interface ExperimentPaneHandle {
+  updateDevice(resetDefaults?: boolean): void
+  selectExperiment(kind: ExperimentKind): void
+}
+
+type DeviceAwarePane = Pick<ExperimentPaneHandle, 'updateDevice'>
+
 interface ExperimentEntry {
   kind: ExperimentKind
   /** HTML — may contain <sub> for proper subscript typography. Static source constants only. */
   labelHTML: string
-  mount: (container: HTMLElement) => void
+  mount: (container: HTMLElement) => DeviceAwarePane | void
 }
 
 interface ExperimentGroup {
@@ -49,7 +56,7 @@ interface ExperimentGroup {
   entries: ExperimentEntry[]
 }
 
-export function mountExperimentPane(container: HTMLElement, opts: ExperimentPaneOptions): void {
+export function mountExperimentPane(container: HTMLElement, opts: ExperimentPaneOptions): ExperimentPaneHandle {
   // Reads the kind from run.result.kind at commit time instead of pre-binding
   // it per pane. Lets the J-V pane dispatch one of {jv, current_decomp,
   // spatial} dynamically based on its "decompose current" / "save spatial
@@ -73,7 +80,7 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
           mount: (el) => mountSunsVocPane(el, paneOpts()),
         },
         {
-          kind: 'voc_t', labelHTML: 'V<sub>oc</sub>(T) \u2014 activation energy',
+          kind: 'voc_t', labelHTML: 'V<sub>oc</sub>(T)',
           mount: (el) => mountVocTPane(el, paneOpts()),
         },
       ],
@@ -82,7 +89,7 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
       label: 'Dark characterisation',
       entries: [
         {
-          kind: 'dark_jv', labelHTML: 'Dark J\u2013V (ideality, J<sub>0</sub>)',
+          kind: 'dark_jv', labelHTML: 'Dark J\u2013V',
           mount: (el) => mountDarkJVPane(el, paneOpts()),
         },
         {
@@ -99,7 +106,7 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
           mount: (el) => mountEQEPane(el, paneOpts()),
         },
         {
-          kind: 'el', labelHTML: 'Electroluminescence (EL, \u0394V<sub>nr</sub>)',
+          kind: 'el', labelHTML: 'EL / \u0394V<sub>nr</sub>',
           mount: (el) => mountELPane(el, paneOpts()),
         },
       ],
@@ -127,7 +134,7 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
       ],
     },
     {
-      label: '2D / Microstructural (Stage A/B)',
+      label: '2D / Microstructure',
       entries: [
         {
           kind: 'jv_2d', labelHTML: 'J–V Sweep (2D)',
@@ -178,17 +185,19 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
   const body = container.querySelector<HTMLDivElement>('#exp-body')!
 
   let selectedKind: ExperimentKind = entries[0].kind
+  let activePane: DeviceAwarePane | void
 
   function selectKind(kind: ExperimentKind): void {
     const entry = entries.find(e => e.kind === kind)
     if (!entry) return
+    if (kind === selectedKind && body.childElementCount > 0) return
     selectedKind = kind
     current.innerHTML = entry.labelHTML
     options.forEach(o =>
       o.classList.toggle('experiment-dropdown-option-selected', o.dataset.kind === kind),
     )
     body.innerHTML = ''
-    entry.mount(body)
+    activePane = entry.mount(body)
   }
 
   function setOpen(open: boolean): void {
@@ -250,6 +259,24 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
   })
 
   selectKind(selectedKind)
+
+  return {
+    updateDevice: resetDefaults => activePane?.updateDevice(resetDefaults),
+    selectExperiment: kind => {
+      const target = kind === 'current_decomp' || kind === 'spatial' ? 'jv' : kind
+      selectKind(target)
+      setOpen(false)
+      if (target === 'jv') {
+        const solver = body.querySelector<HTMLSelectElement>('#jvp-solver')!
+        if (kind === 'current_decomp' || kind === 'spatial') {
+          solver.value = 'transient'
+          solver.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        body.querySelector<HTMLInputElement>('#jvp-decomp')!.checked = kind === 'current_decomp'
+        body.querySelector<HTMLInputElement>('#jvp-spatial')!.checked = kind === 'spatial'
+      }
+    },
+  }
 }
 
 /** Escape plain text for HTML insertion (group labels). */

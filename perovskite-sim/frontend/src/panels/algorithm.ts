@@ -59,7 +59,7 @@ export function algorithmHTML(): string {
       </ul>
 
       <h4>Physics tiers &mdash; Full vs Fast vs Legacy</h4>
-      <p>The <b>Mode</b> selector gates optional transport and optical upgrades; it does not choose the source of the contact potential. <b>Full</b> is the default and enables every feature supplied by the configuration. <b>Fast</b> keeps the build-once upgrades &mdash; thermionic emission, TMM optics, dual ions, spatial trap profiles, temperature scaling and photon recycling &mdash; while omitting the three features that must be recomputed inside every right-hand-side evaluation. <b>Legacy</b> disables the upgrades to reproduce the IonMonger-compatible benchmark baseline.</p>
+      <p><b>Legacy / Fast / Full</b> select optional physical extensions within the shared drift&ndash;diffusion&ndash;Poisson framework. They do not select a reference model, numerical solver or contact-potential convention. <b>Legacy</b> provides the isothermal baseline. <b>Fast</b> permits TMM photogeneration, thermionic interface transport, two ion species, spatial lifetime profiles, temperature scaling and effective photon recycling. <b>Full</b> additionally permits a radiative reabsorption source, field-dependent mobility and finite-rate Robin contacts. Actual activation depends on the configured materials and boundaries.</p>
 
       <table class="param-table mode-table">
         <thead>

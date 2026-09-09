@@ -22,23 +22,23 @@ export interface JV2DPaneOptions {
 export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): void {
   container.innerHTML = `
     <div class="card">
-      <h3>2D J–V Sweep (Stage A — lateral-uniform)</h3>
+      <h3>Sweep settings</h3>
       <div class="form-grid">
-        ${numField('jv2d-Lx-nm', 'Lateral length, <i>L<sub>x</sub></i> (nm)', 500, '1')}
-        ${numField('jv2d-Nx', 'N<sub>x</sub> (lateral intervals)', 10, '1')}
+        ${numField('jv2d-Lx-nm', 'Lateral <i>L</i><sub>x</sub> (nm)', 500, '1')}
+        ${numField('jv2d-Nx', 'N<sub>x</sub> (intervals)', 10, '1')}
         ${numField('jv2d-Nyl', 'N<sub>y</sub> per layer', 20, '1')}
         ${numField('jv2d-vmax', 'V<sub>max</sub> (V)', 1.2, 'any')}
         ${numField('jv2d-vstep', 'V<sub>step</sub> (V)', 0.05, 'any')}
-        ${numField('jv2d-settle', 'settle <i>t</i> (s)', 1e-7, 'any')}
+        ${numField('jv2d-settle', 't<sub>settle</sub> (s)', 1e-7, 'any')}
       </div>
       <div class="form-grid">
         <label class="checkbox-label">
           <input type="checkbox" id="jv2d-illum" checked />
-          <span>Illuminated (AM1.5G via TMM / Beer–Lambert)</span>
+          <span title="Uses the device's configured optical-generation model">Illuminated</span>
         </label>
         <label class="checkbox-label">
           <input type="checkbox" id="jv2d-snaps" />
-          <span>Save 2D snapshots (large; off by default)</span>
+          <span title="Include 2D spatial fields in the result; increases result size">2D snapshots</span>
         </label>
         <label class="row-label">
           <span>Lateral BC</span>
@@ -52,7 +52,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
         <legend>
           <label class="checkbox-label">
             <input type="checkbox" id="jv2d-gb-en" />
-            <span>Single grain boundary (Stage B)</span>
+            <span>Single grain boundary</span>
           </label>
         </legend>
         <div class="form-grid" id="jv2d-gb-fields">
@@ -68,10 +68,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
       </div>
       <div id="progress-jv2d"></div>
       <div class="pane-active-physics" id="jv2d-active-physics" title="Pre-run summary of active physics extras above the baseline 2D drift-diffusion solver. Updates when this pane is re-entered or a run is started.">Active physics: baseline 2D drift-diffusion</div>
-      <div class="pane-hint">Stage A: ions are frozen as a static Poisson background and the
-        device is laterally uniform, so this should reproduce the 1D J–V to within
-        sub-mV V<sub>oc</sub>. TMM presets give physical G(x); Beer–Lambert presets
-        use the equilibrated 1D profile.</div>
+      <div class="pane-hint"><strong>Grain boundaries:</strong> Neumann lateral BCs required.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

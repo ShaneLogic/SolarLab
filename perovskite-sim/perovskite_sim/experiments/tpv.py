@@ -1,42 +1,33 @@
-"""Transient photovoltage (TPV) experiment.
+"""Charge-conserving transient photovoltage with a matched unpulsed control.
 
-Physics: the device is equilibrated at open circuit under steady-state
-illumination (generation rate G_ss). A small perturbation pulse
-(delta_G * G_ss) is applied for t_pulse seconds. The terminal is kept
-at open circuit throughout — the voltage rises during the pulse and
-decays back to V_oc as the excess carriers recombine. The decay
-timescale tau encodes the dominant recombination lifetime.
-
-Implementation: because the drift-diffusion solver operates at fixed
-V_app (Dirichlet Poisson BCs), we approximate open circuit by finding
-V_oc from a quick J-V scan and holding V_app = V_oc. The terminal
-current J(t) is near zero (true OC), and we track V_oc + delta_V(t) by
-reading the quasi-Fermi-level splitting from the spatial profiles. In
-practice, since J ≈ 0 at V_oc, the voltage perturbation is small enough
-that the fixed-V_app approximation is accurate to first order.
-
-Alternative approach used here: we run successive short transient
-intervals and adjust V_app at each step to keep J ≈ 0 (iterative OC
-tracking). This gives a true V(t) transient.
+The terminal voltage evolves continuously with the density equations under
+zero external Maxwell current. Finite-time preparation does not imply ionic
+equilibrium; subtracting an identically prepared control isolates the pulse
+response. A decay time is reported only when one exponential is identifiable.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Callable
 
 import numpy as np
+from scipy.optimize import brentq
 
-from perovskite_sim.models.device import DeviceStack, electrical_layers
-from perovskite_sim.models.tpv import TPVResult
-from perovskite_sim.discretization.grid import multilayer_grid, Layer
+from perovskite_sim.models.device import DeviceStack
+from perovskite_sim.models.tpv import TPVDecayFit, TPVNumericalSettings, TPVResult
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import (
-    run_transient,
     build_material_arrays,
     MaterialArrays,
 )
 from perovskite_sim.experiments.jv_sweep import (
-    _compute_current,
     _integrate_step,
+    build_electrical_grid,
+)
+from perovskite_sim.experiments.open_circuit import (
+    OpenCircuitError,
+    OpenCircuitSystem,
+    integrate_open_circuit,
 )
 from perovskite_sim.experiments.protocol import (
     DCSettleCriterion,
@@ -59,7 +50,7 @@ def _tpv_sampling_times(
 ) -> np.ndarray:
     if n_points < 10:
         raise ValueError(f"n_points must be >= 10, got {n_points}")
-    t_pulse_pts = max(int(n_points * t_pulse / t_decay), 10)
+    t_pulse_pts = min(n_points - 2, max(int(n_points * t_pulse / t_decay), 10))
     t_decay_pts = n_points - t_pulse_pts
     if t_decay_pts < 0:
         raise ValueError(
@@ -157,160 +148,128 @@ def _find_voc(
     atol: float = 1e-6,
     search: VocSearchProtocol | None = None,
 ) -> tuple[float, np.ndarray]:
-    """Find V_oc by bisection: the voltage where J(V) = 0 under illumination.
+    """Bracket zero instantaneous current after a reproducible preparation.
 
-    Starts from a coarse bracket [0, V_guess*1.5] and narrows to ~1 mV.
-    Returns (V_oc, y_at_voc).
+    The coarse scan establishes a lower-bracket state. Every root candidate
+    starts from that same state and receives the same two declared dwell
+    intervals. The returned state is the state evaluated at the accepted root;
+    no additional unchecked settling changes it afterwards.
     """
     protocol = search or VocSearchProtocol()
-    # Coarse scan to bracket V_oc
-    n_coarse = protocol.coarse_points
+    if protocol.fallback != "error" or protocol.warm_start != "fixed_lower_bracket_state":
+        raise ValueError("open-circuit search requires error fallback and fixed_lower_bracket_state")
+    system = OpenCircuitSystem(x, stack, mat)
     V_lo = protocol.coarse_start_V
-    V_hi = max(V_guess, protocol.minimum_guess_V) * (
-        protocol.coarse_upper_guess_factor
-    )
-    V_scan = np.linspace(V_lo, V_hi, n_coarse)
-    dt_coarse = protocol.coarse_dwell_s
+    V_hi = max(V_guess, protocol.minimum_guess_V) * protocol.coarse_upper_guess_factor
+    if not np.isfinite(V_hi) or V_hi <= V_lo:
+        raise OpenCircuitError("invalid open-circuit voltage bracket")
+
+    def fixed_bias_current(t, state, voltage):
+        system.validate_state(state, voltage, t)
+        _, voltage_rate, _ = system.rates(t, state, voltage)
+        return system.capacitance_A * voltage_rate
+
     y = y_ss.copy()
-    J_scan = np.zeros(n_coarse)
-    for k, V_k in enumerate(V_scan):
-        y_prev = y.copy()
-        y = _integrate_step(x, y, stack, mat, V_k, k * dt_coarse,
-                            (k + 1) * dt_coarse, rtol, atol)
-        J_scan[k] = _compute_current(x, y, stack, V_k, y_prev=y_prev,
-                                      dt=dt_coarse, mat=mat)
-
-    # Find bracket where J crosses zero (positive to negative)
-    signs = np.sign(J_scan)
-    crossings = np.where((signs[:-1] > 0) & (signs[1:] <= 0))[0]
-    if len(crossings) == 0:
-        # Fallback: use the V where |J| is smallest
-        idx_min = int(np.argmin(np.abs(J_scan)))
-        return float(V_scan[idx_min]), y
-
-    idx = int(crossings[0])
-    V_a, V_b = float(V_scan[idx]), float(V_scan[idx + 1])
-
-    # Bisection refinement to ~1 mV
-    y_a = y_ss.copy()
-    for _iter in range(protocol.bisection_max_steps):
-        V_mid = 0.5 * (V_a + V_b)
-        y_prev = y_a.copy()
-        t_base = _iter * protocol.bisection_dwell_s
-        y_mid = _integrate_step(x, y_a, stack, mat, V_mid, t_base,
-                                t_base + protocol.bisection_dwell_s, rtol, atol)
-        J_mid = _compute_current(x, y_mid, stack, V_mid, y_prev=y_prev,
-                                  dt=protocol.bisection_dwell_s, mat=mat)
-        if J_mid > 0:
-            V_a = V_mid
-            y_a = y_mid
-        else:
-            V_b = V_mid
-        if abs(V_b - V_a) < protocol.bisection_tolerance_V:
-            break
-
-    V_oc = 0.5 * (V_a + V_b)
-    # Settle at V_oc
-    y_oc = _integrate_step(
-        x, y_a, stack, mat, V_oc, 0.0, protocol.final_settle_s, rtol, atol
-    )
-    return V_oc, y_oc
-
-
-def _adjust_V_for_OC(
-    x: np.ndarray,
-    y_start: np.ndarray,
-    stack: DeviceStack,
-    mat: MaterialArrays,
-    V_guess: float,
-    t_lo: float,
-    t_hi: float,
-    rtol: float = 1e-4,
-    atol: float = 1e-6,
-    J_tol: float = 0.05,
-    max_iter: int = 5,
-    dV_perturb: float = 1e-4,
-) -> tuple[float, np.ndarray, float]:
-    """Find (V, y_end, J_end) such that J_terminal(y_end, V) ≈ 0 after
-    integrating from y_start at (t_lo, V) to t_hi.
-
-    Newton-Raphson with finite-difference dJ/dV, warm-started from V_guess.
-    This is the circuit-mode core: instead of post-hoc mapping J(t) to V(t)
-    via a linearised R_oc slope (which assumes dV ∝ dJ with a single-point
-    slope — incorrect for non-unity ideality and large dV), we impose the
-    exact open-circuit algebraic constraint J = 0 at every reported time
-    and let V_app float to satisfy it.
-
-    Typical cost: 1–3 transient integrations per step (1 when the solution
-    was already at OC, 3 when Newton needs one correction pass).
-    """
-    def _integrate(V: float) -> tuple[float, np.ndarray]:
-        sol = run_transient(
-            x, y_start, (t_lo, t_hi), np.array([t_hi]),
-            stack, illuminated=True, V_app=V,
-            rtol=rtol, atol=atol,
-            max_step=max((t_hi - t_lo) / 5.0, 1e-12),
-            mat=mat,
+    previous = None
+    bracket = None
+    for k, voltage in enumerate(np.linspace(V_lo, V_hi, protocol.coarse_points)):
+        end = (k + 1) * protocol.coarse_dwell_s
+        y = _integrate_step(
+            x, y, stack, mat, float(voltage), k * protocol.coarse_dwell_s,
+            end, rtol, atol,
         )
-        y_end = sol.y[:, -1] if sol.success else y_start.copy()
-        dt = t_hi - t_lo
-        J = _compute_current(x, y_end, stack, V, y_prev=y_start, dt=dt, mat=mat)
-        return J, y_end
-
-    V = V_guess
-    J, y_end = _integrate(V)
-    for _iter in range(max_iter):
-        if abs(J) < J_tol:
+        current = fixed_bias_current(end, y, float(voltage))
+        if previous is not None and previous[1] * current <= 0.0:
+            bracket = (previous[0], float(voltage))
+            y_base = previous[2]
             break
-        J_plus, _ = _integrate(V + dV_perturb)
-        dJdV = (J_plus - J) / dV_perturb
-        if abs(dJdV) < 1e-12:
-            break  # degenerate slope — bail out rather than divide by zero
-        dV = -J / dJdV
-        # Damp to 20 mV per iteration. TPV voltages never swing more than
-        # ~10 mV between output times, so a larger step is always overshoot.
-        if abs(dV) > 0.02:
-            dV = 0.02 * np.sign(dV)
-        V = V + dV
-        J, y_end = _integrate(V)
-    return V, y_end, J
+        previous = (float(voltage), current, y.copy())
+    if bracket is None:
+        raise OpenCircuitError(f"open-circuit current does not cross zero in [{V_lo:g}, {V_hi:g}] V")
+
+    candidates: dict[float, tuple[float, np.ndarray]] = {}
+
+    def evaluate(voltage):
+        voltage = float(voltage)
+        if voltage not in candidates:
+            mid = protocol.bisection_dwell_s
+            end = mid + protocol.final_settle_s
+            candidate = _integrate_step(x, y_base.copy(), stack, mat, voltage,
+                                        0.0, mid, rtol, atol)
+            candidate = _integrate_step(x, candidate, stack, mat, voltage,
+                                        mid, end, rtol, atol)
+            current = fixed_bias_current(end, candidate, voltage)
+            candidates[voltage] = (current, candidate.copy())
+        return candidates[voltage][0]
+
+    if evaluate(bracket[0]) * evaluate(bracket[1]) > 0.0:
+        raise OpenCircuitError("open-circuit bracket does not survive the declared final preparation")
+    try:
+        voltage = float(brentq(
+            evaluate, *bracket, xtol=min(protocol.bisection_tolerance_V, 1e-10),
+            rtol=4 * np.finfo(float).eps, maxiter=protocol.bisection_max_steps,
+        ))
+    except (ValueError, RuntimeError) as exc:
+        raise OpenCircuitError(f"open-circuit voltage root failed: {exc}") from exc
+    current = evaluate(voltage)
+    if not np.isfinite(current) or abs(current) > 1e-4:
+        raise OpenCircuitError(f"initial open-circuit residual exceeds 1e-4 A/m2: {current:.9g}")
+    return voltage, candidates[voltage][1]
 
 
-def _fit_decay_tau(t: np.ndarray, V: np.ndarray, V_oc: float) -> tuple[float, float]:
-    """Fit mono-exponential decay to V(t) - V_oc after the pulse.
+def fit_tpv_decay(
+    t: np.ndarray, delta_voltage: np.ndarray, *, noise_floor_V: float = 1e-8,
+) -> TPVDecayFit:
+    """Fit only a resolved, monotone, approximately single-exponential decay.
 
-    Returns (tau, delta_V0) where V(t) ≈ V_oc + delta_V0 * exp(-t/tau).
+    Inputs start at pulse turn-off and use the matched unpulsed voltage as
+    reference. A window shorter than one observed e-fold is not identifiable.
     """
-    dV = V - V_oc
-    # Find the peak (end of pulse / start of decay)
-    i_peak = int(np.argmax(np.abs(dV)))
-    delta_V0 = float(dV[i_peak])
-    if abs(delta_V0) < 1e-8:
-        return 1e-6, 0.0  # no perturbation detected
+    t = np.asarray(t, dtype=float)
+    delta = np.asarray(delta_voltage, dtype=float)
+    if (t.ndim != 1 or delta.shape != t.shape or not np.all(np.isfinite(t))
+            or not np.all(np.isfinite(delta)) or np.any(np.diff(t) <= 0.0)):
+        return TPVDecayFit(None, 0.0, "invalid_data", 0)
+    if not np.isfinite(noise_floor_V) or noise_floor_V <= 0.0:
+        raise ValueError("noise_floor_V must be finite and positive")
+    if t.size < 5:
+        return TPVDecayFit(None, float(delta[0]) if t.size else 0.0, "insufficient_data", t.size)
+    peak = float(np.max(np.abs(delta)))
+    amplitude = float(delta[0])
+    if peak <= noise_floor_V:
+        return TPVDecayFit(None, 0.0, "no_signal", t.size)
+    sign = float(np.sign(amplitude))
+    signal = sign * delta
+    if sign == 0.0 or np.any(signal < -noise_floor_V):
+        return TPVDecayFit(None, amplitude, "sign_change", t.size)
+    if np.any(np.diff(signal) > 3.0 * noise_floor_V):
+        return TPVDecayFit(None, amplitude, "non_monotonic", t.size)
+    mask = signal > max(0.05 * peak, noise_floor_V)
+    count = int(np.count_nonzero(mask))
+    if count < 5:
+        return TPVDecayFit(None, amplitude, "insufficient_data", count)
+    if signal[mask][-1] > signal[mask][0] / np.e:
+        return TPVDecayFit(None, amplitude, "insufficient_decay_window", count)
+    relative_time = t[mask] - t[0]
+    span = float(relative_time[-1])
+    log_signal = np.log(signal[mask])
+    slope, intercept = np.polyfit(relative_time / span, log_signal, 1)
+    prediction = intercept + slope * relative_time / span
+    variance = float(np.sum((log_signal - np.mean(log_signal)) ** 2))
+    r_squared = 1.0 - float(np.sum((log_signal - prediction) ** 2)) / variance
+    error = float(np.max(np.abs(np.exp(prediction) - signal[mask])) / peak)
+    if slope >= 0.0 or r_squared < 0.995 or error > 0.02:
+        return TPVDecayFit(None, amplitude, "not_single_exponential", count, r_squared, error)
+    return TPVDecayFit(float(-span / slope), float(sign * np.exp(intercept)),
+                       "accepted", count, r_squared, error)
 
-    # Fit on the decay portion
-    t_decay = t[i_peak:] - t[i_peak]
-    dV_decay = dV[i_peak:]
 
-    # Use log-linear fit on |dV| where it's above noise floor
-    mask = np.abs(dV_decay) > 0.05 * abs(delta_V0)
-    if np.sum(mask) < 3:
-        # Not enough points for a fit — estimate from 1/e crossing
-        target = abs(delta_V0) * np.exp(-1)
-        crossings = np.where(np.abs(dV_decay) <= target)[0]
-        if len(crossings) > 0:
-            tau = float(t_decay[crossings[0]])
-        else:
-            tau = float(t_decay[-1])
-        return max(tau, 1e-9), delta_V0
-
-    log_dV = np.log(np.abs(dV_decay[mask]))
-    t_fit = t_decay[mask]
-    # Linear fit: log|dV| = log|delta_V0| - t/tau
-    coeffs = np.polyfit(t_fit, log_dV, 1)
-    slope = coeffs[0]
-    tau = -1.0 / slope if slope < 0 else float(t_decay[-1])
-    return max(tau, 1e-9), delta_V0
+def _fit_decay_tau(
+    t: np.ndarray, V: np.ndarray, V_oc: float,
+) -> tuple[float | None, float]:
+    """Compatibility wrapper for a decay measured relative to a fixed baseline."""
+    fit = fit_tpv_decay(t, np.asarray(V) - V_oc)
+    return fit.tau_s, fit.amplitude_V
 
 
 def run_tpv(
@@ -326,6 +285,10 @@ def run_tpv(
     experiment_protocol: ExperimentProtocol | None = None,
     protocol_mode: ProtocolMode = "compatibility",
     voc_search: VocSearchProtocol | None = None,
+    max_step: float | None = None,
+    voltage_atol: float = 1e-9,
+    max_voltage_error_V: float = 1e-6,
+    max_current_error_A_m2: float = 0.05,
 ) -> TPVResult:
     """Run a transient photovoltage experiment.
 
@@ -334,7 +297,7 @@ def run_tpv(
     stack : DeviceStack
         Device configuration.
     N_grid : int
-        Grid points per layer (passed to multilayer_grid).
+        Nominal total grid intervals, using the shared electrical grid builder.
     delta_G_frac : float
         Fractional generation perturbation (e.g. 0.05 = 5% pulse).
     t_pulse : float
@@ -351,7 +314,8 @@ def run_tpv(
     Returns
     -------
     TPVResult
-        Time-resolved voltage and current, fitted decay time.
+        Pulsed and unpulsed voltages, current/charge evidence and an optional
+        single-exponential decay time. Invalid trajectories raise.
     """
     if N_grid < 3:
         raise ValueError(f"N_grid must be >= 3, got {N_grid}")
@@ -375,37 +339,27 @@ def run_tpv(
         mode=protocol_mode,
     )
 
-    import dataclasses
-
-    # Build grid (electrical layers only)
-    elec = electrical_layers(stack)
-    layers_grid = [
-        Layer(layer.thickness, N_grid // len(elec)) for layer in elec
-    ]
-    x = multilayer_grid(layers_grid)
-
-    # Build material cache — baseline illumination
+    if max_step is None:
+        max_step = min(t_pulse / 5.0, (t_decay - t_pulse) / 20.0)
+    for name, value in (("max_step", max_step), ("rtol", rtol), ("atol", atol),
+                        ("voltage_atol", voltage_atol),
+                        ("max_voltage_error_V", max_voltage_error_V),
+                        ("max_current_error_A_m2", max_current_error_A_m2)):
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be finite and positive")
+    x = build_electrical_grid(stack, N_grid)
     mat_ss = build_material_arrays(x, stack)
-
-    # Ensure G_optical is explicit so we can scale it for the pulse.
-    # For TMM devices G_optical is already set; for Beer-Lambert it's None
-    # and computed inline in assemble_rhs. Materialise it here.
     if mat_ss.G_optical is None:
         from perovskite_sim.physics.generation import beer_lambert_generation
         G_baseline = beer_lambert_generation(x, mat_ss.alpha, stack.Phi)
-        mat_ss = dataclasses.replace(mat_ss, G_optical=G_baseline)
-
-    # Build perturbed material cache — boosted generation for the pulse
-    mat_pulse = dataclasses.replace(
+        mat_ss = replace(mat_ss, G_optical=G_baseline)
+    mat_pulse = replace(
         mat_ss, G_optical=mat_ss.G_optical * (1.0 + delta_G_frac),
     )
-
-    # Step 1: Equilibrate at V_oc under steady illumination
-    y_illum = solve_illuminated_ss(x, stack, V_app=0.0, rtol=rtol, atol=atol)
-    # V_guess is a positive-magnitude upper bracket for the forward V_oc
-    # search. The selected operating value is signed and can be negative for
-    # n-contact-left devices; take its magnitude so the bracket
-    # [0, V_guess*1.5] stays forward-biased instead of scanning into reverse.
+    y_illum = solve_illuminated_ss(
+        x, stack, V_app=0.0, rtol=rtol, atol=atol, mat=mat_ss,
+        t_settle=resolved_protocol.soak_duration_s,
+    )
     search = resolved_protocol.voc_search
     assert search is not None
     V_oc, y_oc = _find_voc(
@@ -420,78 +374,67 @@ def run_tpv(
     )
 
     if progress is not None:
-        progress("tpv", 0, n_points, f"V_oc={V_oc:.4f} V")
-
-    # Step 2: Adaptive time grid — denser during pulse, sparser during decay
+        progress("tpv", 0, 4, f"V_oc={V_oc:.6f} V")
     t_arr = _tpv_sampling_times(t_pulse, t_decay, n_points)
-
-    # Step 3: Circuit-mode transient. At every reported time we enforce
-    # the open-circuit constraint J_terminal(y, V) = 0 exactly via a
-    # Newton root-find on V_app — replacing the prior linearised post-hoc
-    # mapping V(t) = V_oc + delta_V_ideal · J(t)/J_plateau which assumed
-    # dV ∝ dJ with a single-point slope and broke for non-unity ideality.
-    V_arr = np.zeros(len(t_arr))
-    J_arr = np.zeros(len(t_arr))
-    V_arr[0] = V_oc
-    J_arr[0] = 0.0  # steady-state OC
-    y = y_oc.copy()
-    V_prev = V_oc
-
-    for k in range(1, len(t_arr)):
-        t_lo = t_arr[k - 1]
-        t_hi = t_arr[k]
-
-        if t_lo < t_pulse < t_hi:
-            # Straddle the pulse boundary: advance the first sub-interval
-            # (pulse phase) at V = V_prev under mat_pulse, then apply the
-            # Newton correction to the second sub-interval (decay phase)
-            # under mat_ss. The straddle is at most one step per sweep
-            # (fallback to V_prev here is a sub-mV error smeared across
-            # one output sample).
-            if t_pulse - t_lo > 0:
-                sol1 = run_transient(
-                    x, y, (t_lo, t_pulse), np.array([t_pulse]),
-                    stack, illuminated=True, V_app=V_prev,
-                    rtol=rtol, atol=atol,
-                    max_step=max((t_pulse - t_lo) / 5.0, 1e-12),
-                    mat=mat_pulse,
-                )
-                y = sol1.y[:, -1] if sol1.success else y
-            if t_hi - t_pulse > 0:
-                V_k, y, J_k = _adjust_V_for_OC(
-                    x, y, stack, mat_ss, V_prev, t_pulse, t_hi, rtol, atol,
-                )
-            else:
-                V_k = V_prev
-                J_k = _compute_current(x, y, stack, V_prev, mat=mat_pulse)
-        elif t_hi <= t_pulse:
-            # Entirely inside the pulse phase — V climbs toward V_oc(pulse)
-            V_k, y, J_k = _adjust_V_for_OC(
-                x, y, stack, mat_pulse, V_prev, t_lo, t_hi, rtol, atol,
+    traces = []
+    for run_index, pulse_material in enumerate((mat_pulse, mat_ss)):
+        y, voltage = y_oc.copy(), V_oc
+        phases = []
+        for phase_index, (material, times) in enumerate((
+            (pulse_material, t_arr[t_arr <= t_pulse]),
+            (mat_ss, t_arr[t_arr >= t_pulse]),
+        )):
+            phase = integrate_open_circuit(
+                OpenCircuitSystem(x, stack, material), y, voltage, times,
+                rtol=rtol, atol=atol, voltage_atol=voltage_atol,
+                max_step=max_step, max_voltage_error_V=max_voltage_error_V,
+                max_current_error_A_m2=max_current_error_A_m2,
             )
-        else:
-            # Entirely after the pulse — V relaxes back to V_oc
-            V_k, y, J_k = _adjust_V_for_OC(
-                x, y, stack, mat_ss, V_prev, t_lo, t_hi, rtol, atol,
-            )
-
-        V_arr[k] = V_k
-        J_arr[k] = J_k
-        V_prev = V_k
-
-        if progress is not None:
-            progress("tpv", k, len(t_arr) - 1,
-                     f"t={t_hi:.3e} s, V={V_k:.4f} V")
-
-    # Fit decay
-    tau, delta_V0 = _fit_decay_tau(t_arr, V_arr, V_oc)
-
+            phases.append(phase)
+            y, voltage = phase.y[:, -1], float(phase.V[-1])
+            if progress is not None:
+                progress("tpv", 2 * run_index + phase_index + 1, 4,
+                         f"t={times[-1]:.3e} s, V={voltage:.6f} V")
+        joined = {
+            field: np.concatenate((getattr(phases[0], field)[:-1], getattr(phases[1], field)))
+            for field in ("V", "J", "valid", "max_face_current_A_m2",
+                          "interval_current_residual_A_m2", "charge_voltage_error_V")
+        }
+        joined["charge_voltage_error_V"][len(phases[0].t) - 1:] += phases[0].charge_voltage_error_V[-1]
+        traces.append(joined)
+    pulsed, reference = traces
+    delta_voltage = pulsed["V"] - reference["V"]
+    voltage_error = pulsed["charge_voltage_error_V"] + reference["charge_voltage_error_V"]
+    signal_amplitude = float(np.max(np.abs(delta_voltage)))
+    error_limit = max_voltage_error_V
+    if signal_amplitude > max(1e-8, 10 * voltage_atol):
+        error_limit = min(error_limit, 0.01 * signal_amplitude)
+    if voltage_error[-1] > error_limit:
+        raise OpenCircuitError(
+            f"paired TPV charge error {voltage_error[-1]:.6g} V exceeds "
+            f"the signal-dependent limit {error_limit:.6g} V"
+        )
+    decay_mask = t_arr >= t_pulse
+    fit = fit_tpv_decay(
+        t_arr[decay_mask] - t_pulse, delta_voltage[decay_mask],
+        noise_floor_V=max(1e-8, 10 * voltage_atol, 5 * float(voltage_error[-1])),
+    )
+    reference_history = list(resolved_protocol.illumination_history)
+    reference_history[2] = replace(
+        reference_history[2], phase="unpulsed_reference", condition="baseline",
+        relative_generation_change=None,
+    )
     return TPVResult(
-        t=t_arr,
-        V=V_arr,
-        J=J_arr,
-        V_oc=V_oc,
-        tau=tau,
-        delta_V0=delta_V0,
-        protocol=resolved_protocol,
+        t=t_arr, V=pulsed["V"], J=pulsed["J"], V_oc=V_oc,
+        tau=fit.tau_s, delta_V0=fit.amplitude_V, protocol=resolved_protocol,
+        fit=fit, V_reference=reference["V"], delta_V=delta_voltage,
+        valid=pulsed["valid"] & reference["valid"],
+        max_face_current_A_m2=np.maximum(pulsed["max_face_current_A_m2"], reference["max_face_current_A_m2"]),
+        interval_current_residual_A_m2=np.maximum(pulsed["interval_current_residual_A_m2"], reference["interval_current_residual_A_m2"]),
+        charge_voltage_error_V=voltage_error,
+        reference_protocol=replace(resolved_protocol, illumination_history=tuple(reference_history)),
+        numerical_settings=TPVNumericalSettings(
+            rtol, atol, voltage_atol, max_step, max_voltage_error_V,
+            max_current_error_A_m2,
+        ),
     )

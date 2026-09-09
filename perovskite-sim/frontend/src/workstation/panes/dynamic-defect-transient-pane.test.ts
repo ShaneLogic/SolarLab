@@ -368,6 +368,10 @@ describe('dynamic-defect transient plot evidence', () => {
 
     expect(observe).toHaveBeenCalledWith(plot)
     callbacks[0]([], {} as ResizeObserver)
+    expect(mocks.resize).not.toHaveBeenCalled()
+    Object.defineProperty(plot, 'clientWidth', { value: 360 })
+    Object.defineProperty(plot, 'clientHeight', { value: 450 })
+    callbacks[0]([], {} as ResizeObserver)
     expect(mocks.resize).toHaveBeenCalledWith(plot)
 
     renderDynamicDefectTransient(container, result())

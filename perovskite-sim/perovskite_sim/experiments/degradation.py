@@ -3,21 +3,24 @@ from dataclasses import dataclass, replace
 from typing import Callable, Optional
 import numpy as np
 
-ProgressCallback = Callable[[str, int, int, str], None]
-"""Callable protocol: fn(stage, current, total, message) -> None."""
 from perovskite_sim.models.device import DeviceStack, electrical_layers
-from perovskite_sim.discretization.grid import multilayer_grid, Layer
 from perovskite_sim.solver.illuminated_ss import solve_illuminated_ss
 from perovskite_sim.solver.mol import StateVec, run_transient, split_step, build_material_arrays
 from perovskite_sim.solver.tolerances import AbsoluteTolerance, ComponentwiseAtol
 from perovskite_sim.experiments.jv_sweep import (
-    _compute_current,
+    JVMetrics,
+    build_electrical_grid,
+    compute_current_components,
     compute_metrics,
 )
+from perovskite_sim.experiments.steady_state import solve_steady_state
+
+
+ProgressCallback = Callable[[str, int, int, str], None]
 
 
 def _freeze_ions(stack: DeviceStack) -> DeviceStack:
-    """Return a copy of the stack with D_ion = 0 in every layer.
+    """Freeze both diffusivities without changing ion inventories or capacities.
 
     Used for snapshot J-V measurement: carriers relax to quasi-equilibrium
     at each probe voltage while the ion distribution stays pinned at the
@@ -26,8 +29,11 @@ def _freeze_ions(stack: DeviceStack) -> DeviceStack:
     """
     new_layers = []
     for layer in stack.layers:
+        if layer.params is None:
+            new_layers.append(layer)
+            continue
         new_layers.append(
-            replace(layer, params=replace(layer.params, D_ion=0.0))
+            replace(layer, params=replace(layer.params, D_ion=0.0, D_ion_neg=0.0))
         )
     return replace(stack, layers=tuple(new_layers))
 
@@ -42,9 +48,25 @@ class DegradationResult:
     V_oc: np.ndarray
     J_sc: np.ndarray
     ion_profiles: Optional[np.ndarray]   # shape (len(t), N)
+    ion_profiles_neg: np.ndarray | None = None
+    snapshot_carrier_current_bound_A_m2: np.ndarray | None = None
+    snapshot_current_spread_A_m2: np.ndarray | None = None
 
 
-def _measure_snapshot_metrics(
+@dataclass(frozen=True)
+class FrozenIonSnapshot:
+    """Electronically stationary J-V states at one fixed ionic configuration."""
+
+    V: np.ndarray
+    J: np.ndarray
+    states: np.ndarray
+    carrier_residual_s_inv: np.ndarray
+    carrier_current_bound_A_m2: np.ndarray
+    current_spread_A_m2: np.ndarray
+    metrics: JVMetrics
+
+
+def measure_frozen_ion_snapshot(
     x: np.ndarray,
     y_ref: np.ndarray,
     stack: DeviceStack,
@@ -52,57 +74,129 @@ def _measure_snapshot_metrics(
     settle_time: float,
     rtol: float,
     atol: AbsoluteTolerance,
-):
-    """Snapshot J-V with the snapshot ion distribution pinned.
+    *,
+    max_step: float | None = None,
+    max_current_error_A_m2: float = 0.05,
+) -> FrozenIonSnapshot:
+    """Measure a stationary electronic curve with both ion profiles frozen.
 
-    The coupled MOL system is solved at each probe voltage with D_ion=0 in
-    every layer, so the ion profile inherited from `y_ref` stays fixed while
-    carriers relax to quasi-steady-state under the new V_app. The terminal
-    current is read from the same coupled solve at the settled state — no
-    displacement term, because the state is stationary.
-
-    This is the numerical analogue of a laboratory sweep at a rate fast
-    enough (≪ τ_ion ~ seconds for MAPbI3) that the ion lattice does not
-    rearrange within the measurement, but slow enough that carriers follow
-    quasi-statically. Because the ions are literally frozen here we avoid
-    the startup displacement transient that would otherwise contaminate the
-    first few samples of a state-carrying sweep that jumps from y_ref to
-    voltages[0].
+    Every probe starts from the same snapshot. The declared transient dwell
+    supplies a seed for the existing carrier steady-state solve, which owns
+    acceptance. Both solves and current extraction use the frozen material.
+    This separates electronic relaxation from the much slower ionic history;
+    it does not establish ionic equilibrium or a chemical degradation model.
     """
+    if not np.isfinite(settle_time) or settle_time <= 0.0:
+        raise ValueError("settle_time must be finite and positive")
+    if not np.isfinite(rtol) or rtol <= 0.0:
+        raise ValueError("rtol must be finite and positive")
+    if not isinstance(atol, ComponentwiseAtol) and (not np.isfinite(atol) or atol <= 0.0):
+        raise ValueError("atol must be finite and positive")
+    if not np.isfinite(max_current_error_A_m2) or max_current_error_A_m2 <= 0.0:
+        raise ValueError("max_current_error_A_m2 must be finite and positive")
+    if max_step is None:
+        max_step = settle_time / 20.0
+    if not np.isfinite(max_step) or max_step <= 0.0:
+        raise ValueError("max_step must be finite and positive")
+    x = np.asarray(x, dtype=float)
+    y_ref = np.asarray(y_ref, dtype=float).copy()
     frozen_stack = _freeze_ions(stack)
     mat_frozen = build_material_arrays(x, frozen_stack)
-    mat_stack = build_material_arrays(x, stack)
+    # Preserve a declared but empty negative block in an inherited state too.
+    if not mat_frozen.has_dual_ions and y_ref.size == 4 * x.size + 4 * mat_frozen.N_iface_state:
+        original = build_material_arrays(x, stack)
+        if original.has_dual_ions:
+            mat_frozen = replace(
+                mat_frozen, has_dual_ions=True,
+                D_ion_neg_node=np.zeros_like(original.D_ion_neg_node),
+                D_ion_neg_face=np.zeros_like(original.D_ion_neg_face),
+                P_ion0_neg=original.P_ion0_neg.copy(),
+                P_lim_neg_node=original.P_lim_neg_node.copy(),
+                P_lim_neg_face=original.P_lim_neg_face.copy(),
+            )
     voltages = np.asarray(voltages, dtype=float)
+    if voltages.ndim != 1 or voltages.size == 0 or not np.all(np.isfinite(voltages)):
+        raise ValueError("voltages must be a non-empty finite vector")
+    expected_size = (4 if mat_frozen.has_dual_ions else 3) * x.size + 4 * mat_frozen.N_iface_state
+    if y_ref.shape != (expected_size,):
+        raise ValueError("snapshot state does not match the frozen material layout")
+    reference = StateVec.unpack(y_ref, x.size, N_iface_state=mat_frozen.N_iface_state)
+
+    def require_frozen_state(state):
+        if state.shape != y_ref.shape or not np.all(np.isfinite(state)) or np.any(state < 0.0):
+            raise RuntimeError("snapshot has a non-finite, negative, or malformed density state")
+        blocks = StateVec.unpack(state, x.size, N_iface_state=mat_frozen.N_iface_state)
+        for name, values, original, capacity in (
+            ("positive", blocks.P, reference.P, mat_frozen.P_lim_node),
+            ("negative", blocks.P_neg, reference.P_neg, mat_frozen.P_lim_neg_node),
+        ):
+            if values is None:
+                continue
+            if not np.array_equal(values, original):
+                raise RuntimeError(f"frozen {name} ion distribution changed during the snapshot")
+            if capacity is not None and np.any(values > capacity):
+                raise RuntimeError(f"frozen {name} ions exceed their site capacity")
+        if (mat_frozen.has_dual_ions and mat_frozen.ion_steric_diffusion_only
+                and mat_frozen.ion_steric_shared_site
+                and np.any(blocks.P + blocks.P_neg > mat_frozen.P_lim_node)):
+            raise RuntimeError("frozen ions exceed their shared site capacity")
+
+    require_frozen_state(y_ref)
     J_arr = np.zeros_like(voltages)
-    # Tighter tolerances for the settled-state measurement: integration
-    # tolerance controls step size, not distance from true steady state,
-    # so we tighten both to keep residual drift below the current scale.
+    states = np.empty((voltages.size, y_ref.size))
+    residuals = np.empty_like(voltages)
+    current_bounds = np.empty_like(voltages)
+    current_spreads = np.empty_like(voltages)
     snap_rtol = min(rtol, 1e-5)
     if isinstance(atol, ComponentwiseAtol):
         effective_floor = atol.minimum_atol * atol.refinement_factor
         snap_atol = atol.refined(min(1.0, 1.0e-8 / effective_floor))
     else:
         snap_atol = min(atol, 1e-8)
-    # Cap Radau's internal step size. Near V_bi the Jacobian is nearly
-    # singular and Radau's own error estimator can underreport the local
-    # truncation error, letting it accept giant steps that land on the
-    # wrong branch. This guarantees the transient is resolved with
-    # O(20) sub-steps regardless of settle_time.
-    snap_max_step = settle_time / 20.0
     for k, V_k in enumerate(voltages):
         sol = run_transient(
             x, y_ref, (0.0, settle_time), np.array([settle_time]),
             frozen_stack, illuminated=True, V_app=float(V_k),
-            rtol=snap_rtol, atol=snap_atol, max_step=snap_max_step,
+            rtol=snap_rtol, atol=snap_atol, max_step=max_step,
             mat=mat_frozen,
+            max_nfev=100_000,
         )
-        if not sol.success:
+        if not sol.success or np.asarray(sol.y).shape != (y_ref.size, 1):
             raise RuntimeError(
                 f"snapshot J-V solver failed at V={V_k:.4f} V"
             )
-        y_v = sol.y[:, -1]
-        J_arr[k] = _compute_current(x, y_v, stack, float(V_k), mat=mat_stack)
-    return compute_metrics(voltages, J_arr)
+        require_frozen_state(sol.y[:, -1])
+        stationary = solve_steady_state(
+            x, frozen_stack, float(V_k), mat=mat_frozen, y0=sol.y[:, -1],
+            max_continuity_current_error=max_current_error_A_m2,
+        )
+        if (not stationary.converged or not np.isfinite(stationary.residual)
+                or stationary.residual < 0.0
+                or not np.isfinite(stationary.continuity_current_bound)
+                or not 0.0 <= stationary.continuity_current_bound <= max_current_error_A_m2):
+            raise RuntimeError(f"snapshot lacks an electronic steady-state certificate at V={V_k:.6g} V")
+        y_v = stationary.y
+        require_frozen_state(y_v)
+        currents = compute_current_components(x, y_v, frozen_stack, float(V_k), mat=mat_frozen)
+        if not np.all(np.isfinite(currents.J_total)) or np.any(currents.J_ion != 0.0):
+            raise RuntimeError(f"snapshot has a non-finite current or nonzero frozen-ion current at V={V_k:.6g} V")
+        spread = float(np.ptp(currents.J_total))
+        if spread > max_current_error_A_m2:
+            raise RuntimeError(f"snapshot current is not spatially continuous at V={V_k:.6g} V: {spread:.6g} A/m2")
+        states[k] = y_v
+        residuals[k] = stationary.residual
+        current_bounds[k] = stationary.continuity_current_bound
+        current_spreads[k] = spread
+        J_arr[k] = currents.J_total[0]
+    return FrozenIonSnapshot(
+        V=voltages.copy(), J=J_arr, states=states, carrier_residual_s_inv=residuals,
+        carrier_current_bound_A_m2=current_bounds, current_spread_A_m2=current_spreads,
+        metrics=compute_metrics(voltages, J_arr),
+    )
+
+
+def _measure_snapshot_metrics(x, y_ref, stack, voltages, settle_time, rtol, atol):
+    return measure_frozen_ion_snapshot(x, y_ref, stack, voltages, settle_time, rtol, atol).metrics
 
 
 def _absorber_region(
@@ -236,9 +330,7 @@ def run_degradation(
         )
 
     # Grid construction uses electrical layers only; substrate is optical-only.
-    elec = electrical_layers(stack)
-    layers_grid = [Layer(l.thickness, N_grid // len(elec)) for l in elec]
-    x = multilayer_grid(layers_grid)
+    x = build_electrical_grid(stack, N_grid)
     N = len(x)
     # V_oc can exceed V_bi when heterojunction band offsets are present, so
     # sweep beyond V_bi; the caller may override. Default gives ~30 % headroom.
@@ -267,6 +359,8 @@ def run_degradation(
     damage_cached = 0.0
     if n_snapshots == 1:
         t_eval = np.array([t_end])
+    elif n_snapshots == 2:
+        t_eval = np.array([0.0, t_end])
     else:
         t_min = max(min(t_end * 1e-6, t_end), 1e-12)
         t_eval = np.concatenate([[0.0], np.geomspace(t_min, t_end, n_snapshots - 1)])
@@ -275,6 +369,10 @@ def run_degradation(
     V_oc_arr = np.zeros(n_snapshots)
     J_sc_arr = np.zeros(n_snapshots)
     ion_arr = np.zeros((n_snapshots, N)) if store_ion_profiles else None
+    ion_neg_arr = (np.zeros((n_snapshots, N))
+                   if store_ion_profiles and mat_active.has_dual_ions else None)
+    snapshot_bounds = np.zeros(n_snapshots)
+    snapshot_spreads = np.zeros(n_snapshots)
 
     t_prev = 0.0
     for k, t_k in enumerate(t_eval):
@@ -350,17 +448,25 @@ def run_degradation(
         t_prev = t_k
 
         sv = StateVec.unpack(y, N)
-        metrics = _measure_snapshot_metrics(
+        snapshot = measure_frozen_ion_snapshot(
             x, y, active_stack, metric_voltages, metric_settle_time, rtol=rtol, atol=atol
         )
+        metrics = snapshot.metrics
+        snapshot_bounds[k] = np.max(snapshot.carrier_current_bound_A_m2)
+        snapshot_spreads[k] = np.max(snapshot.current_spread_A_m2)
         PCE_arr[k] = metrics.PCE
         V_oc_arr[k] = metrics.V_oc
         J_sc_arr[k] = metrics.J_sc
         if store_ion_profiles:
             ion_arr[k] = sv.P
+            if ion_neg_arr is not None:
+                ion_neg_arr[k] = sv.P_neg
 
         if progress is not None:
             progress("degradation", k + 1, n_snapshots, f"t={float(t_k):.2e} s")
 
-    return DegradationResult(t=t_eval, PCE=PCE_arr, V_oc=V_oc_arr,
-                             J_sc=J_sc_arr, ion_profiles=ion_arr)
+    return DegradationResult(
+        t=t_eval, PCE=PCE_arr, V_oc=V_oc_arr, J_sc=J_sc_arr, ion_profiles=ion_arr,
+        ion_profiles_neg=ion_neg_arr, snapshot_carrier_current_bound_A_m2=snapshot_bounds,
+        snapshot_current_spread_A_m2=snapshot_spreads,
+    )

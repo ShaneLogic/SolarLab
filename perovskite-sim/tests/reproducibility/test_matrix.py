@@ -28,13 +28,25 @@ def _matrix():
 
 def test_matrix_covers_and_loads_every_shipped_config():
     report = validate_matrix(ROOT)
-    assert report["configs"] == 52
+    assert report["configs"] == 55
     assert report["resources"] == 21
     assert report["schemas"] == {
-        "standard-device-v1": 46,
+        "standard-device-v1": 49,
         "scaps-device-v1": 5,
         "tandem-v1": 1,
     }
+
+
+def test_nonphotovoltaic_transport_reference_does_not_relax_solar_device_checks():
+    from perovskite_sim.reproducibility import _validate_stack
+
+    stack = load_device_from_yaml(ROOT / "tests/fixtures/configs/wkb_resolved_electron_barrier.yaml")
+    ordinary = []
+    _validate_stack(stack, "photovoltaic", ordinary)
+    assert any("no absorber" in error for error in ordinary)
+    declared_transport = []
+    _validate_stack(stack, "transport reference", declared_transport, require_absorber=False)
+    assert declared_transport == []
 
 
 def test_default_thermal_velocity_preserves_frozen_semantics():

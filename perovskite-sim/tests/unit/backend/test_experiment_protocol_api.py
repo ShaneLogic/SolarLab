@@ -64,6 +64,60 @@ class _CaptureRegistry:
         return "protocol-job"
 
 
+def test_tpv_preserves_unavailable_fit_and_forwards_accuracy_controls(monkeypatch):
+    from perovskite_sim.models.tpv import TPVDecayFit, TPVResult
+
+    registry = _CaptureRegistry()
+    captured = {}
+    monkeypatch.setattr(backend, "_JOB_REGISTRY", registry)
+    monkeypatch.setattr(backend, "build_stack", lambda *_args: _minimal_stack())
+
+    def unavailable_fit(_stack, **kwargs):
+        captured.update(kwargs)
+        return TPVResult(
+            t=np.array([0.0, 1e-6]), V=np.ones(2), J=np.zeros(2),
+            V_oc=1.0, tau=None, delta_V0=0.0,
+            fit=TPVDecayFit(None, 0.0, "no_signal", 2),
+            V_reference=np.ones(2), delta_V=np.zeros(2), valid=np.ones(2, dtype=bool),
+            charge_voltage_error_V=np.zeros(2),
+        )
+
+    monkeypatch.setattr(tpv_exp, "run_tpv", unavailable_fit)
+    controls = {"rtol": 1e-6, "atol": 1e-8, "voltage_atol": 1e-10,
+                "max_step": 1e-8, "max_voltage_error_V": 1e-7,
+                "max_current_error_A_m2": 0.001}
+    backend.start_job(backend.JobRequest(kind="tpv", device={"device": {}, "layers": []},
+                                       params=controls))
+    result = registry.fn(ProgressReporter())
+    assert result["tau"] is None
+    assert result["fit"]["status"] == "no_signal"
+    assert result["delta_V"] == [0.0, 0.0]
+    assert result["valid"] == [True, True]
+    for name, value in controls.items():
+        assert captured[name] == value
+
+
+def test_tpv_numerical_failure_reaches_the_background_job(monkeypatch):
+    from backend.jobs import JobRegistry, JobStatus
+    from perovskite_sim.experiments.open_circuit import OpenCircuitError
+
+    registry = JobRegistry()
+    monkeypatch.setattr(backend, "_JOB_REGISTRY", registry)
+    monkeypatch.setattr(backend, "build_stack", lambda *_args: _minimal_stack())
+
+    def failed_run(*_args, **_kwargs):
+        raise OpenCircuitError("injected open-circuit charge error")
+
+    monkeypatch.setattr(tpv_exp, "run_tpv", failed_run)
+    response = backend.start_job(backend.JobRequest(
+        kind="tpv", device={"device": {}, "layers": []}, params={},
+    ))
+    status, result, error = registry.wait(response["job_id"], timeout=10.0)
+    assert status == JobStatus.ERROR
+    assert result is None
+    assert "open-circuit charge error" in error
+
+
 def test_direct_jv_default_and_explicit_protocol_preserve_solver_arguments(
     monkeypatch,
 ):

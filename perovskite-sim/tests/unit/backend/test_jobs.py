@@ -1,6 +1,7 @@
 """Unit tests for the in-process job registry that backs the SSE job API."""
 from __future__ import annotations
 import time
+import threading
 import pytest
 from backend.jobs import JobRegistry, JobStatus
 from backend.progress import ProgressReporter
@@ -63,3 +64,49 @@ def test_unknown_job_id_raises():
         reg.status("nope")
     with pytest.raises(KeyError):
         reg.next_event("nope", timeout=0.0)
+
+
+def test_wait_timeout_keeps_the_running_job_and_then_joins_it():
+    registry = JobRegistry()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_job(_reporter):
+        entered.set()
+        assert release.wait(5.0)
+        return {"released": True}
+
+    job_id = registry.submit(blocked_job)
+    try:
+        assert entered.wait(2.0)
+        with pytest.raises(TimeoutError):
+            registry.wait(job_id, timeout=0.0)
+        assert registry.status(job_id)[0] == JobStatus.RUNNING
+    finally:
+        release.set()
+        status, result, error = registry.wait(job_id, timeout=5.0)
+    assert status == JobStatus.DONE
+    assert result == {"released": True}
+    assert error is None
+    assert not registry._jobs[job_id].thread.is_alive()
+
+
+def test_wait_reports_worker_failure_after_cleanup():
+    registry = JobRegistry()
+    job_id = registry.submit(_crashing_job)
+    status, result, error = registry.wait(job_id, timeout=5.0)
+    assert status == JobStatus.ERROR
+    assert result is None
+    assert "boom" in error
+    assert not registry._jobs[job_id].thread.is_alive()
+
+
+def test_wait_rejects_unknown_job():
+    with pytest.raises(KeyError):
+        JobRegistry().wait("missing", timeout=0.0)
+
+
+@pytest.mark.parametrize("timeout", [-1.0, float("nan"), float("inf")])
+def test_wait_rejects_invalid_timeout(timeout):
+    with pytest.raises(ValueError, match="timeout"):
+        JobRegistry().wait("missing", timeout=timeout)

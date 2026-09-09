@@ -124,8 +124,9 @@ def build_poisson_2d_factor(
             A[idx(j_int, i), idx(j_int, i)] = diag
 
             if lateral_bc == "periodic":
-                A[idx(j_int, i), idx(j_int, ileft)]  = Gx_left
-                A[idx(j_int, i), idx(j_int, iright)] = Gx_right
+                # With two columns both periodic faces reach the same node.
+                A[idx(j_int, i), idx(j_int, ileft)] += Gx_left
+                A[idx(j_int, i), idx(j_int, iright)] += Gx_right
             else:
                 if 0 <= ileft < Nx:
                     A[idx(j_int, i), idx(j_int, ileft)]  = Gx_left

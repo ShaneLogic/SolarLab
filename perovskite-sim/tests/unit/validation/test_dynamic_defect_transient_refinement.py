@@ -16,7 +16,6 @@ from perovskite_sim.experiments.dynamic_defect_transient import (
     default_dynamic_defect_transient_policy,
 )
 from perovskite_sim.experiments.interface_defect_ion_transient import (
-    InterfaceDefectIonTransientError,
     InterfaceDefectIonTransientPolicy,
     run_interface_defect_ion_device_transient,
 )
@@ -588,7 +587,7 @@ def test_undeclared_nonlinear_failure_fails_closed():
     assert _nonlinear_failure_outcome(message) is None
 
 
-def test_grid8_fine_defect_case_requires_bounded_opt_in_nonmonotone_steps():
+def test_grid8_fine_defect_case_converges_with_step_local_coordinates():
     lane, source, cases, _identities = _source_and_cases()
     grid = _build_grid(source, intervals_per_layer=8, grid_alpha=1.5)
     times = np.asarray(lane.options["times_s"], dtype=float)
@@ -601,14 +600,15 @@ def test_grid8_fine_defect_case_requires_bounded_opt_in_nonmonotone_steps():
     )
 
     assert monotone_policy.maximum_near_acceptance_nonmonotone_steps == 0
-    with pytest.raises(InterfaceDefectIonTransientError, match="line search stalled"):
-        run_interface_defect_ion_device_transient(
-            grid,
-            cases["defect_dominated"],
-            times,
-            voltage,
-            policy=monotone_policy,
-        )
+    # The historical case stalled even with two nonmonotone steps. Stable
+    # per-step electrostatic increments must solve it at the original limits.
+    monotone = run_interface_defect_ion_device_transient(
+        grid,
+        cases["defect_dominated"],
+        times,
+        voltage,
+        policy=monotone_policy,
+    )
 
     resolved = run_interface_defect_ion_device_transient(
         grid,
@@ -621,8 +621,11 @@ def test_grid8_fine_defect_case_requires_bounded_opt_in_nonmonotone_steps():
         ),
     )
 
-    assert resolved.certificate.certified
-    assert 0 < resolved.certificate.near_acceptance_nonmonotone_step_count <= 12
+    assert monotone.certificate.certified and resolved.certificate.certified
+    assert monotone.certificate.near_acceptance_nonmonotone_step_count == 0
+    assert resolved.certificate.near_acceptance_nonmonotone_step_count == 0
+    np.testing.assert_array_equal(monotone.electron_density_m3, resolved.electron_density_m3)
+    np.testing.assert_array_equal(monotone.total_current_faces_A_m2, resolved.total_current_faces_A_m2)
     assert resolved.certificate.maximum_all_face_current_spread_relative < 2.0e-6
     assert (
         resolved.certificate.maximum_two_sided_interface_total_current_relative_error

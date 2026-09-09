@@ -3089,3 +3089,390 @@ lanes:
       max_newton_iterations: 30
       profile_points: 17
       require_protocol: true
+  wkb-resolved-intraband-qf-dc-v2:
+    claim_level: internal-numerical-candidate
+    config: tests/fixtures/configs/wkb_resolved_electron_barrier.yaml
+    config_sha256: 891165e5ac68609b27dbe6c98b00e27d9b40b4df6edabde764ddda62d4788d27
+    executor: perovskite_sim.validation.resolved_tunnelling_refinement:run_resolved_intraband_refinement
+    executor_version: v2
+    grid:
+      parameter: intervals_per_electrical_layer
+      values: [24, 48, 96]
+    tolerance:
+      parameter: qf_dc_residual_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    limitations:
+      - Internal numerical evidence for one undoped 3 nm material electron barrier between two n-type semiconductor reservoirs at 300 K, in dark Boltzmann transport.
+      - The 1 percent terminal-effect entry criterion is specific to this designed observable reference; it is not a physical law or a revision of the retired v1 threshold.
+      - Physical per-node DOS and band energies set reservoir occupations. Open Gauss-Legendre quadrature and exact linear-band turning-point actions define the energy calculation.
+      - Turning-point interpolation weights also distribute particle transfer; the same face current enters continuity and observation. No single-face injection identity is claimed.
+      - The leading WKB exponent and its fixed unfitted supply prefactor are model assumptions. Small-action supply is bounded here; neither that bound nor numerical convergence constitutes external quantum-transport or SCAPS validation.
+      - Hole, contact, band-to-band, defect-assisted occupancy, multiple material barriers, mobile ions, interface-plane composition, illumination and transient tunnelling are outside this certificate.
+    observables:
+      dark_terminal_current_A_m2: {comparison: relative_linf, limit: 0.001, units: A m-2}
+      disabled_terminal_current_A_m2: {comparison: relative_linf, limit: 0.001, units: A m-2}
+      terminal_tunnelling_effect_A_m2: {comparison: relative_linf, limit: 0.01, units: A m-2}
+      intraband_event_flux_m2_s: {comparison: relative_linf, limit: 0.01, units: m-2 s-1}
+      maximum_local_tunnelling_current_A_m2: {comparison: relative_linf, limit: 0.01, units: A m-2}
+      barrier_base_eV: {comparison: absolute_linf, limit: 0.0001, units: eV}
+      barrier_peak_eV: {comparison: absolute_linf, limit: 0.0001, units: eV}
+      action_at_energy_fractions: {comparison: relative_linf, limit: 0.005, units: '1'}
+      potential_profile_V: {comparison: absolute_linf, limit: 0.0001, units: V}
+      electron_log_density_profile: {comparison: absolute_linf, limit: 0.01, units: '1'}
+      physical_electron_fermi_profile_eV: {comparison: absolute_linf, limit: 0.0001, units: eV}
+    quality_gates:
+      all_states_certified: {operator: eq, limit: 1.0, units: '1'}
+      contact_thermodynamics_consistent: {operator: eq, limit: 1.0, units: '1'}
+      energy_orders_completed: {operator: eq, limit: 3.0, units: '1'}
+      max_energy_event_flux_relative_change: {operator: le, limit: 0.005, units: '1'}
+      max_energy_terminal_effect_relative_change: {operator: le, limit: 0.005, units: '1'}
+      terminal_effect_fraction: {operator: ge, limit: 0.01, units: '1'}
+      equilibrium_terminal_current_A_m2: {operator: le, limit: 0.0001, units: A m-2}
+      equilibrium_tunnelling_current_A_m2: {operator: le, limit: 1.0e-8, units: A m-2}
+      particle_balance_relative_error: {operator: le, limit: 1.0e-12, units: '1'}
+      path_current_relative_error: {operator: le, limit: 1.0e-12, units: '1'}
+      external_tunnelling_face_current_A_m2: {operator: le, limit: 0.0, units: A m-2}
+      dissipative_transfer: {operator: eq, limit: 1.0, units: '1'}
+      dark_electrical_power_consumption: {operator: eq, limit: 1.0, units: '1'}
+      injected_face_count: {operator: ge, limit: 3.0, units: '1'}
+      disabled_bit_identical: {operator: eq, limit: 1.0, units: '1'}
+      maximum_reservoir_occupation: {operator: le, limit: 0.05, units: '1'}
+      minimum_reservoir_occupation: {operator: ge, limit: 1.0e-12, units: '1'}
+      low_action_supply_fraction: {operator: le, limit: 0.01, units: '1'}
+      maximum_electron_density_over_dos: {operator: le, limit: 0.05, units: '1'}
+      maximum_carrier_continuity_bound_A_m2: {operator: le, limit: 0.0001, units: A m-2}
+      maximum_current_spread_A_m2: {operator: le, limit: 0.0001, units: A m-2}
+      maximum_poisson_residual_C_m2: {operator: le, limit: 1.0e-12, units: C m-2}
+      residual_over_solver_limit: {operator: le, limit: 1.0, units: '1'}
+    options:
+      config_loader: standard
+      grid_alpha: 5.0
+      bias_V: 0.02
+      base_newton_residual_tolerance: 1.0e-8
+      base_poisson_tolerance_V: 1.0e-10
+      base_finite_difference_step: 1.0e-5
+      continuity_tolerance_A_m2: 0.0001
+      current_spread_tolerance_A_m2: 0.0001
+      max_newton_iterations: 30
+      energy_quadrature_orders: [96, 192, 384]
+      profile_points_per_layer: 17
+      require_protocol: true
+  foundation-physical-homojunction-steady-v1:
+    claim_level: internal-numerical-candidate
+    config: tests/fixtures/configs/tpv_physical_reference.yaml
+    config_sha256: 2e470b672f2b0ee6970ff169deedf7ce09ed0a45beb8ab9c55b48ab8da487c10
+    executor: perovskite_sim.validation.foundation_reference_refinement:run_foundation_reference_steady_state
+    executor_version: v1
+    grid:
+      parameter: total_uniform_intervals
+      values: [44, 88, 176]
+    tolerance:
+      parameter: nonlinear_poisson_tolerance_factor
+      factors: [1.0, 0.1, 0.01]
+    limitations:
+      - One synthetic 300 K Boltzmann p-i-n homojunction with SRH recombination and declared 2 eV monochromatic optical power; no material fitting or AM1.5G efficiency is claimed.
+      - Uniform spacing preserves physical layer boundaries. Spatial, nonlinear/Poisson tolerance and nested voltage sampling are independent axes.
+      - The fixed current and recombination scales are q*Phi and Phi/L. The positive photovoltaic current is compared at fixed voltages; complete signed curves and all operating-state profiles are retained.
+      - This steady-state certificate excludes moving ions, interface barriers, optical emission balance and external validation. Dynamic and two-dimensional foundation checks are separate.
+    observables:
+      voc_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      jsc_A_m2: {comparison: relative_linf, limit: 0.002, units: A m-2}
+      fill_factor: {comparison: relative_linf, limit: 0.005, units: '1'}
+      power_conversion_fraction: {comparison: relative_linf, limit: 0.005, units: '1'}
+      open_circuit_root_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      maximum_power_voltage_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      photovoltaic_current_normalized_trace: {comparison: absolute_linf, limit: 0.005, units: '1'}
+      equilibrium_potential_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      equilibrium_electron_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      equilibrium_hole_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      equilibrium_electron_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      equilibrium_hole_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      equilibrium_recombination_normalized: {comparison: absolute_linf, limit: 0.01, units: '1'}
+      short_circuit_potential_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      short_circuit_electron_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      short_circuit_hole_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      short_circuit_electron_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      short_circuit_hole_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      short_circuit_recombination_normalized: {comparison: absolute_linf, limit: 0.01, units: '1'}
+      open_circuit_potential_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      open_circuit_electron_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      open_circuit_hole_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      open_circuit_electron_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      open_circuit_hole_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      open_circuit_recombination_normalized: {comparison: absolute_linf, limit: 0.01, units: '1'}
+      maximum_power_potential_V: {comparison: absolute_linf, limit: 0.001, units: V}
+      maximum_power_electron_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      maximum_power_hole_log_density: {comparison: absolute_linf, limit: 0.009950330853168092, units: '1'}
+      maximum_power_electron_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      maximum_power_hole_fermi_eV: {comparison: absolute_linf, limit: 0.001, units: eV}
+      maximum_power_recombination_normalized: {comparison: absolute_linf, limit: 0.01, units: '1'}
+    quality_gates:
+      all_states_certified: {operator: eq, limit: 1.0, units: '1'}
+      contacts_thermodynamically_consistent: {operator: eq, limit: 1.0, units: '1'}
+      maximum_continuity_bound_A_m2: {operator: le, limit: 0.0001, units: A m-2}
+      maximum_face_current_spread_A_m2: {operator: le, limit: 0.0001, units: A m-2}
+      maximum_poisson_residual_C_m2: {operator: le, limit: 1.0e-12, units: C m-2}
+      maximum_residual_over_limit: {operator: le, limit: 1.0, units: '1'}
+      equilibrium_current_A_m2: {operator: le, limit: 0.0001, units: A m-2}
+      equilibrium_fermi_span_eV: {operator: le, limit: 1.0e-8, units: eV}
+      open_circuit_current_A_m2: {operator: le, limit: 0.0001, units: A m-2}
+      maximum_density_over_dos: {operator: le, limit: 0.05, units: '1'}
+      carrier_densities_positive: {operator: eq, limit: 1.0, units: '1'}
+      absorbed_photon_fraction: {operator: le, limit: 1.0, units: '1'}
+      maximum_power_conversion_fraction: {operator: le, limit: 1.0, units: '1'}
+      voltage_voc_absolute_change_V: {operator: le, limit: 0.001, units: V}
+      voltage_jsc_relative_change: {operator: le, limit: 0.002, units: '1'}
+      voltage_ff_relative_change: {operator: le, limit: 0.005, units: '1'}
+      voltage_pce_relative_change: {operator: le, limit: 0.005, units: '1'}
+      sampled_voc_root_error_V: {operator: le, limit: 0.001, units: V}
+      sampled_power_relative_error: {operator: le, limit: 0.005, units: '1'}
+    options:
+      config_loader: standard
+      photon_energy_eV: 2.0
+      base_newton_residual_tolerance: 1.0e-8
+      base_poisson_tolerance_V: 1.0e-10
+      base_finite_difference_step: 1.0e-5
+      require_protocol: true
+  foundation-physical-homojunction-resolved-v2:
+    claim_level: internal-numerical-candidate
+    config: tests/fixtures/configs/tpv_physical_reference.yaml
+    config_sha256: 2e470b672f2b0ee6970ff169deedf7ce09ed0a45beb8ab9c55b48ab8da487c10
+    executor: perovskite_sim.validation.foundation_reference_refinement:run_foundation_reference_steady_state
+    executor_version: v2
+    grid:
+      parameter: total_interface_resolved_intervals
+      values:
+      - 88
+      - 176
+      - 352
+    tolerance:
+      parameter: nonlinear_poisson_tolerance_factor
+      factors:
+      - 1.0
+      - 0.1
+      - 0.01
+    limitations:
+    - The material input, monochromatic power, current/recombination normalization and
+      every observable/quality limit are identical to the retained partial v1 study.
+    - Per-layer tanh grids match the physical cell spacing on both sides of each interface,
+      preserving layer boundaries and the absorber dual-cell measure while resolving
+      abrupt doping and optical boundaries.
+    - Carrier profiles use constant-face-flux Scharfetter-Gummel reconstruction; physical
+      quasi-Fermi levels and recombination are evaluated from the reconstructed densities.
+      Extra fixed near-boundary positions are included.
+    - The v1 uniform-grid/log-interpolation results remain partial evidence. The v2
+      requires its own complete spatial/tolerance/voltage matrix and does not inherit
+      certification.
+    - This is an ion-free 300 K classical p-i-n numerical reference, not atomic-scale
+      contact physics, material calibration, AM1.5G efficiency, moving-ion or external
+      validation. See docs/FoundationReferenceValidationContractV2.md.
+    observables:
+      voc_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+      jsc_A_m2:
+        comparison: relative_linf
+        limit: 0.002
+        units: A m-2
+      fill_factor:
+        comparison: relative_linf
+        limit: 0.005
+        units: '1'
+      power_conversion_fraction:
+        comparison: relative_linf
+        limit: 0.005
+        units: '1'
+      open_circuit_root_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+      maximum_power_voltage_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+      photovoltaic_current_normalized_trace:
+        comparison: absolute_linf
+        limit: 0.005
+        units: '1'
+      equilibrium_potential_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+      equilibrium_electron_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      equilibrium_hole_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      equilibrium_electron_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      equilibrium_hole_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      equilibrium_recombination_normalized:
+        comparison: absolute_linf
+        limit: 0.01
+        units: '1'
+      short_circuit_potential_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+      short_circuit_electron_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      short_circuit_hole_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      short_circuit_electron_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      short_circuit_hole_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      short_circuit_recombination_normalized:
+        comparison: absolute_linf
+        limit: 0.01
+        units: '1'
+      open_circuit_potential_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+      open_circuit_electron_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      open_circuit_hole_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      open_circuit_electron_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      open_circuit_hole_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      open_circuit_recombination_normalized:
+        comparison: absolute_linf
+        limit: 0.01
+        units: '1'
+      maximum_power_potential_V:
+        comparison: absolute_linf
+        limit: 0.001
+        units: V
+      maximum_power_electron_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      maximum_power_hole_log_density:
+        comparison: absolute_linf
+        limit: 0.009950330853168092
+        units: '1'
+      maximum_power_electron_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      maximum_power_hole_fermi_eV:
+        comparison: absolute_linf
+        limit: 0.001
+        units: eV
+      maximum_power_recombination_normalized:
+        comparison: absolute_linf
+        limit: 0.01
+        units: '1'
+    quality_gates:
+      all_states_certified:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      contacts_thermodynamically_consistent:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      maximum_continuity_bound_A_m2:
+        operator: le
+        limit: 0.0001
+        units: A m-2
+      maximum_face_current_spread_A_m2:
+        operator: le
+        limit: 0.0001
+        units: A m-2
+      maximum_poisson_residual_C_m2:
+        operator: le
+        limit: 1.0e-12
+        units: C m-2
+      maximum_residual_over_limit:
+        operator: le
+        limit: 1.0
+        units: '1'
+      equilibrium_current_A_m2:
+        operator: le
+        limit: 0.0001
+        units: A m-2
+      equilibrium_fermi_span_eV:
+        operator: le
+        limit: 1.0e-08
+        units: eV
+      open_circuit_current_A_m2:
+        operator: le
+        limit: 0.0001
+        units: A m-2
+      maximum_density_over_dos:
+        operator: le
+        limit: 0.05
+        units: '1'
+      carrier_densities_positive:
+        operator: eq
+        limit: 1.0
+        units: '1'
+      absorbed_photon_fraction:
+        operator: le
+        limit: 1.0
+        units: '1'
+      maximum_power_conversion_fraction:
+        operator: le
+        limit: 1.0
+        units: '1'
+      voltage_voc_absolute_change_V:
+        operator: le
+        limit: 0.001
+        units: V
+      voltage_jsc_relative_change:
+        operator: le
+        limit: 0.002
+        units: '1'
+      voltage_ff_relative_change:
+        operator: le
+        limit: 0.005
+        units: '1'
+      voltage_pce_relative_change:
+        operator: le
+        limit: 0.005
+        units: '1'
+      sampled_voc_root_error_V:
+        operator: le
+        limit: 0.001
+        units: V
+      sampled_power_relative_error:
+        operator: le
+        limit: 0.005
+        units: '1'
+    options:
+      config_loader: standard
+      photon_energy_eV: 2.0
+      base_newton_residual_tolerance: 1.0e-08
+      base_poisson_tolerance_V: 1.0e-10
+      base_finite_difference_step: 1.0e-05
+      require_protocol: true
+      absorber_alpha: 3.0

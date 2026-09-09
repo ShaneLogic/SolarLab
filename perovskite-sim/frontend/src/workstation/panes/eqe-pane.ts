@@ -6,7 +6,7 @@ import type { DeviceConfig, EQEResult } from '../../types'
 import type { Run, RunResult } from '../types'
 
 const NON_TMM_MSG =
-  'Active device has no TMM optics (no optical_material on any layer). EQE needs wavelength-resolved n,k data — switch to a *_tmm preset (e.g. ionmonger_benchmark_tmm, nip_MAPbI3_tmm).'
+  'TMM optical data required. Select a preset with wavelength-resolved n,k data.'
 
 export interface EQEPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -18,13 +18,13 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
   const showBanner = !!active && !hasTMMOptics(active.config)
   container.innerHTML = `
     <div class="card">
-      <h3>EQE / IPCE Parameters</h3>
+      <h3>Spectral settings</h3>
       <div id="eqe-tmm-banner" class="status error"${showBanner ? '' : ' hidden'} role="alert" style="display:${showBanner ? 'block' : 'none'};margin-bottom:0.5rem;">${NON_TMM_MSG}</div>
       <div class="form-grid">
         ${numField('eqe-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('eqe-lmin', '\u03bb<sub>min</sub> (nm)', 300, '1')}
         ${numField('eqe-lmax', '\u03bb<sub>max</sub> (nm)', 1000, '1')}
-        ${numField('eqe-nl', 'n<sub>\u03bb</sub>', 80, '1')}
+        ${numField('eqe-nl', 'Wavelength points', 80, '1')}
         ${numField('eqe-phi', '\u03a6<sub>inc</sub> (ph/m\u00b2/s)', 1e22, 'any')}
         ${numField('eqe-tset', 't<sub>settle</sub> (s)', 1e-1, 'any')}
       </div>
@@ -33,7 +33,7 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
         <span class="status" id="status-eqe"></span>
       </div>
       <div id="progress-eqe"></div>
-      <div class="pane-hint">Monochromatic short-circuit quantum efficiency swept across <em>\u03bb</em>; AM1.5G-integrated <em>J<sub>sc</sub></em> is reported alongside EQE(<em>\u03bb</em>).</div>
+      <div class="pane-hint" title="Monochromatic short-circuit EQE; J_sc is integrated against AM1.5G."><strong>Outputs:</strong> EQE and AM1.5G <i>J</i><sub>sc</sub>.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

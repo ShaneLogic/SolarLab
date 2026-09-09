@@ -2,21 +2,28 @@
 
 ## Status and capability boundary
 
-This document covers **D8-P0** (audit of the existing tunnelling surface),
+The sections below preserve the historical **D8-P0** (audit of the existing tunnelling surface),
 **D8-E0** (canonical four-channel contract plus the local WKB physics),
 **D8-E1** (production wiring into the guarded QF/DC lane),
 **D8-E2** (the registered refinement certificate) and **D8-E2R** (the drive
 convention audit, which retracts two of D8-E1/E2's headline claims).
+For the current device implementation and acceptance definition, read
+[ResolvedIntrabandTunnellingContractV2.md](ResolvedIntrabandTunnellingContractV2.md).
+It replaces the old energy wiring, action quadrature, barrier selection and
+single-face injection with one resolved, conservative electron path. The
+four-channel device capability and old numerical certificate below are
+historical records, not current capability claims.
 
 > **RETRACTED, 2026-09-01 — read this before quoting any magnitude below.**
 > Two claims in the D8-E1/E2 sections are artifacts of a level-vs-potential
 > convention error and are **withdrawn**: "the channel carries ~19-20 % of the
 > terminal current", and "equilibrium net flux is exactly zero by
 > reciprocity". See [Retraction (D8-E2R)](#retraction-d8-e2r). The convergence
-> results, the mesh order, the injection identity and the D8-E0 unit-level
-> reciprocity claim are unaffected.
+> results, mesh order and single-face injection identity describe the
+> historical implementation only. The D8-E0 formula-level reciprocity
+> identity remains applicable; it does not certify a device equilibrium.
 
-The current capability label is:
+The historical D8-E2 capability label was:
 
 ```text
 four independently switchable WKB tunnelling channels, each anchored to its
@@ -27,7 +34,7 @@ certificate; every other solver route fails closed; no SCAPS comparison has
 been made and no channel magnitude is validated against any reference
 ```
 
-Nothing in this checkpoint changes a shipped number: the canonical document
+Nothing in that checkpoint changed a shipped number: the canonical document
 defaults every channel to disabled, `DeviceStack.tunnelling_channels` defaults
 to `None`, and no shipped config sets the key — so every existing result is
 bit-identical, pinned by
@@ -456,9 +463,16 @@ and the same gradient resolves to `max|f_L - f_R| = 9.37e-26` — non-zero.
 So the gate could not fail, and **a gate that cannot fail is not evidence**.
 It hid precisely the class of error its own docstring named. The negative
 control that proves it discriminates is
-`test_the_equilibrium_zero_is_saturation_not_reciprocity`.
+the historical `test_the_equilibrium_zero_is_saturation_not_reciprocity`.
+The repaired implementation is checked by
+`test_equilibrium_uses_nonsaturated_occupations_with_resolvable_sensitivity`;
+it retains the saturation counterexample using an imposed level perturbation.
 
 ### What survives
+
+This subsection records the conclusion of the original retraction audit.
+The v2 implementation replaces the action quadrature and single-face
+injection, so their old orders and identities do not transfer to v2.
 
 - The D8-E0 **unit-level** reciprocity claim. That test passes one occupation
   array as both sides, so the integrand is identically zero by construction —
@@ -469,6 +483,10 @@ control that proves it discriminates is
 - Every fail-closed route and the disabled-family bit-identity.
 
 ### Why the convention was not simply flipped here
+
+This was the state at the historical D8-E2R checkpoint. F5 subsequently
+introduced a separate 3 nm electron-barrier reference and the v2 definition
+linked above, without lowering or replacing the v1 thresholds.
 
 Correcting the level fails three registered gates at once
 (`channel_flux_fraction_of_terminal_current: ge 0.01` against a corrected

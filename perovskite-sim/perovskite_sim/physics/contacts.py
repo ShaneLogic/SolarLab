@@ -84,6 +84,24 @@ if TYPE_CHECKING:
 CONTACT_THERMODYNAMIC_TOLERANCE_EV = 5.0e-3
 
 
+def resolved_contact_velocities(
+    stack: DeviceStack,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Effective (n-left, p-left, n-right, p-right) exchange velocities.
+
+    None pins a reservoir density; zero blocks that carrier. The historical
+    flat_band_contacts flag enables finite exchange independently of tier.
+    """
+    from perovskite_sim.models.mode import resolve_mode
+
+    values = (stack.S_n_left, stack.S_p_left, stack.S_n_right, stack.S_p_right)
+    if stack.flat_band_contacts:
+        return tuple(1.0e5 if value is None else value for value in values)
+    if not resolve_mode(stack.mode).use_selective_contacts:
+        return (None, None, None, None)
+    return values
+
+
 @dataclass(frozen=True)
 class ContactThermodynamicCertificate:
     """Internal compatibility evidence for Poisson and carrier reservoirs."""
@@ -693,6 +711,7 @@ def schottky_equilibrium_p(N_v: float, phi_B: float, V_T: float) -> float:
 
 
 __all__ = [
+    "resolved_contact_velocities",
     "CONTACT_THERMODYNAMIC_TOLERANCE_EV",
     "ContactThermodynamicCertificate",
     "ContactThermodynamicError",

@@ -4,14 +4,16 @@ import pytest
 
 from perovskite_sim.twod.grid_2d import build_grid_2d
 from perovskite_sim.twod.poisson_2d import (
-    build_poisson_2d_factor, solve_poisson_2d,
+    build_poisson_2d_factor,
+    solve_poisson_2d,
 )
 from perovskite_sim.discretization.grid import Layer
 from perovskite_sim.constants import EPS_0
 
 
-def _uniform_grid_factor(Lx=500e-9, Ly=400e-9, Nx=20, Ny=20, eps_r=10.0,
-                         lateral_bc="periodic"):
+def _uniform_grid_factor(
+    Lx=500e-9, Ly=400e-9, Nx=20, Ny=20, eps_r=10.0, lateral_bc="periodic"
+):
     layers = [Layer(thickness=Ly, N=Ny)]
     g = build_grid_2d(layers, lateral_length=Lx, Nx=Nx, lateral_uniform=True)
     eps_field = np.full((g.Ny, g.Nx), eps_r, dtype=float)
@@ -53,3 +55,14 @@ def test_poisson_2d_recovers_1d_parabolic_profile():
     analytic = rho_val / (2.0 * EPS_0 * eps_r) * g.y * (Ly - g.y)
     for j in range(g.Ny):
         np.testing.assert_allclose(phi[j, :], analytic[j], rtol=1e-3, atol=1e-6)
+
+
+def test_two_column_periodic_poisson_preserves_zero_charge_affine_solution():
+    from perovskite_sim.twod.grid_2d import Grid2D
+    from perovskite_sim.twod.poisson_2d import build_poisson_2d_factor, solve_poisson_2d
+
+    grid = Grid2D(x=np.array([0.0, 3e-7]), y=np.linspace(0.0, 1e-6, 5))
+    factor = build_poisson_2d_factor(grid, np.full((5, 2), 10.0), lateral_bc="periodic")
+    potential = solve_poisson_2d(factor, np.zeros((5, 2)), phi_bottom=0.0, phi_top=1.0)
+    expected = np.broadcast_to(grid.y[:, None] / grid.y[-1], potential.shape)
+    np.testing.assert_allclose(potential, expected, rtol=1e-13, atol=1e-14)

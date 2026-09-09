@@ -5,8 +5,10 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from perovskite_sim.constants import Q
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
 from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.physics.poisson import solve_poisson_prefactored
 from perovskite_sim.solver.dae import (
     build_consistent_initial_condition,
     build_no_ion_no_interface_dae,
@@ -125,12 +127,25 @@ def test_structured_newton_matches_dense_reference_with_less_rhs_work():
         rtol=2.0e-11,
         atol=0.0,
     )
-    np.testing.assert_allclose(
-        structured.potentials_V,
-        dense.potentials_V,
-        rtol=0.0,
-        atol=2.0e-14,
-    )
+    # Charge-neutral densities are much larger than their difference. One
+    # representable carrier increment sets a calculable Poisson uncertainty;
+    # a fixed voltage threshold below that scale tests rounding, not the DAE.
+    count = model.layout.node_count
+    density_roundoff = np.zeros_like(dense.potentials_V)
+    for result in (dense, structured):
+        density_roundoff += (
+            np.spacing(result.physical_states[:, :count])
+            + np.spacing(result.physical_states[:, count:2 * count])
+        )
+    voltage_roundoff = np.asarray([
+        solve_poisson_prefactored(model.material.poisson_factor, Q * row, 0.0, 0.0)
+        for row in density_roundoff
+    ])
+    bound = np.maximum(np.abs(voltage_roundoff), 2.0e-14)
+    assert np.max(bound) < 1.0e-9
+    assert np.all(np.abs(structured.potentials_V - dense.potentials_V) <= bound)
+    assert dense.max_normalized_algebraic_residual < 1.0e-11
+    assert structured.max_normalized_algebraic_residual < 1.0e-11
     assert structured.total_residual_evaluations < (
         dense.total_residual_evaluations / 20
     )

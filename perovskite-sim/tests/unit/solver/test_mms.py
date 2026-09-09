@@ -23,12 +23,13 @@ import numpy as np
 import pytest
 
 from perovskite_sim.constants import EPS_0
+from perovskite_sim._compat.numpy_compat import trapezoid
 from perovskite_sim.physics.poisson import solve_poisson
 
 
 def _l2_norm(u: np.ndarray, x: np.ndarray) -> float:
     """Trapezoidal L2 norm of u on grid x."""
-    return float(math.sqrt(np.trapz(u**2, x)))
+    return float(math.sqrt(trapezoid(u**2, x)))
 
 
 def _observed_order(h: np.ndarray, errs: np.ndarray) -> float:

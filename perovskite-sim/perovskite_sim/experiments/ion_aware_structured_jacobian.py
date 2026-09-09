@@ -788,12 +788,12 @@ def _structured_evaluator(
             )
         increments = poisson.state_steps * scaled_coordinate
         physical = _physical_state(increments, base_state, layout)
-        phi = (
-            poisson.potential_at_operating_point_V
-            + poisson.potential_state_jacobian_V @ increments
+        delta_phi = (
+            poisson.potential_state_jacobian_V @ increments
             + poisson.potential_voltage_derivative
             * (float(voltage) - impedance_protocol.V_dc)
         )
+        phi = poisson.potential_at_operating_point_V + delta_phi
         rate = assemble_rhs(
             0.0,
             physical,
@@ -845,8 +845,8 @@ def _structured_evaluator(
             (component.current_faces for component in components),
             start=np.zeros(x.size - 1, dtype=float),
         )
-        field = -np.diff(phi) / np.diff(x)
-        displacement_charge = polarity * eps_face * field
+        # A constant DC displacement does not contribute to AC current.
+        displacement_charge = -polarity * eps_face * np.diff(delta_phi) / np.diff(x)
         return SmallSignalEvaluation(
             # The exact tangent of y_dc*exp(u) is y_dc.  Returning its affine
             # form makes the structured mass block analytic instead of

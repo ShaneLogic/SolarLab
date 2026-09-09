@@ -1,13 +1,12 @@
-# 52-preset registry. All listed presets are bundled under configs/ (removed
-# 2026-09-05, restored 2026-09-07). Research-preset checks live in
-# tests/reproducibility/test_research_presets.py.
+# Registered inputs include the shipped catalogue and research-only fixtures.
+# The resolved WKB barrier is a test fixture, not a served device preset.
 schema_version: 1
 p0_baseline: p0-certified-2026-08-01
 schema_registry: reproducibility/SchemaRegistry.yaml
 numerical_refinement_registry:
   path: reproducibility/NumericalRefinementRegistry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: d62d7503a8ccd4a61308e609df76266b477c7a11bae5355d3346ebf0e1bb896a
+  sha256: b808fb2c7e44b282fe5e8a7d55a8f23a12101451104c6c639e2991fec34a2dff
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -71,6 +70,7 @@ benchmarks:
     configs:
       - tests/fixtures/configs/cSi_homojunction.yaml
       - configs/calado2016_fig1f.yaml
+      - configs/calado2016_ion_sweep.yaml
       - tests/fixtures/configs/csi_gaussian_bulk_trap_pn_research.yaml
       - tests/fixtures/configs/csi_degenerate_pn_research.yaml
       - tests/fixtures/configs/csi_incomplete_ionization_bgn_pn_research.yaml
@@ -117,6 +117,8 @@ benchmarks:
       - tests/fixtures/configs/solarscale_nip_band_aligned_iface.yaml
       - tests/fixtures/configs/tandem_lin2019.yaml
       - tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml
+      - tests/fixtures/configs/wkb_resolved_electron_barrier.yaml
+      - tests/fixtures/configs/tpv_physical_reference.yaml
       - tests/fixtures/configs/twod/bcx_combined_demo.yaml
       - tests/fixtures/configs/twod/combined_mobile_interface_research.yaml
       - tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml
@@ -158,7 +160,9 @@ benchmarks:
       - tests/fixtures/configs/scaps_mirror.yaml
       - configs/scaps_mirror_v2.yaml
       - tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml
+      - tests/fixtures/configs/wkb_resolved_electron_barrier.yaml
       - tests/fixtures/configs/twod/combined_mobile_interface_research.yaml
+      - tests/fixtures/configs/tpv_physical_reference.yaml
       - tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml
     limitations:
       - this passing benchmark certifies the immutable schema and runner mechanics only
@@ -1328,7 +1332,7 @@ benchmarks:
       - this is dark two-layer, one microscopic interface defect, absorber-positive-ion internal numerical evidence; it is not SCAPS transient parity, experimental validation, bulk-plus-ion or dual-ion production coverage
   wkb-tunnelling-channel-internal-closure:
     kind: numerical
-    status: pass
+    status: partial
     claim_level: internal-numerical-candidate
     command: pytest -q tests/unit/physics/test_wkb_tunneling.py tests/unit/physics/test_wkb_local_windows.py
       tests/unit/physics/test_tunneling_channels.py tests/integration/test_tunnelling_channels_device.py
@@ -1344,20 +1348,128 @@ benchmarks:
       - tests/unit/physics/test_wkb_local_windows.py::test_two_band_action_matches_the_closed_form_zener_exponent
       - tests/unit/physics/test_wkb_local_windows.py::test_forbidden_run_isolates_the_barrier_containing_the_face
       - tests/unit/physics/test_tunneling_channels.py::test_a_disabled_channel_refuses_rather_than_returning_zero
-      - tests/integration/test_tunnelling_channels_device.py::test_an_enabled_channel_changes_the_certified_terminal_current
-      - tests/integration/test_tunnelling_channels_device.py::test_equilibrium_net_flux_is_exactly_zero_through_the_device_wiring
+      - tests/integration/test_tunnelling_channels_device.py::test_retracted_fixture_does_not_retain_the_old_large_flux_claim
+      - tests/integration/test_tunnelling_channels_device.py::test_equilibrium_device_current_is_bounded_without_saturated_occupations
       - tests/integration/test_tunnelling_channels_device.py::test_the_channel_is_driven_by_the_local_drop_not_the_contact_split
       - tests/unit/validation/test_tunnelling_channel_refinement.py::test_lane_declares_a_three_by_three_matrix_and_an_energy_ladder
       - tests/unit/validation/test_tunnelling_channel_refinement.py::test_the_channel_flux_is_an_observable_not_only_the_terminal_current
     configs:
       - tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml
     limitations:
+      - The historical v1 device claims are retracted. Their original thresholds remain registered, and current v2 physics is not expected to satisfy the old single-face injection or exact device-equilibrium zero assertions.
       - Internal numerical convergence and structural identities only. No SCAPS
         tunnelling deck is compared and no channel magnitude is validated against
         any reference; the supply prefactor is an unfitted estimate.
-      - One intraband electron channel on one heterointerface. The other three
-        channels, the hole branch, multi-interface stacks, illumination, AC and
-        transient routes fail closed rather than being certified.
+      - The retained v1 fixture is a historical counterexample. Current device support is one resolved intraband electron material barrier; other channel families require separate conservative coupling. Illumination, AC and transient tunnelling are not covered by its replacement numerical certificate.
+  wkb-resolved-electron-internal-closure:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q tests/unit/physics/test_tunnelling_physical_levels.py tests/unit/physics/test_wkb_turning_point_action.py tests/unit/physics/test_intraband_nonlocal_transfer.py tests/unit/validation/test_resolved_tunnelling_refinement.py
+    tests:
+      - tests/unit/physics/test_tunnelling_physical_levels.py
+      - tests/unit/physics/test_wkb_turning_point_action.py
+      - tests/unit/physics/test_intraband_nonlocal_transfer.py
+      - tests/unit/validation/test_resolved_tunnelling_refinement.py
+    node_ids:
+      - tests/unit/physics/test_tunnelling_physical_levels.py::test_device_supplies_physical_levels_with_dos_contrast
+      - tests/unit/physics/test_wkb_turning_point_action.py::test_single_forbidden_node_is_a_finite_triangle_not_a_transparent_path
+      - tests/unit/physics/test_intraband_nonlocal_transfer.py::test_transfer_conserves_particles_and_dissipates_the_chemical_drive
+      - tests/unit/physics/test_intraband_nonlocal_transfer.py::test_equal_nonsaturated_occupations_give_exactly_zero_transfer
+      - tests/unit/validation/test_resolved_tunnelling_refinement.py::test_real_resolved_cell_has_a_conservative_observable_electron_channel
+    configs:
+      - tests/fixtures/configs/wkb_resolved_electron_barrier.yaml
+    limitations:
+      - One dark, 300 K, Boltzmann intraband electron barrier with fixed unfitted supply prefactor. Numerical scope is independent of SCAPS, quantum-scattering prefactor validation and material calibration.
+      - The v2 grid/tolerance matrix and its internal energy ladder have their own source-bound certificate. No result is inherited from the retracted v1 study. See docs/ResolvedIntrabandTunnellingContractV2.md for the physical and numerical scope; this does not complete the full foundation-stage validation.
+  foundation-physical-homojunction-reference:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q -o addopts='' tests/unit/validation/test_foundation_reference_refinement.py tests/unit/validation/test_foundation_reference_sampling.py
+    tests:
+      - tests/unit/validation/test_foundation_reference_refinement.py
+      - tests/unit/validation/test_foundation_reference_sampling.py
+    node_ids:
+      - tests/unit/validation/test_foundation_reference_refinement.py::test_definition_keeps_physical_scales_and_independent_refinements
+      - tests/unit/validation/test_foundation_reference_refinement.py::test_equilibrium_preserves_subunit_contact_density_and_mass_action
+      - tests/unit/validation/test_foundation_reference_refinement.py::test_resolved_reference_keeps_all_original_physical_limits
+      - tests/unit/validation/test_foundation_reference_refinement.py::test_real_reference_cell_certifies_all_operating_points_and_optical_power
+      - tests/unit/validation/test_foundation_reference_sampling.py::test_balanced_mesh_preserves_physical_absorber_volume
+      - tests/unit/validation/test_foundation_reference_sampling.py::test_subdivision_preserves_the_same_nonzero_face_current
+    configs:
+      - tests/fixtures/configs/tpv_physical_reference.yaml
+    limitations:
+      - Synthetic 300 K p-i-n homojunction with declared 2 eV monochromatic power and fixed physical normalization. The v1 uniform/log-sampling matrix remains partial; v2 passes its separate source-bound matrix under identical limits in two numerical environments. This does not complete dynamic or full foundation validation.
+      - This numerical reference excludes material fitting, AM1.5G efficiency, optical emission balance, mobile ions and external validation. See docs/FoundationReferenceValidationContractV2.md.
+  foundation-tpv-frozen-ion-reference:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q -o addopts='' tests/integration/test_tpv_open_circuit_refinement.py tests/integration/test_foundation_tpv_spatial_refinement.py tests/integration/test_degradation_snapshot_refinement.py tests/unit/experiments/test_degradation_frozen_ions.py
+    tests:
+      - tests/integration/test_tpv_open_circuit_refinement.py
+      - tests/integration/test_foundation_tpv_spatial_refinement.py
+      - tests/integration/test_degradation_snapshot_refinement.py
+      - tests/unit/experiments/test_degradation_frozen_ions.py
+    node_ids:
+      - tests/integration/test_tpv_open_circuit_refinement.py::test_three_time_levels_preserve_the_same_pulse_and_preparation
+      - tests/integration/test_tpv_open_circuit_refinement.py::test_three_tolerance_levels_resolve_the_same_waveform
+      - tests/integration/test_tpv_open_circuit_refinement.py::test_two_amplitude_halvings_recover_the_small_signal_limit
+      - tests/integration/test_foundation_tpv_spatial_refinement.py::test_three_spatial_levels_resolve_the_same_physical_tpv
+      - tests/integration/test_degradation_snapshot_refinement.py::test_snapshot_metrics_are_independent_of_preparation_step_size
+      - tests/integration/test_degradation_snapshot_refinement.py::test_snapshot_voltage_sampling_resolves_voc_jsc_and_ff
+      - tests/unit/experiments/test_degradation_frozen_ions.py::test_nonuniform_ions_have_zero_frozen_flux_and_never_move
+    configs:
+      - tests/fixtures/configs/tpv_physical_reference.yaml
+    limitations:
+      - Synthetic p-i-n input for internal TPV and frozen-ion numerical checks. No optical-spectrum, material-parameter or experimental calibration is claimed.
+      - TPV time/tolerance/amplitude and spatial checks plus frozen-ion snapshot time/voltage checks are internally verified. Browser rendering and full foundation-stage completion are separate.
+  foundation-mobile-ion-reference:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q -o addopts='' tests/unit/validation/test_accepted_trajectory.py tests/integration/test_foundation_mobile_refinement.py
+    tests:
+      - tests/unit/validation/test_accepted_trajectory.py
+      - tests/integration/test_foundation_mobile_refinement.py
+    node_ids:
+      - tests/unit/validation/test_accepted_trajectory.py::test_negative_accepted_density_is_detected_between_positive_output_samples
+      - tests/unit/validation/test_accepted_trajectory.py::test_capacity_excursion_is_detected_between_admissible_output_samples
+      - tests/unit/validation/test_accepted_trajectory.py::test_observing_accepted_states_preserves_samples_steps_and_rhs_counts
+      - tests/integration/test_foundation_mobile_refinement.py::test_space_refinement_preserves_each_ion_inventory_and_profiles
+      - tests/integration/test_foundation_mobile_refinement.py::test_time_refinement_preserves_the_same_ramp_and_hold
+      - tests/integration/test_foundation_mobile_refinement.py::test_tolerance_refinement_preserves_mobile_and_electronic_states
+    configs:
+      - tests/fixtures/configs/tpv_physical_reference.yaml
+    limitations:
+      - Prepared uniform compensated single/dual ions, fixed light step and voltage ramp/hold on the synthetic physical p-i-n input. Diffusivities are accelerated numerical inputs, not material migration coefficients.
+      - The complete early-time carrier, potential, current and ionic histories must pass 176/352/704 lead-resolved spatial refinement plus independent internal time-step and tolerance refinements. Earlier unresolved meshes remain failed evidence.
+      - Per-species particle numbers and physical limits are retained throughout. This is internal numerical evidence, not chemical lifetime or experimental validation. See docs/FoundationReferenceValidationContractV2.md.
+      - Sampled-history convergence and the additional every-accepted-step domain audit pass in both recorded environments under docs/AcceptedTrajectoryValidationContractV1.md. The observer preserves the original returned states and solver evaluations.
+  foundation-twod-active-transport-reference:
+    kind: numerical
+    status: pass
+    claim_level: internal-numerical-candidate
+    command: pytest -q -o addopts='' tests/unit/validation/test_accepted_trajectory.py tests/integration/test_foundation_twod_axis_refinement.py tests/integration/test_twod_combined_refinement.py tests/integration/twod/test_jv_sweep_2d_microstructure.py
+    tests:
+      - tests/unit/validation/test_accepted_trajectory.py
+      - tests/integration/test_foundation_twod_axis_refinement.py
+      - tests/integration/test_twod_combined_refinement.py
+      - tests/integration/twod/test_jv_sweep_2d_microstructure.py
+    node_ids:
+      - tests/unit/validation/test_accepted_trajectory.py::test_observing_accepted_states_preserves_samples_steps_and_rhs_counts
+      - tests/integration/test_foundation_twod_axis_refinement.py::test_vertical_refinement_approaches_the_same_active_transport_limit
+      - tests/integration/test_foundation_twod_axis_refinement.py::test_lateral_refinement_preserves_the_uniform_state_and_currents
+      - tests/integration/test_twod_combined_refinement.py::test_registered_twod_matrix_keeps_every_accepted_state_physical
+      - tests/integration/twod/test_jv_sweep_2d_microstructure.py::test_jv_sweep_2d_singleGB_runs_to_completion
+    configs:
+      - tests/fixtures/configs/twod/nip_MAPbI3_singleGB.yaml
+    limitations:
+      - The independent-axis case is defined by explicit synthetic material parameters in the test, with mixed carrier contacts, active physically normalized thermionic caps and no moving ions.
+      - The YAML is used only for the separate five-nanometre grain-boundary/no-boundary control. Its former unsupported 0.1 percent suppression assertion is withdrawn; causal response must exceed measured numerical uncertainty.
+      - These checks do not extend the registered heterogeneous 2D mobile-ion scope or establish material-specific grain-boundary predictions. See docs/TwodTransportContract.md.
+      - The accepted-step audit also covers the declared one-dimensional preparation of the heterogeneous matrix and passes in both recorded environments under docs/AcceptedTrajectoryValidationContractV1.md. Its original numerical and physical scope is unchanged.
   multivalent-explicit-defect-internal-closure:
     kind: numerical
     status: pass
@@ -1552,6 +1664,27 @@ configs:
       - loader-contract
       - phase1-refinement-contract
       - wkb-tunnelling-channel-internal-closure
+  - path: tests/fixtures/configs/wkb_resolved_electron_barrier.yaml
+    sha256: 891165e5ac68609b27dbe6c98b00e27d9b40b4df6edabde764ddda62d4788d27
+    semantic_sha256: f7fc506235fb225323e4f4cd65b254a338ff08c3c226d896b6891a138b297af9
+    schema: standard-device-v1
+    device_purpose: electrical_transport_reference
+    status: partial
+    benchmarks:
+      - loader-contract
+      - phase1-refinement-contract
+      - wkb-resolved-electron-internal-closure
+  - path: tests/fixtures/configs/tpv_physical_reference.yaml
+    sha256: 2e470b672f2b0ee6970ff169deedf7ce09ed0a45beb8ab9c55b48ab8da487c10
+    semantic_sha256: 80580790bcde51b478fce65cefdfbce9108f0a7df0768d2ab897ba2489faefda
+    schema: standard-device-v1
+    status: partial
+    benchmarks:
+      - loader-contract
+      - foundation-tpv-frozen-ion-reference
+      - phase1-refinement-contract
+      - foundation-physical-homojunction-reference
+      - foundation-mobile-ion-reference
   - path: tests/fixtures/configs/cigs_graded_optics.yaml
     sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
     semantic_sha256: a78884b0074063e50076ac6f2382bd199375e034d263ad76261fd4f83a7a185f
@@ -1588,6 +1721,12 @@ configs:
   - path: configs/calado2016_fig1f.yaml
     sha256: 825d77f15bcfb3e550cc601231a9b6ce07ca11fe185a3eb7d7ef121d54c0ec2a
     semantic_sha256: 03df72ff9c6fe66711b213678dac1a754d500363e9d8c7c43f581d883c200f72
+    schema: standard-device-v1
+    status: load_only
+    benchmarks: [loader-contract]
+  - path: configs/calado2016_ion_sweep.yaml
+    sha256: 2b436f161a62c9edb2f0b1bbbcf0d2d6a5f27471d2a5d296952173c4baadea9c
+    semantic_sha256: 4d059fdb1334dd12a2e53c06ba7f66a5fe2e444953209a8be093b9f4165b1ba1
     schema: standard-device-v1
     status: load_only
     benchmarks: [loader-contract]
@@ -1845,8 +1984,8 @@ configs:
     sha256: 01870c441a410f0c99a6d71ee363e862798ee05fdaaf03156bb657a16b6cf5b6
     semantic_sha256: 7a593a9281e03466f3e6084dff9e9064aca80966be7d855958bb237379f1b826
     schema: standard-device-v1
-    status: load_only
-    benchmarks: [loader-contract]
+    status: partial
+    benchmarks: [loader-contract, foundation-twod-active-transport-reference]
   - path: tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml
     sha256: 6a7e0022575e680e3b4348774eb604c3273930b7a0fe210994e6532cd6d59dcb
     semantic_sha256: 92d27b4b9d47ca66725318ba9115a5dfa99448485044dd02015f9318dfcd7dce

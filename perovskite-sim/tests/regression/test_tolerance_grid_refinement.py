@@ -146,6 +146,9 @@ def test_preregistered_numerical_lanes_and_thresholds_are_immutable():
         "cigs-graded-optics-v1",
         "interface-srh-identifiability-synthetic-v1",
         "wkb-tunnelling-channel-qf-dc-v1",
+        "wkb-resolved-intraband-qf-dc-v2",
+        "foundation-physical-homojunction-steady-v1",
+        "foundation-physical-homojunction-resolved-v2",
     }
     assert all(
         len(lane.matrix_points) == 9

@@ -7,6 +7,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.solver.mol import build_material_arrays, StateVec
 from perovskite_sim.solver.newton import solve_equilibrium
 from perovskite_sim.discretization.grid import multilayer_grid, Layer
+from perovskite_sim.physics.generation import dual_cell_integral
 
 pytestmark = pytest.mark.slow
 
@@ -53,12 +54,12 @@ class TestDualIonEquilibrium:
         y0 = solve_equilibrium(x, stack)
         sv = StateVec.unpack(y0, N)
 
-        P_pos_total = np.trapz(sv.P, x)
-        P0_pos_total = np.trapz(mat.P_ion0, x)
+        P_pos_total = dual_cell_integral(x, sv.P)
+        P0_pos_total = dual_cell_integral(x, mat.P_ion0)
         assert abs(P_pos_total - P0_pos_total) / P0_pos_total < 1e-10
 
-        P_neg_total = np.trapz(sv.P_neg, x)
-        P0_neg_total = np.trapz(mat.P_ion0_neg, x)
+        P_neg_total = dual_cell_integral(x, sv.P_neg)
+        P0_neg_total = dual_cell_integral(x, mat.P_ion0_neg)
         assert abs(P_neg_total - P0_neg_total) / P0_neg_total < 1e-10
 
     def test_single_species_still_3n(self):

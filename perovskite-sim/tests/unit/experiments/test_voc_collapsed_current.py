@@ -66,6 +66,7 @@ import glob
 
 import numpy as np
 import pytest
+import yaml
 
 from perovskite_sim.experiments import jv_sweep as jv
 from perovskite_sim.experiments.jv_sweep import (
@@ -350,11 +351,19 @@ def test_ceiling_ignores_optical_only_substrate_layers():
 
 
 def _device_configs():
+    with open("reproducibility/ConfigBenchmarkMatrix.yaml", encoding="utf-8") as handle:
+        matrix = yaml.safe_load(handle)
+    transport_references = {
+        entry["path"] for entry in matrix["configs"]
+        if entry.get("device_purpose") == "electrical_transport_reference"
+    }
     paths = sorted(glob.glob("configs/*.yaml")) + sorted(
         glob.glob("tests/fixtures/configs/*.yaml")) + sorted(
         glob.glob("tests/fixtures/configs/twod/*.yaml"))
     out = []
     for p in paths:
+        if p in transport_references:
+            continue
         for loader in (load_device_from_yaml, load_scaps_yaml):
             try:
                 out.append((p, loader(p)))

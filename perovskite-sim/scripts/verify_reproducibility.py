@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the historical P0 source and 52-preset benchmark matrix.
-
-All 52 presets are bundled under configs/ again since 2026-09-07. The
-research-preset checks live in tests/reproducibility/test_research_presets.py.
-"""
+"""Validate historical P0 source and the registered device/research inputs."""
 from __future__ import annotations
 
 import argparse

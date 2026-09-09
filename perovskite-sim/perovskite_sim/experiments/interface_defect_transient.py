@@ -5,11 +5,15 @@ bulk electrostatic potential are coupled to six algebraic trace variables per
 physical interface.  Retaining those local variables avoids a nested nonlinear
 solve inside every device Newton evaluation and preserves an analytic sparse
 index-1 DAE Jacobian.
+
+Per-step coordinate and electrostatic increments follow
+docs/InterfaceDefectTransientIncrementContract.md.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import copy
 import hashlib
 import math
 import warnings
@@ -463,6 +467,7 @@ class _DeviceState:
     rate_jacobian: sparse.csr_matrix
     poisson_jacobian: sparse.csr_matrix
     local_jacobian: sparse.csr_matrix
+    direct_poisson_residual: np.ndarray | None = None
 
 
 @dataclass(slots=True)
@@ -577,6 +582,7 @@ class _InterfaceTransientSystem:
             dtype=float,
         )
         self.reference_phi = np.asarray(dynamic_dc.phi, dtype=float)
+        self._step_reference: _DeviceState | None = None
         self.reference_occupancy = np.asarray(occupancy_reference, dtype=float)
         self.reference_logit = _occupancy_logit(self.reference_occupancy)
         self.thermal_voltage = float(material.V_T_device)
@@ -749,6 +755,23 @@ class _InterfaceTransientSystem:
     def initial_coordinate(self) -> np.ndarray:
         return np.zeros(self.dimension, dtype=float)
 
+    def rebase(self, previous: _DeviceState) -> tuple[_InterfaceTransientSystem, _DeviceState]:
+        """Express one step about its accepted state, retaining fixed error scales."""
+        working = copy.copy(self)
+        local_previous = replace(previous, coordinate=np.zeros(self.dimension))
+        working._step_reference = local_previous
+        working.dqfn_dc = previous.dqfn
+        working.dqfp_dc = previous.dqfp
+        working.reference_phi = previous.phi
+        working.reference_logit = _occupancy_logit(previous.occupancy)
+        working.reference_trace_potential = np.asarray(
+            [item.trace_potential for item in previous.local]
+        )
+        working.reference_trace_log_state = np.log(
+            np.asarray([item.state_m3 for item in previous.local])
+        )
+        return working, local_previous
+
     def _local_block_slice(self, index: int) -> slice:
         start = self.local_slice.start + 6 * index
         return slice(start, start + 6)
@@ -796,6 +819,14 @@ class _InterfaceTransientSystem:
             raise InterfaceDefectTransientError("carrier coordinate overflow")
         n = np.exp(log_n)
         p = np.exp(log_p)
+        if self._step_reference is not None:
+            potential_increment = values[self.potential_slice]
+            n[1:-1] = self._step_reference.n[1:-1] * np.exp(
+                values[self.electron_slice] + potential_increment
+            )
+            p[1:-1] = self._step_reference.p[1:-1] * np.exp(
+                values[self.hole_slice] - potential_increment
+            )
         if (
             not np.all(np.isfinite(n))
             or not np.all(np.isfinite(p))
@@ -1145,7 +1176,7 @@ class _InterfaceTransientSystem:
             raise InterfaceDefectTransientError(
                 "interface transient operator produced a non-finite value"
             )
-        return _DeviceState(
+        state = _DeviceState(
             coordinate=np.asarray(coordinate, dtype=float).copy(),
             dqfn=dqfn,
             dqfp=dqfp,
@@ -1167,6 +1198,56 @@ class _InterfaceTransientSystem:
             poisson_jacobian=poisson_jacobian,
             local_jacobian=local_jacobian,
         )
+        return self._with_step_electrostatics(state)
+
+    def _increment_charge_density(self, storage: np.ndarray) -> np.ndarray:
+        result = np.zeros(self.node_count)
+        count = self.interior_count
+        result[1:-1] = Q * (storage[count : 2 * count] - storage[:count])
+        return result
+
+    def _with_step_electrostatics(self, state: _DeviceState) -> _DeviceState:
+        """Evaluate Gauss' law in increments; preserve direct residual evidence."""
+        previous = self._step_reference
+        if previous is None:
+            return state
+        storage = self.storage_increment(state, previous)
+        rho_increment = self._increment_charge_density(storage)
+        occupied = storage[
+            2 * self.interior_count : 2 * self.interior_count + self.interface_count
+        ]
+        potential_increment = self.potential_increment(state, previous)
+        factor = self.material.poisson_factor
+        poisson = (
+            previous.poisson_residual
+            + np.diff(factor.C * np.diff(potential_increment))
+            + rho_increment[1:-1] * factor.h_cell
+        )
+        for index, (left, right) in enumerate(zip(self.left_nodes, self.right_nodes)):
+            weight_left, weight_right = self._sheet_weights(index)
+            poisson[left - 1] -= weight_left * Q * occupied[index]
+            poisson[right - 1] -= weight_right * Q * occupied[index]
+            trace_increment = (
+                self.thermal_voltage * state.coordinate[self._local_block_slice(index)][:2]
+            )
+            capacitance_left = (
+                EPS_0 * self.material.eps_r[left]
+                / self.material.iface_qss_left_distances_m[index]
+            )
+            capacitance_right = (
+                EPS_0 * self.material.eps_r[right]
+                / self.material.iface_qss_right_distances_m[index]
+            )
+            row = 6 * index
+            state.local_residual[row : row + 2] = previous.local_residual[row : row + 2] + np.array([
+                trace_increment[1] - trace_increment[0],
+                capacitance_left * (trace_increment[0] - potential_increment[left])
+                + capacitance_right * (trace_increment[1] - potential_increment[right])
+                + Q * occupied[index],
+            ])
+        state.direct_poisson_residual = state.poisson_residual.copy()
+        state.poisson_residual = poisson
+        return state
 
     def _bulk_coordinate_chain(
         self,
@@ -1812,15 +1893,17 @@ def _solve_step(
     policy: InterfaceDefectTransientPolicy,
     *,
     check_jacobian: bool,
+    scaling_system: _InterfaceTransientSystem | None = None,
 ) -> tuple[_DeviceState, int, float, float, int, int]:
-    storage_scale = system.storage_scale(
+    reference = system if scaling_system is None else scaling_system
+    storage_scale = reference.storage_scale(
         previous.storage,
         previous,
         dt,
         policy,
     )
-    poisson_scale = system.poisson_scale(policy)
-    local_scale = system.local_algebraic_scale(policy)
+    poisson_scale = reference.poisson_scale(policy)
+    local_scale = reference.local_algebraic_scale(policy)
     trial = np.asarray(coordinate, dtype=float).copy()
     maximum_jacobian_error = 0.0
     maximum_nnz = 0
@@ -2056,21 +2139,23 @@ def _integrate_trace(
         final_interface_total = initial_interface_total
         point_iterations = 0
         for local_step in range(substeps):
+            step_system, step_previous = system.rebase(previous)
             state, count, residual, jacobian_error, nnz, nonmonotone_count = (
                 _solve_step(
-                    system,
-                    coordinate,
-                    previous,
+                    step_system,
+                    np.zeros(system.dimension),
+                    step_previous,
                     target_voltage,
                     dt,
                     policy,
                     check_jacobian=(point == 1 and local_step == 0),
+                    scaling_system=system,
                 )
             )
             point_iterations += count
             nonmonotone_step_count += nonmonotone_count
-            coordinate = state.coordinate.copy()
-            charge_increment = system.integrated_charge_increment(state, previous)
+            coordinate = coordinate + state.coordinate
+            charge_increment = system.integrated_charge_increment(state, step_previous)
             (
                 final_displacement,
                 final_total,
@@ -2078,13 +2163,13 @@ def _integrate_trace(
                 final_interface_displacement,
                 face_spread,
                 interface_current_error,
-            ) = system.transient_current_metrics(state, previous, dt)
+            ) = system.transient_current_metrics(state, step_previous, dt)
             final_interface_total = (
                 final_interface_conduction + final_interface_displacement
             )
             charge_absolute_error, charge_error = system.charge_balance_metrics(
                 state,
-                previous,
+                step_previous,
                 dt,
             )
             carrier_residual, gauss_residual = system.local_normalized_residuals(state)
@@ -2092,6 +2177,8 @@ def _integrate_trace(
             maximum_poisson = max(
                 maximum_poisson,
                 float(np.max(np.abs(state.poisson_residual))),
+                float(np.max(np.abs(state.direct_poisson_residual)))
+                if state.direct_poisson_residual is not None else 0.0,
             )
             maximum_local_carrier = max(
                 maximum_local_carrier,

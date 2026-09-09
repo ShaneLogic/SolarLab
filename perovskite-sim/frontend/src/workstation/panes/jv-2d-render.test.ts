@@ -144,7 +144,7 @@ describe('renderJV2D — metrics card row', () => {
 // Layer 4: y-axis operational-range toggle. Plotly is mocked, so the test
 // reads ``newPlot``'s third positional arg (the layout) to assert whether
 // ``yaxis.range`` was set or omitted. Trace data is the second positional
-// arg — the test pins that the J trace is byte-identical between modes
+// arg — the test pins that the J trace is byte-identical between renders
 // (raw V/J unchanged).
 // ---------------------------------------------------------------------------
 
@@ -185,9 +185,9 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
     expect(layout).toBeDefined()
     const range = layout!.yaxis?.range as [number, number] | undefined
     expect(range, 'yaxis.range must be set in operational mode').toBeDefined()
-    // J_sc=200 A/m² → 20 mA/cm². [-0.5*20, 1.5*20] = [-10, 30].
-    expect(range![0]).toBeCloseTo(-10.0, 6)
-    expect(range![1]).toBeCloseTo(+30.0, 6)
+    // J_sc=200 A/m² → 20 mA/cm². [-0.15*20, 1.12*20] = [-3, 22.4].
+    expect(range![0]).toBeCloseTo(-3.0, 6)
+    expect(range![1]).toBeCloseTo(+22.4, 6)
   })
 
   it('switching to Full sweep removes yaxis.range (autorange)', () => {
@@ -300,14 +300,12 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
     expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
   })
 
-  it('renders the Style select even when metrics are absent', () => {
-    // Style is a visual-mode toggle; it must remain available even
-    // for legacy backend payloads that omit the metrics field. The
-    // Range select stays gated on metrics (it needs J_sc to clip).
+  it('renders without a style selector', () => {
+    // The range selector requires J_sc, so legacy payloads have no toolbar.
     const result = makeResult()
     renderJV2D(el, result)
-    expect(el.querySelector('[data-test="jv2d-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="jv2d-style-mode"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="jv2d-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="jv2d-style-mode"]')).toBeNull()
     expect(el.querySelector('[data-test="jv2d-range-mode"]')).toBeNull()
   })
 })
@@ -315,9 +313,7 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
 
 // ---------------------------------------------------------------------------
 // Publication visual-style mode (Nature-style single-panel theme).
-// Engineering mode remains the default; publication mode swaps the Plotly
-// layout / trace style / config WITHOUT mutating raw V/J. Range mode
-// (Operational vs Full sweep) is independent of the visual style.
+// Publication styling and range selection preserve the raw V/J arrays.
 // ---------------------------------------------------------------------------
 
 import { PUBLICATION_FONT_FAMILY } from '../../plot-theme'
@@ -335,13 +331,7 @@ function _lastNewPlotTrace(): Record<string, any> | undefined {
   return data?.[0]
 }
 
-function _toggleStyle(el: HTMLElement, mode: 'engineering' | 'publication'): void {
-  const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-style-mode"]')!
-  sel.value = mode
-  sel.dispatchEvent(new Event('change'))
-}
-
-describe('renderJV2D — publication style mode', () => {
+describe('renderJV2D — publication rendering', () => {
   let el: HTMLDivElement
 
   beforeEach(() => {
@@ -350,24 +340,11 @@ describe('renderJV2D — publication style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('default is engineering — Arial layout, modebar visible (regression)', () => {
+  it('uses publication by default with Nature-style layout', () => {
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    const layout = _lastNewPlotLayout()!
-    expect(layout.font.family).toBe('Arial, sans-serif')
-    const config = _lastNewPlotConfig()!
-    // plotConfig() does not set displayModeBar — default Plotly behaviour.
-    expect(config.displayModeBar).toBeUndefined()
-  })
-
-  it('toggling to publication applies Nature-style layout', () => {
-    const result = makeResult({
-      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
-    })
-    renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.paper_bgcolor).toBe('#ffffff')
@@ -379,13 +356,11 @@ describe('renderJV2D — publication style mode', () => {
     expect(layout.legend.xanchor).toBe('left')
   })
 
-  it('publication config hides the modebar; engineering does not', () => {
+  it('publication config hides the modebar', () => {
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
   })
 
@@ -394,7 +369,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.951, J_sc: 220.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
     expect(annotations.length).toBe(1)
     expect(annotations[0].text).toContain('0.951 V')
@@ -411,7 +385,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
     expect(annotations.length).toBe(1)
     expect(annotations[0].text).toContain('not bracketed')
@@ -424,7 +397,6 @@ describe('renderJV2D — publication style mode', () => {
     // Independent of metrics — publication style still applies.
     const result = makeResult()
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect((layout.annotations as Array<unknown>).length).toBe(0)
@@ -435,48 +407,11 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.95, J_sc: 220, FF: 0.82, PCE: 0.17 },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect((layout.annotations as Array<unknown>).length).toBe(0)
   })
 
-  it('style toggle persists across re-render via el.dataset.plotStyleMode', () => {
-    const result = makeResult({
-      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
-    })
-    renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
-    expect(el.dataset.plotStyleMode).toBe('publication')
-    // External re-entry (e.g. mountMainPlotPane.update) must honour the
-    // dataset attribute without an explicit second toggle.
-    renderJV2D(el, result)
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-style-mode"]')!
-    expect(sel.value).toBe('publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-  })
-
-  it('range mode and style mode are independent (operational + publication)', () => {
-    // Engineering operational uses [-0.5*Jsc_mA, 1.5*Jsc_mA].
-    // Publication operational uses the TIGHTER [-0.15*Jsc_mA, 1.12*Jsc_mA].
-    // J_sc=200 A/m² → J_sc_mA=20 → eng:[-10,+30], pub:[-3.0,+22.4].
-    const result = makeResult({
-      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
-    })
-    renderJV2D(el, result)
-    const engLayout = _lastNewPlotLayout()!
-    expect(engLayout.yaxis.range).toBeDefined()
-    expect((engLayout.yaxis.range as [number, number])[0]).toBeCloseTo(-10.0, 6)
-    expect((engLayout.yaxis.range as [number, number])[1]).toBeCloseTo(+30.0, 6)
-    expect(engLayout.font.family).toBe('Arial, sans-serif')
-    _toggleStyle(el, 'publication')
-    const pubLayout = _lastNewPlotLayout()!
-    expect(pubLayout.yaxis.range).toBeDefined()
-    expect((pubLayout.yaxis.range as [number, number])[0]).toBeCloseTo(-3.0, 6)
-    expect((pubLayout.yaxis.range as [number, number])[1]).toBeCloseTo(+22.4, 6)
-    expect(pubLayout.font.family).toBe(PUBLICATION_FONT_FAMILY)
-  })
-
-  it('range "Full sweep" + style "Publication" composes — autorange + Helvetica', () => {
+  it('Full sweep keeps publication styling and autorange across renders', () => {
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
@@ -486,28 +421,28 @@ describe('renderJV2D — publication style mode', () => {
     rangeSel.value = 'full'
     rangeSel.dispatchEvent(new Event('change'))
     expect(_lastNewPlotLayout()!.yaxis.range).toBeUndefined()
-    // Then toggle style to publication.
-    _toggleStyle(el, 'publication')
+    // Re-render the same result with the selected range.
+    renderJV2D(el, result)
     const layout = _lastNewPlotLayout()!
     expect(layout.yaxis.range).toBeUndefined()                       // still autorange
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
-  it('raw J trace is byte-identical between engineering and publication modes', () => {
+  it('raw J trace is byte-identical across renders', () => {
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    const yEng = _lastNewPlotTraceY()!.slice()
-    _toggleStyle(el, 'publication')
-    const yPub = _lastNewPlotTraceY()!.slice()
-    expect(yPub).toEqual(yEng)
+    const yInitial = _lastNewPlotTraceY()!.slice()
+    renderJV2D(el, result)
+    const yRepeated = _lastNewPlotTraceY()!.slice()
+    expect(yRepeated).toEqual(yInitial)
     // And raw input array must remain untouched in both renders.
     expect(result.J).toEqual([-300.0, -250.0, +50.0])
     // Both equal the documented post-flip-and-scale conversion.
     const expected = result.J.map(j => -j / 10)
-    expect(yEng).toEqual(expected)
-    expect(yPub).toEqual(expected)
+    expect(yInitial).toEqual(expected)
+    expect(yRepeated).toEqual(expected)
   })
 
   it('publication trace: lines+markers, hollow circles, muted blue, thin line', () => {
@@ -515,7 +450,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const trace = _lastNewPlotTrace()!
     expect(trace.mode).toBe('lines+markers')
     expect(trace.marker.symbol).toBe('circle-open')
@@ -532,7 +466,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.0, J_sc: 200.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     expect(el.querySelector('[data-test="jv2d-metrics-row"]')).not.toBeNull()
     expect(el.querySelector('[data-test="jv2d-voc-not-bracketed"]')).not.toBeNull()
   })
@@ -542,7 +475,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotLayout()!.yaxis.zeroline).toBe(true)
   })
 
@@ -555,7 +487,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.xaxis.range).toBeDefined()
     const [xmin, xmax] = layout.xaxis.range as [number, number]
@@ -577,7 +508,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const [, xmax] = _lastNewPlotLayout()!.xaxis.range as [number, number]
     expect(xmax).toBeCloseTo(1.13, 6)
   })
@@ -591,7 +521,6 @@ describe('renderJV2D — publication style mode', () => {
     const rangeSel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
     rangeSel.value = 'full'
     rangeSel.dispatchEvent(new Event('change'))
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.yaxis.range).toBeUndefined()
     expect(layout.xaxis.range).toBeUndefined()
@@ -602,7 +531,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotLayout()!.showlegend).toBe(false)
   })
 
@@ -611,7 +539,6 @@ describe('renderJV2D — publication style mode', () => {
       metrics: { V_oc: 0.951, J_sc: 220.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<Record<string, unknown>>
     expect(annotations.length).toBe(1)
     const ann = annotations[0]
@@ -622,19 +549,5 @@ describe('renderJV2D — publication style mode', () => {
     // No heavy box.
     expect(ann.bgcolor).toBe('rgba(255,255,255,0)')
     expect(ann.borderwidth).toBe(0)
-  })
-
-  it('Engineering operational range stays at the original [-0.5, +1.5]·J_sc envelope', () => {
-    // Pinned regression: refining publication-mode helpers must not
-    // change Engineering Layer-4 behaviour.
-    const result = makeResult({
-      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
-    })
-    renderJV2D(el, result)
-    const [ymin, ymax] = _lastNewPlotLayout()!.yaxis.range as [number, number]
-    expect(ymin).toBeCloseTo(-10.0, 6)
-    expect(ymax).toBeCloseTo(+30.0, 6)
-    // Engineering does not set xaxis.range — it leaves Plotly to autorange.
-    expect(_lastNewPlotLayout()!.xaxis.range).toBeUndefined()
   })
 })

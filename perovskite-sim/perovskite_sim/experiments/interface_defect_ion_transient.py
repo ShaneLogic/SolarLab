@@ -390,6 +390,7 @@ class _InterfaceIonDeviceState:
     rate_jacobian: sparse.csr_matrix
     poisson_jacobian: sparse.csr_matrix
     local_jacobian: sparse.csr_matrix
+    direct_poisson_residual: np.ndarray | None = None
 
 
 class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
@@ -473,6 +474,21 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             )
         )
         self._maximum_eliminated_operator_components: dict[str, float] = {}
+
+    def rebase(self, previous: _InterfaceIonDeviceState):
+        working, local_previous = super().rebase(previous)
+        working.reference_positive = previous.positive
+        working.reference_negative = previous.negative
+        return working, local_previous
+
+    def _increment_charge_density(self, storage: np.ndarray) -> np.ndarray:
+        result = super()._increment_charge_density(storage)
+        start = 2 * self.interior_count + self.interface_count
+        stop = start + self.positive_nodes.size
+        result[self.positive_nodes] += Q * storage[start:stop]
+        if self.negative_nodes.size:
+            result[self.negative_nodes] -= Q * storage[stop:]
+        return result
 
     def _site_fraction(
         self,
@@ -780,7 +796,7 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             raise InterfaceDefectIonTransientError(
                 "joint interface/ion operator produced a non-finite value"
             )
-        return _InterfaceIonDeviceState(
+        state = _InterfaceIonDeviceState(
             coordinate=np.asarray(coordinate, dtype=float).copy(),
             dqfn=dqfn,
             dqfp=dqfp,
@@ -811,6 +827,7 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             poisson_jacobian=poisson_jacobian,
             local_jacobian=local_jacobian,
         )
+        return self._with_step_electrostatics(state)
 
     def interface_current_sides(
         self,

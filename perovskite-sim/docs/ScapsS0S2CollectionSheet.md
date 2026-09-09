@@ -308,4 +308,6 @@ python scripts/import_scaps_defect_reference.py \
 - `D8-E3`（隧穿逐通道）—— 三重阻塞，缺数据只是其中一重；另两重（能级/势约定、
   势垒身份原语）在仓库内部，拿到数据也解不开。
 
+这条隧穿说明记录的是本交付单原始检查点的状态。第一阶段 F5 后，单个导带内电子势垒的能级、势垒身份和守恒转移已有内部修复及独立数值证据，见 [ResolvedIntrabandTunnellingContractV2.md](ResolvedIntrabandTunnellingContractV2.md)。其他通道的器件验证和独立 SCAPS 数据仍不属于这份 S0-S2 交付单。
+
 如需 M1–M3 的同类交付单，另行索取。

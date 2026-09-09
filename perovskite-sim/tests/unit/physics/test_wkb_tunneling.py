@@ -7,7 +7,10 @@ import math
 import numpy as np
 import pytest
 
+from perovskite_sim.constants import Q
 from perovskite_sim.physics.wkb_tunneling import (
+    ELECTRON_MASS_KG,
+    HBAR_J_S,
     MINIMUM_MEANINGFUL_ACTION,
     WKBTunnellingError,
     decay_constant_per_m,
@@ -31,20 +34,42 @@ def _triangular(
     return x, height_eV * (1.0 - x / width_m)
 
 
-def test_action_converges_to_the_analytic_triangular_barrier():
-    """The quadrature is checked against a closed form before any physics."""
+def test_action_matches_the_analytic_triangular_barrier_at_every_resolution():
+    """The linear-band integral is analytic, including the turning point."""
     exact = triangular_barrier_action(HEIGHT_EV, WIDTH_M, MASS_REL)
     errors = []
     for points in (201, 401, 801, 1601):
         x, barrier = _triangular(points=points)
         errors.append(abs(wkb_action(x, barrier, 0.0, MASS_REL) - exact) / exact)
 
-    assert errors[-1] < 1.0e-5
-    orders = [math.log2(coarse / fine) for coarse, fine in zip(errors[:-1], errors[1:])]
-    # A square-root turning point gives order 3/2, not 2. Asserting the
-    # measured order rather than a tolerance is what would catch an
-    # integrator that silently changed behaviour near the turning point.
-    assert all(1.35 < order < 1.65 for order in orders), orders
+    assert max(errors) < 64 * np.finfo(float).eps
+
+
+@pytest.mark.parametrize("points", [2, 7, 33])
+@pytest.mark.parametrize("energy", [0.0, 0.1, 0.299, 0.3, 0.4])
+def test_rectangular_action_and_transmission_match_the_closed_form(points, energy):
+    x = WIDTH_M * np.linspace(0.0, 1.0, points) ** 2
+    barrier = np.full(points, HEIGHT_EV)
+    expected = (
+        WIDTH_M
+        * math.sqrt(2 * MASS_REL * ELECTRON_MASS_KG * Q * max(HEIGHT_EV - energy, 0.0))
+        / HBAR_J_S
+    )
+    assert wkb_action(x, barrier, energy, MASS_REL) == pytest.approx(
+        expected, rel=2e-14, abs=0.0
+    )
+    assert wkb_transmission(x, barrier, energy, MASS_REL) == pytest.approx(
+        math.exp(-2 * expected), rel=2e-14, abs=0.0
+    )
+
+
+def test_rectangular_transmission_limits_retain_the_wkb_validity_boundary():
+    barrier = np.full(2, HEIGHT_EV)
+    thin = np.array([0.0, 1e-14])
+    thick = np.array([0.0, 20e-9])
+    assert wkb_transmission(thin, barrier, 0.1, MASS_REL) > 0.9999
+    assert wkb_transmission(thick, barrier, 0.1, MASS_REL) < 1e-15
+    assert not wkb_validity(thin, barrier, 0.1, MASS_REL).valid
 
 
 def test_transmission_decays_monotonically_with_width_height_and_mass():

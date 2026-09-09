@@ -7,13 +7,13 @@ from typing import Callable, Literal, Sequence
 import numpy as np
 
 from perovskite_sim._compat.numpy_compat import trapezoid
-from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.discretization.grid import (
     Layer,
     multilayer_grid,
     require_thick_layer_interface_resolution,
 )
 from perovskite_sim.physics.ion_migration import ion_face_flux
+from perovskite_sim.physics.continuity import carrier_face_currents
 from perovskite_sim.physics.regularization import RHSRegularization
 from perovskite_sim.solver.numerical_diagnostics import (
     NumericalDiagnosticsReport,
@@ -872,14 +872,6 @@ def compute_current_components(
     # field-corrected face diffusivities that assemble_rhs saw — otherwise
     # the reported current would be inconsistent with the state the solver
     # integrated, which would break charge conservation at the contact.
-    phi_n = phi + mat.chi
-    phi_p = phi + mat.chi + mat.Eg
-    xi_n = (phi_n[1:] - phi_n[:-1]) / V_T_dev
-    xi_p = (phi_p[1:] - phi_p[:-1]) / V_T_dev
-    B_pos_n = bernoulli(xi_n)
-    B_neg_n = bernoulli(-xi_n)
-    B_pos_p = bernoulli(xi_p)
-    B_neg_p = bernoulli(-xi_p)
     if mat.has_field_mobility:
         from perovskite_sim.physics.field_mobility import apply_field_mobility
         E_face = -(phi[1:] - phi[:-1]) / dx
@@ -896,8 +888,10 @@ def compute_current_components(
     else:
         D_n_face_eff = mat.D_n_face
         D_p_face_eff = mat.D_p_face
-    J_n = Q * D_n_face_eff / dx * (B_pos_n * n[1:] - B_neg_n * n[:-1])
-    J_p = Q * D_p_face_eff / dx * (B_pos_p * p[:-1] - B_neg_p * p[1:])
+    carrier_params = mat.carrier_params
+    carrier_params["D_n"] = D_n_face_eff
+    carrier_params["D_p"] = D_p_face_eff
+    J_n, J_p = carrier_face_currents(x, phi, n, p, carrier_params)
 
     ionic = _ionic_current_components_from_fields(x, phi, sv, mat)
 

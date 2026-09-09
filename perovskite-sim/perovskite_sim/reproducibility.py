@@ -288,11 +288,13 @@ def _mapping_value_at_path(mapping: dict[str, Any], dotted_path: str) -> Any:
     return current
 
 
-def _validate_stack(stack: DeviceStack, where: str, errors: list[str]) -> None:
+def _validate_stack(
+    stack: DeviceStack, where: str, errors: list[str], *, require_absorber: bool = True,
+) -> None:
     if not stack.layers:
         errors.append(f"{where}: no layers")
         return
-    if not any(layer.role == "absorber" for layer in stack.layers):
+    if require_absorber and not any(layer.role == "absorber" for layer in stack.layers):
         errors.append(f"{where}: no absorber layer")
     if stack.interfaces and len(stack.interfaces) != len(stack.layers) - 1:
         errors.append(
@@ -522,6 +524,9 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
         path = root / relpath
         schema_id = str(entry.get("schema"))
         status = str(entry.get("status"))
+        purpose = entry.get("device_purpose", "photovoltaic_device")
+        if not isinstance(purpose, str) or purpose not in {"photovoltaic_device", "electrical_transport_reference"}:
+            errors.append(f"{relpath}: unknown device_purpose {purpose!r}")
         status_counts[status] = status_counts.get(status, 0) + 1
         schema_counts[schema_id] = schema_counts.get(schema_id, 0) + 1
         if status not in allowed_statuses:
@@ -567,7 +572,8 @@ def validate_matrix(root: Path | None = None) -> dict[str, Any]:
             if schema_id == "tandem-v1" else (loaded,)
         )
         for index, stack in enumerate(stacks):
-            _validate_stack(stack, f"{relpath} stack[{index}]", errors)
+            _validate_stack(stack, f"{relpath} stack[{index}]", errors,
+                             require_absorber=purpose != "electrical_transport_reference")
         semantic_hashes[relpath] = semantic_sha256(loaded)
         expected_semantic = entry.get("semantic_sha256")
         if not expected_semantic:

@@ -73,6 +73,7 @@ from perovskite_sim.physics.metastable_defect_device import (
 from perovskite_sim.physics.tunneling_channel_device import (
     TunnellingChannelEvaluation,
     evaluate_tunnelling_channels,
+    physical_quasi_fermi_levels_eV,
 )
 from perovskite_sim.physics.defect_distributions import (
     DEFAULT_DEFECT_ENERGY_QUADRATURE_ORDER,
@@ -225,6 +226,7 @@ class QuasiFermiSteadyStateResult:
     defect_distribution_kinds: tuple[str, ...] = ()
     contact_thermodynamic_status: str | None = None
     contact_fermi_level_span_eV: float | None = None
+    density_basin_initializations: int = 0
 
 
 @dataclass(frozen=True)
@@ -670,6 +672,13 @@ def _require_supported(
     unsupported: list[str] = []
     if mat.tunnelling_channels is not None and not allow_tunnelling_channels:
         unsupported.append("WKB tunnelling channels outside the QF/DC lane")
+    if mat.tunnelling_channels is not None:
+        if mat.carrier_statistics != "maxwell_boltzmann":
+            unsupported.append("WKB density-to-level mapping outside Boltzmann statistics")
+        for name in ("N_C_physical", "N_V_physical"):
+            values = getattr(mat, name, None)
+            if values is None or np.any(~np.isfinite(values)) or np.any(values <= 0.0):
+                unsupported.append(f"positive physical DOS ({name}) for tunnelling occupations")
     if mat.frozen_metastable_defects is not None:
         if not allow_frozen_metastable_defects:
             unsupported.append(
@@ -1114,8 +1123,12 @@ class _QuasiFermiSystem:
             poisson_tolerance_V=poisson_tolerance_V,
             poisson_max_iterations=poisson_max_iterations,
         )
-        n0 = np.maximum(self.base[: self.node_count], 1.0)
-        p0 = np.maximum(self.base[self.node_count : 2 * self.node_count], 1.0)
+        n0 = self.base[: self.node_count]
+        p0 = self.base[self.node_count : 2 * self.node_count]
+        if any(np.any(~np.isfinite(value)) or np.any(value <= 0.0) for value in (n0, p0)):
+            raise QuasiFermiSteadyStateError("QF reference densities must be finite and positive")
+        # These densities define the pinned reservoirs as well as the log
+        # coordinates; a numerical floor would change physical contact levels.
         self.log_n0 = np.log(n0)
         self.log_p0 = np.log(p0)
         self.thermal_voltage = mat.V_T_device
@@ -2102,14 +2115,21 @@ class _QuasiFermiSystem:
                     )
                     electron_velocity = float(self.mat.iface_state_v_th)
                     hole_velocity = float(self.mat.iface_state_v_th)
+            electron_level, hole_level = physical_quasi_fermi_levels_eV(
+                potential_V=phi, affinity_eV=self.mat.chi_phys,
+                band_gap_eV=self.mat.Eg_phys, electron_density_m3=n, hole_density_m3=p,
+                conduction_dos_m3=self.mat.N_C_physical,
+                valence_dos_m3=self.mat.N_V_physical,
+                thermal_voltage_V=self.thermal_voltage,
+            )
             tunnelling = evaluate_tunnelling_channels(
                 self.mat.tunnelling_channels,
                 positions_m=self.x,
                 potential_V=phi,
                 affinity_eV=self.mat.chi_phys,
                 band_gap_eV=self.mat.Eg_phys,
-                electron_quasi_fermi_eV=self.qfn0 + dqfn_arr,
-                hole_quasi_fermi_eV=self.qfp0 + dqfp_arr,
+                electron_quasi_fermi_eV=electron_level,
+                hole_quasi_fermi_eV=hole_level,
                 thermal_voltage_V=self.thermal_voltage,
                 interface_occupancy=occupancy,
                 interface_trap_energy_eV=trap_energy,
@@ -2139,8 +2159,12 @@ class _QuasiFermiSystem:
             reported_current_n = current_n.copy()
             reported_current_p = current_p.copy()
             for face, electron_current, hole_current in interface_face_currents:
-                reported_current_n[face] = electron_current
-                reported_current_p[face] = hole_current
+                reported_current_n[face] = electron_current + (
+                    tunnelling.electron_face_current_A_m2[face] if tunnelling is not None else 0.0
+                )
+                reported_current_p[face] = hole_current + (
+                    tunnelling.hole_face_current_A_m2[face] if tunnelling is not None else 0.0
+                )
         return _Evaluation(
             residual=residual,
             y=y,
@@ -2470,6 +2494,7 @@ def solve_quasi_fermi_steady_state(
     initial_state: QuasiFermiSteadyStateResult | None = None,
     initial_state_grid: np.ndarray | None = None,
     force_nodal_coordinate_predictor: bool = False,
+    use_density_predictor: bool = False,
     illumination_steps: tuple[float, ...] = DEFAULT_ILLUMINATION_STEPS,
     finite_difference_step: float = 1.0e-5,
     newton_residual_tolerance: float = 1.0e-10,
@@ -2501,6 +2526,10 @@ def solve_quasi_fermi_steady_state(
     residual tolerance. ``initial_state`` may warm-start a nearby voltage,
     but only when it already carries a physical certificate; the new voltage
     is still solved and certified independently.
+
+    ``use_density_predictor`` opts an ion-free classical bulk problem into
+    the existing density-form illuminated initializer. The QF equations and
+    every final acceptance bound are still enforced after initialization.
     """
     grid = np.asarray(x, dtype=float)
     if grid.ndim != 1 or len(grid) < 3 or np.any(np.diff(grid) <= 0.0):
@@ -2512,6 +2541,10 @@ def solve_quasi_fermi_steady_state(
     )
     if not isinstance(force_nodal_coordinate_predictor, (bool, np.bool_)):
         raise TypeError("force_nodal_coordinate_predictor must be boolean")
+    if not isinstance(use_density_predictor, (bool, np.bool_)):
+        raise TypeError("use_density_predictor must be boolean")
+    if use_density_predictor and (not illuminated or initial_state is not None):
+        raise ValueError("density prediction requires an illuminated solve without an initial state")
     if not isinstance(require_contact_certificate, (bool, np.bool_)):
         raise TypeError("require_contact_certificate must be boolean")
     positive_controls = {
@@ -2827,11 +2860,25 @@ def solve_quasi_fermi_steady_state(
                     increment_n[:-1],
                     increment_p[:-1],
                 ]
+    if use_density_predictor and not interface_boundary:
+        if (
+            input_material.monovalent_bulk_defects is not None
+            or input_material.multivalent_bulk_defects is not None
+            or input_material.frozen_metastable_defects is not None
+            or input_material.tunnelling_channels is not None
+            or np.any(input_material.P_ion0)
+            or (input_material.P_ion0_neg is not None and np.any(input_material.P_ion0_neg))
+        ):
+            raise QuasiFermiSteadyStateError(
+                "bulk density prediction requires ion-free classical transport "
+                "without charged defects, metastable populations or tunnelling"
+            )
+    density_basin_initializations = 0
     interface_basin_initializations = 0
     interface_basin_predictor_failures = 0
     interface_basin_predictor_regrids = 0
     if (
-        interface_boundary
+        (interface_boundary or use_density_predictor)
         and illuminated
         and initial_state is None
         and input_material.monovalent_bulk_defects is None
@@ -2960,7 +3007,8 @@ def solve_quasi_fermi_steady_state(
             ]
             z[system.pin] = 0.0
             stages = (1.0,)
-            interface_basin_initializations = 1
+            density_basin_initializations = 1
+            interface_basin_initializations = int(interface_boundary)
     nonlinear_coordinates = z
     using_edge_coordinates = False
     numerical_residual_limit = (
@@ -3362,6 +3410,7 @@ def solve_quasi_fermi_steady_state(
         interface_topology=topology,
         interface_faces=system.interface_faces,
         interface_basin_initializations=interface_basin_initializations,
+        density_basin_initializations=density_basin_initializations,
         interface_basin_predictor_failures=interface_basin_predictor_failures,
         interface_basin_predictor_regrids=interface_basin_predictor_regrids,
         initial_state_regrids=initial_state_regrids,
@@ -3793,6 +3842,7 @@ def solve_quasi_fermi_jv_sweep(
     interface_transport_model: str = FERMI_RICHARDSON,
     initial_short_circuit_state: QuasiFermiSteadyStateResult | None = None,
     P_in_W_m2: float = 1000.0,
+    require_contact_certificate: bool = False,
     illumination_steps: tuple[float, ...] = DEFAULT_ILLUMINATION_STEPS,
     finite_difference_step: float = 1.0e-5,
     newton_residual_tolerance: float = 1.0e-10,
@@ -3915,6 +3965,7 @@ def solve_quasi_fermi_jv_sweep(
         current_spread_tolerance_A_m2=current_spread_tolerance_A_m2,
         poisson_residual_tolerance=poisson_residual_tolerance,
         defect_energy_quadrature_order=resolved_defect_energy_order,
+        require_contact_certificate=require_contact_certificate,
     )
     if initial_short_circuit_state is not None:
         if not initial_short_circuit_state.certified:

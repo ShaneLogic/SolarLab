@@ -109,6 +109,47 @@ def decay_constant_per_m(
     return np.sqrt(2.0 * mass * ELECTRON_MASS_KG * forbidden * Q) / HBAR_J_S
 
 
+def piecewise_linear_wkb_segment_actions(
+    positions_m: np.ndarray,
+    barrier_eV: np.ndarray,
+    energies_eV: np.ndarray,
+    effective_mass_rel: float,
+) -> np.ndarray:
+    """Exact actions per energy/segment for the linearly interpolated band.
+
+    Integrating sqrt(max(U-E, 0)) analytically retains turning points inside
+    a segment. The rationalized expression also has a stable flat-band limit.
+    """
+    x = np.asarray(positions_m, dtype=float)
+    barrier = np.asarray(barrier_eV, dtype=float)
+    energies = np.asarray(energies_eV, dtype=float)
+    if (x.ndim != 1 or x.size < 2 or not np.all(np.isfinite(x))
+            or np.any(np.diff(x) <= 0.0) or not np.all(np.isfinite(np.diff(x)))):
+        raise WKBTunnellingError("positions_m must be finite and strictly increase on a 1-D grid")
+    if barrier.shape != x.shape or not np.all(np.isfinite(barrier)):
+        raise WKBTunnellingError("finite barrier profile must match positions_m")
+    if energies.ndim != 1 or not np.all(np.isfinite(energies)):
+        raise WKBTunnellingError("energies_eV must be a finite 1-D vector")
+    mass = _positive(effective_mass_rel, "effective_mass_rel")
+    left = barrier[:-1][None, :] - energies[:, None]
+    right = barrier[1:][None, :] - energies[:, None]
+    if not np.all(np.isfinite(left)) or not np.all(np.isfinite(right)):
+        raise WKBTunnellingError("barrier-energy differences must be finite")
+    root_left = np.sqrt(np.maximum(left, 0.0))
+    root_right = np.sqrt(np.maximum(right, 0.0))
+    root_sum = root_left + root_right
+    ratio = np.divide(root_right, root_sum, out=np.zeros_like(root_sum), where=root_sum > 0.0)
+    mean_root = (2.0 / 3.0) * (root_sum - root_left * ratio)
+    crossing = ((left < 0.0) & (right > 0.0)) | ((left > 0.0) & (right < 0.0))
+    positive = np.maximum(left[crossing], right[crossing])
+    negative = -np.minimum(left[crossing], right[crossing])
+    with np.errstate(over="ignore"):
+        forbidden_fraction = 1.0 / (1.0 + negative / positive)
+    mean_root[crossing] *= forbidden_fraction
+    prefactor = math.sqrt(2.0 * mass * ELECTRON_MASS_KG * Q) / HBAR_J_S
+    return prefactor * mean_root * np.diff(x)[None, :]
+
+
 def wkb_action(
     positions_m: np.ndarray,
     barrier_eV: np.ndarray,
@@ -117,22 +158,15 @@ def wkb_action(
 ) -> float:
     """Integrate ``kappa`` over the classically forbidden region.
 
-    The integrand is clipped at the turning points rather than the integration
-    limits being solved for, so the result is a plain quadrature of a
-    continuous, non-negative function. That is deliberately simple; the price
-    is the square-root turning-point behaviour, whose mesh convergence the
-    channel tests measure instead of assuming.
+    The provided band profile is piecewise linear; its turning-point portions
+    are integrated analytically. Refining a nonlinear physical band still
+    requires convergence of that piecewise-linear representation.
     """
 
-    x = np.asarray(positions_m, dtype=float)
-    if x.ndim != 1 or x.size < 2 or not np.all(np.isfinite(x)):
-        raise WKBTunnellingError("positions_m must be a finite 1-D grid")
-    if np.any(np.diff(x) <= 0.0):
-        raise WKBTunnellingError("positions_m must strictly increase")
-    kappa = decay_constant_per_m(barrier_eV, energy_eV, effective_mass_rel)
-    if kappa.shape != x.shape:
-        raise WKBTunnellingError("barrier profile must match positions_m")
-    return float(np.trapezoid(kappa, x))
+    actions = piecewise_linear_wkb_segment_actions(
+        positions_m, barrier_eV, np.array([float(energy_eV)]), effective_mass_rel,
+    )
+    return float(np.sum(actions[0]))
 
 
 def forbidden_run(
@@ -350,9 +384,8 @@ def windowed_wkb_action(
         return 0.0
     low, high = bounds
     x = np.asarray(positions_m, dtype=float)
-    if high - low < 1:
-        # A single forbidden node carries no width on this grid.
-        return 0.0
+    low = max(low - 1, 0)
+    high = min(high + 1, x.size - 1)
     return wkb_action(
         x[low : high + 1],
         np.asarray(barrier_eV, dtype=float)[low : high + 1],
@@ -732,6 +765,8 @@ def reciprocal_net_flux(
     left_occupation: np.ndarray,
     right_occupation: np.ndarray,
     prefactor_m2_s_eV: float,
+    *,
+    quadrature_weights_eV: np.ndarray | None = None,
 ) -> ReciprocalFlux:
     """Combine one transmission with two occupations in detailed-balance form.
 
@@ -764,6 +799,16 @@ def reciprocal_net_flux(
     prefactor = float(prefactor_m2_s_eV)
     if not math.isfinite(prefactor) or prefactor < 0.0:
         raise WKBTunnellingError("prefactor_m2_s_eV must be finite and non-negative")
+    if quadrature_weights_eV is None:
+        def integrate(values):
+            return float(np.trapezoid(values, energies))
+    else:
+        weights = np.asarray(quadrature_weights_eV, dtype=float)
+        if weights.shape != energies.shape or not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
+            raise WKBTunnellingError("quadrature weights must be finite, nonnegative and match energies")
+
+        def integrate(values):
+            return float(np.dot(weights, values))
     spectral = prefactor * transmission_values * (left - right)
     return ReciprocalFlux(
         energies_eV=_readonly(energies),
@@ -771,13 +816,9 @@ def reciprocal_net_flux(
         left_occupation=_readonly(left),
         right_occupation=_readonly(right),
         spectral_flux=_readonly(spectral),
-        net_flux_m2_s=float(np.trapezoid(spectral, energies)),
-        forward_flux_m2_s=float(
-            np.trapezoid(prefactor * transmission_values * left, energies)
-        ),
-        reverse_flux_m2_s=float(
-            np.trapezoid(prefactor * transmission_values * right, energies)
-        ),
+        net_flux_m2_s=integrate(spectral),
+        forward_flux_m2_s=integrate(prefactor * transmission_values * left),
+        reverse_flux_m2_s=integrate(prefactor * transmission_values * right),
     )
 
 
@@ -799,6 +840,7 @@ __all__ = [
     "WKBValidity",
     "decay_constant_per_m",
     "forbidden_run",
+    "piecewise_linear_wkb_segment_actions",
     "reciprocal_net_flux",
     "triangular_barrier_action",
     "wkb_action",

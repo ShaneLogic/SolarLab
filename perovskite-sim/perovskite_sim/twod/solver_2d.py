@@ -111,19 +111,23 @@ class MaterialArrays2D:
     poisson_factor: Poisson2DFactor
     layer_role_per_y: tuple[str, ...]
     # --- Stage B(c.1): Robin / selective contacts --------------------------------
-    # has_selective_contacts is True iff any of the four S values is not None on
-    # the originating DeviceStack.  S values default to 0.0 (zero = Neumann /
-    # blocking; Dirichlet ohmic behaviour is restored via the assemble_rhs_2d
-    # guard when has_selective_contacts is False).
+    # None pins a reservoir density; zero blocks that carrier. Effective S
+    # values inherit the 1D mode and explicit flat-band-contact policy.
     #
     # "left/right" are 1D transport-axis names inherited from DeviceStack.
     # In 2D the transport axis is y, so left→top (y=0, HTL) and right→bottom
     # (y=Ny-1, ETL).  The DeviceStack field names are intentionally unchanged.
     has_selective_contacts: bool = False
-    S_n_top: float = 0.0   # electron SRV at y=0  (HTL); from DeviceStack.S_n_left
-    S_p_top: float = 0.0   # hole    SRV at y=0  (HTL); from DeviceStack.S_p_left
-    S_n_bot: float = 0.0   # electron SRV at y=Ny-1 (ETL); from DeviceStack.S_n_right
-    S_p_bot: float = 0.0   # hole    SRV at y=Ny-1 (ETL); from DeviceStack.S_p_right
+    S_n_top: float | None = None
+    S_p_top: float | None = None
+    S_n_bot: float | None = None
+    S_p_bot: float | None = None
+    chi_phys: np.ndarray | None = None
+    Eg_phys: np.ndarray | None = None
+    N_C_node: np.ndarray | None = None
+    N_V_node: np.ndarray | None = None
+    te_physical_norm: bool = False
+    te_softness: float = 0.0
     # --- Stage B(c.2): Field-dependent mobility μ(E) ----------------------------
     # Face-normal formulation: x-faces use only |E_x_face|, y-faces use only
     # |E_y_face|. See docs/TwodTransportContract.md#field-dependent-mobility.
@@ -178,6 +182,16 @@ class MaterialArrays2D:
     # Explicit research-only clamp-passive cross-node interface-SRH sheets.
     # Empty preserves the historical bulk/GB-only 2D recombination path.
     interface_srh_couplings: tuple[TwoSidedInterfaceSRHCoupling2D, ...] = ()
+
+    @property
+    def thermionic_normalization_status(self) -> str:
+        from perovskite_sim.physics.thermionic_transport import thermionic_normalization_status
+
+        return thermionic_normalization_status({
+            "interface_faces": self.interface_y_faces,
+            "te_physical_norm": self.te_physical_norm,
+            "N_C_node": self.N_C_node, "N_V_node": self.N_V_node,
+        })
 
 
 def build_material_arrays_2d(
@@ -374,26 +388,10 @@ def build_material_arrays_2d(
     V_bi = float(mat1d.V_bi_bc)
     junction_polarity = float(mat1d.junction_polarity)
 
-    # Selective contacts: mirror the 1D mol.py:516–524 gating exactly. The
-    # tier flag is a ceiling — when sim_mode.use_selective_contacts is False
-    # (LEGACY tier) the Robin path stays off even if the stack supplies S
-    # values. This preserves the "tier as ceiling" invariant pinned by the
-    # 1D test_tier_regression suite.
-    from perovskite_sim.models.mode import resolve_mode
-    sim_mode = resolve_mode(getattr(stack, "mode", "full"))
-    _has_sc = bool(
-        sim_mode.use_selective_contacts
-        and (
-            stack.S_n_left  is not None
-            or stack.S_p_left  is not None
-            or stack.S_n_right is not None
-            or stack.S_p_right is not None
-        )
-    )
-    S_n_top = float(stack.S_n_left)  if stack.S_n_left  is not None else 0.0
-    S_p_top = float(stack.S_p_left)  if stack.S_p_left  is not None else 0.0
-    S_n_bot = float(stack.S_n_right) if stack.S_n_right is not None else 0.0
-    S_p_bot = float(stack.S_p_right) if stack.S_p_right is not None else 0.0
+    # Preserve the resolved 1D boundary type for each carrier separately.
+    _has_sc = mat1d.has_selective_contacts
+    S_n_top, S_p_top = mat1d.S_n_L, mat1d.S_p_L
+    S_n_bot, S_p_bot = mat1d.S_n_R, mat1d.S_p_R
 
     # --- Stage B(c.2): Field-dependent mobility μ(E) ----------------------------
     # Build per-node v_sat / ct_beta / pf_gamma arrays from layer params via the
@@ -552,6 +550,12 @@ def build_material_arrays_2d(
         has_selective_contacts=_has_sc,
         S_n_top=S_n_top, S_p_top=S_p_top,
         S_n_bot=S_n_bot, S_p_bot=S_p_bot,
+        chi_phys=None if mat1d.chi_phys is None else extrude(mat1d.chi_phys),
+        Eg_phys=None if mat1d.Eg_phys is None else extrude(mat1d.Eg_phys),
+        N_C_node=None if mat1d.N_C_node is None else extrude(mat1d.N_C_node),
+        N_V_node=None if mat1d.N_V_node is None else extrude(mat1d.N_V_node),
+        te_physical_norm=mat1d.te_physical_norm,
+        te_softness=mat1d.te_softness,
         has_field_mobility=_has_field_mobility,
         v_sat_n_x_face=v_sat_n_x_face, v_sat_p_x_face=v_sat_p_x_face,
         ct_beta_n_x_face=ct_beta_n_x_face, ct_beta_p_x_face=ct_beta_p_x_face,
@@ -661,6 +665,8 @@ def _diffusion_per_node(
 def _unpack_state_2d(
     y_state: np.ndarray,
     mat: MaterialArrays2D,
+    *,
+    pin_contacts: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Unpack the exact frozen or single-mobile-ion 2D state layout."""
     g = mat.grid
@@ -677,6 +683,16 @@ def _unpack_state_2d(
     n = state[:Nn].reshape(shape)
     p = state[Nn:2 * Nn].reshape(shape)
     P_ion = state[2 * Nn:].reshape(shape) if mat.has_mobile_ions else None
+    if pin_contacts:
+        n, p = n.copy(), p.copy()
+        for values, row, velocity, equilibrium in (
+            (n, 0, mat.S_n_top, mat.n_eq_left),
+            (p, 0, mat.S_p_top, mat.p_eq_left),
+            (n, -1, mat.S_n_bot, mat.n_eq_right),
+            (p, -1, mat.S_p_bot, mat.p_eq_right),
+        ):
+            if not mat.has_selective_contacts or velocity is None:
+                values[row] = equilibrium
     return n, p, P_ion
 
 
@@ -745,29 +761,19 @@ def _apply_robin_contacts_2d(
     hy_top = (mat.grid.y[1]  - mat.grid.y[0])  / 2.0
     hy_bot = (mat.grid.y[-1] - mat.grid.y[-2]) / 2.0
 
-    # --- top contact (y=0, HTL, side="left") --------------------------------
-    # selective_contact_flux(carrier="n", side="left") = +Q·S·(n − n_eq)
-    # selective_contact_flux(carrier="p", side="left") = −Q·S·(p − p_eq)
-    J_n_top = selective_contact_flux(
-        n[0, :], mat.n_eq_left, mat.S_n_top, carrier="n", side="left",
-    )
-    J_p_top = selective_contact_flux(
-        p[0, :], mat.p_eq_left, mat.S_p_top, carrier="p", side="left",
-    )
-    dn[0, :] -= J_n_top / (Q * hy_top)   # subtract: dn = +div_n/Q
-    dp[0, :] += J_p_top / (Q * hy_top)   # add:      dp = −div_p/Q (opposite sign)
-
-    # --- bottom contact (y=Ny−1, ETL, side="right") -------------------------
-    # selective_contact_flux(carrier="n", side="right") = −Q·S·(n − n_eq)
-    # selective_contact_flux(carrier="p", side="right") = +Q·S·(p − p_eq)
-    J_n_bot = selective_contact_flux(
-        n[-1, :], mat.n_eq_right, mat.S_n_bot, carrier="n", side="right",
-    )
-    J_p_bot = selective_contact_flux(
-        p[-1, :], mat.p_eq_right, mat.S_p_bot, carrier="p", side="right",
-    )
-    dn[-1, :] += J_n_bot / (Q * hy_bot)   # add:      J_n_bot < 0 when n > n_eq
-    dp[-1, :] -= J_p_bot / (Q * hy_bot)   # subtract: J_p_bot > 0 when p > p_eq
+    for rate, density, row, equilibrium, velocity, carrier, side, sign, width in (
+        (dn, n, 0, mat.n_eq_left, mat.S_n_top, "n", "left", -1, hy_top),
+        (dp, p, 0, mat.p_eq_left, mat.S_p_top, "p", "left", 1, hy_top),
+        (dn, n, -1, mat.n_eq_right, mat.S_n_bot, "n", "right", 1, hy_bot),
+        (dp, p, -1, mat.p_eq_right, mat.S_p_bot, "p", "right", -1, hy_bot),
+    ):
+        if velocity is None:
+            rate[row] = 0.0
+        else:
+            flux = selective_contact_flux(
+                density[row], equilibrium, velocity, carrier=carrier, side=side,
+            )
+            rate[row] += sign * flux / (Q * width)
 
     return dn, dp
 
@@ -955,6 +961,10 @@ def assemble_rhs_2d(
             A_star_n=mat.A_star_n,
             A_star_p=mat.A_star_p,
             T=mat.T_device,
+            chi_te=mat.chi_phys, Eg_te=mat.Eg_phys,
+            te_physical_norm=mat.te_physical_norm,
+            N_C_node=mat.N_C_node, N_V_node=mat.N_V_node,
+            te_softness=mat.te_softness,
             D_n_x_face=d_eff.D_n_x, D_n_y_face=d_eff.D_n_y,
             D_p_x_face=d_eff.D_p_x, D_p_y_face=d_eff.D_p_y,
             D_n_wrap=d_eff.D_n_wrap, D_p_wrap=d_eff.D_p_wrap,
@@ -972,6 +982,10 @@ def assemble_rhs_2d(
             A_star_n=mat.A_star_n,
             A_star_p=mat.A_star_p,
             T=mat.T_device,
+            chi_te=mat.chi_phys, Eg_te=mat.Eg_phys,
+            te_physical_norm=mat.te_physical_norm,
+            N_C_node=mat.N_C_node, N_V_node=mat.N_V_node,
+            te_softness=mat.te_softness,
         )
 
     if mat.interface_srh_couplings:
@@ -985,9 +999,7 @@ def assemble_rhs_2d(
         dp -= interface_report.volumetric_sink_m3_s
 
     # --- Contact boundary conditions ---------------------------------------
-    # Dirichlet (ohmic) path: pin all four boundary rows to zero (unchanged
-    # from Stage A).  Robin path: apply surface-recombination flux correction
-    # at each boundary row; the four pins are skipped entirely.
+    # Each channel retains either its density pin or its exchange flux.
     if mat.has_selective_contacts:
         dn, dp = _apply_robin_contacts_2d(dn, dp, n, p, mat)
     else:
@@ -1100,7 +1112,7 @@ def run_transient_2d(
             "return_ion_diagnostics requires single-mobile-ion dynamics"
         )
     if getattr(mat, "has_mobile_ions", False):
-        initial_n, initial_p, initial_P = _unpack_state_2d(state0, mat)
+        initial_n, initial_p, initial_P = _unpack_state_2d(state0, mat, pin_contacts=False)
         if initial_P is None or mat.P_lim_2d is None:
             raise ValueError("mobile-ion material arrays are incomplete")
         if not np.isfinite(ion_inventory_rtol) or ion_inventory_rtol < 0.0:
@@ -1114,6 +1126,11 @@ def run_transient_2d(
                 "2D mobile-ion initial density must lie within site limits"
             )
 
+    initial_n, initial_p, initial_P = _unpack_state_2d(state0, mat)
+    state0 = np.concatenate([
+        initial_n.ravel(), initial_p.ravel(),
+        *([] if initial_P is None else [initial_P.ravel()]),
+    ])
     solver_atol = atol
     if isinstance(atol, ComponentwiseAtol):
         solver_atol = build_componentwise_atol_2d(
@@ -1162,7 +1179,7 @@ def run_transient_2d(
         return terminal
 
     _, _, initial_P = _unpack_state_2d(state0, mat)
-    terminal_n, terminal_p, terminal_P = _unpack_state_2d(terminal, mat)
+    terminal_n, terminal_p, terminal_P = _unpack_state_2d(terminal, mat, pin_contacts=False)
     if initial_P is None or terminal_P is None or mat.P_lim_2d is None:
         raise RuntimeError("mobile-ion terminal diagnostics are incomplete")
     diagnostics = assess_mobile_ion_terminal_2d(
@@ -1255,6 +1272,10 @@ def extract_snapshot_2d(
         A_star_n=mat.A_star_n,
         A_star_p=mat.A_star_p,
         T=mat.T_device,
+        chi_te=mat.chi_phys, Eg_te=mat.Eg_phys,
+        te_physical_norm=mat.te_physical_norm,
+        N_C_node=mat.N_C_node, N_V_node=mat.N_V_node,
+        te_softness=mat.te_softness,
     )
 
     return SpatialSnapshot2D(

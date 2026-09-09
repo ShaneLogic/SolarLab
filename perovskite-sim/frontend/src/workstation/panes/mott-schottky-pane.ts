@@ -12,12 +12,12 @@ export interface MottSchottkyPaneOptions {
 export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottkyPaneOptions): void {
   container.innerHTML = `
     <div class="card">
-      <h3>Mott\u2013Schottky (C\u2013V) Parameters</h3>
+      <h3>Sweep settings</h3>
       <div class="form-grid">
         ${numField('ms-N', 'N<sub>grid</sub>', 40, '1')}
         ${numField('ms-vlo', 'V<sub>lo</sub> (V)', -0.3, 'any')}
         ${numField('ms-vhi', 'V<sub>hi</sub> (V)', 0.4, 'any')}
-        ${numField('ms-npts', 'n<sub>points</sub>', 8, '1')}
+        ${numField('ms-npts', 'Voltage points', 8, '1')}
         ${numField('ms-freq', 'f (Hz)', 1e6, 'any')}
         ${numField('ms-dV', '\u03b4V (V)', 0.01, 'any')}
       </div>
@@ -26,7 +26,7 @@ export function mountMottSchottkyPane(container: HTMLElement, opts: MottSchottky
         <span class="status" id="status-ms"></span>
       </div>
       <div id="progress-ms"></div>
-      <div class="pane-hint">Dark C\u2013V sweep at fixed <em>f</em> followed by a linear fit of 1/C\u00b2 vs V. The p\u2013n-corrected intercept gives apparent <em>V<sub>bi,app</sub></em>; slope yields effective doping <em>N<sub>eff</sub></em>.</div>
+      <div class="pane-hint" title="Dark C-V at fixed frequency. The p-n-corrected intercept of a linear 1/C²-V fit gives apparent V_bi; the slope gives effective doping."><strong>Fit:</strong> apparent <i>V</i><sub>bi,app</sub> and effective <i>N</i><sub>eff</sub>.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

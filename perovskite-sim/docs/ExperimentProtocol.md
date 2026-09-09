@@ -86,6 +86,14 @@ state-advancing search field changes the protocol hash. J-V scan history
 records all executed point dwells on both branches (`2 * n_points * dwell`),
 including the first point of each branch.
 
+The current TPV/Suns-Voc search requires a genuine current bracket and keeps
+every bracket voltage paired with its evaluated state. A missing bracket
+raises an error. The declared history advances candidates from the retained
+lower-bracket state; historical serialized search options remain readable
+but do not authorize the retired fallback behavior. After TPV preparation,
+the pulse and matched unpulsed reference separately evolve their open-circuit
+terminal charge. See [TpvOpenCircuitContract.md](TpvOpenCircuitContract.md).
+
 The direct endpoints and asynchronous `/api/jobs` path apply the same semantic
 gate. For J-V, impedance, TPV, Suns-Voc and EQE, an explicit protocol that does
 not match normalized request parameters is rejected with HTTP 422 before the

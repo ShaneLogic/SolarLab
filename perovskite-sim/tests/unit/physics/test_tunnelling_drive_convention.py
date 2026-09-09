@@ -1,4 +1,4 @@
-"""D8-E2R: what the QF lane actually hands the tunnelling channels.
+"""D8-E2R retraction controls and the repaired physical-energy interface.
 
 The D8-E1/E2 headline numbers — "the channel carries ~20 % of the terminal
 current" and "equilibrium net flux is exactly zero by reciprocity" — were both
@@ -17,8 +17,8 @@ which, since ``E_C = -(phi + chi)`` and ``E_Fn = E_C + V_T*ln(n/N_C)``, is
     qfn0 = E_Fn + V_T*ln(N_C)
 
 That is correct *for the solver*: it only ever uses ``diff(qfn0)/V_T``, where
-the constant offset cancels. It is the channel wiring that misreads it — the
-channels feed it to a Fermi-Dirac occupation as an absolute level.
+the constant offset cancels. The historical channel wiring misread it and
+fed it to a Fermi-Dirac occupation as an absolute level.
 
 Why it cannot be defended as a convention
 -----------------------------------------
@@ -38,17 +38,14 @@ import numpy as np
 import pytest
 
 from perovskite_sim.discretization.grid import Layer, multilayer_grid
+from perovskite_sim.constants import Q, V_T
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.models.device import electrical_layers
-from perovskite_sim.physics.tunneling_channels import (
-    _fermi,
-    _turning_point_levels,
-    local_barrier_window,
-)
+from perovskite_sim.physics.tunneling_channels import _fermi
 
 
 LANE_CONFIG = "tests/fixtures/configs/wkb_tunnelling_intraband_spike.yaml"
-THERMAL_VOLTAGE_V = 0.025851999786187952
+THERMAL_VOLTAGE_V = V_T
 
 
 def _project_root():
@@ -90,25 +87,26 @@ def _true_level(captured, result, stack, grid):
 
     potential = np.asarray(captured["potential_V"], dtype=float)
     affinity = np.asarray(captured["affinity_eV"], dtype=float)
-    density = np.asarray(result.y[: grid.size], dtype=float)
+    density = np.asarray(captured["electron_density_m3"], dtype=float)
     dos = electrical_layers(stack)[0].params.Nc300
     return -(potential + affinity) + THERMAL_VOLTAGE_V * np.log(
-        np.maximum(density, 1.0) / dos
+        density / dos
     )
 
 
 @pytest.mark.slow
-def test_the_channel_is_handed_a_potential_not_a_level():
-    """Frozen measurement of the offset, to the DOS term it equals."""
+def test_physical_levels_replace_the_historical_offset_at_the_channel():
+    """Retain the old offset identity without requiring the wiring bug."""
 
     result, captured, grid, stack = _solve_and_capture(0.2)
     passed = np.asarray(captured["electron_quasi_fermi_eV"], dtype=float)
     true_level = _true_level(captured, result, stack, grid)
-    offset = passed - true_level
+    offset = result.electron_quasi_fermi_potential_V - true_level
     dos = electrical_layers(stack)[0].params.Nc300
     expected = THERMAL_VOLTAGE_V * math.log(dos)
 
     assert result.certified is True
+    np.testing.assert_allclose(passed, true_level, rtol=0.0, atol=1e-12)
     assert float(np.max(offset)) == pytest.approx(expected, rel=1.0e-9)
     # Uniform here ONLY because every layer of this config carries the same
     # N_C. At a DOS-contrast heterointerface — which is the case a tunnelling
@@ -118,8 +116,8 @@ def test_the_channel_is_handed_a_potential_not_a_level():
 
 
 @pytest.mark.slow
-def test_the_offset_puts_the_level_on_the_wrong_side_of_the_band_edge():
-    """Not a small error: it changes which regime the occupation is in."""
+def test_corrected_level_and_historical_potential_have_distinct_occupations():
+    """The physical dilute state must not become an occupied-above-edge state."""
 
     result, captured, grid, stack = _solve_and_capture(0.2)
     face = captured["face"]
@@ -129,10 +127,11 @@ def test_the_offset_puts_the_level_on_the_wrong_side_of_the_band_edge():
     passed = np.asarray(captured["electron_quasi_fermi_eV"], dtype=float)
     true_level = _true_level(captured, result, stack, grid)
 
-    # The level handed over sits ABOVE the conduction edge; the real one sits
-    # below it. The Fermi factor is exponential in exactly this difference.
-    assert passed[face] - conduction[face] > 0.5
+    # The historical potential sits above the conduction edge; the repaired
+    # physical level lies below it and gives dilute occupations.
+    assert result.electron_quasi_fermi_potential_V[face] - conduction[face] > 0.5
     assert true_level[face] - conduction[face] < -0.4
+    assert passed[face] == pytest.approx(true_level[face], abs=1e-12)
 
 
 def test_the_offset_is_only_a_constant_factor_under_boltzmann():
@@ -174,66 +173,29 @@ def test_the_offset_is_only_a_constant_factor_under_boltzmann():
 
 
 @pytest.mark.slow
-def test_the_equilibrium_zero_is_saturation_not_reciprocity():
-    """The registered exact-zero gate passes for the wrong reason.
-
-    `docs/WkbTunnellingFamilyContract.md` gated equilibrium net flux as
-    exact "because a threshold there would hide a sign or bookkeeping error".
-    Measured, it passes because both Fermi factors round to the SAME double
-    near 1.0: the residual equilibrium quasi-Fermi gradient is ~4e-13 eV, which
-    perturbs an occupation of ~1 by ~1e-20 — below the ~2e-16 ulp there. Read
-    at the true level the occupation is ~3e-12, where the ulp is ~1e-27 and
-    the same gradient IS resolvable.
-
-    So the gate cannot fail, and a gate that cannot fail is not evidence.
-    """
+def test_equilibrium_uses_nonsaturated_occupations_with_resolvable_sensitivity():
+    """A controlled perturbation distinguishes reciprocity from saturation."""
 
     result, captured, grid, stack = _solve_and_capture(0.0)
-    face = captured["face"]
-    potential = np.asarray(captured["potential_V"], dtype=float)
-    affinity = np.asarray(captured["affinity_eV"], dtype=float)
-    conduction = -(potential + affinity)
     passed = np.asarray(captured["electron_quasi_fermi_eV"], dtype=float)
     true_level = _true_level(captured, result, stack, grid)
-
-    peak, base = local_barrier_window(conduction, face)
-    energies = np.linspace(base, peak, 96)
-
-    left_passed, right_passed = _turning_point_levels(
-        conduction, energies, face, passed
-    )
-    left_true, right_true = _turning_point_levels(
-        conduction, energies, face, true_level
-    )
-    occupation_gap_passed = float(
-        np.max(
-            np.abs(
-                _fermi(energies, left_passed, THERMAL_VOLTAGE_V)
-                - _fermi(energies, right_passed, THERMAL_VOLTAGE_V)
-            )
-        )
-    )
-    occupation_gap_true = float(
-        np.max(
-            np.abs(
-                _fermi(energies, left_true, THERMAL_VOLTAGE_V)
-                - _fermi(energies, right_true, THERMAL_VOLTAGE_V)
-            )
-        )
-    )
-
-    # The equilibrium quasi-Fermi profile is flat only to solver residual, not
-    # exactly — so a discriminating gate must see something non-zero here.
-    assert float(np.max(passed) - np.min(passed)) > 0.0
-
-    # As wired: bitwise-equal occupations, hence the "exact" zero.
-    assert occupation_gap_passed == 0.0
-    # At the true level: the same physical state resolves a non-zero gap.
-    assert occupation_gap_true > 0.0
-
-    # And the reported flux is correspondingly, unfalsifiably, exactly zero.
     diagnostics = result.tunnelling_channel_diagnostics
-    assert diagnostics.channel_net_flux_m2_s[0] == 0.0
+    path = diagnostics.intraband_path
+    np.testing.assert_allclose(passed, true_level, rtol=0.0, atol=1e-12)
+    assert np.all((path.flux.left_occupation > 0.0) & (path.flux.left_occupation < 1e-3))
+    assert abs(Q * diagnostics.channel_net_flux_m2_s[0]) < 1e-8
+    energies = path.flux.energies_eV
+    level = float(np.mean(true_level))
+    old_offset = THERMAL_VOLTAGE_V * math.log(electrical_layers(stack)[0].params.Nc300)
+    perturbation = 1e-10
+    physical = _fermi(energies, level, THERMAL_VOLTAGE_V)
+    physical_shift = _fermi(energies, level + perturbation, THERMAL_VOLTAGE_V)
+    legacy = _fermi(energies, level + old_offset, THERMAL_VOLTAGE_V)
+    legacy_shift = _fermi(energies, level + old_offset + perturbation, THERMAL_VOLTAGE_V)
+    physical_response = float(np.max(np.abs(physical_shift - physical) / physical))
+    legacy_response = float(np.max(np.abs(legacy_shift - legacy) / legacy))
+    assert physical_response > 1e-9
+    assert legacy_response < 1e-4 * physical_response
 
 
 def test_reciprocity_itself_is_still_exact_when_the_occupations_are_equal():

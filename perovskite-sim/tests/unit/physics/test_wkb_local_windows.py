@@ -51,18 +51,13 @@ def test_forbidden_run_isolates_the_barrier_containing_the_face():
     assert high_a < low_b, "the two runs must not overlap"
     assert low_a <= first_face <= high_a
     assert low_b <= second_face <= high_b
-    # The whole-grid action sums both barriers; each windowed one must carry
-    # only its own. The sum is a little SMALLER than the whole rather than
-    # equal to it: the full integral also picks up the trapezoid segments that
-    # bridge each run's last forbidden node to the first allowed node, where
-    # kappa is already zero. That difference is the turning-point tail, not a
-    # third barrier, so it is bounded rather than pinned.
+    # Each window includes its turning-point flanks; the intervening allowed
+    # segments have zero action, so the two contributions sum to the whole.
     whole = wkb_action(x, barrier, energy, MASS_REL)
     part_a = windowed_wkb_action(x, barrier, energy, MASS_REL, first_face)
     part_b = windowed_wkb_action(x, barrier, energy, MASS_REL, second_face)
     assert part_a < whole and part_b < whole
-    assert part_a + part_b <= whole
-    assert part_a + part_b == pytest.approx(whole, rel=0.05)
+    assert part_a + part_b == pytest.approx(whole, rel=1e-13)
 
 
 def test_a_face_outside_every_forbidden_region_carries_no_action():

@@ -1,4 +1,4 @@
-import { GoldenLayout } from 'golden-layout'
+import { ContentItem, GoldenLayout } from 'golden-layout'
 import type { LayoutConfig, ResolvedLayoutConfig } from 'golden-layout'
 import { getConfig, listConfigs } from '../api'
 import type { Workspace, Device, Run, ExperimentKind } from './types'
@@ -21,7 +21,7 @@ import type { ConsoleHandle } from './console'
 import { mountDevicePane } from './panes/device-pane'
 import type { DevicePanel } from '../device-panel'
 import { mountHelpPane } from './panes/help-pane'
-import { mountExperimentPane } from './panes/experiment-pane'
+import { mountExperimentPane, type ExperimentPaneHandle } from './panes/experiment-pane'
 import { mountTandemPane } from './panes/tandem-pane'
 import { mountMainPlotPane } from './panes/main-plot-pane'
 import type { MainPlotHandle } from './panes/main-plot-pane'
@@ -76,13 +76,13 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   root.innerHTML = `
     <header class="workstation-header">
       <div>
-        <h1>Thin-Film Solar Cell Simulator</h1>
-        <p class="subtitle">1D Drift-Diffusion + Poisson + Mobile Ions · Perovskite · CIGS · c-Si</p>
+        <h1>SolarLab</h1>
+        <p class="subtitle">Solar cell simulator</p>
       </div>
       <div class="workstation-header-actions">
         <button type="button" class="btn btn-ghost workstation-sidebar-toggle" id="ws-sidebar-toggle" aria-controls="ws-tree" aria-expanded="false" aria-label="Show workspace tree" title="Show workspace tree">☰</button>
-        <button type="button" class="btn btn-ghost" id="ws-reset-layout" title="Restore all panes to the default dock layout">Reset Layout</button>
-        <button type="button" class="btn btn-ghost btn-danger-ghost" id="ws-clear-workspace" title="Clear all devices, experiments, and runs (resets localStorage)">Clear Workspace</button>
+        <button type="button" class="btn btn-ghost" id="ws-reset-layout" title="Restore the default panel arrangement">Reset Layout</button>
+        <button type="button" class="btn btn-ghost btn-danger-ghost" id="ws-clear-workspace" title="Delete all devices, experiments and saved runs from this browser">Clear Workspace</button>
       </div>
     </header>
     <div class="workstation-body">
@@ -128,6 +128,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   // --- helpers wired into pane factories ---
   let mainPlot: MainPlotHandle | null = null
   let devicePanel: DevicePanel | null = null
+  let experimentPane: ExperimentPaneHandle | null = null
 
   function activeDeviceAccessor(): { id: string; config: import('../types').DeviceConfig } | null {
     const id = workspace.activeDeviceId
@@ -158,20 +159,31 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     refreshTree()
     mainPlot?.update(workspace)
     focusComponent('main-plot')
-    consoleHandle.log(`run complete: ${kind}  (${run.activePhysics})`)
+    consoleHandle.log('Run complete', `${kind} · ${run.activePhysics}`)
   }
 
   function focusComponent(componentType: string): void {
     try {
-      const root = layout.rootItem as unknown as {
-        getItemsByFilter?: (fn: (it: { isComponent?: boolean; componentType?: string }) => boolean) => Array<{ focus?: () => void }>
-      } | undefined
-      const items = root?.getItemsByFilter?.(
-        (it) => !!it.isComponent && it.componentType === componentType,
-      ) ?? []
-      items[0]?.focus?.()
+      const pending = layout.rootItem ? [layout.rootItem] : []
+      while (pending.length > 0) {
+        const item = pending.shift()!
+        if (ContentItem.isComponentItem(item) && item.componentType === componentType) {
+          item.focus()
+          return
+        }
+        pending.push(...item.contentItems)
+      }
     } catch (e) {
       console.warn('focusComponent failed:', e)
+    }
+  }
+
+  function updateActiveDeviceEditor(): void {
+    const active = workspace.devices.find(d => d.id === workspace.activeDeviceId)
+    if (active) {
+      devicePanel?.setConfig(active.config)
+      experimentPane?.updateDevice()
+      consoleHandle.setPhysics(tierLabel(active.tier), tierPhysicsSummary(active.tier))
     }
   }
 
@@ -180,22 +192,24 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       workspace = setActiveDevice(workspace, id)
       saveWorkspace(workspace)
       refreshTree()
-      const active = workspace.devices.find(d => d.id === id)
-      if (active) {
-        devicePanel?.setConfig(active.config)
-        consoleHandle.setPhysics(tierLabel(active.tier), tierPhysicsSummary(active.tier))
-      }
+      updateActiveDeviceEditor()
+      focusComponent('device')
     },
     onSelectExperiment: (deviceId, experimentId) => {
       workspace = setActiveExperiment(workspace, deviceId, experimentId)
       saveWorkspace(workspace)
       refreshTree()
+      updateActiveDeviceEditor()
+      const experiment = workspace.devices.find(d => d.id === deviceId)
+        ?.experiments.find(e => e.id === experimentId)
+      if (experiment) experimentPane?.selectExperiment(experiment.kind)
       focusComponent('experiments')
     },
     onSelectRun: (deviceId, experimentId, runId) => {
       workspace = setActiveRun(workspace, deviceId, experimentId, runId)
       saveWorkspace(workspace)
       refreshTree()
+      updateActiveDeviceEditor()
       mainPlot?.update(workspace)
       focusComponent('main-plot')
     },
@@ -219,8 +233,9 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
       active?.config,
     ).then(panel => {
       devicePanel = panel
+      experimentPane?.updateDevice()
       // Sync device config changes (preset dropdown, manual edits) back into the workspace
-      panel.onChange((cfg) => {
+      panel.onChange((cfg, reason) => {
         const devId = workspace.activeDeviceId
         if (!devId) return
         const idx = workspace.devices.findIndex(d => d.id === devId)
@@ -231,6 +246,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         }
         const devices = workspace.devices.map((d, i) => (i === idx ? updated : d))
         workspace = { ...workspace, devices }
+        experimentPane?.updateDevice(reason === 'preset')
         saveWorkspace(workspace)
         refreshTree()
         consoleHandle.setPhysics(tierLabel(updated.tier), tierPhysicsSummary(updated.tier))
@@ -241,7 +257,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     mountHelpPane(container.element)
   })
   layout.registerComponentFactoryFunction('experiments', (container) => {
-    mountExperimentPane(container.element, {
+    experimentPane = mountExperimentPane(container.element, {
       getActiveDevice: () => activeDeviceAccessor(),
       onRunComplete: (deviceId, kind, run) => commitRun(deviceId, kind, run),
     })
@@ -254,18 +270,27 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     mainPlot.update(workspace)
   })
 
+  function loadResponsiveLayout(config: LayoutConfig): void {
+    layout.loadLayout({
+      ...config,
+      settings: { ...config.settings, responsiveMode: 'always' },
+      dimensions: { ...config.dimensions, defaultMinItemWidth: '320px' },
+    })
+    focusComponent('device')
+  }
+
   try {
     const initialLayout = restoreLayoutConfig(workspace.layout, DEFAULT_LAYOUT)
-    layout.loadLayout(initialLayout)
+    loadResponsiveLayout(initialLayout)
   } catch (e) {
     console.error('loadLayout failed, falling back to default:', e)
-    layout.loadLayout(DEFAULT_LAYOUT)
+    loadResponsiveLayout(DEFAULT_LAYOUT)
   }
 
   // Reset Layout — restore the default dock so closed panes come back.
   const resetBtn = root.querySelector<HTMLButtonElement>('#ws-reset-layout')
   resetBtn?.addEventListener('click', () => {
-    layout.loadLayout(DEFAULT_LAYOUT)
+    loadResponsiveLayout(DEFAULT_LAYOUT)
     workspace = { ...workspace, layout: null }
     saveWorkspace(workspace)
     requestAnimationFrame(() => layout.setSize(dockEl.clientWidth, dockEl.clientHeight))
@@ -287,7 +312,11 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   })
 
   // Resize handling — keep dock sized to its container
-  const resize = (): void => layout.setSize(dockEl.clientWidth, dockEl.clientHeight)
+  const resize = (): void => {
+    const focused = layout.focusedComponentItem
+    layout.setSize(dockEl.clientWidth, dockEl.clientHeight)
+    focused?.focus()
+  }
   window.addEventListener('resize', resize)
   // One synchronous resize after mount so the initial layout fills the dock.
   requestAnimationFrame(resize)

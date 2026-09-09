@@ -13,6 +13,7 @@ from perovskite_sim.solver.tolerances import (
     build_componentwise_atol_ions,
 )
 from perovskite_sim.twod import solver_2d
+from perovskite_sim.twod.grid_2d import Grid2D
 
 
 def _one_dimensional_material(N: int = 2, *, dual: bool = False):
@@ -32,6 +33,16 @@ def _one_dimensional_material(N: int = 2, *, dual: bool = False):
         n_R=10.0,
         p_R=10.0,
         ion_steric_shared_site=True,
+    )
+
+
+def _two_dimensional_material(ni):
+    return SimpleNamespace(
+        ni=ni, N_A=np.zeros_like(ni), N_D=np.zeros_like(ni),
+        grid=Grid2D(x=np.arange(ni.shape[1]), y=np.arange(ni.shape[0])),
+        has_mobile_ions=False, has_selective_contacts=True,
+        S_n_top=0.0, S_p_top=0.0, S_n_bot=0.0, S_p_bot=0.0,
+        n_eq_left=ni[0], n_eq_right=ni[-1], p_eq_left=ni[0], p_eq_right=ni[-1],
     )
 
 
@@ -287,11 +298,7 @@ def test_split_step_uses_dual_ion_vector_and_forwards_policy(monkeypatch):
 
 def test_2d_policy_flattens_n_then_p_and_reaches_solver(monkeypatch):
     ni = np.array([[10.0, 20.0], [30.0, 40.0]])
-    mat = SimpleNamespace(
-        ni=ni,
-        N_A=np.zeros_like(ni),
-        N_D=np.zeros_like(ni),
-    )
+    mat = _two_dimensional_material(ni)
     policy = ComponentwiseAtol(
         carrier_fraction=0.1,
         minimum_atol=1.0,
@@ -358,7 +365,7 @@ def test_2d_policy_rejects_invalid_mobile_ion_reference():
 
 def test_2d_scalar_default_is_unchanged(monkeypatch):
     ni = np.ones((1, 2))
-    mat = SimpleNamespace(ni=ni, N_A=np.zeros_like(ni), N_D=np.zeros_like(ni))
+    mat = _two_dimensional_material(ni)
     y0 = np.zeros(4)
     captured = []
 
@@ -425,7 +432,11 @@ def test_degradation_snapshot_tightens_componentwise_policy(monkeypatch):
     monkeypatch.setattr(
         degradation,
         "build_material_arrays",
-        lambda *_args, **_kwargs: object(),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            has_dual_ions=False, N_iface_state=0, P_lim_node=np.full(2, np.inf),
+            P_lim_neg_node=None, ion_steric_diffusion_only=False,
+            ion_steric_shared_site=False,
+        ),
     )
 
     def fake_run_transient(*_args, **kwargs):
@@ -433,7 +444,12 @@ def test_degradation_snapshot_tightens_componentwise_policy(monkeypatch):
         return SimpleNamespace(success=True, y=y_ref[:, None])
 
     monkeypatch.setattr(degradation, "run_transient", fake_run_transient)
-    monkeypatch.setattr(degradation, "_compute_current", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(degradation, "solve_steady_state", lambda *_a, **_k: SimpleNamespace(
+        y=y_ref.copy(), converged=True, residual=0.0, continuity_current_bound=0.0,
+    ))
+    monkeypatch.setattr(degradation, "compute_current_components", lambda *_a, **_k: SimpleNamespace(
+        J_total=np.zeros(1), J_ion=np.zeros(1),
+    ))
     monkeypatch.setattr(
         degradation,
         "compute_metrics",

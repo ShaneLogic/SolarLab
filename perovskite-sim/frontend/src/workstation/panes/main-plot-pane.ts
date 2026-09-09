@@ -2,11 +2,9 @@ import Plotly from 'plotly.js-basic-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
 import {
-  baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle,
-  // Publication-theme additions (Nature-style single-panel mode).
+  baseLayout, plotConfig, LINE, axisTitle,
   publicationLayout, publicationAxis, publicationConfig,
   publicationTraceStyle, metricAnnotation,
-  readPlotStyleMode,
   PUBLICATION_PALETTE, PUBLICATION_FONT_FAMILY, PUBLICATION_LINE_WIDTH,
 } from '../../plot-theme'
 import { metricCard } from '../../ui-helpers'
@@ -50,7 +48,7 @@ export interface MainPlotHandle {
 export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
   container.innerHTML = `
     <div class="main-plot-pane">
-      <div class="main-plot-header" id="mpp-header">(no active run)</div>
+      <div class="main-plot-header" id="mpp-header">Results</div>
       <div id="mpp-plot" class="plot-container"></div>
     </div>`
 
@@ -58,27 +56,31 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
   const plotEl = container.querySelector<HTMLDivElement>('#mpp-plot')!
 
   function clear(msg: string): void {
-    header.textContent = msg
-    disconnectDynamicDefectTransientResizeObserver(plotEl)
+    header.textContent = 'Results'
+    header.removeAttribute('title')
+    disconnectPlotResizeObserver(plotEl)
     Plotly.purge(plotEl)
-    plotEl.innerHTML = '<div class="plot-empty">Run an experiment to see results here.</div>'
+    plotEl.innerHTML = '<div class="plot-empty"></div>'
+    plotEl.firstElementChild!.textContent = msg
   }
 
-  clear('(no active run)')
+  clear('No result selected')
 
   return {
     update(ws: Workspace) {
       if (!ws.activeRunId || !ws.activeDeviceId || !ws.activeExperimentId) {
-        clear('(no active run)')
+        clear('No result selected')
         return
       }
       const run = findRun(ws, ws.activeDeviceId, ws.activeExperimentId, ws.activeRunId)
       if (!run) {
-        clear('(run not found)')
+        clear('Result not found')
         return
       }
-      header.textContent = `${run.activePhysics}  ·  ${new Date(run.timestamp).toLocaleString()}`
-      disconnectDynamicDefectTransientResizeObserver(plotEl)
+      const runMode = run.deviceSnapshot?.device?.mode
+      header.textContent = `${runMode ? `${runMode.toUpperCase()} · ` : ''}${new Date(run.timestamp).toLocaleString()}`
+      header.title = run.activePhysics
+      disconnectPlotResizeObserver(plotEl)
       switch (run.result.kind) {
         case 'jv':
           renderJV(plotEl, run.result.data)
@@ -138,39 +140,6 @@ export function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): vo
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('voc-grain-sweep-render')
 
-  const _vgsStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar — always rendered above the plot.
-  const _vgsToolbar = document.createElement('div')
-  _vgsToolbar.className = 'plot-toolbar'
-  _vgsToolbar.setAttribute('data-test', 'voc-grain-sweep-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'voc-grain-sweep-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'voc-grain-sweep-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'voc-grain-sweep-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _vgsStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderVocGrainSweep(el, r)
-    })
-    _vgsToolbar.appendChild(styleLabel)
-    _vgsToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_vgsToolbar)
-
   const _vgsPlotDiv = document.createElement('div')
   _vgsPlotDiv.className = 'voc-grain-sweep-plot'
   _vgsPlotDiv.id = 'voc-grain-sweep-plot-inner'
@@ -185,86 +154,43 @@ export function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): vo
     )
     .join('<br>')
 
-  if (_vgsStyle === 'publication') {
-    Plotly.newPlot(
-      _vgsPlotDiv,
-      [
+  Plotly.newPlot(
+    _vgsPlotDiv,
+    [
+      {
+        x: r.grain_sizes_nm,
+        y: V_oc_mV,
+        name: 'V<sub>oc</sub>(L<sub>g</sub>)',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Grain size, <i>L</i><sub>g</sub> (nm)', isLog: true }),
+      yaxis: publicationAxis({ title: 'Open-circuit voltage, <i>V</i><sub>oc</sub> (mV)' }),
+      // V_oc(L_g) rises monotonically from lower-left (small grains,
+      // recombination-dominated) toward upper-right (large grains,
+      // bulk limit). Lower-RIGHT quadrant is the empty home for the
+      // multi-line per-grain table (top-down stacked).
+      annotations: [
         {
-          x: r.grain_sizes_nm,
-          y: V_oc_mV,
-          name: 'V<sub>oc</sub>(L<sub>g</sub>)',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
+          x: 0.95, y: 0.05, xref: 'paper', yref: 'paper',
+          xanchor: 'right' as const, yanchor: 'bottom' as const,
+          showarrow: false,
+          text: ann,
+          align: 'left' as const,
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
         },
       ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Grain size, <i>L</i><sub>g</sub> (nm)', isLog: true }),
-        yaxis: publicationAxis({ title: 'Open-circuit voltage, <i>V</i><sub>oc</sub> (mV)' }),
-        // V_oc(L_g) rises monotonically from lower-left (small grains,
-        // recombination-dominated) toward upper-right (large grains,
-        // bulk limit). Lower-RIGHT quadrant is the empty home for the
-        // multi-line per-grain table (top-down stacked).
-        annotations: [
-          {
-            x: 0.95, y: 0.05, xref: 'paper', yref: 'paper',
-            xanchor: 'right' as const, yanchor: 'bottom' as const,
-            showarrow: false,
-            text: ann,
-            align: 'left' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
-          },
-        ],
-      }),
-      publicationConfig('voc_grain_sweep'),
-    )
-  } else {
-    Plotly.newPlot(
-      _vgsPlotDiv,
-      [
-        {
-          x: r.grain_sizes_nm,
-          y: V_oc_mV,
-          name: 'V_oc(L_g)',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-      ],
-      baseLayout({
-        xaxis: {
-          ...(baseLayout().xaxis as object),
-          type: 'log',
-          // Decade-only major tick labels (Nature-style log axis
-          // convention). Plotly's default auto-tick algorithm prints
-          // minor labels at 2× and 5× between decades, which crowds
-          // the canvas. Applies in both Engineering and Publication
-          // mode for consistency.
-          dtick: 1,
-          title: axisTitle('Grain size, <i>L<sub>g</sub></i> (nm)'),
-        },
-        yaxis: {
-          ...(baseLayout().yaxis as object),
-          title: axisTitle('Open-circuit voltage, <i>V<sub>oc</sub></i> (mV)'),
-        },
-        annotations: [
-          {
-            x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
-            xanchor: 'left', yanchor: 'bottom', showarrow: false,
-            text: ann,
-            font: { size: 10 },
-            align: 'left',
-          },
-        ],
-      }),
-      plotConfig('voc_grain_sweep'),
-    )
-  }
+    }),
+    publicationConfig('voc_grain_sweep'),
+  )
 }
 
 // ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
@@ -281,26 +207,7 @@ function _jv2dReadMode(el: HTMLElement): JV2DRangeMode {
   return v === 'full' ? 'full' : 'operational'
 }
 
-function _jv2dComputeYRange(
-  mode: JV2DRangeMode,
-  metrics: JV2DResult['metrics'],
-): [number, number] | undefined {
-  // Returns the clipped ``[ymin, ymax]`` for ``yaxis.range`` only when
-  // every precondition is met; otherwise ``undefined`` so the caller
-  // omits ``yaxis.range`` entirely and lets Plotly autorange (the
-  // explicit fallback path documented in the Layer 4 spec).
-  if (mode !== 'operational') return undefined
-  if (!metrics) return undefined
-  if (metrics.voc_bracketed !== true) return undefined
-  if (!Number.isFinite(metrics.J_sc) || metrics.J_sc <= 0) return undefined
-  // Backend J_sc is in A/m² (J_sc-positive convention). Display is
-  // mA/cm² post-divide-by-10 — same convention as the J trace below.
-  const J_sc_mA = metrics.J_sc / 10
-  return [-0.5 * J_sc_mA, 1.5 * J_sc_mA]
-}
-
-// Publication-mode operational ranges — TIGHTER than the engineering
-// operational window. Designed for paper-figure aesthetics: small
+// Publication operational ranges: small
 // negative padding below J=0, light headroom above J_sc, and a small
 // negative x-margin so the V=0 reference line is visible without
 // inventing negative-voltage data. Both helpers return ``undefined``
@@ -332,7 +239,7 @@ function _jv2dComputeXRangePublication(
   const xmin = minV >= 0 ? -0.05 : minV
   // Cap upper bound at V_oc + 0.18 V when V_oc is bracketed; this
   // trims the diode-tail past the open-circuit point that typically
-  // dominates Engineering "Full sweep" plots. Without a valid V_oc,
+  // dominates full-sweep plots. Without a valid V_oc,
   // fall back to ``maxV + 0.05`` (small headroom for the rightmost
   // sample).
   const vocCap =
@@ -356,49 +263,12 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   el.classList.add('jv2d-render')
 
   const m = r.metrics
-  const style = readPlotStyleMode(el)
 
-  // Toolbar: always rendered (Style: selector is independent of metrics
-  // presence). Range: selector is appended only when ``metrics`` is
-  // available, since the operational-range clip needs J_sc.
-  const toolbar = document.createElement('div')
-  toolbar.className = 'plot-toolbar'
-  toolbar.setAttribute('data-test', 'jv2d-toolbar')
-
-  // Style: select — Nature-style publication theme vs interactive
-  // engineering theme. Always rendered. Toggle state persists on
-  // ``el.dataset.plotStyleMode`` so renderJV2D re-entry honours it.
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'jv2d-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'jv2d-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'jv2d-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = style
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderJV2D(el, r)
-    })
-    toolbar.appendChild(styleLabel)
-    toolbar.appendChild(styleSelect)
-  }
-
-  // Range: select — gated on metrics (existing precondition). Sets
-  // ``yaxis.range`` to the operational window centred on J_sc when
-  // ``Operational range`` is selected; otherwise lets Plotly autorange.
-  // State lives on ``el.dataset.jv2dMode`` (separate from style mode).
+  // The operational-range selector requires metrics for J_sc clipping.
   if (m) {
+    const toolbar = document.createElement('div')
+    toolbar.className = 'plot-toolbar'
+    toolbar.setAttribute('data-test', 'jv2d-toolbar')
     const rangeLabel = document.createElement('label')
     rangeLabel.className = 'plot-range-label'
     rangeLabel.htmlFor = 'jv2d-range-mode'
@@ -422,8 +292,8 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
     })
     toolbar.appendChild(rangeLabel)
     toolbar.appendChild(rangeSelect)
+    el.appendChild(toolbar)
   }
-  el.appendChild(toolbar)
 
   const plotDiv = document.createElement('div')
   plotDiv.className = 'jv2d-plot'
@@ -433,14 +303,6 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // 2D backend signs J < 0 under illumination at V=0; flip to match the
   // 1D forward-sweep display (J > 0 at V_sc, J = 0 at V_oc, J < 0 beyond).
   const J_mA = r.J.map(j => -j / 10)
-  const Ny = r.grid_y.length
-  const Nx = r.grid_x.length
-
-  // Layer 4: compute optional y-axis clipping range. Returns
-  // ``undefined`` when any precondition fails (mode='full', metrics
-  // missing, voc_bracketed!==true, J_sc<=0, J_sc non-finite) so we
-  // omit ``yaxis.range`` and let Plotly autorange.
-  const yClip = _jv2dComputeYRange(_jv2dReadMode(el), m)
 
   // Vertical zero-line is drawn whenever the visible x-axis crosses
   // V=0 — either because the sweep itself includes negative voltage
@@ -458,76 +320,41 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   const xVisibleMin = xClipPub ? xClipPub[0] : minV
   const xWithZero = xVisibleMin < 0
 
-  if (style === 'publication') {
-    const yaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
-      title: 'Current density (mA cm⁻²)',
-      withZeroLine: true,
-    }
-    // Publication mode prefers the tighter ``yClipPub`` window; fall
-    // back to the broader engineering ``yClip`` only when the tighter
-    // helper opts out (Full sweep, missing metrics, etc.).
-    const yRangePub = yClipPub ?? yClip
-    if (yRangePub) yaxisOpts.range = yRangePub
-    const xaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
-      title: 'Voltage (V)',
-      withZeroLine: xWithZero,
-    }
-    if (xClipPub) xaxisOpts.range = xClipPub
-    Plotly.newPlot(
-      plotDiv,
-      [
-        {
-          x: r.V, y: J_mA, name: 'Forward (2D)',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis(xaxisOpts),
-        yaxis: publicationAxis(yaxisOpts),
-        annotations: metricAnnotation(m),
-        // Single-trace 2D forward sweep — a Nature single-panel J-V
-        // figure with one curve does not need a legend; the trace
-        // identity is conveyed by the in-plot metric annotation and
-        // the panel title outside the canvas.
-        showlegend: false,
-      }),
-      publicationConfig('jv_2d_sweep'),
-    )
-  } else {
-    const yaxisLayout: Record<string, unknown> = {
-      ...(baseLayout().yaxis as object),
-      title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)'),
-    }
-    if (yClip) yaxisLayout.range = yClip
-    Plotly.newPlot(
-      plotDiv,
-      [
-        {
-          x: r.V, y: J_mA, name: 'Forward (2D)',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-      ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-        yaxis: yaxisLayout,
-        annotations: [
-          {
-            x: 0.02, y: 0.05, xref: 'paper', yref: 'paper',
-            xanchor: 'left', yanchor: 'bottom', showarrow: false,
-            text: `2D grid: N<sub>x</sub>=${Nx}, N<sub>y</sub>=${Ny} · BC=${r.lateral_bc} · L<sub>x</sub>=${r.grid_x[Nx - 1].toFixed(0)} nm`,
-            font: { size: 11 },
-          },
-        ],
-      }),
-      plotConfig('jv_2d_sweep'),
-    )
+  const yaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+    title: 'Current density (mA cm⁻²)',
+    withZeroLine: true,
   }
+  if (yClipPub) yaxisOpts.range = yClipPub
+  const xaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+    title: 'Voltage (V)',
+    withZeroLine: xWithZero,
+  }
+  if (xClipPub) xaxisOpts.range = xClipPub
+  Plotly.newPlot(
+    plotDiv,
+    [
+      {
+        x: r.V, y: J_mA, name: 'Forward (2D)',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis(xaxisOpts),
+      yaxis: publicationAxis(yaxisOpts),
+      annotations: metricAnnotation(m),
+      // Single-trace 2D forward sweep — a Nature single-panel J-V
+      // figure with one curve does not need a legend; the trace
+      // identity is conveyed by the in-plot metric annotation and
+      // the panel title outside the canvas.
+      showlegend: false,
+    }),
+    publicationConfig('jv_2d_sweep'),
+  )
+  observePlotResize(el, plotDiv)
 
   // Layer 3: render JVMetrics card row + bracket-warning banner. Mirrors
   // the 1D ``panels/jv.ts`` pattern (V_oc / J_sc / FF / PCE), reusing the
@@ -537,9 +364,7 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // rendered. ``J_sc`` is in A/m² (J_sc-positive convention from the
   // backend; divide by 10 for mA/cm² display, mirror of 1D pane).
   // ``m`` was already bound at the top of this function for the Layer 4
-  // toolbar — reuse rather than redeclare. The metric-card row and
-  // warning banner are unchanged in publication mode (style mode only
-  // affects the Plotly layout/traces/config, not the surrounding cards).
+  // toolbar — reuse rather than redeclare.
   if (m) {
     const metricsRow = document.createElement('div')
     metricsRow.className = 'jv2d-metrics-row'
@@ -583,19 +408,11 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
 // Publication-mode operational ranges for the 1D J-V workstation
 // pane. Mirrors the 2D pane's helpers (``_jv2dComputeYRangePublication``
 // / ``_jv2dComputeXRangePublication``). Locally inlined to avoid
-// touching ``plot-theme.ts`` for this commit. Each helper returns
-// ``undefined`` when its preconditions fail so the publication branch
-// in ``renderJV`` can fall back to Plotly autorange — never to the
-// engineering operational envelope.
-// 1D-only metric source picker. Returns whichever sweep's metrics
-// should drive both the publication-mode annotation AND the y/x
-// range helpers, plus the human-readable label used to prefix the
-// annotation. Returning the same object from a single helper keeps
-// the annotation, y-range, and x-range in lockstep — under heavy
-// hysteresis the forward sweep can fail to bracket V_oc while the
-// reverse sweep brackets fine, and we need ALL three derived values
-// to resolve from the same chosen sweep so the publication panel is
-// internally consistent.
+// touching ``plot-theme.ts``. Each helper returns ``undefined`` when its
+// preconditions fail so ``renderJV`` can fall back to Plotly autorange.
+// Pick the annotated branch. Axis bounds separately include both branches,
+// since strong hysteresis can collapse forward J_sc and V_oc while the
+// reverse branch retains its full photovoltaic operating range.
 //
 // Resolution rules (preserved from the previous picker):
 //   1. metrics_fwd.voc_bracketed === true → Forward
@@ -636,49 +453,42 @@ function _jv1dPickMetrics(
   return null
 }
 
-function _jv1dPickAnnotation(pick: Jv1dPick | null): Record<string, unknown>[] {
+function _jv1dPickAnnotation(pick: Jv1dPick | null, y?: number): Record<string, unknown>[] {
   if (!pick) return []
-  return metricAnnotation(pick.metrics, { label: pick.label })
+  return metricAnnotation(pick.metrics, { label: pick.label, y })
 }
 
-// Tight publication y-range based on the picked sweep's J_sc. Falls
-// back to autorange when the picked sweep is not bracketed (sentinel
-// J_sc still meaningful for J_sc-cards, but not safe to drive the
-// y-axis envelope) or when no sweep was picked.
+// Tight publication y-range includes the larger bracketed J_sc.
 function _jv1dComputeYRangePublication(
-  pick: Jv1dPick | null,
+  metrics: Array<JVResult['metrics_fwd'] | undefined>,
 ): [number, number] | undefined {
-  if (!pick) return undefined
-  const m = pick.metrics
-  if (m.voc_bracketed !== true) return undefined
-  if (!Number.isFinite(m.J_sc) || m.J_sc <= 0) return undefined
+  const currents = metrics.flatMap(m =>
+    m?.voc_bracketed === true && Number.isFinite(m.J_sc) && m.J_sc > 0 ? [m.J_sc] : [],
+  )
+  if (currents.length === 0) return undefined
   // 1D backend signs J_sc as POSITIVE in metrics_fwd / metrics_rev
   // (panels/jv.ts displays it via ``(m.J_sc / 10).toFixed(2) mA/cm²``
   // without a negation — same convention as the 2D pane post-Layer 2).
   // Tight publication envelope matches the 2D refinement.
-  const J_sc_mA = m.J_sc / 10
+  const J_sc_mA = Math.max(...currents) / 10
   return [-0.15 * J_sc_mA, 1.12 * J_sc_mA]
 }
 
-// Tight publication x-range. Same -0.05 V left margin (when sweep
-// starts at V≥0) as before, but the upper-bound V_oc cap now uses
-// the PICKED sweep's V_oc — under heavy hysteresis this means a
-// reverse-bracketed sweep tightens the x-axis to ``V_oc(reverse) +
-// 0.18`` rather than spilling past forward's last sample.
+// Cap the diode tail beyond the larger bracketed V_oc, so neither
+// branch's power-producing region is hidden by the other branch's metrics.
 function _jv1dComputeXRangePublication(
   V_fwd: number[],
   V_rev: number[],
-  pick: Jv1dPick | null,
+  metrics: Array<JVResult['metrics_fwd'] | undefined>,
 ): [number, number] | undefined {
   const allV = [...V_fwd, ...V_rev]
   if (allV.length === 0) return undefined
-  const minV = Math.min(...allV)
   const maxV = Math.max(...allV)
-  const xmin = minV >= 0 ? -0.05 : minV
-  const vocCap =
-    pick && pick.metrics.voc_bracketed === true && Number.isFinite(pick.metrics.V_oc)
-      ? pick.metrics.V_oc + 0.18
-      : Number.POSITIVE_INFINITY
+  const xmin = -0.05
+  const voltages = metrics.flatMap(m =>
+    m?.voc_bracketed === true && Number.isFinite(m.V_oc) ? [m.V_oc] : [],
+  )
+  const vocCap = voltages.length ? Math.max(...voltages) + 0.18 : Number.POSITIVE_INFINITY
   const xmax = Math.min(maxV + 0.05, vocCap)
   return [xmin, xmax]
 }
@@ -688,41 +498,31 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('jv1d-render')
-
-  const style = readPlotStyleMode(el)
   const chargedEvidence = r.interface_charge_evidence ?? null
-
-  // Toolbar — always rendered when plot data exists. Hosts only the
-  // Style: selector for 1D J-V (no Operational/Full sweep concept on
-  // 1D today).
+  const fullRange = el.dataset.jv1dRange === 'full'
   const toolbar = document.createElement('div')
   toolbar.className = 'plot-toolbar'
-  toolbar.setAttribute('data-test', 'jv1d-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'jv1d-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'jv1d-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'jv1d-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = style
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderJV(el, r)
-    })
-    toolbar.appendChild(styleLabel)
-    toolbar.appendChild(styleSelect)
+  toolbar.dataset.test = 'jv1d-range-toolbar'
+  const rangeLabel = document.createElement('label')
+  rangeLabel.className = 'plot-range-label'
+  rangeLabel.htmlFor = 'jv1d-range-mode'
+  rangeLabel.textContent = 'Range:'
+  const rangeSelect = document.createElement('select')
+  rangeSelect.className = 'plot-range-select'
+  rangeSelect.id = 'jv1d-range-mode'
+  rangeSelect.dataset.test = 'jv1d-range-mode'
+  for (const [value, label] of [['operational', 'Operational range'], ['full', 'Full sweep']]) {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = label
+    rangeSelect.appendChild(option)
   }
+  rangeSelect.value = fullRange ? 'full' : 'operational'
+  rangeSelect.addEventListener('change', () => {
+    el.dataset.jv1dRange = rangeSelect.value
+    renderJV(el, r)
+  })
+  toolbar.append(rangeLabel, rangeSelect)
   el.appendChild(toolbar)
 
   const defectEvidenceLines = summarizeJVBulkDefectEvidence(r.bulk_defect_evidence)
@@ -769,122 +569,94 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   const V_rev_sorted = [...r.V_rev].reverse()
   const J_rev_sorted = [...J_rev_mA].reverse()
 
-  if (style === 'publication') {
-    // Single source for annotation, y-range and x-range so that all
-    // three derived values agree on which sweep they describe.
-    const ordinaryPick = _jv1dPickMetrics(r.metrics_fwd, r.metrics_rev)
-    const pick: Jv1dPick | null = chargedEvidence && r.metrics_fwd
-      ? {
-          metrics: r.metrics_fwd,
-          label: 'Charged QF/DC',
-          source: 'forward',
-        }
-      : ordinaryPick
-    const yClipPub = _jv1dComputeYRangePublication(pick)
-    const xClipPub = _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, pick)
-    const allV = [...r.V_fwd, ...r.V_rev]
-    const minV = allV.length > 0 ? Math.min(...allV) : 0
-    const xVisibleMin = xClipPub ? xClipPub[0] : minV
-    const xWithZero = xVisibleMin < 0
+  const ordinaryPick = _jv1dPickMetrics(r.metrics_fwd, r.metrics_rev)
+  const pick: Jv1dPick | null = chargedEvidence && r.metrics_fwd
+    ? {
+        metrics: r.metrics_fwd,
+        label: 'Charged QF/DC',
+        source: 'forward',
+      }
+    : ordinaryPick
+  const plottedMetrics = chargedEvidence ? [r.metrics_fwd] : [r.metrics_fwd, r.metrics_rev]
+  const yClipPub = fullRange ? undefined : _jv1dComputeYRangePublication(plottedMetrics)
+  const xClipPub = fullRange ? undefined : _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, plottedMetrics)
+  const shortCircuitCurrents = plottedMetrics.flatMap(m =>
+    m?.voc_bracketed === true && Number.isFinite(m.J_sc) && m.J_sc > 0 ? [m.J_sc] : [],
+  )
+  const separatedBranches = !fullRange && shortCircuitCurrents.length === 2
+    && Math.min(...shortCircuitCurrents) < 0.5 * Math.max(...shortCircuitCurrents)
+  const allV = [...r.V_fwd, ...r.V_rev]
+  const minV = allV.length > 0 ? Math.min(...allV) : 0
+  const xVisibleMin = xClipPub ? xClipPub[0] : minV
+  const xWithZero = xVisibleMin < 0
 
-    const yaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
-      title: 'Current density (mA cm⁻²)',
-      withZeroLine: true,
-    }
-    if (yClipPub) yaxisOpts.range = yClipPub
-    const xaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
-      title: 'Voltage (V)',
-      withZeroLine: xWithZero,
-    }
-    if (xClipPub) xaxisOpts.range = xClipPub
-
-    Plotly.newPlot(
-      plotDiv,
-      chargedEvidence
-        ? [{
-            x: r.V_fwd, y: J_fwd_mA, name: 'Charged QF/DC',
-            mode: 'lines+markers',
-            ...publicationTraceStyle({
-              color: PUBLICATION_PALETTE.forward,
-              hollow: true,
-            }),
-          }]
-        : [
-          {
-            x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
-            mode: 'lines+markers',
-            ...publicationTraceStyle({
-              color: PUBLICATION_PALETTE.forward,
-              hollow: true,
-            }),
-          },
-          {
-            x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
-            mode: 'lines+markers',
-            ...publicationTraceStyle({
-              color: PUBLICATION_PALETTE.reverse,
-              hollow: true,
-              dash: 'dash',
-            }),
-          },
-        ],
-      publicationLayout({
-        xaxis: publicationAxis(xaxisOpts),
-        yaxis: publicationAxis(yaxisOpts),
-        // Override the publicationLayout default upper-LEFT legend
-        // position to upper-RIGHT for 1D J-V. The forward+reverse
-        // curves enter the panel at (V=0, J=+J_sc) — i.e. the
-        // upper-left corner — so the upper-left legend overlaps the
-        // curve plateau. The upper-right corner is empty because
-        // the curves exit toward (V=V_oc, J=0) at the lower-right,
-        // and the metric annotation at (0.12, 0.34) sits well below.
-        // Note: ``publicationLayout`` spreads overrides last, so any
-        // ``legend`` key here REPLACES the default object — re-pin
-        // the publication font / transparent bg / borderless styling
-        // so the override doesn't accidentally restore Plotly defaults.
-        legend: {
-          font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
-          bgcolor: 'rgba(255,255,255,0)',
-          bordercolor: 'rgba(0,0,0,0)',
-          borderwidth: 0,
-          x: 0.98, y: 0.98,
-          xanchor: 'right' as const, yanchor: 'top' as const,
-        },
-        annotations: _jv1dPickAnnotation(pick),
-      }),
-      publicationConfig('jv_sweep'),
-    )
-  } else {
-    Plotly.newPlot(
-      plotDiv,
-      chargedEvidence
-        ? [{
-            x: r.V_fwd, y: J_fwd_mA, name: 'Charged QF/DC',
-            mode: 'lines+markers',
-            line: { color: PALETTE.forward, width: LINE.width },
-            marker: { ...MARKER, color: PALETTE.forward },
-          }]
-        : [
-          {
-            x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
-            mode: 'lines+markers',
-            line: { color: PALETTE.forward, width: LINE.width },
-            marker: { ...MARKER, color: PALETTE.forward },
-          },
-          {
-            x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
-            mode: 'lines+markers',
-            line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
-            marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
-          },
-        ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
-      }),
-      plotConfig('jv_sweep'),
-    )
+  const yaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+    title: 'Current density (mA cm⁻²)',
+    withZeroLine: true,
   }
+  if (yClipPub) yaxisOpts.range = yClipPub
+  const xaxisOpts: { title: string; withZeroLine: boolean; range?: [number, number] } = {
+    title: 'Voltage (V)',
+    withZeroLine: xWithZero,
+  }
+  if (xClipPub) xaxisOpts.range = xClipPub
+
+  Plotly.newPlot(
+    plotDiv,
+    chargedEvidence
+      ? [{
+          x: r.V_fwd, y: J_fwd_mA, name: 'Charged QF/DC',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        }]
+      : [
+        {
+          x: r.V_fwd, y: J_fwd_mA, name: 'Forward',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        },
+        {
+          x: V_rev_sorted, y: J_rev_sorted, name: 'Reverse',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.reverse,
+            hollow: true,
+            dash: 'dash',
+          }),
+        },
+      ],
+    publicationLayout({
+      xaxis: publicationAxis(xaxisOpts),
+      yaxis: publicationAxis(yaxisOpts),
+      // Override the publicationLayout default upper-LEFT legend
+      // position to upper-RIGHT for 1D J-V. The forward+reverse
+      // curves enter the panel at (V=0, J=+J_sc) — i.e. the
+      // upper-left corner — so the upper-left legend overlaps the
+      // curve plateau. The upper-right corner is empty because
+      // the curves exit toward (V=V_oc, J=0) at the lower-right,
+      // and the metric annotation at (0.12, 0.34) sits well below.
+      // Note: ``publicationLayout`` spreads overrides last, so any
+      // ``legend`` key here REPLACES the default object — re-pin
+      // the publication font / transparent bg / borderless styling
+      // so the override doesn't accidentally restore Plotly defaults.
+      legend: {
+        font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+        bgcolor: 'rgba(255,255,255,0)',
+        bordercolor: 'rgba(0,0,0,0)',
+        borderwidth: 0,
+        x: 0.98, y: 0.98,
+        xanchor: 'right' as const, yanchor: 'top' as const,
+      },
+      annotations: _jv1dPickAnnotation(pick, separatedBranches ? 0.72 : undefined),
+    }),
+    publicationConfig('jv_sweep'),
+  )
 }
 
 export function renderImpedance(el: HTMLElement, r: ISResult): void {
@@ -892,39 +664,6 @@ export function renderImpedance(el: HTMLElement, r: ISResult): void {
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('impedance-render')
-
-  const _impStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar — always rendered above the plot.
-  const _impToolbar = document.createElement('div')
-  _impToolbar.className = 'plot-toolbar'
-  _impToolbar.setAttribute('data-test', 'impedance-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'impedance-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'impedance-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'impedance-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _impStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderImpedance(el, r)
-    })
-    _impToolbar.appendChild(styleLabel)
-    _impToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_impToolbar)
 
   const evidenceSummary = document.createElement('div')
   evidenceSummary.className = 'impedance-evidence-summary'
@@ -953,106 +692,57 @@ export function renderImpedance(el: HTMLElement, r: ISResult): void {
 
   const minusImag = r.Z_imag.map(x => -x)
 
-  if (_impStyle === 'publication') {
-    Plotly.newPlot(
-      _impPlotDiv,
-      [
-        {
-          x: r.Z_real, y: minusImag, name: 'Z',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Re(<i>Z</i>) (Ω·m²)' }),
-        yaxis: { ...publicationAxis({ title: '−Im(<i>Z</i>) (Ω·m²)' }), scaleanchor: 'x' },
-      }),
-      publicationConfig('impedance'),
-    )
-  } else {
-    Plotly.newPlot(
-      _impPlotDiv,
-      [
-        {
-          x: r.Z_real, y: minusImag, name: 'Z',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-      ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Re(Z)  (Ω·m²)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('−Im(Z)  (Ω·m²)'), scaleanchor: 'x' },
-      }),
-      plotConfig('impedance'),
-    )
-  }
+  Plotly.newPlot(
+    _impPlotDiv,
+    [
+      {
+        x: r.Z_real, y: minusImag, name: 'Z',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Re(<i>Z</i>) (Ω·m²)' }),
+      yaxis: { ...publicationAxis({ title: '−Im(<i>Z</i>) (Ω·m²)' }), scaleanchor: 'x' },
+    }),
+    publicationConfig('impedance'),
+  )
 }
 
-const dynamicDefectTransientResizeObservers = new WeakMap<HTMLElement, ResizeObserver>()
+const plotResizeObservers = new WeakMap<HTMLElement, ResizeObserver>()
 
-function disconnectDynamicDefectTransientResizeObserver(container: HTMLElement): void {
-  dynamicDefectTransientResizeObservers.get(container)?.disconnect()
-  dynamicDefectTransientResizeObservers.delete(container)
+function disconnectPlotResizeObserver(container: HTMLElement): void {
+  plotResizeObservers.get(container)?.disconnect()
+  plotResizeObservers.delete(container)
 }
 
-function observeDynamicDefectTransientPlot(
+function observePlotResize(
   container: HTMLElement,
   plot: HTMLElement,
 ): void {
-  disconnectDynamicDefectTransientResizeObserver(container)
+  disconnectPlotResizeObserver(container)
   if (typeof ResizeObserver === 'undefined') return
 
   const observer = new ResizeObserver(() => {
-    if (plot.isConnected) void Plotly.Plots.resize(plot)
+    if (plot.isConnected && plot.clientWidth > 0 && plot.clientHeight > 0) {
+      void Plotly.Plots.resize(plot)
+    }
   })
   observer.observe(plot)
-  dynamicDefectTransientResizeObservers.set(container, observer)
+  plotResizeObservers.set(container, observer)
 }
 
 export function renderDynamicDefectTransient(
   el: HTMLElement,
   result: DynamicDefectTransientResult,
 ): void {
-  disconnectDynamicDefectTransientResizeObserver(el)
+  disconnectPlotResizeObserver(el)
   Plotly.purge(el)
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('dynamic-defect-transient-render')
-
-  const style = readPlotStyleMode(el)
-  const toolbar = document.createElement('div')
-  toolbar.className = 'plot-toolbar'
-  toolbar.setAttribute('data-test', 'dynamic-defect-transient-toolbar')
-  const styleLabel = document.createElement('label')
-  styleLabel.className = 'plot-style-label'
-  styleLabel.htmlFor = 'dynamic-defect-transient-style-mode'
-  styleLabel.textContent = 'Style:'
-  const styleSelect = document.createElement('select')
-  styleSelect.id = 'dynamic-defect-transient-style-mode'
-  styleSelect.className = 'plot-style-select'
-  styleSelect.setAttribute('data-test', 'dynamic-defect-transient-style-mode')
-  for (const [value, label] of [
-    ['engineering', 'Engineering'],
-    ['publication', 'Publication'],
-  ] as const) {
-    const option = document.createElement('option')
-    option.value = value
-    option.textContent = label
-    styleSelect.appendChild(option)
-  }
-  styleSelect.value = style
-  styleSelect.addEventListener('change', () => {
-    el.dataset.plotStyleMode = (
-      styleSelect.value === 'publication' ? 'publication' : 'engineering'
-    )
-    renderDynamicDefectTransient(el, result)
-  })
-  toolbar.appendChild(styleLabel)
-  toolbar.appendChild(styleSelect)
-  el.appendChild(toolbar)
 
   const evidenceSummary = document.createElement('div')
   evidenceSummary.className = 'impedance-evidence-summary dynamic-defect-transient-evidence-summary'
@@ -1085,81 +775,37 @@ export function renderDynamicDefectTransient(
   const timeMicroseconds = result.times_s.map(value => value * 1e6)
   const currentMilliampCm2 = result.terminal_total_current_A_m2.map(value => value / 10)
   const occupancyChange = result.interface_occupancy_change.map(row => row[0] ?? 0)
-  const currentTrace = style === 'publication'
-    ? {
-        x: timeMicroseconds,
-        y: currentMilliampCm2,
-        name: 'Terminal current',
-        mode: 'lines+markers',
-        ...publicationTraceStyle({ color: PUBLICATION_PALETTE.forward }),
-      }
-    : {
-        x: timeMicroseconds,
-        y: currentMilliampCm2,
-        name: 'Terminal current',
-        mode: 'lines+markers',
-        line: { color: PALETTE.forward, width: LINE.width },
-        marker: { ...MARKER, color: PALETTE.forward },
-      }
-  const occupancyTrace = style === 'publication'
-    ? {
-        x: timeMicroseconds,
-        y: occupancyChange,
-        name: 'Interface Δf',
-        mode: 'lines+markers',
-        yaxis: 'y2',
-        ...publicationTraceStyle({ color: PUBLICATION_PALETTE.reverse, hollow: true }),
-      }
-    : {
-        x: timeMicroseconds,
-        y: occupancyChange,
-        name: 'Interface Δf',
-        mode: 'lines+markers',
-        yaxis: 'y2',
-        line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
-        marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
-      }
-
-  if (style === 'publication') {
-    Plotly.newPlot(
-      plotDiv,
-      [currentTrace, occupancyTrace],
-      publicationLayout({
-        xaxis: publicationAxis({ title: '<i>t</i> (μs)' }),
-        yaxis: publicationAxis({ title: '<i>J</i><sub>term</sub> (mA·cm⁻²)' }),
-        yaxis2: {
-          ...publicationAxis({ title: 'Interface Δ<i>f</i>' }),
-          overlaying: 'y',
-          side: 'right',
-        },
-      }),
-      publicationConfig('dynamic_defect_transient'),
-    )
-  } else {
-    Plotly.newPlot(
-      plotDiv,
-      [currentTrace, occupancyTrace],
-      baseLayout({
-        xaxis: {
-          ...(baseLayout().xaxis as object),
-          title: axisTitle('Time, <i>t</i> (μs)'),
-        },
-        yaxis: {
-          ...(baseLayout().yaxis as object),
-          title: axisTitle('Terminal current, <i>J</i> (mA·cm⁻²)'),
-        },
-        yaxis2: {
-          ...(baseLayout().yaxis as object),
-          title: axisTitle('Interface occupancy change, Δ<i>f</i>'),
-          overlaying: 'y',
-          side: 'right',
-          showgrid: false,
-        },
-      }),
-      plotConfig('dynamic_defect_transient'),
-    )
+  const currentTrace = {
+    x: timeMicroseconds,
+    y: currentMilliampCm2,
+    name: 'Terminal current',
+    mode: 'lines+markers',
+    ...publicationTraceStyle({ color: PUBLICATION_PALETTE.forward }),
   }
-  observeDynamicDefectTransientPlot(el, plotDiv)
+  const occupancyTrace = {
+    x: timeMicroseconds,
+    y: occupancyChange,
+    name: 'Interface Δf',
+    mode: 'lines+markers',
+    yaxis: 'y2',
+    ...publicationTraceStyle({ color: PUBLICATION_PALETTE.reverse, hollow: true }),
+  }
+
+  Plotly.newPlot(
+    plotDiv,
+    [currentTrace, occupancyTrace],
+    publicationLayout({
+      xaxis: publicationAxis({ title: '<i>t</i> (μs)' }),
+      yaxis: publicationAxis({ title: '<i>J</i><sub>term</sub> (mA·cm⁻²)' }),
+      yaxis2: {
+        ...publicationAxis({ title: 'Interface Δ<i>f</i>' }),
+        overlaying: 'y',
+        side: 'right',
+      },
+    }),
+    publicationConfig('dynamic_defect_transient'),
+  )
+  observePlotResize(el, plotDiv)
 }
 
 export function renderDegradation(el: HTMLElement, r: DegResult): void {
@@ -1167,39 +813,6 @@ export function renderDegradation(el: HTMLElement, r: DegResult): void {
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('degradation-render')
-
-  const _degStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar — always rendered above the plot.
-  const _degToolbar = document.createElement('div')
-  _degToolbar.className = 'plot-toolbar'
-  _degToolbar.setAttribute('data-test', 'degradation-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'degradation-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'degradation-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'degradation-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _degStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderDegradation(el, r)
-    })
-    _degToolbar.appendChild(styleLabel)
-    _degToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_degToolbar)
 
   const _degPlotDiv = document.createElement('div')
   _degPlotDiv.className = 'degradation-plot'
@@ -1209,43 +822,24 @@ export function renderDegradation(el: HTMLElement, r: DegResult): void {
   const pce0 = r.PCE[0] || 1
   const normalized = r.PCE.map(p => p / pce0)
 
-  if (_degStyle === 'publication') {
-    Plotly.newPlot(
-      _degPlotDiv,
-      [
-        {
-          x: r.times, y: normalized, name: 'PCE / PCE<sub>0</sub>',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Time (s)' }),
-        yaxis: publicationAxis({ title: 'Normalised PCE' }),
-      }),
-      publicationConfig('degradation'),
-    )
-  } else {
-    Plotly.newPlot(
-      _degPlotDiv,
-      [
-        {
-          x: r.times, y: normalized, name: 'PCE / PCE₀',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-      ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (s)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Normalised PCE') },
-      }),
-      plotConfig('degradation'),
-    )
-  }
+  Plotly.newPlot(
+    _degPlotDiv,
+    [
+      {
+        x: r.times, y: normalized, name: 'PCE / PCE<sub>0</sub>',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Time (s)' }),
+      yaxis: publicationAxis({ title: 'Normalised PCE' }),
+    }),
+    publicationConfig('degradation'),
+  )
 }
 
 export function renderTPV(el: HTMLElement, r: TPVResult): void {
@@ -1254,39 +848,6 @@ export function renderTPV(el: HTMLElement, r: TPVResult): void {
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('tpv-render')
 
-  const _tpvStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar \u2014 always rendered above the plot.
-  const _tpvToolbar = document.createElement('div')
-  _tpvToolbar.className = 'plot-toolbar'
-  _tpvToolbar.setAttribute('data-test', 'tpv-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'tpv-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'tpv-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'tpv-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _tpvStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderTPV(el, r)
-    })
-    _tpvToolbar.appendChild(styleLabel)
-    _tpvToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_tpvToolbar)
-
   const _tpvPlotDiv = document.createElement('div')
   _tpvPlotDiv.className = 'tpv-plot'
   _tpvPlotDiv.id = 'tpv-plot-inner'
@@ -1294,72 +855,62 @@ export function renderTPV(el: HTMLElement, r: TPVResult): void {
 
   // Convert time to microseconds for readability
   const t_us = r.t.map(t => t * 1e6)
-  // Convert voltage to mV perturbation from V_oc
-  const dV_mV = r.V.map(v => (v - r.V_oc) * 1e3)
-
-  if (_tpvStyle === 'publication') {
-    Plotly.newPlot(
-      _tpvPlotDiv,
-      [
-        {
-          x: t_us, y: dV_mV, name: `\u0394V  (\u03C4=${(r.tau * 1e6).toFixed(1)} \u00B5s)`,
-          mode: 'lines',
-          line: {
-            color: PUBLICATION_PALETTE.forward,
-            width: PUBLICATION_LINE_WIDTH,
-          },
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Time (\u00B5s)' }),
-        yaxis: publicationAxis({ title: '\u0394<i>V</i> (mV)' }),
-        // TPV \u0394V(t) decays from \u0394V_0 toward zero. Upper-RIGHT quadrant
-        // is empty after the transient settles \u2014 best home for the
-        // V_oc / \u03C4 / \u0394V_0 readout.
-        annotations: [
-          {
-            x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
-            xanchor: 'right' as const, yanchor: 'top' as const,
-            showarrow: false,
-            text:
-              `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V<br>` +
-              `\u03C4 = ${(r.tau * 1e6).toFixed(1)} \u00B5s<br>` +
-              `\u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
-            align: 'right' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-          },
-        ],
-      }),
-      publicationConfig('tpv'),
-    )
-  } else {
-    Plotly.newPlot(
-      _tpvPlotDiv,
-      [
-        {
-          x: t_us, y: dV_mV, name: `\u0394V  (\u03C4=${(r.tau * 1e6).toFixed(1)} \u00B5s)`,
-          mode: 'lines',
-          line: { color: PALETTE.forward, width: LINE.width },
-        },
-      ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Time (\u00B5s)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('\u0394V (mV)') },
-        annotations: [
-          {
-            x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
-            xanchor: 'right', yanchor: 'top', showarrow: false,
-            text: `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V &nbsp; \u03C4 = ${(r.tau * 1e6).toFixed(1)} \u00B5s &nbsp; \u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
-            font: { size: 12 },
-          },
-        ],
-      }),
-      plotConfig('tpv'),
-    )
+  const validTrace = !r.valid || r.valid.every(Boolean)
+  const hasDecay = validTrace && r.tau !== null && Number.isFinite(r.tau) && r.tau > 0
+    && (!r.fit || r.fit.status === 'accepted')
+  const fitStatus: Record<string, string> = {
+    no_signal: 'No resolved pulse',
+    insufficient_data: 'Insufficient data',
+    insufficient_decay_window: 'Decay window too short',
+    not_single_exponential: 'Not a single exponential',
+    non_monotonic: 'Nonmonotonic response',
+    sign_change: 'Response changes sign',
+    invalid_data: 'Invalid response',
   }
+  const tauLabel = hasDecay
+    ? `${((r.tau as number) * 1e6).toFixed(1)} \u00B5s`
+    : (validTrace ? (fitStatus[r.fit?.status ?? ''] ?? 'Unavailable') : 'Invalid response')
+  const delta = r.delta_V ?? r.V.map((v, i) => v - (r.V_reference?.[i] ?? r.V_oc))
+  const dV_mV = delta.map((v, i) => r.valid && !r.valid[i] ? null : v * 1e3)
+
+  Plotly.newPlot(
+    _tpvPlotDiv,
+    [
+      {
+        x: t_us, y: dV_mV, name: `\u0394V  (\u03C4=${tauLabel})`,
+        mode: 'lines',
+        line: {
+          color: PUBLICATION_PALETTE.forward,
+          width: PUBLICATION_LINE_WIDTH,
+        },
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Time (\u00B5s)' }),
+      yaxis: publicationAxis({ title: '\u0394<i>V</i> (mV)' }),
+      // TPV \u0394V(t) decays from \u0394V_0 toward zero. Upper-RIGHT quadrant
+      // is empty after the transient settles \u2014 best home for the
+      // V_oc / \u03C4 / \u0394V_0 readout.
+      annotations: [
+        {
+          x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
+          xanchor: 'right' as const, yanchor: 'top' as const,
+          showarrow: false,
+          text:
+            `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V<br>` +
+            `\u03C4 = ${tauLabel}<br>` +
+            `\u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
+          align: 'right' as const,
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+        },
+      ],
+    }),
+    publicationConfig('tpv'),
+  )
+  observePlotResize(el, _tpvPlotDiv)
 }
 
 export function renderVocT(el: HTMLElement, r: VocTResult): void {
@@ -1367,39 +918,6 @@ export function renderVocT(el: HTMLElement, r: VocTResult): void {
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('voc-t-render')
-
-  const _vocTStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar — always rendered above the plot.
-  const _vocTToolbar = document.createElement('div')
-  _vocTToolbar.className = 'plot-toolbar'
-  _vocTToolbar.setAttribute('data-test', 'voc-t-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'voc-t-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'voc-t-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'voc-t-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _vocTStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderVocT(el, r)
-    })
-    _vocTToolbar.appendChild(styleLabel)
-    _vocTToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_vocTToolbar)
 
   const _vocTPlotDiv = document.createElement('div')
   _vocTPlotDiv.className = 'voc-t-plot'
@@ -1414,93 +932,61 @@ export function renderVocT(el: HTMLElement, r: VocTResult): void {
   const fit_y = fit_x.map(T => r.slope * T + r.intercept_0K)
   const slope_mV_per_K = (r.slope * 1e3).toFixed(2)
 
-  if (_vocTStyle === 'publication') {
-    Plotly.newPlot(
-      _vocTPlotDiv,
-      [
-        {
-          x: r.T_arr, y: r.V_oc_arr, name: 'V<sub>oc</sub>(T)',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
+  Plotly.newPlot(
+    _vocTPlotDiv,
+    [
+      {
+        x: r.T_arr, y: r.V_oc_arr, name: 'V<sub>oc</sub>(T)',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+      },
+      {
+        x: fit_x, y: fit_y, name: `linear fit (${slope_mV_per_K} mV/K)`,
+        mode: 'lines',
+        line: {
+          color: PUBLICATION_PALETTE.reverse,
+          width: PUBLICATION_LINE_WIDTH,
+          dash: 'dash' as const,
         },
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Temperature, <i>T</i> (K)' }),
+      yaxis: publicationAxis({ title: 'Open-circuit voltage, <i>V</i><sub>oc</sub> (V)' }),
+      // V_oc(T) curves slope from upper-left (low T, high V_oc)
+      // to lower-right (high T, low V_oc). Legend lives at upper-
+      // RIGHT and the figures-of-merit annotation at lower-LEFT \u2014
+      // both empty quadrants under that slope.
+      legend: {
+        font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+        bgcolor: 'rgba(255,255,255,0)',
+        bordercolor: 'rgba(0,0,0,0)',
+        borderwidth: 0,
+        x: 0.98, y: 0.98,
+        xanchor: 'right' as const, yanchor: 'top' as const,
+      },
+      annotations: [
         {
-          x: fit_x, y: fit_y, name: `linear fit (${slope_mV_per_K} mV/K)`,
-          mode: 'lines',
-          line: {
-            color: PUBLICATION_PALETTE.reverse,
-            width: PUBLICATION_LINE_WIDTH,
-            dash: 'dash' as const,
-          },
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Temperature, <i>T</i> (K)' }),
-        yaxis: publicationAxis({ title: 'Open-circuit voltage, <i>V</i><sub>oc</sub> (V)' }),
-        // V_oc(T) curves slope from upper-left (low T, high V_oc)
-        // to lower-right (high T, low V_oc). Legend lives at upper-
-        // RIGHT and the figures-of-merit annotation at lower-LEFT \u2014
-        // both empty quadrants under that slope.
-        legend: {
-          font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+          x: 0.05, y: 0.05, xref: 'paper', yref: 'paper',
+          xanchor: 'left' as const, yanchor: 'bottom' as const,
+          showarrow: false,
+          text:
+            `E<sub>A</sub> \u2248 ${r.E_A_eV.toFixed(3)} eV<br>` +
+            `dV<sub>oc</sub>/dT = ${slope_mV_per_K} mV/K<br>` +
+            `R\u00B2 = ${r.R_squared.toFixed(3)}`,
+          align: 'left' as const,
           bgcolor: 'rgba(255,255,255,0)',
           bordercolor: 'rgba(0,0,0,0)',
           borderwidth: 0,
-          x: 0.98, y: 0.98,
-          xanchor: 'right' as const, yanchor: 'top' as const,
-        },
-        annotations: [
-          {
-            x: 0.05, y: 0.05, xref: 'paper', yref: 'paper',
-            xanchor: 'left' as const, yanchor: 'bottom' as const,
-            showarrow: false,
-            text:
-              `E<sub>A</sub> \u2248 ${r.E_A_eV.toFixed(3)} eV<br>` +
-              `dV<sub>oc</sub>/dT = ${slope_mV_per_K} mV/K<br>` +
-              `R\u00B2 = ${r.R_squared.toFixed(3)}`,
-            align: 'left' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-          },
-        ],
-      }),
-      publicationConfig('voc_t'),
-    )
-  } else {
-    Plotly.newPlot(
-      _vocTPlotDiv,
-      [
-        {
-          x: r.T_arr, y: r.V_oc_arr, name: 'V<sub>oc</sub>(T)',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-        {
-          x: fit_x, y: fit_y, name: `linear fit (${slope_mV_per_K} mV/K)`,
-          mode: 'lines',
-          line: { color: PALETTE.reverse, width: LINE.width, dash: 'dash' },
+          font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
         },
       ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Temperature, <i>T</i> (K)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Open-circuit voltage, <i>V</i><sub>oc</sub> (V)') },
-        annotations: [
-          {
-            x: 0.98, y: 0.05, xref: 'paper', yref: 'paper',
-            xanchor: 'right', yanchor: 'bottom', showarrow: false,
-            text: `E<sub>A</sub> \u2248 ${r.E_A_eV.toFixed(3)} eV &nbsp; dV<sub>oc</sub>/dT = ${slope_mV_per_K} mV/K &nbsp; R\u00B2 = ${r.R_squared.toFixed(3)}`,
-            font: { size: 12 },
-          },
-        ],
-      }),
-      plotConfig('voc_t'),
-    )
-  }
+    }),
+    publicationConfig('voc_t'),
+  )
 }
 
 // ── Current Decomposition ───────────────────────────────────────────────────
@@ -1688,11 +1174,9 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('dark-jv-render')
-
-  const _darkStyle = readPlotStyleMode(el)
   const _darkCurveMode = el.dataset.darkJvCurveMode === 'ideality' ? 'ideality' : 'signed'
 
-  // Style: select toolbar \u2014 always rendered above the plot.
+  // Keep the signed-current and ideality views selectable.
   const _darkToolbar = document.createElement('div')
   _darkToolbar.className = 'plot-toolbar'
   _darkToolbar.setAttribute('data-test', 'dark-jv-toolbar')
@@ -1721,31 +1205,6 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
     _darkToolbar.appendChild(curveLabel)
     _darkToolbar.appendChild(curveSelect)
   }
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'dark-jv-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'dark-jv-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'dark-jv-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _darkStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderDarkJV(el, r)
-    })
-    _darkToolbar.appendChild(styleLabel)
-    _darkToolbar.appendChild(styleSelect)
-  }
   el.appendChild(_darkToolbar)
 
   const _darkPlotDiv = document.createElement('div')
@@ -1760,20 +1219,6 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
   // current sign and exaggerate near-zero crossings.
   const diodeJ = r.J.map(j => -j / 10)
   const absJ = r.J.map(j => Math.max(Math.abs(j) / 10, 1e-9))
-
-  // Highlight the fit window as a translucent band. Engineering uses
-  // the existing indigo tint; publication uses a softer grey so the
-  // shaded band reads as figure annotation rather than a colored data
-  // region. Both branches keep the band semantics identical.
-  const _engShapes: Record<string, unknown>[] = [
-    {
-      type: 'rect', xref: 'x', yref: 'paper',
-      x0: r.V_fit_lo, x1: r.V_fit_hi,
-      y0: 0, y1: 1,
-      fillcolor: 'rgba(99, 102, 241, 0.10)',
-      line: { width: 0 },
-    },
-  ]
   const _pubShapes: Record<string, unknown>[] = [
     {
       type: 'rect', xref: 'x', yref: 'paper',
@@ -1784,105 +1229,60 @@ export function renderDarkJV(el: HTMLElement, r: DarkJVResult): void {
     },
   ]
 
-  if (_darkStyle === 'publication') {
-    const data = _darkCurveMode === 'ideality'
-      ? [
+  const data = _darkCurveMode === 'ideality'
+    ? [
+        {
+          x: r.V, y: absJ, name: '|J|',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        },
+      ]
+    : [
+        {
+          x: r.V, y: diodeJ, name: 'Dark J-V',
+          mode: 'lines+markers',
+          ...publicationTraceStyle({
+            color: PUBLICATION_PALETTE.forward,
+            hollow: true,
+          }),
+        },
+      ]
+  const layout = _darkCurveMode === 'ideality'
+    ? publicationLayout({
+        xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
+        yaxis: publicationAxis({ title: '|J| (mA cm⁻²)', isLog: true }),
+        shapes: _pubShapes,
+        annotations: [
           {
-            x: r.V, y: absJ, name: '|J|',
-            mode: 'lines+markers',
-            ...publicationTraceStyle({
-              color: PUBLICATION_PALETTE.forward,
-              hollow: true,
-            }),
+            x: 0.05, y: 0.95, xref: 'paper', yref: 'paper',
+            xanchor: 'left' as const, yanchor: 'top' as const,
+            showarrow: false,
+            text:
+              `n = ${r.n_ideality.toFixed(2)}<br>` +
+              `J<sub>0</sub> = ${r.J_0.toExponential(2)} A·m⁻²<br>` +
+              `fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
+            align: 'left' as const,
+            bgcolor: 'rgba(255,255,255,0)',
+            bordercolor: 'rgba(0,0,0,0)',
+            borderwidth: 0,
+            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
           },
-        ]
-      : [
-          {
-            x: r.V, y: diodeJ, name: 'Dark J-V',
-            mode: 'lines+markers',
-            ...publicationTraceStyle({
-              color: PUBLICATION_PALETTE.forward,
-              hollow: true,
-            }),
-          },
-        ]
-    const layout = _darkCurveMode === 'ideality'
-      ? publicationLayout({
-          xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
-          yaxis: publicationAxis({ title: '|J| (mA cm⁻²)', isLog: true }),
-          shapes: _pubShapes,
-          annotations: [
-            {
-              x: 0.05, y: 0.95, xref: 'paper', yref: 'paper',
-              xanchor: 'left' as const, yanchor: 'top' as const,
-              showarrow: false,
-              text:
-                `n = ${r.n_ideality.toFixed(2)}<br>` +
-                `J<sub>0</sub> = ${r.J_0.toExponential(2)} A·m⁻²<br>` +
-                `fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
-              align: 'left' as const,
-              bgcolor: 'rgba(255,255,255,0)',
-              bordercolor: 'rgba(0,0,0,0)',
-              borderwidth: 0,
-              font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-            },
-          ],
-        })
-      : publicationLayout({
-          xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
-          yaxis: publicationAxis({ title: 'Current density, <i>J</i> (mA cm⁻²)', withZeroLine: true }),
-          showlegend: false,
-        })
-    Plotly.newPlot(
-      _darkPlotDiv,
-      data,
-      layout,
-      publicationConfig('dark_jv'),
-    )
-  } else {
-    const data = _darkCurveMode === 'ideality'
-      ? [
-          {
-            x: r.V, y: absJ, name: '|J|',
-            mode: 'lines+markers',
-            line: { color: PALETTE.forward, width: LINE.width },
-            marker: { ...MARKER, color: PALETTE.forward },
-          },
-        ]
-      : [
-          {
-            x: r.V, y: diodeJ, name: 'Dark J-V',
-            mode: 'lines+markers',
-            line: { color: PALETTE.forward, width: LINE.width },
-            marker: { ...MARKER, color: PALETTE.forward },
-          },
-        ]
-    const layout = _darkCurveMode === 'ideality'
-      ? baseLayout({
-          xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-          yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('|J| (mA·cm⁻²)'), type: 'log', dtick: 1 },
-          shapes: _engShapes,
-          annotations: [
-            {
-              x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
-              xanchor: 'left', yanchor: 'top', showarrow: false,
-              text: `n = ${r.n_ideality.toFixed(2)} &nbsp; J<sub>0</sub> = ${r.J_0.toExponential(2)} A·m⁻² &nbsp; fit: [${r.V_fit_lo.toFixed(2)}, ${r.V_fit_hi.toFixed(2)}] V`,
-              font: { size: 12 },
-            },
-          ],
-        })
-      : baseLayout({
-          xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-          yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('Current density, <i>J</i> (mA·cm⁻²)') },
-          showlegend: false,
-        })
-    Plotly.newPlot(
-      _darkPlotDiv,
-      data,
-      layout,
-      plotConfig('dark_jv'),
-    )
-  }
+        ],
+      })
+    : publicationLayout({
+        xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
+        yaxis: publicationAxis({ title: 'Current density, <i>J</i> (mA cm⁻²)', withZeroLine: true }),
+        showlegend: false,
+      })
+  Plotly.newPlot(
+    _darkPlotDiv,
+    data,
+    layout,
+    publicationConfig('dark_jv'),
+  )
 }
 
 // ── Suns–V_oc ───────────────────────────────────────────────────────────────
@@ -1892,39 +1292,6 @@ export function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('suns-voc-render')
-
-  const style = readPlotStyleMode(el)
-
-  // Style: select toolbar \u2014 always rendered above the plot.
-  const toolbar = document.createElement('div')
-  toolbar.className = 'plot-toolbar'
-  toolbar.setAttribute('data-test', 'suns-voc-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'suns-voc-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'suns-voc-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'suns-voc-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = style
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderSunsVoc(el, r)
-    })
-    toolbar.appendChild(styleLabel)
-    toolbar.appendChild(styleSelect)
-  }
-  el.appendChild(toolbar)
 
   const plotDiv = document.createElement('div')
   plotDiv.className = 'suns-voc-plot'
@@ -1936,101 +1303,59 @@ export function renderSunsVoc(el: HTMLElement, r: SunsVocResult): void {
   // untouched (regression-pinned).
   const pseudo_J_mA = r.J_pseudo_J.map(j => j / 10)
 
-  if (style === 'publication') {
-    Plotly.newPlot(
-      plotDiv,
-      [
-        {
-          x: r.suns, y: r.V_oc, name: 'V<sub>oc</sub>(suns)',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
-          xaxis: 'x', yaxis: 'y',
-        },
-        {
-          x: r.J_pseudo_V, y: pseudo_J_mA, name: 'pseudo J\u2013V',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.reverse,
-            hollow: true,
-            symbol: 'square',
-          }),
-          xaxis: 'x2', yaxis: 'y2',
-        },
-      ],
-      publicationLayout({
-        grid: { rows: 1, columns: 2, pattern: 'independent' as const },
-        xaxis: publicationAxis({ title: 'Suns', isLog: true }),
-        // Plotly renders <sub> tags inside title text natively; the
-        // engineering branch already uses the same HTML form below.
-        yaxis: publicationAxis({ title: 'V<sub>oc</sub> (V)' }),
-        xaxis2: publicationAxis({ title: 'Voltage (V)' }),
-        yaxis2: publicationAxis({ title: 'Current density (mA cm\u207B\u00b2)' }),
-        // Suns-V_oc has two distinct subplots \u2014 keep the legend off
-        // entirely; trace identity is conveyed by the per-subplot
-        // axis labels and the in-plot pseudo-FF annotation.
-        showlegend: false,
-        annotations: [
-          {
-            // Bottom-right of the right (pseudo J-V) subplot. Paper
-            // coords place it at the lower-right of the full figure
-            // which lands inside the right subplot under a 2-column grid.
-            x: 0.98, y: 0.05, xref: 'paper', yref: 'paper',
-            xanchor: 'right' as const, yanchor: 'bottom' as const,
-            showarrow: false,
-            text: `pseudo FF = ${(r.pseudo_FF * 100).toFixed(1)}%`,
-            align: 'right' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-          },
-        ],
-      }),
-      publicationConfig('suns_voc'),
-    )
-  } else {
-    const axBase = baseLayout().xaxis as object
-    const ayBase = baseLayout().yaxis as object
-    Plotly.newPlot(
-      plotDiv,
-      [
-        {
-          x: r.suns, y: r.V_oc, name: 'V<sub>oc</sub>(suns)',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-          xaxis: 'x', yaxis: 'y',
-        },
-        {
-          x: r.J_pseudo_V, y: pseudo_J_mA, name: 'pseudo J\u2013V',
-          mode: 'lines+markers',
-          line: { color: PALETTE.reverse, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.reverse, symbol: 'square' },
-          xaxis: 'x2', yaxis: 'y2',
-        },
-      ],
+  Plotly.newPlot(
+    plotDiv,
+    [
       {
-        ...baseLayout(),
-        grid: { rows: 1, columns: 2, pattern: 'independent' },
-        xaxis: { ...axBase, title: axisTitle('Suns'), type: 'log', dtick: 1, anchor: 'y' },
-        yaxis: { ...ayBase, title: axisTitle('V<sub>oc</sub> (V)'), anchor: 'x' },
-        xaxis2: { ...axBase, title: axisTitle('V (V)'), anchor: 'y2' },
-        yaxis2: { ...ayBase, title: axisTitle('J (mA\u00b7cm\u207B\u00b2)'), anchor: 'x2' },
-        annotations: [
-          {
-            x: 0.98, y: 0.02, xref: 'paper', yref: 'paper',
-            xanchor: 'right', yanchor: 'bottom', showarrow: false,
-            text: `pseudo FF = ${(r.pseudo_FF * 100).toFixed(1)} %`,
-            font: { size: 12 },
-          },
-        ],
+        x: r.suns, y: r.V_oc, name: 'V<sub>oc</sub>(suns)',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+        xaxis: 'x', yaxis: 'y',
       },
-      plotConfig('suns_voc'),
-    )
-  }
+      {
+        x: r.J_pseudo_V, y: pseudo_J_mA, name: 'pseudo J\u2013V',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.reverse,
+          hollow: true,
+          symbol: 'square',
+        }),
+        xaxis: 'x2', yaxis: 'y2',
+      },
+    ],
+    publicationLayout({
+      grid: { rows: 1, columns: 2, pattern: 'independent' as const },
+      xaxis: publicationAxis({ title: 'Suns', isLog: true }),
+      // Plotly renders <sub> tags inside title text natively.
+      yaxis: publicationAxis({ title: 'V<sub>oc</sub> (V)' }),
+      xaxis2: publicationAxis({ title: 'Voltage (V)' }),
+      yaxis2: publicationAxis({ title: 'Current density (mA cm\u207B\u00b2)' }),
+      // Suns-V_oc has two distinct subplots \u2014 keep the legend off
+      // entirely; trace identity is conveyed by the per-subplot
+      // axis labels and the in-plot pseudo-FF annotation.
+      showlegend: false,
+      annotations: [
+        {
+          // Bottom-right of the right (pseudo J-V) subplot. Paper
+          // coords place it at the lower-right of the full figure
+          // which lands inside the right subplot under a 2-column grid.
+          x: 0.98, y: 0.05, xref: 'paper', yref: 'paper',
+          xanchor: 'right' as const, yanchor: 'bottom' as const,
+          showarrow: false,
+          text: `pseudo FF = ${(r.pseudo_FF * 100).toFixed(1)}%`,
+          align: 'right' as const,
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
+        },
+      ],
+    }),
+    publicationConfig('suns_voc'),
+  )
 }
 
 // ── EQE / IPCE ──────────────────────────────────────────────────────────────
@@ -2040,39 +1365,6 @@ export function renderEQE(el: HTMLElement, r: EQEResult): void {
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('eqe-render')
-
-  const _eqeStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar \u2014 always rendered above the plot.
-  const _eqeToolbar = document.createElement('div')
-  _eqeToolbar.className = 'plot-toolbar'
-  _eqeToolbar.setAttribute('data-test', 'eqe-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'eqe-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'eqe-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'eqe-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _eqeStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderEQE(el, r)
-    })
-    _eqeToolbar.appendChild(styleLabel)
-    _eqeToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_eqeToolbar)
 
   const _eqePlotDiv = document.createElement('div')
   _eqePlotDiv.className = 'eqe-plot'
@@ -2087,72 +1379,42 @@ export function renderEQE(el: HTMLElement, r: EQEResult): void {
   const eqeSmoothPct = smoothEQE(r.EQE).map(x => Math.min(x, 1) * 100)
   const mAcm2 = r.J_sc_integrated / 10
 
-  if (_eqeStyle === 'publication') {
-    Plotly.newPlot(
-      _eqePlotDiv,
-      [
+  Plotly.newPlot(
+    _eqePlotDiv,
+    [
+      {
+        x: r.wavelengths_nm, y: eqeRawPct, name: 'raw', mode: 'markers',
+        marker: { color: PUBLICATION_PALETTE.forward, size: 3, opacity: 0.22 },
+        showlegend: false, hoverinfo: 'skip',
+      },
+      {
+        x: r.wavelengths_nm, y: eqeSmoothPct, name: 'EQE(<i>\u03bb</i>)',
+        mode: 'lines',
+        line: { color: PUBLICATION_PALETTE.forward, width: PUBLICATION_LINE_WIDTH },
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Wavelength, <i>\u03bb</i> (nm)' }),
+      yaxis: publicationAxis({ title: 'EQE (%)', range: [0, 100] }),
+      // EQE typically rises from ~300 nm, plateaus across the visible,
+      // then drops past the bandgap. Upper-right quadrant under the
+      // falling tail is the empty home for the J_sc readout.
+      annotations: [
         {
-          x: r.wavelengths_nm, y: eqeRawPct, name: 'raw', mode: 'markers',
-          marker: { color: PUBLICATION_PALETTE.forward, size: 3, opacity: 0.22 },
-          showlegend: false, hoverinfo: 'skip',
-        },
-        {
-          x: r.wavelengths_nm, y: eqeSmoothPct, name: 'EQE(<i>\u03bb</i>)',
-          mode: 'lines',
-          line: { color: PUBLICATION_PALETTE.forward, width: PUBLICATION_LINE_WIDTH },
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Wavelength, <i>\u03bb</i> (nm)' }),
-        yaxis: publicationAxis({ title: 'EQE (%)', range: [0, 100] }),
-        // EQE typically rises from ~300 nm, plateaus across the visible,
-        // then drops past the bandgap. Upper-right quadrant under the
-        // falling tail is the empty home for the J_sc readout.
-        annotations: [
-          {
-            x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
-            xanchor: 'right' as const, yanchor: 'top' as const,
-            showarrow: false,
-            text: `J<sub>sc</sub>(AM1.5G) = ${mAcm2.toFixed(2)} mA\u00b7cm\u207B\u00b2`,
-            align: 'right' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-          },
-        ],
-      }),
-      publicationConfig('eqe'),
-    )
-  } else {
-    Plotly.newPlot(
-      _eqePlotDiv,
-      [
-        {
-          x: r.wavelengths_nm, y: eqeRawPct, name: 'raw', mode: 'markers',
-          marker: { color: PALETTE.forward, size: 3, opacity: 0.22 },
-          showlegend: false, hoverinfo: 'skip',
-        },
-        {
-          x: r.wavelengths_nm, y: eqeSmoothPct, name: 'EQE(\u03bb)', mode: 'lines',
-          line: { color: PALETTE.forward, width: LINE.width },
+          x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
+          xanchor: 'right' as const, yanchor: 'top' as const,
+          showarrow: false,
+          text: `J<sub>sc</sub>(AM1.5G) = ${mAcm2.toFixed(2)} mA\u00b7cm\u207B\u00b2`,
+          align: 'right' as const,
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
         },
       ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('EQE (%)'), range: [0, 100] },
-        annotations: [
-          {
-            x: 0.98, y: 0.95, xref: 'paper', yref: 'paper',
-            xanchor: 'right', yanchor: 'top', showarrow: false,
-            text: `J<sub>sc</sub>(AM1.5G) = ${mAcm2.toFixed(2)} mA\u00b7cm\u207B\u00b2`,
-            font: { size: 12 },
-          },
-        ],
-      }),
-      plotConfig('eqe'),
-    )
-  }
+    }),
+    publicationConfig('eqe'),
+  )
 }
 
 // ── Electroluminescence (Rau reciprocity) ───────────────────────────────────
@@ -2163,39 +1425,6 @@ export function renderEL(el: HTMLElement, r: ELResult): void {
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('el-render')
 
-  const _elStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar \u2014 always rendered above the plot.
-  const _elToolbar = document.createElement('div')
-  _elToolbar.className = 'plot-toolbar'
-  _elToolbar.setAttribute('data-test', 'el-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'el-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'el-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'el-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _elStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderEL(el, r)
-    })
-    _elToolbar.appendChild(styleLabel)
-    _elToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_elToolbar)
-
   const _elPlotDiv = document.createElement('div')
   _elPlotDiv.className = 'el-plot'
   _elPlotDiv.id = 'el-plot-inner'
@@ -2203,116 +1432,74 @@ export function renderEL(el: HTMLElement, r: ELResult): void {
 
   const absPct = r.absorber_absorptance.map(a => a * 100)
 
-  if (_elStyle === 'publication') {
-    // Right-side absorptance axis: same Nature-style ticks/line as the
-    // primary y-axis, but anchored on the right. mirror is left false
-    // here so the inner plot area only mirrors the left axis to the top
-    // (right axis already closes the panel via its own line).
-    const yaxis2_pub = {
-      ...publicationAxis({ range: [0, 100] }),
-      title: { text: 'Absorptance (%)', font: { family: PUBLICATION_FONT_FAMILY, size: 12, color: '#000000' }, standoff: 8 },
-      overlaying: 'y', side: 'right', mirror: false,
-    }
-    Plotly.newPlot(
-      _elPlotDiv,
-      [
-        {
-          x: r.wavelengths_nm, y: r.EL_spectrum,
-          name: 'EL spectrum',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
-          yaxis: 'y',
+  // Right-side absorptance axis: same Nature-style ticks/line as the
+  // primary y-axis, but anchored on the right. mirror is left false
+  // here so the inner plot area only mirrors the left axis to the top
+  // (right axis already closes the panel via its own line).
+  const yaxis2_pub = {
+    ...publicationAxis({ range: [0, 100] }),
+    title: { text: 'Absorptance (%)', font: { family: PUBLICATION_FONT_FAMILY, size: 12, color: '#000000' }, standoff: 8 },
+    overlaying: 'y', side: 'right', mirror: false,
+  }
+  Plotly.newPlot(
+    _elPlotDiv,
+    [
+      {
+        x: r.wavelengths_nm, y: r.EL_spectrum,
+        name: 'EL spectrum',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+        yaxis: 'y',
+      },
+      {
+        x: r.wavelengths_nm, y: absPct,
+        name: 'A<sub>abs</sub>(<i>\u03bb</i>)',
+        mode: 'lines',
+        line: {
+          color: PUBLICATION_PALETTE.reverse,
+          width: PUBLICATION_LINE_WIDTH,
+          dash: 'dash' as const,
         },
+        yaxis: 'y2',
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Wavelength, <i>\u03bb</i> (nm)' }),
+      yaxis: publicationAxis({ title: 'EL flux (photons&middot;m\u207B\u00b2&middot;s\u207B\u00b9&middot;nm\u207B\u00b9)' }),
+      yaxis2: yaxis2_pub,
+      // EL spectrum peaks near the bandgap. Legend pinned upper-left
+      // (low-wavelength side) where both EL flux and absorptance are
+      // typically near zero before the band-edge onset.
+      legend: {
+        font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+        bgcolor: 'rgba(255,255,255,0)',
+        bordercolor: 'rgba(0,0,0,0)',
+        borderwidth: 0,
+        x: 0.02, y: 0.98,
+        xanchor: 'left' as const, yanchor: 'top' as const,
+      },
+      annotations: [
         {
-          x: r.wavelengths_nm, y: absPct,
-          name: 'A<sub>abs</sub>(<i>\u03bb</i>)',
-          mode: 'lines',
-          line: {
-            color: PUBLICATION_PALETTE.reverse,
-            width: PUBLICATION_LINE_WIDTH,
-            dash: 'dash' as const,
-          },
-          yaxis: 'y2',
-        },
-      ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Wavelength, <i>\u03bb</i> (nm)' }),
-        yaxis: publicationAxis({ title: 'EL flux (photons&middot;m\u207B\u00b2&middot;s\u207B\u00b9&middot;nm\u207B\u00b9)' }),
-        yaxis2: yaxis2_pub,
-        // EL spectrum peaks near the bandgap. Legend pinned upper-left
-        // (low-wavelength side) where both EL flux and absorptance are
-        // typically near zero before the band-edge onset.
-        legend: {
-          font: { family: PUBLICATION_FONT_FAMILY, size: 9, color: '#000000' },
+          x: 0.02, y: 0.78, xref: 'paper', yref: 'paper',
+          xanchor: 'left' as const, yanchor: 'top' as const,
+          showarrow: false,
+          text:
+            `V<sub>inj</sub> = ${r.V_inj.toFixed(2)} V<br>` +
+            `EQE<sub>EL</sub> = ${r.EQE_EL.toExponential(2)}<br>` +
+            `&Delta;V<sub>nr</sub> = ${r.delta_V_nr_mV.toFixed(1)} mV`,
+          align: 'left' as const,
           bgcolor: 'rgba(255,255,255,0)',
           bordercolor: 'rgba(0,0,0,0)',
           borderwidth: 0,
-          x: 0.02, y: 0.98,
-          xanchor: 'left' as const, yanchor: 'top' as const,
-        },
-        annotations: [
-          {
-            x: 0.02, y: 0.78, xref: 'paper', yref: 'paper',
-            xanchor: 'left' as const, yanchor: 'top' as const,
-            showarrow: false,
-            text:
-              `V<sub>inj</sub> = ${r.V_inj.toFixed(2)} V<br>` +
-              `EQE<sub>EL</sub> = ${r.EQE_EL.toExponential(2)}<br>` +
-              `&Delta;V<sub>nr</sub> = ${r.delta_V_nr_mV.toFixed(1)} mV`,
-            align: 'left' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-          },
-        ],
-      }),
-      publicationConfig('el'),
-    )
-  } else {
-    Plotly.newPlot(
-      _elPlotDiv,
-      [
-        {
-          x: r.wavelengths_nm, y: r.EL_spectrum,
-          name: 'EL spectrum',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-          yaxis: 'y',
-        },
-        {
-          x: r.wavelengths_nm, y: absPct,
-          name: 'A<sub>abs</sub>(\u03bb)',
-          mode: 'lines',
-          line: { color: PALETTE.reverse, width: LINE.width, dash: 'dot' },
-          yaxis: 'y2',
+          font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
         },
       ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Wavelength, <i>\u03bb</i> (nm)') },
-        yaxis: { ...(baseLayout().yaxis as object),
-          title: axisTitle('EL flux (photons&middot;m\u207B\u00b2&middot;s\u207B\u00b9&middot;nm\u207B\u00b9)') },
-        yaxis2: {
-          title: axisTitle('Absorptance (%)'),
-          overlaying: 'y', side: 'right', range: [0, 100],
-          showgrid: false,
-        },
-        annotations: [
-          {
-            x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
-            xanchor: 'left', yanchor: 'top', showarrow: false,
-            text: `V<sub>inj</sub> = ${r.V_inj.toFixed(2)} V &nbsp; EQE<sub>EL</sub> = ${r.EQE_EL.toExponential(2)} &nbsp; &Delta;V<sub>nr</sub> = ${r.delta_V_nr_mV.toFixed(1)} mV`,
-            font: { size: 12 },
-          },
-        ],
-      }),
-      plotConfig('el'),
-    )
-  }
+    }),
+    publicationConfig('el'),
+  )
 }
 
 // ── Mott–Schottky (C–V) ─────────────────────────────────────────────────────
@@ -2323,56 +1510,10 @@ export function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('mott-schottky-render')
 
-  const _msStyle = readPlotStyleMode(el)
-
-  // Style: select toolbar \u2014 always rendered above the plot.
-  const _msToolbar = document.createElement('div')
-  _msToolbar.className = 'plot-toolbar'
-  _msToolbar.setAttribute('data-test', 'mott-schottky-toolbar')
-  {
-    const styleLabel = document.createElement('label')
-    styleLabel.className = 'plot-style-label'
-    styleLabel.htmlFor = 'mott-schottky-style-mode'
-    styleLabel.textContent = 'Style:'
-    const styleSelect = document.createElement('select')
-    styleSelect.id = 'mott-schottky-style-mode'
-    styleSelect.className = 'plot-style-select'
-    styleSelect.setAttribute('data-test', 'mott-schottky-style-mode')
-    const optEng = document.createElement('option')
-    optEng.value = 'engineering'
-    optEng.textContent = 'Engineering'
-    const optPub = document.createElement('option')
-    optPub.value = 'publication'
-    optPub.textContent = 'Publication'
-    styleSelect.appendChild(optEng)
-    styleSelect.appendChild(optPub)
-    styleSelect.value = _msStyle
-    styleSelect.addEventListener('change', () => {
-      el.dataset.plotStyleMode = styleSelect.value === 'publication' ? 'publication' : 'engineering'
-      renderMottSchottky(el, r)
-    })
-    _msToolbar.appendChild(styleLabel)
-    _msToolbar.appendChild(styleSelect)
-  }
-  el.appendChild(_msToolbar)
-
   const _msPlotDiv = document.createElement('div')
   _msPlotDiv.className = 'mott-schottky-plot'
   _msPlotDiv.id = 'mott-schottky-plot-inner'
   el.appendChild(_msPlotDiv)
-
-  // Fit window highlight. Engineering uses the existing indigo tint;
-  // publication softens it to a neutral grey so the shaded band reads
-  // as figure annotation rather than a coloured data region.
-  const _engShapes: Record<string, unknown>[] = [
-    {
-      type: 'rect', xref: 'x', yref: 'paper',
-      x0: r.V_fit_lo, x1: r.V_fit_hi,
-      y0: 0, y1: 1,
-      fillcolor: 'rgba(99, 102, 241, 0.10)',
-      line: { width: 0 },
-    },
-  ]
   const _pubShapes: Record<string, unknown>[] = [
     {
       type: 'rect', xref: 'x', yref: 'paper',
@@ -2383,71 +1524,43 @@ export function renderMottSchottky(el: HTMLElement, r: MottSchottkyResult): void
     },
   ]
 
-  if (_msStyle === 'publication') {
-    Plotly.newPlot(
-      _msPlotDiv,
-      [
+  Plotly.newPlot(
+    _msPlotDiv,
+    [
+      {
+        x: r.V, y: r.one_over_C2, name: '1/C<sup>2</sup>',
+        mode: 'lines+markers',
+        ...publicationTraceStyle({
+          color: PUBLICATION_PALETTE.forward,
+          hollow: true,
+        }),
+      },
+    ],
+    publicationLayout({
+      xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
+      yaxis: publicationAxis({ title: '1/C<sup>2</sup> (m\u2074\u00b7F\u207B\u00b2)' }),
+      shapes: _pubShapes,
+      // Mott-Schottky 1/C\u00b2 typically slopes upper-LEFT (deep reverse
+      // bias, large 1/C\u00b2) to lower-RIGHT (toward the V-axis intercept).
+      // Upper-RIGHT quadrant is the empty home for the V_bi,app / N_eff /
+      // frequency readout.
+      annotations: [
         {
-          x: r.V, y: r.one_over_C2, name: '1/C<sup>2</sup>',
-          mode: 'lines+markers',
-          ...publicationTraceStyle({
-            color: PUBLICATION_PALETTE.forward,
-            hollow: true,
-          }),
+          x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
+          xanchor: 'right' as const, yanchor: 'top' as const,
+          showarrow: false,
+          text:
+            `V<sub>bi,app</sub> = ${r.V_bi_fit.toFixed(3)} V<br>` +
+            `N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3<br>` +
+            `f = ${r.frequency.toExponential(1)} Hz`,
+          align: 'right' as const,
+          bgcolor: 'rgba(255,255,255,0)',
+          bordercolor: 'rgba(0,0,0,0)',
+          borderwidth: 0,
+          font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
         },
       ],
-      publicationLayout({
-        xaxis: publicationAxis({ title: 'Applied bias, <i>V</i> (V)' }),
-        yaxis: publicationAxis({ title: '1/C<sup>2</sup> (m\u2074\u00b7F\u207B\u00b2)' }),
-        shapes: _pubShapes,
-        // Mott-Schottky 1/C\u00b2 typically slopes upper-LEFT (deep reverse
-        // bias, large 1/C\u00b2) to lower-RIGHT (toward the V-axis intercept).
-        // Upper-RIGHT quadrant is the empty home for the V_bi,app / N_eff /
-        // frequency readout.
-        annotations: [
-          {
-            x: 0.95, y: 0.95, xref: 'paper', yref: 'paper',
-            xanchor: 'right' as const, yanchor: 'top' as const,
-            showarrow: false,
-            text:
-              `V<sub>bi,app</sub> = ${r.V_bi_fit.toFixed(3)} V<br>` +
-              `N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3<br>` +
-              `f = ${r.frequency.toExponential(1)} Hz`,
-            align: 'right' as const,
-            bgcolor: 'rgba(255,255,255,0)',
-            bordercolor: 'rgba(0,0,0,0)',
-            borderwidth: 0,
-            font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
-          },
-        ],
-      }),
-      publicationConfig('mott_schottky'),
-    )
-  } else {
-    Plotly.newPlot(
-      _msPlotDiv,
-      [
-        {
-          x: r.V, y: r.one_over_C2, name: '1/C\u00b2',
-          mode: 'lines+markers',
-          line: { color: PALETTE.forward, width: LINE.width },
-          marker: { ...MARKER, color: PALETTE.forward },
-        },
-      ],
-      baseLayout({
-        xaxis: { ...(baseLayout().xaxis as object), title: axisTitle('Applied bias, <i>V</i> (V)') },
-        yaxis: { ...(baseLayout().yaxis as object), title: axisTitle('1/C\u00b2 (m\u2074\u00b7F\u207B\u00b2)') },
-        shapes: _engShapes,
-        annotations: [
-          {
-            x: 0.02, y: 0.98, xref: 'paper', yref: 'paper',
-            xanchor: 'left', yanchor: 'top', showarrow: false,
-            text: `V<sub>bi,app</sub> = ${r.V_bi_fit.toFixed(3)} V &nbsp; N<sub>eff</sub> = ${r.N_eff_fit.toExponential(2)} m\u207B\u00b3 &nbsp; f = ${r.frequency.toExponential(1)} Hz`,
-            font: { size: 12 },
-          },
-        ],
-      }),
-      plotConfig('mott_schottky'),
-    )
-  }
+    }),
+    publicationConfig('mott_schottky'),
+  )
 }

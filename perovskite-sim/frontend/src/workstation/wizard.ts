@@ -1,5 +1,5 @@
 import type { ConfigEntry, SimulationModeName } from '../types'
-import { presetLabel, presetPreferredMode, researchPresetEntries } from '../preset-catalog'
+import { presetDescription, presetLabel, presetPreferredMode, researchPresetEntries } from '../preset-catalog'
 
 export interface WizardSelection {
   tier: SimulationModeName
@@ -29,13 +29,36 @@ const TIER_CARDS: Array<{
   subtitle: string
   bullets: string[]
 }> = [
-  { tier: 'legacy', title: 'Legacy', subtitle: 'IonMonger-compatible',
-    bullets: ['Beer–Lambert optics', 'Single ion species', 'Uniform τ', 'T = 300 K'] },
-  { tier: 'fast', title: 'Fast', subtitle: 'Build-once physics upgrades',
-    bullets: ['TMM optics', 'Thermionic emission', 'Dual-species ions', 'Trap profile · T-scaling'] },
-  { tier: 'full', title: 'Full', subtitle: 'All configured upgrades',
-    bullets: ['Fast-tier physics', 'Radiative reabsorption', 'Field-dependent mobility', 'Robin contacts'] },
+  { tier: 'legacy', title: 'Legacy', subtitle: 'Isothermal baseline',
+    bullets: ['Single-ion transport', 'Material parameters at 300 K', 'Scalar or prescribed photogeneration'] },
+  { tier: 'fast', title: 'Fast', subtitle: 'Optoelectronic extensions',
+    bullets: ['TMM and thermionic transport', 'Two ion species; trap profiles', 'Temperature scaling; photon recycling'] },
+  { tier: 'full', title: 'Full', subtitle: 'Fast + constitutive extensions',
+    bullets: ['Radiative reabsorption source', 'Field-dependent carrier mobility', 'Finite-rate carrier exchange (Robin)'] },
 ]
+
+function modelDescriptionHTML(name: string): string {
+  const model = presetDescription(name)
+  if (!model) return ''
+  return `
+    <h3>${model.formulation}</h3>
+    <ul>${model.mechanisms.map(mechanism => `<li>${mechanism}</li>`).join('')}</ul>
+    <p class="wizard-model-evidence">${model.evidence}</p>`
+}
+
+function updateProfileSummary(root: HTMLElement, preferred?: SimulationModeName): void {
+  const selected = root.querySelector<HTMLInputElement>('input[name="wizard-tier"]:checked')
+    ?.value as SimulationModeName | undefined
+  const title = TIER_CARDS.find(card => card.tier === selected)?.title ?? ''
+  const summary = root.querySelector<HTMLElement>('[data-wizard="profile-summary"]')
+  if (summary) summary.textContent = `${title}${preferred && selected === preferred ? ' · reference' : ''}`
+  const warning = root.querySelector<HTMLElement>('[data-wizard="profile-warning"]')
+  if (warning) {
+    warning.hidden = !preferred || preferred === selected
+    const referenceTitle = TIER_CARDS.find(card => card.tier === preferred)?.title
+    warning.textContent = warning.hidden ? '' : `Non-reference profile. Model reference: ${referenceTitle}.`
+  }
+}
 
 function pickInitialTier(
   compat: ReadonlyArray<SimulationModeName>,
@@ -58,8 +81,10 @@ export function buildWizardHTML(presets: ReadonlyArray<WizardPreset>): string {
     const disabled = enabled ? '' : ' disabled'
     return `
     <label class="wizard-card" data-tier="${c.tier}"${enabled ? '' : ' data-disabled="true"'}>
-      <input type="radio" name="wizard-tier" value="${c.tier}"${checked}${disabled} />
-      <div class="wizard-card-title">${c.title}</div>
+      <div class="wizard-card-heading">
+        <input type="radio" name="wizard-tier" value="${c.tier}"${checked}${disabled} />
+        <span class="wizard-card-title">${c.title}</span>
+      </div>
       <div class="wizard-card-subtitle">${c.subtitle}</div>
       <ul class="wizard-card-bullets">${c.bullets.map(b => `<li>${b}</li>`).join('')}</ul>
     </label>`
@@ -68,24 +93,32 @@ export function buildWizardHTML(presets: ReadonlyArray<WizardPreset>): string {
   const options = presets
     .map(p => `<option value="${p.name}" data-tier-compat="${p.tier_compat.join(',')}" data-preferred-tier="${p.preferred_tier ?? ''}">${presetLabel(p.name)}</option>`)
     .join('')
+  const modelDescription = modelDescriptionHTML(initial?.name ?? '')
+  const profileTitle = TIER_CARDS.find(card => card.tier === initialTier)!.title
 
   return `
     <div class="wizard-modal-backdrop">
-      <div class="wizard-modal">
-        <h2>New Device</h2>
-        <p class="wizard-subtitle">Pick a physics tier and a preset to start from.</p>
-        <div class="wizard-tier-row">${cards}</div>
+      <div class="wizard-modal" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <h2 id="wizard-title">New Device</h2>
+        <p class="wizard-subtitle">1D drift–diffusion–Poisson</p>
         <div class="wizard-form-row">
+          <label>
+            <span>Reference model</span>
+            <select name="wizard-preset">${options}</select>
+          </label>
           <label>
             <span>Device name</span>
             <input type="text" name="wizard-name" value="New device" />
           </label>
-          <label>
-            <span>Preset</span>
-            <select name="wizard-preset">${options}</select>
-          </label>
         </div>
-        <p class="wizard-tier-note" data-wizard="tier-note"></p>
+        <section class="wizard-model-summary" data-wizard="model-summary" aria-label="Reference model physics" aria-live="polite"${modelDescription ? '' : ' hidden'}>${modelDescription}</section>
+        <details class="wizard-profile-options">
+          <summary><span>Physics profile</span> <span class="wizard-profile-summary" data-wizard="profile-summary">${profileTitle}${initial?.preferred_tier === initialTier ? ' · reference' : ''}</span></summary>
+          <p class="wizard-profile-scope">Available extensions; activation depends on material and boundary parameters.</p>
+          <div class="wizard-tier-row" role="radiogroup" aria-label="Physics profile">${cards}</div>
+          <p class="wizard-tier-note" data-wizard="tier-note"></p>
+        </details>
+        <p class="wizard-profile-warning" data-wizard="profile-warning" role="status" hidden></p>
         <div class="wizard-actions">
           <button type="button" class="btn" data-wizard="cancel">Cancel</button>
           <button type="button" class="btn btn-primary" data-wizard="create">Create</button>
@@ -131,11 +164,12 @@ export function applyTierCompat(
   if (note) {
     if (!compat.includes('full')) {
       note.textContent =
-        'This preset advertises legacy/fast only — FULL tier disabled (no chi/Eg on all electrical layers).'
+        'Full profile is unavailable for this preset.'
     } else {
       note.textContent = ''
     }
   }
+  updateProfileSummary(root, preferred)
   return nextTier
 }
 
@@ -179,12 +213,21 @@ export function showWizard(
     const onPresetChange = (): void => {
       const preferred = presets.find(p => p.name === presetSelect.value)?.preferred_tier
       applyTierCompat(modal, compatForSelected(), preferred)
+      const description = modal.querySelector<HTMLElement>('[data-wizard="model-summary"]')!
+      description.innerHTML = modelDescriptionHTML(presetSelect.value)
+      description.hidden = description.innerHTML.trim() === ''
+    }
+    const onProfileChange = (event: Event): void => {
+      if (!(event.target as HTMLElement).matches('input[name="wizard-tier"]')) return
+      updateProfileSummary(modal, presets.find(p => p.name === presetSelect.value)?.preferred_tier)
     }
     onPresetChange()
     presetSelect.addEventListener('change', onPresetChange)
+    modal.addEventListener('change', onProfileChange)
 
     function close(result: WizardResult): void {
       presetSelect.removeEventListener('change', onPresetChange)
+      modal.removeEventListener('change', onProfileChange)
       host.remove()
       resolve(result)
     }

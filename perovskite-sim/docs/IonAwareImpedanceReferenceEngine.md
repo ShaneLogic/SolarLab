@@ -63,6 +63,26 @@ current; when present, their differentiated sum is the discrete definition of
 total conduction, avoiding a second cancellation-sensitive subtraction. The
 ion-aware certificate still gates the returned decomposition closure.
 
+### Displacement Increment Precision
+
+The displacement callback returns the change relative to the fixed DC
+working point. The omitted constant has zero time derivative. The full
+nonlinear reference constructs `delta_y = y_dc * expm1(u)` and solves Poisson
+for its charge increment and the exact boundary voltage increment. Fixed
+dopants and compensating ionic backgrounds therefore cancel analytically.
+This remains a nonlinear reference in `u`, including all four charge signs;
+it does not substitute the structured tangent for the reference.
+
+Directly subtracting two fields obtained from large background potentials
+introduced cancellation into the 91-node voltage derivative. The independent
+fixed-charge result is the discrete series capacitance
+`dD_passive/dV = 1 / sum(dx / epsilon_face)` on every face. Tests compare
+both callbacks with that result at voltage steps `1e-3`, `1e-5`, `1e-7 V`.
+A separate 70-digit calculation integrates Gauss' law on a five-node,
+nonuniform, mixed-dielectric example with all four density increments and
+both junction polarities. The existing derivative and impedance acceptance
+limits are unchanged.
+
 ## Protocol and fail-closed gates
 
 `IonAwareImpedanceProtocol` is frozen, strict-schema, canonical JSON. Its

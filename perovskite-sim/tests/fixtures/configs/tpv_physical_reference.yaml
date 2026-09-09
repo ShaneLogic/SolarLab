@@ -1,0 +1,46 @@
+# Synthetic Boltzmann p-i-n homojunction, not a fitted material or AM1.5G deck.
+# At 300 K: ni = sqrt(Nc*Nv)*exp(-Eg/(2*kT)) = 3.635729012235858e10 m^-3.
+# Identical physical bands and DOS isolate photovoltage without a TE barrier.
+device:
+  mode: full
+  temperature: 300.0
+  built_in_potential_mode: semiconductor_work_function
+  Phi: 1.0e21
+  te_physical_norm: true
+layers:
+  - &semiconductor
+    name: p_contact
+    role: HTL
+    thickness: 75.0e-9
+    eps_r: 25.0
+    mu_n: 1.0e-4
+    mu_p: 1.0e-4
+    chi: 4.0
+    Eg: 1.6
+    Nc300: 1.0e24
+    Nv300: 1.0e24
+    ni: 3.635729012235858e10
+    n1: 3.635729012235858e10
+    p1: 3.635729012235858e10
+    N_A: 1.0e22
+    N_D: 0.0
+    tau_n: 1.0e-6
+    tau_p: 1.0e-6
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    D_ion: 0.0
+    P0: 0.0
+    P_lim: 1.0e26
+    alpha: 0.0
+  - <<: *semiconductor
+    name: intrinsic_absorber
+    role: absorber
+    thickness: 400.0e-9
+    N_A: 0.0
+    alpha: 1.0e7
+  - <<: *semiconductor
+    name: n_contact
+    role: ETL
+    N_A: 0.0
+    N_D: 1.0e22

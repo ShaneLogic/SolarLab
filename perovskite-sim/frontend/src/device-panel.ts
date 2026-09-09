@@ -23,7 +23,7 @@ import type {
 export interface DevicePanel {
   getConfig(): DeviceConfig
   setConfig(config: DeviceConfig): void
-  onChange(cb: (cfg: DeviceConfig) => void): void
+  onChange(cb: (cfg: DeviceConfig, reason: 'edit' | 'preset') => void): void
 }
 
 export interface MountDevicePanelOptions {
@@ -67,7 +67,7 @@ export async function mountDevicePanel(
   root.innerHTML = `
     <div class="card">
       <div class="card-header">
-        <h3>Device Configuration <span id="${tabId}-tmm-badge-slot"></span> <span id="${tabId}-dirty-slot"></span></h3>
+        <h3>Device settings <span id="${tabId}-tmm-badge-slot"></span> <span id="${tabId}-dirty-slot"></span></h3>
         <div class="header-actions">
           <select id="${tabId}-config-select" class="config-select"></select>
           <button class="btn btn-ghost" id="${tabId}-reset">Reset</button>
@@ -89,7 +89,7 @@ export async function mountDevicePanel(
     : null
   let selectedLayerIdx = 0
   let templates: Record<string, LayerTemplate> = {}
-  const listeners: Array<(c: DeviceConfig) => void> = []
+  const listeners: Array<(c: DeviceConfig, reason: 'edit' | 'preset') => void> = []
 
   try {
     const materials = await fetchOpticalMaterials()
@@ -308,7 +308,7 @@ export async function mountDevicePanel(
     }
     refreshBadge(current)
     refreshDirtyPill()
-    listeners.forEach(l => l(current!))
+    listeners.forEach(l => l(current!, 'edit'))
   }
 
   editor.addEventListener('input', syncFromEditor)
@@ -341,7 +341,7 @@ export async function mountDevicePanel(
     current = structuredClone(cfg)
     selectedLayerIdx = 0
     rerender()
-    if (notify) listeners.forEach(l => l(current!))
+    if (notify) listeners.forEach(l => l(current!, 'preset'))
   }
 
   async function load(name: string) {
@@ -360,7 +360,7 @@ export async function mountDevicePanel(
     if (loaded) {
       current = structuredClone(loaded)
       rerender()
-      listeners.forEach(l => l(current!))
+      listeners.forEach(l => l(current!, 'preset'))
     }
   })
 

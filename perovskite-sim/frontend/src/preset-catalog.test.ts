@@ -3,9 +3,10 @@ import { presetLabel, presetPreferredMode, researchPresetEntries } from './prese
 import type { ConfigEntry } from './types'
 
 describe('focused research preset catalog', () => {
-  it('offers the two research baselines in a stable order and preserves user presets', () => {
+  it('offers one entry per model and preserves user presets', () => {
     const entries: ConfigEntry[] = [
       { name: 'calado2016_fig1f.yaml', namespace: 'shipped' },
+      { name: 'calado2016_ion_sweep.yaml', namespace: 'shipped' },
       { name: 'cigs_baseline.yaml', namespace: 'shipped' },
       { name: 'driftfusion_calado2016_repro.yaml', namespace: 'shipped' },
       { name: 'scaps_mirror_v2_robin_strong.yaml', namespace: 'shipped' },
@@ -15,7 +16,7 @@ describe('focused research preset catalog', () => {
     ]
     const original = structuredClone(entries)
     expect(researchPresetEntries(entries).map(e => e.name)).toEqual([
-      'scaps_mirror_v2.yaml', 'calado2016_fig1f.yaml', 'my_scan.yaml',
+      'scaps_mirror_v2.yaml', 'calado2016_ion_sweep.yaml', 'my_scan.yaml',
     ])
     expect(entries).toEqual(original)
   })
@@ -30,10 +31,11 @@ describe('focused research preset catalog', () => {
   })
 
   it('distinguishes the two studies and their reference physics modes', () => {
-    expect(presetLabel('scaps_mirror_v2.yaml')).toBe('SCAPS parity - Reference v2')
+    expect(presetLabel('scaps_mirror_v2.yaml')).toBe('SCAPS reproduction')
     expect(presetPreferredMode('scaps_mirror_v2.yaml')).toBe('fast')
-    expect(presetLabel('calado2016_fig1f.yaml')).toBe('Calado 2016 - Ion hysteresis')
-    expect(presetPreferredMode('calado2016_fig1f.yaml')).toBe('legacy')
+    expect(presetPreferredMode('calado2016_fig1f.yaml')).toBeUndefined()
+    expect(presetLabel('calado2016_ion_sweep.yaml')).toBe('Calado 2016 - Ion hysteresis')
+    expect(presetPreferredMode('calado2016_ion_sweep.yaml')).toBe('full')
     expect(presetLabel('my_scan.yml')).toBe('my_scan')
     expect(presetPreferredMode('my_scan.yml')).toBeUndefined()
   })

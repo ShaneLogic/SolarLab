@@ -1,15 +1,6 @@
 /**
- * Unit tests for the publication-style plot theme helpers added alongside
- * the existing engineering-mode ``baseLayout`` / ``plotConfig`` exports.
- *
- * These tests pin two invariants:
- *   1. The engineering exports (``baseLayout`` etc.) are unchanged — any
- *      drift here would break every existing renderer in main-plot-pane
- *      and panels/{jv,impedance,degradation}.
- *   2. The new publication helpers produce the Nature-style defaults
- *      documented in the design (white bg, black axes, hollow markers,
- *      compact margins, modebar off, in-plot legend, optional metric
- *      annotation that never invents fake V_oc / FF / PCE).
+ * Shared base layouts and publication figure styling, including metric
+ * annotations that never invent V_oc / FF / PCE values.
  *
  * No DOM-renderer logic is exercised here; that lives in the per-pane
  * test files (e.g. ``jv-2d-render.test.ts``).
@@ -23,16 +14,14 @@ import {
   publicationConfig,
   publicationTraceStyle,
   metricAnnotation,
-  readPlotStyleMode,
-  writePlotStyleMode,
   PUBLICATION_FONT_FAMILY,
   PUBLICATION_PALETTE,
   PUBLICATION_LINE_WIDTH,
   PUBLICATION_MARKER_SIZE,
 } from './plot-theme'
 
-describe('plot-theme — engineering baseline (regression)', () => {
-  it('baseLayout font family is Arial (engineering, unchanged)', () => {
+describe('plot-theme — shared base layout', () => {
+  it('baseLayout font family is Arial', () => {
     const L = baseLayout() as { font: { family: string } }
     expect(L.font.family).toBe('Arial, sans-serif')
   })
@@ -274,30 +263,6 @@ describe('plot-theme — metricAnnotation', () => {
     expect(text).toContain('—')
     // Still emits the V_oc / FF / PCE numerics; only J_sc is a dash.
     expect(text).toContain('0.950 V')
-  })
-})
-
-describe('plot-theme — readPlotStyleMode / writePlotStyleMode', () => {
-  it('default is engineering when dataset unset', () => {
-    const el = document.createElement('div')
-    expect(readPlotStyleMode(el)).toBe('engineering')
-  })
-  it('reads "publication" from dataset', () => {
-    const el = document.createElement('div')
-    el.dataset.plotStyleMode = 'publication'
-    expect(readPlotStyleMode(el)).toBe('publication')
-  })
-  it('falls back to engineering for unknown values (defensive)', () => {
-    const el = document.createElement('div')
-    el.dataset.plotStyleMode = 'hello'
-    expect(readPlotStyleMode(el)).toBe('engineering')
-  })
-  it('write round-trips through read', () => {
-    const el = document.createElement('div')
-    writePlotStyleMode(el, 'publication')
-    expect(readPlotStyleMode(el)).toBe('publication')
-    writePlotStyleMode(el, 'engineering')
-    expect(readPlotStyleMode(el)).toBe('engineering')
   })
 })
 

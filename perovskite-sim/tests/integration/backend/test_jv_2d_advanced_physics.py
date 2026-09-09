@@ -11,9 +11,8 @@ Two surfaces matter:
 
 2. ``POST /api/jobs`` with ``kind="jv_2d"`` and either a ``config_path`` to a
    B(c.x)-enabled preset OR an inline ``device`` JSON — must dispatch
-   without error and return a job_id. This mirrors the existing
-   ``test_voc_grain_sweep_api.py`` smoke pattern: we do not await the
-   worker thread, only the synchronous handshake.
+   and return a solved result. Tests consume the result stream before their
+   patched configuration can be restored.
 
 The unit-level round-trip test is where regressions show up first; the
 HTTP smoke tests are belt-and-braces against the dispatch surface.
@@ -354,6 +353,7 @@ def test_jv_2d_dispatches_inline_device_with_microstructure_from_singleGB():
     body = resp.json()
     assert body["status"] == "ok"
     assert isinstance(body["job_id"], str)
+    assert _consume_sse_until_done(client, body["job_id"]) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +385,7 @@ def test_jv_2d_dispatches_bcx_combined_demo():
     body = resp.json()
     assert body["status"] == "ok"
     assert isinstance(body["job_id"], str)
+    assert _consume_sse_until_done(client, body["job_id"]) is not None
 
 
 def test_jv_2d_dispatches_inline_device_with_bcx_fields():
@@ -429,3 +430,4 @@ def test_jv_2d_dispatches_inline_device_with_bcx_fields():
     body = resp.json()
     assert body["status"] == "ok"
     assert isinstance(body["job_id"], str)
+    assert _consume_sse_until_done(client, body["job_id"]) is not None

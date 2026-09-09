@@ -29,10 +29,9 @@ Measured, sweeping the divisor on the failing config::
     dt/20 -> 509.8   dt/100 -> 162.0   dt/200 -> 255.9
     dt/1000 -> 162.0   dt/2000 -> 162.0
 
-Non-monotone: a *global* max_step change perturbs every step's trajectory and
-merely relocates which one lands wrong.  Same lesson as the E9.3 clamp-shape
-variants.  ``test_tighter_max_step_is_not_a_fix`` pins that this remains true,
-so the cheaper-looking fix is not re-attempted.
+Those historical values depend on the numerical-library version as well as
+thread count. Deterministic injected counterexamples below test rejection and
+subdivision agreement; real-device tests retain the converged physical bounds.
 
 THE FIX
 -------
@@ -64,9 +63,9 @@ BLAS only when the ``slow`` marker is selected, so the ``slow`` lane saw it
 legitimately green.  Same sensitivity class as the note on
 ``test_flat_band_contacts`` in CLAUDE.md.
 
-This module therefore pins BLAS itself rather than relying on the marker, so
-it is deterministic in either lane.  It is NOT marked ``slow``: the whole
-lesson is that this bug class hid behind that marker.
+This module pins BLAS rather than relying on the marker. That controls thread
+count, but cannot make a historical fault recur on every library version.
+The module stays in the default lane because rejection must be tested there.
 """
 from __future__ import annotations
 
@@ -277,20 +276,21 @@ def test_rejector_is_inert_on_a_healthy_sweep(monkeypatch):
     np.testing.assert_array_equal(r_on.J_rev, r_off.J_rev)
 
 
-def test_guard_actually_fires_on_the_gate_config(gate_stack, monkeypatch):
-    """Turning the guard OFF must bring the spike back.
+def test_guard_rejects_an_injected_successful_wrong_branch(gate_stack, monkeypatch):
+    """The same wrong candidate survives only when rejection is disabled."""
+    def make_state(V, legs, y, _N):
+        current = 100.0 if V == 0.0 else (500.0 if legs == 1 else 80.0)
+        return _fake_state(y, current, ion=1.0)
 
-    Without this the suite could pass because the spike had quietly gone away
-    for some unrelated reason, leaving the rejector untested.
-    """
+    guarded, _ = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+    assert guarded.status_fwd[1].candidate_current == 500.0
+    assert guarded.status_fwd[1].refinement_converged
+    assert guarded.J_fwd[1] == 80.0
+
     monkeypatch.setattr(JV, "_J_BRANCH_EXCESS", np.inf)
-    r = run_jv_sweep(gate_stack, **_GATE)
-    i = int(np.argmin(np.abs(r.V_fwd - _SPIKE_V)))
-    assert float(r.J_fwd[i]) > 400.0, (
-        "guard disabled but no spike appeared -- this test no longer "
-        f"exercises the rejector (J = {float(r.J_fwd[i]):.3f})"
-    )
-    assert r.metrics_fwd.FF > 1.0
+    unguarded, _ = _run_fake_sweep(monkeypatch, gate_stack, make_state)
+    assert unguarded.J_fwd[1] == 500.0
+    assert unguarded.status_fwd[1].attempted_legs == (1,)
 
 
 def test_shipped_steric_default_avoids_the_historical_spike(monkeypatch):
@@ -561,37 +561,20 @@ def test_near_zero_forward_jsc_uses_absolute_current_resolution(
     assert not any(V > 0.0 and legs > 1 for V, legs, *_ in calls)
 
 
-def test_tighter_max_step_is_not_a_fix(gate_stack):
-    """Pin the measured non-monotonicity so the divisor fix is not retried.
+def test_nonmonotone_refinements_require_an_agreeing_pair(gate_stack, monkeypatch):
+    """A smaller step and an admissible current alone cannot certify a state."""
+    def make_state(V, legs, y, _N):
+        if V == 0.0:
+            return _fake_state(y, 100.0, ion=1.0)
+        current = {1: 500.0, 2: 80.0, 4: 95.0, 8: 80.0}[legs]
+        return _fake_state(y, current, ion=1.0)
 
-    dt/200 must still land on a wrong branch: it is the counterexample that
-    rules out "just make max_step smaller".
-    """
-    orig = JV.run_transient
-
-    def scaled(*a, **kw):
-        ms = kw.get("max_step", np.inf)
-        if np.isfinite(ms):
-            kw["max_step"] = ms / 10.0        # dt/20 -> dt/200
-        return orig(*a, **kw)
-
-    try:
-        JV.run_transient = scaled
-        # Guard off, so we observe the raw integrator behaviour.
-        excess = JV._J_BRANCH_EXCESS
-        JV._J_BRANCH_EXCESS = np.inf
-        r = run_jv_sweep(gate_stack, **_GATE)
-    finally:
-        JV.run_transient = orig
-        JV._J_BRANCH_EXCESS = excess
-
-    i = int(np.argmin(np.abs(r.V_fwd - _SPIKE_V)))
-    assert float(r.J_fwd[i]) > _CONVERGED_J + 50.0, (
-        "dt/200 no longer produces a wrong branch; the measured "
-        "non-monotonicity that rules out a max_step fix has changed and the "
-        "rationale in _integrate_step's docstring needs re-measuring "
-        f"(J = {float(r.J_fwd[i]):.3f})"
-    )
+    with pytest.raises(JV.JVCertificationError) as caught:
+        _run_fake_sweep(monkeypatch, gate_stack, make_state)
+    status = caught.value.status
+    assert status.reason_code == "positive_bias_refinement_exhausted"
+    assert status.attempted_currents == (500.0, 80.0, 95.0, 80.0)
+    assert not status.refinement_converged
 
 
 def test_unrecoverable_positive_violation_fails_closed(

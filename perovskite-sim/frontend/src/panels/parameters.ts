@@ -11,7 +11,7 @@ export function parametersHTML(): string {
         <tbody>
           <tr>
             <td>Mode</td><td>Physics tier</td><td>—</td>
-            <td><b>Full</b> enables every configured upgrade; <b>Fast</b> retains thermionic emission, TMM, dual ions, spatial traps, temperature scaling and photon recycling, but omits the three per-RHS upgrades; <b>Legacy</b> is IonMonger-compatible (<i>T</i> pinned to 300 K, single ion, uniform <i>τ</i>, Beer–Lambert, no TE). See the Algorithm tab for the per-flag gating table.</td>
+            <td>Physics capability profile, separate from the reference model. <b>Legacy:</b> isothermal baseline. <b>Fast:</b> optoelectronic extensions. <b>Full:</b> additional radiative, mobility and contact terms. Each extension requires its corresponding input parameters; these are not accuracy levels.</td>
           </tr>
           <tr>
             <td><i>T</i></td><td>Device temperature</td><td>K</td>

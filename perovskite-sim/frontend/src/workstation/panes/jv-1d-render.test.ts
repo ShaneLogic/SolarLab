@@ -3,10 +3,8 @@
  *
  * Mirrors the 2D pane test pattern: Plotly is mocked because jsdom
  * has no canvas, so layout / trace / config arguments are read from
- * ``newPlot.mock.calls``. Engineering mode is the default and must
- * remain bit-identical to the pre-publication-mode renderer; the
- * Publication branch swaps font / colors / margins / modebar / axes
- * / annotation / hollow markers without mutating raw V/J arrays.
+ * ``newPlot.mock.calls``. Publication styling and metric selection
+ * must preserve the raw V/J arrays.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -125,13 +123,7 @@ function _lastNewPlotConfig(): Record<string, any> | undefined {
   return calls[calls.length - 1][3] as Record<string, any>
 }
 
-function _toggleStyle(el: HTMLElement, mode: 'engineering' | 'publication'): void {
-  const sel = el.querySelector<HTMLSelectElement>('[data-test="jv1d-style-mode"]')!
-  sel.value = mode
-  sel.dispatchEvent(new Event('change'))
-}
-
-describe('renderJV — toolbar + style mode', () => {
+describe('renderJV — controls and evidence', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -139,36 +131,24 @@ describe('renderJV — toolbar + style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select unconditionally when plot data exists', () => {
+  it('renders without a style selector', () => {
     renderJV(el, makeResult())
-    expect(el.querySelector('[data-test="jv1d-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="jv1d-style-mode"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="jv1d-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="jv1d-style-mode"]')).toBeNull()
   })
 
-  it('default style is engineering (Arial layout, modebar visible)', () => {
-    renderJV(el, makeResult())
-    const layout = _lastNewPlotLayout()!
-    expect(layout.font.family).toBe('Arial, sans-serif')
-    const config = _lastNewPlotConfig()!
-    // Engineering ``plotConfig`` does not pin displayModeBar → Plotly default.
-    expect(config.displayModeBar).toBeUndefined()
-  })
-
-  it('Engineering trace colors / symbols match the pre-publication renderer', () => {
-    renderJV(el, makeResult())
-    const traces = _lastNewPlotTraces()!
-    expect(traces).toHaveLength(2)
-    // Forward: filled blue circle (existing engineering palette).
-    expect(traces[0].name).toBe('Forward')
-    expect(traces[0].line.color).toBe('#2563eb')
-    expect(traces[0].marker.color).toBe('#2563eb')
-    expect(traces[0].marker.symbol).toBeUndefined()
-    // Reverse: filled orange dashed square.
-    expect(traces[1].name).toBe('Reverse')
-    expect(traces[1].line.color).toBe('#ea580c')
-    expect(traces[1].line.dash).toBe('dash')
-    expect(traces[1].marker.symbol).toBe('square')
-  })
+  it.each([undefined, 'engineering', 'publication', 'unknown'])(
+    'keeps publication styling across renders with legacy state %s', style => {
+      if (style !== undefined) el.dataset.plotStyleMode = style
+      const result = makeResult()
+      renderJV(el, result)
+      renderJV(el, result)
+      expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
+      expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
+      expect(el.querySelector('.plot-style-select')).toBeNull()
+      expect(el.querySelectorAll('.jv1d-plot')).toHaveLength(1)
+    },
+  )
 
   it('omits the explicit-defect strip for legacy J-V results', () => {
     renderJV(el, makeResult())
@@ -207,7 +187,7 @@ describe('renderJV — toolbar + style mode', () => {
     expect(_lastNewPlotTraces()).toHaveLength(2)
   })
 
-  it('renders charged evidence and one zero-scan curve in both styles', () => {
+  it('renders charged evidence and one zero-scan curve with publication styling', () => {
     const evidence = makeInterfaceChargeEvidence()
     evidence.points.push({} as never, {} as never, {} as never)
     renderJV(el, makeResult({ interface_charge_evidence: evidence }))
@@ -222,14 +202,13 @@ describe('renderJV — toolbar + style mode', () => {
     expect(_lastNewPlotTraces()).toHaveLength(1)
     expect(_lastNewPlotTraces()![0].name).toBe('Charged QF/DC')
 
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotTraces()).toHaveLength(1)
     const annotation = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0]
     expect(annotation.text).toContain('Charged QF/DC')
   })
 })
 
-describe('renderJV — publication style mode', () => {
+describe('renderJV — publication rendering', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -237,9 +216,8 @@ describe('renderJV — publication style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('toggling to publication applies Nature-style layout', () => {
+  it('uses publication by default with Nature-style layout', () => {
     renderJV(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.paper_bgcolor).toBe('#ffffff')
@@ -250,16 +228,13 @@ describe('renderJV — publication style mode', () => {
     expect(layout.yaxis.zeroline).toBe(true)
   })
 
-  it('publication mode hides the Plotly modebar; engineering does not', () => {
+  it('publication mode hides the Plotly modebar', () => {
     renderJV(el, makeResult())
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
   })
 
   it('publication forward trace: hollow circle, muted blue, lines+markers', () => {
     renderJV(el, makeResult())
-    _toggleStyle(el, 'publication')
     const traces = _lastNewPlotTraces()!
     const fwd = traces[0]
     expect(fwd.name).toBe('Forward')
@@ -275,7 +250,6 @@ describe('renderJV — publication style mode', () => {
 
   it('publication reverse trace: hollow circle, muted red, dashed line', () => {
     renderJV(el, makeResult())
-    _toggleStyle(el, 'publication')
     const rev = _lastNewPlotTraces()![1]
     expect(rev.name).toBe('Reverse')
     expect(rev.mode).toBe('lines+markers')
@@ -292,7 +266,6 @@ describe('renderJV — publication style mode', () => {
     // metrics_rev.voc_bracketed=true (both bracket). Annotation must
     // prefer forward.
     renderJV(el, makeResult())
-    _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
     expect(annotations).toHaveLength(1)
     const text = annotations[0].text
@@ -311,7 +284,6 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.951, J_sc: 220.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
       metrics_rev: { V_oc: 0.0, J_sc: 218.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
     }))
-    _toggleStyle(el, 'publication')
     const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
     expect(text.startsWith('<b>Forward:</b><br>')).toBe(true)
     expect(text).toContain('0.951 V')
@@ -325,7 +297,6 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.0, J_sc: 405.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
       metrics_rev: { V_oc: 0.860, J_sc: 404.9, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
     }))
-    _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<{ text: string }>
     expect(annotations).toHaveLength(1)
     const text = annotations[0].text
@@ -349,7 +320,6 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.0, J_sc: 405.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
       metrics_rev: { V_oc: 0.860, J_sc: 400.0, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
     }))
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     const [ymin, ymax] = layout.yaxis.range as [number, number]
     expect(ymin).toBeCloseTo(-6.0, 6)
@@ -363,29 +333,55 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.0, J_sc: 405.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
       metrics_rev: { V_oc: 0.860, J_sc: 400.0, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
     }))
-    _toggleStyle(el, 'publication')
     const [xmin, xmax] = _lastNewPlotLayout()!.xaxis.range as [number, number]
     expect(xmin).toBeCloseTo(-0.05, 6)
     expect(xmax).toBeCloseTo(+1.040, 6)
   })
 
-  it('both bracketed: y/x range driven by metrics_fwd (forward preferred)', () => {
-    // metrics_fwd.J_sc=200 → 20 mA/cm² → [-3.0, +22.4].
-    // metrics_rev.J_sc=400 → 40 mA/cm² → [-6.0, +44.8] (NOT used).
-    // metrics_fwd.V_oc=0.951 → cap 1.131 (vs reverse 1.040 — NOT used).
+  it('both bracketed: axis bounds include both branches', () => {
+    // Reverse sets the current envelope; forward sets the larger V_oc.
     renderJV(el, makeResult({
       metrics_fwd: { V_oc: 0.951, J_sc: 200.0, FF: 0.823, PCE: 0.1722, voc_bracketed: true },
       metrics_rev: { V_oc: 0.860, J_sc: 400.0, FF: 0.865, PCE: 0.3011, voc_bracketed: true },
     }))
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     const [ymin, ymax] = layout.yaxis.range as [number, number]
-    expect(ymin).toBeCloseTo(-3.0, 6)
-    expect(ymax).toBeCloseTo(+22.4, 6)
-    // Forward V_oc cap, not reverse.
+    expect(ymin).toBeCloseTo(-6.0, 6)
+    expect(ymax).toBeCloseTo(+44.8, 6)
     const [, xmax] = layout.xaxis.range as [number, number]
     // V_oc + 0.18 = 1.131; max(V) + 0.05 = 1.05 → cap at 1.05.
     expect(xmax).toBeCloseTo(1.05, 6)
+  })
+
+  it('keeps the reverse operating region visible when forward power collapses', () => {
+    renderJV(el, makeResult({
+      metrics_fwd: { V_oc: 0.25, J_sc: 10, FF: 0.32, PCE: 0.0008, voc_bracketed: true },
+      metrics_rev: { V_oc: 0.78, J_sc: 160, FF: 0.63, PCE: 0.0783, voc_bracketed: true },
+    }))
+    const layout = _lastNewPlotLayout()!
+    expect(layout.yaxis.range[1]).toBeCloseTo(17.92, 6)
+    expect(layout.xaxis.range[1]).toBeCloseTo(0.96, 6)
+    expect(layout.annotations[0].text).toContain('Forward:')
+    expect(layout.annotations[0].text).toContain('0.250 V')
+    expect(layout.annotations[0].y).toBe(0.72)
+  })
+
+  it('shows the photovoltaic quadrant by default and preserves full-history data', () => {
+    const result = makeResult({
+      V_fwd: [-1, 0, 0.5, 1.2], J_fwd: [160, 10, -30, -1000],
+      V_rev: [1.2, 0.5, 0, -1], J_rev: [-1000, 150, 160, 165],
+    })
+    renderJV(el, result)
+    expect(_lastNewPlotLayout()!.xaxis.range[0]).toBe(-0.05)
+    const originalTraces = structuredClone(_lastNewPlotTraces())
+    const range = el.querySelector<HTMLSelectElement>('[data-test="jv1d-range-mode"]')!
+    range.value = 'full'
+    range.dispatchEvent(new Event('change'))
+    expect(_lastNewPlotLayout()!.xaxis.range).toBeUndefined()
+    expect(_lastNewPlotLayout()!.yaxis.range).toBeUndefined()
+    expect(_lastNewPlotTraces()).toEqual(originalTraces)
+    renderJV(el, result)
+    expect(el.querySelector<HTMLSelectElement>('[data-test="jv1d-range-mode"]')!.value).toBe('full')
   })
 
   it('neither bracketed: autorange y/x; annotation Forward + "not bracketed"', () => {
@@ -393,7 +389,6 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
       metrics_rev: { V_oc: 0.0, J_sc: 218.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
     }))
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     // y-range: autoranged because the picked sweep is not bracketed.
     expect(layout.yaxis.range).toBeUndefined()
@@ -414,7 +409,6 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.95, J_sc: 220, FF: 0.82, PCE: 0.17 },     // no voc_bracketed
       metrics_rev: { V_oc: 0.94, J_sc: 218, FF: 0.81, PCE: 0.165 },
     }))
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     // y-range autoranged because no sweep was picked.
     expect(layout.yaxis.range).toBeUndefined()
@@ -431,7 +425,6 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.0, J_sc: 220.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
       metrics_rev: { V_oc: 0.0, J_sc: 218.0, FF: 0.0, PCE: 0.0, voc_bracketed: false },
     }))
-    _toggleStyle(el, 'publication')
     const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
     expect(text.startsWith('<b>Forward:</b><br>')).toBe(true)
     expect(text).toContain('not bracketed')
@@ -447,7 +440,6 @@ describe('renderJV — publication style mode', () => {
       metrics_fwd: { V_oc: 0.95, J_sc: 220, FF: 0.82, PCE: 0.17 },     // no voc_bracketed
       metrics_rev: { V_oc: 0.94, J_sc: 218, FF: 0.81, PCE: 0.165 },
     }))
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     // Style still applies — Helvetica/Arial, white bg, no grid.
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
@@ -457,13 +449,10 @@ describe('renderJV — publication style mode', () => {
     expect(annotations).toHaveLength(0)
   })
 
-  it('publication operational y-range tighter than engineering autorange', () => {
-    // Engineering 1D path leaves yaxis.range unset (autoranges). Publication
-    // tight envelope = [-0.15·J_sc_mA, +1.12·J_sc_mA]. J_sc=220 → 22 mA/cm².
+  it('publication operational y-range follows J_sc', () => {
+    // Envelope = [-0.15·J_sc_mA, +1.12·J_sc_mA]. J_sc=220 → 22 mA/cm².
     // → publication range ≈ [-3.30, +24.64].
     renderJV(el, makeResult())
-    expect(_lastNewPlotLayout()!.yaxis.range).toBeUndefined()
-    _toggleStyle(el, 'publication')
     const range = _lastNewPlotLayout()!.yaxis.range as [number, number]
     expect(range[0]).toBeCloseTo(-3.30, 6)
     expect(range[1]).toBeCloseTo(+24.64, 6)
@@ -471,7 +460,6 @@ describe('renderJV — publication style mode', () => {
 
   it('publication x-axis: -0.05 V left margin when sweep starts at V=0', () => {
     renderJV(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     const [xmin, xmax] = layout.xaxis.range as [number, number]
     expect(xmin).toBeCloseTo(-0.05, 6)
@@ -488,53 +476,38 @@ describe('renderJV — publication style mode', () => {
       V_rev: [1.5, 1.0, 0.5, 0.0],
       J_rev: [+395.0, -55.0, -185.0, -222.0],
     }))
-    _toggleStyle(el, 'publication')
     // V_oc + 0.18 = 0.951 + 0.18 = 1.131 < max(V) + 0.05 = 1.55
     const [, xmax] = _lastNewPlotLayout()!.xaxis.range as [number, number]
     expect(xmax).toBeCloseTo(1.131, 6)
   })
 
-  it('raw V/J trace data are unchanged across modes (no mutation, byte-identical)', () => {
+  it('raw V/J trace data are unchanged across renders (no mutation, byte-identical)', () => {
     const result = makeResult()
     const V_fwd_pre = [...result.V_fwd]
     const J_fwd_pre = [...result.J_fwd]
     const V_rev_pre = [...result.V_rev]
     const J_rev_pre = [...result.J_rev]
-    // Engineering render.
+    // Initial render.
     renderJV(el, result)
-    const tracesEng = _lastNewPlotTraces()!
-    const yEngFwd = (tracesEng[0].y as number[]).slice()
-    const yEngRev = (tracesEng[1].y as number[]).slice()
-    // Publication render.
-    _toggleStyle(el, 'publication')
-    const tracesPub = _lastNewPlotTraces()!
-    const yPubFwd = (tracesPub[0].y as number[]).slice()
-    const yPubRev = (tracesPub[1].y as number[]).slice()
-    // Trace y arrays equal between modes (post-flip-and-scale).
-    expect(yPubFwd).toEqual(yEngFwd)
-    expect(yPubRev).toEqual(yEngRev)
+    const tracesInitial = _lastNewPlotTraces()!
+    const yInitialFwd = (tracesInitial[0].y as number[]).slice()
+    const yInitialRev = (tracesInitial[1].y as number[]).slice()
+    // Repeated render.
+    renderJV(el, result)
+    const tracesRepeated = _lastNewPlotTraces()!
+    const yRepeatedFwd = (tracesRepeated[0].y as number[]).slice()
+    const yRepeatedRev = (tracesRepeated[1].y as number[]).slice()
+    // Trace y arrays equal between renders (post-flip-and-scale).
+    expect(yRepeatedFwd).toEqual(yInitialFwd)
+    expect(yRepeatedRev).toEqual(yInitialRev)
     // Forward traces use raw r.V_fwd reference for x — must remain identical.
-    expect(tracesEng[0].x).toBe(result.V_fwd)
-    expect(tracesPub[0].x).toBe(result.V_fwd)
+    expect(tracesInitial[0].x).toBe(result.V_fwd)
+    expect(tracesRepeated[0].x).toBe(result.V_fwd)
     // Raw input arrays remain bit-identical.
     expect(result.V_fwd).toEqual(V_fwd_pre)
     expect(result.J_fwd).toEqual(J_fwd_pre)
     expect(result.V_rev).toEqual(V_rev_pre)
     expect(result.J_rev).toEqual(J_rev_pre)
-  })
-
-  it('style mode persists across re-render via el.dataset.plotStyleMode', () => {
-    const result = makeResult()
-    renderJV(el, result)
-    _toggleStyle(el, 'publication')
-    expect(el.dataset.plotStyleMode).toBe('publication')
-    // External re-entry (e.g. mountMainPlotPane.update) re-invokes
-    // ``renderJV`` on the same stable container — must honour the
-    // dataset attribute without an explicit second toggle.
-    renderJV(el, result)
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv1d-style-mode"]')!
-    expect(sel.value).toBe('publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
   it('publication legend sits at upper-RIGHT (avoids overlapping J(V=0) plateau)', () => {
@@ -544,7 +517,6 @@ describe('renderJV — publication style mode', () => {
     // 1D pane must override to upper-RIGHT (the curves exit toward
     // the lower-right at V_oc, leaving the upper-right empty).
     renderJV(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.legend.x).toBe(0.98)
     expect(layout.legend.y).toBe(0.98)
@@ -555,15 +527,5 @@ describe('renderJV — publication style mode', () => {
     // legend object would silently restore Plotly defaults).
     expect(layout.legend.bgcolor).toBe('rgba(255,255,255,0)')
     expect(layout.legend.borderwidth).toBe(0)
-  })
-
-  it('publication mode keeps engineering branch intact for second render after toggle-back', () => {
-    renderJV(el, makeResult())
-    _toggleStyle(el, 'publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-    _toggleStyle(el, 'engineering')
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    // Engineering must NOT carry over publication-only artifacts.
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
   })
 })

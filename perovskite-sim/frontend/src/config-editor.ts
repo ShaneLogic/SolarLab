@@ -18,9 +18,9 @@ import { isLayerRole } from './types'
 import { isFieldVisible } from './workstation/tier-gating'
 
 const MODE_OPTIONS: ReadonlyArray<{ value: SimulationModeName; label: string }> = [
-  { value: 'full', label: 'Full (all physics upgrades)' },
-  { value: 'fast', label: 'Fast (build-once physics)' },
-  { value: 'legacy', label: 'Legacy (IonMonger-compatible)' },
+  { value: 'full', label: 'Full (constitutive extensions)' },
+  { value: 'fast', label: 'Fast (optoelectronic)' },
+  { value: 'legacy', label: 'Legacy (isothermal baseline)' },
 ]
 
 const BUILT_IN_POTENTIAL_OPTIONS: ReadonlyArray<{
@@ -972,38 +972,38 @@ function renderInterfaces(config: DeviceConfig): string {
 /**
  * FULL-tier-only Stage B(c.1) Robin / selective-contacts panel. Maps the
  * four ``DeviceConfig.device.S_{n,p}_{left,right}`` fields to UI labels
- * "Top contact (HTL side)" / "Bottom contact (ETL side)" — matches the
+ * "Top contact" / "Bottom contact" — matches the
  * y-axis convention exposed by the workstation 2D pane and
  * ``MaterialArrays2D.S_{n,p}_{top,bot}``. The YAML keys remain the
  * original 1D names (``S_n_left`` etc.) for backwards compatibility with
  * the 1D Phase 3.3 hook; this is a UI-only relabel for the 2D mental
- * model. Empty input is the "absent" sentinel (round-trips as ``null``);
- * an explicit ``0`` is the "perfectly blocking (Neumann)" limit; large
- * values (≥ 10³ m/s) approach the ohmic limit.
+ * model. Empty input retains the device's resolved contact setting;
+ * an explicit ``0`` blocks exchange. Positive values are finite exchange
+ * velocities; their fixed-concentration limit is device-dependent.
  */
 function renderRobinContacts(config: DeviceConfig): string {
   const d = config.device
-  const help = '<p class="param-help">Surface recombination velocities at the outer contacts. Empty = disabled (Dirichlet ohmic); explicit <code>0</code> = perfectly blocking (Neumann); ≥ 10³ m/s approaches the ohmic limit. <strong>Top</strong> = HTL side (y=0, YAML <code>S_*_left</code>); <strong>Bottom</strong> = ETL side (y=Ny−1, YAML <code>S_*_right</code>).</p>'
+  const help = '<p class="param-help">Outer-contact exchange velocities. Empty: device contact setting; <code>0</code>: blocking; positive: finite exchange. <strong>Top</strong>: y=0; <strong>Bottom</strong>: y=L. The fixed-concentration limit depends on the device.</p>'
   return `
       <details class="param-group">
         <summary><h5>Advanced 2D Physics — Robin contacts (B(c.1))</h5></summary>
         ${help}
         <div class="param-grid">
-          <label class="param" title="Electron surface velocity at the top contact (HTL side, YAML S_n_left). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+          <label class="param" title="Top electron exchange velocity (S_n_left). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
             <span class="param-label"><span class="sym"><i>S</i><sub>n</sub><sup>top</sup></span><span class="unit">m/s</span></span>
-            ${numAttr('dev-S-n-top', d.S_n_left, { placeholder: '0 — disabled', title: 'Top electron Robin S (YAML S_n_left)' })}
+            ${numAttr('dev-S-n-top', d.S_n_left, { placeholder: 'Device default', title: 'Top electron exchange velocity (S_n_left)' })}
           </label>
-          <label class="param" title="Hole surface velocity at the top contact (HTL side, YAML S_p_left). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+          <label class="param" title="Top hole exchange velocity (S_p_left). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
             <span class="param-label"><span class="sym"><i>S</i><sub>p</sub><sup>top</sup></span><span class="unit">m/s</span></span>
-            ${numAttr('dev-S-p-top', d.S_p_left, { placeholder: '0 — disabled', title: 'Top hole Robin S (YAML S_p_left)' })}
+            ${numAttr('dev-S-p-top', d.S_p_left, { placeholder: 'Device default', title: 'Top hole exchange velocity (S_p_left)' })}
           </label>
-          <label class="param" title="Electron surface velocity at the bottom contact (ETL side, YAML S_n_right). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+          <label class="param" title="Bottom electron exchange velocity (S_n_right). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
             <span class="param-label"><span class="sym"><i>S</i><sub>n</sub><sup>bot</sup></span><span class="unit">m/s</span></span>
-            ${numAttr('dev-S-n-bot', d.S_n_right, { placeholder: '0 — disabled', title: 'Bottom electron Robin S (YAML S_n_right)' })}
+            ${numAttr('dev-S-n-bot', d.S_n_right, { placeholder: 'Device default', title: 'Bottom electron exchange velocity (S_n_right)' })}
           </label>
-          <label class="param" title="Hole surface velocity at the bottom contact (ETL side, YAML S_p_right). Empty disables; 0 is blocking; ≥ 1e3 m/s approaches ohmic.">
+          <label class="param" title="Bottom hole exchange velocity (S_p_right). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
             <span class="param-label"><span class="sym"><i>S</i><sub>p</sub><sup>bot</sup></span><span class="unit">m/s</span></span>
-            ${numAttr('dev-S-p-bot', d.S_p_right, { placeholder: '0 — disabled', title: 'Bottom hole Robin S (YAML S_p_right)' })}
+            ${numAttr('dev-S-p-bot', d.S_p_right, { placeholder: 'Device default', title: 'Bottom hole exchange velocity (S_p_right)' })}
           </label>
         </div>
       </details>`

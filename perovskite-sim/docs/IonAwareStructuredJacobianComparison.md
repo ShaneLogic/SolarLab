@@ -63,6 +63,16 @@ The certificate directly evaluates the componentwise backward error of every
 state and voltage sensitivity solve. Poisson therefore does not pass merely
 because the final impedance happens to agree.
 
+The structured displacement is formed directly from
+`delta_phi = phi_u @ delta_u + phi_V * delta_V`. Its DC potential is added
+only when evaluating physical conduction and reaction terms. Differencing
+`delta_phi` for displacement avoids reintroducing the background-potential
+cancellation after the analytic Poisson solve. The independently nonlinear
+reference uses `expm1` density increments and a fresh Poisson solve, as
+described in [IonAwareImpedanceReferenceEngine.md](IonAwareImpedanceReferenceEngine.md).
+Independent series-capacitance and high-precision Gauss-law tests supplement
+the comparison between the two implementations.
+
 ## Adaptive column stencil
 
 A single log-density step is not numerically meaningful across this device.

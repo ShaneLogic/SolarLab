@@ -6,7 +6,7 @@ import type { DeviceConfig, ELResult } from '../../types'
 import type { Run, RunResult } from '../types'
 
 const NON_TMM_MSG =
-  'Active device has no TMM optics (no optical_material on any layer). EL needs wavelength-resolved n,k data — switch to a *_tmm preset (e.g. ionmonger_benchmark_tmm, nip_MAPbI3_tmm).'
+  'TMM optical data required. Select a preset with wavelength-resolved n,k data.'
 
 export interface ELPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -18,13 +18,13 @@ export function mountELPane(container: HTMLElement, opts: ELPaneOptions): void {
   const showBanner = !!active && !hasTMMOptics(active.config)
   container.innerHTML = `
     <div class="card">
-      <h3>Electroluminescence (EL) &amp; &Delta;V<sub>nr</sub></h3>
+      <h3>Spectral settings</h3>
       <div id="el-tmm-banner" class="status error"${showBanner ? '' : ' hidden'} role="alert" style="display:${showBanner ? 'block' : 'none'};margin-bottom:0.5rem;">${NON_TMM_MSG}</div>
       <div class="form-grid">
         ${numField('el-V', 'V<sub>inj</sub> (V)', 1.0, 'any')}
         ${numField('el-lmin', '&lambda;<sub>min</sub> (nm)', 400, '1')}
         ${numField('el-lmax', '&lambda;<sub>max</sub> (nm)', 1000, '1')}
-        ${numField('el-nl', '&lambda; points', 25, '1')}
+        ${numField('el-nl', 'Wavelength points', 25, '1')}
         ${numField('el-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('el-nd', 'Dark J&ndash;V points', 30, '1')}
         ${numField('el-rate', 'Scan rate (V/s)', 1.0, 'any')}
@@ -34,7 +34,7 @@ export function mountELPane(container: HTMLElement, opts: ELPaneOptions): void {
         <span class="status" id="status-el"></span>
       </div>
       <div id="progress-el"></div>
-      <div class="pane-hint">Applies Rau (2007) reciprocity: &Phi;<sub>EL</sub>(&lambda;) = A<sub>abs</sub>(&lambda;) &middot; &phi;<sub>bb</sub>(&lambda;,T) &middot; exp(qV/kT). EQE<sub>EL</sub> = J<sub>em,rad</sub> / |J<sub>inj</sub>| and &Delta;V<sub>nr</sub> = &minus;(kT/q)&middot;ln(EQE<sub>EL</sub>). Requires a TMM preset with tabulated n,k data.</div>
+      <div class="pane-hint" title="Rau reciprocity: Phi_EL = A_abs * phi_bb * exp(qV/kT); EQE_EL = J_em,rad / |J_inj|; delta_V_nr = -(kT/q) * ln(EQE_EL)."><strong>Outputs:</strong> EL, EQE<sub>EL</sub>, &Delta;V<sub>nr</sub>.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

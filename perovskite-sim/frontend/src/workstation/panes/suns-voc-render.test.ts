@@ -1,13 +1,8 @@
 /**
  * Vitest cases for ``renderSunsVoc`` (Suns-V_oc workstation pane).
  *
- * Same Plotly mock pattern as ``jv-2d-render.test.ts`` /
- * ``jv-1d-render.test.ts`` — jsdom has no canvas, so layout / trace /
- * config arguments are read from ``newPlot.mock.calls``. Engineering
- * mode is the default and bit-identical to the pre-publication
- * renderer; the Publication branch swaps font / colors / margins /
- * modebar / axes / annotation / hollow markers without mutating the
- * raw suns / V_oc / J_pseudo_V / J_pseudo_J arrays.
+ * Covers publication styling, subplots, and raw array preservation
+ * using the shared Plotly mock pattern.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -57,13 +52,7 @@ function _lastNewPlotConfig(): Record<string, any> | undefined {
   return calls[calls.length - 1][3] as Record<string, any>
 }
 
-function _toggleStyle(el: HTMLElement, mode: 'engineering' | 'publication'): void {
-  const sel = el.querySelector<HTMLSelectElement>('[data-test="suns-voc-style-mode"]')!
-  sel.value = mode
-  sel.dispatchEvent(new Event('change'))
-}
-
-describe('renderSunsVoc — toolbar + style mode', () => {
+describe('renderSunsVoc — controls and evidence', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -71,60 +60,14 @@ describe('renderSunsVoc — toolbar + style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select unconditionally when plot data exists', () => {
+  it('renders without a style selector', () => {
     renderSunsVoc(el, makeResult())
-    expect(el.querySelector('[data-test="suns-voc-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="suns-voc-style-mode"]')).not.toBeNull()
-  })
-
-  it('default style is engineering (Arial layout, modebar visible)', () => {
-    renderSunsVoc(el, makeResult())
-    const layout = _lastNewPlotLayout()!
-    expect(layout.font.family).toBe('Arial, sans-serif')
-    const config = _lastNewPlotConfig()!
-    expect(config.displayModeBar).toBeUndefined()
-  })
-
-  it('engineering trace colors / symbols match the pre-publication renderer', () => {
-    renderSunsVoc(el, makeResult())
-    const traces = _lastNewPlotTraces()!
-    expect(traces).toHaveLength(2)
-    // V_oc(suns): filled blue circle.
-    expect(traces[0].name).toBe('V<sub>oc</sub>(suns)')
-    expect(traces[0].line.color).toBe('#2563eb')
-    expect(traces[0].marker.color).toBe('#2563eb')
-    expect(traces[0].marker.symbol).toBeUndefined()
-    // pseudo J-V: filled orange square.
-    expect(traces[1].name).toBe('pseudo J–V')
-    expect(traces[1].line.color).toBe('#ea580c')
-    expect(traces[1].marker.symbol).toBe('square')
-  })
-
-  it('engineering preserves the dual-subplot grid layout + axis types', () => {
-    renderSunsVoc(el, makeResult())
-    const layout = _lastNewPlotLayout()!
-    expect(layout.grid).toEqual({ rows: 1, columns: 2, pattern: 'independent' })
-    expect(layout.xaxis.type).toBe('log')         // suns axis stays log
-    expect(layout.xaxis2.type).toBeUndefined()    // V axis stays linear
-    expect(layout.yaxis.title.text).toContain('V')
-    expect(layout.yaxis2.title.text).toContain('mA')
-  })
-
-  it('engineering suns log axis prints decade-only labels (dtick=1)', () => {
-    // Same Plotly minor-label clutter ("0.01 2 5 0.1 2 5 1 2 5 10")
-    // shows up in Engineering mode if dtick is unset. The fix is
-    // applied uniformly across both modes.
-    renderSunsVoc(el, makeResult())
-    const layout = _lastNewPlotLayout()!
-    expect(layout.xaxis.dtick).toBe(1)
-    // Linear axes get no dtick (auto-spacing).
-    expect(layout.yaxis.dtick).toBeUndefined()
-    expect(layout.xaxis2.dtick).toBeUndefined()
-    expect(layout.yaxis2.dtick).toBeUndefined()
+    expect(el.querySelector('[data-test="suns-voc-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="suns-voc-style-mode"]')).toBeNull()
   })
 })
 
-describe('renderSunsVoc — publication style mode', () => {
+describe('renderSunsVoc — publication rendering', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -132,9 +75,8 @@ describe('renderSunsVoc — publication style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('toggling to publication applies Nature-style layout', () => {
+  it('uses publication by default with Nature-style layout', () => {
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.paper_bgcolor).toBe('#ffffff')
@@ -147,16 +89,13 @@ describe('renderSunsVoc — publication style mode', () => {
     expect(layout.yaxis2.showgrid).toBe(false)
   })
 
-  it('publication mode hides the Plotly modebar; engineering does not', () => {
+  it('publication mode hides the Plotly modebar', () => {
     renderSunsVoc(el, makeResult())
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
   })
 
   it('publication V_oc(suns) trace: hollow circle, muted blue, lines+markers', () => {
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     const fwd = _lastNewPlotTraces()![0]
     expect(fwd.name).toBe('V<sub>oc</sub>(suns)')
     expect(fwd.mode).toBe('lines+markers')
@@ -169,7 +108,6 @@ describe('renderSunsVoc — publication style mode', () => {
 
   it('publication pseudo J-V trace: hollow square, muted red', () => {
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     const rev = _lastNewPlotTraces()![1]
     expect(rev.name).toBe('pseudo J–V')
     expect(rev.mode).toBe('lines+markers')
@@ -181,7 +119,6 @@ describe('renderSunsVoc — publication style mode', () => {
 
   it('publication mode preserves the suns log axis + dual-subplot grid', () => {
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.grid).toEqual({ rows: 1, columns: 2, pattern: 'independent' })
     // Log type must survive the publication branch.
@@ -201,7 +138,6 @@ describe('renderSunsVoc — publication style mode', () => {
     // which crowds the compact publication panel. publicationAxis
     // pins ``dtick: 1`` whenever ``isLog`` is set.
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.xaxis.dtick).toBe(1)
     // Linear axes get no dtick (auto-spacing).
@@ -211,12 +147,9 @@ describe('renderSunsVoc — publication style mode', () => {
   })
 
   it('publication V_oc(suns) y-axis title preserves <sub>oc</sub> HTML', () => {
-    // Plotly natively renders <sub> tags inside title text. The
-    // engineering branch already uses the same HTML form, but the
-    // publication branch initially shipped with literal "V_oc" text
-    // which surfaced as plain underscore in the rendered figure.
+    // Plotly renders <sub> tags as subscripts; literal V_oc would show
+    // an underscore in the figure.
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.yaxis.title.text).toContain('V<sub>oc</sub>')
     expect(layout.yaxis.title.text).toContain('(V)')
@@ -226,13 +159,11 @@ describe('renderSunsVoc — publication style mode', () => {
 
   it('publication mode hides the legend (subplot identity from axis labels)', () => {
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotLayout()!.showlegend).toBe(false)
   })
 
   it('publication annotation: pseudo FF in Nature-style format', () => {
     renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
     const annotations = _lastNewPlotLayout()!.annotations as Array<Record<string, any>>
     expect(annotations).toHaveLength(1)
     const ann = annotations[0]
@@ -244,68 +175,40 @@ describe('renderSunsVoc — publication style mode', () => {
     expect(ann.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
-  it('engineering pseudo FF annotation unchanged (regression)', () => {
-    renderSunsVoc(el, makeResult())
-    const annotations = _lastNewPlotLayout()!.annotations as Array<Record<string, any>>
-    expect(annotations).toHaveLength(1)
-    expect(annotations[0].text).toBe('pseudo FF = 83.5 %')
-  })
-
-  it('raw arrays unchanged across modes (no mutation, byte-identical)', () => {
+  it('raw arrays unchanged across renders (no mutation, byte-identical)', () => {
     const result = makeResult()
     const suns_pre = [...result.suns]
     const Voc_pre = [...result.V_oc]
     const Jsc_pre = [...result.J_sc]
     const JpV_pre = [...result.J_pseudo_V]
     const JpJ_pre = [...result.J_pseudo_J]
-    // Engineering render.
+    // Initial render.
     renderSunsVoc(el, result)
-    const tracesEng = _lastNewPlotTraces()!
-    const yEngFwd = (tracesEng[0].y as number[]).slice()
-    const yEngRev = (tracesEng[1].y as number[]).slice()
-    // Publication render.
-    _toggleStyle(el, 'publication')
-    const tracesPub = _lastNewPlotTraces()!
-    const yPubFwd = (tracesPub[0].y as number[]).slice()
-    const yPubRev = (tracesPub[1].y as number[]).slice()
-    // Trace y-arrays equal between modes.
-    expect(yPubFwd).toEqual(yEngFwd)
-    expect(yPubRev).toEqual(yEngRev)
+    const tracesInitial = _lastNewPlotTraces()!
+    const yInitialFwd = (tracesInitial[0].y as number[]).slice()
+    const yInitialRev = (tracesInitial[1].y as number[]).slice()
+    // Repeated render.
+    renderSunsVoc(el, result)
+    const tracesRepeated = _lastNewPlotTraces()!
+    const yRepeatedFwd = (tracesRepeated[0].y as number[]).slice()
+    const yRepeatedRev = (tracesRepeated[1].y as number[]).slice()
+    // Trace y-arrays equal between renders.
+    expect(yRepeatedFwd).toEqual(yInitialFwd)
+    expect(yRepeatedRev).toEqual(yInitialRev)
     // V_oc(suns) trace x is reference-identical to the raw r.suns array.
-    expect(tracesEng[0].x).toBe(result.suns)
-    expect(tracesPub[0].x).toBe(result.suns)
+    expect(tracesInitial[0].x).toBe(result.suns)
+    expect(tracesRepeated[0].x).toBe(result.suns)
     // V_oc(suns) trace y is reference-identical to raw r.V_oc.
-    expect(tracesEng[0].y).toBe(result.V_oc)
-    expect(tracesPub[0].y).toBe(result.V_oc)
+    expect(tracesInitial[0].y).toBe(result.V_oc)
+    expect(tracesRepeated[0].y).toBe(result.V_oc)
     // pseudo J-V x reference-identical to raw r.J_pseudo_V.
-    expect(tracesEng[1].x).toBe(result.J_pseudo_V)
-    expect(tracesPub[1].x).toBe(result.J_pseudo_V)
+    expect(tracesInitial[1].x).toBe(result.J_pseudo_V)
+    expect(tracesRepeated[1].x).toBe(result.J_pseudo_V)
     // Raw input arrays remain bit-identical.
     expect(result.suns).toEqual(suns_pre)
     expect(result.V_oc).toEqual(Voc_pre)
     expect(result.J_sc).toEqual(Jsc_pre)
     expect(result.J_pseudo_V).toEqual(JpV_pre)
     expect(result.J_pseudo_J).toEqual(JpJ_pre)
-  })
-
-  it('style mode persists across re-render via el.dataset.plotStyleMode', () => {
-    const result = makeResult()
-    renderSunsVoc(el, result)
-    _toggleStyle(el, 'publication')
-    expect(el.dataset.plotStyleMode).toBe('publication')
-    // External re-entry — must honour the dataset attribute.
-    renderSunsVoc(el, result)
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="suns-voc-style-mode"]')!
-    expect(sel.value).toBe('publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-  })
-
-  it('toggle round-trip Engineering → Publication → Engineering restores defaults', () => {
-    renderSunsVoc(el, makeResult())
-    _toggleStyle(el, 'publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-    _toggleStyle(el, 'engineering')
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
   })
 })

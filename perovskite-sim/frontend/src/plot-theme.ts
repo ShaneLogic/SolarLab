@@ -83,14 +83,8 @@ export const MARKER = {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Publication theme — Nature-style single-panel scientific figure styling.
-// Engineering exports above are unchanged. Publication helpers below are
-// additive: a renderer opts in by reading ``readPlotStyleMode(el)`` and
-// branching its ``Plotly.newPlot`` arguments through these helpers instead
-// of ``baseLayout`` / ``plotConfig`` / ``LINE`` / ``MARKER``.
+// Publication theme for experiment result figures.
 // ───────────────────────────────────────────────────────────────────────────
-
-export type PlotStyleMode = 'engineering' | 'publication'
 
 export const PUBLICATION_PALETTE = {
   forward:   '#2B6FA3',  // muted scientific blue (Nature-family)
@@ -299,18 +293,4 @@ export function metricAnnotation(
     borderwidth: 0,
     font: { family: PUBLICATION_FONT_FAMILY, size: 10, color: '#000000' },
   }]
-}
-
-// State helpers: persist plot style mode on the stable container so the
-// renderer's internal Plotly.purge + child rebuild does not lose the
-// user's choice. Default ``'engineering'`` preserves existing behaviour
-// when the dataset is unset.
-
-export function readPlotStyleMode(el: HTMLElement): PlotStyleMode {
-  const v = el.dataset.plotStyleMode
-  return v === 'publication' ? 'publication' : 'engineering'
-}
-
-export function writePlotStyleMode(el: HTMLElement, mode: PlotStyleMode): void {
-  el.dataset.plotStyleMode = mode
 }

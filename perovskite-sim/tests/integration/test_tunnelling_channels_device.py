@@ -1,11 +1,8 @@
-"""D8-E1: the WKB tunnelling family wired into the guarded QF/DC lane.
+"""Resolved electron-path wiring and explicitly unvalidated device couplings.
 
-D8-E0 proved the four channels are correct in isolation. What these tests
-cover is the wiring: that an enabled channel actually reaches the residual
-(rather than producing a plausible diagnostic and no current), that it is
-driven by the quasi-Fermi drop across its *own* barrier rather than by the
-applied bias, that a disabled family is bit-identical, and that every route
-other than the certified QF/DC lane fails closed.
+The old thick-spike input remains a retraction/control case. The new resolved
+barrier certificate separately checks an observable terminal-current effect.
+Local formulas for other channels do not establish their device injection.
 """
 
 from __future__ import annotations
@@ -37,6 +34,8 @@ from perovskite_sim.reproducibility import semantic_sha256
 from perovskite_sim.physics.tunneling_channel_device import (
     TunnellingChannelCapabilityError,
     compile_tunnelling_channels,
+    evaluate_tunnelling_channels,
+    physical_quasi_fermi_levels_eV,
 )
 from perovskite_sim.solver.mol import assemble_rhs, build_material_arrays
 
@@ -209,16 +208,8 @@ def test_shipped_presets_carry_no_tunnelling_channels():
 # --------------------------------------------------------------------------
 
 
-def test_an_enabled_channel_changes_the_certified_terminal_current():
-    """This is the wiring test, and it has a specific defect in its sights.
-
-    The interface plane zeroes its own face current so its reservoir transfer
-    is not double-counted in the divergence. A tunnelling current injected
-    before that zeroing is deleted: the diagnostics still report a perfectly
-    good flux and the terminal current does not move at all. Asserting on the
-    diagnostics alone would pass against that bug, so the assertion here is on
-    the solved current.
-    """
+def test_retracted_fixture_does_not_retain_the_old_large_flux_claim():
+    """Correct physical occupations must not preserve the withdrawn magnitude."""
     without = _solve()
     with_channel = _solve(_intraband())
     diagnostics = with_channel.tunnelling_channel_diagnostics
@@ -228,41 +219,32 @@ def test_an_enabled_channel_changes_the_certified_terminal_current():
     assert diagnostics.channel_names == ("intraband_electron",)
     net = diagnostics.channel_net_flux_m2_s[0]
     assert net != 0.0
-    assert with_channel.current_A_m2 != without.current_A_m2
-    # The shift must be of the order the channel itself reports, not noise.
-    shift = abs(with_channel.current_A_m2 - without.current_A_m2)
-    assert shift <= abs(Q * net) * 10.0
-    # Two different magnitudes, both worth pinning, and they are NOT the same
-    # number. The channel's own flux is a large fraction of the terminal
-    # current, because it is a real parallel conduction path across the
-    # barrier. The CHANGE in terminal current is far smaller, because that
-    # path is in parallel with the drift-diffusion flux on the same face and
-    # the rest of the device sets the operating point. Conflating the two
-    # would either overstate the channel or make it look inert.
-    assert abs(Q * net) > 0.05 * abs(without.current_A_m2)
-    assert shift > 1.0e-6 * abs(without.current_A_m2)
+    assert abs(Q * net) < 0.01 * abs(without.current_A_m2)
 
 
-def test_the_injected_face_current_matches_the_reported_flux():
-    """Charge is not created between the channel and the face array."""
+def test_nonlocal_injection_preserves_particle_number_and_its_current_profile():
+    """A multi-cell transition has zero total particle source, not one face."""
     result = _solve(_intraband())
     diagnostics = result.tunnelling_channel_diagnostics
     face_current = np.asarray(diagnostics.electron_face_current_A_m2)
 
-    assert np.count_nonzero(face_current) == 1
-    assert float(face_current.sum()) == pytest.approx(
-        -Q * diagnostics.channel_net_flux_m2_s[0], rel=1.0e-12
-    )
+    assert np.count_nonzero(face_current) > 3
+    transfer = np.diff(np.r_[0.0, face_current, 0.0]) / Q
+    assert abs(float(np.sum(transfer))) < 1e-12 * float(np.sum(np.abs(transfer)))
+    np.testing.assert_array_equal(face_current, -Q * diagnostics.intraband_path.particle_face_flux_m2_s)
     assert np.all(np.asarray(diagnostics.hole_face_current_A_m2) == 0.0)
 
 
-def test_equilibrium_net_flux_is_exactly_zero_through_the_device_wiring():
-    """Reciprocity must survive the wiring, not just hold in the primitive."""
+def test_equilibrium_device_current_is_bounded_without_saturated_occupations():
+    """A solved equilibrium has finite residuals; its occupations must be informative."""
     result = _solve(_intraband(), V_app=0.0)
     diagnostics = result.tunnelling_channel_diagnostics
 
-    assert diagnostics.channel_net_flux_m2_s[0] == 0.0
-    assert np.all(np.asarray(diagnostics.electron_face_current_A_m2) == 0.0)
+    assert abs(Q * diagnostics.channel_net_flux_m2_s[0]) < 1e-8
+    assert np.max(np.abs(diagnostics.electron_face_current_A_m2)) < 1e-8
+    for occupation in (diagnostics.intraband_path.flux.left_occupation,
+                       diagnostics.intraband_path.flux.right_occupation):
+        assert np.all((occupation > 0.0) & (occupation < 1e-3))
 
 
 # --------------------------------------------------------------------------
@@ -271,84 +253,53 @@ def test_equilibrium_net_flux_is_exactly_zero_through_the_device_wiring():
 
 
 def test_the_channel_is_driven_by_the_local_drop_not_the_contact_split():
-    """A channel is one conduction path across ONE barrier.
+    """Changing unused contact levels cannot change an interior path."""
+    stack = _stack(_intraband())
+    grid = _grid(stack)
+    material = build_material_arrays(grid, stack)
+    state = _solve(_intraband())
+    fn, fp = physical_quasi_fermi_levels_eV(
+        potential_V=state.phi, affinity_eV=material.chi_phys, band_gap_eV=material.Eg_phys,
+        electron_density_m3=state.y[:grid.size], hole_density_m3=state.y[grid.size:2 * grid.size],
+        conduction_dos_m3=material.N_C_physical, valence_dos_m3=material.N_V_physical,
+        thermal_voltage_V=material.V_T_device,
+    )
+    kwargs = dict(positions_m=grid, potential_V=state.phi, affinity_eV=material.chi_phys,
+                  band_gap_eV=material.Eg_phys, electron_quasi_fermi_eV=fn,
+                  hole_quasi_fermi_eV=fp, thermal_voltage_V=material.V_T_device)
+    original = evaluate_tunnelling_channels(material.tunnelling_channels, **kwargs)
+    moved = fn.copy()
+    moved[0] += 0.5
+    moved[-1] -= 0.4
+    altered = evaluate_tunnelling_channels(material.tunnelling_channels,
+                                           **dict(kwargs, electron_quasi_fermi_eV=moved))
+    np.testing.assert_array_equal(altered.electron_face_current_A_m2, original.electron_face_current_A_m2)
 
-    Its driving force is the quasi-Fermi drop across that barrier — the same
-    drop the Scharfetter-Gummel flux on the same face sees, which is what
-    makes the two additive rather than double-counted. Reading the contact
-    levels instead would drive every interface channel with the full applied
-    bias, inflating the flux by orders of magnitude and making it *grow* with
-    bias. The measured behaviour is the opposite: raising the bias flattens
-    the junction, the local drop shrinks, and so does the tunnelling flux.
-    """
-    low = _solve(_intraband(), V_app=0.2)
-    high = _solve(_intraband(), V_app=0.5)
 
-    low_flux = abs(low.tunnelling_channel_diagnostics.channel_net_flux_m2_s[0])
-    high_flux = abs(high.tunnelling_channel_diagnostics.channel_net_flux_m2_s[0])
-
-    assert low_flux > 0.0
-    assert high_flux < low_flux
-    # Contact-level driving would scale the occupation difference up with the
-    # applied bias; an order-of-magnitude fall in the opposite direction is
-    # not reachable that way.
-    assert high_flux < 0.1 * low_flux
-
-
-def test_states_far_below_both_quasi_fermi_levels_carry_negligible_net_flux():
-    """Full on both sides means essentially no net current.
-
-    Under strong illumination the electron quasi-Fermi level here sits about
-    an eV above the spike, so every energy in the tunnelling window is
-    occupied on both sides. A channel that reported real current in that
-    regime would be double-counting carriers the drift-diffusion flux already
-    carries over the barrier.
-
-    "Negligible" and not "exactly zero": the two turning points are far apart,
-    so their quasi-Fermi levels genuinely differ a little and the occupations
-    differ in the last couple of digits. Exact cancellation here would only
-    happen if both levels were read at the same place — which is what the
-    superseded adjacent-node drive did, and that drive made the flux vanish
-    under mesh refinement. Equilibrium exactness is a separate and stronger
-    claim that still holds structurally; see
-    `test_equilibrium_net_flux_is_exactly_zero_through_the_device_wiring`.
-    """
+def test_illuminated_state_retains_physical_nonsaturated_channel_occupations():
     result = _solve(_intraband(), V_app=0.2, illuminated=True)
-    net = result.tunnelling_channel_diagnostics.channel_net_flux_m2_s[0]
-
     assert result.certified is True
-    assert abs(Q * net) < 1.0e-9 * abs(result.current_A_m2)
+    path = result.tunnelling_channel_diagnostics.intraband_path
+    assert path.flux.net_flux_m2_s != 0.0
+    assert np.max(path.flux.left_occupation) < 0.1
+    assert np.max(path.flux.right_occupation) < 0.1
 
 
 def test_the_transmission_audit_reports_the_opaque_end_of_the_window():
-    """A diagnostic that is 1.0 by construction is not a measurement.
-
-    Every energy window here runs up to the barrier top, so the maximum
-    transmission is 1 and the corresponding action is 0 whatever the barrier
-    does. The informative pair is at the other end, and it is what the
-    channel's opacity has to be read from.
-    """
+    """The open energy rule reports actual actions at both spectral ends."""
     diagnostics = _solve(_intraband()).tunnelling_channel_diagnostics
 
-    assert diagnostics.channel_maximum_transmission[0] == pytest.approx(1.0)
     least = diagnostics.channel_minimum_transmission[0]
-    assert 0.0 < least < 1.0
+    assert 0.0 < least < diagnostics.channel_maximum_transmission[0] < 1.0
+    assert least == pytest.approx(np.exp(-2 * np.max(diagnostics.intraband_path.actions)), rel=1e-12)
 
 
 def test_every_diagnostic_tuple_has_one_entry_per_channel():
     """A mismatched tuple would silently misattribute a flux to a channel."""
-    document = TunnellingChannelDocument(
-        intraband=IntrabandTunnellingChannel(
-            enabled=True, carrier="both", energy_quadrature_order=16
-        ),
-        band_to_band=BandToBandTunnellingChannel(
-            enabled=True, energy_quadrature_order=16
-        ),
-    )
-    diagnostics = _solve(document).tunnelling_channel_diagnostics
+    diagnostics = _solve(_intraband()).tunnelling_channel_diagnostics
     count = len(diagnostics.channel_names)
 
-    assert count == 3
+    assert count == 1
     for field in (
         diagnostics.channel_net_flux_m2_s,
         diagnostics.channel_maximum_transmission,
@@ -359,53 +310,18 @@ def test_every_diagnostic_tuple_has_one_entry_per_channel():
         assert len(field) == count
 
 
-def test_band_to_band_creates_both_carriers_not_just_the_electron():
-    """A Zener event moves one electron VB -> CB, so it makes a hole too.
-
-    The wiring recorded only the electron leg until D8-E4a — a flat
-    charge-conservation violation that no test could see, because the
-    diagnostics tuples (names, lengths) were perfectly correct while the hole
-    face-current array was never touched by this channel.
-    """
+def test_band_to_band_requires_its_own_pair_injection_validation():
     document = TunnellingChannelDocument(
         band_to_band=BandToBandTunnellingChannel(
             enabled=True, energy_quadrature_order=16
         )
     )
-    diagnostics = _solve(document).tunnelling_channel_diagnostics
-    electron = np.asarray(diagnostics.electron_face_current_A_m2)
-    hole = np.asarray(diagnostics.hole_face_current_A_m2)
-    net = diagnostics.channel_net_flux_m2_s[0]
-
-    # Both legs present, on exactly one face each.
-    assert np.count_nonzero(electron) == 1
-    assert np.count_nonzero(hole) == 1
-    # Equal and opposite, and each equal to its own carrier's charge times the
-    # single reported flux — one event, two carriers, one rate.
-    assert float(electron.sum()) == pytest.approx(-Q * net, rel=1.0e-12)
-    assert float(hole.sum()) == pytest.approx(Q * net, rel=1.0e-12)
-    assert float(electron.sum() + hole.sum()) == pytest.approx(0.0, abs=1.0e-30)
-    # Still ONE diagnostics entry: two carriers, one channel.
-    assert diagnostics.channel_names == ("band_to_band",)
+    with pytest.raises(TunnellingChannelCapabilityError, match="conservative device validation"):
+        _solve(document)
 
 
 def test_the_contact_channel_needs_a_stack_that_has_a_contact_barrier():
-    """Recorded as a scope limit, because the failure mode is not obvious.
-
-    D8-E4a put the contact channel's three inputs into one energy frame (the
-    barrier profile was barrier-relative while the metal level and the
-    quasi-Fermi profile were absolute, which made the channel a structural
-    no-op). On a profile that actually has a Schottky barrier the corrected
-    channel behaves: the window height equals `barrier_height_eV` exactly and
-    the action is finite.
-
-    This test stack is a p-n junction with an interlayer spike and NO contact
-    barrier, so the one-sided window walks past the contact into the
-    device-wide band bending and the resulting magnitude breaks the solve. It
-    fails loudly rather than returning a number, which is the right behaviour
-    for a channel asked to run where its barrier does not exist — but the
-    diagnosis is worth pinning so the next reader does not chase the solver.
-    """
+    """The local contact primitive is not a completed device injection model."""
     document = TunnellingChannelDocument(
         contact=ContactTunnellingChannel(
             enabled=True,
@@ -423,7 +339,7 @@ def test_the_contact_channel_needs_a_stack_that_has_a_contact_barrier():
 # --------------------------------------------------------------------------
 
 
-def test_each_channel_reports_under_its_own_name_and_only_when_enabled():
+def test_combining_an_unvalidated_channel_cannot_silently_run_the_electron_subset():
     both = TunnellingChannelDocument(
         intraband=IntrabandTunnellingChannel(
             enabled=True, carrier="electron", energy_quadrature_order=16
@@ -432,60 +348,19 @@ def test_each_channel_reports_under_its_own_name_and_only_when_enabled():
             enabled=True, energy_quadrature_order=16
         ),
     )
-    result = _solve(both)
-    names = result.tunnelling_channel_diagnostics.channel_names
-
-    assert set(names) == {"intraband_electron", "band_to_band"}
-    assert len(names) == len(set(names))
+    with pytest.raises(TunnellingChannelCapabilityError, match="conservative device validation"):
+        _solve(both)
 
 
-def test_the_hole_branch_carries_a_real_flux_not_an_underflowed_one():
-    """Names and tuple lengths cannot see a 212-order sign error.
-
-    `qfp` is already in the hole particle-energy convention that matches the
-    `-E_V` barrier (`V_T*ln(p) + (phi + chi + Eg)` = `-E_V + V_T*ln(p)`).
-    Negating it — which the wiring did until D8-E2R — put the hole drive
-    12.9 eV BELOW its own barrier instead of 0.72 eV above, and the flux
-    underflowed to ~1e-204. The only test covering this branch asserted the
-    channel names and the tuple lengths, both of which were perfectly correct
-    while the physics was not, so the assertion here is on magnitude and sign.
-
-    This does NOT make the hole branch correct: both branches still carry the
-    level-vs-potential convention error that D8-E2R retracts rather than
-    fixes. It makes the two branches consistent with each other.
-    """
+@pytest.mark.parametrize("carrier", ["hole", "both"])
+def test_hole_device_coupling_is_not_promoted_from_electron_evidence(carrier):
     document = TunnellingChannelDocument(
         intraband=IntrabandTunnellingChannel(
-            enabled=True, carrier="both", energy_quadrature_order=24
+            enabled=True, carrier=carrier, energy_quadrature_order=24
         )
     )
-    diagnostics = _solve(document).tunnelling_channel_diagnostics
-    fluxes = dict(zip(diagnostics.channel_names, diagnostics.channel_net_flux_m2_s))
-    hole = fluxes["intraband_hole"]
-
-    # An underflowed branch reports something like 1e-204; a live one does not.
-    assert abs(hole) > 1.0
-    # Electrons and holes drift in opposite directions under the same field,
-    # so their particle fluxes carry opposite signs here.
-    assert hole * fluxes["intraband_electron"] < 0.0
-    # The hole barrier must actually block, or the branch measures nothing.
-    transmissions = dict(
-        zip(diagnostics.channel_names, diagnostics.channel_minimum_transmission)
-    )
-    assert 0.0 < transmissions["intraband_hole"] < 1.0
-
-
-def test_the_two_carrier_intraband_channel_reports_both_carriers():
-    document = TunnellingChannelDocument(
-        intraband=IntrabandTunnellingChannel(
-            enabled=True, carrier="both", energy_quadrature_order=16
-        )
-    )
-    result = _solve(document)
-    diagnostics = result.tunnelling_channel_diagnostics
-
-    assert diagnostics.channel_names == ("intraband_electron", "intraband_hole")
-    assert len(diagnostics.channel_net_flux_m2_s) == 2
+    with pytest.raises(TunnellingChannelCapabilityError, match="conservative device validation"):
+        _solve(document)
 
 
 # --------------------------------------------------------------------------

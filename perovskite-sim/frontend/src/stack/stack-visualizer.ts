@@ -121,7 +121,7 @@ export function mountStackVisualizer(
       const parts: string[] = []
       parts.push(
         '<div class="stack-visualizer-sun" aria-hidden="true">',
-        '  <div class="stack-visualizer-sun-label">☀ AM1.5G</div>',
+        '  <div class="stack-visualizer-sun-label">☀ Illumination</div>',
         '  <div class="stack-visualizer-sun-rays">↓ ↓ ↓ ↓ ↓</div>',
         '</div>',
         '<div class="stack-visualizer-frame">',

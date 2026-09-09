@@ -346,7 +346,7 @@ class SamplingProtocol:
 
 @dataclass(frozen=True, slots=True)
 class VocSearchProtocol:
-    """State-advancing finite-time search used to establish open circuit."""
+    """Coarse preparation followed by root candidates with identical history."""
 
     coarse_start_V: float = 0.0
     coarse_upper_guess_factor: float = 1.5
@@ -357,10 +357,10 @@ class VocSearchProtocol:
     bisection_max_steps: int = 15
     bisection_dwell_s: float = 1.0e-4
     final_settle_s: float = 1.0e-4
-    fallback: Literal["minimum_absolute_current"] = "minimum_absolute_current"
+    fallback: Literal["error", "minimum_absolute_current"] = "error"
     warm_start: Literal[
-        "coarse_continuation_then_lower_bracket_state"
-    ] = "coarse_continuation_then_lower_bracket_state"
+        "fixed_lower_bracket_state", "coarse_continuation_then_lower_bracket_state"
+    ] = "fixed_lower_bracket_state"
 
     def __post_init__(self) -> None:
         for name in ("coarse_start_V", "minimum_guess_V"):
@@ -385,9 +385,9 @@ class VocSearchProtocol:
             if value < minimum:
                 raise ValueError(f"Voc search {name} must be >= {minimum}")
             object.__setattr__(self, name, int(value))
-        if self.fallback != "minimum_absolute_current":
+        if self.fallback not in ("error", "minimum_absolute_current"):
             raise ValueError(f"unsupported Voc search fallback {self.fallback!r}")
-        if self.warm_start != "coarse_continuation_then_lower_bracket_state":
+        if self.warm_start not in ("fixed_lower_bracket_state", "coarse_continuation_then_lower_bracket_state"):
             raise ValueError(f"unsupported Voc search warm_start {self.warm_start!r}")
 
     @classmethod

@@ -12,7 +12,7 @@ export interface SunsVocPaneOptions {
 export function mountSunsVocPane(container: HTMLElement, opts: SunsVocPaneOptions): void {
   container.innerHTML = `
     <div class="card">
-      <h3>Suns\u2013V<sub>oc</sub> Parameters</h3>
+      <h3>Sweep settings</h3>
       <div class="form-grid">
         ${numField('sv-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('sv-tset', 't<sub>settle</sub> (s)', 1e-3, 'any')}
@@ -24,7 +24,7 @@ export function mountSunsVocPane(container: HTMLElement, opts: SunsVocPaneOption
         <span class="status" id="status-sv"></span>
       </div>
       <div id="progress-sv"></div>
-      <div class="pane-hint">Sweeps illumination intensity at open-circuit; builds the pseudo J\u2013V curve (<em>J<sub>sc</sub></em>(suns) &minus; <em>J</em>) vs <em>V<sub>oc</sub></em>(suns) and returns a recombination-only pseudo FF.</div>
+      <div class="pane-hint" title="Open-circuit illumination sweep; pseudo J-V uses J_sc(suns) minus J against V_oc(suns)."><strong>Pseudo FF:</strong> recombination-only.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

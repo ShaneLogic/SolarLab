@@ -1,0 +1,109 @@
+# Reference inputs for the SolarLab dense ion-sweep figure.
+# Captured frontend history: -1 -> 1.2 -> -1 V at 0.04 V/s,
+# uniform absorber generation, and a 3 s dark turnaround hold.
+# This reproduces an internal figure, not the original Calado paper.
+# D/D_ref varies only absorber D_ion; c0/c_ref varies only absorber P0.
+# D_ref = 2.585e-18 m^2/s; c_ref = 1e25 m^-3.
+
+simulation_hints:
+  notes: "Internal ion-sweep figure reference; finite-time diagnostic."
+  jv_sweep:
+    N_grid: 60
+    n_points: 111
+    v_rate: 0.04
+    V_max: 1.2
+    waveform:
+      schema_version: 1
+      start_voltage_V: -1.0
+      dark_seed_s: 120.0
+      dark_prep_s: 30.0
+      branch_dwell_s: 0.5
+      turnaround_s: 3.0
+      turnaround_dark: true
+      uniform_generation_rate_m3_s: 2.5e27
+    waveform_controls:
+      rtol: 1.0e-4
+      atol_m3: 1.0
+
+device:
+  mode: full
+  T: 300
+  V_bi: 1.3
+  Phi: 2.5e22
+  S_n_left: null
+  S_p_left: null
+  S_n_right: null
+  S_p_right: null
+  interfaces:
+    - [0.0, 0.0]
+    - [0.0, 0.0]
+
+layers:
+  - name: p_contact
+    role: HTL
+    thickness: 200e-9
+    eps_r: 20.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 3.62e12
+    N_D: 0.0
+    N_A: 3e23
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 2e-15
+    tau_p: 2e-15
+    n1: 3.05e2
+    p1: 4.36e22
+    B_rad: 1e-16
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 0.0
+    Eg: 0.0
+
+  - name: MAPbI3
+    role: absorber
+    thickness: 400e-9
+    eps_r: 20.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 3.62e12
+    N_D: 0.0
+    N_A: 0.0
+    D_ion: 2.585e-18
+    P_lim: 1e30
+    P0: 1e25
+    tau_n: 1.0
+    tau_p: 1.0
+    n1: 3.62e12
+    p1: 3.62e12
+    B_rad: 1e-16
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 1e5
+    chi: 0.0
+    Eg: 0.0
+
+  - name: n_contact
+    role: ETL
+    thickness: 200e-9
+    eps_r: 20.0
+    mu_n: 2e-3
+    mu_p: 2e-3
+    ni: 3.62e12
+    N_D: 3e23
+    N_A: 0.0
+    D_ion: 0.0
+    P_lim: 1e30
+    P0: 0.0
+    tau_n: 2e-15
+    tau_p: 2e-15
+    n1: 4.36e22
+    p1: 3.05e2
+    B_rad: 1e-16
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    chi: 0.0
+    Eg: 0.0

@@ -19,11 +19,11 @@ export interface ImpedancePaneOptions {
 export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOptions): void {
   container.innerHTML = `
     <div class="card">
-      <h3>Impedance Sweep Parameters</h3>
+      <h3>Sweep settings</h3>
       <div class="form-grid">
         ${numField('imp-N', 'N<sub>grid</sub>', 40, '1')}
         ${numField('imp-Vdc', 'V<sub>dc</sub> (V)', 0.9, 'any')}
-        ${numField('imp-nfreq', 'n<sub>freq</sub>', 15, '1')}
+        ${numField('imp-nfreq', 'Frequency points', 15, '1')}
         ${numField('imp-fmin', 'f<sub>min</sub> (Hz)', 10, 'any')}
         ${numField('imp-fmax', 'f<sub>max</sub> (Hz)', 1e5, 'any')}
         ${numField('imp-dv', '&delta;V (mV)', 10, '0.5')}
@@ -50,7 +50,6 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
         <span class="status" id="status-imp"></span>
       </div>
       <div id="progress-imp"></div>
-      <div class="pane-hint">Results stream into the Main Plot pane and appear as a run under this experiment in the tree.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

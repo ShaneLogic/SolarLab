@@ -8,7 +8,7 @@ from perovskite_sim.discretization.grid import Layer
 from perovskite_sim.experiments.protocol import ImplicitProtocolError, ProtocolMode
 from perovskite_sim.experiments.jv_sweep import JVMetrics, compute_metrics
 from perovskite_sim.models.device import DeviceStack, electrical_layers
-from perovskite_sim.models.mode import resolve_mode
+from perovskite_sim.physics.contacts import resolved_contact_velocities
 from perovskite_sim.solver.tolerances import AbsoluteTolerance
 from perovskite_sim.twod.experiments.jv_protocol_2d import (
     JV2DProtocol,
@@ -316,16 +316,7 @@ def _jv_2d_grid(
 def _carrier_boundary_condition(
     stack: DeviceStack,
 ) -> Literal["ohmic", "selective_robin"]:
-    mode = resolve_mode(getattr(stack, "mode", "full"))
-    has_selective = mode.use_selective_contacts and any(
-        value is not None
-        for value in (
-            stack.S_n_left,
-            stack.S_p_left,
-            stack.S_n_right,
-            stack.S_p_right,
-        )
-    )
+    has_selective = any(value is not None for value in resolved_contact_velocities(stack))
     return "selective_robin" if has_selective else "ohmic"
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 import numpy as np
 
 from perovskite_sim.constants import Q
+from perovskite_sim.physics.thermionic_transport import apply_thermionic_caps
 from perovskite_sim.twod.flux_2d import sg_fluxes_2d_n, sg_fluxes_2d_p
 
 
@@ -18,6 +19,12 @@ def apply_thermionic_caps_y(
     A_star_n: np.ndarray | None,
     A_star_p: np.ndarray | None,
     T: float | None,
+    chi_te: np.ndarray | None = None,
+    Eg_te: np.ndarray | None = None,
+    te_physical_norm: bool = False,
+    N_C_node: np.ndarray | None = None,
+    N_V_node: np.ndarray | None = None,
+    te_softness: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Apply the production thermionic magnitude cap to vertical SG faces."""
     if not interface_y_faces or chi is None or Eg is None or T is None:
@@ -27,26 +34,22 @@ def apply_thermionic_caps_y(
 
     capped_n = np.asarray(Jy_n, dtype=float).copy()
     capped_p = np.asarray(Jy_p, dtype=float).copy()
-    T_sq = T * T
-    for face in interface_y_faces:
-        dEc = float(chi[face, 0] - chi[face + 1, 0])
-        if abs(dEc) > 0.05:
-            left_term = n[face, :] * np.exp(-max(dEc, 0.0) / V_T)
-            right_term = n[face + 1, :] * np.exp(-max(-dEc, 0.0) / V_T)
-            J_te_n = A_star_n[face, :] * T_sq * (left_term - right_term)
-            mask = np.abs(capped_n[face, :]) > np.abs(J_te_n)
-            capped_n[face, mask] = J_te_n[mask]
-
-        dEv = float(
-            (chi[face, 0] + Eg[face, 0])
-            - (chi[face + 1, 0] + Eg[face + 1, 0])
+    for column in range(n.shape[1]):
+        params = {
+            "chi": chi[:, column], "Eg": Eg[:, column], "T": T,
+            "A_star_n": A_star_n[:, column], "A_star_p": A_star_p[:, column],
+            "interface_faces": interface_y_faces,
+            "te_physical_norm": te_physical_norm, "te_softness": te_softness,
+        }
+        for key, values in (
+            ("chi_te", chi_te), ("Eg_te", Eg_te),
+            ("N_C_node", N_C_node), ("N_V_node", N_V_node),
+        ):
+            if values is not None:
+                params[key] = values[:, column]
+        capped_n[:, column], capped_p[:, column] = apply_thermionic_caps(
+            Jy_n[:, column], Jy_p[:, column], n[:, column], p[:, column], params,
         )
-        if abs(dEv) > 0.05:
-            left_term = p[face, :] * np.exp(-max(dEv, 0.0) / V_T)
-            right_term = p[face + 1, :] * np.exp(-max(-dEv, 0.0) / V_T)
-            J_te_p = A_star_p[face, :] * T_sq * (left_term - right_term)
-            mask = np.abs(capped_p[face, :]) > np.abs(J_te_p)
-            capped_p[face, mask] = J_te_p[mask]
     return capped_n, capped_p
 
 
@@ -64,6 +67,12 @@ def continuity_rhs_2d(
     A_star_n: np.ndarray | None = None,
     A_star_p: np.ndarray | None = None,
     T: float | None = None,
+    chi_te: np.ndarray | None = None,
+    Eg_te: np.ndarray | None = None,
+    te_physical_norm: bool = False,
+    N_C_node: np.ndarray | None = None,
+    N_V_node: np.ndarray | None = None,
+    te_softness: float = 0.0,
     # Stage B(c.2) field-mobility per-face D overrides:
     D_n_x_face: np.ndarray | None = None,
     D_n_y_face: np.ndarray | None = None,
@@ -154,6 +163,8 @@ def continuity_rhs_2d(
         A_star_n=A_star_n,
         A_star_p=A_star_p,
         T=T,
+        chi_te=chi_te, Eg_te=Eg_te, te_physical_norm=te_physical_norm,
+        N_C_node=N_C_node, N_V_node=N_V_node, te_softness=te_softness,
     )
 
     Ny, Nx = phi.shape

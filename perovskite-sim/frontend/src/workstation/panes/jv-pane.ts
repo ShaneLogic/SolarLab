@@ -19,27 +19,31 @@ export interface JVPaneOptions {
   onRunComplete: (deviceId: string, run: Run) => void
 }
 
-export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
+export interface JVPaneHandle {
+  updateDevice(resetDefaults?: boolean): void
+}
+
+export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): JVPaneHandle {
   container.innerHTML = `
     <div class="card">
-      <h3>J–V Sweep Parameters</h3>
+      <h3>Sweep settings</h3>
       <div class="form-grid">
         ${numField('jvp-N', 'N<sub>grid</sub>', 60, '1')}
-        ${numField('jvp-np', 'V sample points', 30, '1')}
+        ${numField('jvp-np', 'Voltage points', 30, '1')}
         ${numField('jvp-rate', 'Scan rate (V/s)', 1.0, 'any')}
         ${numField('jvp-vmax', 'V<sub>max</sub> (V)', 1.4, '0.01')}
-        ${checkField('jvp-decomp', 'Decompose current (J<sub>n</sub> / J<sub>p</sub> / J<sub>ion</sub> / J<sub>disp</sub>)', false)}
-        ${checkField('jvp-spatial', 'Save spatial profiles (φ, E, n, p, c)', false)}
+        ${checkField('jvp-decomp', '<span title="Electron, hole, ionic and displacement currents. Requires the transient solver.">Current components</span>', false)}
+        ${checkField('jvp-spatial', '<span title="Potential, electric field, carrier and ion density profiles. Requires the transient solver.">Spatial profiles</span>', false)}
         <label class="form-group">
-          <span>J&ndash;V solver</span>
+          <span>Solver</span>
           <select id="jvp-solver" title="Select the numerical variables and continuation driver">
             <option value="transient">Transient (Radau)</option>
             <option value="steady_state">Algebraic steady state</option>
-            <option value="quasi_fermi">Quasi-Fermi (cancellation-safe)</option>
+            <option value="quasi_fermi" title="Quasi-Fermi variables reduce numerical cancellation">Quasi-Fermi</option>
           </select>
         </label>
-        ${checkField('jvp-iface', 'Interface-plane states (steady-state only)', false)}
-        ${checkField('jvp-interface-boundary', 'Physical interface response (quasi-Fermi only)', false)}
+        ${checkField('jvp-iface', '<span title="Interface-plane state channel; requires the algebraic steady-state solver.">Interface states (steady state)</span>', false)}
+        ${checkField('jvp-interface-boundary', '<span title="Reciprocal physical interface boundary; requires the Quasi-Fermi solver.">Interface response (Quasi-Fermi)</span>', false)}
         <label class="form-group">
           <span>Interface transport</span>
           <select id="jvp-interface-transport">
@@ -56,7 +60,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         <span class="status" id="status-jvp"></span>
       </div>
       <div id="progress-jvp"></div>
-      <div class="pane-hint">Enable &ldquo;Decompose current&rdquo; or &ldquo;Save spatial profiles&rdquo; to produce the richer output view; otherwise a plain J&ndash;V curve is returned. Only one extra view per run.</div>
+      <div class="pane-hint"><strong>Extra outputs:</strong> transient solver only; one per run.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(
@@ -128,15 +132,39 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     syncIfaceEnabled()
     return required
   }
-  solverSelect.addEventListener('focus', () => {
-    syncSolverRequirement(opts.getActiveDevice()?.config ?? null)
-  })
-  syncSolverRequirement(opts.getActiveDevice()?.config ?? null)
+  let appliedDefaultsKey: string | null = null
+  let previousGrid = container.querySelector<HTMLInputElement>('#jvp-N')!.value
+  const updateDevice = (resetDefaults = false): void => {
+    const active = opts.getActiveDevice()
+    syncSolverRequirement(active?.config ?? null)
+    const defaults = active?.config.simulation_hints?.jv_sweep
+    const key = defaults ? JSON.stringify([active!.id, defaults]) : null
+    if (key !== appliedDefaultsKey || (resetDefaults && defaults !== undefined)) {
+      const gridInput = container.querySelector<HTMLInputElement>('#jvp-N')!
+      if (defaults) {
+        if (appliedDefaultsKey === null) previousGrid = gridInput.value
+        gridInput.value = String(defaults.N_grid)
+        solverSelect.value = 'transient'
+        ifaceBox.checked = false
+        interfaceBoundaryBox.checked = false
+        decompBox.checked = false
+        spatialBox.checked = false
+      } else {
+        gridInput.value = previousGrid
+      }
+      waveformControls.applyDefaults(defaults)
+      appliedDefaultsKey = key
+    }
+    syncSolverRequirement(active?.config ?? null)
+  }
+  solverSelect.addEventListener('focus', () => updateDevice())
+  updateDevice()
 
   btn.addEventListener('click', () => {
+    updateDevice()
     const active = opts.getActiveDevice()
     if (!active) {
-      setStatus('status-jvp', 'No active device. Select one in the tree.', true)
+      setStatus('status-jvp', 'Select a device first.', true)
       return
     }
     const qfRequired = syncSolverRequirement(active.config)
@@ -156,7 +184,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
     // different result shape), so we pick one and let the user re-run for
     // the other. Dropped into a hint so nobody sees a silent coercion.
     if (wantDecomp && wantSpatial) {
-      setStatus('status-jvp', 'Both views requested — running decomposition this time. Re-run with only "Save spatial profiles" to get the spatial view.')
+      setStatus('status-jvp', 'Both outputs selected: running current components. Select spatial profiles alone for that output.')
     }
     const kind: ExperimentKind = wantDecomp ? 'current_decomp' : wantSpatial ? 'spatial' : 'jv'
 
@@ -265,6 +293,8 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): void {
         btn.disabled = false
       })
   })
+
+  return { updateDevice }
 }
 
 function randomRunId(): string {

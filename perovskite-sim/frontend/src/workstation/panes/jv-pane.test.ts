@@ -7,6 +7,7 @@
  * plane states" checkbox on the solver selection.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import figureReferenceJSON from '../../../../tests/fixtures/IonDiffusivityFigureReference.json?raw'
 
 vi.mock('../../job-stream', () => ({
   startJob: vi.fn(),
@@ -16,6 +17,18 @@ vi.mock('../../job-stream', () => ({
 import { mountJVPane } from './jv-pane'
 import type { DeviceConfig } from '../../types'
 import { startJob } from '../../job-stream'
+import { mountExperimentPane } from './experiment-pane'
+
+const figureReference = JSON.parse(figureReferenceJSON)
+
+function figureConfig(): DeviceConfig {
+  const config = structuredClone(figureReference.request.device) as DeviceConfig
+  const { N_grid, n_points, v_rate, V_max, waveform, waveform_controls } = figureReference.request.params
+  config.simulation_hints = {
+    jv_sweep: { N_grid, n_points, v_rate, V_max, waveform, waveform_controls },
+  }
+  return config
+}
 
 const opts = { getActiveDevice: () => null, onRunComplete: () => {} }
 
@@ -264,5 +277,106 @@ describe('J–V pane interface-plane-states gating', () => {
     expect(document.getElementById('status-jvp')?.textContent).toContain(
       'N_grid >= 200',
     )
+  })
+})
+
+describe('figure-reference J-V inputs', () => {
+  it('submits the captured figure history from its initial device preset', async () => {
+    const config = figureConfig()
+    mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'figure', config }), onRunComplete: () => {},
+    })
+    expect(boxes().solver.value).toBe('transient')
+    expect((document.getElementById('jvp-waveform-mode') as HTMLSelectElement).value).toBe('continuous')
+    expect((document.getElementById('jvp-waveform-turnaround') as HTMLInputElement).value).toBe('3')
+    expect((document.getElementById('jvp-waveform-atol') as HTMLInputElement).value).toBe('1')
+    document.getElementById('btn-jvp')!.click()
+    await vi.waitFor(() => expect(startJob).toHaveBeenCalledOnce())
+    expect(vi.mocked(startJob).mock.calls[0]).toEqual(['jv', config, figureReference.request.params])
+  })
+
+  it.each([
+    ['D_ion', 0], ['D_ion', 5.17e-19], ['D_ion', 5.17e-18], ['P0', 0], ['P0', 2e24],
+  ] as const)('keeps edited absorber %s=%s and the figure history on run', async (field, value) => {
+    const config = figureConfig()
+    const pane = mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'figure', config }), onRunComplete: () => {},
+    })
+    const absorber = config.layers.find(layer => layer.role === 'absorber')!
+    absorber[field] = value
+    pane.updateDevice()
+    document.getElementById('btn-jvp')!.click()
+    await vi.waitFor(() => expect(startJob).toHaveBeenCalledOnce())
+    const [, sent, params] = vi.mocked(startJob).mock.calls[0]
+    expect((sent as DeviceConfig).layers.find(layer => layer.role === 'absorber')![field]).toBe(value)
+    expect(params).toEqual(figureReference.request.params)
+  })
+
+  it('updates a mounted experiment after preset selection and preserves later scan edits', async () => {
+    let config: DeviceConfig = { device: { Phi: 2e21 }, layers: [] }
+    const pane = mountExperimentPane(container, {
+      getActiveDevice: () => ({ id: 'device', config }), onRunComplete: () => {},
+    })
+    config = figureConfig()
+    pane.updateDevice()
+    const rate = document.getElementById('jvp-rate') as HTMLInputElement
+    expect(rate.value).toBe('0.04')
+    rate.value = '0.08'
+    config.layers[1].D_ion = 5.17e-19
+    pane.updateDevice()
+    expect(rate.value).toBe('0.08')
+    document.getElementById('btn-jvp')!.click()
+    await vi.waitFor(() => expect(startJob).toHaveBeenCalledOnce())
+    expect(vi.mocked(startJob).mock.calls[0][2]).toEqual({
+      ...figureReference.request.params, v_rate: 0.08,
+    })
+  })
+
+  it('restores ordinary scan inputs when leaving the figure preset', () => {
+    let config: DeviceConfig = { device: { Phi: 2e21 }, layers: [] }
+    const pane = mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'device', config }), onRunComplete: () => {},
+    })
+    const grid = document.getElementById('jvp-N') as HTMLInputElement
+    grid.value = '80'
+    config = figureConfig()
+    pane.updateDevice()
+    expect(grid.value).toBe('60')
+    config = { device: { Phi: 2e21 }, layers: [] }
+    pane.updateDevice()
+    expect(grid.value).toBe('80')
+    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('1')
+    expect((document.getElementById('jvp-waveform-mode') as HTMLSelectElement).value).toBe('standard')
+  })
+
+  it('restores the same figure protocol only on an explicit preset reset', () => {
+    const config = figureConfig()
+    const pane = mountExperimentPane(container, {
+      getActiveDevice: () => ({ id: 'figure', config }), onRunComplete: () => {},
+    })
+    const rate = document.getElementById('jvp-rate') as HTMLInputElement
+    const hold = document.getElementById('jvp-waveform-turnaround') as HTMLInputElement
+    rate.value = '0.2'
+    hold.value = '0'
+    boxes().solver.focus()
+    pane.updateDevice()
+    expect(rate.value).toBe('0.2')
+    expect(hold.value).toBe('0')
+    pane.updateDevice(true)
+    expect(rate.value).toBe('0.04')
+    expect(hold.value).toBe('3')
+  })
+
+  it('restores the figure rate after leaving a charged-interface solver lock', () => {
+    let config = chargedInterfaceConfig
+    const pane = mountJVPane(container, {
+      getActiveDevice: () => ({ id: 'device', config }), onRunComplete: () => {},
+    })
+    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('0')
+    config = figureConfig()
+    pane.updateDevice()
+    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('0.04')
+    expect(boxes().solver.value).toBe('transient')
+    expect(boxes().solver.disabled).toBe(false)
   })
 })

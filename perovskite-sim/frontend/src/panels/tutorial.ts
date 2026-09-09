@@ -6,20 +6,20 @@ export function tutorialHTML(): string {
       <p>This simulator solves the 1D drift-diffusion equations coupled with Poisson's equation and mobile-ion transport to reproduce the electrical behaviour of thin-film solar cells.</p>
 
       <h4>1. Choose a device</h4>
-      <p>The research presets cover two studies:</p>
+      <p>Each frontend entry represents one reference model:</p>
       <ul>
-        <li><b>SCAPS parity - Reference v2</b> — the defect-corrected SCAPS partner device, with mobile ions disabled. Studies band offsets, doping, thickness and recombination trends. The reference mode is <b>Fast</b>; selecting this device does not imply that every SCAPS parity target has passed.</li>
-        <li><b>Calado 2016 - Ion hysteresis</b> — the Fig. 1f toy device for ionic redistribution, contact recombination and scan-rate-dependent J–V hysteresis. The reference mode is <b>Legacy</b>, with <i>D</i><sub>c</sub> = 2.585 × 10<sup>−18</sup> m²/s and <i>c</i><sub>0</sub> = 10<sup>25</sup> m⁻³ in the absorber.</li>
+        <li><b>SCAPS reproduction</b> — the defect-corrected SCAPS partner device in <b>Fast</b> mode, with mobile ions disabled. Covers band offsets, doping, thickness and recombination studies; individual SCAPS comparison targets retain their reported validation status.</li>
+        <li><b>Calado 2016 - Ion hysteresis</b> — the Calado toy device in <b>Full</b> mode with the recorded continuous history for the ion-sweep figures. Absorber reference values: <i>D</i><sub>c</sub> = 2.585 × 10<sup>−18</sup> m²/s, <i>c</i><sub>0</sub> = 10<sup>25</sup> m⁻³.</li>
       </ul>
-      <p>For a Calado trend study, a useful starting point is a transient J–V sweep at <b>0.04 V/s</b> up to <b>1.2 V</b>. Change one of <i>D</i><sub>c</sub>, <i>c</i><sub>0</sub>, scan rate or contact SRH at a time. The built-in 0 → V<sub>max</sub> → 0 sweep differs from the paper's −1 → +1.2 V protocol with a 3 s hold; quantitative paper comparison uses the dedicated Calado driver. The forward-branch mismatch remains open.</p>
+      <p>The Calado entry loads the <b>−1 → +1.2 → −1 V</b> scan at <b>0.04 V/s</b>, dark preparation, a <b>3 s dark turnaround hold</b>, uniform generation and the recorded tolerances. Change one parameter at a time and compare <b>HI<sub>P</sub></b>. The internal figure regression is verified; quantitative agreement with the original paper remains open.</p>
       <p>Click <b>Reset</b> to reload the preset, or edit the per-layer parameters directly — each layer expands to reveal Geometry, Transport, Recombination, and Ion/Optics groups.</p>
 
-      <h4>2. Pick a physics tier</h4>
-      <p>The <b>Mode</b> dropdown in the Device group selects which physics upgrades are active (see the <b>Algorithm</b> tab for the equations):</p>
+      <h4>2. Physics profiles</h4>
+      <p><b>Legacy / Fast / Full</b> specify available physical extensions within the shared drift–diffusion–Poisson framework. They are not separate reference models or accuracy levels. Activation also requires the corresponding material, optical and boundary parameters.</p>
       <ul>
         <li><b>Full</b> — every configured upgrade, including self-consistent radiative reabsorption, field-dependent mobility, and explicit finite-rate Robin contacts.</li>
         <li><b>Fast</b> — thermionic emission, TMM optics, dual-species ions, position-dependent traps, temperature scaling and photon recycling remain active; only the three per-RHS upgrades reserved for Full are omitted.</li>
-        <li><b>Legacy</b> — <i>T</i> pinned to 300 K, no TE, Beer–Lambert, single ion species, uniform bulk <i>τ</i>. This is the reference mode for the Calado 2016 study.</li>
+        <li><b>Legacy</b> — <i>T</i> pinned to 300 K, no TE, Beer–Lambert, single ion species, uniform bulk <i>τ</i>.</li>
       </ul>
       <p>The <i>T</i> field next to Mode sets the device temperature (K) in <b>Fast</b> and <b>Full</b>. Legacy clamps the model to 300 K.</p>
 
@@ -55,7 +55,7 @@ export function tutorialHTML(): string {
         <li><b>Beer&ndash;Lambert</b> (Legacy, or the fallback when no optical material is configured): <i>G</i>(<i>x</i>) = <i>α</i> Φ e<sup>&minus;<i>αx</i></sup>. Simple and fast, but ignores reflection at layer interfaces and wavelength dependence. Typically overestimates <i>J</i><sub>SC</sub> by 5&ndash;15 %.</li>
         <li><b>Transfer-matrix method</b> (Fast / Full, active whenever <code>optical_material</code> is set on layers): solves Maxwell's equations across the coherent layer stack at each wavelength of the AM1.5G spectrum and integrates. Captures interference fringes, front-surface reflection, and wavelength-dependent absorption.</li>
       </ul>
-      <p>The SCAPS reference supplies TMM optical materials and uses <b>Fast</b>. The Calado reference uses weak Beer&ndash;Lambert absorption in <b>Legacy</b>; changing its optics changes the comparison protocol.</p>
+      <p>The SCAPS reference supplies TMM optical materials and uses <b>Fast</b>. The Calado reference uses <b>Full</b> with uniform absorber generation in its continuous waveform; changing that source defines a different comparison protocol.</p>
 
       <h4>Custom Stacks</h4>
       <p>

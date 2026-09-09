@@ -248,18 +248,26 @@ def test_voc_search_fields_are_canonical_and_change_protocol_hash(
 
 
 def test_find_voc_executes_declared_search_dwell_and_counts(monkeypatch, stack):
-    calls: list[tuple[float, float, float]] = []
+    from types import SimpleNamespace
+
+    calls = []
 
     def fake_integrate(_x, state, _stack, _mat, voltage, t_lo, t_hi, *_args):
-        calls.append((float(voltage), float(t_lo), float(t_hi)))
-        return state.copy()
+        calls.append((float(voltage), float(t_lo), float(t_hi), state.copy()))
+        result = state.copy()
+        result[0] = voltage
+        return result
 
     monkeypatch.setattr(
         "perovskite_sim.experiments.tpv._integrate_step", fake_integrate
     )
     monkeypatch.setattr(
-        "perovskite_sim.experiments.tpv._compute_current",
-        lambda _x, _state, _stack, voltage, **_kwargs: 1.0 - float(voltage),
+        "perovskite_sim.experiments.tpv.OpenCircuitSystem",
+        lambda *_args: SimpleNamespace(
+            capacitance_A=1.0,
+            validate_state=lambda *_args: None,
+            rates=lambda _t, _state, voltage: (np.zeros(9), 0.9 - voltage, np.zeros(2)),
+        ),
     )
     search = VocSearchProtocol(
         coarse_upper_guess_factor=1.5,
@@ -271,7 +279,7 @@ def test_find_voc_executes_declared_search_dwell_and_counts(monkeypatch, stack):
         final_settle_s=0.04,
     )
 
-    _find_voc(
+    voltage, state = _find_voc(
         np.array([0.0, 0.5, 1.0]),
         np.ones(9),
         stack,
@@ -280,17 +288,21 @@ def test_find_voc_executes_declared_search_dwell_and_counts(monkeypatch, stack):
         search=search,
     )
 
-    assert len(calls) == (
-        search.coarse_points + search.bisection_max_steps + 1
-    )
+    assert voltage == pytest.approx(0.9)
+    assert state[0] == voltage
+    coarse = calls[:3]
+    candidates = calls[3:]
+    assert len(coarse) <= search.coarse_points
+    assert len(candidates) // 2 <= search.bisection_max_steps + 2
     assert all(
         t_hi - t_lo == pytest.approx(search.coarse_dwell_s)
-        for _voltage, t_lo, t_hi in calls[: search.coarse_points]
+        for _voltage, t_lo, t_hi, _state in coarse
     )
-    assert calls[-2][2] - calls[-2][1] == pytest.approx(
-        search.bisection_dwell_s
-    )
-    assert calls[-1][2] - calls[-1][1] == pytest.approx(search.final_settle_s)
+    for preparation, final in zip(candidates[::2], candidates[1::2]):
+        assert preparation[2] - preparation[1] == pytest.approx(search.bisection_dwell_s)
+        assert final[2] - final[1] == pytest.approx(search.final_settle_s)
+        assert preparation[3][0] == pytest.approx(0.5)
+        assert final[3][0] == preparation[0] == final[0]
 
 
 def test_legacy_builders_mark_implicit_history(stack, tmm_stack):

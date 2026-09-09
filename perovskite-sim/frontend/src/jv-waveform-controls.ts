@@ -1,5 +1,5 @@
 import { checkField, numField } from './ui-helpers'
-import type { JVWaveform, JVWaveformEvidence } from './types'
+import type { JVSweepDefaults, JVWaveform, JVWaveformEvidence } from './types'
 
 export function mountJVWaveformControls(
   container: HTMLElement,
@@ -42,6 +42,13 @@ export function mountJVWaveformControls(
   }
   let standardValues = readShared()
   let continuousValues = ['0.04', '1.2', '111']
+  const syncVisibility = () => {
+    const active = mode.value === 'continuous'
+    fields.hidden = !active
+    fields.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')
+      .forEach(field => { field.disabled = !active })
+    input('G').disabled = !active || select('generation').value !== 'uniform'
+  }
   const sync = () => {
     const active = mode.value === 'continuous'
     if (active) {
@@ -51,10 +58,7 @@ export function mountJVWaveformControls(
       continuousValues = readShared()
       writeShared(standardValues)
     }
-    fields.hidden = !active
-    fields.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')
-      .forEach(field => { field.disabled = !active })
-    input('G').disabled = !active || select('generation').value !== 'uniform'
+    syncVisibility()
   }
   mode.addEventListener('change', sync)
   select('generation').addEventListener('change', () => {
@@ -70,6 +74,33 @@ export function mountJVWaveformControls(
     return Number(field.value)
   }
   return {
+    applyDefaults(defaults: JVSweepDefaults | undefined) {
+      if (!defaults) {
+        if (mode.value !== 'standard') {
+          mode.value = 'standard'
+          sync()
+        }
+        return
+      }
+      if (mode.value === 'standard') standardValues = readShared()
+      continuousValues = [String(defaults.v_rate), String(defaults.V_max), String(defaults.n_points)]
+      mode.value = 'continuous'
+      writeShared(continuousValues)
+      const waveform = defaults.waveform
+      input('start').value = String(waveform.start_voltage_V)
+      input('seed').value = String(waveform.dark_seed_s)
+      input('prep').value = String(waveform.dark_prep_s)
+      input('dwell').value = String(waveform.branch_dwell_s)
+      input('turnaround').value = String(waveform.turnaround_s)
+      input('dark').checked = waveform.turnaround_dark
+      select('generation').value = waveform.uniform_generation_rate_m3_s === null ? 'device' : 'uniform'
+      if (waveform.uniform_generation_rate_m3_s !== null) {
+        input('G').value = String(waveform.uniform_generation_rate_m3_s)
+      }
+      input('rtol').value = String(defaults.waveform_controls.rtol)
+      input('atol').value = String(defaults.waveform_controls.atol_m3)
+      syncVisibility()
+    },
     setEnabled(enabled: boolean) {
       if (!enabled && mode.value !== 'standard') {
         mode.value = 'standard'

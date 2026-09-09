@@ -33,10 +33,10 @@ export function mountVocGrainSweepPane(
 ): void {
   container.innerHTML = `
     <div class="card">
-      <h3>V<sub>oc</sub>(L<sub>g</sub>) Grain Sweep (Stage B)</h3>
+      <h3>Grain-size sweep</h3>
       <div class="form-grid">
-        <label class="row-label">
-          <span>Grain sizes <i>L<sub>g</sub></i> (nm, comma-separated)</span>
+        <label class="row-label" title="Positive grain sizes in nm, separated by commas or spaces">
+          <span>Grain sizes <i>L</i><sub>g</sub> (nm)</span>
           <input type="text" id="vgs-sizes" value="${DEFAULT_GRAIN_SIZES_NM}" class="config-input" />
         </label>
         ${numField('vgs-tau-n', 'τ<sub>GB</sub><sup>n</sup> (s)', 1e-9, 'any')}
@@ -46,17 +46,14 @@ export function mountVocGrainSweepPane(
         ${numField('vgs-Nyl', 'N<sub>y</sub> per layer', 8, '1')}
         ${numField('vgs-vmax', 'V<sub>max</sub> (V)', 1.2, 'any')}
         ${numField('vgs-vstep', 'V<sub>step</sub> (V)', 0.05, 'any')}
-        ${numField('vgs-settle', 'settle <i>t</i> (s)', 1e-3, 'any')}
+        ${numField('vgs-settle', 't<sub>settle</sub> (s)', 1e-3, 'any')}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-vgs">Run V<sub>oc</sub>(L<sub>g</sub>)</button>
         <span class="status" id="status-vgs"></span>
       </div>
       <div id="progress-vgs"></div>
-      <div class="pane-hint">For each L<sub>g</sub>, runs a 2D sweep with periodic lateral
-        BCs and a single centred absorber GB. V<sub>oc</sub>(L<sub>g</sub>) is the
-        published headline curve for grain-boundary-limited cells; smaller grains push
-        more recombination through the GB band and lower V<sub>oc</sub>.</div>
+      <div class="pane-hint"><strong>Model:</strong> one centred absorber grain boundary.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

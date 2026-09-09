@@ -36,6 +36,43 @@ not cover field mobility, photon recycling, periodic-x, dual ions, or dynamic
 interface occupancy. It does not establish arbitrary composability of all
 available 2D features.
 
+## Carrier Contacts
+
+The material builder inherits the four resolved exchange velocities from
+the 1D material arrays. `None` means a fixed-density reservoir, zero means
+blocking, and a positive value means finite exchange. Each carrier on each
+side is handled independently. `flat_band_contacts` retains the same explicit
+finite-exchange override in both dimensions, including its tier precedence.
+The J-V protocol uses the same resolver to describe that boundary.
+
+RHS and snapshot evaluation pin only fixed-density contacts, without changing
+the supplied state. Transient initial conditions carry those same reservoir
+values. Negative mobile-ion-lane input or terminal states are checked before
+any boundary substitution, so pinning cannot hide a failed density diagnostic.
+
+The 1D boundary storage uses a full neighbouring interval while 2D uses a
+geometric half interval. This retained discretization difference must be
+included in transient grid studies; equal-grid pointwise identity is not a
+general Robin-transient claim. Boundary-type, conservation, ohmic-limit and
+orientation tests are in `tests/unit/twod/test_contact_boundary_semantics.py`.
+
+## Thermionic Current
+
+The 1D continuity equation and its current observer share
+`physics.continuity.carrier_face_currents`. Both dimensions apply
+`physics.thermionic_transport.apply_thermionic_caps`; the 2D adapter applies
+the same expression to each vertical column. It preserves current direction,
+uses physical band edges separately from DOS-folded transport potentials,
+and carries the selected physical DOS normalization and cap smoothing.
+Snapshot currents use that same cap rather than an uncapped SG reconstruction.
+
+The normalization default is unchanged. Both material representations expose
+`thermionic_normalization_status`: disabled, historical density-weighted,
+physical DOS-normalized, or compatibility fallback caused by missing DOS.
+A fallback is not physical-normalization evidence. These checks establish
+formula and observation consistency, not a general nonlinear-stability or
+external-validation certificate for thermionic transport.
+
 ## Uniform Device Parity
 
 The historical carrier-only parity case in
@@ -59,11 +96,10 @@ reported as the stronger residual certification proposed by the early
 design. Field-mobility and reabsorption parity cases in the same file have
 their own tolerances; the table above is not a universal 2D acceptance gate.
 
-The old `configs/twod/` and related example presets were removed on
-2026-09-05. These historical full-device tests require their original inputs
-and cannot run unchanged in this checkout. New studies must specify new
-inputs, protocols, and acceptance criteria before reporting validation;
-substituting either current research preset does not preserve old evidence.
+The historical inputs are available under `tests/fixtures/configs/twod/`.
+They remain separate from the two shipped research presets. New studies must
+specify their own inputs, protocols and acceptance criteria; substituting a
+current research preset does not preserve historical validation evidence.
 
 ## Field Dependent Mobility
 
@@ -135,3 +171,46 @@ Optical-profile-weighted redistribution, lateral photon transport, and
 validated per-grain optical heterogeneity are not supplied by this uniform
 area closure. Existing synthetic or laterally uniform tests do not establish
 those capabilities or agreement with measured grain-size trends.
+
+## Foundation Independent Axes
+
+`tests/integration/test_foundation_twod_axis_refinement.py` compares a dark,
+laterally uniform two-layer semiconductor with its one-dimensional problem.
+Each layer is 100 nm thick at 300 K, with `Eg=1.2 eV`, `Nc=Nv=1e24 m-3`,
+`N_D=1e20 m-3`, `eps_r=10` and carrier mobilities `0.02 m2/V/s`. Intrinsic
+density follows the Boltzmann mass-action relation. The affinities are 4.0
+and 3.8 eV. The standard Richardson coefficients and physical DOS
+normalization are retained. There are no mobile ions or optical source.
+
+The left electron contact has `S_n=1e3 m/s`, the right hole contact is
+blocking, and the other carrier contacts keep their fixed-density values.
+The same initial sinusoidal electron perturbation, uniform holes, 0.02 V
+bias and `1e-10 s` observation time are used in both dimensions. Integration
+uses `rtol=1e-8`, `atol=1e-4 m-3` and `max_step=1e-11 s`.
+
+Vertical refinement uses 16/32/64 intervals per layer at fixed two lateral
+intervals. Lateral refinement uses 2/4/8 intervals across a fixed 300 nm
+width at 32 vertical intervals per layer. The initial thermionic cap must
+change the electron face current by more than half of the uncapped maximum,
+making disabled-TE agreement insufficient. Both carrier profiles and their
+currents must approach the one-dimensional result; the finest normalized
+differences must be below 0.5 percent. Lateral uniformity and positivity
+remain required at every resolution. The coarse Robin boundary control
+volumes differ between dimensions, so the claim is convergence toward the
+same physical limit, not bit identity at every vertical mesh.
+
+This short-time active-TE/contact check complements the complete uniform
+photovoltaic regression and the registered heterogeneous 2D matrix. It does
+not certify arbitrary long-time or multi-ion two-dimensional dynamics.
+
+### Five-Nanometre Grain-Boundary Control
+
+The old single-GB test required a short-circuit density reduction of at least
+0.1 percent. That threshold was not implied by its declared 5 nm width and
+50 ns lifetime, and is withdrawn. The original failed result is retained in
+the foundation-stage slow-test record. The replacement preserves the same
+material/geometry and compares automatic microstructure selection with an
+explicit declaration and a no-GB control. The suppression must exceed ten
+times the measured tolerance/roundoff uncertainty; both resolutions must
+also agree in state and current. Existing finite-volume GB width, SRH-rate,
+Voc-shift and registered 2D convergence checks retain their original limits.

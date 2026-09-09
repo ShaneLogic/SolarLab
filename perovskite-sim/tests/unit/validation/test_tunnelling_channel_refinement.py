@@ -1,8 +1,7 @@
-"""D8-E2 WKB tunnelling-channel numerical-refinement contract tests.
+"""Historical v1 registration and executable evidence for its withdrawal.
 
-These cover the lane's *contract* — its registration, its protocol hash, its
-refusals, and the structural claims it certifies. The 9-cell matrix itself is
-too slow for the default lane and is exercised by the registered run.
+Its original thresholds remain intact. The current resolved model has a
+separate v2 definition and must not be certified by these obsolete conditions.
 """
 
 from __future__ import annotations
@@ -180,17 +179,8 @@ def test_with_order_rewrites_only_the_quadrature_order_and_enable_flag():
 
 
 @pytest.mark.slow
-def test_a_coarse_cell_certifies_the_structural_channel_claims():
-    """The structural claims are the ones worth a real solve.
-
-    The flux-to-face-current injection identity IS exact and is asserted as
-    exact. The equilibrium zero is asserted too, but D8-E2R showed it holds
-    here by float64 Fermi-factor saturation rather than by reciprocity, so it
-    is NOT evidence of the latter — see
-    `tests/unit/physics/test_tunnelling_drive_convention.py`. The rationale
-    this docstring used to carry ("a tolerance would hide a sign or
-    bookkeeping error") is retracted: the exact gate is what hid one.
-    """
+def test_corrected_physics_rejects_the_withdrawn_v1_device_claims():
+    """Corrected energies and nonlocal transfer must not pass the old recipe."""
     measurement = run_tunnelling_channel_qf_dc_refinement(
         _lane(), MatrixPoint(24, 1.0), ROOT
     )
@@ -199,19 +189,15 @@ def test_a_coarse_cell_certifies_the_structural_channel_claims():
 
     assert quality["certified"].values[0] == 1.0
     assert quality["equilibrium_certified"].values[0] == 1.0
-    # Structural, not numerical: one transmission drives both directions.
-    assert quality["equilibrium_net_flux_m2_s"].values[0] == 0.0
-    assert quality["equilibrium_face_current_A_m2"].values[0] == 0.0
-    # The injected face current IS the reported flux, on exactly one face.
-    assert quality["face_current_injection_relative_error"].values[0] == 0.0
-    assert quality["injected_face_count"].values[0] == 1.0
+    assert quality["equilibrium_face_current_A_m2"].values[0] < 1e-8
+    assert quality["face_current_injection_relative_error"].values[0] > 1e-12
+    assert quality["injected_face_count"].values[0] > 1.0
     # A disabled family must produce no diagnostics at all.
     assert quality["disabled_family_reports_nothing"].values[0] == 1.0
     # The barrier must actually block something, or the lane measures nothing.
     assert quality["minimum_transmission_below_unity"].values[0] == 1.0
     assert observables["intraband_electron_maximum_action"].values[0] > 1.0
-    # The channel must be a real contributor, not a rounding perturbation.
-    assert quality["channel_flux_fraction_of_terminal_current"].values[0] > 0.01
+    assert quality["channel_flux_fraction_of_terminal_current"].values[0] < 0.01
     # The solve stays inside the solver's own accepted residual limit.
     assert quality["residual_over_solver_limit"].values[0] <= 1.0
     # Energy-order convergence over the registered ladder.

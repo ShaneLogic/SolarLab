@@ -2,11 +2,8 @@
  * Vitest cases for ``renderImpedance`` / ``renderDegradation`` /
  * ``renderTPV`` / ``renderVocGrainSweep`` workstation panes.
  *
- * Same Plotly mock pattern as the other publication-mode panes.
- * Engineering mode is the default and bit-identical to the
- * pre-publication renderer; the Publication branch swaps font /
- * colors / margins / modebar / axes / annotation / hollow markers
- * without mutating the raw arrays carried in each result type.
+ * Covers publication styling, result evidence, and raw array preservation
+ * using the shared Plotly mock pattern.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -50,11 +47,6 @@ function _config(): Record<string, any> | undefined {
   const calls = newPlotMock.mock.calls
   if (calls.length === 0) return undefined
   return calls[calls.length - 1][3] as Record<string, any>
-}
-function _toggle(el: HTMLElement, sel: string, mode: 'engineering' | 'publication'): void {
-  const s = el.querySelector<HTMLSelectElement>(`[data-test="${sel}"]`)!
-  s.value = mode
-  s.dispatchEvent(new Event('change'))
 }
 
 // ── Impedance (Nyquist) ──────────────────────────────────────────────────
@@ -144,10 +136,10 @@ describe('renderImpedance', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select toolbar', () => {
+  it('renders without a style selector', () => {
     renderImpedance(el, makeIS())
-    expect(el.querySelector('[data-test="impedance-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="impedance-style-mode"]')).not.toBeNull()
+    expect(el.querySelector('[data-test="impedance-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="impedance-style-mode"]')).toBeNull()
     expect(el.querySelector('[data-test="impedance-evidence-warning"]')).toBeNull()
     const summary = el.querySelector<HTMLElement>('[data-test="impedance-evidence-summary"]')
     expect(summary?.textContent).toContain('blocking-charge frequency bracketed')
@@ -219,21 +211,8 @@ describe('renderImpedance', () => {
     expect(summary?.textContent).toContain('override: used')
   })
 
-  it('default style is engineering (Arial layout, modebar visible)', () => {
-    renderImpedance(el, makeIS())
-    expect(_layout()!.font.family).toBe('Arial, sans-serif')
-    expect(_config()!.displayModeBar).toBeUndefined()
-    expect(_traces()![0].line.color).toBe('#2563eb')
-  })
-
-  it('engineering: square-aspect Nyquist via scaleanchor x', () => {
-    renderImpedance(el, makeIS())
-    expect(_layout()!.yaxis.scaleanchor).toBe('x')
-  })
-
   it('publication: hollow circle muted blue, modebar hidden, scaleanchor preserved', () => {
     renderImpedance(el, makeIS())
-    _toggle(el, 'impedance-style-mode', 'publication')
     const layout = _layout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.paper_bgcolor).toBe('#ffffff')
@@ -244,12 +223,12 @@ describe('renderImpedance', () => {
     expect(data.line.color).toBe('#2B6FA3')
   })
 
-  it('raw Z_real / Z_imag arrays unchanged across modes', () => {
+  it('raw Z_real / Z_imag arrays unchanged across renders', () => {
     const r = makeIS()
     const re_pre = [...r.Z_real]
     const im_pre = [...r.Z_imag]
     renderImpedance(el, r)
-    _toggle(el, 'impedance-style-mode', 'publication')
+    renderImpedance(el, r)
     expect(r.Z_real).toEqual(re_pre)
     expect(r.Z_imag).toEqual(im_pre)
     // x is the raw Z_real reference (no .slice() / .map()).
@@ -276,21 +255,14 @@ describe('renderDegradation', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select toolbar', () => {
+  it('renders without a style selector', () => {
     renderDegradation(el, makeDeg())
-    expect(el.querySelector('[data-test="degradation-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="degradation-style-mode"]')).not.toBeNull()
-  })
-
-  it('default style is engineering (Arial layout, blue trace)', () => {
-    renderDegradation(el, makeDeg())
-    expect(_layout()!.font.family).toBe('Arial, sans-serif')
-    expect(_traces()![0].line.color).toBe('#2563eb')
+    expect(el.querySelector('[data-test="degradation-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="degradation-style-mode"]')).toBeNull()
   })
 
   it('publication: hollow circle muted blue, modebar hidden', () => {
     renderDegradation(el, makeDeg())
-    _toggle(el, 'degradation-style-mode', 'publication')
     expect(_layout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(_config()!.displayModeBar).toBe(false)
     const data = _traces()![0]
@@ -299,12 +271,12 @@ describe('renderDegradation', () => {
     expect(data.name).toContain('PCE')
   })
 
-  it('raw PCE / times arrays unchanged across modes', () => {
+  it('raw PCE / times arrays unchanged across renders', () => {
     const r = makeDeg()
     const pce_pre = [...r.PCE]
     const t_pre = [...r.times]
     renderDegradation(el, r)
-    _toggle(el, 'degradation-style-mode', 'publication')
+    renderDegradation(el, r)
     expect(r.PCE).toEqual(pce_pre)
     expect(r.times).toEqual(t_pre)
     expect(_traces()![0].x).toBe(r.times)
@@ -332,27 +304,14 @@ describe('renderTPV', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select toolbar', () => {
+  it('renders without a style selector', () => {
     renderTPV(el, makeTPV())
-    expect(el.querySelector('[data-test="tpv-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="tpv-style-mode"]')).not.toBeNull()
-  })
-
-  it('engineering annotation upper-RIGHT with V_oc / τ / ΔV_0', () => {
-    renderTPV(el, makeTPV())
-    const ann = _layout()!.annotations as Array<Record<string, any>>
-    expect(ann[0].xanchor).toBe('right')
-    expect(ann[0].yanchor).toBe('top')
-    const t = ann[0].text
-    expect(t).toContain('V<sub>oc</sub>')
-    expect(t).toContain('1.100 V')
-    expect(t).toContain('2.0 µs')
-    expect(t).toContain('5.00 mV')
+    expect(el.querySelector('[data-test="tpv-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="tpv-style-mode"]')).toBeNull()
   })
 
   it('publication: solid muted-blue line (lines mode, no markers), font swap', () => {
     renderTPV(el, makeTPV())
-    _toggle(el, 'tpv-style-mode', 'publication')
     expect(_layout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(_config()!.displayModeBar).toBe(false)
     const data = _traces()![0]
@@ -365,7 +324,6 @@ describe('renderTPV', () => {
 
   it('publication annotation: V_oc / τ / ΔV_0 stacked with <br> at upper-RIGHT', () => {
     renderTPV(el, makeTPV())
-    _toggle(el, 'tpv-style-mode', 'publication')
     const ann = _layout()!.annotations as Array<Record<string, any>>
     expect(ann[0].xanchor).toBe('right')
     expect(ann[0].yanchor).toBe('top')
@@ -373,14 +331,47 @@ describe('renderTPV', () => {
     expect(ann[0].font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
-  it('raw t / V arrays unchanged across modes', () => {
+  it('raw t / V arrays unchanged across renders', () => {
     const r = makeTPV()
     const t_pre = [...r.t]
     const V_pre = [...r.V]
     renderTPV(el, r)
-    _toggle(el, 'tpv-style-mode', 'publication')
+    renderTPV(el, r)
     expect(r.t).toEqual(t_pre)
     expect(r.V).toEqual(V_pre)
+  })
+
+  it.each(['engineering', 'publication'] as const)('uses the matched control with legacy %s style state', mode => {
+    const result = makeTPV()
+    result.V_reference = [1.104, 1.102, 1.1005, 1.0995, 1.0991]
+    el.dataset.plotStyleMode = mode
+    renderTPV(el, result)
+    const voltage = _traces()![0].y as number[]
+    voltage.forEach(value => expect(value).toBeCloseTo(1, 9))
+  })
+
+  it.each(['engineering', 'publication'] as const)('does not invent a lifetime with legacy %s style state', mode => {
+    const result = makeTPV()
+    result.tau = null
+    result.fit = {
+      tau_s: null, amplitude_V: 0, status: 'no_signal', points: 5,
+      r_squared: null, normalized_max_error: null,
+    }
+    el.dataset.plotStyleMode = mode
+    renderTPV(el, result)
+    const annotation = _layout()!.annotations[0].text as string
+    expect(annotation).toContain('No resolved pulse')
+    expect(annotation).not.toContain('0.0 \u00B5s')
+    expect(annotation).not.toContain('NaN')
+  })
+
+  it('rejects a lifetime attached to an invalid trajectory', () => {
+    const result = makeTPV()
+    result.valid = result.t.map(() => false)
+    renderTPV(el, result)
+    expect(_layout()!.annotations[0].text).toContain('Invalid response')
+    expect(_layout()!.annotations[0].text).not.toContain('2.0 \u00B5s')
+    expect(_traces()![0].y).toEqual(result.t.map(() => null))
   })
 })
 
@@ -403,22 +394,14 @@ describe('renderVocGrainSweep', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select toolbar', () => {
+  it('renders without a style selector', () => {
     renderVocGrainSweep(el, makeVGS())
-    expect(el.querySelector('[data-test="voc-grain-sweep-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="voc-grain-sweep-style-mode"]')).not.toBeNull()
-  })
-
-  it('engineering: log x-axis with decade-only ticks (dtick=1)', () => {
-    renderVocGrainSweep(el, makeVGS())
-    const layout = _layout()!
-    expect(layout.xaxis.type).toBe('log')
-    expect(layout.xaxis.dtick).toBe(1)
+    expect(el.querySelector('[data-test="voc-grain-sweep-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="voc-grain-sweep-style-mode"]')).toBeNull()
   })
 
   it('publication: log x-axis with dtick=1 + hollow circle muted blue', () => {
     renderVocGrainSweep(el, makeVGS())
-    _toggle(el, 'voc-grain-sweep-style-mode', 'publication')
     const layout = _layout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.xaxis.type).toBe('log')
@@ -431,7 +414,6 @@ describe('renderVocGrainSweep', () => {
 
   it('publication annotation lives at lower-RIGHT (rising curve, empty quadrant)', () => {
     renderVocGrainSweep(el, makeVGS())
-    _toggle(el, 'voc-grain-sweep-style-mode', 'publication')
     const ann = _layout()!.annotations as Array<Record<string, any>>
     expect(ann).toHaveLength(1)
     expect(ann[0].xanchor).toBe('right')
@@ -442,22 +424,14 @@ describe('renderVocGrainSweep', () => {
     expect(ann[0].font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
-  it('raw arrays unchanged across modes', () => {
+  it('raw arrays unchanged across renders', () => {
     const r = makeVGS()
     const g_pre = [...r.grain_sizes_nm]
     const v_pre = [...r.V_oc_V]
     renderVocGrainSweep(el, r)
-    _toggle(el, 'voc-grain-sweep-style-mode', 'publication')
+    renderVocGrainSweep(el, r)
     expect(r.grain_sizes_nm).toEqual(g_pre)
     expect(r.V_oc_V).toEqual(v_pre)
     expect(_traces()![0].x).toBe(r.grain_sizes_nm)
-  })
-
-  it('toggle round-trip restores defaults', () => {
-    renderVocGrainSweep(el, makeVGS())
-    _toggle(el, 'voc-grain-sweep-style-mode', 'publication')
-    expect(_layout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-    _toggle(el, 'voc-grain-sweep-style-mode', 'engineering')
-    expect(_layout()!.font.family).toBe('Arial, sans-serif')
   })
 })

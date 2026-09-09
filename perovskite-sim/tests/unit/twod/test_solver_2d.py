@@ -368,16 +368,16 @@ def test_mobile_ion_transient_rejects_unphysical_terminal_state(
 
 
 def test_material_arrays_2d_default_no_selective_contacts():
-    """Without S values on the stack, has_selective_contacts is False and S fields are 0."""
+    """Absent S values retain the fixed-density reservoir sentinel."""
     stack = _stack()  # tests/fixtures/configs/nip_MAPbI3.yaml — no S values
     layers = _layers_for_stack(stack)
     g = build_grid_2d(layers, lateral_length=300e-9, Nx=4, lateral_uniform=True)
     mat = build_material_arrays_2d(g, stack, Microstructure())
     assert mat.has_selective_contacts is False
-    assert mat.S_n_top == 0.0
-    assert mat.S_p_top == 0.0
-    assert mat.S_n_bot == 0.0
-    assert mat.S_p_bot == 0.0
+    assert mat.S_n_top is None
+    assert mat.S_p_top is None
+    assert mat.S_n_bot is None
+    assert mat.S_p_bot is None
 
 
 def test_material_arrays_2d_right_maps_to_bot():
@@ -388,9 +388,9 @@ def test_material_arrays_2d_right_maps_to_bot():
     mat = build_material_arrays_2d(g, stack_with_s, Microstructure())
     assert mat.has_selective_contacts is True
     assert mat.S_n_bot == pytest.approx(1e-2)
-    assert mat.S_n_top == 0.0
-    assert mat.S_p_top == 0.0
-    assert mat.S_p_bot == 0.0
+    assert mat.S_n_top is None
+    assert mat.S_p_top is None
+    assert mat.S_p_bot is None
 
 
 def test_material_arrays_2d_left_maps_to_top():
@@ -401,9 +401,9 @@ def test_material_arrays_2d_left_maps_to_top():
     mat = build_material_arrays_2d(g, stack_with_s, Microstructure())
     assert mat.has_selective_contacts is True
     assert mat.S_p_top == pytest.approx(5e3)
-    assert mat.S_n_top == 0.0
-    assert mat.S_n_bot == 0.0
-    assert mat.S_p_bot == 0.0
+    assert mat.S_n_top is None
+    assert mat.S_n_bot is None
+    assert mat.S_p_bot is None
 
 
 def test_material_arrays_2d_builds_area_conservative_single_gb_region():

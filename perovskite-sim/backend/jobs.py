@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import queue
+import math
 import threading
 import traceback
 import uuid
@@ -41,6 +42,7 @@ class JobRegistry:
       - `next_event(job_id, timeout)` blocks for the next progress event,
         returns None when the job is done, re-raises KeyError for unknown ids.
       - `status(job_id)` returns the current state and final result/error.
+      - `wait(job_id)` waits for the worker's completion and cleanup.
 
     Single-process and in-memory. If the FastAPI worker restarts, all jobs
     are lost — acceptable for runs that take seconds to a few minutes.
@@ -103,6 +105,22 @@ class JobRegistry:
                 raise KeyError(job_id)
             job = self._jobs[job_id]
         return job.status, job.result, job.error
+
+    def wait(
+        self,
+        job_id: str,
+        timeout: float | None = None,
+    ) -> Tuple[JobStatus, Optional[dict], Optional[str]]:
+        """Join one worker without consuming its progress or cancelling it."""
+        if timeout is not None and (not math.isfinite(timeout) or timeout < 0.0):
+            raise ValueError("timeout must be finite and non-negative or None")
+        with self._lock:
+            job = self._jobs[job_id]
+        if job.thread is not None:
+            job.thread.join(timeout=timeout)
+            if job.thread.is_alive():
+                raise TimeoutError(f"job {job_id} is still running")
+        return self.status(job_id)
 
 
 class _DrainTimeout:

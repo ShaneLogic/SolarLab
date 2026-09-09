@@ -1,0 +1,57 @@
+# Unfitted, dark two-reservoir electron-transport reference at 300 K.
+# The 3 nm undoped material barrier has a 0.3 eV conduction-band offset.
+# Identical physical DOS keep the bulk SG energy convention unambiguous.
+# Phi defines the solver's reference current scale; illumination is disabled.
+device:
+  Phi: 1.0e21
+  mode: legacy
+  built_in_potential_mode: semiconductor_work_function
+  tunnelling_channels:
+    schema_version: solarlab-wkb-tunnelling-channels-v1
+    intraband:
+      enabled: true
+      electron_effective_mass_rel: 0.2
+      hole_effective_mass_rel: 0.2
+      carrier: electron
+      energy_quadrature_order: 96
+layers:
+  - &reservoir
+    name: left_reservoir
+    role: ETL
+    thickness: 150.0e-9
+    eps_r: 20.0
+    mu_n: 2.0e-3
+    mu_p: 2.0e-3
+    D_ion: 0.0
+    P_lim: 1.0e30
+    P0: 0.0
+    ni: 2.2495700957e11
+    tau_n: 1.0e-6
+    tau_p: 1.0e-6
+    n1: 2.2495700957e11
+    p1: 2.2495700957e11
+    B_rad: 0.0
+    C_n: 0.0
+    C_p: 0.0
+    alpha: 0.0
+    N_A: 0.0
+    N_D: 1.0e22
+    chi: 4.0
+    Eg: 1.5
+    Nc300: 1.0e24
+    Nv300: 8.0e23
+  - <<: *reservoir
+    name: electron_barrier
+    thickness: 3.0e-9
+    mu_n: 2.0e-5
+    mu_p: 2.0e-5
+    N_D: 0.0
+    chi: 3.7
+    Eg: 2.1
+    ni: 2.0526804442e6
+    n1: 2.0526804442e6
+    p1: 2.0526804442e6
+  - <<: *reservoir
+    name: right_reservoir
+    thickness: 100.0e-9
+    N_D: 2.0e22

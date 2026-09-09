@@ -12,19 +12,18 @@ export interface DegradationPaneOptions {
 export function mountDegradationPane(container: HTMLElement, opts: DegradationPaneOptions): void {
   container.innerHTML = `
     <div class="card">
-      <h3>Degradation Parameters</h3>
+      <h3>Stress settings</h3>
       <div class="form-grid">
         ${numField('deg-N', 'N<sub>grid</sub>', 40, '1')}
         ${numField('deg-Vbias', 'V<sub>bias</sub> (V)', 0.9, 'any')}
         ${numField('deg-tend', 't<sub>end</sub> (s)', 100, 'any')}
-        ${numField('deg-nsnap', 'n<sub>snapshots</sub>', 10, '1')}
+        ${numField('deg-nsnap', 'Snapshots', 10, '1')}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-deg">Run Degradation</button>
         <span class="status" id="status-deg"></span>
       </div>
       <div id="progress-deg"></div>
-      <div class="pane-hint">Results stream into the Main Plot pane and appear as a run under this experiment in the tree.</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

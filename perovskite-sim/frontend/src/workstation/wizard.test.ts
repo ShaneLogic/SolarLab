@@ -14,6 +14,21 @@ function preset(name: string, tiers: WizardPreset['tier_compat']): WizardPreset 
 }
 
 describe('buildWizardHTML', () => {
+  it('prioritizes the reference model and keeps physics profiles collapsed', () => {
+    const root = document.createElement('div')
+    root.innerHTML = buildWizardHTML(presetsFromEntries([
+      { name: 'scaps_mirror_v2.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
+    ]))
+    const summary = root.querySelector<HTMLElement>('[data-wizard="model-summary"]')!
+    const profiles = root.querySelector<HTMLDetailsElement>('.wizard-profile-options')!
+    expect(profiles.open).toBe(false)
+    expect(summary.textContent).toContain('no mobile ions')
+    expect(summary.textContent).toContain('Calibrated SCAPS comparison')
+    expect(summary.textContent).not.toContain('Two ion species')
+    expect(root.querySelector('[data-wizard="profile-summary"]')?.textContent).toContain('Fast · reference')
+    expect(summary.compareDocumentPosition(profiles) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('contains three tier cards', () => {
     const html = buildWizardHTML([
       preset('ionmonger_benchmark.yaml', ['legacy', 'fast']),
@@ -100,7 +115,7 @@ describe('applyTierCompat', () => {
     el.innerHTML = buildWizardHTML([preset('legacy.yaml', ['legacy', 'fast'])])
     applyTierCompat(el, ['legacy', 'fast'])
     const note = el.querySelector<HTMLElement>('[data-wizard="tier-note"]')!
-    expect(note.textContent).toMatch(/FULL tier disabled/)
+    expect(note.textContent).toBe('Full profile is unavailable for this preset.')
   })
 
   it('clears the gate note when full is available again', () => {
@@ -131,33 +146,71 @@ describe('presetsFromEntries', () => {
   it('uses the focused catalog and preserves each reference mode', () => {
     const presets = presetsFromEntries([
       { name: 'calado2016_fig1f.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast'] },
+      { name: 'calado2016_ion_sweep.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
       { name: 'scaps_mirror_v2.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
       { name: 'ionmonger_benchmark.yaml', namespace: 'shipped' },
     ])
-    expect(presets.map(p => p.name)).toEqual(['scaps_mirror_v2.yaml', 'calado2016_fig1f.yaml'])
-    expect(presets.map(p => p.preferred_tier)).toEqual(['fast', 'legacy'])
+    expect(presets.map(p => p.name)).toEqual(['scaps_mirror_v2.yaml', 'calado2016_ion_sweep.yaml'])
+    expect(presets.map(p => p.preferred_tier)).toEqual(['fast', 'full'])
   })
 })
 
 describe('research preset selection', () => {
-  it('starts SCAPS in Fast and switches Calado to Legacy without changing the filename payload', async () => {
+  it('updates model physics and flags departures from the reference profile', () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    void showWizard(root, presetsFromEntries([
+      { name: 'scaps_mirror_v2.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
+      { name: 'calado2016_ion_sweep.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
+      { name: 'custom.yaml', namespace: 'user', tier_compat: ['legacy', 'fast', 'full'] },
+    ]))
+    const warning = root.querySelector<HTMLElement>('[data-wizard="profile-warning"]')!
+    const summary = root.querySelector<HTMLElement>('[data-wizard="model-summary"]')!
+    const select = root.querySelector<HTMLSelectElement>('select[name="wizard-preset"]')!
+    expect(warning.hidden).toBe(true)
+    root.querySelector<HTMLDetailsElement>('.wizard-profile-options')!.open = true
+    root.querySelector<HTMLInputElement>('input[name="wizard-tier"][value="full"]')!.click()
+    expect(warning.hidden).toBe(false)
+    expect(warning.textContent).toContain('Model reference: Fast')
+
+    select.value = 'calado2016_ion_sweep.yaml'
+    select.dispatchEvent(new Event('change'))
+    expect(warning.hidden).toBe(true)
+    expect(summary.textContent).toContain('positive-ion drift-diffusion')
+    expect(summary.textContent).toContain('Uniform photogeneration')
+    expect(summary.textContent).not.toContain('TMM photogeneration')
+    expect(summary.textContent).toContain('original-paper agreement remains open')
+    expect(root.querySelector('[data-wizard="profile-summary"]')?.textContent).toBe('Full · reference')
+
+    select.value = 'custom.yaml'
+    select.dispatchEvent(new Event('change'))
+    expect(summary.hidden).toBe(true)
+    expect(summary.textContent).toBe('')
+    expect(warning.hidden).toBe(true)
+    expect(root.querySelector('[data-wizard="profile-summary"]')?.textContent).toBe('Full')
+    root.querySelector<HTMLButtonElement>('[data-wizard="cancel"]')!.click()
+    root.remove()
+  })
+
+  it('starts SCAPS in Fast and selects the verified Full-mode Calado configuration', async () => {
     const root = document.createElement('div')
     const result = showWizard(root, presetsFromEntries([
       { name: 'scaps_mirror_v2.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
-      { name: 'calado2016_fig1f.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast'] },
+      { name: 'calado2016_ion_sweep.yaml', namespace: 'shipped', tier_compat: ['legacy', 'fast', 'full'] },
     ]))
     expect(parseWizardSelection(root)?.tier).toBe('fast')
     const select = root.querySelector<HTMLSelectElement>('select[name="wizard-preset"]')!
-    expect(select.options[0].textContent).toBe('SCAPS parity - Reference v2')
-    select.value = 'calado2016_fig1f.yaml'
+    expect(select.options[0].textContent).toBe('SCAPS reproduction')
+    expect(select.options[1].textContent).toBe('Calado 2016 - Ion hysteresis')
+    select.value = 'calado2016_ion_sweep.yaml'
     select.dispatchEvent(new Event('change'))
     expect(parseWizardSelection(root)).toEqual({
-      tier: 'legacy', preset: 'calado2016_fig1f.yaml', name: 'New device',
+      tier: 'full', preset: 'calado2016_ion_sweep.yaml', name: 'New device',
     })
     root.querySelector<HTMLButtonElement>('[data-wizard="create"]')!.click()
     expect(await result).toEqual({
       cancelled: false,
-      selection: { tier: 'legacy', preset: 'calado2016_fig1f.yaml', name: 'New device' },
+      selection: { tier: 'full', preset: 'calado2016_ion_sweep.yaml', name: 'New device' },
     })
   })
 })

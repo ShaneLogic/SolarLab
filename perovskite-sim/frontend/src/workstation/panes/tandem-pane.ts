@@ -47,7 +47,7 @@ function renderMetrics(data: TandemJVPayload): string {
 export function mountTandemPane(container: HTMLElement): void {
   container.innerHTML = `
     <div class="card">
-      <h3>Tandem J–V Simulation</h3>
+      <h3>Tandem J–V</h3>
       <div class="form-grid">
         <label class="form-group" style="grid-column: 1 / -1;">
           <span>Tandem preset</span>
@@ -56,7 +56,7 @@ export function mountTandemPane(container: HTMLElement): void {
           </select>
         </label>
         ${numField('tandem-N', 'N<sub>grid</sub>', 40, '1')}
-        ${numField('tandem-np', 'V sample points', 15, '1')}
+        ${numField('tandem-np', 'Voltage points', 15, '1')}
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btn-tandem">Run tandem J–V</button>
@@ -65,10 +65,6 @@ export function mountTandemPane(container: HTMLElement): void {
       <div id="progress-tandem"></div>
       <div id="tandem-stack-viz-container" style="margin: 12px 0;"></div>
       <div id="tandem-results"></div>
-      <div class="pane-hint">
-        Tandem runs stream progress for each sub-cell sweep (top then bottom).
-        Results appear below once series-matching completes.
-      </div>
     </div>`
 
   const vizContainer = container.querySelector<HTMLDivElement>('#tandem-stack-viz-container')!

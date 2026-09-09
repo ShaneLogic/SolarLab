@@ -1,12 +1,8 @@
 /**
  * Vitest cases for ``renderEQE`` and ``renderEL`` (spectral workstation panes).
  *
- * Same Plotly mock pattern as the 2D / 1D / Suns-V_oc / V_oc(T) panes.
- * Engineering mode is the default and bit-identical to the
- * pre-publication renderer; the Publication branch swaps font /
- * colors / margins / modebar / axes / annotation / hollow markers
- * without mutating the raw wavelength / EQE / EL_spectrum /
- * absorptance arrays.
+ * Covers publication styling, spectral axes, annotations, and raw array
+ * preservation using the shared Plotly mock pattern.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -70,15 +66,9 @@ function _lastNewPlotConfig(): Record<string, any> | undefined {
   return calls[calls.length - 1][3] as Record<string, any>
 }
 
-function _toggleStyle(el: HTMLElement, ds: string, mode: 'engineering' | 'publication'): void {
-  const sel = el.querySelector<HTMLSelectElement>(`[data-test="${ds}"]`)!
-  sel.value = mode
-  sel.dispatchEvent(new Event('change'))
-}
-
 // ── EQE tests ────────────────────────────────────────────────────────────
 
-describe('renderEQE — toolbar + style mode', () => {
+describe('renderEQE — controls and evidence', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -86,41 +76,10 @@ describe('renderEQE — toolbar + style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select unconditionally when plot data exists', () => {
+  it('renders without a style selector', () => {
     renderEQE(el, makeEQE())
-    expect(el.querySelector('[data-test="eqe-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="eqe-style-mode"]')).not.toBeNull()
-  })
-
-  it('default style is engineering (Arial layout, modebar visible)', () => {
-    renderEQE(el, makeEQE())
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
-  })
-
-  it('engineering: faint raw markers + smoothed line, blue, y-range [0,100]', () => {
-    renderEQE(el, makeEQE())
-    const traces = _lastNewPlotTraces()!
-    expect(traces).toHaveLength(2)
-    // trace 0 = faint raw markers (data stays visible)
-    expect(traces[0].mode).toBe('markers')
-    expect(traces[0].marker.color).toBe('#2563eb')
-    expect(traces[0].marker.opacity).toBe(0.22)
-    expect(traces[0].showlegend).toBe(false)
-    // trace 1 = smoothed headline line
-    expect(traces[1].mode).toBe('lines')
-    expect(traces[1].line.color).toBe('#2563eb')
-    expect(_lastNewPlotLayout()!.yaxis.range).toEqual([0, 100])
-  })
-
-  it('engineering annotation: J_sc(AM1.5G) at upper-right', () => {
-    renderEQE(el, makeEQE())
-    const ann = _lastNewPlotLayout()!.annotations as Array<Record<string, any>>
-    expect(ann).toHaveLength(1)
-    expect(ann[0].text).toContain('J<sub>sc</sub>(AM1.5G)')
-    expect(ann[0].text).toContain('22.00 mA')
-    expect(ann[0].xanchor).toBe('right')
-    expect(ann[0].yanchor).toBe('top')
+    expect(el.querySelector('[data-test="eqe-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="eqe-style-mode"]')).toBeNull()
   })
 
   it('caps display at 100% and smooths an unphysical EQE>1 spike', () => {
@@ -137,7 +96,7 @@ describe('renderEQE — toolbar + style mode', () => {
   })
 })
 
-describe('renderEQE — publication style mode', () => {
+describe('renderEQE — publication rendering', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -145,9 +104,8 @@ describe('renderEQE — publication style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('toggling to publication applies Nature-style layout', () => {
+  it('uses publication by default with Nature-style layout', () => {
     renderEQE(el, makeEQE())
-    _toggleStyle(el, 'eqe-style-mode', 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.paper_bgcolor).toBe('#ffffff')
@@ -158,16 +116,13 @@ describe('renderEQE — publication style mode', () => {
     expect(layout.yaxis.range).toEqual([0, 100])
   })
 
-  it('publication mode hides the Plotly modebar; engineering does not', () => {
+  it('publication mode hides the Plotly modebar', () => {
     renderEQE(el, makeEQE())
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
-    _toggleStyle(el, 'eqe-style-mode', 'publication')
     expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
   })
 
   it('publication EQE: faint raw markers + smoothed muted-blue line', () => {
     renderEQE(el, makeEQE())
-    _toggleStyle(el, 'eqe-style-mode', 'publication')
     const traces = _lastNewPlotTraces()!
     expect(traces).toHaveLength(2)
     expect(traces[0].mode).toBe('markers')
@@ -181,7 +136,6 @@ describe('renderEQE — publication style mode', () => {
 
   it('publication annotation lives at upper-RIGHT under the falling tail', () => {
     renderEQE(el, makeEQE())
-    _toggleStyle(el, 'eqe-style-mode', 'publication')
     const ann = (_lastNewPlotLayout()!.annotations) as Array<Record<string, any>>
     expect(ann).toHaveLength(1)
     expect(ann[0].xanchor).toBe('right')
@@ -193,37 +147,26 @@ describe('renderEQE — publication style mode', () => {
     expect(ann[0].font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
-  it('raw arrays unchanged across modes (reference identity for x)', () => {
+  it('raw arrays unchanged across renders (reference identity for x)', () => {
     const result = makeEQE()
     const wl_pre = [...result.wavelengths_nm]
     const eqe_pre = [...result.EQE]
     renderEQE(el, result)
-    const tracesEng = _lastNewPlotTraces()!
-    _toggleStyle(el, 'eqe-style-mode', 'publication')
-    const tracesPub = _lastNewPlotTraces()!
+    const tracesInitial = _lastNewPlotTraces()!
+    renderEQE(el, result)
+    const tracesRepeated = _lastNewPlotTraces()!
     // x reference identity (no .slice() / .map())
-    expect(tracesEng[0].x).toBe(result.wavelengths_nm)
-    expect(tracesPub[0].x).toBe(result.wavelengths_nm)
+    expect(tracesInitial[0].x).toBe(result.wavelengths_nm)
+    expect(tracesRepeated[0].x).toBe(result.wavelengths_nm)
     // Raw arrays remain bit-identical.
     expect(result.wavelengths_nm).toEqual(wl_pre)
     expect(result.EQE).toEqual(eqe_pre)
-  })
-
-  it('style mode persists across re-render via el.dataset.plotStyleMode', () => {
-    const result = makeEQE()
-    renderEQE(el, result)
-    _toggleStyle(el, 'eqe-style-mode', 'publication')
-    expect(el.dataset.plotStyleMode).toBe('publication')
-    renderEQE(el, result)
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="eqe-style-mode"]')!
-    expect(sel.value).toBe('publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 })
 
 // ── EL tests ─────────────────────────────────────────────────────────────
 
-describe('renderEL — toolbar + style mode', () => {
+describe('renderEL — controls and evidence', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -231,48 +174,14 @@ describe('renderEL — toolbar + style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select unconditionally when plot data exists', () => {
+  it('renders without a style selector', () => {
     renderEL(el, makeEL())
-    expect(el.querySelector('[data-test="el-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="el-style-mode"]')).not.toBeNull()
-  })
-
-  it('default style is engineering (Arial layout, modebar visible)', () => {
-    renderEL(el, makeEL())
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
-  })
-
-  it('engineering: 2 traces with dual y-axis (EL on y, absorptance on y2)', () => {
-    renderEL(el, makeEL())
-    const traces = _lastNewPlotTraces()!
-    expect(traces).toHaveLength(2)
-    expect(traces[0].name).toBe('EL spectrum')
-    expect(traces[0].yaxis).toBe('y')
-    expect(traces[1].name).toContain('A<sub>abs</sub>')
-    expect(traces[1].yaxis).toBe('y2')
-    const layout = _lastNewPlotLayout()!
-    expect(layout.yaxis2.overlaying).toBe('y')
-    expect(layout.yaxis2.side).toBe('right')
-    expect(layout.yaxis2.range).toEqual([0, 100])
-  })
-
-  it('engineering annotation at upper-LEFT with V_inj / EQE_EL / dV_nr (separators)', () => {
-    renderEL(el, makeEL())
-    const ann = _lastNewPlotLayout()!.annotations as Array<Record<string, any>>
-    expect(ann).toHaveLength(1)
-    const t = ann[0].text
-    expect(t).toContain('V<sub>inj</sub>')
-    expect(t).toContain('1.10 V')
-    expect(t).toContain('EQE<sub>EL</sub>')
-    expect(t).toContain('1.00e-3')
-    expect(t).toContain('220.5 mV')
-    expect(ann[0].xanchor).toBe('left')
-    expect(ann[0].yanchor).toBe('top')
+    expect(el.querySelector('[data-test="el-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="el-style-mode"]')).toBeNull()
   })
 })
 
-describe('renderEL — publication style mode', () => {
+describe('renderEL — publication rendering', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -280,9 +189,8 @@ describe('renderEL — publication style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('toggling to publication applies Nature-style layout', () => {
+  it('uses publication by default with Nature-style layout', () => {
     renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.paper_bgcolor).toBe('#ffffff')
@@ -293,13 +201,11 @@ describe('renderEL — publication style mode', () => {
 
   it('publication mode hides the Plotly modebar', () => {
     renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
     expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
   })
 
   it('publication: EL trace = hollow circle muted blue lines+markers', () => {
     renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
     const data = _lastNewPlotTraces()![0]
     expect(data.name).toBe('EL spectrum')
     expect(data.mode).toBe('lines+markers')
@@ -313,7 +219,6 @@ describe('renderEL — publication style mode', () => {
 
   it('publication: absorptance trace = dashed muted red, lines (no markers)', () => {
     renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
     const abs = _lastNewPlotTraces()![1]
     expect(abs.name).toContain('A<sub>abs</sub>')
     expect(abs.mode).toBe('lines')
@@ -327,7 +232,6 @@ describe('renderEL — publication style mode', () => {
 
   it('publication: dual y-axis preserved; right axis Nature-style', () => {
     renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.yaxis2.overlaying).toBe('y')
     expect(layout.yaxis2.side).toBe('right')
@@ -342,7 +246,6 @@ describe('renderEL — publication style mode', () => {
 
   it('publication legend at upper-LEFT (low-λ side, before band-edge onset)', () => {
     renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.legend.x).toBe(0.02)
     expect(layout.legend.y).toBe(0.98)
@@ -354,7 +257,6 @@ describe('renderEL — publication style mode', () => {
 
   it('publication annotation: V_inj / EQE_EL / dV_nr stacked with <br>', () => {
     renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
     const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
     expect(text).toContain('V<sub>inj</sub>')
     expect(text).toContain('1.10 V')
@@ -365,30 +267,21 @@ describe('renderEL — publication style mode', () => {
     expect(text).toContain('<br>')
   })
 
-  it('raw arrays unchanged across modes (reference identity for x / y_EL)', () => {
+  it('raw arrays unchanged across renders (reference identity for x / y_EL)', () => {
     const result = makeEL()
     const wl_pre = [...result.wavelengths_nm]
     const el_pre = [...result.EL_spectrum]
     const abs_pre = [...result.absorber_absorptance]
     renderEL(el, result)
-    const tracesEng = _lastNewPlotTraces()!
-    _toggleStyle(el, 'el-style-mode', 'publication')
-    const tracesPub = _lastNewPlotTraces()!
-    expect(tracesEng[0].x).toBe(result.wavelengths_nm)
-    expect(tracesPub[0].x).toBe(result.wavelengths_nm)
-    expect(tracesEng[0].y).toBe(result.EL_spectrum)
-    expect(tracesPub[0].y).toBe(result.EL_spectrum)
+    const tracesInitial = _lastNewPlotTraces()!
+    renderEL(el, result)
+    const tracesRepeated = _lastNewPlotTraces()!
+    expect(tracesInitial[0].x).toBe(result.wavelengths_nm)
+    expect(tracesRepeated[0].x).toBe(result.wavelengths_nm)
+    expect(tracesInitial[0].y).toBe(result.EL_spectrum)
+    expect(tracesRepeated[0].y).toBe(result.EL_spectrum)
     expect(result.wavelengths_nm).toEqual(wl_pre)
     expect(result.EL_spectrum).toEqual(el_pre)
     expect(result.absorber_absorptance).toEqual(abs_pre)
-  })
-
-  it('toggle round-trip Engineering → Publication → Engineering restores defaults', () => {
-    renderEL(el, makeEL())
-    _toggleStyle(el, 'el-style-mode', 'publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-    _toggleStyle(el, 'el-style-mode', 'engineering')
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
   })
 })

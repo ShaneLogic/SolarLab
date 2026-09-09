@@ -52,6 +52,12 @@ def test_tpv_runs(nip_stack):
     assert len(result.t) == len(result.J)
     assert result.protocol is not None
     assert result.protocol.implicit_legacy_protocol
+    assert result.reference_protocol.illumination_history[2].condition == "baseline"
+    assert result.reference_protocol.illumination_history[2].relative_generation_change is None
+    assert result.numerical_settings.rtol == 1e-4
+    assert result.numerical_settings.max_step_s == pytest.approx(2e-7)
+    np.testing.assert_array_equal(result.delta_V, result.V - result.V_reference)
+    assert np.all(result.valid)
 
 
 @pytest.mark.slow
@@ -137,5 +143,45 @@ def test_fit_decay_tau_no_perturbation():
     V_oc = 1.0
     V = np.full_like(t, V_oc)
     tau, dV0 = _fit_decay_tau(t, V, V_oc)
-    assert tau > 0
+    assert tau is None
     assert abs(dV0) < 1e-6
+
+
+def test_fit_decay_tau_does_not_invent_an_unobserved_lifetime():
+    t = np.linspace(0.0, 1e-7, 100)
+    voltage = 1.0 + 0.01 * np.exp(-t / 1e-3)
+    tau, _ = _fit_decay_tau(t, voltage, 1.0)
+    assert tau is None
+
+
+def test_fit_decay_tau_rejects_distinct_fast_and_slow_populations():
+    t = np.linspace(0.0, 100e-6, 500)
+    voltage = 1.0 + 0.004 * np.exp(-t / 2e-6) + 0.006 * np.exp(-t / 20e-6)
+    tau, _ = _fit_decay_tau(t, voltage, 1.0)
+    assert tau is None
+
+
+def test_open_circuit_search_rejects_a_missing_zero_crossing(nip_stack, monkeypatch):
+    from types import SimpleNamespace
+    from perovskite_sim.experiments import tpv
+
+    monkeypatch.setattr(tpv, "_integrate_step", lambda _x, y, *_args: y.copy())
+    monkeypatch.setattr(tpv, "OpenCircuitSystem", lambda *_args: SimpleNamespace(
+        capacitance_A=1.0,
+        validate_state=lambda *_args: None,
+        rates=lambda *_args: (np.zeros(9), 1.0, np.zeros(2)),
+    ))
+    with pytest.raises(RuntimeError, match="bracket|cross"):
+        tpv._find_voc(np.arange(3), np.ones(9), nip_stack, object(), V_guess=1.0)
+
+
+@pytest.mark.parametrize("count", [10, 11, 30, 200])
+def test_sampling_always_includes_pulse_switch_and_observation_end(count):
+    from perovskite_sim.experiments.tpv import _tpv_sampling_times
+
+    times = _tpv_sampling_times(1e-6, 20e-6, count)
+    assert times[0] == 0.0
+    assert times[-1] == 20e-6
+    assert 1e-6 in times
+    assert len(times) == count + 1
+    assert np.all(np.diff(times) > 0.0)

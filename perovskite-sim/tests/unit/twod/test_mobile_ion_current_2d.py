@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 
 import numpy as np
 import pytest
@@ -19,7 +20,7 @@ from perovskite_sim.twod.continuity_2d import apply_thermionic_caps_y
 from perovskite_sim.twod.field_mobility_2d import recompute_d_eff_2d
 from perovskite_sim.twod.flux_2d import sg_fluxes_2d_n, sg_fluxes_2d_p
 from perovskite_sim.twod.ion_migration_2d import positive_ion_fluxes_2d
-from perovskite_sim.twod.microstructure import Microstructure
+from perovskite_sim.twod.microstructure import Microstructure, lateral_dual_cell_widths
 from perovskite_sim.twod.mobile_ion_current_2d import (
     _terminal_decomposition_is_roundoff_consistent,
     evaluate_mobile_ion_current_components_2d,
@@ -357,13 +358,25 @@ def test_terminal_total_equals_all_four_components_and_arrays_are_immutable():
         0.03,
     )
 
-    assert report.terminal_total_A_m2 == pytest.approx(
-        report.terminal_electron_A_m2
-        + report.terminal_hole_A_m2
-        + report.terminal_positive_ion_A_m2
-        + report.terminal_displacement_A_m2,
-        rel=2.0e-15,
-    )
+    weights = lateral_dual_cell_widths(material.grid.x)
+    width = material.grid.x[-1] - material.grid.x[0]
+    terms = np.asarray([
+        report.electron_y_A_m2[-1], report.hole_y_A_m2[-1],
+        report.positive_ion_y_A_m2[-1], report.displacement_y_A_m2[-1],
+    ]) * (weights / width)
+    reference = math.fsum(terms.ravel())
+    # Bound the two summation orders by their operands, including lateral
+    # cancellation, rather than the small final current alone.
+    operations = terms.size + 8
+    epsilon = np.finfo(float).eps
+    gamma = operations * epsilon / (1.0 - operations * epsilon)
+    bound = gamma * math.fsum(np.abs(terms).ravel())
+    component_sum = math.fsum((
+        report.terminal_electron_A_m2, report.terminal_hole_A_m2,
+        report.terminal_positive_ion_A_m2, report.terminal_displacement_A_m2,
+    ))
+    assert abs(report.terminal_total_A_m2 - reference) <= bound
+    assert abs(component_sum - reference) <= bound
     assert not report.total_y_A_m2.flags.writeable
     assert not report.lateral_average_total_A_m2.flags.writeable
 

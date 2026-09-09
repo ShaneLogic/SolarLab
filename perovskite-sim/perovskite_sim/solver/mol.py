@@ -19,6 +19,7 @@ from perovskite_sim.physics.poisson import (
     PoissonFactor,
 )
 from perovskite_sim.physics.continuity import carrier_continuity_rhs
+from perovskite_sim.physics.contacts import resolved_contact_velocities
 from perovskite_sim.physics.doping import layer_doping_profiles
 from perovskite_sim.physics.ion_migration import ion_continuity_rhs
 from perovskite_sim.physics.generation import beer_lambert_generation
@@ -543,6 +544,13 @@ class MaterialArrays:
     D_p_node: np.ndarray | None = None
 
     @property
+    def thermionic_normalization_status(self) -> str:
+        """Actual cap normalization, including the compatibility DOS fallback."""
+        from perovskite_sim.physics.thermionic_transport import thermionic_normalization_status
+
+        return thermionic_normalization_status(self.carrier_params)
+
+    @property
     def carrier_params(self) -> dict:
         """Dict shape expected by `carrier_continuity_rhs` — legacy key names."""
         d = dict(
@@ -587,7 +595,7 @@ class MaterialArrays:
                 d["Eg_te"] = self.Eg_phys
             if self.te_softness > 0.0:
                 d["te_softness"] = self.te_softness
-            if self.te_physical_norm and self.N_C_node is not None:
+            if self.te_physical_norm:
                 d["te_physical_norm"] = True
                 d["N_C_node"] = self.N_C_node
                 d["N_V_node"] = self.N_V_node
@@ -832,19 +840,17 @@ def _compute_iface_state_dark_eq(mat: "MaterialArrays") -> np.ndarray:
     return out
 
 
-# Half-width of the pad used when testing whether a node lies inside a layer.
-# Layer edges are accumulated by repeated addition here but by an independent
-# cumulative construction in ``discretization.grid.multilayer_grid``, so the
-# two can differ by a few ULP (~1e-19 m on µm-scale thicknesses); the pad
-# absorbs that without ever reaching a neighbouring node (grid spacings are
-# ~1e-9 m and above).
-_LAYER_EDGE_PAD = 1e-12
+def _layer_boundary_padding(x: np.ndarray, layers) -> float:
+    """Roundoff allowance that cannot consume a resolved interface interval."""
+    scale = max(abs(float(x[0])), abs(float(x[-1])), math.fsum(layer.thickness for layer in layers))
+    roundoff = 2 * (len(layers) + 1) * np.spacing(scale)
+    return min(roundoff, 0.25 * float(np.min(np.diff(x))))
 
 
 def _layer_node_masks(x: np.ndarray, layers) -> list[np.ndarray]:
     """Per-layer node ownership masks that PARTITION the grid.
 
-    A layer's span is inclusive at both ends (with ``_LAYER_EDGE_PAD``), so the
+    A layer's span is inclusive at both ends within a roundoff allowance, so the
     node that sits exactly on a shared boundary belongs to the spans of BOTH
     neighbouring layers.  Every per-node consumer must therefore agree on which
     single layer owns that node.  Ownership is resolved **last-layer-wins** —
@@ -862,12 +868,13 @@ def _layer_node_masks(x: np.ndarray, layers) -> list[np.ndarray]:
     Returns one boolean mask per layer; the masks are mutually exclusive and,
     for a grid spanning the stack, cover every node exactly once.
     """
+    padding = _layer_boundary_padding(x, layers)
     owner = np.full(x.shape, -1, dtype=np.intp)
     offset = 0.0
     for i, layer in enumerate(layers):
         span = (
-            (x >= offset - _LAYER_EDGE_PAD)
-            & (x <= offset + layer.thickness + _LAYER_EDGE_PAD)
+            (x >= offset - padding)
+            & (x <= offset + layer.thickness + padding)
         )
         owner[span] = i
         offset += layer.thickness
@@ -1077,7 +1084,9 @@ def _compile_monovalent_bulk_defects(
             raw_coordinates = (
                 np.asarray(grid_m, dtype=float)[mask] - layer_offset
             ) / thickness
-            coordinate_tolerance = _LAYER_EDGE_PAD / thickness
+            coordinate_tolerance = _layer_boundary_padding(
+                np.asarray(grid_m, dtype=float), layers,
+            ) / thickness
             if (
                 np.any(raw_coordinates < -coordinate_tolerance)
                 or np.any(raw_coordinates > 1.0 + coordinate_tolerance)
@@ -2167,7 +2176,8 @@ def build_material_arrays(
     P_lim_face = 0.5 * (P_lim_node[:-1] + P_lim_node[1:])
     D_ion_neg_face = _harmonic_face_average(D_ion_neg_node)
     P_lim_neg_face = 0.5 * (P_lim_neg_node[:-1] + P_lim_neg_node[1:])
-    _has_dual_ions = np.any(D_ion_neg_node > 0.0)
+    # A frozen species still carries its inherited distribution and background.
+    _has_dual_ions = np.any(D_ion_neg_node > 0.0) or np.any(P_ion0_neg > 0.0)
 
     # Field-dependent mobility: linear face averages of the per-node
     # parameters. The CT / PF models handle v_sat = 0 and γ = 0 as "off"
@@ -2222,35 +2232,8 @@ def build_material_arrays(
         or os.environ.get("SOLARLAB_IFACE_PLANE_GEN") == "1"
     )
 
-    # Selective / Schottky outer contact Robin BCs (Phase 3.3). Gated by the
-    # active mode AND the stack supplying at least one finite S_* value.
-    # When inactive the flag stays False and the Dirichlet pin remains the
-    # boundary treatment in assemble_rhs — bit-identical to pre-3.3.
-    _has_selective_contacts = bool(
-        sim_mode.use_selective_contacts
-        and (
-            stack.S_n_left is not None
-            or stack.S_p_left is not None
-            or stack.S_n_right is not None
-            or stack.S_p_right is not None
-        )
-    )
-
-    # SCAPS-style carrier contact kinetics (2026-06). This activates the Robin
-    # path on all four carrier/side channels regardless of tier (finite-S,
-    # default 1e7 cm/s), with the existing doping-derived equilibria as the
-    # references. The Poisson-potential source is now selected independently
-    # by built_in_potential_mode. A pre-mode stack still retains the historical
-    # implication flat_band_contacts -> compute_V_bi for compatibility.
-    _flat_band = bool(getattr(stack, "flat_band_contacts", False))
-    if _flat_band:
-        _has_selective_contacts = True
-    _S_FLAT_BAND = 1.0e5  # SCAPS contact default: 1e7 cm/s
-
-    def _s_contact(v):
-        if v is not None:
-            return v
-        return _S_FLAT_BAND if _flat_band else None
+    contact_velocities = resolved_contact_velocities(stack)
+    _has_selective_contacts = any(value is not None for value in contact_velocities)
 
     # Dual-grid cell widths for surface→volumetric conversion at interfaces.
     dx = np.diff(x)
@@ -2646,7 +2629,7 @@ def build_material_arrays(
     # Poisson value follows the explicitly selected contact-potential source.
     # They differ only for pre-mode compatibility stacks, preserving the
     # historical IonMonger convention. Carrier Robin/Dirichlet kinetics are
-    # controlled independently by ``_flat_band`` and the S_* fields above.
+    # controlled independently by the resolved exchange velocities above.
     V_bi_eff = stack.operating_built_in_potential(
         defect_energy_quadrature_order=resolved_defect_energy_order
     )
@@ -2928,6 +2911,10 @@ def build_material_arrays(
             getattr(stack, "tunnelling_channels", None),
             node_count=len(x),
             interface_nodes=tuple(iface_list),
+            positions_m=x,
+            physical_affinity_eV=chi_phys,
+            layer_names=tuple(layer.name for layer in elec_layers),
+            layer_boundaries_m=np.r_[0.0, np.cumsum([layer.thickness for layer in elec_layers])],
         ),
         explicit_defect_energy_quadrature_order=(
             resolved_defect_energy_order
@@ -2964,10 +2951,10 @@ def build_material_arrays(
         iface_plane_projection=_iface_plane_projection,
         iface_two_sided=_iface_two_sided,
         iface_shared_occ=_iface_shared_occ,
-        S_n_L=_s_contact(stack.S_n_left) if _has_selective_contacts else None,
-        S_p_L=_s_contact(stack.S_p_left) if _has_selective_contacts else None,
-        S_n_R=_s_contact(stack.S_n_right) if _has_selective_contacts else None,
-        S_p_R=_s_contact(stack.S_p_right) if _has_selective_contacts else None,
+        S_n_L=contact_velocities[0],
+        S_p_L=contact_velocities[1],
+        S_n_R=contact_velocities[2],
+        S_p_R=contact_velocities[3],
         has_selective_contacts=_has_selective_contacts,
         V_bi_bc=V_bi_bc,
         absorber_masks=tuple(absorber_masks_list) if _has_radiative_reabsorption else (),

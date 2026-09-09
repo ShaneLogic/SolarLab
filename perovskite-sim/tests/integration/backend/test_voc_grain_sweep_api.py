@@ -3,15 +3,17 @@
 - ``kind="voc_grain_sweep"`` dispatches without error and returns the
   ``grain_sizes_nm`` / ``V_oc_V`` result envelope.
 
-The tests target the synchronous dispatch handshake — POST returns 200 with a
-job_id — rather than waiting for full execution, so they stay fast and avoid
-the per-step Radau cost of a real 2D solve.
+The tests consume the result stream so no numerical worker survives the test
+or its patched configuration. A successful submission is not a solved device.
 """
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.integration.backend.test_jv_2d_advanced_physics import (
+    _consume_sse_until_done,
+)
 
 
 client = TestClient(app)
@@ -50,6 +52,9 @@ def test_jv_2d_accepts_microstructure_payload():
     body = resp.json()
     assert body["status"] == "ok"
     assert isinstance(body["job_id"], str)
+    result = _consume_sse_until_done(client, body["job_id"])
+    assert result is not None
+    assert len(result["V"]) == 2
 
 
 def test_voc_grain_sweep_kind_dispatches():
@@ -76,6 +81,9 @@ def test_voc_grain_sweep_kind_dispatches():
     body = resp.json()
     assert body["status"] == "ok"
     assert isinstance(body["job_id"], str)
+    result = _consume_sse_until_done(client, body["job_id"])
+    assert result is not None
+    assert len(result["V_oc_V"]) == 2
 
 
 def test_voc_grain_sweep_rejects_missing_grain_sizes():
@@ -95,5 +103,8 @@ def test_voc_grain_sweep_rejects_missing_grain_sizes():
             "params": {},
         },
     )
-    # The dispatcher accepts the request; the error fires inside the worker.
     assert resp.status_code == 200, resp.text
+    import pytest
+
+    with pytest.raises(AssertionError, match="grain_sizes_nm"):
+        _consume_sse_until_done(client, resp.json()["job_id"])

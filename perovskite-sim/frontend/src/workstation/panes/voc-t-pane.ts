@@ -12,7 +12,7 @@ export interface VocTPaneOptions {
 export function mountVocTPane(container: HTMLElement, opts: VocTPaneOptions): void {
   container.innerHTML = `
     <div class="card">
-      <h3>V<sub>oc</sub>(T) Parameters</h3>
+      <h3>Temperature sweep</h3>
       <div class="form-grid">
         ${numField('voct-Tmin', 'T<sub>min</sub> (K)', 250, '1')}
         ${numField('voct-Tmax', 'T<sub>max</sub> (K)', 350, '1')}
@@ -26,7 +26,7 @@ export function mountVocTPane(container: HTMLElement, opts: VocTPaneOptions): vo
         <span class="status" id="status-voct"></span>
       </div>
       <div id="progress-voct"></div>
-      <div class="pane-hint">Sweeps temperature and extracts the activation energy E<sub>A</sub> from the T&rarr;0 K linear-fit intercept of V<sub>oc</sub>(T). Requires the temperature-scaling physics flag (FAST or FULL tier).</div>
+      <div class="pane-hint" title="Activation energy E_A is derived from the T = 0 K intercept of a linear V_oc(T) fit."><strong>Requires temperature scaling</strong> (FAST / FULL).</div>
     </div>`
 
   const progressBar: ProgressBarHandle = createProgressBar(

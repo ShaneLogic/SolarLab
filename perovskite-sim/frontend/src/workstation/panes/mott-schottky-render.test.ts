@@ -1,11 +1,8 @@
 /**
  * Vitest cases for ``renderMottSchottky`` (Mott-Schottky workstation pane).
  *
- * Same Plotly mock pattern as the 2D / 1D / Suns-V_oc / V_oc(T) /
- * EQE / EL / Dark JV panes. Engineering mode is the default and
- * bit-identical to the pre-publication renderer; the Publication
- * branch swaps font / colors / margins / modebar / axes / annotation
- * / hollow markers without mutating the raw V / one_over_C2 arrays.
+ * Covers publication styling, fit windows, and raw array preservation
+ * using the shared Plotly mock pattern.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -58,13 +55,7 @@ function _lastNewPlotConfig(): Record<string, any> | undefined {
   return calls[calls.length - 1][3] as Record<string, any>
 }
 
-function _toggleStyle(el: HTMLElement, mode: 'engineering' | 'publication'): void {
-  const sel = el.querySelector<HTMLSelectElement>('[data-test="mott-schottky-style-mode"]')!
-  sel.value = mode
-  sel.dispatchEvent(new Event('change'))
-}
-
-describe('renderMottSchottky — toolbar + style mode', () => {
+describe('renderMottSchottky — controls and evidence', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -72,54 +63,14 @@ describe('renderMottSchottky — toolbar + style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('renders the Style: select unconditionally', () => {
+  it('renders without a style selector', () => {
     renderMottSchottky(el, makeResult())
-    expect(el.querySelector('[data-test="mott-schottky-toolbar"]')).not.toBeNull()
-    expect(el.querySelector('[data-test="mott-schottky-style-mode"]')).not.toBeNull()
-  })
-
-  it('default style is engineering (Arial layout, modebar visible)', () => {
-    renderMottSchottky(el, makeResult())
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
-  })
-
-  it('engineering trace color matches the pre-publication renderer', () => {
-    renderMottSchottky(el, makeResult())
-    const traces = _lastNewPlotTraces()!
-    expect(traces).toHaveLength(1)
-    expect(traces[0].name).toBe('1/C²')
-    expect(traces[0].mode).toBe('lines+markers')
-    expect(traces[0].line.color).toBe('#2563eb')
-    expect(traces[0].marker.color).toBe('#2563eb')
-  })
-
-  it('engineering: fit window highlighted with indigo translucent band', () => {
-    renderMottSchottky(el, makeResult())
-    const shapes = _lastNewPlotLayout()!.shapes as Array<Record<string, any>>
-    expect(shapes).toHaveLength(1)
-    expect(shapes[0].type).toBe('rect')
-    expect(shapes[0].x0).toBe(-0.2)
-    expect(shapes[0].x1).toBe(0.4)
-    expect(shapes[0].fillcolor).toBe('rgba(99, 102, 241, 0.10)')
-  })
-
-  it('engineering annotation: V_bi,app / N_eff / f at upper-LEFT with separators', () => {
-    renderMottSchottky(el, makeResult())
-    const ann = _lastNewPlotLayout()!.annotations as Array<Record<string, any>>
-    expect(ann).toHaveLength(1)
-    const text = ann[0].text
-    expect(text).toContain('V<sub>bi,app</sub>')
-    expect(text).toContain('0.945 V')
-    expect(text).toContain('N<sub>eff</sub>')
-    expect(text).toContain('8.30e+22')
-    expect(text).toContain('1.0e+4 Hz')
-    expect(ann[0].xanchor).toBe('left')
-    expect(ann[0].yanchor).toBe('top')
+    expect(el.querySelector('[data-test="mott-schottky-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="mott-schottky-style-mode"]')).toBeNull()
   })
 })
 
-describe('renderMottSchottky — publication style mode', () => {
+describe('renderMottSchottky — publication rendering', () => {
   let el: HTMLDivElement
   beforeEach(() => {
     newPlotMock.mockClear()
@@ -127,9 +78,8 @@ describe('renderMottSchottky — publication style mode', () => {
     document.body.appendChild(el)
   })
 
-  it('toggling to publication applies Nature-style layout', () => {
+  it('uses publication by default with Nature-style layout', () => {
     renderMottSchottky(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
     expect(layout.paper_bgcolor).toBe('#ffffff')
@@ -141,13 +91,11 @@ describe('renderMottSchottky — publication style mode', () => {
 
   it('publication mode hides the Plotly modebar', () => {
     renderMottSchottky(el, makeResult())
-    _toggleStyle(el, 'publication')
     expect(_lastNewPlotConfig()!.displayModeBar).toBe(false)
   })
 
   it('publication: hollow circle muted blue trace, lines+markers', () => {
     renderMottSchottky(el, makeResult())
-    _toggleStyle(el, 'publication')
     const data = _lastNewPlotTraces()![0]
     expect(data.name).toContain('1/C')
     expect(data.mode).toBe('lines+markers')
@@ -160,7 +108,6 @@ describe('renderMottSchottky — publication style mode', () => {
 
   it('publication: fit window highlighted with neutral grey translucent band', () => {
     renderMottSchottky(el, makeResult())
-    _toggleStyle(el, 'publication')
     const shapes = _lastNewPlotLayout()!.shapes as Array<Record<string, any>>
     expect(shapes).toHaveLength(1)
     expect(shapes[0].x0).toBe(-0.2)
@@ -170,7 +117,6 @@ describe('renderMottSchottky — publication style mode', () => {
 
   it('publication annotation lives at upper-RIGHT (curve slopes UL → LR)', () => {
     renderMottSchottky(el, makeResult())
-    _toggleStyle(el, 'publication')
     const layout = _lastNewPlotLayout()!
     const ann = layout.annotations as Array<Record<string, any>>
     expect(ann).toHaveLength(1)
@@ -185,7 +131,6 @@ describe('renderMottSchottky — publication style mode', () => {
 
   it('publication annotation text: V_bi,app / N_eff / f stacked with <br>', () => {
     renderMottSchottky(el, makeResult())
-    _toggleStyle(el, 'publication')
     const text = (_lastNewPlotLayout()!.annotations as Array<{ text: string }>)[0].text
     expect(text).toContain('V<sub>bi,app</sub>')
     expect(text).toContain('0.945 V')
@@ -195,39 +140,19 @@ describe('renderMottSchottky — publication style mode', () => {
     expect(text).toContain('<br>')
   })
 
-  it('raw arrays unchanged across modes (V is reference-identical)', () => {
+  it('raw arrays unchanged across renders (V is reference-identical)', () => {
     const result = makeResult()
     const V_pre = [...result.V]
     const inv_pre = [...result.one_over_C2]
     renderMottSchottky(el, result)
-    const tracesEng = _lastNewPlotTraces()!
-    _toggleStyle(el, 'publication')
-    const tracesPub = _lastNewPlotTraces()!
-    expect(tracesEng[0].x).toBe(result.V)
-    expect(tracesPub[0].x).toBe(result.V)
-    expect(tracesEng[0].y).toBe(result.one_over_C2)
-    expect(tracesPub[0].y).toBe(result.one_over_C2)
+    const tracesInitial = _lastNewPlotTraces()!
+    renderMottSchottky(el, result)
+    const tracesRepeated = _lastNewPlotTraces()!
+    expect(tracesInitial[0].x).toBe(result.V)
+    expect(tracesRepeated[0].x).toBe(result.V)
+    expect(tracesInitial[0].y).toBe(result.one_over_C2)
+    expect(tracesRepeated[0].y).toBe(result.one_over_C2)
     expect(result.V).toEqual(V_pre)
     expect(result.one_over_C2).toEqual(inv_pre)
-  })
-
-  it('style mode persists across re-render via el.dataset.plotStyleMode', () => {
-    const result = makeResult()
-    renderMottSchottky(el, result)
-    _toggleStyle(el, 'publication')
-    expect(el.dataset.plotStyleMode).toBe('publication')
-    renderMottSchottky(el, result)
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="mott-schottky-style-mode"]')!
-    expect(sel.value).toBe('publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-  })
-
-  it('toggle round-trip Engineering → Publication → Engineering restores defaults', () => {
-    renderMottSchottky(el, makeResult())
-    _toggleStyle(el, 'publication')
-    expect(_lastNewPlotLayout()!.font.family).toBe(PUBLICATION_FONT_FAMILY)
-    _toggleStyle(el, 'engineering')
-    expect(_lastNewPlotLayout()!.font.family).toBe('Arial, sans-serif')
-    expect(_lastNewPlotConfig()!.displayModeBar).toBeUndefined()
   })
 })

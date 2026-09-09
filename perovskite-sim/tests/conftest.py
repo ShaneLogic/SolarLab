@@ -89,6 +89,25 @@ from pathlib import Path  # noqa: E402
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def finish_background_jobs(monkeypatch):
+    """Finish this test's real jobs before its patched inputs are restored."""
+    from backend.jobs import JobRegistry
+
+    submitted = []
+    original = JobRegistry.submit
+
+    def tracked_submit(registry, fn):
+        job_id = original(registry, fn)
+        submitted.append((registry, job_id))
+        return job_id
+
+    monkeypatch.setattr(JobRegistry, "submit", tracked_submit)
+    yield
+    for registry, job_id in submitted:
+        registry.wait(job_id, timeout=60.0)
+
+
 @pytest.fixture(scope="session")
 def all_presets_dir(tmp_path_factory):
     root = Path(__file__).resolve().parents[1]
@@ -112,4 +131,3 @@ def serve_all_presets(monkeypatch, all_presets_dir):
     monkeypatch.setattr(user_configs, "CONFIGS_ROOT", all_presets_dir)
     monkeypatch.setattr(user_configs, "USER_CONFIGS_ROOT", all_presets_dir / "user")
     return all_presets_dir
-
