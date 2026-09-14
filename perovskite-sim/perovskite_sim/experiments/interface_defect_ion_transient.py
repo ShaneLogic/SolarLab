@@ -662,6 +662,11 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
         inverse_volume = sparse.diags(1.0 / self.widths)
         positive_rate = (inverse_volume @ self._divergence @ positive_flux).tocsr()
         negative_rate = (inverse_volume @ self._divergence @ negative_flux).tocsr()
+        if self.material.physical_cell_faces_m is not None:
+            # The carrier divergence is right-minus-left; particle storage
+            # requires left-minus-right, as in the physical ion RHS.
+            positive_rate = -positive_rate
+            negative_rate = -negative_rate
         return (
             positive_density,
             negative_density,
@@ -683,7 +688,7 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             occupancy,
             trace_potential,
             trace_log_state,
-        ) = super()._coordinates(coordinate, voltage)
+        ) = self._coordinates(coordinate, voltage)
         positive, negative = self._ion_coordinates(coordinate)
         local, interface_qss = self._local_states(
             n,
@@ -1258,6 +1263,8 @@ def run_interface_defect_ion_device_transient(
     mat: MaterialArrays | None = None,
     policy: InterfaceDefectIonTransientPolicy | None = None,
     require_certificate: bool = True,
+    research_binding: dict | None = None,
+    accepted_step_observer=None,
 ) -> InterfaceDefectIonTransientResult:
     """Integrate a shared-occupancy two-sided interface/mobile-ion DAE."""
     grid = np.asarray(x, dtype=float)
@@ -1324,6 +1331,17 @@ def run_interface_defect_ion_device_transient(
             "D6-E3b excludes simultaneous bulk and interface defects"
         )
     widths = np.asarray(material.dx_cell, dtype=float)
+    physical_geometry = material.physical_cell_faces_m is not None
+    if physical_geometry != (research_binding is not None):
+        raise InterfaceDefectIonTransientError(
+            "physical R1 geometry requires its own fixed reference binding"
+        )
+    if physical_geometry:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1 import validate_binding, validate_physical_material
+        validate_binding(research_binding, stack)
+        validate_physical_material(grid, stack, material)
+        if illuminated:
+            raise InterfaceDefectIonTransientError("R1-0 is dark only")
     positive_target = _component_inventories(
         np.asarray(material.P_ion0, dtype=float),
         ion_layout.positive_components,
@@ -1377,10 +1395,12 @@ def run_interface_defect_ion_device_transient(
         max_nfev=resolved_policy.dc_max_nfev,
     )
     if not dark_state.certificate.certified:
-        raise InterfaceDefectIonTransientError(
+        error = InterfaceDefectIonTransientError(
             "combined dark state is not certified: "
             + ", ".join(dark_state.certificate.reasons)
         )
+        error.result = dark_state
+        raise error
     local_dark = solve_material_two_sided_interfaces_qss(
         material,
         charge_off_stack,
@@ -1392,7 +1412,9 @@ def run_interface_defect_ion_device_transient(
         fail_on_residual=True,
     )
     dark_reference = InterfaceIonDarkReference(
-        equilibrium_occupancy=np.asarray(local_dark.occupancy),
+        equilibrium_occupancy=np.asarray(
+            research_binding["f_ref"] if physical_geometry else local_dark.occupancy
+        ),
         trap_density_m2=np.asarray(microscopic.trap_density_m2),
         capture_velocities_m_s=np.asarray(microscopic.capture_velocities_m_s),
         interface_defect_document_sha256=microscopic.document_sha256,
@@ -1443,10 +1465,12 @@ def run_interface_defect_ion_device_transient(
         max_nfev=resolved_policy.dc_max_nfev,
     )
     if not dc_state.certificate.certified:
-        raise InterfaceDefectIonTransientError(
+        error = InterfaceDefectIonTransientError(
             "combined operating point is not certified: "
             + ", ".join(dc_state.certificate.reasons)
         )
+        error.result = dc_state
+        raise error
     if qss_dc.interface_charge_qss is None:
         raise InterfaceDefectIonTransientError(
             "combined operating point lost interface occupancy"
@@ -1466,7 +1490,11 @@ def run_interface_defect_ion_device_transient(
         V_app=float(voltage[0]),
     )
     qss_embedding_error = _embedding_error(qss_dc, dynamic_dc, material)
-    system = _InterfaceIonTransientSystem(
+    system_type = _InterfaceIonTransientSystem
+    if physical_geometry:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1 import PhysicalInterfaceIonSystem
+        system_type = PhysicalInterfaceIonSystem
+    system = system_type(
         grid,
         charge_off_stack,
         material,
@@ -1482,7 +1510,10 @@ def run_interface_defect_ion_device_transient(
     )
     try:
         levels = tuple(
-            _integrate_trace(system, times, voltage, substeps, resolved_policy)
+            _integrate_trace(
+                system, times, voltage, substeps, resolved_policy,
+                accepted_step_observer=accepted_step_observer,
+            )
             for substeps in resolved_policy.refinement_substeps
         )
     except InterfaceDefectTransientError as exc:
@@ -1653,6 +1684,11 @@ def run_interface_defect_ion_device_transient(
             for state in final.states
         ]
     )
+    if physical_geometry:
+        certificate = replace(
+            certificate, scope="research_r1_physical_geometry_only",
+            version="r1-0-physical-volumes-v1",
+        )
     bulk_flux = np.asarray(
         [
             [item.tangent.balance.bulk_flux_m2_s for item in state.local]
@@ -1725,6 +1761,11 @@ def run_interface_defect_ion_device_transient(
             "interface defect/ion transient did not certify: "
             + ", ".join(certificate.reasons),
             result,
+        )
+    if physical_geometry:
+        result = replace(
+            result, scope="research_r1_physical_geometry_only",
+            version="r1-0-physical-volumes-v1",
         )
     return result
 

@@ -2093,6 +2093,8 @@ def _integrate_trace(
     voltage: np.ndarray,
     substeps: int,
     policy: InterfaceDefectTransientPolicy,
+    *,
+    accepted_step_observer=None,
 ) -> _Trace:
     coordinate = system.initial_coordinate()
     initial = system.evaluate(coordinate, float(voltage[0]))
@@ -2127,6 +2129,8 @@ def _integrate_trace(
     maximum_nnz = 0
     nonmonotone_step_count = 0
     previous = initial
+    if accepted_step_observer is not None:
+        accepted_step_observer(system, initial, None, 0.0, float(times[0]), substeps, 0.0)
     for point in range(1, times.size):
         interval = float(times[point] - times[point - 1])
         dt = interval / substeps
@@ -2140,6 +2144,8 @@ def _integrate_trace(
         point_iterations = 0
         for local_step in range(substeps):
             step_system, step_previous = system.rebase(previous)
+            if hasattr(step_system, "set_voltage_lift"):
+                step_system.set_voltage_lift(target_voltage, step_previous)
             state, count, residual, jacobian_error, nnz, nonmonotone_count = (
                 _solve_step(
                     step_system,
@@ -2155,7 +2161,7 @@ def _integrate_trace(
             point_iterations += count
             nonmonotone_step_count += nonmonotone_count
             coordinate = coordinate + state.coordinate
-            charge_increment = system.integrated_charge_increment(state, step_previous)
+            charge_increment = step_system.integrated_charge_increment(state, step_previous)
             (
                 final_displacement,
                 final_total,
@@ -2163,11 +2169,11 @@ def _integrate_trace(
                 final_interface_displacement,
                 face_spread,
                 interface_current_error,
-            ) = system.transient_current_metrics(state, step_previous, dt)
+            ) = step_system.transient_current_metrics(state, step_previous, dt)
             final_interface_total = (
                 final_interface_conduction + final_interface_displacement
             )
-            charge_absolute_error, charge_error = system.charge_balance_metrics(
+            charge_absolute_error, charge_error = step_system.charge_balance_metrics(
                 state,
                 step_previous,
                 dt,
@@ -2204,6 +2210,12 @@ def _integrate_trace(
                 system.eliminated_operator_error(state, target_voltage),
             )
             maximum_nnz = max(maximum_nnz, nnz)
+            if accepted_step_observer is not None:
+                accepted_step_observer(
+                    step_system, state, step_previous, dt,
+                    float(times[point - 1] + (local_step + 1) * dt),
+                    substeps, residual,
+                )
             previous = state
             current_charge += charge_increment
         states.append(previous)

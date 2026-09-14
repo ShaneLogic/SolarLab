@@ -313,6 +313,8 @@ class MaterialArrays:
     iface_qss_interface_positions_m: tuple[float, ...] = ()
     iface_qss_left_distances_m: tuple[float, ...] = ()
     iface_qss_right_distances_m: tuple[float, ...] = ()
+    # Explicit opt-in; None retains all historical volume/ion semantics.
+    physical_cell_faces_m: np.ndarray | None = None
     # Heterointerface bulk-recombination de-spike fraction (SCAPS-emulation,
     # default 0.0 = off). See DeviceStack.het_recomb_despike.
     het_recomb_despike: float = 0.0

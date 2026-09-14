@@ -90,6 +90,7 @@ Capability = Literal[
 InterfaceCurrentObservation = Literal[
     "ordinary_finite_volume_faces",
     "symmetric_adjacent_physical_faces",
+    "physical_contacts_and_both_interface_traces",
 ]
 
 
@@ -411,6 +412,9 @@ def _ion_fields(
         steric_diffusion_only=material.ion_steric_diffusion_only,
         P_lim_node=material.P_lim_node,
         P_other_node=negative if shared else None,
+        cell_widths_m=(
+            material.dx_cell if material.physical_cell_faces_m is not None else None
+        ),
     )
     dx = np.diff(grid)
     positive_flux = ion_face_flux(
@@ -438,6 +442,9 @@ def _ion_fields(
             steric_diffusion_only=material.ion_steric_diffusion_only,
             P_lim_node=material.P_lim_neg_node,
             P_other_node=positive if shared else None,
+            cell_widths_m=(
+                material.dx_cell if material.physical_cell_faces_m is not None else None
+            ),
         )
         negative_flux = ion_face_flux(
             phi,
@@ -694,6 +701,36 @@ def _solve_combined_dc(
         max_nfev=int(max_nfev),
         x_scale="jac",
     )
+    optimizer_nfev = int(solution.nfev)
+    maximum_residual_value = float(np.max(np.abs(residual(solution.x))))
+    remaining_nfev = int(max_nfev) - optimizer_nfev
+    if (
+        initial_state is not None
+        and maximum_residual_value > maximum_normalized_residual
+        and remaining_nfev > 0
+    ):
+        # A dark warm start can contain roundoff-sized carrier coordinates
+        # while all ion increments are zero. TRF then derives a vanishing
+        # initial trust radius from x0 and can stop on xtol without solving
+        # the equations. Retry once in coordinates centred on the last state:
+        # delta=0 represents the same physical state, with an ordinary initial
+        # radius. Already accepted solves retain their exact original arrays.
+        origin = solution.x.copy()
+        retry = least_squares(
+            lambda delta: residual(origin + delta),
+            np.zeros_like(origin),
+            xtol=1.0e-12,
+            ftol=1.0e-12,
+            gtol=1.0e-12,
+            max_nfev=remaining_nfev,
+            x_scale="jac",
+        )
+        optimizer_nfev += int(retry.nfev)
+        retry.x = origin + retry.x
+        retry_residual = float(np.max(np.abs(residual(retry.x))))
+        if retry_residual < maximum_residual_value:
+            solution = retry
+            maximum_residual_value = retry_residual
     value, dqfn, dqfp, positive_density, negative_density = evaluate(solution.x)
     positive_rate, negative_rate, positive_flux, negative_flux = _ion_fields(
         grid,
@@ -798,7 +835,6 @@ def _solve_combined_dc(
         interface_gauss = float(
             np.max(value.interface_charge_qss.normalized_gauss_residual)
         )
-    maximum_residual_value = float(np.max(np.abs(residual(solution.x))))
     reasons: list[str] = []
     gates = (
         (
@@ -850,7 +886,7 @@ def _solve_combined_dc(
         maximum_interface_gauss_residual=interface_gauss,
         contact_thermodynamics=context.contact_thermodynamics,
         optimizer_success=bool(solution.success),
-        optimizer_nfev=int(solution.nfev),
+        optimizer_nfev=optimizer_nfev,
         certified=not reasons,
         reasons=tuple(reasons),
     )
@@ -939,6 +975,7 @@ def run_defect_ion_combined_impedance(
     dc_max_nfev: int = 1000,
     require_certificate: bool = True,
     progress: ProgressCallback | None = None,
+    research_binding: dict | None = None,
 ) -> DefectIonCombinedResult:
     """Solve the joint bulk/interface defect and mobile-ion AC operator."""
     grid = np.asarray(x, dtype=float)
@@ -1000,7 +1037,10 @@ def run_defect_ion_combined_impedance(
         defect_energy_quadrature_order=energy_order,
     )
     if has_interface:
-        material = _prepare_two_sided_material(grid, working_stack, material)
+        material = _prepare_two_sided_material(
+            grid, working_stack, material,
+            physical_boundary_volumes=research_binding is not None,
+        )
         material = replace(
             material,
             N_iface_state=0,
@@ -1049,6 +1089,12 @@ def run_defect_ion_combined_impedance(
         capability = "interface_defect_plus_ions"
 
     ion_layout = _build_ion_layout(material)
+    if research_binding is not None:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1 import validate_binding, validate_physical_material
+        validate_binding(research_binding, stack)
+        validate_physical_material(grid, stack, material)
+        if not has_interface or has_bulk or material.has_dual_ions or illuminated:
+            raise DefectIonCombinedError("R1 AC requires the dark single-interface positive-ion lane")
     widths = np.asarray(material.dx_cell, dtype=float)
     positive_target = _component_inventories(
         np.asarray(material.P_ion0, dtype=float),
@@ -1118,6 +1164,8 @@ def run_defect_ion_combined_impedance(
             fail_on_residual=True,
         )
         interface_reference = np.asarray(qss.occupancy, dtype=float)
+        if research_binding is not None:
+            interface_reference = np.asarray(research_binding["f_ref"], dtype=float)
         interface_trap_density = np.asarray(
             microscopic_contract.trap_density_m2,
             dtype=float,
@@ -1426,7 +1474,7 @@ def run_defect_ion_combined_impedance(
         # face-centred external current.  Reconstruct that diagnostic face
         # symmetrically from its two physical neighbours; four-leg capture and
         # Gauss balance remain certified separately on the local plane.
-        for face in material.iface_qss_interface_faces:
+        for face in (() if research_binding is not None else material.iface_qss_interface_faces):
             face = int(face)
             if face <= 0 or face >= electron.size - 1:
                 raise DefectIonCombinedError(
@@ -1438,6 +1486,12 @@ def run_defect_ion_combined_impedance(
                 negative_current[face] = 0.5 * (
                     negative_current[face - 1] + negative_current[face + 1]
                 )
+        if research_binding is not None:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1 import physical_ac_observation
+            electron, hole, positive_current, displacement_charge = physical_ac_observation(
+                material, system, value, positive_density, interface_dynamic,
+                electron, hole, positive_current,
+            )
         components = [
             SmallSignalCurrentComponent("electron", electron),
             SmallSignalCurrentComponent("hole", hole),
@@ -1493,6 +1547,9 @@ def run_defect_ion_combined_impedance(
     )
 
     face_weights = np.diff(grid) / float(grid[-1] - grid[0])
+    if research_binding is not None:
+        face_weights = np.zeros(grid.size + len(material.iface_qss_interface_faces) + 1)
+        face_weights[[0, -1]] = 0.5
     levels: list[FrequencyDomainResult] = []
     for index, factor in enumerate(factors):
         if progress is not None:
@@ -1908,6 +1965,13 @@ def run_defect_ion_combined_impedance(
         refinement_relative_changes=refinement_changes,
         certificate=certificate,
     )
+    if research_binding is not None:
+        new_scope = "research_r1_physical_geometry_ac_only"
+        result = replace(
+            result, scope=new_scope, version="r1-0-physical-volumes-ac-v1",
+            certificate=replace(certificate, scope=new_scope, version="r1-0-physical-volumes-ac-v1"),
+            interface_current_observation="physical_contacts_and_both_interface_traces",
+        )
     if require_certificate and not certificate.certified:
         raise DefectIonCombinedCertificationError(
             "combined defect/ion impedance certificate failed: "
