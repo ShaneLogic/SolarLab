@@ -322,6 +322,8 @@ def ion_continuity_rhs(
     steric_diffusion_only: bool = False,
     P_lim_node: np.ndarray | float | None = None,
     P_other_node: np.ndarray | None = None,
+    *,
+    cell_widths_m: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Vectorized dP/dt = -dF_P/dx for all nodes.
@@ -363,6 +365,10 @@ def ion_continuity_rhs(
         drift_sign=+1.0,
     )
 
+    if cell_widths_m is not None:
+        from perovskite_sim.physics.physical_control_volume import flux_divergence
+        return flux_divergence(F_int, cell_widths_m)
+
     # Zero-flux BCs: pad with 0 at both ends
     F_full = np.concatenate([[0.0], F_int, [0.0]])   # (N+1,)
 
@@ -385,6 +391,8 @@ def ion_continuity_rhs_neg(
     steric_diffusion_only: bool = False,
     P_lim_node: np.ndarray | float | None = None,
     P_other_node: np.ndarray | None = None,
+    *,
+    cell_widths_m: np.ndarray | None = None,
 ) -> np.ndarray:
     """dP_neg/dt for a negatively charged mobile ion species.
 
@@ -408,6 +416,10 @@ def ion_continuity_rhs_neg(
         P_other_node=P_other_node,
         drift_sign=-1.0,
     )
+
+    if cell_widths_m is not None:
+        from perovskite_sim.physics.physical_control_volume import flux_divergence
+        return flux_divergence(F_int, cell_widths_m)
 
     F_full = np.concatenate([[0.0], F_int, [0.0]])
 

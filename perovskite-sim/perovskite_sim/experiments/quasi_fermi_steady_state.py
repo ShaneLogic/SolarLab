@@ -432,6 +432,8 @@ def _prepare_two_sided_material(
     x: np.ndarray,
     stack: DeviceStack,
     mat: MaterialArrays,
+    *,
+    physical_boundary_volumes: bool = False,
 ) -> MaterialArrays:
     """Attach exact interface finite-volume geometry to material arrays."""
     positions = _interface_positions(stack)
@@ -474,6 +476,11 @@ def _prepare_two_sided_material(
         right_nodes.append(right)
         left_distances.append(float(stencil.left_distance_m))
         right_distances.append(float(stencil.right_distance_m))
+    physical_faces = None
+    if physical_boundary_volumes:
+        from perovskite_sim.physics.physical_control_volume import physical_cell_faces
+        physical_faces = physical_cell_faces(x, positions)
+        cell_widths = np.diff(physical_faces)
     if np.any(~np.isfinite(cell_widths)) or np.any(cell_widths <= 0.0):
         raise QuasiFermiSteadyStateError(
             "two-sided interface produced an invalid carrier control volume"
@@ -494,6 +501,7 @@ def _prepare_two_sided_material(
         iface_qss_interface_positions_m=positions,
         iface_qss_left_distances_m=tuple(left_distances),
         iface_qss_right_distances_m=tuple(right_distances),
+        physical_cell_faces_m=physical_faces,
     )
 
 

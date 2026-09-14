@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from perovskite_sim.constants import Q
+from perovskite_sim.experiments import interface_defect_ion_transient
 from perovskite_sim.experiments.interface_defect_ion_transient import (
     INTERFACE_DEFECT_ION_TRANSIENT_SCOPE,
     InterfaceDefectIonTransientCertificationError,
@@ -287,15 +288,34 @@ def test_deep_time_refinement_retains_charge_and_all_face_current_closure():
     assert result.certificate.maximum_refinement_current_relative_change < 1.0e-7
 
 
-def test_overstrict_interface_current_gate_fails_closed():
-    policy = InterfaceDefectIonTransientPolicy(
-        maximum_two_sided_interface_total_current_relative_error=1.0e-8,
+def test_over_limit_interface_current_observation_fails_closed(monkeypatch):
+    policy = InterfaceDefectIonTransientPolicy()
+    observed_error = (
+        2.0 * policy.maximum_two_sided_interface_total_current_relative_error
+    )
+    integrate_trace = interface_defect_ion_transient._integrate_trace
+
+    def integrate_with_over_limit_observation(*args, **kwargs):
+        trace = integrate_trace(*args, **kwargs)
+        # Exercise the production gate independently of platform roundoff in
+        # an otherwise certified solve; leave the gate and its limit intact.
+        return replace(trace, maximum_interface_current_error=observed_error)
+
+    monkeypatch.setattr(
+        interface_defect_ion_transient,
+        "_integrate_trace",
+        integrate_with_over_limit_observation,
     )
 
     with pytest.raises(InterfaceDefectIonTransientCertificationError) as exc_info:
         _run(policy=policy)
 
-    assert exc_info.value.result.certificate.reasons == (
+    certificate = exc_info.value.result.certificate
+    assert not certificate.certified
+    assert certificate.maximum_two_sided_interface_total_current_relative_error == (
+        observed_error
+    )
+    assert certificate.reasons == (
         "two_sided_interface_total_current_closure_failed",
     )
 
