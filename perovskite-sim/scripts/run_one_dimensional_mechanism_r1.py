@@ -15,12 +15,21 @@ import subprocess
 import sys
 import time
 import traceback
+import xml.etree.ElementTree as ET
 import zipfile
 import shutil
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from run_one_dimensional_mechanism_r0 import sha256
+
+GEOMETRY_TEST_PATH = "tests/unit/experiments/test_one_dimensional_mechanism_r1_geometry.py"
+GEOMETRY_TEST_CLASS = "tests.unit.experiments.test_one_dimensional_mechanism_r1_geometry"
+REQUIRED_GEOMETRY_ARTIFACTS = frozenset({
+    "CompletionV1.json", "StudyInputV1.json", "ResolvedStackV1.json",
+    "ExecutionContractV1.md", "GeometryV1.json", "TestsV1.xml", "TestsV1.log",
+    "SourceManifestV1.json",
+})
 
 
 def json_ready(value):
@@ -84,6 +93,101 @@ def manifest(output):
     })
 
 
+def geometry_records(stack, intervals):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1 import build_r1_material
+    import numpy as np
+
+    return [{
+        "intervals": n, "grid_m": x, "faces_m": m.physical_cell_faces_m,
+        "widths_m": m.dx_cell,
+        "left_inventory_m2": np.dot(m.dx_cell[x < 1e-7], m.P_ion0[x < 1e-7]),
+        "right_background_m2": np.dot(m.dx_cell[x > 1e-7], m.P_ion0[x > 1e-7]),
+    } for n in intervals for x, m in [build_r1_material(stack, n)]]
+
+
+def require_geometry_evidence(directory, study_input, stack):
+    """Bind preparation to passing GEO evidence, not any successful run."""
+    directory = Path(directory).resolve(strict=True)
+    completion = json.loads((directory / "CompletionV1.json").read_text())
+    if (
+        completion.get("stage") != "geometry"
+        or completion.get("status") != "passed"
+        or completion.get("failure") is not None
+    ):
+        raise ValueError("prepare requires a passed geometry-stage record")
+    manifest_path = directory / "ManifestV1.json"
+    entries = json.loads(manifest_path.read_text())
+    if not isinstance(entries, dict) or not REQUIRED_GEOMETRY_ARTIFACTS <= entries.keys():
+        raise ValueError("geometry manifest lacks required evidence")
+    for name, entry in entries.items():
+        path = (directory / name).resolve()
+        if (
+            not path.is_relative_to(directory)
+            or not path.is_file()
+            or not isinstance(entry, dict)
+            or path.stat().st_size != entry.get("bytes")
+            or sha256(path) != entry.get("sha256")
+        ):
+            raise ValueError(f"geometry evidence identity mismatch: {name}")
+    if json.loads((directory / "StudyInputV1.json").read_text()) != study_input:
+        raise ValueError("geometry study input differs from preparation input")
+    if json.loads((directory / "ResolvedStackV1.json").read_text()) != json_ready(stack):
+        raise ValueError("geometry resolved stack differs from preparation stack")
+    if sha256(directory / "ExecutionContractV1.md") != sha256(
+        PROJECT / "docs/OneDimensionalMechanismR1GeometryV1.md"
+    ):
+        raise ValueError("geometry execution contract differs from preparation contract")
+
+    # Refuse stale solver/test evidence even if its file checksums are intact.
+    source = json.loads((directory / "SourceManifestV1.json").read_text())
+    paths = list((PROJECT / "perovskite_sim").rglob("*.py"))
+    paths.extend([PROJECT / GEOMETRY_TEST_PATH, PROJECT / study_input["fixture"]])
+    for path in paths:
+        entry = source.get(path.relative_to(PROJECT.parent).as_posix(), {})
+        if entry.get("sha256") != sha256(path):
+            raise ValueError(f"geometry source differs from preparation source: {path.name}")
+    expected_geometry = json_ready(geometry_records(stack, study_input["geometry_intervals"]))
+    if json.loads((directory / "GeometryV1.json").read_text()) != expected_geometry:
+        raise ValueError("geometry records do not match the requested physical grids")
+
+    tests = ET.parse(directory / "TestsV1.xml").getroot()
+    suites = list(tests.iter("testsuite"))
+    cases = list(tests.iter("testcase"))
+    if (
+        not suites or not cases
+        or any(
+            int(suite.get(key, "-1")) != 0
+            for suite in suites for key in ("failures", "errors", "skipped")
+        )
+        or sum(int(suite.get("tests", "-1")) for suite in suites) != len(cases)
+        or any(case.find(tag) is not None for case in cases for tag in ("failure", "error", "skipped"))
+    ):
+        raise ValueError("geometry tests must all pass without errors or skips")
+    names = [case.get("name") for case in cases if case.get("classname") == GEOMETRY_TEST_CLASS]
+    required = {
+        f"{name}[{n}]"
+        for n in study_input["geometry_intervals"]
+        for name in (
+            "test_geo_01_02_geometry_inventory",
+            "test_geo_03_flux_telescopes_and_rate_uses_same_volumes",
+            "test_geo_05_constant_charge_poisson",
+            "test_geo_06_dielectric_sheet_and_series_capacitance",
+        )
+    } | {
+        "test_geo_04_half_occupied_diffusion_cosine_decay",
+        "test_geo_05_spatial_convergence_nonquadratic_charge",
+    }
+    if not required <= set(names) or len(names) != len(set(names)):
+        raise ValueError("geometry tests lack unique GEO-01..06 coverage")
+    return {
+        "stage": "geometry", "status": "passed",
+        "evidence_directory": str(directory),
+        "manifest_sha256": sha256(manifest_path),
+        "required_artifacts": {name: entries[name] for name in sorted(REQUIRED_GEOMETRY_ARTIFACTS)},
+        "required_test_cases": sorted(required),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=["list", "geometry", "prepare", "coupled", "ac", "r0-regression", "verify"])
@@ -142,16 +246,12 @@ def main():
             if not threadpool_info() or any(b["num_threads"] != 1 for b in threadpool_info()):
                 raise RuntimeError("R1 requires observed single-thread BLAS")
             if args.stage == "geometry":
-                write_json(output / "GeometryV1.json", [{
-                    "intervals": n, "grid_m": x, "faces_m": m.physical_cell_faces_m,
-                    "widths_m": m.dx_cell,
-                    "left_inventory_m2": np.dot(m.dx_cell[x < 1e-7], m.P_ion0[x < 1e-7]),
-                    "right_background_m2": np.dot(m.dx_cell[x > 1e-7], m.P_ion0[x > 1e-7]),
-                } for n in [4, 16, 32, 64] for x, m in [build_r1_material(stack, n)]])
+                write_json(output / "GeometryV1.json",
+                           geometry_records(stack, study_input["geometry_intervals"]))
                 with (output / "TestsV1.log").open("w") as log:
                     code = subprocess.call([
                         sys.executable, "-m", "pytest", "-q",
-                        "tests/unit/experiments/test_one_dimensional_mechanism_r1_geometry.py",
+                        GEOMETRY_TEST_PATH,
                         f"--junitxml={output / 'TestsV1.xml'}",
                     ], cwd=PROJECT, stdout=log, stderr=subprocess.STDOUT)
                 if code:
@@ -182,12 +282,8 @@ def main():
                 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import prepare_reference
                 if args.geometry_evidence is None:
                     raise ValueError("--geometry-evidence is required before reference binding")
-                completion = json.loads((args.geometry_evidence / "CompletionV1.json").read_text())
-                if completion["status"] != "passed":
-                    raise ValueError("geometry gates have not passed")
-                for name, entry in json.loads((args.geometry_evidence / "ManifestV1.json").read_text()).items():
-                    if sha256(args.geometry_evidence / name) != entry["sha256"]:
-                        raise ValueError("geometry evidence identity mismatch")
+                prerequisite = require_geometry_evidence(args.geometry_evidence, study_input, stack)
+                write_json(output / "GeometryPrerequisiteV1.json", prerequisite)
                 prepare_reference(stack, output, write_json)
             elif args.stage == "coupled":
                 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import run_coupled

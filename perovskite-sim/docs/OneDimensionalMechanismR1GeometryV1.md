@@ -71,6 +71,17 @@ independently solve with this fixed f_ref; they do not zero their sheet charge.
 This R1-0 binding admits the base parameters only. Controlled rate changes and
 common-state import are not yet exposed as an R1-1 API.
 
+The preparation CLI requires a successful `geometry` completion record, not
+merely a successful run from another stage. Its manifest must cover the
+geometry arrays, JUnit/log evidence, input, resolved stack, execution contract,
+source manifest and completion record; each listed file is verified. The input,
+stack, physical grids, contract and solver/test source must match the current
+preparation. Every required GEO-01..06 case on 4/16/32/64 grids must be present
+in the JUnit record, without failures, errors, skips or duplicate cases.
+Preparation saves the verified prerequisite hashes in
+`GeometryPrerequisiteV1.json`. Changed numerical source or protocol requires
+fresh geometry evidence; archived historical evidence is not overwritten.
+
 The shared DC solver first retains its original warm-start solve. If its
 normalized residual still exceeds the unchanged acceptance limit, it may make
 one retry in increments about the last physical state. A zero increment avoids
