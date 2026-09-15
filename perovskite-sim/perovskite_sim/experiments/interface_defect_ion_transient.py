@@ -409,6 +409,7 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
         voltage: float,
         illuminated: bool,
         site_occupancy_ceiling: float,
+        capture_multiplier: float = 1.0,
     ) -> None:
         proxy = SimpleNamespace(
             V_app=float(voltage),
@@ -428,6 +429,7 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             occupancy_reference,
             dynamic_dc,
             illuminated=illuminated,
+            capture_multiplier=capture_multiplier,
         )
         self.ion_layout = ion_layout
         self.positive_nodes = np.asarray(ion_layout.positive_nodes, dtype=int)
@@ -674,6 +676,10 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             negative_rate,
         )
 
+    def _ion_fields(self, phi, positive, negative):
+        """Physical ion rate and flux; research controls may scale both together."""
+        return _ion_fields(self.grid, self.material, positive, negative, phi)
+
     def evaluate(
         self,
         coordinate: np.ndarray,
@@ -713,12 +719,8 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
         rate_p = source[self.node_count :] - (self._divergence @ transport_p) / (
             Q * self.widths
         )
-        positive_rate, negative_rate, positive_flux, negative_flux = _ion_fields(
-            self.grid,
-            self.material,
-            positive,
-            negative,
-            phi,
+        positive_rate, negative_rate, positive_flux, negative_flux = self._ion_fields(
+            phi, positive, negative,
         )
         capture = np.asarray([item.tangent.balance.capture_flux_m2_s for item in local])
         trap_rate = capture[:, [0, 2]].sum(axis=1) - capture[:, [1, 3]].sum(axis=1)
@@ -1016,12 +1018,8 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             raise InterfaceDefectIonTransientError(
                 "eliminated comparison lost fixed-interface evidence"
             )
-        positive_rate, negative_rate, positive_flux, negative_flux = _ion_fields(
-            self.grid,
-            self.material,
-            state.positive,
-            state.negative,
-            eliminated.phi,
+        positive_rate, negative_rate, positive_flux, negative_flux = self._ion_fields(
+            eliminated.phi, state.positive, state.negative,
         )
         current_scale = max(
             float(np.max(np.abs(state.current_n))),

@@ -509,6 +509,7 @@ class _InterfaceTransientSystem:
         dynamic_dc,
         *,
         illuminated: bool,
+        capture_multiplier: float = 1.0,
     ) -> None:
         self.grid = grid
         self.stack = stack
@@ -516,6 +517,9 @@ class _InterfaceTransientSystem:
         self.dc_state = dc_state
         self.dark_reference = dark_reference
         self.illuminated = bool(illuminated)
+        self.capture_multiplier = float(capture_multiplier)
+        if not math.isfinite(self.capture_multiplier) or not 0.0 <= self.capture_multiplier <= 1.0:
+            raise ValueError("capture_multiplier must lie in [0, 1]")
         self.node_count = grid.size
         self.interior_count = grid.size - 2
         self.interface_count = len(dark_reference.trap_density_m2)
@@ -550,6 +554,7 @@ class _InterfaceTransientSystem:
             interface_transport_model=FERMI_DIRAC_RICHARDSON,
             interface_charge_reference_occupancy=self.equilibrium_occupancy,
             interface_charge_trap_density_m2=self.trap_density,
+            interface_capture_multiplier=self.capture_multiplier,
             poisson_tolerance_V=1.0e-13,
             poisson_max_iterations=100,
         )
@@ -672,6 +677,7 @@ class _InterfaceTransientSystem:
                     self.trap_density[index],
                 ),
                 initial_state_m3=canonical_seed,
+                capture_multiplier=self.capture_multiplier,
             )
             trace = local.qss.potentials
             reference_balance = fixed_occupancy_carrier_tangent(
@@ -687,6 +693,7 @@ class _InterfaceTransientSystem:
                 bulk,
                 self.reference_occupancy[index],
                 trace,
+                capture_multiplier=self.capture_multiplier,
             ).balance
             self.reference_trace_potential[index] = (
                 trace.phi_left_V,
@@ -936,6 +943,7 @@ class _InterfaceTransientSystem:
                 bulk,
                 occupancy[index],
                 traces,
+                capture_multiplier=self.capture_multiplier,
             )
             balance = tangent.balance
             base = 4 * index
@@ -2095,18 +2103,63 @@ def _integrate_trace(
     policy: InterfaceDefectTransientPolicy,
     *,
     accepted_step_observer=None,
+    initial_state=None,
+    initial_current_metrics=None,
 ) -> _Trace:
-    coordinate = system.initial_coordinate()
-    initial = system.evaluate(coordinate, float(voltage[0]))
+    coordinate = (
+        system.initial_coordinate()
+        if initial_state is None
+        else np.zeros(system.dimension, dtype=float)
+    )
+    initial = (
+        system.evaluate(coordinate, float(voltage[0]))
+        if initial_state is None
+        else replace(initial_state, coordinate=coordinate.copy())
+    )
     states: list[_DeviceState] = [initial]
     coordinates = [coordinate.copy()]
-    displacement = [np.zeros(system.node_count - 1, dtype=float)]
-    total_current = [initial.conduction.copy()]
-    (
-        initial_interface_conduction,
-        initial_interface_displacement,
-        initial_interface_total,
-    ) = system.interface_current_sides(initial)
+    if initial_current_metrics is None:
+        initial_displacement = np.zeros(system.node_count - 1, dtype=float)
+        initial_total = initial.conduction.copy()
+        (
+            initial_interface_conduction,
+            initial_interface_displacement,
+            initial_interface_total,
+        ) = system.interface_current_sides(initial)
+        initial_face_spread = initial_interface_error = 0.0
+    else:
+        (
+            initial_displacement,
+            initial_total,
+            initial_interface_conduction,
+            initial_interface_displacement,
+            initial_face_spread,
+            initial_interface_error,
+        ) = initial_current_metrics
+        validated = []
+        for name, value, shape in (
+            ("displacement", initial_displacement, (system.node_count - 1,)),
+            ("total", initial_total, (system.node_count - 1,)),
+            ("interface conduction", initial_interface_conduction, (system.interface_count, 2)),
+            ("interface displacement", initial_interface_displacement, (system.interface_count, 2)),
+        ):
+            array = np.asarray(value, dtype=float)
+            if array.shape != shape or not np.all(np.isfinite(array)):
+                raise InterfaceDefectTransientError(f"initial {name} current is invalid")
+            validated.append(array.copy())
+        (
+            initial_displacement, initial_total,
+            initial_interface_conduction, initial_interface_displacement,
+        ) = validated
+        initial_face_spread = float(initial_face_spread)
+        initial_interface_error = float(initial_interface_error)
+        if any(not math.isfinite(value) or value < 0.0 for value in (
+            initial_face_spread, initial_interface_error,
+        )):
+            raise InterfaceDefectTransientError("initial current closure metrics are invalid")
+        initial_interface_total = initial_interface_conduction + initial_interface_displacement
+    displacement = [initial_displacement]
+    total_current = [initial_total]
     interface_conduction = [initial_interface_conduction]
     interface_displacement = [initial_interface_displacement]
     interface_total_current = [initial_interface_total]
@@ -2120,8 +2173,8 @@ def _integrate_trace(
     maximum_jacobian_error = 0.0
     maximum_charge_absolute_error = 0.0
     maximum_charge_error = 0.0
-    maximum_face_spread = 0.0
-    maximum_interface_current_error = 0.0
+    maximum_face_spread = initial_face_spread
+    maximum_interface_current_error = initial_interface_error
     maximum_operator_error = system.eliminated_operator_error(
         initial,
         float(voltage[0]),

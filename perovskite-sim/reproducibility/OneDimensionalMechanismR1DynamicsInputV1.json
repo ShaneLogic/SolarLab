@@ -1,0 +1,56 @@
+{
+  "schema": "one-dimensional-mechanism-r1-1-input-v1",
+  "stage_scope": "R1-1",
+  "source_parent": "316e7046f85f94d08fe2350f45664ee433318810",
+  "study_spec_sha256": "f140505c3a7ec7c52fe38c46f36d53b876a87c2ee50512568cb62671b05c6a73",
+  "fixture": "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
+  "fixture_sha256": "f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24",
+  "geometry": "physical_boundary_two_sided_v1",
+  "formal_intervals": [16, 32, 64],
+  "fixed_reference_schema": "ReferenceBindingV1",
+  "prepared_state_schema": "R1CommonStateV1",
+  "preparation": {
+    "control": "D",
+    "voltage_V": 0.0,
+    "temperature_K": 300.0,
+    "illuminated": false,
+    "kind": "certified_equilibrium",
+    "state_time": "0-"
+  },
+  "controls": {
+    "A": {"nu_I": 0, "nu_t": 0},
+    "B": {"nu_I": 1, "nu_t": 0},
+    "C": {"nu_I": 0, "nu_t": 1},
+    "D": {"nu_I": 1, "nu_t": 1}
+  },
+  "functional_times_s": [0.0, 1e-9, 1e-8, 1e-6, 1e-4],
+  "default_amplitude_V": 0.005,
+  "amplitude_upper_bound_exclusive_V": 0.02,
+  "waveform": "ideal_voltage_step_with_explicit_zero_minus_zero_plus_and_separate_impulse",
+  "refinement_substeps": [1, 2, 4],
+  "default_nonlinear_factor": 0.1,
+  "nonlinear_factors": [1.0, 0.1, 0.01, 0.001],
+  "inventory_m2": 1e15,
+  "trap_density_m2": 5e14,
+  "gauss_charge_scale_C_m2": 1.602176634e-4,
+  "limits": {
+    "nominal_inventory_relative": 1e-12,
+    "gauss_normalized": 1e-10,
+    "charge_balance_normalized": 1e-10,
+    "inventory_relative_drift": 1e-10,
+    "contact_internal_current_spread_relative": 2e-6
+  },
+  "zero_excitation_evidence": "live_remaining_equations_and_absolute_DC_current_bounds",
+  "parameter_provenance": "synthetic_numerical_reference",
+  "units": "SI; band energies in eV",
+  "claims_excluded": [
+    "R1-2 full observation window and 27-combination convergence matrix",
+    "spatial convergence from a single grid",
+    "finite-amplitude linearity",
+    "time-frequency agreement",
+    "E quasi-steady approximation validity",
+    "non-equilibrium preparation histories",
+    "mechanism identification",
+    "real material validation"
+  ]
+}

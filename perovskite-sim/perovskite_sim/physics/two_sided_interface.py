@@ -890,6 +890,8 @@ def fixed_occupancy_trap_capture_flux_and_log_jacobian(
     state_m3: np.ndarray,
     physics: TwoSidedInterfacePhysics,
     occupancy: float,
+    *,
+    capture_multiplier: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return trap captures and their log-density tangent at fixed occupancy.
 
@@ -905,8 +907,11 @@ def fixed_occupancy_trap_capture_flux_and_log_jacobian(
         raise ValueError("state_m3 must be non-negative")
     if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
         raise ValueError("occupancy must lie in [0, 1]")
-    velocity_n = float(physics.surface_recombination_velocity_n_m_s)
-    velocity_p = float(physics.surface_recombination_velocity_p_m_s)
+    multiplier = float(capture_multiplier)
+    if not math.isfinite(multiplier) or not 0.0 <= multiplier <= 1.0:
+        raise ValueError("capture_multiplier must lie in [0, 1]")
+    velocity_n = multiplier * float(physics.surface_recombination_velocity_n_m_s)
+    velocity_p = multiplier * float(physics.surface_recombination_velocity_p_m_s)
     n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
     p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
     capture = np.array(
@@ -936,6 +941,8 @@ def fixed_occupancy_carrier_balance_and_jacobian(
     bulk: TwoSidedBulkState,
     occupancy: float,
     traces: InterfaceTracePotentials | None = None,
+    *,
+    capture_multiplier: float = 1.0,
 ) -> TwoSidedCarrierBalance:
     """Evaluate local carrier balance while holding trap occupancy explicit."""
     values = np.asarray(log_state, dtype=float)
@@ -975,6 +982,7 @@ def fixed_occupancy_carrier_balance_and_jacobian(
         state,
         physics,
         fixed,
+        capture_multiplier=capture_multiplier,
     )
     residual = bulk_flux + cross_flux - capture_flux
     return TwoSidedCarrierBalance(
@@ -997,6 +1005,8 @@ def fixed_occupancy_carrier_tangent(
     bulk: TwoSidedBulkState,
     occupancy: float,
     traces: InterfaceTracePotentials | None = None,
+    *,
+    capture_multiplier: float = 1.0,
 ) -> FixedOccupancyCarrierTangent:
     """Return the full direct tangent for an explicit-occupancy DAE block.
 
@@ -1031,9 +1041,10 @@ def fixed_occupancy_carrier_tangent(
             state,
             physics,
             fixed,
+            capture_multiplier=capture_multiplier,
         )
     )
-    capture_occupancy_derivative = np.array(
+    capture_occupancy_derivative = float(capture_multiplier) * np.array(
         [
             -physics.surface_recombination_velocity_n_m_s
             * (state[_N_LEFT] + physics.n1_left_m3),
@@ -1053,6 +1064,7 @@ def fixed_occupancy_carrier_tangent(
         bulk,
         fixed,
         trace_values,
+        capture_multiplier=capture_multiplier,
     )
     return FixedOccupancyCarrierTangent(
         balance=balance,
@@ -1517,6 +1529,7 @@ def solve_fixed_occupancy_two_sided_interface(
     residual_tolerance: float = 1.0e-9,
     max_evaluations: int = 200,
     fail_on_residual: bool = True,
+    capture_multiplier: float = 1.0,
 ) -> FixedOccupancyTwoSidedInterfaceResult:
     """Eliminate local traces at an externally supplied dynamic occupancy."""
     _validate_inputs(geometry, physics, bulk)
@@ -1570,6 +1583,7 @@ def solve_fixed_occupancy_two_sided_interface(
         bulk,
         fixed,
         traces,
+        capture_multiplier=capture_multiplier,
     )
     electron_scale = max(
         abs(seed_balance.bulk_flux_m2_s[_N_LEFT]),
@@ -1601,6 +1615,7 @@ def solve_fixed_occupancy_two_sided_interface(
                 bulk,
                 fixed,
                 traces,
+                capture_multiplier=capture_multiplier,
             ).residual_m2_s
             / row_scale
         )
@@ -1614,6 +1629,7 @@ def solve_fixed_occupancy_two_sided_interface(
                 bulk,
                 fixed,
                 traces,
+                capture_multiplier=capture_multiplier,
             ).jacobian_log_state_m2_s
             / row_scale[:, np.newaxis]
         )
@@ -1636,6 +1652,7 @@ def solve_fixed_occupancy_two_sided_interface(
         bulk,
         fixed,
         traces,
+        capture_multiplier=capture_multiplier,
     )
     normalized_carrier = float(np.max(np.abs(balance.residual_m2_s / row_scale)))
     trace_values = np.array([traces.phi_left_V, traces.phi_right_V])
@@ -2083,6 +2100,7 @@ def solve_material_fixed_occupancy_two_sided_interfaces(
     residual_tolerance: float = 1.0e-7,
     max_evaluations: int = 200,
     fail_on_residual: bool = True,
+    capture_multiplier: float = 1.0,
 ) -> FixedOccupancyMaterialInterfaceResult:
     """Eliminate all local traces at explicit shared interface occupancies."""
     from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
@@ -2180,6 +2198,7 @@ def solve_material_fixed_occupancy_two_sided_interfaces(
             residual_tolerance=residual_tolerance,
             max_evaluations=max_evaluations,
             fail_on_residual=fail_on_residual,
+            capture_multiplier=capture_multiplier,
         )
         qss = local.qss
         state[base : base + 4] = qss.state_m3[right_first]
