@@ -141,7 +141,7 @@ describe('renderJV2D — metrics card row', () => {
 
 
 // ---------------------------------------------------------------------------
-// Layer 4: y-axis operational-range toggle. Plotly is mocked, so the test
+// Layer 4: y-axis operational range. Plotly is mocked, so the test
 // reads ``newPlot``'s third positional arg (the layout) to assert whether
 // ``yaxis.range`` was set or omitted. Trace data is the second positional
 // arg — the test pins that the J trace is byte-identical between renders
@@ -173,7 +173,7 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
     document.body.appendChild(el)
   })
 
-  it('applies clipped yaxis.range in default Operational mode when bracketed', () => {
+  it('applies the operational yaxis.range when bracketed', () => {
     const result = makeResult({
       metrics: {
         V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
@@ -190,7 +190,7 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
     expect(range![1]).toBeCloseTo(+22.4, 6)
   })
 
-  it('switching to Full sweep removes yaxis.range (autorange)', () => {
+  it('renders the operational view without a range toolbar', () => {
     const result = makeResult({
       metrics: {
         V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
@@ -199,15 +199,8 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
     })
     renderJV2D(el, result)
     expect(_lastNewPlotLayout()!.yaxis?.range).toBeDefined()
-
-    // Simulate user toggling the select to "Full sweep".
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')
-    expect(sel, 'toolbar select must render when metrics present').not.toBeNull()
-    sel!.value = 'full'
-    sel!.dispatchEvent(new Event('change'))
-
-    const layout = _lastNewPlotLayout()
-    expect(layout!.yaxis?.range, 'Full sweep must omit yaxis.range').toBeUndefined()
+    expect(el.querySelector('[data-test="jv2d-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="jv2d-range-mode"]')).toBeNull()
   })
 
   it('falls back to autorange when voc_bracketed is false', () => {
@@ -250,58 +243,45 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
     expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
   })
 
-  it('raw J trace is byte-identical between Operational and Full sweep modes', () => {
+  it('operational limits preserve every raw voltage and current sample', () => {
+    const result = makeResult({
+      V: [-1.0, 0.0, 0.5, 1.0, 1.5],
+      J: [-310.0, -300.0, -250.0, +50.0, +500.0],
+      metrics: {
+        V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
+        voc_bracketed: true,
+      },
+    })
+    const originalResult = structuredClone(result)
+    renderJV2D(el, result)
+    const trace = _lastNewPlotTrace()!
+    expect(_lastNewPlotLayout()!.xaxis.range[1]).toBeCloseTo(1.13, 6)
+    // The injection tail remains in the trace even outside the visible axes.
+    expect(trace.x).toEqual(originalResult.V)
+    expect(trace.y).toEqual(originalResult.J.map(j => -j / 10))
+    expect(result).toEqual(originalResult)
+  })
+
+  it('keeps operational limits across renders despite obsolete full-range state', () => {
     const result = makeResult({
       metrics: {
         V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
         voc_bracketed: true,
       },
     })
-    // First render — operational (default).
     renderJV2D(el, result)
-    const yOp = _lastNewPlotTraceY()!.slice()
-    // Toggle to full and re-render via the change handler.
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
-    sel.value = 'full'
-    sel.dispatchEvent(new Event('change'))
-    const yFull = _lastNewPlotTraceY()!.slice()
-    // Trace data must match exactly. The Layer 4 toggle changes
-    // yaxis.range only — never the data.
-    expect(yFull).toEqual(yOp)
-    // And both must equal the expected post-flip-and-scale conversion
-    // of the original J array (no mutation of r.J).
-    const expected = result.J.map(j => -j / 10)
-    expect(yOp).toEqual(expected)
-    expect(result.J).toEqual([-300.0, -250.0, +50.0])  // input untouched
+    const originalLayout = _lastNewPlotLayout()!
+    expect(originalLayout.yaxis.range).toBeDefined()
+    expect(originalLayout.xaxis.range).toBeDefined()
+    // A container retained from the old UI cannot restore the removed mode.
+    el.dataset.jv2dMode = 'full'
+    renderJV2D(el, result)
+    expect(_lastNewPlotLayout()!.yaxis.range).toEqual(originalLayout.yaxis.range)
+    expect(_lastNewPlotLayout()!.xaxis.range).toEqual(originalLayout.xaxis.range)
+    expect(el.querySelector('[data-test="jv2d-range-mode"]')).toBeNull()
   })
 
-  it('persists the toggle state on the stable container across renderJV2D calls', () => {
-    const result = makeResult({
-      metrics: {
-        V_oc: 0.95, J_sc: 200.0, FF: 0.82, PCE: 0.16,
-        voc_bracketed: true,
-      },
-    })
-    // First render — default 'operational' (no dataset key written
-    // until user toggles).
-    renderJV2D(el, result)
-    expect(_lastNewPlotLayout()!.yaxis?.range).toBeDefined()
-    // Toggle to full via the select.
-    const sel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
-    sel.value = 'full'
-    sel.dispatchEvent(new Event('change'))
-    expect(el.dataset.jv2dMode).toBe('full')
-    // Now simulate a fresh ``renderJV2D`` call from outside (e.g.
-    // mountMainPlotPane.update). The dataset attribute on the same
-    // ``el`` must be honoured — no clipped range.
-    renderJV2D(el, result)
-    const sel2 = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
-    expect(sel2.value).toBe('full')
-    expect(_lastNewPlotLayout()!.yaxis?.range).toBeUndefined()
-  })
-
-  it('renders without a style selector', () => {
-    // The range selector requires J_sc, so legacy payloads have no toolbar.
+  it('renders legacy payloads without a range or style selector', () => {
     const result = makeResult()
     renderJV2D(el, result)
     expect(el.querySelector('[data-test="jv2d-toolbar"]')).toBeNull()
@@ -313,7 +293,7 @@ describe('renderJV2D — Layer 4 y-axis operational range', () => {
 
 // ---------------------------------------------------------------------------
 // Publication visual-style mode (Nature-style single-panel theme).
-// Publication styling and range selection preserve the raw V/J arrays.
+// Publication styling and operational limits preserve the raw V/J arrays.
 // ---------------------------------------------------------------------------
 
 import { PUBLICATION_FONT_FAMILY } from '../../plot-theme'
@@ -411,20 +391,17 @@ describe('renderJV2D — publication rendering', () => {
     expect((layout.annotations as Array<unknown>).length).toBe(0)
   })
 
-  it('Full sweep keeps publication styling and autorange across renders', () => {
+  it('keeps publication styling and operational limits across renders', () => {
     const result = makeResult({
       metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
     })
     renderJV2D(el, result)
-    // Toggle range to full first.
-    const rangeSel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
-    rangeSel.value = 'full'
-    rangeSel.dispatchEvent(new Event('change'))
-    expect(_lastNewPlotLayout()!.yaxis.range).toBeUndefined()
-    // Re-render the same result with the selected range.
+    const originalLayout = _lastNewPlotLayout()!
+    expect(originalLayout.yaxis.range).toBeDefined()
     renderJV2D(el, result)
     const layout = _lastNewPlotLayout()!
-    expect(layout.yaxis.range).toBeUndefined()                       // still autorange
+    expect(layout.yaxis.range).toEqual(originalLayout.yaxis.range)
+    expect(layout.xaxis.range).toEqual(originalLayout.xaxis.range)
     expect(layout.font.family).toBe(PUBLICATION_FONT_FAMILY)
   })
 
@@ -510,20 +487,6 @@ describe('renderJV2D — publication rendering', () => {
     renderJV2D(el, result)
     const [, xmax] = _lastNewPlotLayout()!.xaxis.range as [number, number]
     expect(xmax).toBeCloseTo(1.13, 6)
-  })
-
-  it('publication+full-sweep autoranges both axes (no clip)', () => {
-    const result = makeResult({
-      metrics: { V_oc: 0.95, J_sc: 200, FF: 0.82, PCE: 0.16, voc_bracketed: true },
-    })
-    renderJV2D(el, result)
-    // Toggle range to full first, then style to publication.
-    const rangeSel = el.querySelector<HTMLSelectElement>('[data-test="jv2d-range-mode"]')!
-    rangeSel.value = 'full'
-    rangeSel.dispatchEvent(new Event('change'))
-    const layout = _lastNewPlotLayout()!
-    expect(layout.yaxis.range).toBeUndefined()
-    expect(layout.xaxis.range).toBeUndefined()
   })
 
   it('publication mode hides the legend (single-trace 2D figure)', () => {

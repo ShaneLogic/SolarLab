@@ -195,28 +195,14 @@ export function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): vo
 
 // ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
 
-type JV2DRangeMode = 'operational' | 'full'
-
-function _jv2dReadMode(el: HTMLElement): JV2DRangeMode {
-  // Toggle state lives on the STABLE container ``el`` passed into
-  // ``renderJV2D`` — survives every internal DOM rebuild (Plotly.purge,
-  // child removal, child re-append). Default ``'operational'`` so users
-  // see the photovoltaic operating window first; the diode tail past
-  // V_bi only appears on opt-in.
-  const v = el.dataset.jv2dMode
-  return v === 'full' ? 'full' : 'operational'
-}
-
 // Publication operational ranges: small
 // negative padding below J=0, light headroom above J_sc, and a small
 // negative x-margin so the V=0 reference line is visible without
-// inventing negative-voltage data. Both helpers return ``undefined``
-// outside operational mode (Full sweep stays autoranged).
+// inventing negative-voltage data. Missing or invalid metrics leave
+// the y-axis autoranged; raw sweep samples remain unchanged.
 function _jv2dComputeYRangePublication(
-  mode: JV2DRangeMode,
   metrics: JV2DResult['metrics'],
 ): [number, number] | undefined {
-  if (mode !== 'operational') return undefined
   if (!metrics) return undefined
   if (metrics.voc_bracketed !== true) return undefined
   if (!Number.isFinite(metrics.J_sc) || metrics.J_sc <= 0) return undefined
@@ -225,11 +211,9 @@ function _jv2dComputeYRangePublication(
 }
 
 function _jv2dComputeXRangePublication(
-  mode: JV2DRangeMode,
   V: number[],
   metrics: JV2DResult['metrics'],
 ): [number, number] | undefined {
-  if (mode !== 'operational') return undefined
   if (V.length === 0) return undefined
   const minV = Math.min(...V)
   const maxV = Math.max(...V)
@@ -254,8 +238,8 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   Plotly.purge(el)
   // Reset wrapper without using innerHTML assignment (security hook).
   while (el.firstChild) el.removeChild(el.firstChild)
-  // Layout: optional toolbar at the top, then plot, then metric-card
-  // row + (optional) bracket warning banner. The plot div is a
+  // Layout: plot, then metric-card row + (optional) bracket warning
+  // banner. The plot div is a
   // SEPARATE child so the metric/warning markup can live in the same
   // wrapper without colliding with Plotly's mutating DOM. Raw J/V
   // arrays are NOT modified — the J → mA/cm² flip below is for
@@ -263,37 +247,6 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   el.classList.add('jv2d-render')
 
   const m = r.metrics
-
-  // The operational-range selector requires metrics for J_sc clipping.
-  if (m) {
-    const toolbar = document.createElement('div')
-    toolbar.className = 'plot-toolbar'
-    toolbar.setAttribute('data-test', 'jv2d-toolbar')
-    const rangeLabel = document.createElement('label')
-    rangeLabel.className = 'plot-range-label'
-    rangeLabel.htmlFor = 'jv2d-range-mode'
-    rangeLabel.textContent = 'Range:'
-    const rangeSelect = document.createElement('select')
-    rangeSelect.id = 'jv2d-range-mode'
-    rangeSelect.className = 'plot-range-select'
-    rangeSelect.setAttribute('data-test', 'jv2d-range-mode')
-    const optOp = document.createElement('option')
-    optOp.value = 'operational'
-    optOp.textContent = 'Operational range'
-    const optFull = document.createElement('option')
-    optFull.value = 'full'
-    optFull.textContent = 'Full sweep'
-    rangeSelect.appendChild(optOp)
-    rangeSelect.appendChild(optFull)
-    rangeSelect.value = _jv2dReadMode(el)
-    rangeSelect.addEventListener('change', () => {
-      el.dataset.jv2dMode = rangeSelect.value === 'full' ? 'full' : 'operational'
-      renderJV2D(el, r)
-    })
-    toolbar.appendChild(rangeLabel)
-    toolbar.appendChild(rangeSelect)
-    el.appendChild(toolbar)
-  }
 
   const plotDiv = document.createElement('div')
   plotDiv.className = 'jv2d-plot'
@@ -309,10 +262,9 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
   // OR because publication+operational mode gives the axis a small
   // negative visual margin (without inventing data). Horizontal
   // zero-line at J=0 is always drawn in publication mode.
-  const range = _jv2dReadMode(el)
   const minV = r.V.length > 0 ? Math.min(...r.V) : 0
-  const yClipPub = _jv2dComputeYRangePublication(range, m)
-  const xClipPub = _jv2dComputeXRangePublication(range, r.V, m)
+  const yClipPub = _jv2dComputeYRangePublication(m)
+  const xClipPub = _jv2dComputeXRangePublication(r.V, m)
   // Use the publication x-clip's lower bound when active (it may be
   // -0.05 even though the raw data starts at 0); otherwise fall back
   // to the raw min(V) — never invents negative data, only relabels
@@ -499,31 +451,6 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
   while (el.firstChild) el.removeChild(el.firstChild)
   el.classList.add('jv1d-render')
   const chargedEvidence = r.interface_charge_evidence ?? null
-  const fullRange = el.dataset.jv1dRange === 'full'
-  const toolbar = document.createElement('div')
-  toolbar.className = 'plot-toolbar'
-  toolbar.dataset.test = 'jv1d-range-toolbar'
-  const rangeLabel = document.createElement('label')
-  rangeLabel.className = 'plot-range-label'
-  rangeLabel.htmlFor = 'jv1d-range-mode'
-  rangeLabel.textContent = 'Range:'
-  const rangeSelect = document.createElement('select')
-  rangeSelect.className = 'plot-range-select'
-  rangeSelect.id = 'jv1d-range-mode'
-  rangeSelect.dataset.test = 'jv1d-range-mode'
-  for (const [value, label] of [['operational', 'Operational range'], ['full', 'Full sweep']]) {
-    const option = document.createElement('option')
-    option.value = value
-    option.textContent = label
-    rangeSelect.appendChild(option)
-  }
-  rangeSelect.value = fullRange ? 'full' : 'operational'
-  rangeSelect.addEventListener('change', () => {
-    el.dataset.jv1dRange = rangeSelect.value
-    renderJV(el, r)
-  })
-  toolbar.append(rangeLabel, rangeSelect)
-  el.appendChild(toolbar)
 
   const defectEvidenceLines = summarizeJVBulkDefectEvidence(r.bulk_defect_evidence)
   appendWaveformEvidence(el, r)
@@ -578,12 +505,12 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
       }
     : ordinaryPick
   const plottedMetrics = chargedEvidence ? [r.metrics_fwd] : [r.metrics_fwd, r.metrics_rev]
-  const yClipPub = fullRange ? undefined : _jv1dComputeYRangePublication(plottedMetrics)
-  const xClipPub = fullRange ? undefined : _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, plottedMetrics)
+  const yClipPub = _jv1dComputeYRangePublication(plottedMetrics)
+  const xClipPub = _jv1dComputeXRangePublication(r.V_fwd, r.V_rev, plottedMetrics)
   const shortCircuitCurrents = plottedMetrics.flatMap(m =>
     m?.voc_bracketed === true && Number.isFinite(m.J_sc) && m.J_sc > 0 ? [m.J_sc] : [],
   )
-  const separatedBranches = !fullRange && shortCircuitCurrents.length === 2
+  const separatedBranches = shortCircuitCurrents.length === 2
     && Math.min(...shortCircuitCurrents) < 0.5 * Math.max(...shortCircuitCurrents)
   const allV = [...r.V_fwd, ...r.V_rev]
   const minV = allV.length > 0 ? Math.min(...allV) : 0

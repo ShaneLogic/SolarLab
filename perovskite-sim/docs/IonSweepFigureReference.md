@@ -36,9 +36,10 @@ c0 = ratio * 1e25 m^-3, while holding D_c at 2.585e-18 m^2/s. Changing both
 parameters or the history defines a new experiment, not a subcurve of either
 one-parameter figure.
 
-Use **Operational range** to inspect the photovoltaic quadrant, or
-**Full sweep** to inspect all negative-bias and injection samples. Both
-branches determine the operational limits; axis selection never changes data.
+The J-V main plot always uses **Operational range** to show the photovoltaic
+quadrant. Both branches determine the operational limits. The full sweep,
+including negative-bias and injection samples, remains in the result data;
+the display limits never change samples or computed metrics.
 
 ## Reference Checks
 

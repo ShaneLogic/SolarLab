@@ -614,11 +614,14 @@ sentinels and only `J_sc` is physically meaningful. The 2D driver
 the 2D Scharfetter–Gummel sign convention is normalised centrally and
 `JV2DResult.metrics` matches the 1D semantics bit-for-bit. The workstation 2D
 J–V pane reads `voc_bracketed` to render `—` for V<sub>oc</sub> / FF / PCE and an inline
-`V_oc not bracketed — increase V_max` warning, and exposes an
-`Operational range / Full sweep` toolbar that toggles a display-only y-axis
-clip $[-0.5\,J_{\text{sc}},\ +1.5\,J_{\text{sc}}]$ (mA/cm²) so the deep
-forward-bias diode tail does not compress the working-quadrant signal — raw
-V/J data are unchanged between the two modes.
+`V_oc not bracketed — increase V_max` warning. The 1D and 2D J–V main plots
+always use the operational range, without a range selector. A display-only
+y-axis clip $[-0.15\,J_{\text{sc}},\ +1.12\,J_{\text{sc}}]$ (mA/cm²) and an
+upper voltage limit of $V_{\text{oc}} + 0.18$ V keep the photovoltaic region
+readable; the voltage limit never exceeds the largest sample plus 0.05 V.
+The 1D limits account for both branches. If valid bracketed metrics are
+unavailable, the y-axis uses autorange and the voltage cap is omitted.
+All raw V/J samples and computed metrics are preserved.
 
 *Source:* `perovskite_sim/experiments/jv_sweep.py::compute_metrics`,
 `frontend/src/workstation/panes/main-plot-pane.ts::renderJV2D`

@@ -366,22 +366,32 @@ describe('renderJV — publication rendering', () => {
     expect(layout.annotations[0].y).toBe(0.72)
   })
 
-  it('shows the photovoltaic quadrant by default and preserves full-history data', () => {
+  it('keeps the operational view across renders and preserves full-history data', () => {
     const result = makeResult({
       V_fwd: [-1, 0, 0.5, 1.2], J_fwd: [160, 10, -30, -1000],
       V_rev: [1.2, 0.5, 0, -1], J_rev: [-1000, 150, 160, 165],
     })
+    const originalResult = structuredClone(result)
     renderJV(el, result)
-    expect(_lastNewPlotLayout()!.xaxis.range[0]).toBe(-0.05)
+    const originalLayout = _lastNewPlotLayout()!
+    expect(originalLayout.xaxis.range[0]).toBe(-0.05)
+    expect(originalLayout.yaxis.range).toBeDefined()
+    expect(el.querySelector('[data-test="jv1d-range-toolbar"]')).toBeNull()
+    expect(el.querySelector('[data-test="jv1d-range-mode"]')).toBeNull()
     const originalTraces = structuredClone(_lastNewPlotTraces())
-    const range = el.querySelector<HTMLSelectElement>('[data-test="jv1d-range-mode"]')!
-    range.value = 'full'
-    range.dispatchEvent(new Event('change'))
-    expect(_lastNewPlotLayout()!.xaxis.range).toBeUndefined()
-    expect(_lastNewPlotLayout()!.yaxis.range).toBeUndefined()
-    expect(_lastNewPlotTraces()).toEqual(originalTraces)
+    expect(originalTraces[0].x).toEqual(result.V_fwd)
+    expect(originalTraces[0].y).toEqual(result.J_fwd.map(j => j / 10))
+    expect(originalTraces[1].x).toEqual([...result.V_rev].reverse())
+    expect(originalTraces[1].y).toEqual([...result.J_rev].reverse().map(j => j / 10))
+
+    // A container retained from the old UI cannot restore the removed mode.
+    el.dataset.jv1dRange = 'full'
     renderJV(el, result)
-    expect(el.querySelector<HTMLSelectElement>('[data-test="jv1d-range-mode"]')!.value).toBe('full')
+    expect(_lastNewPlotLayout()!.xaxis.range).toEqual(originalLayout.xaxis.range)
+    expect(_lastNewPlotLayout()!.yaxis.range).toEqual(originalLayout.yaxis.range)
+    expect(_lastNewPlotTraces()).toEqual(originalTraces)
+    expect(result).toEqual(originalResult)
+    expect(el.querySelector('[data-test="jv1d-range-mode"]')).toBeNull()
   })
 
   it('neither bracketed: autorange y/x; annotation Forward + "not bracketed"', () => {

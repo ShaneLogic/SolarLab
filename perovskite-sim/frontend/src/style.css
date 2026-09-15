@@ -684,7 +684,7 @@ input[type="number"] {
 }
 
 /* Plot-level toolbar shared across experiment panes. Hosts plot-specific
-   selectors (e.g. the 2D J-V Operational/Full sweep range toggle).
+   selectors (e.g. dark J-V curves and spatial-profile branches).
    Display-only; never affects raw arrays. */
 .plot-toolbar {
   display: flex;
