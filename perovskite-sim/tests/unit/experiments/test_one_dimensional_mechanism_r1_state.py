@@ -135,9 +135,18 @@ def test_prepared_source_identity_includes_repository_study_input(
     }
     changed = tmp_path / "StudyInputV1.json"
     changed.write_bytes(raw + b"\n")
-    monkeypatch.setattr(binding_gate, "STUDY_INPUT_PATH", changed)
+    changed_identity = {**original_source["study_input"], "sha256": hashlib.sha256(changed.read_bytes()).hexdigest()}
+    monkeypatch.setattr(common, "study_input_identity", lambda: changed_identity)
     assert common.execution_source()["sha256"] != original_source["sha256"]
     with pytest.raises(common.R1StateError, match="identity mismatch: source"):
+        _restore(common_state)
+
+
+def test_relocated_study_input_is_rejected_before_identity_import(common_state, monkeypatch, tmp_path):
+    relocated = tmp_path / "StudyInputV1.json"
+    relocated.write_bytes(binding_gate.STUDY_INPUT_PATH.read_bytes())
+    monkeypatch.setattr(binding_gate, "STUDY_INPUT_PATH", relocated)
+    with pytest.raises(ValueError, match="tracked|checkout|policy"):
         _restore(common_state)
 
 

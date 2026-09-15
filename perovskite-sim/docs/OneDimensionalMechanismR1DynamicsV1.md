@@ -154,6 +154,10 @@ is the post-step regular state; the separate event stores `0-` and `0+`.
 The CLI permits a finite positive amplitude below 20 mV, recording its exact
 value without claiming linearity. The ten documented nonlinear tolerance
 fields use factor 0.1 by default; selectable factors are 1/0.1/0.01/0.001.
+These are allowed attempts, not a claim that every case converges. The base
+C/D, 16-interval, 5 mV cases at factor 0.001 have a recorded initial local
+line-search failure in both the original and gate-fix implementations. The
+factor remains the preregistered deepest extension; failed runs are retained.
 Physical acceptance limits remain unchanged. The full `1e-9..1e2 s` window,
 window extension to `1e5 s`, early extension, amplitude halving, target-bias
 DC comparison and 27-combination convergence matrix belong to R1-2.
@@ -169,7 +173,7 @@ storage error is explicitly checked and included in the final certificate.
 For the single interface in this study, let
 `E_t = q * abs(delta(N_t f) - dt * R_t)`, where `R_t` is the same controlled
 net capture rate used by the carrier and trap equations. Preserve the
-independently recorded `trap_storage_error_A_m2 = E_t / dt`.
+recorded finite-step `trap_storage_error_A_m2 = E_t / dt`.
 
 The allowed step-charge error is
 `B_t = min(q * eta * S_t, dt * epsilon_Q * J_scale)`.
@@ -179,20 +183,46 @@ absolute, relative and roundoff terms and original scaling reference.
 `epsilon_Q` retains the existing charge-balance acceptance limit (at most
 `1e-10`). `J_scale` is the existing charge-balance scale:
 `max(abs(charge_rate), abs(Jc_left-Jc_right), max(abs(conduction)), 1 A/m2)`.
-This applies the existing total-charge budget conservatively to one local
-interface; it is an explicit additional local check, not a claim that the
-study specification previously listed this separate limit. No tolerance is
-chosen from the observed residuals, and no original physical gate is relaxed.
+The first budget rechecks consistency with the declared Newton storage
+equation. With the same equation and scale, its ratio equals the absolute
+scaled trap-row residual divided by `eta`, so it does not independently
+tighten an otherwise correct Newton acceptance. It can still detect an
+implementation that solves a different storage equation. The second budget
+applies the existing total-charge budget conservatively to this single
+interface; it adds a tighter local condition only when it is smaller than
+the Newton budget. The `1 A/m2` normalization floor remains explicit.
+
+The normalized limit one means compliance with the recorded policy, not a
+fixed absolute physical precision. The Newton budget changes with nonlinear
+tolerances, including their unscaled roundoff terms; the independent charge
+budget is not multiplied by the nonlinear factor. R1-2 must keep numerical
+consistency, physical error budgets and response convergence distinct. Any
+new physical budget must be frozen before its runs. No tolerance is chosen
+from observed residuals, and no original physical gate is relaxed.
 
 Each finite step saves its error, both budget components, the effective
 charge/current limits, the normalized ratio `E_t/B_t` and the pass/fail result.
+It also records separate Newton-consistency and local-charge ratios, the
+dominant budget, actual nonlinear tolerance fields, trap activity and whether
+the current normalization floor is active. Summaries split branch counts
+and maxima into all steps, active traps and nonzero-error subsets. These
+counts describe the saved run, not universal evidence-strength percentages.
 Non-finite errors or invalid budgets are rejected; the normalized ratio must
 not exceed one. The final certificate aggregates the worst normalized ratio
 over all nested levels and retains the maximum absolute current error as a
 diagnostic; that maximum is not compared with an unrelated step's limit.
-The `0+` record has no finite `dt` and labels this check not applicable.
-Its algebraic and regular-current checks remain separate. A failed step is
-saved before raising an error, with the specific trap-storage failure reason.
+The `0+` record has `dt_s=0.0` and no positive elapsed integration interval.
+Its legacy `trap_storage_error_A_m2=0.0` field is retained solely as an
+explicitly labeled compatibility placeholder; the finite-step check is not
+applicable and excludes it from summaries. Its algebraic and regular-current
+checks remain separate.
+
+Every row records solver acceptance separately from physical-check success.
+All applicable gates, including their finite-status checks, are evaluated
+before raising. Simultaneous violations retain every reason and raw metric.
+The observer receives the complete row, including a failed row. If persistence
+also fails, physical reasons remain primary and the write failure is recorded
+separately; it cannot replace a Gauss/charge/trap failure with a JSON error.
 
 ## CLI and sealed evidence
 
@@ -215,10 +245,50 @@ ZIP/manifest/patch and strict JSON/NPZ writer. Successful preparation produces
 produce `StepResultV1.json` plus incrementally saved `AcceptedStepsV1.json`.
 Array-bearing payloads also generate compressed NPZ files.
 
+Formal R1 computation is currently a tracked-source-checkout workflow, including
+the common-state library APIs. Git's actual worktree root determines the
+expected runner, package, helper and study-input paths. Imported modules and
+the CLI/binding study inputs must resolve to those tracked paths; merely
+being somewhere beneath the project is insufficient. The captured source
+manifest must be nonempty and cover the actual runner/helpers, contract,
+fixture, policy and every package source, matching both disk and the ZIP.
+An ignored shadow copy is rejected even when it carries an unchanged package
+and reports a real ancestor Git commit. `ExecutionSourceV1.json` records the
+observed checkout, commit and dirty state, without claiming that a commit has
+been independently approved. Wheel-only and package-only computation contexts
+receive an explicit unsupported-context error. General shared R0 engines keep
+their structural validators; an R1 study wrapper must enforce this study's
+approved context before calling them.
+
 A failed computation exits nonzero and seals `FailureV1.json`, completion
 status, accepted records and any exception result. Non-finite failed numbers
 are explicitly tagged in strict JSON and preserved in raw NPZ arrays.
+Evidence files are replaced atomically per file. Completion records distinguish
+observed rows, successfully persisted rows, finite solver steps and physically
+passing finite steps. The legacy `accepted_record_count` now explicitly means
+persisted rows, including initial records; it is not a scientific pass count.
+When writing fails, the prior valid stream remains and `FailedResultV1` retains
+the complete observed state whenever persistence is available.
 The byte manifest covers every saved file except itself. `verify` checks
 coverage, safe paths, byte counts and hashes and reports the recorded status;
 a failed recorded run remains a nonzero verification result. Integrity
 verification does not rerun equations or validate scientific claims.
+
+The default `verify --mode integrity` reports checksum consistency and recorded
+status, explicitly leaving provenance unauthenticated. Rebuilding a manifest
+after editing its bundle can satisfy this limited check. Acceptance identity
+requires either `--mode acceptance --expected-manifest-sha256 DIGEST`, or
+`--mode acceptance --ledger PATH --ledger-sha256 DIGEST --run-id ID`. The digest
+must come from a separately trusted review channel or approved Git ledger,
+not from the bundle being checked. A ledger must be outside the bundle and
+match the independently supplied ledger digest. Its `R1EvidenceLedgerV1`
+`entries[ID]` pins `manifest_sha256`, `stage`, `recorded_status`, `stage_scope`,
+`source_manifest_sha256`, `study_input_sha256` and `reference_binding_sha256`.
+The runner checks those identities against the anchored bundle. A recorded
+failed run still exits nonzero even when its bytes match the anchor.
+
+Anchor matching does not itself grant independent approval, authenticate an
+arbitrarily replaced verifier, rerun physical equations or certify convergence.
+Candidate ledgers generated during development require separate approval
+before serving as formal study trust anchors. Signatures may be added for
+distribution identity later; they do not replace equation or convergence checks.

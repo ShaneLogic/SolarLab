@@ -57,18 +57,37 @@ def test_controlled_step_retains_common_state_and_separates_impulse(shared, cont
             np.testing.assert_array_equal(row["state"]["occupancy"], original["occupancy"])
             np.testing.assert_array_equal(row["state"]["capture_m2_s"], 0.0)
     assert result["accepted_state_arrays"]["positive_m3"].shape[0] == len(observed)
-    assert result["version"] == "r1-1-controls-and-initial-charge-v2"
-    assert result["certificate"]["trap_storage"]["checked_finite_step_count"] == 28
+    assert result["version"] == "r1-1-controls-and-initial-charge-v3"
+    trap_summary = result["certificate"]["trap_storage"]
+    assert trap_summary["checked_finite_step_count"] == 28
+    assert sum(trap_summary["branch_counts"]["all"].values()) == 28
+    assert sum(trap_summary["branch_counts"]["active_trap"].values()) == (28 if control in "CD" else 0)
     assert result["certificate"]["metrics"]["trap_storage_normalized_error"] <= 1.
     for row in observed:
         check = row["physical"]["trap_storage_check"]
+        assert row["physical_checks_passed"]
+        assert row["physical_checks"]["passed"]
+        assert row["physical_failure_reasons"] == []
         if row["dt_s"] == 0:
             assert not check["applicable"] and check["certified"] is None
-            assert "trap_storage_error_A_m2" not in row["physical"]
+            assert row["physical"]["trap_storage_error_A_m2"] == 0.
+            assert check["dt_s"] == 0. and check["legacy_error_is_placeholder"]
+            assert not row["solver_accepted"]
+            assert row["physical_checks"]["checks"]["trap_storage"]["passed"] is None
+            assert row["physical_checks"]["checks"]["charge_balance_normalized"]["passed"] is None
+            assert row["physical_checks"]["checks"]["regular_right_limit_charge_balance_normalized"]["passed"]
+            assert row["physical"]["initial_algebraic_certificate"] == initial["algebraic_certificate"]
         else:
             assert check["applicable"] and check["certified"]
+            assert row["solver_accepted"]
             assert check["normalized_error"] <= check["normalized_limit"] == 1.
             assert check["charge_error_C_m2"] == row["physical"]["trap_storage_error_A_m2"] * row["dt_s"]
+            assert check["normalized_error"] == max(check["newton_consistency_ratio"], check["local_charge_ratio"])
+            assert check["dominant_budget"] in ("newton", "local_charge", "equal")
+            assert check["trap_dynamics_active"] is (control in "CD")
+            assert check["nonlinear_tolerances"] == {key: getattr(policy, key) for key in protocol._TOLERANCE_FIELDS}
+            assert check["charge_scale_floor_A_m2"] == 1.
+            assert check["charge_scale_floor_active"] is (check["charge_scale_before_floor_A_m2"] < 1.)
 
 
 def test_zero_excitation_labels_equation_check_without_relative_current_claim(shared):
@@ -93,13 +112,14 @@ def test_failed_physical_step_retains_accepted_partial_evidence(shared, monkeypa
         return value
 
     monkeypatch.setattr(protocol, "physical_step_record", over_limit)
-    with pytest.raises(protocol.R1RunError, match="physical contact/charge") as error:
+    with pytest.raises(protocol.R1RunError, match="gauss_normalized_exceeds_limit") as error:
         protocol.run_r1_step(stack, 16, reference, prepared, policy=policy)
     partial = error.value.result
     assert not partial["certificate"]["certified"]
     assert partial["prepared_sha256"] == prepared.sha256
     assert partial["initial_event"]["certified"]
     assert partial["accepted_steps"][-1]["physical"]["gauss_normalized"] == 1e-6
+    assert partial["certificate"]["reasons"] == ["gauss_normalized_exceeds_limit"]
 
 
 @pytest.mark.parametrize("injected", ["over_budget", "nan", "inf"])
@@ -134,13 +154,86 @@ def test_trap_storage_failure_retains_coarse_step_and_distinct_certificate(share
     assert not failed["physical"]["trap_storage_check"]["certified"]
     assert failed["physical"]["gauss_normalized"] <= 1e-10
     assert failed["physical"]["charge_balance_normalized"] <= 1e-10
-    # The failure row remains in the result before an ordinary JSON observer
-    # can mask the explicit error with an unrelated nonfinite serialization.
-    assert len(observed) == 1 and observed[0]["phase"] == "0+"
+    # Every solver-accepted row reaches the observer with complete gate status.
+    assert len(observed) == 2 and observed[0]["phase"] == "0+"
+    assert observed[-1] is failed
+    assert failed["solver_accepted"] and not failed["physical_checks_passed"]
+    assert failed["physical_failure_reasons"] == ["trap_storage_balance_exceeds_budget"]
     if injected == "nan":
         assert np.isnan(failed["physical"]["trap_storage_error_A_m2"])
     elif injected == "inf":
         assert np.isinf(failed["physical"]["trap_storage_error_A_m2"])
+
+
+@pytest.mark.parametrize("observer_fails", [False, True])
+def test_all_physical_failures_reach_observer_and_survive_persistence_error(shared, monkeypatch, observer_fails):
+    stack, reference, policy, prepared = shared
+    original_physical = protocol.physical_step_record
+    original_trap = protocol._trap_storage_check
+    observed = []
+
+    def several_failures(*args, **kwargs):
+        physical = original_physical(*args, **kwargs)
+        if args[2] is not None:
+            for metric, limit in protocol._PHYSICAL_LIMITS:
+                physical[metric] = limit * 2.
+        return physical
+
+    def trap_failure(scaling, state, previous, dt, active_policy, physical):
+        check = original_trap(scaling, state, previous, dt, active_policy, physical)
+        if previous is not None:
+            physical["trap_storage_error_A_m2"] = check["current_error_limit_A_m2"] * 2.
+            check = original_trap(scaling, state, previous, dt, active_policy, physical)
+        return check
+
+    def observer(row):
+        observed.append(row)
+        if row["solver_accepted"] and observer_fails:
+            raise OSError("injected accepted-step write failure")
+
+    monkeypatch.setattr(protocol, "physical_step_record", several_failures)
+    monkeypatch.setattr(protocol, "_trap_storage_check", trap_failure)
+    with pytest.raises(protocol.R1RunError, match="physical gates") as error:
+        protocol.run_r1_step(stack, 16, reference, prepared, policy=policy,
+                             accepted_step_observer=observer)
+    partial = error.value.result
+    expected = [metric + "_exceeds_limit" for metric, _ in protocol._PHYSICAL_LIMITS]
+    expected.append("trap_storage_balance_exceeds_budget")
+    assert partial["certificate"]["reasons"] == expected
+    assert partial["failure"]["reasons"] == expected
+    failed = partial["accepted_steps"][-1]
+    assert len(observed) == 2 and observed[-1] is failed
+    assert failed["solver_accepted"] and not failed["physical_checks_passed"]
+    assert failed["physical_failure_reasons"] == expected
+    assert failed["physical_checks"]["reasons"] == expected
+    if observer_fails:
+        assert partial["certificate"]["secondary_reasons"] == ["accepted_step_persistence_failed"]
+        assert partial["persistence_failure"]["type"] == "OSError"
+        assert partial["persistence_failure"]["message"] == "injected accepted-step write failure"
+        assert partial["failure"]["type"] == "PhysicalCheckFailure"
+    else:
+        assert "persistence_failure" not in partial
+
+
+def test_observer_only_failure_has_output_reason_and_retains_passed_physics(shared):
+    stack, reference, policy, prepared = shared
+    observed = []
+
+    def observer(row):
+        observed.append(row)
+        if row["solver_accepted"]:
+            raise OSError("injected output-only failure")
+
+    with pytest.raises(protocol.R1RunError, match="accepted_step_persistence_failed") as error:
+        protocol.run_r1_step(stack, 16, reference, prepared, policy=policy,
+                             accepted_step_observer=observer)
+    partial = error.value.result
+    assert partial["certificate"]["reasons"] == ["accepted_step_persistence_failed"]
+    assert partial["failure"]["type"] == "OSError"
+    assert len(observed) == 2
+    assert observed[-1]["physical_checks_passed"]
+    assert observed[-1]["physical_failure_reasons"] == []
+    assert observed[-1] is partial["accepted_steps"][-1]
 
 
 def test_initial_numeric_failure_retains_underlying_residuals(shared, monkeypatch):

@@ -13,6 +13,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 
@@ -61,6 +62,41 @@ def _canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def _digest_argument(value, label):
+    if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+        raise ValueError(f"{label} must be a lowercase SHA-256 digest supplied outside the bundle")
+    return value
+
+
+def _verification_anchor(output, expected_manifest_sha256=None, ledger=None,
+                         ledger_sha256=None, run_id=None):
+    """Resolve a caller-trusted anchor; a bundle never supplies its own trust."""
+    if expected_manifest_sha256 is not None:
+        if ledger is not None or ledger_sha256 is not None or run_id is not None:
+            raise ValueError("choose a manifest digest or a separately anchored ledger")
+        return _digest_argument(expected_manifest_sha256, "expected manifest digest"), None
+    if ledger is None or ledger_sha256 is None or not run_id:
+        raise ValueError("acceptance requires an external manifest digest or ledger, ledger digest and run id")
+    ledger = Path(ledger).resolve(strict=True)
+    if ledger.is_relative_to(output.resolve()):
+        raise ValueError("the acceptance ledger must be outside the bundle")
+    if sha256(ledger) != _digest_argument(ledger_sha256, "expected ledger digest"):
+        raise ValueError("external ledger digest mismatch")
+    value = read_json(ledger)
+    if not isinstance(value, dict) or value.get("schema") != "R1EvidenceLedgerV1":
+        raise ValueError("invalid R1 evidence ledger")
+    if not isinstance(value.get("entries"), dict):
+        raise ValueError("invalid R1 evidence ledger entries")
+    entry = value["entries"].get(run_id)
+    if not isinstance(entry, dict):
+        raise ValueError("run id is absent from the anchored ledger")
+    required = {"manifest_sha256", "stage", "recorded_status", "stage_scope",
+                "source_manifest_sha256", "study_input_sha256", "reference_binding_sha256"}
+    if not required <= entry.keys():
+        raise ValueError("anchored ledger entry lacks required identities")
+    return _digest_argument(entry["manifest_sha256"], "ledger manifest digest"), entry
+
+
 def verify_output(output):
     """Check a sealed bundle's bytes; do not promote it to new physics evidence."""
     output = output.resolve(strict=True)
@@ -100,49 +136,105 @@ def verify_output(output):
             required.update(("StepResultV1.json", "AcceptedStepsV1.json"))
         if not required <= entries.keys():
             raise ValueError("passed completion lacks required R1-1 evidence")
+        source = read_json(output / "SourceManifestV1.json")
+        if not isinstance(source, dict) or not source:
+            raise ValueError("passed completion has empty source coverage")
+        if completion.get("evidence_revision", 1) >= 2:
+            if "ExecutionSourceV1.json" not in entries:
+                raise ValueError("passed completion lacks execution checkout evidence")
     elif "FailureV1.json" not in entries:
         raise ValueError("failed completion lacks its failure record")
     return completion, len(entries)
 
 
-def _record_failure_result(output, result):
-    """Keep invalid numeric evidence without emitting non-standard JSON."""
+def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
+                      ledger_sha256=None, run_id=None):
+    output = Path(output).resolve(strict=True)
+    expected, entry = _verification_anchor(output, expected_manifest_sha256, ledger,
+                                          ledger_sha256, run_id)
+    if sha256(output / "ManifestV1.json") != expected:
+        raise ValueError("bundle manifest differs from the supplied external anchor")
+    completion, count = verify_output(output)
+    if entry is not None:
+        actual = {
+            "stage": completion["stage"], "stage_scope": completion["stage_scope"],
+            "recorded_status": completion["status"],
+            "source_manifest_sha256": sha256(output / "SourceManifestV1.json"),
+            "study_input_sha256": sha256(output / "StudyInputV1.json"),
+            "reference_binding_sha256": read_json(output / "ReferenceBindingV1.json")["sha256"],
+        }
+        if any(entry[key] != value for key, value in actual.items()):
+            raise ValueError("bundle identities disagree with the anchored ledger entry")
+    return completion, count
+
+
+def _write_evidence(path, result):
+    """Atomically replace each evidence file, tagging nonfinite JSON values."""
+    import dataclasses
+    import numpy as np
+
+    path = Path(path)
+    def tagged(value):
+        if isinstance(value, float) and not math.isfinite(value):
+            return {"nonfinite": repr(value)}
+        if isinstance(value, dict):
+            return {key: tagged(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [tagged(child) for child in value]
+        return value
+
+    arrays = {}
+    def collect(value, key="data"):
+        if isinstance(value, np.ndarray):
+            arrays[key] = value
+        elif isinstance(value, (float, np.floating)) and not math.isfinite(value):
+            arrays[key] = np.asarray(value)
+        elif dataclasses.is_dataclass(value):
+            for field in dataclasses.fields(value):
+                collect(getattr(value, field.name), key + "." + field.name)
+        elif isinstance(value, dict):
+            for name, child in value.items():
+                collect(child, key + "." + str(name))
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                collect(child, key + "." + str(index))
+    collect(result)
+    text = json.dumps(tagged(json_ready(result)), indent=2, allow_nan=False) + "\n"
+    temporary = []
     try:
-        write_json(output / "FailedResultV1.json", result)
-    except ValueError:
-        import numpy as np
-
-        def tag_nonfinite(value):
-            if isinstance(value, float) and not math.isfinite(value):
-                return {"nonfinite": repr(value)}
-            if isinstance(value, dict):
-                return {key: tag_nonfinite(child) for key, child in value.items()}
-            if isinstance(value, list):
-                return [tag_nonfinite(child) for child in value]
-            return value
-
-        # The original array payload remains lossless in NPZ, including NaN/Inf.
-        arrays = {}
-
-        def collect(value, key="data"):
-            import dataclasses
-
-            if isinstance(value, np.ndarray):
-                arrays[key] = value
-            elif dataclasses.is_dataclass(value):
-                for field in dataclasses.fields(value):
-                    collect(getattr(value, field.name), key + "." + field.name)
-            elif isinstance(value, dict):
-                for name, child in value.items():
-                    collect(child, key + "." + str(name))
-            elif isinstance(value, (list, tuple)):
-                for index, child in enumerate(value):
-                    collect(child, key + "." + str(index))
-
-        collect(result)
-        write_json(output / "FailedResultV1.json", tag_nonfinite(json_ready(result)))
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".r1-evidence-", delete=False) as stream:
+            json_temp = Path(stream.name)
+            temporary.append(json_temp)
+            stream.write(text)
         if arrays:
-            np.savez_compressed(output / "FailedResultV1.npz", **arrays)
+            with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent,
+                                             prefix=".r1-arrays-", delete=False) as stream:
+                array_temp = Path(stream.name)
+                temporary.append(array_temp)
+                np.savez_compressed(stream, **arrays)
+            os.replace(array_temp, path.with_suffix(".npz"))
+        os.replace(json_temp, path)
+    finally:
+        for temporary_path in temporary:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _record_failure_result(output, result):
+    _write_evidence(Path(output) / "FailedResultV1.json", result)
+
+
+def _record_execution_source(output):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
+        git_environment, require_r1_checkout, validate_source_coverage,
+    )
+    context = require_r1_checkout(project=PROJECT, runner=Path(__file__))
+    if not INPUT_PATH.samefile(context.project / "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"):
+        raise ValueError("CLI study input does not identify the tracked checkout policy")
+    source_record(output, repository=context.root, git_environment=git_environment())
+    validate_source_coverage(output, context)
+    write_json(output / "ExecutionSourceV1.json", context.to_dict())
+    return context
 
 
 def main(argv=None):
@@ -156,13 +248,18 @@ def main(argv=None):
     parser.add_argument("--amplitude", type=float, default=0.005, metavar="VOLTS")
     parser.add_argument("--nonlinear-factor", type=float, choices=(1.0, 0.1, 0.01, 0.001), default=0.1)
     parser.add_argument("--input", type=Path, default=INPUT_PATH)
+    parser.add_argument("--mode", choices=("integrity", "acceptance"), default="integrity")
+    parser.add_argument("--expected-manifest-sha256")
+    parser.add_argument("--ledger", type=Path)
+    parser.add_argument("--ledger-sha256")
+    parser.add_argument("--run-id")
     args = parser.parse_args(argv)
     if args.stage == "list":
         print(
             "prepare: shared dark zero-bias D equilibrium from a fixed R1-0 reference\n"
             "zero-check: remaining equations for A-D from the same prepared state\n"
             "step: 0-/0+, impulse charge, and short regular response for one control\n"
-            "verify: saved-file integrity and recorded completion status\n"
+            "verify: byte consistency or comparison to a supplied external acceptance anchor\n"
             "Scope: R1-1 only; long windows and the convergence matrix belong to R1-2."
         )
         return 0
@@ -171,12 +268,24 @@ def main(argv=None):
     output = args.output_dir.resolve()
     if args.stage == "verify":
         try:
-            completion, count = verify_output(output)
+            if args.mode == "acceptance":
+                completion, count = verify_acceptance(
+                    output, expected_manifest_sha256=args.expected_manifest_sha256,
+                    ledger=args.ledger, ledger_sha256=args.ledger_sha256, run_id=args.run_id,
+                )
+            else:
+                if any((args.expected_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
+                    raise ValueError("acceptance anchors require --mode acceptance")
+                completion, count = verify_output(output)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             print(f"verify failed: {exc}", file=sys.stderr)
             return 1
-        print(f"verified {count} artifact identities; recorded {completion['stage']} status: {completion['status']}")
+        scope = ("supplied external anchor matched; no independent approval or physics rerun asserted"
+                 if args.mode == "acceptance" else "provenance not authenticated")
+        print(f"checksums consistent for {count} files; {scope}; recorded {completion['stage']} status: {completion['status']}")
         return int(completion["status"] != "passed")
+    if args.mode != "integrity" or any((args.expected_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
+        parser.error("verification options apply only to verify")
     if args.reference is None:
         parser.error("--reference is required; R1-1 does not prepare a new f_ref")
     if args.stage in ("zero-check", "step") and args.prepared is None:
@@ -196,8 +305,9 @@ def main(argv=None):
     started = time.monotonic()
     failure = None
     accepted = []
+    persisted_count = 0
     try:
-        source_record(output)
+        execution_context = _record_execution_source(output)
         study = read_json(args.input)
         if _canonical(study) != _canonical(read_json(INPUT_PATH)):
             raise ValueError("R1-1 input differs from the supported versioned protocol")
@@ -219,7 +329,7 @@ def main(argv=None):
         from threadpoolctl import threadpool_info, threadpool_limits
         from perovskite_sim.models.config_loader import load_device_from_yaml
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
-            validate_r1_study_binding,
+            STUDY_INPUT_PATH, validate_r1_study_binding,
         )
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
             R1PreparedState, prepare_common_state,
@@ -230,6 +340,8 @@ def main(argv=None):
 
         if not Path(perovskite_sim.__file__).resolve().is_relative_to(PROJECT):
             raise RuntimeError("package import did not resolve to this execution source")
+        if not INPUT_PATH.samefile(STUDY_INPUT_PATH):
+            raise RuntimeError("CLI and imported binding policy must be the same tracked file")
         stack = load_device_from_yaml(fixture)
         policy = r1_policy(nonlinear_factor=args.nonlinear_factor)
         write_json(output / "ResolvedStackV1.json", stack)
@@ -240,11 +352,10 @@ def main(argv=None):
                 "platform": platform.platform(), "numpy": np.__version__,
                 "scipy": scipy.__version__, "blas": backends,
                 "thread_environment": {key: os.environ[key] for key in THREAD_VARIABLES},
-                "parent_commit": subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True,
-                ).strip(),
+                "parent_commit": execution_context.commit if execution_context is not None else None,
                 "command": sys.argv if argv is None else [str(Path(__file__)), *argv],
                 "started_utc": datetime.now(timezone.utc).isoformat(),
+                "checkout": execution_context.to_dict() if execution_context is not None else None,
             })
             if not backends or any(item["num_threads"] != 1 for item in backends):
                 raise RuntimeError("R1 requires observed single-thread BLAS")
@@ -252,6 +363,7 @@ def main(argv=None):
             write_json(output / "ProtocolV1.json", {
                 "stage_scope": "R1-1", "stage": args.stage,
                 "intervals": args.intervals, "policy": policy,
+                "nonlinear_factor": args.nonlinear_factor,
                 "control": "D" if args.stage == "prepare" else args.control or "ABCD",
                 "control_definitions": study["controls"],
                 "amplitude_V": args.amplitude if args.stage == "step" else 0.0,
@@ -278,11 +390,13 @@ def main(argv=None):
                     )
                     write_json(output / "ZeroExcitationV1.json", result)
                 else:
-                    write_json(output / "AcceptedStepsV1.json", accepted)
+                    _write_evidence(output / "AcceptedStepsV1.json", accepted)
 
                     def observe(record):
+                        nonlocal persisted_count
                         accepted.append(record)
-                        write_json(output / "AcceptedStepsV1.json", accepted)
+                        _write_evidence(output / "AcceptedStepsV1.json", accepted)
+                        persisted_count = len(accepted)
 
                     result = run_r1_step(
                         stack, args.intervals, binding, prepared, control=args.control,
@@ -314,7 +428,12 @@ def main(argv=None):
         "stage": args.stage, "status": "failed" if failure else "passed",
         "duration_s": time.monotonic() - started,
         "finished_utc": datetime.now(timezone.utc).isoformat(), "failure": failure,
-        "accepted_record_count": len(accepted),
+        "evidence_revision": 2,
+        "accepted_record_count": persisted_count,
+        "observed_record_count": len(accepted), "persisted_record_count": persisted_count,
+        "persisted_finite_step_count": sum(r.get("phase") == "accepted_regular_step" for r in accepted[:persisted_count]),
+        "physical_passed_finite_step_count": sum(r.get("phase") == "accepted_regular_step" and r.get("physical_checks_passed") is True for r in accepted[:persisted_count]),
+        "count_semantics": "record counts include 0+; accepted_record_count is the persisted record count, not a claim that every physical check passed",
     })
     manifest(output)
     print(f"R1-1 {args.stage}: {'failed' if failure else 'passed'}: {output}")

@@ -163,7 +163,7 @@ def test_unapproved_reference_rejected_before_cli_dispatch(
     monkeypatch.setattr(common, "prepare_common_state", forbidden)
     monkeypatch.setattr(protocol, "check_zero_excitation", forbidden)
     monkeypatch.setattr(protocol, "run_r1_step", forbidden)
-    monkeypatch.setattr(runner, "source_record", lambda output: None)
+    monkeypatch.setattr(runner, "_record_execution_source", lambda output: None)
     # This unit case isolates admission from host BLAS availability. The real
     # subprocess workflow below observes and verifies the actual backend.
     monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda: [{"num_threads": 1, "source": "test-double"}])
@@ -189,7 +189,7 @@ def test_caller_input_cannot_repin_approved_reference(runner, tmp_path, monkeypa
     overridden["fixed_reference_binding_sha256"] = alternate["sha256"]
     input_path = tmp_path / "AlternateInputV1.json"
     runner.write_json(input_path, overridden)
-    monkeypatch.setattr(runner, "source_record", lambda output: None)
+    monkeypatch.setattr(runner, "_record_execution_source", lambda output: None)
     output = tmp_path / "rejected"
     assert runner.main([
         "prepare", "--reference", str(reference), "--input", str(input_path),
@@ -223,7 +223,7 @@ def test_failure_preserves_accepted_observations_and_exception_result(runner, tm
         })
 
     monkeypatch.setattr(protocol, "run_r1_step", fail_after_acceptance)
-    monkeypatch.setattr(runner, "source_record", lambda output: None)
+    monkeypatch.setattr(runner, "_record_execution_source", lambda output: None)
     # Isolate the failure writer from host BLAS availability; real CLI
     # integration below independently observes the actual backend.
     monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda: [{"num_threads": 1, "source": "test-double"}])

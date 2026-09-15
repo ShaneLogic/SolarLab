@@ -6,7 +6,11 @@
   "fixture": "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
   "fixture_sha256": "f617f230b2d9c144573394e38fcc313225dc84c7b38f7670b97e9a0a7cc12a24",
   "geometry": "physical_boundary_two_sided_v1",
-  "formal_intervals": [16, 32, 64],
+  "formal_intervals": [
+    16,
+    32,
+    64
+  ],
   "fixed_reference_schema": "ReferenceBindingV1",
   "fixed_reference_binding_sha256": "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b",
   "prepared_state_schema": "R1CommonStateV1",
@@ -19,27 +23,54 @@
     "state_time": "0-"
   },
   "controls": {
-    "A": {"nu_I": 0, "nu_t": 0},
-    "B": {"nu_I": 1, "nu_t": 0},
-    "C": {"nu_I": 0, "nu_t": 1},
-    "D": {"nu_I": 1, "nu_t": 1}
+    "A": {
+      "nu_I": 0,
+      "nu_t": 0
+    },
+    "B": {
+      "nu_I": 1,
+      "nu_t": 0
+    },
+    "C": {
+      "nu_I": 0,
+      "nu_t": 1
+    },
+    "D": {
+      "nu_I": 1,
+      "nu_t": 1
+    }
   },
-  "functional_times_s": [0.0, 1e-9, 1e-8, 1e-6, 1e-4],
+  "functional_times_s": [
+    0.0,
+    1e-09,
+    1e-08,
+    1e-06,
+    0.0001
+  ],
   "default_amplitude_V": 0.005,
   "amplitude_upper_bound_exclusive_V": 0.02,
   "waveform": "ideal_voltage_step_with_explicit_zero_minus_zero_plus_and_separate_impulse",
-  "refinement_substeps": [1, 2, 4],
+  "refinement_substeps": [
+    1,
+    2,
+    4
+  ],
   "default_nonlinear_factor": 0.1,
-  "nonlinear_factors": [1.0, 0.1, 0.01, 0.001],
-  "inventory_m2": 1e15,
-  "trap_density_m2": 5e14,
-  "gauss_charge_scale_C_m2": 1.602176634e-4,
+  "nonlinear_factors": [
+    1.0,
+    0.1,
+    0.01,
+    0.001
+  ],
+  "inventory_m2": 1000000000000000.0,
+  "trap_density_m2": 500000000000000.0,
+  "gauss_charge_scale_C_m2": 0.0001602176634,
   "limits": {
     "nominal_inventory_relative": 1e-12,
     "gauss_normalized": 1e-10,
     "charge_balance_normalized": 1e-10,
     "inventory_relative_drift": 1e-10,
-    "contact_internal_current_spread_relative": 2e-6
+    "contact_internal_current_spread_relative": 2e-06
   },
   "zero_excitation_evidence": "live_remaining_equations_and_absolute_DC_current_bounds",
   "trap_storage_gate": {
@@ -48,7 +79,8 @@
     "normalized_limit": 1.0,
     "storage_scale": "original_Newton_reference_including_roundoff",
     "charge_relative_limit": "min(policy.maximum_charge_balance_relative_error,1e-10)",
-    "zero_plus": "not_applicable"
+    "zero_plus": "legacy_error_placeholder_zero; no positive elapsed step; check not applicable",
+    "semantics": "recorded_policy_consistency; separate Newton and local-charge ratios, no universal absolute precision claim"
   },
   "parameter_provenance": "synthetic_numerical_reference",
   "units": "SI; band energies in eV",
@@ -61,5 +93,26 @@
     "non-equilibrium preparation histories",
     "mechanism identification",
     "real material validation"
-  ]
+  ],
+  "nonlinear_factor_semantics": "allowed_attempts_not_guaranteed_convergence",
+  "known_nonconvergence": [
+    {
+      "controls": [
+        "C",
+        "D"
+      ],
+      "intervals": 16,
+      "amplitude_V": 0.005,
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "evidence": "R1StageOneAcceptanceV2; present before this evidence cleanup"
+    }
+  ],
+  "execution_context": "tracked_source_checkout; exact imported sources and policy; approval checked separately",
+  "evidence_verification": {
+    "integrity": "checksum_consistency_only",
+    "acceptance": "external_manifest_digest_or_independently_anchored_external_ledger",
+    "physics_and_convergence": "separate_checks"
+  }
 }

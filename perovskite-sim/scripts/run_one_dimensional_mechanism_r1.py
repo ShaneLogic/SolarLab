@@ -67,11 +67,11 @@ def write_json(path, value):
         np.savez_compressed(path.with_suffix(".npz"), **arrays)
 
 
-def source_record(output):
-    repo = PROJECT.parent
+def source_record(output, *, repository=None, git_environment=None):
+    repo = PROJECT.parent if repository is None else Path(repository)
     paths = subprocess.check_output(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=repo,
+        cwd=repo, env=git_environment,
     ).decode().split("\0")
     entries = {}
     with zipfile.ZipFile(output / "SourceV1.zip", "w", zipfile.ZIP_DEFLATED) as archive:
@@ -82,7 +82,7 @@ def source_record(output):
             entries[name] = {"sha256": sha256(path), "bytes": path.stat().st_size}
             archive.write(path, name)
     write_json(output / "SourceManifestV1.json", entries)
-    (output / "SourceChangesV1.patch").write_bytes(subprocess.check_output(["git", "diff", "HEAD"], cwd=repo))
+    (output / "SourceChangesV1.patch").write_bytes(subprocess.check_output(["git", "diff", "HEAD"], cwd=repo, env=git_environment))
 
 
 def manifest(output):

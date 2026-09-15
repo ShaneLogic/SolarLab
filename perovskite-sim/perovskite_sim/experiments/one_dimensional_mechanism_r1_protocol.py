@@ -22,9 +22,16 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import (
 
 
 SCOPE = "research_r1_1_common_state_controlled_ideal_step"
-VERSION = "r1-1-controls-and-initial-charge-v2"
+VERSION = "r1-1-controls-and-initial-charge-v3"
 DEFAULT_TIMES_S = (0.0, 1e-9, 1e-8, 1e-6, 1e-4)
 _TRAP_STORAGE_FAILURE_REASON = "trap_storage_balance_exceeds_budget"
+_PERSISTENCE_FAILURE_REASON = "accepted_step_persistence_failed"
+_PHYSICAL_LIMITS = (
+    ("gauss_normalized", 1e-10), ("charge_balance_normalized", 1e-10),
+    ("inventory_relative_drift", 1e-10),
+    ("contact_internal_current_spread_relative", 2e-6),
+)
+_BUDGET_BRANCHES = ("newton", "local_charge", "equal", "invalid")
 _TOLERANCE_FIELDS = (
     "storage_relative_tolerance", "carrier_storage_atol_m3", "interface_storage_atol_m2",
     "ion_storage_atol_m3", "poisson_relative_tolerance", "poisson_atol_C_m2",
@@ -65,7 +72,12 @@ def _trap_storage_check(scaling_system, state, previous, dt, policy, physical):
     carrier or ion storage residuals.
     """
     if previous is None:
-        return {"applicable": False, "reason": "no_finite_time_step", "certified": None}
+        return {
+            "applicable": False, "dt_s": 0.0, "certified": None,
+            "reason": "no_positive_duration_time_step",
+            "legacy_error_is_placeholder": True,
+            "legacy_error_note": "0.0 is a compatibility placeholder; no finite-step error was computed",
+        }
     if scaling_system.interface_count != 1:
         raise ValueError("R1 trap-storage charge budget is defined for one interface")
     dt = float(dt)
@@ -75,11 +87,12 @@ def _trap_storage_check(scaling_system, state, previous, dt, policy, physical):
     storage_scale = float(scale[2 * scaling_system.interior_count])
     # Match physical_step_record's original charge-balance normalization.
     contact = np.asarray(physical["contact_conduction_A_m2"], dtype=float)
-    charge_scale = max(
+    charge_scale_before_floor = max(
         abs(float(physical["charge_rate_A_m2"])),
         abs(float(contact[0] - contact[1])),
-        float(np.max(np.abs(state.conduction))), 1.0,
+        float(np.max(np.abs(state.conduction))),
     )
+    charge_scale = max(charge_scale_before_floor, 1.0)
     error = float(physical["trap_storage_error_A_m2"])
     charge_error = error * dt
     nonlinear_budget = Q * policy.maximum_scaled_nonlinear_residual * storage_scale
@@ -97,15 +110,33 @@ def _trap_storage_check(scaling_system, state, previous, dt, policy, physical):
         and charge_limit > 0.0 and current_limit > 0.0
     )
     ratio = error / current_limit if valid else float("inf")
+    newton_ratio = error / (nonlinear_budget / dt) if valid else float("inf")
+    local_charge_ratio = error / (conservation_budget / dt) if valid else float("inf")
+    if not valid:
+        dominant_budget = "invalid"
+    elif nonlinear_budget == conservation_budget:
+        dominant_budget = "equal"
+    else:
+        dominant_budget = "newton" if nonlinear_budget < conservation_budget else "local_charge"
     return {
         "applicable": True, "dt_s": dt,
         "error_A_m2": error, "charge_error_C_m2": charge_error,
         "storage_scale_m2": storage_scale,
         "maximum_scaled_nonlinear_residual": policy.maximum_scaled_nonlinear_residual,
+        "nonlinear_tolerances": {key: float(getattr(policy, key)) for key in _TOLERANCE_FIELDS},
         "nonlinear_charge_budget_C_m2": nonlinear_budget,
+        "newton_consistency_ratio": newton_ratio,
+        "newton_consistency_role": "consistency_with_existing_nonlinear_storage_tolerance",
         "charge_balance_scale_A_m2": charge_scale,
+        "charge_scale_before_floor_A_m2": charge_scale_before_floor,
+        "charge_scale_floor_A_m2": 1.0,
+        "charge_scale_floor_active": bool(charge_scale_before_floor < 1.0),
         "charge_balance_relative_limit": charge_relative_limit,
         "conservation_charge_budget_C_m2": conservation_budget,
+        "local_charge_ratio": local_charge_ratio,
+        "local_charge_role": "single_interface_application_of_existing_whole_device_charge_budget",
+        "dominant_budget": dominant_budget,
+        "trap_dynamics_active": bool(scaling_system.controls.nu_t),
         "charge_error_limit_C_m2": charge_limit,
         "current_error_limit_A_m2": current_limit,
         "normalized_error": ratio, "normalized_limit": 1.0,
@@ -122,6 +153,27 @@ def _trap_storage_summary(physical_records):
     ratios = np.asarray([check["normalized_error"] for check in checks], dtype=float)
     raw_errors = np.asarray([r["trap_storage_error_A_m2"] for r in physical_records], dtype=float)
     finite_ratios = bool(np.all(np.isfinite(ratios)))
+    subsets = {
+        "all": checks,
+        "active_trap": [c for c in checks if c["trap_dynamics_active"]],
+        "nontrivial": [c for c in checks if np.isfinite(c["error_A_m2"]) and c["error_A_m2"] > 0.0],
+        "active_trap_nontrivial": [c for c in checks if c["trap_dynamics_active"]
+                                   and np.isfinite(c["error_A_m2"]) and c["error_A_m2"] > 0.0],
+    }
+    branch_counts = {}
+    branch_maxima = {}
+    for name, subset in subsets.items():
+        branch_counts[name] = {}
+        branch_maxima[name] = {}
+        for branch in _BUDGET_BRANCHES:
+            selected = [c for c in subset if c["dominant_budget"] == branch]
+            branch_counts[name][branch] = len(selected)
+            branch_maxima[name][branch] = {
+                "maximum_" + metric: (
+                    float(np.max([c[metric] for c in selected])) if selected else None
+                )
+                for metric in ("newton_consistency_ratio", "local_charge_ratio", "normalized_error")
+            }
     return {
         "checked_finite_step_count": len(checks),
         "maximum_error_A_m2": float(np.max(raw_errors)),
@@ -132,8 +184,54 @@ def _trap_storage_summary(physical_records):
         "maximum_current_error_limit_A_m2": float(max(c["current_error_limit_A_m2"] for c in checks)),
         "certified": bool(finite_ratios and np.all(np.isfinite(raw_errors))
                           and all(c["certified"] for c in checks)),
+        "branch_counts": branch_counts,
+        "branch_maxima": branch_maxima,
+        "nontrivial_definition": "finite strictly positive raw trap-storage error",
+        "charge_scale_floor_active_step_count": sum(c["charge_scale_floor_active"] for c in checks),
         "scope": "all_finite_accepted_steps_across_all_nested_levels",
     }
+
+
+def _physical_step_checks(physical, *, finite_step, policy):
+    """Collect every applicable physical violation before observation or failure."""
+    checks = {}
+
+    def scalar_check(name, value, limit, *, source):
+        value = float(value)
+        reason = (name + "_nonfinite" if not np.isfinite(value)
+                  else name + "_exceeds_limit" if value > limit else None)
+        checks[name] = {
+            "applicable": True, "value": value, "limit": float(limit),
+            "passed": reason is None, "failure_reason": reason, "source": source,
+        }
+
+    for key, limit in _PHYSICAL_LIMITS:
+        if not finite_step and key in ("charge_balance_normalized", "contact_internal_current_spread_relative"):
+            checks[key] = {
+                "applicable": False, "value": None, "limit": limit, "passed": None,
+                "failure_reason": None, "reason": "no_positive_duration_time_step",
+            }
+        else:
+            scalar_check(key, physical[key], limit,
+                         source="finite_step" if finite_step else "initial_algebraic_state")
+    trap = physical["trap_storage_check"]
+    checks["trap_storage"] = {
+        "applicable": trap["applicable"], "value": trap.get("normalized_error"),
+        "limit": 1.0, "passed": trap["certified"],
+        "failure_reason": trap.get("failure_reason"),
+        "source": "finite_step" if finite_step else "compatibility_placeholder_not_computed",
+    }
+    if not finite_step:
+        # These are the evaluated derivative right limits, with their original
+        # current-at-state policy limits, not the finite-step placeholders.
+        for key, limit in (
+            ("charge_balance_normalized", policy.maximum_charge_balance_relative_error),
+            ("contact_internal_current_spread_relative", policy.maximum_all_face_current_spread_relative),
+        ):
+            scalar_check("regular_right_limit_" + key, physical["regular_right_limit"][key],
+                         limit, source="initial_event.regular_current")
+    reasons = [check["failure_reason"] for check in checks.values() if check["failure_reason"]]
+    return {"checks": checks, "passed": not reasons, "reasons": reasons}
 
 
 def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD", policy=None):
@@ -306,45 +404,77 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
             )
             if previous is None:
                 physical = dict(physical)
-                physical.pop("trap_storage_error_A_m2", None)
+                # Preserve the legacy shape without claiming a measured zero.
+                physical["trap_storage_error_A_m2"] = 0.0
                 # At 0+ the derivative displacement is nonzero; its truthful
                 # observation is the separately evaluated right-limit record.
                 for key in ("contact_maxwell_A_m2", "contact_displacement_A_m2", "internal_maxwell_A_m2",
                             "contact_internal_current_spread_relative"):
                     physical.pop(key, None)
                 physical["regular_right_limit"] = initial.event["regular_current"]
+                physical["initial_algebraic_certificate"] = initial.event["algebraic_certificate"]
                 integrated[substeps] = 0.0
             else:
                 physical_records.append(physical)
                 integrated[substeps] += float(working.polarity * physical["contact_maxwell_A_m2"][0] * dt)
+            physical_checks = _physical_step_checks(physical, finite_step=previous is not None, policy=policy)
             item = {
                 "phase": "0+" if previous is None else "accepted_regular_step",
                 "time_s": float(time), "dt_s": float(dt), "substeps": int(substeps),
                 "scaled_nonlinear_residual": float(residual), "state": snapshot(working, state),
                 "physical": json_data(physical),
+                "solver_accepted": previous is not None,
+                "physical_checks": json_data(physical_checks),
+                "physical_checks_passed": physical_checks["passed"],
+                "physical_failure_reasons": list(physical_checks["reasons"]),
                 "regular_integrated_charge_C_m2": integrated[substeps],
             }
             accepted.append(item)
-            if previous is not None and not physical["trap_storage_check"]["certified"]:
-                # Retain the offending row before raising. A nonfinite metric
-                # must reach the failure serializer, not first fail an ordinary
-                # accepted-step JSON writer with an unrelated serialization error.
-                trap_storage = _trap_storage_summary(physical_records)
+            reasons = physical_checks["reasons"]
+            if reasons:
                 record["certificate"] = {
-                    "certified": False, "reasons": [_TRAP_STORAGE_FAILURE_REASON], "scope": SCOPE,
-                    "maximum_trap_storage_error_A_m2": trap_storage["maximum_error_A_m2"],
-                    "trap_storage": json_data(trap_storage),
+                    "certified": False, "reasons": list(reasons), "scope": SCOPE,
+                    "failed_record_index": len(accepted) - 1,
+                    "physical_checks": json_data(physical_checks),
                 }
-                raise R1RunError("R1 accepted step failed " + _TRAP_STORAGE_FAILURE_REASON, record)
+                if physical_records:
+                    trap_storage = _trap_storage_summary(physical_records)
+                    record["certificate"].update({
+                        "maximum_trap_storage_error_A_m2": trap_storage["maximum_error_A_m2"],
+                        "trap_storage": json_data(trap_storage),
+                    })
+                record["failure"] = {
+                    "type": "PhysicalCheckFailure", "message": ", ".join(reasons),
+                    "reasons": list(reasons), "record_index": len(accepted) - 1,
+                }
+            persistence_error = None
             if accepted_step_observer is not None:
-                accepted_step_observer(item)
-            if previous is not None and any(
-                physical[key] > limit or not np.isfinite(physical[key])
-                for key, limit in (("gauss_normalized", 1e-10), ("charge_balance_normalized", 1e-10),
-                                   ("inventory_relative_drift", 1e-10),
-                                   ("contact_internal_current_spread_relative", 2e-6))
-            ):
-                raise R1RunError("R1 accepted step failed physical contact/charge gates", record)
+                try:
+                    # The observer receives every complete row, including a
+                    # solver-accepted row that fails several physical gates.
+                    accepted_step_observer(item)
+                except Exception as exc:
+                    persistence_error = exc
+                    persistence_failure = {
+                        "reason": _PERSISTENCE_FAILURE_REASON,
+                        "type": type(exc).__name__, "message": str(exc),
+                        "record_index": len(accepted) - 1, "time_s": float(time),
+                        "substeps": int(substeps),
+                    }
+                    item["persistence_failure"] = persistence_failure
+                    record["persistence_failure"] = persistence_failure
+            if reasons:
+                if persistence_error is not None:
+                    record["certificate"]["secondary_reasons"] = [_PERSISTENCE_FAILURE_REASON]
+                    record["failure"]["persistence_failure"] = record["persistence_failure"]
+                raise R1RunError("R1 row failed physical gates: " + ", ".join(reasons), record) from persistence_error
+            if persistence_error is not None:
+                record["certificate"] = {
+                    "certified": False, "reasons": [_PERSISTENCE_FAILURE_REASON], "scope": SCOPE,
+                    "failed_record_index": len(accepted) - 1,
+                }
+                record["failure"] = record["persistence_failure"]
+                raise R1RunError("R1 row failed " + _PERSISTENCE_FAILURE_REASON, record) from persistence_error
 
         levels = tuple(
             _integrate_trace(initial.system, times, np.full(times.size, amplitude), substeps, policy,

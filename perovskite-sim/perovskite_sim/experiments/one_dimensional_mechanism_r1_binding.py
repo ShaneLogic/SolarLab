@@ -7,17 +7,32 @@ import json
 from pathlib import Path
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import validate_binding
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
+    R1CheckoutError, require_r1_checkout,
+)
 
 
 STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 STUDY_INPUT_PATH = Path(__file__).resolve().parents[2] / STUDY_INPUT_RELATIVE_PATH
 
 
+def _checked_study_input():
+    context = require_r1_checkout()
+    try:
+        path = Path(STUDY_INPUT_PATH)
+        same_input = path.resolve() == context.study_input.resolve() and path.samefile(context.study_input)
+    except (OSError, TypeError, ValueError):
+        same_input = False
+    if not same_input:
+        raise R1CheckoutError("R1 study input must use the canonical tracked checkout path")
+    return context.study_input
+
+
 def study_input_identity():
     """Bind prepared source identity to the repository-owned study protocol."""
     return {
         "path": STUDY_INPUT_RELATIVE_PATH,
-        "sha256": hashlib.sha256(STUDY_INPUT_PATH.read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(_checked_study_input().read_bytes()).hexdigest(),
     }
 
 
@@ -28,8 +43,9 @@ def validate_r1_study_binding(binding, stack):
     input or the binding's own claimed digest. JSON file formatting is not
     part of binding identity; archive manifests independently seal file bytes.
     """
+    study_input = _checked_study_input()
     validate_binding(binding, stack)
-    study = json.loads(STUDY_INPUT_PATH.read_text(encoding="utf-8"))
+    study = json.loads(study_input.read_text(encoding="utf-8"))
     if (
         not isinstance(study, dict)
         or study.get("schema") != "one-dimensional-mechanism-r1-1-input-v1"
