@@ -22,8 +22,8 @@ export function mountEQEPane(container: HTMLElement, opts: EQEPaneOptions): void
       <div id="eqe-tmm-banner" class="status error"${showBanner ? '' : ' hidden'} role="alert" style="display:${showBanner ? 'block' : 'none'};margin-bottom:0.5rem;">${NON_TMM_MSG}</div>
       <div class="form-grid">
         ${numField('eqe-N', 'N<sub>grid</sub>', 60, '1')}
-        ${numField('eqe-lmin', '\u03bb<sub>min</sub> (nm)', 300, '1')}
-        ${numField('eqe-lmax', '\u03bb<sub>max</sub> (nm)', 1000, '1')}
+        ${numField('eqe-lmin', '\u03bb<sub>min</sub> (nm)', 300, '1', 'scientific')}
+        ${numField('eqe-lmax', '\u03bb<sub>max</sub> (nm)', 1000, '1', 'scientific')}
         ${numField('eqe-nl', 'Wavelength points', 80, '1')}
         ${numField('eqe-phi', '\u03a6<sub>inc</sub> (ph/m\u00b2/s)', 1e22, 'any')}
         ${numField('eqe-tset', 't<sub>settle</sub> (s)', 1e-1, 'any')}

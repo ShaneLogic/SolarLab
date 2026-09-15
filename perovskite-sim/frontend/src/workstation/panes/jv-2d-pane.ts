@@ -24,7 +24,7 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
     <div class="card">
       <h3>Sweep settings</h3>
       <div class="form-grid">
-        ${numField('jv2d-Lx-nm', 'Lateral <i>L</i><sub>x</sub> (nm)', 500, '1')}
+        ${numField('jv2d-Lx-nm', 'Lateral <i>L</i><sub>x</sub> (nm)', 500, '1', 'scientific')}
         ${numField('jv2d-Nx', 'N<sub>x</sub> (intervals)', 10, '1')}
         ${numField('jv2d-Nyl', 'N<sub>y</sub> per layer', 20, '1')}
         ${numField('jv2d-vmax', 'V<sub>max</sub> (V)', 1.2, 'any')}

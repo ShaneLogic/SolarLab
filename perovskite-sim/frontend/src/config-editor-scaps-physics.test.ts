@@ -81,7 +81,7 @@ describe('SCAPS-validation physics panel structure', () => {
     renderDeviceEditor(container, cfg({ dos_band_potentials: true, het_recomb_despike: 0.53 }), 'full')
     expect((document.getElementById('dev-dos') as HTMLInputElement).checked).toBe(true)
     expect((document.getElementById('dev-flatband') as HTMLInputElement).checked).toBe(false)
-    expect((document.getElementById('dev-despike') as HTMLInputElement).value).toBe('0.53')
+    expect((document.getElementById('dev-despike') as HTMLInputElement).value).toBe('5.3e-1')
   })
 
   it('renders an absent DOS flag as enabled to match the backend default', () => {

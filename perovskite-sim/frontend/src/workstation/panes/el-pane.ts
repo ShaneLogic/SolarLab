@@ -22,8 +22,8 @@ export function mountELPane(container: HTMLElement, opts: ELPaneOptions): void {
       <div id="el-tmm-banner" class="status error"${showBanner ? '' : ' hidden'} role="alert" style="display:${showBanner ? 'block' : 'none'};margin-bottom:0.5rem;">${NON_TMM_MSG}</div>
       <div class="form-grid">
         ${numField('el-V', 'V<sub>inj</sub> (V)', 1.0, 'any')}
-        ${numField('el-lmin', '&lambda;<sub>min</sub> (nm)', 400, '1')}
-        ${numField('el-lmax', '&lambda;<sub>max</sub> (nm)', 1000, '1')}
+        ${numField('el-lmin', '&lambda;<sub>min</sub> (nm)', 400, '1', 'scientific')}
+        ${numField('el-lmax', '&lambda;<sub>max</sub> (nm)', 1000, '1', 'scientific')}
         ${numField('el-nl', 'Wavelength points', 25, '1')}
         ${numField('el-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('el-nd', 'Dark J&ndash;V points', 30, '1')}

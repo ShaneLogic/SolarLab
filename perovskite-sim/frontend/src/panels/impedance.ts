@@ -4,6 +4,7 @@ import { startJob, streamJobEvents } from '../job-stream'
 import { createProgressBar, type ProgressBarHandle } from '../progress'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'
 import { checkField, numField, readCheck, readNum, setStatus } from '../ui-helpers'
+import { setNumberInputValue } from '../number-input'
 import {
   collectImpedanceEvidenceWarnings,
   summarizeImpedanceEvidence,
@@ -97,7 +98,7 @@ export async function mountImpedancePanel(root: HTMLElement): Promise<void> {
         : { 'is-N': 40, 'is-nf': 15, 'is-fmin': 10, 'is-fmax': 1e5 }
     for (const [id, value] of Object.entries(presets)) {
       const input = root.querySelector<HTMLInputElement>(`#${id}`)
-      if (input) input.value = String(value)
+      if (input) setNumberInputValue(input, value)
     }
     syncMethodControls()
   })

@@ -26,7 +26,7 @@ import { mountTandemPane } from './panes/tandem-pane'
 import { mountMainPlotPane } from './panes/main-plot-pane'
 import type { MainPlotHandle } from './panes/main-plot-pane'
 import { presetsFromEntries, showWizard } from './wizard'
-import { restoreLayoutConfig } from './layout-persistence'
+import { configureDockLayout, restoreLayoutConfig } from './layout-persistence'
 import { bindMobileSidebarToggle } from './mobile-sidebar'
 
 const DEFAULT_LAYOUT: LayoutConfig = {
@@ -266,16 +266,14 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     mountTandemPane(container.element)
   })
   layout.registerComponentFactoryFunction('main-plot', (container) => {
-    mainPlot = mountMainPlotPane(container.element)
-    mainPlot.update(workspace)
+    const plotPane = mountMainPlotPane(container.element)
+    mainPlot = plotPane
+    plotPane.update(workspace)
+    container.on('destroy', () => plotPane.dispose())
   })
 
   function loadResponsiveLayout(config: LayoutConfig): void {
-    layout.loadLayout({
-      ...config,
-      settings: { ...config.settings, responsiveMode: 'always' },
-      dimensions: { ...config.dimensions, defaultMinItemWidth: '320px' },
-    })
+    layout.loadLayout(configureDockLayout(config))
     focusComponent('device')
   }
 

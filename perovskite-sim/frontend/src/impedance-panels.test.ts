@@ -112,8 +112,8 @@ describe('impedance points-per-cycle controls', () => {
     method.dispatchEvent(new Event('change'))
 
     expect((document.getElementById('is-N') as HTMLInputElement).value).toBe('60')
-    expect((document.getElementById('is-fmin') as HTMLInputElement).value).toBe('0.000001')
-    expect((document.getElementById('is-fmax') as HTMLInputElement).value).toBe('10')
+    expect((document.getElementById('is-fmin') as HTMLInputElement).value).toBe('1e-6')
+    expect((document.getElementById('is-fmax') as HTMLInputElement).value).toBe('1e1')
     expect((document.getElementById('is-nf') as HTMLInputElement).value).toBe('29')
     expect((document.getElementById('is-ppc') as HTMLInputElement).disabled).toBe(true)
     expect(
@@ -140,8 +140,8 @@ describe('impedance points-per-cycle controls', () => {
     method.value = 'transient_ion_aware'
     method.dispatchEvent(new Event('change'))
 
-    expect((document.getElementById('is-fmin') as HTMLInputElement).value).toBe('10')
-    expect((document.getElementById('is-fmax') as HTMLInputElement).value).toBe('100000')
+    expect((document.getElementById('is-fmin') as HTMLInputElement).value).toBe('1e1')
+    expect((document.getElementById('is-fmax') as HTMLInputElement).value).toBe('1e5')
     expect((document.getElementById('is-nf') as HTMLInputElement).value).toBe('15')
     expect((document.getElementById('is-ppc') as HTMLInputElement).disabled).toBe(false)
     expect(
@@ -168,8 +168,8 @@ describe('impedance points-per-cycle controls', () => {
 
     expect((document.getElementById('is-N') as HTMLInputElement).value).toBe('12')
     expect((document.getElementById('is-nf') as HTMLInputElement).value).toBe('33')
-    expect((document.getElementById('is-fmin') as HTMLInputElement).value).toBe('0.0001')
-    expect((document.getElementById('is-fmax') as HTMLInputElement).value).toBe('1000000000000')
+    expect((document.getElementById('is-fmin') as HTMLInputElement).value).toBe('1e-4')
+    expect((document.getElementById('is-fmax') as HTMLInputElement).value).toBe('1e12')
     expect((document.getElementById('is-ppc') as HTMLInputElement).disabled).toBe(true)
     expect((document.getElementById('is-defect-order') as HTMLInputElement).disabled).toBe(false)
     expect((document.getElementById('is-strict') as HTMLInputElement).checked).toBe(true)

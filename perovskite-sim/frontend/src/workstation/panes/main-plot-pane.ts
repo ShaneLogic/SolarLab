@@ -43,6 +43,7 @@ import type {
 
 export interface MainPlotHandle {
   update(ws: Workspace): void
+  dispose(): void
 }
 
 export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
@@ -54,12 +55,38 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
 
   const header = container.querySelector<HTMLDivElement>('#mpp-header')!
   const plotEl = container.querySelector<HTMLDivElement>('#mpp-plot')!
+  let disposed = false
+
+  const plots = (): HTMLElement[] => [
+    ...(plotEl.matches('.js-plotly-plot') ? [plotEl] : []),
+    ...plotEl.querySelectorAll<HTMLElement>('.js-plotly-plot'),
+  ]
+
+  function purgePlots(): void {
+    disconnectPlotResizeObserver(plotEl)
+    for (const plot of plots()) {
+      if (plot !== plotEl) Plotly.purge(plot)
+    }
+    Plotly.purge(plotEl)
+  }
+
+  // Plotly's responsive option listens to the window. Dock splitters and
+  // tab changes also change this host's dimensions without a window resize.
+  const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+    if (disposed || !container.isConnected || container.clientWidth === 0 || container.clientHeight === 0) return
+    for (const plot of plots()) {
+      if (plot.clientWidth > 0 && plot.clientHeight > 0) {
+        // A tab can be hidden or replaced before Plotly's async resize ends.
+        void Promise.resolve(Plotly.Plots.resize(plot)).catch(() => {})
+      }
+    }
+  })
+  resizeObserver?.observe(container)
 
   function clear(msg: string): void {
     header.textContent = 'Results'
     header.removeAttribute('title')
-    disconnectPlotResizeObserver(plotEl)
-    Plotly.purge(plotEl)
+    purgePlots()
     plotEl.innerHTML = '<div class="plot-empty"></div>'
     plotEl.firstElementChild!.textContent = msg
   }
@@ -68,6 +95,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
 
   return {
     update(ws: Workspace) {
+      if (disposed) return
       if (!ws.activeRunId || !ws.activeDeviceId || !ws.activeExperimentId) {
         clear('No result selected')
         return
@@ -80,7 +108,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
       const runMode = run.deviceSnapshot?.device?.mode
       header.textContent = `${runMode ? `${runMode.toUpperCase()} · ` : ''}${new Date(run.timestamp).toLocaleString()}`
       header.title = run.activePhysics
-      disconnectPlotResizeObserver(plotEl)
+      purgePlots()
       switch (run.result.kind) {
         case 'jv':
           renderJV(plotEl, run.result.data)
@@ -128,6 +156,12 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
           renderVocGrainSweep(plotEl, run.result.data)
           return
       }
+    },
+    dispose() {
+      if (disposed) return
+      disposed = true
+      resizeObserver?.disconnect()
+      purgePlots()
     },
   }
 }

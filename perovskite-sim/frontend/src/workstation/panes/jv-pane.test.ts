@@ -288,8 +288,8 @@ describe('figure-reference J-V inputs', () => {
     })
     expect(boxes().solver.value).toBe('transient')
     expect((document.getElementById('jvp-waveform-mode') as HTMLSelectElement).value).toBe('continuous')
-    expect((document.getElementById('jvp-waveform-turnaround') as HTMLInputElement).value).toBe('3')
-    expect((document.getElementById('jvp-waveform-atol') as HTMLInputElement).value).toBe('1')
+    expect((document.getElementById('jvp-waveform-turnaround') as HTMLInputElement).value).toBe('3e0')
+    expect((document.getElementById('jvp-waveform-atol') as HTMLInputElement).value).toBe('1e0')
     document.getElementById('btn-jvp')!.click()
     await vi.waitFor(() => expect(startJob).toHaveBeenCalledOnce())
     expect(vi.mocked(startJob).mock.calls[0]).toEqual(['jv', config, figureReference.request.params])
@@ -320,7 +320,7 @@ describe('figure-reference J-V inputs', () => {
     config = figureConfig()
     pane.updateDevice()
     const rate = document.getElementById('jvp-rate') as HTMLInputElement
-    expect(rate.value).toBe('0.04')
+    expect(rate.value).toBe('4e-2')
     rate.value = '0.08'
     config.layers[1].D_ion = 5.17e-19
     pane.updateDevice()
@@ -345,7 +345,7 @@ describe('figure-reference J-V inputs', () => {
     config = { device: { Phi: 2e21 }, layers: [] }
     pane.updateDevice()
     expect(grid.value).toBe('80')
-    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('1')
+    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('1e0')
     expect((document.getElementById('jvp-waveform-mode') as HTMLSelectElement).value).toBe('standard')
   })
 
@@ -363,8 +363,8 @@ describe('figure-reference J-V inputs', () => {
     expect(rate.value).toBe('0.2')
     expect(hold.value).toBe('0')
     pane.updateDevice(true)
-    expect(rate.value).toBe('0.04')
-    expect(hold.value).toBe('3')
+    expect(rate.value).toBe('4e-2')
+    expect(hold.value).toBe('3e0')
   })
 
   it('restores the figure rate after leaving a charged-interface solver lock', () => {
@@ -375,7 +375,7 @@ describe('figure-reference J-V inputs', () => {
     expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('0')
     config = figureConfig()
     pane.updateDevice()
-    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('0.04')
+    expect((document.getElementById('jvp-rate') as HTMLInputElement).value).toBe('4e-2')
     expect(boxes().solver.value).toBe('transient')
     expect(boxes().solver.disabled).toBe(false)
   })

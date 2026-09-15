@@ -124,8 +124,8 @@ describe('built-in-potential source editor', () => {
     })
     renderDeviceEditor(container, original, 'full')
 
-    expect((document.getElementById('dev-W-left') as HTMLInputElement).value).toBe('5.2')
-    expect((document.getElementById('dev-W-right') as HTMLInputElement).value).toBe('4.1')
+    expect((document.getElementById('dev-W-left') as HTMLInputElement).value).toBe('5.2e0')
+    expect((document.getElementById('dev-W-right') as HTMLInputElement).value).toBe('4.1e0')
     const out = readDeviceEditor(original)
     expect(out.device.built_in_potential_mode).toBe('metal_work_function')
     expect(out.device.work_function_left_eV).toBe(5.2)

@@ -57,6 +57,9 @@ interface ExperimentGroup {
 }
 
 export function mountExperimentPane(container: HTMLElement, opts: ExperimentPaneOptions): ExperimentPaneHandle {
+  // Golden Layout clips component content by default. Make the host own the
+  // scroll area so long forms (including the Calado scan history) stay usable.
+  container.classList.add('pane', 'pane-experiments')
   // Reads the kind from run.result.kind at commit time instead of pre-binding
   // it per pane. Lets the J-V pane dispatch one of {jv, current_decomp,
   // spatial} dynamically based on its "decompose current" / "save spatial

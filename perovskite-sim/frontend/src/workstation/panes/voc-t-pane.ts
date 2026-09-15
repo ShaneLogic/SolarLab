@@ -14,8 +14,8 @@ export function mountVocTPane(container: HTMLElement, opts: VocTPaneOptions): vo
     <div class="card">
       <h3>Temperature sweep</h3>
       <div class="form-grid">
-        ${numField('voct-Tmin', 'T<sub>min</sub> (K)', 250, '1')}
-        ${numField('voct-Tmax', 'T<sub>max</sub> (K)', 350, '1')}
+        ${numField('voct-Tmin', 'T<sub>min</sub> (K)', 250, '1', 'scientific')}
+        ${numField('voct-Tmax', 'T<sub>max</sub> (K)', 350, '1', 'scientific')}
         ${numField('voct-np', 'T points', 6, '1')}
         ${numField('voct-N', 'N<sub>grid</sub>', 60, '1')}
         ${numField('voct-jvnp', 'J&ndash;V points per T', 30, '1')}

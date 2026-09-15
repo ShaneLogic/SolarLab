@@ -23,7 +23,7 @@ export function mountDynamicDefectTransientPane(
       <h3>Certified Defect–Ion Transient</h3>
       <div class="form-grid">
         ${numField('dit-N', 'N<sub>grid</sub>', initialEligibility.N_grid, '1')}
-        ${numField('dit-dv', 'Voltage step (mV)', 50, '1')}
+        ${numField('dit-dv', 'Voltage step (mV)', 50, '1', 'scientific')}
         ${numField('dit-t1', 'Early sample (s)', 1e-8, 'any')}
         ${numField('dit-t2', 'Intermediate sample (s)', 1e-6, 'any')}
         ${numField('dit-tend', 'End time (s)', 1e-4, 'any')}

@@ -1,4 +1,5 @@
 import { checkField, numField } from './ui-helpers'
+import { formatNumberInput, readNumberInput, setNumberInputValue } from './number-input'
 import type { JVSweepDefaults, JVWaveform, JVWaveformEvidence } from './types'
 
 export function mountJVWaveformControls(
@@ -36,12 +37,28 @@ export function mountJVWaveformControls(
   const select = (name: string) => container.querySelector<HTMLSelectElement>(`#${id(name)}`)!
   const mode = select('mode')
   const fields = container.querySelector<HTMLElement>(`#${id('fields')}`)!
-  const readShared = () => [shared.rate.value, shared.maximum.value, shared.points.value]
-  const writeShared = (values: string[]) => {
-    ;[shared.rate.value, shared.maximum.value, shared.points.value] = values
+  const sharedInputs = [shared.rate, shared.maximum, shared.points]
+  const readShared = () => sharedInputs.map(field => ({
+    value: field.value,
+    canonical: field.dataset.numberValue,
+    display: field.dataset.numberDisplay,
+  }))
+  const writeShared = (values: ReturnType<typeof readShared>) => {
+    sharedInputs.forEach((field, index) => {
+      const state = values[index]
+      field.value = state.value
+      if (state.canonical === undefined) delete field.dataset.numberValue
+      else field.dataset.numberValue = state.canonical
+      if (state.display === undefined) delete field.dataset.numberDisplay
+      else field.dataset.numberDisplay = state.display
+    })
   }
   let standardValues = readShared()
-  let continuousValues = ['0.04', '1.2', '111']
+  let continuousValues: ReturnType<typeof readShared> = [0.04, 1.2, 111].map((value, index) => ({
+    value: formatNumberInput(value, index === 2 ? 'integer' : 'scientific'),
+    canonical: String(value),
+    display: formatNumberInput(value, index === 2 ? 'integer' : 'scientific'),
+  }))
   const syncVisibility = () => {
     const active = mode.value === 'continuous'
     fields.hidden = !active
@@ -71,7 +88,7 @@ export function mountJVWaveformControls(
     if (field.value.trim() === '' || !Number.isFinite(Number(field.value))) {
       throw new Error(`${field.closest('label')?.textContent?.trim() ?? name} is required`)
     }
-    return Number(field.value)
+    return readNumberInput(field)
   }
   return {
     applyDefaults(defaults: JVSweepDefaults | undefined) {
@@ -83,22 +100,24 @@ export function mountJVWaveformControls(
         return
       }
       if (mode.value === 'standard') standardValues = readShared()
-      continuousValues = [String(defaults.v_rate), String(defaults.V_max), String(defaults.n_points)]
       mode.value = 'continuous'
-      writeShared(continuousValues)
+      setNumberInputValue(shared.rate, defaults.v_rate, 'scientific')
+      setNumberInputValue(shared.maximum, defaults.V_max, 'scientific')
+      setNumberInputValue(shared.points, defaults.n_points, 'integer')
+      continuousValues = readShared()
       const waveform = defaults.waveform
-      input('start').value = String(waveform.start_voltage_V)
-      input('seed').value = String(waveform.dark_seed_s)
-      input('prep').value = String(waveform.dark_prep_s)
-      input('dwell').value = String(waveform.branch_dwell_s)
-      input('turnaround').value = String(waveform.turnaround_s)
+      setNumberInputValue(input('start'), waveform.start_voltage_V)
+      setNumberInputValue(input('seed'), waveform.dark_seed_s)
+      setNumberInputValue(input('prep'), waveform.dark_prep_s)
+      setNumberInputValue(input('dwell'), waveform.branch_dwell_s)
+      setNumberInputValue(input('turnaround'), waveform.turnaround_s)
       input('dark').checked = waveform.turnaround_dark
       select('generation').value = waveform.uniform_generation_rate_m3_s === null ? 'device' : 'uniform'
       if (waveform.uniform_generation_rate_m3_s !== null) {
-        input('G').value = String(waveform.uniform_generation_rate_m3_s)
+        setNumberInputValue(input('G'), waveform.uniform_generation_rate_m3_s)
       }
-      input('rtol').value = String(defaults.waveform_controls.rtol)
-      input('atol').value = String(defaults.waveform_controls.atol_m3)
+      setNumberInputValue(input('rtol'), defaults.waveform_controls.rtol)
+      setNumberInputValue(input('atol'), defaults.waveform_controls.atol_m3)
       syncVisibility()
     },
     setEnabled(enabled: boolean) {

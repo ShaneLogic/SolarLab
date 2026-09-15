@@ -1192,6 +1192,10 @@ html, body, #app {
 .workstation-dock .lm_content {
   background: var(--bg);
 }
+.workstation-dock .lm_splitter:hover,
+.workstation-dock .lm_splitter.lm_dragging {
+  background: var(--border-strong);
+}
 
 /* ---------- Help pane / legacy pane inner tabs ---------- */
 .help-tabs, .legacy-tabs {
@@ -1364,11 +1368,30 @@ html, body, #app {
 
 /* ── Experiment selector ─────────────────────────────────────────── */
 
+.pane-experiments {
+  scrollbar-gutter: stable;
+}
+.pane-experiments .form-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
+}
+.pane-experiments .form-group {
+  min-width: 0;
+}
+.pane-experiments .form-check > input {
+  flex-shrink: 0;
+}
+.pane-experiments .actions {
+  flex-wrap: wrap;
+}
+.pane-experiments .status {
+  overflow-wrap: anywhere;
+}
 .experiment-pane {
   padding: 0.25rem;
 }
 .experiment-selector {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   padding: 0.625rem 0.75rem;
@@ -1391,7 +1414,7 @@ html, body, #app {
  */
 .experiment-dropdown {
   position: relative;
-  flex: 1;
+  flex: 1 1 170px;
   min-width: 0;
 }
 .experiment-dropdown-button {

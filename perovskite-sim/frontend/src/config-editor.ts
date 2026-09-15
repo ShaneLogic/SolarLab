@@ -16,6 +16,7 @@ import type {
 } from './types'
 import { isLayerRole } from './types'
 import { isFieldVisible } from './workstation/tier-gating'
+import { formatNumberInput as fmt, numberInputAttributes, readNumberInput } from './number-input'
 
 const MODE_OPTIONS: ReadonlyArray<{ value: SimulationModeName; label: string }> = [
   { value: 'full', label: 'Full (constitutive extensions)' },
@@ -299,16 +300,6 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function fmt(v: unknown): string {
-  if (v === undefined || v === null || v === '') return ''
-  const n = typeof v === 'number' ? v : Number(v)
-  if (!Number.isFinite(n)) return ''
-  if (n === 0) return '0'
-  const abs = Math.abs(n)
-  if (abs >= 1e-3 && abs < 1e4) return String(n)
-  return n.toExponential(3)
-}
-
 interface NumAttrOpts {
   /** Hint shown when the input is empty — used for "0 / disabled" sentinels. */
   placeholder?: string
@@ -319,7 +310,7 @@ interface NumAttrOpts {
 function numAttr(id: string, value: unknown, opts?: NumAttrOpts): string {
   const placeholderAttr = opts?.placeholder ? ` placeholder="${escapeHtml(opts.placeholder)}"` : ''
   const titleAttr = opts?.title ? ` title="${escapeHtml(opts.title)}"` : ''
-  return `<input type="text" class="num-input" id="${id}" value="${fmt(value)}" spellcheck="false"${placeholderAttr}${titleAttr}>`
+  return `<input type="text" class="num-input" id="${id}" ${numberInputAttributes(value)} spellcheck="false"${placeholderAttr}${titleAttr}>`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1531,7 +1522,9 @@ function wireBulkDefectEditors(container: HTMLElement, config: DeviceConfig): vo
       updateDefectSchemaLabel(editor, originalSchema)
     })
     list.addEventListener('input', event => {
-      const row = (event.target as Element | null)?.closest('[data-defect-species]')
+      const target = event.target as HTMLElement | null
+      if (target) delete target.dataset.defectCanonical
+      const row = target?.closest('[data-defect-species]')
       if (row) updateDefectProfileAverage(row)
     })
     units.addEventListener('change', () => {
@@ -1556,7 +1549,7 @@ function wireBulkDefectEditors(container: HTMLElement, config: DeviceConfig): vo
 function parseNum(id: string, fallback: number): number {
   const el = document.getElementById(id) as HTMLInputElement | null
   if (!el) return fallback
-  const v = Number(el.value)
+  const v = readNumberInput(el)
   return Number.isFinite(v) ? v : fallback
 }
 
@@ -1578,7 +1571,7 @@ function parseNumOrNull(
   if (!el) return fallback
   const raw = el.value.trim()
   if (raw === '') return null
-  const v = Number(raw)
+  const v = readNumberInput(el)
   return Number.isFinite(v) ? v : fallback
 }
 

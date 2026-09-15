@@ -1,4 +1,5 @@
 import { startJob, streamJobEvents } from '../../job-stream'
+import { setNumberInputValue } from '../../number-input'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import {
   checkField,
@@ -101,7 +102,7 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
         : { 'imp-N': 40, 'imp-nfreq': 15, 'imp-fmin': 10, 'imp-fmax': 1e5 }
     for (const [id, value] of Object.entries(presets)) {
       const input = container.querySelector<HTMLInputElement>(`#${id}`)
-      if (input) input.value = String(value)
+      if (input) setNumberInputValue(input, value)
     }
     syncMethodControls()
   })

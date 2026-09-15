@@ -214,6 +214,26 @@ describe('explicit bulk-defect layer editor', () => {
     expect(() => readDeviceEditor(original, 1)).toThrow(/cross-section must not be empty/)
   })
 
+  it('preserves exact SI values through unit changes until a displayed value is explicitly retyped', () => {
+    const original = explicitConfig()
+    const exact = 2.567890123456789e21
+    original.layers[1].bulk_defects![0].distribution.total_density_m3 = exact
+    renderDeviceEditor(container, original, 'full', 1)
+    const units = document.getElementById('layer-1-defect-units') as HTMLSelectElement
+    const density = container.querySelector<HTMLInputElement>('[data-defect-field="total_density"]')!
+    expect(density.value).toBe('2.56789e21')
+    expect(readDeviceEditor(original, 1).layers[1].bulk_defects![0].distribution.total_density_m3).toBe(exact)
+    units.value = 'scaps_cgs'
+    units.dispatchEvent(new Event('change'))
+    expect(density.value).toBe('2.56789e15')
+    expect(readDeviceEditor(original, 1).layers[1].bulk_defects![0].distribution.total_density_m3).toBe(exact)
+    density.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(readDeviceEditor(original, 1).layers[1].bulk_defects![0].distribution.total_density_m3).toBe(2.56789e21)
+    units.value = 'si'
+    units.dispatchEvent(new Event('change'))
+    expect(readDeviceEditor(original, 1).layers[1].bulk_defects![0].distribution.total_density_m3).toBe(2.56789e21)
+  })
+
   it('adds and removes species without changing the explicit model selector', () => {
     const original = config()
     renderDeviceEditor(container, original, 'full', 1)
