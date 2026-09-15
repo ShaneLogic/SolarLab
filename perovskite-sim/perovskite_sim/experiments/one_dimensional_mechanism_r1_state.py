@@ -81,8 +81,28 @@ def execution_source():
         str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(package.rglob("*.py"))
     }
-    source = {"files": files, "study_input": study_input_identity()}
+    source = {
+        "files": files, "study_input": study_input_identity(),
+        "run_class": context.run_class if context is not None else "development",
+        "source_commit": context.source_commit if context is not None else None,
+        "source_content_sha256": context.source_content_sha256 if context is not None else None,
+    }
     return {**source, "sha256": digest(source)}
+
+
+def _require_finite_preparation(record):
+    # Imported lazily: the protocol also uses the common-state definitions.
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import nonfinite_numeric_paths
+
+    paths = nonfinite_numeric_paths(record)
+    if paths:
+        error = R1StateError("nonfinite common-state evidence: " + ", ".join(paths))
+        error.result = {
+            "schema": "R1FailedPreparationV1", "raw_preparation": record,
+            "nonfinite_numeric_paths": paths, "certified": False,
+            "reasons": ["nonfinite_numeric_evidence"],
+        }
+        raise error
 
 
 def _preparation_history():
@@ -111,6 +131,7 @@ class R1PreparedState:
 
     @classmethod
     def from_dict(cls, record):
+        _require_finite_preparation(record)
         return cls(canonical(record))
 
     def to_dict(self):
@@ -275,8 +296,6 @@ def prepare_common_state(stack, intervals, binding, *, policy=None):
     dc = system.common_dc_state
     state = system.evaluate(system.initial_coordinate(), 0.0)
     checks = equilibrium_checks(system, state, policy)
-    if not checks["certified"]:
-        raise R1StateError(f"common D equilibrium failed: {checks['reasons']}")
     payload = {
         "schema": STATE_SCHEMA, "kind": "equilibrium_D", "state_time": "0-",
         "preparation_controls": {"nu_I": 1, "nu_t": 1},
@@ -294,15 +313,37 @@ def prepare_common_state(stack, intervals, binding, *, policy=None):
         "environment": {"python": sys.version, "numpy": np.__version__, "scipy": scipy.__version__, "platform": platform.platform()},
         "created_utc": datetime.now(timezone.utc).isoformat(),
     }
+    _require_finite_preparation(payload)
+    if not checks["certified"]:
+        error = R1StateError(f"common D equilibrium failed: {checks['reasons']}")
+        error.result = {"schema": "R1FailedPreparationV1", "raw_preparation": payload,
+                        "certified": False, "reasons": checks["reasons"]}
+        raise error
     payload["sha256"] = digest(payload)
     return R1PreparedState.from_dict(payload)
 
 
-def restore_common_state(prepared, stack, intervals, binding, *, controls=None, policy=None):
+def restore_common_state(prepared, stack, intervals, binding, *, controls=None, policy=None,
+                         expected_prepared_sha256=None):
     """Verify identities and live residuals, then copy the same populations."""
     if not isinstance(prepared, R1PreparedState):
         prepared = R1PreparedState.from_dict(prepared)
     record = prepared.to_dict()
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import current_execution_context
+
+    context = current_execution_context()
+    formal = context is not None and context.run_class == "formal"
+    if formal and expected_prepared_sha256 is None:
+        raise R1StateError("formal common-state import requires an external preparation digest")
+    if expected_prepared_sha256 is not None:
+        if (not isinstance(expected_prepared_sha256, str)
+                or len(expected_prepared_sha256) != 64
+                or any(c not in "0123456789abcdef" for c in expected_prepared_sha256)):
+            raise R1StateError("invalid external preparation digest")
+        if prepared.sha256 != expected_prepared_sha256:
+            raise R1StateError("common-state differs from the external preparation digest")
+    if formal and record.get("source", {}).get("run_class") != "formal":
+        raise R1StateError("formal common-state import rejects development preparation")
     policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)
     controls = controls or R1DynamicsControls()
     validate_r1_study_binding(binding, stack)

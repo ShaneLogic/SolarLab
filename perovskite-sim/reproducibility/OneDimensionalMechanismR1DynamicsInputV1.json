@@ -118,76 +118,28 @@
       "control": "A",
       "nonlinear_factor": 0.001,
       "phase": "0+",
-      "failure": "fixed-population local line search stalled"
-    },
-    {
-      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
-      "amplitude_V": 0.005,
-      "times_s": [
-        0.0,
-        1e-09,
-        1e-08,
-        1e-06,
-        0.0001
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
       ],
-      "refinement_substeps": [
-        1,
-        2,
-        4
-      ],
-      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
-      "case_id": "base_b_n16_factor0p001",
-      "intervals": 16,
-      "control": "B",
-      "nonlinear_factor": 0.001,
-      "phase": "0+",
-      "failure": "fixed-population local line search stalled"
-    },
-    {
-      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
-      "amplitude_V": 0.005,
-      "times_s": [
-        0.0,
-        1e-09,
-        1e-08,
-        1e-06,
-        0.0001
-      ],
-      "refinement_substeps": [
-        1,
-        2,
-        4
-      ],
-      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
-      "case_id": "base_c_n16_factor0p001",
-      "intervals": 16,
-      "control": "C",
-      "nonlinear_factor": 0.001,
-      "phase": "0+",
-      "failure": "fixed-population local line search stalled"
-    },
-    {
-      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
-      "amplitude_V": 0.005,
-      "times_s": [
-        0.0,
-        1e-09,
-        1e-08,
-        1e-06,
-        0.0001
-      ],
-      "refinement_substeps": [
-        1,
-        2,
-        4
-      ],
-      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
-      "case_id": "base_d_n16_factor0p001",
-      "intervals": 16,
-      "control": "D",
-      "nonlinear_factor": 0.001,
-      "phase": "0+",
-      "failure": "fixed-population local line search stalled"
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "d0836b40159bd1d5fe407ad9ee1396a0472cc7276200f6b6367bf5992af41528",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
     },
     {
       "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
@@ -210,99 +162,28 @@
       "control": "A",
       "nonlinear_factor": 0.001,
       "phase": "0+",
-      "failure": "fixed-population local line search stalled"
-    },
-    {
-      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
-      "amplitude_V": 0.005,
-      "times_s": [
-        0.0,
-        1e-09,
-        1e-08,
-        1e-06,
-        0.0001
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
       ],
-      "refinement_substeps": [
-        1,
-        2,
-        4
-      ],
-      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
-      "case_id": "base_d_n32_factor0p001",
-      "intervals": 32,
-      "control": "D",
-      "nonlinear_factor": 0.001,
-      "phase": "0+",
-      "failure": "fixed-population local line search stalled"
-    },
-    {
-      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
-      "amplitude_V": 0.005,
-      "times_s": [
-        0.0,
-        1e-09,
-        1e-08,
-        1e-06,
-        0.0001
-      ],
-      "refinement_substeps": [
-        1,
-        2,
-        4
-      ],
-      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
-      "case_id": "base_a_n64_factor0p001",
-      "intervals": 64,
-      "control": "A",
-      "nonlinear_factor": 0.001,
-      "phase": "0+",
-      "failure": "fixed-population local line search stalled"
-    },
-    {
-      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
-      "amplitude_V": 0.005,
-      "times_s": [
-        0.0,
-        1e-09,
-        1e-08,
-        1e-06,
-        0.0001
-      ],
-      "refinement_substeps": [
-        1,
-        2,
-        4
-      ],
-      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
-      "case_id": "base_d_n64_factor0p001",
-      "intervals": 64,
-      "control": "D",
-      "nonlinear_factor": 0.001,
-      "phase": "0+",
-      "failure": "fixed-population local line search stalled"
-    },
-    {
-      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
-      "amplitude_V": 0.005,
-      "times_s": [
-        0.0,
-        1e-09,
-        1e-08,
-        1e-06,
-        0.0001
-      ],
-      "refinement_substeps": [
-        1,
-        2,
-        4
-      ],
-      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
-      "case_id": "base_d_n32_factor0p01",
-      "intervals": 32,
-      "control": "D",
-      "nonlinear_factor": 0.01,
-      "phase": "finite_step",
-      "failure": "analytic sparse Newton line search stalled at iteration 4"
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "f0c3a24ae191621f20e2e1927046217c216ecd583c5c6e07ebfd5658d7626e49",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
     },
     {
       "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
@@ -325,7 +206,340 @@
       "control": "A",
       "nonlinear_factor": 0.01,
       "phase": "0+",
-      "failure": "fixed-population local line search stalled"
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "4741ad79357e04ed0d7c9453690126cd0479052dd20d2103c159bf7b36def96a",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_a_n64_factor0p001",
+      "intervals": 64,
+      "control": "A",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "c42cbd3bf5313a3ed12f0911cc68c377db4f818bf0b543ba5e3e674e20c73889",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_b_n16_factor0p001",
+      "intervals": 16,
+      "control": "B",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "1bdb4bcf1abafee00d4e331b4035160a7022cbabbad38f107436048f06170fab",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "B",
+      "intervals": 32,
+      "nonlinear_factor": 0.001,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_b_n32_factor0p001",
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "b3c24c5ac4742cf4306a3c414b05286975e84672ebb3f27db24a2ab326340f79",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "0cced191df79a1c1aae40b46fade4cb74ada49a71908e6023e3862d6d9466338",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "B",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_b_n64_factor0p01",
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "a35673fa892db720b10c430fc8dfe02ead12e258f5608aff1d81780baf48cddc",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "3cea9ee0acebc54c9416f899af8cdff72774b439f302076d364812db9d4b0fe2",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "B",
+      "intervals": 64,
+      "nonlinear_factor": 0.001,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_b_n64_factor0p001",
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "d6bd0b9ed795b2cf916d462034c644a0875a7d2ea18ac5b9858f6880b714f7f2",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "3c3890b4198f2b11b531c4cd36368125a5ca5ac24c50eaae443c283347bfabaa",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_c_n16_factor0p001",
+      "intervals": 16,
+      "control": "C",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "a84e2692fe17840077070e91153ecb34c261b9340f4655f56fa00d38feadff46",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "C",
+      "intervals": 32,
+      "nonlinear_factor": 0.001,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_c_n32_factor0p001",
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "280e09bf471f8bad08eab4e029c2de7802e70d1c42761ab87a3f378f9b109180",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "6d901a99887c6dea7e158a00675d152f9fd8379fa631a7262e6d4cace2466eed",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
     },
     {
       "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
@@ -348,7 +562,205 @@
       "control": "C",
       "nonlinear_factor": 0.01,
       "phase": "0+",
-      "failure": "fixed-population local line search stalled"
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "7f1fe9a5d705e985e8f5a6d30a29c1329fdc3a94e89c861c9cca09ca0431cbbc",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "C",
+      "intervals": 64,
+      "nonlinear_factor": 0.001,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_c_n64_factor0p001",
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "bacba540610f784b5a5ff988887e98c574621b68296c51e21a92eff7fe895eaa",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "64230a8935a8000ba2b50c86bb1634f473cb68e95385a9d8e91d46dd9c92278e",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n16_factor0p001",
+      "intervals": 16,
+      "control": "D",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "e7043b07d49b32bcce669dd22eb9fbb1399c1c57ada726b0151c455c0da9f2fb",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n32_factor0p01",
+      "intervals": 32,
+      "control": "D",
+      "nonlinear_factor": 0.01,
+      "phase": "finite_step",
+      "failure": "analytic sparse Newton line search stalled at iteration 4",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "6ef18b9197f4032f72e1efc8913ced93d85546f8fba7c8068e9b12ec916e45a8",
+        "failure_message": "R1 controlled step failed: analytic sparse Newton line search stalled at iteration 4 with residual 0.0500128, charge closure 2.23617e-19, all-face current closure 3.38803e-12, interface current closure 1.0046e-11, linear backward error 1.24795e-16",
+        "persisted_record_count": 7,
+        "persisted_finite_step_count": 5,
+        "physical_passed_finite_step_count": 5
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n32_factor0p001",
+      "intervals": 32,
+      "control": "D",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "68439e9e71e83859d0c5b8ea9a4c2947b9f38b4b268c2f79d4fad20aac71dc63",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
     },
     {
       "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
@@ -371,7 +783,72 @@
       "control": "D",
       "nonlinear_factor": 0.01,
       "phase": "0+",
-      "failure": "fixed-population local line search stalled"
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "c99a0abdf8ffda07b4d18930877357b99da41b7ad0ff026b0388738ca869aaff",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n64_factor0p001",
+      "intervals": 64,
+      "control": "D",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "65bb73c5f5950c902b0e0211dac534fee30587f19fbfbc31cf6abc3b4d69842c",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "persisted_record_count": 0,
+        "persisted_finite_step_count": 0,
+        "physical_passed_finite_step_count": 0
+      }
     }
   ],
   "execution_context": "controlled trusted launcher and frozen source bytes for formal runs; explicit development mode otherwise; approval requires an independently held anchor",
@@ -382,6 +859,67 @@
     "strict_contract": "externally selected evidence revision; no downgrade by bundle self-declaration"
   },
   "known_physical_gate_failures": [
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "B",
+      "intervals": 64,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_b_n64_factor1p0",
+      "phase": "finite_step",
+      "failure": "contact_internal_current_spread_relative_exceeds_limit",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "af7b39859b65f41d55641ab4db86f444cd59b6874e097c7c41e43ffc2938686f",
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "bc37b4c0cd1f840747bda47e0bdb673a429d7bd74a62c3aad7f9d7091595ca8c",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "persisted_record_count": 25,
+        "persisted_finite_step_count": 22,
+        "physical_passed_finite_step_count": 21
+      },
+      "failure_reasons": [
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 24,
+      "observed_time_s": 5.05e-07,
+      "observed_dt_s": 2.475e-07,
+      "observed_refinement_substeps": 4,
+      "observed_checks": {
+        "contact_internal_current_spread_relative": {
+          "value": 2.1279340250367033e-06,
+          "limit": 2e-06,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit"
+        }
+      },
+      "observed_metric": 2.1279340250367033e-06,
+      "limit": 2e-06
+    },
     {
       "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
       "amplitude_V": 0.005,
@@ -407,13 +945,175 @@
       "observed_time_s": 5.05e-07,
       "observed_dt_s": 2.475e-07,
       "observed_refinement_substeps": 4,
-      "observed_metric": 2.1276232966e-06,
-      "limit": 2e-06
+      "observed_metric": 2.1276232966245267e-06,
+      "limit": 2e-06,
+      "coverage_id": "short_functional_5mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "1042722c51d13016eed635731838e6b5ada56348a450d3583b73c99fabc00f3d",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "persisted_record_count": 25,
+        "persisted_finite_step_count": 22,
+        "physical_passed_finite_step_count": 21
+      },
+      "failure_reasons": [
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 24,
+      "observed_checks": {
+        "contact_internal_current_spread_relative": {
+          "value": 2.1276232966245267e-06,
+          "limit": 2e-06,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit"
+        }
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "B",
+      "intervals": 32,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.01,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_b_n32_factor1p0_amplitude0p01",
+      "phase": "finite_step",
+      "failure": "charge_balance_normalized_exceeds_limit, contact_internal_current_spread_relative_exceeds_limit",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "3cdea4882776d4a3e570611fb911215fab5e3255841b2a4f427d5b00fc8a03d9",
+      "coverage_id": "supplementary_amplitudes_2p5mV_10mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "8f208eac29f1b19e2182073d2305b5c544b0f1cc099cb057addb84f0364dbf09",
+        "failure_message": "R1 row failed physical gates: charge_balance_normalized_exceeds_limit, contact_internal_current_spread_relative_exceeds_limit",
+        "persisted_record_count": 25,
+        "persisted_finite_step_count": 22,
+        "physical_passed_finite_step_count": 21
+      },
+      "failure_reasons": [
+        "charge_balance_normalized_exceeds_limit",
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 24,
+      "observed_time_s": 5.05e-07,
+      "observed_dt_s": 2.475e-07,
+      "observed_refinement_substeps": 4,
+      "observed_checks": {
+        "charge_balance_normalized": {
+          "value": 1.2362143191941625e-10,
+          "limit": 1e-10,
+          "failure_reason": "charge_balance_normalized_exceeds_limit"
+        },
+        "contact_internal_current_spread_relative": {
+          "value": 2.0315452264455667e-06,
+          "limit": 2e-06,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit"
+        }
+      }
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "control": "D",
+      "intervals": 32,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.01,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_id": "base_d_n32_factor1p0_amplitude0p01",
+      "phase": "finite_step",
+      "failure": "charge_balance_normalized_exceeds_limit, contact_internal_current_spread_relative_exceeds_limit",
+      "evidence": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json#/FailureRegistry and RefutationsV1.json#/FailureRegistry",
+      "parent_confirmation_manifest_sha256": "4e7c9870df0047b6d65da659f844bf0b81e889db3d9bff71ee1521597dae533e",
+      "coverage_id": "supplementary_amplitudes_2p5mV_10mV",
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+        "manifest_sha256": "f7893d7894f3936b45008d317b30590764dbf1f8b51d5b810338f3b935e3f9ba",
+        "failure_message": "R1 row failed physical gates: charge_balance_normalized_exceeds_limit, contact_internal_current_spread_relative_exceeds_limit",
+        "persisted_record_count": 25,
+        "persisted_finite_step_count": 22,
+        "physical_passed_finite_step_count": 21
+      },
+      "failure_reasons": [
+        "charge_balance_normalized_exceeds_limit",
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 24,
+      "observed_time_s": 5.05e-07,
+      "observed_dt_s": 2.475e-07,
+      "observed_refinement_substeps": 4,
+      "observed_checks": {
+        "charge_balance_normalized": {
+          "value": 1.2361751755518348e-10,
+          "limit": 1e-10,
+          "failure_reason": "charge_balance_normalized_exceeds_limit"
+        },
+        "contact_internal_current_spread_relative": {
+          "value": 2.03124602443833e-06,
+          "limit": 2e-06,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit"
+        }
+      }
     }
   ],
   "known_failure_semantics": {
-    "scope": "observations_at_named_source_commit_only; not extrapolated to unmeasured controls, windows or time refinements",
-    "runtime": "match exact case conditions and report whether signature recurred; never skip computation or waive a gate",
+    "scope": "observations_at_named_source_commit_only; not extrapolated to unmeasured controls, grids, nonlinear factors, amplitudes, windows or time refinements",
+    "runtime": "match exact case conditions and report failure-message recurrence; quantitative observations are historical evidence, not runtime numerical comparison; never skip computation or waive a gate",
     "deduplication_key": [
       "observed_source_commit",
       "control",
@@ -425,5 +1125,109 @@
     ],
     "probe_repeat_count_is_not_unique_case_count": true
   },
-  "finite_evidence": "all numeric leaves in physical/state/derived output checked before digest; nonfinite values fail with field paths and are preserved in failed JSON/NPZ"
+  "finite_evidence": "all numeric leaves in physical/state/derived output checked before digest; nonfinite values fail with field paths and are preserved in failed JSON/NPZ",
+  "known_failure_coverage": [
+    {
+      "coverage_id": "short_functional_5mV",
+      "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+      "controls": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "intervals": [
+        16,
+        32,
+        64
+      ],
+      "nonlinear_factors": [
+        1.0,
+        0.1,
+        0.01,
+        0.001
+      ],
+      "amplitudes_V": [
+        0.005
+      ],
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_count": 48,
+      "passed_case_count": 29,
+      "failed_case_count": 19,
+      "nonconvergence_case_count": 17,
+      "physical_gate_failure_case_count": 2,
+      "independent_sweep_count": 2,
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "3523000af39ae0ab2f9878a7a83584871a9a4fd942a0d29ae68c1eb52124556b",
+          "json_pointer": "/FailureRegistry"
+        },
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "scope": "complete only for this explicitly measured short-trace slice; not the R1-2 convergence matrix"
+    },
+    {
+      "coverage_id": "supplementary_amplitudes_2p5mV_10mV",
+      "observed_source_commit": "84f9131123869a8f55a3589d0f3c435c2add8b35",
+      "controls": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "intervals": [
+        32,
+        64
+      ],
+      "nonlinear_factors": [
+        1.0
+      ],
+      "amplitudes_V": [
+        0.0025,
+        0.01
+      ],
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "case_count": 16,
+      "passed_case_count": 14,
+      "failed_case_count": 2,
+      "nonconvergence_case_count": 0,
+      "physical_gate_failure_case_count": 2,
+      "independent_sweep_count": 1,
+      "evidence_sources": [
+        {
+          "path": "R1StageTwoAcceptanceV1/ReviewV1/RefutationsV1.json",
+          "sha256": "243491a0a93503d00a3e0672c1fad9f85c6ecb724499a4a9867ae5fe2554d445",
+          "json_pointer": "/FailureRegistry"
+        }
+      ],
+      "scope": "supplementary measured amplitude slice; failure sets are nonmonotonic in amplitude; not the full seven-level ladder"
+    }
+  ]
 }

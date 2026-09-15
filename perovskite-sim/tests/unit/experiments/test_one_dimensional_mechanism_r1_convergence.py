@@ -6,9 +6,26 @@ import numpy as np
 import pytest
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import (
-    R1ConvergenceCase, R1Response, base_convergence_cases, compare_amplitude_halving,
+    AMPLITUDES_V, R1ConvergenceCase, R1Response, base_convergence_cases, compare_amplitude_halving,
     compare_responses, convergence_cases, observation_times,
 )
+
+
+# Independently transcribed from StudySpecV1 sections 6 and 10.2. Do not import
+# the implementation's rule table or derive these limits from its reports:
+# these values are the external numerical policy against which it is tested.
+SPEC_AMPLITUDES_V = (.01, .005, .0025, .00125, .000625, .0003125, .00015625)
+SPEC_RESPONSE_RULES = [
+    ("dc_potential", 1e-3, 0., "V"),
+    ("response_potential", 5e-5, .01, "V"),
+    ("carrier_log_density", .01, 0., "1"),
+    ("ion_density_over_p0", .01, 0., "1"),
+    ("trap_occupancy_change", 1e-7, .01, "1"),
+    ("ion_centroid_change", 5e-11, .01, "m"),
+    ("regular_current_response", 1e-7, .005, "A/m2"),
+    ("integrated_charge_response", 1e-10, .005, "C/m2"),
+    ("admittance", 1e-8, .01, "S/m2"),
+]
 
 
 def response(values, *, times=None, components=()):
@@ -76,17 +93,7 @@ def test_extensions_are_explicit_and_bounded():
         convergence_cases(intervals=(16, 16))
 
 
-@pytest.mark.parametrize("quantity,absolute,relative,units", [
-    ("dc_potential", 1e-3, 0., "V"),
-    ("response_potential", 5e-5, .01, "V"),
-    ("carrier_log_density", .01, 0., "1"),
-    ("ion_density_over_p0", .01, 0., "1"),
-    ("trap_occupancy_change", 1e-7, .01, "1"),
-    ("ion_centroid_change", 5e-11, .01, "m"),
-    ("regular_current_response", 1e-7, .005, "A/m2"),
-    ("integrated_charge_response", 1e-10, .005, "C/m2"),
-    ("admittance", 1e-8, .01, "S/m2"),
-])
+@pytest.mark.parametrize("quantity,absolute,relative,units", SPEC_RESPONSE_RULES)
 def test_each_spec_rule_preserves_its_absolute_relative_and_unit_budget(quantity, absolute, relative, units):
     passed = compare_responses(quantity, response([0.]), response([absolute]))
     failed = compare_responses(quantity, response([0.]), response([2*absolute]))
@@ -94,6 +101,59 @@ def test_each_spec_rule_preserves_its_absolute_relative_and_unit_budget(quantity
     assert passed["absolute_tolerance"] == absolute
     assert passed["relative_tolerance"] == relative
     assert passed["units"] == units
+
+
+@pytest.mark.parametrize("quantity,absolute,relative,units", SPEC_RESPONSE_RULES)
+@pytest.mark.parametrize("scale_in_absolute_units", [2., 1e6], ids=["absolute_dominated", "large_signal"])
+def test_spec_acceptance_boundary_and_report_use_the_same_effective_budget(
+        quantity, absolute, relative, units, scale_in_absolute_units):
+    # Keep the larger operand fixed. The section-10.2 boundary then has a
+    # known value independent of the comparator. The two probes are 1 ppm
+    # inside/outside it, well clear of float64 subtraction roundoff, including
+    # the zero-relative rules at a large nonzero baseline.
+    scale = absolute*scale_in_absolute_units
+    limit = absolute + relative*scale
+    parts = [(1., None)] if quantity != "admittance" else [(1., "real"), (1j, "imaginary")]
+    for multiplier, expected in ((1-1e-6, True), (1+1e-6, False)):
+        for sign in (-1., 1.):
+            for factor, part in parts:
+                larger = sign*scale*factor
+                smaller = sign*(scale-multiplier*limit)*factor
+                for left, right in ((larger, smaller), (smaller, larger)):
+                    result = compare_responses(quantity, response([left]), response([right]))
+                    assert result["passed"] is expected
+                    assert result["absolute_tolerance"] == absolute
+                    assert result["relative_tolerance"] == relative
+                    assert result["units"] == units
+                    assert result["maximum_budget_ratio"] == pytest.approx(multiplier, rel=1e-9)
+                    if expected:
+                        assert result["failures"] == []
+                    else:
+                        assert result["failure_count"] == 1
+                        failure = result["failures"][0]
+                        assert failure["reasons"] == ["response_difference_exceeds_budget"]
+                        if part is not None:
+                            assert failure["part"] == part
+                        assert failure["response_scale"] == scale
+                        assert failure["allowed_difference"] == limit
+                        # This is the budget used by the comparison arithmetic,
+                        # not just the static labels in its top-level report.
+                        assert failure["allowed_difference"] == (
+                            result["absolute_tolerance"]
+                            + result["relative_tolerance"]*failure["response_scale"])
+
+
+@pytest.mark.parametrize("quantity,absolute,relative,units", SPEC_RESPONSE_RULES)
+def test_twenty_eight_percent_disagreement_fails_every_spec_rule(quantity, absolute, relative, units):
+    # Review counterexample: an actual .499 relative tolerance can accept this
+    # pair while a report still prints the correct 0/0.005/0.01 policy.
+    result = compare_responses(quantity, response([1e6*absolute]), response([5e6*absolute/7]))
+    assert not result["passed"]
+    assert result["failure_count"] == 1
+    assert result["absolute_tolerance"] == absolute
+    assert result["relative_tolerance"] == relative
+    assert result["units"] == units
+    assert result["failures"][0]["allowed_difference"] == absolute + relative*(1e6*absolute)
 
 
 @pytest.mark.parametrize("side,passed", [(-1, True), (0, True), (1, False)])
@@ -187,6 +247,71 @@ def amplitude_result(coarse, fine, error_coarse, error_fine, **kwargs):
         coarse_amplitude_V=kwargs.get("coarse_amplitude_V", .005),
         fine_amplitude_V=kwargs.get("fine_amplitude_V", .0025),
         coarse_current_error=response(error_coarse), fine_current_error=response(error_fine))
+
+
+def test_section_six_amplitude_ladder_has_exactly_the_seven_declared_values():
+    assert AMPLITUDES_V == SPEC_AMPLITUDES_V
+
+
+@pytest.mark.parametrize("amplitude", SPEC_AMPLITUDES_V)
+def test_every_declared_amplitude_is_usable_for_a_convergence_case(amplitude):
+    case = R1ConvergenceCase(16, (1, 2, 4), .1, amplitude_V=amplitude)
+    assert case.amplitude_V == amplitude
+
+
+@pytest.mark.parametrize("amplitude", [
+    .02, .000078125, 0., -.005,
+    *(np.nextafter(level, direction) for level in SPEC_AMPLITUDES_V
+      for direction in (-np.inf, np.inf)),
+])
+def test_no_extra_or_approximately_declared_amplitude_is_accepted(amplitude):
+    with pytest.raises(ValueError, match="halving level"):
+        R1ConvergenceCase(16, (1, 2, 4), .1, amplitude_V=amplitude)
+
+
+@pytest.mark.parametrize("coarse,fine", list(zip(SPEC_AMPLITUDES_V[:-1], SPEC_AMPLITUDES_V[1:])))
+def test_all_six_adjacent_amplitude_pairs_use_the_reported_one_percent_budget(coarse, fine):
+    # A manufactured g=+/-1 S/m2 response fixes the scale. The measured current
+    # errors separately contribute .002 and .003 S/m2, so the linearity limit
+    # is .005 + .01 = .015 S/m2 at every declared adjacent amplitude pair.
+    for multiplier, expected in ((1-1e-6, True), (1+1e-6, False)):
+        for sign in (-1., 1.):
+            result = amplitude_result(
+                [sign*coarse], [sign*fine*(1-multiplier*.015)],
+                [coarse*.002], [fine*.003],
+                coarse_amplitude_V=coarse, fine_amplitude_V=fine)
+            assert result["passed"] is expected
+            assert result["status"] == ("within_linearity_budget" if expected else "response_not_linear")
+            assert result["coarse_amplitude_V"] == coarse
+            assert result["fine_amplitude_V"] == fine
+            assert result["relative_tolerance"] == .01
+            assert result["maximum_error_budget_signal_fraction"] == .01
+            assert result["absolute_numerical_error_budget_S_m2"] == pytest.approx([.005], rel=1e-14)
+            assert result["normalized_response_scale_S_m2"] == [1.]
+            assert result["maximum_budget_ratio"] == pytest.approx(multiplier, rel=1e-12)
+            if not expected:
+                failure = result["failures"][0]
+                assert failure["allowed_difference"] == pytest.approx(.015, rel=1e-14)
+                assert failure["allowed_difference"] == (
+                    result["absolute_numerical_error_budget_S_m2"][0]
+                    + result["relative_tolerance"]*failure["response_scale"])
+
+
+@pytest.mark.parametrize("coarse,fine", [
+    (coarse, fine) for i, coarse in enumerate(SPEC_AMPLITUDES_V)
+    for j, fine in enumerate(SPEC_AMPLITUDES_V) if j != i+1
+])
+def test_every_reverse_equal_or_nonadjacent_declared_amplitude_pair_is_rejected(coarse, fine):
+    with pytest.raises(ValueError, match="adjacent declared positive halving levels"):
+        amplitude_result([coarse], [fine], [0.], [0.],
+                         coarse_amplitude_V=coarse, fine_amplitude_V=fine)
+
+
+@pytest.mark.parametrize("coarse,fine", [(.02, .01), (.00015625, .000078125), (-.005, -.0025)])
+def test_adjacent_but_out_of_ladder_amplitudes_are_rejected(coarse, fine):
+    with pytest.raises(ValueError, match="adjacent declared positive halving levels"):
+        amplitude_result([coarse], [fine], [0.], [0.],
+                         coarse_amplitude_V=coarse, fine_amplitude_V=fine)
 
 
 def test_amplitude_numerical_error_budget_is_sum_of_separately_normalized_errors():

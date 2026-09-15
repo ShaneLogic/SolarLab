@@ -142,7 +142,7 @@ def _write_startup_failure(arguments, source_commit, exc, started, started_utc):
         return
     failure = {"type": type(exc).__name__, "message": str(exc), "phase": "controlled_startup"}
     completion = {
-        "schema": "R1StageOneCompletionV1", "evidence_revision": 3,
+        "schema": "R1StageOneCompletionV1", "evidence_revision": 4,
         "stage_scope": "R1-1", "stage": request.stage, "status": "failed",
         "run_class": "rejected_before_execution", "failure": failure,
         "requested_source_commit": source_commit,
@@ -231,8 +231,11 @@ def main(argv=None):
         finder.context = context
         # Validate the pinned complete input before running any stage, including
         # when the candidate was committed in a different repository.
-        from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import study_input_identity
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
+            study_input_identity, execution_contract_identity,
+        )
         study_input_identity()
+        execution_contract_identity()
         filename = str(project / RUNNER_PATH)
         module = types.ModuleType("__main__")
         module.__file__ = filename

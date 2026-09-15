@@ -14,10 +14,21 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
 
 STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 STUDY_INPUT_PATH = Path(__file__).resolve().parents[2] / STUDY_INPUT_RELATIVE_PATH
+EXECUTION_CONTRACT_RELATIVE_PATH = "docs/OneDimensionalMechanismR1DynamicsV1.md"
 # A versioned policy pin, not a claim that arbitrary code carrying this value
 # is independently approved. Updating the study input requires explicit repin.
-PINNED_STUDY_INPUT_SHA256 = "6a06878c467efe1b4d1a597ffcc45a8ad566ff347c4cdf868af094a36e8b64ca"
+PINNED_STUDY_INPUT_SHA256 = "3065a31951d4a90e8b0d03d042e3f2c0349cc7d8e792381a275cb05d58a047ca"
 PINNED_REFERENCE_BINDING_SHA256 = "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b"
+PINNED_EXECUTION_CONTRACT_SHA256 = "a0a918d175c7989db60d5924b7600baadd1929cc54c7ac66b3ec3ccdcc1f9955"
+
+
+def execution_contract_identity():
+    """The trusted code pins the contract independently of a supplied bundle."""
+    context = require_r1_checkout()
+    raw = context.read_bytes(EXECUTION_CONTRACT_RELATIVE_PATH)
+    if hashlib.sha256(raw).hexdigest() != PINNED_EXECUTION_CONTRACT_SHA256:
+        raise R1CheckoutError("R1 execution contract differs from the pinned contract digest")
+    return {"path": EXECUTION_CONTRACT_RELATIVE_PATH, "sha256": PINNED_EXECUTION_CONTRACT_SHA256}
 
 
 def _checked_study_input():
@@ -73,4 +84,4 @@ def validate_r1_study_binding(binding, stack):
         raise ValueError("R1-1 reference binding is not the approved study reference")
 
 
-__all__ = ["validate_r1_study_binding", "study_input_identity"]
+__all__ = ["validate_r1_study_binding", "study_input_identity", "execution_contract_identity"]

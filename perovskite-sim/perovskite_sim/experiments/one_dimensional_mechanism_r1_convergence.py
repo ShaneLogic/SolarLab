@@ -21,7 +21,10 @@ BASE_TIME_SUBSTEPS = ((1, 2, 4), (2, 4, 8), (4, 8, 16))
 ALLOWED_TIME_SUBSTEPS = (*BASE_TIME_SUBSTEPS, (8, 16, 32), (16, 32, 64))
 BASE_NONLINEAR_FACTORS = (1.0, 0.1, 0.01)
 ALLOWED_NONLINEAR_FACTORS = (*BASE_NONLINEAR_FACTORS, 0.001)
-AMPLITUDES_V = tuple(0.01 / 2**level for level in range(7))
+# Section 6: the three initial levels and the four permitted extensions.
+AMPLITUDES_V = (.01, .005, .0025, .00125, .000625, .0003125, .00015625)
+_AMPLITUDE_RESPONSE_RELATIVE_TOLERANCE = .01
+_AMPLITUDE_MAXIMUM_ERROR_SIGNAL_FRACTION = .01
 POINTS_PER_DECADE = 12
 
 
@@ -292,7 +295,7 @@ def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitud
         normalized_a, normalized_b = coarse.values/a, fine.values/b
         absolute = error_a/a + error_b/b
         scale = np.maximum(np.abs(normalized_a), np.abs(normalized_b))
-        signal_budget = .01*scale
+        signal_budget = _AMPLITUDE_MAXIMUM_ERROR_SIGNAL_FRACTION*scale
     resolved = np.isfinite(absolute) & np.isfinite(scale) & (scale > 0) & (absolute <= signal_budget)
 
     def reasons(index):
@@ -303,7 +306,7 @@ def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitud
         return []
 
     report = _pointwise(normalized_a, normalized_b, coarse, absolute=absolute,
-                        relative=.01, extra_reasons=reasons)
+                        relative=_AMPLITUDE_RESPONSE_RELATIVE_TOLERANCE, extra_reasons=reasons)
     for failure in report["failures"]:
         index = tuple(failure["index"])
         failure["absolute_numerical_error_budget_S_m2"] = _evidence_number(absolute[index])
@@ -318,7 +321,8 @@ def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitud
         "status": "invalid_comparison" if not valid else "linearity_undetermined" if not np.all(resolved) else "response_not_linear" if failed else "within_linearity_budget",
         "coarse_amplitude_V": a, "fine_amplitude_V": b,
         "absolute_budget_definition": "coarse_current_error/coarse_amplitude + fine_current_error/fine_amplitude",
-        "relative_tolerance": .01, "maximum_error_budget_signal_fraction": .01,
+        "relative_tolerance": _AMPLITUDE_RESPONSE_RELATIVE_TOLERANCE,
+        "maximum_error_budget_signal_fraction": _AMPLITUDE_MAXIMUM_ERROR_SIGNAL_FRACTION,
         "absolute_numerical_error_budget_S_m2": _evidence_array(absolute),
         "normalized_response_scale_S_m2": _evidence_array(scale),
         "resolved": resolved.tolist(),

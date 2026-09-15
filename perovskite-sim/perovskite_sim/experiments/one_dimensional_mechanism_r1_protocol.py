@@ -334,7 +334,8 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
             "nonfinite_numeric_paths": paths}
 
 
-def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD", policy=None):
+def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD", policy=None,
+                          expected_prepared_sha256=None):
     """Check A-D remaining equilibrium equations; do not invent a zero-current relative pass."""
     prepared = _prepared(prepared)
     policy = policy or r1_policy()
@@ -343,7 +344,8 @@ def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD
         for label in controls:
             choice = R1DynamicsControls.from_label(label)
             system, state = restore_common_state(prepared, stack, intervals, binding,
-                                                 controls=choice, policy=policy)
+                                                 controls=choice, policy=policy,
+                                                 expected_prepared_sha256=expected_prepared_sha256)
             checks = equilibrium_checks(system, state, policy)
             initial = build_initial_step(system, state, 0.0, policy=policy)
             results[label] = {
@@ -464,7 +466,8 @@ def _trace_certificate(system, zero_minus, levels, policy, physical_records):
 
 
 def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V=0.005,
-                times_s=None, policy=None, accepted_step_observer=None):
+                times_s=None, policy=None, accepted_step_observer=None,
+                expected_prepared_sha256=None):
     """Integrate from 0+; finite steps contain no ideal charging impulse."""
     prepared = _prepared(prepared)
     choice = control if isinstance(control, R1DynamicsControls) else R1DynamicsControls.from_label(control)
@@ -490,7 +493,8 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
     }
     try:
         system, before = restore_common_state(prepared, stack, intervals, binding,
-                                              controls=choice, policy=policy)
+                                              controls=choice, policy=policy,
+                                              expected_prepared_sha256=expected_prepared_sha256)
         record["junction_polarity"] = system.polarity
         record["current_sign_convention"] = "J_x along +x; reported j = junction_polarity * J_x"
         initial = build_initial_step(system, before, amplitude, policy=policy)

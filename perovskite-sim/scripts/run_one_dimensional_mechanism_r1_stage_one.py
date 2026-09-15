@@ -24,7 +24,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 if not (sys.flags.isolated and sys.flags.no_site):
     sys.path.insert(0, str(PROJECT))
 from run_one_dimensional_mechanism_r1 import (
-    json_ready, manifest, sha256, source_record, write_json,
+    json_ready, sha256, source_record, write_json,
 )
 
 INPUT_PATH = PROJECT / "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
@@ -33,235 +33,20 @@ THREAD_VARIABLES = (
     "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
     "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
 )
-COMMON_ARTIFACTS = frozenset({
-    "CompletionV1.json", "StudyInputV1.json", "SourceFixtureV1.yaml",
-    "ExecutionContractV1.md", "EnvironmentV1.json", "ResolvedStackV1.json",
-    "ProtocolV1.json", "ReferenceBindingV1.json", "PreparedStateV1.json",
-    "SourceV1.zip", "SourceManifestV1.json", "SourceChangesV1.patch",
-})
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_evidence import (
+    COMMON_ARTIFACTS, read_json, _read_json_bytes, _canonical,
+    verify_output, verify_acceptance,
+)
 
 
-def _reject_constant(value):
-    raise ValueError(f"non-finite JSON value: {value}")
-
-
-def _unique_pairs(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON key: {key}")
-        result[key] = value
-    return result
-
-
-def read_json(path):
-    return _read_json_bytes(Path(path).read_bytes())
-
-
-def _read_json_bytes(raw):
-    return json.loads(
-        raw.decode("utf-8"),
-        parse_constant=_reject_constant, object_pairs_hook=_unique_pairs,
-    )
-
-
-def _canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
-def _digest_argument(value, label):
-    if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
-        raise ValueError(f"{label} must be a lowercase SHA-256 digest supplied outside the bundle")
-    return value
-
-
-def _verification_anchor(output, expected_manifest_sha256=None, ledger=None,
-                         ledger_sha256=None, run_id=None):
-    """Resolve a caller-trusted anchor; a bundle never supplies its own trust."""
-    if expected_manifest_sha256 is not None:
-        if ledger is not None or ledger_sha256 is not None or run_id is not None:
-            raise ValueError("choose a manifest digest or a separately anchored ledger")
-        return _digest_argument(expected_manifest_sha256, "expected manifest digest"), None
-    if ledger is None or ledger_sha256 is None or not run_id:
-        raise ValueError("acceptance requires an external manifest digest or ledger, ledger digest and run id")
-    ledger = Path(ledger).resolve(strict=True)
-    if ledger.is_relative_to(output.resolve()):
-        raise ValueError("the acceptance ledger must be outside the bundle")
-    if sha256(ledger) != _digest_argument(ledger_sha256, "expected ledger digest"):
-        raise ValueError("external ledger digest mismatch")
-    value = read_json(ledger)
-    if not isinstance(value, dict) or value.get("schema") != "R1EvidenceLedgerV1":
-        raise ValueError("invalid R1 evidence ledger")
-    if not isinstance(value.get("entries"), dict):
-        raise ValueError("invalid R1 evidence ledger entries")
-    entry = value["entries"].get(run_id)
-    if not isinstance(entry, dict):
-        raise ValueError("run id is absent from the anchored ledger")
-    required = {"manifest_sha256", "stage", "recorded_status", "stage_scope",
-                "source_manifest_sha256", "study_input_sha256", "reference_binding_sha256"}
-    if not required <= entry.keys():
-        raise ValueError("anchored ledger entry lacks required identities")
-    return _digest_argument(entry["manifest_sha256"], "ledger manifest digest"), entry
-
-
-def verify_output(output):
-    """Check a sealed bundle's bytes; do not promote it to new physics evidence."""
-    output = output.resolve(strict=True)
-    entries = read_json(output / "ManifestV1.json")
-    if not isinstance(entries, dict) or "CompletionV1.json" not in entries:
-        raise ValueError("manifest lacks the completion record")
-    observed = {
-        path.relative_to(output).as_posix()
-        for path in output.rglob("*") if path.is_file()
-        and path.relative_to(output).as_posix() != "ManifestV1.json"
+def manifest(output):
+    """Seal all artifacts, including the archived parent's own manifest."""
+    entries = {
+        path.relative_to(output).as_posix(): {"sha256": sha256(path), "bytes": path.stat().st_size}
+        for path in sorted(output.rglob("*"))
+        if path.is_file() and path.relative_to(output).as_posix() != "ManifestV1.json"
     }
-    if observed != set(entries):
-        raise ValueError("manifest does not cover exactly the saved files")
-    for name, entry in entries.items():
-        path = (output / name).resolve()
-        if (
-            Path(name).is_absolute() or not path.is_relative_to(output)
-            or not path.is_file() or not isinstance(entry, dict)
-            or path.stat().st_size != entry.get("bytes")
-            or sha256(path) != entry.get("sha256")
-        ):
-            raise ValueError(f"artifact identity mismatch: {name}")
-    completion = read_json(output / "CompletionV1.json")
-    if (
-        completion.get("schema") != "R1StageOneCompletionV1"
-        or completion.get("stage_scope") != "R1-1"
-        or completion.get("stage") not in ("prepare", "zero-check", "step")
-        or completion.get("status") not in ("passed", "failed")
-        or (completion["status"] == "passed") != (completion.get("failure") is None)
-    ):
-        raise ValueError("invalid R1-1 completion record")
-    if completion["status"] == "passed":
-        required = set(COMMON_ARTIFACTS)
-        if completion["stage"] == "zero-check":
-            required.add("ZeroExcitationV1.json")
-        if completion["stage"] == "step":
-            required.update(("StepResultV1.json", "AcceptedStepsV1.json"))
-        if not required <= entries.keys():
-            raise ValueError("passed completion lacks required R1-1 evidence")
-        source = read_json(output / "SourceManifestV1.json")
-        if not isinstance(source, dict) or not source:
-            raise ValueError("passed completion has empty source coverage")
-        if completion.get("evidence_revision", 1) >= 2:
-            if "ExecutionSourceV1.json" not in entries:
-                raise ValueError("passed completion lacks execution checkout evidence")
-    elif "FailureV1.json" not in entries:
-        raise ValueError("failed completion lacks its failure record")
-    return completion, len(entries)
-
-
-def _verify_controlled_evidence(output, completion):
-    """Check revision-three structure selected by the verifier, not the bundle."""
-    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
-        REQUIRED_SOURCE_ANCHORS, source_content_digest,
-    )
-    from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import PINNED_STUDY_INPUT_SHA256
-
-    execution = read_json(output / "ExecutionSourceV1.json")
-    if (execution.get("schema") != "R1ExecutionSourceV2"
-            or execution.get("run_class") != "formal" or completion.get("run_class") != "formal"):
-        raise ValueError("formal acceptance requires controlled execution evidence")
-    commit = execution.get("source_commit")
-    if (not isinstance(commit, str) or len(commit) not in (40, 64)
-            or any(c not in "0123456789abcdef" for c in commit)
-            or execution.get("observed_commit") != commit):
-        raise ValueError("controlled execution source commit mismatch")
-    runtime = execution.get("runtime")
-    if (not isinstance(runtime, dict) or runtime.get("isolated") is not True
-            or runtime.get("no_site") is not True
-            or runtime.get("project_bytecode_cache_used") is not False
-            or runtime.get("project_loader") != "FrozenSourceLoader"):
-        raise ValueError("controlled execution runtime evidence is incomplete")
-    source = read_json(output / "SourceManifestV1.json")
-    required = execution.get("required_sources")
-    expected = {"perovskite-sim/" + name for name in REQUIRED_SOURCE_ANCHORS}
-    expected.update(name for name in source
-                    if name.startswith("perovskite-sim/perovskite_sim/") and name.endswith(".py"))
-    if not isinstance(required, dict) or set(required) != expected or not expected <= source.keys():
-        raise ValueError("execution source coverage lacks the required package sources or anchors")
-    if any(required[name] != source[name] for name in expected):
-        raise ValueError("required source identities disagree with the source manifest")
-    if execution.get("required_source_content_mismatches") != []:
-        raise ValueError("formal execution records source content mismatches")
-    if source_content_digest(required) != execution.get("source_content_sha256"):
-        raise ValueError("execution source content digest mismatch")
-    try:
-        with zipfile.ZipFile(output / "SourceV1.zip") as archive:
-            names = archive.namelist()
-            if len(names) != len(set(names)) or set(names) != set(source):
-                raise ValueError("source ZIP and source manifest coverage differ")
-            for name, identity in source.items():
-                if (not isinstance(identity, dict) or Path(name).is_absolute()
-                        or ".." in Path(name).parts
-                        or archive.getinfo(name).file_size != identity.get("bytes")
-                        or hashlib.sha256(archive.read(name)).hexdigest() != identity.get("sha256")):
-                    raise ValueError("source ZIP identity mismatch: " + name)
-            input_name = "perovskite-sim/reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
-            if archive.read(input_name) != (output / "StudyInputV1.json").read_bytes():
-                raise ValueError("study input differs from the controlled source snapshot")
-            contract_name = "perovskite-sim/docs/OneDimensionalMechanismR1DynamicsV1.md"
-            if archive.read(contract_name) != (output / "ExecutionContractV1.md").read_bytes():
-                raise ValueError("contract differs from the controlled source snapshot")
-            study = read_json(output / "StudyInputV1.json")
-            fixture_name = "perovskite-sim/" + study["fixture"]
-            fixture_bytes = (output / "SourceFixtureV1.yaml").read_bytes()
-            if (archive.read(fixture_name) != fixture_bytes
-                    or hashlib.sha256(fixture_bytes).hexdigest() != study["fixture_sha256"]):
-                raise ValueError("source fixture differs from the controlled snapshot or pinned input")
-    except (zipfile.BadZipFile, KeyError) as exc:
-        raise ValueError("invalid controlled source ZIP") from exc
-    if sha256(output / "StudyInputV1.json") != PINNED_STUDY_INPUT_SHA256:
-        raise ValueError("study input does not match this verifier's pinned protocol")
-    study, protocol = read_json(output / "StudyInputV1.json"), read_json(output / "ProtocolV1.json")
-    binding = read_json(output / "ReferenceBindingV1.json")
-    payload = {key: value for key, value in binding.items() if key != "sha256"}
-    # ReferenceBindingV1 predates the compact-JSON common-state encoding.
-    payload_sha256 = hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
-    if payload_sha256 != binding.get("sha256"):
-        raise ValueError("reference binding canonical payload digest mismatch")
-    expected_reference = study["fixed_reference_binding_sha256"]
-    if any(value != expected_reference for value in (
-        binding["sha256"], protocol.get("reference_binding_sha256"),
-        protocol.get("approved_reference_binding_sha256"),
-    )):
-        raise ValueError("reference identities disagree with the pinned study input")
-    for field, filename in (("input_sha256", "StudyInputV1.json"),
-                            ("contract_sha256", "ExecutionContractV1.md"),
-                            ("reference_file_sha256", "ReferenceBindingV1.json")):
-        if protocol.get(field) != sha256(output / filename):
-            raise ValueError("protocol artifact identity mismatch: " + field)
-
-
-def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
-                      ledger_sha256=None, run_id=None, required_evidence_revision=3):
-    output = Path(output).resolve(strict=True)
-    expected, entry = _verification_anchor(output, expected_manifest_sha256, ledger,
-                                          ledger_sha256, run_id)
-    if sha256(output / "ManifestV1.json") != expected:
-        raise ValueError("bundle manifest differs from the supplied external anchor")
-    completion, count = verify_output(output)
-    if required_evidence_revision not in (1, 2, 3):
-        raise ValueError("unsupported externally required evidence revision")
-    if completion["status"] == "passed":
-        if completion.get("evidence_revision", 1) != required_evidence_revision:
-            raise ValueError("bundle evidence revision differs from the externally required revision")
-        if required_evidence_revision == 3:
-            _verify_controlled_evidence(output, completion)
-    if entry is not None:
-        actual = {
-            "stage": completion["stage"], "stage_scope": completion["stage_scope"],
-            "recorded_status": completion["status"],
-            "source_manifest_sha256": sha256(output / "SourceManifestV1.json"),
-            "study_input_sha256": sha256(output / "StudyInputV1.json"),
-            "reference_binding_sha256": read_json(output / "ReferenceBindingV1.json")["sha256"],
-        }
-        if any(entry[key] != value for key, value in actual.items()):
-            raise ValueError("bundle identities disagree with the anchored ledger entry")
-    return completion, count
+    write_json(output / "ManifestV1.json", entries)
 
 
 def _write_evidence(path, result):
@@ -341,6 +126,50 @@ def _record_execution_source(output):
     return context
 
 
+def _import_preparation(output, prepared_path, expected_manifest, context):
+    """Snapshot and check a whole parent bundle before trusting its metadata."""
+    parent = Path(prepared_path).resolve(strict=True).parent
+    if Path(prepared_path).name != "PreparedStateV1.json":
+        raise ValueError("formal preparation must be PreparedStateV1.json in its sealed bundle")
+    if not expected_manifest:
+        raise ValueError("formal preparation import requires --prepared-manifest-sha256")
+    if output.is_relative_to(parent) or parent.is_relative_to(output):
+        raise ValueError("preparation and consuming output must be separate bundle directories")
+    if sha256(parent / "ManifestV1.json") != expected_manifest:
+        raise ValueError("preparation manifest differs from the external preparation anchor")
+    # Check path/coverage before copying, then validate the immutable copied
+    # bytes against the external anchor. A change during copying is rejected.
+    verify_output(parent)
+    archived = output / "PreparationV1"
+    archived.mkdir()
+    for name in ["ManifestV1.json", *read_json(parent / "ManifestV1.json")]:
+        src, dest = parent / name, archived / name
+        if src.is_symlink():
+            raise ValueError("preparation bundle must not contain symbolic links")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src.read_bytes())
+    completion, _ = verify_acceptance(
+        archived, expected_manifest_sha256=expected_manifest,
+        expected_source_commit=context.source_commit, source_repository=context.root,
+        required_evidence_revision=4,
+    )
+    if completion["stage"] != "prepare" or completion["status"] != "passed":
+        raise ValueError("formal import requires a passed formal preparation bundle")
+    for filename in ("StudyInputV1.json", "SourceFixtureV1.yaml", "ExecutionContractV1.md",
+                     "ReferenceBindingV1.json"):
+        if (archived / filename).read_bytes() != (output / filename).read_bytes():
+            raise ValueError("preparation and consuming inputs disagree: " + filename)
+    raw = (archived / "PreparedStateV1.json").read_bytes()
+    (output / "PreparedStateV1.json").write_bytes(raw)
+    execution = read_json(archived / "ExecutionSourceV1.json")
+    preparation = {
+        "manifest_sha256": expected_manifest, "source_commit": execution["source_commit"],
+        "source_content_sha256": execution["source_content_sha256"],
+        "run_class": completion["run_class"], "evidence_revision": completion["evidence_revision"],
+    }
+    return preparation, _read_json_bytes(raw)["sha256"]
+
+
 def _historical_case_observation(study, args, policy, failure):
     """Report previous measurements without treating them as waivers."""
     if args.stage != "step" or study is None or policy is None:
@@ -364,6 +193,7 @@ def _historical_case_observation(study, args, policy, failure):
                             "different_failure_signature"),
             })
     return {"matching_historical_cases": matched, "waives_checks": False,
+            "signature_comparison": "failure_message_substring_only; recorded metric values are not compared",
             "note": "Historical observations do not determine current acceptance or exit status"}
 
 
@@ -373,6 +203,8 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--prepared", type=Path)
+    parser.add_argument("--prepared-manifest-sha256",
+                        help="externally selected parent preparation manifest digest for formal import/verification")
     parser.add_argument("--control", choices=tuple("ABCD"))
     parser.add_argument("--intervals", type=int, choices=(16, 32, 64), default=16)
     parser.add_argument("--amplitude", type=float, default=0.005, metavar="VOLTS")
@@ -380,11 +212,13 @@ def main(argv=None):
     parser.add_argument("--input", type=Path, default=INPUT_PATH)
     parser.add_argument("--mode", choices=("integrity", "acceptance"), default="integrity")
     parser.add_argument("--expected-manifest-sha256")
+    parser.add_argument("--expected-source-commit",
+                        help="full Git commit selected outside the bundle for revision-4 acceptance")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--ledger-sha256")
     parser.add_argument("--run-id")
-    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3), default=3,
-                        help="acceptance format chosen outside the bundle; 1/2 are explicit legacy verification")
+    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3, 4), default=4,
+                        help="acceptance format chosen outside the bundle; 1/2/3 are explicit legacy verification")
     parser.add_argument("--development", action="store_true",
                         help="explicit unverified development execution; not formal study evidence")
     args = parser.parse_args(argv)
@@ -407,9 +241,13 @@ def main(argv=None):
                     output, expected_manifest_sha256=args.expected_manifest_sha256,
                     ledger=args.ledger, ledger_sha256=args.ledger_sha256, run_id=args.run_id,
                     required_evidence_revision=args.required_evidence_revision,
+                    expected_source_commit=args.expected_source_commit,
+                    expected_prepared_manifest_sha256=args.prepared_manifest_sha256,
+                    source_repository=PROJECT.parent,
                 )
             else:
-                if any((args.expected_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
+                if any((args.expected_manifest_sha256, args.expected_source_commit,
+                        args.prepared_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
                     raise ValueError("acceptance anchors require --mode acceptance")
                 completion, count = verify_output(output)
         except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -418,8 +256,11 @@ def main(argv=None):
         scope = ("supplied external anchor matched; no independent approval or physics rerun asserted"
                  if args.mode == "acceptance" else "provenance not authenticated")
         print(f"checksums consistent for {count} files; {scope}; recorded {completion['stage']} status: {completion['status']}")
+        if completion.get("verification", {}).get("legacy"):
+            print("legacy verification limits: " + str(completion["verification"]["limits"]))
         return int(completion["status"] != "passed")
-    if args.mode != "integrity" or any((args.expected_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
+    if args.mode != "integrity" or any((args.expected_manifest_sha256, args.expected_source_commit,
+                                       args.ledger, args.ledger_sha256, args.run_id)):
         parser.error("verification options apply only to verify")
     if args.reference is None:
         parser.error("--reference is required; R1-1 does not prepare a new f_ref")
@@ -427,7 +268,8 @@ def main(argv=None):
         parser.error("--prepared is required; controls must share one D preparation")
     if args.stage == "step" and args.control is None:
         parser.error("--control is required for a step")
-    if args.stage == "prepare" and (args.control is not None or args.prepared is not None):
+    if args.stage == "prepare" and (args.control is not None or args.prepared is not None
+                                   or args.prepared_manifest_sha256 is not None):
         parser.error("prepare creates the common D state; --control/--prepared are not applicable")
     if not math.isfinite(args.amplitude) or not 0.0 < args.amplitude < 0.02:
         parser.error("--amplitude must be finite, positive, and below 0.02 V")
@@ -444,6 +286,8 @@ def main(argv=None):
     policy = None
     accepted = []
     persisted_count = 0
+    preparation = None
+    expected_prepared_sha256 = None
     try:
         execution_context = _record_execution_source(output)
         controlled = execution_context is not None and execution_context.run_class == "formal"
@@ -472,8 +316,14 @@ def main(argv=None):
         (output / "SourceFixtureV1.yaml").write_bytes(fixture_bytes)
         shutil.copyfile(args.reference, output / "ReferenceBindingV1.json")
         binding = read_json(output / "ReferenceBindingV1.json")
-        if args.prepared is not None:
+        if args.prepared is not None and controlled:
+            preparation, expected_prepared_sha256 = _import_preparation(
+                output, args.prepared, args.prepared_manifest_sha256, execution_context,
+            )
+        elif args.prepared is not None:
             shutil.copyfile(args.prepared, output / "PreparedStateV1.json")
+            if args.prepared_manifest_sha256 is not None:
+                raise ValueError("development import cannot claim an anchored formal preparation chain")
 
         import numpy as np
         import scipy
@@ -483,6 +333,7 @@ def main(argv=None):
         from perovskite_sim.models.config_loader import load_device_from_yaml
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
             STUDY_INPUT_PATH, validate_r1_study_binding,
+            execution_contract_identity,
         )
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
             R1PreparedState, prepare_common_state,
@@ -495,6 +346,7 @@ def main(argv=None):
             raise RuntimeError("package import did not resolve to this execution source")
         if not INPUT_PATH.samefile(STUDY_INPUT_PATH):
             raise RuntimeError("CLI and imported binding policy must be the same tracked file")
+        execution_contract_identity()
         stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
         policy = r1_policy(nonlinear_factor=args.nonlinear_factor)
         write_json(output / "ResolvedStackV1.json", stack)
@@ -518,6 +370,10 @@ def main(argv=None):
             validate_r1_study_binding(binding, stack)
             write_json(output / "ProtocolV1.json", {
                 "stage_scope": "R1-1", "stage": args.stage,
+                "source_commit": execution_context.source_commit if execution_context is not None else None,
+                "source_content_sha256": execution_context.source_content_sha256 if execution_context is not None else None,
+                "run_class": "formal" if controlled else "development",
+                "preparation": preparation,
                 "intervals": args.intervals, "policy": policy,
                 "nonlinear_factor": args.nonlinear_factor,
                 "control": "D" if args.stage == "prepare" else args.control or "ABCD",
@@ -544,6 +400,7 @@ def main(argv=None):
                     result = check_zero_excitation(
                         stack, args.intervals, binding, prepared,
                         controls=args.control or "ABCD", policy=policy,
+                        expected_prepared_sha256=expected_prepared_sha256,
                     )
                     write_json(output / "ZeroExcitationV1.json", result)
                 else:
@@ -559,6 +416,7 @@ def main(argv=None):
                         stack, args.intervals, binding, prepared, control=args.control,
                         amplitude_V=args.amplitude, times_s=np.asarray(study["functional_times_s"]),
                         policy=policy, accepted_step_observer=observe,
+                        expected_prepared_sha256=expected_prepared_sha256,
                     )
                     write_json(output / "StepResultV1.json", result)
                 if not result["certificate"]["certified"]:
@@ -585,7 +443,7 @@ def main(argv=None):
         "stage": args.stage, "status": "failed" if failure else "passed",
         "duration_s": time.monotonic() - started,
         "finished_utc": datetime.now(timezone.utc).isoformat(), "failure": failure,
-        "evidence_revision": 3,
+        "evidence_revision": 4,
         "run_class": execution_context.run_class if execution_context is not None else "rejected_before_execution",
         "independent_approval": "not_asserted_by_execution",
         "historical_case_observation": _historical_case_observation(study, args, policy, failure),

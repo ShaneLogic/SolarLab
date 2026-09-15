@@ -54,7 +54,10 @@ def controlled_bundle(runner, repository, tmp_path):
 
 
 def accept(runner, output):
-    return runner.verify_acceptance(output, expected_manifest_sha256=runner.sha256(output / "ManifestV1.json"))
+    return runner.verify_acceptance(
+        output, expected_manifest_sha256=runner.sha256(output / "ManifestV1.json"),
+        required_evidence_revision=3,
+    )
 
 
 def test_controlled_revision_three_matches_external_anchor(runner, controlled_bundle):

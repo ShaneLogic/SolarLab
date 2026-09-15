@@ -48,13 +48,16 @@ def repository(tmp_path):
     for name in checkout.REQUIRED_SOURCE_ANCHORS:
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        if name in (checkout._CHECKOUT_MODULE, LAUNCHER, INPUT):
+        if name in (checkout._CHECKOUT_MODULE, LAUNCHER, INPUT,
+                    "docs/OneDimensionalMechanismR1DynamicsV1.md"):
             path.write_bytes((PROJECT / name).read_bytes())
         else:
             path.write_text("# test fixture\n")
     (project / "perovskite_sim/__init__.py").write_text("")
     (project / "perovskite_sim/experiments/__init__.py").write_text("")
     (project / BINDING).write_bytes((PROJECT / BINDING).read_bytes())
+    evidence = "perovskite_sim/experiments/one_dimensional_mechanism_r1_evidence.py"
+    (project / evidence).write_bytes((PROJECT / evidence).read_bytes())
     (project / "perovskite_sim/experiments/one_dimensional_mechanism_r1.py").write_text(
         "def validate_binding(binding, stack):\n    pass\n")
     (project / PROBE).write_text("VALUE = 'trusted source'\n")
@@ -325,7 +328,7 @@ def test_startup_rejection_seals_failure_without_overwriting_prior_run(repositor
         completion = json.loads((output / "CompletionV1.json").read_text())
         assert completion["status"] == "failed"
         assert completion["run_class"] == "rejected_before_execution"
-        assert completion["evidence_revision"] == 3
+        assert completion["evidence_revision"] == 4
         assert completion["physical_execution_started"] is False
         assert completion["source_identity_verified"] is False
         assert not (output / "SourceManifestV1.json").exists()

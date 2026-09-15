@@ -158,13 +158,18 @@ These are allowed attempts, not a claim that every case converges or passes
 physical checks. The versioned input records exact historical cases under
 `known_nonconvergence` and, separately, `known_physical_gate_failures`, with
 source commit, control, grid, amplitude, output times and time subdivisions.
-At source 3dd7e0c the measured factor-0.001 initial failures include A-D at
-16 intervals and A/D at 32 and 64. Factor 0.01 also fails for D at 32 during
-integration, and A/C/D at 64 during initialization. The 64/D/factor-1.0 case
-converges locally but fails the existing contact/internal-current gate.
+At source 3dd7e0c, confirmed at 84f9131, all A-D controls at 16/32/64 intervals
+fail during initialization at factor 0.001. Factor 0.01 also fails for D at
+32 during integration and A-D at 64 during initialization. At 5 mV, B and D
+at 64/factor-1.0 converge locally but fail the contact/internal-current gate.
+The 48-cell short-trace slice contains 17 nonconvergence and two physical-gate
+failures. A separate 16-cell amplitude probe includes two additional 10 mV
+B/D/32/factor-1.0 failures, each failing charge balance and current spread.
+These supplementary observations are not part of the 48-cell count.
 These are observations at the named source, not predictions for untested
 cases or later implementations. Repeated probes are deduplicated by their
-full case conditions. The runner reports a matching historical signature
+full case conditions. The runner reports recurrence of the recorded failure
+message substring; it does not compare the historical numeric metric values,
 without skipping the computation, waiving a gate or changing its exit code.
 The factor 0.001 remains the preregistered deepest extension; all failures
 are retained. A new source or a different time window requires a new test.
@@ -177,6 +182,17 @@ inventory drift at `1e-10`, and nonzero-signal contact/internal total-current
 spread at `2e-6`. The original nonlinear, local capture/Gauss, analytic
 Jacobian, eliminated-operator, time-refinement and decomposition checks also
 remain in force. Passing one short trace establishes only its recorded scope.
+
+The decision in `OneDimensionalMechanismR1OperatorCriterionDecisionV1.md`
+freezes the current long-window disposition: the measured nu_I=1 tails are
+not certifiable under the existing eliminated-operator criterion. In the
+observed near-equilibrium states its ion-rate and ion-flux denominators fall
+into a cancellation/roundoff regime. This is a criterion applicability issue;
+the failed ratio alone is not evidence of a physical solver defect. The
+existing 1e-6 gate remains enforced and these failures remain failures. No
+absolute budget, normalization floor or replacement certificate is approved
+by that decision. Future criterion changes require their own preregistered
+error model, independent negative controls and review before formal use.
 
 For every finite accepted step on every nested time grid, the local trap
 storage error is explicitly checked and included in the final certificate.
@@ -263,7 +279,16 @@ python -I -S scripts/run_one_dimensional_mechanism_r1_controlled.py \
   prepare --intervals 16 --reference "$R1_REFERENCE" --output-dir "$R1_NEW_OUTPUT"
 ```
 
-The same launcher prefix supports zero-check and step. Source identity checks
+The same launcher prefix supports zero-check and step. These formal consumers
+also require `--prepared-manifest-sha256` from the independently selected
+passed preparation bundle. A standalone prepared JSON is not a formal input.
+The complete parent is saved under `PreparationV1/`, including its manifest;
+its source commit, execution class, protocol and full payload are verified
+before import. Thus preparation checks, DC certificates and environment are
+pinned even where physical-array reconstruction does not recompute them.
+`execution_source()` includes execution class and commit/content identity.
+Formal library imports require an externally selected prepared-payload digest;
+the CLI obtains it only after checking the sealed parent. Source identity checks
 can succeed for a developer candidate; independent approval remains separate.
 
 The runner observes single-thread BLAS, copies the canonical input, fixture,
@@ -278,7 +303,8 @@ Formal R1 computation uses a controlled source-checkout launcher started by a
 trusted interpreter with `-I -S`. Required source bytes must match blobs in
 the explicitly supplied source commit; Git index flags, ignore rules and a
 clean status report are not evidence of this equality. A constant in the
-checked binding module pins the complete versioned research input digest.
+checked binding module pins both the complete research input and execution
+contract digests. Updating either requires an explicit code/policy repin.
 The launcher executes project modules from the verified frozen source bytes,
 and archives the same bytes. It does not read project bytecode caches.
 Dependency paths are explicitly supplied without site initialization or
@@ -312,7 +338,7 @@ passing finite steps. The legacy `accepted_record_count` now explicitly means
 persisted rows, including initial records; it is not a scientific pass count.
 When writing fails, the prior valid stream remains and `FailedResultV1` retains
 the complete observed state whenever persistence is available.
-All numeric leaves of physical, state and derived result records are checked
+All numeric leaves of preparation, physical, state and derived result records are checked
 before hashing a successful result. Non-finite values fail with field paths;
 None with an explicit not-applicable reason remains a valid missing value.
 The byte manifest covers every saved file except itself. `verify` checks
@@ -330,13 +356,25 @@ not from the bundle being checked. A ledger must be outside the bundle and
 match the independently supplied ledger digest. Its `R1EvidenceLedgerV1`
 `entries[ID]` pins `manifest_sha256`, `stage`, `recorded_status`, `stage_scope`,
 `source_manifest_sha256`, `study_input_sha256` and `reference_binding_sha256`.
+Revision-4 acceptance reads and checks a ledger's top-level `source_commit`
+and any per-entry `source_commit`, rather than merely displaying them. It requires
+`--expected-source-commit` from the caller, or the top-level source commit in the
+separately anchored ledger. Source bytes are compared with that exact commit's
+Git blobs in the trusted verifier repository, independent of HEAD/index flags.
+For consuming stages the caller also supplies `--prepared-manifest-sha256`;
+the nested preparation bundle must match that anchor and the same source.
 The runner checks those identities against the anchored bundle. Acceptance
-defaults to externally selected evidence revision 3: a bundle cannot downgrade
+defaults to externally selected evidence revision 4: a bundle cannot downgrade
 the required revision by deleting or changing its own field. Explicit
-`--required-evidence-revision 1` or `2` requests historical format verification
-without claiming revision-3 controlled execution. Revision 3 also checks
+`--required-evidence-revision 1`, `2` or `3` requests explicitly labelled legacy
+verification without claiming revision-4 source or preparation-chain checks.
+Revision 3 checks
 required-source coverage, source ZIP contents, frozen input and contract bytes,
-canonical reference payload identity and protocol identity agreement. These
+canonical reference payload identity and protocol identity agreement.
+Revision 4 additionally checks the verifier's fixed contract digest, the
+external source identity, source execution class and the parent preparation
+chain. All parent payload bytes and source artifacts remain in the child
+manifest. These
 checks inspect anchored records; they do not independently observe a past
 process or turn an untrusted caller-supplied digest into approval. A recorded
 failed run still exits nonzero even when its bytes match the anchor.
