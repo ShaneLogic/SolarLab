@@ -11,7 +11,10 @@ import numpy as np
 import pytest
 
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE, binding
+from tests.fixtures.r1_reference import (
+    APPROVED_R1_BINDING_PATH, alternate_r1_binding, approved_r1_binding,
+)
+from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE
 
 
 PROJECT = Path(__file__).resolve().parents[3]
@@ -130,13 +133,80 @@ def test_failed_numeric_result_remains_strict_json_and_lossless_npz(runner, tmp_
         np.testing.assert_array_equal(archive["data.state"], original)
 
 
+@pytest.mark.parametrize("stage", ["prepare", "zero-check", "step"])
+@pytest.mark.parametrize("forged_hash", [False, True], ids=["resealed_alternate", "forged_approved_hash"])
+def test_unapproved_reference_rejected_before_cli_dispatch(
+    runner, tmp_path, monkeypatch, stage, forged_hash,
+):
+    import threadpoolctl
+    from perovskite_sim.experiments import one_dimensional_mechanism_r1_protocol as protocol
+    from perovskite_sim.experiments import one_dimensional_mechanism_r1_state as common
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1 import validate_binding
+
+    alternate = alternate_r1_binding()
+    validate_binding(alternate, load_device_from_yaml(FIXTURE))
+    if forged_hash:
+        alternate["sha256"] = approved_r1_binding()["sha256"]
+    reference = tmp_path / "AlternateReferenceV1.json"
+    runner.write_json(reference, alternate)
+    external = {
+        "schema": "R1CommonStateV1", "fixed_reference": alternate,
+        "reference_sha256": alternate["sha256"],
+    }
+    external["sha256"] = common.digest(external)
+    prepared = tmp_path / "ExternalStateV1.json"
+    runner.write_json(prepared, external)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unapproved reference reached a CLI computation stage")
+
+    monkeypatch.setattr(common, "prepare_common_state", forbidden)
+    monkeypatch.setattr(protocol, "check_zero_excitation", forbidden)
+    monkeypatch.setattr(protocol, "run_r1_step", forbidden)
+    monkeypatch.setattr(runner, "source_record", lambda output: None)
+    # This unit case isolates admission from host BLAS availability. The real
+    # subprocess workflow below observes and verifies the actual backend.
+    monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda: [{"num_threads": 1, "source": "test-double"}])
+    output = tmp_path / "rejected"
+    arguments = [stage, "--reference", str(reference), "--output-dir", str(output)]
+    if stage != "prepare":
+        arguments += ["--prepared", str(prepared)]
+    if stage == "step":
+        arguments += ["--control", "D"]
+    assert runner.main(arguments) == 1
+    failure = runner.read_json(output / "FailureV1.json")
+    expected = "reference identity mismatch" if forged_hash else "not the approved study reference"
+    assert expected in failure["message"]
+    assert runner.verify_output(output)[0]["status"] == "failed"
+    assert not (output / "StepResultV1.json").exists()
+
+
+def test_caller_input_cannot_repin_approved_reference(runner, tmp_path, monkeypatch):
+    alternate = alternate_r1_binding()
+    reference = tmp_path / "AlternateReferenceV1.json"
+    runner.write_json(reference, alternate)
+    overridden = runner.read_json(runner.INPUT_PATH)
+    overridden["fixed_reference_binding_sha256"] = alternate["sha256"]
+    input_path = tmp_path / "AlternateInputV1.json"
+    runner.write_json(input_path, overridden)
+    monkeypatch.setattr(runner, "source_record", lambda output: None)
+    output = tmp_path / "rejected"
+    assert runner.main([
+        "prepare", "--reference", str(reference), "--input", str(input_path),
+        "--output-dir", str(output),
+    ]) == 1
+    failure = runner.read_json(output / "FailureV1.json")
+    assert "input differs from the supported versioned protocol" in failure["message"]
+    assert runner.verify_output(output)[0]["status"] == "failed"
+
+
 def test_failure_preserves_accepted_observations_and_exception_result(runner, tmp_path, monkeypatch):
     import threadpoolctl
     from perovskite_sim.experiments import one_dimensional_mechanism_r1_protocol as protocol
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import digest
 
     reference = tmp_path / "ReferenceBindingV1.json"
-    runner.write_json(reference, binding(load_device_from_yaml(FIXTURE)))
+    runner.write_json(reference, approved_r1_binding())
     # The runner only decodes the content hash; the production protocol owns
     # live physical validation. This test injects a failure at that boundary.
     prepared = {"schema": "R1CommonStateV1"}
@@ -173,7 +243,8 @@ def test_failure_preserves_accepted_observations_and_exception_result(runner, tm
 @pytest.mark.slow
 def test_real_cli_prepare_zero_step_and_verify_share_one_state(tmp_path):
     reference = tmp_path / "ReferenceBindingV1.json"
-    reference.write_text(json.dumps(binding(load_device_from_yaml(FIXTURE))))
+    reference.write_text(json.dumps(approved_r1_binding(), separators=(",", ":")))
+    assert reference.read_bytes() != APPROVED_R1_BINDING_PATH.read_bytes()
     environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(PROJECT))
     for key in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         environment[key] = "1"
@@ -202,6 +273,9 @@ def test_real_cli_prepare_zero_step_and_verify_share_one_state(tmp_path):
     result = json.loads((step / "StepResultV1.json").read_text())
     assert result["prepared_sha256"] == prepared["sha256"]
     assert result["certificate"]["certified"]
+    step_protocol = json.loads((step / "ProtocolV1.json").read_text())
+    assert step_protocol["approved_reference_binding_sha256"] == approved_r1_binding()["sha256"]
+    assert step_protocol["reference_binding_sha256"] == step_protocol["approved_reference_binding_sha256"]
     assert result["initial_event"]["impulse_charge_C_m2"] == pytest.approx(2.21354695425e-6, rel=1e-12)
     assert len(result["accepted_steps"]) == 31
     assert json.loads((step / "AcceptedStepsV1.json").read_text()) == result["accepted_steps"]

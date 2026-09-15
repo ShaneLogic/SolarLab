@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 import numpy as np
 
+from perovskite_sim.constants import Q
 from perovskite_sim.experiments.interface_defect_ion_transient import (
     InterfaceDefectIonTransientPolicy, _refinement_changes,
 )
@@ -21,8 +22,9 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import (
 
 
 SCOPE = "research_r1_1_common_state_controlled_ideal_step"
-VERSION = "r1-1-controls-and-initial-charge-v1"
+VERSION = "r1-1-controls-and-initial-charge-v2"
 DEFAULT_TIMES_S = (0.0, 1e-9, 1e-8, 1e-6, 1e-4)
+_TRAP_STORAGE_FAILURE_REASON = "trap_storage_balance_exceeds_budget"
 _TOLERANCE_FIELDS = (
     "storage_relative_tolerance", "carrier_storage_atol_m3", "interface_storage_atol_m2",
     "ion_storage_atol_m3", "poisson_relative_tolerance", "poisson_atol_C_m2",
@@ -51,6 +53,87 @@ def r1_policy(nonlinear_factor=0.1):
 
 def _prepared(value):
     return value if isinstance(value, R1PreparedState) else R1PreparedState.from_dict(value)
+
+
+def _trap_storage_check(scaling_system, state, previous, dt, policy, physical):
+    """Check a single interface against existing storage and charge budgets.
+
+    ``scaling_system`` is the original integration system, just as in
+    ``_solve_step``; using the rebased working system would reset the declared
+    storage accuracy reference. The whole-device charge budget is applied
+    conservatively to the one supported interface, without cancellation with
+    carrier or ion storage residuals.
+    """
+    if previous is None:
+        return {"applicable": False, "reason": "no_finite_time_step", "certified": None}
+    if scaling_system.interface_count != 1:
+        raise ValueError("R1 trap-storage charge budget is defined for one interface")
+    dt = float(dt)
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise ValueError("R1 trap-storage check requires a finite positive time step")
+    scale = scaling_system.storage_scale(previous.storage, previous, dt, policy)
+    storage_scale = float(scale[2 * scaling_system.interior_count])
+    # Match physical_step_record's original charge-balance normalization.
+    contact = np.asarray(physical["contact_conduction_A_m2"], dtype=float)
+    charge_scale = max(
+        abs(float(physical["charge_rate_A_m2"])),
+        abs(float(contact[0] - contact[1])),
+        float(np.max(np.abs(state.conduction))), 1.0,
+    )
+    error = float(physical["trap_storage_error_A_m2"])
+    charge_error = error * dt
+    nonlinear_budget = Q * policy.maximum_scaled_nonlinear_residual * storage_scale
+    charge_relative_limit = min(policy.maximum_charge_balance_relative_error, 1e-10)
+    conservation_budget = dt * charge_relative_limit * charge_scale
+    charge_limit = min(nonlinear_budget, conservation_budget)
+    current_limit = charge_limit / dt
+    valid = (
+        all(np.isfinite(value) for value in (
+            error, charge_error, storage_scale, charge_scale,
+            nonlinear_budget, conservation_budget, charge_limit, current_limit,
+        ))
+        and error >= 0.0 and storage_scale > 0.0 and charge_scale > 0.0
+        and nonlinear_budget > 0.0 and conservation_budget > 0.0
+        and charge_limit > 0.0 and current_limit > 0.0
+    )
+    ratio = error / current_limit if valid else float("inf")
+    return {
+        "applicable": True, "dt_s": dt,
+        "error_A_m2": error, "charge_error_C_m2": charge_error,
+        "storage_scale_m2": storage_scale,
+        "maximum_scaled_nonlinear_residual": policy.maximum_scaled_nonlinear_residual,
+        "nonlinear_charge_budget_C_m2": nonlinear_budget,
+        "charge_balance_scale_A_m2": charge_scale,
+        "charge_balance_relative_limit": charge_relative_limit,
+        "conservation_charge_budget_C_m2": conservation_budget,
+        "charge_error_limit_C_m2": charge_limit,
+        "current_error_limit_A_m2": current_limit,
+        "normalized_error": ratio, "normalized_limit": 1.0,
+        "certified": bool(valid and ratio <= 1.0),
+        "failure_reason": None if valid and ratio <= 1.0 else _TRAP_STORAGE_FAILURE_REASON,
+        "budget_scope": "single_interface_storage_and_whole_device_charge_budget",
+    }
+
+
+def _trap_storage_summary(physical_records):
+    checks = [r["trap_storage_check"] for r in physical_records]
+    if not checks or any(not check.get("applicable") for check in checks):
+        raise ValueError("R1 trap-storage certificate requires finite-step evidence")
+    ratios = np.asarray([check["normalized_error"] for check in checks], dtype=float)
+    raw_errors = np.asarray([r["trap_storage_error_A_m2"] for r in physical_records], dtype=float)
+    finite_ratios = bool(np.all(np.isfinite(ratios)))
+    return {
+        "checked_finite_step_count": len(checks),
+        "maximum_error_A_m2": float(np.max(raw_errors)),
+        "maximum_step_charge_error_C_m2": float(np.max([c["charge_error_C_m2"] for c in checks])),
+        "maximum_normalized_error": float(np.max(ratios)) if finite_ratios else float("inf"),
+        "normalized_limit": 1.0,
+        "minimum_current_error_limit_A_m2": float(min(c["current_error_limit_A_m2"] for c in checks)),
+        "maximum_current_error_limit_A_m2": float(max(c["current_error_limit_A_m2"] for c in checks)),
+        "certified": bool(finite_ratios and np.all(np.isfinite(raw_errors))
+                          and all(c["certified"] for c in checks)),
+        "scope": "all_finite_accepted_steps_across_all_nested_levels",
+    }
 
 
 def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD", policy=None):
@@ -112,6 +195,7 @@ def _trace_certificate(system, zero_minus, levels, policy, physical_records):
         / max(float(np.max(np.abs(s.conduction))), 1.0)
         for s in all_states
     )
+    trap_storage = _trap_storage_summary(physical_records)
     metrics = {
         "nonlinear_residual": final.maximum_scaled_residual,
         "local_carrier_residual": final.maximum_local_carrier_residual,
@@ -128,6 +212,7 @@ def _trace_certificate(system, zero_minus, levels, policy, physical_records):
         "full_gauss_normalized": max(r["gauss_normalized"] for r in physical_records),
         "full_charge_balance_normalized": max(r["charge_balance_normalized"] for r in physical_records),
         "physical_current_spread_relative": max(r["contact_internal_current_spread_relative"] for r in physical_records),
+        "trap_storage_normalized_error": trap_storage["maximum_normalized_error"],
     }
     limits = {
         "nonlinear_residual": policy.maximum_scaled_nonlinear_residual,
@@ -144,8 +229,14 @@ def _trace_certificate(system, zero_minus, levels, policy, physical_records):
         "refinement_current_change": policy.maximum_refinement_current_relative_change,
         "full_gauss_normalized": 1e-10, "full_charge_balance_normalized": 1e-10,
         "physical_current_spread_relative": 2e-6,
+        "trap_storage_normalized_error": 1.0,
     }
-    reasons = [k for k in metrics if not np.isfinite(metrics[k]) or metrics[k] > limits[k]]
+    reasons = [
+        _TRAP_STORAGE_FAILURE_REASON if k == "trap_storage_normalized_error" else k
+        for k in metrics if not np.isfinite(metrics[k]) or metrics[k] > limits[k]
+    ]
+    if not trap_storage["certified"] and _TRAP_STORAGE_FAILURE_REASON not in reasons:
+        reasons.append(_TRAP_STORAGE_FAILURE_REASON)
     if final.maximum_nnz >= system.dimension**2:
         reasons.append("analytic_jacobian_not_sparse")
     frozen = {}
@@ -165,6 +256,8 @@ def _trace_certificate(system, zero_minus, levels, policy, physical_records):
         "zero_plus_is_equilibrium": False,
         "maximum_absolute_charge_balance_error_A_m2": final.maximum_charge_balance_absolute_error,
         "maximum_absolute_poisson_residual_C_m2": final.maximum_poisson_residual,
+        "maximum_trap_storage_error_A_m2": trap_storage["maximum_error_A_m2"],
+        "trap_storage": trap_storage,
         "site_occupancy_fraction": max(system._site_fraction(s.positive, s.negative, reject=False) for s in all_states),
         "analytic_jacobian_nnz": final.maximum_nnz, "dense_entries": system.dimension**2,
         "scope": SCOPE,
@@ -208,8 +301,12 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
 
         def observe(working, state, previous, dt, time, substeps, residual):
             physical = physical_step_record(working, state, previous, dt)
+            physical["trap_storage_check"] = _trap_storage_check(
+                initial.system, state, previous, dt, policy, physical,
+            )
             if previous is None:
                 physical = dict(physical)
+                physical.pop("trap_storage_error_A_m2", None)
                 # At 0+ the derivative displacement is nonzero; its truthful
                 # observation is the separately evaluated right-limit record.
                 for key in ("contact_maxwell_A_m2", "contact_displacement_A_m2", "internal_maxwell_A_m2",
@@ -228,6 +325,17 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
                 "regular_integrated_charge_C_m2": integrated[substeps],
             }
             accepted.append(item)
+            if previous is not None and not physical["trap_storage_check"]["certified"]:
+                # Retain the offending row before raising. A nonfinite metric
+                # must reach the failure serializer, not first fail an ordinary
+                # accepted-step JSON writer with an unrelated serialization error.
+                trap_storage = _trap_storage_summary(physical_records)
+                record["certificate"] = {
+                    "certified": False, "reasons": [_TRAP_STORAGE_FAILURE_REASON], "scope": SCOPE,
+                    "maximum_trap_storage_error_A_m2": trap_storage["maximum_error_A_m2"],
+                    "trap_storage": json_data(trap_storage),
+                }
+                raise R1RunError("R1 accepted step failed " + _TRAP_STORAGE_FAILURE_REASON, record)
             if accepted_step_observer is not None:
                 accepted_step_observer(item)
             if previous is not None and any(

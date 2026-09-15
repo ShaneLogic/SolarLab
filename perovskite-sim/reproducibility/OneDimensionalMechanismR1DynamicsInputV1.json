@@ -8,6 +8,7 @@
   "geometry": "physical_boundary_two_sided_v1",
   "formal_intervals": [16, 32, 64],
   "fixed_reference_schema": "ReferenceBindingV1",
+  "fixed_reference_binding_sha256": "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b",
   "prepared_state_schema": "R1CommonStateV1",
   "preparation": {
     "control": "D",
@@ -41,6 +42,14 @@
     "contact_internal_current_spread_relative": 2e-6
   },
   "zero_excitation_evidence": "live_remaining_equations_and_absolute_DC_current_bounds",
+  "trap_storage_gate": {
+    "scope": "single_interface_all_finite_accepted_steps",
+    "charge_error_limit": "min(q*eta*S_t, dt*epsilon_Q*J_scale)",
+    "normalized_limit": 1.0,
+    "storage_scale": "original_Newton_reference_including_roundoff",
+    "charge_relative_limit": "min(policy.maximum_charge_balance_relative_error,1e-10)",
+    "zero_plus": "not_applicable"
+  },
   "parameter_provenance": "synthetic_numerical_reference",
   "units": "SI; band energies in eV",
   "claims_excluded": [

@@ -23,7 +23,10 @@ from perovskite_sim.experiments.interface_defect_ion_transient import (
     InterfaceDefectIonTransientPolicy, InterfaceIonDarkReference,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import (
-    build_r1_material, physical_step_record, solve_r1_dc, validate_binding,
+    build_r1_material, physical_step_record, solve_r1_dc,
+)
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
+    study_input_identity, validate_r1_study_binding,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import (
     ControlledPhysicalInterfaceIonSystem, R1DynamicsControls,
@@ -75,7 +78,8 @@ def execution_source():
         str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(package.rglob("*.py"))
     }
-    return {"files": files, "sha256": digest(files)}
+    source = {"files": files, "study_input": study_input_identity()}
+    return {**source, "sha256": digest(source)}
 
 
 def _preparation_history():
@@ -261,7 +265,7 @@ def equilibrium_checks(system, state, policy):
 def prepare_common_state(stack, intervals, binding, *, policy=None):
     """Prepare D once. A-D import copies of this state without another DC solve."""
     policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)
-    validate_binding(binding, stack)
+    validate_r1_study_binding(binding, stack)
     grid, material, dc, _ = solve_r1_dc(stack, intervals, np.asarray(binding["f_ref"]))
     system = _make_system(stack, grid, material, dc, binding, R1DynamicsControls(), policy,
                           canonicalize=True)
@@ -298,7 +302,7 @@ def restore_common_state(prepared, stack, intervals, binding, *, controls=None, 
     record = prepared.to_dict()
     policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)
     controls = controls or R1DynamicsControls()
-    validate_binding(binding, stack)
+    validate_r1_study_binding(binding, stack)
     grid, material = build_r1_material(stack, intervals)
     expected = {
         "kind": "equilibrium_D", "state_time": "0-", "intervals": int(intervals),

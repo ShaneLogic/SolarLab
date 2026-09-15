@@ -218,6 +218,9 @@ def main(argv=None):
         import perovskite_sim
         from threadpoolctl import threadpool_info, threadpool_limits
         from perovskite_sim.models.config_loader import load_device_from_yaml
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
+            validate_r1_study_binding,
+        )
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
             R1PreparedState, prepare_common_state,
         )
@@ -245,6 +248,7 @@ def main(argv=None):
             })
             if not backends or any(item["num_threads"] != 1 for item in backends):
                 raise RuntimeError("R1 requires observed single-thread BLAS")
+            validate_r1_study_binding(binding, stack)
             write_json(output / "ProtocolV1.json", {
                 "stage_scope": "R1-1", "stage": args.stage,
                 "intervals": args.intervals, "policy": policy,
@@ -254,6 +258,7 @@ def main(argv=None):
                 "times_s": study["functional_times_s"] if args.stage == "step" else None,
                 "reference_file_sha256": sha256(output / "ReferenceBindingV1.json"),
                 "reference_binding_sha256": binding.get("sha256"),
+                "approved_reference_binding_sha256": study["fixed_reference_binding_sha256"],
                 "prepared_file_sha256": (
                     None if args.prepared is None else sha256(output / "PreparedStateV1.json")
                 ),

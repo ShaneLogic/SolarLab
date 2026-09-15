@@ -22,7 +22,17 @@ dark, one two-sided interface, one positive-ion population and background bulk
 SRH. The controls are recorded separately from the material input.
 
 R1-1 imports an existing validated `ReferenceBindingV1` from R1-0. It never
-prepares a new reference. The reference occupancy remains fixed in
+prepares a new reference. The versioned input pins
+`fixed_reference_binding_sha256` to the approved binding-content identity
+`0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b`.
+Preparation and import first validate the binding's internal hash, stack,
+geometry and reference ladder, then compare its identity with this approved
+value. CLI `prepare`, `zero-check` and `step` and the common-state APIs share
+this requirement. A different self-consistent reference and a matching
+externally prepared state are rejected before solving or importing them.
+JSON whitespace and key order do not change binding identity; the separately
+recorded file-byte hash continues to identify the exact artifact.
+The reference occupancy remains fixed in
 `sigma_t = -q N_t,s (f - f_ref)` for every grid, control and excitation.
 The R1-0 geometry contract defines the reference ladder, binding validation,
 physical control volumes and independent geometry evidence. A finite-grid
@@ -58,7 +68,8 @@ Import verifies the record hash and the physical, grid, reference, contact,
 history, specification and executing-package identities. It reconstructs and
 compares the physical arrays, then evaluates the current D equations and the
 selected control's remaining equations. An old `certified` flag is not an
-import certificate. A changed grid or reference, altered population, stale
+import certificate. Executing-source identity includes the versioned dynamics
+input as well as the package sources. A changed grid or reference, altered population, stale
 package source, or excessive live residual is rejected. Import performs no
 new DC preparation, population interpolation, or silent reset of sheet charge.
 Local algebraic equations may be re-evaluated while the supplied dynamic
@@ -152,6 +163,36 @@ inventory drift at `1e-10`, and nonzero-signal contact/internal total-current
 spread at `2e-6`. The original nonlinear, local capture/Gauss, analytic
 Jacobian, eliminated-operator, time-refinement and decomposition checks also
 remain in force. Passing one short trace establishes only its recorded scope.
+
+For every finite accepted step on every nested time grid, the local trap
+storage error is explicitly checked and included in the final certificate.
+For the single interface in this study, let
+`E_t = q * abs(delta(N_t f) - dt * R_t)`, where `R_t` is the same controlled
+net capture rate used by the carrier and trap equations. Preserve the
+independently recorded `trap_storage_error_A_m2 = E_t / dt`.
+
+The allowed step-charge error is
+`B_t = min(q * eta * S_t, dt * epsilon_Q * J_scale)`.
+`eta` is the original `maximum_scaled_nonlinear_residual`; `S_t` is the
+actual trap-row storage scale used by Newton for that step, including its
+absolute, relative and roundoff terms and original scaling reference.
+`epsilon_Q` retains the existing charge-balance acceptance limit (at most
+`1e-10`). `J_scale` is the existing charge-balance scale:
+`max(abs(charge_rate), abs(Jc_left-Jc_right), max(abs(conduction)), 1 A/m2)`.
+This applies the existing total-charge budget conservatively to one local
+interface; it is an explicit additional local check, not a claim that the
+study specification previously listed this separate limit. No tolerance is
+chosen from the observed residuals, and no original physical gate is relaxed.
+
+Each finite step saves its error, both budget components, the effective
+charge/current limits, the normalized ratio `E_t/B_t` and the pass/fail result.
+Non-finite errors or invalid budgets are rejected; the normalized ratio must
+not exceed one. The final certificate aggregates the worst normalized ratio
+over all nested levels and retains the maximum absolute current error as a
+diagnostic; that maximum is not compared with an unrelated step's limit.
+The `0+` record has no finite `dt` and labels this check not applicable.
+Its algebraic and regular-current checks remain separate. A failed step is
+saved before raising an error, with the specific trap-storage failure reason.
 
 ## CLI and sealed evidence
 

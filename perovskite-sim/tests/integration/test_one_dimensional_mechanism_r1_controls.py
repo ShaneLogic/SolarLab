@@ -30,7 +30,8 @@ from perovskite_sim.physics.two_sided_interface import (
     TWO_SIDED_TRACE,
     fixed_occupancy_trap_capture_flux_and_log_jacobian,
 )
-from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE, binding
+from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE
+from tests.fixtures.r1_reference import approved_r1_binding
 from tests.unit.physics.test_two_sided_interface import _physics
 
 
@@ -54,7 +55,7 @@ def test_controls_reject_nonbinary_or_noninteger_values(value):
 @pytest.fixture(scope="module")
 def prepared_operator_arguments():
     stack = load_device_from_yaml(FIXTURE)
-    fixed_reference = binding(stack)
+    fixed_reference = approved_r1_binding()
     grid, material, dc, _ = solve_r1_dc(stack, 4, np.asarray(fixed_reference["f_ref"]))
     _, _, dark_dc, _ = solve_r1_dc(stack, 4)
     charge_off, microscopic = _research_charge_off_stack(stack)

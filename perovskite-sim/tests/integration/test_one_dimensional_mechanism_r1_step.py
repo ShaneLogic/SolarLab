@@ -1,6 +1,5 @@
 """Independent ideal-step electrostatic and right-limit current checks."""
 
-import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,34 +10,15 @@ from scipy.sparse.linalg import spsolve
 
 from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.experiments.interface_defect_ion_transient import InterfaceDefectIonTransientPolicy
-from perovskite_sim.experiments.one_dimensional_mechanism_r1 import _digest
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import (
     build_initial_step, regular_current_at_state,
 )
-from perovskite_sim.experiments.quasi_fermi_steady_state import _research_charge_off_stack
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.physics.physical_control_volume import PHYSICAL_GEOMETRY_V1
+from tests.fixtures.r1_reference import approved_r1_binding
 
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
-
-
-def _binding(stack):
-    values = [7.954622426871699e-5, 7.934721077963447e-5, 7.929619841679834e-5,
-              7.928333653224332e-5, 7.928011033749389e-5]
-    record = {
-        "schema": "ReferenceBindingV1", "geometry": PHYSICAL_GEOMETRY_V1,
-        "f_ref": [values[-1]], "reference_intervals": 512,
-        "rungs": [
-            {"intervals": n, "f_ref": [v], "difference": None if k == 0 else abs(v - values[k-1])}
-            for k, (n, v) in enumerate(zip([32, 64, 128, 256, 512], values))
-        ],
-        "microscopic_documents": list(_research_charge_off_stack(stack)[1].document_sha256),
-        "stack_sha256": hashlib.sha256(repr(stack).encode()).hexdigest(),
-    }
-    record["sha256"] = _digest(record)
-    return record
 
 
 @pytest.fixture(scope="module")
@@ -46,7 +26,7 @@ def common_state():
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import prepare_common_state
 
     stack = load_device_from_yaml(FIXTURE)
-    binding = _binding(stack)
+    binding = approved_r1_binding()
     policy = InterfaceDefectIonTransientPolicy(
         maximum_newton_iterations=100, maximum_line_search_steps=40,
         maximum_near_acceptance_nonmonotone_steps=2,

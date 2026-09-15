@@ -7,13 +7,14 @@ from perovskite_sim.constants import EPS_0
 from perovskite_sim.experiments import one_dimensional_mechanism_r1_protocol as protocol
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import prepare_common_state
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE, binding
+from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE
+from tests.fixtures.r1_reference import approved_r1_binding
 
 
 @pytest.fixture(scope="module")
 def shared():
     stack = load_device_from_yaml(FIXTURE)
-    reference = binding(stack)
+    reference = approved_r1_binding()
     policy = protocol.r1_policy()
     prepared = prepare_common_state(stack, 16, reference, policy=policy)
     return stack, reference, policy, prepared
@@ -56,6 +57,18 @@ def test_controlled_step_retains_common_state_and_separates_impulse(shared, cont
             np.testing.assert_array_equal(row["state"]["occupancy"], original["occupancy"])
             np.testing.assert_array_equal(row["state"]["capture_m2_s"], 0.0)
     assert result["accepted_state_arrays"]["positive_m3"].shape[0] == len(observed)
+    assert result["version"] == "r1-1-controls-and-initial-charge-v2"
+    assert result["certificate"]["trap_storage"]["checked_finite_step_count"] == 28
+    assert result["certificate"]["metrics"]["trap_storage_normalized_error"] <= 1.
+    for row in observed:
+        check = row["physical"]["trap_storage_check"]
+        if row["dt_s"] == 0:
+            assert not check["applicable"] and check["certified"] is None
+            assert "trap_storage_error_A_m2" not in row["physical"]
+        else:
+            assert check["applicable"] and check["certified"]
+            assert check["normalized_error"] <= check["normalized_limit"] == 1.
+            assert check["charge_error_C_m2"] == row["physical"]["trap_storage_error_A_m2"] * row["dt_s"]
 
 
 def test_zero_excitation_labels_equation_check_without_relative_current_claim(shared):
@@ -87,6 +100,47 @@ def test_failed_physical_step_retains_accepted_partial_evidence(shared, monkeypa
     assert partial["prepared_sha256"] == prepared.sha256
     assert partial["initial_event"]["certified"]
     assert partial["accepted_steps"][-1]["physical"]["gauss_normalized"] == 1e-6
+
+
+@pytest.mark.parametrize("injected", ["over_budget", "nan", "inf"])
+def test_trap_storage_failure_retains_coarse_step_and_distinct_certificate(shared, monkeypatch, injected):
+    stack, reference, policy, prepared = shared
+    original = protocol._trap_storage_check
+    observed = []
+
+    def inject(scaling, state, previous, dt, active_policy, physical):
+        check = original(scaling, state, previous, dt, active_policy, physical)
+        if previous is not None:
+            physical["trap_storage_error_A_m2"] = (
+                np.nextafter(check["current_error_limit_A_m2"], np.inf)
+                if injected == "over_budget" else float(injected)
+            )
+            return original(scaling, state, previous, dt, active_policy, physical)
+        return check
+
+    monkeypatch.setattr(protocol, "_trap_storage_check", inject)
+    with pytest.raises(protocol.R1RunError, match="trap_storage_balance_exceeds_budget") as error:
+        protocol.run_r1_step(stack, 16, reference, prepared, policy=policy,
+                             accepted_step_observer=observed.append)
+    partial = error.value.result
+    assert partial["prepared_sha256"] == prepared.sha256
+    assert partial["reference_sha256"] == reference["sha256"]
+    assert partial["initial_event"]["certified"]
+    assert partial["certificate"]["reasons"] == ["trap_storage_balance_exceeds_budget"]
+    assert not partial["certificate"]["certified"]
+    failed = partial["accepted_steps"][-1]
+    assert failed["substeps"] == policy.refinement_substeps[0]
+    assert failed["dt_s"] > 0 and failed["state"]["occupancy"]
+    assert not failed["physical"]["trap_storage_check"]["certified"]
+    assert failed["physical"]["gauss_normalized"] <= 1e-10
+    assert failed["physical"]["charge_balance_normalized"] <= 1e-10
+    # The failure row remains in the result before an ordinary JSON observer
+    # can mask the explicit error with an unrelated nonfinite serialization.
+    assert len(observed) == 1 and observed[0]["phase"] == "0+"
+    if injected == "nan":
+        assert np.isnan(failed["physical"]["trap_storage_error_A_m2"])
+    elif injected == "inf":
+        assert np.isinf(failed["physical"]["trap_storage_error_A_m2"])
 
 
 def test_initial_numeric_failure_retains_underlying_residuals(shared, monkeypatch):

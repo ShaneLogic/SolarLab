@@ -1,6 +1,8 @@
 """Common-state identity, exact population reuse, and live-equation gates."""
 
 from dataclasses import FrozenInstanceError, replace
+import hashlib
+import json
 
 import numpy as np
 import pytest
@@ -10,10 +12,16 @@ from perovskite_sim.constants import Q
 from perovskite_sim.experiments import defect_ion_combined_impedance as combined
 from perovskite_sim.experiments import interface_defect_ion_transient as transient
 from perovskite_sim.experiments import one_dimensional_mechanism_r1_state as common
-from perovskite_sim.experiments.one_dimensional_mechanism_r1 import build_r1_material
+from perovskite_sim.experiments import one_dimensional_mechanism_r1_binding as binding_gate
+from perovskite_sim.experiments.one_dimensional_mechanism_r1 import (
+    build_r1_material, validate_binding,
+)
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
 from perovskite_sim.models.config_loader import load_device_from_yaml
-from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE, binding
+from tests.fixtures.r1_reference import (
+    APPROVED_R1_BINDING_PATH, alternate_r1_binding, approved_r1_binding,
+)
+from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -25,14 +33,14 @@ def single_thread_blas():
 @pytest.fixture(scope="module")
 def common_state():
     stack = load_device_from_yaml(FIXTURE)
-    reference = binding(stack)
+    reference = approved_r1_binding()
     return stack, reference, common.prepare_common_state(stack, 4, reference)
 
 
 @pytest.fixture(scope="module")
 def common_state_16():
     stack = load_device_from_yaml(FIXTURE)
-    reference = binding(stack)
+    reference = approved_r1_binding()
     return stack, reference, common.prepare_common_state(stack, 16, reference)
 
 
@@ -59,6 +67,78 @@ def _reseal_dc_coordinates(record):
             "electron_qf_increment_V", "hole_qf_increment_V", "positive_ion_density_m3"
         )
     ))
+
+
+def test_approved_binding_uses_canonical_identity_not_file_formatting():
+    stack = load_device_from_yaml(FIXTURE)
+    reference = approved_r1_binding()
+    canonical_sha256 = "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b"
+    study = json.loads(binding_gate.STUDY_INPUT_PATH.read_text())
+    assert study["fixed_reference_binding_sha256"] == reference["sha256"] == canonical_sha256
+    raw = APPROVED_R1_BINDING_PATH.read_bytes()
+    reformatted = json.dumps(reference, sort_keys=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(raw).hexdigest() == (
+        "780e0275a3278e2d0ef2eb0ddf748ac763a7cc38ac0d03796312a952e0a01b4e"
+    )
+    assert hashlib.sha256(reformatted).digest() != hashlib.sha256(raw).digest()
+    binding_gate.validate_r1_study_binding(json.loads(reformatted), stack)
+
+
+@pytest.mark.parametrize("entrypoint", ["prepare", "restore"])
+def test_resealed_alternate_reference_is_rejected_before_state_work(
+    common_state, monkeypatch, entrypoint,
+):
+    stack, _, prepared = common_state
+    alternate = alternate_r1_binding()
+    # It is admissible to the generic reference validator: the failure must
+    # identify this fixed study's approved input, not a malformed ladder.
+    validate_binding(alternate, stack)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unapproved study reference reached numerical state work")
+
+    monkeypatch.setattr(common, "solve_r1_dc", forbidden)
+    monkeypatch.setattr(common, "_make_system", forbidden)
+    with pytest.raises(ValueError, match="not the approved study reference"):
+        if entrypoint == "prepare":
+            common.prepare_common_state(stack, 4, alternate)
+        else:
+            # Model an externally supplied matching reference/state pair.
+            # Admission must reject it before reconstructing any populations.
+            external = prepared.to_dict()
+            external["fixed_reference"] = alternate
+            external["reference_sha256"] = alternate["sha256"]
+            common.restore_common_state(_reseal(external), stack, 4, alternate)
+
+
+def test_claiming_approved_hash_does_not_admit_changed_binding(common_state, monkeypatch):
+    stack, approved, _ = common_state
+    alternate = alternate_r1_binding()
+    alternate["sha256"] = approved["sha256"]
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("forged canonical digest reached a DC solve")
+
+    monkeypatch.setattr(common, "solve_r1_dc", forbidden)
+    with pytest.raises(ValueError, match="reference identity mismatch"):
+        common.prepare_common_state(stack, 4, alternate)
+
+
+def test_prepared_source_identity_includes_repository_study_input(
+    common_state, monkeypatch, tmp_path,
+):
+    original_source = common_state[2].to_dict()["source"]
+    raw = binding_gate.STUDY_INPUT_PATH.read_bytes()
+    assert original_source["study_input"] == {
+        "path": binding_gate.STUDY_INPUT_RELATIVE_PATH,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    changed = tmp_path / "StudyInputV1.json"
+    changed.write_bytes(raw + b"\n")
+    monkeypatch.setattr(binding_gate, "STUDY_INPUT_PATH", changed)
+    assert common.execution_source()["sha256"] != original_source["sha256"]
+    with pytest.raises(common.R1StateError, match="identity mismatch: source"):
+        _restore(common_state)
 
 
 @pytest.mark.parametrize("label", ["A", "B", "C", "D"])

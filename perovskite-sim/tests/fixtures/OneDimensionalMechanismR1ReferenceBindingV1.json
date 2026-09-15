@@ -1,0 +1,52 @@
+{
+  "schema": "ReferenceBindingV1",
+  "geometry": "physical_boundary_two_sided_v1",
+  "f_ref": [
+    7.928011033749389e-05
+  ],
+  "reference_intervals": 512,
+  "rungs": [
+    {
+      "intervals": 32,
+      "f_ref": [
+        7.954622426871699e-05
+      ],
+      "difference": null
+    },
+    {
+      "intervals": 64,
+      "f_ref": [
+        7.934721077963447e-05
+      ],
+      "difference": 1.9901348908252074e-07
+    },
+    {
+      "intervals": 128,
+      "f_ref": [
+        7.929619841679834e-05
+      ],
+      "difference": 5.1012362836127157e-08
+    },
+    {
+      "intervals": 256,
+      "f_ref": [
+        7.928333653224332e-05
+      ],
+      "difference": 1.2861884555017203e-08
+    },
+    {
+      "intervals": 512,
+      "f_ref": [
+        7.928011033749389e-05
+      ],
+      "difference": 3.2261947494337554e-09
+    }
+  ],
+  "maximum_difference": 1e-08,
+  "microscopic_documents": [
+    "486dd4d2969cd6d20c1e054c0ace6e892e964173af6af62d3eb736755cbc0d71"
+  ],
+  "stack_sha256": "532ffb44aaf326b597c4d512e5a16548033f5c25e2a3e8fbb4fd079ab6c719ae",
+  "scope": "synthetic_300K_dark_fixed_energy_positive_ion_reference",
+  "sha256": "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b"
+}
