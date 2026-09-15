@@ -61,7 +61,8 @@ def write_json(path: Path, value) -> None:
 
 def run_baseline(project: Path, output: Path) -> dict:
     # Import the archived source before an editable installation can resolve it.
-    sys.path.insert(0, str(project))
+    if not (sys.flags.isolated and sys.flags.no_site):
+        sys.path.insert(0, str(project))
     import numpy as np
     import scipy
     import scipy.linalg

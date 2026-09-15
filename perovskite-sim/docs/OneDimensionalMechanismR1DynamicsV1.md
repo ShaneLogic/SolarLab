@@ -154,10 +154,20 @@ is the post-step regular state; the separate event stores `0-` and `0+`.
 The CLI permits a finite positive amplitude below 20 mV, recording its exact
 value without claiming linearity. The ten documented nonlinear tolerance
 fields use factor 0.1 by default; selectable factors are 1/0.1/0.01/0.001.
-These are allowed attempts, not a claim that every case converges. The base
-C/D, 16-interval, 5 mV cases at factor 0.001 have a recorded initial local
-line-search failure in both the original and gate-fix implementations. The
-factor remains the preregistered deepest extension; failed runs are retained.
+These are allowed attempts, not a claim that every case converges or passes
+physical checks. The versioned input records exact historical cases under
+`known_nonconvergence` and, separately, `known_physical_gate_failures`, with
+source commit, control, grid, amplitude, output times and time subdivisions.
+At source 3dd7e0c the measured factor-0.001 initial failures include A-D at
+16 intervals and A/D at 32 and 64. Factor 0.01 also fails for D at 32 during
+integration, and A/C/D at 64 during initialization. The 64/D/factor-1.0 case
+converges locally but fails the existing contact/internal-current gate.
+These are observations at the named source, not predictions for untested
+cases or later implementations. Repeated probes are deduplicated by their
+full case conditions. The runner reports a matching historical signature
+without skipping the computation, waiving a gate or changing its exit code.
+The factor 0.001 remains the preregistered deepest extension; all failures
+are retained. A new source or a different time window requires a new test.
 Physical acceptance limits remain unchanged. The full `1e-9..1e2 s` window,
 window extension to `1e5 s`, early extension, amplitude halving, target-bias
 DC comparison and 27-combination convergence matrix belong to R1-2.
@@ -186,8 +196,12 @@ absolute, relative and roundoff terms and original scaling reference.
 The first budget rechecks consistency with the declared Newton storage
 equation. With the same equation and scale, its ratio equals the absolute
 scaled trap-row residual divided by `eta`, so it does not independently
-tighten an otherwise correct Newton acceptance. It can still detect an
-implementation that solves a different storage equation. The second budget
+tighten an otherwise correct Newton acceptance. Solver and diagnostic share
+the storage-increment and rate operators: a consistent error in those shared
+operators can pass both arms. Previously observed detection of a particular
+time-factor inconsistency does not imply detection of arbitrary incorrect
+storage equations. Independent equation tests require a separate oracle.
+The second budget
 applies the existing total-charge budget conservatively to this single
 interface; it adds a tighter local condition only when it is smaller than
 the Newton budget. The `1 A/m2` normalization floor remains explicit.
@@ -231,11 +245,26 @@ R1-0 binding, and a fresh output directory for each execution:
 
 ```sh
 python scripts/run_one_dimensional_mechanism_r1_stage_one.py list
-python scripts/run_one_dimensional_mechanism_r1_stage_one.py prepare --intervals 16 --reference outputs/one_dimensional_mechanism_r1/preparation_v1/ReferenceBindingV1.json --output-dir outputs/one_dimensional_mechanism_r1/common_state_v1
-python scripts/run_one_dimensional_mechanism_r1_stage_one.py zero-check --intervals 16 --reference outputs/one_dimensional_mechanism_r1/preparation_v1/ReferenceBindingV1.json --prepared outputs/one_dimensional_mechanism_r1/common_state_v1/PreparedStateV1.json --output-dir outputs/one_dimensional_mechanism_r1/zero_check_v1
-python scripts/run_one_dimensional_mechanism_r1_stage_one.py step --control D --intervals 16 --amplitude 0.005 --reference outputs/one_dimensional_mechanism_r1/preparation_v1/ReferenceBindingV1.json --prepared outputs/one_dimensional_mechanism_r1/common_state_v1/PreparedStateV1.json --output-dir outputs/one_dimensional_mechanism_r1/step_d_v1
+python scripts/run_one_dimensional_mechanism_r1_stage_one.py prepare --development --intervals 16 --reference outputs/one_dimensional_mechanism_r1/preparation_v1/ReferenceBindingV1.json --output-dir outputs/one_dimensional_mechanism_r1/common_state_v1
+python scripts/run_one_dimensional_mechanism_r1_stage_one.py zero-check --development --intervals 16 --reference outputs/one_dimensional_mechanism_r1/preparation_v1/ReferenceBindingV1.json --prepared outputs/one_dimensional_mechanism_r1/common_state_v1/PreparedStateV1.json --output-dir outputs/one_dimensional_mechanism_r1/zero_check_v1
+python scripts/run_one_dimensional_mechanism_r1_stage_one.py step --development --control D --intervals 16 --amplitude 0.005 --reference outputs/one_dimensional_mechanism_r1/preparation_v1/ReferenceBindingV1.json --prepared outputs/one_dimensional_mechanism_r1/common_state_v1/PreparedStateV1.json --output-dir outputs/one_dimensional_mechanism_r1/step_d_v1
 python scripts/run_one_dimensional_mechanism_r1_stage_one.py verify --output-dir outputs/one_dimensional_mechanism_r1/step_d_v1
 ```
+
+These direct invocations explicitly produce development evidence. Controlled
+execution uses the trusted launcher and a full source commit obtained outside
+the output being verified. `R1_DEPENDENCY_PATH` names the trusted environment's
+site-packages directory; its `.pth` files are not executed. For example:
+
+```bash
+python -I -S scripts/run_one_dimensional_mechanism_r1_controlled.py \
+  --project "$PWD" --source-commit "$R1_SOURCE_COMMIT" \
+  --dependency-path "$R1_DEPENDENCY_PATH" -- \
+  prepare --intervals 16 --reference "$R1_REFERENCE" --output-dir "$R1_NEW_OUTPUT"
+```
+
+The same launcher prefix supports zero-check and step. Source identity checks
+can succeed for a developer candidate; independent approval remains separate.
 
 The runner observes single-thread BLAS, copies the canonical input, fixture,
 contract, fixed reference and imported preparation, and records resolved
@@ -245,30 +274,47 @@ ZIP/manifest/patch and strict JSON/NPZ writer. Successful preparation produces
 produce `StepResultV1.json` plus incrementally saved `AcceptedStepsV1.json`.
 Array-bearing payloads also generate compressed NPZ files.
 
-Formal R1 computation is currently a tracked-source-checkout workflow, including
-the common-state library APIs. Git's actual worktree root determines the
-expected runner, package, helper and study-input paths. Imported modules and
-the CLI/binding study inputs must resolve to those tracked paths; merely
-being somewhere beneath the project is insufficient. The captured source
-manifest must be nonempty and cover the actual runner/helpers, contract,
-fixture, policy and every package source, matching both disk and the ZIP.
-An ignored shadow copy is rejected even when it carries an unchanged package
-and reports a real ancestor Git commit. `ExecutionSourceV1.json` records the
-observed checkout, commit and dirty state, without claiming that a commit has
-been independently approved. Wheel-only and package-only computation contexts
-receive an explicit unsupported-context error. General shared R0 engines keep
-their structural validators; an R1 study wrapper must enforce this study's
-approved context before calling them.
+Formal R1 computation uses a controlled source-checkout launcher started by a
+trusted interpreter with `-I -S`. Required source bytes must match blobs in
+the explicitly supplied source commit; Git index flags, ignore rules and a
+clean status report are not evidence of this equality. A constant in the
+checked binding module pins the complete versioned research input digest.
+The launcher executes project modules from the verified frozen source bytes,
+and archives the same bytes. It does not read project bytecode caches.
+Dependency paths are explicitly supplied without site initialization or
+processing `.pth` files. Merely recording PYTHONPATH or a loader does not
+prevent a startup hook; `-B` prevents bytecode writes, not reads.
+
+An unchanged clone of the allowed source content may be used, including one
+inside an otherwise ignored directory. A clone's own HEAD does not grant
+approval. Altered input/source content must fail the applicable content
+checks regardless of location. `ExecutionSourceV1.json` distinguishes the
+observed commit, supplied source anchor and execution class. The caller must
+obtain approved source/input anchors independently. The trusted launcher,
+interpreter, standard library, Git executable and dependencies remain trust
+assumptions; no claim covers arbitrary replacement of them or memory mutation.
+
+Direct CLI computation requires explicit `--development` unless entered by
+the controlled launcher. Library calls in ordinary Python processes assume
+a trusted caller and are development execution, without formal source
+attestation. Development edits may be recorded; new package files must first
+be declared to Git. Wheel-only computation remains outside this workflow.
+General R0 engines retain structural validators; R1 study wrappers, including
+future AC entry points, must enforce this study context before using them.
 
 A failed computation exits nonzero and seals `FailureV1.json`, completion
 status, accepted records and any exception result. Non-finite failed numbers
 are explicitly tagged in strict JSON and preserved in raw NPZ arrays.
-Evidence files are replaced atomically per file. Completion records distinguish
+Accepted-step streams and failed-result JSON/NPZ files are replaced atomically
+per file; this is not a transaction spanning an entire bundle. Completion records distinguish
 observed rows, successfully persisted rows, finite solver steps and physically
 passing finite steps. The legacy `accepted_record_count` now explicitly means
 persisted rows, including initial records; it is not a scientific pass count.
 When writing fails, the prior valid stream remains and `FailedResultV1` retains
 the complete observed state whenever persistence is available.
+All numeric leaves of physical, state and derived result records are checked
+before hashing a successful result. Non-finite values fail with field paths;
+None with an explicit not-applicable reason remains a valid missing value.
 The byte manifest covers every saved file except itself. `verify` checks
 coverage, safe paths, byte counts and hashes and reports the recorded status;
 a failed recorded run remains a nonzero verification result. Integrity
@@ -284,7 +330,15 @@ not from the bundle being checked. A ledger must be outside the bundle and
 match the independently supplied ledger digest. Its `R1EvidenceLedgerV1`
 `entries[ID]` pins `manifest_sha256`, `stage`, `recorded_status`, `stage_scope`,
 `source_manifest_sha256`, `study_input_sha256` and `reference_binding_sha256`.
-The runner checks those identities against the anchored bundle. A recorded
+The runner checks those identities against the anchored bundle. Acceptance
+defaults to externally selected evidence revision 3: a bundle cannot downgrade
+the required revision by deleting or changing its own field. Explicit
+`--required-evidence-revision 1` or `2` requests historical format verification
+without claiming revision-3 controlled execution. Revision 3 also checks
+required-source coverage, source ZIP contents, frozen input and contract bytes,
+canonical reference payload identity and protocol identity agreement. These
+checks inspect anchored records; they do not independently observe a past
+process or turn an untrusted caller-supplied digest into approval. A recorded
 failed run still exits nonzero even when its bytes match the anchor.
 
 Anchor matching does not itself grant independent approval, authenticate an

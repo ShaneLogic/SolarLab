@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import fields, is_dataclass, replace
+from decimal import Decimal
+from numbers import Integral, Number, Rational
 import numpy as np
 
 from perovskite_sim.constants import Q
@@ -22,10 +25,11 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import (
 
 
 SCOPE = "research_r1_1_common_state_controlled_ideal_step"
-VERSION = "r1-1-controls-and-initial-charge-v3"
+VERSION = "r1-1-controls-and-initial-charge-v4"
 DEFAULT_TIMES_S = (0.0, 1e-9, 1e-8, 1e-6, 1e-4)
 _TRAP_STORAGE_FAILURE_REASON = "trap_storage_balance_exceeds_budget"
 _PERSISTENCE_FAILURE_REASON = "accepted_step_persistence_failed"
+_NONFINITE_EVIDENCE_REASON = "nonfinite_numeric_evidence"
 _PHYSICAL_LIMITS = (
     ("gauss_normalized", 1e-10), ("charge_balance_normalized", 1e-10),
     ("inventory_relative_drift", 1e-10),
@@ -60,6 +64,74 @@ def r1_policy(nonlinear_factor=0.1):
 
 def _prepared(value):
     return value if isinstance(value, R1PreparedState) else R1PreparedState.from_dict(value)
+
+
+def nonfinite_numeric_paths(value, *, prefix=""):
+    """Locate numeric NaN/Inf leaves without changing the original evidence.
+
+    Complex components and array indices are named separately.  ``None`` and
+    descriptive strings (including N/A labels) are not numerical observations.
+    """
+    paths = []
+
+    def visit(item, path):
+        if is_dataclass(item) and not isinstance(item, type):
+            for field in fields(item):
+                visit(getattr(item, field.name), f"{path}.{field.name}" if path else field.name)
+        elif isinstance(item, Mapping):
+            for key, child in item.items():
+                name = str(key)
+                child_path = (f"{path}.{name}" if path else name) if name.isidentifier() else f"{path}[{key!r}]"
+                visit(child, child_path)
+        elif isinstance(item, np.ndarray):
+            for index in np.ndindex(item.shape):
+                visit(item[index], path + "".join(f"[{part}]" for part in index))
+        elif isinstance(item, (tuple, list)):
+            for index, child in enumerate(item):
+                visit(child, f"{path}[{index}]")
+        elif isinstance(item, (complex, np.complexfloating)):
+            for name in ("real", "imag"):
+                if not np.isfinite(getattr(item, name)):
+                    paths.append(f"{path}.{name}" if path else name)
+        elif isinstance(item, (Number, Decimal)) and not isinstance(item, (Integral, Rational)):
+            finite = item.is_finite() if isinstance(item, Decimal) else bool(np.isfinite(item))
+            if not finite:
+                paths.append(path or "$")
+
+    visit(value, prefix)
+    return paths
+
+
+def _require_finite_result(record):
+    """Reject a completed numerical result before strict digest serialization.
+
+    Failure records intentionally retain raw values and are never rescanned:
+    their diagnostic copies must not become a second numerical incident.
+    """
+    paths = nonfinite_numeric_paths(record)
+    certificate = record["certificate"]
+    certificate["finite_numeric_evidence"] = {
+        "passed": not paths, "nonfinite_numeric_paths": paths,
+        "scope": "all_numeric_leaves_before_digest",
+    }
+    if not paths:
+        return
+    reasons = list(certificate["reasons"])
+    covered = {
+        "certificate.metrics." + key
+        for key in certificate.get("metrics", {})
+        if (key in reasons or (key == "trap_storage_normalized_error"
+                              and _TRAP_STORAGE_FAILURE_REASON in reasons))
+    }
+    if any(path not in covered for path in paths) and _NONFINITE_EVIDENCE_REASON not in reasons:
+        reasons.append(_NONFINITE_EVIDENCE_REASON)
+    certificate.update({"certified": False, "reasons": reasons, "nonfinite_numeric_paths": paths})
+    record["failure"] = {
+        "type": "PhysicalCheckFailure", "message": ", ".join(reasons),
+        "reasons": reasons, "nonfinite_numeric_paths": paths,
+        "scope": "completed_result",
+    }
+    raise R1RunError("R1 result failed physical gates: " + ", ".join(reasons), record)
 
 
 def _trap_storage_check(scaling_system, state, previous, dt, policy, physical):
@@ -192,14 +264,20 @@ def _trap_storage_summary(physical_records):
     }
 
 
-def _physical_step_checks(physical, *, finite_step, policy):
+def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
     """Collect every applicable physical violation before observation or failure."""
     checks = {}
+    covered_paths = set()
 
-    def scalar_check(name, value, limit, *, source):
-        value = float(value)
-        reason = (name + "_nonfinite" if not np.isfinite(value)
-                  else name + "_exceeds_limit" if value > limit else None)
+    def scalar_check(name, value, limit, *, source, path):
+        nonfinite = nonfinite_numeric_paths(value, prefix=path)
+        if nonfinite:
+            reason = name + "_nonfinite"
+            covered_paths.update(nonfinite)
+            value = json_data(value)
+        else:
+            value = float(value)
+            reason = name + "_exceeds_limit" if value > limit else None
         checks[name] = {
             "applicable": True, "value": value, "limit": float(limit),
             "passed": reason is None, "failure_reason": reason, "source": source,
@@ -213,7 +291,8 @@ def _physical_step_checks(physical, *, finite_step, policy):
             }
         else:
             scalar_check(key, physical[key], limit,
-                         source="finite_step" if finite_step else "initial_algebraic_state")
+                         source="finite_step" if finite_step else "initial_algebraic_state",
+                         path="physical." + key)
     trap = physical["trap_storage_check"]
     checks["trap_storage"] = {
         "applicable": trap["applicable"], "value": trap.get("normalized_error"),
@@ -221,6 +300,16 @@ def _physical_step_checks(physical, *, finite_step, policy):
         "failure_reason": trap.get("failure_reason"),
         "source": "finite_step" if finite_step else "compatibility_placeholder_not_computed",
     }
+    if trap.get("failure_reason"):
+        # These fields already participate in the trap gate's finite-value
+        # predicate or are invalid ratios produced by that same failed gate.
+        covered_paths.add("physical.trap_storage_error_A_m2")
+        covered_paths.update("physical.trap_storage_check." + key for key in (
+            "error_A_m2", "charge_error_C_m2", "storage_scale_m2", "charge_balance_scale_A_m2",
+            "nonlinear_charge_budget_C_m2", "conservation_charge_budget_C_m2",
+            "charge_error_limit_C_m2", "current_error_limit_A_m2", "normalized_error",
+            "newton_consistency_ratio", "local_charge_ratio",
+        ))
     if not finite_step:
         # These are the evaluated derivative right limits, with their original
         # current-at-state policy limits, not the finite-step placeholders.
@@ -229,9 +318,20 @@ def _physical_step_checks(physical, *, finite_step, policy):
             ("contact_internal_current_spread_relative", policy.maximum_all_face_current_spread_relative),
         ):
             scalar_check("regular_right_limit_" + key, physical["regular_right_limit"][key],
-                         limit, source="initial_event.regular_current")
+                         limit, source="initial_event.regular_current",
+                         path="physical.regular_right_limit." + key)
+    paths = nonfinite_numeric_paths({"physical": physical} if evidence is None else evidence)
+    uncovered = [path for path in paths if path.replace(
+        "initial_event.regular_current.", "physical.regular_right_limit.", 1,
+    ) not in covered_paths]
+    checks["finite_numeric_evidence"] = {
+        "applicable": True, "passed": not paths, "nonfinite_numeric_paths": paths,
+        "failure_reason": _NONFINITE_EVIDENCE_REASON if uncovered else None,
+        "scope": "all_numeric_leaves_in_row_and_initial_event",
+    }
     reasons = [check["failure_reason"] for check in checks.values() if check["failure_reason"]]
-    return {"checks": checks, "passed": not reasons, "reasons": reasons}
+    return {"checks": checks, "passed": not reasons and not paths, "reasons": reasons,
+            "nonfinite_numeric_paths": paths}
 
 
 def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD", policy=None):
@@ -272,6 +372,7 @@ def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD
             "relative_dynamic_current_certified": False},
         "source": execution_source(),
     }
+    _require_finite_result(record)
     record["sha256"] = digest(record)
     if not certified:
         raise R1RunError("R1 zero-excitation check failed", record)
@@ -399,6 +500,17 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
 
         def observe(working, state, previous, dt, time, substeps, residual):
             physical = physical_step_record(working, state, previous, dt)
+            raw_initial_physical = {}
+            if previous is None:
+                # Replacing/removing finite-step placeholders must not conceal
+                # invalid raw numerical evidence on an initial observation.
+                raw_initial_physical = {
+                    key: physical[key] for key in (
+                        "trap_storage_error_A_m2", "contact_maxwell_A_m2", "contact_displacement_A_m2",
+                        "internal_maxwell_A_m2", "contact_internal_current_spread_relative",
+                    )
+                    if key in physical and nonfinite_numeric_paths(physical[key])
+                }
             physical["trap_storage_check"] = _trap_storage_check(
                 initial.system, state, previous, dt, policy, physical,
             )
@@ -417,18 +529,27 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
             else:
                 physical_records.append(physical)
                 integrated[substeps] += float(working.polarity * physical["contact_maxwell_A_m2"][0] * dt)
-            physical_checks = _physical_step_checks(physical, finite_step=previous is not None, policy=policy)
             item = {
                 "phase": "0+" if previous is None else "accepted_regular_step",
                 "time_s": float(time), "dt_s": float(dt), "substeps": int(substeps),
                 "scaled_nonlinear_residual": float(residual), "state": snapshot(working, state),
                 "physical": json_data(physical),
                 "solver_accepted": previous is not None,
+                "regular_integrated_charge_C_m2": integrated[substeps],
+            }
+            if raw_initial_physical:
+                item["raw_initial_physical"] = json_data(raw_initial_physical)
+            evidence = dict(item)
+            if previous is None:
+                evidence["initial_event"] = initial.event
+            physical_checks = _physical_step_checks(
+                physical, finite_step=previous is not None, policy=policy, evidence=evidence,
+            )
+            item.update({
                 "physical_checks": json_data(physical_checks),
                 "physical_checks_passed": physical_checks["passed"],
                 "physical_failure_reasons": list(physical_checks["reasons"]),
-                "regular_integrated_charge_C_m2": integrated[substeps],
-            }
+            })
             accepted.append(item)
             reasons = physical_checks["reasons"]
             if reasons:
@@ -436,6 +557,7 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
                     "certified": False, "reasons": list(reasons), "scope": SCOPE,
                     "failed_record_index": len(accepted) - 1,
                     "physical_checks": json_data(physical_checks),
+                    "nonfinite_numeric_paths": list(physical_checks["nonfinite_numeric_paths"]),
                 }
                 if physical_records:
                     trap_storage = _trap_storage_summary(physical_records)
@@ -446,6 +568,7 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
                 record["failure"] = {
                     "type": "PhysicalCheckFailure", "message": ", ".join(reasons),
                     "reasons": list(reasons), "record_index": len(accepted) - 1,
+                    "nonfinite_numeric_paths": list(physical_checks["nonfinite_numeric_paths"]),
                 }
             persistence_error = None
             if accepted_step_observer is not None:
@@ -509,6 +632,7 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
         record["source"] = execution_source()
         if record["source"] != prepared.to_dict()["source"]:
             raise R1RunError("source changed during the controlled experiment", record)
+        _require_finite_result(record)
         record["sha256"] = digest(record)
         if not record["certificate"]["certified"]:
             raise R1RunError("R1 controlled-step certificate failed: " + ", ".join(record["certificate"]["reasons"]), record)

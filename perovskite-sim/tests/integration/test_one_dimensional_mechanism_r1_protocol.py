@@ -1,5 +1,7 @@
 """Controlled common-state runs retain their initial charge and all steps."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -57,7 +59,7 @@ def test_controlled_step_retains_common_state_and_separates_impulse(shared, cont
             np.testing.assert_array_equal(row["state"]["occupancy"], original["occupancy"])
             np.testing.assert_array_equal(row["state"]["capture_m2_s"], 0.0)
     assert result["accepted_state_arrays"]["positive_m3"].shape[0] == len(observed)
-    assert result["version"] == "r1-1-controls-and-initial-charge-v3"
+    assert result["version"] == "r1-1-controls-and-initial-charge-v4"
     trap_summary = result["certificate"]["trap_storage"]
     assert trap_summary["checked_finite_step_count"] == 28
     assert sum(trap_summary["branch_counts"]["all"].values()) == 28
@@ -68,6 +70,7 @@ def test_controlled_step_retains_common_state_and_separates_impulse(shared, cont
         assert row["physical_checks_passed"]
         assert row["physical_checks"]["passed"]
         assert row["physical_failure_reasons"] == []
+        assert row["physical_checks"]["nonfinite_numeric_paths"] == []
         if row["dt_s"] == 0:
             assert not check["applicable"] and check["certified"] is None
             assert row["physical"]["trap_storage_error_A_m2"] == 0.
@@ -88,6 +91,8 @@ def test_controlled_step_retains_common_state_and_separates_impulse(shared, cont
             assert check["nonlinear_tolerances"] == {key: getattr(policy, key) for key in protocol._TOLERANCE_FIELDS}
             assert check["charge_scale_floor_A_m2"] == 1.
             assert check["charge_scale_floor_active"] is (check["charge_scale_before_floor_A_m2"] < 1.)
+    assert result["certificate"]["finite_numeric_evidence"]["passed"]
+    assert protocol.nonfinite_numeric_paths(result) == []
 
 
 def test_zero_excitation_labels_equation_check_without_relative_current_claim(shared):
@@ -234,6 +239,181 @@ def test_observer_only_failure_has_output_reason_and_retains_passed_physics(shar
     assert observed[-1]["physical_checks_passed"]
     assert observed[-1]["physical_failure_reasons"] == []
     assert observed[-1] is partial["accepted_steps"][-1]
+
+
+@pytest.mark.parametrize("finite_step", [False, True])
+@pytest.mark.parametrize("observer_fails", [False, True])
+def test_nonfinite_interior_charge_is_physical_failure_before_digest(shared, monkeypatch, finite_step, observer_fails):
+    stack, reference, policy, prepared = shared
+    original = protocol.physical_step_record
+    observed = []
+
+    def inject(*args, **kwargs):
+        physical = original(*args, **kwargs)
+        if (args[2] is not None) is finite_step:
+            physical["interior_charge_C_m2"] = np.nan
+        return physical
+
+    def observer(row):
+        observed.append(row)
+        if not row["physical_checks_passed"] and observer_fails:
+            raise OSError("injected nonfinite-row write failure")
+
+    monkeypatch.setattr(protocol, "physical_step_record", inject)
+    with pytest.raises(protocol.R1RunError, match="physical gates: nonfinite_numeric_evidence") as error:
+        protocol.run_r1_step(stack, 16, reference, prepared, policy=policy, accepted_step_observer=observer)
+    partial = error.value.result
+    failed = partial["accepted_steps"][-1]
+    assert len(observed) == (2 if finite_step else 1)
+    assert observed[-1] is failed
+    assert failed["solver_accepted"] is finite_step
+    assert failed["phase"] == ("accepted_regular_step" if finite_step else "0+")
+    assert np.isnan(failed["physical"]["interior_charge_C_m2"])
+    assert not failed["physical_checks_passed"]
+    assert failed["physical_failure_reasons"] == ["nonfinite_numeric_evidence"]
+    assert failed["physical_checks"]["nonfinite_numeric_paths"] == ["physical.interior_charge_C_m2"]
+    assert partial["certificate"]["nonfinite_numeric_paths"] == ["physical.interior_charge_C_m2"]
+    assert partial["certificate"]["reasons"] == ["nonfinite_numeric_evidence"]
+    assert partial["failure"]["type"] == "PhysicalCheckFailure"
+    assert partial["failure"]["nonfinite_numeric_paths"] == ["physical.interior_charge_C_m2"]
+    assert not partial["certificate"]["certified"]
+    assert "sha256" not in partial
+    if observer_fails:
+        assert partial["certificate"]["secondary_reasons"] == ["accepted_step_persistence_failed"]
+        assert partial["persistence_failure"]["message"] == "injected nonfinite-row write failure"
+    else:
+        assert "persistence_failure" not in partial
+
+
+@pytest.mark.parametrize("target", ["state", "physical_complex", "initial_current", "initial_charge"])
+def test_nested_nonfinite_evidence_reports_full_path_on_initial_row(shared, monkeypatch, target):
+    stack, reference, policy, prepared = shared
+    observed = []
+    if target == "state":
+        original = protocol.snapshot
+
+        def inject(*args, **kwargs):
+            result = original(*args, **kwargs)
+            result["n_m3"][0] = -np.inf
+            return result
+
+        monkeypatch.setattr(protocol, "snapshot", inject)
+        expected = ["state.n_m3[0]"]
+    elif target == "physical_complex":
+        original = protocol.physical_step_record
+
+        def inject(*args, **kwargs):
+            result = original(*args, **kwargs)
+            result["nested_current"] = {"vector": np.array([1 + 2j, complex(np.nan, np.inf)])}
+            return result
+
+        monkeypatch.setattr(protocol, "physical_step_record", inject)
+        expected = ["physical.nested_current.vector[1].real", "physical.nested_current.vector[1].imag"]
+    else:
+        original = protocol.build_initial_step
+
+        def inject(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if target == "initial_current":
+                result.event["regular_current"]["extra_contact_current"] = np.array([0., np.inf])
+            else:
+                result.event["impulse_charge_C_m2"] = np.nan
+            return result
+
+        monkeypatch.setattr(protocol, "build_initial_step", inject)
+        expected = (["physical.regular_right_limit.extra_contact_current[1]",
+                     "initial_event.regular_current.extra_contact_current[1]"]
+                    if target == "initial_current" else ["initial_event.impulse_charge_C_m2"])
+    with pytest.raises(protocol.R1RunError, match="nonfinite_numeric_evidence") as error:
+        protocol.run_r1_step(stack, 16, reference, prepared, policy=policy, accepted_step_observer=observed.append)
+    partial = error.value.result
+    assert len(observed) == 1
+    failed = observed[0]
+    assert failed is partial["accepted_steps"][0]
+    assert failed["phase"] == "0+" and not failed["physical_checks_passed"]
+    assert failed["physical_checks"]["nonfinite_numeric_paths"] == expected
+    assert partial["certificate"]["reasons"] == ["nonfinite_numeric_evidence"]
+    assert partial["failure"]["type"] == "PhysicalCheckFailure"
+    assert "sha256" not in partial
+
+
+def test_final_regular_current_nonfinite_evidence_cannot_reach_digest(shared, monkeypatch):
+    stack, reference, policy, prepared = shared
+    original = protocol.regular_current_at_state
+    observed = []
+
+    def inject(*args, **kwargs):
+        result = original(*args, **kwargs)
+        evidence = dict(result.evidence)
+        evidence["extra_vector"] = np.array([complex(0., np.inf)])
+        return SimpleNamespace(evidence=evidence)
+
+    monkeypatch.setattr(protocol, "regular_current_at_state", inject)
+    with pytest.raises(protocol.R1RunError, match="nonfinite_numeric_evidence") as error:
+        protocol.run_r1_step(stack, 16, reference, prepared, policy=policy, accepted_step_observer=observed.append)
+    partial = error.value.result
+    expected = [f"regular_currents[{index}].extra_vector[0].imag" for index in range(5)]
+    assert len(observed) == 31 and all(row["physical_checks_passed"] for row in observed)
+    assert partial["certificate"]["reasons"] == ["nonfinite_numeric_evidence"]
+    assert partial["certificate"]["nonfinite_numeric_paths"] == expected
+    assert not partial["certificate"]["certified"]
+    assert not partial["certificate"]["finite_numeric_evidence"]["passed"]
+    assert partial["failure"]["type"] == "PhysicalCheckFailure"
+    assert partial["failure"]["scope"] == "completed_result"
+    assert np.isinf(partial["regular_currents"][0]["extra_vector"][0].imag)
+    assert "sha256" not in partial
+
+
+@pytest.mark.parametrize("field,value,suffix", [
+    ("trap_storage_error_A_m2", np.nan, ""),
+    ("contact_maxwell_A_m2", [np.inf, 0.], "[0]"),
+    ("contact_internal_current_spread_relative", complex(0., -np.inf), ".imag"),
+])
+def test_initial_placeholder_replacement_cannot_hide_nonfinite_raw_evidence(shared, monkeypatch, field, value, suffix):
+    stack, reference, policy, prepared = shared
+    original = protocol.physical_step_record
+    observed = []
+
+    def inject(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result[field] = value
+        return result
+
+    monkeypatch.setattr(protocol, "physical_step_record", inject)
+    with pytest.raises(protocol.R1RunError, match="nonfinite_numeric_evidence") as error:
+        protocol.run_r1_step(stack, 16, reference, prepared, policy=policy, accepted_step_observer=observed.append)
+    partial = error.value.result
+    assert len(observed) == 1 and observed[0] is partial["accepted_steps"][0]
+    failed = observed[0]
+    assert failed["phase"] == "0+" and not failed["physical_checks_passed"]
+    assert protocol.nonfinite_numeric_paths(failed["raw_initial_physical"]) == [field + suffix]
+    assert failed["physical_checks"]["nonfinite_numeric_paths"] == ["raw_initial_physical." + field + suffix]
+    assert partial["certificate"]["reasons"] == ["nonfinite_numeric_evidence"]
+    assert partial["failure"]["type"] == "PhysicalCheckFailure"
+    assert "sha256" not in partial
+
+
+def test_zero_excitation_nonfinite_population_retains_raw_evidence(shared, monkeypatch):
+    stack, reference, policy, prepared = shared
+    original = protocol.snapshot
+
+    def inject(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result["p_m3"][0] = np.nan
+        return result
+
+    monkeypatch.setattr(protocol, "snapshot", inject)
+    with pytest.raises(protocol.R1RunError, match="nonfinite_numeric_evidence") as error:
+        protocol.check_zero_excitation(stack, 16, reference, prepared, policy=policy)
+    partial = error.value.result
+    assert partial["certificate"]["reasons"] == ["nonfinite_numeric_evidence"]
+    assert partial["failure"]["type"] == "PhysicalCheckFailure"
+    assert partial["certificate"]["nonfinite_numeric_paths"] == [
+        f"controls.{control}.population_identity.p_m3[0]" for control in "ABCD"
+    ]
+    assert np.isnan(partial["controls"]["A"]["population_identity"]["p_m3"][0])
+    assert not partial["certificate"]["certified"]
+    assert "sha256" not in partial
 
 
 def test_initial_numeric_failure_retains_underlying_residuals(shared, monkeypatch):

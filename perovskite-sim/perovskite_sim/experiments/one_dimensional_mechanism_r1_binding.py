@@ -14,6 +14,10 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
 
 STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 STUDY_INPUT_PATH = Path(__file__).resolve().parents[2] / STUDY_INPUT_RELATIVE_PATH
+# A versioned policy pin, not a claim that arbitrary code carrying this value
+# is independently approved. Updating the study input requires explicit repin.
+PINNED_STUDY_INPUT_SHA256 = "6a06878c467efe1b4d1a597ffcc45a8ad566ff347c4cdf868af094a36e8b64ca"
+PINNED_REFERENCE_BINDING_SHA256 = "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b"
 
 
 def _checked_study_input():
@@ -25,14 +29,17 @@ def _checked_study_input():
         same_input = False
     if not same_input:
         raise R1CheckoutError("R1 study input must use the canonical tracked checkout path")
-    return context.study_input
+    raw = context.read_bytes(context.study_input)
+    if hashlib.sha256(raw).hexdigest() != PINNED_STUDY_INPUT_SHA256:
+        raise R1CheckoutError("R1 study input differs from the pinned complete input digest")
+    return raw
 
 
 def study_input_identity():
     """Bind prepared source identity to the repository-owned study protocol."""
     return {
         "path": STUDY_INPUT_RELATIVE_PATH,
-        "sha256": hashlib.sha256(_checked_study_input().read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(_checked_study_input()).hexdigest(),
     }
 
 
@@ -45,7 +52,7 @@ def validate_r1_study_binding(binding, stack):
     """
     study_input = _checked_study_input()
     validate_binding(binding, stack)
-    study = json.loads(study_input.read_text(encoding="utf-8"))
+    study = json.loads(study_input)
     if (
         not isinstance(study, dict)
         or study.get("schema") != "one-dimensional-mechanism-r1-1-input-v1"
@@ -58,6 +65,8 @@ def validate_r1_study_binding(binding, stack):
         or any(character not in "0123456789abcdef" for character in expected)
     ):
         raise ValueError("R1-1 study input lacks a valid approved reference digest")
+    if expected != PINNED_REFERENCE_BINDING_SHA256:
+        raise ValueError("R1-1 study input differs from the pinned reference digest")
     # validate_binding has already recomputed the canonical payload digest and
     # compared it to this field, so a forged copy of the approved hash fails.
     if binding["sha256"] != expected:

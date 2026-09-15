@@ -168,7 +168,7 @@ def test_unapproved_reference_rejected_before_cli_dispatch(
     # subprocess workflow below observes and verifies the actual backend.
     monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda: [{"num_threads": 1, "source": "test-double"}])
     output = tmp_path / "rejected"
-    arguments = [stage, "--reference", str(reference), "--output-dir", str(output)]
+    arguments = [stage, "--development", "--reference", str(reference), "--output-dir", str(output)]
     if stage != "prepare":
         arguments += ["--prepared", str(prepared)]
     if stage == "step":
@@ -192,7 +192,7 @@ def test_caller_input_cannot_repin_approved_reference(runner, tmp_path, monkeypa
     monkeypatch.setattr(runner, "_record_execution_source", lambda output: None)
     output = tmp_path / "rejected"
     assert runner.main([
-        "prepare", "--reference", str(reference), "--input", str(input_path),
+        "prepare", "--development", "--reference", str(reference), "--input", str(input_path),
         "--output-dir", str(output),
     ]) == 1
     failure = runner.read_json(output / "FailureV1.json")
@@ -229,7 +229,7 @@ def test_failure_preserves_accepted_observations_and_exception_result(runner, tm
     monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda: [{"num_threads": 1, "source": "test-double"}])
     output = tmp_path / "interrupted"
     assert runner.main([
-        "step", "--control", "D", "--reference", str(reference), "--prepared", str(prepared_path),
+        "step", "--development", "--control", "D", "--reference", str(reference), "--prepared", str(prepared_path),
         "--output-dir", str(output),
     ]) == 1
     assert runner.read_json(output / "AcceptedStepsV1.json") == [accepted]
@@ -251,7 +251,8 @@ def test_real_cli_prepare_zero_step_and_verify_share_one_state(tmp_path):
 
     def execute(stage, output, *arguments):
         completed = subprocess.run(
-            [sys.executable, str(SCRIPT), stage, "--output-dir", str(output), *arguments],
+            [sys.executable, str(SCRIPT), stage, "--output-dir", str(output),
+             *(["--development"] if stage != "verify" else []), *arguments],
             cwd=PROJECT, env=environment, capture_output=True, text=True, timeout=120,
         )
         assert completed.returncode == 0, completed.stdout + completed.stderr

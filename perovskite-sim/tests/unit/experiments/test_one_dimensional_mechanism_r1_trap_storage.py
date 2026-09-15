@@ -1,6 +1,7 @@
 """Deterministic checks of the single-interface storage charge budget."""
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from decimal import Decimal
 from types import SimpleNamespace
 
 import numpy as np
@@ -123,6 +124,78 @@ def test_each_old_physical_gate_rejects_nonfinite_values(metric, limit, error):
     assert checks["reasons"] == [metric + "_nonfinite"]
     assert not checks["checks"][metric]["passed"]
     assert checks["checks"][metric]["limit"] == limit
+    assert checks["nonfinite_numeric_paths"] == ["physical." + metric]
+    assert not checks["checks"]["finite_numeric_evidence"]["passed"]
+
+
+def test_numeric_evidence_walk_handles_nested_arrays_complex_and_na_without_mutation():
+    @dataclass
+    class Evidence:
+        samples: object
+        unavailable: object = None
+
+    value = {
+        "finite": [0., np.float32(1.), 10**1000, Decimal("2.5"), True, None, "N/A"],
+        "nested": Evidence(np.array([[1 + 2j, complex(np.nan, np.inf)]])),
+        "object_vector": np.array([{"charge": -np.inf}, None], dtype=object),
+        "scalar_array": np.array(np.nan),
+        "decimal": Decimal("Infinity"),
+    }
+    assert protocol.nonfinite_numeric_paths(value) == [
+        "nested.samples[0][1].real", "nested.samples[0][1].imag",
+        "object_vector[0].charge", "scalar_array", "decimal",
+    ]
+    assert np.isnan(value["nested"].samples[0, 1].real)
+    assert np.isposinf(value["nested"].samples[0, 1].imag)
+    assert value["nested"].unavailable is None
+    assert protocol.nonfinite_numeric_paths(value["finite"]) == []
+
+
+@pytest.mark.parametrize("value,paths", [
+    (complex(np.nan, np.inf), ["physical.gauss_normalized.real", "physical.gauss_normalized.imag"]),
+    (np.array([0., np.nan]), ["physical.gauss_normalized[1]"]),
+])
+def test_existing_scalar_gate_rejects_nonfinite_components_before_scalar_conversion(value, paths):
+    physical = {key: 0. for key, _ in protocol._PHYSICAL_LIMITS}
+    physical["gauss_normalized"] = value
+    physical["trap_storage_check"] = {
+        "applicable": True, "normalized_error": 0., "certified": True,
+        "failure_reason": None,
+    }
+    checks = protocol._physical_step_checks(physical, finite_step=True, policy=protocol.r1_policy())
+    assert checks["reasons"] == ["gauss_normalized_nonfinite"]
+    assert checks["nonfinite_numeric_paths"] == paths
+    assert not checks["passed"]
+    assert not checks["checks"]["gauss_normalized"]["passed"]
+
+
+def test_uncovered_numeric_evidence_aggregates_with_existing_physical_failure():
+    physical = {key: 0. for key, _ in protocol._PHYSICAL_LIMITS}
+    physical["gauss_normalized"] = 2e-10
+    physical["interior_charge_C_m2"] = np.nan
+    physical["current_vector"] = [0., -np.inf]
+    physical["trap_storage_check"] = {
+        "applicable": True, "normalized_error": 0., "certified": True,
+        "failure_reason": None,
+    }
+    checks = protocol._physical_step_checks(physical, finite_step=True, policy=protocol.r1_policy())
+    assert checks["reasons"] == ["gauss_normalized_exceeds_limit", "nonfinite_numeric_evidence"]
+    assert not checks["passed"]
+    assert checks["nonfinite_numeric_paths"] == [
+        "physical.interior_charge_C_m2", "physical.current_vector[1]",
+    ]
+
+
+def test_completed_result_preserves_existing_metric_failure_without_duplicate_reason():
+    result = {"certificate": {"certified": False, "reasons": ["nonlinear_residual"],
+                              "metrics": {"nonlinear_residual": np.nan}}}
+    with pytest.raises(protocol.R1RunError, match="physical gates") as error:
+        protocol._require_finite_result(result)
+    assert error.value.result is result
+    assert result["certificate"]["reasons"] == ["nonlinear_residual"]
+    assert result["certificate"]["nonfinite_numeric_paths"] == ["certificate.metrics.nonlinear_residual"]
+    assert not result["certificate"]["finite_numeric_evidence"]["passed"]
+    assert np.isnan(result["certificate"]["metrics"]["nonlinear_residual"])
 
 
 def certificate_case(monkeypatch, errors_and_limits):

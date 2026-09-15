@@ -20,7 +20,8 @@ import zipfile
 import shutil
 
 PROJECT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT))
+if not (sys.flags.isolated and sys.flags.no_site):
+    sys.path.insert(0, str(PROJECT))
 from run_one_dimensional_mechanism_r0 import sha256
 
 GEOMETRY_TEST_PATH = "tests/unit/experiments/test_one_dimensional_mechanism_r1_geometry.py"

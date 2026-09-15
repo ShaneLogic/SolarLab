@@ -11,18 +11,18 @@ from tests.unit.experiments.test_one_dimensional_mechanism_r1_stage_one_cli impo
 
 
 def test_capture_and_commit_use_same_checkout_despite_git_environment(runner, tmp_path, monkeypatch):
-    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import git_environment
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import git_environment, require_r1_checkout
     expected_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=runner.PROJECT,
                                               env=git_environment(), text=True).strip()
-    expected_patch = subprocess.check_output(["git", "diff", "HEAD"], cwd=runner.PROJECT,
-                                             env=git_environment())
+    expected_context = require_r1_checkout(project=runner.PROJECT)
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "unrelated.git"))
     monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "unrelated-index"))
     output = tmp_path / "capture"
     output.mkdir()
     context = runner._record_execution_source(output)
     assert context.commit == expected_commit
-    assert (output / "SourceChangesV1.patch").read_bytes() == expected_patch
+    assert (output / "SourceChangesV1.patch").read_bytes() == expected_context._source_changes
+    assert context.required_sources == expected_context.required_sources
     assert runner.read_json(output / "ExecutionSourceV1.json")["observed_commit"] == expected_commit
     assert runner.read_json(output / "SourceManifestV1.json")
 
@@ -67,7 +67,8 @@ def test_integrity_does_not_claim_authenticated_provenance(runner, bundle, capsy
 
 def test_resealed_changes_fail_against_prior_external_digest(runner, bundle):
     expected = runner.sha256(bundle / "ManifestV1.json")
-    assert runner.verify_acceptance(bundle, expected_manifest_sha256=expected)[0]["status"] == "passed"
+    assert runner.verify_acceptance(bundle, expected_manifest_sha256=expected,
+                                    required_evidence_revision=1)[0]["status"] == "passed"
     runner.write_json(bundle / "PreparedStateV1.json", {"sheet_charge_C_m2": [1.2345e-9]})
     runner.manifest(bundle)
     assert runner.verify_output(bundle)[0]["status"] == "passed"
@@ -82,7 +83,8 @@ def test_acceptance_requires_explicit_external_anchor(runner, bundle, capsys):
 
 def test_ledger_identity_requires_separately_held_digest(runner, bundle, tmp_path):
     path, digest = ledger_for(runner, bundle, tmp_path / "LedgerV1.json")
-    assert runner.verify_acceptance(bundle, ledger=path, ledger_sha256=digest, run_id="run-one")[0]["status"] == "passed"
+    assert runner.verify_acceptance(bundle, ledger=path, ledger_sha256=digest, run_id="run-one",
+                                    required_evidence_revision=1)[0]["status"] == "passed"
     ledger = runner.read_json(path)
     ledger["entries"]["run-one"]["manifest_sha256"] = "0" * 64
     runner.write_json(path, ledger)
@@ -104,7 +106,8 @@ def test_matching_manifest_cannot_hide_ledger_identity_disagreement(runner, bund
     ledger["entries"]["run-one"][key] = value
     runner.write_json(path, ledger)
     with pytest.raises(ValueError, match="identities disagree"):
-        runner.verify_acceptance(bundle, ledger=path, ledger_sha256=runner.sha256(path), run_id="run-one")
+        runner.verify_acceptance(bundle, ledger=path, ledger_sha256=runner.sha256(path), run_id="run-one",
+                                 required_evidence_revision=1)
 
 
 def test_empty_source_manifest_cannot_pass_structural_verification(runner, bundle):
@@ -162,7 +165,7 @@ def test_failed_row_stream_counts_and_physical_reason_survive(runner, tmp_path, 
     monkeypatch.setattr(runner, "_record_execution_source", lambda output: None)
     monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda: [{"num_threads": 1}])
     output = tmp_path / "run"
-    assert runner.main(["step", "--control", "D", "--reference", str(reference),
+    assert runner.main(["step", "--development", "--control", "D", "--reference", str(reference),
                         "--prepared", str(state), "--output-dir", str(output)]) == 1
     completion = runner.read_json(output / "CompletionV1.json")
     streamed = runner.read_json(output / "AcceptedStepsV1.json")

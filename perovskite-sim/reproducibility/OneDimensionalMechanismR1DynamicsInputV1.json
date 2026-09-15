@@ -80,7 +80,8 @@
     "storage_scale": "original_Newton_reference_including_roundoff",
     "charge_relative_limit": "min(policy.maximum_charge_balance_relative_error,1e-10)",
     "zero_plus": "legacy_error_placeholder_zero; no positive elapsed step; check not applicable",
-    "semantics": "recorded_policy_consistency; separate Newton and local-charge ratios, no universal absolute precision claim"
+    "semantics": "recorded_policy_consistency; separate Newton and local-charge ratios, no universal absolute precision claim",
+    "shared_operator_limitation": "solver and diagnostic share storage_increment and rate; a consistent error in shared operators can pass both budget arms"
   },
   "parameter_provenance": "synthetic_numerical_reference",
   "units": "SI; band energies in eV",
@@ -97,22 +98,332 @@
   "nonlinear_factor_semantics": "allowed_attempts_not_guaranteed_convergence",
   "known_nonconvergence": [
     {
-      "controls": [
-        "C",
-        "D"
-      ],
-      "intervals": 16,
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
       "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_a_n16_factor0p001",
+      "intervals": 16,
+      "control": "A",
       "nonlinear_factor": 0.001,
       "phase": "0+",
-      "failure": "fixed-population local line search stalled",
-      "evidence": "R1StageOneAcceptanceV2; present before this evidence cleanup"
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_b_n16_factor0p001",
+      "intervals": 16,
+      "control": "B",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_c_n16_factor0p001",
+      "intervals": 16,
+      "control": "C",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n16_factor0p001",
+      "intervals": 16,
+      "control": "D",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_a_n32_factor0p001",
+      "intervals": 32,
+      "control": "A",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n32_factor0p001",
+      "intervals": 32,
+      "control": "D",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_a_n64_factor0p001",
+      "intervals": 64,
+      "control": "A",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n64_factor0p001",
+      "intervals": 64,
+      "control": "D",
+      "nonlinear_factor": 0.001,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n32_factor0p01",
+      "intervals": 32,
+      "control": "D",
+      "nonlinear_factor": 0.01,
+      "phase": "finite_step",
+      "failure": "analytic sparse Newton line search stalled at iteration 4"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_a_n64_factor0p01",
+      "intervals": 64,
+      "control": "A",
+      "nonlinear_factor": 0.01,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_c_n64_factor0p01",
+      "intervals": 64,
+      "control": "C",
+      "nonlinear_factor": 0.01,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
+    },
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n64_factor0p01",
+      "intervals": 64,
+      "control": "D",
+      "nonlinear_factor": 0.01,
+      "phase": "0+",
+      "failure": "fixed-population local line search stalled"
     }
   ],
-  "execution_context": "tracked_source_checkout; exact imported sources and policy; approval checked separately",
+  "execution_context": "controlled trusted launcher and frozen source bytes for formal runs; explicit development mode otherwise; approval requires an independently held anchor",
   "evidence_verification": {
     "integrity": "checksum_consistency_only",
     "acceptance": "external_manifest_digest_or_independently_anchored_external_ledger",
-    "physics_and_convergence": "separate_checks"
-  }
+    "physics_and_convergence": "separate_checks",
+    "strict_contract": "externally selected evidence revision; no downgrade by bundle self-declaration"
+  },
+  "known_physical_gate_failures": [
+    {
+      "observed_source_commit": "3dd7e0c923fce689909ef4e4237abea400f02b4e",
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "evidence": "R1StageOneAcceptanceV3/ReviewV1/LaneReportsV1.json and RefutationsV1.json",
+      "case_id": "base_d_n64_factor1p0",
+      "intervals": 64,
+      "control": "D",
+      "nonlinear_factor": 1.0,
+      "phase": "finite_step",
+      "failure": "contact_internal_current_spread_relative_exceeds_limit",
+      "observed_time_s": 5.05e-07,
+      "observed_dt_s": 2.475e-07,
+      "observed_refinement_substeps": 4,
+      "observed_metric": 2.1276232966e-06,
+      "limit": 2e-06
+    }
+  ],
+  "known_failure_semantics": {
+    "scope": "observations_at_named_source_commit_only; not extrapolated to unmeasured controls, windows or time refinements",
+    "runtime": "match exact case conditions and report whether signature recurred; never skip computation or waive a gate",
+    "deduplication_key": [
+      "observed_source_commit",
+      "control",
+      "intervals",
+      "nonlinear_factor",
+      "amplitude_V",
+      "times_s",
+      "refinement_substeps"
+    ],
+    "probe_repeat_count_is_not_unique_case_count": true
+  },
+  "finite_evidence": "all numeric leaves in physical/state/derived output checked before digest; nonfinite values fail with field paths and are preserved in failed JSON/NPZ"
 }

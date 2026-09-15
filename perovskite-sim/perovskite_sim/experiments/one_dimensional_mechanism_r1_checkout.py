@@ -1,14 +1,19 @@
-"""Bind formal R1 execution to the actual, tracked SolarLab worktree."""
+"""Content-bound R1 snapshots; trusted startup and approval remain separate."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+import difflib
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import shutil
+import tempfile
+from types import MappingProxyType
+from typing import Mapping
 import zipfile
 
 
@@ -16,15 +21,19 @@ PROJECT_RELATIVE_PATH = "perovskite-sim"
 STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 _CHECKOUT_MODULE = "perovskite_sim/experiments/one_dimensional_mechanism_r1_checkout.py"
 _RUNNER = "scripts/run_one_dimensional_mechanism_r1_stage_one.py"
+_LAUNCHER = "scripts/run_one_dimensional_mechanism_r1_controlled.py"
 _ANCHORS = (
     _CHECKOUT_MODULE,
     _RUNNER,
+    _LAUNCHER,
     "scripts/run_one_dimensional_mechanism_r1.py",
     "scripts/run_one_dimensional_mechanism_r0.py",
     STUDY_INPUT_RELATIVE_PATH,
     "docs/OneDimensionalMechanismR1DynamicsV1.md",
     "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
 )
+REQUIRED_SOURCE_ANCHORS = _ANCHORS
+_CURRENT_CONTEXT = None
 
 
 class R1CheckoutError(ValueError):
@@ -39,40 +48,96 @@ class R1CheckoutContext:
     tracked_paths: tuple[str, ...]
     required_sources: dict[str, dict[str, str | int]]
     dirty: dict[str, bool]
+    run_class: str = "development"
+    source_commit: str | None = None
+    source_content_sha256: str | None = None
+    content_mismatches: tuple[str, ...] = ()
+    runtime: dict | None = None
+    _source_bytes: Mapping[str, bytes] = field(default_factory=dict, repr=False, compare=False)
+    _source_changes: bytes = field(default=b"", repr=False, compare=False)
 
     @property
     def study_input(self):
         return self.project / STUDY_INPUT_RELATIVE_PATH
 
+    def read_bytes(self, path):
+        """Return frozen bytes, never reopen a possibly changed source."""
+        path = Path(path)
+        if not path.is_absolute():
+            path = (self.root if path.parts[:1] == (PROJECT_RELATIVE_PATH,) else self.project) / path
+        try:
+            name = Path(os.path.abspath(path)).relative_to(self.root).as_posix()
+            return self._source_bytes[name]
+        except (ValueError, KeyError) as exc:
+            raise R1CheckoutError(f"path is absent from the frozen R1 source snapshot: {path}") from exc
+
+    def package_source_hashes(self):
+        prefix = PROJECT_RELATIVE_PATH + "/perovskite_sim/"
+        return {name[len(prefix):]: hashlib.sha256(raw).hexdigest()
+                for name, raw in sorted(self._source_bytes.items())
+                if name.startswith(prefix) and name.endswith(".py")}
+
     def to_dict(self):
         return {
+            "schema": "R1ExecutionSourceV2",
             "repository_root": str(self.root),
             "project_relative_path": PROJECT_RELATIVE_PATH,
             "observed_commit": self.commit,
+            "source_commit": self.source_commit,
+            "source_content_sha256": self.source_content_sha256,
+            "run_class": self.run_class,
             "dirty": dict(self.dirty),
+            "dirty_note": "Git status is advisory; required-source content is compared separately",
+            "status_scope": "advisory working-tree observation at capture",
+            "required_source_snapshot_matches_commit": not self.content_mismatches,
+            "archived_source_is_commit_snapshot": self.run_class == "formal",
+            "required_source_content_mismatches": list(self.content_mismatches),
             "tracked_path_count": len(self.tracked_paths),
             "required_sources": {name: dict(entry) for name, entry in self.required_sources.items()},
-            "scope": "tracked_execution_checkout; commit approval is checked separately",
+            "runtime": self.runtime,
+            "scope": ("caller-anchored committed source snapshot; approval is separate"
+                      if self.run_class == "formal" else
+                      "development source snapshot; no controlled execution or independent approval asserted"),
         }
 
 
+def current_execution_context():
+    """The trusted startup path installs this object directly, not through env."""
+    return _CURRENT_CONTEXT
+
+
+def _install_controlled_context(context, runtime):
+    global _CURRENT_CONTEXT
+    if not (sys.flags.isolated and sys.flags.no_site):
+        raise R1CheckoutError("controlled R1 execution must start with Python -I -S")
+    if not isinstance(context, R1CheckoutContext) or context.run_class != "formal":
+        raise R1CheckoutError("controlled startup requires a committed source context")
+    if _CURRENT_CONTEXT is not None:
+        raise R1CheckoutError("a controlled R1 context is already installed")
+    # Arbitrary replacement of Python objects or the launcher is not the threat
+    # model. There is deliberately no environment-variable authorization token.
+    _CURRENT_CONTEXT = replace(context, runtime=dict(runtime))
+    return _CURRENT_CONTEXT
+
+
 def git_environment():
-    """Use filesystem checkout discovery for every formal Git operation."""
-    return {
-        key: value for key, value in os.environ.items()
-        if key not in (
-            "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-            "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
-            "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_PREFIX",
-        ) and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
-    }
+    """Ignore ambient redirects, config paths and object replacement refs."""
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": os.devnull,
+                        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_NO_REPLACE_OBJECTS": "1",
+                        "GIT_OPTIONAL_LOCKS": "0"})
+    return environment
 
 
-def _git(directory, *arguments):
+def _git(directory, *arguments, input=None):
+    executable = shutil.which("git", path=os.defpath)
+    if executable is None:
+        raise R1CheckoutError("R1 research execution requires Git and a source checkout")
     try:
         completed = subprocess.run(
-            ["git", "-C", str(directory), *arguments],
-            capture_output=True, check=False, env=git_environment(),
+            [executable, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull,
+             "-c", "core.excludesFile=" + os.devnull, "-C", str(directory), *arguments],
+            input=input, capture_output=True, check=False, env=git_environment(),
         )
     except OSError as exc:
         raise R1CheckoutError("R1 research execution requires Git and a source checkout") from exc
@@ -82,6 +147,59 @@ def _git(directory, *arguments):
             "package-only and wheel installations are not formal execution contexts"
         )
     return completed.stdout
+
+
+def _commit_tree(root, commit):
+    entries = {}
+    for entry in _git(root, "ls-tree", "-r", "-z", "--full-tree", commit).split(b"\0"):
+        if entry:
+            metadata, name = entry.split(b"\t", 1)
+            entries[name.decode("utf-8")] = tuple(metadata.decode("ascii").split())
+    return entries
+
+
+def _commit_bytes(root, tree):
+    objects = list(dict.fromkeys(oid for mode, kind, oid in tree.values()
+                                if kind == "blob" and mode in ("100644", "100755")))
+    raw = _git(root, "cat-file", "--batch", input=("\n".join(objects) + "\n").encode())
+    blobs, cursor = {}, 0
+    for expected in objects:
+        end = raw.index(b"\n", cursor)
+        oid, kind, length = raw[cursor:end].decode("ascii").split()
+        length = int(length)
+        if oid != expected or kind != "blob":
+            raise R1CheckoutError("Git returned an unexpected source object")
+        cursor = end + 1
+        blobs[oid] = raw[cursor:cursor + length]
+        if len(blobs[oid]) != length or raw[cursor + length:cursor + length + 1] != b"\n":
+            raise R1CheckoutError("Git source object is truncated")
+        cursor += length + 1
+    return {name: blobs[oid] for name, (mode, kind, oid) in tree.items()
+            if kind == "blob" and mode in ("100644", "100755")}
+
+
+def _identity(raw):
+    return {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+
+def source_content_digest(entries):
+    """Canonical digest of the required repo-relative {sha256, bytes} map."""
+    return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _source_patch(original, captured):
+    pieces = []
+    for name in sorted(set(original) | set(captured)):
+        before, after = original.get(name, b""), captured.get(name, b"")
+        if before != after:
+            try:
+                pieces.extend(difflib.unified_diff(
+                    before.decode("utf-8").splitlines(keepends=True),
+                    after.decode("utf-8").splitlines(keepends=True),
+                    fromfile="a/" + name, tofile="b/" + name))
+            except UnicodeDecodeError:
+                pieces.append(f"Binary source differs: {name}\n")
+    return "".join(pieces).encode("utf-8")
 
 
 def _file_identity(path):
@@ -126,13 +244,25 @@ def _require_import_origins(project, tracked):
             _require_exact_path(getattr(module, "__file__", None), project / "scripts" / (name + ".py"), name)
 
 
-def require_r1_checkout(*, project=None, runner=None):
-    """Validate source location/tracking, without treating HEAD as approved.
+def require_r1_checkout(*, project=None, runner=None, formal=False, source_commit=None,
+                        expected_source_sha256=None):
+    """Capture development bytes or check content against a caller's commit.
 
-    The root comes from Git's actual worktree discovery, not from a copied
-    package's parent directory. Development changes may be present: their
-    bytes and dirty flags are recorded, never relabelled as a clean commit.
+    Formal CLI output additionally requires controlled startup. New development
+    files must be declared to Git (intent-to-add is sufficient). Neither Git
+    index flags nor status authorize formal content or imply approval.
     """
+    active = current_execution_context()
+    if active is not None:
+        if project is not None and Path(project).resolve() != active.project:
+            raise R1CheckoutError("project differs from the controlled source snapshot")
+        if runner is not None and Path(runner).resolve() != active.project / _RUNNER:
+            raise R1CheckoutError("runner differs from the controlled source snapshot")
+        if source_commit is not None and source_commit != active.source_commit:
+            raise R1CheckoutError("source commit differs from the controlled source snapshot")
+        if expected_source_sha256 is not None and expected_source_sha256 != active.source_content_sha256:
+            raise R1CheckoutError("source content differs from the caller anchor")
+        return active
     module_file = Path(__file__).resolve()
     root = Path(_git(module_file.parent, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     expected_project = root / PROJECT_RELATIVE_PATH
@@ -143,23 +273,46 @@ def require_r1_checkout(*, project=None, runner=None):
         _require_exact_path(project, expected_project, "R1 project")
     if runner is not None:
         _require_exact_path(runner, expected_project / _RUNNER, "R1 runner")
-    tracked = {
+    head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    if source_commit is not None and (
+        not isinstance(source_commit, str) or len(source_commit) not in (40, 64)
+        or any(c not in "0123456789abcdef" for c in source_commit)
+    ):
+        raise R1CheckoutError("caller source commit must be a full lowercase Git object id")
+    if formal and source_commit is None:
+        raise R1CheckoutError("formal R1 execution requires an explicit caller source commit")
+    selected = source_commit or head
+    if formal and selected != head:
+        raise R1CheckoutError("checkout HEAD differs from the caller source commit")
+    tree = _commit_tree(root, selected)
+    committed = _commit_bytes(root, tree)
+    tracked = set(tree) if formal else {
         value for value in _git(root, "ls-files", "--cached", "--full-name", "-z").decode().split("\0")
         if value
     }
     package = expected_project / "perovskite_sim"
-    package_sources = list(package.rglob("*.py"))
+    package_sources = set(package.rglob("*.py"))
+    prefix = PROJECT_RELATIVE_PATH + "/perovskite_sim/"
+    package_sources.update(root / name for name in committed
+                           if name.startswith(prefix) and name.endswith(".py"))
     if not package_sources:
         raise R1CheckoutError("R1 checkout has no package source coverage")
     required_paths = set(package_sources) | {expected_project / name for name in _ANCHORS}
-    required = {}
+    required, disk = {}, {}
     for path in sorted(required_paths):
         relative = path.relative_to(root).as_posix()
         if relative not in tracked or not path.is_file():
             raise R1CheckoutError(f"required R1 execution source is not a tracked file: {relative}")
         if path.is_symlink() or not path.resolve().is_relative_to(expected_project):
             raise R1CheckoutError(f"R1 execution source escapes its canonical checkout path: {relative}")
-        required[relative] = _file_identity(path)
+        disk[relative] = path.read_bytes()
+        required[relative] = _identity(disk[relative])
+    mismatches = tuple(name for name in sorted(required) if committed.get(name) != disk[name])
+    if formal and mismatches:
+        raise R1CheckoutError("required R1 source differs from caller commit blob: " + ", ".join(mismatches))
+    content_sha256 = source_content_digest(required)
+    if expected_source_sha256 is not None and content_sha256 != expected_source_sha256:
+        raise R1CheckoutError("required R1 source content differs from the caller SHA-256 anchor")
     _require_import_origins(expected_project, tracked)
     status = _git(root, "status", "--porcelain=v1", "--untracked-files=normal").decode().splitlines()
     dirty = {
@@ -167,12 +320,61 @@ def require_r1_checkout(*, project=None, runner=None):
         "unstaged": any(line[1:2] not in (" ", "?") for line in status),
         "untracked": any(line.startswith("?? ") for line in status),
     }
-    commit = _git(root, "rev-parse", "HEAD").decode().strip()
-    return R1CheckoutContext(root, expected_project, commit, tuple(sorted(tracked)), required, dirty)
+    if formal:
+        captured, patch = committed, b""
+    else:
+        captured = {name: (root / name).read_bytes() for name in sorted(tracked)
+                    if (root / name).is_file() and not (root / name).is_symlink()}
+        captured.update(disk)
+        patch = _source_patch(committed, captured)
+        dirty["unstaged"] = bool(patch) or dirty["unstaged"]
+    return R1CheckoutContext(
+        root, expected_project, head, tuple(sorted(tracked)), required, dirty,
+        "formal" if formal else "development", selected, content_sha256, mismatches,
+        _source_bytes=MappingProxyType(dict(captured)), _source_changes=patch,
+    )
+
+
+def _atomic_bytes(path, raw):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".r1-source-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(raw)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def record_frozen_source(output, context):
+    """Save the captured/compiled byte map, without reopening disk sources."""
+    if not isinstance(context, R1CheckoutContext) or not context._source_bytes:
+        raise R1CheckoutError("a frozen source context is required")
+    output = Path(output)
+    entries = {name: _identity(raw) for name, raw in sorted(context._source_bytes.items())}
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=output, prefix=".r1-source-", delete=False) as stream:
+            temporary = Path(stream.name)
+            with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name, raw in sorted(context._source_bytes.items()):
+                    info = zipfile.ZipInfo(name)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    archive.writestr(info, raw)
+        os.replace(temporary, output / "SourceV1.zip")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    _atomic_bytes(output / "SourceManifestV1.json", (json.dumps(entries, indent=2) + "\n").encode())
+    _atomic_bytes(output / "SourceChangesV1.patch", context._source_changes)
+    _atomic_bytes(output / "ExecutionSourceV1.json", (json.dumps(context.to_dict(), indent=2) + "\n").encode())
+    validate_source_coverage(output, context)
+    return context
 
 
 def validate_source_coverage(output, context):
-    """Match nonempty captured evidence to every actual required source file."""
+    """Match captured evidence to the frozen required execution bytes."""
     if not isinstance(context, R1CheckoutContext):
         raise TypeError("context must come from require_r1_checkout")
     if not context.required_sources:
@@ -196,9 +398,8 @@ def validate_source_coverage(output, context):
             for name, expected in context.required_sources.items():
                 if entries[name] != expected:
                     raise R1CheckoutError(f"source manifest identity mismatch: {name}")
-                path = context.root / name
-                if _file_identity(path) != expected:
-                    raise R1CheckoutError(f"execution source changed after checkout capture: {name}")
+                if context._source_bytes and _identity(context.read_bytes(name)) != expected:
+                    raise R1CheckoutError(f"frozen execution source identity mismatch: {name}")
                 info = archive.getinfo(name)
                 if info.file_size != expected["bytes"]:
                     raise R1CheckoutError(f"source archive identity mismatch: {name}")
@@ -211,8 +412,10 @@ def validate_source_coverage(output, context):
         "source_file_count": len(entries),
         "required_execution_source_count": len(context.required_sources),
         "certified": True,
-        "scope": "captured bytes match the tracked execution checkout; approval is separate",
+        "scope": "captured bytes match the frozen source snapshot; approval is separate",
     }
 
 
-__all__ = ["R1CheckoutError", "R1CheckoutContext", "git_environment", "require_r1_checkout", "validate_source_coverage"]
+__all__ = ["R1CheckoutError", "R1CheckoutContext", "git_environment", "require_r1_checkout",
+           "current_execution_context", "record_frozen_source", "validate_source_coverage",
+           "REQUIRED_SOURCE_ANCHORS", "source_content_digest"]

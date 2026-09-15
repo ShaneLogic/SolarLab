@@ -73,8 +73,11 @@ def digest(value):
 
 
 def execution_source():
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import current_execution_context
+
+    context = current_execution_context()
     package = Path(__file__).resolve().parents[1]
-    files = {
+    files = context.package_source_hashes() if context is not None else {
         str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(package.rglob("*.py"))
     }

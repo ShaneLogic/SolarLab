@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -16,10 +17,12 @@ import sys
 import tempfile
 import time
 import traceback
+import zipfile
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT))
+if not (sys.flags.isolated and sys.flags.no_site):
+    sys.path.insert(0, str(PROJECT))
 from run_one_dimensional_mechanism_r1 import (
     json_ready, manifest, sha256, source_record, write_json,
 )
@@ -52,8 +55,12 @@ def _unique_pairs(pairs):
 
 
 def read_json(path):
+    return _read_json_bytes(Path(path).read_bytes())
+
+
+def _read_json_bytes(raw):
     return json.loads(
-        Path(path).read_text(encoding="utf-8"),
+        raw.decode("utf-8"),
         parse_constant=_reject_constant, object_pairs_hook=_unique_pairs,
     )
 
@@ -147,14 +154,103 @@ def verify_output(output):
     return completion, len(entries)
 
 
+def _verify_controlled_evidence(output, completion):
+    """Check revision-three structure selected by the verifier, not the bundle."""
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
+        REQUIRED_SOURCE_ANCHORS, source_content_digest,
+    )
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import PINNED_STUDY_INPUT_SHA256
+
+    execution = read_json(output / "ExecutionSourceV1.json")
+    if (execution.get("schema") != "R1ExecutionSourceV2"
+            or execution.get("run_class") != "formal" or completion.get("run_class") != "formal"):
+        raise ValueError("formal acceptance requires controlled execution evidence")
+    commit = execution.get("source_commit")
+    if (not isinstance(commit, str) or len(commit) not in (40, 64)
+            or any(c not in "0123456789abcdef" for c in commit)
+            or execution.get("observed_commit") != commit):
+        raise ValueError("controlled execution source commit mismatch")
+    runtime = execution.get("runtime")
+    if (not isinstance(runtime, dict) or runtime.get("isolated") is not True
+            or runtime.get("no_site") is not True
+            or runtime.get("project_bytecode_cache_used") is not False
+            or runtime.get("project_loader") != "FrozenSourceLoader"):
+        raise ValueError("controlled execution runtime evidence is incomplete")
+    source = read_json(output / "SourceManifestV1.json")
+    required = execution.get("required_sources")
+    expected = {"perovskite-sim/" + name for name in REQUIRED_SOURCE_ANCHORS}
+    expected.update(name for name in source
+                    if name.startswith("perovskite-sim/perovskite_sim/") and name.endswith(".py"))
+    if not isinstance(required, dict) or set(required) != expected or not expected <= source.keys():
+        raise ValueError("execution source coverage lacks the required package sources or anchors")
+    if any(required[name] != source[name] for name in expected):
+        raise ValueError("required source identities disagree with the source manifest")
+    if execution.get("required_source_content_mismatches") != []:
+        raise ValueError("formal execution records source content mismatches")
+    if source_content_digest(required) != execution.get("source_content_sha256"):
+        raise ValueError("execution source content digest mismatch")
+    try:
+        with zipfile.ZipFile(output / "SourceV1.zip") as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)) or set(names) != set(source):
+                raise ValueError("source ZIP and source manifest coverage differ")
+            for name, identity in source.items():
+                if (not isinstance(identity, dict) or Path(name).is_absolute()
+                        or ".." in Path(name).parts
+                        or archive.getinfo(name).file_size != identity.get("bytes")
+                        or hashlib.sha256(archive.read(name)).hexdigest() != identity.get("sha256")):
+                    raise ValueError("source ZIP identity mismatch: " + name)
+            input_name = "perovskite-sim/reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
+            if archive.read(input_name) != (output / "StudyInputV1.json").read_bytes():
+                raise ValueError("study input differs from the controlled source snapshot")
+            contract_name = "perovskite-sim/docs/OneDimensionalMechanismR1DynamicsV1.md"
+            if archive.read(contract_name) != (output / "ExecutionContractV1.md").read_bytes():
+                raise ValueError("contract differs from the controlled source snapshot")
+            study = read_json(output / "StudyInputV1.json")
+            fixture_name = "perovskite-sim/" + study["fixture"]
+            fixture_bytes = (output / "SourceFixtureV1.yaml").read_bytes()
+            if (archive.read(fixture_name) != fixture_bytes
+                    or hashlib.sha256(fixture_bytes).hexdigest() != study["fixture_sha256"]):
+                raise ValueError("source fixture differs from the controlled snapshot or pinned input")
+    except (zipfile.BadZipFile, KeyError) as exc:
+        raise ValueError("invalid controlled source ZIP") from exc
+    if sha256(output / "StudyInputV1.json") != PINNED_STUDY_INPUT_SHA256:
+        raise ValueError("study input does not match this verifier's pinned protocol")
+    study, protocol = read_json(output / "StudyInputV1.json"), read_json(output / "ProtocolV1.json")
+    binding = read_json(output / "ReferenceBindingV1.json")
+    payload = {key: value for key, value in binding.items() if key != "sha256"}
+    # ReferenceBindingV1 predates the compact-JSON common-state encoding.
+    payload_sha256 = hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    if payload_sha256 != binding.get("sha256"):
+        raise ValueError("reference binding canonical payload digest mismatch")
+    expected_reference = study["fixed_reference_binding_sha256"]
+    if any(value != expected_reference for value in (
+        binding["sha256"], protocol.get("reference_binding_sha256"),
+        protocol.get("approved_reference_binding_sha256"),
+    )):
+        raise ValueError("reference identities disagree with the pinned study input")
+    for field, filename in (("input_sha256", "StudyInputV1.json"),
+                            ("contract_sha256", "ExecutionContractV1.md"),
+                            ("reference_file_sha256", "ReferenceBindingV1.json")):
+        if protocol.get(field) != sha256(output / filename):
+            raise ValueError("protocol artifact identity mismatch: " + field)
+
+
 def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
-                      ledger_sha256=None, run_id=None):
+                      ledger_sha256=None, run_id=None, required_evidence_revision=3):
     output = Path(output).resolve(strict=True)
     expected, entry = _verification_anchor(output, expected_manifest_sha256, ledger,
                                           ledger_sha256, run_id)
     if sha256(output / "ManifestV1.json") != expected:
         raise ValueError("bundle manifest differs from the supplied external anchor")
     completion, count = verify_output(output)
+    if required_evidence_revision not in (1, 2, 3):
+        raise ValueError("unsupported externally required evidence revision")
+    if completion["status"] == "passed":
+        if completion.get("evidence_revision", 1) != required_evidence_revision:
+            raise ValueError("bundle evidence revision differs from the externally required revision")
+        if required_evidence_revision == 3:
+            _verify_controlled_evidence(output, completion)
     if entry is not None:
         actual = {
             "stage": completion["stage"], "stage_scope": completion["stage_scope"],
@@ -175,11 +271,19 @@ def _write_evidence(path, result):
 
     path = Path(path)
     def tagged(value):
+        if dataclasses.is_dataclass(value):
+            return {field.name: tagged(getattr(value, field.name)) for field in dataclasses.fields(value)}
+        if isinstance(value, np.ndarray):
+            return tagged(value.tolist())
+        if isinstance(value, np.generic):
+            return tagged(value.item())
+        if isinstance(value, complex):
+            return {"real": tagged(value.real), "imag": tagged(value.imag)}
         if isinstance(value, float) and not math.isfinite(value):
             return {"nonfinite": repr(value)}
         if isinstance(value, dict):
             return {key: tagged(child) for key, child in value.items()}
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             return [tagged(child) for child in value]
         return value
 
@@ -188,6 +292,8 @@ def _write_evidence(path, result):
         if isinstance(value, np.ndarray):
             arrays[key] = value
         elif isinstance(value, (float, np.floating)) and not math.isfinite(value):
+            arrays[key] = np.asarray(value)
+        elif isinstance(value, (complex, np.complexfloating)) and not np.isfinite(value):
             arrays[key] = np.asarray(value)
         elif dataclasses.is_dataclass(value):
             for field in dataclasses.fields(value):
@@ -199,7 +305,7 @@ def _write_evidence(path, result):
             for index, child in enumerate(value):
                 collect(child, key + "." + str(index))
     collect(result)
-    text = json.dumps(tagged(json_ready(result)), indent=2, allow_nan=False) + "\n"
+    text = json.dumps(tagged(result), indent=2, allow_nan=False) + "\n"
     temporary = []
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
@@ -226,15 +332,39 @@ def _record_failure_result(output, result):
 
 def _record_execution_source(output):
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
-        git_environment, require_r1_checkout, validate_source_coverage,
+        record_frozen_source, require_r1_checkout,
     )
     context = require_r1_checkout(project=PROJECT, runner=Path(__file__))
     if not INPUT_PATH.samefile(context.project / "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"):
         raise ValueError("CLI study input does not identify the tracked checkout policy")
-    source_record(output, repository=context.root, git_environment=git_environment())
-    validate_source_coverage(output, context)
-    write_json(output / "ExecutionSourceV1.json", context.to_dict())
+    record_frozen_source(output, context)
     return context
+
+
+def _historical_case_observation(study, args, policy, failure):
+    """Report previous measurements without treating them as waivers."""
+    if args.stage != "step" or study is None or policy is None:
+        return None
+    matched = []
+    for category in ("known_nonconvergence", "known_physical_gate_failures"):
+        for entry in study.get(category, []):
+            if any(entry.get(key) != actual for key, actual in (
+                ("intervals", args.intervals), ("control", args.control),
+                ("nonlinear_factor", args.nonlinear_factor), ("amplitude_V", args.amplitude),
+                ("times_s", study["functional_times_s"]),
+                ("refinement_substeps", list(policy.refinement_substeps)),
+            )):
+                continue
+            matched.append({
+                "case_id": entry["case_id"], "category": category,
+                "observed_source_commit": entry["observed_source_commit"],
+                "historical_failure": entry["failure"],
+                "outcome": ("previously_failed_case_now_passed" if failure is None else
+                            "historical_signature_recurred" if entry["failure"] in failure["message"] else
+                            "different_failure_signature"),
+            })
+    return {"matching_historical_cases": matched, "waives_checks": False,
+            "note": "Historical observations do not determine current acceptance or exit status"}
 
 
 def main(argv=None):
@@ -253,6 +383,10 @@ def main(argv=None):
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--ledger-sha256")
     parser.add_argument("--run-id")
+    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3), default=3,
+                        help="acceptance format chosen outside the bundle; 1/2 are explicit legacy verification")
+    parser.add_argument("--development", action="store_true",
+                        help="explicit unverified development execution; not formal study evidence")
     args = parser.parse_args(argv)
     if args.stage == "list":
         print(
@@ -272,6 +406,7 @@ def main(argv=None):
                 completion, count = verify_acceptance(
                     output, expected_manifest_sha256=args.expected_manifest_sha256,
                     ledger=args.ledger, ledger_sha256=args.ledger_sha256, run_id=args.run_id,
+                    required_evidence_revision=args.required_evidence_revision,
                 )
             else:
                 if any((args.expected_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
@@ -304,19 +439,37 @@ def main(argv=None):
         os.environ[key] = "1"
     started = time.monotonic()
     failure = None
+    execution_context = None
+    study = None
+    policy = None
     accepted = []
     persisted_count = 0
     try:
         execution_context = _record_execution_source(output)
-        study = read_json(args.input)
-        if _canonical(study) != _canonical(read_json(INPUT_PATH)):
+        controlled = execution_context is not None and execution_context.run_class == "formal"
+        if not controlled and not args.development:
+            raise ValueError("formal R1 computation requires the controlled -I -S launcher; use --development for unverified development")
+        if controlled and args.development:
+            raise ValueError("controlled execution cannot be relabelled as development")
+        canonical_input = (execution_context.read_bytes(INPUT_PATH) if execution_context is not None
+                           else INPUT_PATH.read_bytes())
+        supplied_input = (canonical_input if args.input.resolve() == INPUT_PATH.resolve()
+                          else args.input.read_bytes())
+        study = _read_json_bytes(supplied_input)
+        if _canonical(study) != _canonical(_read_json_bytes(canonical_input)):
             raise ValueError("R1-1 input differs from the supported versioned protocol")
-        shutil.copyfile(args.input, output / "StudyInputV1.json")
-        shutil.copyfile(CONTRACT_PATH, output / "ExecutionContractV1.md")
+        # Execute and identify the canonical policy even when a caller provides
+        # a semantically equivalent input with different JSON formatting.
+        (output / "StudyInputV1.json").write_bytes(canonical_input)
+        contract = (execution_context.read_bytes(CONTRACT_PATH) if execution_context is not None
+                    else CONTRACT_PATH.read_bytes())
+        (output / "ExecutionContractV1.md").write_bytes(contract)
         fixture = PROJECT / study["fixture"]
-        if sha256(fixture) != study["fixture_sha256"]:
+        fixture_bytes = (execution_context.read_bytes(fixture) if execution_context is not None
+                         else fixture.read_bytes())
+        if hashlib.sha256(fixture_bytes).hexdigest() != study["fixture_sha256"]:
             raise ValueError("source fixture mismatch")
-        shutil.copyfile(fixture, output / "SourceFixtureV1.yaml")
+        (output / "SourceFixtureV1.yaml").write_bytes(fixture_bytes)
         shutil.copyfile(args.reference, output / "ReferenceBindingV1.json")
         binding = read_json(output / "ReferenceBindingV1.json")
         if args.prepared is not None:
@@ -342,7 +495,7 @@ def main(argv=None):
             raise RuntimeError("package import did not resolve to this execution source")
         if not INPUT_PATH.samefile(STUDY_INPUT_PATH):
             raise RuntimeError("CLI and imported binding policy must be the same tracked file")
-        stack = load_device_from_yaml(fixture)
+        stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
         policy = r1_policy(nonlinear_factor=args.nonlinear_factor)
         write_json(output / "ResolvedStackV1.json", stack)
         with threadpool_limits(limits=1, user_api="blas"):
@@ -356,6 +509,9 @@ def main(argv=None):
                 "command": sys.argv if argv is None else [str(Path(__file__)), *argv],
                 "started_utc": datetime.now(timezone.utc).isoformat(),
                 "checkout": execution_context.to_dict() if execution_context is not None else None,
+                "run_class": "formal" if controlled else "development",
+                "independent_approval": "not_asserted_by_execution",
+                "controlled_runtime": execution_context.runtime if controlled else None,
             })
             if not backends or any(item["num_threads"] != 1 for item in backends):
                 raise RuntimeError("R1 requires observed single-thread BLAS")
@@ -375,6 +531,7 @@ def main(argv=None):
                     None if args.prepared is None else sha256(output / "PreparedStateV1.json")
                 ),
                 "input_sha256": sha256(output / "StudyInputV1.json"),
+                "supplied_input_sha256": hashlib.sha256(supplied_input).hexdigest(),
                 "contract_sha256": sha256(output / "ExecutionContractV1.md"),
                 "claims_excluded": study["claims_excluded"],
             })
@@ -428,7 +585,10 @@ def main(argv=None):
         "stage": args.stage, "status": "failed" if failure else "passed",
         "duration_s": time.monotonic() - started,
         "finished_utc": datetime.now(timezone.utc).isoformat(), "failure": failure,
-        "evidence_revision": 2,
+        "evidence_revision": 3,
+        "run_class": execution_context.run_class if execution_context is not None else "rejected_before_execution",
+        "independent_approval": "not_asserted_by_execution",
+        "historical_case_observation": _historical_case_observation(study, args, policy, failure),
         "accepted_record_count": persisted_count,
         "observed_record_count": len(accepted), "persisted_record_count": persisted_count,
         "persisted_finite_step_count": sum(r.get("phase") == "accepted_regular_step" for r in accepted[:persisted_count]),
