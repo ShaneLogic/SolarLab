@@ -190,8 +190,13 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     means that the failed experiment is physically certified or complete.
     """
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import (
-        _physical_step_checks, _trace_certificate,
+        _physical_step_checks, _trace_certificate, nonfinite_numeric_paths,
     )
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import (
+        RESULT_ARRAY_FIELDS, verify_step_metadata,
+    )
+    if not allow_incomplete and nonfinite_numeric_paths(record):
+        raise R1PhysicsValidationError("nonfinite numeric evidence in controlled result")
     prepared = prepared if isinstance(prepared, R1PreparedState) else R1PreparedState.from_dict(prepared)
     _same(record.get("prepared_sha256"), prepared.sha256, "preparation identity")
     if expected_prepared_sha256 is not None:
@@ -210,6 +215,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         before = system.evaluate(system.initial_coordinate(), 0.0)
         for name in ("n", "p", "positive", "occupancy", "phi", "sheet_charge"):
             _same(getattr(before, name), getattr(before_D, name), "initial control population " + name)
+    verify_step_metadata(record, intervals=intervals, policy=policy, polarity=system.polarity, same=_same)
     amplitude = float(record["amplitude_V"])
     times = np.asarray(record["times_s"], dtype=float)
     if (not np.isfinite(amplitude) or not 0 < abs(amplitude) < 0.02
@@ -231,6 +237,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     if not rows and not allow_incomplete:
         raise R1PhysicsValidationError("no accepted states to reconstruct")
     output_levels, all_physical, summaries, integrals = [], [], [], {}
+    available_levels = {}
     consumed = 0
     all_recomputed_rows = []
     any_physical_failure = False
@@ -322,14 +329,16 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
                                   for name, detail in diagnostic["eliminated_operator"].items()}})
             all_recomputed_rows.append(recomputed)
             previous, consumed = state, consumed + 1
-        integrals[count] = integrated
+        if observations:
+            integrals[count] = integrated
+            available_levels[count] = _level(state_outputs, observations, initial)
         if len(observations) == len(schedule):
-            output_levels.append(_level(state_outputs, observations, initial))
+            output_levels.append(available_levels[count])
         else:
             break
     complete = consumed == expected_count
     certificate = None
-    required_result_fields = ("output_states", "regular_currents", "finite_step_averages", "accepted_state_arrays", "charge_integral")
+    required_result_fields = RESULT_ARRAY_FIELDS
     has_complete_result = complete and all(key in record for key in required_result_fields)
     if complete:
         certificate = _trace_certificate(initial.system, before, output_levels, policy, all_physical)
@@ -338,14 +347,36 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         # the historical iteration maximum stays explicitly outside this claim.
         stored_certificate = dict(record["certificate"])
         expected_certificate = dict(certificate)
-        for value in (stored_certificate, expected_certificate):
-            value.pop("analytic_jacobian_nnz", None)
-            value.pop("finite_numeric_evidence", None)
         if "metrics" in stored_certificate:
+            nnz = stored_certificate.get("analytic_jacobian_nnz")
+            if type(nnz) is not int or not 0 < nnz < initial.system.dimension**2:
+                raise R1PhysicsValidationError("physical certificate lacks a sparse Jacobian count")
+            if nnz < expected_certificate["analytic_jacobian_nnz"]:
+                raise R1PhysicsValidationError("historical Jacobian maximum is below accepted-state structure")
+            finite_record = dict(record, certificate=dict(stored_certificate))
+            finite_record["certificate"].pop("finite_numeric_evidence", None)
+            paths = nonfinite_numeric_paths(finite_record)
+            _same(stored_certificate.get("finite_numeric_evidence"), {
+                "passed": not paths, "nonfinite_numeric_paths": paths,
+                "scope": "all_numeric_leaves_before_digest",
+            }, "finite numeric certificate")
+            if paths:
+                raise R1PhysicsValidationError("nonfinite numeric evidence in completed controlled result")
+            for value in (stored_certificate, expected_certificate):
+                value.pop("analytic_jacobian_nnz", None)
+                value.pop("finite_numeric_evidence", None)
             _same(stored_certificate, expected_certificate, "recomputed physical certificate")
         elif not allow_incomplete:
             raise R1PhysicsValidationError("physical certificate metrics unavailable")
-        final = output_levels[-1]
+    elif record.get("certificate", {}).get("certified") is not False:
+        raise R1PhysicsValidationError("incomplete failed trajectory must retain a failed certificate")
+    elif "metrics" in record.get("certificate", {}):
+        raise R1PhysicsValidationError("incomplete trajectory cannot claim a full-trace metric certificate")
+    final = available_levels.get(policy.refinement_substeps[-1])
+    sampled_fields = ("output_states", "regular_currents", "finite_step_averages")
+    if final is None and any(name in record for name in sampled_fields):
+        raise R1PhysicsValidationError("result samples have no reconstructed finest-level prefix")
+    if final is not None:
         output_states = {name: np.asarray([getattr(s, attribute) for s in final.states])
             for name, attribute in (("n_m3", "n"), ("p_m3", "p"), ("positive_m3", "positive"),
                                     ("occupancy", "occupancy"), ("phi_V", "phi"), ("sheet_charge_C_m2", "sheet_charge"))}
@@ -355,19 +386,24 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
             currents = [regular_current_at_state(initial.system, state, policy=policy).evidence for state in final.states]
             _same(record["regular_currents"], currents, "instantaneous currents from each output state")
         if "finite_step_averages" in record:
-            for key, actual in (("internal_total_A_m2", final.total_current),
-                               ("internal_displacement_A_m2", final.displacement),
-                               ("interface_total_A_m2", final.interface_total_current)):
-                _same(record["finite_step_averages"][key], actual, "finite-step current " + key)
-        if "accepted_state_arrays" in record:
-            _same(record["accepted_state_arrays"], {key: np.asarray([r["state"][key] for r in all_recomputed_rows])
-                                                  for key in rows[0]["state"]}, "accepted state arrays")
-        if "charge_integral" in record:
-            _same(record["charge_integral"]["regular_by_substeps_C_m2"], integrals, "regular charge integrals")
-            impulse = initial.event["impulse_charge_C_m2"]
-            _same(record["charge_integral"]["impulse_charge_C_m2"], impulse, "impulse charge")
-            _same(record["charge_integral"]["complete_by_substeps_C_m2"],
-                  {key: impulse + value for key, value in integrals.items()}, "complete charge integrals")
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import AVERAGE_NOTE
+            _same(record["finite_step_averages"], {
+                "internal_total_A_m2": final.total_current,
+                "internal_displacement_A_m2": final.displacement,
+                "interface_total_A_m2": final.interface_total_current, "note": AVERAGE_NOTE,
+            }, "finite-step current")
+    if "accepted_state_arrays" in record:
+        if not rows:
+            raise R1PhysicsValidationError("accepted state arrays have no reconstructed rows")
+        _same(record["accepted_state_arrays"], {key: np.asarray([r["state"][key] for r in all_recomputed_rows])
+                                              for key in rows[0]["state"]}, "accepted state arrays")
+    if "charge_integral" in record:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import CHARGE_QUADRATURE
+        impulse = initial.event["impulse_charge_C_m2"]
+        _same(record["charge_integral"], {"regular_by_substeps_C_m2": integrals,
+            "impulse_charge_C_m2": impulse,
+            "complete_by_substeps_C_m2": {key: impulse + value for key, value in integrals.items()},
+            "quadrature": CHARGE_QUADRATURE}, "complete charge integrals")
     if not has_complete_result and not allow_incomplete:
         raise R1PhysicsValidationError("complete result fields unavailable")
     if "failure" in record and rows and rows[-1].get("physical_failure_reasons"):
@@ -400,6 +436,9 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         "physical_limits_satisfied": bool(limits_satisfied),
         "physical_limit_violations": limit_violations, "complete": complete,
         "checked_row_count": consumed, "expected_row_count": expected_count,
+        "checked_result_fields": [key for key in RESULT_ARRAY_FIELDS if key in record],
+        "unavailable_result_fields": [key for key in RESULT_ARRAY_FIELDS if key not in record],
+        "content_scope": "present_scientific_fields_and_saved_rows; failure_messages_and_solver_history_are_provenance",
         "metrics": None if certificate is None else certificate["metrics"],
         "limits": None if certificate is None else certificate["limits"],
         "operator_diagnostics": summaries,

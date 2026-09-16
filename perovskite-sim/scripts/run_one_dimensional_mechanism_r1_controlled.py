@@ -30,6 +30,7 @@ import types
 CHECKOUT_NAME = "perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout"
 CHECKOUT_PATH = "perovskite_sim/experiments/one_dimensional_mechanism_r1_checkout.py"
 RUNNER_PATH = "scripts/run_one_dimensional_mechanism_r1_stage_one.py"
+STUDY_RUNNER_PATH = "scripts/run_one_dimensional_mechanism_r1_physics_study.py"
 LAUNCHER_PATH = "scripts/run_one_dimensional_mechanism_r1_controlled.py"
 THREAD_VARIABLES = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
                     "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")
@@ -182,6 +183,7 @@ def main(argv=None):
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--source-sha256")
+    parser.add_argument("--runner", choices=("stage-one", "physics-study"), default="stage-one")
     parser.add_argument("--dependency-path", action="append", default=[], type=Path,
                         help="trusted dependency directory; .pth files are not processed")
     parser.add_argument("runner_arguments", nargs=argparse.REMAINDER)
@@ -240,15 +242,16 @@ def main(argv=None):
         operator_criterion_identity()
         additional_failures_identity()
         physics_protocol_identity()
-        filename = str(project / RUNNER_PATH)
+        runner_path = STUDY_RUNNER_PATH if args.runner == "physics-study" else RUNNER_PATH
+        filename = str(project / runner_path)
         module = types.ModuleType("__main__")
         module.__file__ = filename
         module.__package__ = ""
-        module.__loader__ = FrozenSourceLoader(context, "__main__", RUNNER_PATH, False)
+        module.__loader__ = FrozenSourceLoader(context, "__main__", runner_path, False)
         sys.modules["__main__"] = module
         sys.argv = [filename, *arguments]
         execution_started = True
-        exec(compile(context.read_bytes(RUNNER_PATH), filename, "exec", dont_inherit=True), module.__dict__)
+        exec(compile(context.read_bytes(runner_path), filename, "exec", dont_inherit=True), module.__dict__)
         return 0
     except (OSError, ValueError, ImportError) as exc:
         phase = "runner" if execution_started else "startup"

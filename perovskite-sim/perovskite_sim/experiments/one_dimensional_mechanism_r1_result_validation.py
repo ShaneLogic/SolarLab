@@ -673,6 +673,14 @@ def _verify_physical_result_records(output, completion):
         _failed_sidecar(result_path.with_suffix(".npz"), record)
         if record.get("certificate", {}).get("certified") is not False:
             raise ValueError("failed result cannot assert a passed certificate")
+        if not rows and not record.get("physics_reconstruction"):
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import RESULT_ARRAY_FIELDS
+            if any(key in record for key in RESULT_ARRAY_FIELDS):
+                raise ValueError("failed result arrays have no reconstructable accepted states")
+            return {**base_scope, "content_matches_recomputed": None,
+                    "physical_limits_satisfied": False, "checked_row_count": 0,
+                    "unavailable_result_fields": list(RESULT_ARRAY_FIELDS),
+                    "unavailable": "failure before exact initial-state reconstruction; only outer identities checked"}
     physics = verify_r1_step_physics(
         load_device_from_yaml(output / "SourceFixtureV1.yaml"), protocol["intervals"],
         read_json(output / "ReferenceBindingV1.json"), prepared, record,
@@ -681,11 +689,13 @@ def _verify_physical_result_records(output, completion):
     if not failed and not physics["certified"]:
         raise ValueError("passed result fails reconstructed physical gates")
     return {**base_scope, **physics, "scientifically_accepted": not failed and physics["certified"],
+            "scope": base_scope["scope"], "reconstruction_scope": physics["scope"],
+            "provenance_only": sorted(set(base_scope["provenance_only"]) | set(physics["provenance_only"])),
             "checked": ["state_to_transport_and_current", "charge_and_storage_equations",
                         "finite_difference_jacobian", "eliminated_operator_and_scales",
                         "original_physical_certificate_metrics"],
             "numerical_certificate_independently_approved": False,
-            "integration_replayed": False, "range_only": []}
+            "integration_replayed": False, "range_only": ["historical_iteration_maximum_jacobian_nnz"]}
 
 
 def verify_result_records(output: Path, completion: dict) -> dict:

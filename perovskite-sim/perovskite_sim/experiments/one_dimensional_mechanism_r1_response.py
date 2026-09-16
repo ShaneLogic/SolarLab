@@ -7,7 +7,8 @@ certify a time/frequency band. See OneDimensionalMechanismR1ResponseV1.md.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from collections.abc import Mapping
 from typing import Any
 import warnings
 
@@ -107,7 +108,7 @@ def descriptor_frequency_response(frequency_Hz, *, storage, rate, forcing,
         raise ValueError("voltage observation shapes disagree")
     if not all(np.all(np.isfinite(x)) for x in (mass.data, operator.data, b, mv, c, d, cv, dv)):
         raise ValueError("descriptor coefficients must be finite")
-    states, current, charge, residual = [], [], [], []
+    states, current, charge, residual, complex_residual = [], [], [], [], []
     for f in frequency:
         s = 2j * np.pi * f
         matrix, rhs = s * mass - operator, b - s * mv
@@ -116,12 +117,14 @@ def descriptor_frequency_response(frequency_Hz, *, storage, rate, forcing,
         current.append(c @ x + cv)
         charge.append(d @ x + dv)
         residual.append(_backward_error(matrix, x, rhs))
+        complex_residual.append(matrix @ x - rhs)
     current, charge = np.asarray(current), np.asarray(charge)
     return {
         "frequency_Hz": frequency, "state_per_V": np.asarray(states),
         "conduction_S_m2": current, "displacement_F_m2": charge,
         "admittance_S_m2": current + 2j * np.pi * frequency[:, None] * charge,
         "linear_backward_error": np.asarray(residual),
+        "complex_linear_residual": np.asarray(complex_residual),
     }
 
 
@@ -245,7 +248,7 @@ def _dc_metrics(system, state, initial, policy):
 
 
 def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
-                        voltage_V=0., policy=None):
+                        voltage_V=0., policy=None, expected_prepared_sha256=None):
     """Bounded direct DC on the controlled transient equations and inventory.
 
     Freeze means retain the common prepared population, including its charge.
@@ -256,7 +259,8 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
     policy = policy or r1_policy()
     controls = R1DynamicsControls.from_label(control)
     system, initial = restore_common_state(prepared, stack, intervals, binding,
-                                           controls=controls, policy=policy)
+                                           controls=controls, policy=policy,
+                                           expected_prepared_sha256=expected_prepared_sha256)
     system, initial = system.rebase(initial)
     coordinate = system.initial_coordinate()
     history, reason = [], "newton_iteration_budget_exhausted"
@@ -309,6 +313,8 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
         "ion_current_A_m2": observations[2], "displacement_C_m2": observations[3],
         "current_A_m2": current, "terminal_current_A_m2": float(current[0]),
         "current_sign_convention": "reported j = junction_polarity * J_x",
+        "junction_polarity": float(system.polarity),
+        "source": (prepared.to_dict() if hasattr(prepared, "to_dict") else prepared).get("source"),
         "certified": reason == "converged" and checks["certified"],
         "scope": "controlled_discrete_dc_equations_only",
     }
@@ -318,16 +324,18 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
     return result
 
 
-def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", policy=None):
+def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", policy=None,
+                         expected_prepared_sha256=None):
     """Independent +/-0.1,0.05,0.025 mV steady states, without tail fitting."""
     widths = np.array([1e-4, 5e-5, 2.5e-5])
     pairs, conductance, error_indicators = [], [], []
-    baseline = solve_controlled_dc(stack, intervals, binding, prepared, control=control, policy=policy)
+    baseline = solve_controlled_dc(stack, intervals, binding, prepared, control=control, policy=policy,
+                                   expected_prepared_sha256=expected_prepared_sha256)
     for h in widths:
         minus = solve_controlled_dc(stack, intervals, binding, prepared, control=control,
-                                    voltage_V=-h, policy=policy)
+                                    voltage_V=-h, policy=policy, expected_prepared_sha256=expected_prepared_sha256)
         plus = solve_controlled_dc(stack, intervals, binding, prepared, control=control,
-                                   voltage_V=h, policy=policy)
+                                   voltage_V=h, policy=policy, expected_prepared_sha256=expected_prepared_sha256)
         pairs.append({"half_width_V": h, "minus": minus.evidence, "plus": plus.evidence})
         conductance.append((plus.evidence["terminal_current_A_m2"] - minus.evidence["terminal_current_A_m2"]) / (2*h))
         error_indicators.append((plus.evidence["checks"]["metrics"]["electron_continuity_A_m2"]
@@ -340,6 +348,8 @@ def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", po
         "schema": "R1DCConductanceStudyV1", "control": control,
         "baseline": baseline.evidence, "pairs": pairs, "half_width_V": widths,
         "conductance_S_m2": values,
+        "richardson_conductance_S_m2": (4*values[-1]-values[-2])/3,
+        "richardson_scope": "central_difference_extrapolation_not_an_absolute_error_bound",
         "finest_pair_absolute_difference_S_m2": abs(values[-1]-values[-2]),
         "finest_pair_limit_S_m2": limit,
         "finest_pair_agrees": bool(abs(values[-1]-values[-2]) <= limit),
@@ -414,6 +424,132 @@ def _constrained_descriptor(system, state, mass, operator, b, mv):
     return mass.tocsr(), operator.tocsr(), b, mv
 
 
+def _response_array(value, name, *, shape=None):
+    """Read native arrays or the documented JSON complex representation."""
+    def decode(item):
+        if isinstance(item, Mapping):
+            if set(item) != {"real", "imag"}:
+                raise ValueError(name + " contains invalid complex evidence")
+            return complex(_finite_scalar(item["real"], name), _finite_scalar(item["imag"], name))
+        if isinstance(item, (tuple, list)):
+            return [decode(child) for child in item]
+        return item
+    array = np.asarray(decode(value))
+    if array.dtype.kind not in "iufc" or not np.all(np.isfinite(array)):
+        raise ValueError(name + " must contain finite numeric evidence")
+    if shape is not None and array.shape != shape:
+        raise ValueError(name + " has the wrong shape")
+    return array
+
+
+def assess_small_signal_response(record):
+    """Recompute per-frequency gates from the published response and its levels.
+
+    This validates internal numeric content, not source provenance. Formal
+    verification additionally calls verify_response_content to rebuild the
+    operating state and the complex equations from the anchored inputs.
+    Stored checks and eligibility booleans never participate in this result.
+    """
+    if record.get("schema") != "R1ControlledSmallSignalV1":
+        raise ValueError("unsupported small-signal response schema")
+    frequency = _frequencies(record["frequency_Hz"])
+    count = len(frequency)
+    voltage = _finite_scalar(record["voltage_V"], "voltage_V")
+    levels = record["derivative_levels"]
+    if len(levels) != 3 or tuple(level["derivative_step"] for level in levels) != (1e-5, 5e-6, 2.5e-6):
+        raise ValueError("the declared three derivative steps must remain 1e-5, 5e-6, 2.5e-6")
+    all_values, consistent = [], np.ones(count, dtype=bool)
+    for level in levels:
+        if not np.array_equal(_frequencies(level["frequency_Hz"]), frequency):
+            raise ValueError("AC level frequency identity differs")
+        conduction = _response_array(level["conduction_S_m2"], "conduction_S_m2")
+        if conduction.ndim != 2 or conduction.shape[0] != count or conduction.shape[1] < 2:
+            raise ValueError("AC requires both physical contacts")
+        displacement = _response_array(level["displacement_F_m2"], "displacement_F_m2", shape=conduction.shape)
+        values = conduction + 2j*np.pi*frequency[:, None]*displacement
+        saved = _response_array(level["admittance_S_m2"], "level admittance", shape=values.shape)
+        consistent &= np.all(saved == values, axis=1)
+        all_values.append(values)
+    fine = all_values[-1]
+    published = _response_array(record["admittance_S_m2"], "published admittance", shape=(count,))
+
+    def metric(key):
+        values = np.asarray([_response_array(level[key], key, shape=(count,)) for level in levels])
+        if np.iscomplexobj(values) or np.any(values < 0):
+            raise ValueError(key + " must be a nonnegative real metric")
+        return np.max(values, axis=0)
+
+    adjacent = [np.max(np.abs(a-b), axis=1) / np.maximum(np.max(np.maximum(np.abs(a), np.abs(b)), axis=1), 1e-20)
+                for a, b in zip(all_values[:-1], all_values[1:])]
+    component_agreements = []
+    for a, b in zip(all_values[:-1], all_values[1:]):
+        components = np.stack((np.abs(a.real-b.real), np.abs(a.imag-b.imag)), axis=-1)
+        limits = 1e-8+.01*np.stack((np.maximum(np.abs(a.real), np.abs(b.real)),
+                                  np.maximum(np.abs(a.imag), np.abs(b.imag))), axis=-1)
+        component_agreements.append(np.all(components <= limits, axis=(1, 2)))
+    spreads, decompositions, inventories, tangents = [], [], [], []
+    for level, values in zip(levels, all_values):
+        spreads.append(np.max(np.abs(values-values[:, :1]), axis=1) / np.maximum(np.max(np.abs(values), axis=1), 1e-20))
+        decomposed = sum(_response_array(level[key], key, shape=values.shape)
+                         for key in ("electron_admittance_S_m2", "hole_admittance_S_m2", "ion_admittance_S_m2"))
+        conduction = _response_array(level["conduction_S_m2"], "conduction_S_m2", shape=values.shape)
+        decompositions.append(np.max(np.abs(conduction-decomposed), axis=1) / np.maximum(np.max(np.abs(conduction), axis=1), 1e-20))
+        inventory = _response_array(level["inventory_response_thermal_normalized"], "thermal inventory")
+        tangent = _response_array(level["state_jacobian_fd_column_relative_error"], "direct tangent")
+        if inventory.ndim != 2 or inventory.shape[0] != count or inventory.shape[1] == 0 or np.iscomplexobj(inventory) or np.any(inventory < 0):
+            raise ValueError("invalid thermal inventory metric")
+        if tangent.ndim != 1 or not tangent.size or np.iscomplexobj(tangent) or np.any(tangent < 0):
+            raise ValueError("invalid direct tangent metric")
+        inventories.append(np.max(inventory, axis=1))
+        tangents.append(np.max(tangent))
+    checks = {
+        "linear_backward_error": metric("linear_backward_error") <= 1e-10,
+        "all_equations_backward_error": metric("unreplaced_equation_backward_error") <= 1e-10,
+        "physical_face_spread": np.max(spreads, axis=0) <= 5e-4,
+        "derivative_refinement": np.max(adjacent, axis=0) <= 2e-3,
+        "derivative_component_refinement": np.all(component_agreements, axis=0),
+        "inventory": np.max(inventories, axis=0) <= 1e-10,
+        "legacy_inventory": metric("legacy_inventory_response_relative") <= 1e-8,
+        "capture_storage": metric("capture_storage_relative_error") <= 1e-3,
+        "current_decomposition": np.max(decompositions, axis=0) <= 1e-7,
+        "direct_tangent_difference": np.full(count, max(tangents) <= 3e-4),
+        "level_admittance_consistent": consistent,
+        "published_admittance_consistent": published == fine[:, 0],
+    }
+    sign = published.real >= -1e-8 if voltage == 0. else None
+    if sign is not None:
+        checks["equilibrium_dissipation_sign"] = sign
+    eligible = np.logical_and.reduce(tuple(checks.values()))
+    stored_consistent = np.ones(count, dtype=bool)
+    if "checks" in record:
+        if set(record["checks"]) != set(checks):
+            raise ValueError("stored AC checks omit or add a physical gate")
+        for key, values in checks.items():
+            saved = np.asarray(record["checks"][key])
+            if saved.dtype.kind != "b" or saved.shape != (count,):
+                raise ValueError("stored AC gate has invalid type or shape: " + key)
+            stored_consistent &= saved == values
+    if "numerically_eligible_frequency_points" in record:
+        saved = np.asarray(record["numerically_eligible_frequency_points"])
+        if saved.dtype.kind != "b" or saved.shape != (count,):
+            raise ValueError("stored AC eligibility has invalid type or shape")
+        stored_consistent &= saved == eligible
+    if "equilibrium_dissipation_sign_observation" in record:
+        saved = record["equilibrium_dissipation_sign_observation"]
+        if sign is None:
+            stored_consistent &= saved is None
+        else:
+            saved = np.asarray(saved)
+            if saved.dtype.kind != "b" or saved.shape != (count,):
+                raise ValueError("stored equilibrium sign has invalid type or shape")
+            stored_consistent &= saved == sign
+    eligible &= stored_consistent
+    return {"checks": checks, "numerically_eligible_frequency_points": eligible,
+            "equilibrium_dissipation_sign_observation": sign,
+            "stored_verdict_matches_recomputed": stored_consistent,
+            "certified": bool(np.all(eligible)), "scope": "response_numeric_content_only"}
+
+
 def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1e-5, 5e-6, 2.5e-6)):
     """Direct sparse response plus three independent derivative-step records.
 
@@ -446,10 +582,11 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
         )
         response = result["state_per_V"]
         decomposed = np.stack([response @ ox[k].T + ov[k] for k in range(3)], axis=1)
-        full_residual = []
+        full_residual, full_complex_residual = [], []
         for f, value in zip(frequency, response):
             s = 2j*np.pi*f
             full_residual.append(_backward_error(s*mass-operator, value, b-s*mv))
+            full_complex_residual.append((s*mass-operator) @ value - (b-s*mv))
         inventory = []
         for _, row, _ in _inventory_rows(system, state):
             inventory.append(response @ row)
@@ -492,6 +629,7 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
             "state_jacobian_fd_elementwise_relative_error": np.asarray(elementwise),
             "state_jacobian_fd_note": "elementwise ratios may be unresolved after cancellation; column norms use direct equation scales",
             "unreplaced_equation_backward_error": np.asarray(full_residual),
+            "unreplaced_complex_linear_residual": np.asarray(full_complex_residual),
             "electron_admittance_S_m2": decomposed[:, 0],
             "hole_admittance_S_m2": decomposed[:, 1], "ion_admittance_S_m2": decomposed[:, 2],
             "inventory_response_relative_per_V": inventory,
@@ -529,39 +667,123 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
     component_difference = np.stack((np.abs(fine.real-coarse.real), np.abs(fine.imag-coarse.imag)), axis=-1)
     component_limits = 1e-8+.01*np.stack((np.maximum(np.abs(fine.real), np.abs(coarse.real)),
                                         np.maximum(np.abs(fine.imag), np.abs(coarse.imag))), axis=-1)
-    checks = {
-        "linear_backward_error": latest["linear_backward_error"] <= 1e-10,
-        "all_equations_backward_error": latest["unreplaced_equation_backward_error"] <= 1e-10,
-        "physical_face_spread": latest["physical_face_spread_relative"] <= 5e-4,
-        "derivative_refinement": np.max(adjacent_refinements, axis=0) <= 2e-3,
-        "derivative_component_refinement": np.all(component_difference <= component_limits, axis=(1, 2)),
-        "inventory": np.max(latest["inventory_response_thermal_normalized"], axis=1) <= 1e-10,
-        "legacy_inventory": latest["legacy_inventory_response_relative"] <= 1e-8,
-        "capture_storage": latest["capture_storage_relative_error"] <= 1e-3,
-        "current_decomposition": latest["current_decomposition_relative_error"] <= 1e-7,
-        "direct_tangent_difference": np.full(len(frequency), np.max(latest["state_jacobian_fd_column_relative_error"]) <= 3e-4),
-    }
-    eligible = np.logical_and.reduce(tuple(checks.values()))
-    return {
+    record = {
         "schema": "R1ControlledSmallSignalV1", "control": dc.evidence["control"],
         "voltage_V": voltage, "prepared_sha256": dc.evidence["prepared_sha256"],
         "reference_sha256": dc.evidence["reference_sha256"], "frequency_Hz": frequency,
+        "intervals": dc.evidence["intervals"], "source": dc.evidence["source"],
+        "junction_polarity": dc.evidence["junction_polarity"],
+        "current_sign_convention": dc.evidence["current_sign_convention"],
         "physical_face_labels": labels, "derivative_levels": records,
         "admittance_S_m2": fine[:, 0], "dc_state": dc.evidence,
-        "derivative_refinement_relative": refinement, "checks": checks,
+        "derivative_refinement_relative": refinement,
         "all_adjacent_derivative_refinement_relative": np.asarray(adjacent_refinements),
         "derivative_component_difference_S_m2": component_difference,
         "derivative_component_limits_S_m2": component_limits,
-        "numerically_eligible_frequency_points": eligible,
         "frequency_window_complete": False, "double_domain_consistent": False,
-        "equilibrium_dissipation_sign_observation": (
-            fine[:, 0].real >= -1e-8 if voltage == 0. else None
-        ),
         "missing_validation": ["frequency_window_coverage", "spatial_refinement",
                                "finite_amplitude_linearity", "time_window_and_early_interval",
                                "time_reconstruction_error_budget"],
         "scope": "direct_controlled_linear_response_only",
     }
+    assessment = assess_small_signal_response(record)
+    record.update({key: assessment[key] for key in
+                   ("checks", "numerically_eligible_frequency_points", "equilibrium_dissipation_sign_observation")})
+    return record
+
+
+def _same_response_content(actual, expected, path="response"):
+    """Exact replay within one frozen source/runtime, including JSON complex data."""
+    def plain(value):
+        if isinstance(value, np.ndarray):
+            return plain(value.tolist())
+        if isinstance(value, np.generic):
+            return plain(value.item())
+        if isinstance(value, complex):
+            return {"real": value.real, "imag": value.imag}
+        if isinstance(value, Mapping):
+            return {key: plain(child) for key, child in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [plain(child) for child in value]
+        return value
+    actual, expected = plain(actual), plain(expected)
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict) or set(actual) != set(expected):
+            raise ValueError("response content mismatch: " + path + " fields")
+        for key in expected:
+            _same_response_content(actual[key], expected[key], path + "." + key)
+    elif isinstance(expected, list):
+        if not isinstance(actual, list) or len(actual) != len(expected):
+            raise ValueError("response content mismatch: " + path + " shape")
+        for index, (a, b) in enumerate(zip(actual, expected)):
+            _same_response_content(a, b, f"{path}[{index}]")
+    else:
+        if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+            same = (isinstance(actual, (int, float)) and not isinstance(actual, bool)
+                    and np.isfinite(actual) and np.isfinite(expected) and actual == expected)
+        else:
+            same = type(actual) is type(expected) and actual == expected
+        if not same:
+            raise ValueError("response content mismatch: " + path)
+
+
+def verify_response_content(record, *, stack, intervals, binding, prepared, request, policy=None):
+    """Rebuild a requested DC/AC result from separately verified source inputs.
+
+    The caller must validate source/preparation provenance before this call.
+    All scientific fields (including saved flags and derivative levels) are
+    compared, not only a certificate. No timestamp or execution metadata is
+    part of these response schemas. Replay requires the frozen runtime.
+    """
+    if request.get("intervals") != intervals or request.get("control") not in ("A", "B", "C", "D"):
+        raise ValueError("response request intervals/control identity differs")
+    common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
+    for key, value in (("prepared_sha256", common["sha256"]), ("reference_sha256", binding["sha256"])):
+        if key in request and request[key] != value:
+            raise ValueError("response request identity differs: " + key)
+    if "source_sha256" in request and request["source_sha256"] != (common.get("source") or {}).get("sha256"):
+        raise ValueError("response request source identity differs")
+    control = request["control"]
+    requested_policy = r1_policy(request.get("nonlinear_factor", .1),
+                                 time_substeps=request.get("time_substeps", (1, 2, 4)))
+    if policy is None:
+        policy = requested_policy
+    elif asdict(policy) != asdict(requested_policy):
+        raise ValueError("response policy differs from the declared request")
+    kwargs = dict(control=control, policy=policy, expected_prepared_sha256=common["sha256"])
+    schema = record.get("schema")
+    if schema == "R1ControlledSmallSignalV1":
+        frequency = _frequencies(request["frequency_Hz"])
+        dc = solve_controlled_dc(stack, intervals, binding, prepared,
+                                 voltage_V=request.get("voltage_V", 0.), **kwargs)
+        expected = small_signal_response(dc, frequency)
+        assessment = assess_small_signal_response(expected)
+        certified = assessment["certified"]
+    elif schema == "R1ControlledDCResponseV1":
+        if "voltage_V" not in request:
+            raise ValueError("DC request must bind voltage_V")
+        expected = solve_controlled_dc(stack, intervals, binding, prepared,
+                                       voltage_V=request["voltage_V"], **kwargs).evidence
+        certified = expected["certified"]
+    elif schema == "R1DCConductanceStudyV1":
+        expected = dc_conductance_study(stack, intervals, binding, prepared, **kwargs)
+        certified = expected["finest_pair_agrees"]
+    elif set(record) == {"target_bias", "conductance"}:
+        if "voltage_V" not in request:
+            raise ValueError("DC request must bind voltage_V")
+        target = solve_controlled_dc(stack, intervals, binding, prepared,
+                                     voltage_V=request["voltage_V"], **kwargs).evidence
+        conductance = dc_conductance_study(stack, intervals, binding, prepared, **kwargs)
+        expected = {"target_bias": target, "conductance": conductance}
+        certified = target["certified"] and conductance["finest_pair_agrees"]
+    else:
+        raise ValueError("unsupported response content schema")
+    _same_response_content(record, expected)
+    return {"schema": "R1ResponseContentVerificationV1", "certified": bool(certified),
+            "content_matches_recomputed": True, "equations_replayed": True,
+            "prepared_sha256": common["sha256"], "reference_sha256": binding["sha256"],
+            "source": common.get("source"), "intervals": intervals, "control": control,
+            "scope": "numeric_replay_requires_separate_source_and_preparation_verification"}
 
 
 def compare_transient_tail(dc: R1DCResponse, *, initial_state, tail_state,
@@ -647,26 +869,63 @@ def compare_transient_tail(dc: R1DCResponse, *, initial_state, tail_state,
             "scope": "same_grid_pointwise_tail_vs_controlled_dc_only"}
 
 
-def compare_reconstructed_response(reconstruction, ac):
+def compare_reconstructed_response(reconstruction, ac, *, reconstruction_identity=None, prerequisites=None):
     """Compare actual common frequencies; unknown tails never pass a budget."""
     frequency = np.asarray(ac["frequency_Hz"])
     if not np.array_equal(reconstruction.frequency_Hz, frequency):
         raise ValueError("time reconstruction and AC frequencies must match exactly")
-    direct, time = np.asarray(ac["admittance_S_m2"]), reconstruction.admittance_S_m2
+    direct = _response_array(ac["admittance_S_m2"], "direct admittance", shape=frequency.shape)
+    time = reconstruction.admittance_S_m2
     limits = np.array([1e-8+.01*np.maximum(np.abs(direct.real), np.abs(time.real)),
                        1e-8+.01*np.maximum(np.abs(direct.imag), np.abs(time.imag))]).T
     differences = np.array([np.abs(direct.real-time.real), np.abs(direct.imag-time.imag)]).T
     budget = reconstruction.total_error_estimate_S_m2[:, None]
+    component_agreement = np.all(differences <= limits, axis=1)
+    error_budget_agreement = np.all(np.isfinite(budget) & (budget <= limits), axis=1)
+    identity_verified = reconstruction_identity is not None
+    if identity_verified:
+        for key in ("prepared_sha256", "reference_sha256", "intervals", "control"):
+            if key not in reconstruction_identity or key not in ac or reconstruction_identity[key] != ac[key]:
+                raise ValueError("time reconstruction and AC identity differs: " + key)
+        source = (ac.get("source") or {}).get("sha256")
+        if source is None or reconstruction_identity.get("source_sha256") != source:
+            raise ValueError("time reconstruction and AC source identity differs")
+        if reconstruction_identity.get("operating_voltage_V") != ac.get("voltage_V"):
+            raise ValueError("time reconstruction and AC operating voltage differs")
+    required = ("finite_amplitude_linearity", "single_axis_convergence", "window_extension",
+                "earlier_start", "stricter_integration", "tail_dc_agreement", "frequency_window_coverage",
+                "input_trajectory_certified", "ac_content_verified")
+    eligible = np.full(len(frequency), identity_verified, dtype=bool)
+    missing = []
+    for key in required:
+        value = (prerequisites or {}).get(key)
+        if value is None:
+            missing.append(key)
+            eligible[:] = False
+            continue
+        values = np.asarray(value)
+        if values.dtype.kind != "b" or values.shape not in ((), frequency.shape):
+            raise ValueError("double-domain prerequisite must be boolean at each frequency: " + key)
+        eligible &= values
+    if ac.get("schema") == "R1ControlledSmallSignalV1":
+        eligible &= assess_small_signal_response(ac)["numerically_eligible_frequency_points"]
+    else:
+        eligible[:] = False
+        missing.append("controlled_ac_response")
+    eligible &= component_agreement & error_budget_agreement
     return {
         "frequency_Hz": frequency, "difference_components_S_m2": differences,
-        "limits_components_S_m2": limits, "component_agreement": np.all(differences <= limits, axis=1),
-        "error_budget_agreement": np.all(budget <= limits, axis=1),
+        "limits_components_S_m2": limits, "component_agreement": component_agreement,
+        "error_budget_agreement": error_budget_agreement,
         "unknown_error_sources": reconstruction.unknown_error_sources,
-        "double_domain_consistent": False,
+        "identity_verified": identity_verified, "missing_prerequisites": missing,
+        "double_domain_consistent_frequency_points": eligible,
+        "double_domain_consistent": bool(np.all(eligible)),
         "scope": "pointwise_comparison_only_other_study_gates_required",
     }
 
 
 __all__ = ["R1ResponseError", "R1DCResponse", "solve_controlled_dc", "dc_conductance_study",
            "small_signal_response", "physical_observations", "descriptor_frequency_response",
+           "assess_small_signal_response", "verify_response_content",
            "compare_reconstructed_response", "compare_transient_tail"]

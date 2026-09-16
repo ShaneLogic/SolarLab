@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import copy
 
 from tests.fixtures.r1_reference import approved_r1_binding
 from tests.integration.test_one_dimensional_mechanism_r1 import FIXTURE
@@ -9,6 +10,7 @@ from perovskite_sim.models.config_loader import load_device_from_yaml
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import prepare_common_state, snapshot
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import (
     solve_controlled_dc, dc_conductance_study, small_signal_response, compare_transient_tail,
+    verify_response_content, assess_small_signal_response,
 )
 
 
@@ -53,6 +55,10 @@ def test_dc_three_steps_and_independent_ac_zero_frequency_agree(conductance_and_
     assert conductance["finest_pair_agrees"]
     g = conductance["conductance_S_m2"][-1]
     assert abs(ac["admittance_S_m2"][0]-g) <= 1e-8+.01*abs(g)
+    # An independent central-difference extrapolation resolves an output
+    # scaling error far smaller than the study's 1% comparison allowance.
+    richardson = (4*conductance["conductance_S_m2"][-1]-conductance["conductance_S_m2"][-2])/3
+    assert abs(ac["admittance_S_m2"][0]-richardson) <= 2e-11*abs(richardson)+1e-12
     assert conductance["absolute_error_bound_S_m2"] is None
 
 
@@ -115,3 +121,72 @@ def test_interface_only_tail_mismatch_is_rejected(reference, field):
     assert not result["all_observables_agree"]
     assert not result["comparisons"][field]["agrees"]
     assert result["comparisons"]["current_A_m2"]["agrees"]
+
+
+def test_response_replay_binds_published_values_flags_and_operating_state(reference, conductance_and_ac):
+    stack, binding, prepared = reference
+    _, dc, ac = conductance_and_ac
+    request = {"intervals": 16, "control": "D", "voltage_V": 0., "frequency_Hz": ac["frequency_Hz"],
+               "prepared_sha256": prepared.sha256, "source_sha256": ac["source"]["sha256"]}
+    kwargs = dict(stack=stack, intervals=16, binding=binding, prepared=prepared, request=request)
+    assert verify_response_content(ac, **kwargs)["certified"]
+    mutants = []
+    changed = copy.deepcopy(ac)
+    changed["admittance_S_m2"] *= 1.009
+    mutants.append(changed)
+    changed = copy.deepcopy(ac)
+    changed["checks"]["inventory"][1] = False
+    mutants.append(changed)
+    changed = copy.deepcopy(ac)
+    changed["dc_state"]["junction_polarity"] *= -1
+    mutants.append(changed)
+    for changed in mutants:
+        with pytest.raises(ValueError, match="response content mismatch"):
+            verify_response_content(changed, **kwargs)
+    with pytest.raises(ValueError, match="source identity"):
+        verify_response_content(ac, **{**kwargs, "request": {**request, "source_sha256": "other"}})
+    dc_request = {"intervals": 16, "control": "D", "voltage_V": 0.}
+    assert verify_response_content(dc.evidence, **{**kwargs, "request": dc_request})["certified"]
+    changed = copy.deepcopy(dc.evidence)
+    changed["terminal_current_A_m2"] += 1e-8
+    with pytest.raises(ValueError, match="response content mismatch"):
+        verify_response_content(changed, **{**kwargs, "request": dc_request})
+
+
+def test_physical_ac_assessor_accepts_json_complex_arrays(conductance_and_ac):
+    _, _, ac = conductance_and_ac
+    def ready(value):
+        if isinstance(value, np.ndarray):
+            return ready(value.tolist())
+        if isinstance(value, np.generic):
+            return ready(value.item())
+        if isinstance(value, complex):
+            return {"real": value.real, "imag": value.imag}
+        if isinstance(value, dict):
+            return {key: ready(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [ready(item) for item in value]
+        return value
+    assert assess_small_signal_response(ready(ac))["certified"]
+    latest = ac["derivative_levels"][-1]
+    assert latest["complex_linear_residual"].shape == latest["state_per_V"].shape
+    assert latest["unreplaced_complex_linear_residual"].shape == latest["state_per_V"].shape
+
+
+def test_study_adapters_use_exact_verified_physical_inputs(reference, conductance_and_ac):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import run_r1_step
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response import (
+        frequency_window_report, reconstruct_study_response,
+    )
+    stack, binding, prepared = reference
+    conductance, _, ac = conductance_and_ac
+    step = run_r1_step(stack, 16, binding, prepared, times_s=[0., 1e-9, 1e-8])
+    window = frequency_window_report(ac)
+    assert window["numeric_checks_passed"]
+    assert not window["frequency_window_complete"]
+    result = reconstruct_study_response(step, prepared, conductance, ac)
+    assert result["published_identity"]["prepared_sha256"] == prepared.sha256
+    assert result["reconstruction"]["dc_conductance_S_m2"] == conductance["conductance_S_m2"][-1]
+    assert not result["full_time_window_covered"]
+    assert not result["double_domain_consistent"]
+    assert result["reconstruction"]["unknown_error_sources"]

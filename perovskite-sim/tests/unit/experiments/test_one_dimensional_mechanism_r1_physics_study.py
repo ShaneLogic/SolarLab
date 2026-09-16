@@ -165,7 +165,7 @@ def test_unavailable_dependencies_are_not_invented_numerical_failures(runner, st
     completion = runner.checked_read(study.latest("Comparison"), "CompletionV1.json")
     assert completion["status"] == "unavailable"
     assert completion["scientific_checks_passed"] is None
-    assert study.finish() == 0
+    assert study.finish() == 2
     assert json.loads((study.output/"FailureIndexV1.json").read_text())["cases"] == []
     assert len(json.loads((study.output/"UnavailableComparisonIndexV1.json").read_text())["cases"]) == 1
 
@@ -178,3 +178,59 @@ def test_ac_mesh_comparison_checks_small_real_component_independently(runner, st
     result = study.ac_mesh_comparison(16, 32)
     assert not result["within_compared_budgets"]
     assert result["component_comparison"]["failure_count"] == 1
+
+
+def test_resumed_passing_subset_does_not_hide_existing_failure(runner, study):
+    def fail(directory):
+        raise ValueError("real failure")
+    study.case("Bad", {"scope": "same-study"}, fail)
+    study.case("Good", {"scope": "same-study"}, lambda directory: {"certificate": {"certified": True}})
+    study.rows.clear()
+    study.case("Good", {"scope": "same-study"}, lambda directory: pytest.fail("must not execute"))
+    assert study.finish() == 1
+    assert json.loads((study.output/"StudySummaryV1.json").read_text())["active_case_count"] == 2
+
+
+def test_resume_recomputes_comparison_instead_of_trusting_resealed_flag(runner, study):
+    request = {"scope": "comparison"}
+    operation = lambda directory: {"within_compared_budgets": False}
+    study.case("Compare/Probe", request, operation)
+    path = study.latest("Compare/Probe")
+    result = runner.checked_read(path, "ResultV1.json")
+    result["within_compared_budgets"] = True
+    completion = runner.checked_read(path, "CompletionV1.json")
+    completion["scientific_checks_passed"] = True
+    runner.write_json(path/"ResultV1.json", result)
+    runner.write_json(path/"CompletionV1.json", completion)
+    runner.seal(path)
+    with pytest.raises(ValueError, match="independent replay"):
+        study.case("Compare/Probe", request, operation)
+
+
+def test_checked_read_rejects_unsealed_extra_file_and_symlink(runner, study):
+    study.case("Example", {"scope": "test"}, lambda directory: {"ok": True})
+    path = study.latest("Example")
+    (path/"extra.json").write_text('{}')
+    with pytest.raises(ValueError, match="coverage"):
+        runner.checked_read(path, "ResultV1.json")
+    (path/"extra.json").unlink()
+    (path/"alias").symlink_to(path/"ResultV1.json")
+    runner.seal(path)
+    with pytest.raises(ValueError, match="manifest"):
+        runner.checked_read(path, "ResultV1.json")
+
+
+def test_physics_recomputation_failure_propagates_out_of_step(runner, study, monkeypatch, tmp_path):
+    prepared = SimpleNamespace(sha256="test-parent")
+    study.prepared = lambda n: prepared
+    study.stack, study.binding = None, None
+    record = {"certificate": {"certified": True}}
+    monkeypatch.setattr(runner, "run_r1_step", lambda *a, **kw: record)
+    monkeypatch.setattr(runner, "verify_r1_step_physics", lambda *a, **kw: {
+        "certified": False, "content_matches_recomputed": True, "violations": ["current"]})
+    assert study.case("Probe", {"scope": "physics"}, lambda directory: study.step(
+        directory, 16, "D", (1, 2, 4), .1, (0., 1e-9))) is None
+    completion = runner.checked_read(study.latest("Probe"), "CompletionV1.json")
+    assert completion["status"] == "failed"
+    assert not completion["scientific_checks_passed"]
+    assert study.finish() == 1

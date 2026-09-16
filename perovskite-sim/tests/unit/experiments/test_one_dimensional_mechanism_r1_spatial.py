@@ -1,6 +1,7 @@
 """Analytic SG limits, conservative cell moments and fixed-position adapters."""
 
 import copy
+from dataclasses import asdict, replace
 
 import numpy as np
 import pytest
@@ -10,7 +11,10 @@ from perovskite_sim.discretization.fe_operators import sg_fluxes_n, sg_fluxes_p
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_spatial import (
     ConservativeIonProfile, compare_spatial_responses, sample_r1_state,
     sample_sg_density, spatial_responses_from_step,
+    compare_convergence_responses,
 )
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import R1Response, compare_responses
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import r1_policy
 from perovskite_sim.physics.physical_control_volume import physical_cell_faces
 
 
@@ -229,6 +233,7 @@ def test_identical_reconstruction_is_only_a_scoped_comparison():
     result = spatial_responses_from_step(prepared, manufactured_step(prepared))
     report = compare_spatial_responses(result, result)
     assert report["within_compared_budgets"]
+    assert not report["convergence_passed"]
     assert "certificate" not in report
     assert "undetermined" in result.metadata["carrier_resolution"]
 
@@ -340,3 +345,105 @@ def test_real_prepared_and_short_step_adapter():
     assert result.responses["carrier_log_density"].values.shape == (2, 34, 2)
     np.testing.assert_allclose(result.inventory_m2, 1e15, rtol=1e-10)
     assert result.metadata["recorded_certificate_passed"]
+
+
+def convergence_fixture():
+    prepared = manufactured_prepared()
+    response = spatial_responses_from_step(prepared, manufactured_step(prepared))
+    metadata = {**response.metadata, "source_sha256": "source", "intervals": 16,
+                "policy": asdict(r1_policy(.1))}
+    left = replace(response, metadata=metadata)
+    right = replace(response, metadata={**metadata, "intervals": 32})
+    zero = R1Response(np.zeros(2), {"time_s": np.array([0., 1.])})
+    electrical = {"regular_current": compare_responses("regular_current_response", zero, zero),
+                  "integrated_charge": compare_responses("integrated_charge_response", zero, zero)}
+    verified = ({"certified": True, "content_matches_recomputed": True},)*2
+    return left, right, electrical, verified
+
+
+@pytest.mark.parametrize("quantity,delta", [
+    ("dc_potential", .002), ("response_potential", .001), ("carrier_log_density", .02),
+    ("ion_density_over_p0", .02), ("trap_occupancy_change", .01), ("ion_centroid_change", 1.),
+    ("regular_current_response", 1e-5), ("integrated_charge_response", 1e-5),
+])
+def test_each_of_the_eight_required_quantities_independently_blocks_convergence(quantity, delta):
+    left, right, electrical, verified = convergence_fixture()
+    baseline = compare_convergence_responses(left, right, axis="spatial", electrical=electrical, input_verifications=verified)
+    assert baseline["convergence_passed"]
+    assert len(baseline["quantity_passed"]) == 8
+    if quantity == "dc_potential":
+        response = right.dc_potential
+        right = replace(right, dc_potential=R1Response(response.values+delta, response.coordinates, response.components))
+    elif quantity in right.responses:
+        responses = dict(right.responses)
+        response = responses[quantity]
+        responses[quantity] = R1Response(response.values+delta, response.coordinates, response.components)
+        right = replace(right, responses=responses)
+    else:
+        a = R1Response(np.zeros(2), {"time_s": [0., 1.]})
+        b = R1Response(np.full(2, delta), {"time_s": [0., 1.]})
+        key = "regular_current" if quantity == "regular_current_response" else "integrated_charge"
+        electrical[key] = compare_responses(quantity, a, b)
+    report = compare_convergence_responses(left, right, axis="spatial", electrical=electrical, input_verifications=verified)
+    assert not report["convergence_passed"]
+    assert not report["quantity_passed"][quantity]
+    assert sum(not passed for passed in report["quantity_passed"].values()) == 1
+
+
+@pytest.mark.parametrize("key", ["response_potential", "carrier_log_density", "ion_density_over_p0", "dc_potential"])
+def test_interface_side_failure_alone_blocks_convergence(key):
+    left, right, electrical, verified = convergence_fixture()
+    if key == "dc_potential":
+        response = right.dc_interface_potential
+        right = replace(right, dc_interface_potential=R1Response(response.values+.1, response.coordinates, response.components))
+    else:
+        sides = dict(right.interface_responses)
+        response = sides[key]
+        sides[key] = R1Response(response.values+1., response.coordinates, response.components)
+        right = replace(right, interface_responses=sides)
+    result = compare_convergence_responses(left, right, axis="spatial", electrical=electrical, input_verifications=verified)
+    assert not result["quantity_passed"][key]
+    assert not result["convergence_passed"]
+
+
+def test_self_comparison_failed_inputs_and_missing_quantities_never_certify_convergence():
+    left, right, electrical, verified = convergence_fixture()
+    with pytest.raises(ValueError, match="self-comparison"):
+        compare_convergence_responses(left, left, axis="spatial", electrical=electrical, input_verifications=verified)
+    for reports in (None, ({"certified": False, "content_matches_recomputed": True}, verified[1])):
+        assert not compare_convergence_responses(left, right, axis="spatial", electrical=electrical,
+                                                input_verifications=reports)["convergence_passed"]
+    failed = replace(right, metadata={**right.metadata, "recorded_certificate_passed": False})
+    assert not compare_convergence_responses(left, failed, axis="spatial", electrical=electrical,
+                                            input_verifications=verified)["convergence_passed"]
+    missing = dict(right.responses)
+    missing.pop("ion_centroid_change")
+    with pytest.raises(ValueError, match="complete response quantity"):
+        compare_convergence_responses(left, replace(right, responses=missing), axis="spatial", electrical=electrical,
+                                      input_verifications=verified)
+    with pytest.raises(ValueError, match="both electrical"):
+        compare_convergence_responses(left, right, axis="spatial", electrical={}, input_verifications=verified)
+
+
+@pytest.mark.parametrize("axis,policy", [("time", r1_policy(.1, time_substeps=(2, 4, 8))),
+                                        ("nonlinear", r1_policy(.01))])
+def test_time_and_nonlinear_convergence_require_the_same_spatial_grid(axis, policy):
+    left, right, electrical, verified = convergence_fixture()
+    right = replace(right, metadata={**right.metadata, "intervals": 16, "policy": asdict(policy)})
+    assert compare_convergence_responses(left, right, axis=axis, electrical=electrical,
+                                         input_verifications=verified)["convergence_passed"]
+    wrong = replace(right, metadata={**right.metadata, "intervals": 32})
+    with pytest.raises(ValueError, match="exactly the declared axis"):
+        compare_convergence_responses(left, wrong, axis=axis, electrical=electrical, input_verifications=verified)
+
+
+def test_convergence_cannot_relax_physical_policy_or_skip_refinement_levels():
+    left, right, electrical, verified = convergence_fixture()
+    policy = dict(right.metadata["policy"])
+    policy["maximum_newton_iterations"] += 1
+    with pytest.raises(ValueError, match="frozen numerical setting"):
+        compare_convergence_responses(left, replace(right, metadata={**right.metadata, "policy": policy}),
+                                      axis="spatial", electrical=electrical, input_verifications=verified)
+    with pytest.raises(ValueError, match="adjacent coarse-to-fine"):
+        compare_convergence_responses(left, replace(right, metadata={**right.metadata, "intervals": 64}),
+                                      axis="spatial", electrical=electrical, input_verifications=verified)

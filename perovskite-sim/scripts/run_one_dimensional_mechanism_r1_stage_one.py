@@ -32,6 +32,7 @@ CONTRACT_PATH = PROJECT / "docs/OneDimensionalMechanismR1DynamicsV1.md"
 CRITERION_PATH = PROJECT / "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md"
 PHYSICS_PROTOCOL_PATH = PROJECT / "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md"
 ADDITIONAL_FAILURES_PATH = PROJECT / "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json"
+ADDITIONAL_FAILURES_V2_PATH = PROJECT / "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV2.json"
 THREAD_VARIABLES = (
     "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
     "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
@@ -158,9 +159,9 @@ def _import_preparation(output, prepared_path, expected_manifest, context):
     )
     if completion["stage"] != "prepare" or completion["status"] != "passed":
         raise ValueError("formal import requires a passed formal preparation bundle")
-    for filename in ("StudyInputV1.json", "SourceFixtureV1.yaml", "ExecutionContractV1.md",
-                     "OperatorCriterionDecisionV2.md", "PhysicsProtocolV1.md", "AdditionalFailuresV1.json",
-                     "ReferenceBindingV1.json"):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import R1_DECLARATIONS
+    for filename in ("StudyInputV1.json", "SourceFixtureV1.yaml", "AdditionalFailuresV1.json", "AdditionalFailuresV2.json",
+                     "ReferenceBindingV1.json", *(entry[1] for entry in R1_DECLARATIONS.values())):
         if (archived / filename).read_bytes() != (output / filename).read_bytes():
             raise ValueError("preparation and consuming inputs disagree: " + filename)
     raw = (archived / "PreparedStateV1.json").read_bytes()
@@ -176,48 +177,20 @@ def _import_preparation(output, prepared_path, expected_manifest, context):
 
 def _merge_additional_failures(study, additional):
     """Merge pinned historical observations without altering the canonical input."""
-    if additional.get("schema") != "R1AdditionalFailuresV1":
-        raise ValueError("unsupported supplemental R1 failure registry")
-    semantics = additional.get("known_failure_semantics", {})
-    if any(semantics.get(key) is not False for key in (
-        "waives_checks", "skip_computation", "changes_acceptance_thresholds",
-    )):
-        raise ValueError("supplemental historical failures cannot waive execution or checks")
-    entries = additional.get("known_physical_gate_failures")
-    if not isinstance(entries, list) or not entries:
-        raise ValueError("supplemental R1 failure registry requires physical-gate observations")
-    known = [*study.get("known_nonconvergence", []), *study.get("known_physical_gate_failures", [])]
-    identities = [entry["case_id"] for entry in [*known, *entries]]
-    if len(identities) != len(set(identities)):
-        raise ValueError("duplicate case identity in supplemental R1 failure registry")
-    return {**study, "known_physical_gate_failures": [*study.get("known_physical_gate_failures", []), *entries]}
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_registry import merge_failure_registries
+    return merge_failure_registries(study, additional)
 
 
 def _historical_case_observation(study, args, policy, failure):
     """Report previous measurements without treating them as waivers."""
     if args.stage != "step" or study is None or policy is None:
         return None
-    matched = []
-    for category in ("known_nonconvergence", "known_physical_gate_failures"):
-        for entry in study.get(category, []):
-            if any(entry.get(key) != actual for key, actual in (
-                ("intervals", args.intervals), ("control", args.control),
-                ("nonlinear_factor", args.nonlinear_factor), ("amplitude_V", args.amplitude),
-                ("times_s", getattr(args, "resolved_times_s", study["functional_times_s"])),
-                ("refinement_substeps", list(policy.refinement_substeps)),
-            )):
-                continue
-            matched.append({
-                "case_id": entry["case_id"], "category": category,
-                "observed_source_commit": entry["observed_source_commit"],
-                "historical_failure": entry["failure"],
-                "outcome": ("previously_failed_case_now_passed" if failure is None else
-                            "historical_signature_recurred" if entry["failure"] in failure["message"] else
-                            "different_failure_signature"),
-            })
-    return {"matching_historical_cases": matched, "waives_checks": False,
-            "signature_comparison": "failure_message_substring_only; recorded metric values are not compared",
-            "note": "Historical observations do not determine current acceptance or exit status"}
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_registry import historical_observation
+    return historical_observation({"intervals": args.intervals, "control": args.control,
+        "nonlinear_factor": args.nonlinear_factor, "amplitude_V": args.amplitude,
+        "times_s": getattr(args, "resolved_times_s", None) or study["functional_times_s"],
+        "time_substeps": list(policy.refinement_substeps),
+        "source_commit": getattr(args, "observed_source_commit", None)}, failure, study=study)
 
 
 def main(argv=None):
@@ -298,6 +271,12 @@ def main(argv=None):
             print("Byte consistency only; physical equations and source provenance were not verified.")
         else:
             print(json.dumps(completion.get("verification", {}), sort_keys=True, allow_nan=False))
+        if args.mode == "acceptance":
+            return int(completion.get("verification", {}).get("scientifically_accepted") is not True)
+        if args.mode == "legacy-inspect":
+            # Exit 2 is a completed inspection without current acceptance.
+            # A saved historical 'passed' label is never a science exit 0.
+            return 2 if completion["status"] == "passed" else 1
         return int(completion["status"] != "passed")
     if args.mode != "integrity" or any((args.expected_manifest_sha256, args.expected_source_commit,
                                        args.ledger, args.ledger_sha256, args.run_id)):
@@ -380,9 +359,17 @@ def main(argv=None):
         physics_protocol = (execution_context.read_bytes(PHYSICS_PROTOCOL_PATH)
                             if execution_context is not None else PHYSICS_PROTOCOL_PATH.read_bytes())
         (output / "PhysicsProtocolV1.md").write_bytes(physics_protocol)
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import R1_DECLARATIONS
+        for relative, (_, artifact, _) in R1_DECLARATIONS.items():
+            raw = (execution_context.read_bytes(relative) if execution_context is not None
+                   else (PROJECT / relative).read_bytes())
+            (output / artifact).write_bytes(raw)
         additional_failures = (execution_context.read_bytes(ADDITIONAL_FAILURES_PATH)
                                if execution_context is not None else ADDITIONAL_FAILURES_PATH.read_bytes())
         (output / "AdditionalFailuresV1.json").write_bytes(additional_failures)
+        additional_failures_v2 = (execution_context.read_bytes(ADDITIONAL_FAILURES_V2_PATH)
+            if execution_context is not None else ADDITIONAL_FAILURES_V2_PATH.read_bytes())
+        (output / "AdditionalFailuresV2.json").write_bytes(additional_failures_v2)
         fixture = PROJECT / study["fixture"]
         fixture_bytes = (execution_context.read_bytes(fixture) if execution_context is not None
                          else fixture.read_bytes())
@@ -409,7 +396,7 @@ def main(argv=None):
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
             STUDY_INPUT_PATH, validate_r1_study_binding,
             execution_contract_identity, operator_criterion_identity, additional_failures_identity,
-            physics_protocol_identity,
+            physics_protocol_identity, additional_failures_v2_identity,
         )
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
             R1PreparedState, prepare_common_state,
@@ -425,8 +412,11 @@ def main(argv=None):
         execution_contract_identity()
         operator_criterion_identity()
         additional_failures_identity()
+        additional_failures_v2_identity()
         physics_protocol_identity()
         study = _merge_additional_failures(study, _read_json_bytes(additional_failures))
+        study = _merge_additional_failures(study, _read_json_bytes(additional_failures_v2))
+        args.observed_source_commit = execution_context.source_commit if execution_context is not None else None
         stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
         policy = r1_policy(nonlinear_factor=args.nonlinear_factor, time_substeps=args.time_substeps)
         if args.stage == "step" and args.resolved_times_s is None:
@@ -459,6 +449,7 @@ def main(argv=None):
                 "intervals": args.intervals, "policy": policy,
                 "nonlinear_factor": args.nonlinear_factor,
                 "time_substeps": list(policy.refinement_substeps),
+                "additional_failures_v2_sha256": sha256(output / "AdditionalFailuresV2.json"),
                 "observation_window": ({
                     "kind": args.window, "first_positive_time_s": args.resolved_times_s[1],
                     "last_time_s": args.resolved_times_s[-1],

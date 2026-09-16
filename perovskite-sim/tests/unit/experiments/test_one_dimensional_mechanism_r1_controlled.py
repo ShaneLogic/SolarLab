@@ -346,6 +346,8 @@ def test_startup_rejection_seals_failure_without_overwriting_prior_run(repositor
     ("docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md", "physics declaration differs"),
     ("docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md", "operator criterion differs"),
     ("docs/OneDimensionalMechanismR1EvidenceV5.md", "physics declaration differs"),
+    ("docs/OneDimensionalMechanismR1ResponseV1.md", "physics declaration differs"),
+    ("docs/OneDimensionalMechanismR1SpatialV1.md", "physics declaration differs"),
 ])
 def test_committed_physics_declaration_cannot_change_pinned_authority(repository, relative, expected):
     root, project, _ = repository
@@ -370,6 +372,15 @@ def test_frozen_snapshot_contains_real_physics_declarations(repository, tmp_path
                 assert data["context"]["required_sources"]["perovskite-sim/"+relative] == {
                     "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
                 }
+
+
+def test_new_r1_declaration_requires_explicit_classification(repository):
+    root, project, _ = repository
+    (project / "docs/OneDimensionalMechanismR1UnreviewedV1.md").write_text("New acceptance rules")
+    revision = commit(root)
+    result = launch((root, project, revision))
+    assert result.returncode == 1
+    assert "declaration registry coverage mismatch" in result.stderr
 
 
 def test_real_extended_controlled_request_cannot_be_relabelled_development(repository, tmp_path):

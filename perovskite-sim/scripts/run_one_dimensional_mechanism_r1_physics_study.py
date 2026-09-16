@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Resumable DEVELOPMENT study of R1 physical consistency, with durable failures.
+"""Versioned R1 physical study with explicit source, scope and independent verification.
 
-Use explicit --section values. Matrix cases use the short diagnostic window;
-their completion is not the full-window 27-case R1-2 acceptance. This runner
-does not claim the controlled launcher's formal source-execution assurance.
+Formal production and verification run through the trusted controlled launcher
+with --runner physics-study. Development calculations remain labelled as such.
+Use --window full for the logarithmic time grid; functional is a short diagnosis.
 """
 
 from __future__ import annotations
@@ -31,28 +31,35 @@ for _name in THREAD_VARIABLES:
 import numpy as np
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
-    require_r1_checkout, record_frozen_source,
+    require_r1_checkout, record_frozen_source, current_execution_context,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import (
     R1Response, base_convergence_cases, observation_times, compare_responses,
+    convergence_cases, AMPLITUDES_V, compare_amplitude_halving,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import (
     DEFAULT_TIMES_S, check_zero_excitation, r1_policy, run_r1_step,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
     R1PreparedState, execution_source, prepare_common_state, restore_common_state,
+    verify_prepared_physics,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import (
     solve_controlled_dc, dc_conductance_study, small_signal_response, compare_transient_tail,
+    assess_small_signal_response,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_physics_validation import verify_r1_step_physics
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_spatial import (
-    spatial_responses_from_step, compare_spatial_responses,
+    spatial_responses_from_step, compare_spatial_responses, compare_convergence_responses,
 )
 from perovskite_sim.models.config_loader import load_device_from_yaml
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response import (
+    frequency_window_report, reconstruct_study_response,
+)
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import R1AdmittanceErrors
 
 
-SECTIONS = ("prepare", "zero", "short", "matrix", "long", "dc", "ac", "amplitude", "compare")
+SECTIONS = ("prepare", "zero", "short", "matrix", "long", "dc", "ac", "amplitude", "compare", "windows", "reconstruct")
 FREQUENCIES = np.r_[0., np.logspace(-3, 8, 45)]
 
 
@@ -101,15 +108,21 @@ def seal(directory):
     write_json(directory/"ManifestV1.json", {
         file.relative_to(directory).as_posix(): sha(file)
         for file in sorted(directory.rglob("*"))
-        if file.is_file() and file.name != "ManifestV1.json"
+        if file.is_file() and file != directory/"ManifestV1.json"
     })
 
 
 def checked_read(directory, filename):
+    directory = Path(directory)
     manifest = json.loads((directory/"ManifestV1.json").read_text())
+    actual = {p.relative_to(directory).as_posix() for p in directory.rglob("*")
+              if p.is_file() and p != directory/"ManifestV1.json"}
+    if set(manifest) != actual:
+        raise ValueError("saved case manifest coverage mismatch: "+str(directory))
     for relative, expected in manifest.items():
         path = directory/relative
-        if not path.is_file() or sha(path) != expected:
+        if (Path(relative).is_absolute() or ".." in Path(relative).parts or path.is_symlink()
+                or not path.is_file() or sha(path) != expected):
             raise ValueError("saved case manifest mismatch: "+str(path))
     if filename not in manifest:
         raise ValueError("saved case does not bind "+filename)
@@ -120,27 +133,57 @@ class Study:
     def __init__(self, args):
         self.args, self.output = args, args.output_dir.resolve()
         self.context = require_r1_checkout(project=PROJECT)
+        self.run_class = self.context.run_class
+        if getattr(args, "formal", False) and self.run_class != "formal":
+            raise ValueError("formal study requires the trusted controlled launcher")
+        self.verifying = getattr(args, "verify", False)
+        if self.verifying and self.run_class != "formal":
+            raise ValueError("scientific study verification requires controlled source execution")
+        self.grids = tuple(getattr(args, "grids", (16, 32, 64)))
+        self.window = getattr(args, "window", "functional")
+        self.times = (DEFAULT_TIMES_S if self.window == "functional" else
+                      observation_times(first_time_s=args.first_time_s, last_time_s=args.last_time_s))
+        self.frequencies = (np.r_[0., np.logspace(-6, 10, 65)]
+                            if getattr(args, "extended_frequency", False) else FREQUENCIES)
+        self.controls = tuple(getattr(args, "matrix_controls", ("D",)))
+        self.verified_cases = {}
+        self.input_dependencies = {}
         self.source = execution_source()
-        self.binding = json.loads(args.reference.read_text())
-        self.stack = load_device_from_yaml(args.fixture)
+        fixture_raw = self.context.read_bytes(args.fixture) if self.run_class == "formal" else args.fixture.read_bytes()
+        reference_raw = self.context.read_bytes(args.reference) if self.run_class == "formal" else args.reference.read_bytes()
+        self.binding = json.loads(reference_raw)
+        with tempfile.TemporaryDirectory(prefix="r1-study-input-") as temporary:
+            fixture_path = Path(temporary)/"SourceFixtureV1.yaml"
+            fixture_path.write_bytes(fixture_raw)
+            self.stack = load_device_from_yaml(fixture_path)
         self.started = datetime.now(timezone.utc).isoformat()
         self.rows, self.attempted = [], 0
         self.preparations = {}
         self.dc_baselines = {}
         request = {
-            "schema": "R1PhysicsStudyRequestV1", "run_class": "development",
+            "schema": "R1PhysicsStudyRequestV2", "run_class": self.run_class,
             "source": self.source, "runner_sha256": sha(Path(__file__)),
-            "fixture_sha256": sha(args.fixture), "reference_sha256": sha(args.reference),
+            "fixture_sha256": hashlib.sha256(fixture_raw).hexdigest(),
+            "reference_sha256": hashlib.sha256(reference_raw).hexdigest(),
             "short_times_s": DEFAULT_TIMES_S, "full_times_s": observation_times(),
-            "frequency_Hz": FREQUENCIES,
-            "short_amplitude_ladder_V": [.01, .005, .0025],
-            "study_exit_passed": False,
-            "scope": "development_equation_recomputation_and_bounded_physics_studies",
-            "matrix_scope": "27 independent settings in short window; full-window convergence remains required",
+            "frequency_Hz": self.frequencies,
+            "amplitude_ladder_V": list(AMPLITUDES_V),
+            "grids": self.grids, "matrix_controls": self.controls,
+            "window": self.window, "times_s": self.times,
+            "window_extensions": {"first_time_s": args.first_time_s, "last_time_s": args.last_time_s,
+                                   "extended_last_time_s": min(args.last_time_s*10, 1e5),
+                                   "earlier_first_time_s": max(args.first_time_s/10, 1e-12)},
+            "scope": "single_frozen_study_settings_not_independent_R1_2_acceptance",
+            "matrix_scope": "base_27_plus_declared_extensions_and_control_axis_crosses",
         }
         if self.output.exists():
-            if not args.resume:
+            if not args.resume and not self.verifying:
                 raise ValueError("output exists; use --resume to verify and extend it")
+            if self.run_class == "formal":
+                anchor = getattr(args, "manifest_sha256", None)
+                if not anchor or sha(self.output/"ManifestV1.json") != anchor:
+                    raise ValueError("formal resume/verify requires the external study manifest digest")
+                checked_read(self.output, "StudyRequestV1.json")
             existing = json.loads((self.output/"StudyRequestV1.json").read_text())
             if existing != ready(request):
                 raise ValueError("resume source, runner, inputs or fixed study request changed")
@@ -152,6 +195,11 @@ class Study:
                 "threads": {key: os.environ[key] for key in THREAD_VARIABLES},
             })
             record_frozen_source(self.output, self.context)
+        if self.run_class == "formal":
+            for path in (args.fixture, args.reference):
+                if self.context.read_bytes(path) != path.read_bytes():
+                    raise ValueError("study input differs from controlled snapshot: "+str(path))
+        self.request = ready(request)
 
     def source_unchanged(self):
         if execution_source() != self.source:
@@ -165,16 +213,114 @@ class Study:
         attempts = sorted(directory.glob("AttemptV*"), key=lambda p: int(p.name.removeprefix("AttemptV")))
         return attempts[-1] if attempts else None
 
-    def saved(self, key):
+    def saved(self, key, *, require_scientific=True):
         directory = self.latest(key)
         if directory is None:
             raise ValueError("required study case has not run: "+key)
         completion = checked_read(directory, "CompletionV1.json")
         if completion["status"] != "completed":
             raise ValueError("required study case failed: "+key)
-        return checked_read(directory, "ResultV1.json")
+        result = checked_read(directory, "ResultV1.json")
+        request = checked_read(directory, "RequestV1.json")
+        self.audit_saved(key, directory, request, result, completion,
+                         operation=getattr(self, "operations", {}).get(key))
+        if require_scientific and completion.get("scientific_checks_passed") is not True:
+            raise ValueError("required study case lacks scientific eligibility: "+key)
+        self.record_dependency(key)
+        return result
+
+    def record_dependency(self, key):
+        owner = getattr(self, "active_case", None)
+        if owner is None or owner == key:
+            return
+        if not hasattr(self, "input_dependencies"):
+            self.input_dependencies = {}
+        directory = self.latest(key)
+        if directory is None:
+            raise ValueError("required dependency has no sealed attempt: "+key)
+        self.input_dependencies.setdefault(owner, {})[key] = {
+            "attempt": str(directory.relative_to(self.output)),
+            "manifest_sha256": sha(directory/"ManifestV1.json"),
+        }
+
+    def audit_saved(self, key, directory, request, result, completion, operation=None):
+        """Recompute physical contents, not the booleans of a self-sealed report."""
+        if not hasattr(self, "verified_cases"):
+            self.verified_cases = {}
+        identity = sha(directory/"ManifestV1.json")
+        cached = self.verified_cases.get(key)
+        if cached is not None and cached[0] == identity:
+            return cached[1]
+        if completion.get("case") != key or completion.get("scope") != request.get("scope"):
+            raise ValueError("case completion differs from requested identity or scope")
+        if hasattr(self, "run_class") and completion.get("run_class") != self.run_class:
+            raise ValueError("case execution class differs from the study")
+        if (directory/"InputBindingsV2.json").is_file():
+            for parent, binding in checked_read(directory, "InputBindingsV2.json").items():
+                current = self.latest(parent)
+                if (current is None or str(current.relative_to(self.output)) != binding["attempt"]
+                        or sha(current/"ManifestV1.json") != binding["manifest_sha256"]):
+                    raise ValueError("case input differs from bound parent evidence: "+parent)
+        audit = self.audit_result(key, request, result, operation=operation)
+        actual = scientific_checks(result)
+        if audit.get("certified") is False:
+            actual = False
+        if completion.get("scientific_checks_passed") is not actual:
+            raise ValueError("case scientific verdict differs from recomputed contents: "+key)
+        self.verified_cases[key] = (identity, audit)
+        return audit
+
+    def audit_result(self, key, request, result, *, operation=None):
+        if not isinstance(result, dict):
+            raise ValueError("study result must be a record")
+        if key.startswith("Preparation/"):
+            prepared = R1PreparedState.from_dict(result)
+            if result.get("source") != self.source or result.get("intervals") != request["intervals"]:
+                raise ValueError("preparation source/grid differs from the study")
+            if result.get("preparation_policy") != ready(r1_policy()):
+                raise ValueError("preparation policy differs from declared R1 policy")
+            verify_prepared_physics(prepared, self.stack, self.binding, policy=r1_policy())
+            return {"certified": bool(result["preparation_checks"]["certified"]),
+                    "content_matches_recomputed": True}
+        if result.get("schema") == "R1ControlledStepV1":
+            n = request["intervals"]
+            if (result.get("intervals") != n or result.get("control_label") != request.get("control", "D")
+                    or result.get("amplitude_V") != request.get("amplitude_V", .005)
+                    or result.get("times_s") != ready(request["times_s"])
+                    or result.get("policy") != ready(r1_policy(request["nonlinear_factor"],
+                                                               time_substeps=request["time_substeps"]))):
+                raise ValueError("step result differs from the requested numerical/physical axes")
+            return verify_r1_step_physics(self.stack, n, self.binding, self.prepared(n), result)
+        if key.startswith(("DC/", "AC/")):
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import verify_response_content
+            return verify_response_content(result, stack=self.stack, intervals=request["intervals"],
+                                           binding=self.binding, prepared=self.prepared(request["intervals"]),
+                                           request=request)
+        if key.startswith("Zero/"):
+            p = self.prepared(request["intervals"])
+            fresh = check_zero_excitation(self.stack, request["intervals"], self.binding, p,
+                                          expected_prepared_sha256=p.sha256)
+        elif operation is not None and key.startswith(("Compare/", "MatrixCompare/", "Amplitude/Comparison",
+                                                       "Linearity/", "Frequency/", "DoubleDomain/")):
+            fresh = operation(None)
+        elif getattr(self, "run_class", "development") == "formal":
+            raise ValueError("formal result type has no independent replay operation: "+key)
+        else:
+            return {"certified": scientific_checks(result), "content_matches_recomputed": False}
+        if ready(fresh) != ready(result):
+            raise ValueError("study result differs from independent replay: "+key)
+        return {"certified": scientific_checks(fresh), "content_matches_recomputed": True}
 
     def case(self, key, request, operation, *, dependency=False):
+        request = dict(request)
+        if all(field in request for field in ("intervals", "control", "time_substeps", "nonlinear_factor", "times_s")):
+            request.setdefault("amplitude_V", .005)
+        if not hasattr(self, "expected_cases"):
+            self.expected_cases = {}
+        if not hasattr(self, "operations"):
+            self.operations = {}
+        self.operations[key] = operation
+        self.expected_cases[key] = ready(request)
         if not dependency and not self.selected(key):
             return None
         prior = self.latest(key)
@@ -185,6 +331,18 @@ class Study:
             if old_request != ready(request):
                 raise ValueError("resume case request changed: "+key)
             completion = checked_read(prior, "CompletionV1.json") if sealed else {"status": "interrupted"}
+            if sealed and completion["status"] in ("completed", "unavailable"):
+                self.audit_saved(key, prior, request, checked_read(prior, "ResultV1.json"), completion,
+                                 operation=operation)
+            if getattr(self, "verifying", False):
+                if not sealed:
+                    raise ValueError("cannot verify an interrupted unsealed case: "+key)
+                if completion["status"] == "failed":
+                    self.audit_failed(key, prior, request)
+                self.rows.append({"case": key, "status": completion["status"],
+                                  "scientific_checks_passed": completion.get("scientific_checks_passed"),
+                                  "independently_verified": True})
+                return checked_read(prior, "ResultV1.json") if completion["status"] == "completed" else None
             if sealed and (completion["status"] == "completed" or not self.args.retry_failed):
                 self.rows.append({"case": key, "status": completion["status"], "resumed": True,
                                   "scientific_checks_passed": completion.get("scientific_checks_passed"),
@@ -193,6 +351,9 @@ class Study:
             if not sealed:
                 self.rows.append({"case": key, "status": "interrupted_attempt_preserved",
                                   "directory": str(prior.relative_to(self.output))})
+        if getattr(self, "verifying", False):
+            self.rows.append({"case": key, "status": "not_run", "scientific_checks_passed": None})
+            return None
         if self.args.max_cases is not None and self.attempted >= self.args.max_cases:
             self.rows.append({"case": key, "status": "not_started_case_budget"})
             return None
@@ -213,6 +374,8 @@ class Study:
         start = time.monotonic()
         self.attempted += 1
         print("START", key, flush=True)
+        previous_owner = getattr(self, "active_case", None)
+        self.active_case = key
         try:
             if dependency_error is not None:
                 raise dependency_error
@@ -227,13 +390,21 @@ class Study:
                        "partial_result": getattr(exc, "result", None)}
             write_json(directory/"FailureV1.json", failure)
             result = None
+        finally:
+            self.active_case = previous_owner
+        write_json(directory/"InputBindingsV2.json", getattr(self, "input_dependencies", {}).get(key, {}))
+        historical = None
+        if all(field in request for field in ("intervals", "control", "time_substeps", "nonlinear_factor", "times_s", "amplitude_V")):
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_registry import historical_observation
+            historical = historical_observation({**request, "source_commit": getattr(self, "source", {}).get("source_commit")}, failure)
         completion = {
             "schema": "R1PhysicsStudyCaseV1", "case": key, "status": status,
-            "duration_s": time.monotonic()-start, "run_class": "development",
+            "duration_s": time.monotonic()-start, "run_class": getattr(self, "run_class", "development"),
             "finished_utc": datetime.now(timezone.utc).isoformat(),
             "study_exit_passed": False, "scope": request.get("scope"),
             "scientific_checks_passed": scientific_checks(result) if status in ("completed", "unavailable") else False,
             "failure": None if failure is None else {k: v for k, v in failure.items() if k != "partial_result"},
+            "historical_observation": historical,
         }
         write_json(directory/"CompletionV1.json", completion)
         seal(directory)
@@ -243,16 +414,32 @@ class Study:
         print(status.upper(), key, f"{completion['duration_s']:.3f}s", flush=True)
         return result
 
+    def audit_failed(self, key, directory, request):
+        failure = checked_read(directory, "FailureV1.json")
+        completion = checked_read(directory, "CompletionV1.json")
+        if completion.get("scientific_checks_passed") is not False:
+            raise ValueError("failed case cannot have scientific eligibility")
+        if completion.get("failure") != {k: v for k, v in failure.items() if k != "partial_result"}:
+            raise ValueError("failed case reason differs from completion")
+        partial = failure.get("partial_result")
+        if isinstance(partial, dict) and partial.get("physics_reconstruction") and partial.get("accepted_steps"):
+            return verify_r1_step_physics(self.stack, request["intervals"], self.binding,
+                                         self.prepared(request["intervals"]), partial, allow_incomplete=True)
+        return {"certified": False, "content_matches_recomputed": None,
+                "reason": "no complete accepted state for physical replay; failed identity retained"}
+
     def prepared(self, intervals):
         if intervals not in self.preparations:
             result = self.case(f"Preparation/N{intervals}", {"intervals": intervals, "scope": "common_D_equilibrium"},
-                               lambda directory: prepare_common_state(self.stack, intervals, self.binding).to_dict(),
+                               lambda directory: prepare_common_state(self.stack, intervals, self.binding,
+                                                                        policy=r1_policy()).to_dict(),
                                dependency=True)
             if result is None:
                 if self.args.max_cases is not None and self.attempted >= self.args.max_cases:
                     raise CaseBudgetExhausted("new-case budget exhausted before required preparation")
                 raise ValueError("preparation unavailable within selected case budget")
             self.preparations[intervals] = R1PreparedState.from_dict(result)
+        self.record_dependency(f"Preparation/N{intervals}")
         return self.preparations[intervals]
 
     def step(self, directory, intervals, control, substeps, factor, times, amplitude=.005):
@@ -269,7 +456,8 @@ class Study:
             result = run_r1_step(self.stack, intervals, self.binding, prepared, control=control,
                                  amplitude_V=amplitude, times_s=times,
                                  policy=r1_policy(factor, time_substeps=substeps),
-                                 accepted_step_observer=observe, physics_evidence=True)
+                                 accepted_step_observer=observe, physics_evidence=True,
+                                 expected_prepared_sha256=prepared.sha256)
         except Exception as exc:
             partial = getattr(exc, "result", None)
             if isinstance(partial, dict) and partial.get("physics_reconstruction") and partial.get("accepted_steps"):
@@ -283,68 +471,78 @@ class Study:
                         "partial_result": getattr(audit_exc, "result", None),
                     })
             raise
-        write_json(directory/"PhysicsRecomputationV1.json", verify_r1_step_physics(
-            self.stack, intervals, self.binding, prepared, result))
+        audit = verify_r1_step_physics(self.stack, intervals, self.binding, prepared, result)
+        write_json(directory/"PhysicsRecomputationV1.json", audit)
+        if audit.get("certified") is not True:
+            error = ValueError("completed trajectory fails reconstructed physical gates")
+            error.result = result
+            raise error
         return result
 
     def run(self, sections):
         if "prepare" in sections:
-            for n in (16, 32, 64):
+            for n in self.grids:
                 if self.selected(f"Preparation/N{n}"):
                     self.prepared(n)
         if "zero" in sections:
-            for n in (16, 32, 64):
+            for n in self.grids:
                 self.case(f"Zero/N{n}", {"intervals": n, "controls": "ABCD", "scope": "zero_excitation_A_D"},
-                          lambda directory, n=n: check_zero_excitation(self.stack, n, self.binding, self.prepared(n)))
+                          lambda directory, n=n: check_zero_excitation(self.stack, n, self.binding, self.prepared(n),
+                              expected_prepared_sha256=self.prepared(n).sha256))
         if "short" in sections:
-            for n in (16, 32, 64):
+            for n in self.grids:
                 for control in "ABCD":
                     self.case(f"Short/N{n}/{control}", {"intervals": n, "control": control,
                               "times_s": DEFAULT_TIMES_S, "time_substeps": (1, 2, 4), "nonlinear_factor": .1,
                               "scope": "short_controlled_physics_recomputation"},
                               lambda directory, n=n, c=control: self.step(directory, n, c, (1, 2, 4), .1, DEFAULT_TIMES_S))
         if "matrix" in sections:
-            for item in base_convergence_cases():
-                key = f"Matrix/N{item.intervals}/T{item.time_substeps[0]}/F{str(item.nonlinear_factor).replace('.', 'p')}"
-                self.case(key, {**dataclasses.asdict(item), "times_s": DEFAULT_TIMES_S,
-                               "scope": "short_window_27_axis_functional_case_not_full_window_acceptance"},
-                          lambda directory, item=item: self.step(directory, item.intervals, "D", item.time_substeps,
-                                                                 item.nonlinear_factor, DEFAULT_TIMES_S))
+            for item in self.matrix_cases():
+                self.case(self.matrix_key(item), {**dataclasses.asdict(item), "times_s": self.times,
+                               "scope": self.window+"_window_independent_axis_case"},
+                          lambda directory, item=item: self.step(directory, item.intervals, item.control, item.time_substeps,
+                                                                 item.nonlinear_factor, self.times))
         if "long" in sections:
             self.case("Long/N16/D", {"intervals": 16, "control": "D", "time_substeps": (1, 2, 4),
                       "nonlinear_factor": .1, "times_s": observation_times(), "scope": "full_100s_window_attempt"},
                       lambda directory: self.step(directory, 16, "D", (1, 2, 4), .1, observation_times()))
         if "dc" in sections:
-            for n in (16, 32, 64):
+            for n in self.grids:
                 for control in "ABCD":
                     self.case(f"DC/N{n}/{control}", {"intervals": n, "control": control, "voltage_V": .005,
                               "scope": "same_control_5mV_dc_and_three_step_zero_bias_conductance"},
                               lambda directory, n=n, c=control: self.dc_record(n, c))
         if "ac" in sections:
-            for n in (16, 32, 64):
-                self.case(f"AC/N{n}/D", {"intervals": n, "control": "D", "frequency_Hz": FREQUENCIES,
+            for n in self.grids:
+                self.case(f"AC/N{n}/D", {"intervals": n, "control": "D", "frequency_Hz": self.frequencies,
                           "scope": "direct_zero_bias_ac_three_derivative_levels_not_window_coverage"},
                           lambda directory, n=n: small_signal_response(solve_controlled_dc(
-                              self.stack, n, self.binding, self.prepared(n)), FREQUENCIES))
+                              self.stack, n, self.binding, self.prepared(n),
+                              expected_prepared_sha256=self.prepared(n).sha256), self.frequencies))
         if "amplitude" in sections:
-            for amplitude, label in ((.01, "A10mV"), (.005, "A5mV"), (.0025, "A2p5mV")):
-                self.case(f"Amplitude/N16/{label}", {"intervals": 16, "control": "D", "amplitude_V": amplitude,
-                          "times_s": DEFAULT_TIMES_S, "time_substeps": (1, 2, 4), "nonlinear_factor": .1,
-                          "scope": "short_small_signal_amplitude_ladder"},
-                          lambda directory, a=amplitude: self.step(directory, 16, "D", (1, 2, 4), .1, DEFAULT_TIMES_S, a))
-            self.case("Amplitude/ComparisonN16", {"scope": "normalized_current_comparison_with_unknown_absolute_error"},
-                      lambda directory: self.amplitude_record())
+            previous = None
+            for amplitude in AMPLITUDES_V:
+                for item in self.amplitude_cases(amplitude):
+                    self.case(self.amplitude_key(item), {**dataclasses.asdict(item), "times_s": self.times,
+                              "scope": self.window+"_amplitude_independent_axis_case"},
+                              lambda directory, item=item: self.step(directory, item.intervals, "D", item.time_substeps,
+                                  item.nonlinear_factor, self.times, item.amplitude_V))
+                if previous is not None:
+                    result = self.case(f"Linearity/A{previous}ToA{amplitude}", {"kind": "amplitude_linearity", "coarse_amplitude_V": previous,
+                              "fine_amplitude_V": amplitude, "scope": self.window+"_normalized_current_and_refinement_error"},
+                              lambda directory, a=previous, b=amplitude: self.amplitude_record(a, b))
+                    if result is not None and result.get("linearity_certified") is True:
+                        break
+                previous = amplitude
         if "compare" in sections:
             for control in "ABCD":
-                for left, right in ((16, 32), (32, 64)):
+                for left, right in zip(self.grids[:-1], self.grids[1:]):
                     self.case(f"Compare/{control}/N{left}N{right}", {"left": left, "right": right, "control": control,
                               "scope": "short_fixed_position_spatial_comparison"},
                               lambda directory, l=left, r=right, c=control: self.compare_available(
                                   [f"Short/N{l}/{c}", f"Short/N{r}/{c}"],
-                                  lambda: compare_spatial_responses(
-                                      spatial_responses_from_step(self.prepared(l), self.saved(f"Short/N{l}/{c}")),
-                                      spatial_responses_from_step(self.prepared(r), self.saved(f"Short/N{r}/{c}")))))
-            for left, right in ((16, 32), (32, 64)):
+                                  lambda: self.short_comparison(l, r, c)))
+            for left, right in zip(self.grids[:-1], self.grids[1:]):
                 self.case(f"Compare/AC/N{left}N{right}", {"left": left, "right": right, "control": "D",
                           "scope": "direct_ac_real_and_imaginary_mesh_comparison"},
                           lambda directory, l=left, r=right: self.compare_available(
@@ -352,39 +550,225 @@ class Study:
             self.case("Compare/LongTailN16D", {"scope": "finite_accepted_tail_vs_5mV_dc_no_infinite_tail_bound"},
                       lambda directory: self.tail_record())
             self.matrix_comparisons()
+        if "windows" in sections:
+            n = self.grids[-1]
+            amplitude, linearity = self.qualified_amplitude()
+            start, end = self.args.first_time_s, self.args.last_time_s
+            windows = (("Base", start, end), ("Extended", start, min(end*10, 1e5)),
+                       ("Earlier", max(start/10, 1e-12), end))
+            for label, first, last in windows:
+                if label == "Extended" and last == end or label == "Earlier" and first == start:
+                    continue
+                times = observation_times(first_time_s=first, last_time_s=last)
+                self.case(f"Window/{label}/N{n}/A{amplitude}", {"intervals": n, "control": "D", "amplitude_V": amplitude,
+                          "time_substeps": (4, 8, 16), "nonlinear_factor": .01, "times_s": times,
+                          "linearity_case": linearity, "scope": "declared_full_window_extension"},
+                          lambda directory, n=n, times=times, a=amplitude: self.step(directory, n, "D", (4, 8, 16), .01, times, a))
+        if "reconstruct" in sections:
+            n = self.grids[-1]
+            for grid in self.grids:
+                self.case(f"Frequency/N{grid}", {"kind": "frequency_coverage", "grid": grid,
+                          "scope": "numerically_valid_bands_and_uncovered_turnovers"},
+                          lambda directory, grid=grid: self.compare_available([f"AC/N{grid}/D"],
+                              lambda: frequency_window_report(self.saved(f"AC/N{grid}/D", require_scientific=False)),
+                              require_scientific=False))
+            self.case(f"DoubleDomain/N{n}/D", {"kind": "double_domain", "grid": n,
+                      "scope": "derived_double_domain_eligibility_with_explicit_unknown_errors"},
+                      lambda directory: self.reconstruction_record(n))
+
+    def reconstruction_record(self, n):
+        amplitude, linearity_key = self.qualified_amplitude()
+        keys = [f"Window/Base/N{n}/A{amplitude}", f"AC/N{n}/D", f"DC/N{n}/D"]
+        def reconstruct():
+            step, ac, dc = (self.saved(key) for key in keys)
+            prepared = self.prepared(n)
+            prerequisites = {"input_trajectory_certified": self.verified_cases[keys[0]][1].get("certified") is True,
+                "ac_content_verified": self.verified_cases[keys[1]][1].get("content_matches_recomputed") is True,
+                "finite_amplitude_linearity": False,
+                "frequency_window_coverage": frequency_window_report(ac)["frequency_window_complete"]}
+            error_fields, uncertainty = {}, {}
+            if linearity_key is not None and self.window == "full":
+                linearity = self.saved(linearity_key)
+                prerequisites["finite_amplitude_linearity"] = linearity["linearity_certified"]
+                _, numerical_error, uncertainty = self.amplitude_error(amplitude)
+                if np.array_equal(numerical_error.coordinates["time_s"], step["times_s"]):
+                    raw_errors = []
+                    for axis in uncertainty["axes"].values():
+                        left, right = (self.saved(key) for key in axis["cases"][-2:])
+                        a = np.asarray([row["report_contact_current_A_m2"] for row in left["regular_currents"]])
+                        b = np.asarray([row["report_contact_current_A_m2"] for row in right["regular_currents"]])
+                        raw_errors.append(np.abs(a-b))
+                    error_fields["current_A_m2"] = np.sum(raw_errors, axis=0)[1:, 0]
+                prerequisites["single_axis_convergence"] = uncertainty["axes_passed"]
+                center = next(c for c in self.amplitude_cases(amplitude) if c.intervals == n
+                              and c.time_substeps == (4, 8, 16) and c.nonlinear_factor == .01)
+                neighbors = [c for c in self.amplitude_cases(amplitude) if c.intervals < n
+                             and c.time_substeps == center.time_substeps and c.nonlinear_factor == center.nonlinear_factor]
+                if neighbors:
+                    neighbor = max(neighbors, key=lambda c: c.intervals)
+                    error_fields["baseline_current_A_m2"] = abs(dc["conductance"]["baseline"]["terminal_current_A_m2"]
+                        - self.zero_dc(neighbor.intervals, "D").evidence["terminal_current_A_m2"])
+                    adjacent_dc = self.saved(f"DC/N{neighbor.intervals}/D")["conductance"]
+                    error_fields["dc_conductance_S_m2"] = (dc["conductance"]["finest_pair_absolute_difference_S_m2"]
+                        + abs(dc["conductance"]["conductance_S_m2"][-1]-adjacent_dc["conductance_S_m2"][-1]))
+            errors = R1AdmittanceErrors(**error_fields)
+            reference = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors,
+                                                   prerequisites=prerequisites)
+            tight = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors,
+                prerequisites=prerequisites, quadrature_absolute_tolerance_F_m2=1e-13, quadrature_relative_tolerance=1e-11)
+            comparisons = {"stricter_integration": self.reconstruction_comparison(reference, tight)}
+            prerequisites["stricter_integration"] = comparisons["stricter_integration"]["passed"]
+            for label, gate in (("Extended", "window_extension"), ("Earlier", "earlier_start")):
+                key = f"Window/{label}/N{n}/A{amplitude}"
+                available = self.compare_available([key], lambda key=key: self.saved(key))
+                if available.get("comparison_available") is False:
+                    comparisons[gate] = available
+                    prerequisites[gate] = False
+                    continue
+                other = reconstruct_study_response(available, prepared, dc["conductance"], ac)
+                comparisons[gate] = self.reconstruction_comparison(reference, other)
+                prerequisites[gate] = comparisons[gate]["passed"]
+            # The measured tail state is compared against an independently
+            # solved DC at the actual selected amplitude.
+            target = solve_controlled_dc(self.stack, n, self.binding, prepared, voltage_V=amplitude,
+                                          expected_prepared_sha256=prepared.sha256)
+            row = next(r for r in reversed(step["accepted_steps"]) if r["time_s"] == step["times_s"][-1]
+                       and r["substeps"] == max(step["policy"]["refinement_substeps"]))
+            tail = {**row["state"], "prepared_sha256": step["prepared_sha256"],
+                    "control": step["control_label"], "voltage_V": step["amplitude_V"]}
+            tail_report = compare_transient_tail(target, initial_state=prepared.to_dict()["state"], tail_state=tail,
+                tail_regular_current_A_m2=step["regular_currents"][-1]["report_contact_current_A_m2"][0], time_s=row["time_s"])
+            prerequisites["tail_dc_agreement"] = tail_report["all_observables_agree"]
+            result = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors, prerequisites=prerequisites)
+            return {**result, "linearity_case": linearity_key, "prerequisite_evidence": comparisons,
+                    "tail_dc_evidence": tail_report, "current_uncertainty_evidence": uncertainty,
+                    "provided_error_estimates": ready(error_fields),
+                    "unestablished_error_budgets": [name for name in R1AdmittanceErrors.__dataclass_fields__
+                                                     if name not in error_fields]}
+        return self.compare_available(keys, reconstruct)
+
+    @staticmethod
+    def reconstruction_comparison(left, right):
+        def response(record):
+            reconstruction = record["reconstruction"]
+            values = np.array([complex(x["real"], x["imag"]) for x in reconstruction["admittance_S_m2"]])
+            return R1Response(values, {"frequency_Hz": np.asarray(reconstruction["frequency_Hz"])})
+        return compare_responses("admittance", response(left), response(right))
+
+    def qualified_amplitude(self):
+        candidates = []
+        for directory in sorted((self.output/"Linearity").glob("*/AttemptV*")):
+            if not (directory/"CompletionV1.json").is_file():
+                continue
+            completion = checked_read(directory, "CompletionV1.json")
+            key = completion["case"]
+            if directory != self.latest(key) or completion.get("scientific_checks_passed") is not True:
+                continue
+            request = checked_read(directory, "RequestV1.json")
+            if not hasattr(self, "operations"):
+                self.operations = {}
+            self.operations[key] = lambda ignored, r=request: self.amplitude_record(r["coarse_amplitude_V"], r["fine_amplitude_V"])
+            result = self.saved(key)
+            if result.get("linearity_certified") is True:
+                candidates.append((request["fine_amplitude_V"], key))
+        return min(candidates) if candidates else (.005, None)
 
     def dc_record(self, n, control):
         prepared = self.prepared(n)
-        target = solve_controlled_dc(self.stack, n, self.binding, prepared, control=control, voltage_V=.005)
+        target = solve_controlled_dc(self.stack, n, self.binding, prepared, control=control, voltage_V=.005,
+                                     expected_prepared_sha256=prepared.sha256)
         return {"target_bias": target.evidence,
-                "conductance": dc_conductance_study(self.stack, n, self.binding, prepared, control=control)}
+                "conductance": dc_conductance_study(self.stack, n, self.binding, prepared, control=control,
+                                                    expected_prepared_sha256=prepared.sha256)}
 
-    def amplitude_record(self):
-        coarse, fine = self.saved("Amplitude/N16/A5mV"), self.saved("Amplitude/N16/A2p5mV")
-        baseline = self.zero_dc(16, "D").evidence["terminal_current_A_m2"]
-        curves = []
-        for record in (coarse, fine):
-            curves.append((np.array([x["report_contact_current_A_m2"][0] for x in record["regular_currents"]])-baseline)
-                          / record["amplitude_V"])
-        return {"scope": "two_smallest_amplitudes_normalized_regular_current_only",
-                "times_s": fine["times_s"], "amplitudes_V": [coarse["amplitude_V"], fine["amplitude_V"]],
-                "normalized_current_S_m2": curves, "absolute_difference_S_m2": np.abs(curves[0]-curves[1]),
-                "one_percent_signal_scale_S_m2": .01*np.maximum(np.abs(curves[0]), np.abs(curves[1])),
-                "independent_absolute_current_error_A_m2": None,
-                "linearity_certified": False,
-                "reason": "independent numerical current errors and their one-percent signal budget remain unestablished"}
+    @staticmethod
+    def amplitude_key(item):
+        return (f"Amplitude/A{item.amplitude_V}/N{item.intervals}/T{item.time_substeps[0]}"
+                f"/F{str(item.nonlinear_factor).replace('.', 'p')}")
+
+    def amplitude_cases(self, amplitude):
+        choices = convergence_cases(intervals=self.grids[-3:], amplitude_V=amplitude)
+        return tuple(c for c in choices if sum((c.intervals != self.grids[-1],
+            c.time_substeps != (4, 8, 16), c.nonlinear_factor != .01)) <= 1)
+
+    def current_response(self, item, key):
+        record = self.saved(key)
+        baseline = self.zero_dc(item.intervals, item.control).evidence["current_A_m2"][[0, -1]]
+        values = np.asarray([row["report_contact_current_A_m2"] for row in record["regular_currents"]])-baseline
+        return R1Response(values, {"time_s": np.asarray(record["times_s"])}, ("left", "right"))
+
+    def amplitude_error(self, amplitude):
+        choices = self.amplitude_cases(amplitude)
+        center = next(c for c in choices if c.intervals == self.grids[-1]
+                      and c.time_substeps == (4, 8, 16) and c.nonlinear_factor == .01)
+        response = self.current_response(center, self.amplitude_key(center))
+        axes, differences = {}, []
+        for axis in ("intervals", "time_substeps", "nonlinear_factor"):
+            group = [c for c in choices if all(getattr(c, name) == getattr(center, name)
+                     for name in ("intervals", "time_substeps", "nonlinear_factor") if name != axis)]
+            group.sort(key=lambda c: getattr(c, axis), reverse=axis == "nonlinear_factor")
+            if len(group) != 3:
+                raise ValueError("amplitude numerical-error estimate requires three levels on every independent axis")
+            responses = [self.current_response(c, self.amplitude_key(c)) for c in group]
+            reports = [compare_responses("regular_current_response", a, b)
+                       for a, b in zip(responses[:-1], responses[1:])]
+            differences.append(np.abs(responses[-1].values-responses[-2].values))
+            axes[axis] = {"cases": [self.amplitude_key(c) for c in group], "comparisons": reports,
+                          "fine_difference_A_m2": differences[-1], "passed": reports[-1]["passed"],
+                          "coarser_comparison_is_diagnostic": True}
+        error = np.sum(differences, axis=0)
+        return response, R1Response(error, response.coordinates, response.components), {
+            "method": "sum of separately measured finest-pair absolute differences on three axes",
+            "interpretation": "empirical numerical uncertainty estimate; not a rigorous continuum error bound",
+            "axes": axes, "axes_passed": all(a["passed"] for a in axes.values()),
+            "error_A_m2": error}
+
+    def amplitude_record(self, coarse=.005, fine=.0025):
+        keys = [self.amplitude_key(c) for a in (coarse, fine) for c in self.amplitude_cases(a)]
+        def compare():
+            a, error_a, audit_a = self.amplitude_error(coarse)
+            b, error_b, audit_b = self.amplitude_error(fine)
+            report = compare_amplitude_halving(a, b, coarse_amplitude_V=coarse, fine_amplitude_V=fine,
+                                               coarse_current_error=error_a, fine_current_error=error_b)
+            qualified = audit_a["axes_passed"] and audit_b["axes_passed"]
+            return {"schema": "R1AmplitudeLinearityV2", "comparison": report,
+                    "coarse_error_evidence": audit_a, "fine_error_evidence": audit_b,
+                    "linearity_certified": qualified and report["passed"],
+                    "within_compared_budgets": qualified and report["passed"],
+                    "scope": self.window+"_window_two_amplitude_response_with_independent_refinement_estimates"}
+        return self.compare_available(keys, compare)
+
+    def short_comparison(self, left, right, control):
+        keys = (f"Short/N{left}/{control}", f"Short/N{right}/{control}")
+        a, b = (self.saved(key) for key in keys)
+        electrical = compare_step_current_charge(a, b, self.zero_dc(left, control).evidence["current_A_m2"][[0, -1]],
+                                                self.zero_dc(right, control).evidence["current_A_m2"][[0, -1]])
+        return compare_convergence_responses(spatial_responses_from_step(self.prepared(left), a),
+            spatial_responses_from_step(self.prepared(right), b), axis="intervals", electrical=electrical,
+            input_verifications=tuple(self.verified_cases[key][1] for key in keys))
 
     @staticmethod
     def matrix_key(item):
-        return f"Matrix/N{item.intervals}/T{item.time_substeps[0]}/F{str(item.nonlinear_factor).replace('.', 'p')}"
+        prefix = "Matrix" if item.control == "D" else "Matrix/"+item.control
+        return f"{prefix}/N{item.intervals}/T{item.time_substeps[0]}/F{str(item.nonlinear_factor).replace('.', 'p')}"
+
+    def matrix_cases(self):
+        cases = []
+        for control in self.controls:
+            choices = convergence_cases(intervals=self.grids, control=control)
+            if control != "D":
+                choices = tuple(c for c in choices if sum((c.intervals != self.grids[-1],
+                    c.time_substeps != (4, 8, 16), c.nonlinear_factor != .01)) <= 1)
+            cases.extend(choices)
+        return tuple(cases)
 
     def matrix_comparisons(self):
-        cases = base_convergence_cases()
+        cases = self.matrix_cases()
         fields = ("intervals", "time_substeps", "nonlinear_factor")
         for axis in fields:
             groups = {}
             for item in cases:
-                other = tuple(getattr(item, key) for key in fields if key != axis)
+                other = (item.control, *(getattr(item, key) for key in fields if key != axis))
                 groups.setdefault(other, []).append(item)
             for group in groups.values():
                 group = sorted(group, key=lambda item: getattr(item, axis), reverse=axis == "nonlinear_factor")
@@ -393,11 +777,14 @@ class Study:
                     label = left_key.removeprefix("Matrix/").replace("/", "")+"To"+right_key.removeprefix("Matrix/").replace("/", "")
                     self.case(f"MatrixCompare/{axis}/{label}", {
                         "axis": axis, "left_case": left_key, "right_case": right_key,
-                        "scope": "one_axis_short_window_comparison_with_other_two_axes_fixed"},
+                        "control": left.control,
+                        "required_finest_pair": (right.intervals == self.grids[-1]
+                            and right.time_substeps == (4, 8, 16) and right.nonlinear_factor == .01),
+                        "scope": self.window+"_window_comparison_with_other_two_axes_fixed"},
                         lambda directory, l=left, r=right: self.compare_available(
                             [self.matrix_key(l), self.matrix_key(r)], lambda: self.matrix_comparison(l, r)))
 
-    def compare_available(self, keys, operation):
+    def compare_available(self, keys, operation, *, require_scientific=True):
         missing = []
         for key in keys:
             directory = self.latest(key)
@@ -407,7 +794,7 @@ class Study:
                 missing.append({"case": key, "status": "interrupted"})
             else:
                 completion = checked_read(directory, "CompletionV1.json")
-                if completion["status"] != "completed":
+                if completion["status"] != "completed" or require_scientific and completion.get("scientific_checks_passed") is not True:
                     missing.append({"case": key, "status": completion["status"]})
         if missing:
             return {"comparison_available": False, "missing_dependencies": missing,
@@ -434,23 +821,26 @@ class Study:
 
     def matrix_comparison(self, left, right):
         a, b = self.saved(self.matrix_key(left)), self.saved(self.matrix_key(right))
-        spatial = compare_spatial_responses(
-            spatial_responses_from_step(self.prepared(left.intervals), a),
-            spatial_responses_from_step(self.prepared(right.intervals), b))
         baseline_left = self.zero_dc(left.intervals, left.control)
         baseline_right = self.zero_dc(right.intervals, right.control)
         electrical = compare_step_current_charge(a, b, baseline_left.evidence["current_A_m2"][[0, -1]],
                                                 baseline_right.evidence["current_A_m2"][[0, -1]])
-        return {"spatial": spatial, "electrical": electrical,
-                "within_compared_budgets": spatial["within_compared_budgets"] and electrical["within_compared_budgets"],
-                "scope": "one_axis_short_window_response_comparison_only",
-                "full_window_convergence_certified": False}
+        axes = [field for field in ("intervals", "time_substeps", "nonlinear_factor")
+                if getattr(left, field) != getattr(right, field)]
+        if len(axes) != 1:
+            raise ValueError("convergence comparison must change exactly one axis")
+        return compare_convergence_responses(
+            spatial_responses_from_step(self.prepared(left.intervals), a),
+            spatial_responses_from_step(self.prepared(right.intervals), b), axis=axes[0], electrical=electrical,
+            input_verifications=(self.verified_cases[self.matrix_key(left)][1],
+                                 self.verified_cases[self.matrix_key(right)][1]))
 
     def zero_dc(self, intervals, control):
         key = intervals, control
         if key not in self.dc_baselines:
             self.dc_baselines[key] = solve_controlled_dc(self.stack, intervals, self.binding,
-                                                        self.prepared(intervals), control=control)
+                                                        self.prepared(intervals), control=control,
+                                                        expected_prepared_sha256=self.prepared(intervals).sha256)
         return self.dc_baselines[key]
 
     def tail_record(self):
@@ -459,14 +849,27 @@ class Study:
         if attempt is None:
             return {"comparison_available": False, "reason": "full-window attempt not available"}
         completion = checked_read(attempt, "CompletionV1.json")
-        record = (checked_read(attempt, "ResultV1.json") if completion["status"] == "completed"
-                  else checked_read(attempt, "FailureV1.json")["partial_result"])
+        if completion["status"] == "completed":
+            record = self.saved("Long/N16/D", require_scientific=False)
+        else:
+            audit = self.audit_failed("Long/N16/D", attempt, checked_read(attempt, "RequestV1.json"))
+            self.record_dependency("Long/N16/D")
+            if audit.get("content_matches_recomputed") is not True:
+                return {"comparison_available": False, "reason": "failed tail has no verified physical reconstruction"}
+            record = checked_read(attempt, "FailureV1.json")["partial_result"]
+        if not isinstance(record, dict):
+            return {"comparison_available": False, "reason": "failed window has no saved physical state"}
         rows = [row for row in record.get("accepted_steps", []) if row.get("physical_checks_passed") and row["dt_s"] > 0]
         if not rows:
             return {"comparison_available": False, "reason": "no physically accepted finite tail is available"}
         row = max(rows, key=lambda r: (r["time_s"], r["substeps"]))
-        state = {**row["state"], "prepared_sha256": prepared.sha256, "control": "D", "voltage_V": .005}
-        dc = solve_controlled_dc(self.stack, 16, self.binding, prepared, voltage_V=.005)
+        if (record.get("prepared_sha256") != prepared.sha256 or record.get("control_label") != "D"
+                or record.get("amplitude_V") != .005 or record.get("reference_sha256") != self.binding["sha256"]):
+            raise ValueError("long-window tail identity differs from its verified preparation")
+        state = {**row["state"], "prepared_sha256": record["prepared_sha256"],
+                 "control": record["control_label"], "voltage_V": record["amplitude_V"]}
+        dc = solve_controlled_dc(self.stack, 16, self.binding, prepared, voltage_V=.005,
+                                expected_prepared_sha256=prepared.sha256)
         # A finite-step average is not the instantaneous regular current.
         # Reconstruct this saved state using its exact solver coordinates.
         if "output_states" not in record or row["time_s"] != record["times_s"][-1]:
@@ -480,20 +883,7 @@ class Study:
                                        tail_regular_current_A_m2=regular, time_s=row["time_s"])
 
     def finish(self):
-        directory = self.output/"Invocations"
-        directory.mkdir(exist_ok=True)
-        index = len(list(directory.glob("InvocationV*.json")))+1
-        summary = {"schema": "R1PhysicsStudyInvocationV1", "started_utc": self.started,
-                   "finished_utc": datetime.now(timezone.utc).isoformat(), "argv": sys.argv,
-                   "cases": self.rows, "attempted_cases": self.attempted,
-                   "study_exit_passed": False,
-                   "missing_for_R1_2_exit": ["full_window_27_case_convergence", "finite_amplitude_linearity",
-                                              "earlier_start_and_extended_tail", "bounded_time_to_frequency_comparison",
-                                              "frequency_window_coverage", "independent_acceptance"],
-                   "scope": "development_case_outcomes_do_not_imply_study_acceptance"}
-        write_json(directory/f"InvocationV{index}.json", summary)
-        write_json(self.output/"StudySummaryV1.json", summary)
-        failures, unavailable = [], []
+        failures, unavailable, active, historical = [], [], {}, []
         for completion_file in sorted(self.output.rglob("CompletionV1.json")):
             case_dir = completion_file.parent
             if not (case_dir/"ManifestV1.json").is_file():
@@ -501,6 +891,13 @@ class Study:
                                  "failure": "interrupted before final case manifest"})
                 continue
             completion = checked_read(case_dir, "CompletionV1.json")
+            key = completion["case"]
+            row = {"case": key, "directory": str(case_dir.relative_to(self.output)),
+                   "completion": completion, "conditions": checked_read(case_dir, "RequestV1.json")}
+            if case_dir != self.latest(key):
+                historical.append(row)
+                continue
+            active[key] = row
             if completion["status"] == "unavailable":
                 unavailable.append({"directory": str(case_dir.relative_to(self.output)), "completion": completion,
                                     "conditions": checked_read(case_dir, "RequestV1.json"),
@@ -510,22 +907,107 @@ class Study:
                                  "conditions": checked_read(case_dir, "RequestV1.json"),
                                  "failure": (checked_read(case_dir, "FailureV1.json").get("message")
                                              if completion["status"] == "failed" else "returned scientific comparisons failed")})
+        inventory_path = self.output/"CaseInventoryV2.json"
+        inventory = json.loads(inventory_path.read_text()) if inventory_path.is_file() else {}
+        for key, value in getattr(self, "expected_cases", {}).items():
+            if key in inventory and inventory[key] != value:
+                raise ValueError("frozen case inventory request changed: "+key)
+            inventory[key] = value
+        missing = sorted(set(inventory)-set(active))
+        unknown = [key for key, row in active.items() if row["completion"].get("scientific_checks_passed") is None]
+        local_fail = any(row["status"] == "failed" for row in self.rows)
+        required_pairs = [row for row in active.values() if row["conditions"].get("required_finest_pair") is True]
+        pair_coverage = {(row["conditions"].get("control"), row["conditions"].get("axis")) for row in required_pairs}
+        expected_pairs = {(control, axis) for control in getattr(self, "controls", ("D",))
+                          for axis in ("intervals", "time_substeps", "nonlinear_factor")}
+        finest_passed = expected_pairs <= pair_coverage and all(
+            row["completion"].get("scientific_checks_passed") is True for row in required_pairs)
+        requirements = {
+            "formal_source_execution": getattr(self, "run_class", "development") == "formal",
+            "verification_completed_without_error": not any(row.get("case") == "invocation"
+                and row.get("status") == "failed" for row in self.rows),
+            "declared_cases_available": not missing and bool(inventory),
+            "required_finest_comparisons_passed": finest_passed,
+            "full_window_base_27": getattr(self, "window", "functional") == "full" and all(
+                self.matrix_key(c) in active for c in base_convergence_cases()),
+            "three_independent_axis_comparisons": all(any(k.startswith("MatrixCompare/"+axis+"/") for k in active)
+                for axis in ("intervals", "time_substeps", "nonlinear_factor")),
+            "amplitude_linearity": any(row["conditions"].get("kind") == "amplitude_linearity"
+                and row["completion"].get("scientific_checks_passed") is True for row in active.values()),
+            "window_and_double_domain": any(row["conditions"].get("kind") == "double_domain"
+                and row["completion"].get("scientific_checks_passed") is True for row in active.values()),
+        }
+        summary = {"schema": "R1PhysicsStudySummaryV2", "started_utc": self.started,
+                   "finished_utc": datetime.now(timezone.utc).isoformat(), "argv": sys.argv,
+                   "cases": self.rows, "attempted_cases": self.attempted,
+                   "active_case_count": len(active), "historical_attempt_count": len(historical),
+                   "diagnostic_failure_count": len(failures),
+                   "required_finest_pair_count": len(required_pairs),
+                   "missing_cases": missing, "unresolved_cases": unknown,
+                   "requirements": requirements, "study_exit_passed": all(requirements.values()),
+                   "missing_for_R1_2_exit": [k for k, v in requirements.items() if not v],
+                   "independent_acceptance": "not_asserted",
+                   "scope": "numerical_study_criteria_do_not_replace_independent_review"}
+        code = 1 if failures or local_fail else 2 if missing or unavailable or unknown else 0
+        summary["exit_code"] = code
+        if getattr(self, "verifying", False):
+            published = checked_read(self.output, "StudySummaryV1.json")
+            if (published.get("schema") != "R1PhysicsStudySummaryV2"
+                    or type(published.get("study_exit_passed")) is not bool
+                    or set(published.get("requirements", {})) != set(requirements)):
+                raise ValueError("published study summary has an invalid scientific contract")
+            if published["active_case_count"] != len(active) or published["historical_attempt_count"] != len(historical):
+                raise ValueError("published study counts differ from recorded attempts")
+            for key, value in published["requirements"].items():
+                if type(value) is not bool:
+                    raise ValueError("published study requirement must be boolean: "+key)
+                # Verification may request more sections than the preceding
+                # invocation; its enlarged missing-case list is not tampering.
+                if key != "declared_cases_available" and value and not requirements[key]:
+                    raise ValueError("published study requirement is not supported: "+key)
+            if published["study_exit_passed"] and not summary["study_exit_passed"]:
+                raise ValueError("published full-study acceptance is not supported by physical evidence")
+            for row in published.get("cases", []):
+                actual = active.get(row.get("case"))
+                if (actual is not None and row.get("scientific_checks_passed") is True
+                        and actual["completion"].get("scientific_checks_passed") is not True):
+                    raise ValueError("published passing case contradicts its physical result")
+            print(json.dumps(summary, indent=2, allow_nan=False), flush=True)
+            return code
+        directory = self.output/"Invocations"
+        directory.mkdir(exist_ok=True)
+        index = len(list(directory.glob("InvocationV*.json")))+1
+        write_json(directory/f"InvocationV{index}.json", summary)
+        write_json(self.output/"StudySummaryV1.json", summary)
+        write_json(inventory_path, inventory)
         write_json(self.output/"FailureIndexV1.json", {"schema": "R1PhysicsStudyFailureIndexV1", "cases": failures})
         write_json(self.output/"UnavailableComparisonIndexV1.json", {"schema": "R1UnavailableComparisonIndexV1", "cases": unavailable})
-        return 1 if any(row["status"] == "failed" or row.get("scientific_checks_passed") is False for row in self.rows) else 0
+        write_json(self.output/"HistoricalAttemptsV2.json", {"cases": historical})
+        seal(self.output)
+        print("STUDY_MANIFEST_SHA256", sha(self.output/"ManifestV1.json"), flush=True)
+        return code
 
 
 def scientific_checks(result):
     """Return scoped pass/fail, or None when a required uncertainty is absent."""
     if not isinstance(result, dict):
         return None
+    if result.get("comparison_available") is False:
+        return None
+    if result.get("schema") == "R1FrequencyWindowReportV1":
+        return bool(result["numeric_checks_passed"])
+    if "double_domain_consistent" in result and "reconstruction" in result:
+        return bool(result["double_domain_consistent"])
     for key in ("certificate", "preparation_checks"):
         if key in result:
             return bool(result[key]["certified"])
     if "within_compared_budgets" in result:
         return bool(result["within_compared_budgets"])
     if "numerically_eligible_frequency_points" in result:
-        return bool(np.all(result["numerically_eligible_frequency_points"]))
+        try:
+            return bool(assess_small_signal_response(result)["certified"])
+        except (ValueError, KeyError, TypeError):
+            return False
     if "target_bias" in result:
         return bool(result["target_bias"]["certified"] and result["conductance"]["finest_pair_agrees"])
     if "all_observables_agree" in result:
@@ -575,11 +1057,24 @@ def main(argv=None):
     parser.add_argument("--retry-failed", action="store_true", help="preserve prior failure and create a new attempt")
     parser.add_argument("--case-filter", default="", help="substring of case key; required preparations run as dependencies")
     parser.add_argument("--max-cases", type=int, help="maximum newly started cases in this invocation")
+    parser.add_argument("--formal", action="store_true", help="require the controlled source launcher")
+    parser.add_argument("--verify", action="store_true", help="recompute archived evidence without writing it")
+    parser.add_argument("--manifest-sha256", help="external root manifest anchor for formal resume/verify")
+    parser.add_argument("--grids", type=int, nargs="+", default=(16, 32, 64), choices=(16, 32, 64, 128, 256))
+    parser.add_argument("--matrix-controls", nargs="+", default=("D",), choices=tuple("ABCD"))
+    parser.add_argument("--window", choices=("functional", "full"), default="functional")
+    parser.add_argument("--first-time-s", type=float, default=1e-9)
+    parser.add_argument("--last-time-s", type=float, default=1e2)
+    parser.add_argument("--extended-frequency", action="store_true", help="include protocol limit band 1e-6..1e10 Hz")
     args = parser.parse_args(argv)
     if args.max_cases is not None and args.max_cases <= 0:
         parser.error("--max-cases must be positive")
     if args.retry_failed and not args.resume:
         parser.error("--retry-failed requires --resume")
+    if list(args.grids) != sorted(set(args.grids)):
+        parser.error("--grids must be distinct and increasing")
+    if args.verify and args.retry_failed:
+        parser.error("verification cannot retry or modify recorded computations")
     study = None
     try:
         study = Study(args)

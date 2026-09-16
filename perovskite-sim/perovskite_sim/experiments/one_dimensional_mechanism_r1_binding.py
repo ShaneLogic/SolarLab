@@ -8,7 +8,7 @@ from pathlib import Path
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import validate_binding
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
-    R1CheckoutError, require_r1_checkout,
+    R1CheckoutError, require_r1_checkout, R1_DECLARATIONS, ADDITIONAL_FAILURES_V2_RELATIVE_PATH,
 )
 
 
@@ -22,16 +22,12 @@ PHYSICS_PROTOCOL_RELATIVE_PATH = "docs/OneDimensionalMechanismR1PhysicsProtocolV
 # is independently approved. Updating the study input requires explicit repin.
 PINNED_STUDY_INPUT_SHA256 = "3065a31951d4a90e8b0d03d042e3f2c0349cc7d8e792381a275cb05d58a047ca"
 PINNED_REFERENCE_BINDING_SHA256 = "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b"
-PINNED_EXECUTION_CONTRACT_SHA256 = "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"
-PINNED_OPERATOR_CRITERION_SHA256 = "659acb61ad5c457626300bf980b7b2208d67779a2691fbdb14d628dc6aec96e6"
+PINNED_EXECUTION_CONTRACT_SHA256 = R1_DECLARATIONS[EXECUTION_CONTRACT_RELATIVE_PATH][2]
+PINNED_OPERATOR_CRITERION_SHA256 = R1_DECLARATIONS[OPERATOR_CRITERION_RELATIVE_PATH][2]
 PINNED_ADDITIONAL_FAILURES_SHA256 = "ae2d52cf08a029e0273689d03f16ce8945fdd1ca423582542a49a641d50f9aaa"
-PINNED_PHYSICS_PROTOCOL_SHA256 = "ab74fc3ff56fdcb764a20697b14b0c6afc2973cb2031232b462b8d7202b7ca98"
-FROZEN_PHYSICS_DECLARATIONS = {
-    PHYSICS_PROTOCOL_RELATIVE_PATH: PINNED_PHYSICS_PROTOCOL_SHA256,
-    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md": "5593dfb1cf96893261932d5167d48ea104baf42425494feb9677c7e34d3c577b",
-    OPERATOR_CRITERION_RELATIVE_PATH: PINNED_OPERATOR_CRITERION_SHA256,
-    "docs/OneDimensionalMechanismR1EvidenceV5.md": "f4855d46ef1861d54daa8959e1d047bd31b764d72dc6b25c1b38505452264a1f",
-}
+PINNED_ADDITIONAL_FAILURES_V2_SHA256 = "2006d232e59b88f3ca668bcc20eb249aa57f1b926227063792e2e30d515ed7b3"
+PINNED_PHYSICS_PROTOCOL_SHA256 = R1_DECLARATIONS[PHYSICS_PROTOCOL_RELATIVE_PATH][2]
+FROZEN_PHYSICS_DECLARATIONS = {path: declaration[2] for path, declaration in R1_DECLARATIONS.items()}
 
 
 def physics_protocol_identity():
@@ -50,6 +46,14 @@ def additional_failures_identity():
     if hashlib.sha256(raw).hexdigest() != PINNED_ADDITIONAL_FAILURES_SHA256:
         raise R1CheckoutError("R1 additional failures differ from the pinned registry digest")
     return {"path": ADDITIONAL_FAILURES_RELATIVE_PATH, "sha256": PINNED_ADDITIONAL_FAILURES_SHA256}
+
+
+def additional_failures_v2_identity():
+    context = require_r1_checkout()
+    raw = context.read_bytes(ADDITIONAL_FAILURES_V2_RELATIVE_PATH)
+    if hashlib.sha256(raw).hexdigest() != PINNED_ADDITIONAL_FAILURES_V2_SHA256:
+        raise R1CheckoutError("R1 additional failures V2 differ from the pinned registry digest")
+    return {"path": ADDITIONAL_FAILURES_V2_RELATIVE_PATH, "sha256": PINNED_ADDITIONAL_FAILURES_V2_SHA256}
 
 
 def operator_criterion_identity():

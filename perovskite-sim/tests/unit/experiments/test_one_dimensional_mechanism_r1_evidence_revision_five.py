@@ -163,6 +163,10 @@ def test_candidate_repin_cannot_override_trusted_verifier(
     assert digest != getattr(policy, pin)
     binding_code = project / BINDING
     binding_code.write_text(binding_code.read_text().replace(getattr(policy, pin), digest))
+    # Document authority is centrally registered; an adversarial candidate
+    # must repin that registry too before it can reach the trusted verifier.
+    checkout_code = project / "perovskite_sim/experiments/one_dimensional_mechanism_r1_checkout.py"
+    checkout_code.write_text(checkout_code.read_text().replace(getattr(policy, pin), digest))
     changed_repository = root, project, commit(root)
     output = make_bundle(changed_repository, tmp_path / "repinned")
     for name, source in (("OperatorCriterionDecisionV2.md", CRITERION), ("AdditionalFailuresV1.json", ADDITIONAL)):

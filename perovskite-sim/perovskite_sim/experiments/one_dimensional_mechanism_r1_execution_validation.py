@@ -20,13 +20,16 @@ def verify_execution_parameters(output, completion):
     protocol = read_json(output / "ProtocolV1.json")
     study = read_json(output / "StudyInputV1.json")
     additional = read_json(output / "AdditionalFailuresV1.json")
+    additional_v2 = read_json(output / "AdditionalFailuresV2.json")
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_evidence import sha256
+    _same(protocol.get("additional_failures_v2_sha256"), sha256(output / "AdditionalFailuresV2.json"), "additional failure registry V2")
     interval = protocol.get("intervals")
     if type(interval) is not int or interval not in (16, 32, 64, 128, 256):
         raise ValueError("execution intervals outside declared R1 set")
     _same(protocol.get("control_definitions"), study["controls"], "control definitions")
     _same(protocol.get("claims_excluded"), study["claims_excluded"], "excluded claims")
     _same(protocol.get("numerical_validation_scope"), NUMERICAL_SCOPE, "numerical scope")
-    count = sum(len(study.get(k, [])) + len(additional.get(k, []))
+    count = sum(len(study.get(k, [])) + len(additional.get(k, [])) + len(additional_v2.get(k, []))
                 for k in ("known_nonconvergence", "known_physical_gate_failures"))
     _same(protocol.get("historical_failure_case_count"), count, "historical failure count")
     factor = protocol.get("nonlinear_factor")

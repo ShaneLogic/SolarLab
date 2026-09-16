@@ -50,8 +50,11 @@ def test_successful_current_record_has_no_range_only_physics_claims(bundle):
     report = verify_result_records(*bundle)
     assert report["scientifically_accepted"] and report["content_matches_recomputed"]
     assert report["physical_limits_satisfied"]
-    assert report["range_only"] == []
+    assert report["range_only"] == ["historical_iteration_maximum_jacobian_nnz"]
     assert not report["integration_replayed"]
+    assert report["scope"] == "single_recorded_setting_not_full_R1_2_or_mechanism_acceptance"
+    assert report["reconstruction_scope"] == "saved_accepted_states_transport_storage_current_and_declared_discrete_equations"
+    assert "timestamps" in report["provenance_only"]
 
 
 def fail_prefix(bundle, runner):

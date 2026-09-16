@@ -1,0 +1,692 @@
+{
+  "schema": "R1AdditionalFailuresV2",
+  "source_review": "R1PhysicsAcceptanceV1",
+  "known_failure_semantics": {
+    "waives_checks": false,
+    "skip_computation": false,
+    "changes_acceptance_thresholds": false,
+    "classification": "exact historical observations; source changes are reported separately; no extrapolation to unmeasured time triples or windows",
+    "deduplication_key": [
+      "observed_source_commit",
+      "control",
+      "intervals",
+      "nonlinear_factor",
+      "amplitude_V",
+      "times_s",
+      "refinement_substeps"
+    ]
+  },
+  "known_nonconvergence": [
+    {
+      "case_id": "r1_physics_v1_d_n32_t2_4_8_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "D",
+      "intervals": 32,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        2,
+        4,
+        8
+      ],
+      "phase": "finite_step",
+      "failure": "R1 controlled step failed: analytic sparse Newton line search stalled at iteration 4 with residual 0.0500128, charge closure 2.23617e-19, all-face current closure 3.38803e-12, interface current closure 1.0046e-11, linear backward error 1.24795e-16",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsDevelopmentV1/ScientificStudyV1.zip",
+          "sha256": "cd5982fb72da63b9ed98d59320dd3f6f2f7e3d0dc4322b081d32f10ba9fe5279",
+          "member": "FailureIndexV1.json",
+          "member_sha256": "a95e9a5159705a55c19e0bda3b9fe138fad0e026d1ce9bb800b6ddf7eb9f249f",
+          "json_pointer": "/cases/3"
+        },
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/12"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV1/SourceProvenanceV1.json",
+          "sha256": "ba8cffa5f099cb34e812199c77875702c64f6c16f694481e47f5f06f274afcd9",
+          "json_pointer": "/source_commit"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "d30654301bd8738d5b1febf210b8bae41da9a1aa50cf38d88f5d4cf08766fe67",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: analytic sparse Newton line search stalled at iteration 4 with residual 0.0500128, charge closure 2.23617e-19, all-face current closure 3.38803e-12, interface current closure 1.0046e-11, linear backward error 1.24795e-16",
+        "artifact_sha256": {
+          "RequestV1.json": "12fdd98c9c81672fd9d277e6a952e1140798c695a9fe18435dfc940057173ae3",
+          "CompletionV1.json": "6c52f244aab6a9e2269cd38b9d43b09ff35a0095f75509152252a05c81b32f5a",
+          "FailureV1.json": "d61dcd5844d30458b3225e25105ec05e2344d6908622b2b0a974200a6a71c898"
+        }
+      },
+      "coverage_id": "r1_physics_v1_extra_d_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_d_n32_t4_8_16_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "D",
+      "intervals": 32,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        4,
+        8,
+        16
+      ],
+      "phase": "finite_step",
+      "failure": "R1 controlled step failed: analytic sparse Newton line search stalled at iteration 4 with residual 0.0517742, charge closure 3.49528e-18, all-face current closure 1.47019e-12, interface current closure 5.75879e-12, linear backward error 1.34022e-16",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsDevelopmentV1/ScientificStudyV1.zip",
+          "sha256": "cd5982fb72da63b9ed98d59320dd3f6f2f7e3d0dc4322b081d32f10ba9fe5279",
+          "member": "FailureIndexV1.json",
+          "member_sha256": "a95e9a5159705a55c19e0bda3b9fe138fad0e026d1ce9bb800b6ddf7eb9f249f",
+          "json_pointer": "/cases/4"
+        },
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/12"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV1/SourceProvenanceV1.json",
+          "sha256": "ba8cffa5f099cb34e812199c77875702c64f6c16f694481e47f5f06f274afcd9",
+          "json_pointer": "/source_commit"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "9195d10b06117c4d416ba62c065859c78ae181ff99dca1a1f7dac3fc1cd52691",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: analytic sparse Newton line search stalled at iteration 4 with residual 0.0517742, charge closure 3.49528e-18, all-face current closure 1.47019e-12, interface current closure 5.75879e-12, linear backward error 1.34022e-16",
+        "artifact_sha256": {
+          "RequestV1.json": "a3be7a8fa986c7bb82a5d7b6de8e3f2ae270fd7c2f7ad57fcd5367bf5f9a2d48",
+          "CompletionV1.json": "770efe1d117f0275ca8e18c6949a419313f889ff5ce410bc6ee19705f5578113",
+          "FailureV1.json": "cff823a604f0dbc84617e22e39842949a93beedb3ff8d63dced58d03d7924bf1"
+        }
+      },
+      "coverage_id": "r1_physics_v1_extra_d_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_d_n64_t2_4_8_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "D",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        2,
+        4,
+        8
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsDevelopmentV1/ScientificStudyV1.zip",
+          "sha256": "cd5982fb72da63b9ed98d59320dd3f6f2f7e3d0dc4322b081d32f10ba9fe5279",
+          "member": "FailureIndexV1.json",
+          "member_sha256": "a95e9a5159705a55c19e0bda3b9fe138fad0e026d1ce9bb800b6ddf7eb9f249f",
+          "json_pointer": "/cases/7"
+        },
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/12"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV1/SourceProvenanceV1.json",
+          "sha256": "ba8cffa5f099cb34e812199c77875702c64f6c16f694481e47f5f06f274afcd9",
+          "json_pointer": "/source_commit"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "0156c5cad85efe6b2c18891cd9126cce7054f7cecdde9421030de0858fe700b4",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "RequestV1.json": "87a19177fe46727393480c4c664b3920ed98eeb5f4f2bf302b69bdd2db3c84bc",
+          "CompletionV1.json": "226e6076daaf59ac9043619b55133c06e72b7d838d7efd340e1a4b6af5a58e90",
+          "FailureV1.json": "a5fee03514015b502a5bf5e551c61d18a5975439308ec56b2481b8e08ae9d560"
+        }
+      },
+      "coverage_id": "r1_physics_v1_extra_d_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_d_n64_t4_8_16_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "D",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        4,
+        8,
+        16
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsDevelopmentV1/ScientificStudyV1.zip",
+          "sha256": "cd5982fb72da63b9ed98d59320dd3f6f2f7e3d0dc4322b081d32f10ba9fe5279",
+          "member": "FailureIndexV1.json",
+          "member_sha256": "a95e9a5159705a55c19e0bda3b9fe138fad0e026d1ce9bb800b6ddf7eb9f249f",
+          "json_pointer": "/cases/9"
+        },
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/12"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV1/SourceProvenanceV1.json",
+          "sha256": "ba8cffa5f099cb34e812199c77875702c64f6c16f694481e47f5f06f274afcd9",
+          "json_pointer": "/source_commit"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "d794040f7392cdbc71a10711c1f8839557b0523831973c74b5704328f4f850e8",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "RequestV1.json": "5bc85a6b7c0c1c425c39bd7ae4fb567c648fd4273344f53b0601acf301fecc35",
+          "CompletionV1.json": "18da62ab10f71a6bb71ea25369d3667caa1db105009c6752ec7b304c2f7c525c",
+          "FailureV1.json": "ffdedb682e24c0d6aa5a020c4cd8a48ef1526285cb90e6d3a9f06c02fd9a0be9"
+        }
+      },
+      "coverage_id": "r1_physics_v1_extra_d_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_a_n64_t2_4_8_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "A",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        2,
+        4,
+        8
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "A_2-4-8_0.01"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "0a3a54b6b548e4e2238a5a2ddcfd7cbe7bf7014aa35b3e2eb0440c2b88a4f8db",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "ProtocolV1.json": "629bcbb4a96111ed71caf9b6f3e6918fc50c47b1296bdce35c534cbd69fe7c77",
+          "CompletionV1.json": "bb717131bb7d36e398f213235f12ef78b29d1c7131e5941e9d4ae080151afd98",
+          "FailureV1.json": "2343b1b312e944a52474781f28d819bd6611650095f072dfe4bad1bfedcd480e"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_a_n64_t4_8_16_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "A",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        4,
+        8,
+        16
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "A_4-8-16_0.01"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "d10e3edf6814e28dcd0860a00c0b47bdd4452001a78b5988eccf282dc821f88a",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "ProtocolV1.json": "58f786dfeaa06a2681a86743322c6a871696ea1df1fbf04b68f7730ea50332ba",
+          "CompletionV1.json": "ae064a4a5614c005f4c644d7261c9b1b9afcd7d83e80b1a42a74535af52dcc49",
+          "FailureV1.json": "2343b1b312e944a52474781f28d819bd6611650095f072dfe4bad1bfedcd480e"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_b_n64_t2_4_8_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "B",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        2,
+        4,
+        8
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "B_2-4-8_0.01"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "2cf88ad414067757ab602aff41136c2cd8c3d51d7dc008770068db7178fd58c5",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "ProtocolV1.json": "ea05210610007f12a1b640a7a2ea7764f4e0b927018b2e49b96cc089a0444d03",
+          "CompletionV1.json": "10cbd76667e40a3d25e34ffb8f051cfed732d5ac910ea3f2a99d7ba20413443e",
+          "FailureV1.json": "2343b1b312e944a52474781f28d819bd6611650095f072dfe4bad1bfedcd480e"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_b_n64_t4_8_16_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "B",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        4,
+        8,
+        16
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "B_4-8-16_0.01"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "d6f19573f52a11a38056d64073e61692a22fb2637f6a3fb37eb51f3dcfca52f1",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "ProtocolV1.json": "54a37d4320364d27236a7035773902772730ff8a7a061baebc920c7858f4b91b",
+          "CompletionV1.json": "d5e5f38f916b4f7b0bed7441a4e87a5020cfa3aac79ddf2ba2ce4779f2593a1c",
+          "FailureV1.json": "2343b1b312e944a52474781f28d819bd6611650095f072dfe4bad1bfedcd480e"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_c_n64_t2_4_8_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "C",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        2,
+        4,
+        8
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "C_2-4-8_0.01"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "3896168f9846b96f7d9d392950ba79a295e2026581cce1d07515fa72598e29ba",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "ProtocolV1.json": "9fa99f5bdc3419d382df39897dad3d9486228d37cef4ec6db33def2410b67782",
+          "CompletionV1.json": "afb6e9fe4cf8b84895b64bde13e01189968f4614ee94ce46ba8a1d004b90400a",
+          "FailureV1.json": "2343b1b312e944a52474781f28d819bd6611650095f072dfe4bad1bfedcd480e"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_c_n64_t4_8_16_f0p01",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "C",
+      "intervals": 64,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        4,
+        8,
+        16
+      ],
+      "phase": "initial_local_solve",
+      "failure": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "C_4-8-16_0.01"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "e7df2dd804994033d1d1339e1ea692381a9abf82cff7f6ef385c2ba8d47183cc",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: R1-1 fixed-population local line search stalled",
+        "artifact_sha256": {
+          "ProtocolV1.json": "0617dedec86d3d2a98cc74cdf6936ffe75bb1b242efd6f86d0787f8506e56ab6",
+          "CompletionV1.json": "61f04f4656ccb796431a47f3618d48f019ba50a7c053d9e13fd96f80594e0ddf",
+          "FailureV1.json": "2343b1b312e944a52474781f28d819bd6611650095f072dfe4bad1bfedcd480e"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    }
+  ],
+  "known_physical_gate_failures": [
+    {
+      "case_id": "r1_physics_v1_d_n64_t2_4_8_f1p0",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "D",
+      "intervals": 64,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        2,
+        4,
+        8
+      ],
+      "phase": "finite_step",
+      "failure": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsDevelopmentV1/ScientificStudyV1.zip",
+          "sha256": "cd5982fb72da63b9ed98d59320dd3f6f2f7e3d0dc4322b081d32f10ba9fe5279",
+          "member": "FailureIndexV1.json",
+          "member_sha256": "a95e9a5159705a55c19e0bda3b9fe138fad0e026d1ce9bb800b6ddf7eb9f249f",
+          "json_pointer": "/cases/8"
+        },
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/12"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV1/SourceProvenanceV1.json",
+          "sha256": "ba8cffa5f099cb34e812199c77875702c64f6c16f694481e47f5f06f274afcd9",
+          "json_pointer": "/source_commit"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "c77982dd558a122ba1260ef95c3e46f174734635bd455085f2edf2e2e5fe56cd",
+        "run_class": "development",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "artifact_sha256": {
+          "RequestV1.json": "3194c2ca96583124247651d134f547e42e48d07bf99bba84f44bca955b732947",
+          "CompletionV1.json": "238074b0b519bd492ef9420e34146a81723b663ad26f9d2b35652ba8ede09521",
+          "FailureV1.json": "51ecb3cef50141bd19b187209b3c752e45dcc2eb477c952c63d24fbb7276b312"
+        }
+      },
+      "coverage_id": "r1_physics_v1_extra_d_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_d_n64_t4_8_16_f1p0",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "D",
+      "intervals": 64,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        4,
+        8,
+        16
+      ],
+      "phase": "finite_step",
+      "failure": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsDevelopmentV1/ScientificStudyV1.zip",
+          "sha256": "cd5982fb72da63b9ed98d59320dd3f6f2f7e3d0dc4322b081d32f10ba9fe5279",
+          "member": "FailureIndexV1.json",
+          "member_sha256": "a95e9a5159705a55c19e0bda3b9fe138fad0e026d1ce9bb800b6ddf7eb9f249f",
+          "json_pointer": "/cases/10"
+        },
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/12"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV1/SourceProvenanceV1.json",
+          "sha256": "ba8cffa5f099cb34e812199c77875702c64f6c16f694481e47f5f06f274afcd9",
+          "json_pointer": "/source_commit"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "b9628c08422f4fa0a5473066a5008920475e56b2fbefa827c14574a6233ff45f",
+        "run_class": "development",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "artifact_sha256": {
+          "RequestV1.json": "2083162d4d54ffa506457a78e130d860a2ea432a1a4341aa36868d1bcfc66946",
+          "CompletionV1.json": "9a4477f3bfa4f7bef64ce2d4bc5b474ed1e04829a71df813293beec44885201d",
+          "FailureV1.json": "d29781d6fd21103e1c3847e510ae43eb4e466ca6e3349c598b3b79b9a26419ac"
+        }
+      },
+      "coverage_id": "r1_physics_v1_extra_d_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_b_n64_t2_4_8_f1p0",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "B",
+      "intervals": 64,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        2,
+        4,
+        8
+      ],
+      "phase": "finite_step",
+      "failure": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "B_2-4-8_1.0"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "412b9c505b30305a11e3de146de9cde9faf60dd29677f7ef58211042378cb4bb",
+        "run_class": "development",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "artifact_sha256": {
+          "ProtocolV1.json": "91ba61c1f16d093bc6cefadeeaa3a747021f9a4e2f1043b9ebdf40db1f0d341e",
+          "CompletionV1.json": "96fa29ab27f7510b7959387936bd1654dd5f9e66aaf8d280236d6b1cca6ecbb9",
+          "FailureV1.json": "b9b5088c003a1d8e9ae0d8683755e4cadd524438c8ba01ad1c5046517e20ba6b"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    },
+    {
+      "case_id": "r1_physics_v1_b_n64_t4_8_16_f1p0",
+      "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "control": "B",
+      "intervals": 64,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        4,
+        8,
+        16
+      ],
+      "phase": "finite_step",
+      "failure": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsAcceptanceV1/ReviewV1/LaneReportsV1.json",
+          "sha256": "510df79e3b400a8ab3dec441ccfe4a21d7977b6d48f3f80dfc37341bd6ffddb5",
+          "json_pointer": "/FailingCombinations/measurements/17",
+          "raw_case": "B_4-8-16_1.0"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+        "manifest_sha256": "e26ac121d0a37a8750a2be9b79af98ed00f9989e918cebb6d7620c956a2dfd5f",
+        "run_class": "development",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "artifact_sha256": {
+          "ProtocolV1.json": "7bac2aabd6d543e9eccf04cb646bb8978a1cfc483c94adc75448fc1e889c8283",
+          "CompletionV1.json": "11b05eb44c0fa845e9937f9cd8041f171bda354bbd786e65788f5d08d58a88d6",
+          "FailureV1.json": "b9b5088c003a1d8e9ae0d8683755e4cadd524438c8ba01ad1c5046517e20ba6b"
+        }
+      },
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    }
+  ],
+  "known_failure_coverage": [
+    {
+      "coverage_id": "r1_physics_v1_extra_d_axes",
+      "observed_failed_case_count": 6,
+      "source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "scope": "six measured D failures at the two new time triples; no new full-slice claim"
+    },
+    {
+      "coverage_id": "r1_physics_acceptance_v1_ac_axes",
+      "observed_case_count": 18,
+      "observed_failed_case_count": 8,
+      "source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
+      "scope": "A-C, N64, factors 1/.1/.01, triples (2,4,8)/(4,8,16), amplitude .005, five-point short window; review measurement17"
+    }
+  ]
+}

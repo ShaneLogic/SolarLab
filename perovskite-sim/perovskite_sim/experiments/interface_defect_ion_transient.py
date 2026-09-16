@@ -703,6 +703,7 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             occupancy,
             trace_potential,
             trace_log_state,
+            trace_density_m3=self._trace_density_coordinates(coordinate),
         )
         source = self._source(n, p, phi, voltage, interface_qss)
         transport_n, transport_p, current_n, current_p = self._currents(

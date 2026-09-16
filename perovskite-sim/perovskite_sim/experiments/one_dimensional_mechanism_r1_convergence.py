@@ -100,6 +100,49 @@ def base_convergence_cases(control="D"):
     )) <= 1)
 
 
+def validate_single_axis_comparison(left, right, *, axis):
+    """Require an adjacent refinement of exactly one declared numerical axis.
+
+    Metadata must come from verified trajectories. This structural check is
+    separate from the pure response comparator, so time/nonlinear comparisons
+    correctly retain the same spatial grid. Equal settings are never a
+    convergence experiment.
+    """
+    from dataclasses import asdict
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import r1_policy
+
+    axes = {"spatial": "intervals", "time": "time_substeps", "nonlinear": "nonlinear_factor",
+            "intervals": "intervals", "time_substeps": "time_substeps", "nonlinear_factor": "nonlinear_factor"}
+    if axis not in axes:
+        raise ValueError("comparison requires one declared numerical axis")
+    axis = axes[axis]
+    for key in ("stack_sha256", "reference_sha256", "source_sha256", "control", "amplitude_V"):
+        if key not in left or key not in right or left[key] is None or left[key] != right[key]:
+            raise ValueError("convergence physical identity differs or is absent: " + key)
+    if left.get("times_s") != right.get("times_s") or not left.get("times_s"):
+        raise ValueError("convergence requires identical explicit output times")
+
+    def setting(metadata):
+        policy = dict(metadata["policy"])
+        steps = validate_time_substeps(policy["refinement_substeps"])
+        policy["refinement_substeps"] = steps
+        factors = [factor for factor in ALLOWED_NONLINEAR_FACTORS
+                   if policy == asdict(r1_policy(factor, time_substeps=steps))]
+        if len(factors) != 1:
+            raise ValueError("convergence policy is not a declared frozen numerical setting")
+        return R1ConvergenceCase(metadata["intervals"], steps, factors[0], metadata["control"], metadata["amplitude_V"])
+
+    a, b = setting(left), setting(right)
+    changes = [name for name in ("intervals", "time_substeps", "nonlinear_factor") if getattr(a, name) != getattr(b, name)]
+    if changes != [axis]:
+        raise ValueError("convergence requires exactly the declared axis to differ; self-comparison is not convergence")
+    ordered = {"intervals": ALLOWED_INTERVALS, "time_substeps": ALLOWED_TIME_SUBSTEPS,
+               "nonlinear_factor": ALLOWED_NONLINEAR_FACTORS}[axis]
+    if ordered.index(getattr(b, axis)) != ordered.index(getattr(a, axis)) + 1:
+        raise ValueError("convergence requires adjacent coarse-to-fine numerical levels")
+    return {"axis": axis, "single_axis_verified": True, "left": asdict(a), "right": asdict(b)}
+
+
 def observation_times(*, first_time_s=1e-9, last_time_s=1e2):
     """Return 0+ and the section-6 logarithmic grid, with exact shared ticks.
 
@@ -353,6 +396,7 @@ def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitud
 __all__ = [
     "R1ConvergenceCase", "R1Response", "convergence_cases", "base_convergence_cases",
     "observation_times", "validate_time_substeps", "compare_responses", "compare_amplitude_halving",
+    "validate_single_axis_comparison",
     "BASE_INTERVALS", "ALLOWED_INTERVALS", "BASE_TIME_SUBSTEPS", "ALLOWED_TIME_SUBSTEPS",
     "BASE_NONLINEAR_FACTORS", "ALLOWED_NONLINEAR_FACTORS", "AMPLITUDES_V",
 ]

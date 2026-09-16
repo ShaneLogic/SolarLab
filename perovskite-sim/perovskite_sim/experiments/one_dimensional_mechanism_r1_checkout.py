@@ -19,6 +19,7 @@ import zipfile
 
 PROJECT_RELATIVE_PATH = "perovskite-sim"
 STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
+ADDITIONAL_FAILURES_V2_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV2.json"
 _CHECKOUT_MODULE = "perovskite_sim/experiments/one_dimensional_mechanism_r1_checkout.py"
 _RUNNER = "scripts/run_one_dimensional_mechanism_r1_stage_one.py"
 _LAUNCHER = "scripts/run_one_dimensional_mechanism_r1_controlled.py"
@@ -33,12 +34,25 @@ _ANCHORS = (
     "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
 )
 LEGACY_SOURCE_ANCHORS = _ANCHORS
+# One registry owns snapshot coverage, pins, and exported names. New R1
+# declarations must be classified here before a controlled checkout can run.
+R1_DECLARATIONS = {
+    "docs/OneDimensionalMechanismR1DynamicsV1.md": ("execution", "ExecutionContractV1.md", "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"),
+    "docs/OneDimensionalMechanismR1AdmittanceV1.md": ("reference", "AdmittanceV1.md", "c8a9132ed3fceb839e30c1c0b4cd46ed3b62f4f3ee93226418624748df7424f1"),
+    "docs/OneDimensionalMechanismR1GeometryV1.md": ("reference", "GeometryV1.md", "a00221bb11e111465e6164151351f0fe9c70c753d8d4958a6cbf1a22d743e6ee"),
+    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md": ("superseded", "OperatorCriterionDecisionV1.md", "5593dfb1cf96893261932d5167d48ea104baf42425494feb9677c7e34d3c577b"),
+    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md": ("superseded", "OperatorCriterionDecisionV2.md", "659acb61ad5c457626300bf980b7b2208d67779a2691fbdb14d628dc6aec96e6"),
+    "docs/OneDimensionalMechanismR1EvidenceV5.md": ("historical", "EvidenceV5.md", "f4855d46ef1861d54daa8959e1d047bd31b764d72dc6b25c1b38505452264a1f"),
+    "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "ab74fc3ff56fdcb764a20697b14b0c6afc2973cb2031232b462b8d7202b7ca98"),
+    "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "d6c7c4a1cafebefa75a8729b23f9fdaac570faf148b0ba895a288896b80d2da3"),
+    "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "0e8b34b9805b896afa90c2f0e7a3f3e6b8b3a4a2c954576225c3adbe2f98a30b"),
+}
 REQUIRED_SOURCE_ANCHORS = (
-    *_ANCHORS, "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md",
+    *_ANCHORS,
+    "scripts/run_one_dimensional_mechanism_r1_physics_study.py",
     "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json",
-    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md",
-    "docs/OneDimensionalMechanismR1EvidenceV5.md",
-    "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md",
+    ADDITIONAL_FAILURES_V2_RELATIVE_PATH,
+    *(name for name in R1_DECLARATIONS if name not in _ANCHORS),
 )
 _CURRENT_CONTEXT = None
 
@@ -304,6 +318,13 @@ def require_r1_checkout(*, project=None, runner=None, formal=False, source_commi
                            if name.startswith(prefix) and name.endswith(".py"))
     if not package_sources:
         raise R1CheckoutError("R1 checkout has no package source coverage")
+    declaration_paths = {path.relative_to(expected_project).as_posix()
+                         for path in (expected_project / "docs").glob("OneDimensionalMechanismR1*.md")}
+    declaration_paths.update(name[len(PROJECT_RELATIVE_PATH)+1:] for name in committed
+        if name.startswith(PROJECT_RELATIVE_PATH + "/docs/OneDimensionalMechanismR1") and name.endswith(".md"))
+    if declaration_paths != set(R1_DECLARATIONS):
+        raise R1CheckoutError("R1 declaration registry coverage mismatch: " +
+                              ", ".join(sorted(declaration_paths ^ set(R1_DECLARATIONS))))
     required_paths = set(package_sources) | {expected_project / name for name in REQUIRED_SOURCE_ANCHORS}
     required, disk = {}, {}
     for path in sorted(required_paths):

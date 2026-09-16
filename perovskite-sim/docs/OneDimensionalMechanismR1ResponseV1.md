@@ -77,16 +77,20 @@ The result retains the existing 1e-10 linear backward-error threshold,
 5e-4 physical-face relative spread, 2e-3 derivative refinement, 1e-3 capture
 versus storage balance, 1e-7 decomposition and 1e-10 thermal inventory gates.
 The legacy inventory gate is 1e-8; direct-tangent comparison uses the existing
-3e-4 transient Jacobian-check limit. The zero-bias real part is reported as a
-passivity sign observation, with the declared 1e-8 S/m2 absolute numerical
-scale. It is not applied to arbitrary nonequilibrium release states.
+3e-4 transient Jacobian-check limit. The zero-bias real part of the actual
+published admittance must be at least -1e-8 S/m2, using the existing absolute
+numerical scale. This dissipated-power sign check participates in every
+eligible-frequency verdict. No positive-sign condition is imposed on the
+imaginary part or on nonequilibrium release states.
 
 Passing frequency points remain `numerically_eligible_frequency_points`.
 They do not establish that the frequency window covers all relevant modes,
 that spatial refinement passed, or that a finite voltage step is linear.
-`frequency_window_complete` and `double_domain_consistent` therefore remain
-false. Evidence needed to change those research conclusions is explicitly
-listed in the result and must come from the full study.
+The direct solve leaves `frequency_window_complete` and `double_domain_consistent`
+false. The separate comparison derives per-frequency dual-domain eligibility
+only from matching source/preparation/control/grid/operating-voltage identity,
+verified AC content, and every independently supplied study prerequisite.
+Absent prerequisites remain incomplete, even when the central curves agree.
 
 `compare_transient_tail` compares a same-preparation, same-control, same-bias
 finite-time state with the independently computed DC state on the same grid.
@@ -105,6 +109,26 @@ unbounded through the existing reconstruction module; matching central
 values alone cannot pass the error-budget check. The other study conditions
 (two smallest amplitudes, independent refinements, T and 10T, earlier start,
 stricter integration and tail-state/DC agreement) remain required.
+
+## Response content verification
+
+`assess_small_signal_response` rederives the per-frequency checks from the
+actual published response and all three saved derivative levels. It checks
+that each level equals conduction plus i omega displacement and that the
+headline uses the finest level's left contact. Stored flags must agree with
+the rederived flags; they cannot replace them. Both constrained and original
+complex linear residual vectors are saved alongside their backward errors.
+
+`verify_response_content` rebuilds DC, the three DC conductance differences,
+or the complete AC calculation from a separately verified preparation,
+source, reference and request. It compares every scientific field, including
+states, outputs, metric values and booleans. Exact numeric replay is scoped
+to the frozen execution runtime. The caller must independently anchor and
+verify the input artifacts before invoking it; these numeric helpers do not
+grant source provenance. Formal DC imports require the caller's external
+preparation digest, forwarded through all conductance solves. The Richardson
+conductance is an additional central-difference diagnostic, not an absolute
+error bound or a replacement for the frozen study tolerances.
 
 ## Verification
 
@@ -147,7 +171,7 @@ completion record and content manifest, and the study has a failure index.
 Unavailable comparison inputs are recorded separately from a measured
 numerical disagreement; their absence cannot produce a passing comparison.
 
-The matrix section runs all 27 independent settings on the *short* window.
+The original V1 matrix section ran all 27 independent settings on the *short* window.
 Its comparison section checks 54 adjacent pairs, changing only one numerical
 axis at a time while holding the other two fixed. It compares fixed physical
 positions, both regular terminal currents, and impulse-inclusive integrated
@@ -165,3 +189,53 @@ error budget unknown and does not certify linearity. The run's completion
 status and the scoped scientific-check outcome are separate, and the full
 R1-2 study exit remains false until its outstanding studies and independent
 acceptance are supplied.
+
+## Version-two study execution and verification
+
+The controlled launcher now accepts `--runner physics-study`. Combined with
+the study's `--formal` flag, this executes its committed package and runner
+bytes through the same frozen-source loader as the stage-one path. Direct
+execution remains explicitly development class. This execution class alone
+does not assert physical convergence or independent approval.
+
+`--grids` declares the ordered subset of 16,32,64,128,256; `--matrix-controls`
+declares D and optional A-C axis crosses. D retains the full Cartesian matrix;
+extra grids are extensions, not replacements for missing base cases.
+`--window full`, `--first-time-s` and `--last-time-s` select the existing
+versioned logarithmic grid. `--extended-frequency` includes zero and the
+protocol-limited 1e-6..1e10 Hz grid. These switches do not change the physical
+budgets or allowed iteration caps.
+
+Each case stores its exact request, outcome, bound input attempts and manifests,
+and historical failure observation. The version-two failure register extends
+the original registers without waivers. Preparation explicitly uses `r1_policy`
+and its fixed 100/40/2 caps. Resume and `--verify` on a formal study require the
+caller-selected root `--manifest-sha256`; verification additionally replays
+physical contents and comparisons. Re-sealing a changed result does not make
+it scientifically valid. Verification is read-only. The source commit,
+declared grid/window and other study choices must match the original request.
+
+An invocation's exit status and the study's required finest-level conditions
+are separate: failed diagnostics remain in the failure index with nonzero
+status, even when a finer comparison succeeds. Missing or unresolvable
+dependencies yield an incomplete result. Coarser comparison failures do not
+replace the specification's finest-pair rule. The study report never asserts
+independent acceptance.
+
+The amplitude section executes separate space/time/nonlinear crosses and
+uses the sum of measured finest-pair current differences as an empirical
+uncertainty estimate. It records coarser differences without treating them as
+the finest-pair criterion. Halving continues until an eligible pair is found
+or the declared minimum amplitude is reached. Window extensions use the
+verified qualifying amplitude when available; a fallback 5 mV observation is
+explicitly diagnostic and does not acquire a linearity prerequisite.
+
+The reconstruction section binds its actual step, DC, AC, amplitude and
+window evidence. It checks T/10T, earlier-start and stricter-quadrature
+differences, and the same-amplitude DC tail. Raw-current uncertainty is kept
+separate from baseline uncertainty; conductance uncertainty requires spatial
+and derivative refinements. Unknown early/interpolation/infinite-tail/impulse
+error bounds remain unknown and cannot be replaced by zeros. Frequency
+reports distinguish numerically eligible sampled bands from the separate
+same-state turnover-coverage requirement. Thus implementing this pipeline
+does not imply that any frequency already has a complete double-domain budget.

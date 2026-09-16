@@ -63,6 +63,7 @@ from perovskite_sim.physics.two_sided_interface import (
     _material_two_sided_interface_problem,
     electrostatic_trace_residual_and_jacobian,
     fixed_occupancy_carrier_tangent,
+    fixed_occupancy_carrier_tangent_from_density,
     shared_trap_occupancy,
     solve_electrostatic_traces,
     solve_fixed_occupancy_two_sided_interface,
@@ -900,6 +901,8 @@ class _InterfaceTransientSystem:
         occupancy: np.ndarray,
         trace_potential: np.ndarray,
         trace_log_state: np.ndarray,
+        *,
+        trace_density_m3: np.ndarray | None = None,
     ) -> tuple[tuple[_LocalState, ...], TwoSidedMaterialQSSResult]:
         states: list[_LocalState] = []
         size = 4 * self.interface_count
@@ -936,8 +939,10 @@ class _InterfaceTransientSystem:
                 charged_geometry,
                 bulk,
             )
-            tangent = fixed_occupancy_carrier_tangent(
-                trace_log_state[index],
+            tangent_function = (fixed_occupancy_carrier_tangent if trace_density_m3 is None
+                                else fixed_occupancy_carrier_tangent_from_density)
+            tangent = tangent_function(
+                trace_log_state[index] if trace_density_m3 is None else trace_density_m3[index],
                 charged_geometry,
                 physics,
                 bulk,
@@ -986,6 +991,10 @@ class _InterfaceTransientSystem:
             capture_flux_m2_s=capture_flux,
             occupancy=np.asarray(occupancy).copy(),
         )
+
+    def _trace_density_coordinates(self, coordinate):
+        """Default absolute-log path; research subclasses can retain increments."""
+        return None
 
     def _source(
         self,
@@ -1136,6 +1145,7 @@ class _InterfaceTransientSystem:
             occupancy,
             trace_potential,
             trace_log_state,
+            trace_density_m3=self._trace_density_coordinates(coordinate),
         )
         source = self._source(n, p, phi, voltage, interface_qss)
         transport_n, transport_p, current_n, current_p = self._currents(

@@ -124,12 +124,118 @@ def test_failed_prefix_is_auditable_but_never_scientifically_certified(cases):
     partial = deepcopy(cases[-1]["D"])
     partial["accepted_steps"] = partial["accepted_steps"][:3]
     partial["failure"] = {"type": "ExampleFailure", "message": "stopped after saved prefix"}
+    partial["certificate"] = {"certified": False, "reasons": ["stopped after saved prefix"]}
     for key in ("output_states", "accepted_state_arrays", "regular_currents", "finite_step_averages", "charge_integral"):
         partial.pop(key)
     report = verify(cases, partial, allow_incomplete=True)
     assert report["evidence_matches_equations"]
     assert not report["complete"] and not report["certified"]
     assert report["checked_row_count"] == 3
+
+
+@pytest.mark.parametrize("factor", [1e-3, -1., 1e3, 1.5])
+def test_saved_physical_current_alone_is_bound_to_recomputed_state(cases, factor):
+    forged = deepcopy(cases[-1]["D"])
+    # Do not change state, diagnostics, charge integrals or the certificate:
+    # this must exercise the isolated published-physical-block guard.
+    current = forged["accepted_steps"][1]["physical"]["contact_maxwell_A_m2"]
+    current[0] *= factor
+    with pytest.raises(R1PhysicsValidationError, match="state-to-current and charge 1"):
+        verify(cases, forged)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("junction_polarity", 1.), ("execution_axes", {"intervals": 256, "time_substeps": [16, 32, 64]}),
+    ("current_sign_convention", "forged sign"), ("scope", "full_r1_2_accepted"),
+    ("scope_note", "all convergence passed"), ("version", "forged"),
+])
+def test_each_published_metadata_field_is_checked(cases, field, value):
+    forged = deepcopy(cases[-1]["D"])
+    forged[field] = value
+    with pytest.raises(R1PhysicsValidationError, match="result metadata " + field):
+        verify(cases, forged)
+
+
+@pytest.mark.parametrize("field,key", [("finite_step_averages", "note"), ("charge_integral", "quadrature")])
+def test_nested_result_meaning_cannot_be_relabelled(cases, field, key):
+    forged = deepcopy(cases[-1]["D"])
+    forged[field][key] = "trapezoidal point samples"
+    with pytest.raises(R1PhysicsValidationError, match="meaning"):
+        verify(cases, forged)
+
+
+@pytest.mark.parametrize("nnz", [0, True, 1.5, 999999, 1])
+def test_historical_nnz_must_be_sparse_integer_and_cover_saved_structure(cases, nnz):
+    forged = deepcopy(cases[-1]["D"])
+    forged["certificate"]["analytic_jacobian_nnz"] = nnz
+    with pytest.raises(R1PhysicsValidationError, match="Jacobian"):
+        verify(cases, forged)
+
+
+@pytest.mark.parametrize("replacement", [None, {"passed": True}, {"passed": False, "nonfinite_numeric_paths": []}])
+def test_finite_certificate_is_not_an_unchecked_provenance_field(cases, replacement):
+    forged = deepcopy(cases[-1]["D"])
+    if replacement is None:
+        forged["certificate"].pop("finite_numeric_evidence")
+    else:
+        forged["certificate"]["finite_numeric_evidence"] = replacement
+    with pytest.raises(R1PhysicsValidationError, match="finite numeric certificate"):
+        verify(cases, forged)
+
+
+def test_unclassified_result_field_and_nonfinite_value_cannot_hide_from_acceptance(cases):
+    forged = deepcopy(cases[-1]["D"])
+    forged["invented_physical_conclusion"] = True
+    with pytest.raises(ValueError, match="unclassified controlled-step"):
+        verify(cases, forged)
+    forged.pop("invented_physical_conclusion")
+    forged["accepted_steps"][1]["physical"]["contact_maxwell_A_m2"][0] = float("nan")
+    with pytest.raises(R1PhysicsValidationError, match="nonfinite numeric evidence"):
+        verify(cases, forged)
+
+
+def partial_with_result_arrays(cases):
+    partial = deepcopy(cases[-1]["D"])
+    # Both coarser levels are complete; only 0+ of the finest level exists.
+    partial["accepted_steps"] = partial["accepted_steps"][:15]
+    partial["failure"] = {"type": "ExampleFailure", "message": "stopped after saved prefix"}
+    partial["certificate"] = {"certified": False, "reasons": ["stopped after saved prefix"]}
+    partial["output_states"] = {k: v[:1] for k, v in partial["output_states"].items()}
+    partial["regular_currents"] = partial["regular_currents"][:1]
+    partial["finite_step_averages"] = {k: v if k == "note" else v[:1]
+                                        for k, v in partial["finite_step_averages"].items()}
+    partial["accepted_state_arrays"] = {k: v[:15] for k, v in partial["accepted_state_arrays"].items()}
+    integrals = {r["substeps"]: r["regular_integrated_charge_C_m2"] for r in partial["accepted_steps"]}
+    partial["charge_integral"]["regular_by_substeps_C_m2"] = integrals
+    impulse = partial["charge_integral"]["impulse_charge_C_m2"]
+    partial["charge_integral"]["complete_by_substeps_C_m2"] = {k: impulse + v for k, v in integrals.items()}
+    return partial
+
+
+def test_existing_failed_prefix_arrays_are_checked_with_explicit_coverage(cases):
+    report = verify(cases, partial_with_result_arrays(cases), allow_incomplete=True)
+    assert report["content_matches_recomputed"] and not report["complete"]
+    assert len(report["checked_result_fields"]) == 5
+    assert report["unavailable_result_fields"] == []
+    assert not report["certified"]
+
+
+@pytest.mark.parametrize("field", ["output_states", "regular_currents", "finite_step_averages",
+                                   "accepted_state_arrays", "charge_integral"])
+def test_each_present_failed_prefix_result_block_rejects_forgery(cases, field):
+    partial = partial_with_result_arrays(cases)
+    if field == "output_states":
+        partial[field]["n_m3"][0][0] *= 1.5
+    elif field == "accepted_state_arrays":
+        partial[field]["n_m3"][0][0] *= 1.5
+    elif field == "finite_step_averages":
+        partial[field]["internal_total_A_m2"][0][0] += 1e-3
+    elif field == "charge_integral":
+        partial[field]["impulse_charge_C_m2"] *= 7
+    else:
+        partial[field][0]["invented_current_A_m2"] = 1.
+    with pytest.raises(R1PhysicsValidationError):
+        verify(cases, partial, allow_incomplete=True)
 
 
 def test_historical_rows_without_exact_coordinates_are_unavailable(cases):

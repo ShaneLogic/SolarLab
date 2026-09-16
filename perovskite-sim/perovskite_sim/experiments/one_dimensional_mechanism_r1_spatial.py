@@ -18,7 +18,7 @@ import numpy as np
 
 from perovskite_sim.constants import K_B, Q
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import (
-    R1Response, compare_responses,
+    R1Response, compare_responses, validate_single_axis_comparison,
 )
 from perovskite_sim.validation.foundation_reference_refinement import _sample_sg_density
 
@@ -258,6 +258,7 @@ class R1SpatialResponses:
     dc_potential: R1Response
     metadata: Mapping
     inventory_m2: np.ndarray
+    dc_interface_potential: R1Response | None = None
     scope: str = "fixed_position_reconstruction_and_comparison_only"
 
     def __post_init__(self):
@@ -317,12 +318,15 @@ def spatial_responses_from_step(prepared, step):
     metadata = {"stack_sha256": record["stack_sha256"], "reference_sha256": record["reference_sha256"],
                 "source_sha256": (step.get("source") or {}).get("sha256"),
                 "amplitude_V": step["amplitude_V"], "control": step["control_label"],
+                "prepared_sha256": record["sha256"], "times_s": times.tolist(),
                 "intervals": record["intervals"], "policy": step["policy"],
                 "recorded_certificate_passed": step.get("certificate", {}).get("certified") is True,
                 "carrier_resolution": "no independent carrier uncertainty supplied; signal resolution undetermined",
                 "ionic_centroid_definition": "integral(x*P_reconstructed)/integral(P_reconstructed) over each active physical component"}
     return R1SpatialResponses(responses, side_responses,
-        R1Response(base["phi_V"], {"position_m": base["position_m"]}), metadata, arrays["ion_inventory_m2"])
+        R1Response(base["phi_V"], {"position_m": base["position_m"]}), metadata, arrays["ion_inventory_m2"],
+        dc_interface_potential=R1Response(base["interface_phi_V"],
+            {"interface_position_m": base["interface_position_m"]}, ("left", "right")))
 
 
 def compare_spatial_responses(left, right):
@@ -336,16 +340,72 @@ def compare_spatial_responses(left, right):
     for key in ("stack_sha256", "reference_sha256", "source_sha256", "amplitude_V", "control"):
         if left.metadata[key] != right.metadata[key]:
             raise ValueError("physical experiment identity differs: " + key)
+    bulk_names = {"response_potential", "carrier_log_density", "ion_density_over_p0",
+                  "trap_occupancy_change", "ion_centroid_change"}
+    side_names = {"response_potential", "carrier_log_density", "ion_density_over_p0"}
+    if any(set(value.responses) != bulk_names or set(value.interface_responses) != side_names
+           for value in (left, right)):
+        raise ValueError("spatial comparison requires the complete response quantity inventory")
+    if left.dc_interface_potential is None or right.dc_interface_potential is None:
+        raise ValueError("spatial comparison requires both DC interface-side potentials")
     bulk = {key: compare_responses(key, value, right.responses[key]) for key, value in left.responses.items()}
     sides = {key: compare_responses(key, value, right.interface_responses[key])
              for key, value in left.interface_responses.items()}
     dc = compare_responses("dc_potential", left.dc_potential, right.dc_potential)
+    dc_sides = compare_responses("dc_potential", left.dc_interface_potential, right.dc_interface_potential)
     return {"scope": "fixed_position_response_budget_comparison_only", "dc_potential": dc,
+            "dc_interface_potential": dc_sides,
             "bulk": bulk, "interface_sides": sides,
-            "within_compared_budgets": all(report["passed"] for report in (dc, *bulk.values(), *sides.values())),
+            "within_compared_budgets": all(report["passed"] for report in (dc, dc_sides, *bulk.values(), *sides.values())),
+            "convergence_passed": False,
             "left_metadata": dict(left.metadata), "right_metadata": dict(right.metadata),
             "limitations": ["no independent signal-resolution certificate", "no full three-axis or long-window acceptance"]}
 
 
+def compare_convergence_responses(left, right, *, axis, electrical, input_verifications=None):
+    """Derive a scoped single-axis verdict from all eight §10.2 quantities.
+
+    The caller must obtain the two verification reports by verifying the
+    exact source-bound input artifacts. They are not stored trajectory flags.
+    Full-window/campaign acceptance remains a separate aggregate decision.
+    """
+    identity = validate_single_axis_comparison(left.metadata, right.metadata, axis=axis)
+    spatial = compare_spatial_responses(left, right)
+    electrical_names = {"regular_current": "regular_current_response", "integrated_charge": "integrated_charge_response"}
+    for key, quantity in electrical_names.items():
+        if key not in electrical or electrical[key].get("quantity") != quantity:
+            raise ValueError("convergence requires both electrical response quantities")
+    bulk, sides = spatial["bulk"], spatial["interface_sides"]
+    reports = {
+        "dc_potential": (spatial["dc_potential"], spatial["dc_interface_potential"]),
+        "response_potential": (bulk["response_potential"], sides["response_potential"]),
+        "carrier_log_density": (bulk["carrier_log_density"], sides["carrier_log_density"]),
+        "ion_density_over_p0": (bulk["ion_density_over_p0"], sides["ion_density_over_p0"]),
+        "trap_occupancy_change": (bulk["trap_occupancy_change"],),
+        "ion_centroid_change": (bulk["ion_centroid_change"],),
+        "regular_current_response": (electrical["regular_current"],),
+        "integrated_charge_response": (electrical["integrated_charge"],),
+    }
+    quantity_passed = {key: all(report.get("passed") is True and report.get("failure_count") == 0
+                                 and report.get("scalar_comparison_count", 0) > 0
+                                 and isinstance(report.get("maximum_budget_ratio"), (int, float))
+                                 and 0 <= report["maximum_budget_ratio"] <= 1 for report in items)
+                       for key, items in reports.items()}
+    verified = input_verifications is not None and len(input_verifications) == 2
+    if verified:
+        verified = all(isinstance(report, Mapping) and report.get("certified") is True
+                       and report.get("content_matches_recomputed") is True
+                       and metadata.get("recorded_certificate_passed") is True
+                       for report, metadata in zip(input_verifications, (left.metadata, right.metadata)))
+    passed = bool(verified and all(quantity_passed.values()))
+    return {"schema": "R1SingleAxisConvergenceComparisonV1", "axis_check": identity,
+            "spatial": spatial, "electrical": electrical, "quantity_passed": quantity_passed,
+            "required_quantity_count": 8, "response_budgets_passed": all(quantity_passed.values()),
+            "input_physics_verified": bool(verified), "within_compared_budgets": passed,
+            "convergence_passed": passed, "full_window_convergence_certified": False,
+            "scope": "verified_single_axis_comparison_only"}
+
+
 __all__ = ["ConservativeIonProfile", "R1SpatialResponses", "sample_sg_density", "sample_r1_state",
+           "compare_convergence_responses",
            "spatial_responses_from_step", "compare_spatial_responses"]

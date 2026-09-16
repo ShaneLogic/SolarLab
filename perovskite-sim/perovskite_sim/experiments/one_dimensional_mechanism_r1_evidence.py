@@ -160,11 +160,34 @@ def verify_output(output):
     return completion, len(entries)
 
 
+def _producer_evidence_revision(source_bytes):
+    """Read a producer's literal completion format without executing its code.
+
+    This is read only after source ZIP/commit identity checks. It cannot be
+    selected by editing a bundle's CompletionV1 or ProtocolV1 labels.
+    """
+    import ast
+    try:
+        tree = ast.parse(source_bytes)
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        raise ValueError("producer source cannot declare its evidence format") from exc
+    revisions = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            entries = {key.value: value for key, value in zip(node.keys, node.values)
+                       if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+            schema, revision = entries.get("schema"), entries.get("evidence_revision")
+            if (isinstance(schema, ast.Constant) and schema.value == "R1StageOneCompletionV1"
+                    and isinstance(revision, ast.Constant) and type(revision.value) is int):
+                revisions.append(revision.value)
+    return max(revisions, default=None)
+
+
 def _verify_controlled_evidence(output, completion, *, expected_source_commit=None,
                                 committed_source=None, pin_contract=False):
     """Check the verifier-selected controlled format and optional source root."""
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
-        REQUIRED_SOURCE_ANCHORS, LEGACY_SOURCE_ANCHORS, source_content_digest,
+        REQUIRED_SOURCE_ANCHORS, LEGACY_SOURCE_ANCHORS, source_content_digest, R1_DECLARATIONS,
     )
     from perovskite_sim.experiments import one_dimensional_mechanism_r1_binding as binding_policy
 
@@ -230,6 +253,10 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
                         or archive.getinfo(name).file_size != identity.get("bytes")
                         or hashlib.sha256(archive.read(name)).hexdigest() != identity.get("sha256")):
                     raise ValueError("source ZIP identity mismatch: " + name)
+            producer_revision = _producer_evidence_revision(archive.read(
+                "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py"))
+            if producer_revision is not None and revision < producer_revision:
+                raise ValueError("bundle evidence revision downgrades its anchored producer format")
             input_name = "perovskite-sim/reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
             if archive.read(input_name) != _required_bytes(output / "StudyInputV1.json"):
                 raise ValueError("study input differs from the controlled source snapshot")
@@ -251,12 +278,18 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
                 if hashlib.sha256(additional).hexdigest() != binding_policy.PINNED_ADDITIONAL_FAILURES_SHA256:
                     raise ValueError("additional failures do not match this verifier's pinned registry")
             if revision >= 6:
+                additional_v2 = _required_bytes(output / "AdditionalFailuresV2.json")
+                if (archive.read("perovskite-sim/" + binding_policy.ADDITIONAL_FAILURES_V2_RELATIVE_PATH) != additional_v2
+                        or hashlib.sha256(additional_v2).hexdigest() != binding_policy.PINNED_ADDITIONAL_FAILURES_V2_SHA256):
+                    raise ValueError("additional failures V2 differ from the pinned registry")
                 physics = _required_bytes(output / "PhysicsProtocolV1.md")
                 if archive.read("perovskite-sim/" + binding_policy.PHYSICS_PROTOCOL_RELATIVE_PATH) != physics:
                     raise ValueError("physics protocol differs from controlled source snapshot")
                 for relative, digest in binding_policy.FROZEN_PHYSICS_DECLARATIONS.items():
                     if hashlib.sha256(archive.read("perovskite-sim/" + relative)).hexdigest() != digest:
                         raise ValueError("physics declaration differs from trusted pinned decision: " + relative)
+                    if archive.read("perovskite-sim/" + relative) != _required_bytes(output / R1_DECLARATIONS[relative][1]):
+                        raise ValueError("exported declaration differs from controlled source snapshot: " + relative)
                 # The caller's Git anchor proves content identity, not that an
                 # arbitrary candidate implementation matches this verifier.
                 package = Path(__file__).resolve().parents[1]

@@ -12,6 +12,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1 import (
     PhysicalInterfaceIonSystem,
 )
 from perovskite_sim.physics.dynamic_storage import logit_occupancy_increment
+from perovskite_sim.physics.physical_control_volume import physical_contact_displacement
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,32 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
             np.zeros(self.node_count - 1),
             None if negative is None else np.zeros(self.node_count - 1),
         )
+
+    def _trace_density_coordinates(self, coordinate):
+        if self._step_reference is None:
+            return None
+        values = np.asarray(coordinate, dtype=float)
+        reference = np.asarray([item.state_m3 for item in self._step_reference.local])
+        increments = np.asarray([values[self._local_block_slice(k)][2:]
+                                 for k in range(self.interface_count)])
+        return reference * np.exp(increments)
+
+    def transient_current_metrics(self, state, previous, dt):
+        metrics = super().transient_current_metrics(state, previous, dt)
+        storage = self.storage_increment(state, previous)
+        delta_rho = self._increment_charge_density(storage)
+        delta_displacement = -self.material.poisson_factor.C * np.diff(
+            self.potential_increment(state, previous))
+        contact_displacement = physical_contact_displacement(
+            delta_displacement, delta_rho, self.widths) / dt
+        # The endpoint electron/hole recombination corrections cancel in the
+        # physical total current. Include contacts in Newton's existing gate,
+        # so a locally accepted step cannot stop before its boundary closes.
+        contact_total = self.polarity * (state.current_n[[0, -1]]
+                                        + state.current_p[[0, -1]] + contact_displacement)
+        all_total = np.r_[metrics[1], contact_total]
+        spread = float(np.ptp(all_total)) / max(float(np.max(np.abs(all_total))), 1e-20)
+        return (*metrics[:4], spread, metrics[5])
 
     def _ion_jacobians(self, phi, positive, negative):
         if self.controls.nu_I:

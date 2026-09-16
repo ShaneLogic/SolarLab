@@ -955,6 +955,15 @@ def fixed_occupancy_carrier_balance_and_jacobian(
     state = np.exp(values)
     if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
         raise FloatingPointError("interface trace densities left finite range")
+    return _fixed_occupancy_carrier_balance_from_density(
+        state, geometry, physics, bulk, fixed, trace_values,
+        capture_multiplier=capture_multiplier,
+    )
+
+
+def _fixed_occupancy_carrier_balance_from_density(
+    state, geometry, physics, bulk, fixed, trace_values, *, capture_multiplier,
+):
     (
         bulk_flux,
         bulk_jacobian,
@@ -1024,6 +1033,37 @@ def fixed_occupancy_carrier_tangent(
     state = np.exp(values)
     if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
         raise FloatingPointError("interface trace densities left finite range")
+    return fixed_occupancy_carrier_tangent_from_density(
+        state, geometry, physics, bulk, fixed, trace_values,
+        capture_multiplier=capture_multiplier,
+    )
+
+
+def fixed_occupancy_carrier_tangent_from_density(
+    state_m3: np.ndarray,
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    occupancy: float,
+    traces: InterfaceTracePotentials | None = None,
+    *,
+    capture_multiplier: float = 1.0,
+) -> FixedOccupancyCarrierTangent:
+    """Evaluate the same log-coordinate tangent from resolved densities.
+
+    Incremental solvers use ``reference_density * exp(log_increment)``.
+    Converting that density through an absolute log and exp can erase a
+    Newton update smaller than one ULP of log(density).  This entry point
+    preserves the supplied positive density; the derivative is still with
+    respect to its logarithm and the balance equations are unchanged.
+    """
+    state = np.asarray(state_m3, dtype=float)
+    if state.shape != (_STATE_SIZE,) or not np.all(np.isfinite(state)) or np.any(state <= 0.0):
+        raise ValueError("state_m3 must contain four finite positive densities")
+    fixed = float(occupancy)
+    if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
+        raise ValueError("occupancy must lie in [0, 1]")
+    trace_values = traces or solve_electrostatic_traces(geometry, bulk)
     (
         _bulk_flux,
         bulk_log_jacobian,
@@ -1057,8 +1097,8 @@ def fixed_occupancy_carrier_tangent(
         ],
         dtype=float,
     )
-    balance = fixed_occupancy_carrier_balance_and_jacobian(
-        values,
+    balance = _fixed_occupancy_carrier_balance_from_density(
+        state,
         geometry,
         physics,
         bulk,
@@ -2260,6 +2300,7 @@ __all__ = [
     "equilibrium_referenced_two_sided_balance",
     "fixed_occupancy_carrier_balance_and_jacobian",
     "fixed_occupancy_carrier_tangent",
+    "fixed_occupancy_carrier_tangent_from_density",
     "fixed_occupancy_trap_capture_flux_and_log_jacobian",
     "remove_shared_interface_nodes",
     "shared_trap_capture_flux",
