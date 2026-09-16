@@ -143,6 +143,11 @@ def test_resealed_ac_publication_and_pass_flags_are_replayed(formal_study, tmp_p
         error = verification.stderr.lower()
         assert any(term in error for term in ("response", "admittance", "replay", "reconstruct", "ac")), error
         assert "manifest mismatch" not in error and "source changed" not in error
+        subset = formal_study.launch(output, "--section", "prepare", "--verify",
+                                     "--manifest-sha256", digest(output / "ManifestV1.json"))
+        assert subset.returncode != 0, (
+            "A forged unselected AC case must be rejected or explicitly remain unverified; "
+            "selecting only prepare cannot turn it into a successful study verification.\n" + subset.stdout)
     else:
         assert verification.returncode == 0, verification.stdout + verification.stderr
 

@@ -200,13 +200,15 @@ class Study:
                 if self.context.read_bytes(path) != path.read_bytes():
                     raise ValueError("study input differs from controlled snapshot: "+str(path))
         self.request = ready(request)
+        self.original_inventory = (json.loads((self.output/"CaseInventoryV2.json").read_text())
+                                   if (self.output/"CaseInventoryV2.json").is_file() else {})
 
     def source_unchanged(self):
         if execution_source() != self.source:
             raise RuntimeError("source changed during the study; start a new evidence directory")
 
     def selected(self, key):
-        return not self.args.case_filter or self.args.case_filter in key
+        return bool(getattr(self, "verifying", False)) or not self.args.case_filter or self.args.case_filter in key
 
     def latest(self, key):
         directory = self.output/key
@@ -313,6 +315,9 @@ class Study:
 
     def case(self, key, request, operation, *, dependency=False):
         request = dict(request)
+        if (getattr(self, "verifying", False) and key not in getattr(self, "original_inventory", {})
+                and self.latest(key) is None):
+            return None
         if all(field in request for field in ("intervals", "control", "time_substeps", "nonlinear_factor", "times_s")):
             request.setdefault("amplitude_V", .005)
         if not hasattr(self, "expected_cases"):
@@ -339,6 +344,8 @@ class Study:
                     raise ValueError("cannot verify an interrupted unsealed case: "+key)
                 if completion["status"] == "failed":
                     self.audit_failed(key, prior, request)
+                    self.verified_cases[key] = (sha(prior/"ManifestV1.json"),
+                                               {"certified": False, "failure_record_checked": True})
                 self.rows.append({"case": key, "status": completion["status"],
                                   "scientific_checks_passed": completion.get("scientific_checks_passed"),
                                   "independently_verified": True})
@@ -408,6 +415,9 @@ class Study:
         }
         write_json(directory/"CompletionV1.json", completion)
         seal(directory)
+        if not hasattr(self, "produced_cases"):
+            self.produced_cases = {}
+        self.produced_cases[key] = sha(directory/"ManifestV1.json")
         self.rows.append({"case": key, "status": status, "duration_s": completion["duration_s"],
                           "scientific_checks_passed": completion["scientific_checks_passed"],
                           "directory": str(directory.relative_to(self.output))})
@@ -915,6 +925,14 @@ class Study:
             inventory[key] = value
         missing = sorted(set(inventory)-set(active))
         unknown = [key for key, row in active.items() if row["completion"].get("scientific_checks_passed") is None]
+        unchecked = []
+        if getattr(self, "run_class", "development") == "formal":
+            for key, row in active.items():
+                digest = sha(self.output/row["directory"]/"ManifestV1.json")
+                verification = getattr(self, "verified_cases", {}).get(key)
+                produced = getattr(self, "produced_cases", {}).get(key)
+                if (verification is None or verification[0] != digest) and produced != digest:
+                    unchecked.append(key)
         local_fail = any(row["status"] == "failed" for row in self.rows)
         required_pairs = [row for row in active.values() if row["conditions"].get("required_finest_pair") is True]
         pair_coverage = {(row["conditions"].get("control"), row["conditions"].get("axis")) for row in required_pairs}
@@ -924,6 +942,7 @@ class Study:
             row["completion"].get("scientific_checks_passed") is True for row in required_pairs)
         requirements = {
             "formal_source_execution": getattr(self, "run_class", "development") == "formal",
+            "all_recorded_cases_checked": not unchecked,
             "verification_completed_without_error": not any(row.get("case") == "invocation"
                 and row.get("status") == "failed" for row in self.rows),
             "declared_cases_available": not missing and bool(inventory),
@@ -944,11 +963,12 @@ class Study:
                    "diagnostic_failure_count": len(failures),
                    "required_finest_pair_count": len(required_pairs),
                    "missing_cases": missing, "unresolved_cases": unknown,
+                   "not_recomputed_in_this_invocation": unchecked,
                    "requirements": requirements, "study_exit_passed": all(requirements.values()),
                    "missing_for_R1_2_exit": [k for k, v in requirements.items() if not v],
                    "independent_acceptance": "not_asserted",
                    "scope": "numerical_study_criteria_do_not_replace_independent_review"}
-        code = 1 if failures or local_fail else 2 if missing or unavailable or unknown else 0
+        code = 1 if failures or local_fail else 2 if missing or unavailable or unknown or unchecked else 0
         summary["exit_code"] = code
         if getattr(self, "verifying", False):
             published = checked_read(self.output, "StudySummaryV1.json")
@@ -1080,6 +1100,10 @@ def main(argv=None):
         study = Study(args)
         sections = SECTIONS if "all" in args.section else [part for section in args.section
                                                           for part in (("dc", "ac") if section == "dc-ac" else (section,))]
+        if args.verify:
+            # --section must never hide a different archived result from an
+            # otherwise successful scientific verification.
+            sections = SECTIONS
         study.run(sections)
         return study.finish()
     except CaseBudgetExhausted:
