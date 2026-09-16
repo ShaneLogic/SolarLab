@@ -999,11 +999,34 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
         )
         return float(np.max(np.abs(left - right), initial=0.0)) / scale
 
-    def eliminated_operator_error(
+    def eliminated_operator_diagnostics(
         self,
         state: _InterfaceIonDeviceState,
         voltage: float,
-    ) -> float:
+    ) -> dict[str, dict]:
+        """Compare both operator forms without changing their original scales.
+
+        Absolute component arrays make near-equilibrium cancellation visible;
+        the pre-existing relative gate is retained exactly.
+        """
+        def comparison(left, right, floor):
+            left, right = np.asarray(left), np.asarray(right)
+            left_max = float(np.max(np.abs(left), initial=0.0))
+            right_max = float(np.max(np.abs(right), initial=0.0))
+            scale = max(left_max, right_max, floor)
+            difference = left - right
+            absolute = float(np.max(np.abs(difference), initial=0.0))
+            return {
+                "direct": left.copy(), "eliminated": right.copy(),
+                "difference": difference, "maximum_absolute_difference": absolute,
+                "direct_maximum_absolute": left_max,
+                "eliminated_maximum_absolute": right_max,
+                "normalization_floor": float(floor),
+                "normalization_scale": float(scale),
+                "floor_active": bool(max(left_max, right_max) < floor),
+                "relative_error": self._relative(left, right, floor),
+            }
+
         eliminated = self.system.evaluate_quasi_fermi_increments_defect_ion_combined(
             state.dqfn,
             state.dqfp,
@@ -1069,49 +1092,49 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
                 [off.phi_left_V, off.phi_right_V]
             )
         values = {
-            "electron_density": self._relative(
+            "electron_density": comparison(
                 state.n, eliminated.y[: self.node_count], 1.0
             ),
-            "hole_density": self._relative(
+            "hole_density": comparison(
                 state.p,
                 eliminated.y[self.node_count : 2 * self.node_count],
                 1.0,
             ),
-            "potential": self._relative(
+            "potential": comparison(
                 state.phi, eliminated.phi, self.thermal_voltage
             ),
-            "electron_rate": self._relative(
+            "electron_rate": comparison(
                 state.rate[: self.interior_count],
                 eliminated.rate_n[1:-1],
                 rate_scale,
             ),
-            "hole_rate": self._relative(
+            "hole_rate": comparison(
                 state.rate[self.interior_count : 2 * self.interior_count],
                 eliminated.rate_p[1:-1],
                 rate_scale,
             ),
-            "electron_current": self._relative(
+            "electron_current": comparison(
                 state.current_n, eliminated.current_n, current_scale
             ),
-            "hole_current": self._relative(
+            "hole_current": comparison(
                 state.current_p, eliminated.current_p, current_scale
             ),
-            "local_state": self._relative(canonical_state, eliminated_state, 1.0),
-            "capture_flux": self._relative(canonical_capture, eliminated_capture, 1.0),
-            "sheet_charge": self._relative(
+            "local_state": comparison(canonical_state, eliminated_state, 1.0),
+            "capture_flux": comparison(canonical_capture, eliminated_capture, 1.0),
+            "sheet_charge": comparison(
                 state.sheet_charge,
                 np.asarray(fixed.incremental_sheet_charge_C_m2),
                 Q * float(np.max(self.trap_density)),
             ),
-            "trace_potential": self._relative(
+            "trace_potential": comparison(
                 trace_shift,
                 np.asarray(fixed.trace_potential_shift_V),
                 self.thermal_voltage,
             ),
-            "positive_ion_rate": self._relative(
+            "positive_ion_rate": comparison(
                 state.positive_rate, positive_rate, ion_rate_scale
             ),
-            "positive_ion_flux": self._relative(
+            "positive_ion_flux": comparison(
                 state.positive_flux, positive_flux, 1.0
             ),
         }
@@ -1126,19 +1149,35 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
                     "eliminated comparison lost negative ions"
                 )
             values.update(
-                negative_ion_rate=self._relative(
+                negative_ion_rate=comparison(
                     state.negative_rate,
                     negative_rate,
                     ion_rate_scale,
                 ),
-                negative_ion_flux=self._relative(
+                negative_ion_flux=comparison(
                     state.negative_flux, negative_flux, 1.0
                 ),
             )
+        units = {
+            "electron_density": "m-3", "hole_density": "m-3",
+            "potential": "V", "electron_rate": "m-3 s-1", "hole_rate": "m-3 s-1",
+            "electron_current": "A m-2", "hole_current": "A m-2", "local_state": "m-3",
+            "capture_flux": "m-2 s-1", "sheet_charge": "C m-2", "trace_potential": "V",
+            "positive_ion_rate": "m-3 s-1", "positive_ion_flux": "m-2 s-1",
+            "negative_ion_rate": "m-3 s-1", "negative_ion_flux": "m-2 s-1",
+        }
+        for name, value in values.items():
+            value["unit"] = units[name]
+        return values
+
+    def eliminated_operator_error(self, state, voltage) -> float:
+        values = {
+            name: detail["relative_error"]
+            for name, detail in self.eliminated_operator_diagnostics(state, voltage).items()
+        }
         for name, value in values.items():
             self._maximum_eliminated_operator_components[name] = max(
-                value,
-                self._maximum_eliminated_operator_components.get(name, 0.0),
+                value, self._maximum_eliminated_operator_components.get(name, 0.0),
             )
         return max(values.values())
 

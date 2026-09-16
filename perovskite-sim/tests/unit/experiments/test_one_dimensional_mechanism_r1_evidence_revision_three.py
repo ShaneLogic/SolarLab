@@ -54,7 +54,7 @@ def controlled_bundle(runner, repository, tmp_path):
 
 
 def accept(runner, output):
-    return runner.verify_acceptance(
+    return runner.inspect_legacy_evidence(
         output, expected_manifest_sha256=runner.sha256(output / "ManifestV1.json"),
         required_evidence_revision=3,
     )

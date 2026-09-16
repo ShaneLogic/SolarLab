@@ -152,12 +152,15 @@ def test_invalid_execution_axes_fail_before_creating_output(runner, tmp_path, ex
 
 @pytest.mark.parametrize("extra", [["--intervals", "128"], ["--time-substeps", "2", "4", "8"],
                                    ["--window", "full"]])
-def test_extended_settings_cannot_claim_formal_r1_1_execution(runner, tmp_path, extra):
+def test_direct_extended_settings_still_require_controlled_execution(runner, tmp_path, monkeypatch, extra):
     output = tmp_path / "not_created"
-    with pytest.raises(SystemExit) as error:
-        runner.main(["step", "--reference", "reference.json", "--prepared", "state.json",
-                     "--control", "D", "--output-dir", str(output), *extra])
-    assert error.value.code == 2 and not output.exists()
+    monkeypatch.setattr(runner, "_record_execution_source", lambda path: None)
+    assert runner.main(["step", "--reference", "reference.json", "--prepared", "state.json",
+                        "--control", "D", "--output-dir", str(output), *extra]) == 1
+    completion, _ = runner.verify_output(output)
+    assert completion["stage_scope"] == "R1-rejected"
+    assert completion["run_class"] == "rejected_before_execution"
+    assert "controlled -I -S launcher" in completion["failure"]["message"]
 
 
 @pytest.mark.parametrize("extra", [["--time-substeps", "2", "4", "8"], ["--window", "full"]])

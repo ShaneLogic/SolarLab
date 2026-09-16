@@ -470,7 +470,7 @@ def _trace_certificate(system, zero_minus, levels, policy, physical_records):
 
 def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V=0.005,
                 times_s=None, policy=None, accepted_step_observer=None,
-                expected_prepared_sha256=None):
+                expected_prepared_sha256=None, physics_evidence=False):
     """Integrate from 0+; finite steps contain no ideal charging impulse."""
     prepared = _prepared(prepared)
     choice = control if isinstance(control, R1DynamicsControls) else R1DynamicsControls.from_label(control)
@@ -504,6 +504,14 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
         record["current_sign_convention"] = "J_x along +x; reported j = junction_polarity * J_x"
         initial = build_initial_step(system, before, amplitude, policy=policy)
         record["initial_event"] = initial.event
+        if physics_evidence:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_physics_validation import (
+                capture_r1_physics_row, reconstruction_context,
+            )
+            record["physics_reconstruction"] = reconstruction_context(
+                initial.system, initial.zero_plus, prepared.sha256, binding["sha256"],
+            )
+        reconstructed_finite_levels = set()
         integrated = {}
         physical_records = []
 
@@ -546,6 +554,28 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
                 "solver_accepted": previous is not None,
                 "regular_integrated_charge_C_m2": integrated[substeps],
             }
+            physics_reconstruction_failure = None
+            if physics_evidence:
+                first_finite = previous is not None and substeps not in reconstructed_finite_levels
+                try:
+                    item["physics_reconstruction"] = capture_r1_physics_row(
+                        initial.system, working, state, previous, amplitude, dt, policy,
+                        check_jacobian=first_finite,
+                    )
+                except Exception as exc:
+                    # Diagnostics must not erase an already accepted state.
+                    # Keep its exact coordinates even when a fresh evaluation
+                    # is unavailable, and fail this evidence-producing run.
+                    physics_reconstruction_failure = {
+                        "type": type(exc).__name__, "message": str(exc),
+                    }
+                    item["physics_reconstruction"] = {
+                        "schema": "R1StateEquationRowV1", "available": False,
+                        "voltage_V": amplitude, "coordinate": json_data(state.coordinate),
+                        "failure": physics_reconstruction_failure,
+                    }
+                if previous is not None:
+                    reconstructed_finite_levels.add(substeps)
             if raw_initial_physical:
                 item["raw_initial_physical"] = json_data(raw_initial_physical)
             evidence = dict(item)
@@ -554,6 +584,14 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
             physical_checks = _physical_step_checks(
                 physical, finite_step=previous is not None, policy=policy, evidence=evidence,
             )
+            if physics_reconstruction_failure is not None:
+                reason = "physics_reconstruction_failed"
+                physical_checks["checks"]["physics_reconstruction"] = {
+                    "applicable": True, "passed": False, "failure_reason": reason,
+                    "failure": physics_reconstruction_failure,
+                }
+                physical_checks["passed"] = False
+                physical_checks["reasons"].append(reason)
             item.update({
                 "physical_checks": json_data(physical_checks),
                 "physical_checks_passed": physical_checks["passed"],

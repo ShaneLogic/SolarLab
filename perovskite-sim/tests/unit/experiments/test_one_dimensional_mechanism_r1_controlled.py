@@ -35,7 +35,7 @@ def git(root, *arguments):
 def commit(root):
     git(root, "add", "-A")
     git(root, "-c", "user.name=R1 Test", "-c", "user.email=r1-test@example.invalid",
-        "commit", "-q", "-m", "committed test fixture")
+        "commit", "--allow-empty", "-q", "-m", "committed test fixture")
     return git(root, "rev-parse", "HEAD")
 
 
@@ -48,10 +48,9 @@ def repository(tmp_path):
     for name in checkout.REQUIRED_SOURCE_ANCHORS:
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        if name in (checkout._CHECKOUT_MODULE, LAUNCHER, INPUT,
-                    "docs/OneDimensionalMechanismR1DynamicsV1.md",
-                    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md",
-                    "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json"):
+        if name in (checkout._CHECKOUT_MODULE, LAUNCHER) or Path(name).suffix != ".py":
+            # Every policy/data root is real. New pinned declarations must not
+            # silently become placeholders in an otherwise successful test.
             path.write_bytes((PROJECT / name).read_bytes())
         else:
             path.write_text("# test fixture\n")
@@ -330,7 +329,8 @@ def test_startup_rejection_seals_failure_without_overwriting_prior_run(repositor
         completion = json.loads((output / "CompletionV1.json").read_text())
         assert completion["status"] == "failed"
         assert completion["run_class"] == "rejected_before_execution"
-        assert completion["evidence_revision"] == 5
+        assert completion["evidence_revision"] == 6
+        assert completion["stage_scope"] == "R1-rejected"
         assert completion["physical_execution_started"] is False
         assert completion["source_identity_verified"] is False
         assert not (output / "SourceManifestV1.json").exists()
@@ -339,3 +339,68 @@ def test_startup_rejection_seals_failure_without_overwriting_prior_run(repositor
         for name, entry in entries.items():
             raw = (output / name).read_bytes()
             assert entry == {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+@pytest.mark.parametrize("relative,expected", [
+    ("docs/OneDimensionalMechanismR1PhysicsProtocolV1.md", "physics declaration differs"),
+    ("docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md", "physics declaration differs"),
+    ("docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md", "operator criterion differs"),
+    ("docs/OneDimensionalMechanismR1EvidenceV5.md", "physics declaration differs"),
+])
+def test_committed_physics_declaration_cannot_change_pinned_authority(repository, relative, expected):
+    root, project, _ = repository
+    path = project / relative
+    path.write_bytes(path.read_bytes()+b"\nForged permission to waive physical checks.\n")
+    revision = commit(root)
+    result = launch((root, project, revision))
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_frozen_snapshot_contains_real_physics_declarations(repository, tmp_path):
+    _, project, _ = repository
+    output = tmp_path / "snapshot"
+    data = assert_passed(launch(repository, "--output", str(output)))
+    with zipfile.ZipFile(output / "SourceV1.zip") as archive:
+        for relative in checkout.REQUIRED_SOURCE_ANCHORS:
+            if Path(relative).suffix in (".md", ".json", ".yaml"):
+                raw = (PROJECT / relative).read_bytes()
+                assert (project / relative).read_bytes() == raw
+                assert archive.read("perovskite-sim/"+relative) == raw
+                assert data["context"]["required_sources"]["perovskite-sim/"+relative] == {
+                    "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
+                }
+
+
+def test_real_extended_controlled_request_cannot_be_relabelled_development(repository, tmp_path):
+    import numpy as np
+
+    root, project, _ = repository
+    for relative in ("scripts/run_one_dimensional_mechanism_r1.py",
+                     "scripts/run_one_dimensional_mechanism_r0.py",
+                     "perovskite_sim/experiments/one_dimensional_mechanism_r1_convergence.py"):
+        (project / relative).write_bytes((PROJECT / relative).read_bytes())
+    output = tmp_path / "rejected_development"
+    runner = (PROJECT / "scripts/run_one_dimensional_mechanism_r1_stage_one.py").read_text()
+    arguments = ["step", "--development", "--physics-evidence", "--control", "D", "--intervals", "128",
+                 "--time-substeps", "2", "4", "8", "--reference", str(tmp_path / "not_read_reference.json"),
+                 "--prepared", str(tmp_path / "not_read_prepared.json"), "--output-dir", str(output)]
+    wrapper = (
+        "namespace = {'__file__': __file__, '__name__': 'production_runner_under_test'}\n"
+        "exec(compile("+repr(runner)+", __file__, 'exec'), namespace)\n"
+        "raise SystemExit(namespace['main']("+repr(arguments)+"))\n"
+    )
+    (project / "scripts/run_one_dimensional_mechanism_r1_stage_one.py").write_text(wrapper)
+    revision = commit(root)
+    result = launch((root, project, revision), deps=(Path(np.__file__).resolve().parent.parent,))
+    assert result.returncode == 1, result.stdout+result.stderr
+    failure = json.loads((output / "FailureV1.json").read_text())
+    assert "controlled execution cannot be relabelled as development" in failure["message"]
+    completion = json.loads((output / "CompletionV1.json").read_text())
+    assert completion["evidence_revision"] == 6
+    assert completion["stage_scope"] == "R1-rejected"
+    assert completion["run_class"] == "rejected_before_execution"
+    assert completion["status"] == "failed"
+    assert completion["physical_execution_started"] is False
+    assert not (output / "PreparedStateV1.json").exists()
+    assert not (output / "StepResultV1.json").exists()

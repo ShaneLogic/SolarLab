@@ -1,8 +1,8 @@
 """Externally anchored R1 artifact and controlled-source identity checks.
 
-Acceptance verifies identities and declared execution structure. Revision five
-also reevaluates saved preparation physics and cross-checks result records;
-it does not rerun time integration or grant independent approval. Trust this
+Current acceptance requires revision six and re-evaluates saved state equations,
+physical currents and declared execution parameters. Older formats are available
+only through explicit historical inspection. No mode grants independent approval. Trust this
 verifier, its Python startup and dependency installation, its fixed policy
 constants, and the Git object database selected outside the bundle.
 """
@@ -15,8 +15,15 @@ from pathlib import Path
 import zipfile
 
 
+def _required_bytes(path):
+    try:
+        return Path(path).read_bytes()
+    except OSError as exc:
+        raise ValueError("required evidence artifact unavailable: " + Path(path).name) from exc
+
+
 def sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return hashlib.sha256(_required_bytes(path)).hexdigest()
 
 
 COMMON_ARTIFACTS = frozenset({
@@ -41,7 +48,7 @@ def _unique_pairs(pairs):
 
 
 def read_json(path):
-    return _read_json_bytes(Path(path).read_bytes())
+    return _read_json_bytes(_required_bytes(path))
 
 
 def _read_json_bytes(raw):
@@ -114,9 +121,19 @@ def verify_output(output):
         ):
             raise ValueError(f"artifact identity mismatch: {name}")
     completion = read_json(output / "CompletionV1.json")
+    rejected = (completion.get("stage_scope") == "R1-rejected"
+                and completion.get("status") == "failed"
+                and completion.get("run_class") == "rejected_before_execution"
+                and completion.get("physical_execution_started") is False
+                and all(completion.get(name, 0) == 0 for name in (
+                    "accepted_record_count", "observed_record_count", "persisted_record_count",
+                    "persisted_finite_step_count", "physical_passed_finite_step_count")))
     if (
         completion.get("schema") != "R1StageOneCompletionV1"
-        or not (completion.get("stage_scope") == "R1-1" or (
+        or not (rejected or completion.get("stage_scope") == "R1-1" or (
+            completion.get("stage_scope") == "R1-2-physics"
+            and completion.get("run_class") == "formal"
+            and completion.get("evidence_revision") == 6) or (
             completion.get("stage_scope") == "R1-2-development"
             and completion.get("run_class") == "development"))
         or completion.get("stage") not in ("prepare", "zero-check", "step")
@@ -151,8 +168,10 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
     )
     from perovskite_sim.experiments import one_dimensional_mechanism_r1_binding as binding_policy
 
-    if completion.get("stage_scope") != "R1-1":
-        raise ValueError("formal acceptance rejects development execution scope")
+    revision = completion.get("evidence_revision", 1)
+    permitted_scopes = ("R1-1", "R1-2-physics") if revision >= 6 else ("R1-1",)
+    if completion.get("stage_scope") not in permitted_scopes:
+        raise ValueError("formal acceptance rejects development or unexecuted scope")
     execution = read_json(output / "ExecutionSourceV1.json")
     if (execution.get("schema") != "R1ExecutionSourceV2"
             or execution.get("run_class") != "formal" or completion.get("run_class") != "formal"):
@@ -173,9 +192,12 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
     source = read_json(output / "SourceManifestV1.json")
     required = execution.get("required_sources")
     revision = completion.get("evidence_revision", 1)
-    anchors = REQUIRED_SOURCE_ANCHORS if revision >= 5 else LEGACY_SOURCE_ANCHORS
+    fifth_anchors = (*LEGACY_SOURCE_ANCHORS,
+        "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md",
+        "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json")
+    anchors = REQUIRED_SOURCE_ANCHORS if revision >= 6 else fifth_anchors if revision == 5 else LEGACY_SOURCE_ANCHORS
     expected = {"perovskite-sim/" + name for name in anchors}
-    if revision < 5 and isinstance(required, dict):
+    if revision < 6 and isinstance(required, dict):
         # Old formats may have been produced with a superset of the old roots.
         # Accept only this known extension, never arbitrary bundle-selected roots.
         expected.update("perovskite-sim/" + name for name in REQUIRED_SOURCE_ANCHORS
@@ -209,29 +231,51 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
                         or hashlib.sha256(archive.read(name)).hexdigest() != identity.get("sha256")):
                     raise ValueError("source ZIP identity mismatch: " + name)
             input_name = "perovskite-sim/reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
-            if archive.read(input_name) != (output / "StudyInputV1.json").read_bytes():
+            if archive.read(input_name) != _required_bytes(output / "StudyInputV1.json"):
                 raise ValueError("study input differs from the controlled source snapshot")
             contract_name = "perovskite-sim/docs/OneDimensionalMechanismR1DynamicsV1.md"
-            if archive.read(contract_name) != (output / "ExecutionContractV1.md").read_bytes():
+            if archive.read(contract_name) != _required_bytes(output / "ExecutionContractV1.md"):
                 raise ValueError("contract differs from the controlled source snapshot")
             if revision >= 5:
-                criterion = (output / "OperatorCriterionDecisionV2.md").read_bytes()
+                criterion = _required_bytes(output / "OperatorCriterionDecisionV2.md")
                 if archive.read("perovskite-sim/" + binding_policy.OPERATOR_CRITERION_RELATIVE_PATH) != criterion:
                     raise ValueError("operator criterion differs from the controlled source snapshot")
-                if hashlib.sha256(criterion).hexdigest() != binding_policy.PINNED_OPERATOR_CRITERION_SHA256:
+                criterion_pins = {binding_policy.PINNED_OPERATOR_CRITERION_SHA256}
+                if revision < 6:
+                    criterion_pins.add("0adf2d3fec785febb9747c47e62a532fb23fabe6d58d08925e8de5573f657b9b")
+                if hashlib.sha256(criterion).hexdigest() not in criterion_pins:
                     raise ValueError("operator criterion does not match this verifier's pinned decision")
-                additional = (output / "AdditionalFailuresV1.json").read_bytes()
+                additional = _required_bytes(output / "AdditionalFailuresV1.json")
                 if archive.read("perovskite-sim/" + binding_policy.ADDITIONAL_FAILURES_RELATIVE_PATH) != additional:
                     raise ValueError("additional failures differ from the controlled source snapshot")
                 if hashlib.sha256(additional).hexdigest() != binding_policy.PINNED_ADDITIONAL_FAILURES_SHA256:
                     raise ValueError("additional failures do not match this verifier's pinned registry")
+            if revision >= 6:
+                physics = _required_bytes(output / "PhysicsProtocolV1.md")
+                if archive.read("perovskite-sim/" + binding_policy.PHYSICS_PROTOCOL_RELATIVE_PATH) != physics:
+                    raise ValueError("physics protocol differs from controlled source snapshot")
+                for relative, digest in binding_policy.FROZEN_PHYSICS_DECLARATIONS.items():
+                    if hashlib.sha256(archive.read("perovskite-sim/" + relative)).hexdigest() != digest:
+                        raise ValueError("physics declaration differs from trusted pinned decision: " + relative)
+                # The caller's Git anchor proves content identity, not that an
+                # arbitrary candidate implementation matches this verifier.
+                package = Path(__file__).resolve().parents[1]
+                installed = {"perovskite-sim/perovskite_sim/" + item.relative_to(package).as_posix(): item
+                             for item in package.rglob("*.py")}
+                archived = {name for name in source if name.startswith("perovskite-sim/perovskite_sim/")
+                            and name.endswith(".py")}
+                if archived != set(installed):
+                    raise ValueError("recorded package differs from trusted installed package coverage")
+                for name, path in installed.items():
+                    if archive.read(name) != path.read_bytes():
+                        raise ValueError("recorded package differs from trusted installed package: " + name)
             study = read_json(output / "StudyInputV1.json")
             fixture_name = "perovskite-sim/" + study["fixture"]
-            fixture_bytes = (output / "SourceFixtureV1.yaml").read_bytes()
+            fixture_bytes = _required_bytes(output / "SourceFixtureV1.yaml")
             if (archive.read(fixture_name) != fixture_bytes
                     or hashlib.sha256(fixture_bytes).hexdigest() != study["fixture_sha256"]):
                 raise ValueError("source fixture differs from the controlled snapshot or pinned input")
-    except (zipfile.BadZipFile, KeyError) as exc:
+    except (zipfile.BadZipFile, KeyError, OSError) as exc:
         raise ValueError("invalid controlled source ZIP") from exc
     input_pins = {binding_policy.PINNED_STUDY_INPUT_SHA256}
     if revision == 3:
@@ -240,9 +284,17 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
         input_pins.add("6a06878c467efe1b4d1a597ffcc45a8ad566ff347c4cdf868af094a36e8b64ca")
     if sha256(output / "StudyInputV1.json") not in input_pins:
         raise ValueError("study input does not match this verifier's pinned protocol")
-    if pin_contract and sha256(output / "ExecutionContractV1.md") != binding_policy.PINNED_EXECUTION_CONTRACT_SHA256:
+    contract_pins = {binding_policy.PINNED_EXECUTION_CONTRACT_SHA256}
+    if revision < 6:
+        contract_pins.add("a0a918d175c7989db60d5924b7600baadd1929cc54c7ac66b3ec3ccdcc1f9955")
+    if pin_contract and sha256(output / "ExecutionContractV1.md") not in contract_pins:
         raise ValueError("contract does not match this verifier's pinned contract")
     study, protocol = read_json(output / "StudyInputV1.json"), read_json(output / "ProtocolV1.json")
+    if revision >= 6:
+        expected_physics = binding_policy.PINNED_PHYSICS_PROTOCOL_SHA256
+        if (protocol.get("physics_protocol_sha256") != expected_physics
+                or sha256(output / "PhysicsProtocolV1.md") != expected_physics):
+            raise ValueError("protocol physical acceptance identity mismatch")
     if revision >= 5 and protocol.get("criterion_sha256") != sha256(output / "OperatorCriterionDecisionV2.md"):
         raise ValueError("protocol operator criterion identity mismatch")
     if revision >= 5 and protocol.get("additional_failures_sha256") != sha256(output / "AdditionalFailuresV1.json"):
@@ -376,7 +428,8 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
     parent_completion = read_json(parent / "CompletionV1.json")
     if parent_completion.get("stage") != "prepare" or parent_completion.get("status") != "passed":
         raise ValueError("preparation chain must refer to a passed prepare stage")
-    parent_completion, _ = verify_acceptance(
+    parent_verifier = verify_acceptance if revision >= 6 else inspect_legacy_evidence
+    parent_completion, _ = parent_verifier(
         parent, expected_manifest_sha256=expected,
         expected_source_commit=execution["source_commit"],
         source_repository=source_repository, required_evidence_revision=revision,
@@ -396,18 +449,20 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
     # while preserving an externally selected parent manifest identity.
     for name in ("PreparedStateV1.json", "StudyInputV1.json", "ExecutionContractV1.md",
                  "ReferenceBindingV1.json", "SourceFixtureV1.yaml"):
-        if (output / name).read_bytes() != (parent / name).read_bytes():
+        if _required_bytes(output / name) != _required_bytes(parent / name):
             raise ValueError("imported preparation artifact differs from the anchored parent: " + name)
     if revision >= 5:
         for name in ("OperatorCriterionDecisionV2.md", "AdditionalFailuresV1.json"):
-            if (output / name).read_bytes() != (parent / name).read_bytes():
+            if _required_bytes(output / name) != _required_bytes(parent / name):
                 raise ValueError("imported policy artifact differs from the anchored parent: " + name)
+    if revision >= 6 and _required_bytes(output / "PhysicsProtocolV1.md") != _required_bytes(parent / "PhysicsProtocolV1.md"):
+        raise ValueError("imported physics protocol differs from anchored parent")
     if protocol.get("prepared_file_sha256") != sha256(output / "PreparedStateV1.json"):
         raise ValueError("protocol prepared-state file identity mismatch")
 
 
-def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
-                      ledger_sha256=None, run_id=None, required_evidence_revision=5,
+def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=None,
+                      ledger_sha256=None, run_id=None, required_evidence_revision=6,
                       expected_source_commit=None, source_repository=None,
                       expected_prepared_manifest_sha256=None):
     output = Path(output).resolve(strict=True)
@@ -418,8 +473,11 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
         raise ValueError("bundle manifest differs from the supplied external anchor")
     completion, count = verify_output(output)
     result_checks = None
-    if required_evidence_revision not in (1, 2, 3, 4, 5):
+    execution_parameters = None
+    if required_evidence_revision not in (1, 2, 3, 4, 5, 6):
         raise ValueError("unsupported externally required evidence revision")
+    if completion.get("stage_scope") == "R1-rejected":
+        raise ValueError("physical execution did not start; required scientific inputs and trajectory unavailable")
     if required_evidence_revision >= 4:
         if expected_source_commit is None:
             expected_source_commit = ledger_source_commit
@@ -448,10 +506,15 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
                 output, completion, execution, source_repository=source_repository,
                 expected_prepared_manifest_sha256=expected_prepared_manifest_sha256,
             )
+        if required_evidence_revision >= 6:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_execution_validation import verify_execution_parameters
+            execution_parameters = verify_execution_parameters(output, completion)
         if required_evidence_revision >= 5:
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import verify_result_records
-
             result_checks = verify_result_records(output, completion)
+            if (required_evidence_revision >= 6 and completion["status"] == "passed"
+                    and not result_checks.get("scientifically_accepted", False)):
+                raise ValueError("passed record lacks current physical acceptance")
     if entry is not None:
         if ("required_evidence_revision" in entry
                 and entry["required_evidence_revision"] != required_evidence_revision):
@@ -481,10 +544,46 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
             limits.append("failed preparation has no accepted equilibrium certificate")
     if completion["status"] == "failed":
         limits.append("failed record remains failed; successful-evidence structure not certified")
+    if required_evidence_revision < 6:
+        limits.append("historical inspection only; not eligible for current scientific acceptance")
+    elif completion["stage"] == "step":
+        limits.append("saved states, rates, currents and declared equation residuals independently reevaluated; no time integration replay")
     return {**completion, "verification": {
         "required_evidence_revision": required_evidence_revision,
-        "legacy": required_evidence_revision < 5,
+        "legacy": required_evidence_revision < 6,
+        "mode": "physical_acceptance" if required_evidence_revision >= 6 else "historical_inspection",
+        "scientifically_accepted": bool(required_evidence_revision >= 6 and completion["status"] == "passed"
+                                        and result_checks and result_checks.get("scientifically_accepted")),
+        "execution_parameters": execution_parameters,
         "source_commit_anchor": source_commit,
         "result_checks": result_checks,
         "limits": limits,
     }}, count
+
+
+def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
+                      ledger_sha256=None, run_id=None, required_evidence_revision=6,
+                      expected_source_commit=None, source_repository=None,
+                      expected_prepared_manifest_sha256=None):
+    """Current physical acceptance; historical contracts cannot lower this gate."""
+    if type(required_evidence_revision) is not int or required_evidence_revision != 6:
+        raise ValueError("current physical acceptance requires evidence revision 6; use inspect_legacy_evidence for historical inspection")
+    return _verify_anchored_evidence(output, expected_manifest_sha256=expected_manifest_sha256,
+        ledger=ledger, ledger_sha256=ledger_sha256, run_id=run_id,
+        required_evidence_revision=6, expected_source_commit=expected_source_commit,
+        source_repository=source_repository,
+        expected_prepared_manifest_sha256=expected_prepared_manifest_sha256)
+
+
+def inspect_legacy_evidence(output, *, expected_manifest_sha256=None, ledger=None,
+                            ledger_sha256=None, run_id=None, required_evidence_revision=5,
+                            expected_source_commit=None, source_repository=None,
+                            expected_prepared_manifest_sha256=None):
+    """Inspect externally anchored revisions 1-5 without current science approval."""
+    if type(required_evidence_revision) is not int or required_evidence_revision not in (1, 2, 3, 4, 5):
+        raise ValueError("historical inspection supports only evidence revisions 1 through 5")
+    return _verify_anchored_evidence(output, expected_manifest_sha256=expected_manifest_sha256,
+        ledger=ledger, ledger_sha256=ledger_sha256, run_id=run_id,
+        required_evidence_revision=required_evidence_revision,
+        expected_source_commit=expected_source_commit, source_repository=source_repository,
+        expected_prepared_manifest_sha256=expected_prepared_manifest_sha256)

@@ -183,7 +183,7 @@ spread at `2e-6`. The original nonlinear, local capture/Gauss, analytic
 Jacobian, eliminated-operator, time-refinement and decomposition checks also
 remain in force. Passing one short trace establishes only its recorded scope.
 
-The decision in `OneDimensionalMechanismR1OperatorCriterionDecisionV1.md`
+The current declaration in `OneDimensionalMechanismR1PhysicsProtocolV1.md`
 freezes the current long-window disposition: the measured nu_I=1 tails are
 not certifiable under the existing eliminated-operator criterion. In the
 observed near-equilibrium states its ion-rate and ion-flux denominators fall

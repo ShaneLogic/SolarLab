@@ -1,4 +1,6 @@
-# R1 evidence revision five
+# Historical R1 evidence revision five
+
+Superseded for current physical acceptance by `OneDimensionalMechanismR1PhysicsProtocolV1.md`. Revision five is inspection-only; its reported status is not a current physical acceptance decision.
 
 Revision five is a development candidate. It does not imply independent
 approval of a source commit, a trajectory, a parameter range or a new physical

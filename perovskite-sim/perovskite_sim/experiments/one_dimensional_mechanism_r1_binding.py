@@ -17,13 +17,30 @@ STUDY_INPUT_PATH = Path(__file__).resolve().parents[2] / STUDY_INPUT_RELATIVE_PA
 EXECUTION_CONTRACT_RELATIVE_PATH = "docs/OneDimensionalMechanismR1DynamicsV1.md"
 OPERATOR_CRITERION_RELATIVE_PATH = "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md"
 ADDITIONAL_FAILURES_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json"
+PHYSICS_PROTOCOL_RELATIVE_PATH = "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md"
 # A versioned policy pin, not a claim that arbitrary code carrying this value
 # is independently approved. Updating the study input requires explicit repin.
 PINNED_STUDY_INPUT_SHA256 = "3065a31951d4a90e8b0d03d042e3f2c0349cc7d8e792381a275cb05d58a047ca"
 PINNED_REFERENCE_BINDING_SHA256 = "0a6532a436dd07e6b27f01da3fc39aef906e6fd882057f0109c1bc5bdf77e39b"
-PINNED_EXECUTION_CONTRACT_SHA256 = "a0a918d175c7989db60d5924b7600baadd1929cc54c7ac66b3ec3ccdcc1f9955"
-PINNED_OPERATOR_CRITERION_SHA256 = "0adf2d3fec785febb9747c47e62a532fb23fabe6d58d08925e8de5573f657b9b"
+PINNED_EXECUTION_CONTRACT_SHA256 = "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"
+PINNED_OPERATOR_CRITERION_SHA256 = "659acb61ad5c457626300bf980b7b2208d67779a2691fbdb14d628dc6aec96e6"
 PINNED_ADDITIONAL_FAILURES_SHA256 = "ae2d52cf08a029e0273689d03f16ce8945fdd1ca423582542a49a641d50f9aaa"
+PINNED_PHYSICS_PROTOCOL_SHA256 = "ab74fc3ff56fdcb764a20697b14b0c6afc2973cb2031232b462b8d7202b7ca98"
+FROZEN_PHYSICS_DECLARATIONS = {
+    PHYSICS_PROTOCOL_RELATIVE_PATH: PINNED_PHYSICS_PROTOCOL_SHA256,
+    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md": "5593dfb1cf96893261932d5167d48ea104baf42425494feb9677c7e34d3c577b",
+    OPERATOR_CRITERION_RELATIVE_PATH: PINNED_OPERATOR_CRITERION_SHA256,
+    "docs/OneDimensionalMechanismR1EvidenceV5.md": "f4855d46ef1861d54daa8959e1d047bd31b764d72dc6b25c1b38505452264a1f",
+}
+
+
+def physics_protocol_identity():
+    """Keep current authority and superseded declarations unambiguous."""
+    context = require_r1_checkout()
+    for path, expected in FROZEN_PHYSICS_DECLARATIONS.items():
+        if hashlib.sha256(context.read_bytes(path)).hexdigest() != expected:
+            raise R1CheckoutError("R1 physics declaration differs from its pinned digest: " + path)
+    return {"path": PHYSICS_PROTOCOL_RELATIVE_PATH, "sha256": PINNED_PHYSICS_PROTOCOL_SHA256}
 
 
 def additional_failures_identity():
@@ -107,4 +124,4 @@ def validate_r1_study_binding(binding, stack):
 
 
 __all__ = ["validate_r1_study_binding", "study_input_identity", "execution_contract_identity",
-           "operator_criterion_identity", "additional_failures_identity"]
+           "operator_criterion_identity", "additional_failures_identity", "physics_protocol_identity"]

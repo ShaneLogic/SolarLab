@@ -63,7 +63,7 @@ def test_revision_five_recertifies_saved_preparation_without_new_dc_solve(bundle
         raise AssertionError("acceptance must not run another DC optimizer")
     monkeypatch.setattr(common, "solve_r1_dc", forbidden)
     completion, _ = check(bundle, source_repository)
-    assert completion["verification"]["legacy"] is False
+    assert completion["verification"]["legacy"] is True
     assert "time integration not rerun" in " ".join(completion["verification"]["limits"])
 
 

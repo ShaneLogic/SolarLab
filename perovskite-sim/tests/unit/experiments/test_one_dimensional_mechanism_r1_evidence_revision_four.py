@@ -113,7 +113,7 @@ def accept(output, repository, **kwargs):
         "expected_source_commit": repository[2], "source_repository": repository[0],
     }
     defaults.update(kwargs)
-    return evidence.verify_acceptance(output, **defaults)
+    return evidence.inspect_legacy_evidence(output, **defaults)
 
 
 def consume(prepared, target):
@@ -346,7 +346,7 @@ def test_legacy_selection_is_explicit_and_marked(prepared_bundle, source_reposit
     seal(prepared_bundle)
     with pytest.raises(ValueError, match="externally required revision"):
         accept(prepared_bundle, source_repository)
-    accepted, _ = evidence.verify_acceptance(
+    accepted, _ = evidence.inspect_legacy_evidence(
         prepared_bundle, expected_manifest_sha256=evidence.sha256(prepared_bundle / "ManifestV1.json"),
         required_evidence_revision=revision,
     )
@@ -375,7 +375,7 @@ def make_ledger(output, repository, destination, *, top=True, entry=True):
 
 
 def accept_ledger(output, repository, ledger, **kwargs):
-    return evidence.verify_acceptance(
+    return evidence.inspect_legacy_evidence(
         output, ledger=ledger, ledger_sha256=evidence.sha256(ledger), run_id="prepare",
         source_repository=repository[0], required_evidence_revision=4, **kwargs,
     )

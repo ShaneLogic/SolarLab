@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run R1 common-state controls; opt into R1-2 numerical axes in development."""
+"""Run R1 controls with saved state-equation evidence and independent accuracy settings."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from run_one_dimensional_mechanism_r1 import (
 INPUT_PATH = PROJECT / "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 CONTRACT_PATH = PROJECT / "docs/OneDimensionalMechanismR1DynamicsV1.md"
 CRITERION_PATH = PROJECT / "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md"
+PHYSICS_PROTOCOL_PATH = PROJECT / "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md"
 ADDITIONAL_FAILURES_PATH = PROJECT / "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json"
 THREAD_VARIABLES = (
     "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
@@ -37,7 +38,7 @@ THREAD_VARIABLES = (
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_evidence import (
     COMMON_ARTIFACTS, read_json, _read_json_bytes, _canonical,
-    verify_output, verify_acceptance,
+    verify_output, verify_acceptance, inspect_legacy_evidence,
 )
 
 
@@ -153,12 +154,12 @@ def _import_preparation(output, prepared_path, expected_manifest, context):
     completion, _ = verify_acceptance(
         archived, expected_manifest_sha256=expected_manifest,
         expected_source_commit=context.source_commit, source_repository=context.root,
-        required_evidence_revision=5,
+        required_evidence_revision=6,
     )
     if completion["stage"] != "prepare" or completion["status"] != "passed":
         raise ValueError("formal import requires a passed formal preparation bundle")
     for filename in ("StudyInputV1.json", "SourceFixtureV1.yaml", "ExecutionContractV1.md",
-                     "OperatorCriterionDecisionV2.md", "AdditionalFailuresV1.json",
+                     "OperatorCriterionDecisionV2.md", "PhysicsProtocolV1.md", "AdditionalFailuresV1.json",
                      "ReferenceBindingV1.json"):
         if (archived / filename).read_bytes() != (output / filename).read_bytes():
             raise ValueError("preparation and consuming inputs disagree: " + filename)
@@ -233,7 +234,7 @@ def main(argv=None):
     parser.add_argument("--nonlinear-factor", type=float, choices=(1.0, 0.1, 0.01, 0.001), default=0.1)
     parser.add_argument("--time-substeps", type=int, nargs=3, default=(1, 2, 4),
                         metavar=("COARSE", "MIDDLE", "FINE"),
-                        help="step time-axis setting: 1 2 4 through 16 32 64; nondefault requires --development")
+                        help="independent step time setting: 1 2 4 through 16 32 64")
     parser.add_argument("--window", choices=("functional", "full"), default="functional",
                         help="step output grid: legacy short functional grid or section-6 full logarithmic grid")
     parser.add_argument("--first-time-s", type=float,
@@ -241,15 +242,17 @@ def main(argv=None):
     parser.add_argument("--last-time-s", type=float,
                         help="full-grid endpoint: 1e2, 1e3, 1e4 or 1e5 s")
     parser.add_argument("--input", type=Path, default=INPUT_PATH)
-    parser.add_argument("--mode", choices=("integrity", "acceptance"), default="integrity")
+    parser.add_argument("--mode", choices=("integrity", "acceptance", "legacy-inspect"), default="integrity")
     parser.add_argument("--expected-manifest-sha256")
     parser.add_argument("--expected-source-commit",
                         help="full Git commit selected outside the bundle for current acceptance")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--ledger-sha256")
     parser.add_argument("--run-id")
-    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3, 4, 5), default=5,
-                        help="acceptance format chosen outside the bundle; 1/2/3/4 are explicit legacy verification")
+    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3, 4, 5, 6), default=6,
+                        help="current physical acceptance requires 6; use legacy-inspect for revisions 1-5")
+    parser.add_argument("--physics-evidence", action="store_true",
+                        help="save state-equation evidence in development runs; always enabled for controlled runs")
     parser.add_argument("--development", action="store_true",
                         help="explicit unverified development execution; not formal study evidence")
     args = parser.parse_args(argv)
@@ -260,10 +263,10 @@ def main(argv=None):
             "step: 0-/0+, impulse charge, and regular response for one control\n"
             "verify: byte consistency or comparison to a supplied external acceptance anchor\n"
             "Default scope: R1-1 short functional window.\n"
-            "R1-2 development: --time-substeps selects an independent nested time setting;\n"
+            "R1-2 physics: --time-substeps selects an independent nested time setting;\n"
             "--intervals supports 16/32/64/128/256; --window full uses 0+ and 1e-9..1e2 s,\n"
             "12 intervals per decade; --first-time-s/--last-time-s select declared extensions.\n"
-            "Nondefault time settings, extended spatial grids and full windows require --development.\n"
+            "Controlled runs save per-step state-equation evidence under revision 6.\n"
             "Each invocation runs one setting; three-axis convergence and full-window certification are not asserted."
         )
         return 0
@@ -272,8 +275,9 @@ def main(argv=None):
     output = args.output_dir.resolve()
     if args.stage == "verify":
         try:
-            if args.mode == "acceptance":
-                completion, count = verify_acceptance(
+            if args.mode in ("acceptance", "legacy-inspect"):
+                verify = verify_acceptance if args.mode == "acceptance" else inspect_legacy_evidence
+                completion, count = verify(
                     output, expected_manifest_sha256=args.expected_manifest_sha256,
                     ledger=args.ledger, ledger_sha256=args.ledger_sha256, run_id=args.run_id,
                     required_evidence_revision=args.required_evidence_revision,
@@ -284,16 +288,16 @@ def main(argv=None):
             else:
                 if any((args.expected_manifest_sha256, args.expected_source_commit,
                         args.prepared_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
-                    raise ValueError("acceptance anchors require --mode acceptance")
+                    raise ValueError("external anchors require --mode acceptance or --mode legacy-inspect")
                 completion, count = verify_output(output)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             print(f"verify failed: {exc}", file=sys.stderr)
             return 1
-        scope = ("supplied external anchor matched; no independent approval or physics rerun asserted"
-                 if args.mode == "acceptance" else "provenance not authenticated")
-        print(f"checksums consistent for {count} files; {scope}; recorded {completion['stage']} status: {completion['status']}")
-        if completion.get("verification", {}).get("legacy"):
-            print("legacy verification limits: " + str(completion["verification"]["limits"]))
+        print(f"{args.mode}: {count} saved files checked; recorded {completion['stage']} status: {completion['status']}")
+        if args.mode == "integrity":
+            print("Byte consistency only; physical equations and source provenance were not verified.")
+        else:
+            print(json.dumps(completion.get("verification", {}), sort_keys=True, allow_nan=False))
         return int(completion["status"] != "passed")
     if args.mode != "integrity" or any((args.expected_manifest_sha256, args.expected_source_commit,
                                        args.ledger, args.ledger_sha256, args.run_id)):
@@ -335,9 +339,7 @@ def main(argv=None):
         except (TypeError, ValueError) as exc:
             parser.error(str(exc))
     stage_two = args.intervals > 64 or args.time_substeps != (1, 2, 4) or args.window != "functional"
-    if stage_two and not args.development:
-        parser.error("R1-2 axes/windows require --development; the formal R1-1 contract is unchanged")
-    stage_scope = "R1-2-development" if stage_two else "R1-1"
+    stage_scope = ("R1-2-development" if args.development else "R1-2-physics") if stage_two else "R1-1"
     try:
         output.mkdir(parents=True, exist_ok=False)
     except FileExistsError:
@@ -351,6 +353,7 @@ def main(argv=None):
     persisted_count = 0
     preparation = None
     expected_prepared_sha256 = None
+    computation_started = False
     try:
         execution_context = _record_execution_source(output)
         controlled = execution_context is not None and execution_context.run_class == "formal"
@@ -374,6 +377,9 @@ def main(argv=None):
         criterion = (execution_context.read_bytes(CRITERION_PATH) if execution_context is not None
                      else CRITERION_PATH.read_bytes())
         (output / "OperatorCriterionDecisionV2.md").write_bytes(criterion)
+        physics_protocol = (execution_context.read_bytes(PHYSICS_PROTOCOL_PATH)
+                            if execution_context is not None else PHYSICS_PROTOCOL_PATH.read_bytes())
+        (output / "PhysicsProtocolV1.md").write_bytes(physics_protocol)
         additional_failures = (execution_context.read_bytes(ADDITIONAL_FAILURES_PATH)
                                if execution_context is not None else ADDITIONAL_FAILURES_PATH.read_bytes())
         (output / "AdditionalFailuresV1.json").write_bytes(additional_failures)
@@ -403,6 +409,7 @@ def main(argv=None):
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
             STUDY_INPUT_PATH, validate_r1_study_binding,
             execution_contract_identity, operator_criterion_identity, additional_failures_identity,
+            physics_protocol_identity,
         )
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
             R1PreparedState, prepare_common_state,
@@ -418,6 +425,7 @@ def main(argv=None):
         execution_contract_identity()
         operator_criterion_identity()
         additional_failures_identity()
+        physics_protocol_identity()
         study = _merge_additional_failures(study, _read_json_bytes(additional_failures))
         stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
         policy = r1_policy(nonlinear_factor=args.nonlinear_factor, time_substeps=args.time_substeps)
@@ -458,6 +466,7 @@ def main(argv=None):
                     "logarithmic_intervals_per_decade": 12 if args.window == "full" else None,
                 } if args.stage == "step" else None),
                 "numerical_validation_scope": "single setting; no three-axis convergence, amplitude linearity or dual-domain acceptance asserted",
+                "physics_evidence": controlled or args.physics_evidence,
                 "control": "D" if args.stage == "prepare" else args.control or "ABCD",
                 "control_definitions": study["controls"],
                 "amplitude_V": args.amplitude if args.stage == "step" else 0.0,
@@ -472,12 +481,14 @@ def main(argv=None):
                 "supplied_input_sha256": hashlib.sha256(supplied_input).hexdigest(),
                 "contract_sha256": sha256(output / "ExecutionContractV1.md"),
                 "criterion_sha256": sha256(output / "OperatorCriterionDecisionV2.md"),
+                "physics_protocol_sha256": sha256(output / "PhysicsProtocolV1.md"),
                 "additional_failures_sha256": sha256(output / "AdditionalFailuresV1.json"),
                 "historical_failure_case_count": sum(len(study.get(key, [])) for key in (
                     "known_nonconvergence", "known_physical_gate_failures",
                 )),
                 "claims_excluded": study["claims_excluded"],
             })
+            computation_started = True
             if args.stage == "prepare":
                 prepared = prepare_common_state(stack, args.intervals, binding, policy=policy)
                 write_json(output / "PreparedStateV1.json", prepared.to_dict())
@@ -504,6 +515,7 @@ def main(argv=None):
                         amplitude_V=args.amplitude, times_s=np.asarray(args.resolved_times_s),
                         policy=policy, accepted_step_observer=observe,
                         expected_prepared_sha256=expected_prepared_sha256,
+                        physics_evidence=controlled or args.physics_evidence,
                     )
                     write_json(output / "StepResultV1.json", result)
                 if not result["certificate"]["certified"]:
@@ -526,14 +538,16 @@ def main(argv=None):
                     "message": str(serialization_error),
                 })
     write_json(output / "CompletionV1.json", {
-        "schema": "R1StageOneCompletionV1", "stage_scope": stage_scope,
+        "schema": "R1StageOneCompletionV1", "stage_scope": stage_scope if computation_started else "R1-rejected",
         "stage": args.stage, "status": "failed" if failure else "passed",
         "duration_s": time.monotonic() - started,
         "finished_utc": datetime.now(timezone.utc).isoformat(), "failure": failure,
-        "evidence_revision": 5,
-        "run_class": (execution_context.run_class if execution_context is not None else
+        "evidence_revision": 6,
+        "run_class": ("rejected_before_execution" if not computation_started else
+                      execution_context.run_class if execution_context is not None else
                       "development" if args.development else "rejected_before_execution"),
         "independent_approval": "not_asserted_by_execution",
+        "physical_execution_started": computation_started,
         "historical_case_observation": _historical_case_observation(study, args, policy, failure),
         "accepted_record_count": persisted_count,
         "observed_record_count": len(accepted), "persisted_record_count": persisted_count,

@@ -1,4 +1,4 @@
-"""Revision-five result consistency, without claiming an integration replay."""
+"""Current saved-state physics verification and explicit legacy consistency."""
 
 from __future__ import annotations
 
@@ -427,7 +427,7 @@ def _step(record, rows, protocol, completion, prepared, output):
     _counts(completion, rows)
 
 
-def verify_result_records(output: Path, completion: dict) -> dict:
+def _verify_legacy_result_records(output: Path, completion: dict) -> dict:
     """Validate saved claims and duplicate representations, without new solves."""
     output = Path(output)
     if completion["status"] == "failed":
@@ -474,3 +474,224 @@ def verify_result_records(output: Path, completion: dict) -> dict:
             if value["remaining_equations"].get("certified") is not True:
                 raise ValueError("zero-check contains failed equilibrium equations")
     return _scope("step" if completion["stage"] == "step" else "zero-check")
+
+
+def _tagged_numeric(value):
+    """Recover a lossless failed-array sidecar value from strict tagged JSON."""
+    if isinstance(value, dict):
+        if set(value) == {"nonfinite"} and value["nonfinite"] in ("nan", "inf", "-inf"):
+            return float(value["nonfinite"])
+        if set(value) == {"real", "imag"}:
+            return complex(_tagged_numeric(value["real"]), _tagged_numeric(value["imag"]))
+        raise ValueError("failed result contains invalid numeric tags")
+    if isinstance(value, list):
+        return [_tagged_numeric(item) for item in value]
+    return value
+
+
+def _failed_sidecar(path, record):
+    if not path.exists():
+        return
+    with np.load(path, allow_pickle=False) as arrays:
+        if len(arrays.files) != len(set(arrays.files)):
+            raise ValueError("duplicate failed result sidecar arrays")
+        for name in arrays.files:
+            parts = name.split(".")
+            if parts[0] != "data":
+                raise ValueError("unknown failed result sidecar field")
+            value = record
+            try:
+                for part in parts[1:]:
+                    value = value[int(part)] if isinstance(value, list) else value[part]
+                expected = np.asarray(_tagged_numeric(value))
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise ValueError("unknown failed result sidecar field: " + name) from exc
+            actual = arrays[name]
+            if (actual.dtype.kind not in "fiuc" or expected.dtype.kind not in "fiuc"
+                    or actual.shape != expected.shape
+                    or not np.array_equal(actual, expected, equal_nan=True)):
+                raise ValueError("failed result JSON/NPZ mismatch: " + name)
+
+
+
+def _failed_preparation_physics(output, raw):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
+        _decode_dc, _make_system, _preparation_policy, _recomputed_dc_certificate,
+        build_r1_material, equilibrium_checks, snapshot, json_data,
+    )
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
+    binding = read_json(output / "ReferenceBindingV1.json")
+    _same(raw.get("physical_stack"), json_data(stack), "failed preparation material stack")
+    _same(raw.get("fixed_reference"), binding, "failed preparation fixed reference")
+    _same(raw.get("intervals"), read_json(output / "ProtocolV1.json")["intervals"], "failed preparation intervals")
+    policy = _preparation_policy(raw.get("preparation_policy"))
+    try:
+        grid, material = build_r1_material(stack, raw["intervals"])
+        dc = _decode_dc(raw["dc_state"])
+        system = _make_system(stack, grid, material, dc, binding, R1DynamicsControls(), policy)
+        state = system.evaluate(system.initial_coordinate(), 0.0)
+        _same(raw.get("state"), snapshot(system, state), "failed preparation saved physical arrays")
+        checks = equilibrium_checks(system, state, policy)
+        _same(raw.get("preparation_checks"), checks, "failed preparation reported equations")
+        certificate = _recomputed_dc_certificate(system, dc)
+        for key, value in certificate.items():
+            _same(raw["dc_state"]["certificate"].get(key), value, "failed preparation DC metric " + key)
+    except (TypeError, KeyError, FloatingPointError, RuntimeError) as exc:
+        raise ValueError("failed preparation physical reevaluation unavailable: " + str(exc)) from exc
+
+
+def _failed_zero_physics(output, record, prepared):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import r1_policy
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import equilibrium_checks, snapshot
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import build_initial_step
+
+    protocol = read_json(output / "ProtocolV1.json")
+    policy = r1_policy(protocol["nonlinear_factor"], time_substeps=protocol["time_substeps"])
+    _same(record.get("prepared_sha256"), prepared["sha256"], "failed zero preparation")
+    _same(record.get("reference_sha256"), prepared["reference_sha256"], "failed zero reference")
+    if not isinstance(record.get("controls"), dict) or not set(record["controls"]) <= set(protocol["control"]):
+        raise ValueError("failed zero-control coverage mismatch")
+    for label, value in record["controls"].items():
+        controls = R1DynamicsControls.from_label(label)
+        system, state = _system(output, prepared, controls, policy)
+        _same(value.get("controls"), controls, "failed zero control " + label)
+        _same(value.get("population_identity"), snapshot(system, state), "failed zero population " + label)
+        _same(value.get("remaining_equations"), equilibrium_checks(system, state, policy), "failed zero equations " + label)
+        _same(value.get("initial_event"), build_initial_step(system, state, 0.0, policy=policy).event,
+              "failed zero initial event " + label)
+
+def _verify_physical_result_records(output, completion):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_physics_validation import verify_r1_step_physics
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import verify_prepared_physics
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    failed, stage = completion["status"] == "failed", completion["stage"]
+    base_scope = {
+        "stage": stage, "integration_replayed": False,
+        "numerical_certificate_independently_approved": False,
+        "range_only": [], "provenance_only": ["execution_environment", "timestamps", "solver_iteration_history"],
+        "scientifically_accepted": False,
+        "scope": "single_recorded_setting_not_full_R1_2_or_mechanism_acceptance",
+    }
+    if failed:
+        _same(read_json(output / "FailureV1.json"), completion["failure"], "failure record")
+    elif any((output / name).exists() for name in ("FailureV1.json", "FailedResultV1.json")):
+        raise ValueError("passed result contains conflicting failure evidence")
+    if stage != "step":
+        if failed:
+            checked = []
+            prepared = None
+            if (output / "PreparedStateV1.json").exists():
+                prepared = read_json(output / "PreparedStateV1.json")
+                _failed_sidecar(output / "PreparedStateV1.npz", prepared)
+                verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
+                                        read_json(output / "ReferenceBindingV1.json"))
+                checked.append("saved_preparation_equations")
+            payload_path = output / "FailedResultV1.json"
+            if payload_path.exists():
+                payload = read_json(payload_path)
+                _failed_sidecar(payload_path.with_suffix(".npz"), payload)
+                duplicate = output / "ZeroExcitationV1.json"
+                if duplicate.exists():
+                    _same(read_json(duplicate), payload, "failed zero-excitation duplicate")
+                    _failed_sidecar(duplicate.with_suffix(".npz"), payload)
+                if payload.get("certificate", {}).get("certified") is True or payload.get("certified") is True:
+                    raise ValueError("failed scientific payload cannot assert a passed certificate")
+                schema = payload.get("schema")
+                if schema == "R1FailedPreparationV1" and "raw_preparation" in payload:
+                    _failed_preparation_physics(output, payload["raw_preparation"])
+                    checked.append("failed_preparation_state_and_reported_equations")
+                elif schema == "R1ZeroExcitationV1" and prepared is not None:
+                    _failed_zero_physics(output, payload, prepared)
+                    checked.append("saved_partial_zero_excitation_equations")
+                else:
+                    raise ValueError("present failed scientific payload has no reconstructable physical schema")
+            return {**base_scope, "content_matches_recomputed": True if checked else None,
+                    "physical_limits_satisfied": False, "checked": checked,
+                    "unavailable": "failed experiment remains ineligible for scientific acceptance"}
+        prepared = read_json(output / "PreparedStateV1.json")
+        _failed_sidecar(output / "PreparedStateV1.npz", prepared)
+        verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
+                                read_json(output / "ReferenceBindingV1.json"))
+        if stage == "zero-check":
+            _verify_legacy_result_records(output, completion)
+            _failed_sidecar(output / "ZeroExcitationV1.npz", read_json(output / "ZeroExcitationV1.json"))
+        return {**base_scope, "scientifically_accepted": True,
+                "content_matches_recomputed": True, "physical_limits_satisfied": True,
+                "checked": ["saved_preparation_equations"] + (["zero_excitation_equations"] if stage == "zero-check" else [])}
+    rows_path = output / "AcceptedStepsV1.json"
+    rows = read_json(rows_path) if rows_path.exists() else []
+    _failed_sidecar(rows_path.with_suffix(".npz"), rows)
+    _counts(completion, rows)
+    result_path = output / ("FailedResultV1.json" if failed else "StepResultV1.json")
+    if not result_path.exists():
+        if failed and not rows:
+            return {**base_scope, "content_matches_recomputed": None,
+                    "physical_limits_satisfied": False, "checked_row_count": 0,
+                    "unavailable": "failure before a reconstructable trajectory was saved"}
+        raise ValueError("physical result payload unavailable for saved accepted rows")
+    record = read_json(result_path)
+    if failed and (output / "StepResultV1.json").exists():
+        _same(read_json(output / "StepResultV1.json"), record, "failed step duplicate")
+        _failed_sidecar(output / "StepResultV1.npz", record)
+    if record.get("schema") != "R1ControlledStepV1":
+        if failed and not rows:
+            return {**base_scope, "content_matches_recomputed": None,
+                    "physical_limits_satisfied": False, "checked_row_count": 0,
+                    "unavailable": "failed payload contains no controlled trajectory"}
+        raise ValueError("physical result schema mismatch")
+    record_rows = record.get("accepted_steps")
+    if not isinstance(record_rows, list):
+        raise ValueError("physical result lacks accepted-state records")
+    if failed and len(record_rows) != len(rows):
+        # A failed durable write can leave one extra observed row in the raw
+        # failure payload. Bind the durable prefix, then verify every raw row.
+        if len(record_rows) != completion.get("observed_record_count") or len(record_rows) < len(rows):
+            raise ValueError("failed result observed-state coverage mismatch")
+        _same(record_rows[:len(rows)], rows, "failed persisted accepted prefix")
+    else:
+        _same(record_rows, rows, "accepted step records")
+    prepared = read_json(output / "PreparedStateV1.json")
+    protocol = read_json(output / "ProtocolV1.json")
+    for name in ("intervals", "amplitude_V", "times_s", "policy"):
+        _same(record.get(name), protocol.get(name), "executed " + name)
+    _same(record.get("control_label"), protocol.get("control"), "executed control")
+    _same(record.get("prepared_sha256"), prepared["sha256"], "preparation identity")
+    if not failed:
+        _sealed(record)
+        _same(record.get("source"), prepared["source"], "source identity")
+        _npz_matches_json(result_path.with_suffix(".npz"), record)
+    else:
+        if "source" in record:
+            _same(record["source"], prepared["source"], "failed source identity")
+        if "sha256" in record:
+            _sealed(record)
+        _failed_sidecar(result_path.with_suffix(".npz"), record)
+        if record.get("certificate", {}).get("certified") is not False:
+            raise ValueError("failed result cannot assert a passed certificate")
+    physics = verify_r1_step_physics(
+        load_device_from_yaml(output / "SourceFixtureV1.yaml"), protocol["intervals"],
+        read_json(output / "ReferenceBindingV1.json"), prepared, record,
+        expected_prepared_sha256=prepared["sha256"], allow_incomplete=failed,
+    )
+    if not failed and not physics["certified"]:
+        raise ValueError("passed result fails reconstructed physical gates")
+    return {**base_scope, **physics, "scientifically_accepted": not failed and physics["certified"],
+            "checked": ["state_to_transport_and_current", "charge_and_storage_equations",
+                        "finite_difference_jacobian", "eliminated_operator_and_scales",
+                        "original_physical_certificate_metrics"],
+            "numerical_certificate_independently_approved": False,
+            "integration_replayed": False, "range_only": []}
+
+
+def verify_result_records(output: Path, completion: dict) -> dict:
+    """Revision six checks saved physics; legacy formats retain explicit scope."""
+    output = Path(output)
+    if completion.get("evidence_revision", 5) == 6:
+        return _verify_physical_result_records(output, completion)
+    scope = _verify_legacy_result_records(output, completion)
+    return {**scope, "scientifically_accepted": False, "mode": "historical_inspection"}

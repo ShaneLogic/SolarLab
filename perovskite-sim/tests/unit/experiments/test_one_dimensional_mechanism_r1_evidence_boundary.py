@@ -60,20 +60,20 @@ def ledger_for(runner, bundle, destination):
 def test_integrity_does_not_claim_authenticated_provenance(runner, bundle, capsys):
     assert runner.main(["verify", "--output-dir", str(bundle)]) == 0
     output = capsys.readouterr().out
-    assert "checksums consistent" in output
-    assert "provenance not authenticated" in output
+    assert "saved files checked" in output
+    assert "source provenance were not verified" in output
     assert "artifact identities" not in output
 
 
 def test_resealed_changes_fail_against_prior_external_digest(runner, bundle):
     expected = runner.sha256(bundle / "ManifestV1.json")
-    assert runner.verify_acceptance(bundle, expected_manifest_sha256=expected,
+    assert runner.inspect_legacy_evidence(bundle, expected_manifest_sha256=expected,
                                     required_evidence_revision=1)[0]["status"] == "passed"
     runner.write_json(bundle / "PreparedStateV1.json", {"sheet_charge_C_m2": [1.2345e-9]})
     runner.manifest(bundle)
     assert runner.verify_output(bundle)[0]["status"] == "passed"
     with pytest.raises(ValueError, match="external anchor"):
-        runner.verify_acceptance(bundle, expected_manifest_sha256=expected)
+        runner.inspect_legacy_evidence(bundle, expected_manifest_sha256=expected)
 
 
 def test_acceptance_requires_explicit_external_anchor(runner, bundle, capsys):
@@ -83,19 +83,19 @@ def test_acceptance_requires_explicit_external_anchor(runner, bundle, capsys):
 
 def test_ledger_identity_requires_separately_held_digest(runner, bundle, tmp_path):
     path, digest = ledger_for(runner, bundle, tmp_path / "LedgerV1.json")
-    assert runner.verify_acceptance(bundle, ledger=path, ledger_sha256=digest, run_id="run-one",
+    assert runner.inspect_legacy_evidence(bundle, ledger=path, ledger_sha256=digest, run_id="run-one",
                                     required_evidence_revision=1)[0]["status"] == "passed"
     ledger = runner.read_json(path)
     ledger["entries"]["run-one"]["manifest_sha256"] = "0" * 64
     runner.write_json(path, ledger)
     with pytest.raises(ValueError, match="ledger digest mismatch"):
-        runner.verify_acceptance(bundle, ledger=path, ledger_sha256=digest, run_id="run-one")
+        runner.inspect_legacy_evidence(bundle, ledger=path, ledger_sha256=digest, run_id="run-one")
 
 
 def test_bundled_ledger_cannot_authorize_itself(runner, bundle):
     path, digest = ledger_for(runner, bundle, bundle / "LedgerV1.json")
     with pytest.raises(ValueError, match="outside the bundle"):
-        runner.verify_acceptance(bundle, ledger=path, ledger_sha256=digest, run_id="run-one")
+        runner.inspect_legacy_evidence(bundle, ledger=path, ledger_sha256=digest, run_id="run-one")
 
 
 @pytest.mark.parametrize("key,value", [("stage", "step"), ("recorded_status", "failed"),
@@ -106,7 +106,7 @@ def test_matching_manifest_cannot_hide_ledger_identity_disagreement(runner, bund
     ledger["entries"]["run-one"][key] = value
     runner.write_json(path, ledger)
     with pytest.raises(ValueError, match="identities disagree"):
-        runner.verify_acceptance(bundle, ledger=path, ledger_sha256=runner.sha256(path), run_id="run-one",
+        runner.inspect_legacy_evidence(bundle, ledger=path, ledger_sha256=runner.sha256(path), run_id="run-one",
                                  required_evidence_revision=1)
 
 

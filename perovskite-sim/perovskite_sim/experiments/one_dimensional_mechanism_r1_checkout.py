@@ -36,6 +36,9 @@ LEGACY_SOURCE_ANCHORS = _ANCHORS
 REQUIRED_SOURCE_ANCHORS = (
     *_ANCHORS, "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md",
     "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json",
+    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md",
+    "docs/OneDimensionalMechanismR1EvidenceV5.md",
+    "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md",
 )
 _CURRENT_CONTEXT = None
 
