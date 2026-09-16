@@ -292,3 +292,30 @@ def test_double_domain_requires_matching_identity_and_every_frequency_prerequisi
         assert not result["double_domain_consistent"]
     with pytest.raises(ValueError, match="identity differs"):
         compare_reconstructed_response(time, ac, reconstruction_identity={**identity, "intervals": 32}, prerequisites=conditions)
+
+
+def test_dc_endpoint_ladder_subtracts_baseline_without_claiming_linearity(monkeypatch):
+    import perovskite_sim.experiments.one_dimensional_mechanism_r1_response as response
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import AMPLITUDES_V
+    calls = []
+    def solve(stack, intervals, binding, prepared, *, voltage_V, **kwargs):
+        calls.append((voltage_V, kwargs["expected_prepared_sha256"]))
+        evidence = {"control": kwargs["control"], "prepared_sha256": "prepared", "reference_sha256": "reference",
+                    "source": {"sha256": "source"}, "junction_polarity": -1., "current_sign_convention": "sign",
+                    "terminal_current_A_m2": .25+2*voltage_V+3*voltage_V**2, "certified": True}
+        return response.R1DCResponse(None, None, evidence)
+    monkeypatch.setattr(response, "solve_controlled_dc", solve)
+    result = response.dc_amplitude_endpoint_study(None, 16, None, None, control="D",
+                                                 expected_prepared_sha256="external-preparation")
+    assert [call[0] for call in calls] == [0., *AMPLITUDES_V]
+    assert all(call[1] == "external-preparation" for call in calls)
+    np.testing.assert_allclose(result["normalized_endpoint_response_S_m2"], 2+3*np.array(AMPLITUDES_V), atol=2e-13)
+    assert len(result["adjacent_halving_diagnostics"]) == 6
+    assert result["dc_states_certified"]
+    assert not result["linearity_certified"] and not result["full_transient_linearity_certified"]
+    assert result["absolute_current_error_bounds_A_m2"] is None
+    for row in result["adjacent_halving_diagnostics"]:
+        assert row["absolute_numerical_error_budget_S_m2"] is None
+        assert not row["linearity_certified"]
+    with pytest.raises(ValueError, match="complete declared amplitude"):
+        response.dc_amplitude_endpoint_study(None, 16, None, None, amplitudes_V=(.005, .0025))

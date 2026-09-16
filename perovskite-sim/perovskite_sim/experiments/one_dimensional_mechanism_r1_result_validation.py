@@ -31,6 +31,57 @@ def _array(value, label):
     return data
 
 
+def _legacy_contact_closure_scope(record, output):
+    """Select the saved producer's definition, never whichever metric passes.
+
+    Older R1 sources inherited the internal-face metric. The current R1
+    override includes physical contacts for finite steps. Source anchoring is
+    performed by the outer evidence verifier; here its module bytes must also
+    match the result's recorded source identity before choosing that meaning.
+    """
+    import ast
+    import zipfile
+
+    relative = "experiments/one_dimensional_mechanism_r1_dynamics.py"
+    claimed = record.get("source", {}).get("files", {}).get(relative)
+    current = Path(__file__).with_name("one_dimensional_mechanism_r1_dynamics.py").read_bytes()
+    if claimed == hashlib.sha256(current).hexdigest():
+        producer = current
+    else:
+        try:
+            with zipfile.ZipFile(Path(output) / "SourceV1.zip") as archive:
+                producer = archive.read("perovskite-sim/perovskite_sim/" + relative)
+        except (OSError, KeyError, zipfile.BadZipFile) as exc:
+            raise ValueError("legacy current metric requires its recorded producer source") from exc
+        if hashlib.sha256(producer).hexdigest() != claimed:
+            raise ValueError("legacy current metric producer differs from recorded source identity")
+
+    def override(raw):
+        for node in ast.parse(raw).body:
+            if isinstance(node, ast.ClassDef) and node.name == "ControlledPhysicalInterfaceIonSystem":
+                return next((ast.dump(item, include_attributes=False) for item in node.body
+                             if isinstance(item, ast.FunctionDef) and item.name == "transient_current_metrics"), None)
+        raise ValueError("legacy current metric producer lacks the controlled R1 system")
+
+    observed = override(producer)
+    if observed is None:
+        return False
+    if observed != override(current):
+        raise ValueError("unsupported recorded R1 current-metric implementation")
+    return True
+
+
+def _saved_face_current_spread(row, *, include_contacts):
+    physical = row["physical"].get("regular_right_limit") or row["physical"]
+    currents = _array(physical["internal_maxwell_A_m2"], "internal Maxwell current")
+    # The initial event remains the regular internal right limit. The R1
+    # finite-step producer aggregates the same signed internal/contact totals;
+    # a common polarity of +/-1 preserves this range and scale exactly.
+    if include_contacts and row["dt_s"] > 0:
+        currents = np.r_[currents, _array(physical["contact_maxwell_A_m2"], "contact Maxwell current")]
+    return float(np.ptp(currents)) / max(float(np.max(np.abs(currents))), 1e-20)
+
+
 def _npz_matches_json(path, record):
     """Compare every numerical sidecar to the corresponding JSON field."""
     if not path.exists():
@@ -351,10 +402,8 @@ def _step(record, rows, protocol, completion, prepared, output):
             gauss = max(gauss, abs(float(electrostatic[1])) / system.reference_local_scale[index, 1])
     _same(metrics["local_carrier_residual"], carrier, "certificate local carrier residual")
     _same(metrics["local_gauss_residual"], gauss, "certificate local Gauss residual")
-    face_spreads = []
-    for row in finest:
-        currents = np.asarray((row["physical"].get("regular_right_limit") or row["physical"])["internal_maxwell_A_m2"])
-        face_spreads.append(float(np.ptp(currents)) / max(float(np.max(np.abs(currents))), 1e-20))
+    include_contacts = _legacy_contact_closure_scope(record, output)
+    face_spreads = [_saved_face_current_spread(row, include_contacts=include_contacts) for row in finest]
     _same(metrics["all_face_current_relative"], max(face_spreads), "certificate face current spread")
     sampled_groups = [[next(row for row in group if row["time_s"] == time) for time in times]
                       for group in groups.values()]

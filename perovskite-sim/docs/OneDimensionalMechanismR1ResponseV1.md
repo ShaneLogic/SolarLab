@@ -130,6 +130,30 @@ preparation digest, forwarded through all conductance solves. The Richardson
 conductance is an additional central-difference diagnostic, not an absolute
 error bound or a replacement for the frozen study tolerances.
 
+## DC amplitude endpoints
+
+The native study section `amplitude-dc` runs `dc_amplitude_endpoint_study` for
+the requested grids and controls. Each `R1DCEndpointAmplitudeStudyV1` record
+contains an independently solved zero-bias baseline and the seven declared
+positive amplitudes from 10 mV through 0.15625 mV. Every endpoint retains its
+full DC state, physical checks, actual voltage, preparation, reference and
+source. The published endpoint response is `(j_dc(a)-j_dc(0))/a` in S/m2.
+The six adjacent-halving diagnostics report differences and their ratios to
+the 1% response scale; those ratios are not linearity acceptance results.
+
+No independent absolute current-error budget is supplied by this endpoint
+study. Its error-budget fields remain `None`, and both `linearity_certified`
+and `full_transient_linearity_certified` remain false. `dc_states_certified`
+only reports successful discrete DC solves. A close pair of endpoints cannot
+certify the intervening transient or satisfy the R1-2 amplitude-linearity gate.
+
+Formal verification rebuilds the baseline and all seven DC endpoints under
+the bound amplitude/grid/control/preparation/source request and compares every
+scientific field, including the normalized responses and diagnostic flags.
+It cannot accept a changed DC value, a relabeled amplitude or a different source
+by resealing the artifact. A failed solve retains the completed endpoint prefix
+and identifies the amplitude whose DC solve failed.
+
 ## Verification
 
 Independent analytic resistor, capacitor and one-pole descriptors check

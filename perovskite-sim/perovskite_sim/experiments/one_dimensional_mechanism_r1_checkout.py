@@ -44,7 +44,7 @@ R1_DECLARATIONS = {
     "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md": ("superseded", "OperatorCriterionDecisionV2.md", "659acb61ad5c457626300bf980b7b2208d67779a2691fbdb14d628dc6aec96e6"),
     "docs/OneDimensionalMechanismR1EvidenceV5.md": ("historical", "EvidenceV5.md", "f4855d46ef1861d54daa8959e1d047bd31b764d72dc6b25c1b38505452264a1f"),
     "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "ab74fc3ff56fdcb764a20697b14b0c6afc2973cb2031232b462b8d7202b7ca98"),
-    "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "d6c7c4a1cafebefa75a8729b23f9fdaac570faf148b0ba895a288896b80d2da3"),
+    "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "d61d0385985d07f306af6f0d013a97e29c2eb20c232e6a4bb3a2a8f343e1422f"),
     "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "0e8b34b9805b896afa90c2f0e7a3f3e6b8b3a4a2c954576225c3adbe2f98a30b"),
 }
 REQUIRED_SOURCE_ANCHORS = (

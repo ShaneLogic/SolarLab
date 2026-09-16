@@ -23,6 +23,7 @@ from perovskite_sim.experiments.defect_ion_combined_impedance import (
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import (
     R1DynamicsControls,
 )
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import AMPLITUDES_V
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import r1_policy
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
     restore_common_state, snapshot,
@@ -357,6 +358,54 @@ def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", po
         "absolute_error_bound_S_m2": None,
         "scope": "dc_step_refinement_only_not_an_absolute_error_bound",
     }
+
+
+def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control="D", policy=None,
+                                 expected_prepared_sha256=None, amplitudes_V=AMPLITUDES_V):
+    """Measure the seven declared DC endpoints without certifying linearity.
+
+    Differences of j(a)/a are endpoint diagnostics. An independent current
+    uncertainty budget and the full transient are absent from this study.
+    """
+    amplitudes = tuple(_finite_scalar(value, "amplitude_V") for value in amplitudes_V)
+    if amplitudes != AMPLITUDES_V:
+        raise ValueError("DC endpoints require the complete declared amplitude ladder")
+    kwargs = dict(control=control, policy=policy, expected_prepared_sha256=expected_prepared_sha256)
+    baseline = solve_controlled_dc(stack, intervals, binding, prepared, voltage_V=0., **kwargs).evidence
+    record = {"schema": "R1DCEndpointAmplitudeStudyV1", "control": baseline["control"],
+              "intervals": intervals, "prepared_sha256": baseline["prepared_sha256"],
+              "reference_sha256": baseline["reference_sha256"], "source": baseline["source"],
+              "junction_polarity": baseline["junction_polarity"],
+              "current_sign_convention": baseline["current_sign_convention"],
+              "operating_voltage_V": 0., "amplitudes_V": np.asarray(amplitudes), "baseline": baseline,
+              "endpoints": [], "dc_states_certified": False,
+              "absolute_current_error_bounds_A_m2": None, "linearity_certified": False,
+              "full_transient_linearity_certified": False,
+              "scope": "independent_dc_endpoint_diagnostic_without_current_error_budget_or_transient_linearity"}
+    normalized = []
+    for amplitude in amplitudes:
+        try:
+            endpoint = solve_controlled_dc(stack, intervals, binding, prepared, voltage_V=amplitude, **kwargs).evidence
+        except R1ResponseError as exc:
+            record.update(failed_amplitude_V=amplitude, failed_dc=exc.result)
+            raise R1ResponseError("controlled DC amplitude endpoint did not converge", record) from exc
+        delta = endpoint["terminal_current_A_m2"]-baseline["terminal_current_A_m2"]
+        value = delta/amplitude
+        record["endpoints"].append({"amplitude_V": amplitude, "dc": endpoint,
+                                    "delta_current_A_m2": delta, "normalized_response_S_m2": value})
+        normalized.append(value)
+    comparisons = []
+    for index, (coarse, fine) in enumerate(zip(amplitudes[:-1], amplitudes[1:])):
+        a, b = normalized[index:index+2]
+        difference, scale = abs(a-b), .01*max(abs(a), abs(b))
+        comparisons.append({"coarse_amplitude_V": coarse, "fine_amplitude_V": fine,
+                            "absolute_difference_S_m2": difference, "one_percent_response_scale_S_m2": scale,
+                            "difference_to_one_percent_scale_ratio": difference/scale if scale else None,
+                            "absolute_numerical_error_budget_S_m2": None,
+                            "linearity_certified": False, "scope": "endpoint_difference_diagnostic_only"})
+    record.update(normalized_endpoint_response_S_m2=np.asarray(normalized), adjacent_halving_diagnostics=comparisons,
+                  dc_states_certified=baseline["certified"] and all(row["dc"]["certified"] for row in record["endpoints"]))
+    return record
 
 
 def _linear_coefficients(system, state, voltage, h):
@@ -752,7 +801,13 @@ def verify_response_content(record, *, stack, intervals, binding, prepared, requ
         raise ValueError("response policy differs from the declared request")
     kwargs = dict(control=control, policy=policy, expected_prepared_sha256=common["sha256"])
     schema = record.get("schema")
-    if schema == "R1ControlledSmallSignalV1":
+    if schema == "R1DCEndpointAmplitudeStudyV1":
+        if request.get("operating_voltage_V") != 0. or tuple(request.get("amplitudes_V", ())) != AMPLITUDES_V:
+            raise ValueError("DC endpoint request must bind the zero operating bias and declared amplitude ladder")
+        expected = dc_amplitude_endpoint_study(stack, intervals, binding, prepared,
+                                               amplitudes_V=request["amplitudes_V"], **kwargs)
+        certified = expected["dc_states_certified"]
+    elif schema == "R1ControlledSmallSignalV1":
         frequency = _frequencies(request["frequency_Hz"])
         dc = solve_controlled_dc(stack, intervals, binding, prepared,
                                  voltage_V=request.get("voltage_V", 0.), **kwargs)
@@ -926,6 +981,7 @@ def compare_reconstructed_response(reconstruction, ac, *, reconstruction_identit
 
 
 __all__ = ["R1ResponseError", "R1DCResponse", "solve_controlled_dc", "dc_conductance_study",
+           "dc_amplitude_endpoint_study",
            "small_signal_response", "physical_observations", "descriptor_frequency_response",
            "assess_small_signal_response", "verify_response_content",
            "compare_reconstructed_response", "compare_transient_tail"]

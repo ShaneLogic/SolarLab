@@ -46,7 +46,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import (
     solve_controlled_dc, dc_conductance_study, small_signal_response, compare_transient_tail,
-    assess_small_signal_response,
+    assess_small_signal_response, dc_amplitude_endpoint_study,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_physics_validation import verify_r1_step_physics
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_spatial import (
@@ -59,7 +59,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response impo
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import R1AdmittanceErrors
 
 
-SECTIONS = ("prepare", "zero", "short", "matrix", "long", "dc", "ac", "amplitude", "compare", "windows", "reconstruct")
+SECTIONS = ("prepare", "zero", "short", "matrix", "long", "dc", "amplitude-dc", "ac", "amplitude", "compare", "windows", "reconstruct")
 FREQUENCIES = np.r_[0., np.logspace(-3, 8, 45)]
 
 
@@ -293,7 +293,7 @@ class Study:
                                                                time_substeps=request["time_substeps"]))):
                 raise ValueError("step result differs from the requested numerical/physical axes")
             return verify_r1_step_physics(self.stack, n, self.binding, self.prepared(n), result)
-        if key.startswith(("DC/", "AC/")):
+        if key.startswith(("DC/", "AC/", "AmplitudeDC/")):
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import verify_response_content
             return verify_response_content(result, stack=self.stack, intervals=request["intervals"],
                                            binding=self.binding, prepared=self.prepared(request["intervals"]),
@@ -314,7 +314,7 @@ class Study:
         return {"certified": scientific_checks(fresh), "content_matches_recomputed": True}
 
     def case(self, key, request, operation, *, dependency=False):
-        request = dict(request)
+        request = ready(dict(request))
         if (getattr(self, "verifying", False) and key not in getattr(self, "original_inventory", {})
                 and self.latest(key) is None):
             return None
@@ -522,6 +522,17 @@ class Study:
                     self.case(f"DC/N{n}/{control}", {"intervals": n, "control": control, "voltage_V": .005,
                               "scope": "same_control_5mV_dc_and_three_step_zero_bias_conductance"},
                               lambda directory, n=n, c=control: self.dc_record(n, c))
+        if "amplitude-dc" in sections:
+            for n in self.grids:
+                for control in self.controls:
+                    self.case(f"AmplitudeDC/N{n}/{control}", {
+                        "kind": "dc_amplitude_endpoints", "intervals": n, "control": control,
+                        "operating_voltage_V": 0., "amplitudes_V": list(AMPLITUDES_V),
+                        "nonlinear_factor": .1, "time_substeps": (1, 2, 4),
+                        "scope": "dc_endpoint_ladder_without_transient_linearity_acceptance"},
+                        lambda directory, n=n, c=control: dc_amplitude_endpoint_study(
+                            self.stack, n, self.binding, self.prepared(n), control=c,
+                            expected_prepared_sha256=self.prepared(n).sha256))
         if "ac" in sections:
             for n in self.grids:
                 self.case(f"AC/N{n}/D", {"intervals": n, "control": "D", "frequency_Hz": self.frequencies,
@@ -1016,6 +1027,9 @@ def scientific_checks(result):
         return None
     if result.get("schema") == "R1FrequencyWindowReportV1":
         return bool(result["numeric_checks_passed"])
+    if result.get("schema") == "R1DCEndpointAmplitudeStudyV1":
+        return (result.get("dc_states_certified") is True and result.get("linearity_certified") is False
+                and result.get("full_transient_linearity_certified") is False)
     if "double_domain_consistent" in result and "reconstruction" in result:
         return bool(result["double_domain_consistent"])
     for key in ("certificate", "preparation_checks"):

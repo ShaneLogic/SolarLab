@@ -133,6 +133,44 @@ def test_dc_ac_section_alias_expands_without_starting_other_sections(runner, mon
     assert seen == ["dc", "ac"]
 
 
+def test_dc_amplitude_section_is_bounded_to_requested_grids_and_controls(runner, study):
+    seen = []
+    study.grids, study.controls = (16, 32), ("D", "B")
+    study.case = lambda key, request, operation: seen.append((key, request))
+    study.run(["amplitude-dc"])
+    assert [key for key, _ in seen] == ["AmplitudeDC/N16/D", "AmplitudeDC/N16/B",
+                                       "AmplitudeDC/N32/D", "AmplitudeDC/N32/B"]
+    for _, request in seen:
+        assert request["operating_voltage_V"] == 0.
+        assert request["amplitudes_V"] == list(runner.AMPLITUDES_V)
+        assert request["kind"] == "dc_amplitude_endpoints"
+
+
+def test_dc_amplitude_scientific_pass_is_only_the_dc_diagnostic(runner):
+    result = {"schema": "R1DCEndpointAmplitudeStudyV1", "dc_states_certified": True,
+              "linearity_certified": False, "full_transient_linearity_certified": False}
+    assert runner.scientific_checks(result)
+    assert not runner.scientific_checks({**result, "linearity_certified": True})
+    assert not runner.scientific_checks({**result, "dc_states_certified": False})
+
+
+def test_dc_amplitude_audit_routes_to_independent_response_replay(runner, study, monkeypatch):
+    import perovskite_sim.experiments.one_dimensional_mechanism_r1_response as response
+    seen = []
+    def verify(record, **kwargs):
+        seen.append((record, kwargs))
+        return {"certified": True, "content_matches_recomputed": True}
+    monkeypatch.setattr(response, "verify_response_content", verify)
+    study.stack, study.binding = "stack", "binding"
+    study.prepared = lambda n: ("prepared", n)
+    request = {"intervals": 16, "control": "D", "operating_voltage_V": 0.,
+               "amplitudes_V": list(runner.AMPLITUDES_V)}
+    record = {"schema": "R1DCEndpointAmplitudeStudyV1"}
+    assert study.audit_result("AmplitudeDC/N16/D", request, record)["content_matches_recomputed"]
+    assert seen[0][1]["request"] is request
+    assert seen[0][1]["prepared"] == ("prepared", 16)
+
+
 def electrical_record(baseline):
     return {"times_s": [0., 1.], "policy": {"refinement_substeps": [1, 2, 4]},
             "regular_currents": [{"report_contact_current_A_m2": [baseline+2., baseline+2.]}]*2,
@@ -234,3 +272,71 @@ def test_physics_recomputation_failure_propagates_out_of_step(runner, study, mon
     assert completion["status"] == "failed"
     assert not completion["scientific_checks_passed"]
     assert study.finish() == 1
+
+
+@pytest.mark.parametrize("physical_pass", [True, False], ids=["success", "physical-gate-failure"])
+def test_full_window_numpy_times_seal_success_and_physical_failure(runner, study, monkeypatch, physical_pass):
+    times = runner.observation_times()
+    assert isinstance(times, np.ndarray) and len(times) == 134
+    assert times[0] == 0. and times[1] == 1e-9 and times[-1] == 100.
+    request = {"intervals": 16, "control": "D", "time_substeps": (1, 2, 4),
+               "nonlinear_factor": .1, "times_s": times, "scope": "full_window_independent_axis_case"}
+    prepared = SimpleNamespace(sha256="test-parent")
+    study.prepared = lambda n: prepared
+    study.stack, study.binding = None, None
+    endpoint = {"time_s": times[-1], "substeps": 4}
+    record = {"times_s": times, "certificate": {"certified": physical_pass},
+              "accepted_steps": [endpoint]}
+    audit = {"certified": physical_pass, "content_matches_recomputed": True,
+             "violations": [] if physical_pass else ["eliminated_operator_error"]}
+
+    def simulate(*args, **kwargs):
+        np.testing.assert_array_equal(kwargs["times_s"], times)
+        kwargs["accepted_step_observer"](endpoint)
+        return record
+
+    monkeypatch.setattr(runner, "run_r1_step", simulate)
+    monkeypatch.setattr(runner, "verify_r1_step_physics", lambda *a, **kw: audit)
+    key = "Matrix/N16/T1/F0p1"
+    result = study.case(key, request, lambda directory: study.step(directory, 16, "D", (1, 2, 4), .1, times))
+    path = study.latest(key)
+    saved_request = runner.checked_read(path, "RequestV1.json")
+    completion = runner.checked_read(path, "CompletionV1.json")
+    assert saved_request["times_s"] == times.tolist()
+    assert completion["status"] == ("completed" if physical_pass else "failed")
+    assert completion["scientific_checks_passed"] is physical_pass
+    assert completion["study_exit_passed"] is False
+    historical = completion["historical_observation"]
+    assert historical["matched_conditions"]["times_s"] == times.tolist()
+    assert all(type(value) is float for value in historical["matched_conditions"]["times_s"])
+    assert historical["waives_checks"] is False
+    assert historical["changes_acceptance_thresholds"] is False
+    assert runner.checked_read(path, "PhysicsRecomputationV1.json") == audit
+    assert json.loads((path/"AcceptedStepsV1.jsonl").read_text()) == runner.ready(endpoint)
+    assert study.produced_cases[key] == runner.sha(path/"ManifestV1.json")
+    assert request["times_s"] is times
+    assert request["time_substeps"] == (1, 2, 4)
+    if physical_pass:
+        assert result is record
+        assert runner.checked_read(path, "ResultV1.json") == runner.ready(record)
+    else:
+        assert result is None
+        failure = runner.checked_read(path, "FailureV1.json")
+        assert failure["message"] == "completed trajectory fails reconstructed physical gates"
+        assert failure["partial_result"] == runner.ready(record)
+        assert completion["failure"] == {k: v for k, v in failure.items() if k != "partial_result"}
+
+
+@pytest.mark.parametrize("times", [
+    np.array([0., np.nan]), np.array([0., np.inf]), np.array([0., 0.]),
+    np.array([0., -1.]), np.array([1., 2.]), np.array([0.]),
+    np.array([False, True]), np.array(["0", "1"]), np.array([[0., 1.], [2., 3.]]),
+], ids=["nan", "infinite", "duplicate", "negative", "missing-zero", "too-short", "boolean", "text", "matrix"])
+def test_case_numpy_conversion_does_not_accept_invalid_observation_times(runner, study, times):
+    study.prepared = lambda n: None
+    request = {"intervals": 16, "control": "D", "time_substeps": (1, 2, 4),
+               "nonlinear_factor": .1, "times_s": times, "scope": "invalid-time-probe"}
+    with pytest.raises(ValueError, match="invalid failure registry observation times"):
+        study.case("InvalidTimes", request, lambda directory: {"certificate": {"certified": True}})
+    assert not (study.latest("InvalidTimes")/"CompletionV1.json").exists()
+    assert not (study.latest("InvalidTimes")/"ManifestV1.json").exists()
