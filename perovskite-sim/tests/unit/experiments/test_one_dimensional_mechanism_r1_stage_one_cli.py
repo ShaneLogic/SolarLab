@@ -30,13 +30,14 @@ def runner(monkeypatch):
     return module
 
 
-def test_list_is_read_only_and_scoped_to_r1_1(runner, tmp_path, capsys):
+def test_list_is_read_only_and_distinguishes_default_from_development_scope(runner, tmp_path, capsys):
     output = tmp_path / "must_not_be_created"
     assert runner.main(["list", "--output-dir", str(output)]) == 0
     assert not output.exists()
     text = capsys.readouterr().out
-    assert "Scope: R1-1 only" in text
-    assert "convergence matrix belong to R1-2" in text
+    assert "Default scope: R1-1 short functional window" in text
+    assert "R1-2 development" in text
+    assert "three-axis convergence and full-window certification are not asserted" in text
 
 
 @pytest.mark.parametrize("arguments", [

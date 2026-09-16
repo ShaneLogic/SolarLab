@@ -32,7 +32,11 @@ _ANCHORS = (
     "docs/OneDimensionalMechanismR1DynamicsV1.md",
     "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
 )
-REQUIRED_SOURCE_ANCHORS = _ANCHORS
+LEGACY_SOURCE_ANCHORS = _ANCHORS
+REQUIRED_SOURCE_ANCHORS = (
+    *_ANCHORS, "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md",
+    "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json",
+)
 _CURRENT_CONTEXT = None
 
 
@@ -297,7 +301,7 @@ def require_r1_checkout(*, project=None, runner=None, formal=False, source_commi
                            if name.startswith(prefix) and name.endswith(".py"))
     if not package_sources:
         raise R1CheckoutError("R1 checkout has no package source coverage")
-    required_paths = set(package_sources) | {expected_project / name for name in _ANCHORS}
+    required_paths = set(package_sources) | {expected_project / name for name in REQUIRED_SOURCE_ANCHORS}
     required, disk = {}, {}
     for path in sorted(required_paths):
         relative = path.relative_to(root).as_posix()

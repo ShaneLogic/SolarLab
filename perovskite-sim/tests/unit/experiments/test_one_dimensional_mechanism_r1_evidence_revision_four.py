@@ -109,6 +109,7 @@ def prepared_bundle(source_repository, tmp_path):
 def accept(output, repository, **kwargs):
     defaults = {
         "expected_manifest_sha256": evidence.sha256(output / "ManifestV1.json"),
+        "required_evidence_revision": 4,
         "expected_source_commit": repository[2], "source_repository": repository[0],
     }
     defaults.update(kwargs)
@@ -139,7 +140,7 @@ def test_revision_four_matches_the_separately_selected_commit_and_contract(prepa
     completion, _ = accept(prepared_bundle, source_repository)
     assert completion["status"] == "passed"
     assert completion["verification"]["source_commit_anchor"] == source_repository[2]
-    assert completion["verification"]["legacy"] is False
+    assert completion["verification"]["legacy"] is True
     assert "signatures or independent approval" in " ".join(completion["verification"]["limits"])
     assert "verification" not in evidence.read_json(prepared_bundle / "CompletionV1.json")
 
@@ -376,7 +377,7 @@ def make_ledger(output, repository, destination, *, top=True, entry=True):
 def accept_ledger(output, repository, ledger, **kwargs):
     return evidence.verify_acceptance(
         output, ledger=ledger, ledger_sha256=evidence.sha256(ledger), run_id="prepare",
-        source_repository=repository[0], **kwargs,
+        source_repository=repository[0], required_evidence_revision=4, **kwargs,
     )
 
 

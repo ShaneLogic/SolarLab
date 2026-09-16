@@ -17,7 +17,8 @@ import scipy
 from perovskite_sim.constants import Q
 from perovskite_sim.experiments.defect_ion_combined_impedance import (
     CombinedDCCertificate, CombinedDCState, _build_ion_layout,
-    _component_inventories, _ion_equilibrium_residual, _state_sha256,
+    _component_inventories, _ion_equilibrium_residual, _ion_fields,
+    _maximum_component_inventory_error, _state_sha256,
 )
 from perovskite_sim.experiments.interface_defect_ion_transient import (
     InterfaceDefectIonTransientPolicy, InterfaceIonDarkReference,
@@ -111,6 +112,23 @@ def _preparation_history():
         "temperature_K": 300.0, "illuminated": False,
         "duration_s": None,
         "duration_reason": "certified equilibrium, not finite-time preparation",
+    }
+
+
+def _preparation_verification():
+    """Declare the boundary between repeatable equations and historical claims."""
+    return {
+        "schema": "R1PreparationVerificationV1",
+        "recomputed": ["preparation_checks"] + [
+            "dc_state.certificate." + field.name for field in fields(CombinedDCCertificate)
+            if field.name not in ("optimizer_success", "optimizer_nfev")
+        ],
+        "dc_certificate_evaluation": "saved_QF_and_ion_coordinates_with_QSS_interface",
+        "provenance_only": [
+            "environment", "created_utc", "dc_state.certificate.optimizer_success",
+            "dc_state.certificate.optimizer_nfev",
+        ],
+        "provenance_assurance": "content_bound_claims_not_independently_verified",
     }
 
 
@@ -286,9 +304,88 @@ def equilibrium_checks(system, state, policy):
     return {"metrics": metrics, "limits": limits, "certified": not failures, "reasons": failures}
 
 
+def _recomputed_dc_certificate(system, dc):
+    """Re-evaluate the original QSS certificate at saved solver coordinates.
+
+    The exported n/p/phi arrays use the public dynamic D embedding. Its roundoff
+    residuals differ from the original QSS evaluation, so they cannot be used
+    to verify this certificate. No optimizer or dynamic population update runs
+    here. R1's material constructor excludes negative ions and bulk traps.
+    """
+    material = system.material
+    if dc.negative_ion_density_m3 is not None or dc.bulk_trap_occupancy is not None:
+        raise R1StateError("common-state DC contains unsupported ion or bulk-trap blocks")
+    count = system.grid.size
+    value = system.system.evaluate_quasi_fermi_increments_defect_ion_combined(
+        dc.electron_qf_increment_V, dc.hole_qf_increment_V, 0.0,
+        positive_ion_density_m3=dc.positive_ion_density_m3, V_app=0.0,
+    )
+    target = _component_inventories(
+        material.P_ion0, system.ion_layout.positive_components, material.dx_cell)
+    mu = _ion_equilibrium_residual(
+        dc.positive_ion_density_m3, None, value.phi,
+        system.ion_layout.positive_components, target, material, positive=True,
+    )
+    _, _, positive_flux, _ = _ion_fields(
+        system.grid, material, dc.positive_ion_density_m3, None, value.phi)
+    ionic_current = Q * positive_flux
+    widths = np.asarray(material.dx_cell)
+    interface = value.interface_charge_qss
+    if interface is None or not np.array_equal(interface.qss.occupancy, dc.interface_occupancy):
+        raise R1StateError("common-state DC QSS interface occupancy mismatch")
+    actual = {
+        "maximum_normalized_residual": float(np.max(np.abs(np.r_[
+            value.residual[1:count - 1], value.residual[count + 1:2*count - 1], mu,
+        ]))),
+        "electron_continuity_bound_A_m2": float(Q * np.sum(np.abs(value.rate_n[1:-1]) * widths[1:-1])),
+        "hole_continuity_bound_A_m2": float(Q * np.sum(np.abs(value.rate_p[1:-1]) * widths[1:-1])),
+        "maximum_ion_electrochemical_residual": float(np.max(np.abs(mu), initial=0.0)),
+        "maximum_ionic_face_current_A_m2": float(np.max(np.abs(ionic_current))),
+        "maximum_ion_inventory_relative_error": _maximum_component_inventory_error(
+            _component_inventories(dc.positive_ion_density_m3,
+                                   system.ion_layout.positive_components, widths), target),
+        "face_current_spread_A_m2": float(np.ptp(value.current_n + value.current_p + ionic_current)),
+        "poisson_residual": float(value.poisson_residual),
+        "maximum_bulk_trap_balance_relative_error": 0.0,
+        "maximum_interface_residual": float(interface.qss.normalized_residual),
+        "maximum_interface_gauss_residual": float(np.max(interface.normalized_gauss_residual)),
+        "contact_thermodynamics": json_data(require_contact_thermodynamic_certificate(system.stack, material)),
+    }
+    # These are the unchanged solve_r1_dc gates, independent of a transient's
+    # nonlinear/refinement policy or the supplied certificate's pass flags.
+    gates = (
+        (actual["maximum_normalized_residual"] <= 1e-8, "joint_dc_residual_exceeds_limit"),
+        (actual["electron_continuity_bound_A_m2"] <= 1e-4, "electron_continuity_bound_exceeds_limit"),
+        (actual["hole_continuity_bound_A_m2"] <= 1e-4, "hole_continuity_bound_exceeds_limit"),
+        (actual["maximum_ionic_face_current_A_m2"] <= 1e-6, "ionic_face_current_exceeds_limit"),
+        (actual["maximum_ion_inventory_relative_error"] <= 1e-10, "ion_inventory_error_exceeds_limit"),
+        (actual["poisson_residual"] <= 1e-8, "poisson_residual_exceeds_limit"),
+        (actual["face_current_spread_A_m2"] <= 1e-4, "dc_face_current_spread_exceeds_limit"),
+    )
+    reasons = [reason for passed, reason in gates if not passed]
+    actual.update(certified=not reasons, reasons=reasons)
+    return actual
+
+
+def _preparation_policy(value):
+    # Keep the standard common-state API and the four declared R1 nonlinear
+    # refinements. A resealed policy must not loosen any physical gate.
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import ALLOWED_TIME_SUBSTEPS
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import r1_policy
+
+    allowed = [InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)]
+    allowed.extend(r1_policy(factor, time_substeps=substeps)
+                   for factor in (1.0, 0.1, 0.01, 0.001) for substeps in ALLOWED_TIME_SUBSTEPS)
+    for policy in allowed:
+        if canonical(value) == canonical(policy):
+            return policy
+    raise R1StateError("common-state preparation_policy is not a declared R1 policy")
+
+
 def prepare_common_state(stack, intervals, binding, *, policy=None):
     """Prepare D once. A-D import copies of this state without another DC solve."""
     policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)
+    policy = _preparation_policy(policy)
     validate_r1_study_binding(binding, stack)
     grid, material, dc, _ = solve_r1_dc(stack, intervals, np.asarray(binding["f_ref"]))
     system = _make_system(stack, grid, material, dc, binding, R1DynamicsControls(), policy,
@@ -306,7 +403,8 @@ def prepare_common_state(stack, intervals, binding, *, policy=None):
         "contact_certificate": json_data(require_contact_thermodynamic_certificate(system.stack, material)),
         "dc_state": json_data(dc), "state": snapshot(system, state),
         "qf_references_V": {"electron": system.qfn_reference.tolist(), "hole": system.qfp_reference.tolist()},
-        "preparation_checks": checks,
+        "preparation_checks": checks, "preparation_policy": json_data(policy),
+        "verification": _preparation_verification(),
         "history": _preparation_history(),
         "study_spec_sha256": STUDY_SPEC_SHA256,
         "source": execution_source(),
@@ -344,8 +442,44 @@ def restore_common_state(prepared, stack, intervals, binding, *, controls=None, 
             raise R1StateError("common-state differs from the external preparation digest")
     if formal and record.get("source", {}).get("run_class") != "formal":
         raise R1StateError("formal common-state import rejects development preparation")
-    policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)
+    if record.get("intervals") != int(intervals):
+        raise R1StateError("common-state identity mismatch: intervals")
+    if record.get("source") != execution_source():
+        raise R1StateError("common-state identity mismatch: source")
+    baseline, initial = verify_prepared_physics(prepared, stack, binding, policy=policy)
     controls = controls or R1DynamicsControls()
+    if controls == R1DynamicsControls():
+        return baseline, initial
+    policy = policy or _preparation_policy(record["preparation_policy"])
+    system = _make_system(stack, baseline.grid, baseline.material, baseline.common_dc_state,
+                          binding, controls, policy)
+    controlled = system.evaluate(system.initial_coordinate(), 0.0)
+    for name in ("n", "p", "positive", "occupancy", "phi", "sheet_charge"):
+        if not np.array_equal(getattr(controlled, name), getattr(initial, name)):
+            raise R1StateError(f"control switch changed a shared physical population: {name}")
+    checks = equilibrium_checks(system, controlled, policy)
+    if not checks["certified"]:
+        raise R1StateError(f"control switch fails zero-excitation equations: {checks['reasons']}")
+    return system, controlled
+
+
+def verify_prepared_physics(prepared, stack, binding, *, policy=None):
+    """Verify saved physics without asserting historical execution provenance.
+
+    This bounded verifier is usable after a bundle's source has independently
+    been anchored. Unlike restore_common_state it does not compare source to
+    the active checkout or prove the environment, creation time, or optimizer
+    history. It repeats algebraic evaluations, never a DC optimization, and
+    returns the unchanged D system/state. Saved checks use the declared saved
+    preparation policy; an optional consumer policy adds live equation gates.
+    """
+    if not isinstance(prepared, R1PreparedState):
+        prepared = R1PreparedState.from_dict(prepared)
+    record = prepared.to_dict()
+    preparation_policy = _preparation_policy(record.get("preparation_policy"))
+    if type(record.get("intervals")) is not int or record["intervals"] < 1:
+        raise R1StateError("common-state intervals must be a positive integer")
+    intervals = record["intervals"]
     validate_r1_study_binding(binding, stack)
     grid, material = build_r1_material(stack, intervals)
     expected = {
@@ -354,9 +488,9 @@ def restore_common_state(prepared, stack, intervals, binding, *, controls=None, 
         "grid": _grid_identity(grid, material), "physical_stack": json_data(stack),
         "stack_sha256": digest(json_data(stack)), "fixed_reference": binding,
         "reference_sha256": binding["sha256"], "study_spec_sha256": STUDY_SPEC_SHA256,
-        "source": execution_source(),
         "contact_velocities_m_s": json_data(resolved_contact_velocities(stack)),
         "history": _preparation_history(),
+        "verification": _preparation_verification(),
     }
     mismatches = [k for k, value in expected.items() if record.get(k) != value]
     if mismatches:
@@ -378,7 +512,18 @@ def restore_common_state(prepared, stack, intervals, binding, *, controls=None, 
         ):
             if not np.array_equal(getattr(dc, dc_field), record["state"][physical_field]):
                 raise R1StateError(f"common-state DC physical array mismatch: {dc_field}")
-        baseline = _make_system(stack, grid, material, dc, binding, R1DynamicsControls(), policy)
+        if type(dc.certificate.optimizer_success) is not bool or type(dc.certificate.optimizer_nfev) is not int:
+            raise R1StateError("common-state optimizer provenance has invalid types")
+        if not 1 <= dc.certificate.optimizer_nfev <= 1000:
+            raise R1StateError("common-state optimizer provenance exceeds declared iteration budget")
+        if (not isinstance(record.get("environment"), dict)
+                or set(record["environment"]) != {"python", "numpy", "scipy", "platform"}
+                or any(not isinstance(value, str) or not value for value in record["environment"].values())):
+            raise R1StateError("common-state environment provenance must contain version strings")
+        created = datetime.fromisoformat(record["created_utc"])
+        if created.utcoffset() is None or created.utcoffset().total_seconds() != 0:
+            raise R1StateError("common-state created_utc provenance must declare UTC")
+        baseline = _make_system(stack, grid, material, dc, binding, R1DynamicsControls(), preparation_policy)
         initial = baseline.evaluate(baseline.initial_coordinate(), 0.0)
         actual = snapshot(baseline, initial)
         if set(actual) != set(record["state"]):
@@ -390,22 +535,36 @@ def restore_common_state(prepared, stack, intervals, binding, *, controls=None, 
             raise R1StateError("common-state QF reference mismatch")
         if record["contact_certificate"] != json_data(require_contact_thermodynamic_certificate(baseline.stack, material)):
             raise R1StateError("common-state contact certificate mismatch")
-        checks = equilibrium_checks(baseline, initial, policy)
+        checks = equilibrium_checks(baseline, initial, preparation_policy)
         if not checks["certified"]:
             raise R1StateError(f"imported common state fails live D equations: {checks['reasons']}")
-        if controls == R1DynamicsControls():
-            return baseline, initial
-        system = _make_system(stack, grid, material, dc, binding, controls, policy)
-        controlled = system.evaluate(system.initial_coordinate(), 0.0)
-        for name in ("n", "p", "positive", "occupancy", "phi", "sheet_charge"):
-            if not np.array_equal(getattr(controlled, name), getattr(initial, name)):
-                raise R1StateError(f"control switch changed a shared physical population: {name}")
-        checks = equilibrium_checks(system, controlled, policy)
-        if not checks["certified"]:
-            raise R1StateError(f"control switch fails zero-excitation equations: {checks['reasons']}")
-        return system, controlled
-    except (KeyError, TypeError, IndexError) as exc:
+        if canonical(record.get("preparation_checks")) != canonical(checks):
+            raise R1StateError("common-state preparation_checks differ from recomputed physics")
+        certificate = _recomputed_dc_certificate(baseline, dc)
+        saved_certificate = record["dc_state"]["certificate"]
+        for key, value in certificate.items():
+            if canonical(saved_certificate.get(key)) != canonical(value):
+                raise R1StateError(f"common-state DC certificate differs from recomputed physics: {key}")
+        if not certificate["certified"]:
+            raise R1StateError(f"imported common state fails QSS DC equations: {certificate['reasons']}")
+        if policy is not None:
+            # _make_system only consumes site_occupancy_ceiling. All declared
+            # nonlinear/time refinements retain it; honor an explicit stricter
+            # consumer ceiling without replacing any prepared populations.
+            if policy.site_occupancy_ceiling != preparation_policy.site_occupancy_ceiling:
+                consumer = _make_system(stack, grid, material, dc, binding, R1DynamicsControls(), policy)
+                consumer_state = consumer.evaluate(consumer.initial_coordinate(), 0.0)
+                if snapshot(consumer, consumer_state) != actual:
+                    raise R1StateError("consumer policy changed common-state physical arrays")
+                baseline, initial = consumer, consumer_state
+            checks = equilibrium_checks(baseline, initial, policy)
+            if not checks["certified"]:
+                raise R1StateError(f"imported common state fails consumer D equations: {checks['reasons']}")
+        return baseline, initial
+    except R1StateError:
+        raise
+    except (KeyError, TypeError, IndexError, ValueError) as exc:
         raise R1StateError(f"malformed common-state record: {exc}") from exc
 
 
-__all__ = ["R1PreparedState", "R1StateError", "prepare_common_state", "restore_common_state", "equilibrium_checks"]
+__all__ = ["R1PreparedState", "R1StateError", "prepare_common_state", "restore_common_state", "verify_prepared_physics", "equilibrium_checks"]

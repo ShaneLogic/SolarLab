@@ -49,7 +49,9 @@ def repository(tmp_path):
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
         if name in (checkout._CHECKOUT_MODULE, LAUNCHER, INPUT,
-                    "docs/OneDimensionalMechanismR1DynamicsV1.md"):
+                    "docs/OneDimensionalMechanismR1DynamicsV1.md",
+                    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md",
+                    "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json"):
             path.write_bytes((PROJECT / name).read_bytes())
         else:
             path.write_text("# test fixture\n")
@@ -328,7 +330,7 @@ def test_startup_rejection_seals_failure_without_overwriting_prior_run(repositor
         completion = json.loads((output / "CompletionV1.json").read_text())
         assert completion["status"] == "failed"
         assert completion["run_class"] == "rejected_before_execution"
-        assert completion["evidence_revision"] == 4
+        assert completion["evidence_revision"] == 5
         assert completion["physical_execution_started"] is False
         assert completion["source_identity_verified"] is False
         assert not (output / "SourceManifestV1.json").exists()

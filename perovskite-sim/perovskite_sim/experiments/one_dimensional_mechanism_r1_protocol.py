@@ -14,6 +14,7 @@ from perovskite_sim.experiments.interface_defect_ion_transient import (
 )
 from perovskite_sim.experiments.interface_defect_transient import _integrate_trace
 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import physical_step_record
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import validate_time_substeps
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
     R1PreparedState, digest, equilibrium_checks, execution_source, json_data,
@@ -50,11 +51,13 @@ class R1RunError(RuntimeError):
         super().__init__(message)
 
 
-def r1_policy(nonlinear_factor=0.1):
+def r1_policy(nonlinear_factor=0.1, *, time_substeps=(1, 2, 4)):
+    """Select independent time and nonlinear settings without changing physical gates."""
     factor = float(nonlinear_factor)
     if factor not in (1.0, 0.1, 0.01, 0.001):
         raise ValueError("R1 nonlinear factor must be 1, .1, .01 or .001")
     policy = InterfaceDefectIonTransientPolicy(
+        refinement_substeps=validate_time_substeps(time_substeps),
         maximum_newton_iterations=100, maximum_line_search_steps=40,
         maximum_near_acceptance_nonmonotone_steps=2,
         maximum_ion_inventory_relative_drift=1e-10,
@@ -489,7 +492,9 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
         "intervals": int(intervals), "amplitude_V": amplitude, "times_s": times,
         "voltage_V": np.full(times.size, amplitude), "policy": json_data(policy),
         "accepted_steps": accepted,
-        "scope_note": "R1-1 controlled short-time execution; no full-window or three-axis convergence claim",
+        "scope_note": "Single controlled-step execution at the recorded observation times; no full-window or three-axis convergence claim",
+        "execution_axes": {"intervals": int(intervals),
+                           "time_substeps": list(policy.refinement_substeps)},
     }
     try:
         system, before = restore_common_state(prepared, stack, intervals, binding,

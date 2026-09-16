@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run R1-1 common preparation, A-D zero checks, or a short ideal step."""
+"""Run R1 common-state controls; opt into R1-2 numerical axes in development."""
 
 from __future__ import annotations
 
@@ -29,6 +29,8 @@ from run_one_dimensional_mechanism_r1 import (
 
 INPUT_PATH = PROJECT / "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 CONTRACT_PATH = PROJECT / "docs/OneDimensionalMechanismR1DynamicsV1.md"
+CRITERION_PATH = PROJECT / "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md"
+ADDITIONAL_FAILURES_PATH = PROJECT / "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json"
 THREAD_VARIABLES = (
     "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
     "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
@@ -151,11 +153,12 @@ def _import_preparation(output, prepared_path, expected_manifest, context):
     completion, _ = verify_acceptance(
         archived, expected_manifest_sha256=expected_manifest,
         expected_source_commit=context.source_commit, source_repository=context.root,
-        required_evidence_revision=4,
+        required_evidence_revision=5,
     )
     if completion["stage"] != "prepare" or completion["status"] != "passed":
         raise ValueError("formal import requires a passed formal preparation bundle")
     for filename in ("StudyInputV1.json", "SourceFixtureV1.yaml", "ExecutionContractV1.md",
+                     "OperatorCriterionDecisionV2.md", "AdditionalFailuresV1.json",
                      "ReferenceBindingV1.json"):
         if (archived / filename).read_bytes() != (output / filename).read_bytes():
             raise ValueError("preparation and consuming inputs disagree: " + filename)
@@ -170,6 +173,25 @@ def _import_preparation(output, prepared_path, expected_manifest, context):
     return preparation, _read_json_bytes(raw)["sha256"]
 
 
+def _merge_additional_failures(study, additional):
+    """Merge pinned historical observations without altering the canonical input."""
+    if additional.get("schema") != "R1AdditionalFailuresV1":
+        raise ValueError("unsupported supplemental R1 failure registry")
+    semantics = additional.get("known_failure_semantics", {})
+    if any(semantics.get(key) is not False for key in (
+        "waives_checks", "skip_computation", "changes_acceptance_thresholds",
+    )):
+        raise ValueError("supplemental historical failures cannot waive execution or checks")
+    entries = additional.get("known_physical_gate_failures")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("supplemental R1 failure registry requires physical-gate observations")
+    known = [*study.get("known_nonconvergence", []), *study.get("known_physical_gate_failures", [])]
+    identities = [entry["case_id"] for entry in [*known, *entries]]
+    if len(identities) != len(set(identities)):
+        raise ValueError("duplicate case identity in supplemental R1 failure registry")
+    return {**study, "known_physical_gate_failures": [*study.get("known_physical_gate_failures", []), *entries]}
+
+
 def _historical_case_observation(study, args, policy, failure):
     """Report previous measurements without treating them as waivers."""
     if args.stage != "step" or study is None or policy is None:
@@ -180,7 +202,7 @@ def _historical_case_observation(study, args, policy, failure):
             if any(entry.get(key) != actual for key, actual in (
                 ("intervals", args.intervals), ("control", args.control),
                 ("nonlinear_factor", args.nonlinear_factor), ("amplitude_V", args.amplitude),
-                ("times_s", study["functional_times_s"]),
+                ("times_s", getattr(args, "resolved_times_s", study["functional_times_s"])),
                 ("refinement_substeps", list(policy.refinement_substeps)),
             )):
                 continue
@@ -206,19 +228,28 @@ def main(argv=None):
     parser.add_argument("--prepared-manifest-sha256",
                         help="externally selected parent preparation manifest digest for formal import/verification")
     parser.add_argument("--control", choices=tuple("ABCD"))
-    parser.add_argument("--intervals", type=int, choices=(16, 32, 64), default=16)
+    parser.add_argument("--intervals", type=int, choices=(16, 32, 64, 128, 256), default=16)
     parser.add_argument("--amplitude", type=float, default=0.005, metavar="VOLTS")
     parser.add_argument("--nonlinear-factor", type=float, choices=(1.0, 0.1, 0.01, 0.001), default=0.1)
+    parser.add_argument("--time-substeps", type=int, nargs=3, default=(1, 2, 4),
+                        metavar=("COARSE", "MIDDLE", "FINE"),
+                        help="step time-axis setting: 1 2 4 through 16 32 64; nondefault requires --development")
+    parser.add_argument("--window", choices=("functional", "full"), default="functional",
+                        help="step output grid: legacy short functional grid or section-6 full logarithmic grid")
+    parser.add_argument("--first-time-s", type=float,
+                        help="first positive full-grid time: 1e-9, 1e-10, 1e-11 or 1e-12 s")
+    parser.add_argument("--last-time-s", type=float,
+                        help="full-grid endpoint: 1e2, 1e3, 1e4 or 1e5 s")
     parser.add_argument("--input", type=Path, default=INPUT_PATH)
     parser.add_argument("--mode", choices=("integrity", "acceptance"), default="integrity")
     parser.add_argument("--expected-manifest-sha256")
     parser.add_argument("--expected-source-commit",
-                        help="full Git commit selected outside the bundle for revision-4 acceptance")
+                        help="full Git commit selected outside the bundle for current acceptance")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--ledger-sha256")
     parser.add_argument("--run-id")
-    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3, 4), default=4,
-                        help="acceptance format chosen outside the bundle; 1/2/3 are explicit legacy verification")
+    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3, 4, 5), default=5,
+                        help="acceptance format chosen outside the bundle; 1/2/3/4 are explicit legacy verification")
     parser.add_argument("--development", action="store_true",
                         help="explicit unverified development execution; not formal study evidence")
     args = parser.parse_args(argv)
@@ -226,9 +257,14 @@ def main(argv=None):
         print(
             "prepare: shared dark zero-bias D equilibrium from a fixed R1-0 reference\n"
             "zero-check: remaining equations for A-D from the same prepared state\n"
-            "step: 0-/0+, impulse charge, and short regular response for one control\n"
+            "step: 0-/0+, impulse charge, and regular response for one control\n"
             "verify: byte consistency or comparison to a supplied external acceptance anchor\n"
-            "Scope: R1-1 only; long windows and the convergence matrix belong to R1-2."
+            "Default scope: R1-1 short functional window.\n"
+            "R1-2 development: --time-substeps selects an independent nested time setting;\n"
+            "--intervals supports 16/32/64/128/256; --window full uses 0+ and 1e-9..1e2 s,\n"
+            "12 intervals per decade; --first-time-s/--last-time-s select declared extensions.\n"
+            "Nondefault time settings, extended spatial grids and full windows require --development.\n"
+            "Each invocation runs one setting; three-axis convergence and full-window certification are not asserted."
         )
         return 0
     if args.output_dir is None:
@@ -273,12 +309,39 @@ def main(argv=None):
         parser.error("prepare creates the common D state; --control/--prepared are not applicable")
     if not math.isfinite(args.amplitude) or not 0.0 < args.amplitude < 0.02:
         parser.error("--amplitude must be finite, positive, and below 0.02 V")
+    for key in THREAD_VARIABLES:
+        os.environ[key] = "1"
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import (
+        observation_times, validate_time_substeps,
+    )
+    try:
+        args.time_substeps = validate_time_substeps(args.time_substeps)
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
+    if args.stage != "step" and (
+        args.time_substeps != (1, 2, 4) or args.window != "functional"
+        or args.first_time_s is not None or args.last_time_s is not None
+    ):
+        parser.error("time-axis and observation-window options apply only to step")
+    if args.window == "functional" and (args.first_time_s is not None or args.last_time_s is not None):
+        parser.error("--first-time-s/--last-time-s require --window full")
+    args.resolved_times_s = None
+    if args.window == "full":
+        try:
+            args.resolved_times_s = observation_times(
+                first_time_s=1e-9 if args.first_time_s is None else args.first_time_s,
+                last_time_s=1e2 if args.last_time_s is None else args.last_time_s,
+            ).tolist()
+        except (TypeError, ValueError) as exc:
+            parser.error(str(exc))
+    stage_two = args.intervals > 64 or args.time_substeps != (1, 2, 4) or args.window != "functional"
+    if stage_two and not args.development:
+        parser.error("R1-2 axes/windows require --development; the formal R1-1 contract is unchanged")
+    stage_scope = "R1-2-development" if stage_two else "R1-1"
     try:
         output.mkdir(parents=True, exist_ok=False)
     except FileExistsError:
         parser.error("--output-dir already exists; use a fresh evidence directory")
-    for key in THREAD_VARIABLES:
-        os.environ[key] = "1"
     started = time.monotonic()
     failure = None
     execution_context = None
@@ -308,6 +371,12 @@ def main(argv=None):
         contract = (execution_context.read_bytes(CONTRACT_PATH) if execution_context is not None
                     else CONTRACT_PATH.read_bytes())
         (output / "ExecutionContractV1.md").write_bytes(contract)
+        criterion = (execution_context.read_bytes(CRITERION_PATH) if execution_context is not None
+                     else CRITERION_PATH.read_bytes())
+        (output / "OperatorCriterionDecisionV2.md").write_bytes(criterion)
+        additional_failures = (execution_context.read_bytes(ADDITIONAL_FAILURES_PATH)
+                               if execution_context is not None else ADDITIONAL_FAILURES_PATH.read_bytes())
+        (output / "AdditionalFailuresV1.json").write_bytes(additional_failures)
         fixture = PROJECT / study["fixture"]
         fixture_bytes = (execution_context.read_bytes(fixture) if execution_context is not None
                          else fixture.read_bytes())
@@ -333,7 +402,7 @@ def main(argv=None):
         from perovskite_sim.models.config_loader import load_device_from_yaml
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import (
             STUDY_INPUT_PATH, validate_r1_study_binding,
-            execution_contract_identity,
+            execution_contract_identity, operator_criterion_identity, additional_failures_identity,
         )
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
             R1PreparedState, prepare_common_state,
@@ -347,8 +416,13 @@ def main(argv=None):
         if not INPUT_PATH.samefile(STUDY_INPUT_PATH):
             raise RuntimeError("CLI and imported binding policy must be the same tracked file")
         execution_contract_identity()
+        operator_criterion_identity()
+        additional_failures_identity()
+        study = _merge_additional_failures(study, _read_json_bytes(additional_failures))
         stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
-        policy = r1_policy(nonlinear_factor=args.nonlinear_factor)
+        policy = r1_policy(nonlinear_factor=args.nonlinear_factor, time_substeps=args.time_substeps)
+        if args.stage == "step" and args.resolved_times_s is None:
+            args.resolved_times_s = study["functional_times_s"]
         write_json(output / "ResolvedStackV1.json", stack)
         with threadpool_limits(limits=1, user_api="blas"):
             backends = threadpool_info()
@@ -369,17 +443,25 @@ def main(argv=None):
                 raise RuntimeError("R1 requires observed single-thread BLAS")
             validate_r1_study_binding(binding, stack)
             write_json(output / "ProtocolV1.json", {
-                "stage_scope": "R1-1", "stage": args.stage,
+                "stage_scope": stage_scope, "stage": args.stage,
                 "source_commit": execution_context.source_commit if execution_context is not None else None,
                 "source_content_sha256": execution_context.source_content_sha256 if execution_context is not None else None,
                 "run_class": "formal" if controlled else "development",
                 "preparation": preparation,
                 "intervals": args.intervals, "policy": policy,
                 "nonlinear_factor": args.nonlinear_factor,
+                "time_substeps": list(policy.refinement_substeps),
+                "observation_window": ({
+                    "kind": args.window, "first_positive_time_s": args.resolved_times_s[1],
+                    "last_time_s": args.resolved_times_s[-1],
+                    "output_point_count": len(args.resolved_times_s),
+                    "logarithmic_intervals_per_decade": 12 if args.window == "full" else None,
+                } if args.stage == "step" else None),
+                "numerical_validation_scope": "single setting; no three-axis convergence, amplitude linearity or dual-domain acceptance asserted",
                 "control": "D" if args.stage == "prepare" else args.control or "ABCD",
                 "control_definitions": study["controls"],
                 "amplitude_V": args.amplitude if args.stage == "step" else 0.0,
-                "times_s": study["functional_times_s"] if args.stage == "step" else None,
+                "times_s": args.resolved_times_s if args.stage == "step" else None,
                 "reference_file_sha256": sha256(output / "ReferenceBindingV1.json"),
                 "reference_binding_sha256": binding.get("sha256"),
                 "approved_reference_binding_sha256": study["fixed_reference_binding_sha256"],
@@ -389,6 +471,11 @@ def main(argv=None):
                 "input_sha256": sha256(output / "StudyInputV1.json"),
                 "supplied_input_sha256": hashlib.sha256(supplied_input).hexdigest(),
                 "contract_sha256": sha256(output / "ExecutionContractV1.md"),
+                "criterion_sha256": sha256(output / "OperatorCriterionDecisionV2.md"),
+                "additional_failures_sha256": sha256(output / "AdditionalFailuresV1.json"),
+                "historical_failure_case_count": sum(len(study.get(key, [])) for key in (
+                    "known_nonconvergence", "known_physical_gate_failures",
+                )),
                 "claims_excluded": study["claims_excluded"],
             })
             if args.stage == "prepare":
@@ -414,7 +501,7 @@ def main(argv=None):
 
                     result = run_r1_step(
                         stack, args.intervals, binding, prepared, control=args.control,
-                        amplitude_V=args.amplitude, times_s=np.asarray(study["functional_times_s"]),
+                        amplitude_V=args.amplitude, times_s=np.asarray(args.resolved_times_s),
                         policy=policy, accepted_step_observer=observe,
                         expected_prepared_sha256=expected_prepared_sha256,
                     )
@@ -439,12 +526,13 @@ def main(argv=None):
                     "message": str(serialization_error),
                 })
     write_json(output / "CompletionV1.json", {
-        "schema": "R1StageOneCompletionV1", "stage_scope": "R1-1",
+        "schema": "R1StageOneCompletionV1", "stage_scope": stage_scope,
         "stage": args.stage, "status": "failed" if failure else "passed",
         "duration_s": time.monotonic() - started,
         "finished_utc": datetime.now(timezone.utc).isoformat(), "failure": failure,
-        "evidence_revision": 4,
-        "run_class": execution_context.run_class if execution_context is not None else "rejected_before_execution",
+        "evidence_revision": 5,
+        "run_class": (execution_context.run_class if execution_context is not None else
+                      "development" if args.development else "rejected_before_execution"),
         "independent_approval": "not_asserted_by_execution",
         "historical_case_observation": _historical_case_observation(study, args, policy, failure),
         "accepted_record_count": persisted_count,
@@ -454,7 +542,7 @@ def main(argv=None):
         "count_semantics": "record counts include 0+; accepted_record_count is the persisted record count, not a claim that every physical check passed",
     })
     manifest(output)
-    print(f"R1-1 {args.stage}: {'failed' if failure else 'passed'}: {output}")
+    print(f"{stage_scope} {args.stage}: {'failed' if failure else 'passed'}: {output}")
     return int(failure is not None)
 
 

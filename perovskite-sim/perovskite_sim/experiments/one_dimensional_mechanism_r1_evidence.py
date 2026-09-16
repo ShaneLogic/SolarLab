@@ -1,7 +1,8 @@
 """Externally anchored R1 artifact and controlled-source identity checks.
 
-Acceptance verifies identities and declared execution structure. It neither
-reruns physics nor grants independent approval. The caller must trust this
+Acceptance verifies identities and declared execution structure. Revision five
+also reevaluates saved preparation physics and cross-checks result records;
+it does not rerun time integration or grant independent approval. Trust this
 verifier, its Python startup and dependency installation, its fixed policy
 constants, and the Git object database selected outside the bundle.
 """
@@ -115,7 +116,9 @@ def verify_output(output):
     completion = read_json(output / "CompletionV1.json")
     if (
         completion.get("schema") != "R1StageOneCompletionV1"
-        or completion.get("stage_scope") != "R1-1"
+        or not (completion.get("stage_scope") == "R1-1" or (
+            completion.get("stage_scope") == "R1-2-development"
+            and completion.get("run_class") == "development"))
         or completion.get("stage") not in ("prepare", "zero-check", "step")
         or completion.get("status") not in ("passed", "failed")
         or (completion["status"] == "passed") != (completion.get("failure") is None)
@@ -144,10 +147,12 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
                                 committed_source=None, pin_contract=False):
     """Check the verifier-selected controlled format and optional source root."""
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
-        REQUIRED_SOURCE_ANCHORS, source_content_digest,
+        REQUIRED_SOURCE_ANCHORS, LEGACY_SOURCE_ANCHORS, source_content_digest,
     )
     from perovskite_sim.experiments import one_dimensional_mechanism_r1_binding as binding_policy
 
+    if completion.get("stage_scope") != "R1-1":
+        raise ValueError("formal acceptance rejects development execution scope")
     execution = read_json(output / "ExecutionSourceV1.json")
     if (execution.get("schema") != "R1ExecutionSourceV2"
             or execution.get("run_class") != "formal" or completion.get("run_class") != "formal"):
@@ -167,7 +172,14 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
         raise ValueError("controlled execution runtime evidence is incomplete")
     source = read_json(output / "SourceManifestV1.json")
     required = execution.get("required_sources")
-    expected = {"perovskite-sim/" + name for name in REQUIRED_SOURCE_ANCHORS}
+    revision = completion.get("evidence_revision", 1)
+    anchors = REQUIRED_SOURCE_ANCHORS if revision >= 5 else LEGACY_SOURCE_ANCHORS
+    expected = {"perovskite-sim/" + name for name in anchors}
+    if revision < 5 and isinstance(required, dict):
+        # Old formats may have been produced with a superset of the old roots.
+        # Accept only this known extension, never arbitrary bundle-selected roots.
+        expected.update("perovskite-sim/" + name for name in REQUIRED_SOURCE_ANCHORS
+                        if "perovskite-sim/" + name in required)
     expected.update(name for name in source
                     if name.startswith("perovskite-sim/perovskite_sim/") and name.endswith(".py"))
     if not isinstance(required, dict) or set(required) != expected or not expected <= source.keys():
@@ -202,6 +214,17 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
             contract_name = "perovskite-sim/docs/OneDimensionalMechanismR1DynamicsV1.md"
             if archive.read(contract_name) != (output / "ExecutionContractV1.md").read_bytes():
                 raise ValueError("contract differs from the controlled source snapshot")
+            if revision >= 5:
+                criterion = (output / "OperatorCriterionDecisionV2.md").read_bytes()
+                if archive.read("perovskite-sim/" + binding_policy.OPERATOR_CRITERION_RELATIVE_PATH) != criterion:
+                    raise ValueError("operator criterion differs from the controlled source snapshot")
+                if hashlib.sha256(criterion).hexdigest() != binding_policy.PINNED_OPERATOR_CRITERION_SHA256:
+                    raise ValueError("operator criterion does not match this verifier's pinned decision")
+                additional = (output / "AdditionalFailuresV1.json").read_bytes()
+                if archive.read("perovskite-sim/" + binding_policy.ADDITIONAL_FAILURES_RELATIVE_PATH) != additional:
+                    raise ValueError("additional failures differ from the controlled source snapshot")
+                if hashlib.sha256(additional).hexdigest() != binding_policy.PINNED_ADDITIONAL_FAILURES_SHA256:
+                    raise ValueError("additional failures do not match this verifier's pinned registry")
             study = read_json(output / "StudyInputV1.json")
             fixture_name = "perovskite-sim/" + study["fixture"]
             fixture_bytes = (output / "SourceFixtureV1.yaml").read_bytes()
@@ -210,11 +233,20 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
                 raise ValueError("source fixture differs from the controlled snapshot or pinned input")
     except (zipfile.BadZipFile, KeyError) as exc:
         raise ValueError("invalid controlled source ZIP") from exc
-    if sha256(output / "StudyInputV1.json") != binding_policy.PINNED_STUDY_INPUT_SHA256:
+    input_pins = {binding_policy.PINNED_STUDY_INPUT_SHA256}
+    if revision == 3:
+        # Reviewed 794dd7e/84f9131 legacy input. This exception cannot select
+        # revision five or promote the old evidence to current certification.
+        input_pins.add("6a06878c467efe1b4d1a597ffcc45a8ad566ff347c4cdf868af094a36e8b64ca")
+    if sha256(output / "StudyInputV1.json") not in input_pins:
         raise ValueError("study input does not match this verifier's pinned protocol")
     if pin_contract and sha256(output / "ExecutionContractV1.md") != binding_policy.PINNED_EXECUTION_CONTRACT_SHA256:
         raise ValueError("contract does not match this verifier's pinned contract")
     study, protocol = read_json(output / "StudyInputV1.json"), read_json(output / "ProtocolV1.json")
+    if revision >= 5 and protocol.get("criterion_sha256") != sha256(output / "OperatorCriterionDecisionV2.md"):
+        raise ValueError("protocol operator criterion identity mismatch")
+    if revision >= 5 and protocol.get("additional_failures_sha256") != sha256(output / "AdditionalFailuresV1.json"):
+        raise ValueError("protocol additional failures identity mismatch")
     for field in ("stage", "stage_scope"):
         if protocol.get(field) != completion[field]:
             raise ValueError("protocol completion identity mismatch: " + field)
@@ -324,7 +356,14 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
                               expected_prepared_manifest_sha256):
     """Check an externally pinned archived parent and the exact imported bytes."""
     protocol = read_json(output / "ProtocolV1.json")
-    _verify_prepared_record(output, execution)
+    prepared = _verify_prepared_record(output, execution)
+    revision = completion["evidence_revision"]
+    if revision >= 5:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import verify_prepared_physics
+        from perovskite_sim.models.config_loader import load_device_from_yaml
+
+        verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
+                                read_json(output / "ReferenceBindingV1.json"))
     parent = output / "PreparationV1"
     if completion["stage"] == "prepare":
         if (protocol.get("preparation", "missing") is not None or parent.exists()
@@ -340,13 +379,13 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
     parent_completion, _ = verify_acceptance(
         parent, expected_manifest_sha256=expected,
         expected_source_commit=execution["source_commit"],
-        source_repository=source_repository, required_evidence_revision=4,
+        source_repository=source_repository, required_evidence_revision=revision,
     )
     parent_execution = read_json(parent / "ExecutionSourceV1.json")
     expected_identity = {
         "manifest_sha256": expected, "source_commit": execution["source_commit"],
         "source_content_sha256": execution["source_content_sha256"],
-        "run_class": "formal", "evidence_revision": 4,
+        "run_class": "formal", "evidence_revision": revision,
     }
     if protocol.get("preparation") != expected_identity:
         raise ValueError("protocol preparation identity differs from the external parent anchor")
@@ -359,12 +398,16 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
                  "ReferenceBindingV1.json", "SourceFixtureV1.yaml"):
         if (output / name).read_bytes() != (parent / name).read_bytes():
             raise ValueError("imported preparation artifact differs from the anchored parent: " + name)
+    if revision >= 5:
+        for name in ("OperatorCriterionDecisionV2.md", "AdditionalFailuresV1.json"):
+            if (output / name).read_bytes() != (parent / name).read_bytes():
+                raise ValueError("imported policy artifact differs from the anchored parent: " + name)
     if protocol.get("prepared_file_sha256") != sha256(output / "PreparedStateV1.json"):
         raise ValueError("protocol prepared-state file identity mismatch")
 
 
 def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
-                      ledger_sha256=None, run_id=None, required_evidence_revision=4,
+                      ledger_sha256=None, run_id=None, required_evidence_revision=5,
                       expected_source_commit=None, source_repository=None,
                       expected_prepared_manifest_sha256=None):
     output = Path(output).resolve(strict=True)
@@ -374,9 +417,10 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
     if sha256(output / "ManifestV1.json") != expected:
         raise ValueError("bundle manifest differs from the supplied external anchor")
     completion, count = verify_output(output)
-    if required_evidence_revision not in (1, 2, 3, 4):
+    result_checks = None
+    if required_evidence_revision not in (1, 2, 3, 4, 5):
         raise ValueError("unsupported externally required evidence revision")
-    if required_evidence_revision == 4:
+    if required_evidence_revision >= 4:
         if expected_source_commit is None:
             expected_source_commit = ledger_source_commit
         elif ledger_source_commit is not None and expected_source_commit != ledger_source_commit:
@@ -389,20 +433,25 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
         if expected_source_commit is not None or expected_prepared_manifest_sha256 is not None:
             raise ValueError("legacy acceptance does not implement source or preparation anchors; select revision four")
         source_commit = committed_source = None
-    if completion["status"] == "passed":
-        if completion.get("evidence_revision", 1) != required_evidence_revision:
-            raise ValueError("bundle evidence revision differs from the externally required revision")
-        if required_evidence_revision == 3:
-            _verify_controlled_evidence(output, completion)
-        elif required_evidence_revision == 4:
-            execution = _verify_controlled_evidence(
-                output, completion, expected_source_commit=source_commit,
-                committed_source=committed_source, pin_contract=True,
-            )
+    # A failure is evidence too: it cannot bypass format, source or policy checks.
+    if completion.get("evidence_revision", 1) != required_evidence_revision:
+        raise ValueError("bundle evidence revision differs from the externally required revision")
+    if required_evidence_revision == 3:
+        _verify_controlled_evidence(output, completion)
+    elif required_evidence_revision >= 4:
+        execution = _verify_controlled_evidence(
+            output, completion, expected_source_commit=source_commit,
+            committed_source=committed_source, pin_contract=True,
+        )
+        if completion["status"] == "passed" or completion["stage"] != "prepare":
             _verify_preparation_chain(
                 output, completion, execution, source_repository=source_repository,
                 expected_prepared_manifest_sha256=expected_prepared_manifest_sha256,
             )
+        if required_evidence_revision >= 5:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import verify_result_records
+
+            result_checks = verify_result_records(output, completion)
     if entry is not None:
         if ("required_evidence_revision" in entry
                 and entry["required_evidence_revision"] != required_evidence_revision):
@@ -418,15 +467,24 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
             raise ValueError("bundle identities disagree with the anchored ledger entry")
     # Return annotations without changing the sealed completion record. Legacy
     # selection is explicit and cannot acquire revision-four certificate weight.
-    limits = ["identity and declared execution checks; physics not rerun",
-              "external anchors are not signatures or independent approval"]
+    limits = ["external anchors are not signatures or independent approval",
+              "historical environment, timestamps and optimizer history are recorded provenance, not independently verified"]
     if required_evidence_revision < 4:
         limits.append("legacy revision: no external source commit, pinned contract, or preparation-chain acceptance")
+    if required_evidence_revision < 5:
+        limits.append("legacy revision: preparation numerical claims, result records and operator decision are not recertified")
+    else:
+        limits.append("record consistency checked; time integration not rerun")
+        if completion["status"] == "passed" or completion["stage"] != "prepare":
+            limits.append("saved preparation physics reevaluated")
+        else:
+            limits.append("failed preparation has no accepted equilibrium certificate")
     if completion["status"] == "failed":
         limits.append("failed record remains failed; successful-evidence structure not certified")
     return {**completion, "verification": {
         "required_evidence_revision": required_evidence_revision,
-        "legacy": required_evidence_revision < 4,
+        "legacy": required_evidence_revision < 5,
         "source_commit_anchor": source_commit,
+        "result_checks": result_checks,
         "limits": limits,
     }}, count

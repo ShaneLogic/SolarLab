@@ -344,6 +344,72 @@ def test_large_error_budget_cannot_certify_a_weak_or_non_linear_signal():
     assert result["failures"][0]["reasons"] == ["linearity_signal_not_resolved"]
 
 
+def test_unresolved_point_does_not_mask_a_seventy_five_fold_budget_violation():
+    # g_coarse=1, g_fine=-.5 S/m2, with numerical budget .01 S/m2.
+    # The 1.5 discrepancy exceeds the total .02 budget by 75x. A second,
+    # unresolved zero signal must not turn the whole result into undetermined.
+    result = amplitude_result([.005, 0.], [-.00125, 0.], [5e-5, 0.], [0., 0.])
+    assert not result["passed"] and result["status"] == "response_not_linear"
+    assert result["maximum_budget_ratio"] == pytest.approx(75.)
+    assert result["resolved"] == [True, False]
+    assert result["unresolved_scalar_count"] == 1
+    assert result["failures"][0]["reasons"] == ["response_difference_exceeds_budget"]
+    assert result["failures"][1]["reasons"] == ["linearity_signal_not_resolved"]
+
+
+def test_discrepancy_exceeding_budget_is_retained_at_an_unresolved_point():
+    result = amplitude_result([.005], [-.0025], [.0001], [0.])
+    assert result["status"] == "response_not_linear"
+    assert result["resolved"] == [False]
+    assert result["failures"][0]["reasons"] == [
+        "response_difference_exceeds_budget", "linearity_signal_not_resolved",
+    ]
+
+
+def test_finite_normalized_values_with_overflowing_difference_are_invalid():
+    result = amplitude_result([4.5e305], [-2.25e305], [0.], [0.])
+    assert not result["passed"] and result["status"] == "invalid_comparison"
+    assert "nonfinite_comparison_arithmetic" in result["failures"][0]["reasons"]
+
+
+@pytest.mark.parametrize("quantity,absolute,relative,units", SPEC_RESPONSE_RULES)
+@pytest.mark.parametrize("regime", ["relative", "absolute"])
+def test_full_observation_shape_preserves_pointwise_budgets_at_the_last_sample(
+    quantity, absolute, relative, units, regime,
+):
+    times = observation_times()
+    positions = np.arange(34, dtype=float)
+    left = np.zeros((len(times), len(positions)))
+    right = left.copy()
+    if regime == "relative":
+        left[:] = 1e6*absolute
+        right[:] = left
+        right[-1, -1] = 1.4e6*absolute
+    else:
+        right[-1, -1] = 100*absolute
+    result = compare_responses(quantity, R1Response(left, {"time_s": times, "position_m": positions}),
+                                R1Response(right, {"time_s": times, "position_m": positions}))
+    assert not result["passed"]
+    failure, = result["failures"]
+    assert failure["index"] == [133, 33]
+    assert failure["coordinates"] == {"time_s": 100., "position_m": 33.}
+    budget = absolute + relative*max(abs(left[-1, -1]), abs(right[-1, -1]))
+    assert failure["allowed_difference"] == budget
+    assert result["maximum_budget_ratio"] == pytest.approx(abs(left[-1, -1]-right[-1, -1])/budget)
+
+
+def test_full_time_grid_retains_late_amplitude_violation_with_unresolved_early_signal():
+    coarse = np.full(134, .005)
+    fine = np.full(134, .0025)
+    coarse[0] = fine[0] = 0.
+    fine[-1] = -.00125
+    result = amplitude_result(coarse, fine, np.full(134, 5e-5), np.zeros(134))
+    assert not result["passed"] and result["status"] == "response_not_linear"
+    assert result["maximum_budget_ratio"] == pytest.approx(75.)
+    assert result["unresolved_scalar_count"] == 1
+    assert result["failures"][-1]["index"] == [133]
+
+
 def test_zero_signal_does_not_establish_a_linear_range():
     result = amplitude_result([0.], [0.], [0.], [0.])
     assert not result["passed"] and result["status"] == "linearity_undetermined"

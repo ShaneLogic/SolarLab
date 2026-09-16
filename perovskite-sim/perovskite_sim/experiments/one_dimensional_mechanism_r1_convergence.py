@@ -41,6 +41,14 @@ def _real_scalar(value, name):
     return float(array)
 
 
+def validate_time_substeps(values):
+    """Return one declared independent time-axis setting without coercing types."""
+    substeps = tuple(_integer(value, "time substeps") for value in values)
+    if substeps not in ALLOWED_TIME_SUBSTEPS:
+        raise ValueError("R1 time setting must be a declared three-level nested tuple")
+    return substeps
+
+
 @dataclass(frozen=True, slots=True)
 class R1ConvergenceCase:
     """One numerical setting; the tuple is one complete nested time setting."""
@@ -53,13 +61,11 @@ class R1ConvergenceCase:
 
     def __post_init__(self):
         intervals = _integer(self.intervals, "intervals")
-        substeps = tuple(_integer(value, "time substeps") for value in self.time_substeps)
+        substeps = validate_time_substeps(self.time_substeps)
         factor = _real_scalar(self.nonlinear_factor, "nonlinear factor")
         amplitude = _real_scalar(self.amplitude_V, "amplitude_V")
         if intervals not in ALLOWED_INTERVALS:
             raise ValueError("R1 spatial settings are 16, 32, 64, 128 and 256")
-        if substeps not in ALLOWED_TIME_SUBSTEPS:
-            raise ValueError("R1 time setting must be a declared three-level nested tuple")
         if factor not in ALLOWED_NONLINEAR_FACTORS:
             raise ValueError("R1 nonlinear factor must be 1, .1, .01 or .001")
         if self.control not in ("A", "B", "C", "D"):
@@ -314,11 +320,24 @@ def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitud
     failed = bool(report["failures"])
     valid = all(np.all(np.isfinite(value)) for value in (
         normalized_a, normalized_b, error_a, error_b, absolute, scale,
-    ))
+    )) and not any("nonfinite_comparison_arithmetic" in failure["reasons"]
+                   for failure in report["failures"])
+    # A known discrepancy remains a discrepancy even when another point (or
+    # that same point) is unresolved. Resolution only limits a passing claim.
+    exceeds_budget = any("response_difference_exceeds_budget" in failure["reasons"]
+                         for failure in report["failures"])
+    if not valid:
+        status = "invalid_comparison"
+    elif exceeds_budget:
+        status = "response_not_linear"
+    elif not np.all(resolved):
+        status = "linearity_undetermined"
+    else:
+        status = "within_linearity_budget"
     return {
         "scope": "amplitude_halving_comparison_only", "units": "S/m2",
         "passed": not failed,
-        "status": "invalid_comparison" if not valid else "linearity_undetermined" if not np.all(resolved) else "response_not_linear" if failed else "within_linearity_budget",
+        "status": status,
         "coarse_amplitude_V": a, "fine_amplitude_V": b,
         "absolute_budget_definition": "coarse_current_error/coarse_amplitude + fine_current_error/fine_amplitude",
         "relative_tolerance": _AMPLITUDE_RESPONSE_RELATIVE_TOLERANCE,
@@ -333,7 +352,7 @@ def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitud
 
 __all__ = [
     "R1ConvergenceCase", "R1Response", "convergence_cases", "base_convergence_cases",
-    "observation_times", "compare_responses", "compare_amplitude_halving",
+    "observation_times", "validate_time_substeps", "compare_responses", "compare_amplitude_halving",
     "BASE_INTERVALS", "ALLOWED_INTERVALS", "BASE_TIME_SUBSTEPS", "ALLOWED_TIME_SUBSTEPS",
     "BASE_NONLINEAR_FACTORS", "ALLOWED_NONLINEAR_FACTORS", "AMPLITUDES_V",
 ]

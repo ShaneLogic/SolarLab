@@ -106,6 +106,25 @@ def test_zero_excitation_labels_equation_check_without_relative_current_claim(sh
         assert row["initial_event"]["impulse_charge_C_m2"] == 0.0
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("substeps", [(2, 4, 8), (4, 8, 16)])
+def test_independent_time_settings_execute_each_nested_level(shared, substeps):
+    stack, reference, _, prepared = shared
+    policy = protocol.r1_policy(time_substeps=substeps)
+    result = protocol.run_r1_step(stack, 16, reference, prepared, control="D", policy=policy,
+                                  times_s=np.array([0., 1e-9]))
+    assert result["certificate"]["certified"]
+    assert result["prepared_sha256"] == prepared.sha256
+    assert result["execution_axes"] == {"intervals": 16, "time_substeps": list(substeps)}
+    for count in substeps:
+        rows = [row for row in result["accepted_steps"] if row["substeps"] == count]
+        assert len(rows) == count + 1
+        assert rows[0]["phase"] == "0+" and rows[-1]["time_s"] == 1e-9
+        assert sum(row["dt_s"] for row in rows) == pytest.approx(1e-9)
+        assert all(row["physical_checks_passed"] for row in rows)
+    assert "no full-window or three-axis convergence claim" in result["scope_note"]
+
+
 def test_failed_physical_step_retains_accepted_partial_evidence(shared, monkeypatch):
     stack, reference, policy, prepared = shared
     original = protocol.physical_step_record
